@@ -1,0 +1,56 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Logs and runtime files
+*.log
+*.pid
+*.seed
+*.tmp
+tmp/
+temp/
+
+# Go build/test artifacts
+/bin/
+/open-managed-agents
+*.test
+*.out
+*.prof
+coverage.out
+coverage.html
+
+# Frontend dependencies and build artifacts
+node_modules/
+web/node_modules/
+dist/
+web/dist/
+.vite/
+web/.vite/
+coverage/
+web/coverage/
+playwright-report/
+web/playwright-report/
+test-results/
+web/test-results/
+*.tsbuildinfo
+
+# Local databases and object storage scratch data
+*.db
+*.sqlite
+*.sqlite3
+minio-data/
+data/
+
+# Large bundled assets kept out of the repo for now
+assets/

@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ANT_BIN="${ANT_BIN:-/Users/arthur/GolandProjects/anthropic-sdk-all/anthropic-cli/ant}"
+ANT_BASE_URL="${ANT_BASE_URL:-http://127.0.0.1:38080}"
+ANT_API_KEY="${ANT_API_KEY:-sk-ant-local-default}"
+ANT_FILES_BETA="${ANT_FILES_BETA:-files-api-2025-04-14}"
+ANT_FORMAT="${ANT_FORMAT:-json}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/ant-files upload <path> [ant flags...]
+  scripts/ant-files upload-id <path> [ant flags...]
+  scripts/ant-files list [ant flags...]
+  scripts/ant-files get <file_id> [ant flags...]
+  scripts/ant-files delete <file_id> [ant flags...]
+  scripts/ant-files download <file_id> <output|->
+  scripts/ant-files raw <ant args...>
+
+Defaults:
+  ANT_BIN=/Users/arthur/GolandProjects/anthropic-sdk-all/anthropic-cli/ant
+  ANT_BASE_URL=http://127.0.0.1:38080
+  ANT_API_KEY=sk-ant-local-default
+  ANT_FILES_BETA=files-api-2025-04-14
+  ANT_FORMAT=json
+
+Examples:
+  scripts/ant-files upload /tmp/example.txt
+  FILE_ID=$(scripts/ant-files upload-id /tmp/example.txt)
+  scripts/ant-files list --limit 10
+  scripts/ant-files get "$FILE_ID"
+  scripts/ant-files delete "$FILE_ID"
+
+The local service should be running first, for example:
+  ADDR=127.0.0.1:38080 go run .
+EOF
+}
+
+die() {
+  echo "ant-files: $*" >&2
+  echo >&2
+  usage >&2
+  exit 2
+}
+
+run_ant() {
+  exec "$ANT_BIN" --base-url "$ANT_BASE_URL" --api-key "$ANT_API_KEY" "$@"
+}
+
+files_command() {
+  local command="${1:-}"
+  [[ -n "$command" ]] || die "missing command"
+  shift || true
+
+  case "$command" in
+    upload)
+      [[ $# -ge 1 ]] || die "upload requires <path>"
+      local file="$1"
+      shift
+      run_ant --format "$ANT_FORMAT" beta:files upload \
+        --file "$file" \
+        --beta "$ANT_FILES_BETA" \
+        "$@"
+      ;;
+    upload-id)
+      [[ $# -ge 1 ]] || die "upload-id requires <path>"
+      local file="$1"
+      shift
+      run_ant --transform id --raw-output beta:files upload \
+        --file "$file" \
+        --beta "$ANT_FILES_BETA" \
+        "$@"
+      ;;
+    list)
+      run_ant --format "$ANT_FORMAT" beta:files list \
+        --beta "$ANT_FILES_BETA" \
+        "$@"
+      ;;
+    get | retrieve | retrieve-metadata)
+      [[ $# -ge 1 ]] || die "$command requires <file_id>"
+      local file_id="$1"
+      shift
+      run_ant --format "$ANT_FORMAT" beta:files retrieve-metadata \
+        --file-id "$file_id" \
+        --beta "$ANT_FILES_BETA" \
+        "$@"
+      ;;
+    delete | rm)
+      [[ $# -ge 1 ]] || die "$command requires <file_id>"
+      local file_id="$1"
+      shift
+      run_ant --format "$ANT_FORMAT" beta:files delete \
+        --file-id "$file_id" \
+        --beta "$ANT_FILES_BETA" \
+        "$@"
+      ;;
+    download)
+      [[ $# -ge 2 ]] || die "download requires <file_id> <output|->"
+      local file_id="$1"
+      local output="$2"
+      shift 2
+      run_ant beta:files download \
+        --file-id "$file_id" \
+        --output "$output" \
+        --beta "$ANT_FILES_BETA" \
+        "$@"
+      ;;
+    *)
+      die "unknown command: $command"
+      ;;
+  esac
+}
+
+main() {
+  case "${1:-}" in
+    "" | -h | --help)
+      usage
+      ;;
+    raw)
+      shift
+      [[ $# -ge 1 ]] || die "raw requires <ant args...>"
+      run_ant "$@"
+      ;;
+    upload | upload-id | list | get | retrieve | retrieve-metadata | delete | rm | download)
+      files_command "$@"
+      ;;
+    *)
+      run_ant "$@"
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,320 @@
+package environments
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+
+	"github.com/google/uuid"
+)
+
+type Runner struct {
+	db           *db.DB
+	provider     e2bruntime.Provider
+	cfg          config.Config
+	codeSessions *codesessions.Service
+}
+
+func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
+	return &Runner{db: database, provider: provider}
+}
+
+func NewRunnerWithConfig(database *db.DB, provider e2bruntime.Provider, cfg config.Config) *Runner {
+	return &Runner{
+		db:           database,
+		provider:     provider,
+		cfg:          cfg,
+		codeSessions: codesessions.NewService(cfg, database),
+	}
+}
+
+func StartRunner(ctx context.Context, database *db.DB, cfg config.Config) {
+	if !cfg.EnvironmentRunnerEnabled {
+		return
+	}
+	concurrency := cfg.EnvironmentRunnerConcurrency
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	runner := NewRunnerWithConfig(database, e2bruntime.NewProvider(cfg), cfg)
+	for i := 0; i < concurrency; i++ {
+		workerID := fmt.Sprintf("environment-runner-%d", i+1)
+		go runner.loop(ctx, workerID)
+	}
+}
+
+func (r *Runner) loop(ctx context.Context, workerID string) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		processed, err := r.RunOnce(ctx, workerID)
+		if err != nil {
+			log.Printf("environment runner worker=%s: %v", workerID, err)
+		}
+		if processed {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
+	work, err := r.db.PollNextEnvironmentWorkForRunner(ctx, workerID, 5*time.Second, true)
+	if err != nil || work == nil {
+		return false, err
+	}
+	if _, err := r.db.AckEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID); err != nil {
+		return true, err
+	}
+	env, err := r.db.GetEnvironmentByInternalID(ctx, work.WorkspaceID, work.EnvironmentID)
+	if err != nil {
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
+	}
+	sandboxID, err := ids.New("envsbx_")
+	if err != nil {
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
+	}
+	resolution, err := r.provider.Resolve(env, work)
+	if err != nil {
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
+	}
+	launch, err := r.prepareManagedAgentLaunch(ctx, env, work)
+	if err != nil {
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
+	}
+	record, err := r.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
+		UUID:                  uuid.NewString(),
+		ExternalID:            sandboxID,
+		OrganizationID:        work.OrganizationID,
+		WorkspaceID:           work.WorkspaceID,
+		EnvironmentID:         work.EnvironmentID,
+		EnvironmentExternalID: work.EnvironmentExternalID,
+		WorkID:                &work.ID,
+		WorkExternalID:        &work.ExternalID,
+		Provider:              "e2b",
+		Template:              resolution.Template,
+		State:                 "creating",
+		Metadata:              work.Metadata,
+		CreatedAt:             time.Now().UTC(),
+	})
+	if err != nil {
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
+	}
+	sandbox, err := r.provider.Create(ctx, env, work)
+	if err != nil {
+		now := time.Now().UTC()
+		message := err.Error()
+		_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", nil, &message, &now)
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
+	}
+	providerSandboxID := sandbox.ID
+	if strings.TrimSpace(providerSandboxID) != "" {
+		nextWorkMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
+			"provider_sandbox_id": providerSandboxID,
+		})
+		if err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+		updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, nextWorkMetadata)
+		if err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+		*work = updatedWork
+	}
+	if launch != nil {
+		if err := r.provider.WriteFile(ctx, providerSandboxID, launch.StdinPath, launch.Payload); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+		if err := r.provider.RunCommand(ctx, providerSandboxID, launch.ShellCommand); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+	}
+	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
+		return true, err
+	}
+	_, err = r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
+	return true, err
+}
+
+func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
+	now := time.Now().UTC()
+	message := cause.Error()
+	_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
+	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	if strings.TrimSpace(providerSandboxID) == "" {
+		return
+	}
+	killCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_ = r.provider.Kill(killCtx, providerSandboxID)
+}
+
+func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*environmentManagerCommand, error) {
+	if r == nil || work == nil || r.codeSessions == nil {
+		return nil, nil
+	}
+	sessionID, ok := sessionIDFromEnvironmentWork(*work)
+	if !ok || !cloudEnvironment(env) {
+		return nil, nil
+	}
+	session, err := r.db.GetSession(ctx, work.WorkspaceID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceID, session.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	events, err := r.sessionEventPayloads(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	sessionConfig := managedAgentSessionConfig(session, resources)
+	workDir := managedAgentWorkDir(resources)
+	title := ""
+	if session.Title != nil {
+		title = *session.Title
+	}
+	local, err := r.codeSessions.CreateManagedAgentCodeSession(ctx, codesessions.ManagedAgentCreateInput{
+		Session:                    session,
+		Environment:                env,
+		Model:                      modelIDFromAgentSnapshot(session.AgentSnapshot),
+		Title:                      title,
+		WorkDir:                    workDir,
+		PermissionMode:             "bypassPermissions",
+		DangerouslySkipPermissions: true,
+		Config:                     sessionConfig,
+		InitialEvents:              events,
+	})
+	if err != nil {
+		return nil, err
+	}
+	sessionMetadataPatch := map[string]any{
+		"claude_code_session_id":        local.CodeSessionID,
+		"claude_code_public_session_id": local.PublicSessionID,
+		"claude_code_sdk_url_path":      local.SDKURLPath,
+		"runtime":                       "claude_code_local",
+	}
+	workMetadataPatch := map[string]any{
+		"claude_code_session_id":        local.CodeSessionID,
+		"claude_code_public_session_id": local.PublicSessionID,
+		"claude_code_sdk_url_path":      local.SDKURLPath,
+		"runtime":                       "claude_code_local",
+	}
+	if hosts := managedAgentMCPAllowedHosts(session.AgentSnapshot); len(hosts) > 0 {
+		workMetadataPatch["mcp_allowed_hosts"] = hosts
+	}
+	metadataPatch, err := json.Marshal(sessionMetadataPatch)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := r.db.PatchSessionMetadata(ctx, session.WorkspaceID, session.ExternalID, metadataPatch); err != nil {
+		return nil, err
+	}
+	nextWorkMetadata, err := patchJSONMetadata(work.Metadata, workMetadataPatch)
+	if err != nil {
+		return nil, err
+	}
+	updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, nextWorkMetadata)
+	if err != nil {
+		return nil, err
+	}
+	*work = updatedWork
+
+	payload, err := buildEnvironmentManagerV0Payload(local.CodeSessionID, workDir, sessionConfig, r.cfg)
+	if err != nil {
+		return nil, err
+	}
+	command := buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload)
+	return &command, nil
+}
+
+func (r *Runner) sessionEventPayloads(ctx context.Context, session db.Session) ([]json.RawMessage, error) {
+	var out []json.RawMessage
+	var cursor *db.SessionEventPageCursor
+	for {
+		events, hasMore, err := r.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+			WorkspaceID:       session.WorkspaceID,
+			SessionExternalID: session.ExternalID,
+			Limit:             100,
+			Cursor:            cursor,
+			Order:             "asc",
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, event := range events {
+			out = append(out, append(json.RawMessage(nil), event.Payload...))
+		}
+		if !hasMore || len(events) == 0 {
+			return out, nil
+		}
+		last := events[len(events)-1]
+		cursor = &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+}
+
+func sessionIDFromEnvironmentWork(work db.EnvironmentWork) (string, bool) {
+	var data struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if err := json.Unmarshal(work.Data, &data); err != nil {
+		return "", false
+	}
+	if strings.TrimSpace(data.Type) != "session" || strings.TrimSpace(data.ID) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(data.ID), true
+}
+
+func cloudEnvironment(env db.Environment) bool {
+	var config struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(env.Config, &config); err != nil {
+		return false
+	}
+	return strings.TrimSpace(config.Type) == "cloud"
+}
+
+func patchJSONMetadata(raw json.RawMessage, patch map[string]any) (json.RawMessage, error) {
+	metadata := map[string]any{}
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &metadata); err != nil {
+			return nil, err
+		}
+	}
+	for key, value := range patch {
+		metadata[key] = value
+	}
+	return json.Marshal(metadata)
+}

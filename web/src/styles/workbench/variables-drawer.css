@@ -1,0 +1,137 @@
+.workbench-variable-panel {
+  display: flex;
+  height: 100%;
+  min-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workbench-variable-fields {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  align-content: start;
+  align-items: start;
+  gap: 18px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 14px;
+}
+
+.workbench-variable-field {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.workbench-hidden-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
+.workbench-variable-logic {
+  display: grid;
+  margin: 2px -14px 0;
+}
+
+.workbench-variable-logic-toggle {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 0 16px;
+  color: rgb(184, 183, 171);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  text-align: left;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.workbench-variable-logic-toggle:hover {
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.workbench-variable-logic.is-open .workbench-variable-logic-toggle {
+  color: var(--foreground);
+}
+
+.workbench-variable-logic-editor {
+  display: grid;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+
+.workbench-variable-logic-header {
+  position: relative;
+  display: flex;
+  min-height: 20px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workbench-variable-logic-header p {
+  margin: 4px 0 0;
+  color: rgb(149, 148, 137);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.workbench-variable-logic-actions {
+  position: absolute;
+  top: -12px;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgb(184, 183, 171);
+}
+
+.workbench-variable-logic-actions button {
+  color: rgb(184, 183, 171);
+}
+
+.workbench-variable-logic-actions button:hover {
+  color: var(--foreground);
+}
+
+.workbench-variable-empty {
+  display: flex;
+  min-height: 360px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.workbench-variable-empty h3 {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.workbench-variable-empty p {
+  margin-top: 8px;
+  max-width: 280px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 22px;
+}

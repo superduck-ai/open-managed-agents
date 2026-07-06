@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ANT_BIN="${ANT_BIN:-/Users/arthur/GolandProjects/anthropic-sdk-all/anthropic-cli/ant}"
+ANT_BASE_URL="${ANT_BASE_URL:-http://127.0.0.1:38080}"
+ANT_API_KEY="${ANT_API_KEY:-sk-ant-api03-XuCxmIM_sikQZNITUgn96BcR301063m581U9yzlTzB0}"
+ANT_FIXTURE_API_KEY="${ANT_FIXTURE_API_KEY:-sk-ant-api03-cuAqUqFbiNXtNkjtrPC0UYLItBAejN44tGBoBt4l-mE}"
+ANT_BATCH_VARIANT="${ANT_BATCH_VARIANT:-stable}"
+ANT_BATCH_BETA="${ANT_BATCH_BETA:-message-batches-2024-09-24}"
+ANT_BATCH_MODEL="${ANT_BATCH_MODEL:-claude-3-5-haiku-latest}"
+ANT_BATCH_MAX_TOKENS="${ANT_BATCH_MAX_TOKENS:-32}"
+ANT_BATCH_POLL_INTERVAL="${ANT_BATCH_POLL_INTERVAL:-5}"
+ANT_BATCH_POLL_ATTEMPTS="${ANT_BATCH_POLL_ATTEMPTS:-60}"
+ANT_FORMAT="${ANT_FORMAT:-json}"
+
+BATCH_RESOURCE=""
+BATCH_IS_BETA=0
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/ant-batches run [--stable|--beta]
+  scripts/ant-batches fixture [--stable|--beta]
+  scripts/ant-batches create [--stable|--beta] [body.yaml]
+  scripts/ant-batches create-id [--stable|--beta] [body.yaml]
+  scripts/ant-batches poll [--stable|--beta] <message_batch_id>
+  scripts/ant-batches get [--stable|--beta] <message_batch_id>
+  scripts/ant-batches results [--stable|--beta] <message_batch_id>
+  scripts/ant-batches list [--stable|--beta] [ant flags...]
+  scripts/ant-batches cancel [--stable|--beta] <message_batch_id>
+  scripts/ant-batches delete [--stable|--beta] <message_batch_id>
+  scripts/ant-batches raw <ant args...>
+
+Defaults:
+  ANT_BIN=/Users/arthur/GolandProjects/anthropic-sdk-all/anthropic-cli/ant
+  ANT_BASE_URL=http://127.0.0.1:38080
+  ANT_API_KEY=sk-ant-local-default
+  ANT_FIXTURE_API_KEY=my-anthropic-api-key
+  ANT_BATCH_VARIANT=stable
+  ANT_BATCH_MODEL=claude-3-5-haiku-latest
+  ANT_BATCH_MAX_TOKENS=32
+  ANT_BATCH_POLL_INTERVAL=5
+  ANT_BATCH_POLL_ATTEMPTS=60
+
+Examples:
+  scripts/ant-batches run
+  scripts/ant-batches fixture
+  scripts/ant-batches run --beta
+  BATCH_ID=$(scripts/ant-batches create-id)
+  scripts/ant-batches poll "$BATCH_ID"
+  scripts/ant-batches results "$BATCH_ID"
+
+For real batch processing, start the local service with an upstream key:
+  ADDR=127.0.0.1:38080 ANTHROPIC_UPSTREAM_API_KEY=... go run .
+EOF
+}
+
+die() {
+  echo "ant-batches: $*" >&2
+  echo >&2
+  usage >&2
+  exit 2
+}
+
+set_variant() {
+  case "$1" in
+    stable)
+      BATCH_RESOURCE="messages:batches"
+      BATCH_IS_BETA=0
+      ;;
+    beta)
+      BATCH_RESOURCE="beta:messages:batches"
+      BATCH_IS_BETA=1
+      ;;
+    *)
+      die "ANT_BATCH_VARIANT must be stable or beta"
+      ;;
+  esac
+}
+
+run_ant() {
+  env \
+    -u ANTHROPIC_AUTH_TOKEN \
+    -u ANTHROPIC_PROFILE \
+    -u ANTHROPIC_IDENTITY_TOKEN \
+    -u ANTHROPIC_IDENTITY_TOKEN_FILE \
+    -u ANTHROPIC_FEDERATION_RULE_ID \
+    -u ANTHROPIC_ORGANIZATION_ID \
+    -u ANTHROPIC_SERVICE_ACCOUNT_ID \
+    "$ANT_BIN" --base-url "$ANT_BASE_URL" --api-key "$ANT_API_KEY" "$@"
+}
+
+run_batch_command() {
+  local command="$1"
+  shift
+  if [[ "$BATCH_IS_BETA" == "1" ]]; then
+    run_ant "$BATCH_RESOURCE" "$command" --beta "$ANT_BATCH_BETA" "$@"
+  else
+    run_ant "$BATCH_RESOURCE" "$command" "$@"
+  fi
+}
+
+sample_body() {
+  local suffix
+  suffix="$(date +%s)"
+  cat <<EOF
+requests:
+  - custom_id: local-test-1-${suffix}
+    params:
+      model: ${ANT_BATCH_MODEL}
+      max_tokens: ${ANT_BATCH_MAX_TOKENS}
+      messages:
+        - role: user
+          content: 'Say "batch one ok" and nothing else.'
+  - custom_id: local-test-2-${suffix}
+    params:
+      model: ${ANT_BATCH_MODEL}
+      max_tokens: ${ANT_BATCH_MAX_TOKENS}
+      messages:
+        - role: user
+          content: 'Say "batch two ok" and nothing else.'
+EOF
+}
+
+create_batch() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    run_batch_command create "$@"
+    return
+  fi
+
+  local body_file="${1:-}"
+  shift || true
+  if [[ -n "$body_file" && -f "$body_file" ]]; then
+    run_batch_command create --format "$ANT_FORMAT" "$@" <"$body_file"
+  elif [[ -n "$body_file" ]]; then
+    die "body file not found: $body_file"
+  else
+    sample_body | run_batch_command create --format "$ANT_FORMAT" "$@"
+  fi
+}
+
+create_batch_id() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    run_batch_command create "$@"
+    return
+  fi
+
+  local body_file="${1:-}"
+  shift || true
+  if [[ -n "$body_file" && -f "$body_file" ]]; then
+    run_batch_command create --transform id --raw-output "$@" <"$body_file"
+  elif [[ -n "$body_file" ]]; then
+    die "body file not found: $body_file"
+  else
+    sample_body | run_batch_command create --transform id --raw-output "$@"
+  fi
+}
+
+get_batch() {
+  [[ $# -ge 1 ]] || die "get requires <message_batch_id>"
+  local batch_id="$1"
+  shift
+  run_batch_command retrieve \
+    --message-batch-id "$batch_id" \
+    --format "$ANT_FORMAT" \
+    "$@"
+}
+
+get_status() {
+  local batch_id="$1"
+  run_batch_command retrieve \
+    --message-batch-id "$batch_id" \
+    --transform processing_status \
+    --raw-output
+}
+
+poll_batch() {
+  [[ $# -ge 1 ]] || die "poll requires <message_batch_id>"
+  local batch_id="$1"
+  local status=""
+
+  for ((attempt = 1; attempt <= ANT_BATCH_POLL_ATTEMPTS; attempt++)); do
+    status="$(get_status "$batch_id")"
+    printf '[%s/%s] %s status=%s\n' "$attempt" "$ANT_BATCH_POLL_ATTEMPTS" "$batch_id" "$status" >&2
+    if [[ "$status" == "ended" ]]; then
+      return 0
+    fi
+    sleep "$ANT_BATCH_POLL_INTERVAL"
+  done
+
+  die "timed out waiting for batch to end; last status: $status"
+}
+
+results_batch() {
+  [[ $# -ge 1 ]] || die "results requires <message_batch_id>"
+  local batch_id="$1"
+  shift
+  run_batch_command results \
+    --message-batch-id "$batch_id" \
+    --format jsonl \
+    --max-items -1 \
+    "$@"
+}
+
+run_batch_test() {
+  local batch_id
+  batch_id="$(create_batch_id)"
+  printf 'Created batch: %s\n' "$batch_id" >&2
+  poll_batch "$batch_id"
+  printf '\nFinal batch metadata:\n' >&2
+  get_batch "$batch_id"
+  printf '\nBatch results:\n' >&2
+  results_batch "$batch_id"
+}
+
+run_fixture_test() {
+  ANT_API_KEY="$ANT_FIXTURE_API_KEY"
+  run_batch_test
+}
+
+batch_command() {
+  local command="${1:-}"
+  [[ -n "$command" ]] || die "missing command"
+  shift || true
+
+  case "${1:-}" in
+    --stable)
+      ANT_BATCH_VARIANT="stable"
+      shift
+      ;;
+    --beta)
+      ANT_BATCH_VARIANT="beta"
+      shift
+      ;;
+  esac
+  set_variant "$ANT_BATCH_VARIANT"
+
+  case "$command" in
+    run)
+      [[ $# -eq 0 ]] || die "run does not accept positional arguments"
+      run_batch_test
+      ;;
+    fixture)
+      [[ $# -eq 0 ]] || die "fixture does not accept positional arguments"
+      run_fixture_test
+      ;;
+    create)
+      create_batch "$@"
+      ;;
+    create-id)
+      create_batch_id "$@"
+      ;;
+    poll)
+      poll_batch "$@"
+      ;;
+    get | retrieve)
+      get_batch "$@"
+      ;;
+    results)
+      results_batch "$@"
+      ;;
+    list)
+      run_batch_command list --format "$ANT_FORMAT" "$@"
+      ;;
+    cancel)
+      [[ $# -ge 1 ]] || die "cancel requires <message_batch_id>"
+      local batch_id="$1"
+      shift
+      run_batch_command cancel \
+        --message-batch-id "$batch_id" \
+        --format "$ANT_FORMAT" \
+        "$@"
+      ;;
+    delete | rm)
+      [[ $# -ge 1 ]] || die "$command requires <message_batch_id>"
+      local batch_id="$1"
+      shift
+      run_batch_command delete \
+        --message-batch-id "$batch_id" \
+        --format "$ANT_FORMAT" \
+        "$@"
+      ;;
+    *)
+      die "unknown command: $command"
+      ;;
+  esac
+}
+
+main() {
+  case "${1:-}" in
+    "" | -h | --help)
+      usage
+      ;;
+    raw)
+      shift
+      [[ $# -ge 1 ]] || die "raw requires <ant args...>"
+      run_ant "$@"
+      ;;
+    run | fixture | create | create-id | poll | get | retrieve | results | list | cancel | delete | rm)
+      batch_command "$@"
+      ;;
+    *)
+      run_ant "$@"
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,116 @@
+.workbench-code-dialog {
+  width: min(1152px, calc(100vw - 32px));
+  height: min(644px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px) !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  background: #383835 !important;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.58) !important;
+}
+
+.workbench-code-dialog-header {
+  height: 60px !important;
+  border-bottom: 0 !important;
+  padding: 0 14px 0 24px !important;
+}
+
+.workbench-code-dialog-header .grid {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.workbench-code-dialog-title {
+  font-size: 22px !important;
+  font-weight: 540 !important;
+  line-height: 26px !important;
+}
+
+.workbench-code-dialog-close {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(244, 241, 234, 0.82);
+}
+
+.workbench-code-dialog-close:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--foreground);
+}
+
+.workbench-code-dialog-body {
+  height: calc(100% - 60px);
+  max-height: none !important;
+  overflow: hidden !important;
+  padding: 0 24px 24px !important;
+}
+
+.workbench-code-modal {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workbench-code-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.workbench-code-frame {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #383835;
+}
+
+.workbench-code-pre {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 14px 14px 0;
+  color: var(--code-foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 19.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workbench-code-pre code {
+  display: grid;
+  gap: 0;
+  background: transparent;
+}
+
+.workbench-code-pre .hljs-keyword {
+  color: rgb(204, 123, 244);
+}
+
+.workbench-code-line {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  min-height: 20px;
+}
+
+.workbench-code-line-number {
+  user-select: none;
+  color: rgba(244, 241, 234, 0.34);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.workbench-code-line-content {
+  min-width: 0;
+  padding-left: 12px;
+}

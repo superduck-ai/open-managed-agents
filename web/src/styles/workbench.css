@@ -1,0 +1,10 @@
+@import "./workbench/shell-editor.css";
+@import "./workbench/evaluate-response.css";
+@import "./workbench/drawer-layout-history.css";
+@import "./workbench/model-drawer.css";
+@import "./workbench/variables-drawer.css";
+@import "./workbench/examples-drawer.css";
+@import "./workbench/tools-drawer.css";
+@import "./workbench/code-delete-dialogs.css";
+@import "./workbench/share-rename-attachment-dialogs.css";
+@import "./workbench/generate-improve-dialogs.css";

@@ -1,0 +1,721 @@
+.workbench-shell {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  margin: -24px -32px;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.workbench-topbar {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  min-height: 120px;
+  padding: 12px 20px 0;
+}
+
+.workbench-title-stack {
+  display: grid;
+  gap: 24px;
+}
+
+.workbench-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workbench-title-button {
+  display: inline-flex;
+  max-width: min(640px, 100%);
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0 4px 0 6px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 19.6px;
+}
+
+.workbench-title-button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.workbench-save-meta {
+  display: flex;
+  width: fit-content;
+  margin-top: 4px;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.workbench-save-separator {
+  color: var(--muted-foreground);
+}
+
+.workbench-save-link {
+  color: var(--muted-foreground);
+  text-decoration-line: underline;
+  text-underline-offset: 2px;
+}
+
+.workbench-save-link:hover {
+  color: var(--foreground);
+}
+
+.workbench-save-link:disabled {
+  cursor: default;
+  color: var(--muted-foreground);
+  text-decoration-line: none;
+}
+
+.workbench-view-switcher {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.workbench-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 58px;
+}
+
+.workbench-mini-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+}
+
+.workbench-mini-button:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.workbench-new-prompt-button,
+.workbench-new-prompt-button:hover {
+  color: #d97757;
+}
+
+.workbench-mini-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.workbench-grid {
+  display: grid;
+  min-height: 0;
+  height: calc(100% - 120px);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 40%);
+  gap: 16px;
+  padding: 0 20px 12px;
+}
+
+.workbench-main {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0;
+}
+
+.workbench-toolbar {
+  display: flex;
+  width: 100%;
+  max-width: 661px;
+  min-height: 32px;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4.5px;
+  margin-bottom: 8px;
+  color: rgb(195, 194, 183);
+}
+
+.workbench-toolbar-button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0 8px;
+  color: rgb(195, 194, 183);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.workbench-toolbar-model-button {
+  gap: 4px;
+  padding: 0 10px 0 8px;
+}
+
+.workbench-toolbar-icon-button {
+  width: 32px;
+  justify-content: center;
+  padding: 0;
+}
+
+.workbench-toolbar-button svg {
+  color: rgb(137, 135, 129);
+}
+
+.workbench-toolbar-button:hover {
+  color: var(--foreground);
+}
+
+.workbench-toolbar-button.is-active {
+  border-color: var(--border);
+  background: #151515;
+  color: var(--foreground);
+}
+
+.workbench-toolbar-button.is-active svg {
+  color: var(--foreground);
+}
+
+.workbench-toolbar-button[aria-disabled='true'],
+.workbench-toolbar-button:disabled {
+  cursor: not-allowed;
+  color: var(--muted-foreground);
+}
+
+.workbench-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.workbench-toolbar-count {
+  display: inline-flex;
+  height: 16px;
+  align-items: center;
+  background: transparent;
+  color: rgb(195, 194, 183);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.workbench-variable-badge {
+  display: inline-grid;
+  min-width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.workbench-editor-stack {
+  display: grid;
+  gap: 12px;
+  max-width: 661px;
+}
+
+.workbench-system-card,
+.workbench-message-card {
+  border: 0.5px solid var(--border);
+  border-radius: 8px;
+  background: var(--secondary);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.workbench-system-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.workbench-system-card[aria-label='Click to open system prompt'] {
+  cursor: pointer;
+}
+
+.workbench-system-card[aria-label='Click to open system prompt']:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.workbench-system-card.is-open {
+  min-height: 78px;
+}
+
+.workbench-system-expanded {
+  display: grid;
+  min-height: 78px;
+  align-content: start;
+  gap: 8px;
+  padding: 16px 12px 12px;
+}
+
+.workbench-system-expanded-title {
+  color: rgb(195, 194, 183);
+  font-size: 14px;
+  font-weight: var(--workbench-field-weight);
+  line-height: 20px;
+}
+
+.workbench-system-button {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  color: rgb(137, 135, 129);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+  font-family: var(--font-sans);
+}
+
+.workbench-system-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-system-copy strong {
+  flex-shrink: 0;
+  color: rgb(195, 194, 183);
+  font-weight: 400;
+}
+
+.workbench-system-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: rgb(137, 135, 129);
+  text-overflow: ellipsis;
+}
+
+.workbench-system-icons {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0;
+  margin-right: -8px;
+}
+
+.workbench-system-editor {
+  display: block;
+  width: 100%;
+  min-height: 20px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: var(--workbench-field-weight);
+  line-height: 20px;
+  outline: none;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: normal;
+  cursor: text;
+  field-sizing: content;
+}
+
+.workbench-tiptap-shell {
+  min-width: 0;
+}
+
+.workbench-system-editor p,
+.workbench-message-textarea p {
+  margin: 0;
+}
+
+.workbench-system-expanded-icons {
+  position: absolute;
+  top: 16px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: rgb(137, 135, 129);
+}
+
+.workbench-system-icon-button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.workbench-system-icon-button:hover,
+.workbench-system-icon-button:focus-visible {
+  color: rgb(195, 194, 183);
+}
+
+.workbench-message-header {
+  position: absolute;
+  top: 10px;
+  right: 4px;
+  left: 12px;
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+}
+
+.workbench-message-title {
+  color: var(--muted-foreground);
+  font-size: 14px;
+  font-weight: var(--workbench-field-weight);
+  line-height: 20px;
+}
+
+.workbench-attachment-control {
+  position: relative;
+  z-index: 20;
+}
+
+.workbench-attachment-trigger {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+
+.workbench-attachment-trigger:hover,
+.workbench-attachment-trigger:focus-visible,
+.workbench-attachment-trigger.is-open {
+  background: rgb(10, 10, 9);
+  color: rgb(244, 241, 234);
+  outline: none;
+}
+
+.workbench-attachment-trigger:disabled {
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+.workbench-message-input-wrap {
+  position: relative;
+  min-height: 20px;
+}
+
+.workbench-message-input-wrap.has-placeholder {
+  min-height: 40px;
+}
+
+.workbench-message-input-wrap.has-generator-placeholder {
+  --workbench-generate-prompt-prepend-width: 170px;
+}
+
+.workbench-message-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.workbench-message-placeholder.has-generator .workbench-message-placeholder-copy {
+  display: none;
+}
+
+.workbench-message-placeholder-copy {
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 36px;
+}
+
+.workbench-generate-prompt-tooltip {
+  display: inline-flex;
+  pointer-events: auto;
+}
+
+.workbench-generate-prompt-button {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0.5px solid rgba(244, 241, 234, 0.18);
+  border-radius: 8px;
+  background: transparent;
+  padding: 0 15px;
+  color: rgba(244, 241, 234, 0.92);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.workbench-generate-prompt-button:hover,
+.workbench-generate-prompt-button:focus-visible {
+  border-color: rgba(244, 241, 234, 0.34);
+  background: rgba(244, 241, 234, 0.04);
+  color: rgb(244, 241, 234);
+}
+
+.workbench-generate-prompt-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.workbench-message-textarea {
+  display: block;
+  width: 100%;
+  min-height: 20px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: var(--workbench-field-weight);
+  line-height: 20px;
+  outline: none;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: normal;
+  cursor: text;
+  field-sizing: content;
+}
+
+.workbench-message-input-wrap.has-generator-placeholder .workbench-message-textarea {
+  min-height: 34px;
+  padding-left: var(--workbench-generate-prompt-prepend-width);
+  padding-top: 7px;
+}
+
+.workbench-message-textarea.is-read-only,
+.workbench-system-editor.is-read-only {
+  cursor: default;
+}
+
+.workbench-message-textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+.workbench-message-input-wrap.has-variable-layer .workbench-message-textarea {
+  color: transparent;
+  caret-color: var(--foreground);
+}
+
+.workbench-message-input-wrap.has-variable-layer .workbench-message-textarea::selection {
+  background: rgba(237, 136, 129, 0.28);
+  color: transparent;
+}
+
+.workbench-message-variable-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: var(--workbench-field-weight);
+  line-height: 20px;
+}
+
+.workbench-message-variable-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #efa09a;
+  vertical-align: baseline;
+}
+
+.workbench-message-variable-name {
+  border-bottom: 1px dotted #f08c83;
+  line-height: 18px;
+}
+
+.workbench-message-variable-token button {
+  pointer-events: auto;
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  transform: translateY(3px);
+  border: 0.5px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted-foreground);
+}
+
+.workbench-message-variable-token button:hover,
+.workbench-message-variable-token button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--foreground);
+}
+
+.workbench-message-attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.workbench-message-attachment {
+  display: grid;
+  min-height: 36px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 0.5px solid var(--border);
+  border-radius: 5px;
+  background: rgba(25, 25, 23, 0.38);
+  padding: 4px 8px 4px 6px;
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workbench-message-attachment-thumb {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0.5px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  background: rgba(244, 241, 234, 0.1);
+  color: rgba(244, 241, 234, 0.72);
+}
+
+.workbench-message-attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgb(244, 241, 234);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.workbench-message-attachment-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.workbench-message-attachment-actions button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: rgba(244, 241, 234, 0.58);
+}
+
+.workbench-message-attachment-actions button:hover,
+.workbench-message-attachment-actions button:focus-visible {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--foreground);
+  outline: none;
+}
+
+.workbench-message-attachment-actions button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.workbench-message-upload-error {
+  margin-top: 8px;
+  color: var(--destructive);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workbench-message-card {
+  position: relative;
+  padding: 36px 12px 12px;
+}
+
+.workbench-message-card.is-drag-over {
+  border-color: rgba(244, 241, 234, 0.32);
+}
+
+.workbench-message-card:focus-within {
+  border-color: var(--border);
+}
+
+.workbench-message-drop-target {
+  position: absolute;
+  inset: 36px 12px 12px;
+  z-index: 4;
+  display: none;
+  min-height: 72px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed rgba(244, 241, 234, 0.36);
+  border-radius: 6px;
+  background: rgba(34, 34, 31, 0.92);
+  color: rgba(244, 241, 234, 0.92);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: center;
+}
+
+.workbench-message-drop-target small {
+  color: rgba(244, 241, 234, 0.58);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.workbench-message-card.is-drag-over .workbench-message-drop-target {
+  display: flex;
+}
+
+.workbench-message-textarea:focus,
+.workbench-message-textarea:focus-visible,
+.workbench-system-editor:focus,
+.workbench-system-editor:focus-visible {
+  box-shadow: none;
+}
+
+.workbench-bottom-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  padding: 8px 0 0;
+}

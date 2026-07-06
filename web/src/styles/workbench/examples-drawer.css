@@ -1,0 +1,177 @@
+.workbench-examples-panel {
+  display: flex;
+  height: 100%;
+  min-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--foreground);
+}
+
+.workbench-example-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-bottom: 14px;
+}
+
+.workbench-examples-empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.workbench-examples-empty h3 {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.workbench-examples-empty p {
+  margin-top: 12px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.workbench-examples-empty a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.workbench-example-form {
+  display: grid;
+  gap: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 14px 12px 12px;
+}
+
+.workbench-example-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workbench-example-form-header h3 {
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.workbench-example-field {
+  display: grid;
+  gap: 8px;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.workbench-example-field > span:first-child {
+  color: var(--foreground);
+}
+
+.workbench-example-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workbench-example-list {
+  display: grid;
+  gap: 12px;
+}
+
+.workbench-example-card {
+  display: grid;
+  gap: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #0e0e0c;
+  padding: 12px;
+  color: var(--foreground);
+}
+
+.workbench-example-card-head {
+  display: flex;
+  min-height: 28px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workbench-example-card-values {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workbench-example-value-pill {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: var(--background);
+  padding: 3px 7px;
+  color: rgb(214, 211, 201);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-example-card-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.workbench-example-output,
+.workbench-example-context-preview p {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workbench-example-output {
+  min-height: 78px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: #141411;
+  padding: 12px;
+  color: rgb(175, 171, 160);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.workbench-example-context-preview {
+  display: grid;
+  gap: 7px;
+  color: rgb(175, 171, 160);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.workbench-example-context-preview p {
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: #141411;
+  padding: 10px 12px;
+  color: rgb(175, 171, 160);
+  font-size: 14px;
+  font-style: italic;
+  line-height: 20px;
+}

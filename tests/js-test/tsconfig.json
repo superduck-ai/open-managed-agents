@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@anthropic-ai/sdk": ["../../../anthropic-sdk-all/anthropic-sdk-typescript/src/index.ts"],
+      "@anthropic-ai/sdk/*": ["../../../anthropic-sdk-all/anthropic-sdk-typescript/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

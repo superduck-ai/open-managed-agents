@@ -140,7 +140,7 @@ func (s *Server) v1EntrypointRouter() http.Handler {
 }
 
 func (r apiEntrypointRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if isPlatformHost(req.Host) && auth.ExtractAPIKey(req) == "" {
+	if isExternalPlatformHost(req.Host) || (isPlatformHost(req.Host) && auth.ExtractAPIKey(req) == "") {
 		r.platform.ServeHTTP(w, req)
 		return
 	}
@@ -651,15 +651,23 @@ func isPlatformAPIRequestPath(path string) bool {
 }
 
 func isPlatformHost(host string) bool {
+	if isExternalPlatformHost(host) {
+		return true
+	}
 	normalizedHost, port := normalizedRequestHostParts(host)
 	switch normalizedHost {
-	case "oma.duck.ai":
-		return true
 	case "localhost", "127.0.0.1", "::1":
 		return port == "5173"
 	default:
 		return false
 	}
+}
+
+func isExternalPlatformHost(host string) bool {
+	normalizedHost, _ := normalizedRequestHostParts(host)
+	return normalizedHost == "oma.duck.ai" ||
+		normalizedHost == "platform.claude.com" ||
+		strings.HasSuffix(normalizedHost, ".platform.claude.com")
 }
 
 func normalizedRequestHost(host string) string {

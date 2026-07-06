@@ -15,10 +15,12 @@ restart-server:
   PORT="${PORT:-38080}" ADDR="${ADDR:-127.0.0.1:${PORT:-38080}}" ./scripts/restart-server.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web
+# Only stops listeners from this checkout; uses the next port when another checkout/process owns the requested port.
 web:
   PORT="${PORT:-5173}" HOST="${HOST:-127.0.0.1}" API_PORT="${API_PORT:-38080}" VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET:-http://127.0.0.1:${API_PORT:-38080}}" ./scripts/restart-web.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just restart-web
+# Only stops listeners from this checkout; uses the next port when another checkout/process owns the requested port.
 restart-web:
   PORT="${PORT:-5173}" HOST="${HOST:-127.0.0.1}" API_PORT="${API_PORT:-38080}" VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET:-http://127.0.0.1:${API_PORT:-38080}}" ./scripts/restart-web.sh
 

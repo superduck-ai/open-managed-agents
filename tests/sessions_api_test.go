@@ -1650,6 +1650,14 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 	if len(eventIDs) != 1 || eventIDs[0] != toolEventID {
 		t.Fatalf("stop_reason.event_ids = %#v, want [%s]; status=%#v tool=%#v", eventIDs, toolEventID, statusEvent, toolEvent)
 	}
+	assertRequiresActionStopReasonSDKShape(t, stopReason)
+	requiresActionDetails, ok := statusEvent["requires_action_details"].(map[string]any)
+	if !ok {
+		t.Fatalf("session.status_idle requires_action_details = %#v, want object: %#v", statusEvent["requires_action_details"], statusEvent)
+	}
+	if requiresActionDetails["tool_use_id"] != toolUseID || requiresActionDetails["request_id"] != requestID || requiresActionDetails["tool_name"] != "mcp__weather_service__get_weather" {
+		t.Fatalf("requires_action_details = %#v, want compatibility tool_use_id/request_id/tool_name", requiresActionDetails)
+	}
 
 	resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{"type":"user.tool_confirmation","tool_use_id":`+quoteJSON(toolEventID)+`,"result":"allow"}]}`), defaultTestKey, true)
 	defer resp.Body.Close()
@@ -1783,6 +1791,14 @@ func TestCodeSessionMCPDefaultAskPreservesSubagentThreadForConfirmation(t *testi
 	primaryEventIDs := stringArrayField(primaryStopReason, "event_ids")
 	if len(primaryEventIDs) != 1 || primaryEventIDs[0] != primaryToolEventID {
 		t.Fatalf("primary stop_reason.event_ids = %#v, want [%s]; status=%#v tool=%#v", primaryEventIDs, primaryToolEventID, primaryStatusEvent, primaryToolEvent)
+	}
+	assertRequiresActionStopReasonSDKShape(t, primaryStopReason)
+	primaryRequiresActionDetails, ok := primaryStatusEvent["requires_action_details"].(map[string]any)
+	if !ok {
+		t.Fatalf("primary status requires_action_details = %#v, want object: %#v", primaryStatusEvent["requires_action_details"], primaryStatusEvent)
+	}
+	if primaryRequiresActionDetails["tool_use_id"] != toolUseID || primaryRequiresActionDetails["request_id"] != requestID || primaryRequiresActionDetails["session_thread_id"] != childThreadID {
+		t.Fatalf("primary requires_action_details = %#v, want compatibility tool_use_id/request_id/session_thread_id", primaryRequiresActionDetails)
 	}
 
 	childEvents := listThreadEvents(t, app, session.ID, childThreadID, defaultTestKey)
@@ -3309,6 +3325,18 @@ func stringArrayField(object map[string]any, field string) []string {
 		}
 	}
 	return values
+}
+
+func assertRequiresActionStopReasonSDKShape(t *testing.T, stopReason map[string]any) {
+	t.Helper()
+	if stopReason["type"] != "requires_action" {
+		t.Fatalf("stop_reason.type = %v, want requires_action: %#v", stopReason["type"], stopReason)
+	}
+	for _, field := range []string{"tool_name", "tool_use_id", "request_id", "session_thread_id"} {
+		if _, ok := stopReason[field]; ok {
+			t.Fatalf("stop_reason contains compatibility field %q, want SDK shape only: %#v", field, stopReason)
+		}
+	}
 }
 
 func eventPageContainsCount(events sessionEventPageAPIResponse, needle string) int {

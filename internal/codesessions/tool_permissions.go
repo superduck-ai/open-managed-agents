@@ -382,27 +382,31 @@ func (s *Service) publishToolPermissionRequiresAction(ctx context.Context, codeS
 	if sessionThreadID != "" {
 		blockingEventID = derivedPrimarySessionEventID(codeSessionID, toolEventID, toolEventType)
 	}
-	requiresAction := map[string]any{
+	stopReason := map[string]any{
+		"event_ids": []string{blockingEventID},
+		"type":      "requires_action",
+	}
+	requiresActionDetails := map[string]any{
 		"event_ids": []string{blockingEventID},
 		"type":      "requires_action",
 		"tool_name": toolName,
 	}
 	if toolUseID != "" {
-		requiresAction["tool_use_id"] = toolUseID
+		requiresActionDetails["tool_use_id"] = toolUseID
 	}
 	if sessionThreadID != "" {
-		requiresAction["session_thread_id"] = sessionThreadID
+		requiresActionDetails["session_thread_id"] = sessionThreadID
 	}
 	if requestID != "" {
-		requiresAction["request_id"] = requestID
+		requiresActionDetails["request_id"] = requestID
 	}
 	statusTime := now.Add(time.Millisecond)
 	statusPayload := map[string]any{
 		"id":                      stablePublicEventID(codeSessionID, seed+"\x00tool_permission_requires_action"),
 		"uuid":                    stablePublicEventID(codeSessionID, seed+"\x00tool_permission_requires_action_uuid"),
 		"type":                    "session.status_idle",
-		"stop_reason":             requiresAction,
-		"requires_action_details": requiresAction,
+		"stop_reason":             stopReason,
+		"requires_action_details": requiresActionDetails,
 		"created_at":              formatTime(statusTime),
 		"processed_at":            formatTime(statusTime),
 	}

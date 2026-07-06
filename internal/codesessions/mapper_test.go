@@ -328,6 +328,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *tes
 		"type":            "result",
 		"uuid":            "result-uuid",
 		"created_at":      "2026-06-16T01:11:00Z",
+		"stop_reason":     "end_turn",
 		"duration_ms":     float64(9000),
 		"duration_api_ms": float64(12000),
 		"result":          "Done.",
@@ -380,6 +381,10 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *tes
 	}
 	if objects[2]["result"] != "Done." {
 		t.Fatalf("status idle should preserve result payload: %#v", objects[2])
+	}
+	stopReason, ok := objects[2]["stop_reason"].(map[string]any)
+	if !ok || stopReason["type"] != "end_turn" {
+		t.Fatalf("status idle stop_reason = %#v, want {type:end_turn}", objects[2]["stop_reason"])
 	}
 }
 

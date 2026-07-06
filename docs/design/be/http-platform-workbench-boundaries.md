@@ -20,6 +20,7 @@
 `internal/api/server.go` 仍负责顶层 chi router、全局 middleware、鉴权入口选择和资源挂载：
 
 - `/v1` platform privacy consent 路由从 `platformapi` 注册。
+- `/v1` 入口先按 `Host` 分流到 platform 或 service 路由：`platform.claude.com`、`*.platform.claude.com` 和 `oma.duck.ai` 始终走 platform session 鉴权，即使请求携带 service API key 也不能落到 service API；本地 Vite 前端 host（`localhost`、`127.0.0.1`、`::1` 的 `5173` 端口）在没有 service API key 时走 platform，有 service API key 时仍允许进入 service API，便于本地 SDK/API 调试。
 - `/api`、`/auth`、`/oauth`、`/web-api` 的平台 console 路由从 `platformapi` 注册。
 - `/api/organizations/{orgUuid}` 下的 Workbench 子路由从 `workbench` 注册。
 

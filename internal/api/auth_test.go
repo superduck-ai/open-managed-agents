@@ -25,6 +25,8 @@ func TestAPIEntrypointRouterDispatchesByHost(t *testing.T) {
 	}{
 		{name: "platform host", host: "platform.claude.com", want: "platform"},
 		{name: "platform host with port", host: "platform.claude.com:443", want: "platform"},
+		{name: "platform host with api key", host: "platform.claude.com", apiKey: "sk-ant-local-test", want: "platform"},
+		{name: "platform subdomain host", host: "staging.platform.claude.com", want: "platform"},
 		{name: "oma platform host", host: "oma.duck.ai", want: "platform"},
 		{name: "oma platform host with port", host: "oma.duck.ai:443", want: "platform"},
 		{name: "localhost frontend host", host: "localhost:5173", want: "platform"},

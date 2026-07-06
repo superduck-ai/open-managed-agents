@@ -296,7 +296,28 @@ func normalizePublicWorkerPayload(codeSessionID string, event db.CodeSessionEven
 			}
 		}
 	}
+	normalizePublicIdleStopReason(payload)
 	return marshalRaw(payload)
+}
+
+func normalizePublicIdleStopReason(payload map[string]any) {
+	switch stringField(payload, "type") {
+	case "session.status_idle", "session.thread_status_idle":
+	default:
+		return
+	}
+	raw, ok := payload["stop_reason"]
+	if !ok || raw == nil {
+		payload["stop_reason"] = map[string]any{"type": "end_turn"}
+		return
+	}
+	if reason, ok := raw.(string); ok {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			reason = "end_turn"
+		}
+		payload["stop_reason"] = map[string]any{"type": reason}
+	}
 }
 
 func publicPayloadWithType(object map[string]any, eventType string) map[string]any {

@@ -76,12 +76,70 @@ func TestLoadDatabaseAutoMigrateOverride(t *testing.T) {
 	})
 }
 
+func TestLoadCodeSessionOTLPFileLogDefaults(t *testing.T) {
+	t.Run("development enabled", func(t *testing.T) {
+		prepareLoadTest(t)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		if !cfg.CodeSessionOTLPFileLogEnabled {
+			t.Fatal("CodeSessionOTLPFileLogEnabled = false, want true")
+		}
+		if cfg.CodeSessionOTLPLogRoot != "logs" {
+			t.Fatalf("CodeSessionOTLPLogRoot = %q, want logs", cfg.CodeSessionOTLPLogRoot)
+		}
+		if cfg.CodeSessionOTLPLogBodyPreviewBytes != 256*1024 {
+			t.Fatalf("CodeSessionOTLPLogBodyPreviewBytes = %d, want %d", cfg.CodeSessionOTLPLogBodyPreviewBytes, 256*1024)
+		}
+	})
+
+	t.Run("production disabled", func(t *testing.T) {
+		prepareLoadTest(t)
+		t.Setenv("APP_ENV", "production")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		if cfg.CodeSessionOTLPFileLogEnabled {
+			t.Fatal("CodeSessionOTLPFileLogEnabled = true, want false")
+		}
+	})
+}
+
+func TestLoadCodeSessionOTLPFileLogOverrides(t *testing.T) {
+	prepareLoadTest(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("CODE_SESSION_OTLP_FILE_LOG_ENABLED", "true")
+	t.Setenv("CODE_SESSION_OTLP_LOG_ROOT", "/tmp/custom-otlp")
+	t.Setenv("CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES", "1024")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.CodeSessionOTLPFileLogEnabled {
+		t.Fatal("CodeSessionOTLPFileLogEnabled = false, want true")
+	}
+	if cfg.CodeSessionOTLPLogRoot != "/tmp/custom-otlp" {
+		t.Fatalf("CodeSessionOTLPLogRoot = %q, want /tmp/custom-otlp", cfg.CodeSessionOTLPLogRoot)
+	}
+	if cfg.CodeSessionOTLPLogBodyPreviewBytes != 1024 {
+		t.Fatalf("CodeSessionOTLPLogBodyPreviewBytes = %d, want 1024", cfg.CodeSessionOTLPLogBodyPreviewBytes)
+	}
+}
+
 func prepareLoadTest(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())
 	for _, key := range []string{
 		"APP_ENV",
 		"DB_AUTO_MIGRATE",
+		"CODE_SESSION_OTLP_FILE_LOG_ENABLED",
+		"CODE_SESSION_OTLP_LOG_ROOT",
+		"CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES",
 		"DATABASE_URL",
 		"S3_ENDPOINT",
 		"S3_BUCKET",

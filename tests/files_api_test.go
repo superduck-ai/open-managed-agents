@@ -904,6 +904,7 @@ func newMinIOStore(t *testing.T, override *config.Config) (storage.ObjectStore, 
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	cfg.CodeSessionOTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
@@ -921,6 +922,7 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	cfg.CodeSessionOTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}

@@ -60,6 +60,9 @@ type Config struct {
 	EnvironmentManagerPath              string
 	ClaudeAgentVersion                  string
 	ClaudePath                          string
+	CodeSessionOTLPFileLogEnabled       bool
+	CodeSessionOTLPLogRoot              string
+	CodeSessionOTLPLogBodyPreviewBytes  int
 	WebhookEndpointURL                  string
 	WebhookSigningKey                   string
 	WebhookEventTypes                   []string
@@ -146,6 +149,9 @@ func Load() (Config, error) {
 		EnvironmentManagerPath:              env("ENVIRONMENT_MANAGER_PATH", "/usr/local/bin/environment-manager"),
 		ClaudeAgentVersion:                  env("CLAUDE_AGENT_VERSION", "2.1.120"),
 		ClaudePath:                          env("CLAUDE_PATH", "/opt/claude-code/bin/claude"),
+		CodeSessionOTLPFileLogEnabled:       envBool("CODE_SESSION_OTLP_FILE_LOG_ENABLED", defaultCodeSessionOTLPFileLogEnabled(appEnv)),
+		CodeSessionOTLPLogRoot:              env("CODE_SESSION_OTLP_LOG_ROOT", "logs"),
+		CodeSessionOTLPLogBodyPreviewBytes:  envInt("CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES", 256*1024),
 		WebhookEndpointURL:                  env("WEBHOOK_ENDPOINT_URL", ""),
 		WebhookSigningKey:                   env("ANTHROPIC_WEBHOOK_SIGNING_KEY", ""),
 		WebhookEventTypes:                   envCSV("WEBHOOK_EVENT_TYPES", defaultWebhookEventTypes()),
@@ -257,6 +263,15 @@ func envBool(key string, fallback bool) bool {
 }
 
 func defaultDatabaseAutoMigrate(appEnv string) bool {
+	switch strings.ToLower(strings.TrimSpace(appEnv)) {
+	case "production", "prod":
+		return false
+	default:
+		return true
+	}
+}
+
+func defaultCodeSessionOTLPFileLogEnabled(appEnv string) bool {
 	switch strings.ToLower(strings.TrimSpace(appEnv)) {
 	case "production", "prod":
 		return false

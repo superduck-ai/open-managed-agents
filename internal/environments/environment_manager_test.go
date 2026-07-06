@@ -44,6 +44,9 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
 		startupEnv["OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"] != "http/protobuf" ||
 		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/metrics" ||
+		startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
+		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
+		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/logs" ||
 		startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "Authorization=Bearer cse_test,x-worker-epoch=1" {
 		t.Fatalf("unexpected otlp environment variables: %#v", startupEnv)
 	}
@@ -106,11 +109,47 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *
 	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"]; ok {
 		t.Fatalf("unexpected default otlp metrics endpoint for custom exporter: %#v", startupEnv)
 	}
-	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value" {
-		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want x-custom=value", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
+	if startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
+		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
+		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/logs" {
+		t.Fatalf("unexpected default otlp logs environment variables: %#v", startupEnv)
+	}
+	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value,Authorization=Bearer cse_test,x-worker-epoch=1" {
+		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want custom plus auth", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
 	}
 	if startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" {
 		t.Fatalf("CLAUDE_CODE_WORKER_EPOCH = %q, want 1", startupEnv["CLAUDE_CODE_WORKER_EPOCH"])
+	}
+}
+
+func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *testing.T) {
+	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	sessionConfig := json.RawMessage(`{"environment_variables":{
+		"OTEL_LOGS_EXPORTER":"console",
+		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
+	}}`)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "", sessionConfig, cfg)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	startup := body["startup_context"].(map[string]any)
+	startupEnv := startup["environment_variables"].(map[string]any)
+	if startupEnv["OTEL_LOGS_EXPORTER"] != "console" {
+		t.Fatalf("OTEL_LOGS_EXPORTER = %q, want console", startupEnv["OTEL_LOGS_EXPORTER"])
+	}
+	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"]; ok {
+		t.Fatalf("unexpected default otlp logs endpoint for custom exporter: %#v", startupEnv)
+	}
+	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
+		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/metrics" {
+		t.Fatalf("unexpected default otlp metrics environment variables: %#v", startupEnv)
+	}
+	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value,Authorization=Bearer cse_test,x-worker-epoch=1" {
+		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want custom plus auth", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
 	}
 }
 

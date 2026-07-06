@@ -314,7 +314,7 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, workDir string, sess
 	environmentVariables["CLAUDE_CODE_SESSION_ACCESS_TOKEN"] = codeSessionID
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
 	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
-	applyCodeSessionOTLPMetricsEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, "1")
+	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, "1")
 	startupContext["environment_variables"] = environmentVariables
 	if _, ok := startupContext["sources"]; !ok {
 		startupContext["sources"] = []any{}
@@ -362,31 +362,46 @@ func claudeRuntimeEnvironment(cfg config.Config) map[string]string {
 	return env
 }
 
-func applyCodeSessionOTLPMetricsEnvironment(environmentVariables map[string]any, apiBaseURL string, codeSessionID string, workerEpoch string) {
+func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBaseURL string, codeSessionID string, workerEpoch string) {
 	if environmentVariables == nil {
 		return
 	}
-	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") != "" || stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
-		return
+	injected := false
+	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+		exporters := stringFromMap(environmentVariables, "OTEL_METRICS_EXPORTER")
+		if exporters == "" || commaListContains(exporters, "otlp") {
+			setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
+			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
+			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL, codeSessionID))
+			injected = true
+		}
 	}
-	exporters := stringFromMap(environmentVariables, "OTEL_METRICS_EXPORTER")
-	if exporters != "" && !commaListContains(exporters, "otlp") {
-		return
+	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+		exporters := stringFromMap(environmentVariables, "OTEL_LOGS_EXPORTER")
+		if exporters == "" || commaListContains(exporters, "otlp") {
+			setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
+			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
+			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", codeSessionWorkerOTLPLogsEndpoint(apiBaseURL, codeSessionID))
+			injected = true
+		}
 	}
-	setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
-	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
-	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL, codeSessionID))
-	environmentVariables["OTEL_EXPORTER_OTLP_HEADERS"] = ensureOTLPHeaders(
-		stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_HEADERS"),
-		[]string{
-			"Authorization=Bearer " + codeSessionID,
-			"x-worker-epoch=" + workerEpoch,
-		},
-	)
+	if injected {
+		environmentVariables["OTEL_EXPORTER_OTLP_HEADERS"] = ensureOTLPHeaders(
+			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_HEADERS"),
+			[]string{
+				"Authorization=Bearer " + codeSessionID,
+				"x-worker-epoch=" + workerEpoch,
+			},
+		)
+	}
 }
 
 func codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL string, codeSessionID string) string {
 	return strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp/metrics"
+}
+
+func codeSessionWorkerOTLPLogsEndpoint(apiBaseURL string, codeSessionID string) string {
+	return strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp/logs"
 }
 
 func setDefaultEnvironmentVariable(environmentVariables map[string]any, key string, value string) {

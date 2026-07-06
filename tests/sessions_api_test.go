@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -2272,8 +2274,93 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	}
 
-	resp = doCodeSessionWorkerRequest(t, app, codeSessionID, "otlp/metrics", `test`)
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics", "")
+	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "metrics", "")
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs", "")
+
+	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "abc", "application/x-protobuf", nil)
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+}
+
+func TestCodeSessionWorkerOTLPFileLogWritesAcceptedTelemetry(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.CodeSessionOTLPFileLogEnabled = true
+	cfg.CodeSessionOTLPLogRoot = t.TempDir()
+	cfg.CodeSessionOTLPLogBodyPreviewBytes = 128
+	app := newTestAppWithStore(t, &cfg, newFakeStore("sessions-code-worker-otlp-file-log-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-otlp-file-log-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-worker-otlp-file-log-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	epoch1 := registerCodeSessionWorker(t, app, codeSessionID)
+
+	metricsBody := []byte(`{"resourceMetrics":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}}]},"scopeMetrics":[{"scope":{"name":"com.anthropic.claude_code"},"metrics":[{"name":"claude_code.integration.counter","sum":{"aggregationTemporality":"AGGREGATION_TEMPORALITY_CUMULATIVE","isMonotonic":true,"dataPoints":[{"timeUnixNano":"1783348800000000000","asInt":"3","attributes":[{"key":"phase","value":{"stringValue":"handler-test"}}]}]}}]}]}]}`)
+	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "", "application/json", metricsBody)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("post missing-epoch metrics status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+
+	logsBody := []byte(`{"resourceLogs":[{"scopeLogs":[{"scope":{"name":"com.anthropic.claude_code.events"},"logRecords":[{"timeUnixNano":"1783348860000000000","severityNumber":"SEVERITY_NUMBER_INFO","severityText":"INFO","body":{"stringValue":"claude_code.integration_event"},"attributes":[{"key":"event.name","value":{"stringValue":"integration_event"}}]}]}]}]}`)
+	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "logs", epoch1, "application/json", logsBody)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("post current-epoch logs status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+
+	otlpDir := filepath.Join(cfg.CodeSessionOTLPLogRoot, codeSessionID, "otlp")
+	requestLines := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "requests.jsonl"))
+	if len(requestLines) != 2 {
+		t.Fatalf("request jsonl lines = %d, want 2: %#v", len(requestLines), requestLines)
+	}
+	firstEpoch := requestLines[0]["worker_epoch"].(map[string]any)
+	if firstEpoch["present"] != false {
+		t.Fatalf("missing epoch request worker_epoch = %#v, want present=false", firstEpoch)
+	}
+	secondEpoch := requestLines[1]["worker_epoch"].(map[string]any)
+	if secondEpoch["present"] != true || secondEpoch["value"] != epoch1 {
+		t.Fatalf("current epoch request worker_epoch = %#v, want epoch %s", secondEpoch, epoch1)
+	}
+
+	metricLines := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "metrics.jsonl"))
+	if len(metricLines) != 1 {
+		t.Fatalf("metrics jsonl lines = %d, want 1: %#v", len(metricLines), metricLines)
+	}
+	metric := metricLines[0]["metric"].(map[string]any)
+	if metric["name"] != "claude_code.integration.counter" {
+		t.Fatalf("metric name = %#v, want claude_code.integration.counter", metric)
+	}
+	point := metricLines[0]["point"].(map[string]any)
+	if point["value"].(float64) != 3 {
+		t.Fatalf("metric point = %#v, want value=3", point)
+	}
+
+	logLines := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "logs.jsonl"))
+	if len(logLines) != 1 {
+		t.Fatalf("logs jsonl lines = %d, want 1: %#v", len(logLines), logLines)
+	}
+	record := logLines[0]["log"].(map[string]any)
+	if record["body"] != "claude_code.integration_event" {
+		t.Fatalf("log record = %#v, want integration event body", record)
+	}
+
+	epoch2 := registerCodeSessionWorker(t, app, codeSessionID)
+	if epoch2 == epoch1 {
+		t.Fatalf("epoch2 = %q, want new epoch", epoch2)
+	}
+	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "logs", epoch1, "application/json", logsBody)
+	assertError(t, resp, http.StatusConflict, "conflict_error")
+	afterConflictRequests := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "requests.jsonl"))
+	if len(afterConflictRequests) != len(requestLines) {
+		t.Fatalf("request jsonl lines after stale epoch = %d, want %d", len(afterConflictRequests), len(requestLines))
+	}
 }
 
 func TestCodeSessionWorkerHeartbeatRejectsInvalidRequests(t *testing.T) {
@@ -3888,6 +3975,24 @@ func doCodeSessionWorkerOTLPRequest(t *testing.T, app *testApp, codeSessionID st
 		t.Fatalf("do code session worker otlp request: %v", err)
 	}
 	return resp
+}
+
+func readJSONLObjectsForTest(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read jsonl %s: %v", path, err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	result := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		var object map[string]any
+		if err := json.Unmarshal(line, &object); err != nil {
+			t.Fatalf("decode jsonl line %q: %v", string(line), err)
+		}
+		result = append(result, object)
+	}
+	return result
 }
 
 func readCodeSessionWorkerSSEFrames(t *testing.T, app *testApp, codeSessionID string, waitFor string) []string {

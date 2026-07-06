@@ -33,6 +33,8 @@ type Service struct {
 	mu      sync.Mutex
 	sink    PublicEventSink
 	workers map[string]*workerClient
+
+	otlpLogMu sync.Mutex
 }
 
 type ManagedAgentCreateInput struct {

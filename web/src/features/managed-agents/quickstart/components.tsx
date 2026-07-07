@@ -2116,16 +2116,18 @@ export function BrowseTemplatesPanel({
           />
         </label>
 
-        <div
-          ref={listRef}
-          className="subtle-scrollbar mt-4 grid min-h-0 flex-1 auto-rows-[136px] content-start items-stretch grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 overflow-y-auto pr-1"
-        >
-          {visibleTemplates.map((template) => (
-            <TemplateCard key={template.id} template={template} onClick={() => onTemplateClick(template)} />
-          ))}
-
-          {visibleTemplates.length === 0 ? (
-            <Card size="sm" className="col-span-full row-span-2 py-0">
+        {visibleTemplates.length > 0 ? (
+          <div
+            ref={listRef}
+            className="subtle-scrollbar mt-4 grid min-h-0 flex-1 auto-rows-[136px] content-start items-stretch grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 overflow-y-auto pr-1"
+          >
+            {visibleTemplates.map((template) => (
+              <TemplateCard key={template.id} template={template} onClick={() => onTemplateClick(template)} />
+            ))}
+          </div>
+        ) : (
+          <div ref={listRef} className="subtle-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+            <Card size="sm" className="py-0">
               <CardContent className="grid min-h-[240px] place-items-center px-4 py-12 text-center">
                 <div>
                   <Search className="mx-auto mb-3 size-6 text-muted-foreground/70" aria-hidden />
@@ -2138,8 +2140,8 @@ export function BrowseTemplatesPanel({
                 </div>
               </CardContent>
             </Card>
-          ) : null}
-        </div>
+          </div>
+        )}
 
         {showScrollCue ? (
           <Button

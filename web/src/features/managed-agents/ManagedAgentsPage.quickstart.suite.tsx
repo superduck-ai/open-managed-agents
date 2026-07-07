@@ -1526,10 +1526,12 @@ export function registerManagedAgentsQuickstartTests() {
 
     const emptyState = screen.getByText('No templates found');
     const emptyStateCard = emptyState.closest('[data-slot="card"]') as HTMLElement | null;
+    const emptyStateContainer = emptyStateCard?.parentElement as HTMLElement | null;
     expect(emptyState).toBeTruthy();
     expect(screen.getByText('Try a different search.')).toBeTruthy();
-    expect(emptyStateCard?.className).toContain('col-span-full');
-    expect(emptyStateCard?.className).toContain('row-span-2');
+    expect(emptyStateCard?.className).not.toContain('row-span-2');
+    expect(emptyStateContainer?.className).not.toContain('auto-rows-[136px]');
+    expect(emptyStateContainer?.className).toContain('overflow-y-auto');
   });
 
   test('renders overflow template tags as a visible count badge', () => {
@@ -1556,7 +1558,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect(within(templateCard).getByTitle('sentry')).toBeTruthy();
     expect(within(templateCard).getByTitle('linear')).toBeTruthy();
     expect(within(templateCard).queryByTitle('github')).toBeNull();
-    expect(within(templateCard).getByTitle('1 more tags')).toBeTruthy();
+    expect(within(templateCard).getByTitle('1 more tag')).toBeTruthy();
     expect(within(templateCard).getByText('+1')).toBeTruthy();
     expect(templateCard.getAttribute('aria-label')).toContain('github');
   });

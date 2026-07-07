@@ -268,6 +268,7 @@ export function TemplateCard({
   const tags = template.tags ?? [];
   const visibleTags = tags.slice(0, maxVisibleTemplateTags);
   const hiddenTagCount = tags.length - visibleTags.length;
+  const hiddenTagTitle = `${hiddenTagCount} more ${hiddenTagCount === 1 ? 'tag' : 'tags'}`;
   return (
     <Button
       type="button"
@@ -295,7 +296,7 @@ export function TemplateCard({
           {hiddenTagCount > 0 ? (
             <span
               className="grid h-5 min-w-5 place-items-center rounded-full border border-border bg-secondary px-1.5 text-[10px] font-medium leading-none text-secondary-foreground"
-              title={`${hiddenTagCount} more tags`}
+              title={hiddenTagTitle}
             >
               +{hiddenTagCount}
             </span>

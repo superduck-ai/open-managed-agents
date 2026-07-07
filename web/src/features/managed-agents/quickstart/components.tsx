@@ -2125,7 +2125,7 @@ export function BrowseTemplatesPanel({
           ))}
 
           {visibleTemplates.length === 0 ? (
-            <Card size="sm" className="col-span-2 py-0">
+            <Card size="sm" className="col-span-full row-span-2 py-0">
               <CardContent className="grid min-h-[240px] place-items-center px-4 py-12 text-center">
                 <div>
                   <Search className="mx-auto mb-3 size-6 text-muted-foreground/70" aria-hidden />

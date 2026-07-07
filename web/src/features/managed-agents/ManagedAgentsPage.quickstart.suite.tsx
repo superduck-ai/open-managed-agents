@@ -1,4 +1,7 @@
 import { expect, test } from 'bun:test';
+import { I18nProvider } from '../../shared/i18n';
+import { templateTags } from './agentConfig';
+import { TemplateCard } from './components/CodeBlocks';
 import { clampQuickstartInspectorPaneWidth } from './quickstart/AgentQuickstartPage';
 import {
   ManagedAgentsPage,
@@ -1518,6 +1521,44 @@ export function registerManagedAgentsQuickstartTests() {
 
     expect(screen.getByRole('button', { name: /Incident commander/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Data analyst/i })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText('Search templates'), { target: { value: 'no-match-template' } });
+
+    const emptyState = screen.getByText('No templates found');
+    const emptyStateCard = emptyState.closest('[data-slot="card"]') as HTMLElement | null;
+    expect(emptyState).toBeTruthy();
+    expect(screen.getByText('Try a different search.')).toBeTruthy();
+    expect(emptyStateCard?.className).toContain('col-span-full');
+    expect(emptyStateCard?.className).toContain('row-span-2');
+  });
+
+  test('renders overflow template tags as a visible count badge', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    render(
+      <I18nProvider initialLocale="en">
+        <TemplateCard
+          template={{
+            id: 'tag-overflow',
+            slug: 'tag-overflow',
+            title: 'Tag overflow',
+            body: 'Template body.',
+            prompt: 'Create an agent.',
+            tags: [templateTags.notion, templateTags.slack, templateTags.sentry, templateTags.linear, templateTags.github]
+          }}
+          onClick={() => {}}
+        />
+      </I18nProvider>
+    );
+
+    const templateCard = screen.getByRole('button', { name: /Tag overflow/i });
+    expect(within(templateCard).getByTitle('notion')).toBeTruthy();
+    expect(within(templateCard).getByTitle('slack')).toBeTruthy();
+    expect(within(templateCard).getByTitle('sentry')).toBeTruthy();
+    expect(within(templateCard).getByTitle('linear')).toBeTruthy();
+    expect(within(templateCard).queryByTitle('github')).toBeNull();
+    expect(within(templateCard).getByTitle('1 more tags')).toBeTruthy();
+    expect(within(templateCard).getByText('+1')).toBeTruthy();
+    expect(templateCard.getAttribute('aria-label')).toContain('github');
   });
 
 }

@@ -252,6 +252,8 @@ export function ScrollableCodeBlock({ code, language }: { code: string; language
   );
 }
 
+const maxVisibleTemplateTags = 4;
+
 export function TemplateCard({
   template,
   onClick
@@ -263,6 +265,9 @@ export function TemplateCard({
   const title = templateTitle(template, msg);
   const body = templateBody(template, msg);
   const label = [title, body, ...(template.tags?.map((tag) => tag.label) ?? [])].join(' ');
+  const tags = template.tags ?? [];
+  const visibleTags = tags.slice(0, maxVisibleTemplateTags);
+  const hiddenTagCount = tags.length - visibleTags.length;
   return (
     <Button
       type="button"
@@ -273,9 +278,9 @@ export function TemplateCard({
     >
       <div className="line-clamp-2 w-full min-w-0 text-[15px] font-medium leading-5 text-foreground">{title}</div>
       <p className="mt-1 w-full min-w-0 line-clamp-2 text-[13px] leading-[18px] text-muted-foreground">{body}</p>
-      {template.tags?.length ? (
+      {tags.length ? (
         <div className="mt-auto flex max-w-full flex-nowrap gap-1.5 overflow-hidden pt-3">
-          {template.tags.map((tag) => {
+          {visibleTags.map((tag) => {
             const Icon = tag.icon;
             return (
               <span
@@ -287,6 +292,14 @@ export function TemplateCard({
               </span>
             );
           })}
+          {hiddenTagCount > 0 ? (
+            <span
+              className="grid h-5 min-w-5 place-items-center rounded-full border border-border bg-secondary px-1.5 text-[10px] font-medium leading-none text-secondary-foreground"
+              title={`${hiddenTagCount} more tags`}
+            >
+              +{hiddenTagCount}
+            </span>
+          ) : null}
         </div>
       ) : null}
     </Button>

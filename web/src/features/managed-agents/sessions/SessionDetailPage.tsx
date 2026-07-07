@@ -580,7 +580,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             timelineVisibleIds={timelineVisibleIds}
             threadNameById={threadNameById}
             onDetailTabChange={setSelectedDetailTab}
-            onToggleArchivedLanes={setShowArchivedLanes}
+            onToggleArchivedLanes={(nextPressed) => setShowArchivedLanes(nextPressed)}
             view={view}
           />
         </SessionDetailDeltaFramesContext.Provider>

@@ -599,6 +599,7 @@
   "managedAgents.quickstart.scrollMoreTemplates": "Scroll to see more templates",
   "managedAgents.quickstart.searchTemplates": "Search templates",
   "managedAgents.quickstart.selectEnvironment": "Select an environment",
+  "managedAgents.quickstart.selectLanguage": "Select language",
   "managedAgents.quickstart.selected": "Selected",
   "managedAgents.quickstart.selectingEnvironment": "Selecting environment",
   "managedAgents.quickstart.sendMessage": "Send message",

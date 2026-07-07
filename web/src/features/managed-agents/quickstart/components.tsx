@@ -1661,7 +1661,7 @@ export function IntegrationExitsCard({
               </div>
               <div className="flex min-w-0 items-center gap-1">
                 <TabsList
-                  aria-label={msg('managedAgents.quickstart.sampleCode', 'Sample code')}
+                  aria-label={msg('managedAgents.quickstart.selectLanguage', 'Select language')}
                   className="subtle-scrollbar h-7 max-w-[238px] gap-0.5 overflow-x-auto bg-secondary p-0.5"
                 >
                   {integrationSnippetLanguages.map((item) => (

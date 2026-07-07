@@ -1093,7 +1093,6 @@ export function AgentQuickstartPage() {
           </ResizablePanel>
 
           <ResizableHandle
-            withHandle
             aria-label={msg('managedAgents.quickstart.resizePanels', 'Resize quickstart panels')}
           />
 

@@ -201,9 +201,9 @@ function getOTLPExporterConfig() {
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | - | 通用 OTLP 端点 |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | 当前后端默认注入 session metrics endpoint | Metrics 专用端点 |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | 当前后端默认注入 session logs endpoint | Logs 专用端点 |
-| `OTEL_EXPORTER_OTLP_HEADERS` | 当前后端默认注入 auth 和 epoch | 通用 OTLP 请求头；Claude Code 当前静态解析使用这个变量 |
-| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | - | Metrics 专用请求头；当前 Claude Code 的 `getOTLPExporterConfig()` 不读取这个变量 |
-| `OTEL_EXPORTER_OTLP_LOGS_HEADERS` | - | Logs 专用请求头；当前 Claude Code 的 `getOTLPExporterConfig()` 不读取这个变量 |
+| `OTEL_EXPORTER_OTLP_HEADERS` | 当前后端默认兼容注入 auth 和 epoch；如果用户显式启用 OTLP traces 则不注入 | 通用 OTLP 请求头；Claude Code 当前静态解析使用这个变量 |
+| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | 当前后端默认注入 auth 和 epoch | Metrics 专用请求头；供标准 OpenTelemetry signal-scoped 配置使用 |
+| `OTEL_EXPORTER_OTLP_LOGS_HEADERS` | 当前后端默认注入 auth 和 epoch | Logs 专用请求头；供标准 OpenTelemetry signal-scoped 配置使用 |
 
 ### 协议配置
 
@@ -248,6 +248,7 @@ CLAUDE_CODE_WORKER_EPOCH=1
 OTEL_METRICS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT={api_base_url}/v1/code/sessions/{code_session_id}/worker/otlp/metrics
+OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
 ```
 
@@ -257,6 +258,7 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch
 OTEL_LOGS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT={api_base_url}/v1/code/sessions/{code_session_id}/worker/otlp/logs
+OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
 ```
 
@@ -266,7 +268,8 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch
 2. 如果用户已设置 `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_ENDPOINT`，不注入默认 logs endpoint。
 3. 如果用户将 `OTEL_METRICS_EXPORTER` 设置为不包含 `otlp` 的值，如 `console`、`prometheus` 或 `none`，不注入默认 OTLP metrics 配置。
 4. 如果用户将 `OTEL_LOGS_EXPORTER` 设置为不包含 `otlp` 的值，如 `console` 或 `none`，不注入默认 OTLP logs 配置。
-5. 如果任一默认 OTLP endpoint 被注入，且用户已有 `OTEL_EXPORTER_OTLP_HEADERS`，会保留已有 header，并只补缺 `Authorization` 与 `x-worker-epoch`。
+5. 如果默认 metrics/logs OTLP endpoint 被注入，会分别向 `OTEL_EXPORTER_OTLP_METRICS_HEADERS` / `OTEL_EXPORTER_OTLP_LOGS_HEADERS` 补缺 `Authorization` 与 `x-worker-epoch`。
+6. 为兼容当前 Claude Code 静态 OTLP 配置，如果任一默认 OTLP endpoint 被注入，且用户没有显式配置 OTLP traces（`OTEL_TRACES_EXPORTER` 包含 `otlp` 或 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`），后端也会向通用 `OTEL_EXPORTER_OTLP_HEADERS` 补缺 `Authorization` 与 `x-worker-epoch`；若用户已有通用 header，会保留已有 header 并只补缺这两个字段。
 
 ### 服务端本地 JSONL 日志配置
 
@@ -286,7 +289,9 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch
 {CODE_SESSION_OTLP_LOG_ROOT}/{safe_code_session_id}/otlp/logs.jsonl
 ```
 
-`requests.jsonl` 每个已接受 OTLP export request 一行，包含 request metadata、worker epoch metadata、decode summary 和有界 body preview。`metrics.jsonl` 每个 metric datapoint 一行，`logs.jsonl` 每个 log record 一行。JSON/text-like body preview 以 UTF-8 保存；protobuf/binary preview 以 base64 保存，并带 `truncated` 标记。
+`safe_code_session_id` 只保留 ASCII 字母、数字、`_` 与 `-`，其他字符统一替换为 `_`，避免路径分隔符或 `..` 影响日志根目录边界。日志目录以 `0700` 创建，JSONL 文件以 `0600` 创建。
+
+`requests.jsonl` 每个已接受 OTLP export request 一行，包含 request metadata、worker epoch metadata、decode summary 和有界 body preview。`metrics.jsonl` 每个 metric datapoint 一行，`logs.jsonl` 每个 log record 一行。JSON/text-like body preview 以 UTF-8 保存；protobuf/binary preview 以 base64 保存，并带 `truncated` 标记。OTLP JSON 解码忽略未知字段，以兼容 SDK 增量字段。
 
 ---
 
@@ -986,7 +991,8 @@ curl -X POST http://127.0.0.1:38080/v1/code/sessions/cse_abc123/worker/otlp/metr
 5. JSON 请求返回 `{}`；protobuf 请求返回 200 空 body。
 6. stale epoch 返回 `409 conflict_error`；epoch 格式非法返回 `400 invalid_request_error`。
 7. 调试日志记录 OTLP 请求元数据和有界 body 预览；JSON/text-like body 以 UTF-8 打印，protobuf/binary body 以 base64 打印。
-8. 成功通过认证与 activity/epoch 检查后，best-effort 解码 OTLP JSON/protobuf，并写入本地 JSONL；解码或文件写入失败不改变 HTTP 响应。
+8. 成功通过认证与 activity/epoch 检查后，best-effort 解码 OTLP JSON/protobuf，并写入本地 JSONL；未知 OTLP JSON 字段按兼容字段忽略，解码或文件写入失败不改变 HTTP 响应。
+9. 本地 JSONL 使用安全路径段、`0700` 目录和 `0600` 文件权限，避免 session id 影响日志根目录边界并降低本机敏感 telemetry 暴露面。
 
 ### 后续扩展要求
 

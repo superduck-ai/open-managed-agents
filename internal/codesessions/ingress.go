@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1159,7 +1160,7 @@ func logCodeSessionWorkerOTLPRequest(r *http.Request, codeSessionID string, body
 	if epochValue == "" && epochFound && epoch > 0 {
 		epochValue = strconv.FormatInt(epoch, 10)
 	}
-	log.Printf("code session worker otlp request request_id=%s signal=%s method=%s path=%s query=%q code_session_id=%s content_type=%q accept=%q user_agent=%q content_length=%d body_bytes=%d body_encoding=%s body_truncated=%t epoch_found=%t epoch_value=%q epoch_source=%q reason=%s error=%v body=%q",
+	log.Printf("code session worker otlp request_id=%s signal=%s method=%s path=%s query=%q code_session_id=%s content_type=%q accept=%q user_agent=%q content_length=%d body_bytes=%d body_encoding=%s body_truncated=%t epoch_found=%t epoch_value=%q epoch_source=%q reason=%s error=%v body=%q",
 		httpapi.RequestID(r.Context()),
 		otlpSignalFromPath(path),
 		r.Method,
@@ -1201,12 +1202,20 @@ func loggedOTLPRequestBody(r *http.Request, body []byte) (string, string, bool) 
 }
 
 func otlpBodyLooksText(r *http.Request) bool {
-	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
-	if strings.HasPrefix(contentType, "text/") {
+	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		mediaType = strings.TrimSpace(strings.Split(contentType, ";")[0])
+	}
+	mediaType = strings.ToLower(mediaType)
+	if strings.HasPrefix(mediaType, "text/") {
 		return true
 	}
-	for _, marker := range []string{"json", "xml", "yaml", "csv"} {
-		if strings.Contains(contentType, marker) {
+	if strings.HasSuffix(mediaType, "+json") || strings.HasSuffix(mediaType, "+xml") {
+		return true
+	}
+	for _, exact := range []string{"application/json", "application/xml", "application/yaml", "application/x-yaml", "text/csv"} {
+		if mediaType == exact {
 			return true
 		}
 	}
@@ -1220,6 +1229,7 @@ func otlpSignalFromPath(path string) string {
 	case strings.HasSuffix(path, "/logs"):
 		return "logs"
 	default:
+		// Only the metrics and logs worker OTLP HTTP endpoints are registered today.
 		return ""
 	}
 }

@@ -28,25 +28,62 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  issues: write
   actions: read
   checks: read
-  id-token: write
 
 jobs:
   review:
     name: PR review (${{ matrix.reviewer }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    concurrency:
+      group: duckpr-${{ inputs.pr_number }}-${{ matrix.reviewer }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
         reviewer: [claude, opencode, ocr]
     steps:
+      - name: Validate PR head
+        id: pr-context
+        if: inputs.pr_number != '0' && inputs.trigger_event != 'duckpr_installation_test'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const prNumber = Number(process.env.INPUT_PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              throw new Error(`Invalid PR number: ${process.env.INPUT_PR_NUMBER}`);
+            }
+
+            const expectedHeadSha = String(process.env.INPUT_HEAD_SHA || "").trim();
+            if (!/^[0-9a-f]{40}$/i.test(expectedHeadSha)) {
+              throw new Error(`Invalid PR head SHA: ${expectedHeadSha || "<empty>"}`);
+            }
+
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            if (pullRequest.head.sha !== expectedHeadSha) {
+              throw new Error(
+                `Refusing to review untrusted head SHA ${expectedHeadSha}; PR #${prNumber} currently points to ${pullRequest.head.sha}.`
+              );
+            }
+
+            core.setOutput("base_ref", pullRequest.base.ref);
+            core.setOutput("head_sha", pullRequest.head.sha);
+            core.setOutput("title", pullRequest.title || "");
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.head_sha }}
+          ref: ${{ steps.pr-context.outputs.head_sha || inputs.head_sha }}
           persist-credentials: false
 
       - name: Checkout private Pullfrog source
@@ -71,7 +108,6 @@ jobs:
           private-key: ${{ secrets.DUCKPR_PRIVATE_KEY }}
           permission-contents: read
           permission-pull-requests: write
-          permission-issues: write
           permission-checks: read
           permission-actions: read
 
@@ -104,8 +140,10 @@ jobs:
           OCR_AUTH_TOKEN: ${{ secrets.LLM_API_KEY || secrets.ANTHROPIC_AUTH_TOKEN || secrets.ANTHROPIC_API_KEY }}
           OCR_MODEL: ${{ inputs.model }}
           OCR_NO_UPDATE: "1"
+          HOME: ${{ runner.temp }}/ocr-home
         run: |
           set -euo pipefail
+          mkdir -p "${HOME}"
 
           if [ -z "${OCR_BASE_URL}" ]; then
             echo "::error::OpenCodeReview requires llm_base_url, vars.LLM_BASE_URL, or vars.ANTHROPIC_BASE_URL."
@@ -145,7 +183,6 @@ jobs:
           ocr config set llm.extra_body '{"thinking":{"type":"disabled"}}'
           ocr config set language Chinese
 
-          echo "opencodereview_url=${ocr_url}"
           echo "opencodereview_model=${ocr_model}"
 
       - name: Get OpenCodeReview PR context
@@ -193,6 +230,7 @@ jobs:
           OCR_HEAD_SHA: ${{ steps.ocr-context.outputs.head_sha }}
           OCR_PR_TITLE: ${{ steps.ocr-context.outputs.title }}
           OCR_NO_UPDATE: "1"
+          HOME: ${{ runner.temp }}/ocr-home
         run: |
           set -euo pipefail
           echo "Reviewing ${OCR_HEAD_SHA} against origin/${OCR_BASE_REF}"
@@ -342,9 +380,15 @@ jobs:
                 console.log(`Cooling down ${retry.delayMs}ms after batch failure (${retry.source}: ${retry.detail}).`);
                 await sleep(retry.delayMs);
               } else {
-                let fallbackBody = summaryBody + formatFailedInlineComments(
-                  reviewComments.map(({ comment }) => ({ comment, error: error.message }))
+                const failedComments = reviewComments.map(({ comment }) => ({ comment, error: error.message }));
+                let fallbackBody = buildSummaryBody(
+                  comments.length,
+                  0,
+                  summaryComments.length + failedComments.length,
+                  warnings
                 );
+                fallbackBody += formatSummaryComments(summaryComments);
+                fallbackBody += formatFailedInlineComments(failedComments);
                 await createSummaryReview(fallbackBody);
                 failIfOcrFailed();
                 return;
@@ -724,6 +768,6 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PULLFROG_MODEL: ${{ inputs.model }}
           PULLFROG_AGENT: ${{ matrix.reviewer }}
-          LOG_LEVEL: debug
+          LOG_LEVEL: info
           PULLFROG_SELF_HOSTED: "1"
           PULLFROG_FORCE_LOCAL_CLI: "1"

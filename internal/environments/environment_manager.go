@@ -366,14 +366,19 @@ func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBas
 	if environmentVariables == nil {
 		return
 	}
-	injected := false
+	requiredHeaders := []string{
+		"Authorization=Bearer " + codeSessionID,
+		"x-worker-epoch=" + workerEpoch,
+	}
+	metricsInjected := false
+	logsInjected := false
 	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 		exporters := stringFromMap(environmentVariables, "OTEL_METRICS_EXPORTER")
 		if exporters == "" || commaListContains(exporters, "otlp") {
 			setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
 			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
 			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL, codeSessionID))
-			injected = true
+			metricsInjected = true
 		}
 	}
 	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == "" && stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
@@ -382,16 +387,25 @@ func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBas
 			setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
 			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
 			setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", codeSessionWorkerOTLPLogsEndpoint(apiBaseURL, codeSessionID))
-			injected = true
+			logsInjected = true
 		}
 	}
-	if injected {
+	if metricsInjected {
+		environmentVariables["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] = ensureOTLPHeaders(
+			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_HEADERS"),
+			requiredHeaders,
+		)
+	}
+	if logsInjected {
+		environmentVariables["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] = ensureOTLPHeaders(
+			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_HEADERS"),
+			requiredHeaders,
+		)
+	}
+	if (metricsInjected || logsInjected) && shouldInjectGenericOTLPHeaders(environmentVariables) {
 		environmentVariables["OTEL_EXPORTER_OTLP_HEADERS"] = ensureOTLPHeaders(
 			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_HEADERS"),
-			[]string{
-				"Authorization=Bearer " + codeSessionID,
-				"x-worker-epoch=" + workerEpoch,
-			},
+			requiredHeaders,
 		)
 	}
 }
@@ -437,6 +451,14 @@ func ensureOTLPHeaders(raw string, required []string) string {
 		seen[normalizedKey] = struct{}{}
 	}
 	return strings.Join(pairs, ",")
+}
+
+func shouldInjectGenericOTLPHeaders(environmentVariables map[string]any) bool {
+	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != "" {
+		return false
+	}
+	tracesExporter := stringFromMap(environmentVariables, "OTEL_TRACES_EXPORTER")
+	return tracesExporter == "" || !commaListContains(tracesExporter, "otlp")
 }
 
 func commaListContains(raw string, want string) bool {

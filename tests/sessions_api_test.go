@@ -2290,12 +2290,25 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	}
 
+	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "abc", "application/x-protobuf", nil)
+	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+}
+
+func TestCodeSessionWorkerOTLPAcceptsMissingEpoch(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-otlp-missing-epoch-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-otlp-missing-epoch-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-worker-otlp-missing-epoch-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	_ = registerCodeSessionWorker(t, app, codeSessionID)
+
 	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics", "")
 	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "metrics", "")
 	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs", "")
-
-	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "abc", "application/x-protobuf", nil)
-	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 }
 
 func TestCodeSessionWorkerOTLPFileLogWritesAcceptedTelemetry(t *testing.T) {

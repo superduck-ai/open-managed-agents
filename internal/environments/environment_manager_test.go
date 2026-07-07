@@ -47,6 +47,8 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
 		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
 		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp/logs" ||
+		startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer cse_test,x-worker-epoch=1" ||
+		startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer cse_test,x-worker-epoch=1" ||
 		startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "Authorization=Bearer cse_test,x-worker-epoch=1" {
 		t.Fatalf("unexpected otlp environment variables: %#v", startupEnv)
 	}
@@ -117,6 +119,12 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *
 	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value,Authorization=Bearer cse_test,x-worker-epoch=1" {
 		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want custom plus auth", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
 	}
+	if startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer cse_test,x-worker-epoch=1" {
+		t.Fatalf("OTEL_EXPORTER_OTLP_LOGS_HEADERS = %q, want signal auth", startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"])
+	}
+	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"]; ok {
+		t.Fatalf("unexpected metrics headers for custom metrics exporter: %#v", startupEnv)
+	}
 	if startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" {
 		t.Fatalf("CLAUDE_CODE_WORKER_EPOCH = %q, want 1", startupEnv["CLAUDE_CODE_WORKER_EPOCH"])
 	}
@@ -150,6 +158,67 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *tes
 	}
 	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "x-custom=value,Authorization=Bearer cse_test,x-worker-epoch=1" {
 		t.Fatalf("OTEL_EXPORTER_OTLP_HEADERS = %q, want custom plus auth", startupEnv["OTEL_EXPORTER_OTLP_HEADERS"])
+	}
+	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer cse_test,x-worker-epoch=1" {
+		t.Fatalf("OTEL_EXPORTER_OTLP_METRICS_HEADERS = %q, want signal auth", startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"])
+	}
+	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"]; ok {
+		t.Fatalf("unexpected logs headers for custom logs exporter: %#v", startupEnv)
+	}
+}
+
+func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *testing.T) {
+	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	sessionConfig := json.RawMessage(`{"environment_variables":{
+		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"
+	}}`)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "", sessionConfig, cfg)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	startup := body["startup_context"].(map[string]any)
+	startupEnv := startup["environment_variables"].(map[string]any)
+	if startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"] != "https://collector.example.com" {
+		t.Fatalf("OTEL_EXPORTER_OTLP_ENDPOINT = %q, want custom collector", startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"])
+	}
+	for _, key := range []string{
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+		"OTEL_EXPORTER_OTLP_HEADERS",
+		"OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+		"OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+	} {
+		if _, ok := startupEnv[key]; ok {
+			t.Fatalf("unexpected injected %s with custom generic endpoint: %#v", key, startupEnv)
+		}
+	}
+}
+
+func TestBuildEnvironmentManagerPayloadAvoidsGenericOTLPHeadersWhenTracesUseOTLP(t *testing.T) {
+	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	sessionConfig := json.RawMessage(`{"environment_variables":{
+		"OTEL_TRACES_EXPORTER":"otlp"
+	}}`)
+	payload, err := buildEnvironmentManagerV0Payload("cse_test", "", sessionConfig, cfg)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	startup := body["startup_context"].(map[string]any)
+	startupEnv := startup["environment_variables"].(map[string]any)
+	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer cse_test,x-worker-epoch=1" ||
+		startupEnv["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] != "Authorization=Bearer cse_test,x-worker-epoch=1" {
+		t.Fatalf("signal otlp headers missing auth: %#v", startupEnv)
+	}
+	if _, ok := startupEnv["OTEL_EXPORTER_OTLP_HEADERS"]; ok {
+		t.Fatalf("unexpected generic otlp headers when traces use otlp: %#v", startupEnv)
 	}
 }
 

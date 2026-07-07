@@ -140,7 +140,7 @@ func (s *Server) v1EntrypointRouter() http.Handler {
 }
 
 func (r apiEntrypointRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if isExternalPlatformHost(req.Host) || (isPlatformHost(req.Host) && auth.ExtractAPIKey(req) == "") {
+	if isExternalPlatformHost(req.Host) || (isLocalFrontendPlatformHost(req.Host) && auth.ExtractAPIKey(req) == "") {
 		r.platform.ServeHTTP(w, req)
 		return
 	}
@@ -651,9 +651,10 @@ func isPlatformAPIRequestPath(path string) bool {
 }
 
 func isPlatformHost(host string) bool {
-	if isExternalPlatformHost(host) {
-		return true
-	}
+	return isExternalPlatformHost(host) || isLocalFrontendPlatformHost(host)
+}
+
+func isLocalFrontendPlatformHost(host string) bool {
 	normalizedHost, port := normalizedRequestHostParts(host)
 	switch normalizedHost {
 	case "localhost", "127.0.0.1", "::1":

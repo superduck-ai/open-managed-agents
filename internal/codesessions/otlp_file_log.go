@@ -162,10 +162,10 @@ func appendJSONLLines(path string, lines []any) error {
 	if len(lines) == 0 {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func unmarshalOTLP(protocol string, body []byte, target proto.Message) error {
 		if len(strings.TrimSpace(string(body))) == 0 {
 			return errors.New("empty OTLP JSON body")
 		}
-		return protojson.UnmarshalOptions{DiscardUnknown: false}.Unmarshal(body, target)
+		return protojson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(body, target)
 	default:
 		return proto.Unmarshal(body, target)
 	}
@@ -607,7 +607,31 @@ func unixNanoRFC3339(value uint64) string {
 }
 
 func safeOTLPPathSegment(value string) string {
-	return strings.NewReplacer("/", "_", "\\", "_", " ", "_").Replace(value)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "_"
+	}
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z':
+			builder.WriteRune(char)
+		case char >= 'A' && char <= 'Z':
+			builder.WriteRune(char)
+		case char >= '0' && char <= '9':
+			builder.WriteRune(char)
+		case char == '_' || char == '-':
+			builder.WriteRune(char)
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	safe := builder.String()
+	if strings.Trim(safe, "_") == "" {
+		return "_"
+	}
+	return safe
 }
 
 func requestIDFromRequest(r *http.Request) string {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,41 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestDecodeOTLPRequestRejectsMalformedPayloads(t *testing.T) {
+	if _, err := decodeOTLPRequest("logs", otlpProtocolJSON, []byte(`{"resourceLogs":[`)); err == nil {
+		t.Fatal("decode malformed json error = nil, want error")
+	}
+	if _, err := decodeOTLPRequest("metrics", otlpProtocolProtobuf, []byte{0xff, 0xff}); err == nil {
+		t.Fatal("decode malformed protobuf error = nil, want error")
+	}
+}
+
+func TestRecordCodeSessionWorkerOTLPFileLogRecordsDecodeErrors(t *testing.T) {
+	root := t.TempDir()
+	service := &Service{
+		cfg: config.Config{
+			CodeSessionOTLPFileLogEnabled: true,
+			CodeSessionOTLPLogRoot:        root,
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_bad/worker/otlp/logs", bytes.NewReader([]byte(`{"resourceLogs":[`)))
+	req.Header.Set("Content-Type", "application/json")
+
+	service.recordCodeSessionWorkerOTLP(req, "cse_bad", []byte(`{"resourceLogs":[`), true, "query:worker_epoch", "7")
+
+	requestLines := readJSONLObjects(t, filepath.Join(root, "cse_bad", "otlp", "requests.jsonl"))
+	if len(requestLines) != 1 {
+		t.Fatalf("request lines = %d, want 1: %#v", len(requestLines), requestLines)
+	}
+	decode := requestLines[0]["decode"].(map[string]any)
+	if decode["ok"] != false || decode["error"] == "" {
+		t.Fatalf("unexpected decode error line: %#v", requestLines[0])
+	}
+	if _, err := os.Stat(filepath.Join(root, "cse_bad", "otlp", "logs.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("logs.jsonl exists for decode failure, stat err=%v", err)
+	}
+}
 
 func TestDecodeOTLPRequestSupportsJSONAndProtobuf(t *testing.T) {
 	metricsRequest := testOTLPMetricsRequest()
@@ -66,12 +102,44 @@ func TestDecodeOTLPRequestSupportsJSONAndProtobuf(t *testing.T) {
 	}
 }
 
-func TestDecodeOTLPRequestRejectsMalformedPayloads(t *testing.T) {
-	if _, err := decodeOTLPRequest("logs", otlpProtocolJSON, []byte(`{"resourceLogs":[`)); err == nil {
-		t.Fatal("decode malformed json error = nil, want error")
+func TestDecodeOTLPRequestIgnoresUnknownJSONFields(t *testing.T) {
+	decoded, err := decodeOTLPRequest("metrics", otlpProtocolJSON, []byte(`{"resourceMetrics":[],"unknownField":"ignored"}`))
+	if err != nil {
+		t.Fatalf("decode unknown json field: %v", err)
 	}
-	if _, err := decodeOTLPRequest("metrics", otlpProtocolProtobuf, []byte{0xff, 0xff}); err == nil {
-		t.Fatal("decode malformed protobuf error = nil, want error")
+	if !decoded.Summary.OK || decoded.Summary.ResourceCount != 0 {
+		t.Fatalf("unexpected summary for unknown-field json: %+v", decoded.Summary)
+	}
+}
+
+func TestSafeOTLPPathSegmentRejectsPathControlCharacters(t *testing.T) {
+	got := safeOTLPPathSegment("../cse.test\\bad id")
+	if got == "" || strings.ContainsAny(got, `/\.`) || strings.Contains(got, " ") {
+		t.Fatalf("safeOTLPPathSegment returned unsafe segment %q", got)
+	}
+	if safeOTLPPathSegment(" \t") != "_" {
+		t.Fatalf("empty safe path segment = %q, want _", safeOTLPPathSegment(" \t"))
+	}
+}
+
+func TestOTLPBodyLooksTextUsesParsedMediaType(t *testing.T) {
+	cases := []struct {
+		contentType string
+		want        bool
+	}{
+		{contentType: "application/not-json", want: false},
+		{contentType: "application/vnd.otlp+json", want: true},
+		{contentType: "text/plain; charset=utf-8", want: true},
+		{contentType: "application/x-protobuf", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.contentType, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/otlp", nil)
+			req.Header.Set("Content-Type", tc.contentType)
+			if got := otlpBodyLooksText(req); got != tc.want {
+				t.Fatalf("otlpBodyLooksText(%q) = %t, want %t", tc.contentType, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -105,6 +173,17 @@ func TestRecordCodeSessionWorkerOTLPFileLogWritesRequestAndExpandedRecords(t *te
 	if len(requestLines) != 2 {
 		t.Fatalf("request lines = %d, want 2: %#v", len(requestLines), requestLines)
 	}
+	otlpDir := filepath.Join(root, "cse_test", "otlp")
+	if info, err := os.Stat(otlpDir); err != nil {
+		t.Fatalf("stat otlp dir: %v", err)
+	} else if info.Mode().Perm() != 0o700 {
+		t.Fatalf("otlp dir mode = %o, want 700", info.Mode().Perm())
+	}
+	if info, err := os.Stat(filepath.Join(otlpDir, "requests.jsonl")); err != nil {
+		t.Fatalf("stat requests.jsonl: %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Fatalf("requests.jsonl mode = %o, want 600", info.Mode().Perm())
+	}
 	firstDecode := requestLines[0]["decode"].(map[string]any)
 	if firstDecode["ok"] != true || firstDecode["record_count"].(float64) != 1 {
 		t.Fatalf("unexpected first request decode: %#v", firstDecode)
@@ -118,7 +197,7 @@ func TestRecordCodeSessionWorkerOTLPFileLogWritesRequestAndExpandedRecords(t *te
 		t.Fatalf("unexpected second worker_epoch: %#v", secondEpoch)
 	}
 
-	metricLines := readJSONLObjects(t, filepath.Join(root, "cse_test", "otlp", "metrics.jsonl"))
+	metricLines := readJSONLObjects(t, filepath.Join(otlpDir, "metrics.jsonl"))
 	if len(metricLines) != 1 {
 		t.Fatalf("metric lines = %d, want 1: %#v", len(metricLines), metricLines)
 	}
@@ -131,39 +210,13 @@ func TestRecordCodeSessionWorkerOTLPFileLogWritesRequestAndExpandedRecords(t *te
 		t.Fatalf("unexpected metric point: %#v", point)
 	}
 
-	logLines := readJSONLObjects(t, filepath.Join(root, "cse_test", "otlp", "logs.jsonl"))
+	logLines := readJSONLObjects(t, filepath.Join(otlpDir, "logs.jsonl"))
 	if len(logLines) != 1 {
 		t.Fatalf("log lines = %d, want 1: %#v", len(logLines), logLines)
 	}
 	record := logLines[0]["log"].(map[string]any)
 	if record["body"] != "claude_code.test_event" || record["severity_text"] != "INFO" {
 		t.Fatalf("unexpected log record: %#v", record)
-	}
-}
-
-func TestRecordCodeSessionWorkerOTLPFileLogRecordsDecodeErrors(t *testing.T) {
-	root := t.TempDir()
-	service := &Service{
-		cfg: config.Config{
-			CodeSessionOTLPFileLogEnabled: true,
-			CodeSessionOTLPLogRoot:        root,
-		},
-	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_bad/worker/otlp/logs", bytes.NewReader([]byte(`{"resourceLogs":[`)))
-	req.Header.Set("Content-Type", "application/json")
-
-	service.recordCodeSessionWorkerOTLP(req, "cse_bad", []byte(`{"resourceLogs":[`), true, "query:worker_epoch", "7")
-
-	requestLines := readJSONLObjects(t, filepath.Join(root, "cse_bad", "otlp", "requests.jsonl"))
-	if len(requestLines) != 1 {
-		t.Fatalf("request lines = %d, want 1: %#v", len(requestLines), requestLines)
-	}
-	decode := requestLines[0]["decode"].(map[string]any)
-	if decode["ok"] != false || decode["error"] == "" {
-		t.Fatalf("unexpected decode error line: %#v", requestLines[0])
-	}
-	if _, err := os.Stat(filepath.Join(root, "cse_bad", "otlp", "logs.jsonl")); !os.IsNotExist(err) {
-		t.Fatalf("logs.jsonl exists for decode failure, stat err=%v", err)
 	}
 }
 

@@ -602,7 +602,7 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
-    expect(within(dialog).getByRole('combobox', { name: 'YAML' })).toBeTruthy();
+    expect(within(dialog).getByRole('combobox', { name: 'Code format' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Copy code' })).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Save new version' })).toBeTruthy();
@@ -613,7 +613,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(configCard?.className).toContain('bg-card');
     expect(configCard?.className).not.toContain('bg-muted');
     expect(dialog.textContent).toContain('name: Editable agent');
-    fireEvent.click(within(dialog).getByRole('combobox', { name: 'YAML' }));
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Code format' }));
     expect(screen.getByRole('option', { name: 'YAML' }).getAttribute('aria-selected')).toBe('true');
 
     fireEvent.keyDown(document, { key: 'Escape' });
@@ -664,8 +664,8 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
-    await selectManagedComboboxOption(dialog, 'YAML', 'JSON');
-    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'JSON' })).toBeTruthy());
+    await selectManagedComboboxOption(dialog, 'Code format', 'JSON');
+    await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Code format' }).textContent).toContain('JSON'));
 
     setAgentConfigEditorValue(dialog, '{', 'Agent configuration');
 

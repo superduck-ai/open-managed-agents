@@ -156,6 +156,7 @@ export function FormatSelect({
   buttonClassName?: string;
   menuClassName?: string;
 }) {
+  const { msg } = useI18n();
   const items: Array<{ value: CodeFormat; label: CodeFormat }> = [
     { value: 'YAML', label: 'YAML' },
     { value: 'JSON', label: 'JSON' }
@@ -172,10 +173,10 @@ export function FormatSelect({
       }}
     >
       <SelectTrigger
-        aria-label={value}
+        aria-label={msg('managedAgents.codeBlocks.codeFormat', 'Code format')}
         size="sm"
         className={clsx(
-          'h-7 w-auto min-w-[4.5rem] border-transparent bg-transparent px-2 text-sm text-foreground shadow-none hover:bg-accent focus-visible:ring-0',
+          'h-7 w-auto min-w-[4.5rem] border-transparent bg-transparent px-2 text-sm text-foreground shadow-none hover:bg-accent',
           compact ? 'rounded-md px-2' : 'px-2.5',
           buttonClassName
         )}

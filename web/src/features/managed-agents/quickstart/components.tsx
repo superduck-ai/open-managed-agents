@@ -1478,6 +1478,10 @@ export function nextStepButtonLabel(call: QuickstartToolCall, msg?: I18nMsg) {
 
 export const integrationSnippetLanguages: IntegrationSnippetLanguage[] = ['cli', 'python', 'typescript', 'curl'];
 
+export function isIntegrationSnippetLanguage(value: unknown): value is IntegrationSnippetLanguage {
+  return integrationSnippetLanguages.some((item) => item === value);
+}
+
 export const integrationLanguageLabels: Record<IntegrationSnippetLanguage, string> = {
   cli: 'CLI',
   python: 'Python',
@@ -1641,7 +1645,15 @@ export function IntegrationExitsCard({
   return (
     <QuickstartAssistantTurn>
       <div className="flex flex-col gap-4">
-        <Tabs value={language} onValueChange={(nextValue) => setLanguage(nextValue as IntegrationSnippetLanguage)} className="gap-0">
+        <Tabs
+          value={language}
+          onValueChange={(nextValue) => {
+            if (isIntegrationSnippetLanguage(nextValue)) {
+              setLanguage(nextValue);
+            }
+          }}
+          className="gap-0"
+        >
           <div className="overflow-hidden rounded-lg border border-border bg-popover">
             <div className="flex min-h-11 items-center justify-between gap-3 border-b border-border px-3 py-1.5">
               <div className="text-sm font-medium text-foreground">
@@ -1667,7 +1679,9 @@ export function IntegrationExitsCard({
             </div>
             {integrationSnippetLanguages.map((item) => (
               <TabsContent key={item} value={item} className="mt-0">
-                <ScrollableCodeBlock code={snippets[item]} language={integrationHighlightLanguage[item]} />
+                {item === language ? (
+                  <ScrollableCodeBlock code={snippets[item]} language={integrationHighlightLanguage[item]} />
+                ) : null}
               </TabsContent>
             ))}
           </div>

@@ -158,7 +158,7 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(screen.getByRole('button', { name: /Structured extractor/i }));
 
     expect(screen.getByRole('button', { name: 'Back to templates' })).toBeTruthy();
-    expect(screen.getByRole('combobox', { name: 'YAML' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Code format' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Use template' })).toBeTruthy();
     expect(screen.getByText(/name:/)).toBeTruthy();
@@ -467,8 +467,8 @@ export function registerManagedAgentsQuickstartTests() {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Structured extractor/i }));
-    await selectManagedComboboxOption(document.body, 'YAML', 'JSON');
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'JSON' })).toBeTruthy());
+    await selectManagedComboboxOption(document.body, 'Code format', 'JSON');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Code format' }).textContent).toContain('JSON'));
     expectPageTextToContain('"metadata":');
     const templateJsonBlock = codeBlockContaining('"metadata":');
     expect(templateJsonBlock?.querySelector('code.language-json')).toBeTruthy();

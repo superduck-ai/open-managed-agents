@@ -957,7 +957,7 @@ export function LaneTabStrip({
             type="button"
             size="sm"
             className={clsx(
-              'shrink-0 rounded-md text-sm font-medium shadow-none hover:bg-accent hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground aria-pressed:hover:bg-accent',
+              'shrink-0 rounded-md text-sm font-medium shadow-none',
               !showArchivedLanes && 'text-muted-foreground'
             )}
             pressed={showArchivedLanes}
@@ -1057,7 +1057,7 @@ export function HeaderRow({
       data-transcript-header
       pressed={isSelected}
       className={clsx(
-        'flex h-9 w-[calc(100%+2rem)] cursor-pointer justify-start rounded-none border-0 bg-transparent px-4 text-left font-normal active:translate-y-0 hover:bg-accent hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground aria-pressed:hover:bg-accent',
+        'flex h-9 w-[calc(100%+2rem)] cursor-pointer justify-start rounded-none border-0 bg-transparent px-4 text-left font-normal active:translate-y-0',
         '-mx-4',
         isSelected && '[[data-panel-focused=true]_&]:bg-accent'
       )}

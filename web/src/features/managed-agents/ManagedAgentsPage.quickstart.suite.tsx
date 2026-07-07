@@ -18,6 +18,7 @@ import {
   renderManagedAgentsPage,
   resetTestDom,
   screen,
+  selectManagedComboboxOption,
   serverAgent,
   sessionStatusValuesFromUrl,
   setAgentConfigEditorValue,
@@ -157,7 +158,7 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(screen.getByRole('button', { name: /Structured extractor/i }));
 
     expect(screen.getByRole('button', { name: 'Back to templates' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'YAML' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'YAML' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Use template' })).toBeTruthy();
     expect(screen.getByText(/name:/)).toBeTruthy();
@@ -466,10 +467,8 @@ export function registerManagedAgentsQuickstartTests() {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Structured extractor/i }));
-    fireEvent.click(screen.getByRole('button', { name: 'YAML' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'JSON' }));
-
-    expect(screen.getByRole('button', { name: 'JSON' })).toBeTruthy();
+    await selectManagedComboboxOption(document.body, 'YAML', 'JSON');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'JSON' })).toBeTruthy());
     expectPageTextToContain('"metadata":');
     const templateJsonBlock = codeBlockContaining('"metadata":');
     expect(templateJsonBlock?.querySelector('code.language-json')).toBeTruthy();
@@ -498,7 +497,7 @@ export function registerManagedAgentsQuickstartTests() {
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')).toBe(true)
     );
-    expect(screen.getByRole('button', { name: 'Test run' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Test run' }).hasAttribute('disabled')).toBe(true);
     expect(await screen.findByText("Let's configure the environment.")).toBeTruthy();
     const panelTabs = screen.getByRole('tablist', { name: 'Agent panel views' });
     const agentPanel = panelTabs.closest('aside') as HTMLElement | null;
@@ -1270,7 +1269,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect((integrationMessage as HTMLElement).querySelector('[data-slot="message-avatar"]')).toBeTruthy();
     expect(screen.getAllByText(/agent_created123456/).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(/agent_model_wrong123456/)).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Python' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Python' }));
     expectPageTextToContain('from anthropic import Anthropic');
     expectPageTextToContain('client.beta.sessions.events.stream');
     const pythonCodeBlock = codeBlockContaining('from anthropic import Anthropic');

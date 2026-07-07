@@ -186,6 +186,7 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('tab', { name: 'reporter' }).dataset.slot).toBe('tabs-trigger');
     expect(screen.getByRole('tab', { name: 'reporter' }).getAttribute('title')).toBeNull();
     expect(screen.getByRole('button', { name: '+1 archived' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '+1 archived' }).dataset.slot).toBe('toggle');
     expect(screen.queryByRole('tab', { name: 'archived' })).toBeNull();
     expect(screen.queryByRole('tab', { name: /sthr_orp/ })).toBeNull();
     expect(screen.queryByText('(Bash completed with no output)')).toBeNull();
@@ -291,7 +292,7 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.queryByText('Reporter is summarizing order cohorts.')).toBeNull();
     expect(screen.queryByText('{"command":"unzip /mnt/session/uploads/orders.zip -d /workspace/data/"}')).toBeNull();
     const resultPreview = screen.getByText(/^Verification with/);
-    const resultRow = resultPreview.closest('[data-slot="button"]');
+    const resultRow = resultPreview.closest('[data-slot="toggle"]');
     expect(resultRow?.className).toContain('h-9');
     expect(resultPreview.className).toContain('truncate');
     const resultBadge = within(resultRow as HTMLElement).getByText('Result').parentElement;
@@ -391,6 +392,7 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
     await waitFor(() => expect(screen.getAllByText('Reporter is summarizing order cohorts.').length).toBeGreaterThan(0));
     const selectedReporterRow = document.querySelector('[data-event-id^="evt_reporter-"][data-entry-kind="message"]') as HTMLElement;
+    expect(selectedReporterRow.querySelector('[data-transcript-header]')?.getAttribute('data-slot')).toBe('toggle');
     expect(selectedReporterRow.querySelector('[data-transcript-header]')?.getAttribute('aria-pressed')).toBe('true');
     expect(new URL(window.location.href).searchParams.get('event')).toBe('evt_reporter');
     fireEvent.click(screen.getByRole('tab', { name: 'Debug' }));

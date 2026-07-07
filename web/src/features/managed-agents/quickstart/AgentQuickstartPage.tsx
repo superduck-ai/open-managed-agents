@@ -1005,7 +1005,9 @@ export function AgentQuickstartPage() {
         {createdTemplate && createdAgent ? (
           <Button
             type="button"
-            className="absolute right-0 top-0 h-8 gap-2 bg-foreground px-3 text-sm font-semibold text-background hover:bg-muted"
+            size="sm"
+            disabled={!selectedEnvironment}
+            className="absolute right-0 top-0 gap-2"
             onClick={() => {
               if (session && !testRunStopped) {
                 void stopTestRun();

@@ -2,6 +2,7 @@ import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
+import { Toggle } from '../../../shared/ui/toggle';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 import { type DisplayEventType, type IconComponent, type LaneTabGroup, type SessionDetailLane, type SessionEventUsage, type SessionTimelineLane, type SessionTimelineTick, type TimelinePickOptions, type ToolLifecycle } from '../types';
 import clsx from 'clsx';
@@ -835,7 +836,7 @@ export function LaneTabStrip({
   showArchivedLanes: boolean;
   timeline: SessionTimelineLane[];
   timelineVisibleIds?: Set<string>;
-  onToggleArchivedLanes: () => void;
+  onToggleArchivedLanes: (nextPressed: boolean) => void;
   onChange: (laneId: string, targetEntryId?: string | null) => void;
 }) {
   const { msg } = useI18n();
@@ -952,18 +953,18 @@ export function LaneTabStrip({
           </TabsList>
         </Tabs>
         {archivedLaneCount > 0 ? (
-          <Button
+          <Toggle
             type="button"
-            variant="ghost"
+            size="sm"
             className={clsx(
-              'h-8 shrink-0 rounded-md px-2 text-sm font-medium',
-              showArchivedLanes ? 'bg-accent text-foreground hover:bg-accent' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              'shrink-0 rounded-md text-sm font-medium shadow-none hover:bg-accent hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground aria-pressed:hover:bg-accent',
+              !showArchivedLanes && 'text-muted-foreground'
             )}
-            aria-pressed={showArchivedLanes}
-            onClick={onToggleArchivedLanes}
+            pressed={showArchivedLanes}
+            onPressedChange={onToggleArchivedLanes}
           >
             {msg('managedAgents.sessions.detail.archivedLanes', '+{count} archived', { count: archivedLaneCount })}
-          </Button>
+          </Toggle>
         ) : null}
       </div>
       {scrollState.canScroll ? (
@@ -1050,21 +1051,20 @@ export function HeaderRow({
   onSelect: () => void;
 }) {
   return (
-    <Button
+    <Toggle
       render={<div />}
       nativeButton={false}
-      variant="ghost"
       data-transcript-header
-      aria-pressed={isSelected}
+      pressed={isSelected}
       className={clsx(
-        'flex h-9 w-[calc(100%+2rem)] cursor-pointer justify-start rounded-none border-0 bg-transparent px-4 text-left font-normal active:translate-y-0',
+        'flex h-9 w-[calc(100%+2rem)] cursor-pointer justify-start rounded-none border-0 bg-transparent px-4 text-left font-normal active:translate-y-0 hover:bg-accent hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground aria-pressed:hover:bg-accent',
         '-mx-4',
-        isSelected ? 'bg-accent [[data-panel-focused=true]_&]:bg-accent' : 'hover:bg-accent'
+        isSelected && '[[data-panel-focused=true]_&]:bg-accent'
       )}
-      onClick={onSelect}
+      onPressedChange={() => onSelect()}
     >
       {children}
-    </Button>
+    </Toggle>
   );
 }
 

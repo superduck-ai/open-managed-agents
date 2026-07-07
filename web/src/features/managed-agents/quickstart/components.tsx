@@ -1254,14 +1254,12 @@ export function QuickstartApiCallCard({ method, path, code, maxLines }: { method
         </span>
         <span className="font-mono text-[13px] text-foreground">{path}</span>
         <div className="ml-auto flex items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            className="gap-1 px-2 text-foreground hover:bg-accent"
+          <Badge
+            variant="outline"
+            className="h-7 rounded-md px-2 text-[11px] font-semibold uppercase tracking-[0.02em] text-muted-foreground"
           >
             CLI
-            <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
-          </Button>
+          </Badge>
           <CopyButton value={code} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
         </div>
       </div>
@@ -1643,33 +1641,37 @@ export function IntegrationExitsCard({
   return (
     <QuickstartAssistantTurn>
       <div className="flex flex-col gap-4">
-        <div className="overflow-hidden rounded-lg border border-border bg-popover">
-          <div className="flex min-h-11 items-center justify-between gap-3 border-b border-border px-3 py-1.5">
-            <div className="text-sm font-medium text-foreground">
-              {msg('managedAgents.quickstart.sampleCode', 'Sample code')}
-            </div>
-            <div className="flex min-w-0 items-center gap-1">
-              <div className="subtle-scrollbar flex max-w-[238px] items-center gap-1 overflow-x-auto rounded-md bg-secondary p-0.5">
-                {integrationSnippetLanguages.map((item) => (
-                  <Button
-                    key={item}
-                    type="button"
-                    variant="ghost"
-                    className={clsx(
-                      'h-7 rounded px-2 text-xs font-medium',
-                      item === language ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                    )}
-                    onClick={() => setLanguage(item)}
-                  >
-                    {integrationLanguageLabels[item]}
-                  </Button>
-                ))}
+        <Tabs value={language} onValueChange={(nextValue) => setLanguage(nextValue as IntegrationSnippetLanguage)} className="gap-0">
+          <div className="overflow-hidden rounded-lg border border-border bg-popover">
+            <div className="flex min-h-11 items-center justify-between gap-3 border-b border-border px-3 py-1.5">
+              <div className="text-sm font-medium text-foreground">
+                {msg('managedAgents.quickstart.sampleCode', 'Sample code')}
               </div>
-              <CopyButton value={sampleCode} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
+              <div className="flex min-w-0 items-center gap-1">
+                <TabsList
+                  aria-label={msg('managedAgents.quickstart.sampleCode', 'Sample code')}
+                  className="subtle-scrollbar h-7 max-w-[238px] gap-0.5 overflow-x-auto bg-secondary p-0.5"
+                >
+                  {integrationSnippetLanguages.map((item) => (
+                    <TabsTrigger
+                      key={item}
+                      value={item}
+                      className="h-6 shrink-0 px-2 text-xs font-medium"
+                    >
+                      {integrationLanguageLabels[item]}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+                <CopyButton value={sampleCode} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
+              </div>
             </div>
+            {integrationSnippetLanguages.map((item) => (
+              <TabsContent key={item} value={item} className="mt-0">
+                <ScrollableCodeBlock code={snippets[item]} language={integrationHighlightLanguage[item]} />
+              </TabsContent>
+            ))}
           </div>
-          <ScrollableCodeBlock code={sampleCode} language={integrationHighlightLanguage[language]} />
-        </div>
+        </Tabs>
         <div className="flex flex-wrap items-center gap-2">
           {call.status === 'awaiting_user' ? (
             <>

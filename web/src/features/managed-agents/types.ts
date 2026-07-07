@@ -715,7 +715,7 @@ export type EventsTabProps = {
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
   onSelectedTypesChange: (types: string[]) => void;
   onTimelineSeek: (entryId: string | null) => void;
-  onToggleArchivedLanes: () => void;
+  onToggleArchivedLanes: (nextPressed: boolean) => void;
   onViewChange: (view: SessionTraceView) => void;
   query: string;
   scrollerRef: RefObject<HTMLDivElement | null>;

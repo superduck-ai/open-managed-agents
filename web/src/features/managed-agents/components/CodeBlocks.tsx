@@ -1,6 +1,6 @@
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../../shared/ui/dropdown-menu';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import clsx from 'clsx';
 import hljs from 'highlight.js/lib/core';
 import bash from 'highlight.js/lib/languages/bash';
@@ -9,7 +9,7 @@ import json from 'highlight.js/lib/languages/json';
 import python from 'highlight.js/lib/languages/python';
 import typescript from 'highlight.js/lib/languages/typescript';
 import yamlLanguage from 'highlight.js/lib/languages/yaml';
-import { Check, ChevronDown, Copy } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { templateBody, templateTitle } from '../labels';
 import { looksLikeJson } from '../sessions/SessionDetailPage';
@@ -156,39 +156,45 @@ export function FormatSelect({
   buttonClassName?: string;
   menuClassName?: string;
 }) {
+  const items: Array<{ value: CodeFormat; label: CodeFormat }> = [
+    { value: 'YAML', label: 'YAML' },
+    { value: 'JSON', label: 'JSON' }
+  ];
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={clsx(
-              'gap-1.5 text-sm text-foreground hover:bg-accent',
-              compact ? 'px-2' : 'px-2.5',
-              buttonClassName
-            )}
-          />
+    <Select<CodeFormat>
+      value={value}
+      items={items}
+      onValueChange={(nextValue) => {
+        if (nextValue !== null) {
+          onChange(nextValue);
         }
+      }}
+    >
+      <SelectTrigger
+        aria-label={value}
+        size="sm"
+        className={clsx(
+          'h-7 w-auto min-w-[4.5rem] border-transparent bg-transparent px-2 text-sm text-foreground shadow-none hover:bg-accent focus-visible:ring-0',
+          compact ? 'rounded-md px-2' : 'px-2.5',
+          buttonClassName
+        )}
       >
-        {value}
-        <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
+        <SelectValue>{value}</SelectValue>
+      </SelectTrigger>
+      <SelectContent
         align={align === 'left' ? 'start' : 'end'}
+        alignItemWithTrigger={false}
         sideOffset={6}
         className={clsx('w-28 min-w-[7rem]', menuClassName)}
       >
-        <DropdownMenuRadioGroup value={value} onValueChange={(nextValue) => onChange(nextValue as CodeFormat)}>
-          {(['YAML', 'JSON'] as const).map((item) => (
-            <DropdownMenuRadioItem key={item} value={item} className="h-8 px-2 text-sm">
-              {item}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        {items.map((item) => (
+          <SelectItem key={item.value} value={item.value} label={item.label}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

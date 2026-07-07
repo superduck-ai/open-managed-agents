@@ -136,11 +136,16 @@ func (s *Server) v1EntrypointRouter() http.Handler {
 }
 
 func (r apiEntrypointRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if isPlatformHost(req.Host) && auth.ExtractAPIKey(req) == "" {
+	// Route by authentication credential.
+	if auth.ExtractAPIKey(req) != "" {
+		r.service.ServeHTTP(w, req)
+		return
+	}
+	if auth.ExtractPlatformSessionKey(req) != "" {
 		r.platform.ServeHTTP(w, req)
 		return
 	}
-	r.service.ServeHTTP(w, req)
+	r.platform.ServeHTTP(w, req)
 }
 
 func (s *Server) serviceAPIRouter() chi.Router {

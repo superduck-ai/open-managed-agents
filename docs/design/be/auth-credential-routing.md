@@ -100,20 +100,72 @@ func ExtractPlatformSessionKey(r *http.Request) string
 
 ---
 
-## 3. 不影响的范围
+## 3. 同步清理
 
-1. **`isPlatformHost` 函数保留** — 其他路径（`/api/*`、`/auth/*` 等）仍依赖 host 白名单做平台鉴权和登录流程，这些路径有自己的路由入口，不经过 `apiEntrypointRouter`，本次改动不涉及。
-2. **`/v1/*` 以外的路由** — 不受影响。
-3. **service auth middleware 逻辑** — 不变。API key 验证、权限、scope 均无变化。
-4. **platform auth middleware 逻辑** — 不变。session 解析、组织上下文注入均无变化。
+### 3.1 认证中间件中的 `isPlatformHost` 残留
+
+入口路由已改为凭证驱动，但认证中间件内部仍按 `isPlatformHost(r.Host)` 判断是否清除无效 session cookie 或恢复 mirror session。这导致非 platform host 上的无效 session 不会被清理，mirror session 也无法恢复。
+
+清理了4处残留检查：
+
+| 函数 | 变更 |
+|------|------|
+| `platformAuthMiddleware` | 移除 `isPlatformHost`，只要有 `sessionKey` cookie 就清理 |
+| `authenticated` | 同上 |
+| `recoverPlatformMirrorSession` | 移除 `!isPlatformHost(r.Host)` 前置条件 |
+| `platformMirrorOrganizationAlias` | 移除 `!isPlatformHost(r.Host)` 前置条件 |
+
+### 3.2 死代码删除
+
+`isPlatformHost` 及其依赖函数在 `/v1/*` 路由和中间件中均不再使用，全部删除：
+
+```go
+// 删除的函数
+func isPlatformHost(host string) bool
+func isExternalPlatformHost(host string) bool
+func isLocalFrontendPlatformHost(host string) bool
+func normalizedRequestHost(host string) string
+func normalizedRequestHostParts(host string) (string, string)
+```
+
+同时移除 `net` 包导入（`normalizedRequestHostParts` 中 `net.SplitHostPort` 的唯一使用者）。
+
+### 3.3 `sessionKey` cookie 安全加固
+
+此前 `sessionKey` cookie 没有 `HttpOnly` 和 `SameSite` 属性。改为凭证驱动路由后，任何 `Host` 都可能携带 session cookie 访问 `/v1/*`，CSRF 与 XSS 窃取面扩大。
+
+在 `internal/platformapi/platform_auth_routes.go` 的 `setSessionCookies` 中：
+
+```go
+// 修复后
+http.SetCookie(w, &http.Cookie{
+    Name:     "sessionKey",
+    Value:    sessionKey,
+    Path:     "/",
+    MaxAge:   maxAge,
+    HttpOnly: true,
+    Secure:   false,          // 本地部署无 HTTPS
+    SameSite: http.SameSiteLaxMode,
+})
+```
+
+`lastActiveOrg` cookie 保持 `HttpOnly: false`（前端需要读取组织上下文）。
 
 ---
 
-## 4. 测试
+## 4. 不影响的范围
 
-### 4.1 单元测试
+1. **`/v1/*` 以外的路由** — 不受影响。
+2. **service auth middleware 逻辑** — 不变。API key 验证、权限、scope 均无变化。
+3. **platform session 解析逻辑** — 不变。session 验证、组织上下文注入均无变化。
 
-`internal/api/auth_test.go` — `TestAPIEntrypointRouterDispatchesByAuth`：
+---
+
+## 5. 测试
+
+### 5.1 单元测试
+
+`internal/api/auth_test.go` — `TestAPIEntrypointRouterDispatchesByAuth`（12个用例）：
 
 覆盖：
 
@@ -123,21 +175,16 @@ func ExtractPlatformSessionKey(r *http.Request) string
 - API key + session cookie 同时存在 → API key 胜出，进 service
 - 无凭证时默认进 platform（保留开放路由）
 
-### 4.2 集成验证
+### 5.2 集成测试
 
-```bash
-# 通过 Caddy :80 访问（docker-compose 部署）
-curl http://localhost/v1/models -H 'Cookie: sessionKey=...'
-# 预期：200（platform 路由），而非 401
+`tests/files_api_test.go` — `TestV1AuthModes`（8个用例），已更新以匹配新的凭证路由语义：
 
-# 直连服务端口
-curl http://localhost:38080/v1/models -H 'Cookie: sessionKey=...'
-# 预期：200（platform 路由），而非 401
-```
+- `success api key works on any host` — API key 在 platform host 上也返回 200（旧语义下预期 401）
+- `success session cookie works on any host` — session cookie 在 API host 上也返回 200（旧语义下预期 401）
 
 ---
 
-## 5. 与 docker-compose 部署的关系
+## 6. 与 docker-compose 部署的关系
 
 本次修复是 docker-compose 一键部署的前置条件。Caddy 反向代理在 `:80` 提供服务，Host 头为 `localhost`（不带端口），原路由逻辑会将其误判为 service 调用。修复后，前端控制台通过 Caddy 访问时，session cookie 被正确识别，platform 路由生效。
 
@@ -145,11 +192,12 @@ curl http://localhost:38080/v1/models -H 'Cookie: sessionKey=...'
 
 ---
 
-## 6. 实现文件
+## 7. 实现文件
 
 | 文件 | 变更 |
 |------|------|
-| `internal/api/server.go` | `apiEntrypointRouter.ServeHTTP` 改为凭证驱动路由 |
-| `internal/api/auth_test.go` | 测试用例从 host 驱动改为凭证驱动，新增 session cookie 和混合场景 |
-
-PR: https://github.com/superduck-ai/open-managed-agents/pull/6
+| `internal/api/server.go` | `apiEntrypointRouter.ServeHTTP` 改为凭证驱动路由；移除中间件中4处 `isPlatformHost` 检查；删除 `isPlatformHost`、`isExternalPlatformHost`、`isLocalFrontendPlatformHost`、`normalizedRequestHost`、`normalizedRequestHostParts` 五个死函数；移除 `net` 导入 |
+| `internal/api/auth_test.go` | 测试用例从 host 驱动改为凭证驱动，12个用例覆盖 API key、session cookie、双凭证、无凭证场景 |
+| `tests/files_api_test.go` | 更新2个集成测试用例：api key 在任意 host 返回 200，session cookie 在任意 host 返回 200 |
+| `internal/platformapi/platform_auth_routes.go` | `sessionKey` cookie 添加 `HttpOnly: true` 和 `SameSite: Lax` |
+| `docs/design/be/auth-credential-routing.md` | 本设计文档 |

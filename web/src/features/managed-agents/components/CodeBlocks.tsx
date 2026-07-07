@@ -268,13 +268,13 @@ export function TemplateCard({
       type="button"
       variant="ghost"
       aria-label={label}
-      className="h-auto min-h-[118px] w-full self-start flex-col items-start justify-start gap-0 overflow-hidden whitespace-normal rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-colors hover:border-border hover:bg-card"
+      className="h-full min-h-0 w-full flex-col items-start justify-start gap-0 overflow-hidden whitespace-normal rounded-lg border border-border bg-card p-3 text-left shadow-sm transition-colors hover:border-border hover:bg-card"
       onClick={onClick}
     >
-      <div className="w-full min-w-0 text-[15px] font-medium leading-5 text-foreground">{title}</div>
-      <p className="mt-1 min-h-[54px] w-full min-w-0 line-clamp-3 text-[13px] leading-[18px] text-muted-foreground">{body}</p>
+      <div className="line-clamp-2 w-full min-w-0 text-[15px] font-medium leading-5 text-foreground">{title}</div>
+      <p className="mt-1 w-full min-w-0 line-clamp-2 text-[13px] leading-[18px] text-muted-foreground">{body}</p>
       {template.tags?.length ? (
-        <div className="mt-auto flex flex-wrap gap-1.5 pt-3">
+        <div className="mt-auto flex max-w-full flex-nowrap gap-1.5 overflow-hidden pt-3">
           {template.tags.map((tag) => {
             const Icon = tag.icon;
             return (

@@ -147,12 +147,12 @@ export function registerManagedAgentsQuickstartTests() {
     const fieldMonitorTemplate = screen.getByRole('button', { name: /Field monitor/i });
     const templateGrid = fieldMonitorTemplate.parentElement as HTMLElement | null;
     const fieldMonitorDescription = within(fieldMonitorTemplate).getByText(/Scans software blogs for a topic/i);
-    expect(fieldMonitorTemplate.className).toContain('min-h-[118px]');
-    expect(fieldMonitorTemplate.className).toContain('h-auto');
-    expect(fieldMonitorTemplate.className).toContain('self-start');
+    expect(fieldMonitorTemplate.className).toContain('h-full');
+    expect(fieldMonitorTemplate.className).toContain('min-h-0');
     expect(fieldMonitorTemplate.className).toContain('overflow-hidden');
-    expect(templateGrid?.className).toContain('items-start');
-    expect(fieldMonitorDescription.className).toContain('min-h-[54px]');
+    expect(templateGrid?.className).toContain('auto-rows-[136px]');
+    expect(templateGrid?.className).toContain('items-stretch');
+    expect(fieldMonitorDescription.className).toContain('line-clamp-2');
     expect(fieldMonitorTemplate.querySelector('[title="notion"]')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: /Structured extractor/i }));
@@ -234,7 +234,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect(screen.getByTestId('quickstart-resizable-panels')).toBeTruthy();
     expect(divider.getAttribute('data-slot')).toBe('resizable-handle');
     expect(divider.getAttribute('aria-orientation')).toBe('vertical');
-    expect(divider.querySelector('svg')).toBeTruthy();
+    expect(divider.querySelector('svg')).toBeNull();
   });
 
   test('clamps quickstart inspector widths against the container bounds', () => {

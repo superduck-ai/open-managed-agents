@@ -110,9 +110,12 @@ func TestV1AuthModes(t *testing.T) {
 		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
 	})
 
-	t.Run("failure platform host ignores service api key", func(t *testing.T) {
+	t.Run("success api key works on any host", func(t *testing.T) {
 		resp := app.doAuthMode(t, "platform.claude.com", defaultTestKey, "", "")
-		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
 	})
 
 	t.Run("failure platform host clears invalid session cookie", func(t *testing.T) {
@@ -126,9 +129,12 @@ func TestV1AuthModes(t *testing.T) {
 		}
 	})
 
-	t.Run("failure api host ignores platform session cookie", func(t *testing.T) {
+	t.Run("success session cookie works on any host", func(t *testing.T) {
 		resp := app.doAuthMode(t, "api.anthropic.com", "", "", platformSessionKey)
-		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
 	})
 
 	t.Run("success api host accepts x api key", func(t *testing.T) {

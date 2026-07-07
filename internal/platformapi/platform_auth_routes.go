@@ -235,8 +235,8 @@ func decodeMagicLinkEmail(encoded string) string {
 
 func setSessionCookies(w http.ResponseWriter, sessionKey string, orgUUID string) {
 	const maxAge = 25920000
-	http.SetCookie(w, &http.Cookie{Name: "lastActiveOrg", Value: orgUUID, Path: "/", MaxAge: maxAge})
-	http.SetCookie(w, &http.Cookie{Name: "sessionKey", Value: sessionKey, Path: "/", MaxAge: maxAge})
+	http.SetCookie(w, &http.Cookie{Name: "lastActiveOrg", Value: orgUUID, Path: "/", MaxAge: maxAge, HttpOnly: false, Secure: false, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "sessionKey", Value: sessionKey, Path: "/", MaxAge: maxAge, HttpOnly: true, Secure: false, SameSite: http.SameSiteLaxMode})
 }
 
 func clearSessionCookies(w http.ResponseWriter) {

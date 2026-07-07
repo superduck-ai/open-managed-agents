@@ -402,12 +402,6 @@ func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBas
 			requiredHeaders,
 		)
 	}
-	if (metricsInjected || logsInjected) && shouldInjectGenericOTLPHeaders(environmentVariables) {
-		environmentVariables["OTEL_EXPORTER_OTLP_HEADERS"] = ensureOTLPHeaders(
-			stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_HEADERS"),
-			requiredHeaders,
-		)
-	}
 }
 
 func codeSessionWorkerOTLPMetricsEndpoint(apiBaseURL string, codeSessionID string) string {
@@ -451,14 +445,6 @@ func ensureOTLPHeaders(raw string, required []string) string {
 		seen[normalizedKey] = struct{}{}
 	}
 	return strings.Join(pairs, ",")
-}
-
-func shouldInjectGenericOTLPHeaders(environmentVariables map[string]any) bool {
-	if stringFromMap(environmentVariables, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != "" {
-		return false
-	}
-	tracesExporter := stringFromMap(environmentVariables, "OTEL_TRACES_EXPORTER")
-	return tracesExporter == "" || !commaListContains(tracesExporter, "otlp")
 }
 
 func commaListContains(raw string, want string) bool {

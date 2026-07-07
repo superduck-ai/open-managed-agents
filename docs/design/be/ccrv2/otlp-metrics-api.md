@@ -201,7 +201,7 @@ function getOTLPExporterConfig() {
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | - | 通用 OTLP 端点 |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | 当前后端默认注入 session metrics endpoint | Metrics 专用端点 |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | 当前后端默认注入 session logs endpoint | Logs 专用端点 |
-| `OTEL_EXPORTER_OTLP_HEADERS` | 当前后端默认兼容注入 auth 和 epoch；如果用户显式启用 OTLP traces 则不注入 | 通用 OTLP 请求头；Claude Code 当前静态解析使用这个变量 |
+| `OTEL_EXPORTER_OTLP_HEADERS` | - | 通用 OTLP 请求头；后端不会向该变量注入 session token，避免 token 被自定义 signal endpoint 通过 fallback header 发送到外部 collector |
 | `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | 当前后端默认注入 auth 和 epoch | Metrics 专用请求头；供标准 OpenTelemetry signal-scoped 配置使用 |
 | `OTEL_EXPORTER_OTLP_LOGS_HEADERS` | 当前后端默认注入 auth 和 epoch | Logs 专用请求头；供标准 OpenTelemetry signal-scoped 配置使用 |
 
@@ -249,7 +249,6 @@ OTEL_METRICS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT={api_base_url}/v1/code/sessions/{code_session_id}/worker/otlp/metrics
 OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
-OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
 ```
 
 如果没有显式配置 `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_ENDPOINT`，并且 `OTEL_LOGS_EXPORTER` 未设置或包含 `otlp`，后端会默认注入：
@@ -259,7 +258,6 @@ OTEL_LOGS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT={api_base_url}/v1/code/sessions/{code_session_id}/worker/otlp/logs
 OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
-OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
 ```
 
 保留用户自定义配置的规则：
@@ -269,7 +267,7 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch
 3. 如果用户将 `OTEL_METRICS_EXPORTER` 设置为不包含 `otlp` 的值，如 `console`、`prometheus` 或 `none`，不注入默认 OTLP metrics 配置。
 4. 如果用户将 `OTEL_LOGS_EXPORTER` 设置为不包含 `otlp` 的值，如 `console` 或 `none`，不注入默认 OTLP logs 配置。
 5. 如果默认 metrics/logs OTLP endpoint 被注入，会分别向 `OTEL_EXPORTER_OTLP_METRICS_HEADERS` / `OTEL_EXPORTER_OTLP_LOGS_HEADERS` 补缺 `Authorization` 与 `x-worker-epoch`。
-6. 为兼容当前 Claude Code 静态 OTLP 配置，如果任一默认 OTLP endpoint 被注入，且用户没有显式配置 OTLP traces（`OTEL_TRACES_EXPORTER` 包含 `otlp` 或 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`），后端也会向通用 `OTEL_EXPORTER_OTLP_HEADERS` 补缺 `Authorization` 与 `x-worker-epoch`；若用户已有通用 header，会保留已有 header 并只补缺这两个字段。
+6. 后端不会向通用 `OTEL_EXPORTER_OTLP_HEADERS` 补缺 session token。若用户自行设置该变量，会原样保留；用户需要自行承担通用 header 被所有 OTLP signal fallback 复用的风险。
 
 ### 服务端本地 JSONL 日志配置
 

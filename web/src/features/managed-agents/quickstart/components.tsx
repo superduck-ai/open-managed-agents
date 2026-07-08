@@ -23,7 +23,7 @@ import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import clsx from 'clsx';
 import { AlertCircle, ArrowUp, ArrowUpRight, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, Cloud, Copy, FileText, Loader2, LockKeyhole, Pencil, Play, Plus, Search, Sparkles, Terminal, TriangleAlert, UserRound } from 'lucide-react';
-import { type Dispatch, type ReactNode, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import { type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { codeForTemplate, createDialogAgentConfig, displayAgentConfig, yamlStringify } from '../agentConfig';
 import { quickstartComposerFrameClassName, quickstartComposerSendButtonClassName, quickstartComposerTextareaClassName } from '../components/composerStyles';
 import { listSessionEvents, quickstartEnvironmentRequestBody, streamQuickstartSessionEvents } from '../api';
@@ -35,6 +35,8 @@ import { copyText, errorMessage, managedEntityDetailHref, titleCase, toRecord } 
 
 export const quickstartEnvironmentSearchQuery =
   "An environment is a reusable template for the container where your agent's tools execute — things like networking policy and package access. Let me check what environments you already have.";
+
+type PromptComposerSubmitShortcut = 'enter' | 'mod-enter';
 
 export function InitialPromptPane({
   prompt,
@@ -65,6 +67,7 @@ export function InitialPromptPane({
         label={msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
         placeholder={msg('managedAgents.quickstart.initial.placeholder', 'Describe your agent…')}
         isBusy={isCreating}
+        submitShortcut="mod-enter"
         onChange={onPromptChange}
         onSubmit={onSubmit}
       />
@@ -245,9 +248,10 @@ export function QuickstartChatPane({
         label={msg('managedAgents.quickstart.reply.label', 'Reply…')}
         placeholder={msg('managedAgents.quickstart.reply.placeholder', 'Reply…')}
         isBusy={isStreaming}
+        submitShortcut="enter"
         onChange={onReplyChange}
         onSubmit={onSubmitReply}
-        formClassName="shrink-0"
+        formClassName="shrink-0 p-3 pt-0"
       />
     </div>
   );
@@ -1976,6 +1980,7 @@ export function PromptComposer({
   label,
   placeholder,
   isBusy = false,
+  submitShortcut,
   formClassName = 'absolute inset-x-0 bottom-0 p-3 pt-0',
   onChange,
   onSubmit
@@ -1984,6 +1989,7 @@ export function PromptComposer({
   label: string;
   placeholder: string;
   isBusy?: boolean;
+  submitShortcut?: PromptComposerSubmitShortcut;
   formClassName?: string;
   onChange: (value: string) => void;
   onSubmit?: () => void;
@@ -1991,6 +1997,7 @@ export function PromptComposer({
   const { msg } = useI18n();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const promptId = `${label.toLowerCase().replace(/\s+/g, '-')}-prompt`;
+  const canSubmit = !isBusy && value.trim().length > 0;
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -2001,14 +2008,41 @@ export function PromptComposer({
     textarea.style.height = `${textarea.scrollHeight}px`;
   }, [value]);
 
+  const submitPrompt = () => {
+    if (canSubmit) {
+      onSubmit?.();
+    }
+  };
+
+  const handleTextareaKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (!submitShortcut || event.key !== 'Enter') {
+      return;
+    }
+    const nativeEvent = event.nativeEvent as KeyboardEvent;
+    // Respect IME composition so Enter confirms text instead of sending.
+    if (nativeEvent.isComposing || nativeEvent.keyCode === 229) {
+      return;
+    }
+    if (submitShortcut === 'enter') {
+      if (event.shiftKey || isBusy) {
+        return;
+      }
+    } else if ((!event.metaKey && !event.ctrlKey) || isBusy) {
+      return;
+    }
+    event.preventDefault();
+    if (event.repeat) {
+      return;
+    }
+    submitPrompt();
+  };
+
   return (
     <form
       className={formClassName}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!isBusy && value.trim()) {
-          onSubmit?.();
-        }
+        submitPrompt();
       }}
     >
       <label htmlFor={promptId} className="sr-only">
@@ -2025,6 +2059,7 @@ export function PromptComposer({
           placeholder={placeholder}
           className={clsx(quickstartComposerTextareaClassName, 'subtle-scrollbar block max-h-52 overflow-y-auto px-4 pb-2 pt-4 text-[15px] leading-6')}
           onChange={(event) => onChange(event.target.value)}
+          onKeyDown={handleTextareaKeyDown}
         />
         <InputGroupAddon align="block-end" className="justify-end px-3 pb-3 pt-0">
           <InputGroupButton
@@ -2032,7 +2067,7 @@ export function PromptComposer({
             variant="ghost"
             size="icon-sm"
             aria-label={msg('managedAgents.quickstart.sendMessage', 'Send message')}
-            disabled={!value.trim() || isBusy}
+            disabled={!canSubmit}
             className={quickstartComposerSendButtonClassName}
           >
             {isBusy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ArrowUp className="size-4" aria-hidden />}

@@ -210,6 +210,70 @@ export function registerManagedAgentsQuickstartTests() {
     expect(promptInput.className).toContain('overflow-y-auto');
   });
 
+  test('keeps Enter for newlines in the initial quickstart composer and submits on Cmd/Ctrl+Enter', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    const api = mockAgentsApi([], {
+      quickstartStream: () => quickstartToolStream('build_agent_config', {
+        name: 'Invoice tracker',
+        description: 'Tracks invoices and keeps the team updated.',
+        model: 'claude-sonnet-4-6',
+        system: 'Track invoice intake and summarize status.',
+        mcp_servers: [],
+        tools: [],
+        skills: [],
+        metadata: { template: 'blank-agent', source: 'description' }
+      })
+    });
+    renderManagedAgentsPage('quickstart');
+
+    const promptInput = screen.getByLabelText('Describe your agent') as HTMLTextAreaElement;
+
+    fireEvent.change(promptInput, { target: { value: 'Build an invoice tracker.' } });
+    fireEvent.keyDown(promptInput, { key: 'Enter' });
+    expect(api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length).toBe(0);
+
+    fireEvent.keyDown(promptInput, { key: 'Enter', ctrlKey: true });
+
+    await waitFor(() => expect(api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length).toBe(1));
+    expect(await screen.findByRole('button', { name: 'Create this agent' })).toBeTruthy();
+  });
+
+  test('sends quickstart chat replies on Enter and keeps Shift+Enter for newlines', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    let proxyCalls = 0;
+    const api = mockAgentsApi([], {
+      quickstartStream: () => {
+        proxyCalls += 1;
+        if (proxyCalls === 1) {
+          return quickstartTextStream('Ready for the next step.');
+        }
+        return quickstartTextStream("Thanks, I'll continue from there.");
+      }
+    });
+    renderManagedAgentsPage('quickstart');
+
+    const promptInput = screen.getByLabelText('Describe your agent') as HTMLTextAreaElement;
+    fireEvent.change(promptInput, { target: { value: 'Build an invoice tracker.' } });
+    fireEvent.keyDown(promptInput, { key: 'Enter', ctrlKey: true });
+
+    expect(await screen.findByText('Ready for the next step.')).toBeTruthy();
+    const reply = screen.getByLabelText('Reply…') as HTMLTextAreaElement;
+
+    fireEvent.change(reply, { target: { value: 'Use limited networking.' } });
+    const initialRequestCount = api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length;
+
+    fireEvent.keyDown(reply, { key: 'Enter', shiftKey: true });
+    expect(api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length).toBe(initialRequestCount);
+
+    fireEvent.keyDown(reply, { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length).toBe(initialRequestCount + 1)
+    );
+    const latestProxyRequest = api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').at(-1);
+    expect(JSON.stringify(latestProxyRequest?.body?.messages)).toContain('Use limited networking.');
+  });
+
   test('anchors the initial quickstart composer inside a full-height primary pane', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
     render(<ManagedAgentsPage section="quickstart" />);
@@ -1047,6 +1111,8 @@ export function registerManagedAgentsQuickstartTests() {
     const reply = screen.getByLabelText('Reply…') as HTMLTextAreaElement;
     expect(reply.className).toContain('focus-visible:ring-0');
     expect(reply.parentElement?.dataset.slot).toBe('input-group');
+    expect(reply.closest('form')?.className).toContain('p-3');
+    expect(reply.closest('form')?.className).toContain('pt-0');
     fireEvent.change(reply, { target: { value: 'Keep the current setup and continue.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 

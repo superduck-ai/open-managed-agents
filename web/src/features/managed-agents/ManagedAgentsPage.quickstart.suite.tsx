@@ -328,12 +328,14 @@ export function registerManagedAgentsQuickstartTests() {
     const chatStream = screen.getByTestId('quickstart-chat-stream');
     const chatContent = screen.getByTestId('quickstart-chat-content');
     expect(chatStream.getAttribute('data-slot')).toBe('message-scroller-viewport');
+    expect(chatStream.className).toContain('subtle-scrollbar-auto');
     expect(chatContent.getAttribute('data-slot')).toBe('message-scroller-content');
     expect(chatContent.className).toContain('w-full');
     expect(chatContent.className).toContain('px-4');
     expect(chatContent.className).not.toContain('w-[432px]');
     expect(chatContent.className).not.toContain('max-w-');
     expect(chatContent.className).not.toContain('px-6');
+    expect(codeBlockContaining('ant beta:agents create')?.className).toContain('subtle-scrollbar-auto');
 
     const userMessage = within(chatContent)
       .getByText('Parses unstructured text into a typed JSON schema.')

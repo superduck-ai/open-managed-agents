@@ -155,7 +155,7 @@ export function QuickstartChatPane({
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller className="min-h-0 flex-1">
-          <MessageScrollerViewport data-testid="quickstart-chat-stream" className="pb-6">
+          <MessageScrollerViewport data-testid="quickstart-chat-stream" className="subtle-scrollbar-auto pb-6">
             <MessageScrollerContent data-testid="quickstart-chat-content" className="mt-8 w-full gap-0 px-4">
               {streamItems.map((item, index) => {
                 if (item.type === 'message') {
@@ -1666,7 +1666,7 @@ export function IntegrationExitsCard({
               <div className="flex min-w-0 items-center gap-1">
                 <TabsList
                   aria-label={msg('managedAgents.quickstart.selectLanguage', 'Select language')}
-                  className="subtle-scrollbar h-7 max-w-[238px] gap-0.5 overflow-x-auto bg-secondary p-0.5"
+                  className="subtle-scrollbar-auto h-7 max-w-[238px] gap-0.5 overflow-x-auto bg-secondary p-0.5"
                 >
                   {integrationSnippetLanguages.map((item) => (
                     <TabsTrigger
@@ -2057,7 +2057,7 @@ export function PromptComposer({
           value={value}
           rows={1}
           placeholder={placeholder}
-          className={clsx(quickstartComposerTextareaClassName, 'subtle-scrollbar block max-h-52 overflow-y-auto px-4 pb-2 pt-4 text-[15px] leading-6')}
+          className={clsx(quickstartComposerTextareaClassName, 'subtle-scrollbar-auto block max-h-52 overflow-y-auto px-4 pb-2 pt-4 text-[15px] leading-6')}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={handleTextareaKeyDown}
         />
@@ -2154,14 +2154,14 @@ export function BrowseTemplatesPanel({
         {visibleTemplates.length > 0 ? (
           <div
             ref={listRef}
-            className="subtle-scrollbar mt-4 grid min-h-0 flex-1 auto-rows-[136px] content-start items-stretch grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 overflow-y-auto pr-1"
+            className="subtle-scrollbar-auto mt-4 grid min-h-0 flex-1 auto-rows-[136px] content-start items-stretch grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 overflow-y-auto pr-1"
           >
             {visibleTemplates.map((template) => (
               <TemplateCard key={template.id} template={template} onClick={() => onTemplateClick(template)} />
             ))}
           </div>
         ) : (
-          <div ref={listRef} className="subtle-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+          <div ref={listRef} className="subtle-scrollbar-auto mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
             <Card size="sm" className="py-0">
               <CardContent className="grid min-h-[240px] place-items-center px-4 py-12 text-center">
                 <div>
@@ -2244,7 +2244,7 @@ export function TemplateDetailPanel({
             {isUsing ? msg('common.creating', 'Creating...') : msg('managedAgents.quickstart.useTemplate', 'Use template')}
           </Button>
         </div>
-        <div className="subtle-scrollbar min-h-0 flex-1 overflow-auto px-5 py-4">
+        <div className="subtle-scrollbar-auto min-h-0 flex-1 overflow-auto px-5 py-4">
           <NumberedCodeBlock code={code} format={format} />
         </div>
       </CardContent>
@@ -2328,7 +2328,7 @@ export function CreatedAgentConfigPanel({
           ) : null}
         </div>
 
-        <TabsContent value="config" className="subtle-scrollbar min-h-0 overflow-auto px-5 py-4">
+        <TabsContent value="config" className="subtle-scrollbar-auto min-h-0 overflow-auto px-5 py-4">
           <NumberedCodeBlock code={code} format={format} />
         </TabsContent>
         <TabsContent value="preview" className="min-h-0">
@@ -2587,7 +2587,7 @@ export function PreviewEnvironmentPanel({
         )}
       </div>
       {environment ? (
-        <div className="subtle-scrollbar flex-1 overflow-auto p-4">
+        <div className="subtle-scrollbar-auto flex-1 overflow-auto p-4">
           <div className="rounded-lg border border-border bg-secondary p-4">
             <div className="flex items-start justify-between gap-4">
               <div>

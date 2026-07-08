@@ -35,6 +35,18 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 
 核心依赖方向大致是：`internal/api` 负责服务组装和路由，资源包负责 HTTP handler 与业务编排，`internal/db` 只做持久化边界，不能反向依赖 API 或 handler 包。
 
+## Docker Compose 一键部署
+
+项目支持通过 `docker compose up -d` 一条命令启动完整环境（PostgreSQL、Redis、MinIO、e2b-local 沙箱网关、oma-server 以及前端 Caddy 反代）。详见 `docs/design/docker-compose-deployment.md`。
+
+```bash
+docker compose up -d
+```
+
+启动后前端访问 `http://localhost:28080`（端口可通过 `CADDY_HOST_PORT` 环境变量配置），API 访问 `http://localhost:38080`。
+
+> **平台要求**：仅支持 Linux Docker Engine 20.10+ 或 OrbStack（macOS）。
+
 ## 本地依赖
 
 需要先准备：
@@ -44,26 +56,6 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 - PostgreSQL，默认连接串是 `postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable`。
 - Redis，默认 `redis://localhost:6379`。
 - MinIO 或其他 S3 兼容存储，默认 `http://localhost:9000`、bucket `claude-files`、账号密码 `minioadmin/minioadmin`。
-
-如果你没有现成服务，可以用 Docker 快速起一组本地依赖：
-
-```bash
-docker run --name oma-postgres -d \
-  -p 5432:5432 \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_HOST_AUTH_METHOD=trust \
-  postgres:17
-
-docker run --name oma-redis -d \
-  -p 6379:6379 \
-  redis:8
-
-docker run --name oma-minio -d \
-  -p 9000:9000 -p 9001:9001 \
-  -e MINIO_ROOT_USER=minioadmin \
-  -e MINIO_ROOT_PASSWORD=minioadmin \
-  minio/minio server /data --console-address ":9001"
-```
 
 服务启动时会尝试用 `POSTGRES_ADMIN_URL` 创建默认数据库和角色；如果你的本地 PostgreSQL 不允许默认的 `postgres` 用户免密连接，请在 `.env` 中显式配置可用的管理连接串。
 

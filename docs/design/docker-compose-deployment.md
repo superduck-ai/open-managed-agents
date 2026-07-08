@@ -62,7 +62,7 @@ init-web:
 
 ```yaml
 init-envd:
-  image: ghcr.io/postroggy/e2b-local:latest
+  image: ghcr.io/superduck-ai/e2b-local:latest
   entrypoint: ["sh", "-c"]
   command:
     - |
@@ -135,7 +135,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
    ```bash
    # sandbox 模板镜像需从 e2b-local 对应的镜像仓库拉取。
    # 具体镜像名和 tag 取决于 e2b-local 的 E2B_TEMPLATE 配置。
-   docker pull ghcr.io/postroggy/claude-code-interpreter:latest
+   docker pull ghcr.io/superduck-ai/claude-code-interpreter:latest
    ```
 
 2. 配置上游 Anthropic API（在 `.env` 中）：

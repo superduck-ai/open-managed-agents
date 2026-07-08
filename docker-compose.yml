@@ -51,7 +51,7 @@ services:
   # 从 e2b-local 镜像提取 envd 二进制到宿主机。
   # Docker daemon 需要宿主机路径才能 bind-mount envd 到 sandbox 容器。
   init-envd:
-    image: ghcr.io/postroggy/e2b-local:latest
+    image: ghcr.io/superduck-ai/e2b-local:latest
     user: root
     entrypoint: ["sh", "-c"]
     command:
@@ -127,7 +127,7 @@ services:
 
   # e2b-local — 沙箱网关（host 网络，管理宿主机 sandbox 容器）
   e2b-local:
-    image: ghcr.io/postroggy/e2b-local:latest
+    image: ghcr.io/superduck-ai/e2b-local:latest
     network_mode: host
     depends_on:
       init-envd:

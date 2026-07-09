@@ -83,8 +83,6 @@ export function CopyIdCell({
   displayValue?: ReactNode;
   children?: ReactNode;
   ariaLabel: string;
-  tooltipLabel?: string;
-  copiedLabel?: string;
   className?: string;
   textClassName?: string;
   buttonClassName?: string;

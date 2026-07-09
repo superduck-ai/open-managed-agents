@@ -188,8 +188,6 @@ function FilesTable({
                     value={file.id}
                     displayValue={formatFileId(file.id)}
                     ariaLabel={msg('files.copyAria', 'Copy {fileId}', { fileId: file.id })}
-                    tooltipLabel={msg('common.copy', 'Copy')}
-                    copiedLabel={msg('common.copied', 'Copied')}
                   />
                 </DataTableCell>
                 <DataTableCell className="truncate">{file.filename}</DataTableCell>

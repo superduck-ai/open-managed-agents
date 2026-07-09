@@ -1,9 +1,11 @@
+-- +goose NO TRANSACTION
+
 -- +goose Up
 with ranked as (
 	select
 		id,
 		display_title,
-		external_id,
+		'skill_' || id::text as duplicate_suffix,
 		row_number() over (
 			partition by workspace_id, display_title
 			order by updated_at desc, id desc
@@ -15,7 +17,7 @@ with ranked as (
 renamed as (
 	select
 		id,
-		display_title || ' (' || external_id || ')' as display_title
+		display_title || ' (' || duplicate_suffix || ')' as display_title
 	from ranked
 	where duplicate_rank > 1
 )
@@ -24,9 +26,11 @@ set display_title = renamed.display_title
 from renamed
 where skills.id = renamed.id;
 
-create unique index if not exists skills_workspace_display_title_active_key
+create unique index concurrently if not exists skills_workspace_display_title_active_key
 	on skills (workspace_id, display_title)
 	where deleted_at is null and display_title is not null;
 
 -- +goose Down
-drop index if exists skills_workspace_display_title_active_key;
+-- Duplicate-title renames are intentionally not reversed; restoring them would
+-- recreate active duplicates and violate the API contract this migration adds.
+drop index concurrently if exists skills_workspace_display_title_active_key;

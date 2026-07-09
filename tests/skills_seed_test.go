@@ -8,68 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/skills"
 )
-
-func TestSeedBuiltinSkills(t *testing.T) {
-	store := newFakeStore("seed-bucket")
-	app := newTestAppWithStore(t, nil, store)
-	defer app.close()
-	cleanupBuiltinSkillRows(t, app.db)
-	defer cleanupBuiltinSkillRows(t, app.db)
-
-	dir := t.TempDir()
-	skillID := uniqueBuiltinSeedID("xlsx")
-	writeSkillArchive(t, dir, skillID, skillArchiveBytes(t, skillID, "---\nname: xlsx\ndescription: spreadsheets\n---\n\n# xlsx\n"))
-	versionsPath := filepath.Join(dir, "versions.json")
-	if err := os.WriteFile(versionsPath, []byte(fmt.Sprintf("%s=20260203\n", skillID)), 0o600); err != nil {
-		t.Fatalf("write versions: %v", err)
-	}
-
-	result, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
-		Dir:          dir,
-		VersionsPath: versionsPath,
-	})
-	if err != nil {
-		t.Fatalf("seed builtin skills: %v", err)
-	}
-	if result.Imported != 1 || len(result.Skills) != 1 || result.Skills[0] != skillID {
-		t.Fatalf("seed result = %+v", result)
-	}
-	skill, err := app.db.GetBuiltinSkill(context.Background(), skillID)
-	if err != nil {
-		t.Fatalf("get seeded builtin skill: %v", err)
-	}
-	if skill.LatestVersion == nil || *skill.LatestVersion != "20260203" {
-		t.Fatalf("latest version = %v, want 20260203", skill.LatestVersion)
-	}
-	version, err := app.db.GetBuiltinSkillVersion(context.Background(), skillID, "latest")
-	if err != nil {
-		t.Fatalf("get seeded builtin version: %v", err)
-	}
-	if _, ok := store.objects[version.S3Key]; !ok {
-		t.Fatalf("seeded object %s missing from store", version.S3Key)
-	}
-
-	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
-		Dir:          dir,
-		VersionsPath: versionsPath,
-	}); err != nil {
-		t.Fatalf("seed builtin skills idempotent rerun: %v", err)
-	}
-
-	writeSkillArchive(t, dir, skillID, skillArchiveBytes(t, skillID, "---\nname: xlsx\ndescription: changed\n---\n\n# xlsx\n"))
-	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
-		Dir:          dir,
-		VersionsPath: versionsPath,
-	}); err == nil || !stringsContains(err.Error(), "already exists with different content") {
-		t.Fatalf("conflicting seed error = %v, want version conflict", err)
-	}
-}
 
 func TestSeedBuiltinSkillsRejectsInvalidArchives(t *testing.T) {
 	store := newFakeStore("seed-invalid-bucket")
@@ -119,6 +64,69 @@ func TestSeedBuiltinSkillsRejectsInvalidArchives(t *testing.T) {
 	}
 }
 
+func TestSeedBuiltinSkills(t *testing.T) {
+	store := newFakeStore("seed-bucket")
+	app := newTestAppWithStore(t, nil, store)
+	defer app.close()
+	cleanupBuiltinSkillRows(t, app.db)
+	defer cleanupBuiltinSkillRows(t, app.db)
+
+	dir := t.TempDir()
+	skillID := uniqueBuiltinSeedID("xlsx")
+	writeSkillArchive(t, dir, skillID, skillArchiveBytes(t, skillID, "---\nname: xlsx\ndescription: spreadsheets\n---\n\n# xlsx\n"))
+	versionsPath := filepath.Join(dir, "versions.json")
+	if err := os.WriteFile(versionsPath, []byte(fmt.Sprintf("%s=20260203\n", skillID)), 0o600); err != nil {
+		t.Fatalf("write versions: %v", err)
+	}
+
+	result, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
+		Dir:          dir,
+		VersionsPath: versionsPath,
+	})
+	if err != nil {
+		t.Fatalf("seed builtin skills: %v", err)
+	}
+	if result.Imported != 1 || len(result.Skills) != 1 || result.Skills[0] != skillID {
+		t.Fatalf("seed result = %+v", result)
+	}
+	skill, err := app.db.GetBuiltinSkill(context.Background(), skillID)
+	if err != nil {
+		t.Fatalf("get seeded builtin skill: %v", err)
+	}
+	if skill.LatestVersion == nil || *skill.LatestVersion != "20260203" {
+		t.Fatalf("latest version = %v, want 20260203", skill.LatestVersion)
+	}
+	version, err := app.db.GetBuiltinSkillVersion(context.Background(), skillID, "latest")
+	if err != nil {
+		t.Fatalf("get seeded builtin version: %v", err)
+	}
+	if _, ok := store.objects[version.S3Key]; !ok {
+		t.Fatalf("seeded object %s missing from store", version.S3Key)
+	}
+
+	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
+		Dir:          dir,
+		VersionsPath: versionsPath,
+	}); err != nil {
+		t.Fatalf("seed builtin skills idempotent rerun: %v", err)
+	}
+	rerunVersion, err := app.db.GetBuiltinSkillVersion(context.Background(), skillID, "latest")
+	if err != nil {
+		t.Fatalf("get seeded builtin version after rerun: %v", err)
+	}
+	if !rerunVersion.CreatedAt.Equal(version.CreatedAt) {
+		t.Fatalf("version created_at changed on idempotent rerun: got %s, want %s", rerunVersion.CreatedAt, version.CreatedAt)
+	}
+
+	writeSkillArchive(t, dir, skillID, skillArchiveBytes(t, skillID, "---\nname: xlsx\ndescription: changed\n---\n\n# xlsx\n"))
+	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
+		Dir:          dir,
+		VersionsPath: versionsPath,
+	}); err == nil || !stringsContains(err.Error(), "already exists with different content") {
+		t.Fatalf("conflicting seed error = %v, want version conflict", err)
+	}
+}
+
 func TestSeedBuiltinSkillsPrune(t *testing.T) {
 	store := newFakeStore("seed-prune-bucket")
 	app := newTestAppWithStore(t, nil, store)
@@ -134,6 +142,13 @@ func TestSeedBuiltinSkillsPrune(t *testing.T) {
 	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{Dir: dir}); err != nil {
 		t.Fatalf("seed initial: %v", err)
 	}
+	pdfVersion, err := app.db.GetBuiltinSkillVersion(context.Background(), pdfID, "latest")
+	if err != nil {
+		t.Fatalf("get seeded pdf version: %v", err)
+	}
+	if _, ok := store.objects[pdfVersion.S3Key]; !ok {
+		t.Fatalf("seeded pdf object %s missing from store", pdfVersion.S3Key)
+	}
 	if err := os.Remove(filepath.Join(dir, pdfID+".skill")); err != nil {
 		t.Fatalf("remove pdf archive: %v", err)
 	}
@@ -146,6 +161,9 @@ func TestSeedBuiltinSkillsPrune(t *testing.T) {
 	}
 	if _, err := app.db.GetBuiltinSkill(context.Background(), pdfID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("get pruned pdf err = %v, want not found", err)
+	}
+	if _, ok := store.objects[pdfVersion.S3Key]; ok {
+		t.Fatalf("pruned pdf object %s still present in store", pdfVersion.S3Key)
 	}
 }
 
@@ -190,5 +208,5 @@ func zipEntriesBytes(t *testing.T, entries map[string]string) []byte {
 }
 
 func stringsContains(value, needle string) bool {
-	return bytes.Contains([]byte(value), []byte(needle))
+	return strings.Contains(value, needle)
 }

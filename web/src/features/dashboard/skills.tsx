@@ -80,14 +80,13 @@ import {
   listSkillVersions,
   listSkills,
   retrieveSkill,
+  skillsIndexHref,
   useDashboardWorkspaceScope,
   type ConsoleSkill,
   type ConsoleSkillVersion
 } from './model';
 
 const maxUploadBytes = 8 * 1024 * 1024;
-const missingSkillMdMessage = 'SKILL.md not found. File name must be in all caps (SKILL.md) and located in the top-level folder.';
-const emptySkillFileMessage = 'Skill package files cannot be empty.';
 
 type SkillsPageProps = {
   initialCreateOpen?: boolean;
@@ -108,6 +107,8 @@ type SkillFile = File & {
   __skillPath?: string;
 };
 
+type I18nMsg = ReturnType<typeof useI18n>['msg'];
+
 type SkillFileSystemEntry = {
   isFile: boolean;
   isDirectory: boolean;
@@ -127,6 +128,7 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
   const [updateSkillTarget, setUpdateSkillTarget] = useState<ConsoleSkill | null>(null);
   const [deleteSkillTarget, setDeleteSkillTarget] = useState<ConsoleSkill | null>(null);
   const [deletingSkillId, setDeletingSkillId] = useState<string | null>(null);
+  const [deleteSkillError, setDeleteSkillError] = useState<string | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageTokens, setPageTokens] = useState<Array<string | undefined>>([undefined]);
   const paginationWorkspaceIdRef = useRef(workspaceId);
@@ -192,17 +194,24 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
     }
     const target = deleteSkillTarget;
     setDeletingSkillId(target.id);
+    setDeleteSkillError(null);
     try {
-      const versions = await listSkillVersions(target.id, workspaceId);
-      for (const version of versions.data) {
-        await deleteSkillVersion(target.id, version.version, workspaceId);
-      }
+      let nextPage: string | undefined;
+      do {
+        const versions = await listSkillVersions(target.id, workspaceId, nextPage);
+        for (const version of versions.data) {
+          await deleteSkillVersion(target.id, version.version, workspaceId);
+        }
+        nextPage = versions.next_page ?? undefined;
+      } while (nextPage);
       await deleteSkill(target.id, workspaceId);
       setDeleteSkillTarget(null);
       if (selectedSkillId === target.id) {
         setSelectedSkillId(null);
       }
       await invalidateSkills();
+    } catch (err) {
+      setDeleteSkillError(errorMessage(err));
     } finally {
       setDeletingSkillId(null);
     }
@@ -255,7 +264,10 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
         onRetry={() => void skillsQuery.refetch()}
         onOpenSkill={(skillId) => setSelectedSkillId(skillId)}
         onUpdateSkill={setUpdateSkillTarget}
-        onDeleteSkill={setDeleteSkillTarget}
+        onDeleteSkill={(skill) => {
+          setDeleteSkillError(null);
+          setDeleteSkillTarget(skill);
+        }}
       />
 
       <CursorPagination
@@ -274,7 +286,10 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
         workspaceId={workspaceId}
         onClose={() => setSelectedSkillId(null)}
         onUpdateSkill={setUpdateSkillTarget}
-        onDeleteSkill={setDeleteSkillTarget}
+        onDeleteSkill={(skill) => {
+          setDeleteSkillError(null);
+          setDeleteSkillTarget(skill);
+        }}
         onVersionChanged={invalidateSkill}
       />
 
@@ -310,9 +325,11 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
       <DeleteSkillDialog
         skill={deleteSkillTarget}
         isDeleting={Boolean(deleteSkillTarget && deletingSkillId === deleteSkillTarget.id)}
+        error={deleteSkillError}
         onOpenChange={(open) => {
           if (!open && !deletingSkillId) {
             setDeleteSkillTarget(null);
+            setDeleteSkillError(null);
           }
         }}
         onConfirm={() => void handleDeleteSkill()}
@@ -352,7 +369,7 @@ function SkillsTable({
   onUpdateSkill: (skill: ConsoleSkill) => void;
   onDeleteSkill: (skill: ConsoleSkill) => void;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
 
   return (
     <section aria-label={msg('skills.listAria', 'Skills list')} className="min-w-0">
@@ -403,8 +420,6 @@ function SkillsTable({
                       value={skill.id}
                       displayValue={formatSkillId(skill.id)}
                       ariaLabel={msg('skills.copyAria', 'Copy {skillId}', { skillId: skill.id })}
-                      tooltipLabel={msg('common.copy', 'Copy')}
-                      copiedLabel={msg('common.copied', 'Copied')}
                       stopPropagation
                     />
                   </DataTableCell>
@@ -414,8 +429,8 @@ function SkillsTable({
                   <DataTableCell className="truncate">
                     <SkillSourceBadge source={skill.source} />
                   </DataTableCell>
-                  <DataTableCell className="truncate text-muted-foreground">{formatSkillVersionDate(skill.latest_version)}</DataTableCell>
-                  <DataTableCell className="truncate text-muted-foreground">{formatSkillUpdatedAt(skill.updated_at || skill.created_at)}</DataTableCell>
+                  <DataTableCell className="truncate text-muted-foreground">{formatSkillVersionDate(skill.latest_version, locale)}</DataTableCell>
+                  <DataTableCell className="truncate text-muted-foreground">{formatSkillUpdatedAt(skill.updated_at || skill.created_at, locale, msg)}</DataTableCell>
                   <DataTableCell edge="end" className="px-2 text-right">
                     {skill.source === 'custom' ? (
                       <SkillActionsMenu
@@ -450,9 +465,10 @@ function SkillDrawer({
   onDeleteSkill: (skill: ConsoleSkill) => void;
   onVersionChanged: (skillId: string) => Promise<void>;
 }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const [versionToDelete, setVersionToDelete] = useState<ConsoleSkillVersion | null>(null);
   const [deletingVersion, setDeletingVersion] = useState(false);
+  const [deleteVersionError, setDeleteVersionError] = useState<string | null>(null);
   const skillQuery = useQuery({
     queryKey: ['skill', workspaceId, skillId],
     queryFn: () => retrieveSkill(skillId || '', workspaceId),
@@ -479,10 +495,13 @@ function SkillDrawer({
       return;
     }
     setDeletingVersion(true);
+    setDeleteVersionError(null);
     try {
       await deleteSkillVersion(skill.id, versionToDelete.version, workspaceId);
       setVersionToDelete(null);
       await onVersionChanged(skill.id);
+    } catch (err) {
+      setDeleteVersionError(errorMessage(err));
     } finally {
       setDeletingVersion(false);
     }
@@ -521,7 +540,7 @@ function SkillDrawer({
                       <SkillSourceBadge source={skill.source} />
                     </div>
                     <SheetDescription className="mt-1 font-mono">
-                      {formatSkillUpdatedAt(skill.updated_at || skill.created_at)}
+                      {formatSkillUpdatedAt(skill.updated_at || skill.created_at, locale, msg)}
                       <span className="mx-2 font-sans" aria-hidden>·</span>
                       {formatSkillId(skill.id)}
                     </SheetDescription>
@@ -569,7 +588,7 @@ function SkillDrawer({
                           <Badge variant="secondary" className="max-w-[180px] rounded-md font-mono">
                             <span className="truncate">{version.version}</span>
                           </Badge>
-                          <span className="text-sm text-muted-foreground">{formatSkillUpdatedAt(version.created_at)}</span>
+                          <span className="text-sm text-muted-foreground">{formatSkillUpdatedAt(version.created_at, locale, msg)}</span>
                           {version.version === skill.latest_version ? (
                             <Badge className="rounded-md bg-primary/20 text-primary">{msg('skills.versions.latest', 'Latest')}</Badge>
                           ) : null}
@@ -580,7 +599,10 @@ function SkillDrawer({
                               size="icon-sm"
                               className="ml-auto text-muted-foreground"
                               aria-label={msg('skills.versions.deleteAria', 'Delete version {version}', { version: version.version })}
-                              onClick={() => setVersionToDelete(version)}
+                              onClick={() => {
+                                setDeleteVersionError(null);
+                                setVersionToDelete(version);
+                              }}
                             >
                               <Trash2 className="size-4" aria-hidden />
                             </Button>
@@ -596,7 +618,15 @@ function SkillDrawer({
         </SheetContent>
       </Sheet>
 
-      <AlertDialog open={Boolean(versionToDelete)} onOpenChange={(open) => !open && !deletingVersion && setVersionToDelete(null)}>
+      <AlertDialog
+        open={Boolean(versionToDelete)}
+        onOpenChange={(open) => {
+          if (!open && !deletingVersion) {
+            setVersionToDelete(null);
+            setDeleteVersionError(null);
+          }
+        }}
+      >
         <AlertDialogContent size="default">
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -606,11 +636,25 @@ function SkillDrawer({
               {msg('skills.deleteVersion.description', 'This version will no longer be available. This action is permanent and cannot be undone.')}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deleteVersionError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <AlertTitle>{msg('skills.deleteVersion.error', 'Version could not be deleted.')}</AlertTitle>
+              <AlertDescription>{deleteVersionError}</AlertDescription>
+            </Alert>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel variant="secondary" disabled={deletingVersion}>
               {msg('common.cancel', 'Cancel')}
             </AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={deletingVersion} onClick={handleDeleteVersion}>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deletingVersion}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDeleteVersion();
+              }}
+            >
               {deletingVersion ? msg('common.deleting', 'Deleting...') : msg('common.delete', 'Delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -639,6 +683,7 @@ function SkillUploadDialog({
 }) {
   const { msg } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const [selection, setSelection] = useState<UploadSelection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -653,7 +698,15 @@ function SkillUploadDialog({
       if (inputRef.current) {
         inputRef.current.value = '';
       }
+      if (directoryInputRef.current) {
+        directoryInputRef.current.value = '';
+      }
     }
+  }, [open]);
+
+  useEffect(() => {
+    directoryInputRef.current?.setAttribute('webkitdirectory', '');
+    directoryInputRef.current?.setAttribute('directory', '');
   }, [open]);
 
   const findCreateConflict = useCallback((displayTitle: string) => {
@@ -666,12 +719,12 @@ function SkillUploadDialog({
     }
     return existingSkills.find((candidate) => (
       candidate.source === 'custom' &&
-      candidate.display_title.trim() === normalizedTitle
+      (candidate.display_title || '').trim() === normalizedTitle
     )) ?? null;
   }, [existingSkills, mode]);
 
   const selectFiles = async (files: File[]) => {
-    const result = validateUploadFiles(files);
+    const result = validateUploadFiles(files, msg);
     setSelection(result.selection);
     setError(result.error);
   };
@@ -720,6 +773,13 @@ function SkillUploadDialog({
           className="hidden"
           onChange={(event) => void selectFiles(Array.from(event.currentTarget.files ?? []))}
         />
+        <input
+          ref={directoryInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(event) => void selectFiles(Array.from(event.currentTarget.files ?? []))}
+        />
 
         {selection ? (
           <div className="rounded-lg border border-border bg-background p-3">
@@ -748,6 +808,9 @@ function SkillUploadDialog({
                   setError(null);
                   if (inputRef.current) {
                     inputRef.current.value = '';
+                  }
+                  if (directoryInputRef.current) {
+                    directoryInputRef.current.value = '';
                   }
                 }}
               >
@@ -786,6 +849,30 @@ function SkillUploadDialog({
               <p className="text-sm leading-5">
                 {msg('skills.upload.dropzone', 'Drag and drop a .zip, .skill file, or directory to upload')}
               </p>
+              <div className="flex justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    inputRef.current?.click();
+                  }}
+                >
+                  {msg('skills.upload.chooseFile', 'Choose file')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    directoryInputRef.current?.click();
+                  }}
+                >
+                  {msg('skills.upload.chooseDirectory', 'Choose directory')}
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -871,11 +958,13 @@ function SkillActionsMenu({
 function DeleteSkillDialog({
   skill,
   isDeleting,
+  error,
   onOpenChange,
   onConfirm
 }: {
   skill: ConsoleSkill | null;
   isDeleting: boolean;
+  error: string | null;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
 }) {
@@ -896,6 +985,13 @@ function DeleteSkillDialog({
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {error ? (
+          <Alert variant="destructive">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <AlertTitle>{msg('skills.delete.error', 'Skill could not be deleted.')}</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel variant="secondary" disabled={isDeleting}>
             {msg('common.cancel', 'Cancel')}
@@ -903,7 +999,10 @@ function DeleteSkillDialog({
           <AlertDialogAction
             variant="destructive"
             disabled={isDeleting}
-            onClick={onConfirm}
+            onClick={(event) => {
+              event.preventDefault();
+              onConfirm();
+            }}
           >
             {isDeleting ? msg('common.deleting', 'Deleting...') : msg('common.delete', 'Delete')}
           </AlertDialogAction>
@@ -914,7 +1013,8 @@ function DeleteSkillDialog({
 }
 
 function SkillSourceBadge({ source }: { source: string }) {
-  const label = formatSkillSource(source);
+  const { msg } = useI18n();
+  const label = formatSkillSource(source, msg);
   const anthropic = source.trim().toLowerCase() === 'anthropic';
   return (
     <Badge
@@ -952,7 +1052,8 @@ function useSkillSearchParam(initialSkillId?: string): [string | null, (skillId:
       params.delete('skill');
     }
     const search = params.toString();
-    const nextURL = search ? `${window.location.pathname}?${search}` : window.location.pathname;
+    const basePath = skillsIndexHref();
+    const nextURL = search ? `${basePath}?${search}` : basePath;
     if (replace) {
       window.history.replaceState(null, '', nextURL);
     } else {
@@ -964,16 +1065,16 @@ function useSkillSearchParam(initialSkillId?: string): [string | null, (skillId:
   return [skillId, updateSkillId];
 }
 
-function validateUploadFiles(files: File[]): { selection: UploadSelection | null; error: string | null } {
+function validateUploadFiles(files: File[], msg: I18nMsg): { selection: UploadSelection | null; error: string | null } {
   if (!files.length) {
     return { selection: null, error: null };
   }
   if (files.some((file) => file.size === 0)) {
-    return { selection: null, error: emptySkillFileMessage };
+    return { selection: null, error: msg('skills.upload.errors.emptyFile', 'Skill package files cannot be empty.') };
   }
   const size = files.reduce((total, file) => total + file.size, 0);
   if (size > maxUploadBytes) {
-    return { selection: null, error: 'Skill package exceeds maximum size.' };
+    return { selection: null, error: msg('skills.upload.errors.tooLarge', 'Skill package exceeds maximum size.') };
   }
   if (files.length === 1 && isSkillArchive(files[0].name)) {
     const label = files[0].name;
@@ -992,11 +1093,17 @@ function validateUploadFiles(files: File[]): { selection: UploadSelection | null
   const paths = files.map(skillFilePath);
   const topLevel = new Set(paths.map((path) => path.split('/')[0]).filter(Boolean));
   if (topLevel.size !== 1) {
-    return { selection: null, error: 'All skill files must be under a single top-level directory.' };
+    return { selection: null, error: msg('skills.upload.errors.singleTopLevel', 'All skill files must be under a single top-level directory.') };
   }
   const directory = Array.from(topLevel)[0];
   if (!paths.includes(`${directory}/SKILL.md`)) {
-    return { selection: null, error: missingSkillMdMessage };
+    return {
+      selection: null,
+      error: msg(
+        'skills.upload.errors.missingSkillMd',
+        'SKILL.md not found. File name must be in all caps (SKILL.md) and located in the top-level folder.'
+      )
+    };
   }
   return {
     selection: {
@@ -1066,34 +1173,34 @@ function formatSkillId(skillId: string) {
   return `${skillId.slice(0, 9)}...${skillId.slice(-6)}`;
 }
 
-function formatSkillVersionDate(version: string) {
+function formatSkillVersionDate(version: string, locale: string) {
   if (/^\d{8}$/.test(version)) {
     const year = Number(version.slice(0, 4));
     const month = Number(version.slice(4, 6));
     const day = Number(version.slice(6, 8));
-    return formatDate(new Date(Date.UTC(year, month - 1, day)));
+    return formatDate(new Date(Date.UTC(year, month - 1, day)), locale);
   }
   if (/^\d{13,16}$/.test(version)) {
-    return formatDate(new Date(Number(version) / 1000));
+    return formatDate(new Date(Number(version) / 1000), locale);
   }
   return version || '-';
 }
 
-function formatDate(date: Date) {
+function formatDate(date: Date, locale: string) {
   if (!Number.isFinite(date.getTime())) {
     return '-';
   }
-  return new Intl.DateTimeFormat('en', {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     year: 'numeric'
   }).format(date);
 }
 
-function formatSkillUpdatedAt(value: string) {
+function formatSkillUpdatedAt(value: string, locale: string, msg: I18nMsg) {
   const timestamp = Date.parse(value);
   if (Number.isFinite(timestamp) && Math.abs(Date.now() - timestamp) < 60_000) {
-    return 'just now';
+    return msg('common.justNow', 'just now');
   }
-  return formatRelativeTime(value);
+  return formatRelativeTime(value, locale, msg('common.justNow', 'just now'));
 }

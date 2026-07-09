@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -100,7 +101,9 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 			CreatedAt:   now,
 		})
 		if err != nil {
-			_ = store.Delete(ctx, objectKey)
+			if deleteErr := store.Delete(ctx, objectKey); deleteErr != nil {
+				log.Printf("seed builtin skills: cleanup failed for %s: %v", objectKey, deleteErr)
+			}
 			if errors.Is(err, db.ErrVersionConflict) {
 				return BuiltinSeedResult{}, fmt.Errorf("%s version %s already exists with different content; choose a new version", skillID, version)
 			}
@@ -116,7 +119,9 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 			return BuiltinSeedResult{}, err
 		}
 		for _, version := range prunedVersions {
-			_ = store.Delete(ctx, version.S3Key)
+			if err := store.Delete(ctx, version.S3Key); err != nil {
+				log.Printf("seed builtin skills: delete pruned object failed for %s version %s (%s): %v", version.SkillExternalID, version.Version, version.S3Key, err)
+			}
 		}
 		result.Pruned = len(prunedVersions)
 	}
@@ -163,11 +168,14 @@ func loadBuiltinSeedVersions(path string) (map[string]string, error) {
 }
 
 func defaultBuiltinSeedVersion(modTime time.Time, sha string) string {
-	if !modTime.IsZero() {
-		return modTime.UTC().Format("20060102")
-	}
 	if len(sha) >= 12 {
 		return sha[:12]
+	}
+	if strings.TrimSpace(sha) != "" {
+		return sha
+	}
+	if !modTime.IsZero() {
+		return modTime.UTC().Format("20060102")
 	}
 	return sha
 }

@@ -826,8 +826,6 @@ export function ManagedEntityRow({
               value={entity.id}
               displayValue={compactEntityId(entity.id)}
               ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: entity.id })}
-              tooltipLabel={msg('common.copy', 'Copy')}
-              copiedLabel={msg('common.copied', 'Copied')}
             />
           ) :
           column === 'Name' ? (

@@ -193,10 +193,16 @@ export function retrieveSkill(skillId: string, workspaceId: string) {
   return anthropicBetaApi.skills.retrieve<ConsoleSkill>(skillId, workspaceId);
 }
 
-export function listSkillVersions(skillId: string, workspaceId: string) {
+export function listSkillVersions(skillId: string, workspaceId: string, pageToken?: string) {
+  const params: Record<string, string | number> = {
+    limit: 50
+  };
+  if (pageToken) {
+    params.page = pageToken;
+  }
   return anthropicBetaApi.skills.versions.list<ConsoleSkillVersion>(
     skillId,
-    { limit: 50 },
+    params,
     workspaceId
   ) as Promise<SkillVersionsListResponse>;
 }
@@ -241,30 +247,11 @@ function skillUploadPath(file: File) {
 }
 
 export async function deleteSkill(skillId: string, workspaceId: string) {
-  const response = await fetch(`/v1/skills/${encodeURIComponent(skillId)}?beta=true`, {
-    method: 'DELETE',
-    headers: skillsRequestHeaders(workspaceRequestHeaders(workspaceId)),
-    credentials: 'include'
-  });
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-  return response.json() as Promise<{ id: string; type: string }>;
+  return anthropicBetaApi.skills.delete<{ id: string; type: string }>(skillId, workspaceId);
 }
 
 export async function deleteSkillVersion(skillId: string, version: string, workspaceId: string) {
-  const response = await fetch(
-    `/v1/skills/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}?beta=true`,
-    {
-      method: 'DELETE',
-      headers: skillsRequestHeaders(workspaceRequestHeaders(workspaceId)),
-      credentials: 'include'
-    }
-  );
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-  return response.json() as Promise<{ id: string; type: string }>;
+  return anthropicBetaApi.skills.versions.delete<{ id: string; type: string }>(skillId, version, workspaceId);
 }
 
 async function responseErrorMessage(response: Response) {
@@ -366,16 +353,16 @@ export function canCancelBatch(batch: ConsoleMessageBatch) {
   return batch.processing_status === 'in_progress';
 }
 
-export function formatRelativeTime(value: string) {
+export function formatRelativeTime(value: string, locale = 'en', lessThanMinuteLabel = 'less than a minute ago') {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
     return value;
   }
   const diffSeconds = Math.round((timestamp - Date.now()) / 1000);
   const absoluteSeconds = Math.abs(diffSeconds);
-  const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
   if (absoluteSeconds < 60) {
-    return 'less than a minute ago';
+    return lessThanMinuteLabel;
   }
   if (absoluteSeconds < 3600) {
     return formatter.format(Math.round(diffSeconds / 60), 'minute');
@@ -386,7 +373,7 @@ export function formatRelativeTime(value: string) {
   if (absoluteSeconds < 2_592_000) {
     return formatter.format(Math.round(diffSeconds / 86_400), 'day');
   }
-  return new Intl.DateTimeFormat('en', {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     year: new Date(timestamp).getFullYear() === new Date().getFullYear() ? undefined : 'numeric'

@@ -546,8 +546,6 @@ export function AgentsResourcePage({ config, routeWorkspaceId }: { config: Resou
                         <CopyIdCell
                           value={agent.id}
                           ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: agent.id })}
-                          tooltipLabel={msg('common.copy', 'Copy')}
-                          copiedLabel={msg('common.copied', 'Copied')}
                           className="gap-1.5"
                         >
                           <a href={detailHref} className="truncate font-mono text-[13px] text-foreground underline-offset-4 hover:underline">

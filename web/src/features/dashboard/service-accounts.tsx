@@ -370,8 +370,6 @@ function ServiceAccountsTable({
                   value={record.id}
                   displayValue={record.id}
                   ariaLabel={msg('serviceAccounts.copyId', 'Copy {id}', { id: record.id })}
-                  tooltipLabel={msg('common.copy', 'Copy')}
-                  copiedLabel={msg('common.copied', 'Copied')}
                   textClassName="text-muted-foreground"
                 />
               </DataTableCell>

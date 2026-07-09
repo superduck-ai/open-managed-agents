@@ -262,6 +262,9 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 		return nil, false, err
 	}
 	if offset < builtinCount {
+		// The combined feed is ordered as all builtin skills first, followed by
+		// workspace custom skills. Offsets inside the builtin range page through
+		// builtin rows before spilling into custom rows.
 		builtins, builtinMore, err := h.db.ListBuiltinSkillsPage(r.Context(), db.ListBuiltinSkillsPageParams{
 			Limit:  limit,
 			Offset: offset,
@@ -273,6 +276,8 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 		if len(data) == limit {
 			hasMore := builtinMore || builtinCount > offset+len(data)
 			if !hasMore && offset+len(data) >= builtinCount {
+				// If builtin rows exactly fill this page at the boundary, probe
+				// custom rows so has_more still exposes the next custom page.
 				records, _, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
 					WorkspaceID: principal.WorkspaceID,
 					Limit:       1,
@@ -285,6 +290,8 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 			}
 			return data, hasMore, nil
 		}
+		// A partial builtin page is completed from the first custom row because
+		// no custom rows have been consumed yet.
 		customLimit := limit - len(data)
 		records, customMore, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
 			WorkspaceID: principal.WorkspaceID,
@@ -298,6 +305,8 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 		return data, customMore, nil
 	}
 
+	// Once the offset has passed all builtin rows, translate the combined
+	// offset into the custom-only feed.
 	records, hasMore, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
 		WorkspaceID: principal.WorkspaceID,
 		Limit:       limit,

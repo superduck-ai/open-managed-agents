@@ -268,8 +268,6 @@ function BatchesTable({
                     <CopyIdCell
                       value={batch.id}
                       ariaLabel={msg('batches.copyAria', 'Copy {batchId}', { batchId: batch.id })}
-                      tooltipLabel={msg('common.copy', 'Copy')}
-                      copiedLabel={msg('common.copied', 'Copied')}
                       stopPropagation
                     >
                       <Button
@@ -406,8 +404,6 @@ function BatchDetailPanel({
             value={batch.id}
             displayValue={formatMessageBatchId(batchId)}
             ariaLabel={msg('batches.copyAria', 'Copy {batchId}', { batchId: formatMessageBatchId(batch.id) })}
-            tooltipLabel={msg('common.copy', 'Copy')}
-            copiedLabel={msg('common.copied', 'Copied')}
             className="mt-2"
             textClassName="text-muted-foreground"
           />

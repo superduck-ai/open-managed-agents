@@ -33,10 +33,8 @@ func main() {
 		log.Fatalf("open database: %v", err)
 	}
 	defer database.Close()
-	if cfg.DatabaseAutoMigrate {
-		if err := database.Migrate(ctx); err != nil {
-			log.Fatalf("migrate database: %v", err)
-		}
+	if err := database.Migrate(ctx); err != nil {
+		log.Fatalf("migrate database: %v", err)
 	}
 	store, err := storage.NewMinIO(cfg)
 	if err != nil {

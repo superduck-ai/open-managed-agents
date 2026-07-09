@@ -64,6 +64,8 @@ go run ./cmd/seed-builtin-skills --dir /path/to/assets/skills/public --versions 
 - `--versions` 可选，支持 JSON object 或 `skill_id=version` 行格式。生产导入推荐显式指定平台版本号。
 - `--prune` 可选，软删除本次目录中缺失的 builtin skill/version；默认只 upsert，不删除旧项。
 
+CLI 会在导入前主动执行 goose migrations，不依赖服务端运行时的 `DB_AUTO_MIGRATE` 配置。这样管理员可以在新环境里先运行 seed 工具完成表结构和 catalog 初始化。
+
 Archive 校验规则：
 
 - 单个 archive 解包后必须只有一个顶层目录。
@@ -80,9 +82,10 @@ builtin-skills/{skill_id}/versions/{version}/{sha256}.skill
 
 幂等规则：
 
-- 同一个 `skill_id + version + sha256` 重跑只刷新 catalog，不产生语义变化。
+- 缺省版本号由 archive 内容 sha 派生；生产导入推荐通过 `--versions` 显式指定平台版本号。
+- 同一个 `skill_id + version + sha256` 重跑只刷新 catalog，不产生语义变化，并保留已存在 active version 的 `created_at`，避免版本排序被幂等重跑改变。
 - 同一个 `skill_id + version` 但内容 sha 不同会返回冲突错误，管理员需要换新版本号。
-- `--prune` 只软删除 DB 行，并 best-effort 删除对应对象；对象删除失败不阻塞 DB 软删除。
+- `--prune` 软删除 DB 行，并 best-effort 删除对应对象；对象删除失败会记录日志但不阻塞 DB 软删除。
 
 ## API 行为
 
@@ -99,7 +102,8 @@ Builtin retrieve、versions 和 content/download 都从 DB metadata 定位 MinIO
 Custom create 是纯创建语义，不会把同名 skill 自动合并成新版本。`display_title` 是当前 workspace 内 custom skill 的业务唯一键：
 
 - migration `00011_unique_skill_display_title.sql` 在 `skills(workspace_id, display_title)` 上创建 active-row partial unique index。
-- migration 会先修复历史重复 active rows：每个 workspace/title 组合保留最近更新的一条原名，其余重复项追加 `external_id` 后缀，避免已存在数据阻塞升级。
+- migration 会先修复历史重复 active rows：每个 workspace/title 组合保留最近更新的一条原名，其余重复项追加数据库内部 `id` 派生的后缀，避免已存在数据阻塞升级。
+- 唯一索引用 `CREATE UNIQUE INDEX CONCURRENTLY` 创建，降低迁移期间对 `skills` 表写入的锁影响。
 - `POST /v1/skills` 若复用未删除 custom skill 的 `display_title`，返回 `400 invalid_request_error`。
 - 正确更新路径是 `POST /v1/skills/{skill_id}/versions?beta=true`。
 - soft delete 后同一 workspace 可以重新创建相同 `display_title`。

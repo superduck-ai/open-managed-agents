@@ -4,7 +4,7 @@ import { relativeTime } from '../agents/AgentsResourcePage';
 import { localTimezone } from '../api';
 import { CompactChip, StatusPill } from '../components/common';
 import { type CredentialFormValues, type DeploymentApiResponse, type DeploymentRunApiResponse, type EnvironmentApiResponse, type EnvironmentEditValues, type EnvironmentPackageRow, type ManagedEntityApiResponse, type ManagedEntityFormValues, type ManagedEntitySection, type MemoryApiResponse, type MemoryBranchState, type MemoryTreeNode, type PageResponse, type SessionApiResponse, type VaultApiResponse, type VaultCredentialApiResponse } from '../types';
-import { compactEntityId, formatBytes, objectRecord, titleCase } from '../utils';
+import { formatBytes, objectRecord, titleCase } from '../utils';
 
 export function initialSelectedMemoryId() {
   if (typeof window === 'undefined') {
@@ -211,13 +211,11 @@ export function memoryFileName(path: string) {
 }
 
 export function cellsForEntity(section: ManagedEntitySection, entity: ManagedEntityApiResponse): Record<string, ReactNode> {
-  const idCell = <span className="truncate font-mono text-[13px] text-foreground">{compactEntityId(entity.id)}</span>;
   const status = <StatusPill>{entityStatusLabel(entity)}</StatusPill>;
 
   switch (section) {
     case 'sessions':
       return {
-        ID: idCell,
         Name: entityDisplayName(section, entity),
         Status: status,
         Agent: <CompactChip icon={Bot}>{entityAgentLabel(entity)}</CompactChip>,
@@ -225,7 +223,6 @@ export function cellsForEntity(section: ManagedEntitySection, entity: ManagedEnt
       };
     case 'deployments':
       return {
-        ID: idCell,
         Name: entityDisplayName(section, entity),
         Status: status,
         Agent: <CompactChip icon={Bot}>{entityAgentLabel(entity)}</CompactChip>,
@@ -234,7 +231,6 @@ export function cellsForEntity(section: ManagedEntitySection, entity: ManagedEnt
       };
     case 'environments':
       return {
-        ID: idCell,
         Name: entityDisplayName(section, entity),
         Status: status,
         Type: 'Cloud',
@@ -242,14 +238,12 @@ export function cellsForEntity(section: ManagedEntitySection, entity: ManagedEnt
       };
     case 'credential-vaults':
       return {
-        ID: idCell,
         Name: entityDisplayName(section, entity),
         Status: status,
         Created: relativeTime(entity.created_at)
       };
     case 'memory-stores':
       return {
-        ID: idCell,
         Name: entityDisplayName(section, entity),
         Status: status,
         Created: relativeTime(entity.created_at)

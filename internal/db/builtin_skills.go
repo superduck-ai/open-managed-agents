@@ -73,12 +73,11 @@ func (d *DB) UpsertBuiltinSkillWithVersion(ctx context.Context, skill BuiltinSki
 	}
 
 	var existingSHA string
-	var existingDeletedAt *time.Time
 	err = tx.QueryRow(ctx, `
-		select sha256, deleted_at
+		select sha256
 		from builtin_skill_versions
 		where skill_id = $1 and version = $2
-	`, createdSkill.ID, version.Version).Scan(&existingSHA, &existingDeletedAt)
+	`, createdSkill.ID, version.Version).Scan(&existingSHA)
 	if err == nil && existingSHA != version.SHA256 {
 		return BuiltinSkill{}, BuiltinSkillVersion{}, ErrVersionConflict
 	}
@@ -91,17 +90,6 @@ func (d *DB) UpsertBuiltinSkillWithVersion(ctx context.Context, skill BuiltinSki
 	createdVersion, err := upsertBuiltinSkillVersion(ctx, tx, version)
 	if err != nil {
 		return BuiltinSkill{}, BuiltinSkillVersion{}, err
-	}
-	if existingDeletedAt != nil {
-		if _, err := tx.Exec(ctx, `
-			update builtin_skills
-			set latest_version = $2,
-				updated_at = $3,
-				deleted_at = null
-			where id = $1
-		`, createdSkill.ID, createdVersion.Version, createdVersion.CreatedAt); err != nil {
-			return BuiltinSkill{}, BuiltinSkillVersion{}, err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return BuiltinSkill{}, BuiltinSkillVersion{}, err
@@ -127,7 +115,10 @@ func upsertBuiltinSkillVersion(ctx context.Context, tx skillTx, version BuiltinS
 			s3_key = excluded.s3_key,
 			size_bytes = excluded.size_bytes,
 			sha256 = excluded.sha256,
-			created_at = excluded.created_at,
+			created_at = case
+				when builtin_skill_versions.deleted_at is not null then excluded.created_at
+				else builtin_skill_versions.created_at
+			end,
 			deleted_at = null
 		returning id, uuid::text, external_id, skill_id, skill_external_id, version,
 			name, description, directory, s3_bucket, s3_key, size_bytes, sha256, created_at, deleted_at

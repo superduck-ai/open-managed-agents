@@ -57,16 +57,13 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 		if err != nil {
 			return skillPackage{}, err
 		}
-		data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+		data, err := readWithinBudget(file, maxBytes)
 		closeErr := file.Close()
 		if err != nil {
 			return skillPackage{}, err
 		}
 		if closeErr != nil {
 			return skillPackage{}, closeErr
-		}
-		if int64(len(data)) > maxBytes {
-			return skillPackage{}, packageError{Status: http.StatusRequestEntityTooLarge, Message: "Skill package exceeds maximum size"}
 		}
 		return skillPackageFromArchive(data, maxBytes)
 	}
@@ -82,7 +79,7 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 		if err != nil {
 			return skillPackage{}, err
 		}
-		data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+		data, err := readWithinBudget(file, maxBytes-total)
 		closeErr := file.Close()
 		if err != nil {
 			return skillPackage{}, err
@@ -238,15 +235,19 @@ func shouldSkipArchiveEntry(name string) bool {
 }
 
 func readZipFile(file *zip.File, remaining int64) ([]byte, error) {
-	if remaining < 0 {
-		remaining = 0
-	}
 	rc, err := file.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	data, err := io.ReadAll(io.LimitReader(rc, remaining+1))
+	return readWithinBudget(rc, remaining)
+}
+
+func readWithinBudget(reader io.Reader, remaining int64) ([]byte, error) {
+	if remaining < 0 {
+		remaining = 0
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, remaining+1))
 	if err != nil {
 		return nil, err
 	}

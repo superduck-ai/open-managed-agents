@@ -1104,7 +1104,15 @@ describe('Skills page', () => {
               skill_id: 'skill_emoji',
               version: '20260708',
               created_at: new Date(Date.now() - 120_000).toISOString()
-            },
+            }
+          ],
+          has_more: true,
+          next_page: 'cursor_2'
+        };
+      }
+      if (url === '/v1/skills/skill_emoji/versions?beta=true&limit=50&page=cursor_2') {
+        return {
+          data: [
             {
               id: 'skillver_2',
               type: 'skill_version',

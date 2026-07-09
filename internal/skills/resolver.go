@@ -40,16 +40,12 @@ type RuntimeSkill struct {
 
 func (s RuntimeSkill) LoadArchive(ctx context.Context) ([]byte, error) {
 	if len(s.Archive) > 0 {
-		return append([]byte(nil), s.Archive...), nil
+		return s.Archive, nil
 	}
 	if s.archiveLoader == nil {
 		return nil, fmt.Errorf("skill archive loader is unavailable for %s/%s@%s", s.Source, s.SkillID, s.Version)
 	}
-	data, err := s.archiveLoader(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return append([]byte(nil), data...), nil
+	return s.archiveLoader(ctx)
 }
 
 type runtimeSkillRef struct {
@@ -181,23 +177,18 @@ func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceID int64, 
 	if r.db == nil || r.store == nil {
 		return RuntimeSkill{}, errors.New("custom skill resolver is unavailable")
 	}
-	version := ref.Version
-	if version == "latest" {
-		skill, err := r.db.GetSkill(ctx, workspaceID, ref.SkillID)
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				return RuntimeSkill{}, fmt.Errorf("custom skill not found: %s", ref.SkillID)
-			}
-			return RuntimeSkill{}, err
-		}
-		if skill.LatestVersion == nil || strings.TrimSpace(*skill.LatestVersion) == "" {
-			return RuntimeSkill{}, fmt.Errorf("custom skill has no active versions: %s", ref.SkillID)
-		}
-		version = strings.TrimSpace(*skill.LatestVersion)
+	var record db.SkillVersion
+	var err error
+	if ref.Version == "latest" {
+		record, err = r.db.GetLatestSkillVersion(ctx, workspaceID, ref.SkillID)
+	} else {
+		record, err = r.db.GetSkillVersion(ctx, workspaceID, ref.SkillID, ref.Version)
 	}
-	record, err := r.db.GetSkillVersion(ctx, workspaceID, ref.SkillID, version)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
+			if ref.Version == "latest" {
+				return RuntimeSkill{}, fmt.Errorf("custom skill latest version not found: %s", ref.SkillID)
+			}
 			return RuntimeSkill{}, fmt.Errorf("custom skill version not found: %s@%s", ref.SkillID, ref.Version)
 		}
 		return RuntimeSkill{}, err

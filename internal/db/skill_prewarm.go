@@ -129,19 +129,28 @@ func (d *DB) LeaseSkillPrewarmJobs(ctx context.Context, workerID string, limit i
 	return jobs, rows.Err()
 }
 
-func (d *DB) CompleteSkillPrewarmJob(ctx context.Context, jobID int64) error {
-	_, err := d.Pool.Exec(ctx, `
-		update jobs
-		set status = 'completed',
-			locked_by = null,
-			locked_until = null,
-			updated_at = now()
-		where id = $1 and type = 'skill_prewarm'
-	`, jobID)
-	return err
+func (d *DB) CompleteSkillPrewarmJob(ctx context.Context, jobID int64, workerID string) error {
+	tag, err := d.Pool.Exec(ctx, `
+			update jobs
+			set status = 'completed',
+				locked_by = null,
+				locked_until = null,
+				updated_at = now()
+			where id = $1
+				and type = 'skill_prewarm'
+				and status = 'running'
+				and locked_by = $2
+		`, jobID, workerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
-func (d *DB) FailSkillPrewarmJob(ctx context.Context, jobID int64, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error {
+func (d *DB) FailSkillPrewarmJob(ctx context.Context, jobID int64, workerID string, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error {
 	nextAttempts := attempts + 1
 	status := "retry"
 	if nextAttempts >= maxAttempts {
@@ -149,21 +158,30 @@ func (d *DB) FailSkillPrewarmJob(ctx context.Context, jobID int64, attempts int,
 	}
 	now := time.Now().UTC()
 	runAfter := now.Add(retryDelay)
-	_, err := d.Pool.Exec(ctx, `
-		update jobs
-		set status = $2,
-			locked_by = null,
-			locked_until = null,
+	tag, err := d.Pool.Exec(ctx, `
+			update jobs
+			set status = $2,
+				locked_by = null,
+				locked_until = null,
 			run_after = $3,
 			updated_at = now(),
 			attempts = $5,
 			payload = payload || jsonb_build_object(
-				'last_error', $4::text,
-				'last_error_at', $6::text
-			)
-		where id = $1 and type = 'skill_prewarm'
-	`, jobID, status, runAfter, reason, nextAttempts, now.Format(time.RFC3339Nano))
-	return err
+					'last_error', $4::text,
+					'last_error_at', $6::text
+				)
+			where id = $1
+				and type = 'skill_prewarm'
+				and status = 'running'
+				and locked_by = $7
+		`, jobID, status, runAfter, reason, nextAttempts, now.Format(time.RFC3339Nano), workerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (d *DB) ListAgentsForSkillPrewarmFanout(ctx context.Context, workspaceID int64, skillID string, afterID int64, limit int) ([]Agent, bool, error) {
@@ -174,13 +192,13 @@ func (d *DB) ListAgentsForSkillPrewarmFanout(ctx context.Context, workspaceID in
 		where workspace_id = $1
 			and id > $3
 			and deleted_at is null
-			and archived_at is null
-			and exists (
-				select 1
-				from jsonb_array_elements(skills) elem
-				where elem->>'type' = 'custom'
-					and elem->>'skill_id' = $2
-					and coalesce(nullif(elem->>'version', ''), 'latest') = 'latest'
+				and archived_at is null
+				and exists (
+					select 1
+					from jsonb_array_elements(coalesce(skills, '[]'::jsonb)) elem
+					where elem->>'type' = 'custom'
+						and elem->>'skill_id' = $2
+						and coalesce(nullif(elem->>'version', ''), 'latest') = 'latest'
 			)
 		order by id asc
 		limit $4

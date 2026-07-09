@@ -48,7 +48,7 @@ type SkillMount struct {
 }
 
 type Provider interface {
-	Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (Sandbox, error)
+	Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolution Resolution) (Sandbox, error)
 	Kill(ctx context.Context, sandboxID string) error
 	Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error)
 	WriteFile(ctx context.Context, sandboxID string, path string, data []byte) error
@@ -96,13 +96,16 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 	return resolved, nil
 }
 
-func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (Sandbox, error) {
+func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolved Resolution) (Sandbox, error) {
 	if strings.TrimSpace(p.cfg.E2BAPIKey) == "" && !p.cfg.E2BDebug {
 		return Sandbox{}, errors.New("E2B_API_KEY is required to create a sandbox")
 	}
-	resolved, err := p.Resolve(env, work)
-	if err != nil {
-		return Sandbox{}, err
+	if strings.TrimSpace(resolved.Template) == "" {
+		var err error
+		resolved, err = p.Resolve(env, work)
+		if err != nil {
+			return Sandbox{}, err
+		}
 	}
 	timeoutMs := int(resolved.Timeout / time.Millisecond)
 	if timeoutMs <= 0 {
@@ -215,9 +218,9 @@ func (p *E2BProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []ski
 		return nil, err
 	}
 	if !created {
-		ready, err := volume.Exists(ctx, skillMountReadyPath, p.volumeAPIOpts())
+		ready, err := p.skillVolumeReady(ctx, volume, volumeName, manifestSHA256)
 		if err != nil {
-			return nil, fmt.Errorf("check managed agent skill volume readiness %s: %w", volumeName, err)
+			return nil, err
 		}
 		if ready {
 			return &SkillMount{
@@ -237,6 +240,30 @@ func (p *E2BProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []ski
 		ManifestSHA256: manifestSHA256,
 		Skills:         manifest.Skills,
 	}, nil
+}
+
+func (p *E2BProvider) skillVolumeReady(ctx context.Context, volume *e2b.Volume, volumeName string, manifestSHA256 string) (bool, error) {
+	exists, err := volume.Exists(ctx, skillMountReadyPath, p.volumeAPIOpts())
+	if err != nil {
+		return false, fmt.Errorf("check managed agent skill volume readiness %s: %w", volumeName, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	value, err := volume.ReadFile(ctx, skillMountReadyPath, p.volumeReadOpts())
+	if err != nil {
+		return false, fmt.Errorf("read managed agent skill volume ready marker %s: %w", volumeName, err)
+	}
+	var marker string
+	switch typed := value.(type) {
+	case string:
+		marker = typed
+	case []byte:
+		marker = string(typed)
+	default:
+		return false, fmt.Errorf("managed agent skill volume ready marker %s has unsupported type %T", volumeName, value)
+	}
+	return strings.TrimSpace(marker) == strings.TrimSpace(manifestSHA256), nil
 }
 
 func (p *E2BProvider) connect(ctx context.Context, sandboxID string) (*e2b.Sandbox, error) {
@@ -296,22 +323,25 @@ func (p *E2BProvider) connectOrCreateSkillVolume(ctx context.Context, volumeName
 }
 
 func (p *E2BProvider) writeSkillVolume(ctx context.Context, volume *e2b.Volume, manifestBytes []byte, manifestSHA256 string, manifest skillsapi.MountManifest, runtimeSkills []skillsapi.RuntimeSkill) error {
-	archives := make(map[string][]byte, len(runtimeSkills))
+	skillsByFilename := make(map[string]skillsapi.RuntimeSkill, len(runtimeSkills))
 	for _, skill := range runtimeSkills {
-		archive, err := skill.LoadArchive(ctx)
-		if err != nil {
-			return err
-		}
-		archives[skillsapi.MountArchiveFilename(skill)] = archive
+		skillsByFilename[skillsapi.MountArchiveFilename(skill)] = skill
 	}
 	opts := p.volumeWriteOpts()
 	if _, err := volume.WriteFile(ctx, skillMountManifestPath, manifestBytes, opts); err != nil {
 		return fmt.Errorf("write managed agent skill manifest: %w", err)
 	}
 	for _, entry := range manifest.Skills {
-		archive := archives[entry.Filename]
+		skill, ok := skillsByFilename[entry.Filename]
+		if !ok {
+			return fmt.Errorf("managed agent skill archive %s is missing", entry.Filename)
+		}
+		archive, err := skill.LoadArchive(ctx)
+		if err != nil {
+			return err
+		}
 		if len(archive) == 0 {
-			return fmt.Errorf("managed agent skill archive %s is empty or missing", entry.Filename)
+			return fmt.Errorf("managed agent skill archive %s is empty", entry.Filename)
 		}
 		if _, err := volume.WriteFile(ctx, entry.Filename, archive, opts); err != nil {
 			return fmt.Errorf("write managed agent skill archive %s: %w", entry.Filename, err)
@@ -345,6 +375,13 @@ func (p *E2BProvider) volumeAPIOpts() *e2b.VolumeApiOpts {
 		Debug:            &debug,
 		ApiUrl:           p.cfg.E2BAPIURL,
 		RequestTimeoutMs: &requestTimeoutMs,
+	}
+}
+
+func (p *E2BProvider) volumeReadOpts() *e2b.VolumeReadOpts {
+	apiOpts := p.volumeAPIOpts()
+	return &e2b.VolumeReadOpts{
+		VolumeApiOpts: *apiOpts,
 	}
 }
 
@@ -503,9 +540,6 @@ func skillMountFromWork(work *db.EnvironmentWork) (*SkillMount, bool) {
 
 func skillMountVolumeName(manifestSHA256 string) string {
 	sha := strings.TrimSpace(manifestSHA256)
-	if len(sha) > 32 {
-		sha = sha[:32]
-	}
 	if sha == "" {
 		sha = "unknown"
 	}

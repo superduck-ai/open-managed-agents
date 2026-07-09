@@ -27,8 +27,8 @@ const (
 
 type JobStore interface {
 	LeaseSkillPrewarmJobs(ctx context.Context, workerID string, limit int, leaseDuration time.Duration) ([]db.SkillPrewarmJob, error)
-	CompleteSkillPrewarmJob(ctx context.Context, jobID int64) error
-	FailSkillPrewarmJob(ctx context.Context, jobID int64, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error
+	CompleteSkillPrewarmJob(ctx context.Context, jobID int64, workerID string) error
+	FailSkillPrewarmJob(ctx context.Context, jobID int64, workerID string, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error
 }
 
 type SnapshotJobStore interface {
@@ -112,13 +112,17 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 	for _, job := range jobs {
 		if err := w.processJob(ctx, job); err != nil {
 			delay := retryDelay(job.Attempts + 1)
-			if markErr := w.jobs.FailSkillPrewarmJob(ctx, job.ID, job.Attempts, err.Error(), delay, maxAttempts); markErr != nil {
+			if markErr := w.jobs.FailSkillPrewarmJob(ctx, job.ID, workerID, job.Attempts, err.Error(), delay, maxAttempts); errors.Is(markErr, db.ErrNotFound) {
+				continue
+			} else if markErr != nil {
 				errs = append(errs, fmt.Errorf("mark skill prewarm job %s retry: %w", job.ExternalID, markErr))
 			}
 			errs = append(errs, fmt.Errorf("process skill prewarm job %s: %w", job.ExternalID, err))
 			continue
 		}
-		if err := w.jobs.CompleteSkillPrewarmJob(ctx, job.ID); err != nil {
+		if err := w.jobs.CompleteSkillPrewarmJob(ctx, job.ID, workerID); errors.Is(err, db.ErrNotFound) {
+			continue
+		} else if err != nil {
 			errs = append(errs, fmt.Errorf("complete skill prewarm job %s: %w", job.ExternalID, err))
 		}
 	}

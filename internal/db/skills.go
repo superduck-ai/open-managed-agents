@@ -166,11 +166,29 @@ func (d *DB) ListSkillsPage(ctx context.Context, params ListSkillsPageParams) ([
 
 func (d *DB) GetSkillVersion(ctx context.Context, workspaceID int64, skillExternalID, version string) (SkillVersion, error) {
 	return scanSkillVersion(d.Pool.QueryRow(ctx, skillVersionSelectSQL()+`
-		where workspace_id = $1
-			and skill_external_id = $2
-			and version = $3
-			and deleted_at is null
-	`, workspaceID, skillExternalID, version))
+			where workspace_id = $1
+				and skill_external_id = $2
+				and version = $3
+				and deleted_at is null
+		`, workspaceID, skillExternalID, version))
+}
+
+func (d *DB) GetLatestSkillVersion(ctx context.Context, workspaceID int64, skillExternalID string) (SkillVersion, error) {
+	return scanSkillVersion(d.Pool.QueryRow(ctx, `
+			select sv.id, sv.uuid::text, sv.external_id, sv.workspace_id, sv.skill_id, sv.skill_external_id,
+				sv.version, sv.name, sv.description, sv.directory, sv.s3_bucket, sv.s3_key, sv.size_bytes, sv.sha256,
+				sv.created_by_api_key_id, sv.created_at, sv.deleted_at
+			from skills s
+			join skill_versions sv
+				on sv.skill_id = s.id
+				and sv.version = s.latest_version
+				and sv.deleted_at is null
+			where s.workspace_id = $1
+				and s.external_id = $2
+				and s.deleted_at is null
+				and s.latest_version is not null
+				and s.latest_version <> ''
+		`, workspaceID, skillExternalID))
 }
 
 func (d *DB) ListSkillVersionsPage(ctx context.Context, params ListSkillVersionsPageParams) ([]SkillVersion, bool, error) {

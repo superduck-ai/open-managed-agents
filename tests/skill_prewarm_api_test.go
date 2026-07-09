@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -80,7 +81,7 @@ func TestSkillPrewarmJobFailureStoresLastErrorAt(t *testing.T) {
 	if len(jobs) != 1 || jobs[0].WorkspaceID != ids.WorkspaceID {
 		t.Fatalf("leased jobs = %+v, want one default workspace job", jobs)
 	}
-	if err := app.db.FailSkillPrewarmJob(ctx, jobs[0].ID, jobs[0].Attempts, "boom", time.Minute, 5); err != nil {
+	if err := app.db.FailSkillPrewarmJob(ctx, jobs[0].ID, "skill-prewarm-failure-test", jobs[0].Attempts, "boom", time.Minute, 5); err != nil {
 		t.Fatalf("fail skill prewarm job: %v", err)
 	}
 
@@ -98,6 +99,63 @@ func TestSkillPrewarmJobFailureStoresLastErrorAt(t *testing.T) {
 	}
 	if _, err := time.Parse(time.RFC3339Nano, lastErrorAt); err != nil {
 		t.Fatalf("last_error_at = %q, want RFC3339Nano timestamp: %v", lastErrorAt, err)
+	}
+}
+
+func TestSkillPrewarmJobStateTransitionsRequireLeaseOwner(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("skill-prewarm-lease-bucket"))
+	defer app.close()
+
+	ctx := context.Background()
+	ids := getDefaultDBIDs(t, app.db)
+	sourceID := "agent_prewarm_lease_" + time.Now().Format("150405.000000000")
+	if err := app.db.EnqueueSkillPrewarmSnapshotJob(ctx, db.SkillPrewarmSnapshotJobInput{
+		WorkspaceID:   ids.WorkspaceID,
+		AgentSnapshot: json.RawMessage(`{"skills":[{"type":"custom","skill_id":"skill_missing","version":"latest"}]}`),
+		Source:        "agent",
+		SourceID:      sourceID,
+		Trigger:       "test_lease",
+	}); err != nil {
+		t.Fatalf("enqueue skill prewarm snapshot job: %v", err)
+	}
+	defer app.db.Pool.Exec(ctx, `delete from jobs where type = 'skill_prewarm' and payload->>'source_id' = $1`, sourceID)
+
+	const workerID = "skill-prewarm-owner-test"
+	jobs, err := app.db.LeaseSkillPrewarmJobs(ctx, workerID, 1, time.Minute)
+	if err != nil {
+		t.Fatalf("lease skill prewarm jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("leased jobs = %+v, want one", jobs)
+	}
+
+	if err := app.db.CompleteSkillPrewarmJob(ctx, jobs[0].ID, "other-worker"); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("complete with wrong worker error = %v, want ErrNotFound", err)
+	}
+	if err := app.db.FailSkillPrewarmJob(ctx, jobs[0].ID, "other-worker", jobs[0].Attempts, "boom", time.Minute, 5); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("fail with wrong worker error = %v, want ErrNotFound", err)
+	}
+
+	var status, lockedBy string
+	if err := app.db.Pool.QueryRow(ctx, `
+		select status, locked_by
+		from jobs
+		where id = $1
+	`, jobs[0].ID).Scan(&status, &lockedBy); err != nil {
+		t.Fatalf("load skill prewarm job: %v", err)
+	}
+	if status != "running" || lockedBy != workerID {
+		t.Fatalf("job status=%q locked_by=%q, want running/%s", status, lockedBy, workerID)
+	}
+
+	if err := app.db.CompleteSkillPrewarmJob(ctx, jobs[0].ID, workerID); err != nil {
+		t.Fatalf("complete with lease owner: %v", err)
+	}
+	if err := app.db.Pool.QueryRow(ctx, `select status from jobs where id = $1`, jobs[0].ID).Scan(&status); err != nil {
+		t.Fatalf("load completed skill prewarm job: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("job status = %q, want completed", status)
 	}
 }
 

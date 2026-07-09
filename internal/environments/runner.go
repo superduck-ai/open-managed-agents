@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -36,16 +37,12 @@ func NewRunnerWithConfig(database *db.DB, provider e2bruntime.Provider, cfg conf
 }
 
 func NewRunnerWithConfigAndStore(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore) *Runner {
-	var skillResolver *skillsapi.RuntimeResolver
-	if store != nil {
-		skillResolver = skillsapi.NewRuntimeResolver(cfg, database, store)
-	}
 	return &Runner{
 		db:           database,
 		provider:     provider,
 		cfg:          cfg,
 		codeSessions: codesessions.NewService(cfg, database),
-		skills:       skillResolver,
+		skills:       skillsapi.NewRuntimeResolver(cfg, database, store),
 	}
 }
 
@@ -110,12 +107,12 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	launch, err := r.prepareManagedAgentLaunch(ctx, env, work)
+	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	resolution, err := r.provider.Resolve(env, work)
+	launch, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
@@ -139,7 +136,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	sandbox, err := r.provider.Create(ctx, env, work)
+	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
 		now := time.Now().UTC()
 		message := err.Error()
@@ -297,6 +294,9 @@ func (r *Runner) prepareRuntimeSkillMount(ctx context.Context, runtimeSkills []s
 
 func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) ([]skillsapi.RuntimeSkill, error) {
 	if r == nil || r.skills == nil {
+		if agentsnapshot.SnapshotHasSkills(session.AgentSnapshot) {
+			return nil, fmt.Errorf("managed agent session %s has skills but runtime skill resolver is unavailable", session.ExternalID)
+		}
 		return nil, nil
 	}
 	return r.skills.ResolveAgentSnapshot(ctx, session.WorkspaceID, session.AgentSnapshot)

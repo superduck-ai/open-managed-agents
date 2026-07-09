@@ -153,6 +153,7 @@ func TestWorkerFanoutCompletesWhenNoMatches(t *testing.T) {
 type fakeWorkerStore struct {
 	jobs           []db.SkillPrewarmJob
 	completed      []int64
+	completedBy    []string
 	failed         []fakeFailure
 	snapshotInputs []db.SkillPrewarmSnapshotJobInput
 	fanoutInputs   []db.SkillPrewarmFanoutJobInput
@@ -164,6 +165,7 @@ type fakeWorkerStore struct {
 
 type fakeFailure struct {
 	id          int64
+	workerID    string
 	attempts    int
 	reason      string
 	delay       time.Duration
@@ -176,13 +178,14 @@ func (s *fakeWorkerStore) LeaseSkillPrewarmJobs(_ context.Context, _ string, _ i
 	return jobs, nil
 }
 
-func (s *fakeWorkerStore) CompleteSkillPrewarmJob(_ context.Context, jobID int64) error {
+func (s *fakeWorkerStore) CompleteSkillPrewarmJob(_ context.Context, jobID int64, workerID string) error {
 	s.completed = append(s.completed, jobID)
+	s.completedBy = append(s.completedBy, workerID)
 	return nil
 }
 
-func (s *fakeWorkerStore) FailSkillPrewarmJob(_ context.Context, jobID int64, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error {
-	s.failed = append(s.failed, fakeFailure{id: jobID, attempts: attempts, reason: reason, delay: retryDelay, maxAttempts: maxAttempts})
+func (s *fakeWorkerStore) FailSkillPrewarmJob(_ context.Context, jobID int64, workerID string, attempts int, reason string, retryDelay time.Duration, maxAttempts int) error {
+	s.failed = append(s.failed, fakeFailure{id: jobID, workerID: workerID, attempts: attempts, reason: reason, delay: retryDelay, maxAttempts: maxAttempts})
 	return nil
 }
 

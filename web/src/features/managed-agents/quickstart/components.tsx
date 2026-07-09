@@ -23,7 +23,7 @@ import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import clsx from 'clsx';
 import { AlertCircle, ArrowUp, ArrowUpRight, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, Cloud, Copy, FileText, Loader2, LockKeyhole, Pencil, Play, Plus, Search, Sparkles, Terminal, TriangleAlert, UserRound } from 'lucide-react';
-import { type Dispatch, type ReactNode, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import { type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { codeForTemplate, createDialogAgentConfig, displayAgentConfig, yamlStringify } from '../agentConfig';
 import { quickstartComposerFrameClassName, quickstartComposerSendButtonClassName, quickstartComposerTextareaClassName } from '../components/composerStyles';
 import { listSessionEvents, quickstartEnvironmentRequestBody, streamQuickstartSessionEvents } from '../api';
@@ -35,6 +35,8 @@ import { copyText, errorMessage, managedEntityDetailHref, titleCase, toRecord } 
 
 export const quickstartEnvironmentSearchQuery =
   "An environment is a reusable template for the container where your agent's tools execute — things like networking policy and package access. Let me check what environments you already have.";
+
+type PromptComposerSubmitShortcut = 'enter' | 'mod-enter';
 
 export function InitialPromptPane({
   prompt,
@@ -65,6 +67,7 @@ export function InitialPromptPane({
         label={msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
         placeholder={msg('managedAgents.quickstart.initial.placeholder', 'Describe your agent…')}
         isBusy={isCreating}
+        submitShortcut="mod-enter"
         onChange={onPromptChange}
         onSubmit={onSubmit}
       />
@@ -152,7 +155,7 @@ export function QuickstartChatPane({
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller className="min-h-0 flex-1">
-          <MessageScrollerViewport data-testid="quickstart-chat-stream" className="pb-6">
+          <MessageScrollerViewport data-testid="quickstart-chat-stream" className="subtle-scrollbar-auto pb-6">
             <MessageScrollerContent data-testid="quickstart-chat-content" className="mt-8 w-full gap-0 px-4">
               {streamItems.map((item, index) => {
                 if (item.type === 'message') {
@@ -245,9 +248,10 @@ export function QuickstartChatPane({
         label={msg('managedAgents.quickstart.reply.label', 'Reply…')}
         placeholder={msg('managedAgents.quickstart.reply.placeholder', 'Reply…')}
         isBusy={isStreaming}
+        submitShortcut="enter"
         onChange={onReplyChange}
         onSubmit={onSubmitReply}
-        formClassName="shrink-0"
+        formClassName="shrink-0 p-3 pt-0"
       />
     </div>
   );
@@ -1662,7 +1666,7 @@ export function IntegrationExitsCard({
               <div className="flex min-w-0 items-center gap-1">
                 <TabsList
                   aria-label={msg('managedAgents.quickstart.selectLanguage', 'Select language')}
-                  className="subtle-scrollbar h-7 max-w-[238px] gap-0.5 overflow-x-auto bg-secondary p-0.5"
+                  className="subtle-scrollbar-auto h-7 max-w-[238px] gap-0.5 overflow-x-auto bg-secondary p-0.5"
                 >
                   {integrationSnippetLanguages.map((item) => (
                     <TabsTrigger
@@ -1976,6 +1980,7 @@ export function PromptComposer({
   label,
   placeholder,
   isBusy = false,
+  submitShortcut,
   formClassName = 'absolute inset-x-0 bottom-0 p-3 pt-0',
   onChange,
   onSubmit
@@ -1984,6 +1989,7 @@ export function PromptComposer({
   label: string;
   placeholder: string;
   isBusy?: boolean;
+  submitShortcut?: PromptComposerSubmitShortcut;
   formClassName?: string;
   onChange: (value: string) => void;
   onSubmit?: () => void;
@@ -1991,6 +1997,7 @@ export function PromptComposer({
   const { msg } = useI18n();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const promptId = `${label.toLowerCase().replace(/\s+/g, '-')}-prompt`;
+  const canSubmit = !isBusy && value.trim().length > 0;
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -2001,14 +2008,41 @@ export function PromptComposer({
     textarea.style.height = `${textarea.scrollHeight}px`;
   }, [value]);
 
+  const submitPrompt = () => {
+    if (canSubmit) {
+      onSubmit?.();
+    }
+  };
+
+  const handleTextareaKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (!submitShortcut || event.key !== 'Enter') {
+      return;
+    }
+    const nativeEvent = event.nativeEvent as KeyboardEvent;
+    // Respect IME composition so Enter confirms text instead of sending.
+    if (nativeEvent.isComposing || nativeEvent.keyCode === 229) {
+      return;
+    }
+    if (submitShortcut === 'enter') {
+      if (event.shiftKey || isBusy) {
+        return;
+      }
+    } else if ((!event.metaKey && !event.ctrlKey) || isBusy) {
+      return;
+    }
+    event.preventDefault();
+    if (event.repeat) {
+      return;
+    }
+    submitPrompt();
+  };
+
   return (
     <form
       className={formClassName}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!isBusy && value.trim()) {
-          onSubmit?.();
-        }
+        submitPrompt();
       }}
     >
       <label htmlFor={promptId} className="sr-only">
@@ -2023,8 +2057,9 @@ export function PromptComposer({
           value={value}
           rows={1}
           placeholder={placeholder}
-          className={clsx(quickstartComposerTextareaClassName, 'subtle-scrollbar block max-h-52 overflow-y-auto px-4 pb-2 pt-4 text-[15px] leading-6')}
+          className={clsx(quickstartComposerTextareaClassName, 'subtle-scrollbar-auto block max-h-52 overflow-y-auto px-4 pb-2 pt-4 text-[15px] leading-6')}
           onChange={(event) => onChange(event.target.value)}
+          onKeyDown={handleTextareaKeyDown}
         />
         <InputGroupAddon align="block-end" className="justify-end px-3 pb-3 pt-0">
           <InputGroupButton
@@ -2032,7 +2067,7 @@ export function PromptComposer({
             variant="ghost"
             size="icon-sm"
             aria-label={msg('managedAgents.quickstart.sendMessage', 'Send message')}
-            disabled={!value.trim() || isBusy}
+            disabled={!canSubmit}
             className={quickstartComposerSendButtonClassName}
           >
             {isBusy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ArrowUp className="size-4" aria-hidden />}
@@ -2119,14 +2154,14 @@ export function BrowseTemplatesPanel({
         {visibleTemplates.length > 0 ? (
           <div
             ref={listRef}
-            className="subtle-scrollbar mt-4 grid min-h-0 flex-1 auto-rows-[136px] content-start items-stretch grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 overflow-y-auto pr-1"
+            className="subtle-scrollbar-auto mt-4 grid min-h-0 flex-1 auto-rows-[136px] content-start items-stretch grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 overflow-y-auto pr-1"
           >
             {visibleTemplates.map((template) => (
               <TemplateCard key={template.id} template={template} onClick={() => onTemplateClick(template)} />
             ))}
           </div>
         ) : (
-          <div ref={listRef} className="subtle-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+          <div ref={listRef} className="subtle-scrollbar-auto mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
             <Card size="sm" className="py-0">
               <CardContent className="grid min-h-[240px] place-items-center px-4 py-12 text-center">
                 <div>
@@ -2209,7 +2244,7 @@ export function TemplateDetailPanel({
             {isUsing ? msg('common.creating', 'Creating...') : msg('managedAgents.quickstart.useTemplate', 'Use template')}
           </Button>
         </div>
-        <div className="subtle-scrollbar min-h-0 flex-1 overflow-auto px-5 py-4">
+        <div className="subtle-scrollbar-auto min-h-0 flex-1 overflow-auto px-5 py-4">
           <NumberedCodeBlock code={code} format={format} />
         </div>
       </CardContent>
@@ -2293,7 +2328,7 @@ export function CreatedAgentConfigPanel({
           ) : null}
         </div>
 
-        <TabsContent value="config" className="subtle-scrollbar min-h-0 overflow-auto px-5 py-4">
+        <TabsContent value="config" className="subtle-scrollbar-auto min-h-0 overflow-auto px-5 py-4">
           <NumberedCodeBlock code={code} format={format} />
         </TabsContent>
         <TabsContent value="preview" className="min-h-0">
@@ -2552,7 +2587,7 @@ export function PreviewEnvironmentPanel({
         )}
       </div>
       {environment ? (
-        <div className="subtle-scrollbar flex-1 overflow-auto p-4">
+        <div className="subtle-scrollbar-auto flex-1 overflow-auto p-4">
           <div className="rounded-lg border border-border bg-secondary p-4">
             <div className="flex items-start justify-between gap-4">
               <div>

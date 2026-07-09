@@ -1,0 +1,24 @@
+# Caddyfile — SPA 静态文件 + API 反向代理
+# 镜像: caddy:alpine
+# 静态文件挂载到 /usr/share/caddy/html
+
+:80 {
+	root * /usr/share/caddy/html
+	encode gzip
+
+	# ---- 平台 Console API 反向代理 → oma-server ----
+	@backend {
+		path /api* /v1* /auth* /oauth* /web-api*
+	}
+	handle @backend {
+		reverse_proxy oma-server:8080 {
+			flush_interval -1
+		}
+	}
+
+	# ---- SPA 静态文件 + History 路由 fallback ----
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

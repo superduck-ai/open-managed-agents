@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { anthropicBaseURL, anthropicBetaApi, setAnthropicClientForTest } from './anthropic';
 import { setConsoleRequestContext } from './client';
+import { resetTestDom } from '../../test/setup';
 
 const originalFetch = globalThis.fetch;
 
@@ -8,6 +9,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   setConsoleRequestContext({});
   setAnthropicClientForTest(null);
+  resetTestDom('https://oma.duck.ai/');
 });
 
 describe('anthropicBetaApi', () => {
@@ -53,6 +55,50 @@ describe('anthropicBetaApi', () => {
       last_id: 'file_123'
     });
     expect(Object.getPrototypeOf(page)).toBe(Object.prototype);
+  });
+
+  test('uploads skill versions through same-origin SDK requests with cookie credentials', async () => {
+    let capturedInput: RequestInfo | URL = '';
+    let capturedInit: RequestInit | undefined;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedInput = input;
+      capturedInit = init;
+      return new Response(
+        JSON.stringify({
+          skill_id: 'skill_123',
+          version: '1783557867000000',
+          name: 'emoji-translator',
+          description: 'Translate text to emoji.'
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }) as unknown as typeof fetch;
+
+    setConsoleRequestContext({
+      organizationUuid: 'org_test_uuid',
+      workspaceId: 'wrkspc_test_uuid'
+    });
+
+    const file = new File(['skill archive'], 'emoji-translator.zip', { type: 'application/zip' });
+    const version = await anthropicBetaApi.skills.versions.create<{ skill_id: string }>('skill_123', { files: [file] });
+
+    expect(String(capturedInput)).toBe('/v1/skills/skill_123/versions?beta=true');
+    expect(capturedInit?.method).toBe('POST');
+    expect(capturedInit?.credentials).toBe('include');
+    expect(capturedInit?.body).toBeInstanceOf(FormData);
+    const body = capturedInit?.body as FormData;
+    const uploadedFile = body.get('files[]') as File | null;
+    expect(uploadedFile?.name).toBe('emoji-translator.zip');
+    const headers = new Headers(capturedInit?.headers);
+    expect(headers.get('anthropic-beta')).toBe('skills-2025-10-02');
+    expect(headers.get('x-organization-uuid')).toBe('org_test_uuid');
+    expect(headers.get('x-workspace-id')).toBe('wrkspc_test_uuid');
+    expect(headers.get('x-api-key')).toBeNull();
+    expect(headers.get('authorization')).toBeNull();
+    expect(version.skill_id).toBe('skill_123');
   });
 
   test('normalizes SDK API errors to the frontend API error shape', async () => {

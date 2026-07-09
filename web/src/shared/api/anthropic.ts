@@ -219,6 +219,9 @@ export const anthropicBetaApi = {
     }
   },
   skills: {
+    create<T>(params: { display_title?: string | null; files?: Uploadable[] | null }, workspaceId?: string) {
+      return sdkCall(() => getAnthropicClient().beta.skills.create(params, requestOptions(workspaceId))) as Promise<T>;
+    },
     list<T>(params: Record<string, unknown>, workspaceId?: string) {
       return sdkPage<T>(() => getAnthropicClient().beta.skills.list(params, requestOptions(workspaceId)));
     },
@@ -229,6 +232,11 @@ export const anthropicBetaApi = {
       return sdkCall(() => getAnthropicClient().beta.skills.delete(skillId, {}, requestOptions(workspaceId))) as Promise<T>;
     },
     versions: {
+      create<T>(skillId: string, params: { files?: Uploadable[] | null }, workspaceId?: string) {
+        return sdkCall(() =>
+          getAnthropicClient().beta.skills.versions.create(skillId, params, requestOptions(workspaceId))
+        ) as Promise<T>;
+      },
       list<T>(skillId: string, params: Record<string, unknown>, workspaceId?: string) {
         return sdkPage<T>(() => getAnthropicClient().beta.skills.versions.list(skillId, params, requestOptions(workspaceId)));
       },

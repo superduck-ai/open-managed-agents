@@ -1,9 +1,18 @@
-import { AlertCircle, Ban, Copy, Download, Receipt, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, Ban, Download, Receipt, RefreshCw, X } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { cn } from '@/shared/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import {
+  CopyIdCell,
+  DataTableCell,
+  DataTableRow,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName
+} from '@/shared/ui/data-table-interactions';
 import {
   Table,
   TableBody,
@@ -13,7 +22,7 @@ import {
   TableRow
 } from '@/shared/ui/table';
 import { useI18n } from '../../shared/i18n';
-import { ConsolePageFrame, CursorPagination, DataTableCard, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
+import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
   batchDetailHref,
   batchRequestProgressClass,
@@ -21,7 +30,6 @@ import {
   canCancelBatch,
   cancelMessageBatch,
   clearBatchDetailHref,
-  copyText,
   currentBatchId,
   downloadMessageBatchResults,
   errorMessage,
@@ -211,91 +219,93 @@ function BatchesTable({
   const { msg } = useI18n();
 
   return (
-    <section aria-label={msg('batches.listAria', 'Batches list')}>
-      <DataTableCard>
-        <Table className="min-w-[760px] table-fixed text-left">
-          <colgroup>
-            <col className="w-[28%]" />
-            <col className="w-[16%]" />
-            <col className="w-[16%]" />
-            <col className="w-[40%]" />
-          </colgroup>
-          <TableHeader className="text-xs text-muted-foreground/70">
-            <TableRow className="border-b border-border hover:bg-transparent">
-              <TableHead className="px-3 py-3 text-muted-foreground/70">{msg('common.id', 'ID')}</TableHead>
-              <TableHead className="px-3 py-3 text-muted-foreground/70">{msg('common.status', 'Status')}</TableHead>
-              <TableHead className="px-3 py-3 text-muted-foreground/70">{msg('analytics.table.requests', 'Requests')}</TableHead>
-              <TableHead className="px-3 py-3 text-muted-foreground/70">{msg('common.created', 'Created')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableLoadingRow colSpan={4} label={msg('batches.loading', 'Loading batches...')} />
-            ) : error ? (
-              <TableErrorRow
-                colSpan={4}
-                title={msg('batches.error', 'Batches could not be loaded.')}
-                message={errorMessage(error)}
-                retryLabel={msg('common.retry', 'Retry')}
-                onRetry={onRetry}
-              />
-            ) : batches.length === 0 ? (
-              <TableEmptyRow colSpan={4}>
-                {msg('batches.empty', 'No batches have been created in the {workspaceName} workspace.', {
-                  workspaceName
-                })}
-              </TableEmptyRow>
-            ) : (
-              batches.map((batch) => {
-                const selected = batch.id === selectedBatchId;
-                return (
-                  <TableRow key={batch.id} className="group border-b border-border text-foreground">
-                    <TableCell className="px-3 py-3 align-middle">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          aria-label={batch.id}
-                          aria-controls="batch-detail-panel"
-                          aria-pressed={selected}
-                          aria-expanded={selected}
-                          className="h-auto justify-start truncate p-0 font-mono text-[13px] font-normal text-foreground hover:bg-transparent hover:text-primary focus-visible:bg-transparent"
-                          onClick={() => onSelectBatch(batch.id)}
-                        >
-                          {formatMessageBatchId(batch.id)}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label={msg('batches.copyAria', 'Copy {batchId}', { batchId: batch.id })}
-                          className="shrink-0 text-muted-foreground/70 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
-                          onClick={() => void copyText(batch.id)}
-                        >
-                          <Copy className="size-3.5" aria-hidden />
-                        </Button>
-                      </div>
-                    </TableCell>
-                    <TableCell className="px-3 py-3 align-middle">
-                      <Badge variant="secondary" className={`rounded-md ${batchStatusClass(batch.processing_status)}`}>
-                        {formatBatchStatus(batch.processing_status, msg)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="px-3 py-3 align-middle text-muted-foreground">
-                      <span className="inline-flex items-center gap-2">
-                        <span className={`size-3 rounded-full ${batchRequestProgressClass(batch)}`} aria-hidden />
-                        {formatBatchRequestProgress(batch)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="px-3 py-3 align-middle text-muted-foreground">{formatRelativeTime(batch.created_at)}</TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
-      </DataTableCard>
+    <section aria-label={msg('batches.listAria', 'Batches list')} className="overflow-x-auto">
+      <Table className={cn('min-w-[760px]', dataTableClassName)}>
+        <colgroup>
+          <col className="w-[28%]" />
+          <col className="w-[16%]" />
+          <col className="w-[16%]" />
+          <col className="w-[40%]" />
+        </colgroup>
+        <TableHeader>
+          <TableRow className={dataTableHeaderRowClassName}>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.status', 'Status')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('analytics.table.requests', 'Requests')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading ? (
+            <TableLoadingRow colSpan={4} label={msg('batches.loading', 'Loading batches...')} />
+          ) : error ? (
+            <TableErrorRow
+              colSpan={4}
+              title={msg('batches.error', 'Batches could not be loaded.')}
+              message={errorMessage(error)}
+              retryLabel={msg('common.retry', 'Retry')}
+              onRetry={onRetry}
+            />
+          ) : batches.length === 0 ? (
+            <TableEmptyRow colSpan={4}>
+              {msg('batches.empty', 'No batches have been created in the {workspaceName} workspace.', {
+                workspaceName
+              })}
+            </TableEmptyRow>
+          ) : (
+            batches.map((batch) => {
+              const selected = batch.id === selectedBatchId;
+              return (
+                <DataTableRow
+                  key={batch.id}
+                  clickable
+                  selected={selected}
+                  aria-controls="batch-detail-panel"
+                  aria-expanded={selected}
+                  onClick={() => onSelectBatch(batch.id)}
+                >
+                  <DataTableCell edge="start">
+                    <CopyIdCell
+                      value={batch.id}
+                      ariaLabel={msg('batches.copyAria', 'Copy {batchId}', { batchId: batch.id })}
+                      stopPropagation
+                    >
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={batch.id}
+                        aria-controls="batch-detail-panel"
+                        aria-pressed={selected}
+                        aria-expanded={selected}
+                        className="h-auto min-w-0 justify-start truncate p-0 font-mono text-xs font-medium text-foreground hover:bg-transparent hover:text-foreground focus-visible:bg-transparent"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onSelectBatch(batch.id);
+                        }}
+                      >
+                        {formatMessageBatchId(batch.id)}
+                      </Button>
+                    </CopyIdCell>
+                  </DataTableCell>
+                  <DataTableCell>
+                    <Badge variant="secondary" className={`rounded-md ${batchStatusClass(batch.processing_status)}`}>
+                      {formatBatchStatus(batch.processing_status, msg)}
+                    </Badge>
+                  </DataTableCell>
+                  <DataTableCell className="text-muted-foreground">
+                    <span className="inline-flex items-center gap-2">
+                      <span className={`size-3 rounded-full ${batchRequestProgressClass(batch)}`} aria-hidden />
+                      {formatBatchRequestProgress(batch)}
+                    </span>
+                  </DataTableCell>
+                  <DataTableCell edge="end" className="text-muted-foreground">{formatRelativeTime(batch.created_at)}</DataTableCell>
+                </DataTableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </Table>
 
       <CursorPagination
         previousLabel={msg('pagination.previousPage', 'Previous page')}
@@ -390,19 +400,14 @@ function BatchDetailPanel({
               {formatBatchStatus(batch.processing_status, msg)}
             </Badge>
           </div>
-          <div className="mt-2 flex min-w-0 items-center gap-2">
-            <span className="truncate font-mono text-xs text-muted-foreground">{formatMessageBatchId(batchId)}</span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={msg('batches.copyAria', 'Copy {batchId}', { batchId: formatMessageBatchId(batch.id) })}
-              className="shrink-0 text-muted-foreground/70"
-              onClick={() => void copyText(batch.id)}
-            >
-              <Copy className="size-3.5" aria-hidden />
-            </Button>
-          </div>
+          <CopyIdCell
+            value={batch.id}
+            displayValue={formatMessageBatchId(batchId)}
+            ariaLabel={msg('batches.copyAria', 'Copy {batchId}', { batchId: formatMessageBatchId(batch.id) })}
+            className="mt-2"
+            textClassName="text-muted-foreground"
+            alwaysVisible
+          />
         </div>
         <Button
           type="button"

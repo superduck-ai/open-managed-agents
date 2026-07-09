@@ -1,13 +1,22 @@
 import { type ApiError } from '../../../shared/api/client';
 import { useI18n } from '../../../shared/i18n';
+import { cn } from '../../../shared/lib/utils';
 import { Button } from '../../../shared/ui/button';
+import {
+  CopyIdCell,
+  DataTableCell,
+  DataTableRow,
+  MoreActionsButton,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName
+} from '../../../shared/ui/data-table-interactions';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../shared/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { useWorkspace } from '../../../shared/workspaces/context';
-import { Archive, ChevronLeft, ChevronRight, MoreVertical, Plus, Search, TriangleAlert } from 'lucide-react';
+import { Archive, ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { agentsListLimit, archiveAgent, createAgent, defaultAgentFilters, exactAgentIdPattern, listAgents, retrieveAgent, searchAgentsByName } from '../api';
-import { CopyButton } from '../components/CodeBlocks';
 import {
   AgentFilterDropdown,
   AgentsEmptyState,
@@ -419,18 +428,13 @@ export function AgentsResourcePage({ config, routeWorkspaceId }: { config: Resou
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={msg('managedAgents.common.moreActions', 'More actions')}
+            <MoreActionsButton
+              label={msg('managedAgents.common.moreActions', 'More actions')}
               disabled={archiving}
-              className="text-foreground hover:bg-secondary disabled:cursor-wait disabled:text-muted-foreground/70"
+              className="disabled:cursor-wait"
             />
           }
-        >
-          <MoreVertical className="size-4" aria-hidden />
-        </DropdownMenuTrigger>
+        />
         <DropdownMenuContent align="end" className="w-[164px]">
           <DropdownMenuItem disabled={archiving || Boolean(agent.archived_at)} onClick={() => requestArchiveAgents([agent.id])}>
             <Archive className="size-4" aria-hidden />
@@ -513,16 +517,16 @@ export function AgentsResourcePage({ config, routeWorkspaceId }: { config: Resou
             onAction={retryAgentsLoad}
           />
         ) : isAgentsPage ? (
-          <Table className="table-fixed border-separate border-spacing-y-px text-left">
+          <Table className={dataTableClassName}>
             <TableHeader>
-              <TableRow className="border-0 text-muted-foreground hover:bg-transparent">
-                <TableHead className="h-9 w-[185px] px-3 text-muted-foreground">{managedColumnLabel('ID', msg)}</TableHead>
-                <TableHead className="w-auto px-3 text-muted-foreground">{managedColumnLabel('Name', msg)}</TableHead>
-                <TableHead className="w-[210px] px-3 text-muted-foreground">{managedColumnLabel('Model', msg)}</TableHead>
-                <TableHead className="w-[120px] px-3 text-muted-foreground">{managedColumnLabel('Status', msg)}</TableHead>
-                <TableHead className="w-[150px] px-3 text-muted-foreground">{managedColumnLabel('Created', msg)}</TableHead>
-                <TableHead className="w-[150px] px-3 text-muted-foreground">{managedColumnLabel('Last updated', msg)}</TableHead>
-                <TableHead className="w-[48px] px-2 text-muted-foreground" aria-label={managedColumnLabel('Actions', msg)} />
+              <TableRow className={dataTableHeaderRowClassName}>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[185px]')}>{managedColumnLabel('ID', msg)}</TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-auto')}>{managedColumnLabel('Name', msg)}</TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[210px]')}>{managedColumnLabel('Model', msg)}</TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[120px]')}>{managedColumnLabel('Status', msg)}</TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>{managedColumnLabel('Created', msg)}</TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>{managedColumnLabel('Last updated', msg)}</TableHead>
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')} aria-label={managedColumnLabel('Actions', msg)} />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -537,30 +541,33 @@ export function AgentsResourcePage({ config, routeWorkspaceId }: { config: Resou
                   const archiving = archivingIds.has(agent.id);
                   const detailHref = agentDetailHref(workspaceId, agent.id);
                   return (
-                    <TableRow key={agent.id} className="border-0 bg-transparent text-foreground hover:bg-accent">
-                      <TableCell className="h-10 rounded-l-lg px-3">
-                        <div className="flex min-w-0 items-center gap-1.5">
+                    <DataTableRow key={agent.id}>
+                      <DataTableCell edge="start">
+                        <CopyIdCell
+                          value={agent.id}
+                          ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: agent.id })}
+                          className="gap-1.5"
+                        >
                           <a href={detailHref} className="truncate font-mono text-[13px] text-foreground underline-offset-4 hover:underline">
                             {compactAgentId(agent.id)}
                           </a>
-                          <CopyButton value={agent.id} label={msg('common.copyId', 'Copy ID')} />
-                        </div>
-                      </TableCell>
-                      <TableCell className="h-10 truncate px-3 text-foreground">
+                        </CopyIdCell>
+                      </DataTableCell>
+                      <DataTableCell className="truncate text-foreground">
                         <a href={detailHref} className="underline-offset-4 hover:underline">
                           {agent.name || msg('managedAgents.agents.untitled', 'Untitled agent')}
                         </a>
-                      </TableCell>
-                      <TableCell className="h-10 truncate px-3 font-mono text-[13px] text-muted-foreground">
+                      </DataTableCell>
+                      <DataTableCell className="truncate font-mono text-[13px] text-muted-foreground">
                         {agentModelName(agent.model)}
-                      </TableCell>
-                      <TableCell className="h-10 truncate px-3">
+                      </DataTableCell>
+                      <DataTableCell className="truncate">
                         <AgentStatusBadge archived={Boolean(agent.archived_at)} />
-                      </TableCell>
-                      <TableCell className="h-10 truncate px-3 text-muted-foreground">{relativeTime(agent.created_at)}</TableCell>
-                      <TableCell className="h-10 truncate px-3 text-muted-foreground">{relativeTime(agent.updated_at)}</TableCell>
-                      <TableCell className="h-10 rounded-r-lg px-2">{renderAgentActionMenu(agent, archiving)}</TableCell>
-                    </TableRow>
+                      </DataTableCell>
+                      <DataTableCell className="truncate text-muted-foreground">{relativeTime(agent.created_at)}</DataTableCell>
+                      <DataTableCell className="truncate text-muted-foreground">{relativeTime(agent.updated_at)}</DataTableCell>
+                      <DataTableCell edge="end" className="px-2">{renderAgentActionMenu(agent, archiving)}</DataTableCell>
+                    </DataTableRow>
                   );
                 })
               )}

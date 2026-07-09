@@ -19,9 +19,8 @@ import (
 )
 
 type RuntimeResolver struct {
-	db      *db.DB
-	store   storage.ObjectStore
-	catalog *builtinCatalog
+	db    *db.DB
+	store storage.ObjectStore
 }
 
 type RuntimeSkill struct {
@@ -54,11 +53,10 @@ type runtimeSkillRef struct {
 	Version string `json:"version"`
 }
 
-func NewRuntimeResolver(cfg config.Config, database *db.DB, store storage.ObjectStore) *RuntimeResolver {
+func NewRuntimeResolver(_ config.Config, database *db.DB, store storage.ObjectStore) *RuntimeResolver {
 	return &RuntimeResolver{
-		db:      database,
-		store:   store,
-		catalog: loadBuiltinCatalog(cfg),
+		db:    database,
+		store: store,
 	}
 }
 
@@ -137,7 +135,7 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 func (r *RuntimeResolver) resolveRef(ctx context.Context, workspaceID int64, ref runtimeSkillRef) (RuntimeSkill, error) {
 	switch ref.Type {
 	case "anthropic":
-		return r.resolveBuiltin(ref)
+		return r.resolveBuiltin(ctx, ref)
 	case "custom":
 		return r.resolveCustom(ctx, workspaceID, ref)
 	default:
@@ -145,30 +143,33 @@ func (r *RuntimeResolver) resolveRef(ctx context.Context, workspaceID int64, ref
 	}
 }
 
-func (r *RuntimeResolver) resolveBuiltin(ref runtimeSkillRef) (RuntimeSkill, error) {
-	if r.catalog == nil {
-		return RuntimeSkill{}, errors.New("built-in skills catalog is unavailable")
+func (r *RuntimeResolver) resolveBuiltin(ctx context.Context, ref runtimeSkillRef) (RuntimeSkill, error) {
+	if r.db == nil {
+		return RuntimeSkill{}, errors.New("built-in skill resolver is unavailable")
 	}
-	skill, ok := r.catalog.get(ref.SkillID)
-	if !ok {
-		return RuntimeSkill{}, fmt.Errorf("built-in skill not found: %s", ref.SkillID)
+	record, err := r.db.GetBuiltinSkillVersion(ctx, ref.SkillID, ref.Version)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			if ref.Version == "latest" {
+				return RuntimeSkill{}, fmt.Errorf("built-in skill not found: %s", ref.SkillID)
+			}
+			return RuntimeSkill{}, fmt.Errorf("built-in skill version not found: %s@%s", ref.SkillID, ref.Version)
+		}
+		return RuntimeSkill{}, err
 	}
-	if ref.Version != "latest" && ref.Version != builtinVersion {
-		return RuntimeSkill{}, fmt.Errorf("built-in skill version not found: %s", ref.Version)
-	}
-	catalogSkill := skill
+	versionRecord := record
 	return RuntimeSkill{
 		Source:           "anthropic",
-		SkillID:          skill.ID,
+		SkillID:          record.SkillExternalID,
 		RequestedVersion: ref.Version,
-		Version:          builtinVersion,
-		Directory:        skill.Directory,
-		Name:             firstNonEmpty(skill.Name, skill.ID),
-		Description:      skill.Description,
-		SHA256:           skill.SHA256,
-		SizeBytes:        skill.ArchiveSize,
+		Version:          record.Version,
+		Directory:        record.Directory,
+		Name:             firstNonEmpty(record.Name, record.Directory, record.SkillExternalID),
+		Description:      record.Description,
+		SHA256:           record.SHA256,
+		SizeBytes:        record.SizeBytes,
 		archiveLoader: func(ctx context.Context) ([]byte, error) {
-			return loadBuiltinArchive(ctx, catalogSkill)
+			return r.loadBuiltinArchive(ctx, versionRecord)
 		},
 	}, nil
 }
@@ -210,18 +211,20 @@ func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceID int64, 
 	}, nil
 }
 
-func loadBuiltinArchive(ctx context.Context, skill builtinSkill) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+func (r *RuntimeResolver) loadBuiltinArchive(ctx context.Context, record db.BuiltinSkillVersion) ([]byte, error) {
+	if r.store == nil {
+		return nil, errors.New("built-in skill object store is unavailable")
 	}
-	data, err := os.ReadFile(skill.ArchivePath)
+	object, err := r.store.Get(ctx, record.S3Key)
 	if err != nil {
-		return nil, fmt.Errorf("read built-in skill %s: %w", skill.ID, err)
+		return nil, fmt.Errorf("read built-in skill object %s@%s: %w", record.SkillExternalID, record.Version, err)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	defer object.Body.Close()
+	data, err := io.ReadAll(object.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read built-in skill archive %s@%s: %w", record.SkillExternalID, record.Version, err)
 	}
-	if err := validateRuntimeSkillArchive(data, "built-in skill", skill.ID, builtinVersion, skill.Directory, skill.SHA256, skill.ArchiveSize); err != nil {
+	if err := validateRuntimeSkillArchive(data, "built-in skill", record.SkillExternalID, record.Version, record.Directory, record.SHA256, record.SizeBytes); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -265,10 +268,14 @@ func inspectSkillArchiveBytes(data []byte) (string, []byte, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	return inspectSkillZipFiles(reader.File)
+}
+
+func inspectSkillZipFiles(files []*zip.File) (string, []byte, error) {
 	var top string
 	var skillMD []byte
 	var uncompressedSize uint64
-	for _, file := range reader.File {
+	for _, file := range files {
 		name := strings.ReplaceAll(file.Name, "\\", "/")
 		if name == "" {
 			continue
@@ -306,7 +313,7 @@ func inspectSkillArchiveBytes(data []byte) (string, []byte, error) {
 			return "", nil, err
 		}
 		if cleanName == top+"/SKILL.md" {
-			data, err := readZipFile(file)
+			data, err := readZipFile(file, MaxSkillPackageBytes)
 			if err != nil {
 				return "", nil, err
 			}

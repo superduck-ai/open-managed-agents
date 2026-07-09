@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const skillDisplayTitleUniqueIndex = "skills_workspace_display_title_active_key"
+
 type Skill struct {
 	ID                int64
 	UUID              string
@@ -55,12 +57,40 @@ type ListSkillVersionsPageParams struct {
 	Offset          int
 }
 
+type SkillDisplayTitleConflictError struct {
+	DisplayTitle string
+}
+
+func (e *SkillDisplayTitleConflictError) Error() string {
+	return "skill display_title conflicts with an existing skill"
+}
+
 func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version SkillVersion) (Skill, SkillVersion, error) {
 	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
 		return Skill{}, SkillVersion{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	if skill.DisplayTitle == nil {
+		return Skill{}, SkillVersion{}, ErrInvalidState
+	}
+
+	var existingID string
+	err = tx.QueryRow(ctx, `
+		select external_id
+		from skills
+		where workspace_id = $1
+			and display_title = $2
+			and deleted_at is null
+		limit 1
+	`, skill.WorkspaceID, *skill.DisplayTitle).Scan(&existingID)
+	if err == nil {
+		return Skill{}, SkillVersion{}, &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Skill{}, SkillVersion{}, err
+	}
 
 	createdSkill, err := scanSkill(tx.QueryRow(ctx, `
 		insert into skills (
@@ -73,6 +103,9 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 	`, skill.UUID, skill.ExternalID, skill.WorkspaceID, skill.CreatedByAPIKeyID,
 		skill.DisplayTitle, version.Version, skill.CreatedAt))
 	if err != nil {
+		if isUniqueViolationOnConstraint(err, skillDisplayTitleUniqueIndex) {
+			return Skill{}, SkillVersion{}, &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
+		}
 		return Skill{}, SkillVersion{}, err
 	}
 

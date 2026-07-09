@@ -54,4 +54,15 @@ data/
 
 # Large bundled assets kept out of the repo for now
 assets/
+
+# envd binaries — extracted at runtime by init-envd container from
+# ghcr.io/superduck-ai/e2b-local image.  Docker daemon needs host-accessible
+# envd to bind-mount into sandbox containers.
 envd-bin/
+logs/
+
+# AI agent 个人本地覆盖文件（不提交）
+# Claude Code 读 CLAUDE.local.md；Codex 读 AGENTS.override.md（覆盖同级 AGENTS.md）。
+# Codex 全局个人偏好放 ~/.codex/AGENTS.override.md，不在此处。
+CLAUDE.local.md
+AGENTS.override.md

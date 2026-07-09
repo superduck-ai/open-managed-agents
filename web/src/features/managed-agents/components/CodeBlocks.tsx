@@ -236,7 +236,7 @@ export function MiniCodeBlock({ code, maxLines }: { code: string; maxLines: numb
 
   return (
     <pre
-      className="subtle-scrollbar overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words px-3 py-3 font-mono text-[12px] leading-[18px] text-foreground"
+      className="subtle-scrollbar-auto overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words px-3 py-3 font-mono text-[12px] leading-[18px] text-foreground"
       style={{ maxHeight }}
     >
       <HighlightedCode code={code} language="bash-yaml" />
@@ -246,7 +246,7 @@ export function MiniCodeBlock({ code, maxLines }: { code: string; maxLines: numb
 
 export function ScrollableCodeBlock({ code, language }: { code: string; language: HighlightLanguage }) {
   return (
-    <pre className="subtle-scrollbar max-h-80 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words px-3 py-3 font-mono text-[12px] leading-[18px] text-foreground">
+    <pre className="subtle-scrollbar-auto max-h-80 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words px-3 py-3 font-mono text-[12px] leading-[18px] text-foreground">
       <HighlightedCode code={code} language={language} />
     </pre>
   );

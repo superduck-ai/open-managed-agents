@@ -55,3 +55,4 @@ data/
 # Large bundled assets kept out of the repo for now
 assets/
 envd-bin/
+logs

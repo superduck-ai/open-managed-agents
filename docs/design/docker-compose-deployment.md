@@ -143,7 +143,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
    ANTHROPIC_UPSTREAM_API_KEY=sk-ant-...
    ```
 
-> **平台要求**：`e2b-local` 使用 `network_mode: host`，仅支持 Linux Docker Engine。Docker Desktop（macOS/Windows）不支持 host 网络模式。
+> **平台要求**：`e2b-local` 使用 `network_mode: host`，支持 Linux Docker Engine 20.10+ 和 OrbStack（macOS）。Docker Desktop for Mac/Windows 不支持 host 网络模式。
 
 ## 7. 启动
 

@@ -102,7 +102,8 @@ Builtin retrieve、versions 和 content/download 都从 DB metadata 定位 MinIO
 Custom create 是纯创建语义，不会把同名 skill 自动合并成新版本。`display_title` 是当前 workspace 内 custom skill 的业务唯一键：
 
 - migration `00011_unique_skill_display_title.sql` 在 `skills(workspace_id, display_title)` 上创建 active-row partial unique index。
-- migration 会先修复历史重复 active rows：每个 workspace/title 组合保留最近更新的一条原名，其余重复项追加数据库内部 `id` 派生的后缀，避免已存在数据阻塞升级。
+- migration 假设已有 active `display_title` 数据在 workspace 内唯一；若存在重复数据，索引创建会失败并暴露需要人工清理的数据问题。
+- migration `00012_require_skill_display_title.sql` 把 `skills.display_title` 改为 `NOT NULL`，避免未来写入路径绕过业务唯一键。
 - 唯一索引用 `CREATE UNIQUE INDEX CONCURRENTLY` 创建，降低迁移期间对 `skills` 表写入的锁影响。
 - `POST /v1/skills` 若复用未删除 custom skill 的 `display_title`，返回 `400 invalid_request_error`。
 - 正确更新路径是 `POST /v1/skills/{skill_id}/versions?beta=true`。

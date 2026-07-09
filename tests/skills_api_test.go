@@ -531,6 +531,43 @@ func TestSkillsAPI(t *testing.T) {
 	})
 }
 
+func TestSkillsDisplayTitleSchema(t *testing.T) {
+	store := newFakeStore("skills-schema-bucket")
+	app := newTestAppWithStore(t, nil, store)
+	defer app.close()
+
+	var isNullable string
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select is_nullable
+		from information_schema.columns
+		where table_schema = current_schema()
+			and table_name = 'skills'
+			and column_name = 'display_title'
+	`).Scan(&isNullable); err != nil {
+		t.Fatalf("query skills.display_title nullability: %v", err)
+	}
+	if isNullable != "NO" {
+		t.Fatalf("skills.display_title is_nullable = %s, want NO", isNullable)
+	}
+
+	var indexDef string
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select indexdef
+		from pg_indexes
+		where schemaname = current_schema()
+			and indexname = 'skills_workspace_display_title_active_key'
+	`).Scan(&indexDef); err != nil {
+		t.Fatalf("query skills display_title unique index: %v", err)
+	}
+	normalizedIndexDef := strings.ToLower(indexDef)
+	if !strings.Contains(normalizedIndexDef, "display_title") || !strings.Contains(normalizedIndexDef, "where (deleted_at is null)") {
+		t.Fatalf("skills display_title index = %s, want active display_title unique index", indexDef)
+	}
+	if strings.Contains(normalizedIndexDef, "display_title is not null") {
+		t.Fatalf("skills display_title index = %s, should not depend on nullable display_title predicate", indexDef)
+	}
+}
+
 func TestSkillsListPagination(t *testing.T) {
 	t.Run("success mixed list continues after builtin boundary", func(t *testing.T) {
 		pageApp, pageStore := newSkillsPaginationTestApp(t)

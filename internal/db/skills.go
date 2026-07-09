@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
+
+const skillDisplayTitleUniqueIndex = "skills_workspace_display_title_active_key"
 
 type Skill struct {
 	ID                int64
@@ -71,22 +72,24 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 	}
 	defer tx.Rollback(ctx)
 
-	if skill.DisplayTitle != nil {
-		var existingID string
-		err := tx.QueryRow(ctx, `
-			select external_id
-			from skills
-			where workspace_id = $1
-				and display_title = $2
-				and deleted_at is null
-			limit 1
-		`, skill.WorkspaceID, *skill.DisplayTitle).Scan(&existingID)
-		if err == nil {
-			return Skill{}, SkillVersion{}, &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return Skill{}, SkillVersion{}, err
-		}
+	if skill.DisplayTitle == nil {
+		return Skill{}, SkillVersion{}, ErrInvalidState
+	}
+
+	var existingID string
+	err = tx.QueryRow(ctx, `
+		select external_id
+		from skills
+		where workspace_id = $1
+			and display_title = $2
+			and deleted_at is null
+		limit 1
+	`, skill.WorkspaceID, *skill.DisplayTitle).Scan(&existingID)
+	if err == nil {
+		return Skill{}, SkillVersion{}, &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Skill{}, SkillVersion{}, err
 	}
 
 	createdSkill, err := scanSkill(tx.QueryRow(ctx, `
@@ -100,8 +103,8 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 	`, skill.UUID, skill.ExternalID, skill.WorkspaceID, skill.CreatedByAPIKeyID,
 		skill.DisplayTitle, version.Version, skill.CreatedAt))
 	if err != nil {
-		if isSkillDisplayTitleUniqueViolation(err) {
-			return Skill{}, SkillVersion{}, &SkillDisplayTitleConflictError{DisplayTitle: derefString(skill.DisplayTitle)}
+		if isUniqueViolationOnConstraint(err, skillDisplayTitleUniqueIndex) {
+			return Skill{}, SkillVersion{}, &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
 		}
 		return Skill{}, SkillVersion{}, err
 	}
@@ -116,20 +119,6 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 		return Skill{}, SkillVersion{}, err
 	}
 	return createdSkill, createdVersion, nil
-}
-
-func isSkillDisplayTitleUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) &&
-		pgErr.Code == "23505" &&
-		pgErr.ConstraintName == "skills_workspace_display_title_active_key"
-}
-
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }
 
 func (d *DB) CreateSkillVersion(ctx context.Context, workspaceID int64, skillExternalID string, version SkillVersion) (Skill, SkillVersion, error) {

@@ -166,6 +166,30 @@ export function registerManagedAgentsAgentsTests() {
     expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull();
   });
 
+  test('uses client-side navigation for agent detail links', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    mockAgentsApi([serverAgent]);
+    let popstateCount = 0;
+    const handlePopstate = () => {
+      popstateCount += 1;
+    };
+    window.addEventListener('popstate', handlePopstate);
+
+    try {
+      render(<ManagedAgentsPage section="agents" />);
+
+      const agentLink = await screen.findByRole('link', { name: 'Server agent' });
+      expect(agentLink.getAttribute('href')).toBe('/workspaces/default/agents/agent_server123456');
+
+      fireEvent.click(agentLink);
+
+      expect(window.location.pathname).toBe('/workspaces/default/agents/agent_server123456');
+      expect(popstateCount).toBe(1);
+    } finally {
+      window.removeEventListener('popstate', handlePopstate);
+    }
+  });
+
   test('validates and generates create-agent config before navigating to the created agent', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi([], {

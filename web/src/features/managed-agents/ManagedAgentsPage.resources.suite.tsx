@@ -61,6 +61,27 @@ export function registerManagedAgentsResourceTests() {
     expect(api.requests.some((request) => request.url.startsWith('/v1/memory_stores?') && request.method === 'GET')).toBe(true);
   });
 
+  test('uses client-side navigation for managed resource detail links', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    const popstateHandler = mock(() => undefined);
+    window.addEventListener('popstate', popstateHandler);
+
+    try {
+      renderManagedAgentsPage('sessions');
+
+      const sessionLink = await screen.findByRole('link', { name: 'Session one' });
+      expect(sessionLink.getAttribute('href')).toBe('/workspaces/default/sessions/sesn_one123456');
+
+      fireEvent.click(sessionLink);
+
+      expect(window.location.pathname).toBe('/workspaces/default/sessions/sesn_one123456');
+      expect(popstateHandler).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('popstate', popstateHandler);
+    }
+  });
+
   test('uses shared alerts for managed resource list failures', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments');
     mockManagedResourceApi();

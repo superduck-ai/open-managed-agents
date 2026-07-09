@@ -31,7 +31,7 @@ import {
 } from '../components/common';
 import { createdFilterLabel, createdFilterOptionsFor, managedColumnLabel, resourceCreateLabel, resourceDescription, resourceEmptyAction, resourceSearchPlaceholder, resourceTitle, statusFilterLabel, statusFilterOptionsFor } from '../labels';
 import { type AgentApiResponse, type AgentCreatedFilter, type AgentFilterMenu, type AgentLoadMode, type AgentStatusFilter, type CreateAgentInput, type PageCursor, type ResourceConfig } from '../types';
-import { agentDetailHref, errorMessage } from '../utils';
+import { agentDetailHref, errorMessage, handleInternalLinkClick } from '../utils';
 import { CreateAgentDialog } from './create-dialog';
 import {
   agentMatchesClientFilters,
@@ -548,13 +548,21 @@ export function AgentsResourcePage({ config, routeWorkspaceId }: { config: Resou
                           ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: agent.id })}
                           className="gap-1.5"
                         >
-                          <a href={detailHref} className="truncate font-mono text-[13px] text-foreground underline-offset-4 hover:underline">
+                          <a
+                            href={detailHref}
+                            className="truncate font-mono text-[13px] text-foreground underline-offset-4 hover:underline"
+                            onClick={(event) => handleInternalLinkClick(event, detailHref)}
+                          >
                             {compactAgentId(agent.id)}
                           </a>
                         </CopyIdCell>
                       </DataTableCell>
                       <DataTableCell className="truncate text-foreground">
-                        <a href={detailHref} className="underline-offset-4 hover:underline">
+                        <a
+                          href={detailHref}
+                          className="underline-offset-4 hover:underline"
+                          onClick={(event) => handleInternalLinkClick(event, detailHref)}
+                        >
                           {agent.name || msg('managedAgents.agents.untitled', 'Untitled agent')}
                         </a>
                       </DataTableCell>

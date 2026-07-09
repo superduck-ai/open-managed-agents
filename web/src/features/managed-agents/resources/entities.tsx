@@ -21,7 +21,7 @@ import { archiveManagedEntity, createManagedEntity, deleteManagedEntity, listAge
 import { AgentFilterDropdown, AgentSelectionCheckbox, ConfirmEntityDialog, EmptyState, ManagedErrorAlert, ManagedSearchField } from '../components/common';
 import { entityActionLabel, entityKindLabel, managedColumnLabel, managedMessage, managedToastMessage, resourceCreateLabel, resourceDescription, resourceSearchPlaceholder, resourceTitle } from '../labels';
 import { type AgentDetailCreatedFilter, type AgentDetailStatusFilter, type AgentStatusFilter, type DeploymentApiResponse, type EntityOption, type ManagedEntityApiResponse, type ManagedEntityFormValues, type ManagedEntityListFilters, type ManagedEntitySection, type PageCursor, type ResourceConfig, type SessionApiResponse } from '../types';
-import { compactEntityId, copyText, errorMessage, managedEntityDetailHref } from '../utils';
+import { compactEntityId, copyText, errorMessage, handleInternalLinkClick, managedEntityDetailHref } from '../utils';
 import { ManagedEntityDialog } from './dialogs';
 import { cellsForEntity, columnWidth, entityAgentId, entityAgentLabel, entityDisplayName, entityStatusLabel } from './model';
 
@@ -816,6 +816,7 @@ export function ManagedEntityRow({
   const busy = Boolean(busyAction?.endsWith(`:${entity.id}`));
   const deployment = config.section === 'deployments' ? (entity as DeploymentApiResponse) : null;
   const paused = deployment?.status === 'paused';
+  const detailHref = managedEntityDetailHref(workspaceId, config.section, entity.id);
 
   return (
     <DataTableRow selected={selected}>
@@ -830,8 +831,9 @@ export function ManagedEntityRow({
           ) :
           column === 'Name' ? (
             <a
-              href={managedEntityDetailHref(workspaceId, config.section, entity.id)}
+              href={detailHref}
               className="truncate text-foreground underline-offset-4 hover:underline"
+              onClick={(event) => handleInternalLinkClick(event, detailHref)}
             >
               {cells[column]}
             </a>

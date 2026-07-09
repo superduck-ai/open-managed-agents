@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -423,6 +424,16 @@ func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) 
 	if provider.creates[0].resolution.Metadata["resolved_before_launch"] != "true" {
 		t.Fatalf("Create did not use precomputed resolution: %#v", provider.creates[0].resolution)
 	}
+	if provider.creates[0].resolution.Network == nil {
+		t.Fatalf("Create resolution has nil network, want limited network options")
+	}
+	allowOut, ok := provider.creates[0].resolution.Network.AllowOut.([]string)
+	if !ok {
+		t.Fatalf("Create resolution AllowOut = %#v, want []string", provider.creates[0].resolution.Network.AllowOut)
+	}
+	if slices.Contains(allowOut, "mcp.notion.com") {
+		t.Fatalf("Create resolution allowed agent MCP host: %#v", allowOut)
+	}
 }
 
 func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T) {
@@ -496,7 +507,8 @@ type recordingRunnerProvider struct {
 }
 
 type recordedSandboxResolve struct {
-	metadata json.RawMessage
+	metadata   json.RawMessage
+	resolution e2bruntime.Resolution
 }
 
 type recordedSandboxWrite struct {
@@ -516,19 +528,26 @@ type recordedSkillMount struct {
 }
 
 func (p *recordingRunnerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
+	record := recordedSandboxResolve{}
 	if work != nil {
-		p.resolves = append(p.resolves, recordedSandboxResolve{metadata: append(json.RawMessage(nil), work.Metadata...)})
+		record.metadata = append(json.RawMessage(nil), work.Metadata...)
 	}
 	if p.resolveErr != nil {
+		p.resolves = append(p.resolves, record)
 		return e2bruntime.Resolution{}, p.resolveErr
 	}
-	return e2bruntime.Resolution{
-		Template:            "fake-template",
-		Metadata:            map[string]string{"environment_id": env.ExternalID, "resolved_before_launch": "true"},
-		Envs:                map[string]string{"ANTHROPIC_ENVIRONMENT_ID": env.ExternalID},
-		Timeout:             time.Minute,
-		AllowInternetAccess: true,
-	}, nil
+	resolution, err := e2bruntime.NewProvider(config.Config{E2BTemplate: "fake-template"}).Resolve(env, work)
+	if err != nil {
+		p.resolves = append(p.resolves, record)
+		return e2bruntime.Resolution{}, err
+	}
+	if resolution.Metadata == nil {
+		resolution.Metadata = map[string]string{}
+	}
+	resolution.Metadata["resolved_before_launch"] = "true"
+	record.resolution = resolution
+	p.resolves = append(p.resolves, record)
+	return resolution, nil
 }
 
 func (p *recordingRunnerProvider) Create(_ context.Context, _ db.Environment, work *db.EnvironmentWork, resolution e2bruntime.Resolution) (e2bruntime.Sandbox, error) {

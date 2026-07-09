@@ -12,6 +12,32 @@ import (
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
+func TestWorkerSnapshotFailureRetries(t *testing.T) {
+	store := &fakeWorkerStore{
+		jobs: []db.SkillPrewarmJob{{
+			ID:          2,
+			ExternalID:  "job_2",
+			WorkspaceID: 42,
+			Attempts:    1,
+			Payload:     json.RawMessage(`{"kind":"snapshot","agent_snapshot":{"skills":[{"type":"custom","skill_id":"skill_1","version":"latest"}]}}`),
+		}},
+	}
+	worker := NewWorker(store, store, store, &fakeResolver{err: errors.New("resolve failed")}, &fakePreparer{})
+
+	if err := worker.RunOnce(context.Background(), "worker_1"); err == nil {
+		t.Fatal("RunOnce error = nil, want failure")
+	}
+	if len(store.failed) != 1 {
+		t.Fatalf("failed = %+v, want one failure", store.failed)
+	}
+	if store.failed[0].id != 2 || store.failed[0].attempts != 1 || store.failed[0].maxAttempts != maxAttempts {
+		t.Fatalf("failure = %+v", store.failed[0])
+	}
+	if len(store.completed) != 0 {
+		t.Fatalf("completed = %+v, want none", store.completed)
+	}
+}
+
 func TestWorkerSnapshotPreparesMountAndCompletes(t *testing.T) {
 	store := &fakeWorkerStore{
 		jobs: []db.SkillPrewarmJob{{
@@ -42,29 +68,55 @@ func TestWorkerSnapshotPreparesMountAndCompletes(t *testing.T) {
 	}
 }
 
-func TestWorkerSnapshotFailureRetries(t *testing.T) {
+func TestWorkerFanoutSkipsAgentSnapshotFailure(t *testing.T) {
+	originalSnapshotFromAgent := agentSnapshotFromAgent
+	agentSnapshotFromAgent = func(agent db.Agent) (json.RawMessage, error) {
+		if agent.ExternalID == "agent_bad" {
+			return nil, errors.New("snapshot failed")
+		}
+		return originalSnapshotFromAgent(agent)
+	}
+	t.Cleanup(func() {
+		agentSnapshotFromAgent = originalSnapshotFromAgent
+	})
+
 	store := &fakeWorkerStore{
 		jobs: []db.SkillPrewarmJob{{
-			ID:          2,
-			ExternalID:  "job_2",
+			ID:          5,
+			ExternalID:  "job_5",
 			WorkspaceID: 42,
-			Attempts:    1,
-			Payload:     json.RawMessage(`{"kind":"snapshot","agent_snapshot":{"skills":[{"type":"custom","skill_id":"skill_1","version":"latest"}]}}`),
+			Payload:     json.RawMessage(`{"kind":"fanout","skill_id":"skill_1","version":"20260708"}`),
+		}},
+		agents: []db.Agent{{
+			ID:             10,
+			ExternalID:     "agent_bad",
+			CurrentVersion: 2,
+			Name:           "bad agent",
+			Model:          json.RawMessage(`{}`),
+			Skills:         json.RawMessage(`[{"type":"custom","skill_id":"skill_1","version":"latest"}]`),
+		}},
+		deployments: []db.Deployment{{
+			ID:            20,
+			ExternalID:    "dep_1",
+			AgentSnapshot: json.RawMessage(`{"skills":[{"type":"custom","skill_id":"skill_1","version":"latest"}]}`),
 		}},
 	}
-	worker := NewWorker(store, store, store, &fakeResolver{err: errors.New("resolve failed")}, &fakePreparer{})
+	worker := NewWorker(store, store, store, &fakeResolver{}, &fakePreparer{})
 
-	if err := worker.RunOnce(context.Background(), "worker_1"); err == nil {
-		t.Fatal("RunOnce error = nil, want failure")
+	if err := worker.RunOnce(context.Background(), "worker_1"); err != nil {
+		t.Fatalf("RunOnce error = %v", err)
 	}
-	if len(store.failed) != 1 {
-		t.Fatalf("failed = %+v, want one failure", store.failed)
+	if len(store.snapshotInputs) != 1 {
+		t.Fatalf("snapshot inputs = %+v, want deployment only", store.snapshotInputs)
 	}
-	if store.failed[0].id != 2 || store.failed[0].attempts != 1 || store.failed[0].maxAttempts != maxAttempts {
-		t.Fatalf("failure = %+v", store.failed[0])
+	if store.snapshotInputs[0].Source != "deployment" || store.snapshotInputs[0].SourceID != "dep_1" {
+		t.Fatalf("snapshot input = %+v, want deployment", store.snapshotInputs[0])
 	}
-	if len(store.completed) != 0 {
-		t.Fatalf("completed = %+v, want none", store.completed)
+	if len(store.failed) != 0 {
+		t.Fatalf("failed = %+v, want none", store.failed)
+	}
+	if len(store.completed) != 1 || store.completed[0] != 5 {
+		t.Fatalf("completed = %+v, want [5]", store.completed)
 	}
 }
 

@@ -81,6 +81,18 @@ func TestBuildMountManifestDoesNotLoadArchive(t *testing.T) {
 	}
 }
 
+func TestAddZipFileUncompressedSizeRejectsOversize(t *testing.T) {
+	_, err := addZipFileUncompressedSize(0, &zip.File{
+		FileHeader: zip.FileHeader{
+			Name:               "runtime-skill/huge.bin",
+			UncompressedSize64: maxSkillArchiveUncompressedBytes + 1,
+		},
+	})
+	if err == nil {
+		t.Fatal("addZipFileUncompressedSize error = nil, want oversize error")
+	}
+}
+
 func TestInspectSkillArchiveAcceptsDirectoryEntries(t *testing.T) {
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
@@ -108,17 +120,5 @@ func TestInspectSkillArchiveAcceptsDirectoryEntries(t *testing.T) {
 	}
 	if dir != "runtime-skill" || string(skillMD) != "# Runtime Skill\n" {
 		t.Fatalf("inspectSkillArchiveBytes() = %q, %q", dir, skillMD)
-	}
-}
-
-func TestAddZipFileUncompressedSizeRejectsOversize(t *testing.T) {
-	_, err := addZipFileUncompressedSize(0, &zip.File{
-		FileHeader: zip.FileHeader{
-			Name:               "runtime-skill/huge.bin",
-			UncompressedSize64: maxSkillArchiveUncompressedBytes + 1,
-		},
-	})
-	if err == nil {
-		t.Fatal("addZipFileUncompressedSize error = nil, want oversize error")
 	}
 }

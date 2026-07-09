@@ -57,6 +57,8 @@ type Worker struct {
 	preparer  SkillMountPreparer
 }
 
+var agentSnapshotFromAgent = agentsnapshot.FromAgent
+
 type jobPayload struct {
 	Kind                string          `json:"kind"`
 	AgentSnapshot       json.RawMessage `json:"agent_snapshot"`
@@ -184,9 +186,10 @@ func (w *Worker) processFanout(ctx context.Context, workspaceID int64, payload j
 	nextAfterAgentID := payload.AfterAgentID
 	for _, agent := range agents {
 		nextAfterAgentID = agent.ID
-		snapshot, err := agentsnapshot.FromAgent(agent)
+		snapshot, err := agentSnapshotFromAgent(agent)
 		if err != nil {
-			return err
+			log.Printf("skill prewarm fanout skip agent workspace_id=%d agent_id=%s skill_id=%s version=%s: %v", workspaceID, agent.ExternalID, payload.SkillID, payload.Version, err)
+			continue
 		}
 		if err := w.snapshots.EnqueueSkillPrewarmSnapshotJob(ctx, db.SkillPrewarmSnapshotJobInput{
 			WorkspaceID:         workspaceID,

@@ -22,7 +22,7 @@ func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := NewProvider(tt.cfg)
-			mounts := provider.sandboxVolumeMounts()
+			mounts := provider.sandboxVolumeMounts(nil)
 			if got := mounts[sandboxUserDataMountPath]; got != sandboxUserDataVolumeName {
 				t.Fatalf("mount %s = %v, want %s", sandboxUserDataMountPath, got, sandboxUserDataVolumeName)
 			}
@@ -30,6 +30,24 @@ func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
 				t.Fatalf("mounts = %#v, want only user-data", mounts)
 			}
 		})
+	}
+}
+
+func TestSandboxVolumeMountsIncludesManagedAgentSkills(t *testing.T) {
+	provider := NewProvider(config.Config{})
+	work := &db.EnvironmentWork{
+		Metadata: json.RawMessage(`{"managed_agent_skills_mount":{"mount_path":"/mnt/skills","volume_name":"managed-agent-skills-test","manifest_sha256":"abc123"}}`),
+	}
+
+	mounts := provider.sandboxVolumeMounts(work)
+	if got := mounts[sandboxUserDataMountPath]; got != sandboxUserDataVolumeName {
+		t.Fatalf("mount %s = %v, want %s", sandboxUserDataMountPath, got, sandboxUserDataVolumeName)
+	}
+	if got := mounts[SandboxSkillsMountPath]; got != "managed-agent-skills-test" {
+		t.Fatalf("mount %s = %v, want managed-agent-skills-test", SandboxSkillsMountPath, got)
+	}
+	if len(mounts) != 2 {
+		t.Fatalf("mounts = %#v, want user-data plus skills", mounts)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -173,16 +174,134 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	}
 }
 
+func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
+	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
+	cfg.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.ClaudeAgentVersion = "2.1.120"
+	cfg.E2BTemplate = "fake-template"
+
+	store := newFakeStore("runner-cloud-skills-bucket")
+	app := newTestAppWithStore(t, &cfg, store)
+	defer app.close()
+
+	skill := createSkill(t, app, "runtime-skill")
+	defer deleteSkill(t, app, skill.ID)
+	agent := createAgent(t, app, `{
+		"model":"claude-opus-4-8",
+		"name":"Runner Skill Agent",
+		"skills":[{"type":"custom","skill_id":"`+skill.ID+`","version":"latest"}]
+	}`)
+	defer archiveAgent(t, app, agent.ID)
+
+	client := anthropic.NewClient(
+		option.WithBaseURL(app.baseURL),
+		option.WithAPIKey(defaultTestKey),
+	)
+	environment, err := client.Beta.Environments.New(ctx, anthropic.BetaEnvironmentNewParams{
+		Name: "runner-cloud-skills-" + strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", ""),
+		Config: anthropic.BetaEnvironmentNewParamsConfigUnion{
+			OfCloud: &anthropic.BetaCloudConfigParams{
+				Networking: anthropic.BetaCloudConfigParamsNetworkingUnion{
+					OfUnrestricted: &anthropic.BetaUnrestrictedNetworkParam{},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create environment: %v", err)
+	}
+	defer client.Beta.Environments.Delete(context.Background(), environment.ID, anthropic.BetaEnvironmentDeleteParams{})
+
+	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
+		EnvironmentID: environment.ID,
+		Title:         anthropic.String("Runner skills session"),
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+
+	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-skills"}
+	runner := environments.NewRunnerWithConfigAndStore(app.db, provider, cfg, store)
+	processed, err := runner.RunOnce(ctx, "runner-cloud-skills-test")
+	if err != nil {
+		t.Fatalf("run once: %v", err)
+	}
+	if !processed {
+		t.Fatal("runner did not process queued session work")
+	}
+
+	if len(provider.writes) != 1 {
+		t.Fatalf("sandbox writes = %#v, want only environment-manager stdin", provider.writes)
+	}
+	if !strings.HasSuffix(provider.writes[0].path, "/environment-manager.v0.json") {
+		t.Fatalf("first write path = %s, want environment-manager stdin", provider.writes[0].path)
+	}
+	if len(provider.skillMounts) != 1 {
+		t.Fatalf("skill mounts = %#v, want one prepared mount", provider.skillMounts)
+	}
+	mount := provider.skillMounts[0].mount
+	if mount.MountPath != e2bruntime.SandboxSkillsMountPath || mount.VolumeName == "" || mount.ManifestSHA256 == "" {
+		t.Fatalf("unexpected skill mount: %#v", mount)
+	}
+	if len(mount.Skills) != 1 || mount.Skills[0].Directory != "runtime-skill" {
+		t.Fatalf("unexpected skill mount manifest: %#v", mount.Skills)
+	}
+	if len(provider.skillMounts[0].runtimeSkills) != 1 {
+		t.Fatalf("runtime skills = %#v, want one", provider.skillMounts[0].runtimeSkills)
+	}
+	assertZipContains(t, provider.skillMounts[0].runtimeSkills[0].Archive, "runtime-skill/SKILL.md")
+	if len(provider.creates) != 1 {
+		t.Fatalf("sandbox creates = %#v, want one", provider.creates)
+	}
+	var workMetadata map[string]any
+	if err := json.Unmarshal(provider.creates[0].metadata, &workMetadata); err != nil {
+		t.Fatalf("decode work metadata: %v", err)
+	}
+	rawMount, ok := workMetadata[e2bruntime.SkillMountMetadataKey].(map[string]any)
+	if !ok {
+		t.Fatalf("work metadata missing skill mount: %#v", workMetadata)
+	}
+	if rawMount["mount_path"] != e2bruntime.SandboxSkillsMountPath || rawMount["volume_name"] != mount.VolumeName {
+		t.Fatalf("unexpected work skill mount metadata: %#v", rawMount)
+	}
+	if len(provider.commands) != 1 ||
+		strings.Contains(provider.commands[0], "installed managed agent skills") ||
+		strings.Contains(provider.commands[0], "$HOME/.claude/skills") {
+		t.Fatalf("sandbox command should not install managed agent skills directly:\n%v", provider.commands)
+	}
+}
+
 type recordingRunnerProvider struct {
-	sandboxID string
-	writes    []recordedSandboxWrite
-	commands  []string
+	sandboxID   string
+	writes      []recordedSandboxWrite
+	commands    []string
+	creates     []recordedSandboxCreate
+	skillMounts []recordedSkillMount
 }
 
 type recordedSandboxWrite struct {
 	sandboxID string
 	path      string
 	data      []byte
+}
+
+type recordedSandboxCreate struct {
+	metadata json.RawMessage
+}
+
+type recordedSkillMount struct {
+	mount         e2bruntime.SkillMount
+	runtimeSkills []skillsapi.RuntimeSkill
 }
 
 func (p *recordingRunnerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -195,7 +314,10 @@ func (p *recordingRunnerProvider) Resolve(env db.Environment, work *db.Environme
 	}, nil
 }
 
-func (p *recordingRunnerProvider) Create(context.Context, db.Environment, *db.EnvironmentWork) (e2bruntime.Sandbox, error) {
+func (p *recordingRunnerProvider) Create(_ context.Context, _ db.Environment, work *db.EnvironmentWork) (e2bruntime.Sandbox, error) {
+	if work != nil {
+		p.creates = append(p.creates, recordedSandboxCreate{metadata: append(json.RawMessage(nil), work.Metadata...)})
+	}
 	return e2bruntime.Sandbox{ID: p.sandboxID}, nil
 }
 
@@ -206,6 +328,33 @@ func (p *recordingRunnerProvider) Kill(context.Context, string) error {
 func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID string, path string, data []byte) error {
 	p.writes = append(p.writes, recordedSandboxWrite{sandboxID: sandboxID, path: path, data: append([]byte(nil), data...)})
 	return nil
+}
+
+func (p *recordingRunnerProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*e2bruntime.SkillMount, error) {
+	manifest, _, manifestSHA256, err := skillsapi.BuildMountManifest(runtimeSkills)
+	if err != nil {
+		return nil, err
+	}
+	mount := e2bruntime.SkillMount{
+		MountPath:      e2bruntime.SandboxSkillsMountPath,
+		VolumeName:     "test-managed-agent-skills-" + manifestSHA256[:12],
+		ManifestSHA256: manifestSHA256,
+		Skills:         manifest.Skills,
+	}
+	copied := make([]skillsapi.RuntimeSkill, 0, len(runtimeSkills))
+	for _, skill := range runtimeSkills {
+		archive, err := skill.LoadArchive(ctx)
+		if err != nil {
+			return nil, err
+		}
+		skill.Archive = archive
+		copied = append(copied, skill)
+	}
+	p.skillMounts = append(p.skillMounts, recordedSkillMount{
+		mount:         mount,
+		runtimeSkills: copied,
+	})
+	return &mount, nil
 }
 
 func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, command string) error {

@@ -3,6 +3,8 @@ package skills
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +35,7 @@ type builtinSkill struct {
 	Directory     string
 	ArchivePath   string
 	ArchiveSize   int64
+	SHA256        string
 	LatestVersion *string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
@@ -132,6 +135,10 @@ func loadBuiltinSkill(root, archivePath string) (builtinSkill, error) {
 	if err != nil {
 		metadataBytes = skillMD
 	}
+	sha, err := fileSHA256(archivePath)
+	if err != nil {
+		return builtinSkill{}, err
+	}
 	meta := parseSkillMetadata(metadataBytes, directory)
 	version := builtinVersion
 	return builtinSkill{
@@ -142,10 +149,25 @@ func loadBuiltinSkill(root, archivePath string) (builtinSkill, error) {
 		Directory:     directory,
 		ArchivePath:   archivePath,
 		ArchiveSize:   info.Size(),
+		SHA256:        sha,
 		LatestVersion: &version,
 		CreatedAt:     info.ModTime().UTC(),
 		UpdatedAt:     info.ModTime().UTC(),
 	}, nil
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func inspectSkillArchive(path string) (string, []byte, error) {
@@ -157,6 +179,7 @@ func inspectSkillArchive(path string) (string, []byte, error) {
 
 	var top string
 	var skillMD []byte
+	var uncompressedSize uint64
 	for _, file := range reader.File {
 		name := strings.ReplaceAll(file.Name, "\\", "/")
 		if name == "" {
@@ -179,8 +202,16 @@ func inspectSkillArchive(path string) (string, []byte, error) {
 		} else if top != parts[0] {
 			return "", nil, fmt.Errorf("multiple top-level directories: %s and %s", top, parts[0])
 		}
+		if file.Mode()&os.ModeSymlink != 0 {
+			return "", nil, fmt.Errorf("zip contains symlink: %s", file.Name)
+		}
 		if file.FileInfo().IsDir() {
 			continue
+		}
+		var err error
+		uncompressedSize, err = addZipFileUncompressedSize(uncompressedSize, file)
+		if err != nil {
+			return "", nil, err
 		}
 		if name == top+"/SKILL.md" {
 			data, err := readZipFile(file)

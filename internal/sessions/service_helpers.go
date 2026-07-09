@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -63,39 +64,11 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, nil, errors.New("agent must not be archived")
 	}
-	snapshot, err := snapshotFromAgent(agent)
+	snapshot, err := agentsnapshot.FromAgent(agent)
 	if err != nil {
 		return db.Agent{}, nil, err
 	}
 	return agent, snapshot, nil
-}
-
-func snapshotFromAgent(agent db.Agent) (json.RawMessage, error) {
-	return httpapi.MarshalRaw(map[string]any{
-		"id":          agent.ExternalID,
-		"description": agent.Description,
-		"mcp_servers": rawJSONValue(agent.MCPServers, []any{}),
-		"metadata":    rawJSONValue(agent.Metadata, map[string]any{}),
-		"model":       rawJSONValue(agent.Model, map[string]any{}),
-		"multiagent":  rawJSONValue(agent.Multiagent, nil),
-		"name":        agent.Name,
-		"skills":      rawJSONValue(agent.Skills, []any{}),
-		"system":      agent.System,
-		"tools":       rawJSONValue(agent.Tools, []any{}),
-		"type":        "agent",
-		"version":     agent.CurrentVersion,
-	})
-}
-
-func rawJSONValue(raw json.RawMessage, fallback any) any {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return fallback
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return fallback
-	}
-	return value
 }
 
 func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, raw json.RawMessage) (json.RawMessage, error) {
@@ -189,7 +162,7 @@ func (h *Handler) resourceFromFields(r *http.Request, session db.Session, fields
 		payload["url"] = url
 		payload["mount_path"] = mountPath
 		if raw, ok := fields["checkout"]; ok && !httpapi.IsJSONNull(raw) {
-			payload["checkout"] = rawJSONValue(raw, nil)
+			payload["checkout"] = agentsnapshot.RawJSONValue(raw, nil)
 		}
 	case "memory_store":
 		memoryStoreID, err := parseRequiredStringField(fields, "memory_store_id")

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -200,7 +201,7 @@ func (h *Handler) agentNameForSessionThread(ctx context.Context, session db.Sess
 	if err != nil {
 		return "", err
 	}
-	snapshot, ok := rawJSONValue(thread.AgentSnapshot, nil).(map[string]any)
+	snapshot, ok := agentsnapshot.RawJSONValue(thread.AgentSnapshot, nil).(map[string]any)
 	if !ok {
 		return "", nil
 	}

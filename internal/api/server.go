@@ -26,6 +26,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
+	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -74,22 +75,23 @@ func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectSto
 		platformStore = platformsession.NewMemoryStore()
 	}
 	codeSessionService := codesessions.NewService(cfg, database)
+	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(database)
 	s := &Server{
 		cfg:            cfg,
 		db:             database,
 		platformStore:  platformStore,
 		admin:          adminapi.NewHandler(cfg, database),
-		agents:         agents.NewHandler(cfg, database),
+		agents:         agents.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
 		batch:          batches.NewHandler(cfg, database, objectStore),
 		codeSessions:   codeSessionService,
-		deployments:    deploymentsapi.NewHandler(cfg, database),
+		deployments:    deploymentsapi.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
 		deploymentRuns: deploymentsapi.NewRunsHandler(cfg, database),
 		envs:           environments.NewHandler(cfg, database),
 		files:          files.NewHandler(cfg, database, objectStore),
 		memory:         memoryapi.NewHandler(cfg, database, objectStore),
 		models:         modelsapi.NewHandler(),
 		sessions:       sessionsapi.NewHandler(cfg, database, codeSessionService),
-		skills:         skillsapi.NewHandler(cfg, database, objectStore),
+		skills:         skillsapi.NewHandlerWithSkillPrewarm(cfg, database, objectStore, skillPrewarmEnqueuer),
 		vaults:         vaultsapi.NewHandler(cfg, database),
 		webhooks:       webhooksapi.NewHandler(cfg, database),
 	}

@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -23,12 +25,20 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxDeploymentBodySize = 4 << 20
+const (
+	maxDeploymentBodySize      = 4 << 20
+	skillPrewarmEnqueueTimeout = 3 * time.Second
+)
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	router chi.Router
+	cfg     config.Config
+	db      *db.DB
+	prewarm skillPrewarmSnapshotEnqueuer
+	router  chi.Router
+}
+
+type skillPrewarmSnapshotEnqueuer interface {
+	EnqueueSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) error
 }
 
 type RunsHandler struct {
@@ -79,7 +89,11 @@ type resolvedAgent struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	h := &Handler{cfg: cfg, db: database}
+	return NewHandlerWithSkillPrewarm(cfg, database, nil)
+}
+
+func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer) *Handler {
+	h := &Handler{cfg: cfg, db: database, prewarm: prewarm}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -231,6 +245,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment"))
 		return
 	}
+	h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, created.AgentSnapshot, "deployment", created.ExternalID, "deployment_create")
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(created, now))
 }
 
@@ -430,6 +445,9 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeDeploymentLoadError(w, r, err, deploymentID)
 		return
+	}
+	if !agentsnapshot.SnapshotSkillsEqual(current.AgentSnapshot, updated.AgentSnapshot) {
+		h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, updated.AgentSnapshot, "deployment", updated.ExternalID, "deployment_update")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(updated, time.Now().UTC()))
 }
@@ -836,7 +854,7 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	if agent.ArchivedAt != nil {
 		return resolvedAgent{}, errors.New("agent must not be archived")
 	}
-	snapshot, err := snapshotFromAgent(agent)
+	snapshot, err := agentsnapshot.FromAgent(agent)
 	if err != nil {
 		return resolvedAgent{}, err
 	}
@@ -845,23 +863,6 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 		return resolvedAgent{}, err
 	}
 	return resolvedAgent{record: agent, snapshot: snapshot, ref: ref}, nil
-}
-
-func snapshotFromAgent(agent db.Agent) (json.RawMessage, error) {
-	return httpapi.MarshalRaw(map[string]any{
-		"id":          agent.ExternalID,
-		"description": agent.Description,
-		"mcp_servers": rawJSONValue(agent.MCPServers, []any{}),
-		"metadata":    rawJSONValue(agent.Metadata, map[string]any{}),
-		"model":       rawJSONValue(agent.Model, map[string]any{}),
-		"multiagent":  rawJSONValue(agent.Multiagent, nil),
-		"name":        agent.Name,
-		"skills":      rawJSONValue(agent.Skills, []any{}),
-		"system":      agent.System,
-		"tools":       rawJSONValue(agent.Tools, []any{}),
-		"type":        "agent",
-		"version":     agent.CurrentVersion,
-	})
 }
 
 func agentRefRaw(id string, version int) (json.RawMessage, error) {
@@ -971,7 +972,7 @@ func (h *Handler) normalizeResource(r *http.Request, principal auth.Principal, f
 			if err := validateCheckout(raw); err != nil {
 				return nil, nil, err
 			}
-			payload["checkout"] = rawJSONValue(raw, nil)
+			payload["checkout"] = agentsnapshot.RawJSONValue(raw, nil)
 		}
 		if raw, ok := fields["authorization_token"]; ok && !httpapi.IsJSONNull(raw) {
 			token, err := parseRequiredRawString(raw, "authorization_token")
@@ -1383,7 +1384,7 @@ func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now tim
 	if lastRunAt != nil {
 		schedule["last_run_at"] = httpapi.FormatTime(*lastRunAt)
 	}
-	schedule["upcoming_runs_at"] = rawJSONValue(upcomingRuns(scheduleRaw, lastRunAt, now, archived), []any{})
+	schedule["upcoming_runs_at"] = agentsnapshot.RawJSONValue(upcomingRuns(scheduleRaw, lastRunAt, now, archived), []any{})
 	raw, _ := httpapi.MarshalRaw(schedule)
 	return raw
 }
@@ -1771,15 +1772,15 @@ func defaultRepoMountPath(rawURL string) string {
 	return "/workspace/" + name
 }
 
-func rawJSONValue(raw json.RawMessage, fallback any) any {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return fallback
+func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) {
+	if h == nil || h.prewarm == nil || !agentsnapshot.SnapshotHasSkills(snapshot) {
+		return
 	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return fallback
+	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
+	defer cancel()
+	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, source, sourceID, trigger); err != nil {
+		log.Printf("enqueue deployment skill prewarm source=%s source_id=%s trigger=%s: %v", source, sourceID, trigger, err)
 	}
-	return value
 }
 
 func cloneMap(input map[string]any) map[string]any {

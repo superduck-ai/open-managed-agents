@@ -89,6 +89,10 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if strings.Contains(command.ShellCommand, "sk-ant-test-secret") {
 		t.Fatalf("command leaked anthropic api key:\n%s", command.ShellCommand)
 	}
+	if strings.Contains(command.ShellCommand, "installed managed agent skills") ||
+		strings.Contains(command.ShellCommand, "$HOME/.claude/skills") {
+		t.Fatalf("command should not install managed agent skills directly:\n%s", command.ShellCommand)
+	}
 }
 
 func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *testing.T) {

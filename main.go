@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
@@ -75,7 +76,8 @@ func main() {
 		batches.StartBatchWorker(ctx, database, objectStore, cfg)
 		batches.StartBatchExpirySweep(ctx, database, cfg)
 	}
-	environments.StartRunner(ctx, database, cfg)
+	environments.StartRunnerWithStore(ctx, database, objectStore, cfg)
+	skillprewarm.StartWorker(ctx, database, objectStore, cfg)
 	webhooks.StartWorker(ctx, database, cfg)
 
 	server := &http.Server{

@@ -125,9 +125,19 @@ export type DeploymentFixture = {
   updated_at?: string;
 };
 
+export type SkillFixture = {
+  id: string;
+  displayTitle?: string;
+  latestVersion?: string;
+  source?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type MockAgentsApiOptions = {
   sessions?: SessionFixture[];
   deployments?: DeploymentFixture[];
+  skills?: SkillFixture[];
   analyticsOverview?: Record<string, unknown>;
   analyticsTimeseries?: Array<Record<string, unknown>>;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
@@ -151,6 +161,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentsSearchErrorsRemaining = options.agentsSearchErrorOnce ? 1 : 0;
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   const now = new Date().toISOString();
+  const skillDetails = new Map((options.skills ?? []).map((skill) => [skill.id, skillResponse(skill)]));
   let environments = [
     {
       id: 'env_option123456',
@@ -262,6 +273,12 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     if (versionsMatch && method === 'GET') {
       const agentId = decodeURIComponent(versionsMatch[1]);
       return jsonResponse({ data: versionsById.get(agentId) ?? [], next_page: null });
+    }
+
+    const skillRetrieveMatch = url.match(/^\/v1\/skills\/([^/]+)\?beta=true$/);
+    if (skillRetrieveMatch && method === 'GET') {
+      const skillId = decodeURIComponent(skillRetrieveMatch[1]);
+      return jsonResponse(skillDetails.get(skillId) ?? skillResponse({ id: skillId }));
     }
 
     if (url.startsWith('/v1/sessions?') && method === 'GET') {
@@ -1429,6 +1446,19 @@ export function agentResponse(agent: AgentFixture) {
     type: 'agent',
     updated_at: agent.updated_at ?? now,
     version: agent.version ?? 1
+  };
+}
+
+export function skillResponse(skill: SkillFixture) {
+  const now = new Date().toISOString();
+  return {
+    id: skill.id,
+    type: 'skill',
+    display_title: skill.displayTitle ?? skill.id,
+    latest_version: skill.latestVersion ?? '20260701',
+    source: skill.source ?? 'custom',
+    created_at: skill.created_at ?? now,
+    updated_at: skill.updated_at ?? now
   };
 }
 

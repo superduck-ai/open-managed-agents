@@ -130,6 +130,20 @@ export function listAgentVersions(agentId: string, workspaceId: string) {
   return anthropicBetaApi.agents.versions.list<AgentApiResponse>(agentId, { limit: 100 }, workspaceId) as Promise<AgentPageResponse>;
 }
 
+export type AgentSkillApiResponse = {
+  id: string;
+  type: 'skill';
+  display_title: string;
+  latest_version: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export function retrieveAgentSkill(skillId: string, workspaceId: string) {
+  return anthropicBetaApi.skills.retrieve<AgentSkillApiResponse>(skillId, workspaceId);
+}
+
 export function updateAgentDetail(agentId: string, input: AgentUpdateInput, workspaceId: string) {
   return anthropicBetaApi.agents.update<AgentApiResponse>(agentId, sdkBody(input), workspaceId);
 }

@@ -231,27 +231,50 @@ export function registerManagedAgentsAgentsTests() {
 
   test('renders agent detail and switches the config viewer to a historical version', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_detail123456');
-    const api = mockAgentsApi([
+    const api = mockAgentsApi(
+      [
+        {
+          id: 'agent_detail123456',
+          name: 'Current agent',
+          version: 2,
+          description: 'Current description',
+          model: { id: 'claude-sonnet-4-6', speed: 'fast' },
+          skills: [
+            { type: 'anthropic', skill_id: 'triage', version: '2026-07-01' },
+            { type: 'custom', skill_id: 'reporting' }
+          ],
+          system: 'Current system prompt',
+          tools: [{ type: 'agent_toolset_20260401', configs: [{ name: 'bash' }] }],
+          versions: [
+            {
+              id: 'agent_detail123456',
+              name: 'Historical agent',
+              version: 1,
+              description: 'Old description',
+              system: 'Old system prompt'
+            }
+          ]
+        }
+      ],
       {
-        id: 'agent_detail123456',
-        name: 'Current agent',
-        version: 2,
-        description: 'Current description',
-        model: { id: 'claude-sonnet-4-6', speed: 'fast' },
-        skills: ['triage', 'reporting'],
-        system: 'Current system prompt',
-        tools: [{ type: 'agent_toolset_20260401', configs: [{ name: 'bash' }] }],
-        versions: [
+        skills: [
           {
-            id: 'agent_detail123456',
-            name: 'Historical agent',
-            version: 1,
-            description: 'Old description',
-            system: 'Old system prompt'
+            id: 'triage',
+            displayTitle: 'Customer triage',
+            latestVersion: '20260708',
+            source: 'anthropic',
+            updated_at: '2026-07-08T12:00:00Z'
+          },
+          {
+            id: 'reporting',
+            displayTitle: 'Weekly reporting',
+            latestVersion: '20260702',
+            source: 'custom',
+            updated_at: '2026-07-02T12:00:00Z'
           }
         ]
       }
-    ]);
+    );
     render(<ManagedAgentsPage section="agents" />);
 
     expect(await screen.findByRole('heading', { name: 'Current agent', hidden: true })).toBeTruthy();
@@ -271,7 +294,32 @@ export function registerManagedAgentsAgentsTests() {
     expect(screen.getByRole('tabpanel').textContent).toContain('Current system prompt');
     expect(screen.getByText('New').closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     expect(screen.getByText('Fast').closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
-    expect(screen.getByText('triage').closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
+    expect(await screen.findByText('Customer triage')).toBeTruthy();
+    expect(screen.getByText('Weekly reporting')).toBeTruthy();
+    const skillsCard = screen.getByText('Customer triage').closest('[data-slot="card"]') as HTMLElement;
+    expect(skillsCard).toBeTruthy();
+    expect(within(skillsCard).getByText('triage').closest('code')).toBeTruthy();
+    expect(within(skillsCard).getByText('reporting').closest('code')).toBeTruthy();
+    expect(within(skillsCard).getByText('v2026-07-01')).toBeTruthy();
+    expect(within(skillsCard).queryByText('Update available (v20260708)')).toBeNull();
+    expect(within(skillsCard).getAllByText('Anthropic').length).toBeGreaterThan(0);
+    expect(within(skillsCard).getAllByText('Custom').length).toBeGreaterThan(0);
+    const triageHoverTarget = screen.getByText('Customer triage').closest('[aria-label$="skill summary"]') as HTMLElement;
+    expect(triageHoverTarget).toBeTruthy();
+    fireEvent.click(triageHoverTarget);
+    await waitFor(() => expect(screen.getByText('Source')).toBeTruthy());
+    expect(screen.getByText('Latest version')).toBeTruthy();
+    expect(screen.getByText('20260708')).toBeTruthy();
+    expect(screen.getByText('Agent version')).toBeTruthy();
+    expect(screen.getByText('2026-07-01')).toBeTruthy();
+    expect(screen.getByText('Resolved')).toBeTruthy();
+    expect(screen.getAllByText('Anthropic').length).toBeGreaterThan(0);
+    fireEvent.click(triageHoverTarget);
+    await waitFor(() => expect(screen.queryByText('Source')).toBeNull());
+    expect(screen.queryByRole('columnheader', { name: 'Skill' })).toBeNull();
+    expect(api.requests.some((request) => request.url === '/v1/skills/triage?beta=true')).toBe(true);
+    expect(api.requests.some((request) => request.url === '/v1/skills/reporting?beta=true')).toBe(true);
+    expect(screen.queryByText('No skills configured.')).toBeNull();
     const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+8/ });
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
@@ -290,6 +338,7 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'v1' }));
 
     await waitFor(() => expect(screen.getByText('Old system prompt')).toBeTruthy());
+    expect(screen.getByText('No skills configured.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Current agent' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     expect(api.requests.some((request) => request.url === '/v1/agents/agent_detail123456?beta=true&version=1')).toBe(true);

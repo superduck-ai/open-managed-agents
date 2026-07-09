@@ -54,11 +54,79 @@ export function relativeTime(value: string) {
 }
 
 export function agentSkillLabel(skill: unknown) {
+  return agentSkillId(skill) || 'skill';
+}
+
+export function agentSkillId(skill: unknown) {
   if (typeof skill === 'string') {
     return skill;
   }
   const record = objectRecord(skill);
-  return String(record.skill_id || record.name || record.id || 'skill');
+  const skillId = record.skill_id;
+  return typeof skillId === 'string' && skillId.trim() ? skillId : '';
+}
+
+export function agentSkillSnapshotTitle(skill: unknown) {
+  if (typeof skill === 'string') {
+    return '';
+  }
+  const record = objectRecord(skill);
+  for (const key of ['display_title', 'name', 'title']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
+export function agentSkillRequestedVersion(skill: unknown) {
+  if (typeof skill === 'string') {
+    return '';
+  }
+  const record = objectRecord(skill);
+  const version = record.version;
+  if (typeof version === 'string' && version.trim()) {
+    return version.trim();
+  }
+  if (typeof version === 'number' && Number.isFinite(version)) {
+    return String(version);
+  }
+  return '';
+}
+
+export function agentSkillSnapshotSource(skill: unknown) {
+  if (typeof skill === 'string') {
+    return '';
+  }
+  const record = objectRecord(skill);
+  const source = record.source;
+  if (typeof source === 'string' && source.trim()) {
+    return source.trim();
+  }
+  const type = record.type;
+  if (typeof type === 'string' && type.trim() && type !== 'skill') {
+    return type.trim();
+  }
+  return '';
+}
+
+export function formatAgentSkillSource(source: string) {
+  const normalized = source.trim().toLowerCase();
+  if (!normalized) {
+    return 'Unknown';
+  }
+  if (normalized === 'anthropic') {
+    return 'Anthropic';
+  }
+  if (normalized === 'custom') {
+    return 'Custom';
+  }
+  return normalized
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 export const BUILT_IN_AGENT_TOOLSETS: Record<string, AgentToolPermission[]> = {

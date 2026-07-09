@@ -14,7 +14,7 @@ import clsx from 'clsx';
 import { AlertCircle, Archive, ArrowUpRight, BriefcaseBusiness, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Copy, MoreVertical, Pencil, Play, Plus, Sparkles, X } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { agentEditConfig, agentEditConfigText, agentEditSaveErrorMessage, buildAgentUpdateInput, parseAgentEditConfigText } from '../agentConfig';
-import { archiveAgent, createAgentDetailDeployment, createAgentDetailSession, getAgentSessionAnalyticsOverview, getAgentSessionAnalyticsTimeseries, listAgentDetailDeployments, listAgentDetailSessions, listAgentVersions, retrieveAgent, runDeployment, updateAgentDetail } from '../api';
+import { archiveAgent, createAgentDetailDeployment, createAgentDetailSession, getAgentSessionAnalyticsOverview, getAgentSessionAnalyticsTimeseries, listAgentDetailDeployments, listAgentDetailSessions, listAgentVersions, retrieveAgent, retrieveAgentSkill, runDeployment, updateAgentDetail, type AgentSkillApiResponse } from '../api';
 import { AgentConfigEditor } from '../components/AgentConfigEditor';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { CopyButton, FormatSelect } from '../components/CodeBlocks';
@@ -33,10 +33,15 @@ import {
   agentDetailTabFromSearch,
   agentDetailVersionFromSearch,
   agentModelName,
+  agentSkillId,
   agentSkillLabel,
+  agentSkillRequestedVersion,
+  agentSkillSnapshotSource,
+  agentSkillSnapshotTitle,
   agentToolCards,
   emptyAgentSessionAnalyticsOverview,
   ensureArray,
+  formatAgentSkillSource,
   formatDecimal,
   formatDetailDate,
   formatDurationSeconds,
@@ -360,6 +365,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
             ) : (
               <AgentConfigTab
                 agent={configAgent ?? agent}
+                workspaceId={workspaceId}
                 versions={versions}
                 activeVersion={activeVersion}
                 latestVersion={latestVersion}
@@ -430,12 +436,14 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
 
 export function AgentConfigTab({
   agent,
+  workspaceId,
   versions,
   activeVersion,
   latestVersion,
   onSelectVersion
 }: {
   agent: AgentApiResponse;
+  workspaceId: string;
   versions: AgentApiResponse[];
   activeVersion: number;
   latestVersion: number;
@@ -444,8 +452,69 @@ export function AgentConfigTab({
   const { msg } = useI18n();
   const toolCards = agentToolCards(agent);
   const skills = ensureArray(agent.skills);
+  const skillRefs = useMemo(
+    () =>
+      skills.map((skill, index) => ({
+        key: `${agentSkillLabel(skill)}-${index}`,
+        id: agentSkillId(skill),
+        fallbackLabel: agentSkillLabel(skill),
+        requestedVersion: agentSkillRequestedVersion(skill),
+        snapshotSource: agentSkillSnapshotSource(skill),
+        snapshotTitle: agentSkillSnapshotTitle(skill)
+      })),
+    [skills]
+  );
+  const skillIdsKey = useMemo(
+    () => Array.from(new Set(skillRefs.map((skill) => skill.id).filter(Boolean))).join('\u0000'),
+    [skillRefs]
+  );
+  const [skillDetailsById, setSkillDetailsById] = useState<Record<string, AgentSkillApiResponse>>({});
+  const [skillDetailErrorsById, setSkillDetailErrorsById] = useState<Record<string, true>>({});
+  const [skillDetailsLoading, setSkillDetailsLoading] = useState(false);
   const modelRecord = objectRecord(agent.model);
   const fastModel = modelRecord.speed === 'fast';
+
+  useEffect(() => {
+    const skillIds = skillIdsKey ? skillIdsKey.split('\u0000') : [];
+    if (!skillIds.length) {
+      setSkillDetailsById({});
+      setSkillDetailErrorsById({});
+      setSkillDetailsLoading(false);
+      return;
+    }
+
+    let active = true;
+    setSkillDetailsLoading(true);
+    void Promise.all(
+      skillIds.map(async (skillId) => {
+        try {
+          return { skillId, detail: await retrieveAgentSkill(skillId, workspaceId), ok: true as const };
+        } catch {
+          return { skillId, ok: false as const };
+        }
+      })
+    ).then((results) => {
+      if (!active) {
+        return;
+      }
+      const nextDetails: Record<string, AgentSkillApiResponse> = {};
+      const nextErrors: Record<string, true> = {};
+      results.forEach((result) => {
+        if (result.ok) {
+          nextDetails[result.skillId] = result.detail;
+        } else {
+          nextErrors[result.skillId] = true;
+        }
+      });
+      setSkillDetailsById(nextDetails);
+      setSkillDetailErrorsById(nextErrors);
+      setSkillDetailsLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [skillIdsKey, workspaceId]);
 
   return (
     <div className="space-y-6">
@@ -473,37 +542,287 @@ export function AgentConfigTab({
       </AgentDetailSection>
 
       <AgentDetailSection title={msg('managedAgents.agents.detail.mcpsAndTools', 'MCPs and tools')}>
-        <Card className="max-w-[760px] gap-0 py-0">
+        <Card className="gap-0 py-0">
           {toolCards.map((card, index) => (
             <AgentToolCard key={`${card.title}-${card.subtitle}`} card={card} divided={index > 0} />
           ))}
         </Card>
       </AgentDetailSection>
 
-      <AgentDetailSection title={msg('managedAgents.skills.title', 'Skills')}>
-        {skills.length ? (
-          <div className="flex flex-wrap gap-2">
-            {skills.map((skill, index) => (
-              <Badge key={`${agentSkillLabel(skill)}-${index}`} variant="secondary" className="h-auto rounded-md px-2 py-1 text-sm font-normal text-foreground">
-                {agentSkillLabel(skill)}
-              </Badge>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">{msg('managedAgents.agents.detail.noSkills', 'No skills configured.')}</p>
-        )}
+      <AgentDetailSection
+        title={msg('managedAgents.skills.title', 'Skills')}
+        description={skillRefs.length ? undefined : msg('managedAgents.agents.detail.noSkills', 'No skills configured.')}
+      >
+        {skillRefs.length ? (
+          <AgentSkillsList
+            skills={skillRefs}
+            detailsById={skillDetailsById}
+            errorsById={skillDetailErrorsById}
+            loading={skillDetailsLoading}
+          />
+        ) : null}
       </AgentDetailSection>
     </div>
   );
 }
 
-export function AgentDetailSection({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+type AgentSkillRef = {
+  key: string;
+  id: string;
+  fallbackLabel: string;
+  requestedVersion: string;
+  snapshotSource: string;
+  snapshotTitle: string;
+};
+
+function SkillVersionBadges({
+  requestedVersion,
+  msg
+}: {
+  requestedVersion: string;
+  msg: any;
+}) {
+  const isLatest = requestedVersion === 'latest' || !requestedVersion;
+
+  return (
+    <div className="mt-1 flex flex-wrap gap-1.5">
+      <Badge
+        variant="outline"
+        className="h-auto rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted/30"
+      >
+        {isLatest ? msg('skills.versions.latest', 'Latest') : `v${requestedVersion}`}
+      </Badge>
+    </div>
+  );
+}
+
+function AgentSkillsList({
+  skills,
+  detailsById,
+  errorsById,
+  loading
+}: {
+  skills: AgentSkillRef[];
+  detailsById: Record<string, AgentSkillApiResponse>;
+  errorsById: Record<string, true>;
+  loading: boolean;
+}) {
+  const { msg } = useI18n();
+  const [expandedSkillKey, setExpandedSkillKey] = useState<string | null>(null);
+
+  const skillRows = skills.map((skill) => {
+    const detail = skill.id ? detailsById[skill.id] : undefined;
+    const displayTitle = detail?.display_title?.trim() || skill.snapshotTitle || skill.id || skill.fallbackLabel;
+    const source = detail?.source || skill.snapshotSource;
+    const requestedVersion = skill.requestedVersion || msg('managedAgents.agents.detail.skillLatestRequested', 'latest');
+    const latestVersion = detail?.latest_version?.trim() || '';
+
+    return {
+      key: skill.key,
+      displayTitle,
+      idLabel: skill.id || skill.fallbackLabel,
+      source,
+      metadataUnavailable: Boolean(skill.id && errorsById[skill.id]),
+      requestedVersion,
+      latestVersion,
+      createdAt: detail?.created_at || '',
+      updatedAt: detail?.updated_at || '',
+      copyId: skill.id
+    };
+  });
+
+  return (
+    <Card className="gap-0 overflow-hidden py-0">
+      <div className="divide-y divide-border">
+        {skillRows.map((skill) => {
+          const isExpanded = expandedSkillKey === skill.key;
+          return (
+            <Collapsible
+              key={skill.key}
+              open={isExpanded}
+              onOpenChange={(open) => setExpandedSkillKey(open ? skill.key : null)}
+              className="bg-card"
+            >
+              <div className="group/row flex items-center justify-between bg-card hover:bg-muted/50 transition-colors">
+                <CollapsibleTrigger
+                  type="button"
+                  aria-label={msg('managedAgents.agents.detail.skillSummary', '{name} skill summary', { name: skill.displayTitle })}
+                  className="flex h-auto flex-1 items-center gap-4 px-4 py-3 text-left text-sm font-normal text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <span className="grid size-10 place-items-center rounded-lg border border-border bg-secondary text-foreground">
+                      <Sparkles className="size-5 text-primary" aria-hidden />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="truncate text-sm font-semibold text-foreground">
+                          {skill.displayTitle}
+                        </span>
+                        <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                          (
+                          <code className="truncate font-mono">
+                            {skill.idLabel}
+                          </code>
+                          )
+                        </span>
+                        <Badge
+                          variant="secondary"
+                          className="h-auto rounded-md px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground bg-secondary/80"
+                        >
+                          {formatAgentSkillSource(skill.source)}
+                        </Badge>
+                      </div>
+                      <SkillVersionBadges
+                        requestedVersion={skill.requestedVersion}
+                        msg={msg}
+                      />
+                    </div>
+                  </div>
+                </CollapsibleTrigger>
+                <div className="flex shrink-0 items-center gap-2 pr-4">
+                  {skill.copyId ? (
+                    <div className="opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
+                      <CopyButton
+                        value={skill.copyId}
+                        label={msg('managedAgents.agents.detail.copySkillId', 'Copy skill ID')}
+                      />
+                    </div>
+                  ) : null}
+                  <CollapsibleTrigger
+                    type="button"
+                    className="grid size-8 place-items-center rounded-md hover:bg-accent text-muted-foreground/70"
+                  >
+                    <ChevronDown
+                      className={clsx(
+                        'size-4 transition',
+                        isExpanded && 'rotate-180'
+                      )}
+                      aria-hidden
+                    />
+                  </CollapsibleTrigger>
+                </div>
+              </div>
+              <CollapsibleContent className="border-t border-border bg-muted/30">
+                <div className="px-5 py-4">
+                  <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 text-xs leading-5">
+                    <div className="flex flex-col gap-1">
+                      <dt className="font-medium text-muted-foreground">
+                        {msg('managedAgents.agents.detail.skillIdLabel', 'ID')}
+                      </dt>
+                      <dd className="flex items-center gap-1.5 font-mono text-foreground break-all">
+                        {skill.idLabel}
+                        {skill.copyId ? (
+                          <CopyButton
+                            value={skill.copyId}
+                            label={msg('managedAgents.agents.detail.copySkillId', 'Copy skill ID')}
+                          />
+                        ) : null}
+                      </dd>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <dt className="font-medium text-muted-foreground">
+                        {msg('managedAgents.agents.detail.skillSourceLabel', 'Source')}
+                      </dt>
+                      <dd className="text-foreground">
+                        <Badge variant="secondary" className="h-auto rounded-md px-2 py-0.5 text-xs font-normal">
+                          {formatAgentSkillSource(skill.source)}
+                        </Badge>
+                      </dd>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <dt className="font-medium text-muted-foreground">
+                        {msg('managedAgents.agents.detail.skillAgentVersionLabel', 'Agent version')}
+                      </dt>
+                      <dd className="text-foreground font-medium">
+                        {skill.requestedVersion}
+                      </dd>
+                    </div>
+
+                    {skill.latestVersion ? (
+                      <div className="flex flex-col gap-1">
+                        <dt className="font-medium text-muted-foreground">
+                          {msg('managedAgents.agents.detail.skillLatestVersionLabel', 'Latest version')}
+                        </dt>
+                        <dd className="text-foreground font-medium">
+                          {skill.latestVersion}
+                        </dd>
+                      </div>
+                    ) : null}
+
+                    {skill.updatedAt ? (
+                      <div className="flex flex-col gap-1">
+                        <dt className="font-medium text-muted-foreground">
+                          {msg('managedAgents.agents.detail.skillUpdatedLabel', 'Updated')}
+                        </dt>
+                        <dd className="text-foreground">
+                          {formatDetailDate(skill.updatedAt)}
+                        </dd>
+                      </div>
+                    ) : null}
+
+                    {skill.createdAt ? (
+                      <div className="flex flex-col gap-1">
+                        <dt className="font-medium text-muted-foreground">
+                          {msg('managedAgents.agents.detail.skillCreatedLabel', 'Created')}
+                        </dt>
+                        <dd className="text-foreground">
+                          {formatDetailDate(skill.createdAt)}
+                        </dd>
+                      </div>
+                    ) : null}
+
+                    <div className="flex flex-col gap-1">
+                      <dt className="font-medium text-muted-foreground">
+                        {msg('managedAgents.agents.detail.skillMetadataLabel', 'Metadata')}
+                      </dt>
+                      <dd className="text-foreground">
+                        {skill.metadataUnavailable ? (
+                          <span className="text-destructive font-medium">
+                            {msg('managedAgents.agents.detail.skillMetadataUnavailable', 'Metadata unavailable')}
+                          </span>
+                        ) : (
+                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                            {msg('managedAgents.agents.detail.skillMetadataAvailable', 'Resolved')}
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          );
+        })}
+      </div>
+      {loading ? (
+        <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
+          {msg('managedAgents.agents.detail.resolvingSkillMetadata', 'Resolving skill metadata...')}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+export function AgentDetailSection({
+  title,
+  description,
+  action,
+  children
+}: {
+  title: string;
+  description?: ReactNode;
+  action?: ReactNode;
+  children?: ReactNode;
+}) {
   return (
     <section>
       <div className="mb-3 flex items-start justify-between gap-4">
         <h2 className="text-base font-semibold leading-6 text-foreground">{title}</h2>
         {action}
       </div>
+      {description ? <p className={clsx('text-sm text-muted-foreground', children && 'mb-3')}>{description}</p> : null}
       {children}
     </section>
   );

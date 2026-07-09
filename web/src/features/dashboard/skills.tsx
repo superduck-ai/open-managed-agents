@@ -196,14 +196,6 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
     setDeletingSkillId(target.id);
     setDeleteSkillError(null);
     try {
-      let nextPage: string | undefined;
-      do {
-        const versions = await listSkillVersions(target.id, workspaceId, nextPage);
-        for (const version of versions.data) {
-          await deleteSkillVersion(target.id, version.version, workspaceId);
-        }
-        nextPage = versions.next_page ?? undefined;
-      } while (nextPage);
       await deleteSkill(target.id, workspaceId);
       setDeleteSkillTarget(null);
       if (selectedSkillId === target.id) {
@@ -297,7 +289,6 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
         mode="create"
         open={createOpen}
         workspaceId={workspaceId}
-        existingSkills={skills}
         onOpenChange={setCreateOpen}
         onUploaded={handleCreateUploaded}
       />
@@ -669,7 +660,6 @@ function SkillUploadDialog({
   open,
   workspaceId,
   skill,
-  existingSkills = [],
   onOpenChange,
   onUploaded
 }: {
@@ -677,7 +667,6 @@ function SkillUploadDialog({
   open: boolean;
   workspaceId: string;
   skill?: ConsoleSkill;
-  existingSkills?: ConsoleSkill[];
   onOpenChange: (open: boolean) => void;
   onUploaded: (resource: ConsoleSkill | ConsoleSkillVersion) => void;
 }) {
@@ -709,20 +698,6 @@ function SkillUploadDialog({
     directoryInputRef.current?.setAttribute('directory', '');
   }, [open]);
 
-  const findCreateConflict = useCallback((displayTitle: string) => {
-    if (mode !== 'create') {
-      return null;
-    }
-    const normalizedTitle = displayTitle.trim();
-    if (!normalizedTitle) {
-      return null;
-    }
-    return existingSkills.find((candidate) => (
-      candidate.source === 'custom' &&
-      (candidate.display_title || '').trim() === normalizedTitle
-    )) ?? null;
-  }, [existingSkills, mode]);
-
   const selectFiles = async (files: File[]) => {
     const result = validateUploadFiles(files, msg);
     setSelection(result.selection);
@@ -740,10 +715,9 @@ function SkillUploadDialog({
     if (!selection || error || isSubmitting) {
       return;
     }
-    const conflict = findCreateConflict(selection.displayTitle);
     setIsSubmitting(true);
     try {
-      const resource = await createSkillPackage(skill?.id ?? conflict?.id, selection.files, workspaceId, selection.displayTitle);
+      const resource = await createSkillPackage(skill?.id, selection.files, workspaceId, selection.displayTitle);
       onUploaded(resource);
     } catch (err) {
       setError(errorMessage(err));

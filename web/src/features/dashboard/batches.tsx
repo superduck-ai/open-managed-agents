@@ -406,6 +406,7 @@ function BatchDetailPanel({
             ariaLabel={msg('batches.copyAria', 'Copy {batchId}', { batchId: formatMessageBatchId(batch.id) })}
             className="mt-2"
             textClassName="text-muted-foreground"
+            alwaysVisible
           />
         </div>
         <Button

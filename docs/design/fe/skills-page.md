@@ -60,19 +60,13 @@ Create / Update 使用 shadcn `Dialog`，交互遵循 Claude 平台 reverse engi
 - 单 archive 直接作为一个 `files[]` 上传。
 - 目录上传要求所有文件在同一个顶层目录下，并包含顶层 `SKILL.md`。
 - display title 自动从 archive 文件名或顶层目录推断。
-- Create 模式会用当前 skills 列表预检 custom `display_title`；命中已有 custom skill 时自动切换为 `POST /v1/skills/{skill_id}/versions?beta=true`，把上传作为新版本处理，避免误走 `POST /v1/skills` 的唯一性冲突。
+- Create 模式始终是纯创建语义，提交 `POST /v1/skills?beta=true`。如果 `display_title` 与已有 custom skill 冲突，展示后端 400 错误，并提示用户从已有 skill 的 actions menu 使用 Update 上传新版本。
 
 Create 成功后：
 
 - invalidates skills list。
 - 关闭 dialog。
 - 打开新 skill drawer。
-
-Create 上传命中已有 custom skill 后：
-
-- invalidates skills list、skill detail 和 versions query。
-- 关闭 dialog。
-- 打开已有 skill drawer。
 
 Update 成功后：
 
@@ -86,7 +80,7 @@ Update 成功后：
 
 - title：`Confirm deleting {name}`
 - description：说明现有代码引用会立即失效，且操作不可撤销。
-- confirm 时分页删除所有 custom versions，再删除 custom skill。
+- confirm 时调用 `DELETE /v1/skills/{skill_id}?beta=true`；skill 和 versions 的删除由后端在同一删除语义内处理。
 - 删除失败时确认框保持打开并展示错误信息。
 
 Builtin skill 和 builtin version 不显示删除入口；后端仍会强制返回 read-only error。
@@ -98,7 +92,7 @@ SuperDuck 手动验收覆盖：
 - Skills list：列、source badge、pagination、builtin/custom actions 差异。
 - Create empty state：dropzone、8MB 文案、disabled Continue。
 - Create file state：archive summary、check icon、remove upload、enabled Continue。
-- Create duplicate custom title：自动发送 `POST /v1/skills/{skill_id}/versions?beta=true`，不发送 `POST /v1/skills`。
+- Create duplicate custom title：发送 `POST /v1/skills?beta=true` 后展示后端冲突错误，不发送 versions endpoint。
 - Drawer：query param、description、versions、close。
 - Actions menu：custom Update/Delete，builtin 无 menu。
 - Update empty state：说明文案和 dropzone。

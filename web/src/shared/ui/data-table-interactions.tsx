@@ -1,5 +1,14 @@
 import { Check, Copy, EllipsisVertical } from 'lucide-react';
-import { createContext, useContext, useState, type ComponentProps, type MouseEvent, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type MouseEvent,
+  type ReactNode
+} from 'react';
 
 import { copyText } from '@/shared/lib/clipboard';
 import { cn } from '@/shared/lib/utils';
@@ -77,7 +86,8 @@ export function CopyIdCell({
   className,
   textClassName,
   buttonClassName,
-  stopPropagation = false
+  stopPropagation = false,
+  alwaysVisible = false
 }: {
   value: string;
   displayValue?: ReactNode;
@@ -87,10 +97,20 @@ export function CopyIdCell({
   textClassName?: string;
   buttonClassName?: string;
   stopPropagation?: boolean;
+  alwaysVisible?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [keyboardFocused, setKeyboardFocused] = useState(false);
+  const resetCopiedTimeoutRef = useRef<number | null>(null);
   const rowHovered = useContext(DataTableRowHoverContext);
+
+  useEffect(() => {
+    return () => {
+      if (resetCopiedTimeoutRef.current !== null) {
+        window.clearTimeout(resetCopiedTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleCopy = async (event: MouseEvent<HTMLButtonElement>) => {
     if (stopPropagation) {
@@ -98,7 +118,13 @@ export function CopyIdCell({
     }
     await copyText(value);
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 900);
+    if (resetCopiedTimeoutRef.current !== null) {
+      window.clearTimeout(resetCopiedTimeoutRef.current);
+    }
+    resetCopiedTimeoutRef.current = window.setTimeout(() => {
+      setCopied(false);
+      resetCopiedTimeoutRef.current = null;
+    }, 900);
   };
 
   return (
@@ -113,7 +139,7 @@ export function CopyIdCell({
         aria-label={ariaLabel}
         data-copy-id-button
         data-copied={copied ? 'true' : undefined}
-        style={{ opacity: rowHovered || copied || keyboardFocused ? 1 : 0 }}
+        style={{ opacity: alwaysVisible || rowHovered || copied || keyboardFocused ? 1 : 0 }}
         className={cn(
           'oma-copy-id-button shrink-0 text-muted-foreground/70 hover:text-foreground',
           buttonClassName

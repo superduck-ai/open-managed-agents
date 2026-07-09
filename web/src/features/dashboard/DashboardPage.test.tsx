@@ -259,7 +259,9 @@ describe('Dashboard i18n', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByRole('table', { name: 'Service accounts' })).toBeTruthy();
+    const serviceAccountsTable = screen.getByRole('table', { name: 'Service accounts' });
+    expect(serviceAccountsTable).toBeTruthy();
+    expect(serviceAccountsTable.closest('[data-slot="card"]')).toBeNull();
     expect(screen.getByText('CI deploy bot')).toBeTruthy();
     expect(screen.getByText('svcacc_local_0001')).toBeTruthy();
 
@@ -912,7 +914,7 @@ describe('Skills page', () => {
     expect(new URL(window.location.href).searchParams.get('skill')).toBe('skill_created');
   });
 
-  test('creates a new version when create upload matches an existing custom skill', async () => {
+  test('surfaces duplicate create errors without posting a new version', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
       if (url === '/v1/skills?beta=true&limit=100') {
@@ -932,46 +934,20 @@ describe('Skills page', () => {
           next_page: null
         };
       }
-      if (url === '/v1/skills/skill_emoji/versions?beta=true') {
-        return {
-          id: 'skillver_emoji_2',
-          type: 'skill_version',
-          description: 'updated',
-          directory: 'emoji-translator',
-          name: 'emoji-translator',
-          skill_id: 'skill_emoji',
-          version: '20260709',
-          created_at: new Date(Date.now() - 10_000).toISOString()
-        };
-      }
-      if (url === '/v1/skills/skill_emoji?beta=true') {
-        return {
-          id: 'skill_emoji',
-          type: 'skill',
-          display_title: 'emoji-translator',
-          latest_version: '20260709',
-          source: 'custom',
-          created_at: new Date(Date.now() - 120_000).toISOString(),
-          updated_at: new Date(Date.now() - 10_000).toISOString()
-        };
-      }
-      if (url === '/v1/skills/skill_emoji/versions?beta=true&limit=50') {
-        return {
-          data: [
-            {
-              id: 'skillver_emoji_2',
-              type: 'skill_version',
-              description: 'updated',
-              directory: 'emoji-translator',
-              name: 'emoji-translator',
-              skill_id: 'skill_emoji',
-              version: '20260709',
-              created_at: new Date(Date.now() - 10_000).toISOString()
-            }
-          ],
-          has_more: false,
-          next_page: null
-        };
+      if (url === '/v1/skills?beta=true') {
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: 'A custom skill named "emoji-translator" already exists. Use Update from that skill\'s actions menu to upload a new version.',
+              type: 'invalid_request_error'
+            },
+            type: 'error'
+          }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
       }
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -987,13 +963,15 @@ describe('Skills page', () => {
     expect(screen.queryByText(/already exists/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-    await waitFor(() => expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills/skill_emoji/versions?beta=true')).toBe(true));
-    expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(false);
-    const post = requests.find((request) => request.method === 'POST' && request.url === '/v1/skills/skill_emoji/versions?beta=true');
+    await waitFor(() => expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(true));
+    expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills/skill_emoji/versions?beta=true')).toBe(false);
+    const post = requests.find((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true');
     const body = post?.body as FormData;
+    expect(body.get('display_title')).toBe('emoji-translator');
     expect((body.get('files[]') as File).name).toBe('emoji-translator.zip');
-    await waitFor(() => expect(screen.queryByText('emoji-translator.zip')).toBeNull());
-    expect(new URL(window.location.href).searchParams.get('skill')).toBe('skill_emoji');
+    expect(await screen.findByText(/A custom skill named "emoji-translator" already exists/)).toBeTruthy();
+    expect(screen.getByText('emoji-translator.zip')).toBeTruthy();
+    expect(new URL(window.location.href).searchParams.get('skill')).toBeNull();
   });
 
   test('blocks empty skill archive uploads before posting', async () => {
@@ -1072,7 +1050,7 @@ describe('Skills page', () => {
     expect(screen.queryByText('emoji-translator.zip')).toBeNull();
   });
 
-  test('deletes a custom skill after confirming and deleting versions first', async () => {
+  test('deletes a custom skill atomically from the skill endpoint', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
       if (url === '/v1/skills?beta=true&limit=100') {
@@ -1091,45 +1069,6 @@ describe('Skills page', () => {
           has_more: false,
           next_page: null
         };
-      }
-      if (url === '/v1/skills/skill_emoji/versions?beta=true&limit=50') {
-        return {
-          data: [
-            {
-              id: 'skillver_1',
-              type: 'skill_version',
-              description: 'first',
-              directory: 'emoji-translator',
-              name: 'emoji-translator',
-              skill_id: 'skill_emoji',
-              version: '20260708',
-              created_at: new Date(Date.now() - 120_000).toISOString()
-            }
-          ],
-          has_more: true,
-          next_page: 'cursor_2'
-        };
-      }
-      if (url === '/v1/skills/skill_emoji/versions?beta=true&limit=50&page=cursor_2') {
-        return {
-          data: [
-            {
-              id: 'skillver_2',
-              type: 'skill_version',
-              description: 'second',
-              directory: 'emoji-translator',
-              name: 'emoji-translator',
-              skill_id: 'skill_emoji',
-              version: '20260709',
-              created_at: new Date(Date.now() - 60_000).toISOString()
-            }
-          ],
-          has_more: false,
-          next_page: null
-        };
-      }
-      if (url === '/v1/skills/skill_emoji/versions/20260708?beta=true' || url === '/v1/skills/skill_emoji/versions/20260709?beta=true') {
-        return { id: url.includes('20260708') ? '20260708' : '20260709', type: 'skill_version_deleted' };
       }
       if (url === '/v1/skills/skill_emoji?beta=true') {
         return { id: 'skill_emoji', type: 'skill_deleted' };
@@ -1151,11 +1090,7 @@ describe('Skills page', () => {
     const deleteOrder = requests
       .map((request) => request.method === 'DELETE' ? request.url : '')
       .filter(Boolean);
-    expect(deleteOrder).toEqual([
-      '/v1/skills/skill_emoji/versions/20260708?beta=true',
-      '/v1/skills/skill_emoji/versions/20260709?beta=true',
-      '/v1/skills/skill_emoji?beta=true'
-    ]);
+    expect(deleteOrder).toEqual(['/v1/skills/skill_emoji?beta=true']);
   });
 });
 
@@ -1397,6 +1332,9 @@ describe('Batches page', () => {
     expect(screen.getByText('Batch details')).toBeTruthy();
     expect(screen.getByText('Total requests')).toBeTruthy();
     expect(screen.getAllByText('msgbatch_done').length).toBeGreaterThanOrEqual(1);
+    const detailPanel = screen.getByRole('region', { name: 'Batch details' });
+    const detailCopyButton = within(detailPanel).getByRole('button', { name: 'Copy msgbatch_done' });
+    expect((detailCopyButton as HTMLElement).style.opacity).toBe('1');
     expect(screen.queryByText('Copy the template below to set up your first batch:')).toBeNull();
     expect(requests[0]?.url).toBe('/v1/messages/batches?beta=true&limit=20');
     expect(requests[0]?.headers.get('anthropic-beta')).toBe('message-batches-2024-09-24');

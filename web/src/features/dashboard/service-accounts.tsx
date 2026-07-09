@@ -64,7 +64,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { Textarea } from '@/shared/ui/textarea';
 import { useI18n } from '../../shared/i18n';
-import { ConsolePageFrame, DataTableCard } from './frame';
+import { ConsolePageFrame } from './frame';
 
 type ServiceAccountStatus = 'active' | 'archived';
 
@@ -340,8 +340,8 @@ function ServiceAccountsTable({
   const { msg } = useI18n();
 
   return (
-    <DataTableCard>
-      <Table aria-label={msg('serviceAccounts.table.ariaLabel', 'Service accounts')} className={dataTableClassName}>
+    <section className="overflow-x-auto">
+      <Table aria-label={msg('serviceAccounts.table.ariaLabel', 'Service accounts')} className={cn('min-w-[920px]', dataTableClassName)}>
         <TableHeader className="text-muted-foreground">
           <TableRow className={dataTableHeaderRowClassName}>
             <TableHead className={dataTableHeaderCellClassName}>{msg('common.name', 'Name')}</TableHead>
@@ -398,7 +398,7 @@ function ServiceAccountsTable({
           ))}
         </TableBody>
       </Table>
-    </DataTableCard>
+    </section>
   );
 }
 

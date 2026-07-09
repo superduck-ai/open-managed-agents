@@ -72,23 +72,13 @@ func (d *DB) UpsertBuiltinSkillWithVersion(ctx context.Context, skill BuiltinSki
 		return BuiltinSkill{}, BuiltinSkillVersion{}, err
 	}
 
-	var existingSHA string
-	err = tx.QueryRow(ctx, `
-		select sha256
-		from builtin_skill_versions
-		where skill_id = $1 and version = $2
-	`, createdSkill.ID, version.Version).Scan(&existingSHA)
-	if err == nil && existingSHA != version.SHA256 {
-		return BuiltinSkill{}, BuiltinSkillVersion{}, ErrVersionConflict
-	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return BuiltinSkill{}, BuiltinSkillVersion{}, err
-	}
-
 	version.SkillID = createdSkill.ID
 	version.SkillExternalID = createdSkill.ExternalID
 	createdVersion, err := upsertBuiltinSkillVersion(ctx, tx, version)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrNotFound) {
+			return BuiltinSkill{}, BuiltinSkillVersion{}, ErrVersionConflict
+		}
 		return BuiltinSkill{}, BuiltinSkillVersion{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -120,6 +110,7 @@ func upsertBuiltinSkillVersion(ctx context.Context, tx skillTx, version BuiltinS
 				else builtin_skill_versions.created_at
 			end,
 			deleted_at = null
+		where builtin_skill_versions.sha256 = excluded.sha256
 		returning id, uuid::text, external_id, skill_id, skill_external_id, version,
 			name, description, directory, s3_bucket, s3_key, size_bytes, sha256, created_at, deleted_at
 	`, version.ExternalID, version.SkillID, version.SkillExternalID, version.Version, version.Name, version.Description,

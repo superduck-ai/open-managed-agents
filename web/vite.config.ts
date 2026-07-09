@@ -23,6 +23,18 @@ export default defineConfig({
       '/v1': {
         target: backendTarget,
         changeOrigin: false
+      },
+      '/auth': {
+        target: backendTarget,
+        changeOrigin: true
+      },
+      '/oauth': {
+        target: backendTarget,
+        changeOrigin: true
+      },
+      '/web-api': {
+        target: backendTarget,
+        changeOrigin: true
       }
     }
   }

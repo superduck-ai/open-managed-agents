@@ -1,0 +1,19 @@
+# e2b-local Docker runtime 配置（compose 内使用）
+#
+# e2b-local 容器以 host 网络模式运行，挂载宿主机 docker.sock，
+# 可创建 sandbox 兄弟容器并直接通过 127.0.0.1 访问其端口。
+#
+# __ENVD_BIN_DIR__ 是占位符 — docker-compose 启动时通过 entrypoint wrapper
+# 替换为宿主机上 envd-bin 目录的真实绝对路径。
+server:
+  addr: "0.0.0.0:3099"
+
+runtime:
+  type: "docker"
+
+docker:
+  container_name_prefix: "e2b-envd-"
+  health_timeout_seconds: 30
+  # envd_binary 必须指向宿主机可访问的路径 — Docker daemon 在宿主机上运行。
+  # 占位符 __ENVD_BIN_DIR__ 会被 docker-compose entrypoint wrapper 替换。
+  envd_binary: "__ENVD_BIN_DIR__/envd-linux-amd64"

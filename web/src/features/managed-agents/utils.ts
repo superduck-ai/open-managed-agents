@@ -1,6 +1,6 @@
 import { type ApiError } from '../../shared/api/client';
 import { copyText } from '../../shared/lib/clipboard';
-import { sectionPathSegment } from './resources/ManagedResources';
+import { type MouseEvent } from 'react';
 import { type ManagedEntitySection } from './types';
 
 export { copyText };
@@ -111,6 +111,17 @@ export function managedEntityDetailHref(workspaceId: string, section: ManagedEnt
   return `${managedEntityListHref(workspaceId, section)}/${encodeURIComponent(entityId)}`;
 }
 
+export function sectionPathSegment(section: ManagedEntitySection) {
+  switch (section) {
+    case 'credential-vaults':
+      return 'vaults';
+    case 'memory-stores':
+      return 'memory-stores';
+    default:
+      return section;
+  }
+}
+
 export function agentDetailHref(workspaceId: string, agentId: string) {
   return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/agents/${encodeURIComponent(agentId)}`;
 }
@@ -120,8 +131,39 @@ export function navigateToAgentConfig(workspaceId: string, agentId: string) {
     return;
   }
   const href = `${agentDetailHref(workspaceId, agentId)}?tab=config`;
+  navigateToInternalHref(href);
+}
+
+export function handleInternalLinkClick(event: MouseEvent<HTMLAnchorElement>, href: string) {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.currentTarget.target ||
+    event.metaKey ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    typeof window === 'undefined'
+  ) {
+    return;
+  }
+
+  const targetUrl = new URL(href, window.location.href);
+  if (targetUrl.origin !== window.location.origin) {
+    return;
+  }
+
+  event.preventDefault();
+  navigateToInternalHref(`${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`);
+}
+
+export function navigateToInternalHref(href: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
   window.history.pushState(null, '', href);
-  const event = typeof PopStateEvent === 'function' ? new PopStateEvent('popstate') : new Event('popstate');
+  const event =
+    typeof window.PopStateEvent === 'function' ? new window.PopStateEvent('popstate') : new window.Event('popstate');
   window.dispatchEvent(event);
 }
 

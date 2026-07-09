@@ -4,7 +4,9 @@ import { relativeTime } from '../agents/AgentsResourcePage';
 import { localTimezone } from '../api';
 import { CompactChip, StatusPill } from '../components/common';
 import { type CredentialFormValues, type DeploymentApiResponse, type DeploymentRunApiResponse, type EnvironmentApiResponse, type EnvironmentEditValues, type EnvironmentPackageRow, type ManagedEntityApiResponse, type ManagedEntityFormValues, type ManagedEntitySection, type MemoryApiResponse, type MemoryBranchState, type MemoryTreeNode, type PageResponse, type SessionApiResponse, type VaultApiResponse, type VaultCredentialApiResponse } from '../types';
-import { formatBytes, objectRecord, titleCase } from '../utils';
+import { formatBytes, objectRecord, sectionPathSegment, titleCase } from '../utils';
+
+export { sectionPathSegment };
 
 export function initialSelectedMemoryId() {
   if (typeof window === 'undefined') {
@@ -466,17 +468,6 @@ export function deploymentRunStatus(run: DeploymentRunApiResponse) {
     return 'Succeeded';
   }
   return 'Running';
-}
-
-export function sectionPathSegment(section: ManagedEntitySection) {
-  switch (section) {
-    case 'credential-vaults':
-      return 'vaults';
-    case 'memory-stores':
-      return 'memory-stores';
-    default:
-      return section;
-  }
 }
 
 export function environmentEditValues(entity: EnvironmentApiResponse): EnvironmentEditValues {

@@ -1,12 +1,12 @@
 import {
   Archive,
   LockKeyhole,
-  MoreVertical,
   Plus,
   RotateCcw,
   Trash2
 } from 'lucide-react';
 import { useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { cn } from '@/shared/lib/utils';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,6 +20,15 @@ import {
 } from '@/shared/ui/alert-dialog';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import {
+  CopyIdCell,
+  DataTableCell,
+  DataTableRow,
+  MoreActionsButton,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName
+} from '@/shared/ui/data-table-interactions';
 import {
   Dialog,
   DialogContent,
@@ -48,7 +57,6 @@ import { Input } from '@/shared/ui/input';
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow
@@ -333,21 +341,21 @@ function ServiceAccountsTable({
 
   return (
     <DataTableCard>
-      <Table aria-label={msg('serviceAccounts.table.ariaLabel', 'Service accounts')}>
+      <Table aria-label={msg('serviceAccounts.table.ariaLabel', 'Service accounts')} className={dataTableClassName}>
         <TableHeader className="text-muted-foreground">
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="px-5 py-3">{msg('common.name', 'Name')}</TableHead>
-            <TableHead className="px-5 py-3">{msg('serviceAccounts.table.id', 'ID')}</TableHead>
-            <TableHead className="px-5 py-3">{msg('serviceAccounts.table.created', 'Created')}</TableHead>
-            <TableHead className="px-5 py-3">{msg('serviceAccounts.table.lastUsed', 'Last used')}</TableHead>
-            <TableHead className="px-5 py-3">{msg('serviceAccounts.table.status', 'Status')}</TableHead>
-            <TableHead className="w-14 px-5 py-3" />
+          <TableRow className={dataTableHeaderRowClassName}>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.name', 'Name')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('serviceAccounts.table.id', 'ID')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('serviceAccounts.table.created', 'Created')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('serviceAccounts.table.lastUsed', 'Last used')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('serviceAccounts.table.status', 'Status')}</TableHead>
+            <TableHead className={cn(dataTableHeaderCellClassName, 'w-14')} />
           </TableRow>
         </TableHeader>
         <TableBody>
           {records.map((record) => (
-            <TableRow key={record.id} className="text-foreground last:border-0">
-              <TableCell className="px-5 py-4 align-top">
+            <DataTableRow key={record.id}>
+              <DataTableCell edge="start" className="h-auto py-3 align-top">
                 <div className="min-w-0">
                   <div className="font-medium text-foreground">{record.name}</div>
                   {record.description ? (
@@ -356,32 +364,39 @@ function ServiceAccountsTable({
                     </p>
                   ) : null}
                 </div>
-              </TableCell>
-              <TableCell className="px-5 py-4 align-top font-mono text-xs text-muted-foreground">
-                {record.id}
-              </TableCell>
-              <TableCell className="px-5 py-4 align-top text-sm text-muted-foreground">
+              </DataTableCell>
+              <DataTableCell className="h-auto py-3 align-top">
+                <CopyIdCell
+                  value={record.id}
+                  displayValue={record.id}
+                  ariaLabel={msg('serviceAccounts.copyId', 'Copy {id}', { id: record.id })}
+                  tooltipLabel={msg('common.copy', 'Copy')}
+                  copiedLabel={msg('common.copied', 'Copied')}
+                  textClassName="text-muted-foreground"
+                />
+              </DataTableCell>
+              <DataTableCell className="h-auto py-3 align-top text-sm text-muted-foreground">
                 {formatDateTime(record.createdAt, locale)}
-              </TableCell>
-              <TableCell className="px-5 py-4 align-top text-sm text-muted-foreground">
+              </DataTableCell>
+              <DataTableCell className="h-auto py-3 align-top text-sm text-muted-foreground">
                 {msg('serviceAccounts.table.neverUsed', 'Never')}
-              </TableCell>
-              <TableCell className="px-5 py-4 align-top">
+              </DataTableCell>
+              <DataTableCell className="h-auto py-3 align-top">
                 <Badge variant={record.status === 'active' ? 'secondary' : 'outline'}>
                   {record.status === 'active'
                     ? msg('common.active', 'Active')
                     : msg('common.archived', 'Archived')}
                 </Badge>
-              </TableCell>
-              <TableCell className="px-5 py-4 text-right align-top">
+              </DataTableCell>
+              <DataTableCell edge="end" className="h-auto py-3 text-right align-top">
                 <ServiceAccountActionsMenu
                   record={record}
                   onArchive={onArchive}
                   onRestore={onRestore}
                   onDelete={onDelete}
                 />
-              </TableCell>
-            </TableRow>
+              </DataTableCell>
+            </DataTableRow>
           ))}
         </TableBody>
       </Table>
@@ -406,17 +421,9 @@ function ServiceAccountActionsMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground"
-            aria-label={msg('managedAgents.common.moreActions', 'More actions')}
-          />
+          <MoreActionsButton label={msg('managedAgents.common.moreActions', 'More actions')} />
         }
-      >
-        <MoreVertical className="size-4" aria-hidden />
-      </DropdownMenuTrigger>
+      />
       <DropdownMenuContent align="end" className="w-44">
         {record.status === 'active' ? (
           <DropdownMenuItem onClick={() => onArchive(record)}>

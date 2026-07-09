@@ -100,7 +100,7 @@ describe('Dashboard i18n', () => {
     const skills = renderSkillsPage(undefined, 'zh-CN');
 
     expect(await screen.findByRole('heading', { name: '技能' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: '创建技能' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '创建技能' })).toBeTruthy();
     expect(screen.getByRole('region', { name: '技能列表' })).toBeTruthy();
     expect(await screen.findByText('Default 工作区还没有创建技能。')).toBeTruthy();
 
@@ -625,79 +625,121 @@ describe('Files page', () => {
 });
 
 describe('Skills page', () => {
-  test('renders skills in the platform list shape with version descriptions', async () => {
+  test('renders skills in the platform list shape and opens the query-param drawer', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const clipboardWrite = mock(async (_value: string) => undefined);
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { writeText: clipboardWrite },
+      configurable: true
+    });
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills/frontend-design/versions/latest?beta=true') {
+      if (url === '/v1/skills/skill_emoji?beta=true') {
         return {
-          id: 'skillver_frontend-design',
-          type: 'skill_version',
-          description: 'Create distinctive, production-grade frontend interfaces with high design quality.',
-          directory: 'frontend-design',
-          name: 'frontend-design',
-          skill_id: 'frontend-design',
-          version: '1',
-          created_at: new Date(Date.now() - 120_000).toISOString()
+          id: 'skill_emoji',
+          type: 'skill',
+          display_title: 'emoji-translator',
+          latest_version: '20260708',
+          source: 'custom',
+          created_at: new Date(Date.now() - 120_000).toISOString(),
+          updated_at: new Date(Date.now() - 60_000).toISOString()
         };
       }
-      return {
-        data: [
-          {
-            id: 'frontend-design',
-            type: 'skill',
-            display_title: 'frontend-design',
-            latest_version: '1',
-            source: 'anthropic',
-            created_at: new Date(Date.now() - 120_000).toISOString(),
-            updated_at: new Date(Date.now() - 120_000).toISOString()
-          }
-        ],
-        has_more: false,
-        next_page: null
-      };
+      if (url === '/v1/skills/skill_emoji/versions?beta=true&limit=50') {
+        return {
+          data: [
+            {
+              id: 'skillver_emoji',
+              type: 'skill_version',
+              description: 'This skill should be used when the user asks to turn this into emojis.',
+              directory: 'emoji-translator',
+              name: 'emoji-translator',
+              skill_id: 'skill_emoji',
+              version: '20260708',
+              created_at: new Date(Date.now() - 60_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
+      if (url === '/v1/skills?beta=true&limit=100') {
+        return {
+          data: [
+            {
+              id: 'skill_emoji',
+              type: 'skill',
+              display_title: 'emoji-translator',
+              latest_version: '20260708',
+              source: 'custom',
+              created_at: new Date(Date.now() - 120_000).toISOString(),
+              updated_at: new Date(Date.now() - 60_000).toISOString()
+            },
+            {
+              id: 'xlsx',
+              type: 'skill',
+              display_title: 'xlsx',
+              latest_version: '20260203',
+              source: 'anthropic',
+              created_at: new Date(Date.now() - 240_000).toISOString(),
+              updated_at: new Date(Date.now() - 240_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
     });
 
     renderSkillsPage();
 
     expect(await screen.findByRole('heading', { name: 'Skills' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Create skill/i }).getAttribute('href')).toBe('/workspaces/default/skills/new');
-    expect(screen.getByText(/To see another workspace's skills, select a workspace\./)).toBeTruthy();
-    expect(await screen.findByText('Create distinctive, production-grade frontend interfaces with high design quality.')).toBeTruthy();
-    expect(screen.getAllByText('frontend-design').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole('link', { name: /frontend-design/i }).getAttribute('href')).toBe('/workspaces/default/skills/frontend-design');
+    expect(screen.getByRole('button', { name: /Create skill/i })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'ID' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Source' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Latest version' })).toBeTruthy();
+    expect(await screen.findByText('emoji-translator')).toBeTruthy();
+    expect(screen.getAllByText('xlsx').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Custom')).toBeTruthy();
     expect(screen.getByText('Anthropic')).toBeTruthy();
-    expect(screen.queryByText('data-analysis')).toBeNull();
-    expect(requests[0]?.url).toBe('/v1/skills?beta=true&limit=20');
+    expect(screen.getByText('Jul 8, 2026')).toBeTruthy();
+    expect(screen.getByText('Feb 3, 2026')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Actions' })).toHaveLength(1);
+    expect(requests[0]?.url).toBe('/v1/skills?beta=true&limit=100');
     expect(requests[0]?.headers.get('anthropic-beta')).toBe('skills-2025-10-02');
     expect(requests[0]?.headers.get('x-workspace-id')).toBe('default');
-    const latestRequest = requests.find((request) => request.url === '/v1/skills/frontend-design/versions/latest?beta=true');
-    expect(latestRequest?.headers.get('x-workspace-id')).toBe('default');
+
+    const copyButton = screen.getByRole('button', { name: 'Copy skill_emoji' });
+    fireEvent.mouseEnter(copyButton);
+    expect(screen.queryByText('Copy')).toBeNull();
+    fireEvent.click(copyButton);
+
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('skill_emoji'));
+    expect(new URL(window.location.href).searchParams.get('skill')).toBeNull();
+
+    fireEvent.click(screen.getByText('emoji-translator'));
+
+    expect(await screen.findByText('This skill should be used when the user asks to turn this into emojis.')).toBeTruthy();
+    expect(new URL(window.location.href).searchParams.get('skill')).toBe('skill_emoji');
+    expect(requests.find((request) => request.url === '/v1/skills/skill_emoji?beta=true')?.headers.get('x-workspace-id')).toBe('default');
+    expect(
+      requests.find((request) => request.url === '/v1/skills/skill_emoji/versions?beta=true&limit=50')?.headers.get('x-workspace-id')
+    ).toBe('default');
   });
 
   test('refetches skills when the active workspace changes', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi((url, headers) => {
+    const requests = mockSkillsApi((_url, headers) => {
       const workspaceId = headers.get('x-workspace-id');
       const skillId = workspaceId === 'wrkspc_alt' ? 'alt-skill' : 'default-skill';
-      if (url.includes('/versions/latest')) {
-        return {
-          id: `skillver_${skillId}`,
-          type: 'skill_version',
-          description: `${skillId} description`,
-          directory: skillId,
-          name: skillId,
-          skill_id: skillId,
-          version: '1',
-          created_at: new Date(Date.now() - 120_000).toISOString()
-        };
-      }
       return {
         data: [
           {
             id: skillId,
             type: 'skill',
             display_title: skillId,
-            latest_version: '1',
+            latest_version: '20260708',
             source: 'custom',
             created_at: new Date(Date.now() - 120_000).toISOString(),
             updated_at: new Date(Date.now() - 120_000).toISOString()
@@ -710,13 +752,13 @@ describe('Skills page', () => {
 
     const rendered = renderSkillsPage({ id: 'default', name: 'Default' });
 
-    expect(await screen.findByText('default-skill description')).toBeTruthy();
+    expect((await screen.findAllByText('default-skill')).length).toBeGreaterThanOrEqual(1);
 
     window.history.pushState(null, '', 'https://oma.duck.ai/workspaces/wrkspc_alt/skills');
     rendered.rerenderWorkspace({ id: 'wrkspc_alt', name: 'Alt' });
 
-    expect(await screen.findByText('alt-skill description')).toBeTruthy();
-    expect(screen.queryByText('default-skill description')).toBeNull();
+    expect((await screen.findAllByText('alt-skill')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('default-skill')).toBeNull();
     expect(requests.map((request) => request.headers.get('x-workspace-id'))).toContain('default');
     expect(requests.map((request) => request.headers.get('x-workspace-id'))).toContain('wrkspc_alt');
   });
@@ -724,19 +766,6 @@ describe('Skills page', () => {
   test('uses the next_page cursor when moving to the next skills page', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url.includes('/versions/latest')) {
-        const skillId = url.split('/')[3];
-        return {
-          id: `skillver_${skillId}`,
-          type: 'skill_version',
-          description: `${skillId} description`,
-          directory: skillId,
-          name: skillId,
-          skill_id: skillId,
-          version: '1',
-          created_at: new Date(Date.now() - 120_000).toISOString()
-        };
-      }
       if (url.includes('page=cursor_two')) {
         return {
           data: [
@@ -744,7 +773,7 @@ describe('Skills page', () => {
               id: 'product-self-knowledge',
               type: 'skill',
               display_title: 'product-self-knowledge',
-              latest_version: '1',
+              latest_version: '20260622',
               source: 'anthropic',
               created_at: new Date(Date.now() - 240_000).toISOString(),
               updated_at: new Date(Date.now() - 240_000).toISOString()
@@ -760,7 +789,7 @@ describe('Skills page', () => {
             id: 'frontend-design',
             type: 'skill',
             display_title: 'frontend-design',
-            latest_version: '1',
+            latest_version: '20260203',
             source: 'anthropic',
             created_at: new Date(Date.now() - 120_000).toISOString(),
             updated_at: new Date(Date.now() - 120_000).toISOString()
@@ -773,29 +802,382 @@ describe('Skills page', () => {
 
     renderSkillsPage();
 
-    expect(await screen.findByText('frontend-design description')).toBeTruthy();
+    expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
-    expect(await screen.findByText('product-self-knowledge description')).toBeTruthy();
-    expect(requests.some((request) => request.url === '/v1/skills?beta=true&limit=20&page=cursor_two')).toBe(true);
+    expect(await screen.findByText('product-self-knowledge')).toBeTruthy();
+    expect(requests.some((request) => request.url === '/v1/skills?beta=true&limit=100&page=cursor_two')).toBe(true);
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+
+    expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(screen.queryByText('product-self-knowledge')).toBeNull());
+    expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test('disables skills next pagination without a next_page cursor', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const requests = mockSkillsApi(() => ({
+      data: [
+        {
+          id: 'frontend-design',
+          type: 'skill',
+          display_title: 'frontend-design',
+          latest_version: '20260203',
+          source: 'anthropic',
+          created_at: new Date(Date.now() - 120_000).toISOString(),
+          updated_at: new Date(Date.now() - 120_000).toISOString()
+        }
+      ],
+      has_more: true,
+      next_page: null
+    }));
+
+    renderSkillsPage();
+
+    expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
+    const next = screen.getByRole('button', { name: 'Next page' }) as HTMLButtonElement;
+    expect(next.disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(next);
+    expect(requests).toHaveLength(1);
+  });
+
+  test('creates a skill from a single archive upload', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const requests = mockSkillsApi((url) => {
+      if (url === '/v1/skills?beta=true&limit=100') {
+        return { data: [], has_more: false, next_page: null };
+      }
+      if (url === '/v1/skills?beta=true') {
+        return {
+          id: 'skill_created',
+          display_title: 'emoji-translator',
+          latest_version: '20260708',
+          source: 'custom',
+          created_at: new Date(Date.now() - 10_000).toISOString(),
+          updated_at: new Date(Date.now() - 10_000).toISOString()
+        };
+      }
+      if (url === '/v1/skills/skill_created?beta=true') {
+        return {
+          id: 'skill_created',
+          type: 'skill',
+          display_title: 'emoji-translator',
+          latest_version: '20260708',
+          source: 'custom',
+          created_at: new Date(Date.now() - 120_000).toISOString()
+        };
+      }
+      if (url === '/v1/skills/skill_created/versions?beta=true&limit=50') {
+        return {
+          data: [
+            {
+              id: 'skillver_created',
+              type: 'skill_version',
+              description: 'created description',
+              directory: 'emoji-translator',
+              name: 'emoji-translator',
+              skill_id: 'skill_created',
+              version: '20260708',
+              created_at: new Date(Date.now() - 10_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    renderSkillsPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create skill' }));
+    expect(await screen.findByText('Drag and drop a .zip, .skill file, or directory to upload')).toBeTruthy();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['zip bytes'], 'emoji-translator.zip', { type: 'application/zip' });
+
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(await screen.findByText('emoji-translator.zip')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(true));
+    const post = requests.find((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true');
+    expect(post?.headers.get('x-workspace-id')).toBe('default');
+    const body = post?.body as FormData;
+    expect(body.get('display_title')).toBe('emoji-translator');
+    expect((body.get('files[]') as File).name).toBe('emoji-translator.zip');
+    await waitFor(() => expect(screen.queryByText('emoji-translator.zip')).toBeNull());
+    expect(new URL(window.location.href).searchParams.get('skill')).toBe('skill_created');
+  });
+
+  test('creates a new version when create upload matches an existing custom skill', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const requests = mockSkillsApi((url) => {
+      if (url === '/v1/skills?beta=true&limit=100') {
+        return {
+          data: [
+            {
+              id: 'skill_emoji',
+              type: 'skill',
+              display_title: 'emoji-translator',
+              latest_version: '20260708',
+              source: 'custom',
+              created_at: new Date(Date.now() - 120_000).toISOString(),
+              updated_at: new Date(Date.now() - 120_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
+      if (url === '/v1/skills/skill_emoji/versions?beta=true') {
+        return {
+          id: 'skillver_emoji_2',
+          type: 'skill_version',
+          description: 'updated',
+          directory: 'emoji-translator',
+          name: 'emoji-translator',
+          skill_id: 'skill_emoji',
+          version: '20260709',
+          created_at: new Date(Date.now() - 10_000).toISOString()
+        };
+      }
+      if (url === '/v1/skills/skill_emoji?beta=true') {
+        return {
+          id: 'skill_emoji',
+          type: 'skill',
+          display_title: 'emoji-translator',
+          latest_version: '20260709',
+          source: 'custom',
+          created_at: new Date(Date.now() - 120_000).toISOString(),
+          updated_at: new Date(Date.now() - 10_000).toISOString()
+        };
+      }
+      if (url === '/v1/skills/skill_emoji/versions?beta=true&limit=50') {
+        return {
+          data: [
+            {
+              id: 'skillver_emoji_2',
+              type: 'skill_version',
+              description: 'updated',
+              directory: 'emoji-translator',
+              name: 'emoji-translator',
+              skill_id: 'skill_emoji',
+              version: '20260709',
+              created_at: new Date(Date.now() - 10_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    renderSkillsPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create skill' }));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['zip bytes'], 'emoji-translator.zip', { type: 'application/zip' });
+
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(await screen.findByText('emoji-translator.zip')).toBeTruthy();
+    expect(screen.queryByText(/already exists/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills/skill_emoji/versions?beta=true')).toBe(true));
+    expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(false);
+    const post = requests.find((request) => request.method === 'POST' && request.url === '/v1/skills/skill_emoji/versions?beta=true');
+    const body = post?.body as FormData;
+    expect((body.get('files[]') as File).name).toBe('emoji-translator.zip');
+    await waitFor(() => expect(screen.queryByText('emoji-translator.zip')).toBeNull());
+    expect(new URL(window.location.href).searchParams.get('skill')).toBe('skill_emoji');
+  });
+
+  test('blocks empty skill archive uploads before posting', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const requests = mockSkillsApi((url) => {
+      if (url === '/v1/skills?beta=true&limit=100') {
+        return {
+          data: [],
+          has_more: false,
+          next_page: null
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    renderSkillsPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create skill' }));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([], 'emoji-translator.zip', { type: 'application/zip' });
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText('Skill package files cannot be empty.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(false);
+  });
+
+  test('updates a custom skill from the action menu', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const requests = mockSkillsApi((url) => {
+      if (url === '/v1/skills?beta=true&limit=100') {
+        return {
+          data: [
+            {
+              id: 'skill_emoji',
+              type: 'skill',
+              display_title: 'emoji-translator',
+              latest_version: '20260708',
+              source: 'custom',
+              created_at: new Date(Date.now() - 120_000).toISOString(),
+              updated_at: new Date(Date.now() - 120_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
+      if (url === '/v1/skills/skill_emoji/versions?beta=true') {
+        return {
+          id: 'skillver_emoji_2',
+          type: 'skill_version',
+          description: 'updated',
+          directory: 'emoji-translator',
+          name: 'emoji-translator',
+          skill_id: 'skill_emoji',
+          version: '20260709',
+          created_at: new Date(Date.now() - 10_000).toISOString()
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    renderSkillsPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions' }));
+    fireEvent.click(await screen.findByText('Update'));
+    expect(await screen.findByText('Update Skill')).toBeTruthy();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['zip bytes'], 'emoji-translator.zip', { type: 'application/zip' });
+    fireEvent.change(input, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills/skill_emoji/versions?beta=true')).toBe(true));
+    await waitFor(() => expect(screen.queryByText('Update Skill')).toBeNull());
+    expect(screen.queryByText('emoji-translator.zip')).toBeNull();
+  });
+
+  test('deletes a custom skill after confirming and deleting versions first', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const requests = mockSkillsApi((url) => {
+      if (url === '/v1/skills?beta=true&limit=100') {
+        return {
+          data: [
+            {
+              id: 'skill_emoji',
+              type: 'skill',
+              display_title: 'emoji-translator',
+              latest_version: '20260708',
+              source: 'custom',
+              created_at: new Date(Date.now() - 120_000).toISOString(),
+              updated_at: new Date(Date.now() - 120_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
+      if (url === '/v1/skills/skill_emoji/versions?beta=true&limit=50') {
+        return {
+          data: [
+            {
+              id: 'skillver_1',
+              type: 'skill_version',
+              description: 'first',
+              directory: 'emoji-translator',
+              name: 'emoji-translator',
+              skill_id: 'skill_emoji',
+              version: '20260708',
+              created_at: new Date(Date.now() - 120_000).toISOString()
+            },
+            {
+              id: 'skillver_2',
+              type: 'skill_version',
+              description: 'second',
+              directory: 'emoji-translator',
+              name: 'emoji-translator',
+              skill_id: 'skill_emoji',
+              version: '20260709',
+              created_at: new Date(Date.now() - 60_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
+      if (url === '/v1/skills/skill_emoji/versions/20260708?beta=true' || url === '/v1/skills/skill_emoji/versions/20260709?beta=true') {
+        return { id: url.includes('20260708') ? '20260708' : '20260709', type: 'skill_version_deleted' };
+      }
+      if (url === '/v1/skills/skill_emoji?beta=true') {
+        return { id: 'skill_emoji', type: 'skill_deleted' };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    renderSkillsPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions' }));
+    fireEvent.click(await screen.findByText('Delete'));
+    expect(await screen.findByText('Confirm deleting emoji-translator')).toBeTruthy();
+    const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
+    fireEvent.click(deleteButtons[deleteButtons.length - 1]);
+
+    await waitFor(() =>
+      expect(requests.some((request) => request.method === 'DELETE' && request.url === '/v1/skills/skill_emoji?beta=true')).toBe(true)
+    );
+    const deleteOrder = requests
+      .map((request) => request.method === 'DELETE' ? request.url : '')
+      .filter(Boolean);
+    expect(deleteOrder).toEqual([
+      '/v1/skills/skill_emoji/versions/20260708?beta=true',
+      '/v1/skills/skill_emoji/versions/20260709?beta=true',
+      '/v1/skills/skill_emoji?beta=true'
+    ]);
   });
 });
 
 describe('Skill detail page', () => {
-  test('renders skill versions, switches selected version, and downloads version content', async () => {
+  test('renders the selected skill in the query-param drawer', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
-    const createObjectURL = mock((_blob: Blob) => 'https://oma.duck.ai/downloads/skill-version');
-    const revokeObjectURL = mock((_url: string) => undefined);
-    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true });
-    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true });
     const requests = mockSkillsApi((url) => {
+      if (url === '/v1/skills?beta=true&limit=100') {
+        return {
+          data: [
+            {
+              id: 'frontend-design',
+              type: 'skill',
+              display_title: 'frontend-design',
+              latest_version: '20260708',
+              source: 'anthropic',
+              created_at: new Date(Date.now() - 360_000).toISOString(),
+              updated_at: new Date(Date.now() - 120_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
       if (url === '/v1/skills/frontend-design?beta=true') {
         return {
           id: 'frontend-design',
           type: 'skill',
           display_title: 'frontend-design',
-          latest_version: '2',
+          latest_version: '20260708',
           source: 'anthropic',
           created_at: new Date(Date.now() - 360_000).toISOString(),
           updated_at: new Date(Date.now() - 120_000).toISOString()
@@ -811,7 +1193,7 @@ describe('Skill detail page', () => {
               directory: 'frontend-design',
               name: 'frontend-design',
               skill_id: 'frontend-design',
-              version: '1',
+              version: '20260707',
               created_at: new Date(Date.now() - 360_000).toISOString()
             },
             {
@@ -821,7 +1203,7 @@ describe('Skill detail page', () => {
               directory: 'frontend-design',
               name: 'frontend-design v2',
               skill_id: 'frontend-design',
-              version: '2',
+              version: '20260708',
               created_at: new Date(Date.now() - 120_000).toISOString()
             }
           ],
@@ -829,46 +1211,41 @@ describe('Skill detail page', () => {
           next_page: null
         };
       }
-      if (url === '/v1/skills/frontend-design/versions/1/content?beta=true') {
-        return new Response(new Blob(['skill zip']), {
-          status: 200,
-          headers: { 'Content-Type': 'application/zip' }
-        });
-      }
       throw new Error(`Unexpected request: ${url}`);
     });
 
     renderSkillDetailPage('frontend-design');
 
-    expect(await screen.findByRole('heading', { name: 'frontend-design' })).toBeTruthy();
     expect(await screen.findByText('v2 description')).toBeTruthy();
-    expect(screen.getByText('Latest version v2')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /v2 Latest/i })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'v1' }));
-
-    expect(await screen.findByText('v1 description')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Download version 1' }));
-
-    await waitFor(() =>
-      expect(requests.some((request) => request.url === '/v1/skills/frontend-design/versions/1/content?beta=true')).toBe(true)
-    );
-    const downloadRequest = requests.find((request) => request.url === '/v1/skills/frontend-design/versions/1/content?beta=true');
-    expect(downloadRequest?.headers.get('anthropic-beta')).toBe('skills-2025-10-02');
+    expect(screen.getByText('Latest')).toBeTruthy();
+    expect(new URL(window.location.href).searchParams.get('skill')).toBe('frontend-design');
     expect(requests.find((request) => request.url === '/v1/skills/frontend-design?beta=true')?.headers.get('x-workspace-id')).toBe('default');
     expect(
       requests.find((request) => request.url === '/v1/skills/frontend-design/versions?beta=true&limit=50')?.headers.get('x-workspace-id')
     ).toBe('default');
-    expect(downloadRequest?.headers.get('x-workspace-id')).toBe('default');
-    expect(createObjectURL).toHaveBeenCalled();
-    expect(revokeObjectURL).toHaveBeenCalledWith('https://oma.duck.ai/downloads/skill-version');
   });
 
   test('renders the standardized skill detail error alert and retries successfully', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
     let attempt = 0;
     const requests = mockSkillsApi((url) => {
+      if (url === '/v1/skills?beta=true&limit=100') {
+        return {
+          data: [
+            {
+              id: 'frontend-design',
+              type: 'skill',
+              display_title: 'frontend-design',
+              latest_version: '2',
+              source: 'anthropic',
+              created_at: new Date(Date.now() - 360_000).toISOString(),
+              updated_at: new Date(Date.now() - 120_000).toISOString()
+            }
+          ],
+          has_more: false,
+          next_page: null
+        };
+      }
       if (url === '/v1/skills/frontend-design?beta=true') {
         attempt += 1;
         if (attempt === 1) {
@@ -1274,11 +1651,12 @@ function mockFilesList(handler: (url: string, headers: Headers) => unknown) {
 }
 
 function mockSkillsApi(handler: (url: string, headers: Headers) => unknown) {
-  const requests: Array<{ url: string; headers: Headers }> = [];
+  const requests: Array<{ url: string; method: string; headers: Headers; body?: BodyInit | null }> = [];
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    const method = init?.method ?? 'GET';
     const headers = new Headers(init?.headers);
-    requests.push({ url, headers });
+    requests.push({ url, method, headers, body: init?.body });
     const result = handler(url, headers);
     if (result instanceof Response) {
       return result;

@@ -1,12 +1,9 @@
 import { type ApiError } from '../../shared/api/client';
+import { copyText } from '../../shared/lib/clipboard';
 import { sectionPathSegment } from './resources/ManagedResources';
 import { type ManagedEntitySection } from './types';
 
-export async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-  }
-}
+export { copyText };
 
 export function parseToolInput(inputJson: string, fallback: Record<string, unknown>) {
   if (!inputJson.trim()) {

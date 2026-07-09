@@ -1,19 +1,26 @@
-import { Copy, Download, FileText } from 'lucide-react';
+import { Download, FileText } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/shared/ui/button';
+import { cn } from '@/shared/lib/utils';
+import {
+  CopyIdCell,
+  DataTableCell,
+  DataTableRow,
+  RowIconButton,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName
+} from '@/shared/ui/data-table-interactions';
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow
 } from '@/shared/ui/table';
 import { useI18n } from '../../shared/i18n';
-import { ConsolePageFrame, CursorPagination, DataTableCard, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
+import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
-  copyText,
   downloadFile,
   errorMessage,
   formatBytes,
@@ -138,82 +145,69 @@ function FilesTable({
   const { msg } = useI18n();
 
   return (
-    <section aria-label={msg('files.listAria', 'Files list')}>
-      <DataTableCard>
-        <Table className="min-w-[920px] table-fixed text-left">
-          <colgroup>
-            <col className="w-[18%]" />
-            <col className="w-[49%]" />
-            <col className="w-[11%]" />
-            <col className="w-[15%]" />
-            <col className="w-[7%]" />
-          </colgroup>
-          <TableHeader className="text-xs text-muted-foreground/70">
-            <TableRow className="border-b border-border hover:bg-transparent">
-              <TableHead className="px-3 py-3 text-muted-foreground/70">{msg('common.id', 'ID')}</TableHead>
-              <TableHead className="px-3 py-3 text-muted-foreground/70">{msg('common.name', 'Name')}</TableHead>
-              <TableHead className="px-3 py-3 text-muted-foreground/70">{msg('common.size', 'Size')}</TableHead>
-              <TableHead className="px-3 py-3 text-muted-foreground/70">{msg('common.created', 'Created')}</TableHead>
-              <TableHead className="px-3 py-3 text-muted-foreground/70" aria-label={msg('common.actions', 'Actions')} />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableLoadingRow colSpan={5} label={msg('files.loading', 'Loading files...')} />
-            ) : error ? (
-              <TableErrorRow
-                colSpan={5}
-                title={msg('files.error', 'Files could not be loaded.')}
-                message={errorMessage(error)}
-                retryLabel={msg('common.retry', 'Retry')}
-                onRetry={onRetry}
-              />
-            ) : files.length === 0 ? (
-              <TableEmptyRow colSpan={5}>
-                {msg('files.empty', 'No files have been uploaded to the {workspaceName} workspace.', {
-                  workspaceName
-                })}
-              </TableEmptyRow>
-            ) : (
-              files.map((file) => (
-                <TableRow key={file.id} className="group border-b border-border text-foreground">
-                  <TableCell className="px-3 py-3 align-middle">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="truncate font-mono text-[13px]">{formatFileId(file.id)}</span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={msg('files.copyAria', 'Copy {fileId}', { fileId: file.id })}
-                        className="shrink-0 text-muted-foreground/70 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
-                        onClick={() => void copyText(file.id)}
-                      >
-                        <Copy className="size-3.5" aria-hidden />
-                      </Button>
-                    </div>
-                  </TableCell>
-                  <TableCell className="truncate px-3 py-3 align-middle">{file.filename}</TableCell>
-                  <TableCell className="px-3 py-3 align-middle text-muted-foreground">{formatBytes(file.size_bytes)}</TableCell>
-                  <TableCell className="px-3 py-3 align-middle text-muted-foreground">{formatRelativeTime(file.created_at)}</TableCell>
-                  <TableCell className="px-3 py-3 text-right align-middle">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={msg('files.downloadAria', 'Download {filename}', { filename: file.filename })}
-                      className="text-muted-foreground/70"
-                      disabled={!file.downloadable || downloadingFileId === file.id}
-                      onClick={() => onDownload(file)}
-                    >
-                      <Download className="size-3.5" aria-hidden />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </DataTableCard>
+    <section aria-label={msg('files.listAria', 'Files list')} className="overflow-x-auto">
+      <Table className={cn('min-w-[920px]', dataTableClassName)}>
+        <colgroup>
+          <col className="w-[18%]" />
+          <col className="w-[49%]" />
+          <col className="w-[11%]" />
+          <col className="w-[15%]" />
+          <col className="w-[7%]" />
+        </colgroup>
+        <TableHeader>
+          <TableRow className={dataTableHeaderRowClassName}>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.name', 'Name')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.size', 'Size')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading ? (
+            <TableLoadingRow colSpan={5} label={msg('files.loading', 'Loading files...')} />
+          ) : error ? (
+            <TableErrorRow
+              colSpan={5}
+              title={msg('files.error', 'Files could not be loaded.')}
+              message={errorMessage(error)}
+              retryLabel={msg('common.retry', 'Retry')}
+              onRetry={onRetry}
+            />
+          ) : files.length === 0 ? (
+            <TableEmptyRow colSpan={5}>
+              {msg('files.empty', 'No files have been uploaded to the {workspaceName} workspace.', {
+                workspaceName
+              })}
+            </TableEmptyRow>
+          ) : (
+            files.map((file) => (
+              <DataTableRow key={file.id}>
+                <DataTableCell edge="start">
+                  <CopyIdCell
+                    value={file.id}
+                    displayValue={formatFileId(file.id)}
+                    ariaLabel={msg('files.copyAria', 'Copy {fileId}', { fileId: file.id })}
+                    tooltipLabel={msg('common.copy', 'Copy')}
+                    copiedLabel={msg('common.copied', 'Copied')}
+                  />
+                </DataTableCell>
+                <DataTableCell className="truncate">{file.filename}</DataTableCell>
+                <DataTableCell className="text-muted-foreground">{formatBytes(file.size_bytes)}</DataTableCell>
+                <DataTableCell className="text-muted-foreground">{formatRelativeTime(file.created_at)}</DataTableCell>
+                <DataTableCell edge="end" className="text-right">
+                  <RowIconButton
+                    label={msg('files.downloadAria', 'Download {filename}', { filename: file.filename })}
+                    icon={<Download aria-hidden />}
+                    disabled={!file.downloadable || downloadingFileId === file.id}
+                    onClick={() => onDownload(file)}
+                  />
+                </DataTableCell>
+              </DataTableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
 
       <CursorPagination
         previousLabel={msg('pagination.previousPage', 'Previous page')}

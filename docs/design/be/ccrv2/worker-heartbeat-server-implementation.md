@@ -248,8 +248,6 @@ go test ./internal/db ./internal/codesessions -count=1
 go test ./... -count=1
 ```
 
-当前本地 worktree 中，全量测试可能受 `assets/skills/public` 缺失影响，在 `TestSkillsAPI` 处失败；该问题与 heartbeat 实现无关。
-
 ## 本次非目标
 
 以下能力不属于当前实现：

@@ -31,6 +31,20 @@
   color: var(--success);
 }
 
+.oma-data-table-row:hover .oma-data-table-cell {
+  background: color-mix(in oklch, var(--muted) 50%, transparent);
+}
+
+.oma-data-table-row[data-state="selected"] .oma-data-table-cell {
+  background: var(--muted);
+}
+
+.oma-data-table-row:hover .oma-copy-id-button,
+.oma-copy-id-button:focus-visible,
+.oma-copy-id-button[data-copied="true"] {
+  opacity: 1 !important;
+}
+
 .subtle-scrollbar {
   scrollbar-color: color-mix(in srgb, var(--muted-foreground) 36%, transparent) transparent;
   scrollbar-width: thin;

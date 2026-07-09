@@ -1,11 +1,20 @@
 import { useI18n } from '../../../shared/i18n';
+import { cn } from '../../../shared/lib/utils';
 import { Button } from '../../../shared/ui/button';
+import {
+  CopyIdCell,
+  DataTableCell,
+  DataTableRow,
+  MoreActionsButton,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName
+} from '../../../shared/ui/data-table-interactions';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../shared/ui/dropdown-menu';
 import { toast } from '../../../shared/ui/sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { useWorkspace } from '../../../shared/workspaces/context';
-import clsx from 'clsx';
-import { Archive, ChevronLeft, ChevronRight, Copy, MoreVertical, Pencil, Play, Plus, X } from 'lucide-react';
+import { Archive, ChevronLeft, ChevronRight, Copy, Pencil, Play, Plus, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { agentDetailStatusValues } from '../agents/model';
 import { archiveManagedEntity, createManagedEntity, deleteManagedEntity, listAgents, listManagedEntities, pauseDeployment, runDeployment, unpauseDeployment, updateManagedEntity } from '../api';
@@ -665,11 +674,11 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       {mutationError ? <ManagedErrorAlert className="mb-3">{mutationError}</ManagedErrorAlert> : null}
 
       <div className="overflow-visible">
-        <Table className="table-fixed border-separate border-spacing-y-px text-left">
+        <Table className={dataTableClassName}>
           <TableHeader>
-            <TableRow className="border-0 text-muted-foreground hover:bg-transparent">
+            <TableRow className={dataTableHeaderRowClassName}>
               {config.columns.map((column) => (
-                <TableHead key={column || 'select'} className={clsx('h-10 px-3 text-muted-foreground', columnWidth(config.section, column))}>
+                <TableHead key={column || 'select'} className={cn(dataTableHeaderCellClassName, columnWidth(config.section, column))}>
                   {column ? (
                     managedColumnLabel(column, msg)
                   ) : (
@@ -683,7 +692,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
                   )}
                 </TableHead>
               ))}
-              <TableHead className="h-10 w-[48px] px-2 text-muted-foreground" aria-label={managedColumnLabel('Actions', msg)} />
+              <TableHead className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')} aria-label={managedColumnLabel('Actions', msg)} />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -809,9 +818,18 @@ export function ManagedEntityRow({
   const paused = deployment?.status === 'paused';
 
   return (
-    <TableRow className={clsx('group border-0 text-foreground', selected ? 'bg-secondary' : 'hover:bg-accent')}>
+    <DataTableRow selected={selected}>
       {config.columns.map((column, index) => {
         const content =
+          column === 'ID' ? (
+            <CopyIdCell
+              value={entity.id}
+              displayValue={compactEntityId(entity.id)}
+              ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: entity.id })}
+              tooltipLabel={msg('common.copy', 'Copy')}
+              copiedLabel={msg('common.copied', 'Copied')}
+            />
+          ) :
           column === 'Name' ? (
             <a
               href={managedEntityDetailHref(workspaceId, config.section, entity.id)}
@@ -829,34 +847,27 @@ export function ManagedEntityRow({
             />
           );
         return (
-          <TableCell
+          <DataTableCell
             key={column || 'select'}
-            className={clsx(
-              'h-[45px] truncate px-3 align-middle',
-              index === 0 && 'rounded-l-lg'
-            )}
+            edge={index === 0 ? 'start' : undefined}
+            className="truncate"
           >
             {content}
-          </TableCell>
+          </DataTableCell>
         );
       })}
-      <TableCell className="h-[45px] rounded-r-lg px-2">
+      <DataTableCell edge="end" className="px-2">
         <div className="flex justify-end">
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={msg('managedAgents.common.moreActions', 'More actions')}
+                <MoreActionsButton
+                  label={msg('managedAgents.common.moreActions', 'More actions')}
                   disabled={busy}
-                  className="text-foreground hover:bg-secondary disabled:cursor-wait disabled:text-muted-foreground/70"
+                  className="disabled:cursor-wait"
                 />
               }
-            >
-              <MoreVertical className="size-4" aria-hidden />
-            </DropdownMenuTrigger>
+            />
             <DropdownMenuContent align="end" className="w-[188px]">
               <DropdownMenuItem onClick={onCopy}>
                 <Copy className="size-4" aria-hidden />
@@ -891,7 +902,7 @@ export function ManagedEntityRow({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </TableCell>
-    </TableRow>
+      </DataTableCell>
+    </DataTableRow>
   );
 }

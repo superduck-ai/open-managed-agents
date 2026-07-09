@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { copyText } from '@/shared/lib/clipboard';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import {
   filesRequestHeaders,
@@ -110,7 +111,7 @@ export type EnrichedSkillsListResponse = Omit<SkillsListResponse, 'data'> & {
 
 const filesPageLimit = 20;
 const messageBatchesPageLimit = 20;
-const skillsPageLimit = 20;
+const skillsPageLimit = 100;
 
 function workspaceRequestHeaders(workspaceId: string) {
   const headers = new Headers();
@@ -175,33 +176,17 @@ export function cancelMessageBatch(batchId: string, workspaceId: string) {
   return anthropicBetaApi.messageBatches.cancel<ConsoleMessageBatch>(batchId, workspaceId);
 }
 
-export async function listSkills(pageToken: string | undefined, workspaceId: string): Promise<EnrichedSkillsListResponse> {
+export async function listSkills(pageToken: string | undefined, workspaceId: string): Promise<SkillsListResponse> {
   const params: Record<string, string | number> = {
     limit: skillsPageLimit
   };
   if (pageToken) {
     params.page = pageToken;
   }
-  const response = (await anthropicBetaApi.skills.list<ConsoleSkill>(
+  return (await anthropicBetaApi.skills.list<ConsoleSkill>(
     params,
     workspaceId
   )) as SkillsListResponse;
-  const data = await Promise.all(response.data.map((skill) => enrichSkill(skill, workspaceId)));
-  return { ...response, data };
-}
-
-async function enrichSkill(skill: ConsoleSkill, workspaceId: string): Promise<EnrichedConsoleSkill> {
-  try {
-    const version = await anthropicBetaApi.skills.versions.retrieve<ConsoleSkillVersion>(skill.id, 'latest', workspaceId);
-    return {
-      ...skill,
-      description: version.description,
-      directory: version.directory,
-      versionName: version.name
-    };
-  } catch {
-    return skill;
-  }
 }
 
 export function retrieveSkill(skillId: string, workspaceId: string) {
@@ -216,24 +201,70 @@ export function listSkillVersions(skillId: string, workspaceId: string) {
   ) as Promise<SkillVersionsListResponse>;
 }
 
-export async function createSkillPackage(skillId: string | undefined, files: FileList | File[], workspaceId: string) {
-  const formData = new FormData();
-  Array.from(files).forEach((file) => {
-    formData.append('files[]', file, file.webkitRelativePath || file.name);
+export async function createSkillPackage(
+  skillId: string | undefined,
+  files: FileList | File[],
+  workspaceId: string,
+  displayTitle?: string
+) {
+  const uploadFiles = Array.from(files).map(skillUploadFile);
+  if (skillId) {
+    return anthropicBetaApi.skills.versions.create<ConsoleSkillVersion>(
+      skillId,
+      { files: uploadFiles },
+      workspaceId
+    );
+  }
+  return anthropicBetaApi.skills.create<ConsoleSkill>(
+    {
+      display_title: displayTitle?.trim() || null,
+      files: uploadFiles
+    },
+    workspaceId
+  );
+}
+
+function skillUploadFile(file: File) {
+  const filename = skillUploadPath(file);
+  if (filename === file.name) {
+    return file;
+  }
+  return new File([file], filename, {
+    type: file.type,
+    lastModified: file.lastModified
   });
-  const endpoint = skillId
-    ? `/v1/skills/${encodeURIComponent(skillId)}/versions?beta=true`
-    : '/v1/skills?beta=true';
-  const response = await fetch(endpoint, {
-    method: 'POST',
+}
+
+function skillUploadPath(file: File) {
+  const skillPath = (file as File & { __skillPath?: string }).__skillPath;
+  return skillPath || file.webkitRelativePath || file.name;
+}
+
+export async function deleteSkill(skillId: string, workspaceId: string) {
+  const response = await fetch(`/v1/skills/${encodeURIComponent(skillId)}?beta=true`, {
+    method: 'DELETE',
     headers: skillsRequestHeaders(workspaceRequestHeaders(workspaceId)),
-    credentials: 'include',
-    body: formData
+    credentials: 'include'
   });
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
-  return response.json() as Promise<ConsoleSkill | ConsoleSkillVersion>;
+  return response.json() as Promise<{ id: string; type: string }>;
+}
+
+export async function deleteSkillVersion(skillId: string, version: string, workspaceId: string) {
+  const response = await fetch(
+    `/v1/skills/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}?beta=true`,
+    {
+      method: 'DELETE',
+      headers: skillsRequestHeaders(workspaceRequestHeaders(workspaceId)),
+      credentials: 'include'
+    }
+  );
+  if (!response.ok) {
+    throw new Error(await responseErrorMessage(response));
+  }
+  return response.json() as Promise<{ id: string; type: string }>;
 }
 
 async function responseErrorMessage(response: Response) {
@@ -385,9 +416,9 @@ export function formatSkillSource(source: string, msg?: ReturnType<typeof useI18
     return 'Anthropic';
   }
   if (normalized === 'custom') {
-    return msg ? msg('skills.source.workspace', 'Workspace') : 'Workspace';
+    return msg ? msg('skills.source.custom', 'Custom') : 'Custom';
   }
-  return titleize(normalized || 'workspace');
+  return titleize(normalized || 'custom');
 }
 
 export function errorMessage(error: unknown) {
@@ -397,21 +428,7 @@ export function errorMessage(error: unknown) {
   return 'Try refreshing the page.';
 }
 
-export async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  const textArea = document.createElement('textarea');
-  textArea.value = value;
-  textArea.setAttribute('readonly', '');
-  textArea.style.position = 'fixed';
-  textArea.style.opacity = '0';
-  document.body.appendChild(textArea);
-  textArea.select();
-  document.execCommand('copy');
-  textArea.remove();
-}
+export { copyText };
 
 export async function downloadFile(file: ConsoleFile, workspaceId: string) {
   const response = await fetch(`/v1/files/${encodeURIComponent(file.id)}/content?beta=true`, {
@@ -482,7 +499,9 @@ export function skillsIndexHref() {
 }
 
 export function skillDetailHref(skillId: string) {
-  return `${skillsIndexHref()}/${encodeURIComponent(skillId)}`;
+  const params = new URLSearchParams(window.location.search);
+  params.set('skill', skillId);
+  return `${skillsIndexHref()}?${params.toString()}`;
 }
 
 export function createSkillHref() {
@@ -490,6 +509,10 @@ export function createSkillHref() {
 }
 
 export function currentSkillId() {
+  const querySkill = new URLSearchParams(window.location.search).get('skill');
+  if (querySkill) {
+    return querySkill;
+  }
   const match = window.location.pathname.match(/\/skills\/([^/?#]+)/);
   if (!match || match[1] === 'new') {
     return '';

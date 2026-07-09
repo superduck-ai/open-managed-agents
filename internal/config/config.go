@@ -32,7 +32,6 @@ type Config struct {
 	AnthropicUpstreamBaseURL            string
 	AnthropicUpstreamAPIKey             string
 	PublicBaseURL                       string
-	SkillsBuiltinDir                    string
 	MaxFileBytes                        int64
 	WorkspaceStorageLimitBytes          int64
 	BatchWorkerEnabled                  bool
@@ -121,7 +120,6 @@ func Load() (Config, error) {
 		AnthropicUpstreamBaseURL:            env("ANTHROPIC_UPSTREAM_BASE_URL", "https://api.anthropic.com"),
 		AnthropicUpstreamAPIKey:             env("ANTHROPIC_UPSTREAM_API_KEY", ""),
 		PublicBaseURL:                       env("PUBLIC_BASE_URL", ""),
-		SkillsBuiltinDir:                    env("SKILLS_BUILTIN_DIR", "assets/skills/public"),
 		MaxFileBytes:                        envInt64("MAX_FILE_BYTES", 500*1024*1024),
 		WorkspaceStorageLimitBytes:          envInt64("WORKSPACE_STORAGE_LIMIT_BYTES", 500*1024*1024*1024),
 		BatchWorkerEnabled:                  envBool("BATCH_WORKER_ENABLED", true),

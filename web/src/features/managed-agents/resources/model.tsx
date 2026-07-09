@@ -1,11 +1,10 @@
-import { Bot, Copy } from 'lucide-react';
+import { Bot } from 'lucide-react';
 import { type ReactNode } from 'react';
-import { Button } from '../../../shared/ui/button';
 import { relativeTime } from '../agents/AgentsResourcePage';
 import { localTimezone } from '../api';
 import { CompactChip, StatusPill } from '../components/common';
 import { type CredentialFormValues, type DeploymentApiResponse, type DeploymentRunApiResponse, type EnvironmentApiResponse, type EnvironmentEditValues, type EnvironmentPackageRow, type ManagedEntityApiResponse, type ManagedEntityFormValues, type ManagedEntitySection, type MemoryApiResponse, type MemoryBranchState, type MemoryTreeNode, type PageResponse, type SessionApiResponse, type VaultApiResponse, type VaultCredentialApiResponse } from '../types';
-import { compactEntityId, copyText, formatBytes, objectRecord, titleCase } from '../utils';
+import { compactEntityId, formatBytes, objectRecord, titleCase } from '../utils';
 
 export function initialSelectedMemoryId() {
   if (typeof window === 'undefined') {
@@ -212,14 +211,7 @@ export function memoryFileName(path: string) {
 }
 
 export function cellsForEntity(section: ManagedEntitySection, entity: ManagedEntityApiResponse): Record<string, ReactNode> {
-  const idCell = (
-    <span className="inline-flex min-w-0 max-w-full items-center gap-2">
-      <Button type="button" aria-label={`Copy ${entity.id}`} variant="ghost" size="icon-xs" className="text-muted-foreground hover:bg-secondary" onClick={() => void copyText(entity.id)}>
-        <Copy className="size-3.5" aria-hidden />
-      </Button>
-      <span className="truncate font-mono text-[13px] text-foreground">{compactEntityId(entity.id)}</span>
-    </span>
-  );
+  const idCell = <span className="truncate font-mono text-[13px] text-foreground">{compactEntityId(entity.id)}</span>;
   const status = <StatusPill>{entityStatusLabel(entity)}</StatusPill>;
 
   switch (section) {

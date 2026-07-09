@@ -12,8 +12,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 )
+
+const MaxSkillPackageBytes int64 = 8 * 1024 * 1024
 
 type packageError struct {
 	Status  int
@@ -49,6 +52,100 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 		return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: "Missing required multipart field: files[]"}
 	}
 
+	if len(headers) == 1 && isSkillArchiveFilename(originalFilename(headers[0])) {
+		file, err := headers[0].Open()
+		if err != nil {
+			return skillPackage{}, err
+		}
+		data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+		closeErr := file.Close()
+		if err != nil {
+			return skillPackage{}, err
+		}
+		if closeErr != nil {
+			return skillPackage{}, closeErr
+		}
+		if int64(len(data)) > maxBytes {
+			return skillPackage{}, packageError{Status: http.StatusRequestEntityTooLarge, Message: "Skill package exceeds maximum size"}
+		}
+		return skillPackageFromArchive(data, maxBytes)
+	}
+
+	var files []normalizedSkillFile
+	var total int64
+	for _, header := range headers {
+		normalized, top, err := validateArchivePath(originalFilename(header))
+		if err != nil {
+			return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: err.Error()}
+		}
+		file, err := header.Open()
+		if err != nil {
+			return skillPackage{}, err
+		}
+		data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+		closeErr := file.Close()
+		if err != nil {
+			return skillPackage{}, err
+		}
+		if closeErr != nil {
+			return skillPackage{}, closeErr
+		}
+		total += int64(len(data))
+		if total > maxBytes {
+			return skillPackage{}, packageError{Status: http.StatusRequestEntityTooLarge, Message: "Skill package exceeds maximum size"}
+		}
+		_ = top
+		files = append(files, normalizedSkillFile{Name: normalized, Data: data})
+	}
+	return skillPackageFromFiles(files, maxBytes)
+}
+
+type normalizedSkillFile struct {
+	Name string
+	Data []byte
+}
+
+func skillPackageFromArchive(data []byte, maxBytes int64) (skillPackage, error) {
+	if len(data) == 0 {
+		return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: "Skill package must contain files"}
+	}
+	if int64(len(data)) > maxBytes {
+		return skillPackage{}, packageError{Status: http.StatusRequestEntityTooLarge, Message: "Skill package exceeds maximum size"}
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: "Skill package archive is not a valid zip file"}
+	}
+
+	var files []normalizedSkillFile
+	var total int64
+	for _, file := range reader.File {
+		name := strings.ReplaceAll(file.Name, "\\", "/")
+		if shouldSkipArchiveEntry(name) || file.FileInfo().IsDir() {
+			continue
+		}
+		normalized, _, err := validateArchivePath(name)
+		if err != nil {
+			return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: err.Error()}
+		}
+		data, err := readZipFile(file, maxBytes-total)
+		if err != nil {
+			return skillPackage{}, err
+		}
+		total += int64(len(data))
+		if total > maxBytes {
+			return skillPackage{}, packageError{Status: http.StatusRequestEntityTooLarge, Message: "Skill package exceeds maximum size"}
+		}
+		files = append(files, normalizedSkillFile{Name: normalized, Data: data})
+	}
+	return skillPackageFromFiles(files, maxBytes)
+}
+
+func skillPackageFromFiles(files []normalizedSkillFile, maxBytes int64) (skillPackage, error) {
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name < files[j].Name
+	})
+
 	var zipBuf bytes.Buffer
 	writer := zip.NewWriter(&zipBuf)
 	var directory string
@@ -56,8 +153,8 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 	var total int64
 	seen := map[string]struct{}{}
 
-	for _, header := range headers {
-		normalized, top, err := validateArchivePath(originalFilename(header))
+	for _, file := range files {
+		normalized, top, err := validateArchivePath(file.Name)
 		if err != nil {
 			writer.Close()
 			return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: err.Error()}
@@ -74,28 +171,13 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 		}
 		seen[normalized] = struct{}{}
 
-		file, err := header.Open()
-		if err != nil {
-			writer.Close()
-			return skillPackage{}, err
-		}
-		data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
-		closeErr := file.Close()
-		if err != nil {
-			writer.Close()
-			return skillPackage{}, err
-		}
-		if closeErr != nil {
-			writer.Close()
-			return skillPackage{}, closeErr
-		}
-		total += int64(len(data))
+		total += int64(len(file.Data))
 		if total > maxBytes {
 			writer.Close()
 			return skillPackage{}, packageError{Status: http.StatusRequestEntityTooLarge, Message: "Skill package exceeds maximum size"}
 		}
 		if normalized == directory+"/SKILL.md" {
-			skillMD = data
+			skillMD = file.Data
 		}
 
 		entry, err := writer.CreateHeader(&zip.FileHeader{Name: normalized, Method: zip.Deflate})
@@ -103,7 +185,7 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 			writer.Close()
 			return skillPackage{}, err
 		}
-		if _, err := entry.Write(data); err != nil {
+		if _, err := entry.Write(file.Data); err != nil {
 			writer.Close()
 			return skillPackage{}, err
 		}
@@ -128,6 +210,50 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 		Size:        int64(zipBuf.Len()),
 		SHA256:      hex.EncodeToString(sum[:]),
 	}, nil
+}
+
+func isSkillArchiveFilename(filename string) bool {
+	name := strings.ToLower(strings.TrimSpace(filename))
+	return strings.HasSuffix(name, ".zip") || strings.HasSuffix(name, ".skill")
+}
+
+func shouldSkipArchiveEntry(name string) bool {
+	name = strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
+	if name == "" {
+		return true
+	}
+	parts := strings.Split(name, "/")
+	if len(parts) == 0 {
+		return true
+	}
+	if parts[0] == "__MACOSX" {
+		return true
+	}
+	for _, part := range parts {
+		if part == ".DS_Store" || strings.HasPrefix(part, "._") {
+			return true
+		}
+	}
+	return false
+}
+
+func readZipFile(file *zip.File, remaining int64) ([]byte, error) {
+	if remaining < 0 {
+		remaining = 0
+	}
+	rc, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, remaining+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > remaining {
+		return nil, packageError{Status: http.StatusRequestEntityTooLarge, Message: "Skill package exceeds maximum size"}
+	}
+	return data, nil
 }
 
 func collectSkillFileHeaders(form *multipart.Form) []*multipart.FileHeader {

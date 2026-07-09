@@ -4,17 +4,21 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 type skillAPIResponse struct {
@@ -60,6 +64,9 @@ func TestSkillsAPI(t *testing.T) {
 	store := newFakeStore("fake-bucket")
 	app := newTestAppWithStore(t, nil, store)
 	defer app.close()
+	cleanupBuiltinSkillRows(t, app.db)
+	defer cleanupBuiltinSkillRows(t, app.db)
+	seedBuiltinSkill(t, app, store, "xlsx", "20260203")
 
 	t.Run("failure missing beta header", func(t *testing.T) {
 		resp := doSkillRequest(t, app, http.MethodGet, "/v1/skills?beta=true", nil, defaultTestKey, false, "")
@@ -80,6 +87,22 @@ func TestSkillsAPI(t *testing.T) {
 		body, contentType := skillMultipartBody(t, "", nil)
 		resp := doSkillRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, defaultTestKey, true, contentType)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("failure empty archive upload", func(t *testing.T) {
+		body, contentType := skillMultipartBody(t, "", []skillUploadFile{
+			{FieldName: "files[]", Filename: "empty.zip", Content: ""},
+		})
+		resp := doSkillRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, defaultTestKey, true, contentType)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("empty archive status = %d, want 400: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var payload errorResponse
+		decodeJSON(t, resp.Body, &payload)
+		if payload.Error.Type != "invalid_request_error" || payload.Error.Message != "Skill package must contain files" {
+			t.Fatalf("unexpected empty archive error: %+v", payload)
+		}
 	})
 
 	t.Run("failure missing top-level skill md", func(t *testing.T) {
@@ -107,6 +130,93 @@ func TestSkillsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
+	t.Run("failure duplicate display title uses update flow", func(t *testing.T) {
+		body, contentType := skillMultipartBody(t, "Duplicate Skill", []skillUploadFile{
+			{FieldName: "files[]", Filename: "duplicate-skill/SKILL.md", Content: "---\nname: Duplicate Skill\ndescription: first\n---\n\n# Duplicate Skill\n"},
+		})
+		resp := doSkillRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, defaultTestKey, true, contentType)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create duplicate fixture status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var created skillAPIResponse
+		decodeJSON(t, resp.Body, &created)
+		defer deleteSkill(t, app, created.ID)
+
+		body, contentType = skillMultipartBody(t, "Duplicate Skill", []skillUploadFile{
+			{FieldName: "files[]", Filename: "duplicate-skill-copy/SKILL.md", Content: "---\nname: Duplicate Skill\ndescription: second\n---\n\n# Duplicate Skill\n"},
+		})
+		resp = doSkillRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, defaultTestKey, true, contentType)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("duplicate create status = %d, want 400: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var conflict errorResponse
+		decodeJSON(t, resp.Body, &conflict)
+		if conflict.Error.Type != "invalid_request_error" || !strings.Contains(conflict.Error.Message, "Skill cannot reuse an existing display_title: Duplicate Skill") {
+			t.Fatalf("unexpected duplicate title error: %+v", conflict)
+		}
+	})
+
+	t.Run("success custom skill archive upload", func(t *testing.T) {
+		archive := skillArchiveBytes(t, "archive-skill", "---\nname: Archive Skill\ndescription: archive description\n---\n\n# Archive Skill\n")
+		body, contentType := skillMultipartBody(t, "Archive Skill", []skillUploadFile{
+			{FieldName: "files[]", Filename: "archive-skill.skill", Content: string(archive)},
+		})
+		resp := doSkillRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, defaultTestKey, true, contentType)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create archive skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var created skillAPIResponse
+		decodeJSON(t, resp.Body, &created)
+		defer deleteSkill(t, app, created.ID)
+		versions := listSkillVersions(t, app, created.ID, "")
+		if len(versions.Data) != 1 || versions.Data[0].Directory != "archive-skill" || versions.Data[0].Name != "Archive Skill" {
+			t.Fatalf("unexpected archive upload versions: %+v", versions)
+		}
+	})
+
+	t.Run("success custom skill upload with platform session", func(t *testing.T) {
+		sessionKey := "session-skills-platform"
+		app.seedPlatformSession(t, sessionKey)
+		body, contentType := skillMultipartBody(t, "Session Skill", []skillUploadFile{
+			{FieldName: "files[]", Filename: "session-skill/SKILL.md", Content: "---\nname: Session Skill\ndescription: session description\n---\n\n# Session Skill\n"},
+		})
+		resp := doSkillSessionRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, sessionKey, true, contentType)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create platform session skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var created skillAPIResponse
+		decodeJSON(t, resp.Body, &created)
+		defer deleteSkill(t, app, created.ID)
+		if created.DisplayTitle != "Session Skill" || created.Source != "custom" {
+			t.Fatalf("unexpected platform session skill: %+v", created)
+		}
+	})
+
+	t.Run("success custom skill version upload with platform session", func(t *testing.T) {
+		created := createSkill(t, app, "session-update-skill")
+		defer deleteSkill(t, app, created.ID)
+
+		sessionKey := "session-skills-platform-update"
+		app.seedPlatformSession(t, sessionKey)
+		body, contentType := skillMultipartBody(t, "", []skillUploadFile{
+			{FieldName: "files[]", Filename: "session-update-skill/SKILL.md", Content: "---\nname: Session Update Skill\ndescription: session update description\n---\n\n# Session Update Skill\n"},
+		})
+		resp := doSkillSessionRequest(t, app, http.MethodPost, "/v1/skills/"+created.ID+"/versions?beta=true", body, sessionKey, true, contentType)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create platform session skill version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		var version skillVersionAPIResponse
+		decodeJSON(t, resp.Body, &version)
+		if version.SkillID != created.ID || version.Name != "Session Update Skill" || version.Version == created.LatestVersion {
+			t.Fatalf("unexpected platform session skill version: %+v", version)
+		}
+	})
+
 	t.Run("failure cross workspace isolation", func(t *testing.T) {
 		otherKey := "sk-ant-local-skills-other"
 		seedWorkspaceKey(t, app.db, "org_skills_other_test", "workspace_skills_other_test", "api_key_skills_other_test", otherKey)
@@ -124,7 +234,7 @@ func TestSkillsAPI(t *testing.T) {
 			t.Fatalf("built-in skills did not include xlsx: %+v", page.Data)
 		}
 		for _, skill := range page.Data {
-			if skill.Source != "anthropic" || skill.Type != "skill" || skill.LatestVersion != "1" {
+			if skill.Source != "anthropic" || skill.Type != "skill" || skill.LatestVersion != "20260203" {
 				t.Fatalf("unexpected built-in skill: %+v", skill)
 			}
 		}
@@ -141,16 +251,16 @@ func TestSkillsAPI(t *testing.T) {
 		}
 		var xlsx skillAPIResponse
 		decodeJSON(t, resp.Body, &xlsx)
-		if xlsx.ID != "xlsx" || xlsx.Source != "anthropic" || xlsx.LatestVersion != "1" {
+		if xlsx.ID != "xlsx" || xlsx.Source != "anthropic" || xlsx.LatestVersion != "20260203" {
 			t.Fatalf("unexpected xlsx response: %+v", xlsx)
 		}
 
 		versions := listSkillVersions(t, app, "xlsx", "")
-		if len(versions.Data) != 1 || versions.Data[0].Version != "1" || versions.Data[0].Directory == "" {
+		if len(versions.Data) != 1 || versions.Data[0].Version != "20260203" || versions.Data[0].Directory == "" {
 			t.Fatalf("unexpected xlsx versions: %+v", versions)
 		}
 
-		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/xlsx/versions/1/content?beta=true", nil, defaultTestKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/xlsx/versions/20260203/content?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("download xlsx status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -161,8 +271,22 @@ func TestSkillsAPI(t *testing.T) {
 		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/xlsx?beta=true", nil, defaultTestKey, true, "")
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 
-		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/xlsx/versions/1?beta=true", nil, defaultTestKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/xlsx/versions/20260203?beta=true", nil, defaultTestKey, true, "")
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("failure list rejects invalid pagination params", func(t *testing.T) {
+		for _, path := range []string{
+			"/v1/skills?beta=true&page=bad",
+			"/v1/skills?beta=true&source=anthropic&page=bad",
+			"/v1/skills?beta=true&source=custom&page=bad",
+			"/v1/skills?beta=true&limit=-1",
+			"/v1/skills?beta=true&limit=101",
+			"/v1/skills?beta=true&limit=abc",
+		} {
+			resp := doSkillRequest(t, app, http.MethodGet, path, nil, defaultTestKey, true, "")
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		}
 	})
 
 	t.Run("success custom skill lifecycle", func(t *testing.T) {
@@ -326,7 +450,7 @@ func TestSkillsAPI(t *testing.T) {
 			t.Fatalf("unexpected env key list page: %+v", page)
 		}
 
-		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/xlsx/versions/1/content?beta=true", nil, envKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/xlsx/versions/20260203/content?beta=true", nil, envKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("env key download skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -407,6 +531,99 @@ func TestSkillsAPI(t *testing.T) {
 	})
 }
 
+func TestSkillsListPagination(t *testing.T) {
+	t.Run("success mixed list continues after builtin boundary", func(t *testing.T) {
+		pageApp, pageStore := newSkillsPaginationTestApp(t)
+		suffix := uniqueSkillSuffix()
+		seedBuiltinSkill(t, pageApp, pageStore, "mixed-boundary-a", "20260203")
+		seedBuiltinSkill(t, pageApp, pageStore, "mixed-boundary-b", "20260203")
+		created := createNamedSkill(t, pageApp, "Mixed Pagination Skill "+suffix, "mixed-pagination-skill-"+suffix)
+		defer deleteSkill(t, pageApp, created.ID)
+
+		first := listSkills(t, pageApp, "limit=1")
+		if len(first.Data) != 1 || first.Data[0].Source != "anthropic" || !first.HasMore || first.NextPage == nil {
+			t.Fatalf("first mixed page = %+v, want one builtin with next_page", first)
+		}
+		second := listSkills(t, pageApp, "limit=1&page="+url.QueryEscape(*first.NextPage))
+		if len(second.Data) != 1 || second.Data[0].Source != "anthropic" || !second.HasMore || second.NextPage == nil {
+			t.Fatalf("second mixed page = %+v, want final builtin with next_page to custom", second)
+		}
+		third := listSkills(t, pageApp, "limit=1&page="+url.QueryEscape(*second.NextPage))
+		if len(third.Data) != 1 || third.Data[0].ID != created.ID || third.Data[0].Source != "custom" || third.HasMore || third.NextPage != nil {
+			t.Fatalf("third mixed page = %+v, want final custom skill %s", third, created.ID)
+		}
+	})
+
+	t.Run("success mixed list fills remaining page with custom skills", func(t *testing.T) {
+		pageApp, pageStore := newSkillsPaginationTestApp(t)
+		suffix := uniqueSkillSuffix()
+		seedBuiltinSkill(t, pageApp, pageStore, "mixed-fill-builtin", "20260203")
+		firstCustom := createNamedSkill(t, pageApp, "Mixed Fill One "+suffix, "mixed-fill-one-"+suffix)
+		defer deleteSkill(t, pageApp, firstCustom.ID)
+		secondCustom := createNamedSkill(t, pageApp, "Mixed Fill Two "+suffix, "mixed-fill-two-"+suffix)
+		defer deleteSkill(t, pageApp, secondCustom.ID)
+		thirdCustom := createNamedSkill(t, pageApp, "Mixed Fill Three "+suffix, "mixed-fill-three-"+suffix)
+		defer deleteSkill(t, pageApp, thirdCustom.ID)
+
+		first := listSkills(t, pageApp, "limit=2")
+		if len(first.Data) != 2 || first.Data[0].Source != "anthropic" || first.Data[1].Source != "custom" || !first.HasMore || first.NextPage == nil {
+			t.Fatalf("first mixed fill page = %+v, want builtin plus custom with next_page", first)
+		}
+		if first.Data[1].ID != thirdCustom.ID {
+			t.Fatalf("first mixed fill custom = %s, want newest custom %s", first.Data[1].ID, thirdCustom.ID)
+		}
+
+		second := listSkills(t, pageApp, "limit=2&page="+url.QueryEscape(*first.NextPage))
+		if len(second.Data) != 2 || second.Data[0].ID != secondCustom.ID || second.Data[1].ID != firstCustom.ID || second.HasMore || second.NextPage != nil {
+			t.Fatalf("second mixed fill page = %+v, want remaining custom skills and no next_page", second)
+		}
+	})
+
+	t.Run("success mixed list stops at builtin boundary without custom skills", func(t *testing.T) {
+		pageApp, pageStore := newSkillsPaginationTestApp(t)
+		seedBuiltinSkill(t, pageApp, pageStore, "builtin-only-a", "20260203")
+		seedBuiltinSkill(t, pageApp, pageStore, "builtin-only-b", "20260203")
+
+		first := listSkills(t, pageApp, "limit=1")
+		if len(first.Data) != 1 || first.Data[0].Source != "anthropic" || !first.HasMore || first.NextPage == nil {
+			t.Fatalf("first builtin-only page = %+v, want first builtin with next_page", first)
+		}
+		second := listSkills(t, pageApp, "limit=1&page="+url.QueryEscape(*first.NextPage))
+		if len(second.Data) != 1 || second.Data[0].Source != "anthropic" || second.HasMore || second.NextPage != nil {
+			t.Fatalf("second builtin-only page = %+v, want final builtin with no next_page", second)
+		}
+	})
+
+	t.Run("success source filtered skill lists paginate independently", func(t *testing.T) {
+		pageApp, pageStore := newSkillsPaginationTestApp(t)
+		suffix := uniqueSkillSuffix()
+		seedBuiltinSkill(t, pageApp, pageStore, "source-page-a", "20260203")
+		seedBuiltinSkill(t, pageApp, pageStore, "source-page-b", "20260203")
+		firstCustom := createNamedSkill(t, pageApp, "Source Page One "+suffix, "source-page-one-"+suffix)
+		defer deleteSkill(t, pageApp, firstCustom.ID)
+		secondCustom := createNamedSkill(t, pageApp, "Source Page Two "+suffix, "source-page-two-"+suffix)
+		defer deleteSkill(t, pageApp, secondCustom.ID)
+
+		anthropicFirst := listSkills(t, pageApp, "source=anthropic&limit=1")
+		if len(anthropicFirst.Data) != 1 || anthropicFirst.Data[0].Source != "anthropic" || !anthropicFirst.HasMore || anthropicFirst.NextPage == nil {
+			t.Fatalf("first anthropic source page = %+v, want builtin with next_page", anthropicFirst)
+		}
+		anthropicSecond := listSkills(t, pageApp, "source=anthropic&limit=1&page="+url.QueryEscape(*anthropicFirst.NextPage))
+		if len(anthropicSecond.Data) != 1 || anthropicSecond.Data[0].Source != "anthropic" || anthropicSecond.HasMore || anthropicSecond.NextPage != nil {
+			t.Fatalf("second anthropic source page = %+v, want final builtin", anthropicSecond)
+		}
+
+		customFirst := listSkills(t, pageApp, "source=custom&limit=1")
+		if len(customFirst.Data) != 1 || customFirst.Data[0].ID != secondCustom.ID || customFirst.Data[0].Source != "custom" || !customFirst.HasMore || customFirst.NextPage == nil {
+			t.Fatalf("first custom source page = %+v, want newest custom with next_page", customFirst)
+		}
+		customSecond := listSkills(t, pageApp, "source=custom&limit=1&page="+url.QueryEscape(*customFirst.NextPage))
+		if len(customSecond.Data) != 1 || customSecond.Data[0].ID != firstCustom.ID || customSecond.Data[0].Source != "custom" || customSecond.HasMore || customSecond.NextPage != nil {
+			t.Fatalf("second custom source page = %+v, want oldest custom", customSecond)
+		}
+	})
+}
+
 func doSkillRequest(t *testing.T, app *testApp, method, path string, body io.Reader, key string, betaHeader bool, contentType string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(method, app.baseURL+path, body)
@@ -426,6 +643,29 @@ func doSkillRequest(t *testing.T, app *testApp, method, path string, body io.Rea
 	resp, err := app.client.Do(req)
 	if err != nil {
 		t.Fatalf("do skills request: %v", err)
+	}
+	return resp
+}
+
+func doSkillSessionRequest(t *testing.T, app *testApp, method, path string, body io.Reader, sessionKey string, betaHeader bool, contentType string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, app.baseURL+path, body)
+	if err != nil {
+		t.Fatalf("new skills session request: %v", err)
+	}
+	if sessionKey != "" {
+		req.AddCookie(&http.Cookie{Name: "sessionKey", Value: sessionKey})
+	}
+	if betaHeader {
+		req.Header.Set("anthropic-beta", "skills-2025-10-02")
+	}
+	req.Header.Set("anthropic-version", "2023-06-01")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := app.client.Do(req)
+	if err != nil {
+		t.Fatalf("do skills session request: %v", err)
 	}
 	return resp
 }
@@ -475,6 +715,38 @@ func createSkill(t *testing.T, app *testApp, directory string) skillAPIResponse 
 	var created skillAPIResponse
 	decodeJSON(t, resp.Body, &created)
 	return created
+}
+
+func createNamedSkill(t *testing.T, app *testApp, displayTitle, directory string) skillAPIResponse {
+	t.Helper()
+	body, contentType := skillMultipartBody(t, displayTitle, []skillUploadFile{
+		{FieldName: "files[]", Filename: directory + "/SKILL.md", Content: "---\nname: " + displayTitle + "\ndescription: custom description\n---\n\n# " + displayTitle + "\n"},
+		{FieldName: "files", Filename: directory + "/README.md", Content: "readme"},
+	})
+	resp := doSkillRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, defaultTestKey, true, contentType)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create named skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+	var created skillAPIResponse
+	decodeJSON(t, resp.Body, &created)
+	return created
+}
+
+func newSkillsPaginationTestApp(t *testing.T) (*testApp, *fakeStore) {
+	t.Helper()
+	store := newFakeStore("skills-pagination-bucket-" + uniqueSkillSuffix())
+	app := newTestAppWithStore(t, nil, store)
+	cleanupBuiltinSkillRows(t, app.db)
+	t.Cleanup(func() {
+		cleanupBuiltinSkillRows(t, app.db)
+		app.close()
+	})
+	return app, store
+}
+
+func uniqueSkillSuffix() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
 func deleteSkill(t *testing.T, app *testApp, skillID string) {
@@ -535,6 +807,53 @@ func containsSkill(skills []skillAPIResponse, id string) bool {
 		}
 	}
 	return false
+}
+
+func seedBuiltinSkill(t *testing.T, app *testApp, store *fakeStore, skillID, version string) {
+	t.Helper()
+	archive := skillArchiveBytes(t, skillID, "---\nname: "+skillID+"\ndescription: builtin "+skillID+"\n---\n\n# "+skillID+"\n")
+	sum := sha256.Sum256(archive)
+	shaHex := hex.EncodeToString(sum[:])
+	key := "builtin-skills/" + skillID + "/versions/" + version + "/" + shaHex + ".skill"
+	if err := store.Put(context.Background(), key, bytes.NewReader(archive), int64(len(archive)), "application/zip"); err != nil {
+		t.Fatalf("seed builtin object: %v", err)
+	}
+	now := time.Now().UTC()
+	if _, _, err := app.db.UpsertBuiltinSkillWithVersion(context.Background(), db.BuiltinSkill{
+		ExternalID:   skillID,
+		DisplayTitle: skillID,
+		CreatedAt:    now,
+	}, db.BuiltinSkillVersion{
+		ExternalID:  "skillver_" + skillID + "_" + version,
+		Version:     version,
+		Name:        skillID,
+		Description: "builtin " + skillID,
+		Directory:   skillID,
+		S3Bucket:    store.Bucket(),
+		S3Key:       key,
+		SizeBytes:   int64(len(archive)),
+		SHA256:      shaHex,
+		CreatedAt:   now,
+	}); err != nil {
+		t.Fatalf("seed builtin db: %v", err)
+	}
+}
+
+func skillArchiveBytes(t *testing.T, directory, skillMD string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	entry, err := writer.Create(directory + "/SKILL.md")
+	if err != nil {
+		t.Fatalf("create skill md: %v", err)
+	}
+	if _, err := entry.Write([]byte(skillMD)); err != nil {
+		t.Fatalf("write skill md: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close skill archive: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func assertZipContains(t *testing.T, data []byte, name string) {

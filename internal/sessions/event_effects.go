@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -122,9 +123,9 @@ func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, erro
 	now := time.Now().UTC()
 	payload, err := httpapi.MarshalRaw(map[string]any{
 		"id":           eventID,
-		"agent":        rawJSONValue(session.AgentSnapshot, nil),
+		"agent":        agentsnapshot.RawJSONValue(session.AgentSnapshot, nil),
 		"created_at":   httpapi.FormatTime(now),
-		"metadata":     rawJSONValue(session.Metadata, map[string]any{}),
+		"metadata":     agentsnapshot.RawJSONValue(session.Metadata, map[string]any{}),
 		"processed_at": now.Format(time.RFC3339),
 		"title":        session.Title,
 		"type":         "session.updated",

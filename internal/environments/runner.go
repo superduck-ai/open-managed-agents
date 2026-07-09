@@ -8,11 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/google/uuid"
 )
@@ -22,6 +25,7 @@ type Runner struct {
 	provider     e2bruntime.Provider
 	cfg          config.Config
 	codeSessions *codesessions.Service
+	skills       *skillsapi.RuntimeResolver
 }
 
 func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
@@ -29,15 +33,24 @@ func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
 }
 
 func NewRunnerWithConfig(database *db.DB, provider e2bruntime.Provider, cfg config.Config) *Runner {
+	return NewRunnerWithConfigAndStore(database, provider, cfg, nil)
+}
+
+func NewRunnerWithConfigAndStore(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore) *Runner {
 	return &Runner{
 		db:           database,
 		provider:     provider,
 		cfg:          cfg,
 		codeSessions: codesessions.NewService(cfg, database),
+		skills:       skillsapi.NewRuntimeResolver(cfg, database, store),
 	}
 }
 
 func StartRunner(ctx context.Context, database *db.DB, cfg config.Config) {
+	StartRunnerWithStore(ctx, database, nil, cfg)
+}
+
+func StartRunnerWithStore(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config) {
 	if !cfg.EnvironmentRunnerEnabled {
 		return
 	}
@@ -45,7 +58,7 @@ func StartRunner(ctx context.Context, database *db.DB, cfg config.Config) {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	runner := NewRunnerWithConfig(database, e2bruntime.NewProvider(cfg), cfg)
+	runner := NewRunnerWithConfigAndStore(database, e2bruntime.NewProvider(cfg), cfg, store)
 	for i := 0; i < concurrency; i++ {
 		workerID := fmt.Sprintf("environment-runner-%d", i+1)
 		go runner.loop(ctx, workerID)
@@ -123,7 +136,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	sandbox, err := r.provider.Create(ctx, env, work)
+	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
 		now := time.Now().UTC()
 		message := err.Error()
@@ -197,6 +210,14 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	if err != nil {
 		return nil, err
 	}
+	runtimeSkills, err := r.resolveRuntimeSkills(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	skillMount, err := r.prepareRuntimeSkillMount(ctx, runtimeSkills)
+	if err != nil {
+		return nil, err
+	}
 	sessionConfig := managedAgentSessionConfig(session, resources)
 	workDir := managedAgentWorkDir(resources)
 	title := ""
@@ -232,6 +253,9 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	if hosts := managedAgentMCPAllowedHosts(session.AgentSnapshot); len(hosts) > 0 {
 		workMetadataPatch["mcp_allowed_hosts"] = hosts
 	}
+	if skillMount != nil {
+		workMetadataPatch[e2bruntime.SkillMountMetadataKey] = skillMount
+	}
 	metadataPatch, err := json.Marshal(sessionMetadataPatch)
 	if err != nil {
 		return nil, err
@@ -255,6 +279,27 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	}
 	command := buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload)
 	return &command, nil
+}
+
+func (r *Runner) prepareRuntimeSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*e2bruntime.SkillMount, error) {
+	if len(runtimeSkills) == 0 {
+		return nil, nil
+	}
+	preparer, ok := r.provider.(e2bruntime.SkillMountPreparer)
+	if !ok {
+		return nil, fmt.Errorf("runtime provider cannot prepare managed agent skill mount")
+	}
+	return preparer.PrepareSkillMount(ctx, runtimeSkills)
+}
+
+func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) ([]skillsapi.RuntimeSkill, error) {
+	if r == nil || r.skills == nil {
+		if agentsnapshot.SnapshotHasSkills(session.AgentSnapshot) {
+			return nil, fmt.Errorf("managed agent session %s has skills but runtime skill resolver is unavailable", session.ExternalID)
+		}
+		return nil, nil
+	}
+	return r.skills.ResolveAgentSnapshot(ctx, session.WorkspaceID, session.AgentSnapshot)
 }
 
 func (r *Runner) sessionEventPayloads(ctx context.Context, session db.Session) ([]json.RawMessage, error) {

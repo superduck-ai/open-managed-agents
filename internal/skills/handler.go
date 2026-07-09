@@ -28,19 +28,25 @@ import (
 )
 
 const (
-	skillsBeta                = "skills-2025-10-02"
-	defaultSkillsLimit        = 20
-	maxSkillsLimit            = 100
-	defaultSkillVersionsLimit = 20
-	maxSkillVersionsLimit     = 1000
-	skillArchiveContentType   = "application/zip"
+	skillsBeta                 = "skills-2025-10-02"
+	defaultSkillsLimit         = 20
+	maxSkillsLimit             = 100
+	defaultSkillVersionsLimit  = 20
+	maxSkillVersionsLimit      = 1000
+	skillArchiveContentType    = "application/zip"
+	skillPrewarmEnqueueTimeout = 3 * time.Second
 )
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	store  storage.ObjectStore
-	router chi.Router
+	cfg     config.Config
+	db      *db.DB
+	store   storage.ObjectStore
+	prewarm skillPrewarmFanoutEnqueuer
+	router  chi.Router
+}
+
+type skillPrewarmFanoutEnqueuer interface {
+	EnqueueFanout(ctx context.Context, workspaceID int64, skillID string, version string) error
 }
 
 type skillResponse struct {
@@ -75,10 +81,15 @@ type pageCursor struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore) *Handler {
+	return NewHandlerWithSkillPrewarm(cfg, database, store, nil)
+}
+
+func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, store storage.ObjectStore, prewarm skillPrewarmFanoutEnqueuer) *Handler {
 	h := &Handler{
-		cfg:   cfg,
-		db:    database,
-		store: store,
+		cfg:     cfg,
+		db:      database,
+		store:   store,
+		prewarm: prewarm,
 	}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
@@ -482,6 +493,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create skill version"))
 		return
 	}
+	h.enqueueSkillPrewarmFanout(r.Context(), principal.WorkspaceID, skillID, version.Version)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromSkillVersion(version))
 }
 
@@ -777,6 +789,17 @@ func (h *Handler) downloadFixtureSkill(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func (h *Handler) enqueueSkillPrewarmFanout(ctx context.Context, workspaceID int64, skillID string, version string) {
+	if h == nil || h.prewarm == nil {
+		return
+	}
+	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
+	defer cancel()
+	if err := h.prewarm.EnqueueFanout(enqueueCtx, workspaceID, skillID, version); err != nil {
+		log.Printf("enqueue skill prewarm fanout skill_id=%s version=%s: %v", skillID, version, err)
+	}
 }
 
 func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, workspaceID int64, bucket, key, externalID string) {

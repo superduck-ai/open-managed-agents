@@ -235,6 +235,23 @@ jobs:
       - name: Hide private Pullfrog checkout from git status
         run: echo ".duckpr/" >> .git/info/exclude
 
+      - name: Run pre-sync audit (baseline)
+        id: audit-before
+        run: |
+          set +e
+          python3 scripts/docs-audit/audit_design_docs.py --diff --output /tmp/docs-audit-before.json > /tmp/docs-audit-before.txt 2>&1
+          code=$?
+          set -e
+          # Capture baseline high-finding count for the post-sync verify step.
+          high=$(python3 -c "import json;d=json.load(open('/tmp/docs-audit-before.json'));print(sum(1 for f in d.get('findings',[]) if f.get('severity')=='high'))" 2>/dev/null || echo "?")
+          {
+            echo "exit_code=$code"
+            echo "high_before=$high"
+          } >> "$GITHUB_OUTPUT"
+          echo "Pre-sync audit: exit=$code high_findings=$high"
+          # Do not fail here even on exit 2 — let the agent see the JSON and
+          # decide (SKILL.md step 1 says STOP on exit 2 and comment instead).
+
       - name: Build docs-sync prompt
         id: prompt
         uses: actions/github-script@v7
@@ -242,6 +259,7 @@ jobs:
           PR_NUMBER: ${{ needs.audit-comment.outputs.pr_number }}
           EXTRA_PROMPT: ${{ inputs.prompt || '' }}
           COMMENT_BODY: ${{ github.event.comment.body || '' }}
+          AUDIT_BEFORE_PATH: /tmp/docs-audit-before.json
         with:
           github-token: ${{ github.token }}
           script: |
@@ -256,20 +274,47 @@ jobs:
               repo: context.repo.repo,
               pull_number: prNumber,
             });
+            // changed_files: paths + +/- stats. Bounded to keep prompt sane.
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 300,
+            });
+            const changedFiles = files
+              .map((f) => `${f.status.padEnd(9)} +${f.additions}/-${f.deletions}  ${f.filename}`)
+              .join("\n");
             const skill = fs.readFileSync(skillPath, "utf8");
             const extra = String(process.env.EXTRA_PROMPT || "").trim();
             const comment = String(process.env.COMMENT_BODY || "").trim();
+            // Audit JSON produced by the pre-sync step (truth source for findings).
+            const auditPath = String(process.env.AUDIT_BEFORE_PATH || "");
+            let auditJson = "(pre-sync audit JSON unavailable)";
+            if (auditPath && fs.existsSync(auditPath)) {
+              auditJson = fs.readFileSync(auditPath, "utf8");
+            }
             const parts = [
               "Follow the docs-sync skill below exactly.",
               "",
+              "<pr_context>",
               `PR number: #${prNumber}`,
               `PR URL: ${pr.html_url}`,
               `PR title: ${pr.title || ""}`,
               `PR head branch: ${pr.head.ref}`,
+              `PR base branch: ${pr.base.ref}`,
+              "</pr_context>",
               "",
               "<pr_body>",
               pr.body || "",
               "</pr_body>",
+              "",
+              "<changed_files>",
+              changedFiles || "(none)",
+              "</changed_files>",
+              "",
+              "<audit_findings>",
+              auditJson,
+              "</audit_findings>",
               "",
             ];
             if (comment) {
@@ -328,3 +373,34 @@ jobs:
           LOG_LEVEL: debug
           PULLFROG_SELF_HOSTED: "1"
           PULLFROG_FORCE_LOCAL_CLI: "1"
+
+      - name: Post-sync verify (audit after agent edits)
+        if: always()
+        run: |
+          set +e
+          # Pull agent's pushed commits so the audit sees the latest tree.
+          git fetch --quiet origin "${HEAD_REF}" 2>/dev/null
+          git checkout --quiet "${HEAD_REF}" 2>/dev/null || true
+          git pull --quiet --ff-only origin "${HEAD_REF}" 2>/dev/null || true
+          python3 scripts/docs-audit/audit_design_docs.py --diff --output /tmp/docs-audit-after.json > /tmp/docs-audit-after.txt 2>&1
+          after_code=$?
+          high_after=$(python3 -c "import json;d=json.load(open('/tmp/docs-audit-after.json'));print(sum(1 for f in d.get('findings',[]) if f.get('severity')=='high'))" 2>/dev/null || echo "?")
+          {
+            echo "## Post-sync audit"
+            echo
+            echo "- pre-sync: exit \`${HIGH_BEFORE}\` high findings, post-sync: exit \`${after_code}\` high findings \`${high_after}\`"
+            echo
+            echo "<details><summary>Audit report (after)</summary>"
+            echo
+            echo '```'
+            head -c 12000 /tmp/docs-audit-after.txt
+            echo
+            echo '```'
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "Post-sync audit: exit=$after_code high_before=${HIGH_BEFORE} high_after=$high_after"
+          # Non-fatal: the agent already pushed. This step only reports drift.
+          exit 0
+        env:
+          HEAD_REF: ${{ needs.audit-comment.outputs.head_ref }}
+          HIGH_BEFORE: ${{ steps.audit-before.outputs.high_before }}

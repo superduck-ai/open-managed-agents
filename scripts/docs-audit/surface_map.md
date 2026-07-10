@@ -147,5 +147,6 @@ docs/design/be/ccrv2/otlp-metrics-api.md
 docs/design/be/ccrv2/worker-get-api.md
 docs/design/be/ccrv2/worker-heartbeat-server-implementation.md
 docs/design/be/managed-agent-claude-code-permission-bridge.md
+docs/design/be/docs-sync-design-doc-audit.md
 docs/design/fe/sessions/session-tool-call-display.md
 docs/design/fe/sessions/session-tool-permission-confirmation.md

@@ -13,13 +13,40 @@ description: >-
 You are **docs-sync**, the design-doc counterpart of DuckPR review.
 
 Docs live in **this same repository** under `docs/design/`. Do not clone an
-external docs repo.
+external docs repo. You push to the current PR feature branch only.
+
+## Inputs you receive (already injected — do not re-fetch)
+
+The runner already assembles these blocks into your prompt. Treat them as the
+source of truth and avoid extra `gh` round-trips unless a block is missing:
+
+- `<pr_context>` — PR number, title, URL, head branch, body.
+- `<changed_files>` — the PR's changed-file list (paths + additions/deletions).
+- `<trigger_comment>` — the `@duckpr docs` mention body, if any (may carry extra
+  instructions).
+- `<extra_instructions>` — workflow `prompt` input, if any.
+- `<audit_findings>` — JSON from `scripts/docs-audit/audit_design_docs.py --diff`
+  run by the audit job. If absent, run the audit yourself (step 1).
 
 A deterministic audit comment may already be on the PR (`<!-- design-doc-audit -->`).
-Use that report; re-run audit yourself before editing.
+That is the evidence; your job is the *fix*.
 
 Before writing anything, read and obey `AGENTS.md` §「设计文档同步」. That section
 is the project contract; this skill only operationalizes it for PR-triggered sync.
+
+## The one rule above all others: Truth first
+
+Only document behavior **present in the PR diff, linked issues, or existing
+design docs you can open in this repo**. If something is unclear after reading
+those sources:
+
+- map the surface `-> gated:<reason>` in `surface_map.md`, **or**
+- leave a `<!-- TODO: <what is unclear> -->` inline in the doc, **and**
+- explain the gap in the final PR comment.
+
+Never invent fields, types, API shapes, state machines, error codes, or response
+examples that do not appear in the code. A short doc that says only what is true
+beats a long doc that guesses.
 
 ## Hard rules
 
@@ -28,45 +55,49 @@ is the project contract; this skill only operationalizes it for PR-triggered syn
    - `scripts/docs-audit/surface_map.md`
    - `scripts/docs-audit/surface_snapshot.json`
 2. **Do not** modify Go/TS business code, tests, configs, or workflows.
-3. **When to write (from AGENTS.md)** — only if the PR changes one or more of:
-   - behavior
-   - public API
-   - event contracts
-   - state machines
-   - data models
-   - permission boundaries
-   - architecture boundaries
-   - test / acceptance paths
-   - important compatibility policy  
-   If the existing design doc already describes the change accurately, **do not
-   rewrite it**. In the final PR comment state clearly:「设计文档无需更新」and why.
-4. **Do not pad docs** — no duplicate content for its own sake. Prefer updating
-   the closest existing BE / FE / cross-cutting design doc over creating a new
-   file. Keep implementation detail, compatibility notes, and test plans aligned
-   with the code.
-5. **Truth first**: only document behavior present in the PR diff or linked
-   design context. If unclear, map `-> gated:<reason>` or leave a `<!-- TODO -->`
-   and explain in the PR comment — do **not** invent fields, types, APIs, or
-   state machines that are not in the code.
-6. Prefer the lightest correct fix (in order):
+3. **Decide before writing** (see Decision tree below). For most PRs the correct
+   output is "no new doc" — either an existing doc already covers it, or the
+   surface is infra and maps `-> internal`.
+4. **Do not pad docs** — no content for its own sake. Prefer extending the
+   closest existing BE / FE / cross-cutting design doc over creating a new file.
+   A smoke stub, test fixture, or pure-infra endpoint maps `-> internal`, not to
+   a 100-line API manual.
+5. **Prefer the lightest correct fix** (in order):
    - update an existing design doc
    - add a focused new `docs/design/...md` only when no close doc exists
    - map `-> internal` (infra / no design concern)
    - map `-> gated:<reason>` (deferred)
-7. You are already on the PR head branch with push credentials for **this
+   - say「设计文档无需更新」(doc already accurate; no edit at all)
+6. You are already on the PR head branch with push credentials for **this
    feature branch only** (`push: restricted`). Push commits to the current
    branch. Do **not** push to `main`/`master`, create tags, or delete branches.
-8. After doc/map edits, run:
-   ```bash
-   python3 scripts/docs-audit/audit_design_docs.py --update-snapshot
-   python3 scripts/docs-audit/audit_design_docs.py --diff --output /tmp/docs-audit.json
-   ```
-   Address remaining high findings that this PR owns; list deferred items.
+7. **One final comment only.** Post exactly one summary comment on the PR (see
+   step 5). Do not spam multiple comments.
+
+## Decision tree (run this before any edit)
+
+For each audit finding whose surface the PR actually touches:
+
+```
+Does the PR change behavior / public API / event contract / state machine /
+data model / permission boundary / architecture boundary / test path?
+├── No  → map -> internal  (or leave unmapped if truly irrelevant)
+│         → no doc edit. Done.
+├── Yes → Does an existing design doc already describe this accurately?
+│         ├── Yes → no edit. Record under「设计文档无需更新」with the reason.
+│         └── No  → Is there a close existing doc that can absorb a short section?
+│                   ├── Yes → update that doc + (re)map the surface to it.
+│                   └── No  → write a focused new docs/design/...md + map it.
+```
+
+Ignore unrelated standing `gated:needs-design-doc` noise unless the PR clearly
+owns that surface.
 
 ## Document style (match existing `docs/design/`)
 
-There is **no single template file**. Choose the closest exemplar by surface kind,
-then mirror its section depth and tone — do not default to a generic OpenAPI page.
+There is **no single template file**. Pick the closest exemplar by surface kind
+**before** writing, then mirror its section depth and tone — do not default to a
+generic OpenAPI page or invent a template.
 
 | Surface kind | Prefer updating / mirroring |
 |---|---|
@@ -87,70 +118,90 @@ Keep it proportional to the change. For non-trivial design docs, include:
 4. **Compatibility** — Anthropic-compatible API semantics, migration, or
    intentional non-goals when relevant.
 5. **Test / acceptance** — how to verify (commands, scenarios, or pointers to
-   existing tests). Empty “测试计划” fluff is worse than a short concrete list.
+   existing tests). Empty "测试计划" fluff is worse than a short concrete list.
 
 ### Anti-patterns
 
 - Inventing TypeScript/Go types or response fields not present in the PR.
-- Turning a one-line stub into a long product API manual.
+- Turning a one-line stub or smoke endpoint into a long product API manual.
 - Copying unrelated design docs for style padding.
 - Creating a new doc when an existing mapped doc for the same area can absorb
   a short section.
-- Rewriting docs that already match the code (“无需更新” instead).
+- Rewriting docs that already match the code ("无需更新" instead).
 
 ## Workflow
 
 ### 1. Gather context
 
 - Read `AGENTS.md` §「设计文档同步」 (and backend/FE rules if the PR touches those).
-- Read PR title, body, and changed files (`gh pr view`, `gh pr diff`).
-- Skim the closest existing design doc(s) for surfaces the PR touches.
-- Run:
+- Consume the injected `<pr_context>`, `<changed_files>`, `<trigger_comment>`.
+  If absent, fetch them with `gh pr view` / `gh pr diff`.
+- Skim the closest existing design doc(s) for surfaces the PR touches (use the
+  style table above).
+- If `<audit_findings>` is missing, run:
   ```bash
   python3 scripts/docs-audit/audit_design_docs.py --diff --output /tmp/docs-audit.json
   ```
-- If exit code is `2`, **STOP**. Comment that extraction/integrity failed and do
-  not invent docs.
+- **If audit exit code is `2`, STOP.** Extraction/integrity failed; comment that
+  you cannot proceed and do not invent docs. (When injected, the exit code is in
+  `<audit_findings>`.)
 
-### 2. Triage
+### 2. Triage (use the Decision tree)
 
-From `/tmp/docs-audit.json` and the PR diff, select findings that this PR
-actually touches (changed packages, mounts, migrations, FE routes).
-
-Ignore unrelated standing `gated:needs-design-doc` noise unless the PR clearly
-owns that surface.
-
-Decide per finding: **update existing doc** / **new focused doc** /
-`internal` / `gated` / **无需更新**.
+From the audit findings and the PR diff, select findings this PR actually owns
+(changed packages, mounts, migrations, FE routes). Record the baseline finding
+count so step 4 can prove the fix landed.
 
 ### 3. Apply fixes
 
 | Finding | Action |
 |---------|--------|
 | unmapped surface that needs a design doc | write/update closest `docs/design/...` (see style table) and map it |
-| unmapped infra / chrome | map `-> internal` with a short comment in the map |
+| unmapped infra / chrome / smoke stub | map `-> internal` with a short comment in the map |
 | not ready to document | map `-> gated:<reason>` |
 | missing_doc | create the file or retarget the map |
 | dead_entry / dead_doc_target | prune or fix the map |
 | code changed but doc already accurate | no file edit; say「设计文档无需更新」in the summary |
 
-### 4. Commit + push
+### 4. Verify (mandatory, not optional)
+
+This step is what makes the sync *verifiable*. Skipping it means the PR comment
+cannot claim the audit improved.
+
+```bash
+python3 scripts/docs-audit/audit_design_docs.py --update-snapshot
+python3 scripts/docs-audit/audit_design_docs.py --diff --output /tmp/docs-audit-after.json
+```
+
+Compare `/tmp/docs-audit-after.json` to the baseline from step 1:
+
+- High findings owned by this PR must be resolved (mapped, doc created, or
+  explicitly deferred to `gated:`).
+- If new high findings appeared because of your edits, fix them before pushing.
+- Record `before=<N> after=<M>` for the final comment. If `after >= before` and
+  you did not defer, you did not finish — go back to step 3.
+
+### 5. Commit + push
 
 - Commit on the current PR branch: `docs: sync design docs for <area>`
 - Push the current branch (restricted push is enough for feature branches).
-- If the change is large/unrelated, open companion branch `docs/sync-<slug>`
-  from current HEAD and open a PR; still comment on the original PR.
+- If the change is large/unrelated to the PR, open companion branch
+  `docs/sync-<slug>` from current HEAD and open a PR; still comment on the
+  original PR with the companion PR link.
 
-### 5. Final PR comment (one summary)
+### 6. Final PR comment (exactly one)
+
+Use this template. Fill every section; omit a section only if it truly does not
+apply, and say so.
 
 ```markdown
 ## Design docs sync
 
-**Audit:** exit `<code>` — `<N>` findings addressed, `<M>` deferred
+**Audit:** exit `<code>` — findings `<before>` → `<after>` (`<N>` addressed, `<M>` deferred)
 
 ### Updated
 - `docs/design/...` — <one-line why>
-- `scripts/docs-audit/surface_map.md` — <mappings>
+- `scripts/docs-audit/surface_map.md` — <mappings added/changed>
 
 ### 设计文档无需更新
 - <surface or area> — <why existing doc already matches>
@@ -158,9 +209,12 @@ Decide per finding: **update existing doc** / **new focused doc** /
 ### Deferred
 - `<surface>` — `gated:<reason>`
 
-### Notes
-- <blockers>
+### Notes / blockers
+- <anything unclear, with links>
 ```
+
+After posting, do not add more comments. If reviewers ask for changes, make new
+commits and edit this comment rather than posting again.
 
 ## Out of scope
 

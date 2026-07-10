@@ -62,6 +62,42 @@ describe('MCP directory API', () => {
     expect(requestCount).toBe(2);
     expect(servers[0].slug).toBe('slack');
   });
+
+  test('keeps a reset request isolated from an older in-flight request', async () => {
+    let requestCount = 0;
+    let resolveFirst!: (response: Response) => void;
+    let resolveSecond!: (response: Response) => void;
+    const firstResponse = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondResponse = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    globalThis.fetch = mock(() => {
+      requestCount += 1;
+      return requestCount === 1 ? firstResponse : secondResponse;
+    });
+
+    const firstRequest = loadMcpDirectoryServers();
+    resetMcpDirectoryCacheForTests();
+    const secondRequest = loadMcpDirectoryServers();
+
+    resolveFirst(jsonResponse({
+      servers: [{ type: 'remote', slug: 'old', display_name: 'Old', tool_names: ['old_tool'] }]
+    }));
+    await firstRequest;
+    expect(loadMcpDirectoryServers()).toBe(secondRequest);
+
+    resolveSecond(jsonResponse({
+      servers: [{ type: 'remote', slug: 'new', display_name: 'New', tool_names: ['new_tool'] }]
+    }));
+    const servers = await secondRequest;
+    const cached = await loadMcpDirectoryServers();
+
+    expect(requestCount).toBe(2);
+    expect(servers[0].slug).toBe('new');
+    expect(cached).toBe(servers);
+  });
 });
 
 function jsonResponse(body: unknown, status = 200) {

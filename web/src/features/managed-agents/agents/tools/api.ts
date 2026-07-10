@@ -6,6 +6,7 @@ const MCP_DIRECTORY_PATH = '/api/directory/servers?type=remote&visibility=commer
 
 let directoryCache: { expiresAt: number; servers: McpDirectoryServer[] } | undefined;
 let directoryRequest: Promise<McpDirectoryServer[]> | undefined;
+let directoryGeneration = 0;
 
 export function loadMcpDirectoryServers() {
   if (directoryCache && directoryCache.expiresAt > Date.now()) {
@@ -15,19 +16,26 @@ export function loadMcpDirectoryServers() {
     return directoryRequest;
   }
 
-  directoryRequest = consoleApi<unknown>(MCP_DIRECTORY_PATH)
+  const generation = directoryGeneration;
+  const request = consoleApi<unknown>(MCP_DIRECTORY_PATH)
     .then((payload) => {
       const servers = normalizeMcpDirectoryServers(payload);
-      directoryCache = { expiresAt: Date.now() + MCP_DIRECTORY_CACHE_MS, servers };
+      if (generation === directoryGeneration && directoryRequest === request) {
+        directoryCache = { expiresAt: Date.now() + MCP_DIRECTORY_CACHE_MS, servers };
+      }
       return servers;
     })
     .finally(() => {
-      directoryRequest = undefined;
+      if (directoryRequest === request) {
+        directoryRequest = undefined;
+      }
     });
-  return directoryRequest;
+  directoryRequest = request;
+  return request;
 }
 
 export function resetMcpDirectoryCacheForTests() {
+  directoryGeneration += 1;
   directoryCache = undefined;
   directoryRequest = undefined;
 }

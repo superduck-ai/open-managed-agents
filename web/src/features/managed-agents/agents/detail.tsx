@@ -11,7 +11,7 @@ import { toast } from '../../../shared/ui/sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import clsx from 'clsx';
-import { AlertCircle, Archive, ArrowUpRight, BriefcaseBusiness, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Copy, MoreVertical, Pencil, Play, Plus, Sparkles, X } from 'lucide-react';
+import { AlertCircle, Archive, ArrowUpRight, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Copy, MoreVertical, Pencil, Play, Plus, Sparkles, X } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { agentEditConfig, agentEditConfigText, agentEditSaveErrorMessage, buildAgentUpdateInput, parseAgentEditConfigText } from '../agentConfig';
 import { archiveAgent, createAgentDetailDeployment, createAgentDetailSession, getAgentSessionAnalyticsOverview, getAgentSessionAnalyticsTimeseries, listAgentDetailDeployments, listAgentDetailSessions, listAgentVersions, retrieveAgent, retrieveAgentSkill, runDeployment, updateAgentDetail, type AgentSkillApiResponse } from '../api';
@@ -22,7 +22,7 @@ import { ConfirmAgentsArchiveDialog, StatusPill } from '../components/common';
 import { managedColumnLabel } from '../labels';
 import { deploymentAgentVersion, DeploymentRunsPanel, deploymentTrigger, ManagedEntityDialog } from '../resources/ManagedResources';
 import { numericValueFromKeys, stringValueFromKeys } from '../sessions/SessionDetailPage';
-import { type AgentApiResponse, type AgentDetailCreatedFilter, type AgentDetailStatusFilter, type AgentDetailTab, type AgentDetailVersionFilter, type AgentSessionAnalyticsOverview, type AgentSessionAnalyticsTimeseries, type AgentToolCardModel, type AnalyticsMetricBucket, type CodeFormat, type DeploymentApiResponse, type PageCursor, type SessionApiResponse } from '../types';
+import { type AgentApiResponse, type AgentDetailCreatedFilter, type AgentDetailStatusFilter, type AgentDetailTab, type AgentDetailVersionFilter, type AgentSessionAnalyticsOverview, type AgentSessionAnalyticsTimeseries, type AnalyticsMetricBucket, type CodeFormat, type DeploymentApiResponse, type PageCursor, type SessionApiResponse } from '../types';
 import { agentDetailHref, compactEntityId, copyText, errorMessage, managedEntityDetailHref, objectRecord, titleCase } from '../utils';
 import {
   agentDetailDeploymentFromSearch,
@@ -38,7 +38,6 @@ import {
   agentSkillRequestedVersion,
   agentSkillSnapshotSource,
   agentSkillSnapshotTitle,
-  agentToolCards,
   emptyAgentSessionAnalyticsOverview,
   ensureArray,
   formatAgentSkillSource,
@@ -58,6 +57,8 @@ import {
   uniqueVersionNumbers,
   writeAgentSessionFiltersToUrl
 } from './model';
+import { AgentToolsSection } from './tools/AgentToolsSection';
+import { hasConfiguredAgentTools } from './tools/model';
 
 export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string; routeWorkspaceId?: string }) {
   const { msg } = useI18n();
@@ -450,7 +451,6 @@ export function AgentConfigTab({
   onSelectVersion: (version: number) => void;
 }) {
   const { msg } = useI18n();
-  const toolCards = agentToolCards(agent);
   const skills = ensureArray(agent.skills);
   const skillRefs = useMemo(
     () =>
@@ -541,12 +541,15 @@ export function AgentConfigTab({
         </pre>
       </AgentDetailSection>
 
-      <AgentDetailSection title={msg('managedAgents.agents.detail.mcpsAndTools', 'MCPs and tools')}>
-        <Card className="gap-0 py-0">
-          {toolCards.map((card, index) => (
-            <AgentToolCard key={`${card.title}-${card.subtitle}`} card={card} divided={index > 0} />
-          ))}
-        </Card>
+      <AgentDetailSection
+        title={msg('managedAgents.agents.detail.mcpsAndTools', 'MCPs and tools')}
+        description={
+          hasConfiguredAgentTools(agent)
+            ? undefined
+            : msg('managedAgents.agents.detail.noMcpsOrTools', 'No MCPs or tools configured.')
+        }
+      >
+        {hasConfiguredAgentTools(agent) ? <AgentToolsSection agent={agent} /> : null}
       </AgentDetailSection>
 
       <AgentDetailSection
@@ -2047,55 +2050,5 @@ export function AgentAnalyticsBreakdown({ title, values, emptyLabel }: { title: 
         )}
       </CardContent>
     </Card>
-  );
-}
-
-export function AgentToolCard({ card, divided = false }: { card: AgentToolCardModel; divided?: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasPermissions = Boolean(card.permissions?.length);
-
-  return (
-    <div className={clsx('bg-card', divided && 'border-t border-border')}>
-      <div className="flex items-center gap-3 px-4 py-3">
-        <span className="grid size-10 place-items-center rounded-lg border border-border bg-secondary text-foreground">
-          <BriefcaseBusiness className="size-5" aria-hidden />
-        </span>
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-foreground">{card.title}</div>
-          <div className="truncate text-sm text-muted-foreground">{card.subtitle}</div>
-        </div>
-      </div>
-      <Button
-        type="button"
-        variant="ghost"
-        disabled={!hasPermissions}
-        aria-expanded={expanded}
-        className="h-11 w-full justify-start gap-3 rounded-none border-0 border-t border-border px-4 text-left text-sm font-semibold text-muted-foreground enabled:hover:bg-accent disabled:cursor-default"
-        onClick={() => setExpanded((value) => !value)}
-      >
-        {expanded ? (
-          <ChevronDown className="size-4 text-muted-foreground/70" aria-hidden />
-        ) : (
-          <ChevronRight className="size-4 text-muted-foreground/70" aria-hidden />
-        )}
-        Tool permissions
-        <Badge variant="secondary" className="h-auto rounded-md px-2 py-0.5 text-xs font-normal text-muted-foreground">
-          {card.permissionCount}
-        </Badge>
-      </Button>
-      {expanded && card.permissions?.length ? (
-        <div className="border-t border-border px-4 py-2">
-          <div className="grid gap-1">
-            {card.permissions.map((permission) => (
-              <div key={permission.name} className="grid grid-cols-[112px_128px_minmax(0,1fr)] items-start gap-3 rounded-md px-2 py-2 text-sm">
-                <div className="font-semibold text-foreground">{permission.label}</div>
-                <code className="font-sans text-[13px] text-muted-foreground">{permission.name}</code>
-                <div className="min-w-0 text-muted-foreground">{permission.description}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
   );
 }

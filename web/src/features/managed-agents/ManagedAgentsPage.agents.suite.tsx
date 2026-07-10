@@ -275,7 +275,9 @@ export function registerManagedAgentsAgentsTests() {
               name: 'Historical agent',
               version: 1,
               description: 'Old description',
-              system: 'Old system prompt'
+              system: 'Old system prompt',
+              tools: [],
+              mcp_servers: []
             }
           ]
         }
@@ -348,9 +350,9 @@ export function registerManagedAgentsAgentsTests() {
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     fireEvent.click(permissionsButton);
-    expect(screen.getByText('Bash')).toBeTruthy();
+    expect(screen.getByText('bash')).toBeTruthy();
     expect(screen.getByText('web_search')).toBeTruthy();
-    expect(screen.getByText('Search the web for information')).toBeTruthy();
+    expect(screen.getByText('Search the web')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     const versionButton = screen.getByRole('button', { name: 'Version: v2' });
     expect(versionButton.className.includes('bg-secondary')).toBe(false);
@@ -363,9 +365,142 @@ export function registerManagedAgentsAgentsTests() {
 
     await waitFor(() => expect(screen.getByText('Old system prompt')).toBeTruthy());
     expect(screen.getByText('No skills configured.')).toBeTruthy();
+    expect(screen.getByText('No MCPs or tools configured.')).toBeTruthy();
+    expect(screen.queryByText('Built-in tools')).toBeNull();
     expect(screen.getByRole('heading', { name: 'Current agent' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     expect(api.requests.some((request) => request.url === '/v1/agents/agent_detail123456?beta=true&version=1')).toBe(true);
+  });
+
+  test('shows the agent detail tools empty state without rendering a placeholder card', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_emptytools123456');
+    mockAgentsApi([{
+      id: 'agent_emptytools123456',
+      name: 'No tools agent',
+      tools: [],
+      mcp_servers: []
+    }]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByText('No MCPs or tools configured.')).toBeTruthy();
+    expect(screen.queryByText('No tools configured')).toBeNull();
+    const toolsHeading = screen.getByRole('heading', { name: 'MCPs and tools' });
+    const toolsSection = toolsHeading.closest('section') as HTMLElement;
+    expect(toolsSection.querySelector('[data-slot="card"]')).toBeNull();
+  });
+
+  test('renders coexisting built-in, custom, and directory-backed MCP tool permissions as read-only cards', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_mixedtools123456');
+    const api = mockAgentsApi(
+      [{
+        id: 'agent_mixedtools123456',
+        name: 'Mixed tools agent',
+        mcp_servers: [{ name: 'notion', url: 'https://agent.example.com/notion' }],
+        tools: [
+          {
+            type: 'agent_toolset_20260401',
+            configs: [{ name: 'bash', enabled: false }]
+          },
+          {
+            type: 'custom',
+            name: 'lookup_customer',
+            description: 'Find a customer by email',
+            enabled: false,
+            permission_policy: { type: 'always_ask' }
+          },
+          {
+            type: 'mcp_toolset',
+            mcp_server_name: 'notion',
+            default_config: { permission_policy: { type: 'always_ask' } },
+            configs: [{ name: 'search', enabled: false }]
+          }
+        ]
+      }],
+      {
+        mcpDirectoryServers: [{
+          type: 'remote',
+          slug: 'notion',
+          name: 'Notion',
+          display_name: 'Notion',
+          icon_url: 'https://example.com/notion.png',
+          tool_names: ['search', 'create_page'],
+          remote: { url: 'https://directory.example.com/notion' }
+        }]
+      }
+    );
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Mixed tools agent', hidden: true })).toBeTruthy();
+    const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
+    await waitFor(() => expect(within(section).getByRole('button', { name: /Tool permissions\s+2/ })).toBeTruthy());
+    const directoryStatus = within(section).getByRole('status');
+    expect(directoryStatus.textContent).toBe('MCP tool metadata loaded.');
+    expect(directoryStatus.parentElement?.getAttribute('aria-busy')).toBe('false');
+    const cards = Array.from(section.querySelectorAll<HTMLElement>('[data-slot="card"]'));
+    expect(cards).toHaveLength(3);
+    expect(cards.map((card) => card.textContent?.match(/Built-in tools|Custom tools|Notion/)?.[0])).toEqual([
+      'Built-in tools',
+      'Custom tools',
+      'Notion'
+    ]);
+
+    const builtInCard = cards[0];
+    expect(within(builtInCard).getByText('Custom')).toBeTruthy();
+    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+8/ }));
+    expect(within(builtInCard).getByText('bash')).toBeTruthy();
+    expect(within(builtInCard).getByText('Always deny')).toBeTruthy();
+    expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
+
+    const customCard = cards[1];
+    fireEvent.click(within(customCard).getByRole('button', { name: /Tools\s+1/ }));
+    expect(within(customCard).getByText('lookup_customer')).toBeTruthy();
+    expect(within(customCard).getByText('Find a customer by email')).toBeTruthy();
+    expect(within(customCard).queryByText(/Always (allow|ask|deny)/)).toBeNull();
+
+    const mcpCard = cards[2];
+    expect(within(mcpCard).getByText('https://agent.example.com/notion')).toBeTruthy();
+    expect(within(mcpCard).getByText('Custom')).toBeTruthy();
+    const mcpPermissionsButton = within(mcpCard).getByRole('button', { name: /Tool permissions\s+2/ });
+    expect(mcpPermissionsButton.getAttribute('aria-label')).toContain('Custom');
+    fireEvent.click(mcpPermissionsButton);
+    expect(within(mcpCard).getByText('search')).toBeTruthy();
+    expect(within(mcpCard).getByText('create_page')).toBeTruthy();
+    expect(within(mcpCard).getByText('Always deny')).toBeTruthy();
+    expect(within(mcpCard).getByText('Always ask')).toBeTruthy();
+    const directoryIcon = mcpCard.querySelector('img') as HTMLImageElement;
+    expect(directoryIcon).toBeTruthy();
+    fireEvent.error(directoryIcon);
+    expect(mcpCard.querySelector('img')).toBeNull();
+    expect(mcpCard.querySelector('.lucide-server')).toBeTruthy();
+    expect(api.requests.some((request) => request.url.startsWith('/api/directory/servers?'))).toBe(true);
+  });
+
+  test('keeps an unknown MCP usable when the directory request fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_directoryfailure123456');
+    mockAgentsApi(
+      [{
+        id: 'agent_directoryfailure123456',
+        name: 'Private MCP agent',
+        mcp_servers: [{ name: 'private_docs', url: 'https://docs.example.com/mcp' }],
+        tools: []
+      }],
+      { mcpDirectoryErrorOnce: true }
+    );
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Private MCP agent', hidden: true })).toBeTruthy();
+    const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
+    await waitFor(() =>
+      expect(within(section).getByRole('status').textContent).toBe('MCP tool metadata is unavailable.')
+    );
+    const permissionsButton = within(section).getByRole('button', {
+      name: /Private Docs Tool permissions 0 Always ask/
+    });
+    expect(permissionsButton).toBeTruthy();
+    expect(within(section).getByRole('status').parentElement?.getAttribute('aria-busy')).toBe('false');
+
+    fireEvent.click(permissionsButton);
+    expect(within(section).getByText('No tool list available.')).toBeTruthy();
   });
 
   test('renders agent sessions tab and refetches with version, deployment, and status filters', async () => {

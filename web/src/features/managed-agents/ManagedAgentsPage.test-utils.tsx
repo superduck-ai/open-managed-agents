@@ -10,6 +10,7 @@ export const { ManagedAgentsPage } = await import('./ManagedAgentsPage');
 export const { WorkspaceContext } = await import('../../shared/workspaces/context');
 const { defaultWorkspace } = await import('../../shared/workspaces/api');
 const { setConsoleRequestContext } = await import('../../shared/api/client');
+const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 
@@ -20,6 +21,7 @@ export function resetManagedAgentsTestState() {
   cleanup();
   globalThis.fetch = originalFetch;
   setConsoleRequestContext({});
+  resetMcpDirectoryCacheForTests();
 }
 
 export function expectPageTextToContain(value: string) {
@@ -138,6 +140,8 @@ export type MockAgentsApiOptions = {
   sessions?: SessionFixture[];
   deployments?: DeploymentFixture[];
   skills?: SkillFixture[];
+  mcpDirectoryServers?: Array<Record<string, unknown>>;
+  mcpDirectoryErrorOnce?: boolean;
   analyticsOverview?: Record<string, unknown>;
   analyticsTimeseries?: Array<Record<string, unknown>>;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
@@ -160,6 +164,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentsListErrorsRemaining = options.agentsListErrorOnce ? 1 : 0;
   let agentsSearchErrorsRemaining = options.agentsSearchErrorOnce ? 1 : 0;
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
+  let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
   const now = new Date().toISOString();
   const skillDetails = new Map((options.skills ?? []).map((skill) => [skill.id, skillResponse(skill)]));
   let environments = [
@@ -207,6 +212,14 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
+
+    if (url.startsWith('/api/directory/servers?') && method === 'GET') {
+      if (mcpDirectoryErrorsRemaining > 0) {
+        mcpDirectoryErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'MCP directory unavailable' } }, 503);
+      }
+      return jsonResponse({ servers: options.mcpDirectoryServers ?? [] });
+    }
 
     if (url.startsWith('/v1/agents?') && method === 'GET') {
       if (agentsListErrorsRemaining > 0) {

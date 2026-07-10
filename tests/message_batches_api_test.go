@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -66,6 +67,39 @@ func TestMessageBatchesAPI(t *testing.T) {
 		decodeJSON(t, resp.Body, &batch)
 		if batch.Type != "message_batch" || batch.ProcessingStatus != "in_progress" {
 			t.Fatalf("unexpected fixture batch: %+v", batch)
+		}
+	})
+
+	t.Run("failure results upload closes producer pipe", func(t *testing.T) {
+		uploadErr := errors.New("result upload failed")
+		failingStore := &earlyFailBatchStore{
+			fakeStore: newFakeStore("early-fail-bucket"),
+			putErr:    uploadErr,
+		}
+		failingApp := newTestAppWithStore(t, &cfg, failingStore)
+		defer failingApp.close()
+
+		created := createBatch(t, failingApp, defaultTestKey, minimalBatchBody("upload-failure-1"))
+		defer cleanupBatchRows(t, failingApp.db, created.ID)
+		prioritizeBatchJob(t, failingApp.db, created.ID)
+
+		err := batches.RunBatchOnce(context.Background(), failingApp.db, failingStore, failingApp.cfg, &fakeBatchUpstream{}, "batch-worker-upload-failure-test")
+		if !errors.Is(err, uploadErr) {
+			t.Fatalf("run batch worker error = %v, want %v", err, uploadErr)
+		}
+		if failingStore.body == nil || failingStore.bytesRead != 1 || failingStore.readErr != nil {
+			t.Fatalf("early failing store read = (%d, %v), want (1, nil)", failingStore.bytesRead, failingStore.readErr)
+		}
+
+		// 上传失败后，保留下来的读取端必须已经关闭。没有修复时，此处会读到
+		// producer 剩余的 JSONL，并通过继续消费数据意外解除其阻塞。
+		probe := make([]byte, 1)
+		n, readErr := failingStore.body.Read(probe)
+		if n != 0 || !errors.Is(readErr, io.ErrClosedPipe) {
+			if readErr == nil {
+				_, _ = io.Copy(io.Discard, failingStore.body)
+			}
+			t.Fatalf("pipe read after failed upload = (%d bytes, %v), want (0 bytes, %v)", n, readErr, io.ErrClosedPipe)
 		}
 	})
 
@@ -141,6 +175,25 @@ func TestMessageBatchesAPI(t *testing.T) {
 
 type fakeBatchUpstream struct {
 	calls []db.MessageBatchRequest
+}
+
+type earlyFailBatchStore struct {
+	*fakeStore
+	putErr    error
+	body      io.Reader
+	bytesRead int
+	readErr   error
+}
+
+func (s *earlyFailBatchStore) Put(_ context.Context, _ string, body io.Reader, _ int64, _ string) error {
+	s.body = body
+	// 失败前只消费一个字节，确保 producer 稳定阻塞在同一次无缓冲 pipe 写入中，
+	// 且该次写入仍有剩余数据尚未被读取。
+	s.bytesRead, s.readErr = body.Read(make([]byte, 1))
+	if s.readErr != nil {
+		return s.readErr
+	}
+	return s.putErr
 }
 
 func (u *fakeBatchUpstream) Send(_ context.Context, batch db.MessageBatch, req db.MessageBatchRequest) (batches.UpstreamResult, error) {

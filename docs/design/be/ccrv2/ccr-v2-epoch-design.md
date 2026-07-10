@@ -268,12 +268,24 @@ lease 过期本身不修改 epoch。UI 或观测状态用 `worker_lease_expires_
 
 ## 11. Legacy 兼容边界
 
-以下入口保留 token-only 行为，用于兼容旧 session ingress 客户端，不属于 CCR v2 worker epoch 所有权面：
+legacy WebSocket transport 已移除，包括：
 
-- `/v1/session_ingress/*`
-- `/v2/session_ingress/*`
-- WebSocket ingress
+- `/v1/session_ingress/ws/{code_session_id}`
+- `/v2/session_ingress/ws/{code_session_id}`
+- `/v1/code/sessions/{code_session_id}` 的 WebSocket upgrade 行为
+
+前两个显式 WebSocket 路径不存在，canonical code session 路径收到 WebSocket upgrade 请求时返回 `404`；不带 upgrade 的 `GET` 仍保持 HTTP poll 兼容语义。
+
+CCR v2 worker 使用持久化 inbound event 队列和带 epoch 的
+`/v1/code/sessions/{code_session_id}/worker/events/stream`，不依赖进程内 WebSocket worker 连接。
+
+以下 legacy HTTP 入口仍保留 token-only 行为，用于兼容旧 session ingress 客户端，不属于 CCR v2 worker epoch 所有权面：
+
+- `/v1/session_ingress/session/{code_session_id}`
+- `/v2/session_ingress/session/{code_session_id}`
+- 上述路径的 `/events`、`/diag_logs` 子资源
 - `/v1/code/sessions/{code_session_id}` HTTP poll / persistence 兼容入口
+- `/v2/sessions/{code_session_id}` session context 兼容入口
 
 这些入口仍可写 worker event，但不提供“旧 worker 被新 register 抢占后必然 409”的语义。要让它们进入 CCR v2 所有权保证，需要先定义对应客户端 register/epoch 传递契约，再改成 `AppendWorkerEventForEpoch()`。
 

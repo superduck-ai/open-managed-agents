@@ -433,7 +433,7 @@ and processed_at is null
 - 不要求修改 Claude Code TS 客户端。
 - `processed` 可直接从 `sent/received` 跳过 `processing`，因为 TS 里部分路径会直接上报 completed。
 - `replBridgeTransport` 当前可能在收到 SSE 后立即上报 `received + processed`，后端按终态幂等处理。
-- 旧 WebSocket / HTTP poll 路径可保持现有“写出即 sent”行为；可靠 delivery/replay 只约束 CCR v2 SSE worker stream。
+- legacy WebSocket transport 已移除；旧 HTTP poll 路径仍保持现有“写出即 sent”行为，可靠 delivery/replay 只约束 CCR v2 SSE worker stream。
 - delivery ACK 不作为 lease 续租信号；worker 活性仍以 heartbeat/lease 为准。
 - 当前还没有专门的 ignored ACK metric；如需运营可观测性，后续应加安全截断 event id 的日志或指标。
 

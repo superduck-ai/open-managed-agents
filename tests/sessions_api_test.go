@@ -29,7 +29,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 )
 
 type sessionAPIResponse struct {
@@ -899,69 +898,27 @@ func TestSessionThreadsDefaultPageSupportsOfficialPollingAndLegacyPrimary(t *tes
 	}
 }
 
-func TestCodeSessionWebSocketReceivesQueuedAndLiveUserEvents(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-ws-bucket"))
+func TestLegacyCodeSessionWebSocketRoutesAreRemoved(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-ws-removed-bucket"))
 	defer app.close()
 
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-code-ws-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-code-ws-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"queued message"}]}]}`, defaultTestKey)
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	assertCodeSessionHTTPPersistence(t, app, codeSessionID)
-
-	wsURL := "ws" + strings.TrimPrefix(app.baseURL, "http") + "/v1/code/sessions/" + codeSessionID
-	headers := http.Header{"Authorization": []string{"Bearer " + codeSessionID}}
-	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, headers)
-	if err != nil {
-		status := 0
-		if resp != nil {
-			status = resp.StatusCode
+	for _, path := range []string{
+		"/v1/session_ingress/ws/cse_retired",
+		"/v2/session_ingress/ws/cse_retired",
+	} {
+		req, err := http.NewRequest(http.MethodGet, app.baseURL+path, nil)
+		if err != nil {
+			t.Fatalf("new retired websocket route request %s: %v", path, err)
 		}
-		t.Fatalf("dial code session websocket status=%d: %v", status, err)
-	}
-	defer conn.Close()
-
-	initialize := readWebSocketJSON(t, conn)
-	request := initialize["request"].(map[string]any)
-	if initialize["type"] != "control_request" || request["subtype"] != "initialize" {
-		t.Fatalf("unexpected initialize frame: %#v", initialize)
-	}
-	queued := readWebSocketJSON(t, conn)
-	message := queued["message"].(map[string]any)
-	if queued["type"] != "user" || message["content"] != "queued message" {
-		t.Fatalf("unexpected queued user frame: %#v", queued)
-	}
-	_ = conn.Close()
-	conn, resp, err = websocket.DefaultDialer.Dial(wsURL, headers)
-	if err != nil {
-		status := 0
-		if resp != nil {
-			status = resp.StatusCode
+		resp, err := app.client.Do(req)
+		if err != nil {
+			t.Fatalf("request retired websocket route %s: %v", path, err)
 		}
-		t.Fatalf("redial code session websocket status=%d: %v", status, err)
-	}
-	defer conn.Close()
-	expectNoWebSocketMessage(t, conn, 150*time.Millisecond)
-	_ = conn.Close()
-
-	conn, resp, err = websocket.DefaultDialer.Dial(wsURL, headers)
-	if err != nil {
-		status := 0
-		if resp != nil {
-			status = resp.StatusCode
+		body := readAll(t, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("retired websocket route %s status = %d, want %d: %s", path, resp.StatusCode, http.StatusNotFound, body)
 		}
-		t.Fatalf("third dial code session websocket status=%d: %v", status, err)
-	}
-	defer conn.Close()
-
-	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"live message"}]}]}`, defaultTestKey)
-	live := readWebSocketJSON(t, conn)
-	liveMessage := live["message"].(map[string]any)
-	if live["type"] != "user" || liveMessage["content"] != "live message" {
-		t.Fatalf("unexpected live user frame: %#v", live)
 	}
 }
 
@@ -996,6 +953,27 @@ func TestCodeSessionHTTPPollReceivesQueuedUserEvents(t *testing.T) {
 	decodeJSON(t, resp.Body, &polled)
 	if len(polled.Events) < 2 || !eventPageContains(sessionEventPageAPIResponse{Data: polled.Events}, "queued over http poll") {
 		t.Fatalf("unexpected polled events: %s", polled.Events)
+	}
+
+	// The canonical path remains an HTTP poll endpoint, but WebSocket upgrade
+	// requests on it are retired. Queue an event first so a regression that
+	// accidentally falls through to polling cannot wait for its 30-second empty
+	// response timeout.
+	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"queued for upgrade-shaped poll"}]}]}`, defaultTestKey)
+	upgradeReq, err := http.NewRequest(http.MethodGet, app.baseURL+"/v1/code/sessions/"+codeSessionID, nil)
+	if err != nil {
+		t.Fatalf("new upgrade-shaped code session poll request: %v", err)
+	}
+	upgradeReq.Header.Set("Authorization", "Bearer "+codeSessionID)
+	upgradeReq.Header.Set("Connection", "Upgrade")
+	upgradeReq.Header.Set("Upgrade", "websocket")
+	upgradeResp, err := app.client.Do(upgradeReq)
+	if err != nil {
+		t.Fatalf("upgrade-shaped code session poll: %v", err)
+	}
+	defer upgradeResp.Body.Close()
+	if upgradeResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("retired canonical websocket upgrade status = %d, want 404: %s", upgradeResp.StatusCode, readAll(t, upgradeResp.Body))
 	}
 }
 
@@ -2550,7 +2528,7 @@ func TestCodeSessionBridgeBumpsWorkerEpoch(t *testing.T) {
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, second.WorkerEpoch)
 }
 
-func TestCodeSessionWorkerEventsStreamReceivesQueuedUserEvents(t *testing.T) {
+func TestCodeSessionWorkerEventsStreamReceivesQueuedAndLiveUserEvents(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-stream-bucket"))
 	defer app.close()
 
@@ -2561,15 +2539,35 @@ func TestCodeSessionWorkerEventsStreamReceivesQueuedUserEvents(t *testing.T) {
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"queued over worker sse"}]}]}`, defaultTestKey)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
 
-	frames := readCodeSessionWorkerSSEFrames(t, app, codeSessionID, "queued over worker sse")
-	if len(frames) < 2 {
-		t.Fatalf("worker SSE frames len = %d, want at least 2: %#v", len(frames), frames)
+	frames := readCodeSessionWorkerSSEFramesAfterConnect(
+		t,
+		app,
+		codeSessionID,
+		"events/stream?worker_epoch="+url.QueryEscape(workerEpoch),
+		"live over worker sse",
+		func() {
+			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"live over worker sse"}]}]}`, defaultTestKey)
+		},
+	)
+	if len(frames) < 3 {
+		t.Fatalf("worker SSE frames len = %d, want at least 3: %#v", len(frames), frames)
 	}
 	if !strings.Contains(frames[0], "event: client_event") || !strings.Contains(frames[0], `"event_type":"control_request"`) {
 		t.Fatalf("unexpected first worker SSE frame: %s", frames[0])
 	}
-	if !strings.Contains(frames[len(frames)-1], "event: client_event") || !strings.Contains(frames[len(frames)-1], `"payload"`) {
+	queuedSeen := false
+	for _, frame := range frames {
+		if strings.Contains(frame, "queued over worker sse") {
+			queuedSeen = true
+			break
+		}
+	}
+	if !queuedSeen {
+		t.Fatalf("worker SSE frames missing queued event: %#v", frames)
+	}
+	if !strings.Contains(frames[len(frames)-1], "event: client_event") || !strings.Contains(frames[len(frames)-1], "live over worker sse") {
 		t.Fatalf("unexpected user worker SSE frame: %s", frames[len(frames)-1])
 	}
 	frameData := decodeWorkerSSEFrameData(t, frames[len(frames)-1])
@@ -4036,12 +4034,12 @@ func readJSONLObjectsForTest(t *testing.T, path string) []map[string]any {
 	return result
 }
 
-func readCodeSessionWorkerSSEFrames(t *testing.T, app *testApp, codeSessionID string, waitFor string) []string {
+func readCodeSessionWorkerSSEFramesFromSuffix(t *testing.T, app *testApp, codeSessionID string, suffix string, waitFor string) []string {
 	t.Helper()
-	return readCodeSessionWorkerSSEFramesFromSuffix(t, app, codeSessionID, "events/stream", waitFor)
+	return readCodeSessionWorkerSSEFramesAfterConnect(t, app, codeSessionID, suffix, waitFor, nil)
 }
 
-func readCodeSessionWorkerSSEFramesFromSuffix(t *testing.T, app *testApp, codeSessionID string, suffix string, waitFor string) []string {
+func readCodeSessionWorkerSSEFramesAfterConnect(t *testing.T, app *testApp, codeSessionID string, suffix string, waitFor string, afterConnect func()) []string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -4058,6 +4056,9 @@ func readCodeSessionWorkerSSEFramesFromSuffix(t *testing.T, app *testApp, codeSe
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("worker events stream status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+	if afterConnect != nil {
+		afterConnect()
 	}
 	reader := bufio.NewReader(resp.Body)
 	frames := []string{}
@@ -4118,34 +4119,6 @@ func assertCodeSessionHTTPPersistence(t *testing.T, app *testApp, codeSessionID 
 			t.Fatalf("%s code session persistence status = %d, want 200: %s", method, resp.StatusCode, body)
 		}
 	}
-}
-
-func readWebSocketJSON(t *testing.T, conn *websocket.Conn) map[string]any {
-	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, data, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("read websocket message: %v", err)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
-		t.Fatalf("decode websocket message: %v: %s", err, data)
-	}
-	return payload
-}
-
-func expectNoWebSocketMessage(t *testing.T, conn *websocket.Conn, wait time.Duration) {
-	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(wait))
-	_, data, err := conn.ReadMessage()
-	if err == nil {
-		t.Fatalf("unexpected websocket message after reconnect: %s", data)
-	}
-	if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-		_ = conn.SetReadDeadline(time.Time{})
-		return
-	}
-	t.Fatalf("unexpected websocket read error: %v", err)
 }
 
 func listSessionThreads(t *testing.T, app *testApp, sessionID, key string) sessionThreadPageAPIResponse {

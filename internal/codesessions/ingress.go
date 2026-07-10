@@ -22,7 +22,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 )
 
 const (
@@ -32,10 +31,6 @@ const (
 	codeSessionWorkerLeaseGrace = 10 * time.Second
 	internalEventsPageSize      = 500
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
 
 type BridgeAuthenticator func(r *http.Request, codeSessionID string) (auth.Principal, *httpapi.Error)
 
@@ -62,10 +57,8 @@ func (s *Service) RegisterRoutes(router chi.Router) {
 	router.Post("/v1/code/sessions/{code_session_id}/worker/heartbeat", s.handleCodeSessionWorkerHeartbeat)
 	router.Post("/v1/code/sessions/{code_session_id}/worker/otlp/metrics", s.handleCodeSessionWorkerOTLP)
 	router.Post("/v1/code/sessions/{code_session_id}/worker/otlp/logs", s.handleCodeSessionWorkerOTLP)
-	// Legacy session_ingress routes remain token-only for compatibility. CCR v2
-	// ownership is enforced on the /worker/* surface.
-	router.Get("/v1/session_ingress/ws/{code_session_id}", s.handleWebSocket)
-	router.Get("/v2/session_ingress/ws/{code_session_id}", s.handleWebSocket)
+	// Legacy HTTP session_ingress routes remain token-only for compatibility.
+	// CCR v2 ownership is enforced on the /worker/* surface.
 	router.Get("/v1/session_ingress/session/{code_session_id}", s.handleSessionIngressPersistence)
 	router.Post("/v1/session_ingress/session/{code_session_id}", s.handleSessionIngressPersistence)
 	router.Put("/v1/session_ingress/session/{code_session_id}", s.handleSessionIngressPersistence)
@@ -80,11 +73,13 @@ func (s *Service) RegisterRoutes(router chi.Router) {
 }
 
 func (s *Service) handleCodeSession(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && websocket.IsWebSocketUpgrade(r) {
-		s.handleWebSocket(w, r)
-		return
-	}
 	if r.Method == http.MethodGet {
+		// legacy WebSocket ingress 已移除。必须在请求进入旧的 30 秒 HTTP poll
+		// 之前拒绝 WebSocket upgrade，避免退化成长轮询请求。
+		if strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+			return
+		}
 		s.handleCodeSessionHTTPPoll(w, r)
 		return
 	}
@@ -601,70 +596,6 @@ func (s *Service) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 	}
 	s.recordCodeSessionWorkerOTLP(r, codeSessionID, body, true, epochSource, epochValue)
 	writeOTLPSuccess(w, r)
-}
-
-func (s *Service) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	codeSessionID := chi.URLParam(r, "code_session_id")
-	if !s.authorizeIngress(w, r, codeSessionID) {
-		return
-	}
-	if _, err := s.db.GetCodeSession(r.Context(), codeSessionID); err != nil {
-		writeIngressLoadError(w, r, err)
-		return
-	}
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	client := &workerClient{codeSessionID: codeSessionID, conn: conn}
-	s.replaceWorker(codeSessionID, client)
-	if err := s.db.MarkCodeSessionWorkerConnected(r.Context(), codeSessionID); err != nil && !errors.Is(err, db.ErrNotFound) {
-		log.Printf("mark code session worker connected code_session_id=%s: %v", codeSessionID, err)
-	}
-	defer func() {
-		s.clearWorker(codeSessionID, client)
-		if err := s.db.MarkCodeSessionWorkerDisconnected(r.Context(), codeSessionID); err != nil && !errors.Is(err, db.ErrNotFound) {
-			log.Printf("mark code session worker disconnected code_session_id=%s: %v", codeSessionID, err)
-		}
-	}()
-	s.flushQueuedInboundEvents(r.Context(), codeSessionID, client)
-	conn.SetReadLimit(maxIngressBodySize)
-	for {
-		messageType, message, err := conn.ReadMessage()
-		if err != nil {
-			return
-		}
-		if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
-			continue
-		}
-		payloads, err := splitWorkerFrame(message)
-		if err != nil {
-			log.Printf("decode code session websocket frame code_session_id=%s: %v", codeSessionID, err)
-			continue
-		}
-		for _, payload := range payloads {
-			if err := s.AppendWorkerEvent(r.Context(), codeSessionID, payload, "websocket"); err != nil {
-				log.Printf("append code session websocket event code_session_id=%s: %v", codeSessionID, err)
-			}
-		}
-	}
-}
-
-func (s *Service) flushQueuedInboundEvents(ctx context.Context, codeSessionID string, client *workerClient) {
-	events, err := s.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
-	if err != nil {
-		log.Printf("list queued code session inbound events code_session_id=%s: %v", codeSessionID, err)
-		return
-	}
-	for _, event := range events {
-		if err := client.send(event.Payload); err != nil {
-			log.Printf("send queued code session inbound event code_session_id=%s event_id=%s: %v", codeSessionID, event.ExternalID, err)
-			return
-		}
-		if err := s.db.MarkCodeSessionInboundEventSent(ctx, event.ExternalID); err != nil && !errors.Is(err, db.ErrNotFound) {
-			log.Printf("mark queued code session inbound event sent code_session_id=%s event_id=%s: %v", codeSessionID, event.ExternalID, err)
-		}
-	}
 }
 
 func (s *Service) handleSessionIngressEvents(w http.ResponseWriter, r *http.Request) {
@@ -1368,29 +1299,6 @@ func parseWorkerEpochString(value string) (int64, error) {
 		return 0, errors.New("worker_epoch must be a positive integer")
 	}
 	return epoch, nil
-}
-
-func splitWorkerFrame(frame []byte) ([]json.RawMessage, error) {
-	frame = bytes.TrimSpace(frame)
-	if len(frame) == 0 {
-		return nil, nil
-	}
-	decoder := json.NewDecoder(bytes.NewReader(frame))
-	decoder.UseNumber()
-	var payloads []json.RawMessage
-	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, err
-		}
-		if len(bytes.TrimSpace(raw)) > 0 {
-			payloads = append(payloads, raw)
-		}
-	}
-	return payloads, nil
 }
 
 func decodeIngressEventsBody(w http.ResponseWriter, r *http.Request) ([]json.RawMessage, error) {

@@ -17,6 +17,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
@@ -78,6 +79,7 @@ func main() {
 	}
 	environments.StartRunnerWithStore(ctx, database, objectStore, cfg)
 	skillprewarm.StartWorker(ctx, database, objectStore, cfg)
+	mcpcatalogs.StartWorker(ctx, database, cfg)
 	webhooks.StartWorker(ctx, database, cfg)
 
 	server := &http.Server{

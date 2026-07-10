@@ -21,6 +21,26 @@ export type AgentToolDisplayCard = {
   iconUrl?: string;
   aggregatePermission?: ToolPermissionState;
   tools: AgentToolListItem[];
+  toolCountKnown?: boolean;
+  catalogStatus?: McpToolCatalogStatus;
+  catalogError?: { code: string; message: string };
+  serverName?: string;
+  discoveredAt?: string;
+};
+
+export type McpToolCatalogStatus = 'unknown' | 'loading' | 'ready' | 'refreshing' | 'stale' | 'auth_required' | 'error';
+
+export type McpToolCatalog = {
+  server_name: string;
+  endpoint_fingerprint?: string;
+  status: McpToolCatalogStatus;
+  tools: Array<{ name: string; title?: string; description?: string }> | null;
+  source?: 'anonymous_probe' | 'runtime_observation';
+  protocol_version?: string;
+  discovered_at?: string;
+  expires_at?: string;
+  last_error?: { code: string; message: string };
+  generation: number;
 };
 
 export type McpDirectoryServer = {
@@ -198,7 +218,8 @@ export function aggregateToolPermissions(
 
 export function buildAgentToolDisplayCards(
   agent: AgentApiResponse,
-  directoryServers: McpDirectoryServer[] = []
+  directoryServers: McpDirectoryServer[] = [],
+  catalogs: McpToolCatalog[] = []
 ): AgentToolDisplayCard[] {
   const cards: AgentToolDisplayCard[] = [];
   const tools = arrayRecords(agent.tools);
@@ -245,10 +266,18 @@ export function buildAgentToolDisplayCards(
     const toolset = tools.find(
       (tool) => tool.type === 'mcp_toolset' && stringValue(tool.mcp_server_name) === serverName
     );
-    const rows = server.toolNames.map((name) => ({
-      name,
-      permission: toolPermissionForName(toolset, name, false, 'always_ask')
-    }));
+    const catalog = catalogs.find((item) => item.server_name === serverName);
+    const discoveredTools = catalog?.tools;
+    const rows = discoveredTools !== null && discoveredTools !== undefined
+      ? discoveredTools.map((tool) => ({
+          name: tool.name,
+          description: tool.description || tool.title,
+          permission: toolPermissionForName(toolset, tool.name, false, 'always_ask')
+        }))
+      : server.toolNames.map((name) => ({
+          name,
+          permission: toolPermissionForName(toolset, name, false, 'always_ask')
+        }));
     const defaultPermission = effectiveToolPermission(
       toolset ? optionalRecordValue(toolset.default_config) : undefined,
       'always_ask'
@@ -260,7 +289,12 @@ export function buildAgentToolDisplayCards(
       subtitle: server.url,
       iconUrl: server.iconUrl,
       aggregatePermission: aggregateToolPermissions(rows.map((row) => row.permission), defaultPermission),
-      tools: rows
+      tools: rows,
+      toolCountKnown: discoveredTools !== null && discoveredTools !== undefined ? true : rows.length > 0,
+      catalogStatus: catalog?.status,
+      catalogError: catalog?.last_error,
+      serverName,
+      discoveredAt: catalog?.discovered_at
     });
   });
 

@@ -494,13 +494,97 @@ export function registerManagedAgentsAgentsTests() {
       expect(within(section).getByRole('status').textContent).toBe('MCP tool metadata is unavailable.')
     );
     const permissionsButton = within(section).getByRole('button', {
-      name: /Private Docs Tool permissions 0 Always ask/
+      name: /Private Docs Tool permissions — Always ask/
     });
     expect(permissionsButton).toBeTruthy();
     expect(within(section).getByRole('status').parentElement?.getAttribute('aria-busy')).toBe('false');
 
     fireEvent.click(permissionsButton);
     expect(within(section).getByText('No tool list available.')).toBeTruthy();
+  });
+
+  test('renders the live MCP catalog and requests a scoped refresh', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_livecatalog123456');
+    const api = mockAgentsApi(
+      [{
+        id: 'agent_livecatalog123456',
+        name: 'Live catalog agent',
+        mcp_servers: [{ name: 'weather', url: 'http://weather.local:39090/mcp' }],
+        tools: [{
+          type: 'mcp_toolset',
+          mcp_server_name: 'weather',
+          default_config: { permission_policy: { type: 'always_ask' } },
+          configs: [{ name: 'get_forecast', enabled: false }]
+        }]
+      }],
+      {
+        mcpDirectoryServers: [{
+          type: 'remote',
+          slug: 'weather',
+          display_name: 'Weather Service',
+          tool_names: ['stale_directory_tool']
+        }],
+        mcpToolCatalogs: [{
+          server_name: 'weather',
+          status: 'ready',
+          tools: [{ name: 'get_forecast', title: 'Forecast', description: 'Returns a weather forecast.' }],
+          source: 'anonymous_probe',
+          generation: 1
+        }]
+      }
+    );
+    render(
+      <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+        <ManagedAgentsPage section="agents" />
+      </WorkspaceContext.Provider>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Live catalog agent', hidden: true })).toBeTruthy();
+    const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
+    const permissionsButton = await within(section).findByRole('button', {
+      name: /Weather Service Tool permissions 1 Always deny Live tool list/
+    });
+    fireEvent.click(permissionsButton);
+    expect(within(section).getByText('get_forecast')).toBeTruthy();
+    expect(within(section).getByText('Returns a weather forecast.')).toBeTruthy();
+    expect(within(section).queryByText('stale_directory_tool')).toBeNull();
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Refresh MCP tools' }));
+    await waitFor(() => expect(api.requests.some((request) =>
+      request.method === 'POST' && request.url.includes('/agent_livecatalog123456/mcp_tool_catalogs/refresh?version=1')
+    )).toBe(true));
+    const refresh = api.requests.find((request) => request.method === 'POST' && request.url.includes('/mcp_tool_catalogs/refresh'));
+    expect(refresh?.body).toEqual({ server_names: ['weather'] });
+  });
+
+  test('shows an error when an MCP catalog refresh fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_catalogrefreshfailure123456');
+    mockAgentsApi(
+      [{
+        id: 'agent_catalogrefreshfailure123456',
+        name: 'Catalog refresh failure agent',
+        mcp_servers: [{ name: 'weather', url: 'http://weather.local:39090/mcp' }],
+        tools: [{
+          type: 'mcp_toolset',
+          mcp_server_name: 'weather',
+          default_config: { permission_policy: { type: 'always_ask' } }
+        }]
+      }],
+      { mcpToolCatalogRefreshErrorOnce: true }
+    );
+    render(
+      <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+        <ManagedAgentsPage section="agents" />
+      </WorkspaceContext.Provider>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Catalog refresh failure agent', hidden: true })).toBeTruthy();
+    const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
+    fireEvent.click(await within(section).findByRole('button', { name: 'Refresh MCP tools' }));
+
+    const toastTitle = await screen.findByText('Could not refresh MCP tools.');
+    expect(toastTitle.closest('[data-sonner-toast]')?.getAttribute('data-type')).toBe('error');
+    expect(screen.getByText('MCP catalog refresh unavailable')).toBeTruthy();
   });
 
   test('renders agent sessions tab and refetches with version, deployment, and status filters', async () => {

@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { setConsoleRequestContext } from '../../../../shared/api/client';
-import { loadMcpDirectoryServers, resetMcpDirectoryCacheForTests } from './api';
+import {
+  loadAgentMcpToolCatalogs,
+  loadMcpDirectoryServers,
+  refreshAgentMcpToolCatalogs,
+  resetMcpDirectoryCacheForTests
+} from './api';
 
 const originalFetch = globalThis.fetch;
 
@@ -97,6 +102,46 @@ describe('MCP directory API', () => {
     expect(requestCount).toBe(2);
     expect(servers[0].slug).toBe('new');
     expect(cached).toBe(servers);
+  });
+});
+
+describe('Agent MCP catalog API', () => {
+  test('loads a version-scoped catalog with the active Console context', async () => {
+    let requestUrl = '';
+    let requestHeaders = new Headers();
+    setConsoleRequestContext({ organizationUuid: 'org_uuid', workspaceId: 'workspace_uuid' });
+    globalThis.fetch = mock(async (input, init) => {
+      requestUrl = String(input);
+      requestHeaders = new Headers(init?.headers);
+      return jsonResponse({ data: [], version: 7 });
+    });
+
+    const response = await loadAgentMcpToolCatalogs('org uuid', 'workspace/default', 'agent/test', 7);
+
+    expect(response.version).toBe(7);
+    const url = new URL(requestUrl, 'https://oma.duck.ai');
+    expect(url.pathname).toBe('/api/console/organizations/org%20uuid/workspaces/workspace%2Fdefault/agents/agent%2Ftest/mcp_tool_catalogs');
+    expect(url.searchParams.get('version')).toBe('7');
+    expect(requestHeaders.get('X-Organization-UUID')).toBe('org_uuid');
+    expect(requestHeaders.get('X-Workspace-ID')).toBe('workspace_uuid');
+  });
+
+  test('posts a scoped manual refresh with CSRF protection', async () => {
+    let requestUrl = '';
+    let requestInit: RequestInit | undefined;
+    globalThis.fetch = mock(async (input, init) => {
+      requestUrl = String(input);
+      requestInit = init;
+      return jsonResponse({ data: [{ server_name: 'weather', generation: 2, queued: true }] }, 202);
+    });
+
+    const response = await refreshAgentMcpToolCatalogs('org', 'default', 'agent_123', 3, ['weather'], 'csrf-token');
+
+    expect(response.data[0]).toEqual({ server_name: 'weather', generation: 2, queued: true });
+    expect(requestInit?.method).toBe('POST');
+    expect(new Headers(requestInit?.headers).get('X-CSRF-Token')).toBe('csrf-token');
+    expect(JSON.parse(String(requestInit?.body))).toEqual({ server_names: ['weather'] });
+    expect(new URL(requestUrl, 'https://oma.duck.ai').searchParams.get('version')).toBe('3');
   });
 });
 

@@ -1,84 +1,121 @@
 import { useI18n } from '../../../../shared/i18n';
+import { AuthContext } from '../../../../shared/auth/context';
 import { Badge } from '../../../../shared/ui/badge';
+import { Button } from '../../../../shared/ui/button';
 import { Card } from '../../../../shared/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../../shared/ui/collapsible';
-import { Ban, BriefcaseBusiness, CheckCircle2, ChevronRight, Ellipsis, Hand, Server, Wrench } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { toast } from '../../../../shared/ui/sonner';
+import { Ban, BriefcaseBusiness, CheckCircle2, ChevronRight, Ellipsis, Hand, RefreshCw, Server, Wrench } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useContext, useMemo, useState } from 'react';
 import { type AgentApiResponse } from '../../types';
-import { loadMcpDirectoryServers } from './api';
+import { errorMessage } from '../../utils';
+import { loadAgentMcpToolCatalogs, loadMcpDirectoryServers, refreshAgentMcpToolCatalogs } from './api';
 import {
   buildAgentToolDisplayCards,
   type AgentToolDisplayCard,
-  type McpDirectoryServer,
   type ToolPermissionState
 } from './model';
 
-export function AgentToolsSection({ agent }: { agent: AgentApiResponse }) {
+export function AgentToolsSection({
+  agent,
+  orgUuid,
+  workspaceId
+}: {
+  agent: AgentApiResponse;
+  orgUuid: string;
+  workspaceId: string;
+}) {
   const { msg } = useI18n();
-  const [directoryState, setDirectoryState] = useState<{
-    key: string;
-    status: 'idle' | 'ready' | 'failed';
-    servers: McpDirectoryServer[];
-  }>({ key: '', status: 'idle', servers: [] });
-  const mcpServersKey = useMemo(
-    () => JSON.stringify(Array.isArray(agent.mcp_servers) ? agent.mcp_servers : []),
-    [agent.mcp_servers]
-  );
-  const hasMcpServers = mcpServersKey !== '[]';
-  const directoryStatus = directoryState.key === mcpServersKey
-    ? directoryState.status
-    : hasMcpServers
-      ? 'loading'
-      : 'idle';
-
-  useEffect(() => {
-    if (!hasMcpServers) {
-      return;
+  const csrfToken = useContext(AuthContext)?.csrfToken;
+  const queryClient = useQueryClient();
+  const hasMcpServers = Array.isArray(agent.mcp_servers) && agent.mcp_servers.length > 0;
+  const catalogEnabled = hasMcpServers && Boolean(orgUuid && workspaceId && agent.id);
+  const catalogQueryKey = ['agent-mcp-tool-catalogs', orgUuid, workspaceId, agent.id, agent.version] as const;
+  const directoryQuery = useQuery({
+    queryKey: ['mcp-directory-servers'],
+    queryFn: loadMcpDirectoryServers,
+    enabled: hasMcpServers,
+    staleTime: 60 * 60 * 1000,
+    retry: false
+  });
+  const catalogQuery = useQuery({
+    queryKey: catalogQueryKey,
+    queryFn: ({ signal }) => loadAgentMcpToolCatalogs(orgUuid, workspaceId, agent.id, agent.version, signal),
+    enabled: catalogEnabled,
+    refetchInterval: (query) =>
+      query.state.data?.data.some((catalog) => catalog.status === 'loading' || catalog.status === 'refreshing')
+        ? 1000
+        : false,
+    refetchIntervalInBackground: true,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    retry: 1
+  });
+  const refreshMutation = useMutation({
+    mutationFn: (serverName: string) =>
+      refreshAgentMcpToolCatalogs(orgUuid, workspaceId, agent.id, agent.version, [serverName], csrfToken),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: catalogQueryKey });
+    },
+    onError: (error) => {
+      toast.error(
+        msg('managedAgents.agents.detail.refreshMcpToolsFailed', 'Could not refresh MCP tools.'),
+        { description: errorMessage(error) }
+      );
     }
-    let active = true;
-    void loadMcpDirectoryServers()
-      .then((servers) => {
-        if (active) {
-          setDirectoryState({ key: mcpServersKey, status: 'ready', servers });
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setDirectoryState({ key: mcpServersKey, status: 'failed', servers: [] });
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [hasMcpServers, mcpServersKey]);
+  });
 
   const cards = useMemo(
     () => buildAgentToolDisplayCards(
       agent,
-      directoryState.key === mcpServersKey ? directoryState.servers : []
+      directoryQuery.data ?? [],
+      catalogQuery.data?.data ?? []
     ),
-    [agent, directoryState.key, directoryState.servers, mcpServersKey]
+    [agent, catalogQuery.data?.data, directoryQuery.data]
   );
+  const catalogBusy = catalogQuery.isFetching || cards.some((card) => card.catalogStatus === 'loading' || card.catalogStatus === 'refreshing');
 
   return (
-    <div className="space-y-2" aria-busy={directoryStatus === 'loading'}>
+    <div className="space-y-2" aria-busy={catalogBusy || directoryQuery.isFetching}>
       <span className="sr-only" role="status" aria-live="polite">
-        {directoryStatus === 'loading'
-          ? msg('managedAgents.agents.detail.mcpDirectoryLoading', 'Loading MCP tool metadata.')
-          : directoryStatus === 'ready'
-            ? msg('managedAgents.agents.detail.mcpDirectoryLoaded', 'MCP tool metadata loaded.')
-            : directoryStatus === 'failed'
-              ? msg('managedAgents.agents.detail.mcpDirectoryUnavailable', 'MCP tool metadata is unavailable.')
-              : ''}
+        {catalogEnabled
+          ? catalogBusy
+            ? msg('managedAgents.agents.detail.mcpCatalogLoading', 'Discovering MCP tools.')
+            : catalogQuery.isSuccess
+              ? msg('managedAgents.agents.detail.mcpCatalogLoaded', 'MCP tool discovery finished.')
+              : catalogQuery.isError
+                ? msg('managedAgents.agents.detail.mcpCatalogUnavailable', 'MCP tool discovery is unavailable.')
+                : ''
+          : directoryQuery.isFetching
+            ? msg('managedAgents.agents.detail.mcpDirectoryLoading', 'Loading MCP tool metadata.')
+            : directoryQuery.isSuccess
+              ? msg('managedAgents.agents.detail.mcpDirectoryLoaded', 'MCP tool metadata loaded.')
+              : directoryQuery.isError
+                ? msg('managedAgents.agents.detail.mcpDirectoryUnavailable', 'MCP tool metadata is unavailable.')
+                : ''}
       </span>
       {cards.map((card) => (
-        <AgentToolCard key={card.key} card={card} />
+        <AgentToolCard
+          key={card.key}
+          card={card}
+          refreshBusy={refreshMutation.isPending && refreshMutation.variables === card.serverName}
+          onRefresh={catalogEnabled && card.serverName ? () => refreshMutation.mutate(card.serverName!) : undefined}
+        />
       ))}
     </div>
   );
 }
 
-export function AgentToolCard({ card }: { card: AgentToolDisplayCard }) {
+export function AgentToolCard({
+  card,
+  refreshBusy = false,
+  onRefresh
+}: {
+  card: AgentToolDisplayCard;
+  refreshBusy?: boolean;
+  onRefresh?: () => void;
+}) {
   const { msg } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const title =
@@ -97,6 +134,8 @@ export function AgentToolCard({ card }: { card: AgentToolDisplayCard }) {
   const aggregatePermissionLabel = card.aggregatePermission
     ? permissionLabel(card.aggregatePermission, msg)
     : undefined;
+  const catalogStatusLabel = card.catalogStatus ? mcpCatalogStatusLabel(card.catalogStatus, msg) : undefined;
+  const toolCount = card.toolCountKnown === false ? '—' : card.tools.length;
 
   return (
     <Card size="sm" className="gap-0 py-0">
@@ -109,11 +148,29 @@ export function AgentToolCard({ card }: { card: AgentToolDisplayCard }) {
           ) : (
             <code className="block truncate font-mono text-xs text-muted-foreground">{subtitle}</code>
           )}
+          {catalogStatusLabel ? (
+            <span className="mt-1 block truncate text-xs text-muted-foreground" title={card.catalogError?.message}>
+              {catalogStatusLabel}
+            </span>
+          ) : null}
         </div>
+        {card.kind === 'mcp' && onRefresh ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={refreshBusy || card.catalogStatus === 'loading' || card.catalogStatus === 'refreshing'}
+            onClick={onRefresh}
+            aria-label={msg('managedAgents.agents.detail.refreshMcpTools', 'Refresh MCP tools')}
+          >
+            <RefreshCw className={refreshBusy ? 'animate-spin' : ''} aria-hidden />
+            {msg('common.refresh', 'Refresh')}
+          </Button>
+        ) : null}
       </div>
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <CollapsibleTrigger
-          aria-label={[title, triggerLabel, card.tools.length, aggregatePermissionLabel].filter((value) => value !== undefined).join(' ')}
+          aria-label={[title, triggerLabel, toolCount, aggregatePermissionLabel, catalogStatusLabel].filter((value) => value !== undefined).join(' ')}
           className="flex h-11 w-full items-center gap-3 border-t border-border px-4 text-left text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         >
           <ChevronRight
@@ -122,7 +179,7 @@ export function AgentToolCard({ card }: { card: AgentToolDisplayCard }) {
           />
           {triggerLabel}
           <Badge variant="secondary" className="h-auto rounded-md px-2 py-0.5 text-xs font-normal text-muted-foreground">
-            {card.tools.length}
+            {toolCount}
           </Badge>
           <span className="min-w-0 flex-1" />
           {card.aggregatePermission ? <PermissionBadge permission={card.aggregatePermission} /> : null}
@@ -167,13 +224,39 @@ export function AgentToolCard({ card }: { card: AgentToolDisplayCard }) {
             </div>
           ) : (
             <div className="px-4 py-3 pl-12 text-sm text-muted-foreground">
-              {msg('managedAgents.agents.detail.noToolList', 'No tool list available.')}
+              {card.catalogStatus === 'loading' || card.catalogStatus === 'refreshing'
+                ? msg('managedAgents.agents.detail.discoveringTools', 'Discovering tools…')
+                : card.catalogStatus === 'ready'
+                  ? msg('managedAgents.agents.detail.noToolsDiscovered', 'This server reported no tools.')
+                  : card.catalogError?.message || msg('managedAgents.agents.detail.noToolList', 'No tool list available.')}
             </div>
           )}
         </CollapsibleContent>
       </Collapsible>
     </Card>
   );
+}
+
+function mcpCatalogStatusLabel(
+  status: NonNullable<AgentToolDisplayCard['catalogStatus']>,
+  msg: ReturnType<typeof useI18n>['msg']
+) {
+  switch (status) {
+    case 'unknown':
+      return msg('managedAgents.agents.detail.mcpStatusUnknown', 'Tool list not discovered');
+    case 'loading':
+      return msg('managedAgents.agents.detail.mcpStatusLoading', 'Discovering tools…');
+    case 'ready':
+      return msg('managedAgents.agents.detail.mcpStatusReady', 'Live tool list');
+    case 'refreshing':
+      return msg('managedAgents.agents.detail.mcpStatusRefreshing', 'Refreshing; showing last known tools');
+    case 'stale':
+      return msg('managedAgents.agents.detail.mcpStatusStale', 'Showing last known tools');
+    case 'auth_required':
+      return msg('managedAgents.agents.detail.mcpStatusAuthRequired', 'Authentication required for discovery');
+    case 'error':
+      return msg('managedAgents.agents.detail.mcpStatusError', 'Tool discovery failed');
+  }
 }
 
 function PermissionBadge({ permission, className = '' }: { permission: ToolPermissionState; className?: string }) {

@@ -1,5 +1,5 @@
 import { consoleApi } from '../../../../shared/api/client';
-import { normalizeMcpDirectoryServers, type McpDirectoryServer } from './model';
+import { normalizeMcpDirectoryServers, type McpDirectoryServer, type McpToolCatalog } from './model';
 
 const MCP_DIRECTORY_CACHE_MS = 60 * 60 * 1000;
 const MCP_DIRECTORY_PATH = '/api/directory/servers?type=remote&visibility=commercial&sort=popular&limit=500';
@@ -38,4 +38,37 @@ export function resetMcpDirectoryCacheForTests() {
   directoryGeneration += 1;
   directoryCache = undefined;
   directoryRequest = undefined;
+}
+
+export function loadAgentMcpToolCatalogs(
+  orgUuid: string,
+  workspaceId: string,
+  agentId: string,
+  version: number,
+  signal?: AbortSignal
+) {
+  const versionQuery = version > 0 ? `?version=${encodeURIComponent(String(version))}` : '';
+  return consoleApi<{ data: McpToolCatalog[]; version: number }>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/mcp_tool_catalogs${versionQuery}`,
+    { signal }
+  );
+}
+
+export function refreshAgentMcpToolCatalogs(
+  orgUuid: string,
+  workspaceId: string,
+  agentId: string,
+  version: number,
+  serverNames: string[],
+  csrfToken?: string
+) {
+  const versionQuery = version > 0 ? `?version=${encodeURIComponent(String(version))}` : '';
+  return consoleApi<{ data: Array<{ server_name: string; generation: number; queued: boolean }> }>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/mcp_tool_catalogs/refresh${versionQuery}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ server_names: serverNames }),
+      csrfToken
+    }
+  );
 }

@@ -366,6 +366,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
             ) : (
               <AgentConfigTab
                 agent={configAgent ?? agent}
+                orgUuid={orgUuid ?? ''}
                 workspaceId={workspaceId}
                 versions={versions}
                 activeVersion={activeVersion}
@@ -437,6 +438,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
 
 export function AgentConfigTab({
   agent,
+  orgUuid,
   workspaceId,
   versions,
   activeVersion,
@@ -444,6 +446,7 @@ export function AgentConfigTab({
   onSelectVersion
 }: {
   agent: AgentApiResponse;
+  orgUuid: string;
   workspaceId: string;
   versions: AgentApiResponse[];
   activeVersion: number;
@@ -549,7 +552,9 @@ export function AgentConfigTab({
             : msg('managedAgents.agents.detail.noMcpsOrTools', 'No MCPs or tools configured.')
         }
       >
-        {hasConfiguredAgentTools(agent) ? <AgentToolsSection agent={agent} /> : null}
+        {hasConfiguredAgentTools(agent) ? (
+          <AgentToolsSection agent={agent} orgUuid={orgUuid} workspaceId={workspaceId} />
+        ) : null}
       </AgentDetailSection>
 
       <AgentDetailSection

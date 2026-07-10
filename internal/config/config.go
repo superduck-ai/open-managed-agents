@@ -69,6 +69,10 @@ type Config struct {
 	WebhookTimeout                      time.Duration
 	WebhookMaxAttempts                  int
 	WebhookAllowInsecure                bool
+	MCPDiscoveryEnabled                 bool
+	MCPDiscoveryHMACKey                 string
+	MCPDiscoveryProbeTimeout            time.Duration
+	MCPDiscoveryWorkerConcurrency       int
 	SeedAPIKeys                         []SeedAPIKey
 	OfficialSDKFixtureFileID            string
 	OfficialSDKFixtureBatchID           string
@@ -105,6 +109,10 @@ func Load() (Config, error) {
 	}
 
 	appEnv := env("APP_ENV", "development")
+	mcpDiscoveryHMACKey := "open-managed-agents-development-mcp-catalog-key"
+	if appEnv == "production" {
+		mcpDiscoveryHMACKey = ""
+	}
 	cfg := Config{
 		AppEnv:                              appEnv,
 		Addr:                                env("ADDR", ":8080"),
@@ -156,6 +164,10 @@ func Load() (Config, error) {
 		WebhookTimeout:                      envDuration("WEBHOOK_TIMEOUT", 10*time.Second),
 		WebhookMaxAttempts:                  envInt("WEBHOOK_MAX_ATTEMPTS", 10),
 		WebhookAllowInsecure:                envBool("WEBHOOK_ALLOW_INSECURE", false),
+		MCPDiscoveryEnabled:                 envBool("MCP_DISCOVERY_ENABLED", appEnv != "production"),
+		MCPDiscoveryHMACKey:                 env("MCP_DISCOVERY_HMAC_KEY", mcpDiscoveryHMACKey),
+		MCPDiscoveryProbeTimeout:            envDuration("MCP_DISCOVERY_PROBE_TIMEOUT", 10*time.Second),
+		MCPDiscoveryWorkerConcurrency:       envInt("MCP_DISCOVERY_WORKER_CONCURRENCY", 3),
 		OfficialSDKFixtureFileID:            "file_id",
 		OfficialSDKFixtureBatchID:           "message_batch_id",
 		OfficialSDKFixtureAgentID:           env("OFFICIAL_SDK_FIXTURE_AGENT_ID", "agent_011CZkYpogX7uDKUyvBTophP"),
@@ -197,6 +209,9 @@ func Load() (Config, error) {
 	}
 	if cfg.S3AccessKeyID == "" || cfg.S3SecretAccessKey == "" {
 		return Config{}, errors.New("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required")
+	}
+	if cfg.MCPDiscoveryEnabled && cfg.MCPDiscoveryHMACKey == "" {
+		return Config{}, errors.New("MCP_DISCOVERY_HMAC_KEY is required when MCP discovery is enabled")
 	}
 	return cfg, nil
 }

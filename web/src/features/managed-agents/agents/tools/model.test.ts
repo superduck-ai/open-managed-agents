@@ -107,6 +107,41 @@ describe('agent tool display model', () => {
     expect(card.aggregatePermission).toBe('always_allow');
   });
 
+  test('uses discovered tools as authoritative, including a confirmed empty catalog', () => {
+    const agent = agentFixture({
+      mcp_servers: [{ name: 'weather', url: 'https://weather.example/mcp' }],
+      tools: [{
+        type: 'mcp_toolset',
+        mcp_server_name: 'weather',
+        default_config: { permission_policy: { type: 'always_ask' } },
+        configs: [{ name: 'get_forecast', enabled: false }]
+      }]
+    });
+    const directory = [{
+      slug: 'weather',
+      displayName: 'Weather',
+      toolNames: ['stale_directory_tool']
+    }];
+    const [ready] = buildAgentToolDisplayCards(agent, directory, [{
+      server_name: 'weather',
+      status: 'ready',
+      tools: [{ name: 'get_forecast', title: 'Forecast', description: 'Returns a forecast.' }],
+      generation: 1
+    }]);
+    const [empty] = buildAgentToolDisplayCards(agent, directory, [{
+      server_name: 'weather',
+      status: 'ready',
+      tools: [],
+      generation: 2
+    }]);
+
+    expect(ready.tools).toEqual([{ name: 'get_forecast', description: 'Returns a forecast.', permission: 'always_deny' }]);
+    expect(ready.toolCountKnown).toBe(true);
+    expect(empty.tools).toEqual([]);
+    expect(empty.toolCountKnown).toBe(true);
+    expect(empty.aggregatePermission).toBe('always_ask');
+  });
+
   test('uses the GitHub and Slack fallback catalogs when directory metadata is unavailable', () => {
     const cards = buildAgentToolDisplayCards(agentFixture({
       mcp_servers: [

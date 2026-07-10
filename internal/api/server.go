@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/files"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
@@ -76,12 +77,13 @@ func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectSto
 	}
 	codeSessionService := codesessions.NewService(cfg, database)
 	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(database)
+	mcpCatalogEnqueuer := mcpcatalogs.NewEnqueuer(cfg, database)
 	s := &Server{
 		cfg:            cfg,
 		db:             database,
 		platformStore:  platformStore,
 		admin:          adminapi.NewHandler(cfg, database),
-		agents:         agents.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
+		agents:         agents.NewHandlerWithPrewarmers(cfg, database, skillPrewarmEnqueuer, mcpCatalogEnqueuer),
 		batch:          batches.NewHandler(cfg, database, objectStore),
 		codeSessions:   codeSessionService,
 		deployments:    deploymentsapi.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
@@ -213,6 +215,7 @@ func (s *Server) platformConsoleAPIRouter() chi.Router {
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
+			mcpcatalogs.NewHandler(s.cfg, s.db).RegisterRoutes(r)
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {
 			s.files.RegisterPlatformRoutes(r)

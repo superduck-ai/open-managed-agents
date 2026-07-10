@@ -14,8 +14,24 @@ const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 
-export const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+export const { act, cleanup, fireEvent, screen, waitFor, within } = testingLibrary;
 const originalFetch = globalThis.fetch;
+
+export function render(
+  ui: Parameters<typeof testingLibrary.render>[0],
+  options?: Parameters<typeof testingLibrary.render>[1]
+) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false }
+    }
+  });
+  return testingLibrary.render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    options
+  );
+}
 
 export function resetManagedAgentsTestState() {
   cleanup();
@@ -142,6 +158,8 @@ export type MockAgentsApiOptions = {
   skills?: SkillFixture[];
   mcpDirectoryServers?: Array<Record<string, unknown>>;
   mcpDirectoryErrorOnce?: boolean;
+  mcpToolCatalogs?: Array<Record<string, unknown>>;
+  mcpToolCatalogRefreshErrorOnce?: boolean;
   analyticsOverview?: Record<string, unknown>;
   analyticsTimeseries?: Array<Record<string, unknown>>;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
@@ -165,6 +183,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentsSearchErrorsRemaining = options.agentsSearchErrorOnce ? 1 : 0;
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
+  let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
   const now = new Date().toISOString();
   const skillDetails = new Map((options.skills ?? []).map((skill) => [skill.id, skillResponse(skill)]));
   let environments = [
@@ -212,6 +231,30 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
+
+    const mcpCatalogMatch = url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/agents\/([^/]+)\/mcp_tool_catalogs(?:\/refresh)?(?:\?|$)/);
+    if (mcpCatalogMatch && method === 'GET') {
+      const agentId = decodeURIComponent(mcpCatalogMatch[1]);
+      const agent = agents.find((candidate) => candidate.id === agentId);
+      const servers = Array.isArray(agent?.mcp_servers) ? agent.mcp_servers : [];
+      const data = options.mcpToolCatalogs ?? servers.map((server) => ({
+        server_name: typeof server === 'object' && server && 'name' in server ? String(server.name) : 'mcp',
+        status: 'unknown',
+        tools: null,
+        generation: 0
+      }));
+      return jsonResponse({ data, version: agent?.version ?? 1 });
+    }
+    if (mcpCatalogMatch && method === 'POST') {
+      if (mcpToolCatalogRefreshErrorsRemaining > 0) {
+        mcpToolCatalogRefreshErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'MCP catalog refresh unavailable' } }, 503);
+      }
+      const names = Array.isArray(body?.server_names) ? body.server_names : [];
+      return jsonResponse({
+        data: names.map((name) => ({ server_name: name, generation: 1, queued: true }))
+      }, 202);
+    }
 
     if (url.startsWith('/api/directory/servers?') && method === 'GET') {
       if (mcpDirectoryErrorsRemaining > 0) {

@@ -52,6 +52,8 @@ func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error)
 		return ProbeResult{}, probeError("invalid_endpoint", "The MCP endpoint is invalid.", false)
 	}
 	status := &statusRecorder{}
+	// 当前产品决策不做目标地址级 SSRF 过滤，直接使用系统 DNS 和标准拨号；
+	// MCP 的可达网络范围由部署环境的网络策略决定。
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 15 * time.Second}
 	transport := &http.Transport{
 		Proxy:                 nil,
@@ -65,6 +67,8 @@ func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error)
 	client := &http.Client{
 		Transport: status.wrap(transport),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// 允许同源路径重定向以兼容常见部署，但不接受跨源跳转；
+			// 这能保证 catalog 记录的 endpoint 与实际提供工具的服务来源一致。
 			if len(via) >= 3 {
 				return errors.New("too many redirects")
 			}

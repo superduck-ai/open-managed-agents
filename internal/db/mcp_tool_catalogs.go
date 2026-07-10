@@ -118,6 +118,9 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 		input.AuthScopeKey = "anonymous"
 	}
 	externalID := mcpToolCatalogExternalID(input.OrganizationID, input.WorkspaceID, input.EndpointKey, input.AuthScopeKey)
+	// Agent 详情页会高频调用 Ensure；引用时间仍在窗口内且 catalog 可复用时直接只读返回，
+	// 避免每次轮询都更新 last_referenced_at/updated_at。执行中的 generation 即使 Force=true 也复用；
+	// Force 只跳过已完成 catalog 的 fresh/backoff 限制，不会制造并行探测。
 	if existing, getErr := d.GetMCPToolCatalog(ctx, input.OrganizationID, input.WorkspaceID, input.EndpointKey, input.AuthScopeKey); getErr == nil {
 		referenceIsRecent := !existing.LastReferencedAt.Before(input.Now.Add(-mcpToolCatalogReferenceTouchInterval))
 		endpointIsCurrent := existing.TransportType == input.TransportType && existing.EndpointURL == input.EndpointURL
@@ -159,6 +162,8 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 		return EnsureMCPToolCatalogResult{Catalog: catalog}, nil
 	}
 
+	// generation 递增和对应 job 写入必须在同一事务中，避免“已标记刷新但没有任务”。
+	// job external_id 由 catalog 与 generation 确定，使并发 Ensure 可以安全幂等。
 	generation := catalog.RequestedGeneration + 1
 	catalog, err = scanMCPToolCatalog(tx.QueryRow(ctx, `
 		update mcp_tool_catalogs
@@ -285,6 +290,8 @@ func (d *DB) CompleteMCPToolDiscovery(ctx context.Context, input CompleteMCPTool
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// 先确认 job 仍由当前 worker 持有，再通过 requested_generation 对 catalog 做 CAS；
+	// lease 已过期或旧 generation 的 worker 因而不能覆盖更新一代的结果。
 	if err := settleMCPToolDiscoveryJob(ctx, tx, input.JobID, input.WorkerID, "completed", 0, time.Time{}, "", time.Time{}); err != nil {
 		return err
 	}

@@ -6,6 +6,8 @@ const MCP_DIRECTORY_PATH = '/api/directory/servers?type=remote&visibility=commer
 
 let directoryCache: { expiresAt: number; servers: McpDirectoryServer[] } | undefined;
 let directoryRequest: Promise<McpDirectoryServer[]> | undefined;
+// Directory 是全局静态展示元数据：成功结果缓存一小时并复用进行中的 Promise；
+// generation 防止测试 reset 后已在途的旧请求回填新缓存。
 let directoryGeneration = 0;
 
 export function loadMcpDirectoryServers() {

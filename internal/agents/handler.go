@@ -1259,6 +1259,8 @@ func (h *Handler) enqueueMCPCatalog(ctx context.Context, organizationID, workspa
 	if h == nil || h.mcp == nil {
 		return
 	}
+	// MCP catalog 是可重建的派生数据，预热失败不应阻塞 Agent 创建或更新。
+	// 脱离请求取消信号后限时异步执行，并复制 RawMessage，避免响应返回后继续引用调用方缓冲区。
 	requestContext := context.WithoutCancel(ctx)
 	servers := append(json.RawMessage(nil), mcpServers...)
 	go func() {

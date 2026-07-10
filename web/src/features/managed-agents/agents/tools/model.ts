@@ -34,6 +34,7 @@ export type McpToolCatalog = {
   server_name: string;
   endpoint_fingerprint?: string;
   status: McpToolCatalogStatus;
+  // null 表示尚无成功发现快照；[] 表示 MCP 已成功报告零个工具，两者不能合并处理。
   tools: Array<{ name: string; title?: string; description?: string }> | null;
   source?: 'anonymous_probe' | 'runtime_observation';
   protocol_version?: string;
@@ -268,6 +269,8 @@ export function buildAgentToolDisplayCards(
     );
     const catalog = catalogs.find((item) => item.server_name === serverName);
     const discoveredTools = catalog?.tools;
+    // 动态 catalog 的非 null tools 是权威快照（包括真实空数组）；仅在 null/缺失时回退
+    // Directory，不能与静态工具名做 union，否则已下线的工具会继续显示。
     const rows = discoveredTools !== null && discoveredTools !== undefined
       ? discoveredTools.map((tool) => ({
           name: tool.name,
@@ -309,7 +312,8 @@ export function normalizeMcpDirectoryServers(payload: unknown): McpDirectoryServ
     const visibility = Array.isArray(server.visibility)
       ? server.visibility.filter((value): value is string => typeof value === 'string')
       : [];
-    // The embedded Console route currently returns local and remote entries regardless of its query string.
+    // Directory 路由目前不执行查询参数过滤，因此前端再次筛选 remote/commercial；
+    // 租户型条目即使没有固定 URL 也必须保留其 slug 和工具元数据。
     if ((serverType && serverType !== 'remote') || (visibility.length && !visibility.includes('commercial'))) {
       return [];
     }
@@ -352,6 +356,8 @@ function toolPermissionForName(
   if (!toolset) {
     return fallback;
   }
+  // 与运行时保持 first-wins：按配置顺序取首个同名项。内置工具兼容 legacy tool_name，
+  // MCP 只匹配 name；未命中时再使用 default_config。
   const override = arrayRecords(toolset.configs).find(
     (config) =>
       (stringValue(config.name) || (allowLegacyToolName ? stringValue(config.tool_name) : '')) === toolName
@@ -372,6 +378,8 @@ function resolveMcpServer(name: string, url: string, directoryServers: McpDirect
   const metadata =
     directoryServers.find((server) => server.slug === name) ??
     FALLBACK_MCP_SERVERS.find((server) => server.slug === name);
+  // 展示元数据优先级：在线 Directory > 内置 GitHub/Slack fallback > 名称格式化；
+  // 实际 URL 始终以当前 Agent 版本配置为准。
   if (metadata) {
     return { ...metadata, slug: name, url };
   }

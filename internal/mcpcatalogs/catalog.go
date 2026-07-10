@@ -55,6 +55,8 @@ func (e *Enqueuer) EnsureAgent(ctx context.Context, organizationID, workspaceID 
 	if err != nil {
 		return err
 	}
+	// 每个 MCP 独立预热：单个 endpoint 无效或入队失败时继续处理其余 server，
+	// 最后合并错误交给调用方记录，避免一个坏配置阻断整个 Agent 的 catalog 建立。
 	var joined error
 	for _, server := range servers {
 		normalizedURL, normalizeErr := NormalizeEndpoint(server.URL)

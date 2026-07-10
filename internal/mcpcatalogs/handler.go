@@ -81,6 +81,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	responses := make([]catalogResponse, 0, len(servers))
+	// 详情 GET 只确保后台 generation 已存在并返回当前缓存，不在请求链路中直连 MCP；
+	// 实际探测由 worker 异步完成，旧快照可在刷新期间继续展示。
 	for _, server := range servers {
 		response, buildErr := h.ensureAndMap(r, principal, server, false, "detail_read", now)
 		if buildErr != nil {
@@ -116,6 +118,8 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		writeCatalogError(w, r, http.StatusInternalServerError, "Could not read the Agent MCP configuration")
 		return
 	}
+	// 请求体只允许选择 Agent 已配置的 server 名；实际 endpoint 始终来自持久化版本，
+	// 防止 refresh 接口被用来提交任意探测地址。
 	selected := map[string]struct{}{}
 	for _, name := range input.ServerNames {
 		name = strings.TrimSpace(name)
@@ -171,6 +175,7 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.Principal, db.Agent, int, bool) {
+	// 跨组织、跨 workspace 与资源不存在统一返回 404，避免通过响应差异枚举 Agent。
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok || !principalCanSeeOrganization(principal, chi.URLParam(r, "orgUuid")) || !principalCanSeeWorkspace(principal, chi.URLParam(r, "workspaceId")) {
 		writeCatalogError(w, r, http.StatusNotFound, "Agent not found")
@@ -217,6 +222,8 @@ func (h *Handler) ensureAndMap(r *http.Request, principal auth.Principal, server
 	}
 	endpointKey := EndpointKey(h.cfg.MCPDiscoveryHMACKey, normalized)
 	if !h.cfg.MCPDiscoveryEnabled {
+		// 发现关闭时仍可读取已有 catalog，但不得创建或刷新任务；
+		// 这样关闭外部探测不会让已经缓存的工具列表立即消失。
 		catalog, getErr := h.database.GetMCPToolCatalog(r.Context(), principal.OrganizationID, principal.WorkspaceID, endpointKey, "anonymous")
 		if errors.Is(getErr, db.ErrNotFound) {
 			return catalogResponse{ServerName: server.Name, EndpointFingerprint: endpointKey, Status: "unknown", Tools: json.RawMessage("null")}, nil
@@ -245,6 +252,8 @@ func (h *Handler) ensureAndMap(r *http.Request, principal auth.Principal, server
 
 func mapCatalog(serverName, endpointKey string, catalog db.MCPToolCatalog, now time.Time) catalogResponse {
 	status := "unknown"
+	// requested_generation 大于 settled_generation 表示最新一代仍在执行。
+	// 有旧 tools 时按 stale-while-refresh 显示 refreshing；尚无成功快照时才显示 loading。
 	active := catalog.RequestedGeneration > catalog.SettledGeneration
 	if catalog.Tools != nil {
 		if active {
@@ -263,6 +272,7 @@ func mapCatalog(serverName, endpointKey string, catalog db.MCPToolCatalog, now t
 	}
 	tools := catalog.Tools
 	if tools == nil {
+		// null 表示从未获得成功快照；成功发现的真实空列表会保留为 []，前端据此区分“未知”和“零工具”。
 		tools = json.RawMessage("null")
 	}
 	response := catalogResponse{

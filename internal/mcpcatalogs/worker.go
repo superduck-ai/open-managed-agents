@@ -163,6 +163,8 @@ func discoveryProbeTimeout(configured time.Duration) time.Duration {
 }
 
 func discoveryLeaseDuration(configuredProbeTimeout time.Duration) time.Duration {
+	// lease 必须覆盖完整探测时间并预留数据库落盘余量；否则结果提交前任务可能被
+	// 另一实例重新领取，导致同一 generation 被多个 worker 并发执行。
 	probeTimeout := discoveryProbeTimeout(configuredProbeTimeout)
 	if probeTimeout > time.Duration(1<<63-1)-discoveryLeaseCleanupMargin {
 		return time.Duration(1<<63 - 1)

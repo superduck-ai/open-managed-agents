@@ -109,6 +109,8 @@ func Load() (Config, error) {
 	}
 
 	appEnv := env("APP_ENV", "development")
+	// 开发环境使用固定默认值方便本地启动；生产环境故意不提供默认密钥。
+	// 生产开启 MCP 发现时必须显式配置，避免用公开默认值生成可预测的 endpoint 指纹。
 	mcpDiscoveryHMACKey := "open-managed-agents-development-mcp-catalog-key"
 	if appEnv == "production" {
 		mcpDiscoveryHMACKey = ""

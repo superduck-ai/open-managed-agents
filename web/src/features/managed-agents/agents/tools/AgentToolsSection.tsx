@@ -39,6 +39,8 @@ export function AgentToolsSection({
     staleTime: 60 * 60 * 1000,
     retry: false
   });
+  // 这里只轮询后端缓存状态：loading/refreshing 时每秒读取一次，进入终态立即停止；
+  // 浏览器不会直连 MCP，也不会在轮询时重复提交 refresh。
   const catalogQuery = useQuery({
     queryKey: catalogQueryKey,
     queryFn: ({ signal }) => loadAgentMcpToolCatalogs(orgUuid, workspaceId, agent.id, agent.version, signal),
@@ -52,6 +54,8 @@ export function AgentToolsSection({
     refetchOnWindowFocus: false,
     retry: 1
   });
+  // Refresh POST 只负责入队或复用 generation；成功后失效 GET query，
+  // 再由上面的状态轮询等待异步发现结果。
   const refreshMutation = useMutation({
     mutationFn: (serverName: string) =>
       refreshAgentMcpToolCatalogs(orgUuid, workspaceId, agent.id, agent.version, [serverName], csrfToken),

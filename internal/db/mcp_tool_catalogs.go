@@ -2,32 +2,26 @@ package db
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
 	"github.com/jackc/pgx/v5"
 )
 
 const (
-	mcpToolDiscoveryJobType              = "mcp_tool_discovery"
 	mcpToolCatalogReferenceTouchInterval = 5 * time.Minute
 )
 
 type MCPToolCatalog struct {
 	ID                  int64
 	ExternalID          string
-	OrganizationID      int64
-	WorkspaceID         int64
 	TransportType       string
 	EndpointURL         string
-	EndpointKey         string
-	AuthScopeKey        string
-	AuthScopeReference  *string
 	Tools               json.RawMessage
 	Source              *string
 	LastResultStatus    *string
@@ -49,12 +43,10 @@ type MCPToolCatalog struct {
 }
 
 type EnsureMCPToolCatalogInput struct {
-	OrganizationID int64
-	WorkspaceID    int64
+	// JobWorkspaceID 只满足通用 jobs 表的任务归属要求，不参与全局 catalog identity。
+	JobWorkspaceID int64
 	TransportType  string
 	EndpointURL    string
-	EndpointKey    string
-	AuthScopeKey   string
 	Trigger        string
 	Force          bool
 	Now            time.Time
@@ -66,22 +58,16 @@ type EnsureMCPToolCatalogResult struct {
 }
 
 type MCPToolDiscoveryJob struct {
-	ID                  int64
-	ExternalID          string
-	WorkspaceID         int64
-	Payload             json.RawMessage
-	Attempts            int
-	CatalogExternalID   string
-	CatalogOrganization int64
-	EndpointURL         string
-	EndpointKey         string
-	Generation          int64
+	ID                int64
+	Attempts          int
+	CatalogExternalID string
+	EndpointURL       string
+	Generation        int64
 }
 
 type CompleteMCPToolDiscoveryInput struct {
 	JobID             int64
 	WorkerID          string
-	WorkspaceID       int64
 	CatalogExternalID string
 	Generation        int64
 	Tools             json.RawMessage
@@ -95,7 +81,6 @@ type CompleteMCPToolDiscoveryInput struct {
 type FailMCPToolDiscoveryInput struct {
 	JobID             int64
 	WorkerID          string
-	WorkspaceID       int64
 	CatalogExternalID string
 	Generation        int64
 	Attempts          int
@@ -114,21 +99,23 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 	if input.TransportType == "" {
 		input.TransportType = "url"
 	}
-	if input.AuthScopeKey == "" {
-		input.AuthScopeKey = "anonymous"
+	if input.JobWorkspaceID <= 0 {
+		return EnsureMCPToolCatalogResult{}, fmt.Errorf("job workspace id is required")
 	}
-	externalID := mcpToolCatalogExternalID(input.OrganizationID, input.WorkspaceID, input.EndpointKey, input.AuthScopeKey)
 	// Agent 详情页会高频调用 Ensure；引用时间仍在窗口内且 catalog 可复用时直接只读返回，
 	// 避免每次轮询都更新 last_referenced_at/updated_at。执行中的 generation 即使 Force=true 也复用；
 	// Force 只跳过已完成 catalog 的 fresh/backoff 限制，不会制造并行探测。
-	if existing, getErr := d.GetMCPToolCatalog(ctx, input.OrganizationID, input.WorkspaceID, input.EndpointKey, input.AuthScopeKey); getErr == nil {
+	if existing, getErr := d.GetMCPToolCatalog(ctx, input.TransportType, input.EndpointURL); getErr == nil {
 		referenceIsRecent := !existing.LastReferencedAt.Before(input.Now.Add(-mcpToolCatalogReferenceTouchInterval))
-		endpointIsCurrent := existing.TransportType == input.TransportType && existing.EndpointURL == input.EndpointURL
-		if referenceIsRecent && endpointIsCurrent && canReuseMCPToolCatalog(existing, input) {
+		if referenceIsRecent && canReuseMCPToolCatalog(existing, input) {
 			return EnsureMCPToolCatalogResult{Catalog: existing}, nil
 		}
 	} else if !errors.Is(getErr, ErrNotFound) {
 		return EnsureMCPToolCatalogResult{}, getErr
+	}
+	externalID, err := ids.New("mcpc_")
+	if err != nil {
+		return EnsureMCPToolCatalogResult{}, err
 	}
 
 	tx, err := d.Pool.Begin(ctx)
@@ -139,18 +126,14 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 
 	catalog, err := scanMCPToolCatalog(tx.QueryRow(ctx, `
 		insert into mcp_tool_catalogs (
-			external_id, organization_id, workspace_id, transport_type,
-			endpoint_url, endpoint_key, auth_scope_key, last_referenced_at,
-			created_at, updated_at
+			external_id, transport_type, endpoint_url, last_referenced_at, created_at, updated_at
 		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8)
-		on conflict (organization_id, workspace_id, endpoint_key, auth_scope_key)
-		do update set endpoint_url = excluded.endpoint_url,
-			last_referenced_at = excluded.last_referenced_at,
+		values ($1, $2, $3, $4, $4, $4)
+		on conflict (transport_type, endpoint_url)
+		do update set last_referenced_at = excluded.last_referenced_at,
 			updated_at = excluded.updated_at
 		returning `+mcpToolCatalogColumns()+`
-	`, externalID, input.OrganizationID, input.WorkspaceID, input.TransportType,
-		input.EndpointURL, input.EndpointKey, input.AuthScopeKey, input.Now))
+	`, externalID, input.TransportType, input.EndpointURL, input.Now))
 	if err != nil {
 		return EnsureMCPToolCatalogResult{}, err
 	}
@@ -182,17 +165,16 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 		"catalog_external_id": catalog.ExternalID,
 		"generation":          generation,
 		"trigger":             input.Trigger,
-		"context_ref":         nil,
 	})
 	if err != nil {
 		return EnsureMCPToolCatalogResult{}, err
 	}
-	jobExternalID := mcpToolDiscoveryJobExternalID(input.OrganizationID, input.WorkspaceID, catalog.ExternalID, generation)
+	jobExternalID := mcpToolDiscoveryJobExternalID(catalog.ExternalID, generation)
 	tag, err := tx.Exec(ctx, `
 		insert into jobs (external_id, workspace_id, type, status, payload, run_after, created_at, updated_at)
 		values ($1, $2, 'mcp_tool_discovery', 'pending', $3::jsonb, $4, $4, $4)
 		on conflict (external_id) do nothing
-	`, jobExternalID, input.WorkspaceID, jsonArg(payload), input.Now)
+	`, jobExternalID, input.JobWorkspaceID, jsonArg(payload), input.Now)
 	if err != nil {
 		return EnsureMCPToolCatalogResult{}, err
 	}
@@ -209,18 +191,13 @@ func canReuseMCPToolCatalog(catalog MCPToolCatalog, input EnsureMCPToolCatalogIn
 	return active || (!input.Force && (fresh || backingOff))
 }
 
-func (d *DB) GetMCPToolCatalog(ctx context.Context, organizationID, workspaceID int64, endpointKey, authScopeKey string) (MCPToolCatalog, error) {
-	if authScopeKey == "" {
-		authScopeKey = "anonymous"
-	}
+func (d *DB) GetMCPToolCatalog(ctx context.Context, transportType, endpointURL string) (MCPToolCatalog, error) {
 	return scanMCPToolCatalog(d.Pool.QueryRow(ctx, `
 		select `+mcpToolCatalogColumns()+`
 		from mcp_tool_catalogs
-		where organization_id = $1
-			and workspace_id = $2
-			and endpoint_key = $3
-			and auth_scope_key = $4
-	`, organizationID, workspaceID, endpointKey, authScopeKey))
+		where transport_type = $1
+			and endpoint_url = $2
+	`, transportType, endpointURL))
 }
 
 func (d *DB) LeaseMCPToolDiscoveryJobs(ctx context.Context, workerID string, limit int, leaseDuration time.Duration) ([]MCPToolDiscoveryJob, error) {
@@ -251,15 +228,14 @@ func (d *DB) LeaseMCPToolDiscoveryJobs(ctx context.Context, workerID string, lim
 				updated_at = now()
 			from next_jobs
 			where j.id = next_jobs.id
-			returning j.id, j.external_id, j.workspace_id, j.payload, j.attempts
+			returning j.id, j.payload, j.attempts
 		)
-		select l.id, l.external_id, l.workspace_id, l.payload, l.attempts,
-			c.external_id, c.organization_id, c.endpoint_url, c.endpoint_key,
+		select l.id, l.attempts,
+			c.external_id, c.endpoint_url,
 			coalesce((l.payload->>'generation')::bigint, 0)
 		from leased l
 		join mcp_tool_catalogs c
 			on c.external_id = l.payload->>'catalog_external_id'
-			and c.workspace_id = l.workspace_id
 	`, limit, workerID, leaseDuration)
 	if err != nil {
 		return nil, err
@@ -269,15 +245,12 @@ func (d *DB) LeaseMCPToolDiscoveryJobs(ctx context.Context, workerID string, lim
 	var jobs []MCPToolDiscoveryJob
 	for rows.Next() {
 		var job MCPToolDiscoveryJob
-		var payload []byte
 		if err := rows.Scan(
-			&job.ID, &job.ExternalID, &job.WorkspaceID, &payload, &job.Attempts,
-			&job.CatalogExternalID, &job.CatalogOrganization, &job.EndpointURL, &job.EndpointKey,
-			&job.Generation,
+			&job.ID, &job.Attempts,
+			&job.CatalogExternalID, &job.EndpointURL, &job.Generation,
 		); err != nil {
 			return nil, err
 		}
-		job.Payload = copyRaw(payload)
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
@@ -297,26 +270,25 @@ func (d *DB) CompleteMCPToolDiscovery(ctx context.Context, input CompleteMCPTool
 	}
 	_, err = tx.Exec(ctx, `
 		update mcp_tool_catalogs
-		set tools = $4::jsonb,
+		set tools = $3::jsonb,
 			source = 'anonymous_probe',
 			last_result_status = 'success',
-			protocol_version = nullif($5, ''),
-			server_info = $6::jsonb,
-			catalog_hash = nullif($7, ''),
-			discovered_at = $8,
-			expires_at = $9,
-			last_attempt_at = $8,
+			protocol_version = nullif($4, ''),
+			server_info = $5::jsonb,
+			catalog_hash = nullif($6, ''),
+			discovered_at = $7,
+			expires_at = $8,
+			last_attempt_at = $7,
 			last_error_code = null,
 			last_error_message = null,
 			last_error_at = null,
 			retry_after = null,
-			settled_generation = $3,
-			updated_at = $8
+			settled_generation = $2,
+			updated_at = $7
 		where external_id = $1
-			and workspace_id = $2
-			and requested_generation = $3
-			and settled_generation < $3
-	`, input.CatalogExternalID, input.WorkspaceID, input.Generation,
+			and requested_generation = $2
+			and settled_generation < $2
+	`, input.CatalogExternalID, input.Generation,
 		jsonArg(input.Tools), input.ProtocolVersion, nullableJSONArg(input.ServerInfo), input.CatalogHash,
 		input.DiscoveredAt, input.ExpiresAt)
 	if err != nil {
@@ -348,12 +320,11 @@ func (d *DB) FailMCPToolDiscovery(ctx context.Context, input FailMCPToolDiscover
 		}
 		_, err = tx.Exec(ctx, `
 			update mcp_tool_catalogs
-			set last_attempt_at = $4,
-				updated_at = $4
+			set last_attempt_at = $3,
+				updated_at = $3
 			where external_id = $1
-				and workspace_id = $2
-				and requested_generation = $3
-		`, input.CatalogExternalID, input.WorkspaceID, input.Generation, input.Now)
+				and requested_generation = $2
+		`, input.CatalogExternalID, input.Generation, input.Now)
 		if err != nil {
 			return err
 		}
@@ -374,19 +345,18 @@ func (d *DB) FailMCPToolDiscovery(ctx context.Context, input FailMCPToolDiscover
 	retryAfter := input.Now.Add(input.RetryDelay)
 	_, err = tx.Exec(ctx, `
 		update mcp_tool_catalogs
-		set last_result_status = $4,
-			last_attempt_at = $5,
-			last_error_code = $6,
-			last_error_message = nullif($7, ''),
-			last_error_at = $5,
-			retry_after = $8,
-			settled_generation = $3,
-			updated_at = $5
+		set last_result_status = $3,
+			last_attempt_at = $4,
+			last_error_code = $5,
+			last_error_message = nullif($6, ''),
+			last_error_at = $4,
+			retry_after = $7,
+			settled_generation = $2,
+			updated_at = $4
 		where external_id = $1
-			and workspace_id = $2
-			and requested_generation = $3
-			and settled_generation < $3
-	`, input.CatalogExternalID, input.WorkspaceID, input.Generation,
+			and requested_generation = $2
+			and settled_generation < $2
+	`, input.CatalogExternalID, input.Generation,
 		resultStatus, input.Now, input.ErrorCode, truncateDatabaseText(input.ErrorMessage, 512), retryAfter)
 	if err != nil {
 		return err
@@ -504,9 +474,8 @@ func settleMCPToolDiscoveryJob(
 }
 
 func mcpToolCatalogColumns() string {
-	return `id, external_id, organization_id, workspace_id, transport_type,
-		endpoint_url, endpoint_key, auth_scope_key, auth_scope_reference, tools,
-		source, last_result_status, protocol_version, server_info, catalog_hash,
+	return `id, external_id, transport_type, endpoint_url, tools, source,
+		last_result_status, protocol_version, server_info, catalog_hash,
 		discovered_at, expires_at, last_attempt_at, last_error_code, last_error_message,
 		last_error_at, retry_after, requested_generation, settled_generation,
 		last_referenced_at, created_at, updated_at`
@@ -520,9 +489,8 @@ func scanMCPToolCatalog(row mcpCatalogRowScanner) (MCPToolCatalog, error) {
 	var catalog MCPToolCatalog
 	var tools, serverInfo []byte
 	err := row.Scan(
-		&catalog.ID, &catalog.ExternalID, &catalog.OrganizationID, &catalog.WorkspaceID,
-		&catalog.TransportType, &catalog.EndpointURL, &catalog.EndpointKey, &catalog.AuthScopeKey,
-		&catalog.AuthScopeReference, &tools, &catalog.Source, &catalog.LastResultStatus,
+		&catalog.ID, &catalog.ExternalID, &catalog.TransportType, &catalog.EndpointURL,
+		&tools, &catalog.Source, &catalog.LastResultStatus,
 		&catalog.ProtocolVersion, &serverInfo, &catalog.CatalogHash, &catalog.DiscoveredAt,
 		&catalog.ExpiresAt, &catalog.LastAttemptAt, &catalog.LastErrorCode,
 		&catalog.LastErrorMessage, &catalog.LastErrorAt, &catalog.RetryAfter,
@@ -537,30 +505,8 @@ func scanMCPToolCatalog(row mcpCatalogRowScanner) (MCPToolCatalog, error) {
 	return catalog, nil
 }
 
-func mcpToolCatalogExternalID(organizationID, workspaceID int64, endpointKey, authScopeKey string) string {
-	hash := sha256.New()
-	writeMCPHashInt64(hash, organizationID)
-	writeMCPHashInt64(hash, workspaceID)
-	hash.Write([]byte(endpointKey))
-	hash.Write([]byte{0})
-	hash.Write([]byte(authScopeKey))
-	return "mcpc_" + hex.EncodeToString(hash.Sum(nil))[:40]
-}
-
-func mcpToolDiscoveryJobExternalID(organizationID, workspaceID int64, catalogExternalID string, generation int64) string {
-	hash := sha256.New()
-	hash.Write([]byte(mcpToolDiscoveryJobType))
-	writeMCPHashInt64(hash, organizationID)
-	writeMCPHashInt64(hash, workspaceID)
-	hash.Write([]byte(catalogExternalID))
-	writeMCPHashInt64(hash, generation)
-	return "job_mcpt_" + hex.EncodeToString(hash.Sum(nil))[:40]
-}
-
-func writeMCPHashInt64(hash interface{ Write([]byte) (int, error) }, value int64) {
-	var encoded [8]byte
-	binary.LittleEndian.PutUint64(encoded[:], uint64(value))
-	_, _ = hash.Write(encoded[:])
+func mcpToolDiscoveryJobExternalID(catalogExternalID string, generation int64) string {
+	return fmt.Sprintf("job_mcpt_%s_%d", strings.TrimPrefix(catalogExternalID, "mcpc_"), generation)
 }
 
 func nullableJSONArg(raw json.RawMessage) any {

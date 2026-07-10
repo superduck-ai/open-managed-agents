@@ -24,16 +24,15 @@ type Handler struct {
 }
 
 type catalogResponse struct {
-	ServerName          string          `json:"server_name"`
-	EndpointFingerprint string          `json:"endpoint_fingerprint,omitempty"`
-	Status              string          `json:"status"`
-	Tools               json.RawMessage `json:"tools"`
-	Source              *string         `json:"source,omitempty"`
-	ProtocolVersion     *string         `json:"protocol_version,omitempty"`
-	DiscoveredAt        *string         `json:"discovered_at,omitempty"`
-	ExpiresAt           *string         `json:"expires_at,omitempty"`
-	LastError           *catalogError   `json:"last_error,omitempty"`
-	Generation          int64           `json:"generation"`
+	ServerName      string          `json:"server_name"`
+	Status          string          `json:"status"`
+	Tools           json.RawMessage `json:"tools"`
+	Source          *string         `json:"source,omitempty"`
+	ProtocolVersion *string         `json:"protocol_version,omitempty"`
+	DiscoveredAt    *string         `json:"discovered_at,omitempty"`
+	ExpiresAt       *string         `json:"expires_at,omitempty"`
+	LastError       *catalogError   `json:"last_error,omitempty"`
+	Generation      int64           `json:"generation"`
 }
 
 type catalogError struct {
@@ -84,7 +83,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	// 详情 GET 只确保后台 generation 已存在并返回当前缓存，不在请求链路中直连 MCP；
 	// 实际探测由 worker 异步完成，旧快照可在刷新期间继续展示。
 	for _, server := range servers {
-		response, buildErr := h.ensureAndMap(r, principal, server, false, "detail_read", now)
+		response, buildErr := h.ensureAndMap(r, principal.WorkspaceID, server, false, "detail_read", now)
 		if buildErr != nil {
 			log.Printf("list mcp catalog workspace_id=%d agent_id=%s server=%s: %v", principal.WorkspaceID, agent.ExternalID, server.Name, buildErr)
 			writeCatalogError(w, r, http.StatusInternalServerError, "Could not load MCP tool catalogs")
@@ -154,12 +153,9 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ensure, ensureErr := h.database.EnsureMCPToolCatalog(r.Context(), db.EnsureMCPToolCatalogInput{
-			OrganizationID: principal.OrganizationID,
-			WorkspaceID:    principal.WorkspaceID,
+			JobWorkspaceID: principal.WorkspaceID,
 			TransportType:  "url",
 			EndpointURL:    normalized,
-			EndpointKey:    EndpointKey(h.cfg.MCPDiscoveryHMACKey, normalized),
-			AuthScopeKey:   "anonymous",
 			Trigger:        "manual_refresh",
 			Force:          true,
 			Now:            time.Now().UTC(),
@@ -210,7 +206,7 @@ func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.
 	return principal, agent, version, true
 }
 
-func (h *Handler) ensureAndMap(r *http.Request, principal auth.Principal, server AgentServer, force bool, trigger string, now time.Time) (catalogResponse, error) {
+func (h *Handler) ensureAndMap(r *http.Request, jobWorkspaceID int64, server AgentServer, force bool, trigger string, now time.Time) (catalogResponse, error) {
 	normalized, err := NormalizeEndpoint(server.URL)
 	if err != nil {
 		return catalogResponse{
@@ -220,26 +216,22 @@ func (h *Handler) ensureAndMap(r *http.Request, principal auth.Principal, server
 			LastError:  &catalogError{Code: "invalid_endpoint", Message: "The MCP endpoint is invalid."},
 		}, nil
 	}
-	endpointKey := EndpointKey(h.cfg.MCPDiscoveryHMACKey, normalized)
 	if !h.cfg.MCPDiscoveryEnabled {
 		// 发现关闭时仍可读取已有 catalog，但不得创建或刷新任务；
 		// 这样关闭外部探测不会让已经缓存的工具列表立即消失。
-		catalog, getErr := h.database.GetMCPToolCatalog(r.Context(), principal.OrganizationID, principal.WorkspaceID, endpointKey, "anonymous")
+		catalog, getErr := h.database.GetMCPToolCatalog(r.Context(), "url", normalized)
 		if errors.Is(getErr, db.ErrNotFound) {
-			return catalogResponse{ServerName: server.Name, EndpointFingerprint: endpointKey, Status: "unknown", Tools: json.RawMessage("null")}, nil
+			return catalogResponse{ServerName: server.Name, Status: "unknown", Tools: json.RawMessage("null")}, nil
 		}
 		if getErr != nil {
 			return catalogResponse{}, getErr
 		}
-		return mapCatalog(server.Name, endpointKey, catalog, now), nil
+		return mapCatalog(server.Name, catalog, now), nil
 	}
 	ensured, err := h.database.EnsureMCPToolCatalog(r.Context(), db.EnsureMCPToolCatalogInput{
-		OrganizationID: principal.OrganizationID,
-		WorkspaceID:    principal.WorkspaceID,
+		JobWorkspaceID: jobWorkspaceID,
 		TransportType:  "url",
 		EndpointURL:    normalized,
-		EndpointKey:    endpointKey,
-		AuthScopeKey:   "anonymous",
 		Trigger:        trigger,
 		Force:          force,
 		Now:            now,
@@ -247,10 +239,10 @@ func (h *Handler) ensureAndMap(r *http.Request, principal auth.Principal, server
 	if err != nil {
 		return catalogResponse{}, err
 	}
-	return mapCatalog(server.Name, endpointKey, ensured.Catalog, now), nil
+	return mapCatalog(server.Name, ensured.Catalog, now), nil
 }
 
-func mapCatalog(serverName, endpointKey string, catalog db.MCPToolCatalog, now time.Time) catalogResponse {
+func mapCatalog(serverName string, catalog db.MCPToolCatalog, now time.Time) catalogResponse {
 	status := "unknown"
 	// requested_generation 大于 settled_generation 表示最新一代仍在执行。
 	// 有旧 tools 时按 stale-while-refresh 显示 refreshing；尚无成功快照时才显示 loading。
@@ -276,15 +268,14 @@ func mapCatalog(serverName, endpointKey string, catalog db.MCPToolCatalog, now t
 		tools = json.RawMessage("null")
 	}
 	response := catalogResponse{
-		ServerName:          serverName,
-		EndpointFingerprint: endpointKey,
-		Status:              status,
-		Tools:               tools,
-		Source:              catalog.Source,
-		ProtocolVersion:     catalog.ProtocolVersion,
-		DiscoveredAt:        formatTime(catalog.DiscoveredAt),
-		ExpiresAt:           formatTime(catalog.ExpiresAt),
-		Generation:          catalog.RequestedGeneration,
+		ServerName:      serverName,
+		Status:          status,
+		Tools:           tools,
+		Source:          catalog.Source,
+		ProtocolVersion: catalog.ProtocolVersion,
+		DiscoveredAt:    formatTime(catalog.DiscoveredAt),
+		ExpiresAt:       formatTime(catalog.ExpiresAt),
+		Generation:      catalog.RequestedGeneration,
 	}
 	if catalog.LastErrorCode != nil {
 		message := "MCP tool discovery failed."

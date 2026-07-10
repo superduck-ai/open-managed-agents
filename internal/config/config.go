@@ -70,7 +70,6 @@ type Config struct {
 	WebhookMaxAttempts                  int
 	WebhookAllowInsecure                bool
 	MCPDiscoveryEnabled                 bool
-	MCPDiscoveryHMACKey                 string
 	MCPDiscoveryProbeTimeout            time.Duration
 	MCPDiscoveryWorkerConcurrency       int
 	SeedAPIKeys                         []SeedAPIKey
@@ -109,12 +108,6 @@ func Load() (Config, error) {
 	}
 
 	appEnv := env("APP_ENV", "development")
-	// 开发环境使用固定默认值方便本地启动；生产环境故意不提供默认密钥。
-	// 生产开启 MCP 发现时必须显式配置，避免用公开默认值生成可预测的 endpoint 指纹。
-	mcpDiscoveryHMACKey := "open-managed-agents-development-mcp-catalog-key"
-	if appEnv == "production" {
-		mcpDiscoveryHMACKey = ""
-	}
 	cfg := Config{
 		AppEnv:                              appEnv,
 		Addr:                                env("ADDR", ":8080"),
@@ -167,7 +160,6 @@ func Load() (Config, error) {
 		WebhookMaxAttempts:                  envInt("WEBHOOK_MAX_ATTEMPTS", 10),
 		WebhookAllowInsecure:                envBool("WEBHOOK_ALLOW_INSECURE", false),
 		MCPDiscoveryEnabled:                 envBool("MCP_DISCOVERY_ENABLED", appEnv != "production"),
-		MCPDiscoveryHMACKey:                 env("MCP_DISCOVERY_HMAC_KEY", mcpDiscoveryHMACKey),
 		MCPDiscoveryProbeTimeout:            envDuration("MCP_DISCOVERY_PROBE_TIMEOUT", 10*time.Second),
 		MCPDiscoveryWorkerConcurrency:       envInt("MCP_DISCOVERY_WORKER_CONCURRENCY", 3),
 		OfficialSDKFixtureFileID:            "file_id",
@@ -211,9 +203,6 @@ func Load() (Config, error) {
 	}
 	if cfg.S3AccessKeyID == "" || cfg.S3SecretAccessKey == "" {
 		return Config{}, errors.New("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required")
-	}
-	if cfg.MCPDiscoveryEnabled && cfg.MCPDiscoveryHMACKey == "" {
-		return Config{}, errors.New("MCP_DISCOVERY_HMAC_KEY is required when MCP discovery is enabled")
 	}
 	return cfg, nil
 }

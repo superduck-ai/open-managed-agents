@@ -76,6 +76,20 @@ func TestLoadDatabaseAutoMigrateOverride(t *testing.T) {
 	})
 }
 
+func TestLoadMCPDiscoveryEnabledInProductionWithoutIdentitySecret(t *testing.T) {
+	prepareLoadTest(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("MCP_DISCOVERY_ENABLED", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.MCPDiscoveryEnabled {
+		t.Fatal("MCPDiscoveryEnabled = false, want true")
+	}
+}
+
 func TestLoadCodeSessionOTLPFileLogDefaults(t *testing.T) {
 	t.Run("development enabled", func(t *testing.T) {
 		prepareLoadTest(t)
@@ -140,6 +154,7 @@ func prepareLoadTest(t *testing.T) {
 		"CODE_SESSION_OTLP_FILE_LOG_ENABLED",
 		"CODE_SESSION_OTLP_LOG_ROOT",
 		"CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES",
+		"MCP_DISCOVERY_ENABLED",
 		"DATABASE_URL",
 		"S3_ENDPOINT",
 		"S3_BUCKET",

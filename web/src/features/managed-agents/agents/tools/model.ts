@@ -32,11 +32,10 @@ export type McpToolCatalogStatus = 'unknown' | 'loading' | 'ready' | 'refreshing
 
 export type McpToolCatalog = {
   server_name: string;
-  endpoint_fingerprint?: string;
   status: McpToolCatalogStatus;
   // null 表示尚无成功发现快照；[] 表示 MCP 已成功报告零个工具，两者不能合并处理。
   tools: Array<{ name: string; title?: string; description?: string }> | null;
-  source?: 'anonymous_probe' | 'runtime_observation';
+  source?: 'anonymous_probe';
   protocol_version?: string;
   discovered_at?: string;
   expires_at?: string;

@@ -19,7 +19,6 @@ type AgentServer struct {
 
 type Store interface {
 	EnsureMCPToolCatalog(context.Context, db.EnsureMCPToolCatalogInput) (db.EnsureMCPToolCatalogResult, error)
-	GetMCPToolCatalog(context.Context, int64, int64, string, string) (db.MCPToolCatalog, error)
 }
 
 type Enqueuer struct {
@@ -47,7 +46,7 @@ func ParseAgentServers(raw json.RawMessage) ([]AgentServer, error) {
 	return servers, nil
 }
 
-func (e *Enqueuer) EnsureAgent(ctx context.Context, organizationID, workspaceID int64, raw json.RawMessage, trigger string) error {
+func (e *Enqueuer) EnsureAgent(ctx context.Context, workspaceID int64, raw json.RawMessage, trigger string) error {
 	if e == nil || !e.cfg.MCPDiscoveryEnabled {
 		return nil
 	}
@@ -65,12 +64,9 @@ func (e *Enqueuer) EnsureAgent(ctx context.Context, organizationID, workspaceID 
 			continue
 		}
 		_, ensureErr := e.store.EnsureMCPToolCatalog(ctx, db.EnsureMCPToolCatalogInput{
-			OrganizationID: organizationID,
-			WorkspaceID:    workspaceID,
+			JobWorkspaceID: workspaceID,
 			TransportType:  "url",
 			EndpointURL:    normalizedURL,
-			EndpointKey:    EndpointKey(e.cfg.MCPDiscoveryHMACKey, normalizedURL),
-			AuthScopeKey:   "anonymous",
 			Trigger:        trigger,
 			Now:            time.Now().UTC(),
 		})

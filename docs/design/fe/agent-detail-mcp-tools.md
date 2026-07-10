@@ -23,7 +23,7 @@ flowchart LR
   Agent["Agent version response"] --> Classify["Classify tools and MCP servers"]
   Directory["MCP directory API"] --> Normalize["Keep slug, display name, URL, icon, tool names"]
   Normalize --> Resolve["Resolve MCP metadata by exact slug"]
-  Catalog["Console MCP catalog API"] --> Inventory["Resolve live / stale / fallback inventory"]
+  Catalog["Global anonymous MCP catalog via Console API"] --> Inventory["Resolve live / stale / fallback inventory"]
   Resolve --> Inventory
   Classify --> Cards["Build ordered display cards"]
   Inventory --> Cards
@@ -49,6 +49,8 @@ flowchart LR
 
 - `GET /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/agents/{agentId}/mcp_tool_catalogs?version={N}`
 - `POST /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/agents/{agentId}/mcp_tool_catalogs/refresh?version={N}`
+
+路由中的 organization/workspace 用于验证当前用户有权读取该 Agent/version，并从 Agent 配置取得 endpoint；它们不是 catalog identity。后端匿名 catalog 以 `transport_type + normalized endpoint_url` 全局唯一，相同 endpoint 可以跨 Agent、workspace 和 organization 复用。响应不暴露 endpoint 身份字段，前端始终按当前版本的 `server_name` 合并展示数据，也不能直接查询任意全局 endpoint。
 
 工具清单优先级为动态 catalog（包括成功返回的真实空数组）> Directory 非空工具名 > unknown。动态成功使用 replace 语义，不与 Directory 做 union。`tools=null` 表示未知，count 显示 `—`；`tools=[]` 才显示真实 `0`。`loading`/`refreshing` 每秒轮询后端 cache，标签页进入后台后仍继续，浏览器不会直连 MCP endpoint；服务端对活跃 catalog 使用只读 fast path，并把引用时间 touch 限制为最多每 5 分钟一次。失败且存在 last-good 时继续展示旧列表；用户可用独立 Refresh 按钮强制调度新 generation，刷新请求失败时显示 error toast 且不覆盖现有工具。
 

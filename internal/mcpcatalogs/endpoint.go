@@ -1,9 +1,6 @@
 package mcpcatalogs
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net"
 	"net/url"
@@ -11,6 +8,8 @@ import (
 )
 
 var ErrInvalidEndpoint = errors.New("invalid MCP endpoint")
+
+const maxEndpointURLBytes = 2048
 
 func NormalizeEndpoint(raw string) (string, error) {
 	// catalog identity 基于规范化 URL；这里统一大小写、默认端口和空路径，
@@ -50,14 +49,10 @@ func NormalizeEndpoint(raw string) (string, error) {
 	if parsed.Path == "" {
 		parsed.Path = "/"
 	}
-	return parsed.String(), nil
-}
-
-func EndpointKey(secret, normalizedURL string) string {
-	// EndpointKey 同时用于 catalog 去重和接口中的稳定指纹；HMAC 避免直接暴露原始 URL。
-	// 更换 secret 会改变 catalog identity，运维上应将其视为一次数据迁移。
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte("url\x00"))
-	_, _ = mac.Write([]byte(normalizedURL))
-	return "mcpe_" + hex.EncodeToString(mac.Sum(nil))
+	normalized := parsed.String()
+	// endpoint_url 直接参与全局唯一索引，因此限制字节长度，避免异常长 URL 超过数据库索引上限。
+	if len(normalized) > maxEndpointURLBytes {
+		return "", ErrInvalidEndpoint
+	}
+	return normalized, nil
 }

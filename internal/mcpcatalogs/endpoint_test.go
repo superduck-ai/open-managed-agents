@@ -1,6 +1,9 @@
 package mcpcatalogs
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeEndpointRejectsUnsupportedEndpoints(t *testing.T) {
 	tests := []string{
@@ -18,6 +21,13 @@ func TestNormalizeEndpointRejectsUnsupportedEndpoints(t *testing.T) {
 	}
 }
 
+func TestNormalizeEndpointRejectsURLTooLongForCatalogIdentity(t *testing.T) {
+	endpoint := "https://example.com/" + strings.Repeat("a", maxEndpointURLBytes)
+	if _, err := NormalizeEndpoint(endpoint); err == nil {
+		t.Fatal("NormalizeEndpoint unexpectedly accepted an oversized endpoint")
+	}
+}
+
 func TestNormalizeEndpointCanonicalizesHTTPURL(t *testing.T) {
 	got, err := NormalizeEndpoint(" HTTPS://Example.COM.:443/mcp ")
 	if err != nil {
@@ -28,19 +38,14 @@ func TestNormalizeEndpointCanonicalizesHTTPURL(t *testing.T) {
 	}
 }
 
-func TestEndpointKeyIsTransportBoundAndStable(t *testing.T) {
-	first := EndpointKey("secret", "https://example.com/mcp")
-	second := EndpointKey("secret", "https://example.com/mcp")
-	otherSecret := EndpointKey("other", "https://example.com/mcp")
-	if first != second {
-		t.Fatalf("EndpointKey is not stable: %q != %q", first, second)
+func TestNormalizeEndpointAcceptsCatalogIdentityAtLengthLimit(t *testing.T) {
+	prefix := "https://example.com/"
+	endpoint := prefix + strings.Repeat("a", maxEndpointURLBytes-len(prefix))
+	got, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		t.Fatalf("NormalizeEndpoint returned error at length limit: %v", err)
 	}
-	if first == otherSecret {
-		t.Fatal("EndpointKey must depend on the configured HMAC secret")
-	}
-	if len(first) != len("mcpe_")+sha256HexLength {
-		t.Fatalf("EndpointKey length = %d", len(first))
+	if len(got) != maxEndpointURLBytes {
+		t.Fatalf("normalized endpoint length = %d, want %d", len(got), maxEndpointURLBytes)
 	}
 }
-
-const sha256HexLength = 64

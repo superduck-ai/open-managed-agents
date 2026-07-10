@@ -13,7 +13,7 @@ type blockingMCPCatalogEnqueuer struct {
 	done    chan struct{}
 }
 
-func (e *blockingMCPCatalogEnqueuer) EnsureAgent(context.Context, int64, int64, json.RawMessage, string) error {
+func (e *blockingMCPCatalogEnqueuer) EnsureAgent(context.Context, int64, json.RawMessage, string) error {
 	close(e.started)
 	<-e.release
 	close(e.done)
@@ -32,7 +32,6 @@ func TestEnqueueMCPCatalogDoesNotWaitForScheduling(t *testing.T) {
 	go func() {
 		handler.enqueueMCPCatalog(
 			context.Background(),
-			1,
 			2,
 			json.RawMessage(`[{"name":"weather","url":"https://weather.example/mcp"}]`),
 			"agent_test",

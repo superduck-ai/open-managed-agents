@@ -58,7 +58,7 @@ func TestWorkerPersistsSafeTerminalFailure(t *testing.T) {
 	store := &fakeWorkerStore{}
 	worker := NewWorker(store, config.Config{MCPDiscoveryProbeTimeout: time.Second})
 	worker.process(context.Background(), db.MCPToolDiscoveryJob{
-		ID: 1, WorkspaceID: 2, CatalogExternalID: "mcpc_test", Generation: 1, EndpointURL: server.URL,
+		ID: 1, CatalogExternalID: "mcpc_test", Generation: 1, EndpointURL: server.URL,
 	})
 
 	if len(store.failed) != 1 {
@@ -77,7 +77,7 @@ func TestWorkerPersistsDiscoveredCatalog(t *testing.T) {
 	store := &fakeWorkerStore{}
 	worker := NewWorker(store, config.Config{MCPDiscoveryProbeTimeout: time.Second})
 	worker.process(context.Background(), db.MCPToolDiscoveryJob{
-		ID: 1, WorkspaceID: 2, CatalogExternalID: "mcpc_test", Generation: 3, EndpointURL: httpServer.URL,
+		ID: 1, CatalogExternalID: "mcpc_test", Generation: 3, EndpointURL: httpServer.URL,
 	})
 
 	if len(store.completed) != 1 {

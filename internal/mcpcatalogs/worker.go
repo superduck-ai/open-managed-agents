@@ -117,7 +117,6 @@ func (w *Worker) process(ctx context.Context, job db.MCPToolDiscoveryJob) {
 		if failErr := w.store.FailMCPToolDiscovery(ctx, db.FailMCPToolDiscoveryInput{
 			JobID:             job.ID,
 			WorkerID:          w.workerID,
-			WorkspaceID:       job.WorkspaceID,
 			CatalogExternalID: job.CatalogExternalID,
 			Generation:        job.Generation,
 			Attempts:          job.Attempts,
@@ -141,7 +140,6 @@ func (w *Worker) process(ctx context.Context, job db.MCPToolDiscoveryJob) {
 	if completeErr := w.store.CompleteMCPToolDiscovery(ctx, db.CompleteMCPToolDiscoveryInput{
 		JobID:             job.ID,
 		WorkerID:          w.workerID,
-		WorkspaceID:       job.WorkspaceID,
 		CatalogExternalID: job.CatalogExternalID,
 		Generation:        job.Generation,
 		Tools:             tools,

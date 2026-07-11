@@ -83,9 +83,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	// 详情 GET 只确保后台 generation 已存在并返回当前缓存，不在请求链路中直连 MCP；
 	// 实际探测由 worker 异步完成，旧快照可在刷新期间继续展示。
 	for _, server := range servers {
-		response, buildErr := h.ensureAndMap(r, principal.WorkspaceID, server, false, "detail_read", now)
+		response, buildErr := h.ensureAndMap(r, principal.WorkspaceExternalID, server, false, "detail_read", now)
 		if buildErr != nil {
-			log.Printf("list mcp catalog workspace_id=%d agent_id=%s server=%s: %v", principal.WorkspaceID, agent.ExternalID, server.Name, buildErr)
+			log.Printf("list mcp catalog workspace_external_id=%s agent_id=%s server=%s: %v", principal.WorkspaceExternalID, agent.ExternalID, server.Name, buildErr)
 			writeCatalogError(w, r, http.StatusInternalServerError, "Could not load MCP tool catalogs")
 			return
 		}
@@ -153,15 +153,15 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ensure, ensureErr := h.database.EnsureMCPToolCatalog(r.Context(), db.EnsureMCPToolCatalogInput{
-			JobWorkspaceID: principal.WorkspaceID,
-			TransportType:  "url",
-			EndpointURL:    normalized,
-			Trigger:        "manual_refresh",
-			Force:          true,
-			Now:            time.Now().UTC(),
+			JobWorkspaceExternalID: principal.WorkspaceExternalID,
+			TransportType:          "url",
+			EndpointURL:            normalized,
+			Trigger:                "manual_refresh",
+			Force:                  true,
+			Now:                    time.Now().UTC(),
 		})
 		if ensureErr != nil {
-			log.Printf("refresh mcp catalog workspace_id=%d agent_id=%s server=%s: %v", principal.WorkspaceID, agent.ExternalID, server.Name, ensureErr)
+			log.Printf("refresh mcp catalog workspace_external_id=%s agent_id=%s server=%s: %v", principal.WorkspaceExternalID, agent.ExternalID, server.Name, ensureErr)
 			writeCatalogError(w, r, http.StatusInternalServerError, "Could not refresh MCP tool catalogs")
 			return
 		}
@@ -206,7 +206,7 @@ func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.
 	return principal, agent, version, true
 }
 
-func (h *Handler) ensureAndMap(r *http.Request, jobWorkspaceID int64, server AgentServer, force bool, trigger string, now time.Time) (catalogResponse, error) {
+func (h *Handler) ensureAndMap(r *http.Request, jobWorkspaceExternalID string, server AgentServer, force bool, trigger string, now time.Time) (catalogResponse, error) {
 	normalized, err := NormalizeEndpoint(server.URL)
 	if err != nil {
 		return catalogResponse{
@@ -229,12 +229,12 @@ func (h *Handler) ensureAndMap(r *http.Request, jobWorkspaceID int64, server Age
 		return mapCatalog(server.Name, catalog, now), nil
 	}
 	ensured, err := h.database.EnsureMCPToolCatalog(r.Context(), db.EnsureMCPToolCatalogInput{
-		JobWorkspaceID: jobWorkspaceID,
-		TransportType:  "url",
-		EndpointURL:    normalized,
-		Trigger:        trigger,
-		Force:          force,
-		Now:            now,
+		JobWorkspaceExternalID: jobWorkspaceExternalID,
+		TransportType:          "url",
+		EndpointURL:            normalized,
+		Trigger:                trigger,
+		Force:                  force,
+		Now:                    now,
 	})
 	if err != nil {
 		return catalogResponse{}, err
@@ -293,6 +293,8 @@ func principalCanSeeOrganization(principal auth.Principal, value string) bool {
 }
 
 func principalCanSeeWorkspace(principal auth.Principal, value string) bool {
+	// "default" 只是控制台路由中“当前已认证 workspace”的别名，不代表全局默认 workspace；
+	// 后续 Agent 查询仍使用 principal.WorkspaceID 作为真实租户边界。
 	value = strings.TrimSpace(value)
 	return value != "" && (value == "default" || value == strings.TrimSpace(principal.WorkspaceUUID) || value == strings.TrimSpace(principal.WorkspaceExternalID))
 }

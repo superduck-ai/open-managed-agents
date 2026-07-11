@@ -46,6 +46,8 @@ func (e *ProbeError) Error() string { return e.Message }
 
 type Prober struct{}
 
+// Probe 通过匿名 Streamable HTTP 会话发现工具，并对分页数量、字段长度和响应体读取量设置上限。
+// 返回结果只包含可安全展示的工具元数据及 MCP 初始化信息，不携带请求凭据或工具输入 schema。
 func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error) {
 	normalized, err := NormalizeEndpoint(endpoint)
 	if err != nil {
@@ -80,8 +82,9 @@ func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error)
 	}
 	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "open-managed-agents-catalog", Version: "1"}, nil)
 	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:             normalized,
-		HTTPClient:           client,
+		Endpoint:   normalized,
+		HTTPClient: client,
+		// 重试统一交给持久化 job 状态机处理，避免 SDK 内部重试绕过 attempts、退避与可观测状态。
 		MaxRetries:           -1,
 		DisableStandaloneSSE: true,
 	}, nil)
@@ -106,6 +109,8 @@ func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error)
 			if name == "" || runeCount(name) > maxToolNameRunes {
 				return ProbeResult{}, probeError("invalid_response", "The MCP server returned an invalid tool name.", false)
 			}
+			// 工具权限和前端展示都以 name 作为身份键；重复名称会产生不确定映射，
+			// 因此拒绝整份快照，而不是静默采用 first-wins 或 last-wins。
 			if _, duplicate := seenNames[name]; duplicate {
 				return ProbeResult{}, probeError("invalid_response", "The MCP server returned duplicate tool names.", false)
 			}
@@ -144,6 +149,8 @@ func sameOrigin(left, right *url.URL) bool {
 	return strings.EqualFold(left.Scheme, right.Scheme) && strings.EqualFold(left.Host, right.Host)
 }
 
+// statusRecorder 补充记录 MCP SDK 错误中可能丢失的 HTTP 状态，用于区分鉴权、限流和上游故障；
+// transport wrapper 同时限制单个不受信响应体的读取量，互斥锁保护潜在的并发请求。
 type statusRecorder struct {
 	mu         sync.Mutex
 	statusCode int

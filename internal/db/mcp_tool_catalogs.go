@@ -17,6 +17,8 @@ const (
 	mcpToolCatalogReferenceTouchInterval = 5 * time.Minute
 )
 
+// MCPToolCatalog 是按规范化 transport_type + endpoint_url 全局共享的匿名派生缓存，不属于任何组织或 workspace。
+// 这里不得存放认证信息或租户特有的运行时观察；此类数据必须使用单独的租户级模型。
 type MCPToolCatalog struct {
 	ID                  int64
 	ExternalID          string
@@ -43,13 +45,13 @@ type MCPToolCatalog struct {
 }
 
 type EnsureMCPToolCatalogInput struct {
-	// JobWorkspaceID 只满足通用 jobs 表的任务归属要求，不参与全局 catalog identity。
-	JobWorkspaceID int64
-	TransportType  string
-	EndpointURL    string
-	Trigger        string
-	Force          bool
-	Now            time.Time
+	// JobWorkspaceExternalID 是便于日志与排障识别的稳定业务 ID，只记录任务来源，不参与全局 catalog identity。
+	JobWorkspaceExternalID string
+	TransportType          string
+	EndpointURL            string
+	Trigger                string
+	Force                  bool
+	Now                    time.Time
 }
 
 type EnsureMCPToolCatalogResult struct {
@@ -99,8 +101,9 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 	if input.TransportType == "" {
 		input.TransportType = "url"
 	}
-	if input.JobWorkspaceID <= 0 {
-		return EnsureMCPToolCatalogResult{}, fmt.Errorf("job workspace id is required")
+	input.JobWorkspaceExternalID = strings.TrimSpace(input.JobWorkspaceExternalID)
+	if input.JobWorkspaceExternalID == "" {
+		return EnsureMCPToolCatalogResult{}, fmt.Errorf("job workspace external id is required")
 	}
 	// Agent 详情页会高频调用 Ensure；引用时间仍在窗口内且 catalog 可复用时直接只读返回，
 	// 避免每次轮询都更新 last_referenced_at/updated_at。执行中的 generation 即使 Force=true 也复用；
@@ -145,6 +148,17 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 		return EnsureMCPToolCatalogResult{Catalog: catalog}, nil
 	}
 
+	// MCP 业务链只传递可读的 workspace external ID；直到写入通用 jobs 表时，
+	// 才在同一事务内解析其 bigint 主键。该内部主键仍不参与 catalog 的全局去重。
+	var jobWorkspaceID int64
+	if err := tx.QueryRow(ctx, `
+		select id
+		from workspaces
+		where external_id = $1
+	`, input.JobWorkspaceExternalID).Scan(&jobWorkspaceID); err != nil {
+		return EnsureMCPToolCatalogResult{}, mapNoRows(err)
+	}
+
 	// generation 递增和对应 job 写入必须在同一事务中，避免“已标记刷新但没有任务”。
 	// job external_id 由 catalog 与 generation 确定，使并发 Ensure 可以安全幂等。
 	generation := catalog.RequestedGeneration + 1
@@ -161,10 +175,11 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"schema_version":      1,
-		"catalog_external_id": catalog.ExternalID,
-		"generation":          generation,
-		"trigger":             input.Trigger,
+		"schema_version":        1,
+		"catalog_external_id":   catalog.ExternalID,
+		"generation":            generation,
+		"trigger":               input.Trigger,
+		"workspace_external_id": input.JobWorkspaceExternalID,
 	})
 	if err != nil {
 		return EnsureMCPToolCatalogResult{}, err
@@ -174,7 +189,7 @@ func (d *DB) EnsureMCPToolCatalog(ctx context.Context, input EnsureMCPToolCatalo
 		insert into jobs (external_id, workspace_id, type, status, payload, run_after, created_at, updated_at)
 		values ($1, $2, 'mcp_tool_discovery', 'pending', $3::jsonb, $4, $4, $4)
 		on conflict (external_id) do nothing
-	`, jobExternalID, input.JobWorkspaceID, jsonArg(payload), input.Now)
+	`, jobExternalID, jobWorkspaceID, jsonArg(payload), input.Now)
 	if err != nil {
 		return EnsureMCPToolCatalogResult{}, err
 	}
@@ -207,6 +222,8 @@ func (d *DB) LeaseMCPToolDiscoveryJobs(ctx context.Context, workerID string, lim
 	if leaseDuration <= 0 {
 		leaseDuration = 30 * time.Second
 	}
+	// 多个 worker 实例通过 FOR UPDATE SKIP LOCKED 并发领取任务；过期的 running lease 可被重新领取。
+	// 完成或失败时还会校验 locked_by，防止旧 worker 在 lease 失效后结算任务。
 	rows, err := d.Pool.Query(ctx, `
 		with next_jobs as (
 			select id
@@ -313,6 +330,8 @@ func (d *DB) FailMCPToolDiscovery(ctx context.Context, input FailMCPToolDiscover
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// 可重试且次数未耗尽时只延后 job，generation 保持 active，并继续保留上一份成功快照。
+	// 只有终态错误或重试耗尽才结算 generation，避免等待重试期间又创建并行探测。
 	if willRetry {
 		runAfter := input.Now.Add(input.RetryDelay)
 		if err := settleMCPToolDiscoveryJob(ctx, tx, input.JobID, input.WorkerID, "retry", nextAttempts, runAfter, input.ErrorCode, input.Now); err != nil {
@@ -331,6 +350,8 @@ func (d *DB) FailMCPToolDiscovery(ctx context.Context, input FailMCPToolDiscover
 		return tx.Commit(ctx)
 	}
 
+	// 非重试错误表示发现流程已得到业务终态（例如 auth_required），因此 job 记为 completed；
+	// 只有可重试错误耗尽尝试次数才记为 failed。
 	jobStatus := "completed"
 	if input.Retryable {
 		jobStatus = "failed"
@@ -374,6 +395,9 @@ func (d *DB) RunMCPToolCatalogRetention(ctx context.Context, now time.Time) erro
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// 保留策略分阶段执行：7 天后清除错误详情，30 天后清除陈旧工具载荷；
+	// 工具载荷与整行删除只处理不存在 active generation 的记录。项目不使用外键，
+	// 因此先删除终态 job，再删除 catalog，最后兜底清理孤儿 job。
 	if _, err := tx.Exec(ctx, `
 		update mcp_tool_catalogs
 		set last_error_message = null,

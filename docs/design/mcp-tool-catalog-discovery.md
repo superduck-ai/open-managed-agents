@@ -285,9 +285,12 @@ payload 只保存：
   "schema_version": 1,
   "catalog_external_id": "mcpc_...",
   "generation": 3,
-  "trigger": "manual_refresh"
+  "trigger": "manual_refresh",
+  "workspace_external_id": "workspace_default"
 }
 ```
+
+MCP 业务链只传递稳定、可读的 `workspace_external_id`，Console 日志和 job payload 也使用该值，便于直接排障。只有真正创建 job 时，DB 才在调度事务内按 `workspaces.external_id` 解析内部 bigint，并写入通用 `jobs.workspace_id`；该 bigint 和 external ID 都只是任务来源，不参与全局 catalog identity。路由别名 `default`、workspace UUID 和可修改名称不能代替真实 external ID。
 
 payload 不保存 token、header、vault secret、响应体或授权上下文，也不复制 URL。`trigger` 允许 `agent_create`、`agent_update`、`detail_read`、`manual_refresh` 和 `backfill`。
 

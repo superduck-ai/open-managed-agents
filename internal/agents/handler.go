@@ -45,7 +45,7 @@ type skillPrewarmSnapshotEnqueuer interface {
 }
 
 type mcpCatalogEnqueuer interface {
-	EnsureAgent(ctx context.Context, workspaceID int64, mcpServers json.RawMessage, trigger string) error
+	EnsureAgent(ctx context.Context, workspaceExternalID string, mcpServers json.RawMessage, trigger string) error
 }
 
 type agentResponse struct {
@@ -183,7 +183,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, created, "agent_create")
-	h.enqueueMCPCatalog(r.Context(), principal.WorkspaceID, created.MCPServers, created.ExternalID, "agent_create")
+	h.enqueueMCPCatalog(r.Context(), principal.WorkspaceExternalID, created.MCPServers, created.ExternalID, "agent_create")
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(created))
 }
 
@@ -393,7 +393,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, updated, "agent_update")
 	}
 	if !agentsnapshot.SameRawJSON(current.MCPServers, updated.MCPServers) {
-		h.enqueueMCPCatalog(r.Context(), principal.WorkspaceID, updated.MCPServers, updated.ExternalID, "agent_update")
+		h.enqueueMCPCatalog(r.Context(), principal.WorkspaceExternalID, updated.MCPServers, updated.ExternalID, "agent_update")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
 }
@@ -1255,7 +1255,7 @@ func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, ag
 	}
 }
 
-func (h *Handler) enqueueMCPCatalog(ctx context.Context, workspaceID int64, mcpServers json.RawMessage, agentID, trigger string) {
+func (h *Handler) enqueueMCPCatalog(ctx context.Context, workspaceExternalID string, mcpServers json.RawMessage, agentID, trigger string) {
 	if h == nil || h.mcp == nil {
 		return
 	}
@@ -1266,8 +1266,8 @@ func (h *Handler) enqueueMCPCatalog(ctx context.Context, workspaceID int64, mcpS
 	go func() {
 		enqueueCtx, cancel := context.WithTimeout(requestContext, mcpCatalogEnqueueTimeout)
 		defer cancel()
-		if err := h.mcp.EnsureAgent(enqueueCtx, workspaceID, servers, trigger); err != nil {
-			log.Printf("enqueue agent mcp catalog agent_id=%s trigger=%s: %v", agentID, trigger, err)
+		if err := h.mcp.EnsureAgent(enqueueCtx, workspaceExternalID, servers, trigger); err != nil {
+			log.Printf("enqueue agent mcp catalog workspace_external_id=%s agent_id=%s trigger=%s: %v", workspaceExternalID, agentID, trigger, err)
 		}
 	}()
 }

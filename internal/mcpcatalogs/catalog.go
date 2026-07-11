@@ -46,7 +46,9 @@ func ParseAgentServers(raw json.RawMessage) ([]AgentServer, error) {
 	return servers, nil
 }
 
-func (e *Enqueuer) EnsureAgent(ctx context.Context, workspaceID int64, raw json.RawMessage, trigger string) error {
+// EnsureAgent 解析 Agent 配置中的 MCP servers，并为每个合法 endpoint 幂等确保全局匿名工具目录及异步发现任务。
+// workspaceExternalID 只记录通用 job 的来源，不参与 catalog identity；单个 server 失败时仍会继续处理其余 server。
+func (e *Enqueuer) EnsureAgent(ctx context.Context, workspaceExternalID string, raw json.RawMessage, trigger string) error {
 	if e == nil || !e.cfg.MCPDiscoveryEnabled {
 		return nil
 	}
@@ -64,11 +66,11 @@ func (e *Enqueuer) EnsureAgent(ctx context.Context, workspaceID int64, raw json.
 			continue
 		}
 		_, ensureErr := e.store.EnsureMCPToolCatalog(ctx, db.EnsureMCPToolCatalogInput{
-			JobWorkspaceID: workspaceID,
-			TransportType:  "url",
-			EndpointURL:    normalizedURL,
-			Trigger:        trigger,
-			Now:            time.Now().UTC(),
+			JobWorkspaceExternalID: workspaceExternalID,
+			TransportType:          "url",
+			EndpointURL:            normalizedURL,
+			Trigger:                trigger,
+			Now:                    time.Now().UTC(),
 		})
 		if ensureErr != nil {
 			joined = errors.Join(joined, ensureErr)

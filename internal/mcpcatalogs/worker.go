@@ -56,6 +56,7 @@ func StartWorker(ctx context.Context, store WorkerStore, cfg config.Config) {
 		return
 	}
 	worker := NewWorker(store, cfg)
+	// 任务消费与缓存保留策略使用独立循环：探测按秒轮询，清理启动时执行一次后按天运行。
 	go worker.run(ctx)
 	go worker.runRetention(ctx)
 }
@@ -103,6 +104,8 @@ func (w *Worker) runOnce(ctx context.Context) error {
 }
 
 func (w *Worker) process(ctx context.Context, job db.MCPToolDiscoveryJob) {
+	// 每次外部探测都有独立超时；job lease 会额外预留落库时间，因此正常情况下不会在结算前过期。
+	// 数据库仍以 locked_by 和 generation 作为最终围栏；结算返回 ErrNotFound 表示当前 worker 已失去所有权，可直接忽略。
 	timeout := discoveryProbeTimeout(w.cfg.MCPDiscoveryProbeTimeout)
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	result, err := w.prober.Probe(probeCtx, job.EndpointURL)

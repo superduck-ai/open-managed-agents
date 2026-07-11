@@ -474,3 +474,51 @@ jobs:
         env:
           HEAD_REF: ${{ needs.audit-comment.outputs.head_ref }}
           HIGH_BEFORE: ${{ steps.audit-before.outputs.high_before }}
+
+      - name: Notify on docs-sync failure
+        if: failure()
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ needs.audit-comment.outputs.pr_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const runUrl = String(process.env.RUN_URL || "");
+            const marker = "<!-- design-doc-audit-failure -->";
+            const body = [
+              "### 设计文档同步失败",
+              "",
+              `docs-sync agent 运行失败或超时（[查看运行日志](${runUrl})）。`,
+              "",
+              "可能原因：agent 超时（45 分钟上限）、LLM 网关不可用、或推送被拒。",
+              "可重新评论 `@duckpr docs` 重试；如仅需审计结果，用 `@duckpr docs --audit-only`。",
+              "",
+              marker,
+            ].join("\n");
+            // Upsert: replace previous failure notice so we don't spam on retries.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (c) => c.user?.type === "Bot" && String(c.body || "").includes(marker)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }

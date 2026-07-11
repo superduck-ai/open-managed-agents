@@ -382,6 +382,7 @@ jobs:
           INPUT_MODEL: ${{ inputs.model }}
           VAR_DOCS_MODEL: ${{ vars.DUCKPR_DOCS_MODEL }}
           VAR_MODEL: ${{ vars.DUCKPR_MODEL }}
+          VAR_BASE_URL: ${{ inputs.llm_base_url || vars.LLM_BASE_URL || vars.ANTHROPIC_BASE_URL }}
         run: |
           set -euo pipefail
           # DuckPR Review always receives model from the bot (observed: anthropic/glm-5.2).
@@ -393,8 +394,24 @@ jobs:
             echo "::error::Pass -f model=anthropic/glm-5.2 (or set vars.DUCKPR_DOCS_MODEL). Matching DuckPR Review is required."
             exit 1
           fi
+          # Pullfrog/opencode routes providers by the model id prefix (e.g.
+          # anthropic/<id>, bedrock/<id>). A bare id like "kimi-k2.5" has no
+          # provider signal, so Pullfrog falls back to bedrock and fails on
+          # missing AWS_* secrets. When LLM_BASE_URL points at an
+          # Anthropic-compatible gateway (moonshot/kimi/any /anthropic suffix),
+          # namespace the model under anthropic/ so routing lands on the
+          # Anthropic provider that honors ANTHROPIC_BASE_URL + AUTH_TOKEN.
+          base_url="${VAR_BASE_URL:-}"
+          case "$base_url" in
+            */anthropic|*/anthropic/*|*moonshot*|*kimi*)
+              case "$model" in
+                */*) ;;  # already provider-namespaced
+                *) model="anthropic/${model}" ;;
+              esac
+              ;;
+          esac
           echo "model=${model}" >> "$GITHUB_OUTPUT"
-          echo "Using model=${model}"
+          echo "Using model=${model} (base_url=${base_url:-unset})"
 
       - name: Run private Pullfrog docs-sync
         uses: ./.duckpr/pullfrog-private

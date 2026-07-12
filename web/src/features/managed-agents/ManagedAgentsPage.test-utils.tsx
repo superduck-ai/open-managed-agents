@@ -159,7 +159,9 @@ export type MockAgentsApiOptions = {
   mcpDirectoryServers?: Array<Record<string, unknown>>;
   mcpDirectoryErrorOnce?: boolean;
   mcpToolCatalogs?: Array<Record<string, unknown>>;
+  mcpToolCatalogRefreshResult?: Record<string, unknown>;
   mcpToolCatalogRefreshErrorOnce?: boolean;
+  mcpToolCatalogRefreshWait?: Promise<void>;
   analyticsOverview?: Record<string, unknown>;
   analyticsTimeseries?: Array<Record<string, unknown>>;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
@@ -184,6 +186,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
+  let mcpToolCatalogs = options.mcpToolCatalogs?.map((catalog) => ({ ...catalog }));
   const now = new Date().toISOString();
   const skillDetails = new Map((options.skills ?? []).map((skill) => [skill.id, skillResponse(skill)]));
   let environments = [
@@ -237,11 +240,10 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       const agentId = decodeURIComponent(mcpCatalogMatch[1]);
       const agent = agents.find((candidate) => candidate.id === agentId);
       const servers = Array.isArray(agent?.mcp_servers) ? agent.mcp_servers : [];
-      const data = options.mcpToolCatalogs ?? servers.map((server) => ({
+      const data = mcpToolCatalogs ?? servers.map((server) => ({
         server_name: typeof server === 'object' && server && 'name' in server ? String(server.name) : 'mcp',
         status: 'unknown',
-        tools: null,
-        generation: 0
+        tools: null
       }));
       return jsonResponse({ data, version: agent?.version ?? 1 });
     }
@@ -250,10 +252,24 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         mcpToolCatalogRefreshErrorsRemaining -= 1;
         return jsonResponse({ error: { message: 'MCP catalog refresh unavailable' } }, 503);
       }
-      const names = Array.isArray(body?.server_names) ? body.server_names : [];
-      return jsonResponse({
-        data: names.map((name) => ({ server_name: name, generation: 1, queued: true }))
-      }, 202);
+      await options.mcpToolCatalogRefreshWait;
+      const serverName = typeof body?.server_name === 'string' ? body.server_name : '';
+      if (!serverName) {
+        return jsonResponse({ error: { message: 'server_name is required' } }, 400);
+      }
+      const refreshedCatalog = {
+        server_name: serverName,
+        status: 'ready',
+        tools: [],
+        ...options.mcpToolCatalogRefreshResult
+      };
+      mcpToolCatalogs = [
+        ...(mcpToolCatalogs ?? []).filter((catalog) => catalog.server_name !== serverName),
+        refreshedCatalog
+      ];
+      const agentId = decodeURIComponent(mcpCatalogMatch[1]);
+      const agent = agents.find((candidate) => candidate.id === agentId);
+      return jsonResponse({ data: refreshedCatalog, version: agent?.version ?? 1 });
     }
 
     if (url.startsWith('/api/directory/servers?') && method === 'GET') {

@@ -61,15 +61,15 @@ export function refreshAgentMcpToolCatalogs(
   workspaceId: string,
   agentId: string,
   version: number,
-  serverNames: string[],
+  serverName: string,
   csrfToken?: string
 ) {
   const versionQuery = version > 0 ? `?version=${encodeURIComponent(String(version))}` : '';
-  return consoleApi<{ data: Array<{ server_name: string; generation: number; queued: boolean }> }>(
+  return consoleApi<{ data: McpToolCatalog; version: number }>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/mcp_tool_catalogs/refresh${versionQuery}`,
     {
       method: 'POST',
-      body: JSON.stringify({ server_names: serverNames }),
+      body: JSON.stringify({ server_name: serverName }),
       csrfToken
     }
   );

@@ -23,24 +23,16 @@ export type AgentToolDisplayCard = {
   tools: AgentToolListItem[];
   toolCountKnown?: boolean;
   catalogStatus?: McpToolCatalogStatus;
-  catalogError?: { code: string; message: string };
   serverName?: string;
-  discoveredAt?: string;
 };
 
-export type McpToolCatalogStatus = 'unknown' | 'loading' | 'ready' | 'refreshing' | 'stale' | 'auth_required' | 'error';
+export type McpToolCatalogStatus = 'unknown' | 'ready' | 'error';
 
 export type McpToolCatalog = {
   server_name: string;
   status: McpToolCatalogStatus;
   // null 表示尚无成功发现快照；[] 表示 MCP 已成功报告零个工具，两者不能合并处理。
   tools: Array<{ name: string; title?: string; description?: string }> | null;
-  source?: 'anonymous_probe';
-  protocol_version?: string;
-  discovered_at?: string;
-  expires_at?: string;
-  last_error?: { code: string; message: string };
-  generation: number;
 };
 
 export type McpDirectoryServer = {
@@ -294,9 +286,7 @@ export function buildAgentToolDisplayCards(
       tools: rows,
       toolCountKnown: discoveredTools !== null && discoveredTools !== undefined ? true : rows.length > 0,
       catalogStatus: catalog?.status,
-      catalogError: catalog?.last_error,
-      serverName,
-      discoveredAt: catalog?.discovered_at
+      serverName
     });
   });
 

@@ -2,7 +2,6 @@ package mcpcatalogs
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,22 +25,16 @@ const (
 	maxDescriptionRunes   = 4096
 )
 
-type CatalogTool struct {
-	Name        string `json:"name"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-}
+// CatalogTool 复用持久化 schema，确保探测结果、数据库和 Console API 使用同一份字段定义。
+type CatalogTool = db.MCPToolCatalogItem
 
 type ProbeResult struct {
-	Tools           []CatalogTool
-	ProtocolVersion string
-	ServerInfo      json.RawMessage
+	Tools []CatalogTool
 }
 
 type ProbeError struct {
-	Code      string
-	Message   string
-	Retryable bool
+	Code    string
+	Message string
 }
 
 func (e *ProbeError) Error() string { return e.Message }
@@ -47,11 +42,11 @@ func (e *ProbeError) Error() string { return e.Message }
 type Prober struct{}
 
 // Probe 通过匿名 Streamable HTTP 会话发现工具，并对分页数量、字段长度和响应体读取量设置上限。
-// 返回结果只包含可安全展示的工具元数据及 MCP 初始化信息，不携带请求凭据或工具输入 schema。
+// 返回结果只包含可安全展示的工具元数据，不携带请求凭据、初始化详情或工具输入 schema。
 func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error) {
 	normalized, err := NormalizeEndpoint(endpoint)
 	if err != nil {
-		return ProbeResult{}, probeError("invalid_endpoint", "The MCP endpoint is invalid.", false)
+		return ProbeResult{}, probeError("invalid_endpoint", "The MCP endpoint is invalid.")
 	}
 	status := &statusRecorder{}
 	// 当前产品决策不做目标地址级 SSRF 过滤，直接使用系统 DNS 和标准拨号；
@@ -84,7 +79,7 @@ func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error)
 	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:   normalized,
 		HTTPClient: client,
-		// 重试统一交给持久化 job 状态机处理，避免 SDK 内部重试绕过 attempts、退避与可观测状态。
+		// 手动刷新只执行一次明确的用户请求；关闭 SDK 内部重试，让超时和失败立即返回页面。
 		MaxRetries:           -1,
 		DisableStandaloneSSE: true,
 	}, nil)
@@ -103,19 +98,19 @@ func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error)
 		}
 		for _, tool := range result.Tools {
 			if tool == nil {
-				return ProbeResult{}, probeError("invalid_response", "The MCP server returned an invalid tool list.", false)
+				return ProbeResult{}, probeError("invalid_response", "The MCP server returned an invalid tool list.")
 			}
 			name := strings.TrimSpace(tool.Name)
 			if name == "" || runeCount(name) > maxToolNameRunes {
-				return ProbeResult{}, probeError("invalid_response", "The MCP server returned an invalid tool name.", false)
+				return ProbeResult{}, probeError("invalid_response", "The MCP server returned an invalid tool name.")
 			}
 			// 工具权限和前端展示都以 name 作为身份键；重复名称会产生不确定映射，
 			// 因此拒绝整份快照，而不是静默采用 first-wins 或 last-wins。
 			if _, duplicate := seenNames[name]; duplicate {
-				return ProbeResult{}, probeError("invalid_response", "The MCP server returned duplicate tool names.", false)
+				return ProbeResult{}, probeError("invalid_response", "The MCP server returned duplicate tool names.")
 			}
 			if len(tools) >= maxCatalogTools {
-				return ProbeResult{}, probeError("response_too_large", "The MCP server returned too many tools.", false)
+				return ProbeResult{}, probeError("response_too_large", "The MCP server returned too many tools.")
 			}
 			seenNames[name] = struct{}{}
 			title := truncateRunes(strings.TrimSpace(tool.Title), maxToolTitleRunes)
@@ -130,19 +125,10 @@ func (p Prober) Probe(ctx context.Context, endpoint string) (ProbeResult, error)
 		}
 		cursor = strings.TrimSpace(result.NextCursor)
 		if cursor == "" {
-			initialize := session.InitializeResult()
-			var serverInfo json.RawMessage
-			protocolVersion := ""
-			if initialize != nil {
-				protocolVersion = initialize.ProtocolVersion
-				if initialize.ServerInfo != nil {
-					serverInfo, _ = json.Marshal(initialize.ServerInfo)
-				}
-			}
-			return ProbeResult{Tools: tools, ProtocolVersion: protocolVersion, ServerInfo: serverInfo}, nil
+			return ProbeResult{Tools: tools}, nil
 		}
 	}
-	return ProbeResult{}, probeError("response_too_large", "The MCP server returned too many tool pages.", false)
+	return ProbeResult{}, probeError("response_too_large", "The MCP server returned too many tool pages.")
 }
 
 func sameOrigin(left, right *url.URL) bool {
@@ -190,23 +176,23 @@ func classifyProbeError(err error, statusCode int) error {
 		return existing
 	}
 	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
-		return probeError("auth_required", "Authentication is required to discover this MCP server's tools.", false)
+		return probeError("auth_required", "Authentication is required to discover this MCP server's tools.")
 	}
 	if statusCode == http.StatusTooManyRequests || statusCode >= 500 {
-		return probeError("upstream_unavailable", "The MCP server is temporarily unavailable.", true)
+		return probeError("upstream_unavailable", "The MCP server is temporarily unavailable.")
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return probeError("timeout", "The MCP server did not respond in time.", true)
+		return probeError("timeout", "The MCP server did not respond in time.")
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return probeError("unreachable", "The MCP server could not be reached.", true)
+		return probeError("unreachable", "The MCP server could not be reached.")
 	}
-	return probeError("invalid_response", "The MCP server returned an invalid MCP response.", false)
+	return probeError("invalid_response", "The MCP server returned an invalid MCP response.")
 }
 
-func probeError(code, message string, retryable bool) *ProbeError {
-	return &ProbeError{Code: code, Message: message, Retryable: retryable}
+func probeError(code, message string) *ProbeError {
+	return &ProbeError{Code: code, Message: message}
 }
 
 func runeCount(value string) int { return len([]rune(value)) }
@@ -217,12 +203,4 @@ func truncateRunes(value string, max int) string {
 		return value
 	}
 	return string(runes[:max])
-}
-
-func probeErrorDetails(err error) (string, string, bool) {
-	var probeErr *ProbeError
-	if errors.As(err, &probeErr) {
-		return probeErr.Code, probeErr.Message, probeErr.Retryable
-	}
-	return "internal_error", "MCP discovery failed.", true
 }

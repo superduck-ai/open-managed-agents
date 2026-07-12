@@ -132,15 +132,18 @@ describe('Agent MCP catalog API', () => {
     globalThis.fetch = mock(async (input, init) => {
       requestUrl = String(input);
       requestInit = init;
-      return jsonResponse({ data: [{ server_name: 'weather', generation: 2, queued: true }] }, 202);
+      return jsonResponse({
+        data: { server_name: 'weather', status: 'ready', tools: [{ name: 'get_forecast' }] },
+        version: 3
+      });
     });
 
-    const response = await refreshAgentMcpToolCatalogs('org', 'default', 'agent_123', 3, ['weather'], 'csrf-token');
+    const response = await refreshAgentMcpToolCatalogs('org', 'default', 'agent_123', 3, 'weather', 'csrf-token');
 
-    expect(response.data[0]).toEqual({ server_name: 'weather', generation: 2, queued: true });
+    expect(response.data).toEqual({ server_name: 'weather', status: 'ready', tools: [{ name: 'get_forecast' }] });
     expect(requestInit?.method).toBe('POST');
     expect(new Headers(requestInit?.headers).get('X-CSRF-Token')).toBe('csrf-token');
-    expect(JSON.parse(String(requestInit?.body))).toEqual({ server_names: ['weather'] });
+    expect(JSON.parse(String(requestInit?.body))).toEqual({ server_name: 'weather' });
     expect(new URL(requestUrl, 'https://oma.duck.ai').searchParams.get('version')).toBe('3');
   });
 });

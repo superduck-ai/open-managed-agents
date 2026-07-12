@@ -125,14 +125,12 @@ describe('agent tool display model', () => {
     const [ready] = buildAgentToolDisplayCards(agent, directory, [{
       server_name: 'weather',
       status: 'ready',
-      tools: [{ name: 'get_forecast', title: 'Forecast', description: 'Returns a forecast.' }],
-      generation: 1
+      tools: [{ name: 'get_forecast', title: 'Forecast', description: 'Returns a forecast.' }]
     }]);
     const [empty] = buildAgentToolDisplayCards(agent, directory, [{
       server_name: 'weather',
       status: 'ready',
-      tools: [],
-      generation: 2
+      tools: []
     }]);
 
     expect(ready.tools).toEqual([{ name: 'get_forecast', description: 'Returns a forecast.', permission: 'always_deny' }]);

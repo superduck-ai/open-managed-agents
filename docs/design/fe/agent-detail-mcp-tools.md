@@ -1,6 +1,6 @@
 # Agent detail MCP 与工具展示
 
-> 当前实现状态：静态 Directory metadata 与后端动态 catalog 已同时落地。动态发现、持久缓存、刷新状态和安全边界见 [Agent Detail MCP Tool Catalog 动态发现与缓存设计](../mcp-tool-catalog-discovery.md)。
+> 当前实现状态：静态 Directory metadata 与后端成功快照 catalog 已同时落地。手动同步刷新、持久化和网络边界见 [Agent Detail MCP 工具目录手动刷新设计](../mcp-tool-catalog-discovery.md)。
 
 ## 目标与边界
 
@@ -23,7 +23,7 @@ flowchart LR
   Agent["Agent version response"] --> Classify["Classify tools and MCP servers"]
   Directory["MCP directory API"] --> Normalize["Keep slug, display name, URL, icon, tool names"]
   Normalize --> Resolve["Resolve MCP metadata by exact slug"]
-  Catalog["Global anonymous MCP catalog via Console API"] --> Inventory["Resolve live / stale / fallback inventory"]
+  Catalog["Global anonymous MCP catalog via Console API"] --> Inventory["Resolve saved / fallback inventory"]
   Resolve --> Inventory
   Classify --> Cards["Build ordered display cards"]
   Inventory --> Cards
@@ -52,7 +52,9 @@ flowchart LR
 
 路由中的 organization/workspace 用于验证当前用户有权读取该 Agent/version，并从 Agent 配置取得 endpoint；它们不是 catalog identity。后端匿名 catalog 以 `transport_type + normalized endpoint_url` 全局唯一，相同 endpoint 可以跨 Agent、workspace 和 organization 复用。响应不暴露 endpoint 身份字段，前端始终按当前版本的 `server_name` 合并展示数据，也不能直接查询任意全局 endpoint。
 
-工具清单优先级为动态 catalog（包括成功返回的真实空数组）> Directory 非空工具名 > unknown。动态成功使用 replace 语义，不与 Directory 做 union。`tools=null` 表示未知，count 显示 `—`；`tools=[]` 才显示真实 `0`。`loading`/`refreshing` 每秒轮询后端 cache，标签页进入后台后仍继续，浏览器不会直连 MCP endpoint；服务端对活跃 catalog 使用只读 fast path，并把引用时间 touch 限制为最多每 5 分钟一次。失败且存在 last-good 时继续展示旧列表；用户可用独立 Refresh 按钮强制调度新 generation，刷新请求失败时显示 error toast 且不覆盖现有工具。
+工具清单优先级为成功 catalog（包括真实空数组）> Directory 非空工具名 > unknown。动态成功使用 replace 语义，不与 Directory 做 union。数据库不存在对应 endpoint 时 GET 返回 `tools=null`，count 显示 `—`；只有成功保存的 `tools=[]` 才显示真实 `0`。
+
+GET 只读取数据库，不轮询也不自动连接 MCP。用户点击单张卡片的 Refresh 后，POST 会在后端请求内同步执行匿名 `tools/list`，成功落库后直接返回最终 catalog；前端按请求发起时的 Agent/version scope 替换 TanStack Query cache，避免等待期间切换版本造成串写。常规成功无需第二次 GET；仅当初次 collection GET 已失败、没有完整 merge 基线时，前端才对仍活跃的同一 scope 回源 GET，补齐其他 MCP 已保存快照。刷新期间保留旧列表并禁用所有 MCP Refresh 按钮，失败时显示 error toast 且不覆盖现有工具。浏览器始终不会直连 MCP endpoint。
 
 ## 权限计算
 
@@ -75,4 +77,4 @@ flowchart LR
 - `agents/tools/AgentToolsSection.tsx`：TanStack Query、只读卡片、折叠交互、动态状态和手动刷新。
 - `agents/detail.tsx`：只选择 Section 空态或挂载工具 feature。
 
-验证覆盖孤立 `mcp_toolset`、未知 MCP、无 concrete URL 的 remote metadata、local 过滤、GitHub/Slack fallback、目录失败、动态 catalog replace/真实空数组、MCP 默认 ask、重复配置 first-wins、deny 派生、混合聚合、三类卡片共存、目录 URL 覆盖、图标失败 fallback、custom 无权限 UI、空态无占位卡片以及历史 Agent 版本的工具区切换。API 测试额外覆盖目录并发去重/成功缓存/失败重试，以及动态 catalog 的版本 scope、Console context、CSRF refresh；页面测试覆盖 live inventory 与 refresh 请求。
+验证覆盖孤立 `mcp_toolset`、未知 MCP、无 concrete URL 的 remote metadata、local 过滤、GitHub/Slack fallback、目录失败、catalog replace/真实空数组、MCP 默认 ask、重复配置 first-wins、deny 派生、混合聚合、三类卡片共存、目录 URL 覆盖、图标失败 fallback、custom 无权限 UI、空态无占位卡片以及历史 Agent 版本的工具区切换。API 测试额外覆盖目录并发去重/成功缓存/失败重试，以及 catalog 的版本 scope、Console context 和同步 refresh；页面/组件测试覆盖成功立即替换、失败保留旧值、pending 按钮状态、空数组覆盖 Directory、初次 GET 失败后补齐完整 collection、pending 期间切换版本不串写 cache，以及多卡片 Refresh accessible name 与 Directory 状态播报。

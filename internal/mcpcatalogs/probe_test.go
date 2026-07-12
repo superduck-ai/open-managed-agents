@@ -23,8 +23,8 @@ func TestProbeClassifiesAuthenticationFailure(t *testing.T) {
 	if !errors.As(err, &probeErr) {
 		t.Fatalf("Probe error = %v, want ProbeError", err)
 	}
-	if probeErr.Code != "auth_required" || probeErr.Retryable {
-		t.Fatalf("ProbeError = %#v, want terminal auth_required", probeErr)
+	if probeErr.Code != "auth_required" {
+		t.Fatalf("ProbeError = %#v, want auth_required", probeErr)
 	}
 	if probeErr.Message == "do not expose this upstream body" {
 		t.Fatal("ProbeError leaked an upstream response body")
@@ -52,9 +52,6 @@ func TestProbeAllowsPrivateMCPWithoutAddressPolicy(t *testing.T) {
 	}
 	if got := result.Tools[0]; got.Name != "get_forecast" || got.Title != "Get forecast" || got.Description != "Returns a weather forecast." {
 		t.Fatalf("Probe tool = %#v", got)
-	}
-	if result.ProtocolVersion == "" {
-		t.Fatal("Probe did not retain the negotiated protocol version")
 	}
 }
 

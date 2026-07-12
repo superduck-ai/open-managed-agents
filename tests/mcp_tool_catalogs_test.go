@@ -4,26 +4,76 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func TestMCPToolCatalogConsoleAuthorization(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("mcp-catalog-console-bucket"))
+const (
+	testMCPAvailable int32 = iota
+	testMCPUnavailable
+)
+
+type controllableMCPServer struct {
+	server *httptest.Server
+	mode   atomic.Int32
+}
+
+type testCatalogItem struct {
+	ServerName string                  `json:"server_name"`
+	Status     string                  `json:"status"`
+	Tools      []db.MCPToolCatalogItem `json:"tools"`
+}
+
+type testCatalogListResponse struct {
+	Data    []testCatalogItem `json:"data"`
+	Version int               `json:"version"`
+}
+
+type testCatalogRefreshResponse struct {
+	Data    testCatalogItem `json:"data"`
+	Version int             `json:"version"`
+}
+
+func TestMCPToolCatalogConsoleAPI(t *testing.T) {
+	weather := newControllableMCPServer(t, &mcp.Tool{
+		Name:        "get_forecast",
+		Title:       "Get forecast",
+		Description: "Returns a weather forecast.",
+	})
+	empty := newControllableMCPServer(t)
+	weatherEndpoint := weather.server.URL + "/mcp?toolsets=all"
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.MCPDiscoveryEnabled = true
+	cfg.MCPDiscoveryProbeTimeout = 150 * time.Millisecond
+	app := newTestAppWithStore(t, &cfg, newFakeStore("mcp-catalog-console-bucket"))
 	defer app.close()
-	endpointURL := testMCPEndpointURL()
-	agent := createAgent(t, app, `{
+
+	agent := createAgent(t, app, fmt.Sprintf(`{
 		"model":"claude-opus-4-6",
 		"name":"mcp-catalog-console-agent",
-		"mcp_servers":[{"name":"weather","type":"url","url":"`+endpointURL+`"}]
-	}`)
+		"mcp_servers":[
+			{"name":"weather","type":"url","url":%q},
+			{"name":"empty","type":"url","url":%q}
+		]
+		}`, weatherEndpoint, empty.server.URL))
 	defer cleanupAgentRows(t, app.db, agent.ID)
-	defer deleteTestMCPCatalogByEndpoint(t, app.db, endpointURL)
+	defer deleteTestMCPCatalogByEndpoint(t, app.db, weatherEndpoint)
+	defer deleteTestMCPCatalogByEndpoint(t, app.db, empty.server.URL)
 
 	cookies := app.platformLoginCookies(t, "mcp-catalog-console@example.com")
 	orgCookie := responseCookie(cookies, "lastActiveOrg")
@@ -31,7 +81,9 @@ func TestMCPToolCatalogConsoleAuthorization(t *testing.T) {
 		t.Fatal("platform login did not return lastActiveOrg")
 	}
 	basePath := "/api/console/organizations/" + orgCookie.Value + "/workspaces/"
+	agentPath := basePath + "default/agents/" + agent.ID + "/mcp_tool_catalogs"
 
+	// 失败和边界场景先执行，确保请求校验或探测失败不会创建成功快照。
 	t.Run("rejects a workspace outside the authenticated Agent scope", func(t *testing.T) {
 		resp := app.platformRequest(t, http.MethodGet, basePath+"other/agents/"+agent.ID+"/mcp_tool_catalogs", nil, cookies)
 		defer resp.Body.Close()
@@ -40,277 +92,204 @@ func TestMCPToolCatalogConsoleAuthorization(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects refresh URLs supplied outside the Agent configuration", func(t *testing.T) {
-		body := strings.NewReader(`{"server_names":["weather"],"url":"https://attacker.example/mcp"}`)
-		resp := app.platformRequest(t, http.MethodPost, basePath+"default/agents/"+agent.ID+"/mcp_tool_catalogs/refresh", body, cookies)
+	t.Run("rejects a client supplied endpoint", func(t *testing.T) {
+		body := strings.NewReader(`{"server_name":"weather","url":"https://attacker.example/mcp"}`)
+		resp := app.platformRequest(t, http.MethodPost, agentPath+"/refresh?version=1", body, cookies)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Fatalf("arbitrary refresh URL status = %d, want 400: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 	})
 
-	t.Run("returns the Agent-scoped view without exposing endpoint identity", func(t *testing.T) {
-		resp := app.platformRequest(t, http.MethodGet, basePath+"default/agents/"+agent.ID+"/mcp_tool_catalogs?version=1", nil, cookies)
+	t.Run("rejects an unknown server name", func(t *testing.T) {
+		resp := app.platformRequest(t, http.MethodPost, agentPath+"/refresh?version=1", strings.NewReader(`{"server_name":"missing"}`), cookies)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("unknown server status = %d, want 400: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+	})
+
+	t.Run("GET missing is unknown and does not create a row", func(t *testing.T) {
+		payload := getTestMCPCatalogs(t, app, agentPath+"?version=1", cookies)
+		if payload.Version != 1 || len(payload.Data) != 2 {
+			t.Fatalf("catalog response = %#v", payload)
+		}
+		weatherItem := findTestCatalogItem(t, payload.Data, "weather")
+		if weatherItem.Status != "unknown" || weatherItem.Tools != nil {
+			t.Fatalf("missing weather catalog = %#v, want unknown/null", weatherItem)
+		}
+		if _, err := app.db.GetMCPToolCatalog(context.Background(), "url", weatherEndpoint); !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("catalog after GET error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("upstream failure before first success leaves no row", func(t *testing.T) {
+		weather.mode.Store(testMCPUnavailable)
+		resp := refreshTestMCPCatalog(t, app, agentPath, "weather", cookies)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("upstream failure status = %d, want 502: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+		if _, err := app.db.GetMCPToolCatalog(context.Background(), "url", weatherEndpoint); !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("catalog after failed refresh error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("successful refresh saves and returns typed tools", func(t *testing.T) {
+		weather.mode.Store(testMCPAvailable)
+		resp := refreshTestMCPCatalog(t, app, agentPath, "weather", cookies)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("catalog status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+			t.Fatalf("refresh status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
-		var payload struct {
-			Data []map[string]any `json:"data"`
-		}
+		var payload testCatalogRefreshResponse
 		decodeJSON(t, resp.Body, &payload)
-		if len(payload.Data) != 1 || payload.Data[0]["server_name"] != "weather" {
-			t.Fatalf("catalog response = %#v", payload.Data)
+		if payload.Version != 1 || payload.Data.ServerName != "weather" || payload.Data.Status != "ready" || len(payload.Data.Tools) != 1 {
+			t.Fatalf("refresh response = %#v", payload)
 		}
-		if _, exposed := payload.Data[0]["endpoint_fingerprint"]; exposed {
-			t.Fatalf("catalog response exposed endpoint identity: %#v", payload.Data[0])
+		tool := payload.Data.Tools[0]
+		if tool.Name != "get_forecast" || tool.Title != "Get forecast" || tool.Description != "Returns a weather forecast." {
+			t.Fatalf("refresh tool = %#v", tool)
 		}
-	})
-}
 
-func TestMCPToolCatalogDatabaseTransitions(t *testing.T) {
-	app := newTestApp(t, nil)
-	defer app.close()
-	ctx := context.Background()
-
-	t.Run("unknown job workspace leaves no catalog or job", func(t *testing.T) {
-		endpointURL := testMCPEndpointURL()
-		var jobsBefore int
-		if err := app.db.Pool.QueryRow(ctx, `select count(*) from jobs where type = 'mcp_tool_discovery'`).Scan(&jobsBefore); err != nil {
-			t.Fatalf("count MCP jobs before failed ensure: %v", err)
-		}
-		_, err := app.db.EnsureMCPToolCatalog(ctx, db.EnsureMCPToolCatalogInput{
-			JobWorkspaceExternalID: "workspace_missing_" + uuid.NewString(),
-			TransportType:          "url",
-			EndpointURL:            endpointURL,
-			Trigger:                "test",
-			Now:                    time.Now().UTC(),
-		})
-		if !errors.Is(err, db.ErrNotFound) {
-			t.Fatalf("EnsureMCPToolCatalog error = %v, want ErrNotFound", err)
-		}
-		if _, err := app.db.GetMCPToolCatalog(ctx, "url", endpointURL); !errors.Is(err, db.ErrNotFound) {
-			t.Fatalf("catalog after failed workspace lookup error = %v, want ErrNotFound", err)
-		}
-		var jobsAfter int
-		if err := app.db.Pool.QueryRow(ctx, `select count(*) from jobs where type = 'mcp_tool_discovery'`).Scan(&jobsAfter); err != nil {
-			t.Fatalf("count MCP jobs after failed ensure: %v", err)
-		}
-		if jobsAfter != jobsBefore {
-			t.Fatalf("MCP job count changed after failed workspace lookup: before=%d after=%d", jobsBefore, jobsAfter)
+		listed := getTestMCPCatalogs(t, app, agentPath+"?version=1", cookies)
+		weatherItem := findTestCatalogItem(t, listed.Data, "weather")
+		if weatherItem.Status != "ready" || len(weatherItem.Tools) != 1 || weatherItem.Tools[0].Name != "get_forecast" {
+			t.Fatalf("saved weather catalog = %#v", weatherItem)
 		}
 	})
 
-	t.Run("failure settles a leased generation", func(t *testing.T) {
-		endpointURL := testMCPEndpointURL()
-		ensured := ensureTestMCPCatalog(t, app.db, "workspace_default", endpointURL)
-		defer deleteTestMCPCatalog(t, app.db, ensured.Catalog.ExternalID)
-		job := leaseTestMCPJob(t, app.db, ensured.Catalog.ExternalID, "mcp-test-failure")
-		now := time.Now().UTC()
-		if err := app.db.FailMCPToolDiscovery(ctx, db.FailMCPToolDiscoveryInput{
-			JobID:             job.ID,
-			WorkerID:          "mcp-test-failure",
-			CatalogExternalID: job.CatalogExternalID,
-			Generation:        job.Generation,
-			MaxAttempts:       4,
-			Retryable:         false,
-			RetryDelay:        time.Hour,
-			ErrorCode:         "auth_required",
-			ErrorMessage:      "Authentication is required.",
-			Now:               now,
-		}); err != nil {
-			t.Fatalf("FailMCPToolDiscovery: %v", err)
-		}
-		catalog, err := app.db.GetMCPToolCatalog(ctx, "url", endpointURL)
+	t.Run("failure after success preserves the last good snapshot", func(t *testing.T) {
+		before, err := app.db.GetMCPToolCatalog(context.Background(), "url", weatherEndpoint)
 		if err != nil {
-			t.Fatalf("GetMCPToolCatalog: %v", err)
+			t.Fatalf("load catalog before failed refresh: %v", err)
 		}
-		if catalog.SettledGeneration != 1 || valueOrEmpty(catalog.LastResultStatus) != "auth_required" {
-			t.Fatalf("settled catalog = %#v", catalog)
+		weather.mode.Store(testMCPUnavailable)
+		resp := refreshTestMCPCatalog(t, app, agentPath, "weather", cookies)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("failed refresh status = %d, want 502: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
-	})
-
-	t.Run("active catalog polling avoids repeated reference writes", func(t *testing.T) {
-		endpointURL := testMCPEndpointURL()
-		ensured := ensureTestMCPCatalog(t, app.db, "workspace_default", endpointURL)
-		defer deleteTestMCPCatalog(t, app.db, ensured.Catalog.ExternalID)
-		polledAt := ensured.Catalog.LastReferencedAt.Add(time.Second)
-		polled, err := app.db.EnsureMCPToolCatalog(ctx, db.EnsureMCPToolCatalogInput{
-			JobWorkspaceExternalID: "workspace_default",
-			TransportType:          "url",
-			EndpointURL:            endpointURL,
-			Trigger:                "detail_read",
-			Now:                    polledAt,
-		})
+		after, err := app.db.GetMCPToolCatalog(context.Background(), "url", weatherEndpoint)
 		if err != nil {
-			t.Fatalf("poll EnsureMCPToolCatalog: %v", err)
+			t.Fatalf("load catalog after failed refresh: %v", err)
 		}
-		if polled.Queued {
-			t.Fatal("active catalog poll unexpectedly queued another generation")
-		}
-		if !polled.Catalog.LastReferencedAt.Equal(ensured.Catalog.LastReferencedAt) || !polled.Catalog.UpdatedAt.Equal(ensured.Catalog.UpdatedAt) {
-			t.Fatalf("active poll wrote catalog timestamps: before=%v/%v after=%v/%v",
-				ensured.Catalog.LastReferencedAt, ensured.Catalog.UpdatedAt,
-				polled.Catalog.LastReferencedAt, polled.Catalog.UpdatedAt,
-			)
+		if !after.UpdatedAt.Equal(before.UpdatedAt) || len(after.Tools) != 1 || after.Tools[0].Name != "get_forecast" {
+			t.Fatalf("catalog changed after failed refresh: before=%#v after=%#v", before, after)
 		}
 	})
 
-	t.Run("success stores a confirmed empty catalog and retention runs", func(t *testing.T) {
-		endpointURL := testMCPEndpointURL()
-		ensured := ensureTestMCPCatalog(t, app.db, "workspace_default", endpointURL)
-		defer deleteTestMCPCatalog(t, app.db, ensured.Catalog.ExternalID)
-		job := leaseTestMCPJob(t, app.db, ensured.Catalog.ExternalID, "mcp-test-success")
-		now := time.Now().UTC()
-		if err := app.db.CompleteMCPToolDiscovery(ctx, db.CompleteMCPToolDiscoveryInput{
-			JobID:             job.ID,
-			WorkerID:          "mcp-test-success",
-			CatalogExternalID: job.CatalogExternalID,
-			Generation:        job.Generation,
-			Tools:             json.RawMessage(`[]`),
-			ProtocolVersion:   "2025-03-26",
-			ServerInfo:        json.RawMessage(`{"name":"test"}`),
-			CatalogHash:       "empty-hash",
-			DiscoveredAt:      now,
-			ExpiresAt:         now.Add(10 * time.Minute),
-		}); err != nil {
-			t.Fatalf("CompleteMCPToolDiscovery: %v", err)
+	t.Run("successful empty list remains a known empty array", func(t *testing.T) {
+		resp := refreshTestMCPCatalog(t, app, agentPath, "empty", cookies)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("empty refresh status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
-		catalog, err := app.db.GetMCPToolCatalog(ctx, "url", endpointURL)
-		if err != nil {
-			t.Fatalf("GetMCPToolCatalog: %v", err)
+		var payload testCatalogRefreshResponse
+		decodeJSON(t, resp.Body, &payload)
+		if payload.Data.Status != "ready" || payload.Data.Tools == nil || len(payload.Data.Tools) != 0 {
+			t.Fatalf("empty refresh response = %#v, want ready/[]", payload.Data)
 		}
-		if catalog.SettledGeneration != 1 || valueOrEmpty(catalog.LastResultStatus) != "success" || string(catalog.Tools) != "[]" {
-			t.Fatalf("completed catalog = %#v", catalog)
-		}
-		if err := app.db.RunMCPToolCatalogRetention(ctx, now); err != nil {
-			t.Fatalf("RunMCPToolCatalogRetention: %v", err)
+		listed := getTestMCPCatalogs(t, app, agentPath, cookies)
+		emptyItem := findTestCatalogItem(t, listed.Data, "empty")
+		if emptyItem.Status != "ready" || emptyItem.Tools == nil || len(emptyItem.Tools) != 0 {
+			t.Fatalf("saved empty catalog = %#v, want ready/[]", emptyItem)
 		}
 	})
 
-	t.Run("same endpoint shares one active catalog across workspaces", func(t *testing.T) {
-		endpointURL := testMCPEndpointURL()
-		otherWorkspaceExternalID := createTestMCPWorkspace(t, app.db)
-		first := ensureTestMCPCatalog(t, app.db, "workspace_default", endpointURL)
-		defer deleteTestMCPCatalog(t, app.db, first.Catalog.ExternalID)
-		second := ensureTestMCPCatalog(t, app.db, otherWorkspaceExternalID, endpointURL)
-		if first.Catalog.ExternalID != second.Catalog.ExternalID {
-			t.Fatalf("catalog IDs differ across workspaces: %q != %q", first.Catalog.ExternalID, second.Catalog.ExternalID)
+	t.Run("another Agent reuses the global endpoint snapshot", func(t *testing.T) {
+		other := createAgent(t, app, fmt.Sprintf(`{
+			"model":"claude-opus-4-6",
+			"name":"shared-mcp-catalog-agent",
+			"mcp_servers":[{"name":"shared_weather","type":"url","url":%q}]
+			}`, weatherEndpoint))
+		defer cleanupAgentRows(t, app.db, other.ID)
+
+		otherPath := basePath + "default/agents/" + other.ID + "/mcp_tool_catalogs"
+		listed := getTestMCPCatalogs(t, app, otherPath, cookies)
+		item := findTestCatalogItem(t, listed.Data, "shared_weather")
+		if item.Status != "ready" || len(item.Tools) != 1 || item.Tools[0].Name != "get_forecast" {
+			t.Fatalf("shared endpoint catalog = %#v", item)
 		}
-		if !first.Queued || second.Queued {
-			t.Fatalf("queue results = first:%v second:%v, want true/false", first.Queued, second.Queued)
-		}
-		var catalogs, jobs int
-		if err := app.db.Pool.QueryRow(ctx, `select count(*) from mcp_tool_catalogs where transport_type = 'url' and endpoint_url = $1`, endpointURL).Scan(&catalogs); err != nil {
+		var count int
+		if err := app.db.Pool.QueryRow(context.Background(), `
+			select count(*) from mcp_tool_catalogs
+			where transport_type = 'url' and endpoint_url = $1
+		`, weatherEndpoint).Scan(&count); err != nil {
 			t.Fatalf("count shared catalogs: %v", err)
 		}
-		if err := app.db.Pool.QueryRow(ctx, `select count(*) from jobs where type = 'mcp_tool_discovery' and payload->>'catalog_external_id' = $1`, first.Catalog.ExternalID).Scan(&jobs); err != nil {
-			t.Fatalf("count shared catalog jobs: %v", err)
-		}
-		if catalogs != 1 || jobs != 1 {
-			t.Fatalf("shared endpoint rows = catalogs:%d jobs:%d, want 1/1", catalogs, jobs)
-		}
-		var rowWorkspaceExternalID, payloadWorkspaceExternalID string
-		if err := app.db.Pool.QueryRow(ctx, `
-			select w.external_id, j.payload->>'workspace_external_id'
-			from jobs j
-			join workspaces w on w.id = j.workspace_id
-			where j.type = 'mcp_tool_discovery'
-				and j.payload->>'catalog_external_id' = $1
-		`, first.Catalog.ExternalID).Scan(&rowWorkspaceExternalID, &payloadWorkspaceExternalID); err != nil {
-			t.Fatalf("load shared catalog job workspace: %v", err)
-		}
-		if rowWorkspaceExternalID != "workspace_default" || payloadWorkspaceExternalID != "workspace_default" {
-			t.Fatalf("job workspace IDs = row:%q payload:%q, want workspace_default", rowWorkspaceExternalID, payloadWorkspaceExternalID)
+		if count != 1 {
+			t.Fatalf("shared endpoint catalog rows = %d, want 1", count)
 		}
 	})
 }
 
-func ensureTestMCPCatalog(t *testing.T, database *db.DB, workspaceExternalID, endpointURL string) db.EnsureMCPToolCatalogResult {
+func newControllableMCPServer(t *testing.T, tools ...*mcp.Tool) *controllableMCPServer {
 	t.Helper()
-	result, err := database.EnsureMCPToolCatalog(context.Background(), db.EnsureMCPToolCatalogInput{
-		JobWorkspaceExternalID: workspaceExternalID,
-		TransportType:          "url",
-		EndpointURL:            endpointURL,
-		Trigger:                "test",
-		Now:                    time.Now().UTC(),
-	})
+	server := mcp.NewServer(&mcp.Implementation{Name: "test-mcp", Version: "1.0.0"}, nil)
+	for _, tool := range tools {
+		mcp.AddTool(server, tool, testMCPToolHandler)
+	}
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	controlled := &controllableMCPServer{}
+	controlled.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch controlled.mode.Load() {
+		case testMCPUnavailable:
+			http.Error(w, "upstream body must not be exposed", http.StatusServiceUnavailable)
+			return
+		default:
+			mcpHandler.ServeHTTP(w, r)
+		}
+	}))
+	t.Cleanup(controlled.server.Close)
+	return controlled
+}
+
+func testMCPToolHandler(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+	return nil, nil, nil
+}
+
+func refreshTestMCPCatalog(t *testing.T, app *testApp, agentPath, serverName string, cookies []*http.Cookie) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"server_name": serverName})
 	if err != nil {
-		t.Fatalf("EnsureMCPToolCatalog: %v", err)
+		t.Fatalf("marshal refresh body: %v", err)
 	}
-	return result
+	return app.platformRequest(t, http.MethodPost, agentPath+"/refresh?version=1", strings.NewReader(string(body)), cookies)
 }
 
-func createTestMCPWorkspace(t *testing.T, database *db.DB) string {
+func getTestMCPCatalogs(t *testing.T, app *testApp, path string, cookies []*http.Cookie) testCatalogListResponse {
 	t.Helper()
-	externalID := "workspace_mcp_" + uuid.NewString()
-	var id int64
-	if err := database.Pool.QueryRow(context.Background(), `
-		insert into workspaces (external_id, organization_id, name)
-		select $1, id, $2
-		from organizations
-		where external_id = 'org_default'
-		returning id
-	`, externalID, externalID).Scan(&id); err != nil {
-		t.Fatalf("create MCP test workspace: %v", err)
+	resp := app.platformRequest(t, http.MethodGet, path, nil, cookies)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("catalog GET status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
-	t.Cleanup(func() {
-		if _, err := database.Pool.Exec(context.Background(), `delete from workspaces where id = $1`, id); err != nil {
-			t.Errorf("delete MCP test workspace: %v", err)
+	var payload testCatalogListResponse
+	decodeJSON(t, resp.Body, &payload)
+	return payload
+}
+
+func findTestCatalogItem(t *testing.T, items []testCatalogItem, serverName string) testCatalogItem {
+	t.Helper()
+	for _, item := range items {
+		if item.ServerName == serverName {
+			return item
 		}
-	})
-	return externalID
-}
-
-func testMCPEndpointURL() string {
-	return "https://example.test/" + uuid.NewString() + "/mcp"
-}
-
-func leaseTestMCPJob(t *testing.T, database *db.DB, catalogExternalID, workerID string) db.MCPToolDiscoveryJob {
-	t.Helper()
-	var job db.MCPToolDiscoveryJob
-	var workspaceID int64
-	var payload json.RawMessage
-	err := database.Pool.QueryRow(context.Background(), `
-		update jobs
-		set status = 'running', locked_by = $2, locked_until = now() + interval '1 minute', updated_at = now()
-		where type = 'mcp_tool_discovery'
-			and payload->>'catalog_external_id' = $1
-		returning id, workspace_id, attempts, payload, (payload->>'generation')::bigint
-	`, catalogExternalID, workerID).Scan(&job.ID, &workspaceID, &job.Attempts, &payload, &job.Generation)
-	if err != nil {
-		t.Fatalf("lease test MCP job: %v", err)
 	}
-	job.CatalogExternalID = catalogExternalID
-	return job
-}
-
-func deleteTestMCPCatalog(t *testing.T, database *db.DB, catalogExternalID string) {
-	t.Helper()
-	ctx := context.Background()
-	if _, err := database.Pool.Exec(ctx, `delete from jobs where type = 'mcp_tool_discovery' and payload->>'catalog_external_id' = $1`, catalogExternalID); err != nil {
-		t.Errorf("delete MCP discovery jobs: %v", err)
-	}
-	if _, err := database.Pool.Exec(ctx, `delete from mcp_tool_catalogs where external_id = $1`, catalogExternalID); err != nil {
-		t.Errorf("delete MCP catalog: %v", err)
-	}
+	t.Fatalf("catalog response does not contain server %q: %#v", serverName, items)
+	return testCatalogItem{}
 }
 
 func deleteTestMCPCatalogByEndpoint(t *testing.T, database *db.DB, endpointURL string) {
 	t.Helper()
-	ctx := context.Background()
-	var catalogExternalID string
-	err := database.Pool.QueryRow(ctx, `select external_id from mcp_tool_catalogs where transport_type = 'url' and endpoint_url = $1`, endpointURL).Scan(&catalogExternalID)
+	normalized, err := mcpcatalogs.NormalizeEndpoint(endpointURL)
 	if err != nil {
-		t.Errorf("find MCP catalog for cleanup: %v", err)
-		return
+		t.Fatalf("normalize MCP catalog cleanup endpoint: %v", err)
 	}
-	deleteTestMCPCatalog(t, database, catalogExternalID)
-}
-
-func valueOrEmpty(value *string) string {
-	if value == nil {
-		return ""
+	if _, err := database.Pool.Exec(context.Background(), `
+			delete from mcp_tool_catalogs where transport_type = 'url' and endpoint_url = $1
+		`, normalized); err != nil {
+		t.Errorf("delete MCP catalog: %v", err)
 	}
-	return *value
 }

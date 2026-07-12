@@ -77,13 +77,12 @@ func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectSto
 	}
 	codeSessionService := codesessions.NewService(cfg, database)
 	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(database)
-	mcpCatalogEnqueuer := mcpcatalogs.NewEnqueuer(cfg, database)
 	s := &Server{
 		cfg:            cfg,
 		db:             database,
 		platformStore:  platformStore,
 		admin:          adminapi.NewHandler(cfg, database),
-		agents:         agents.NewHandlerWithPrewarmers(cfg, database, skillPrewarmEnqueuer, mcpCatalogEnqueuer),
+		agents:         agents.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
 		batch:          batches.NewHandler(cfg, database, objectStore),
 		codeSessions:   codeSessionService,
 		deployments:    deploymentsapi.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),

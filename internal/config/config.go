@@ -71,7 +71,6 @@ type Config struct {
 	WebhookAllowInsecure                bool
 	MCPDiscoveryEnabled                 bool
 	MCPDiscoveryProbeTimeout            time.Duration
-	MCPDiscoveryWorkerConcurrency       int
 	SeedAPIKeys                         []SeedAPIKey
 	OfficialSDKFixtureFileID            string
 	OfficialSDKFixtureBatchID           string
@@ -161,7 +160,6 @@ func Load() (Config, error) {
 		WebhookAllowInsecure:                envBool("WEBHOOK_ALLOW_INSECURE", false),
 		MCPDiscoveryEnabled:                 envBool("MCP_DISCOVERY_ENABLED", appEnv != "production"),
 		MCPDiscoveryProbeTimeout:            envDuration("MCP_DISCOVERY_PROBE_TIMEOUT", 10*time.Second),
-		MCPDiscoveryWorkerConcurrency:       envInt("MCP_DISCOVERY_WORKER_CONCURRENCY", 3),
 		OfficialSDKFixtureFileID:            "file_id",
 		OfficialSDKFixtureBatchID:           "message_batch_id",
 		OfficialSDKFixtureAgentID:           env("OFFICIAL_SDK_FIXTURE_AGENT_ID", "agent_011CZkYpogX7uDKUyvBTophP"),

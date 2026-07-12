@@ -14,8 +14,20 @@ import { loadAgentMcpToolCatalogs, loadMcpDirectoryServers, refreshAgentMcpToolC
 import {
   buildAgentToolDisplayCards,
   type AgentToolDisplayCard,
+  type McpToolCatalog,
   type ToolPermissionState
 } from './model';
+
+type McpCatalogQueryData = { data: McpToolCatalog[]; version: number };
+type McpCatalogQueryKey = readonly ['agent-mcp-tool-catalogs', string, string, string, number];
+type McpRefreshVariables = {
+  orgUuid: string;
+  workspaceId: string;
+  agentId: string;
+  version: number;
+  serverName: string;
+  queryKey: McpCatalogQueryKey;
+};
 
 export function AgentToolsSection({
   agent,
@@ -39,28 +51,49 @@ export function AgentToolsSection({
     staleTime: 60 * 60 * 1000,
     retry: false
   });
-  // 这里只轮询后端缓存状态：loading/refreshing 时每秒读取一次，进入终态立即停止；
-  // 浏览器不会直连 MCP，也不会在轮询时重复提交 refresh。
+  // 详情页初始加载只读取数据库中最近一次成功快照，不轮询、不自动触发 MCP 探测。
   const catalogQuery = useQuery({
     queryKey: catalogQueryKey,
     queryFn: ({ signal }) => loadAgentMcpToolCatalogs(orgUuid, workspaceId, agent.id, agent.version, signal),
     enabled: catalogEnabled,
-    refetchInterval: (query) =>
-      query.state.data?.data.some((catalog) => catalog.status === 'loading' || catalog.status === 'refreshing')
-        ? 1000
-        : false,
-    refetchIntervalInBackground: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     retry: 1
   });
-  // Refresh POST 只负责入队或复用 generation；成功后失效 GET query，
-  // 再由上面的状态轮询等待异步发现结果。
+  // 手动刷新会同步等待后端探测并落库；成功响应就是新的权威快照，直接写入 Query 缓存。
+  // 探测期间不做乐观替换，因此失败时页面仍保留旧工具列表。
   const refreshMutation = useMutation({
-    mutationFn: (serverName: string) =>
-      refreshAgentMcpToolCatalogs(orgUuid, workspaceId, agent.id, agent.version, [serverName], csrfToken),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: catalogQueryKey });
+    // 请求作用域作为 mutation variables 固化，避免等待探测时 Agent 切换版本后，
+    // 旧 endpoint 的响应被误写进新版本的 Query cache。
+    mutationFn: (variables: McpRefreshVariables) =>
+      refreshAgentMcpToolCatalogs(
+        variables.orgUuid,
+        variables.workspaceId,
+        variables.agentId,
+        variables.version,
+        variables.serverName,
+        csrfToken
+      ),
+    onSuccess: async (response, variables) => {
+      const current = queryClient.getQueryData<McpCatalogQueryData>(variables.queryKey);
+      queryClient.setQueryData<McpCatalogQueryData>(variables.queryKey, () => {
+        const catalogs = current?.data ?? [];
+        const existingIndex = catalogs.findIndex((catalog) => catalog.server_name === response.data.server_name);
+        const nextCatalogs = existingIndex >= 0
+          ? catalogs.map((catalog, index) => index === existingIndex ? response.data : catalog)
+          : [...catalogs, response.data];
+        return { data: nextCatalogs, version: response.version || current?.version || variables.version };
+      });
+
+      // 初次 GET 失败时没有可安全 merge 的完整 collection：先展示本次成功结果，
+      // 再仅对仍活跃的同一作用域回源 GET，避免其他 MCP 的已保存快照丢失。
+      if (!current) {
+        await queryClient.invalidateQueries({
+          queryKey: variables.queryKey,
+          exact: true,
+          refetchType: 'active'
+        });
+      }
     },
     onError: (error) => {
       toast.error(
@@ -78,33 +111,59 @@ export function AgentToolsSection({
     ),
     [agent, catalogQuery.data?.data, directoryQuery.data]
   );
-  const catalogBusy = catalogQuery.isFetching || cards.some((card) => card.catalogStatus === 'loading' || card.catalogStatus === 'refreshing');
+  const refreshScopeIsCurrent = Boolean(
+    refreshMutation.variables &&
+    refreshMutation.variables.orgUuid === orgUuid &&
+    refreshMutation.variables.workspaceId === workspaceId &&
+    refreshMutation.variables.agentId === agent.id &&
+    refreshMutation.variables.version === agent.version
+  );
+  const refreshPending = refreshMutation.isPending && refreshScopeIsCurrent;
+  const refreshSucceeded = refreshMutation.isSuccess && refreshScopeIsCurrent;
+  const catalogBusy = catalogQuery.isFetching || refreshPending;
+  const catalogStatusMessage = catalogEnabled
+    ? refreshPending
+      ? msg('managedAgents.agents.detail.refreshMcpToolsPending', 'Refreshing and saving MCP tools.')
+      : refreshSucceeded
+        ? msg('managedAgents.agents.detail.refreshMcpToolsSucceeded', 'MCP tools refreshed and saved.')
+        : catalogQuery.isFetching
+          ? msg('managedAgents.agents.detail.mcpCatalogLoading', 'Loading saved MCP tools.')
+          : catalogQuery.isSuccess
+            ? msg('managedAgents.agents.detail.mcpCatalogLoaded', 'Saved MCP tools loaded.')
+            : catalogQuery.isError
+              ? msg('managedAgents.agents.detail.mcpCatalogUnavailable', 'Saved MCP tools are unavailable.')
+              : ''
+    : '';
+  // Catalog 和 Directory 是两条独立异步链路；同时组合两者的状态，
+  // 避免真实 Console 上 catalog 已启用时屏蔽 Directory 的读屏播报。
+  const directoryStatusMessage = directoryQuery.isFetching
+    ? msg('managedAgents.agents.detail.mcpDirectoryLoading', 'Loading MCP tool metadata.')
+    : directoryQuery.isSuccess
+      ? msg('managedAgents.agents.detail.mcpDirectoryLoaded', 'MCP tool metadata loaded.')
+      : directoryQuery.isError
+        ? msg('managedAgents.agents.detail.mcpDirectoryUnavailable', 'MCP tool metadata is unavailable.')
+        : '';
+  const asyncStatusMessage = [catalogStatusMessage, directoryStatusMessage].filter(Boolean).join(' ');
 
   return (
     <div className="space-y-2" aria-busy={catalogBusy || directoryQuery.isFetching}>
       <span className="sr-only" role="status" aria-live="polite">
-        {catalogEnabled
-          ? catalogBusy
-            ? msg('managedAgents.agents.detail.mcpCatalogLoading', 'Discovering MCP tools.')
-            : catalogQuery.isSuccess
-              ? msg('managedAgents.agents.detail.mcpCatalogLoaded', 'MCP tool discovery finished.')
-              : catalogQuery.isError
-                ? msg('managedAgents.agents.detail.mcpCatalogUnavailable', 'MCP tool discovery is unavailable.')
-                : ''
-          : directoryQuery.isFetching
-            ? msg('managedAgents.agents.detail.mcpDirectoryLoading', 'Loading MCP tool metadata.')
-            : directoryQuery.isSuccess
-              ? msg('managedAgents.agents.detail.mcpDirectoryLoaded', 'MCP tool metadata loaded.')
-              : directoryQuery.isError
-                ? msg('managedAgents.agents.detail.mcpDirectoryUnavailable', 'MCP tool metadata is unavailable.')
-                : ''}
+        {asyncStatusMessage}
       </span>
       {cards.map((card) => (
         <AgentToolCard
           key={card.key}
           card={card}
-          refreshBusy={refreshMutation.isPending && refreshMutation.variables === card.serverName}
-          onRefresh={catalogEnabled && card.serverName ? () => refreshMutation.mutate(card.serverName!) : undefined}
+          refreshBusy={refreshPending && refreshMutation.variables?.serverName === card.serverName}
+          refreshDisabled={refreshPending || catalogQuery.isFetching}
+          onRefresh={catalogEnabled && card.serverName ? () => refreshMutation.mutate({
+            orgUuid,
+            workspaceId,
+            agentId: agent.id,
+            version: agent.version,
+            serverName: card.serverName!,
+            queryKey: catalogQueryKey
+          }) : undefined}
         />
       ))}
     </div>
@@ -114,10 +173,12 @@ export function AgentToolsSection({
 export function AgentToolCard({
   card,
   refreshBusy = false,
+  refreshDisabled = false,
   onRefresh
 }: {
   card: AgentToolDisplayCard;
   refreshBusy?: boolean;
+  refreshDisabled?: boolean;
   onRefresh?: () => void;
 }) {
   const { msg } = useI18n();
@@ -153,7 +214,7 @@ export function AgentToolCard({
             <code className="block truncate font-mono text-xs text-muted-foreground">{subtitle}</code>
           )}
           {catalogStatusLabel ? (
-            <span className="mt-1 block truncate text-xs text-muted-foreground" title={card.catalogError?.message}>
+            <span className="mt-1 block truncate text-xs text-muted-foreground">
               {catalogStatusLabel}
             </span>
           ) : null}
@@ -163,9 +224,13 @@ export function AgentToolCard({
             type="button"
             variant="ghost"
             size="sm"
-            disabled={refreshBusy || card.catalogStatus === 'loading' || card.catalogStatus === 'refreshing'}
+            disabled={refreshDisabled}
             onClick={onRefresh}
-            aria-label={msg('managedAgents.agents.detail.refreshMcpTools', 'Refresh MCP tools')}
+            aria-label={msg(
+              'managedAgents.agents.detail.refreshMcpTools',
+              'Refresh MCP tools for {server}',
+              { server: title }
+            )}
           >
             <RefreshCw className={refreshBusy ? 'animate-spin' : ''} aria-hidden />
             {msg('common.refresh', 'Refresh')}
@@ -228,11 +293,9 @@ export function AgentToolCard({
             </div>
           ) : (
             <div className="px-4 py-3 pl-12 text-sm text-muted-foreground">
-              {card.catalogStatus === 'loading' || card.catalogStatus === 'refreshing'
-                ? msg('managedAgents.agents.detail.discoveringTools', 'Discovering tools…')
-                : card.catalogStatus === 'ready'
-                  ? msg('managedAgents.agents.detail.noToolsDiscovered', 'This server reported no tools.')
-                  : card.catalogError?.message || msg('managedAgents.agents.detail.noToolList', 'No tool list available.')}
+              {card.catalogStatus === 'ready'
+                ? msg('managedAgents.agents.detail.noToolsDiscovered', 'This server reported no tools.')
+                : msg('managedAgents.agents.detail.noToolList', 'No tool list available.')}
             </div>
           )}
         </CollapsibleContent>
@@ -247,19 +310,11 @@ function mcpCatalogStatusLabel(
 ) {
   switch (status) {
     case 'unknown':
-      return msg('managedAgents.agents.detail.mcpStatusUnknown', 'Tool list not discovered');
-    case 'loading':
-      return msg('managedAgents.agents.detail.mcpStatusLoading', 'Discovering tools…');
+      return msg('managedAgents.agents.detail.mcpStatusUnknown', 'Tool list not refreshed');
     case 'ready':
-      return msg('managedAgents.agents.detail.mcpStatusReady', 'Live tool list');
-    case 'refreshing':
-      return msg('managedAgents.agents.detail.mcpStatusRefreshing', 'Refreshing; showing last known tools');
-    case 'stale':
-      return msg('managedAgents.agents.detail.mcpStatusStale', 'Showing last known tools');
-    case 'auth_required':
-      return msg('managedAgents.agents.detail.mcpStatusAuthRequired', 'Authentication required for discovery');
+      return msg('managedAgents.agents.detail.mcpStatusReady', 'Saved tool list');
     case 'error':
-      return msg('managedAgents.agents.detail.mcpStatusError', 'Tool discovery failed');
+      return msg('managedAgents.agents.detail.mcpStatusError', 'Tool list unavailable');
   }
 }
 

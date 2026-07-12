@@ -27,9 +27,9 @@ func NormalizeEndpoint(raw string) (string, error) {
 		return "", ErrInvalidEndpoint
 	}
 
-	// 全局 catalog 仅表示匿名探测。拒绝 userinfo、query 和 fragment，避免把凭据或语义不同的
-	// 请求错误地归并到同一匿名 endpoint；这里选择拒绝而不是静默删除这些部分。
-	if parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" {
+	// 全局 catalog 仅表示匿名探测，因此拒绝 userinfo 和 fragment，避免保存 URL 凭据或
+	// 客户端本地片段。query 是部分合法 MCP endpoint 的服务端路由参数，必须保留并参与 identity。
+	if parsed.User != nil || parsed.Fragment != "" {
 		return "", ErrInvalidEndpoint
 	}
 

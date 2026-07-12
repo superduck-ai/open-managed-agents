@@ -27,7 +27,6 @@ import (
 const (
 	maxAgentBodySize           = 4 << 20
 	skillPrewarmEnqueueTimeout = 3 * time.Second
-	mcpCatalogEnqueueTimeout   = 3 * time.Second
 )
 
 var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
@@ -36,16 +35,11 @@ type Handler struct {
 	cfg     config.Config
 	db      *db.DB
 	prewarm skillPrewarmSnapshotEnqueuer
-	mcp     mcpCatalogEnqueuer
 	router  chi.Router
 }
 
 type skillPrewarmSnapshotEnqueuer interface {
 	EnqueueSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) error
-}
-
-type mcpCatalogEnqueuer interface {
-	EnsureAgent(ctx context.Context, workspaceExternalID string, mcpServers json.RawMessage, trigger string) error
 }
 
 type agentResponse struct {
@@ -101,11 +95,7 @@ func NewHandler(cfg config.Config, database *db.DB) *Handler {
 }
 
 func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer) *Handler {
-	return NewHandlerWithPrewarmers(cfg, database, prewarm, nil)
-}
-
-func NewHandlerWithPrewarmers(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer, mcp mcpCatalogEnqueuer) *Handler {
-	h := &Handler{cfg: cfg, db: database, prewarm: prewarm, mcp: mcp}
+	h := &Handler{cfg: cfg, db: database, prewarm: prewarm}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -183,7 +173,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, created, "agent_create")
-	h.enqueueMCPCatalog(r.Context(), principal.WorkspaceExternalID, created.MCPServers, created.ExternalID, "agent_create")
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(created))
 }
 
@@ -391,9 +380,6 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 	}
 	if !agentsnapshot.SameRawJSON(current.Skills, updated.Skills) {
 		h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, updated, "agent_update")
-	}
-	if !agentsnapshot.SameRawJSON(current.MCPServers, updated.MCPServers) {
-		h.enqueueMCPCatalog(r.Context(), principal.WorkspaceExternalID, updated.MCPServers, updated.ExternalID, "agent_update")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
 }
@@ -1253,23 +1239,6 @@ func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, ag
 	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, "agent", agent.ExternalID, trigger); err != nil {
 		log.Printf("enqueue agent skill prewarm agent_id=%s trigger=%s: %v", agent.ExternalID, trigger, err)
 	}
-}
-
-func (h *Handler) enqueueMCPCatalog(ctx context.Context, workspaceExternalID string, mcpServers json.RawMessage, agentID, trigger string) {
-	if h == nil || h.mcp == nil {
-		return
-	}
-	// MCP catalog 是可重建的派生数据，预热失败不应阻塞 Agent 创建或更新。
-	// 脱离请求取消信号后限时异步执行，并复制 RawMessage，避免响应返回后继续引用调用方缓冲区。
-	requestContext := context.WithoutCancel(ctx)
-	servers := append(json.RawMessage(nil), mcpServers...)
-	go func() {
-		enqueueCtx, cancel := context.WithTimeout(requestContext, mcpCatalogEnqueueTimeout)
-		defer cancel()
-		if err := h.mcp.EnsureAgent(enqueueCtx, workspaceExternalID, servers, trigger); err != nil {
-			log.Printf("enqueue agent mcp catalog workspace_external_id=%s agent_id=%s trigger=%s: %v", workspaceExternalID, agentID, trigger, err)
-		}
-	}()
 }
 
 func (h *Handler) isOfficialSDKFixtureID(principal auth.Principal, agentID string) bool {

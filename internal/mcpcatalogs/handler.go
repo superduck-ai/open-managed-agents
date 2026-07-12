@@ -1,10 +1,12 @@
 package mcpcatalogs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,26 +20,20 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+const defaultProbeTimeout = 10 * time.Second
+
 type Handler struct {
 	cfg      config.Config
 	database *db.DB
+	prober   Prober
 }
 
+// catalogResponse 是面向 Agent Detail 的 server 视图，不暴露全局 catalog 的 endpoint 和内部 ID。
+// nil tools 会编码为 null，表示尚未成功刷新；成功发现零工具则编码为 []。
 type catalogResponse struct {
-	ServerName      string          `json:"server_name"`
-	Status          string          `json:"status"`
-	Tools           json.RawMessage `json:"tools"`
-	Source          *string         `json:"source,omitempty"`
-	ProtocolVersion *string         `json:"protocol_version,omitempty"`
-	DiscoveredAt    *string         `json:"discovered_at,omitempty"`
-	ExpiresAt       *string         `json:"expires_at,omitempty"`
-	LastError       *catalogError   `json:"last_error,omitempty"`
-	Generation      int64           `json:"generation"`
-}
-
-type catalogError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	ServerName string                  `json:"server_name"`
+	Status     string                  `json:"status"`
+	Tools      []db.MCPToolCatalogItem `json:"tools"`
 }
 
 type catalogListResponse struct {
@@ -46,21 +42,16 @@ type catalogListResponse struct {
 }
 
 type refreshRequest struct {
-	ServerNames []string `json:"server_names"`
+	ServerName string `json:"server_name"`
 }
 
 type refreshResponse struct {
-	Data []refreshResult `json:"data"`
-}
-
-type refreshResult struct {
-	ServerName string `json:"server_name"`
-	Generation int64  `json:"generation"`
-	Queued     bool   `json:"queued"`
+	Data    catalogResponse `json:"data"`
+	Version int             `json:"version"`
 }
 
 func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	return &Handler{cfg: cfg, database: database}
+	return &Handler{cfg: cfg, database: database, prober: Prober{}}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -68,8 +59,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/workspaces/{workspaceId}/agents/{agentId}/mcp_tool_catalogs/refresh", h.refresh)
 }
 
+// list 只读取已经成功保存的工具快照。详情页读取不会连接外部 MCP，也不会隐式创建任务。
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	principal, agent, version, ok := h.authorizedAgent(w, r)
+	_, agent, version, ok := h.authorizedAgent(w, r)
 	if !ok {
 		return
 	}
@@ -78,14 +70,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		writeCatalogError(w, r, http.StatusInternalServerError, "Could not read the Agent MCP configuration")
 		return
 	}
-	now := time.Now().UTC()
 	responses := make([]catalogResponse, 0, len(servers))
-	// 详情 GET 只确保后台 generation 已存在并返回当前缓存，不在请求链路中直连 MCP；
-	// 实际探测由 worker 异步完成，旧快照可在刷新期间继续展示。
 	for _, server := range servers {
-		response, buildErr := h.ensureAndMap(r, principal.WorkspaceExternalID, server, false, "detail_read", now)
-		if buildErr != nil {
-			log.Printf("list mcp catalog workspace_external_id=%s agent_id=%s server=%s: %v", principal.WorkspaceExternalID, agent.ExternalID, server.Name, buildErr)
+		response, getErr := h.readCatalog(r.Context(), server)
+		if getErr != nil {
+			log.Printf("list mcp catalog agent_id=%s server=%s: %v", agent.ExternalID, server.Name, getErr)
 			writeCatalogError(w, r, http.StatusInternalServerError, "Could not load MCP tool catalogs")
 			return
 		}
@@ -94,86 +83,80 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteJSON(w, http.StatusOK, catalogListResponse{Data: responses, Version: version})
 }
 
+// refresh 在一次 HTTP 请求内完成单个 MCP 的匿名工具发现，并且只在成功后替换数据库快照。
+// 因而探测失败或请求取消时，详情页仍可继续展示上一次成功保存的工具列表。
 func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 	if !h.cfg.MCPDiscoveryEnabled {
 		writeCatalogError(w, r, http.StatusServiceUnavailable, "MCP tool discovery is disabled")
 		return
 	}
-	principal, agent, _, ok := h.authorizedAgent(w, r)
+	principal, agent, version, ok := h.authorizedAgent(w, r)
 	if !ok {
 		return
 	}
+
 	var input refreshRequest
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
-	if r.Body != nil && r.Body != http.NoBody {
-		if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
-			writeCatalogError(w, r, http.StatusBadRequest, "Invalid refresh request")
-			return
-		}
+	if r.Body == nil || r.Body == http.NoBody || decoder.Decode(&input) != nil {
+		writeCatalogError(w, r, http.StatusBadRequest, "Invalid refresh request")
+		return
 	}
+	// 一个请求只能包含一个 JSON object；拒绝拼接的第二个值，避免边界层出现含糊解析。
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeCatalogError(w, r, http.StatusBadRequest, "Invalid refresh request")
+		return
+	}
+	input.ServerName = strings.TrimSpace(input.ServerName)
+	if input.ServerName == "" {
+		writeCatalogError(w, r, http.StatusBadRequest, "server_name must not be empty")
+		return
+	}
+	// 请求只选择 Agent 已保存的 server；endpoint 始终来自持久化的指定版本。
+	// 这样 Agent 版本仍是配置事实来源，刷新接口也不需要接受或保存客户端 URL。
 	servers, err := ParseAgentServers(agent.MCPServers)
 	if err != nil {
 		writeCatalogError(w, r, http.StatusInternalServerError, "Could not read the Agent MCP configuration")
 		return
 	}
-	// 请求体只允许选择 Agent 已配置的 server 名；实际 endpoint 始终来自持久化版本，
-	// 防止 refresh 接口被用来提交任意探测地址。
-	selected := map[string]struct{}{}
-	for _, name := range input.ServerNames {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			writeCatalogError(w, r, http.StatusBadRequest, "server_names must not contain empty names")
-			return
-		}
-		selected[name] = struct{}{}
+	server, found := findAgentServer(servers, input.ServerName)
+	if !found {
+		writeCatalogError(w, r, http.StatusBadRequest, "Unknown MCP server name: "+input.ServerName)
+		return
 	}
-	if len(selected) > 0 {
-		known := map[string]struct{}{}
-		for _, server := range servers {
-			known[server.Name] = struct{}{}
-		}
-		for name := range selected {
-			if _, exists := known[name]; !exists {
-				writeCatalogError(w, r, http.StatusBadRequest, "Unknown MCP server name: "+name)
-				return
-			}
-		}
+	normalized, err := NormalizeEndpoint(server.URL)
+	if err != nil {
+		writeCatalogError(w, r, http.StatusBadRequest, "MCP server "+server.Name+" has an invalid endpoint")
+		return
 	}
-	results := make([]refreshResult, 0, len(servers))
-	for _, server := range servers {
-		if len(selected) > 0 {
-			if _, include := selected[server.Name]; !include {
-				continue
-			}
-		}
-		normalized, normalizeErr := NormalizeEndpoint(server.URL)
-		if normalizeErr != nil {
-			writeCatalogError(w, r, http.StatusBadRequest, "MCP server "+server.Name+" has an invalid endpoint")
-			return
-		}
-		ensure, ensureErr := h.database.EnsureMCPToolCatalog(r.Context(), db.EnsureMCPToolCatalogInput{
-			JobWorkspaceExternalID: principal.WorkspaceExternalID,
-			TransportType:          "url",
-			EndpointURL:            normalized,
-			Trigger:                "manual_refresh",
-			Force:                  true,
-			Now:                    time.Now().UTC(),
-		})
-		if ensureErr != nil {
-			log.Printf("refresh mcp catalog workspace_external_id=%s agent_id=%s server=%s: %v", principal.WorkspaceExternalID, agent.ExternalID, server.Name, ensureErr)
-			writeCatalogError(w, r, http.StatusInternalServerError, "Could not refresh MCP tool catalogs")
-			return
-		}
-		results = append(results, refreshResult{ServerName: server.Name, Generation: ensure.Catalog.RequestedGeneration, Queued: ensure.Queued})
+
+	// 手动刷新应有明确的等待上限，且沿用请求 context：浏览器断开时会取消探测并且不会写库。
+	probeCtx, cancel := context.WithTimeout(r.Context(), configuredProbeTimeout(h.cfg.MCPDiscoveryProbeTimeout))
+	defer cancel()
+	result, err := h.prober.Probe(probeCtx, normalized)
+	if err != nil {
+		status, message := probeHTTPError(err)
+		log.Printf("refresh mcp catalog workspace_external_id=%s agent_id=%s server=%s: %v", principal.WorkspaceExternalID, agent.ExternalID, server.Name, err)
+		writeCatalogError(w, r, status, message)
+		return
 	}
-	httpapi.WriteJSON(w, http.StatusAccepted, refreshResponse{Data: results})
+	// Prober 对成功的零工具结果返回非 nil 空切片；DB 层也会拒绝 nil，避免把 unknown 写成成功快照。
+	catalog, err := h.database.UpsertMCPToolCatalog(r.Context(), "url", normalized, result.Tools)
+	if err != nil {
+		log.Printf("save mcp catalog workspace_external_id=%s agent_id=%s server=%s: %v", principal.WorkspaceExternalID, agent.ExternalID, server.Name, err)
+		writeCatalogError(w, r, http.StatusInternalServerError, "Could not save MCP tool catalog")
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusOK, refreshResponse{
+		Data:    mapCatalog(server.Name, catalog),
+		Version: version,
+	})
 }
 
 func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.Principal, db.Agent, int, bool) {
 	// 跨组织、跨 workspace 与资源不存在统一返回 404，避免通过响应差异枚举 Agent。
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || !principalCanSeeOrganization(principal, chi.URLParam(r, "orgUuid")) || !principalCanSeeWorkspace(principal, chi.URLParam(r, "workspaceId")) {
+	if !ok || !principalCanSeeOrganization(r, principal, chi.URLParam(r, "orgUuid")) || !principalCanSeeWorkspace(principal, chi.URLParam(r, "workspaceId")) {
 		writeCatalogError(w, r, http.StatusNotFound, "Agent not found")
 		return auth.Principal{}, db.Agent{}, 0, false
 	}
@@ -206,90 +189,76 @@ func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.
 	return principal, agent, version, true
 }
 
-func (h *Handler) ensureAndMap(r *http.Request, jobWorkspaceExternalID string, server AgentServer, force bool, trigger string, now time.Time) (catalogResponse, error) {
+func (h *Handler) readCatalog(ctx context.Context, server AgentServer) (catalogResponse, error) {
 	normalized, err := NormalizeEndpoint(server.URL)
 	if err != nil {
-		return catalogResponse{
-			ServerName: server.Name,
-			Status:     "error",
-			Tools:      json.RawMessage("null"),
-			LastError:  &catalogError{Code: "invalid_endpoint", Message: "The MCP endpoint is invalid."},
-		}, nil
+		return catalogResponse{ServerName: server.Name, Status: "error", Tools: nil}, nil
 	}
-	if !h.cfg.MCPDiscoveryEnabled {
-		// 发现关闭时仍可读取已有 catalog，但不得创建或刷新任务；
-		// 这样关闭外部探测不会让已经缓存的工具列表立即消失。
-		catalog, getErr := h.database.GetMCPToolCatalog(r.Context(), "url", normalized)
-		if errors.Is(getErr, db.ErrNotFound) {
-			return catalogResponse{ServerName: server.Name, Status: "unknown", Tools: json.RawMessage("null")}, nil
-		}
-		if getErr != nil {
-			return catalogResponse{}, getErr
-		}
-		return mapCatalog(server.Name, catalog, now), nil
+	catalog, err := h.database.GetMCPToolCatalog(ctx, "url", normalized)
+	if errors.Is(err, db.ErrNotFound) {
+		return catalogResponse{ServerName: server.Name, Status: "unknown", Tools: nil}, nil
 	}
-	ensured, err := h.database.EnsureMCPToolCatalog(r.Context(), db.EnsureMCPToolCatalogInput{
-		JobWorkspaceExternalID: jobWorkspaceExternalID,
-		TransportType:          "url",
-		EndpointURL:            normalized,
-		Trigger:                trigger,
-		Force:                  force,
-		Now:                    now,
-	})
 	if err != nil {
 		return catalogResponse{}, err
 	}
-	return mapCatalog(server.Name, ensured.Catalog, now), nil
+	return mapCatalog(server.Name, catalog), nil
 }
 
-func mapCatalog(serverName string, catalog db.MCPToolCatalog, now time.Time) catalogResponse {
-	status := "unknown"
-	// requested_generation 大于 settled_generation 表示最新一代仍在执行。
-	// 有旧 tools 时按 stale-while-refresh 显示 refreshing；尚无成功快照时才显示 loading。
-	active := catalog.RequestedGeneration > catalog.SettledGeneration
-	if catalog.Tools != nil {
-		if active {
-			status = "refreshing"
-		} else if catalog.ExpiresAt != nil && catalog.ExpiresAt.After(now) && stringValue(catalog.LastResultStatus) == "success" {
-			status = "ready"
-		} else {
-			status = "stale"
-		}
-	} else if active {
-		status = "loading"
-	} else if stringValue(catalog.LastResultStatus) == "auth_required" {
-		status = "auth_required"
-	} else if stringValue(catalog.LastResultStatus) == "error" {
-		status = "error"
-	}
-	tools := catalog.Tools
-	if tools == nil {
-		// null 表示从未获得成功快照；成功发现的真实空列表会保留为 []，前端据此区分“未知”和“零工具”。
-		tools = json.RawMessage("null")
-	}
-	response := catalogResponse{
-		ServerName:      serverName,
-		Status:          status,
-		Tools:           tools,
-		Source:          catalog.Source,
-		ProtocolVersion: catalog.ProtocolVersion,
-		DiscoveredAt:    formatTime(catalog.DiscoveredAt),
-		ExpiresAt:       formatTime(catalog.ExpiresAt),
-		Generation:      catalog.RequestedGeneration,
-	}
-	if catalog.LastErrorCode != nil {
-		message := "MCP tool discovery failed."
-		if catalog.LastErrorMessage != nil && strings.TrimSpace(*catalog.LastErrorMessage) != "" {
-			message = *catalog.LastErrorMessage
-		}
-		response.LastError = &catalogError{Code: *catalog.LastErrorCode, Message: message}
-	}
-	return response
+func mapCatalog(serverName string, catalog db.MCPToolCatalog) catalogResponse {
+	return catalogResponse{ServerName: serverName, Status: "ready", Tools: catalog.Tools}
 }
 
-func principalCanSeeOrganization(principal auth.Principal, value string) bool {
+func findAgentServer(servers []AgentServer, name string) (AgentServer, bool) {
+	for _, server := range servers {
+		if server.Name == name {
+			return server, true
+		}
+	}
+	return AgentServer{}, false
+}
+
+func configuredProbeTimeout(value time.Duration) time.Duration {
+	if value <= 0 {
+		return defaultProbeTimeout
+	}
+	return value
+}
+
+func probeHTTPError(err error) (int, string) {
+	var probeErr *ProbeError
+	if errors.As(err, &probeErr) {
+		if probeErr.Code == "timeout" {
+			return http.StatusGatewayTimeout, probeErr.Message
+		}
+		return http.StatusBadGateway, probeErr.Message
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return http.StatusGatewayTimeout, "The MCP server did not respond in time."
+	}
+	return http.StatusBadGateway, "Could not refresh MCP tool catalog"
+}
+
+func principalCanSeeOrganization(r *http.Request, principal auth.Principal, value string) bool {
 	value = strings.TrimSpace(value)
-	return value != "" && (value == strings.TrimSpace(principal.OrganizationUUID) || value == strings.TrimSpace(principal.OrganizationExternalID))
+	if value == "" {
+		return false
+	}
+	if value == strings.TrimSpace(principal.OrganizationUUID) || value == strings.TrimSpace(principal.OrganizationExternalID) {
+		return true
+	}
+	// platform.claude.com 的镜像 session 恢复后，path 仍携带官方 organization UUID，
+	// principal 则指向本地镜像 organization；只在受信 Console host 上接受中间件写入的别名。
+	alias := strings.TrimSpace(auth.PlatformMirrorOrganizationAliasFromContext(r.Context()))
+	return alias != "" && alias == value && isPlatformClaudeHost(r.Host)
+}
+
+func isPlatformClaudeHost(requestHost string) bool {
+	host := strings.TrimSpace(strings.ToLower(requestHost))
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(host, "[]")
+	return host == "platform.claude.com" || strings.HasSuffix(host, ".platform.claude.com")
 }
 
 func principalCanSeeWorkspace(principal auth.Principal, value string) bool {
@@ -297,21 +266,6 @@ func principalCanSeeWorkspace(principal auth.Principal, value string) bool {
 	// 后续 Agent 查询仍使用 principal.WorkspaceID 作为真实租户边界。
 	value = strings.TrimSpace(value)
 	return value != "" && (value == "default" || value == strings.TrimSpace(principal.WorkspaceUUID) || value == strings.TrimSpace(principal.WorkspaceExternalID))
-}
-
-func stringValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-func formatTime(value *time.Time) *string {
-	if value == nil {
-		return nil
-	}
-	formatted := value.UTC().Format(time.RFC3339Nano)
-	return &formatted
 }
 
 func writeCatalogError(w http.ResponseWriter, r *http.Request, status int, message string) {

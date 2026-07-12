@@ -13,17 +13,15 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 
 	"github.com/go-chi/chi/v5"
 )
 
-const defaultProbeTimeout = 10 * time.Second
+const mcpProbeTimeout = 10 * time.Second
 
 type Handler struct {
-	cfg      config.Config
 	database *db.DB
 	prober   Prober
 }
@@ -50,8 +48,8 @@ type refreshResponse struct {
 	Version int             `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	return &Handler{cfg: cfg, database: database, prober: Prober{}}
+func NewHandler(database *db.DB) *Handler {
+	return &Handler{database: database, prober: Prober{}}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -86,10 +84,6 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 // refresh 在一次 HTTP 请求内完成单个 MCP 的匿名工具发现，并且只在成功后替换数据库快照。
 // 因而探测失败或请求取消时，详情页仍可继续展示上一次成功保存的工具列表。
 func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
-	if !h.cfg.MCPDiscoveryEnabled {
-		writeCatalogError(w, r, http.StatusServiceUnavailable, "MCP tool discovery is disabled")
-		return
-	}
 	principal, agent, version, ok := h.authorizedAgent(w, r)
 	if !ok {
 		return
@@ -131,7 +125,7 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 手动刷新应有明确的等待上限，且沿用请求 context：浏览器断开时会取消探测并且不会写库。
-	probeCtx, cancel := context.WithTimeout(r.Context(), configuredProbeTimeout(h.cfg.MCPDiscoveryProbeTimeout))
+	probeCtx, cancel := context.WithTimeout(r.Context(), mcpProbeTimeout)
 	defer cancel()
 	result, err := h.prober.Probe(probeCtx, normalized)
 	if err != nil {
@@ -215,13 +209,6 @@ func findAgentServer(servers []AgentServer, name string) (AgentServer, bool) {
 		}
 	}
 	return AgentServer{}, false
-}
-
-func configuredProbeTimeout(value time.Duration) time.Duration {
-	if value <= 0 {
-		return defaultProbeTimeout
-	}
-	return value
 }
 
 func probeHTTPError(err error) (int, string) {

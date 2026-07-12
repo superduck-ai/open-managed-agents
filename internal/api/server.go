@@ -214,7 +214,7 @@ func (s *Server) platformConsoleAPIRouter() chi.Router {
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
-			mcpcatalogs.NewHandler(s.cfg, s.db).RegisterRoutes(r)
+			mcpcatalogs.NewHandler(s.db).RegisterRoutes(r)
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {
 			s.files.RegisterPlatformRoutes(r)

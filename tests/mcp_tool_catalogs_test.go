@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -58,8 +57,6 @@ func TestMCPToolCatalogConsoleAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.MCPDiscoveryEnabled = true
-	cfg.MCPDiscoveryProbeTimeout = 150 * time.Millisecond
 	app := newTestAppWithStore(t, &cfg, newFakeStore("mcp-catalog-console-bucket"))
 	defer app.close()
 

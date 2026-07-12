@@ -194,7 +194,7 @@ internal/db/migrations/00014_globalize_mcp_tool_catalogs.sql
 
 请求限制：
 
-- 默认完整 probe 超时 10 秒，可用 `MCP_DISCOVERY_PROBE_TIMEOUT` 配置；
+- 完整 probe 使用固定 10 秒总超时；
 - connect 和 TLS handshake 各有有界超时；
 - 最多 20 页、512 个工具、单响应体最多 1 MiB；
 - 最多三次同源 redirect，不接受跨 origin redirect；
@@ -358,10 +358,8 @@ TanStack Query key：
 
 ## 13. 配置与代码边界
 
-配置：
-
-- `MCP_DISCOVERY_ENABLED`：控制 POST refresh；关闭时 GET 仍可读取已有快照。
-- `MCP_DISCOVERY_PROBE_TIMEOUT`：同步 probe 总预算，默认 10 秒。
+手动 Refresh 是 Agent 详情页的固定能力，不设置功能开关。同步 probe 的总预算固定为 10 秒，
+不暴露环境变量，避免页面存在可见按钮但后端因部署配置返回 503。
 
 职责：
 

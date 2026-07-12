@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"testing"
-	"time"
 )
 
 func TestLoadDatabaseAutoMigrateDefaultDevelopment(t *testing.T) {
@@ -77,33 +76,6 @@ func TestLoadDatabaseAutoMigrateOverride(t *testing.T) {
 	})
 }
 
-func TestLoadMCPDiscoveryEnabledInProduction(t *testing.T) {
-	prepareLoadTest(t)
-	t.Setenv("APP_ENV", "production")
-	t.Setenv("MCP_DISCOVERY_ENABLED", "true")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if !cfg.MCPDiscoveryEnabled {
-		t.Fatal("MCPDiscoveryEnabled = false, want true")
-	}
-}
-
-func TestLoadMCPDiscoveryProbeTimeout(t *testing.T) {
-	prepareLoadTest(t)
-	t.Setenv("MCP_DISCOVERY_PROBE_TIMEOUT", "7s")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if cfg.MCPDiscoveryProbeTimeout != 7*time.Second {
-		t.Fatalf("MCPDiscoveryProbeTimeout = %v, want 7s", cfg.MCPDiscoveryProbeTimeout)
-	}
-}
-
 func TestLoadCodeSessionOTLPFileLogDefaults(t *testing.T) {
 	t.Run("development enabled", func(t *testing.T) {
 		prepareLoadTest(t)
@@ -168,8 +140,6 @@ func prepareLoadTest(t *testing.T) {
 		"CODE_SESSION_OTLP_FILE_LOG_ENABLED",
 		"CODE_SESSION_OTLP_LOG_ROOT",
 		"CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES",
-		"MCP_DISCOVERY_ENABLED",
-		"MCP_DISCOVERY_PROBE_TIMEOUT",
 		"DATABASE_URL",
 		"S3_ENDPOINT",
 		"S3_BUCKET",

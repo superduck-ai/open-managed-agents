@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -70,18 +69,6 @@ func TestProbeHTTPErrorUsesGatewayStatuses(t *testing.T) {
 				t.Fatalf("status = %d, want %d", status, test.wantStatus)
 			}
 		})
-	}
-}
-
-func TestConfiguredProbeTimeoutDefaultsOnlyForNonPositiveValues(t *testing.T) {
-	if got := configuredProbeTimeout(0); got != defaultProbeTimeout {
-		t.Fatalf("zero timeout = %v, want %v", got, defaultProbeTimeout)
-	}
-	if got := configuredProbeTimeout(-time.Second); got != defaultProbeTimeout {
-		t.Fatalf("negative timeout = %v, want %v", got, defaultProbeTimeout)
-	}
-	if got := configuredProbeTimeout(250 * time.Millisecond); got != 250*time.Millisecond {
-		t.Fatalf("configured timeout = %v, want 250ms", got)
 	}
 }
 

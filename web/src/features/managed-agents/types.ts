@@ -679,19 +679,6 @@ export type ResourceConfig = {
   rows?: Array<Record<string, ReactNode>>;
 };
 
-export type AgentToolCardModel = {
-  title: string;
-  subtitle: string;
-  permissionCount: number;
-  permissions?: AgentToolPermission[];
-};
-
-export type AgentToolPermission = {
-  label: string;
-  name: string;
-  description: string;
-};
-
 export type EventsTabProps = {
   activeLane: string;
   archivedLaneCount: number;

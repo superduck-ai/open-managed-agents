@@ -2,7 +2,7 @@ import { type ReactNode } from 'react';
 import { createdFilterStartISOString } from '../api';
 import { StatusPill } from '../components/common';
 import { numericValueFromKeys } from '../sessions/SessionDetailPage';
-import { type AgentApiResponse, type AgentDetailCreatedFilter, type AgentDetailStatusFilter, type AgentDetailTab, type AgentDetailVersionFilter, type AgentListFilters, type AgentSessionAnalyticsOverview, type AgentToolCardModel, type AgentToolPermission, type AnalyticsMetricBucket, type SessionApiResponse } from '../types';
+import { type AgentApiResponse, type AgentDetailCreatedFilter, type AgentDetailStatusFilter, type AgentDetailTab, type AgentDetailVersionFilter, type AgentListFilters, type AgentSessionAnalyticsOverview, type AnalyticsMetricBucket, type SessionApiResponse } from '../types';
 import { objectRecord } from '../utils';
 
 export const emptyAgents: AgentApiResponse[] = [];
@@ -128,19 +128,6 @@ export function formatAgentSkillSource(source: string) {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
 }
-
-export const BUILT_IN_AGENT_TOOLSETS: Record<string, AgentToolPermission[]> = {
-  agent_toolset_20260401: [
-    { label: 'Bash', name: 'bash', description: 'Execute bash commands in a shell session' },
-    { label: 'Read', name: 'read', description: 'Read a file from the local filesystem' },
-    { label: 'Write', name: 'write', description: 'Write a file to the local filesystem' },
-    { label: 'Edit', name: 'edit', description: 'Perform string replacement in a file' },
-    { label: 'Glob', name: 'glob', description: 'Fast file pattern matching using glob patterns' },
-    { label: 'Grep', name: 'grep', description: 'Text search using regex patterns' },
-    { label: 'Web fetch', name: 'web_fetch', description: 'Fetch content from a URL' },
-    { label: 'Web search', name: 'web_search', description: 'Search the web for information' }
-  ]
-};
 
 export function agentMatchesClientFilters(agent: AgentApiResponse, filters: AgentListFilters, applyCreatedFilter: boolean) {
   if (filters.status !== 'all' && agent.archived_at) {
@@ -346,60 +333,6 @@ export function formatDetailDate(value: string) {
     hour: 'numeric',
     minute: '2-digit'
   }).format(new Date(timestamp));
-}
-
-export function agentToolCards(agent: AgentApiResponse): AgentToolCardModel[] {
-  const cards: AgentToolCardModel[] = [];
-  const tools = ensureArray(agent.tools);
-  const mcpServers = ensureArray(agent.mcp_servers);
-
-  tools
-    .map((tool) => objectRecord(tool))
-    .filter((tool) => String(tool.type || '').includes('agent_toolset'))
-    .forEach((tool) => {
-      const type = String(tool.type || 'agent_toolset_20260401');
-      const permissions = builtInToolPermissions(type);
-      cards.push({
-        title: 'Built-in tools',
-        subtitle: type,
-        permissionCount: permissions.length || (Array.isArray(tool.configs) ? tool.configs.length : 0),
-        permissions
-      });
-    });
-
-  mcpServers.map((server) => objectRecord(server)).forEach((server, index) => {
-    const name = String(server.name || server.display_name || `MCP server ${index + 1}`);
-    const url = String(server.url || server.server_url || server.mcp_server_url || 'Configured MCP server');
-    cards.push({
-      title: name,
-      subtitle: url,
-      permissionCount: mcpPermissionCount(name, tools)
-    });
-  });
-
-  if (!cards.length && tools.length) {
-    tools.map((tool) => objectRecord(tool)).forEach((tool, index) => {
-      cards.push({
-        title: String(tool.name || tool.type || `Tool ${index + 1}`),
-        subtitle: String(tool.type || 'Configured tool'),
-        permissionCount: Array.isArray(tool.configs) ? tool.configs.length : 0
-      });
-    });
-  }
-
-  return cards.length ? cards : [{ title: 'No tools configured', subtitle: 'Add built-in tools or MCP servers when editing this agent.', permissionCount: 0 }];
-}
-
-export function builtInToolPermissions(toolsetType: string): AgentToolPermission[] {
-  return BUILT_IN_AGENT_TOOLSETS[toolsetType] ?? [];
-}
-
-export function mcpPermissionCount(serverName: string, tools: unknown[]) {
-  const normalized = serverName.toLowerCase();
-  const tool = tools
-    .map((item) => objectRecord(item))
-    .find((item) => String(item.mcp_server_name || item.name || '').toLowerCase() === normalized);
-  return Array.isArray(tool?.configs) ? tool.configs.length : 0;
 }
 
 export function ensureArray(value: unknown): unknown[] {

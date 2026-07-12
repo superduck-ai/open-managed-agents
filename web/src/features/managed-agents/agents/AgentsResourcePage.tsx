@@ -47,10 +47,10 @@ export {
   agentDetailCreatedRange,
   agentDetailStatusValues,
   agentModelName,
-  BUILT_IN_AGENT_TOOLSETS,
   compactAgentId,
   relativeTime
 } from './model';
+export { BUILT_IN_AGENT_TOOLSETS } from './tools/model';
 
 export function AgentsResourcePage({ config, routeWorkspaceId }: { config: ResourceConfig; routeWorkspaceId?: string }) {
   const { msg } = useI18n();

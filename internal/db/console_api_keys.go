@@ -3,9 +3,7 @@ package db
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -570,9 +568,4 @@ func consoleRandomToken(bytes int) string {
 		return strings.ReplaceAll(uuid.NewString(), "-", "")
 	}
 	return base64.RawURLEncoding.EncodeToString(raw)
-}
-
-func consoleAPIKeySHA256Hex(content []byte) string {
-	sum := sha256.Sum256(content)
-	return hex.EncodeToString(sum[:])
 }

@@ -33,6 +33,9 @@ test:
 lint:
   golangci-lint run --config .golangci.yml ./...
 
+dead-code:
+  ./scripts/go-dead-code.sh
+
 complexity: go-file-lines go-complexity web-complexity
 
 go-file-lines:

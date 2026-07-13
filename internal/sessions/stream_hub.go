@@ -46,10 +46,6 @@ func (h *Handler) broadcastStreamDelta(event db.SessionEvent) {
 	h.streams.broadcastStreamDelta(event)
 }
 
-func (h *Handler) broadcastToSubscribers(event db.SessionEvent, streamDelta bool) {
-	h.streams.broadcastToSubscribers(event, streamDelta)
-}
-
 func (h *streamHub) subscribe(sessionID, threadID string, includeStreamDeltas bool) (int64, <-chan db.SessionEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

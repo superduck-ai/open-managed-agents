@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const skillPrewarmJobType = "skill_prewarm"
-
 type SkillPrewarmJob struct {
 	ID          int64
 	ExternalID  string

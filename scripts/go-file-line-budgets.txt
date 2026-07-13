@@ -1,13 +1,13 @@
 # Exact legacy ratchets: <lines> <tracked Go path>
-4233 tests/sessions_api_test.go
-3357 internal/workbench/console_platform_workbench.go
+4213 tests/sessions_api_test.go
+3186 internal/workbench/console_platform_workbench.go
 1921 internal/deployments/handler.go
-1854 internal/codesessions/ingress.go
 1829 internal/memory/handler.go
+1815 internal/codesessions/ingress.go
 1544 internal/environments/handler.go
 1489 internal/vaults/handler.go
-1378 internal/db/code_sessions.go
 1376 tests/files_api_test.go
+1369 internal/db/code_sessions.go
 1367 internal/db/schema.go
 1278 internal/agents/handler.go
 1194 internal/db/memory.go
@@ -26,14 +26,11 @@
 643 internal/db/batches.go
 606 internal/batches/handler.go
 595 internal/codesessions/service.go
-578 internal/db/console_api_keys.go
+571 internal/db/console_api_keys.go
 552 internal/db/deployments.go
 547 internal/runtime/e2bruntime/runtime.go
 546 internal/db/workbench.go
 537 internal/environments/environment_manager.go
 534 internal/files/platform.go
 532 internal/webhooks/handler.go
-523 internal/workbench/workbench_support.go
 521 internal/platformapi/console_api_keys.go
-519 internal/platformapi/support.go
-504 internal/sessions/event_mapper.go

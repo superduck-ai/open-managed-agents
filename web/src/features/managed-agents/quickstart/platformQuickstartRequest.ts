@@ -1,6 +1,4 @@
-import { type Locale } from '../../../shared/i18n';
 import { platformQuickstartOfficialRequest } from './platformQuickstartOfficialRequest.generated';
-import { resolveQuickstartSystem } from './quickstartPromptText';
 
 export type QuickstartStep = 'agent' | 'environment' | 'session' | 'integrate';
 
@@ -15,7 +13,6 @@ export type QuickstartRequestInput = {
   agentConfig: Record<string, unknown>;
   agentDescription?: string | null;
   messages?: QuickstartMessage[];
-  locale?: Locale;
 };
 
 export type PlatformQuickstartRequest = {
@@ -41,7 +38,7 @@ export const platformQuickstartToolNames = platformQuickstartTools.map((tool) =>
 export function buildPlatformQuickstartRequest(input: QuickstartRequestInput): PlatformQuickstartRequest {
   return {
     messages: input.messages?.length ? input.messages : [buildInitialQuickstartMessage(input)],
-    system: resolveQuickstartSystem(input.locale ?? 'en'),
+    system: platformQuickstartSystem,
     model: platformQuickstartModel,
     max_tokens: platformQuickstartMaxTokens,
     tools: platformQuickstartTools,
@@ -59,38 +56,15 @@ export function buildInitialQuickstartMessage(input: QuickstartRequestInput): Qu
 
 export function buildQuickstartTurnContextText(input: QuickstartRequestInput): string {
   const trimmedDescription = input.agentDescription?.trim();
-
-  // Bracketed state lines are machine state the model reads to align with the system
-  // prompt's step keys; keep them in English for both locales. Only the natural-language
-  // sentences are localized.
-  const stateLines = [
-    `[Current quickstart step: "${input.step}". Follow this step's instructions from the system prompt.]`,
-    '',
-    `[Deployment schedule planned: ${input.deploymentSchedulePlanned ? 'yes' : 'no'}.]`,
-    '',
-  ];
-
-  if ((input.locale ?? 'en') === 'zh-CN') {
-    const agentIntro = trimmedDescription
-      ? ['我正在构建一个 agent。这是我的描述：', `"${trimmedDescription}"`]
-      : ['我正在构建一个新的 agent。'];
-    return [
-      ...stateLines,
-      ...agentIntro,
-      '',
-      '这是当前的配置：',
-      JSON.stringify(input.agentConfig, null, 2),
-      '',
-      '请从当前 quickstart 步骤开始（见 turn context）。',
-    ].join('\n');
-  }
-
   const agentIntro = trimmedDescription
     ? ["I'm building an agent. Here's my description:", `"${trimmedDescription}"`]
     : ["I'm building a new agent."];
 
   return [
-    ...stateLines,
+    `[Current quickstart step: "${input.step}". Follow this step's instructions from the system prompt.]`,
+    '',
+    `[Deployment schedule planned: ${input.deploymentSchedulePlanned ? 'yes' : 'no'}.]`,
+    '',
     ...agentIntro,
     '',
     "Here's the current config:",

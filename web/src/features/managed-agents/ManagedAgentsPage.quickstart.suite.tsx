@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import { I18nProvider, useI18n } from '../../shared/i18n';
-import { agentTemplates, createDialogTemplateConfigsZh, templateTags } from './agentConfig';
+import { I18nProvider } from '../../shared/i18n';
+import { templateTags } from './agentConfig';
 import { TemplateCard } from './components/CodeBlocks';
 import { clampQuickstartInspectorPaneWidth } from './quickstart/AgentQuickstartPage';
 import {
@@ -73,15 +73,6 @@ if (typeof globalThis.DOMRect === 'undefined') {
   Object.assign(globalThis, { DOMRect: TestDOMRect });
 }
 
-function QuickstartLocaleTestToggle() {
-  const { locale, setLocale } = useI18n();
-  return (
-    <button type="button" onClick={() => setLocale(locale === 'zh-CN' ? 'en' : 'zh-CN')}>
-      Toggle test locale
-    </button>
-  );
-}
-
 export function registerManagedAgentsQuickstartTests() {
   test('renders the quickstart template browser in Chinese', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
@@ -94,135 +85,10 @@ export function registerManagedAgentsQuickstartTests() {
     expect(screen.getByRole('heading', { name: '浏览模板' })).toBeTruthy();
     expect(screen.getByPlaceholderText('搜索模板')).toBeTruthy();
 
-    fireEvent.change(screen.getByPlaceholderText('搜索模板'), { target: { value: '故障' } });
+    fireEvent.change(screen.getByPlaceholderText('搜索模板'), { target: { value: '事故' } });
 
-    expect(screen.getByRole('button', { name: /故障指挥官/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /事故指挥官/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /数据分析师/i })).toBeNull();
-  });
-
-  test('shows the localized template description in the Chinese quickstart chat', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
-    mockAgentsApi([]);
-    renderManagedAgentsPage('quickstart', 'zh-CN');
-    const template = agentTemplates.find((candidate) => candidate.id === 'structured-extractor');
-    const localizedDescription = createDialogTemplateConfigsZh['structured-extractor'].description;
-
-    if (!template || typeof localizedDescription !== 'string') {
-      throw new Error('Structured extractor localization fixture is missing.');
-    }
-    fireEvent.click(screen.getByRole('button', { name: /结构化提取助手/i }));
-    fireEvent.click(screen.getByRole('button', { name: '使用模板' }));
-
-    const chatContent = await screen.findByTestId('quickstart-chat-content');
-    const userMessage = within(chatContent)
-      .getByText(localizedDescription)
-      .closest('[data-slot="message"]') as HTMLElement | null;
-    expect(userMessage).toBeTruthy();
-    expect(userMessage?.getAttribute('data-align')).toBe('end');
-    expect(within(chatContent).queryByText(template.body)).toBeNull();
-  });
-
-  test('localizes the environment continuation and default integration user message in Chinese', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
-    let proxyCalls = 0;
-    mockAgentsApi([], {
-      quickstartStream: () => {
-        proxyCalls += 1;
-        if (proxyCalls === 1) {
-          return quickstartToolStream('create_environment', {
-            reuse_environment_id: 'env_option123456',
-          });
-        }
-        if (proxyCalls === 2) {
-          return quickstartToolStream('show_integration_exits', {
-            agent_id: 'agent_test123456',
-            environment_id: 'env_option123456',
-          });
-        }
-        return quickstartTextStream('集成步骤已完成。');
-      },
-    });
-    renderManagedAgentsPage('quickstart', 'zh-CN');
-
-    fireEvent.click(screen.getByRole('button', { name: /结构化提取助手/i }));
-    fireEvent.click(screen.getByRole('button', { name: '使用模板' }));
-    fireEvent.click(await screen.findByRole('button', { name: '下一步：配置环境' }));
-
-    const startSessionButton = await screen.findByRole('button', { name: '下一步：启动会话' });
-    expect(screen.queryByRole('button', { name: 'Next: Start session' })).toBeNull();
-    fireEvent.click(startSessionButton);
-
-    expect(await screen.findByText('示例代码')).toBeTruthy();
-    await waitFor(() => {
-      const cliCode = Array.from(document.querySelectorAll('code.language-bash')).find((node) =>
-        node.textContent?.includes('你好！你能帮我做什么？'),
-      );
-      expect(cliCode).toBeTruthy();
-      expect(cliCode?.textContent).not.toContain('Hello! What can you help me with?');
-    });
-  });
-
-  test('returns Chinese results for Skip and Keep refining interactions', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
-    let proxyCalls = 0;
-    const api = mockAgentsApi([], {
-      quickstartStream: () => {
-        proxyCalls += 1;
-        if (proxyCalls === 1) {
-          return quickstartToolStream('ask_user_questions', {
-            questions: [
-              {
-                question: '这个 Agent 需要访问哪些服务？',
-                header: '服务',
-                multiSelect: false,
-                options: [{ label: '暂不决定', description: '稍后再配置。' }],
-              },
-            ],
-          });
-        }
-        if (proxyCalls === 2) {
-          return quickstartToolStream('build_agent_config', {
-            name: '结构化提取助手',
-            description: '从文档中提取结构化数据。',
-            model: 'claude-sonnet-4-6',
-            system: '从用户提供的文档中提取结构化数据。',
-            mcp_servers: [],
-            tools: [{ type: 'agent_toolset_20260401' }],
-            skills: [],
-          });
-        }
-        return quickstartTextStream('配置继续使用中文。');
-      },
-    });
-    renderManagedAgentsPage('quickstart', 'zh-CN');
-
-    fireEvent.click(screen.getByRole('button', { name: /结构化提取助手/i }));
-    fireEvent.click(screen.getByRole('button', { name: '使用模板' }));
-    fireEvent.click(await screen.findByRole('button', { name: '下一步：配置环境' }));
-
-    expect(await screen.findByText('这个 Agent 需要访问哪些服务？')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '跳过' }));
-
-    await waitFor(() => expect(screen.getAllByText('已跳过。').length).toBeGreaterThan(0));
-    expect(screen.queryByText('Skipped.')).toBeNull();
-    const skipRequest = api.requests
-      .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
-      .at(-1);
-    expect(JSON.stringify(skipRequest?.body?.messages)).toContain('已跳过。');
-
-    fireEvent.click(await screen.findByRole('button', { name: '继续调整' }));
-
-    await waitFor(() =>
-      expect(
-        api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length,
-      ).toBeGreaterThanOrEqual(3),
-    );
-    const refineRequest = api.requests
-      .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
-      .at(-1);
-    const refineMessages = JSON.stringify(refineRequest?.body?.messages);
-    expect(refineMessages).toContain('我想在创建前继续调整配置。');
-    expect(refineMessages).not.toContain("I'd like to keep refining the config before creating.");
   });
 
   test('renders the agents list controls and empty state in Chinese', async () => {
@@ -257,7 +123,7 @@ export function registerManagedAgentsQuickstartTests() {
 
     const dialog = screen.getByRole('dialog', { name: '创建 Agent' });
     fireEvent.click(within(dialog).getByRole('tab', { name: '模板' }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /深度调研助手/i }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /深度研究员/i }));
 
     expect(
       within(dialog)
@@ -265,75 +131,9 @@ export function registerManagedAgentsQuickstartTests() {
         .getAttribute('aria-expanded'),
     ).toBe('false');
     const collapsedSummary = within(dialog)
-      .getAllByText('深度调研助手')
+      .getAllByText('深度研究员')
       .find((node) => node.closest('[data-slot="badge"]'));
     expect(collapsedSummary?.closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
-  });
-
-  test('keeps only the active Builder prompt language fixed when the UI locale changes', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
-    let proxyCalls = 0;
-    const api = mockAgentsApi([], {
-      quickstartStream: () => {
-        proxyCalls += 1;
-        if (proxyCalls === 1) {
-          return quickstartToolStream('build_agent_config', {
-            name: '发票跟踪器',
-            description: '汇总收到的发票邮件。',
-            model: 'claude-sonnet-4-6',
-            system: '跟踪发票，并在执行不可逆操作前询问用户。',
-            mcp_servers: [],
-            tools: [{ type: 'agent_toolset_20260401' }],
-            skills: [],
-            metadata: { template: 'blank-agent', source: 'description' },
-          });
-        }
-        return quickstartTextStream('Builder 对话继续使用中文。');
-      },
-    });
-    render(
-      <I18nProvider initialLocale="zh-CN">
-        <QuickstartLocaleTestToggle />
-        <WorkspaceContext.Provider value={workspaceContextValue('default')}>
-          <ManagedAgentsPage section="quickstart" />
-        </WorkspaceContext.Provider>
-      </I18nProvider>,
-    );
-
-    fireEvent.change(screen.getByLabelText('描述你的 Agent'), {
-      target: { value: '构建一个汇总收件箱发票邮件的发票跟踪器。' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
-
-    expect(await screen.findByRole('button', { name: '创建此 Agent' })).toBeTruthy();
-    const firstProxyRequest = api.requests.find(
-      (request) => request.url === '/api/organizations/org_test/proxy/v1/messages',
-    );
-    const firstBuilderPrompt = (firstProxyRequest?.body?.system as Array<{ text?: string }> | undefined)?.[1]?.text;
-    expect(firstBuilderPrompt).toContain('你是一位专业的 agent 构建助手');
-    expect(JSON.stringify(firstProxyRequest?.body?.messages)).toContain(
-      createDialogTemplateConfigsZh.blank.description,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle test locale' }));
-
-    await waitFor(() => expect(document.documentElement.lang).toBe('en'));
-    expect(screen.getByRole('button', { name: 'Quickstart' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Keep refining' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create this agent' }));
-
-    await waitFor(() =>
-      expect(
-        api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length,
-      ).toBeGreaterThanOrEqual(2),
-    );
-    const continuationRequest = api.requests
-      .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
-      .at(-1);
-    const continuationBuilderPrompt = (continuationRequest?.body?.system as Array<{ text?: string }> | undefined)?.[1]
-      ?.text;
-    expect(continuationBuilderPrompt).toContain('你是一位专业的 agent 构建助手');
-    expect(JSON.stringify(continuationRequest?.body?.messages)).toContain('Agent 已创建。');
   });
 
   test('renders the quickstart template browser and opens a template detail view', () => {
@@ -1200,7 +1000,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect(continuationMessages).not.toContain('I should not be visible');
   });
 
-  test('renders official quickstart status lines and drops upstream search narration', async () => {
+  test('renders official quickstart status lines and preserves visible search-result text', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
     const officialSearchResult =
       "Search results for query: An environment is a reusable template for the container where your agent's tools execute — things like networking policy and package access. Let me check what environments you already have.";
@@ -1240,19 +1040,15 @@ export function registerManagedAgentsQuickstartTests() {
     expect(vaultSharingNotice?.getAttribute('role')).toBe('alert');
     expect(screen.queryByText('A vault')).toBeNull();
     expect(screen.getByRole('link', { name: /here/ }).getAttribute('href')).toBe('/docs/en/managed-agents/vaults');
+    expect(await screen.findByText(officialSearchResult)).toBeTruthy();
     expect(await screen.findByText('Vaults loaded')).toBeTruthy();
     expect(await screen.findByText('Vault options are ready.')).toBeTruthy();
-    expect(screen.queryByText(officialSearchResult)).toBeNull();
     expect(screen.queryByText('Vaults loaded.')).toBeNull();
     expect(screen.queryByText('List vaults')).toBeNull();
     expect(screen.getByLabelText('Reply…')).toBeTruthy();
     expect(api.requests.some((request) => request.url.startsWith('/v1/vaults?') && request.method === 'GET')).toBe(
       true,
     );
-    const continuationRequest = api.requests
-      .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
-      .at(-1);
-    expect(JSON.stringify(continuationRequest?.body?.messages)).not.toContain('Search results for query:');
   });
 
   test('handles quickstart web_search tool calls without inventing a local API side effect', async () => {
@@ -1281,24 +1077,27 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Use template' }));
     fireEvent.click(await screen.findByRole('button', { name: /Next: Configure environment/i }));
 
+    expect(await screen.findByText(`Search results for query: ${environmentSearchQuery}`)).toBeTruthy();
     expect(await screen.findByText('Search web')).toBeTruthy();
     expect(screen.getByText('web_search')).toBeTruthy();
     expect(await screen.findByText('web_search is handled by the upstream model.')).toBeTruthy();
     expect(await screen.findByText('Search complete.')).toBeTruthy();
-    expect(screen.queryByText(/Search results for query:/)).toBeNull();
     const continuationRequest = api.requests
       .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
       .at(-1);
-    expect(JSON.stringify(continuationRequest?.body?.messages)).not.toContain('Search results for query:');
-    expect(JSON.stringify(continuationRequest?.body?.messages)).toContain(environmentSearchQuery);
+    expect(JSON.stringify(continuationRequest?.body?.messages)).toContain(
+      `Search results for query: ${environmentSearchQuery}`,
+    );
     expect(JSON.stringify(continuationRequest?.body?.messages)).toContain(
       'web_search is handled by the upstream model.',
     );
     expect(api.requests.some((request) => request.url.includes('/v1/search'))).toBe(false);
   });
 
-  test('drops server-side quickstart search narration and keeps the environment tool flow', async () => {
+  test('renders server-side quickstart web search queries without an empty prefix row', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    const environmentSearchQuery =
+      "An environment is a reusable template for the container where your agent's tools execute — things like networking policy and package access. Let me check what environments you already have.";
     let proxyCalls = 0;
     const api = mockAgentsApi([], {
       quickstartStream: () => {
@@ -1319,14 +1118,15 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Use template' }));
     fireEvent.click(await screen.findByRole('button', { name: /Next: Configure environment/i }));
 
+    expect(await screen.findByText(`Search results for query: ${environmentSearchQuery}`)).toBeTruthy();
+    expect(screen.queryByText('Search results for query:')).toBeNull();
     expect(await screen.findByText('Environments loaded')).toBeTruthy();
     expect(await screen.findByText('Environment options are ready.')).toBeTruthy();
-    expect(screen.queryByText(/Search results for query:/)).toBeNull();
     expect(screen.queryByText('Search web')).toBeNull();
     const continuationRequest = api.requests
       .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
       .at(-1);
-    expect(JSON.stringify(continuationRequest?.body?.messages)).not.toContain('Search results for query:');
+    expect(JSON.stringify(continuationRequest?.body?.messages)).toContain(environmentSearchQuery);
     expect(JSON.stringify(continuationRequest?.body?.messages)).not.toContain('server_tool_use');
     expect(api.requests.some((request) => request.url.includes('/v1/search'))).toBe(false);
   });

@@ -32,6 +32,14 @@ repos:
         types: [go]
         require_serial: true
 
+      - id: go-complexity
+        name: Enforce Go cyclomatic complexity
+        entry: scripts/go-complexity.sh
+        language: script
+        types: [go]
+        pass_filenames: false
+        require_serial: true
+
       - id: prettier
         name: Format staged frontend files
         entry: scripts/pre-commit-web-format.sh
@@ -44,5 +52,13 @@ repos:
         entry: bash -c 'cd web && bun run lint:naming'
         language: system
         files: ^web/(?:src/.*\.tsx?|eslint\.naming\.config\.js|package\.json)$
+        pass_filenames: false
+        require_serial: true
+
+      - id: typescript-complexity
+        name: Enforce TypeScript cyclomatic complexity
+        entry: bash -c 'cd web && bun run lint:complexity'
+        language: system
+        files: ^web/(?:src/.*\.tsx?|eslint\.complexity\.config\.js|package\.json)$
         pass_filenames: false
         require_serial: true

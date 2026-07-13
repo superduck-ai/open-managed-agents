@@ -9,6 +9,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "bun test",
     "lint": "eslint .",
+    "lint:complexity": "eslint --config eslint.complexity.config.js src",
     "lint:naming": "eslint --config eslint.naming.config.js src",
     "format": "prettier . --write",
     "format:check": "prettier . --check"

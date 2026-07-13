@@ -1,0 +1,17 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: false
+
+linters:
+  default: none
+  enable:
+    - cyclop
+  settings:
+    cyclop:
+      max-complexity: 30
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

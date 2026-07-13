@@ -16,6 +16,7 @@
   - `bun run dev`
   - `bun run build`
   - `bun test`
+  - `bun run lint:complexity`
   - `bun run lint:naming`
   - `bun run format`
   - `bun run format:check`
@@ -190,6 +191,12 @@
 - 组件或构造器引用作为参数传递时允许 PascalCase（例如 `Icon`）；普通值参数仍使用 camelCase。
 - API/数据库 payload 的 `snake_case` 仅保留在边界属性和解构位置，内部标识符应转换为 camelCase。
 - 修改 TypeScript/TSX 标识符或命名配置后运行 `bun run lint:naming`。
+
+## 圈复杂度
+
+- 修改生产 TypeScript/TSX 后运行 `bun run lint:complexity`。新文件和未列入历史预算的文件采用 modified cyclomatic complexity 上限 20。
+- `eslint.complexity.config.js` 中的历史文件预算是只能下降的 ratchet，不是目标值；不得为了通过检查提高预算或扩大匹配范围。
+- 复杂函数优先拆成领域判断、数据归一化、事件处理和展示组件。保持 API 请求、状态流、路由语义、文案与样式不变，并用对应功能测试和 `bun run build` 验证机械拆分。
 
 ## 本地开发
 

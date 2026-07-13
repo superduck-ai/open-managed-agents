@@ -16,6 +16,7 @@
   - `bun run dev`
   - `bun run build`
   - `bun test`
+  - `bun run lint:naming`
   - `bun run format`
   - `bun run format:check`
 - 修改 `web/` 下的前端代码后，在使用浏览器或 SuperDuck 验证前，需要先在仓库根目录运行 `./restart-web.sh` 重启前端开发服务器。
@@ -182,6 +183,13 @@
   - `bun test`
   - `bun run build`
 - 如果 UI 变更涉及层级、响应式行为或交互保真度，需要打开浏览器验证。
+
+## 标识符命名
+
+- React 组件、类型、接口和类使用 PascalCase；普通函数、变量和参数使用 camelCase；模块级常量允许 UPPER_CASE；泛型类型参数使用 PascalCase。
+- 组件或构造器引用作为参数传递时允许 PascalCase（例如 `Icon`）；普通值参数仍使用 camelCase。
+- API/数据库 payload 的 `snake_case` 仅保留在边界属性和解构位置，内部标识符应转换为 camelCase。
+- 修改 TypeScript/TSX 标识符或命名配置后运行 `bun run lint:naming`。
 
 ## 本地开发
 

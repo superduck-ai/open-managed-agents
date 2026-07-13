@@ -38,3 +38,11 @@ repos:
         language: script
         files: ^web/.*\.(?:[cm]?[jt]sx?|json|css|md|ya?ml)$
         require_serial: true
+
+      - id: typescript-naming
+        name: Enforce TypeScript naming conventions
+        entry: bash -c 'cd web && bun run lint:naming'
+        language: system
+        files: ^web/(?:src/.*\.tsx?|eslint\.naming\.config\.js|package\.json)$
+        pass_filenames: false
+        require_serial: true

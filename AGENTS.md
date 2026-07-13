@@ -19,6 +19,13 @@
 - hook 对暂存文件执行通用文件卫生检查，对 Go 文件执行 `gofmt` 和对应 package 的 golangci-lint，并用项目固定版本的 Prettier 格式化前端文件。
 - 使用 `just hooks-run` 对全部跟踪文件复跑相同检查；不要使用 `SKIP` 绕过失败项，除非用户明确批准并记录原因。
 
+## 命名规范
+
+- Go package 名使用简短的小写单词；导出类型、函数和方法使用 PascalCase，未导出标识符使用 mixedCaps。缩写保持 Go 惯例并在同一标识符中一致，例如 `API`、`HTTP`、`ID`、`URL`、`UUID`；接收器名应简短且在同一类型的方法中一致。
+- TypeScript/React 的类型、接口、类和组件使用 PascalCase；普通变量、函数和参数使用 camelCase；模块级常量可使用 UPPER_CASE；泛型类型参数使用 PascalCase。以 PascalCase 命名的函数参数只用于组件或构造器引用等可调用类型。
+- Anthropic/API、数据库和第三方 payload 的字段名属于外部合同，可在边界 DTO、对象属性和解构中保留 `snake_case`；进入内部变量或业务模型后应映射为上述语言惯例，不要把例外扩散到业务标识符。
+- Go 命名由 `.golangci.yml` 中 `revive/var-naming` 强制；前端命名由 `bun run lint:naming` 强制，并在 pre-commit 与 `.github/workflows/web-naming.yml` 中执行。
+
 ## 前端设计方向
 
 - 前端实现细节位于 `web/AGENTS.md`。

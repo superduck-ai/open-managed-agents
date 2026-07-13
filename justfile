@@ -42,6 +42,9 @@ web-test:
 web-lint:
   cd web && bun run lint
 
+web-lint-naming:
+  cd web && bun run lint:naming
+
 web-format:
   cd web && bun run format
 

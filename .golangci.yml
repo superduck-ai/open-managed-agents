@@ -15,9 +15,14 @@ linters:
     - musttag
     - nilnesserr
     - reassign
+    - revive
     - rowserrcheck
     - spancheck
     - sqlclosecheck
+  settings:
+    revive:
+      rules:
+        - name: var-naming
 
 formatters:
   enable:

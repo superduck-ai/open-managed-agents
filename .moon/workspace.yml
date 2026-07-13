@@ -1,0 +1,11 @@
+projects:
+  backend: "."
+  web: "web"
+  agent-sdk-test: "tests/js-test"
+
+constraints:
+  enforceLayerRelationships: true
+
+vcs:
+  defaultBranch: "main"
+  provider: "github"

@@ -42,6 +42,7 @@
       },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
+        "@moonrepo/cli": "2.4.2",
         "@tailwindcss/vite": "^4.3.1",
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^16.3.2",
@@ -199,6 +200,22 @@
     "@lezer/yaml": ["@lezer/yaml@1.0.4", "https://registry.npmmirror.com/@lezer/yaml/-/yaml-1.0.4.tgz", { "dependencies": { "@lezer/common": "^1.2.0", "@lezer/highlight": "^1.0.0", "@lezer/lr": "^1.4.0" } }, "sha512-2lrrHqxalACEbxIbsjhqGpSW8kWpUKuY6RHgnSAFZa6qK62wvnPxA8hGOwOoDbwHcOFs5M4o27mjGu+P7TvBmw=="],
 
     "@marijn/find-cluster-break": ["@marijn/find-cluster-break@1.0.3", "https://registry.npmmirror.com/@marijn/find-cluster-break/-/find-cluster-break-1.0.3.tgz", {}, "sha512-FY+MKLBoTsLNJF/eLWaOsXGdz6uh3Iu1axjPf6TUq92IYumcTcXWHoS747JARLkcdlJ/Waiaxc5wQfFO8jC6NA=="],
+
+    "@moonrepo/cli": ["@moonrepo/cli@2.4.2", "https://registry.npmmirror.com/@moonrepo/cli/-/cli-2.4.2.tgz", { "dependencies": { "detect-libc": "^2.1.2" }, "optionalDependencies": { "@moonrepo/core-linux-arm64-gnu": "2.4.2", "@moonrepo/core-linux-arm64-musl": "2.4.2", "@moonrepo/core-linux-x64-gnu": "2.4.2", "@moonrepo/core-linux-x64-musl": "2.4.2", "@moonrepo/core-macos-arm64": "2.4.2", "@moonrepo/core-macos-x64": "2.4.2", "@moonrepo/core-windows-x64-msvc": "2.4.2" }, "bin": { "moon": "moon.js", "moonx": "moonx.js" } }, "sha512-/Ga7i9yzGzmUKy/n8pCeFEpFJnQs02+CEmQYOv/9ngI5G7zMhI+rB5zBVfJZFnKIKGKPrS3Nl73cLa7b8kDtVw=="],
+
+    "@moonrepo/core-linux-arm64-gnu": ["@moonrepo/core-linux-arm64-gnu@2.4.2", "https://registry.npmmirror.com/@moonrepo/core-linux-arm64-gnu/-/core-linux-arm64-gnu-2.4.2.tgz", { "os": "linux", "cpu": "arm64" }, "sha512-6xdS2MF6NYjky+3PgIo17L9DF3nDurUYultUqGwue8u5lyHvredBQY8SPfoBNqVCWpmlGG1zTszB4NXxCz32Wg=="],
+
+    "@moonrepo/core-linux-arm64-musl": ["@moonrepo/core-linux-arm64-musl@2.4.2", "https://registry.npmmirror.com/@moonrepo/core-linux-arm64-musl/-/core-linux-arm64-musl-2.4.2.tgz", { "os": "linux", "cpu": "arm64" }, "sha512-fzVvZn4HzWmdWNyZzhhjPAFFRO+2MsIFWXC4CZVS9uvnpjooxOP/XcccS5dD3Q5Vi89Eib4K0SLuos+UTzRTfw=="],
+
+    "@moonrepo/core-linux-x64-gnu": ["@moonrepo/core-linux-x64-gnu@2.4.2", "https://registry.npmmirror.com/@moonrepo/core-linux-x64-gnu/-/core-linux-x64-gnu-2.4.2.tgz", { "os": "linux", "cpu": "x64" }, "sha512-Uw+mV/AAubnL8wVCv7rMkvtoU5XKnuJ5tZDpLwUiR3djKVGEg3ZbhX8KNuo6ANhxE1BsIzH5PXmlWPYakqLgTg=="],
+
+    "@moonrepo/core-linux-x64-musl": ["@moonrepo/core-linux-x64-musl@2.4.2", "https://registry.npmmirror.com/@moonrepo/core-linux-x64-musl/-/core-linux-x64-musl-2.4.2.tgz", { "os": "linux", "cpu": "x64" }, "sha512-BcBymmcLcaDY0QXx0+wsEzBL2CXcodkGJs2752gsbLkdeMeopyJMZeafd4EeJ+RTLmR4ov+Kz7QMpdVhCAPMNA=="],
+
+    "@moonrepo/core-macos-arm64": ["@moonrepo/core-macos-arm64@2.4.2", "https://registry.npmmirror.com/@moonrepo/core-macos-arm64/-/core-macos-arm64-2.4.2.tgz", { "os": "darwin", "cpu": "arm64" }, "sha512-V0O+punkt6VjdH2Dg6Jt4hN4m+M7ugwheapYlVL2QfPITttXn8SjFY2h7hyVEgBJqRGpCxXGaubhtztZReGnjQ=="],
+
+    "@moonrepo/core-macos-x64": ["@moonrepo/core-macos-x64@2.4.2", "https://registry.npmmirror.com/@moonrepo/core-macos-x64/-/core-macos-x64-2.4.2.tgz", { "os": "darwin", "cpu": "x64" }, "sha512-Etb4WY/Xb5nD9IZbsgTscn9F7akGkCFRjcMqhepomx917VgjrZ5gLKrBbw9YNBlIEAo9xzalzV5tbxHzrm8pvQ=="],
+
+    "@moonrepo/core-windows-x64-msvc": ["@moonrepo/core-windows-x64-msvc@2.4.2", "https://registry.npmmirror.com/@moonrepo/core-windows-x64-msvc/-/core-windows-x64-msvc-2.4.2.tgz", { "os": "win32", "cpu": "x64" }, "sha512-oE7NLmAQrxZjBk364nA68NKdP+1M5GMIkQNwEV7Aht6DeVxfCyTcVDxcAo7jzR66sET/Nm2r/wojVN8CjxMIjA=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.1.5", "https://registry.npmmirror.com/@napi-rs/wasm-runtime/-/wasm-runtime-1.1.5.tgz", { "dependencies": { "@tybys/wasm-util": "^0.10.2" }, "peerDependencies": { "@emnapi/core": "^1.7.1", "@emnapi/runtime": "^1.7.1" } }, "sha512-AWPoBRJ9tsnVhor4sjO7rkni+7p+2IAEFj6cx06UgP10jkQHqay/36uRV/bFkgrh18D9vb4cr8Q0Pthskgzy+Q=="],
 

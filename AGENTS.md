@@ -31,6 +31,13 @@
 - `.jscpd.json` 将 Go 生产代码重复率限制为 3.75%，`web/.jscpd.json` 将前端生产代码重复率限制为 1.1%。测试、suite 和生成文件不计入生产预算；不要通过扩大 ignore、提高百分比、提高最小行数/token 数或拆成近似副本绕过门禁。
 - pre-commit 和 `.github/workflows/duplicate-code.yml` 使用 `scripts/check-duplicates.sh` 执行相同门禁。预算失败时优先抽取领域辅助函数、共享数据映射或展示组件；只有确实共享同一语义与演进方向的代码才应合并。
 
+## Monorepo 工作区
+
+- `.moon/workspace.yml` 将仓库显式划分为 `backend`、`web` 和 `agent-sdk-test` 三个项目，并通过 `moon.yml`、`web/moon.yml` 与 `tests/js-test/moon.yml` 固定各项目的语言、层级、输入、输出和任务边界。
+- moon CLI 固定在 `web` 的 Bun lockfile 中；统一通过 `scripts/moon.sh` 调用，避免与系统中其他名为 `moon` 的命令冲突。首次使用前运行 `cd web && bun install --frozen-lockfile`。
+- 使用 `just workspace-projects` 查看项目图，使用 `just workspace-build` 构建 Go 服务与前端，使用 `just workspace-test` 运行项目测试和 SDK test typecheck，使用 `just workspace-check` 运行当前强制执行的跨项目静态检查（Go lint、前端命名/复杂度/格式与 SDK typecheck）。完整但尚未清零历史基线的前端 `bun run lint` 仍保留为显式的 `web:lint` 任务。moon 根据声明的 inputs/outputs 进行增量执行和本地缓存；后端 lint 通过 `scripts/go-lint.sh` 只分析仓库 Go package，不扫描 `web/node_modules` 中的第三方示例源码。
+- 修改 `.moon/`、任一项目的 `moon.yml` 或 moon 包版本后，运行 `scripts/check-monorepo.sh`。pre-commit 和 `.github/workflows/monorepo.yml` 会验证三个项目及关键任务均存在，并在 CI 中实际构建两个应用和 typecheck SDK 测试工具。
+
 ## 复杂度预算
 
 - 修改 Go 或 TypeScript/TSX 生产代码后运行 `just complexity`。Go 使用 `cyclop`，单函数最大圈复杂度为 30；`funlen` 以当前最长函数作为 ratchet，限制函数最多 163 行且最多 100 条语句；测试文件不计入生产函数指标。

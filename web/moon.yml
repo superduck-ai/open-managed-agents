@@ -1,0 +1,63 @@
+language: 'typescript'
+stack: 'frontend'
+layer: 'application'
+
+project:
+  title: 'Open Managed Agents Console'
+  description: 'React and TypeScript browser console built with Vite and Bun.'
+
+toolchains:
+  default:
+    - 'javascript'
+    - 'bun'
+
+fileGroups:
+  sources:
+    - 'src/**/*'
+    - 'index.html'
+  configs:
+    - 'package.json'
+    - 'bun.lock'
+    - 'tsconfig*.json'
+    - '*.config.*'
+
+tasks:
+  build:
+    command: 'bun run build'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+    outputs:
+      - 'dist'
+
+  test:
+    command: 'bun test'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
+  lint:
+    command: 'bun run lint'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
+  lint-naming:
+    command: 'bun run lint:naming'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
+  lint-complexity:
+    command: 'bun run lint:complexity'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+
+  format-check:
+    command: 'bun run format:check'
+    inputs:
+      - '@group(sources)'
+      - '@group(configs)'
+      - '.prettierrc.json'
+      - '.prettierignore'

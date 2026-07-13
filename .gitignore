@@ -45,6 +45,11 @@ test-results/
 web/test-results/
 *.tsbuildinfo
 
+# moon workspace artifacts
+.moon/cache/
+.moon/docker/
+web/.moon/cache/
+
 # Local databases and object storage scratch data
 *.db
 *.sqlite

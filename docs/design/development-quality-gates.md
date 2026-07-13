@@ -16,12 +16,13 @@
 ## 配置与执行
 
 - `.golangci.yml` 是常规 Go lint 规则来源；复杂度和死代码等需要不同扫描范围的专项门禁使用独立的固定配置。
-- `just lint` 在本地对所有 Go package（包括测试）运行相同配置。
+- `just lint` 通过 `scripts/go-lint.sh` 对所有仓库 Go package（包括测试）运行相同配置，并排除 `web/node_modules` 中不属于后端项目的第三方 Go 示例。
 - `.golangci-dead-code.yml` 单独启用 golangci-lint 的 `unused` 分析器并覆盖测试代码；`just dead-code` 通过 `scripts/go-dead-code.sh` 枚举当前 Go module 的仓库 package，避免本地前端依赖中的第三方 Go 示例污染结果。
 - `.github/workflows/lint.yml` 在 Pull Request 和 `main` 分支推送时运行固定版本的 `golangci-lint`。
 - `.github/workflows/dead-code.yml` 在 Go 代码或死代码配置变化时运行固定版本的 `unused` 分析，pre-commit 使用相同脚本阻止不可达函数、方法、变量、常量和类型进入提交。
 - `.jscpd.json` 与 `web/.jscpd.json` 固定 strict token 检测规则：复制块至少 12 行且至少 70 token；Go 生产代码上限为 3.75%，TypeScript/TSX 生产代码上限为 1.1%。两个应用分别执行，避免合并百分比掩盖单侧增长；测试、suite 和生成文件不计入生产预算。
 - `.github/workflows/duplicate-code.yml` 和 pre-commit 都调用 `scripts/check-duplicates.sh`。本地通过 `just duplicates` 运行同一门禁，超限时输出 clone 文件与行号供重构定位。
+- `.moon/workspace.yml` 显式注册 Go 后端、Web 控制台和 JavaScript SDK 测试工具；各项目的 `moon.yml` 声明缓存输入、构建输出和可执行任务。`scripts/check-monorepo.sh` 在 pre-commit 中验证项目图与关键任务，`.github/workflows/monorepo.yml` 则在干净环境中运行实际构建与 typecheck。
 - `.github/workflows/large-files.yml` 在每个 Pull Request 和 `main` 分支推送时通过固定版本的 `uv` 和 `pre-commit` 对全部受跟踪文件运行同一个官方 hook，确保本地与 CI 共用一套实现和阈值。
 - 门禁启用 `govet`、`ineffassign`，以及覆盖时间计算、日志参数、切片初始化、序列化标签、nil 错误、变量重赋值、数据库 rows/资源关闭和 tracing span 的专项分析器，同时用 `gofmt` 检查格式。
 

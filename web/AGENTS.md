@@ -21,6 +21,7 @@
   - `bun run lint:naming`
   - `bun run format`
   - `bun run format:check`
+- 仓库级构建与检查由 moon 工作区编排；在仓库根目录使用 `just workspace-projects` 查看边界，使用 `just workspace-build` 或 `just workspace-check` 运行跨项目任务。不要直接调用 PATH 中不确定来源的 `moon`，统一使用 `scripts/moon.sh`。
 - 修改 `web/` 下的前端代码后，在使用浏览器或 SuperDuck 验证前，需要先在仓库根目录运行 `./restart-web.sh` 重启前端开发服务器。
 - 生产环境产物应为 `web/dist` 下的静态文件，由 Nginx 或其他静态服务器提供服务。
 - 除非用户明确调整架构，否则不要引入 Next.js、Remix、Node 服务或 Bun HTTP 服务。

@@ -1,0 +1,74 @@
+name: Monorepo
+
+on:
+  pull_request:
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "moon.yml"
+      - ".moon/**"
+      - "web/**"
+      - "tests/js-test/**"
+      - "scripts/moon.sh"
+      - "scripts/check-monorepo.sh"
+      - "scripts/go-lint.sh"
+      - ".github/workflows/monorepo.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "moon.yml"
+      - ".moon/**"
+      - "web/**"
+      - "tests/js-test/**"
+      - "scripts/moon.sh"
+      - "scripts/check-monorepo.sh"
+      - "scripts/go-lint.sh"
+      - ".github/workflows/monorepo.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monorepo-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  project-graph:
+    name: Project graph and builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MOON_TOOLCHAIN_FORCE_GLOBALS: "true"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install frontend dependencies and moon
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Install JavaScript SDK test dependencies
+        working-directory: tests/js-test
+        run: bun install --frozen-lockfile
+
+      - name: Validate project graph and task boundaries
+        run: ./scripts/check-monorepo.sh
+
+      - name: Build applications and type-check SDK test tool
+        run: ./scripts/moon.sh run backend:build web:build agent-sdk-test:typecheck --summary

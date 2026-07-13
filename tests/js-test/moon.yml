@@ -1,0 +1,31 @@
+dependsOn:
+  - id: "backend"
+    scope: "development"
+
+language: "typescript"
+stack: "backend"
+layer: "automation"
+
+project:
+  title: "JavaScript SDK agent test"
+  description: "Type-checked Bun runner for exercising the managed-agent API through the JavaScript SDK."
+
+toolchains:
+  default:
+    - "javascript"
+    - "bun"
+
+fileGroups:
+  sources:
+    - "src/**/*.ts"
+  configs:
+    - "package.json"
+    - "bun.lock"
+    - "tsconfig.json"
+
+tasks:
+  typecheck:
+    command: "bun run typecheck"
+    inputs:
+      - "@group(sources)"
+      - "@group(configs)"

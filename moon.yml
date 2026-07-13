@@ -1,0 +1,46 @@
+language: "go"
+stack: "backend"
+layer: "application"
+
+project:
+  title: "Open Managed Agents API"
+  description: "Go API server, persistence layer, runtime orchestration, and backend tests."
+
+toolchains:
+  default: "go"
+
+fileGroups:
+  sources:
+    - "main.go"
+    - "cmd/**/*.go"
+    - "internal/**/*"
+    - "go.mod"
+    - "go.sum"
+  tests:
+    - "**/*_test.go"
+    - "tests/**/*.go"
+
+tasks:
+  build:
+    command: "go build -o bin/open-managed-agents ."
+    inputs:
+      - "@group(sources)"
+    outputs:
+      - "bin/open-managed-agents"
+
+  test:
+    command: "go test"
+    args:
+      - "./..."
+      - "-count=1"
+    inputs:
+      - "@group(sources)"
+      - "@group(tests)"
+
+  lint:
+    command: "./scripts/go-lint.sh"
+    inputs:
+      - "@group(sources)"
+      - "@group(tests)"
+      - ".golangci.yml"
+      - "scripts/go-lint.sh"

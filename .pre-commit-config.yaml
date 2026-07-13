@@ -56,6 +56,14 @@ repos:
         pass_filenames: false
         require_serial: true
 
+      - id: monorepo-graph
+        name: Validate monorepo project graph and tasks
+        entry: scripts/check-monorepo.sh
+        language: script
+        files: ^(?:\.moon/.*|moon\.yml|web/moon\.yml|tests/js-test/moon\.yml|web/(?:package\.json|bun\.lock)|scripts/(?:moon|check-monorepo|go-lint)\.sh)$
+        pass_filenames: false
+        require_serial: true
+
       - id: duplicate-code
         name: Enforce Go and TypeScript duplicate-code budgets
         entry: scripts/check-duplicates.sh

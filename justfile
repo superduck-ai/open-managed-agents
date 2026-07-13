@@ -31,13 +31,25 @@ test:
 
 # Run the repository's configured Go static-analysis and formatting checks.
 lint:
-  golangci-lint run --config .golangci.yml ./...
+  ./scripts/go-lint.sh
 
 dead-code:
   ./scripts/go-dead-code.sh
 
 duplicates:
   ./scripts/check-duplicates.sh
+
+workspace-projects:
+  ./scripts/moon.sh projects
+
+workspace-build:
+  ./scripts/moon.sh run backend:build web:build
+
+workspace-test:
+  ./scripts/moon.sh run backend:test web:test agent-sdk-test:typecheck
+
+workspace-check:
+  ./scripts/moon.sh run backend:lint web:lint-naming web:lint-complexity web:format-check agent-sdk-test:typecheck
 
 complexity: go-file-lines go-complexity web-complexity
 

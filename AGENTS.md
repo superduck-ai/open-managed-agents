@@ -82,6 +82,7 @@
 ## 测试要求
 
 - 测试组织顺序应先写失败场景，再写成功场景。
+- 修改 Go 代码后，运行 `just lint`；该命令使用仓库根目录的 `.golangci.yml` 执行与 CI 相同的静态分析和格式检查。
 - 修改 schema 或 handler 后，运行 `go test ./... -count=1`。
 - 做真实 E2E 时，先用 `ADDR=127.0.0.1:18080 go run .` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
 - 自定义 SDK E2E 覆盖：

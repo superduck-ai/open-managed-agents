@@ -175,14 +175,13 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 	thumbnailWidth, thumbnailHeight := imageWidth, imageHeight
 	if hasThumbnail {
 		thumbnailKey := platformThumbnailKey(record)
-		if thumbnailKey == "" {
-			hasThumbnail = false
-		} else if err := h.store.Put(r.Context(), thumbnailKey, bytes.NewReader(thumbnail.Content), int64(len(thumbnail.Content)), thumbnail.ContentType); err != nil {
-			hasThumbnail = false
-			log.Printf("put platform thumbnail object file_uuid=%s key=%s: %v", record.UUID, thumbnailKey, err)
-		} else {
-			thumbnailWidth = thumbnail.Width
-			thumbnailHeight = thumbnail.Height
+		if thumbnailKey != "" {
+			if err := h.store.Put(r.Context(), thumbnailKey, bytes.NewReader(thumbnail.Content), int64(len(thumbnail.Content)), thumbnail.ContentType); err != nil {
+				log.Printf("put platform thumbnail object file_uuid=%s key=%s: %v", record.UUID, thumbnailKey, err)
+			} else {
+				thumbnailWidth = thumbnail.Width
+				thumbnailHeight = thumbnail.Height
+			}
 		}
 	}
 

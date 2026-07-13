@@ -26,11 +26,10 @@ import {
   generateCreateAgentConfig,
   parseCreateAgentConfigText,
 } from '../agentConfig';
-import { AgentConfigEditor } from '../components/AgentConfigEditor';
-import { CopyButton } from '../components/CodeBlocks';
 import { templateBody, templateTitle } from '../labels';
 import { type AgentApiResponse, type AgentTemplate, type CodeFormat, type CreateAgentInput } from '../types';
 import { errorMessage, navigateToAgentConfig } from '../utils';
+import { CreateDialogConfigEditor } from './create-dialog-config-editor';
 
 export function CreateAgentDialog({
   workspaceId,
@@ -346,60 +345,14 @@ export function CreateAgentDialog({
             </CollapsibleContent>
           </Collapsible>
 
-          <div className="mt-5 flex min-h-0 flex-1 basis-[304px] flex-col">
-            <div className="text-sm font-semibold leading-5 text-foreground">
-              {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
-            </div>
-            <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/70 bg-popover shadow-sm">
-              <Tabs
-                value={format}
-                onValueChange={(nextValue) => nextValue && selectFormat(nextValue as CodeFormat)}
-                className="h-full gap-0"
-              >
-                <div className="flex h-11 items-center justify-between border-b border-border/60 px-3">
-                  <TabsList
-                    aria-label={msg('managedAgents.agents.createDialog.configFormat', 'Config format')}
-                    className="h-8"
-                  >
-                    <TabsTrigger value="YAML" className="px-4 text-[14px] font-semibold">
-                      YAML
-                    </TabsTrigger>
-                    <TabsTrigger value="JSON" className="px-4 text-[14px] font-semibold">
-                      JSON
-                    </TabsTrigger>
-                  </TabsList>
-                  <CopyButton value={configText} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
-                </div>
-                <TabsContent value="YAML" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-                  {format === 'YAML' ? (
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      <AgentConfigEditor
-                        value={configText}
-                        format="YAML"
-                        onChange={handleEditorChange}
-                        validate={validateEditorText}
-                        minHeight="0px"
-                      />
-                    </div>
-                  ) : null}
-                </TabsContent>
-                <TabsContent value="JSON" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-                  {format === 'JSON' ? (
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      <AgentConfigEditor
-                        value={configText}
-                        format="JSON"
-                        onChange={handleEditorChange}
-                        validate={validateEditorText}
-                        minHeight="0px"
-                      />
-                    </div>
-                  ) : null}
-                </TabsContent>
-              </Tabs>
-            </div>
-            {configError ? <p className="mt-2 text-sm text-destructive">{configError}</p> : null}
-          </div>
+          <CreateDialogConfigEditor
+            format={format}
+            configText={configText}
+            configError={configError}
+            onFormatChange={selectFormat}
+            onEditorChange={handleEditorChange}
+            validateEditorText={validateEditorText}
+          />
 
           <div className="mt-4 flex items-center justify-between gap-4">
             {createError ? <p className="text-sm text-destructive">{createError}</p> : <span />}

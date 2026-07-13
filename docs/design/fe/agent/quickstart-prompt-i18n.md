@@ -112,9 +112,10 @@ sequenceDiagram
 - 磁性字符串一致性：`quickstartChatReplyToolResult` 的 `build_agent_config` 分支（en `User sent a message instead: "…"` / zh `用户改为发送了消息："…"`）与 `block1Zh` STEP 3.4 中「session 仍在进行」的判断措辞保持同步。
 - `quickstartToolMeta(name, msg?)`：工具卡片标签属于 UI 展示层，改为经 `msg()` 读 `managedAgents.quickstart.toolMeta.*` key（en / zh-CN 两边已对齐）。
 
-### 内置模板中文配置（`agentConfig.ts`）
+### 内置模板中文配置
 
-- 新增 `createDialogTemplateConfigsZh: Record<string, CreateAgentInput>`：为全部模板提供中文 `name` / `description` / `system`；`model` / `mcp_servers` / `tools` / `skills` / `metadata` 与英文表逐字段一致。同时提供 `structuredExtractorSystemZh` 与 blank 的中文配置。
+- `agentTemplateCatalog.ts` 维护模板展示目录与应用标签，`agentConfigTemplateText.ts` 维护中文 `name` / `description` / `system`；`agentConfig.ts` 在配置边界组装 `createDialogTemplateConfigsZh`，并保留原有公共导出。
+- 中文模板的 `model` / `mcp_servers` / `tools` / `skills` / `metadata` 与英文表逐字段一致。同时提供 `structuredExtractorSystemZh` 与 blank 的中文配置。
 - `createDialogAgentConfig` / `templateSystem` / `generateCreateAgentConfig` / `codeForTemplate` 等增加 `locale`，按语言选表；`generateCreateAgentConfig` 把 locale 透传给 `buildPlatformQuickstartRequest`。右侧展示的模板配置代码块也随语言切换。
 
 ## 涉及文件
@@ -123,9 +124,12 @@ sequenceDiagram
 | --- | --- |
 | `web/src/features/managed-agents/quickstart/quickstartPromptText.ts`（新增） | `resolveQuickstartSystem`、`block1Zh` 与中文 tool-result 文案 |
 | `web/src/features/managed-agents/quickstart/platformQuickstartRequest.ts` | `QuickstartRequestInput` 加 `locale?`；`buildPlatformQuickstartRequest` 用 `resolveQuickstartSystem`；`buildQuickstartTurnContextText` 加中英分支 |
-| `web/src/features/managed-agents/agentConfig.ts` | 新增 `createDialogTemplateConfigsZh` / `structuredExtractorSystemZh`；相关函数加 `locale` 并选表 |
+| `web/src/features/managed-agents/agentTemplateCatalog.ts`（新增） | 承载模板展示目录与应用标签，避免配置编排模块继续膨胀 |
+| `web/src/features/managed-agents/agentConfigTemplateText.ts`（新增） | 集中维护中文模板自然语言字段与 `structuredExtractorSystemZh` |
+| `web/src/features/managed-agents/agentConfig.ts` | 组装并继续导出中英文模板配置；相关函数加 `locale` 并选表 |
 | `web/src/features/managed-agents/quickstart/AgentQuickstartPage.tsx` | 新增 `promptLocaleRef`，仅固定模型可见 Builder 对话语言；UI、模板配置与 Integration scaffold 继续使用实时 locale |
 | `web/src/features/managed-agents/agents/create-dialog.tsx` | `createDialogAgentConfig` / `generateCreateAgentConfig` 传 `locale` |
+| `web/src/features/managed-agents/agents/create-dialog-config-editor.tsx`（新增） | 承载 Create Agent Dialog 的 YAML/JSON 编辑器展示与格式切换 |
 | `web/src/features/managed-agents/quickstart/components.tsx` | `codeForTemplate` 等传 `locale`；残余硬编码英文按 locale 切换；丢弃上游搜索临时 narration |
 | `web/src/shared/i18n/messages/{en,zh-CN}.json` | 补齐新增 UI key（两边对齐） |
 
@@ -134,7 +138,7 @@ sequenceDiagram
 - `agentConfig.test.ts`：守卫中英模板 key 和技术配置逐字段一致；断言中英文自然语言字段不同；覆盖 locale 默认值、新参数顺序和 description override。
 - `platformQuickstartRequest.test.ts`：断言 `en` 分支不变；`zh-CN` 分支 system 第二块为中文且技术 token（tool 名、MCP URL、step key、model ID）保留；turn context 与 tool-result 中文分支正确。
 - `ManagedAgentsPage.quickstart.suite.tsx`：断言搜索临时 narration 不展示也不写入后续请求；断言中途切换 UI locale 后界面立即更新，而进行中的 Builder 对话仍使用启动时的 prompt locale。
-- 运行 `just web-format-check`、`bun test`、`bun run lint:naming` 与 `bun run build`。
+- 运行 `just complexity`、`just web-format-check`、`bun test`、`bun run lint:naming` 与 `bun run build`。
 
 ## 不做的事
 

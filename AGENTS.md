@@ -7,6 +7,12 @@
 - 仅在有意测试不同绑定地址时，才使用 `PORT=...` 或 `ADDR=... just restart-server` 覆盖默认值。
 - 如果修改了 `web/` 下的前端代码，在使用浏览器或 SuperDuck 验证前，也要从仓库根目录执行 `just restart-web` 重启前端开发服务器。该命令会调用 `./scripts/restart-web.sh`，只停止当前仓库路径启动的 Vite 监听进程；如果目标端口被其他路径的进程占用，则保留该进程并自动选择后续可用端口以前台方式启动前端。
 
+## GitHub PR 提交身份
+
+- 本仓库的 Pull Request 必须通过本机已认证的 `gh` CLI 创建；禁止使用 Codex GitHub Connector 或其 GitHub App 创建 PR。
+- 创建 PR 前必须依次运行 `gh auth status` 和 `gh api user --jq .login`，并确认当前登录账号严格等于 `arthur-zhang`。如果账号不匹配，应停止并请求用户处理，不能继续创建 PR。
+- 分支、提交和推送仍使用本地 `git`；分支推送成功后，使用 `gh pr create --draft ...` 创建 Draft PR，并通过 `gh pr view --json author,url,isDraft` 复核作者和状态。
+
 ## 前端设计方向
 
 - 前端实现细节位于 `web/AGENTS.md`。

@@ -33,10 +33,18 @@ repos:
         require_serial: true
 
       - id: go-complexity
-        name: Enforce Go cyclomatic complexity
+        name: Enforce Go function length and cyclomatic complexity
         entry: scripts/go-complexity.sh
         language: script
-        types: [go]
+        files: ^(?:.*\.go|\.golangci-complexity\.yml|go\.(?:mod|sum)|scripts/go-complexity\.sh)$
+        pass_filenames: false
+        require_serial: true
+
+      - id: go-file-lines
+        name: Enforce Go file line budgets
+        entry: scripts/check-go-file-lines.sh
+        language: script
+        files: ^(?:.*\.go|scripts/(?:check-go-file-lines\.sh|go-file-line-budgets\.txt|tests/check-go-file-lines_test\.sh))$
         pass_filenames: false
         require_serial: true
 
@@ -56,7 +64,7 @@ repos:
         require_serial: true
 
       - id: typescript-complexity
-        name: Enforce TypeScript cyclomatic complexity
+        name: Enforce TypeScript size and complexity budgets
         entry: bash -c 'cd web && bun run lint:complexity'
         language: system
         files: ^web/(?:src/.*\.tsx?|eslint\.complexity\.config\.js|package\.json)$

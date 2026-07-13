@@ -192,10 +192,10 @@
 - API/数据库 payload 的 `snake_case` 仅保留在边界属性和解构位置，内部标识符应转换为 camelCase。
 - 修改 TypeScript/TSX 标识符或命名配置后运行 `bun run lint:naming`。
 
-## 圈复杂度
+## 代码规模与复杂度
 
-- 修改生产 TypeScript/TSX 后运行 `bun run lint:complexity`。新文件和未列入历史预算的文件采用 modified cyclomatic complexity 上限 20。
-- `eslint.complexity.config.js` 中的历史文件预算是只能下降的 ratchet，不是目标值；不得为了通过检查提高预算或扩大匹配范围。
+- 修改生产 TypeScript/TSX 后运行 `bun run lint:complexity`。新文件和未列入历史预算的文件最多 500 个有效行，单函数最多 200 个有效行，并采用 modified cyclomatic complexity 上限 20；空行和纯注释不计入行数。
+- `eslint.complexity.config.js` 中的历史文件、函数长度和复杂度预算是只能下降的 ratchet，不是目标值；不得为了通过检查提高预算或扩大匹配范围。
 - 复杂函数优先拆成领域判断、数据归一化、事件处理和展示组件。保持 API 请求、状态流、路由语义、文案与样式不变，并用对应功能测试和 `bun run build` 验证机械拆分。
 
 ## 本地开发

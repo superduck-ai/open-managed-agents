@@ -354,11 +354,6 @@ func copySessionEventPayload(input map[string]any) map[string]any {
 	return out
 }
 
-func (h *Handler) isChildSessionThread(ctx context.Context, session db.Session, threadID string) bool {
-	primary, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceID, session.ExternalID)
-	return err == nil && primary.ExternalID != threadID
-}
-
 func (h *Handler) shouldCrossPostBlockingToolEvent(eventType string, payload map[string]any, threadID string) bool {
 	if strings.TrimSpace(threadID) == "" || !sessionToolUseEventHasThreadScopedSessionThreadID(eventType) {
 		return false

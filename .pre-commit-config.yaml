@@ -32,6 +32,14 @@ repos:
         types: [go]
         require_serial: true
 
+      - id: go-dead-code
+        name: Detect unreachable Go declarations
+        entry: scripts/go-dead-code.sh
+        language: script
+        files: ^(?:.*\.go|\.golangci-dead-code\.yml|go\.(?:mod|sum)|scripts/go-dead-code\.sh)$
+        pass_filenames: false
+        require_serial: true
+
       - id: go-complexity
         name: Enforce Go function length and cyclomatic complexity
         entry: scripts/go-complexity.sh

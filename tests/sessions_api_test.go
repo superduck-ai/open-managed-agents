@@ -4101,26 +4101,6 @@ func decodeWorkerSSEFrameData(t *testing.T, frame string) map[string]any {
 	return nil
 }
 
-func assertCodeSessionHTTPPersistence(t *testing.T, app *testApp, codeSessionID string) {
-	t.Helper()
-	for _, method := range []string{http.MethodPost, http.MethodPut} {
-		req, err := http.NewRequest(method, app.baseURL+"/v1/code/sessions/"+codeSessionID, nil)
-		if err != nil {
-			t.Fatalf("new code session persistence request: %v", err)
-		}
-		req.Header.Set("Authorization", "Bearer "+codeSessionID)
-		resp, err := app.client.Do(req)
-		if err != nil {
-			t.Fatalf("%s code session persistence: %v", method, err)
-		}
-		body := readAll(t, resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s code session persistence status = %d, want 200: %s", method, resp.StatusCode, body)
-		}
-	}
-}
-
 func listSessionThreads(t *testing.T, app *testApp, sessionID, key string) sessionThreadPageAPIResponse {
 	t.Helper()
 	resp := doSessionRequest(t, app, http.MethodGet, "/v1/sessions/"+sessionID+"/threads?beta=true", nil, key, true)

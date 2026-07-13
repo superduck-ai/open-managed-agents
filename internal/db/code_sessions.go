@@ -697,15 +697,6 @@ func (d *DB) getCodeSessionEventTx(ctx context.Context, tx pgx.Tx, direction str
 	`, workspaceID, idempotencyKey))
 }
 
-func (d *DB) getCodeSessionInternalEventTx(ctx context.Context, tx pgx.Tx, workspaceID int64, idempotencyKey string) (CodeSessionInternalEvent, error) {
-	return scanCodeSessionInternalEvent(tx.QueryRow(ctx, `
-		select `+codeSessionInternalEventColumns()+`
-		from code_session_internal_events
-		where workspace_id = $1 and idempotency_key = $2 and deleted_at is null
-		limit 1
-	`, workspaceID, idempotencyKey))
-}
-
 func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListCodeSessionInternalEventsPageParams) ([]CodeSessionInternalEvent, bool, error) {
 	limit := params.Limit
 	if limit <= 0 {

@@ -16,9 +16,14 @@
 ## 提交前质量门禁
 
 - 首次 clone 仓库或发现 hook 尚未安装时运行 `just hooks-install`，为当前 Git 仓库安装受管的 pre-commit hook；同一 clone 下的 worktree 共用该 hook。缺少 `pre-commit` 时，脚本会优先通过 `uv` 安装固定版本。
-- hook 对暂存文件执行通用文件卫生检查，对 Go 文件执行 `gofmt`、对应 package 的 golangci-lint、文件行数、函数长度和生产代码复杂度检查，并用项目固定版本的 Prettier 格式化前端文件，同时检查 TypeScript 命名、文件行数、函数长度与复杂度。
+- hook 对暂存文件执行通用文件卫生检查，对 Go 文件执行 `gofmt`、对应 package 的 golangci-lint、不可达声明检测、文件行数、函数长度和生产代码复杂度检查，并用项目固定版本的 Prettier 格式化前端文件，同时检查 TypeScript 命名、文件行数、函数长度与复杂度。
 - 使用 `just hooks-run` 对全部跟踪文件复跑相同检查；不要使用 `SKIP` 绕过失败项，除非用户明确批准并记录原因。
 - 使用 `just large-files` 通过仓库固定版本的 `check-added-large-files --enforce-all` 检查全部受跟踪文件，统一上限为 1 MiB。嵌入式目录快照 `internal/platformapi/directory_servers.json` 必须保存为紧凑 JSON。不要通过改名、忽略路径或提高预算绕过失败；有意引入大二进制文件时，应单独评审 Git LFS 策略。
+
+## 死代码检测
+
+- 修改 Go 代码后运行 `just dead-code`。`.golangci-dead-code.yml` 使用 `unused` 分析器检查生产代码和测试中的不可达包级函数、方法、变量、常量与类型。
+- pre-commit 和 `.github/workflows/dead-code.yml` 使用同一配置；不要通过 `nolint`、全局排除、伪造引用或保留无调用路径的兼容包装来绕过失败。确认不再可达的声明及其专属辅助链应直接删除。
 
 ## 复杂度预算
 

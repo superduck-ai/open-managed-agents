@@ -166,33 +166,8 @@ func platformClaudeOptionalStringValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
-func optionalStringValue(value *string) any {
-	if value == nil {
-		return nil
-	}
-	return *value
-}
-
-func optionalTimeString(value *time.Time) any {
-	if value == nil {
-		return nil
-	}
-	return isoTime(*value)
-}
-
-func isoTime(value time.Time) string {
-	if value.IsZero() {
-		return time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	return value.UTC().Format(time.RFC3339Nano)
-}
-
 func formatJSISOString(value time.Time) string {
 	return value.UTC().Format("2006-01-02T15:04:05.000Z")
-}
-
-func internalError(w http.ResponseWriter, message string) {
-	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": message})
 }
 
 func proxyMessagesAnthropicToken() string {

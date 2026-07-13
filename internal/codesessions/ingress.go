@@ -1482,15 +1482,6 @@ func copyRawMessage(raw json.RawMessage) json.RawMessage {
 	return json.RawMessage(copied)
 }
 
-func decodeCodeSessionWorkerEventsBody(w http.ResponseWriter, r *http.Request) ([]workerOutputEvent, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxIngressBodySize)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, err
-	}
-	return decodeCodeSessionWorkerEventsPayload(body)
-}
-
 func decodeCodeSessionWorkerEventsPayload(body []byte) ([]workerOutputEvent, error) {
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
@@ -1583,36 +1574,6 @@ func decodeCodeSessionWorkerDeliveryPayload(body []byte) ([]db.CodeSessionWorker
 		})
 	}
 	return updates, nil
-}
-
-func unwrapCodeSessionWorkerEvents(events []json.RawMessage) ([]json.RawMessage, error) {
-	payloads := make([]json.RawMessage, 0, len(events))
-	for _, event := range events {
-		payload, err := unwrapCodeSessionWorkerEvent(event)
-		if err != nil {
-			return nil, err
-		}
-		payloads = append(payloads, payload)
-	}
-	return payloads, nil
-}
-
-func unwrapCodeSessionWorkerEvent(raw json.RawMessage) (json.RawMessage, error) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return nil, errors.New("event payload is required")
-	}
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &envelope); err == nil && envelope != nil {
-		if payload, ok := envelope["payload"]; ok {
-			payload = bytes.TrimSpace(payload)
-			if len(payload) == 0 || bytes.Equal(payload, []byte("null")) {
-				return nil, errors.New("event payload is required")
-			}
-			return payload, nil
-		}
-	}
-	return raw, nil
 }
 
 func decodeCodeSessionWorkerInternalEventsPayload(codeSessionID string, body []byte) ([]db.AppendCodeSessionInternalEventInput, error) {

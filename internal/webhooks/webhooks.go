@@ -280,14 +280,6 @@ func enabled(cfg config.Config) bool {
 	return cfg.WebhookWorkerEnabled && cfg.WebhookEndpointURL != "" && cfg.WebhookSigningKey != ""
 }
 
-func validateTarget(cfg config.Config) error {
-	return validateDeliveryTarget(deliveryTarget{
-		URL:           cfg.WebhookEndpointURL,
-		SigningKey:    cfg.WebhookSigningKey,
-		AllowInsecure: cfg.WebhookAllowInsecure,
-	}, "WEBHOOK_ENDPOINT_URL")
-}
-
 func validateDeliveryTarget(target deliveryTarget, name string) error {
 	if target.URL == "" {
 		return fmt.Errorf("%s is empty", name)

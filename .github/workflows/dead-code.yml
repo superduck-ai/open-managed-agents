@@ -1,0 +1,49 @@
+name: Dead code
+
+on:
+  pull_request:
+    paths:
+      - '**/*.go'
+      - '.golangci-dead-code.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'scripts/go-dead-code.sh'
+      - '.github/workflows/dead-code.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**/*.go'
+      - '.golangci-dead-code.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'scripts/go-dead-code.sh'
+      - '.github/workflows/dead-code.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dead-code-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-dead-code:
+    name: Go dead-code analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Detect unreachable Go declarations
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          args: --config=.golangci-dead-code.yml --timeout=5m ./...

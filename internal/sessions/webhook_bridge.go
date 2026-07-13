@@ -41,14 +41,6 @@ type sessionWebhookEvent struct {
 	ThreadID  *string
 }
 
-func webhookEventFromSessionEvent(event db.SessionEvent) (string, *string, bool) {
-	webhookEvents := webhookEventsFromSessionEvent(event)
-	if len(webhookEvents) == 0 {
-		return "", nil, false
-	}
-	return webhookEvents[0].EventType, webhookEvents[0].ThreadID, true
-}
-
 func webhookEventsFromSessionEvent(event db.SessionEvent) []sessionWebhookEvent {
 	switch event.EventType {
 	case "session.status_run_started", "session.status_running", "session.running":

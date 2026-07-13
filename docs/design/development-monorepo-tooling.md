@@ -32,4 +32,4 @@
 3. 通过同一个 moon action graph 构建 Go API 与 Web 控制台；
 4. typecheck JavaScript SDK 测试工具。
 
-CI 使用官方 setup actions 提供已经固定版本的 Go 与 Bun，并通过 `MOON_TOOLCHAIN_FORCE_GLOBALS=true` 复用这些二进制；开发机未设置该变量时，moon 可按 `.moon/toolchains.yml` 准备匹配版本。
+CI checkout 保留完整 Git 历史，使 moon 能解析 `main` 与当前提交的 merge base；官方 setup actions 提供已经固定版本的 Go 与 Bun，并通过 `MOON_TOOLCHAIN_FORCE_GLOBALS=true` 复用这些二进制。开发机未设置该变量时，moon 可按 `.moon/toolchains.yml` 准备匹配版本。

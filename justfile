@@ -51,6 +51,14 @@ web-format:
 web-format-check:
   cd web && bun run format:check
 
+# Check every tracked Git blob against the repository's file-size budgets.
+large-files:
+  ./scripts/check-large-files.sh
+
+# Exercise failure, boundary, legacy-budget, and untracked-file scenarios.
+test-large-files:
+  ./scripts/tests/check-large-files_test.sh
+
 # Install the repository-managed pre-commit hook in the current Git clone.
 hooks-install:
   ./scripts/pre-commit.sh install --install-hooks

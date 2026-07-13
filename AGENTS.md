@@ -18,6 +18,7 @@
 - 首次 clone 仓库或发现 hook 尚未安装时运行 `just hooks-install`，为当前 Git 仓库安装受管的 pre-commit hook；同一 clone 下的 worktree 共用该 hook。缺少 `pre-commit` 时，脚本会优先通过 `uv` 安装固定版本。
 - hook 对暂存文件执行通用文件卫生检查，对 Go 文件执行 `gofmt` 和对应 package 的 golangci-lint，并用项目固定版本的 Prettier 格式化前端文件。
 - 使用 `just hooks-run` 对全部跟踪文件复跑相同检查；不要使用 `SKIP` 绕过失败项，除非用户明确批准并记录原因。
+- 使用 `just large-files` 检查 Git index 中全部受跟踪文件。普通文件上限为 1 MiB；已存在的嵌入式目录快照 `internal/platformapi/directory_servers.json` 使用 1.25 MiB 的固定增长预算。不要通过改名、忽略路径或提高预算绕过失败；有意引入大二进制文件时，应单独评审 Git LFS 策略。
 
 ## 命名规范
 

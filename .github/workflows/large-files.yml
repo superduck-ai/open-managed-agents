@@ -1,0 +1,29 @@
+name: Large Files
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: large-files-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tracked-file-size:
+    name: Tracked file size budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Test large file guardrail
+        run: ./scripts/tests/check-large-files_test.sh
+
+      - name: Check tracked files
+        run: ./scripts/check-large-files.sh

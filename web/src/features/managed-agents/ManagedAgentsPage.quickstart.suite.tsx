@@ -122,6 +122,109 @@ export function registerManagedAgentsQuickstartTests() {
     expect(within(chatContent).queryByText(template.body)).toBeNull();
   });
 
+  test('localizes the environment continuation and default integration user message in Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    let proxyCalls = 0;
+    mockAgentsApi([], {
+      quickstartStream: () => {
+        proxyCalls += 1;
+        if (proxyCalls === 1) {
+          return quickstartToolStream('create_environment', {
+            reuse_environment_id: 'env_option123456',
+          });
+        }
+        if (proxyCalls === 2) {
+          return quickstartToolStream('show_integration_exits', {
+            agent_id: 'agent_test123456',
+            environment_id: 'env_option123456',
+          });
+        }
+        return quickstartTextStream('集成步骤已完成。');
+      },
+    });
+    renderManagedAgentsPage('quickstart', 'zh-CN');
+
+    fireEvent.click(screen.getByRole('button', { name: /结构化提取助手/i }));
+    fireEvent.click(screen.getByRole('button', { name: '使用模板' }));
+    fireEvent.click(await screen.findByRole('button', { name: '下一步：配置环境' }));
+
+    const startSessionButton = await screen.findByRole('button', { name: '下一步：启动会话' });
+    expect(screen.queryByRole('button', { name: 'Next: Start session' })).toBeNull();
+    fireEvent.click(startSessionButton);
+
+    expect(await screen.findByText('示例代码')).toBeTruthy();
+    await waitFor(() => {
+      const cliCode = Array.from(document.querySelectorAll('code.language-bash')).find((node) =>
+        node.textContent?.includes('你好！你能帮我做什么？'),
+      );
+      expect(cliCode).toBeTruthy();
+      expect(cliCode?.textContent).not.toContain('Hello! What can you help me with?');
+    });
+  });
+
+  test('returns Chinese results for Skip and Keep refining interactions', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    let proxyCalls = 0;
+    const api = mockAgentsApi([], {
+      quickstartStream: () => {
+        proxyCalls += 1;
+        if (proxyCalls === 1) {
+          return quickstartToolStream('ask_user_questions', {
+            questions: [
+              {
+                question: '这个 Agent 需要访问哪些服务？',
+                header: '服务',
+                multiSelect: false,
+                options: [{ label: '暂不决定', description: '稍后再配置。' }],
+              },
+            ],
+          });
+        }
+        if (proxyCalls === 2) {
+          return quickstartToolStream('build_agent_config', {
+            name: '结构化提取助手',
+            description: '从文档中提取结构化数据。',
+            model: 'claude-sonnet-4-6',
+            system: '从用户提供的文档中提取结构化数据。',
+            mcp_servers: [],
+            tools: [{ type: 'agent_toolset_20260401' }],
+            skills: [],
+          });
+        }
+        return quickstartTextStream('配置继续使用中文。');
+      },
+    });
+    renderManagedAgentsPage('quickstart', 'zh-CN');
+
+    fireEvent.click(screen.getByRole('button', { name: /结构化提取助手/i }));
+    fireEvent.click(screen.getByRole('button', { name: '使用模板' }));
+    fireEvent.click(await screen.findByRole('button', { name: '下一步：配置环境' }));
+
+    expect(await screen.findByText('这个 Agent 需要访问哪些服务？')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '跳过' }));
+
+    await waitFor(() => expect(screen.getAllByText('已跳过。').length).toBeGreaterThan(0));
+    expect(screen.queryByText('Skipped.')).toBeNull();
+    const skipRequest = api.requests
+      .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
+      .at(-1);
+    expect(JSON.stringify(skipRequest?.body?.messages)).toContain('已跳过。');
+
+    fireEvent.click(await screen.findByRole('button', { name: '继续调整' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length,
+      ).toBeGreaterThanOrEqual(3),
+    );
+    const refineRequest = api.requests
+      .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
+      .at(-1);
+    const refineMessages = JSON.stringify(refineRequest?.body?.messages);
+    expect(refineMessages).toContain('我想在创建前继续调整配置。');
+    expect(refineMessages).not.toContain("I'd like to keep refining the config before creating.");
+  });
+
   test('renders the agents list controls and empty state in Chinese', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi([]);

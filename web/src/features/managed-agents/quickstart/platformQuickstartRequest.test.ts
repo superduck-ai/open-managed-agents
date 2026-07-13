@@ -124,6 +124,23 @@ describe('platform quickstart request builder', () => {
     expect(builderText).toContain('claude-opus-4-8');
     expect(builderText).toContain('build_agent_config');
     expect(builderText).toContain('https://platform.claude.com');
+    // User-visible choices must follow the Builder language instead of leaking
+    // the English examples from the source prompt into structured questions.
+    expect(builderText).toContain('“创建新环境”');
+    expect(builderText).toContain('“不受限制”');
+    expect(builderText).toContain('“按原配置重新运行”');
+    expect(builderText).toContain('“暂时跳过”');
+    expect(builderText).toContain('“其他”选项');
+    expect(builderText).toContain('在右侧的测试运行面板中发送你的第一条消息');
+    expect(builderText).toContain('增加一个“计划部署”步骤');
+    expect(builderText).toContain('然后“计划部署”步骤');
+    expect(builderText).toContain('“计划部署”步骤会成为下一步');
+    expect(builderText).toContain('STEP: 计划部署（key "deploy"）');
+    expect(builderText).not.toContain('"Create a new one"');
+    expect(builderText).not.toContain('"Rerun as-is"');
+    expect(builderText).not.toContain('"Skip for now"');
+    expect(builderText).not.toContain('"Run it on demand instead"');
+    expect(builderText).not.toContain('"Other" 选项');
     // The MCP catalog is sliced from the English block, so its identifiers appear verbatim.
     const catalogStart = englishBuilderText.indexOf('Known servers (URLs on file):\n');
     const catalogEnd = englishBuilderText.indexOf('\n  If the user names a service not in this list');
@@ -173,5 +190,10 @@ describe('platform quickstart request builder', () => {
     expect(chinese.sessionCreatedWithMessage('session_123', 'Run the report')).toContain('session_123');
     expect(chinese.sessionCreatedWithMessage('session_123', 'Run the report')).toContain('Run the report');
     expect(chinese.webSearchUpstream).toContain('web_search');
+    expect(english.questionSkipped).toBe('Skipped.');
+    expect(chinese.questionSkipped).toBe('已跳过。');
+    expect(chinese.agentCreated).toBe('Agent 已创建。');
+    expect(chinese.refineAgentConfig).toBe('我想在创建前继续调整配置。');
+    expect(chinese.keepRefining).toBe('继续调整。');
   });
 });

@@ -595,6 +595,7 @@
   "managedAgents.quickstart.initial.inputLabel": "Describe your agent",
   "managedAgents.quickstart.initial.placeholder": "Describe your agent…",
   "managedAgents.quickstart.initial.title": "What do you want to build?",
+  "managedAgents.quickstart.integration.defaultUserMessage": "Hello! What can you help me with?",
   "managedAgents.quickstart.keepRefining": "Keep refining",
   "managedAgents.quickstart.needEnvironment": "You'll need an environment to run a test session.",
   "managedAgents.quickstart.next.configureEnvironment": "Next: Configure environment",

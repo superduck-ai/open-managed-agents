@@ -1105,6 +1105,7 @@ export function AgentQuickstartPage() {
                 environment={selectedEnvironment}
                 session={session}
                 chatItems={chatItems}
+                interactionResultText={quickstartResultText()}
                 isStreaming={isChatStreaming}
                 error={chatError}
                 reply={reply}

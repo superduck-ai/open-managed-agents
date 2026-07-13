@@ -92,6 +92,7 @@ import {
   type SessionApiResponse,
 } from '../types';
 import { copyText, errorMessage, managedEntityDetailHref, titleCase, toRecord } from '../utils';
+import { type QuickstartInteractionResultText } from './quickstartPromptText';
 
 type PromptComposerSubmitShortcut = 'enter' | 'mod-enter';
 
@@ -138,6 +139,7 @@ export function QuickstartChatPane({
   environment,
   session,
   chatItems,
+  interactionResultText,
   isStreaming,
   error,
   reply,
@@ -162,6 +164,7 @@ export function QuickstartChatPane({
   environment: EnvironmentApiResponse | null;
   session: SessionApiResponse | null;
   chatItems: QuickstartChatItem[];
+  interactionResultText: QuickstartInteractionResultText;
   isStreaming: boolean;
   error: string | null;
   reply: string;
@@ -199,6 +202,7 @@ export function QuickstartChatPane({
       agentConfig={agentConfig}
       environment={environment}
       session={session}
+      interactionResultText={interactionResultText}
       pinned={pinned}
       onCompleteTool={onCompleteTool}
       onCompleteEnvironmentTool={onCompleteEnvironmentTool}
@@ -485,6 +489,7 @@ export function QuickstartToolCard({
   agentConfig,
   environment,
   session,
+  interactionResultText,
   onCompleteTool,
   onCompleteEnvironmentTool,
   onConfirmVaultSelection,
@@ -503,6 +508,7 @@ export function QuickstartToolCard({
   agentConfig: CreateAgentInput | null;
   environment: EnvironmentApiResponse | null;
   session: SessionApiResponse | null;
+  interactionResultText: QuickstartInteractionResultText;
   pinned?: boolean;
   onCompleteTool: (call: QuickstartToolCall, result: QuickstartToolExecutionResult) => Promise<void>;
   onCompleteEnvironmentTool: (call: QuickstartToolCall) => Promise<void>;
@@ -520,14 +526,16 @@ export function QuickstartToolCard({
   onIntegrationExit: (call: QuickstartToolCall, exit: 'scaffold' | 'go_to_agent') => Promise<void>;
   offerNextStepLabel?: string;
 }) {
+  const results = interactionResultText;
   if (call.name === 'ask_user_questions') {
-    return <AskUserQuestionsCard call={call} pinned={pinned} onCompleteTool={onCompleteTool} />;
+    return <AskUserQuestionsCard call={call} pinned={pinned} results={results} onCompleteTool={onCompleteTool} />;
   }
   if (call.name === 'build_agent_config') {
     return (
       <BuildAgentConfigCard
         call={call}
         agent={agent}
+        results={results}
         onCompleteTool={onCompleteTool}
         onCreateAgent={onCreateAgentFromConfig}
       />
@@ -543,6 +551,7 @@ export function QuickstartToolCard({
         agent={agent}
         environment={environment}
         session={session}
+        results={results}
         onCreateSession={onCreateSession}
         onCompleteTool={onCompleteTool}
       />
@@ -983,7 +992,7 @@ export function EnvironmentStepCard({
       )}
       {call.status === 'awaiting_user' ? (
         <Button type="button" className="mt-5" onClick={() => onNext(call)}>
-          Next: Start session
+          {msg('managedAgents.quickstart.next.startSession', 'Next: Start session')}
           <ChevronRight className="size-4" aria-hidden />
         </Button>
       ) : null}
@@ -994,10 +1003,12 @@ export function EnvironmentStepCard({
 export function AskUserQuestionsCard({
   call,
   pinned = false,
+  results,
   onCompleteTool,
 }: {
   call: QuickstartToolCall;
   pinned?: boolean;
+  results: QuickstartInteractionResultText;
   onCompleteTool: (call: QuickstartToolCall, result: QuickstartToolExecutionResult) => Promise<void>;
 }) {
   const { msg } = useI18n();
@@ -1235,7 +1246,7 @@ export function AskUserQuestionsCard({
               type="button"
               variant="secondary"
               className="ml-auto hover:bg-popover"
-              onClick={() => onCompleteTool(call, { content: 'Skipped.' })}
+              onClick={() => onCompleteTool(call, { content: results.questionSkipped })}
             >
               {msg('managedAgents.quickstart.skip', 'Skip')}
             </Button>
@@ -1249,11 +1260,13 @@ export function AskUserQuestionsCard({
 export function BuildAgentConfigCard({
   call,
   agent,
+  results,
   onCompleteTool,
   onCreateAgent,
 }: {
   call: QuickstartToolCall;
   agent: AgentApiResponse | null;
+  results: QuickstartInteractionResultText;
   onCompleteTool: (call: QuickstartToolCall, result: QuickstartToolExecutionResult) => Promise<void>;
   onCreateAgent: (call: QuickstartToolCall) => Promise<void>;
 }) {
@@ -1294,7 +1307,7 @@ export function BuildAgentConfigCard({
           disabled={isCreating}
           onClick={async () => {
             if (agent) {
-              await onCompleteTool(call, { content: 'Agent created.' });
+              await onCompleteTool(call, { content: results.agentCreated });
               return;
             }
             setIsCreating(true);
@@ -1312,7 +1325,7 @@ export function BuildAgentConfigCard({
           variant="secondary"
           className="disabled:cursor-wait disabled:opacity-70"
           disabled={isCreating}
-          onClick={() => onCompleteTool(call, { content: "I'd like to keep refining the config before creating." })}
+          onClick={() => onCompleteTool(call, { content: results.refineAgentConfig })}
         >
           {msg('managedAgents.quickstart.keepRefining', 'Keep refining')}
         </Button>
@@ -1440,6 +1453,7 @@ export function AgentReadyCard({
   agent,
   environment,
   session,
+  results,
   onCreateSession,
   onCompleteTool,
 }: {
@@ -1447,6 +1461,7 @@ export function AgentReadyCard({
   agent: AgentApiResponse | null;
   environment: EnvironmentApiResponse | null;
   session: SessionApiResponse | null;
+  results: QuickstartInteractionResultText;
   onCreateSession: (call: QuickstartToolCall) => Promise<void>;
   onCompleteTool: (call: QuickstartToolCall, result: QuickstartToolExecutionResult) => Promise<void>;
 }) {
@@ -1474,7 +1489,11 @@ export function AgentReadyCard({
             <Play className="size-3.5 fill-current" aria-hidden />
             {msg('managedAgents.quickstart.testRun', 'Test run')}
           </Button>
-          <Button type="button" variant="secondary" onClick={() => onCompleteTool(call, { content: 'Keep refining.' })}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => onCompleteTool(call, { content: results.keepRefining })}
+          >
             {msg('managedAgents.quickstart.keepRefining', 'Keep refining')}
           </Button>
         </div>
@@ -1769,7 +1788,9 @@ export function IntegrationExitsCard({
   const environmentId =
     environment?.id || (typeof call.input.environment_id === 'string' ? call.input.environment_id : 'env_...');
   const prompt =
-    typeof call.input.user_prompt === 'string' ? call.input.user_prompt : 'Hello! What can you help me with?';
+    typeof call.input.user_prompt === 'string'
+      ? call.input.user_prompt
+      : msg('managedAgents.quickstart.integration.defaultUserMessage', 'Hello! What can you help me with?');
   const snippets = useMemo(
     () => integrationSnippets({ agentId, environmentId, prompt }),
     [agentId, environmentId, prompt],

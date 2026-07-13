@@ -7,6 +7,12 @@
 - 仅在有意测试不同绑定地址时，才使用 `PORT=...` 或 `ADDR=... just restart-server` 覆盖默认值。
 - 如果修改了 `web/` 下的前端代码，在使用浏览器或 SuperDuck 验证前，也要从仓库根目录执行 `just restart-web` 重启前端开发服务器。该命令会调用 `./scripts/restart-web.sh`，只停止当前仓库路径启动的 Vite 监听进程；如果目标端口被其他路径的进程占用，则保留该进程并自动选择后续可用端口以前台方式启动前端。
 
+## GitHub PR 提交身份
+
+- 本仓库的 Pull Request 必须通过本机已认证的 `gh` CLI 创建；禁止使用 Codex GitHub Connector 或其 GitHub App 创建 PR。
+- 创建 PR 前必须依次运行 `gh auth status` 和 `gh api user --jq .login`，记录当前登录账号。任意已认证账号均可使用；仅当用户明确指定了账号且当前登录账号不匹配时，才应停止并请求用户处理。
+- 分支、提交和推送仍使用本地 `git`；分支推送成功后，使用 `gh pr create --draft ...` 创建 Draft PR，并通过 `gh pr view --json author,url,isDraft` 确认 PR 作者与创建前记录的登录账号一致且状态为 Draft。
+
 ## 前端设计方向
 
 - 前端实现细节位于 `web/AGENTS.md`。
@@ -83,6 +89,7 @@
 
 - 测试组织顺序应先写失败场景，再写成功场景。
 - 修改 `web/` 下的文件后，运行 `just web-format-check`，确保 Prettier 格式门禁通过。
+- 修改 Go 代码后，运行 `just lint`；该命令使用仓库根目录的 `.golangci.yml` 执行与 CI 相同的静态分析和格式检查。
 - 修改 schema 或 handler 后，运行 `go test ./... -count=1`。
 - 做真实 E2E 时，先用 `ADDR=127.0.0.1:18080 go run .` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
 - 自定义 SDK E2E 覆盖：

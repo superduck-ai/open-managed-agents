@@ -29,6 +29,10 @@ restart-web:
 test:
   go test ./... -count=1
 
+# Run the repository's configured Go static-analysis and formatting checks.
+lint:
+  golangci-lint run --config .golangci.yml ./...
+
 web-build:
   cd web && bun run build
 

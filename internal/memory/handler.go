@@ -751,7 +751,6 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			}
 			targetContent = copied
 			targetContentKnown = true
-			targetSHA = record.ContentSHA256
 		}
 		versionID, err := ids.New("memver_")
 		if err != nil {

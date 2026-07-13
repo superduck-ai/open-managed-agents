@@ -235,7 +235,7 @@ func (s *Service) queueControlResponseForToolConfirmation(ctx context.Context, c
 	if err != nil {
 		return false, err
 	}
-	behavior := resolvedToolPermissionAsk
+	var behavior resolvedToolPermission
 	switch stringField(payload, "result") {
 	case "allow":
 		behavior = resolvedToolPermissionAllow

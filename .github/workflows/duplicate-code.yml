@@ -1,0 +1,55 @@
+name: Duplicate code
+
+on:
+  pull_request:
+    paths:
+      - "**/*.go"
+      - "web/src/**/*.ts"
+      - "web/src/**/*.tsx"
+      - ".jscpd.json"
+      - "web/.jscpd.json"
+      - "web/package.json"
+      - "web/bun.lock"
+      - "scripts/check-duplicates.sh"
+      - ".github/workflows/duplicate-code.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "web/src/**/*.ts"
+      - "web/src/**/*.tsx"
+      - ".jscpd.json"
+      - "web/.jscpd.json"
+      - "web/package.json"
+      - "web/bun.lock"
+      - "scripts/check-duplicates.sh"
+      - ".github/workflows/duplicate-code.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: duplicate-code-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  duplicate-code:
+    name: Go and TypeScript duplication
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install duplicate-code detector
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Check duplicate-code budgets
+        run: ./scripts/check-duplicates.sh

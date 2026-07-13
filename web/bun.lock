@@ -54,6 +54,7 @@
         "eslint-plugin-react-refresh": "^0.5.3",
         "globals": "^17.6.0",
         "happy-dom": "^20.10.5",
+        "jscpd": "5.0.12",
         "prettier": "3.9.5",
         "tailwindcss": "^4.3.1",
         "typescript": "^6.0.3",
@@ -588,6 +589,20 @@
     "jiti": ["jiti@2.7.0", "https://registry.npmmirror.com/jiti/-/jiti-2.7.0.tgz", { "bin": { "jiti": "lib/jiti-cli.mjs" } }, "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ=="],
 
     "js-tokens": ["js-tokens@4.0.0", "https://registry.npmmirror.com/js-tokens/-/js-tokens-4.0.0.tgz", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
+
+    "jscpd": ["jscpd@5.0.12", "https://registry.npmmirror.com/jscpd/-/jscpd-5.0.12.tgz", { "optionalDependencies": { "jscpd-darwin-arm64": "5.0.12", "jscpd-darwin-x64": "5.0.12", "jscpd-linux-arm64-gnu": "5.0.12", "jscpd-linux-x64-gnu": "5.0.12", "jscpd-linux-x64-musl": "5.0.12", "jscpd-windows-x64-msvc": "5.0.12" }, "bin": { "jscpd": "run-jscpd.js" } }, "sha512-87dC+akj2mCywlt8p3xnRlDg0B55u4GDbfE9cuwOOeIxbEuWuIoNqGoYi65A0516aJ4EzAjGwBj1Qb/Ahc8WAQ=="],
+
+    "jscpd-darwin-arm64": ["jscpd-darwin-arm64@5.0.12", "https://registry.npmmirror.com/jscpd-darwin-arm64/-/jscpd-darwin-arm64-5.0.12.tgz", { "os": "darwin", "cpu": "arm64" }, "sha512-CQCDYhQY9yOGGeauzkRGYW/QtXurPCjfDkEhUoM/M5UdmpzxfG3i9mnNsaheJ0RdFRf73mL7JaLVRP8U2l5/kA=="],
+
+    "jscpd-darwin-x64": ["jscpd-darwin-x64@5.0.12", "https://registry.npmmirror.com/jscpd-darwin-x64/-/jscpd-darwin-x64-5.0.12.tgz", { "os": "darwin", "cpu": "x64" }, "sha512-7XNCDfChP9fPkIWLepd0zGnTov7/5mR7rJ5Utc1MdWFdgkN//qz6FAJ1FhQA0E/qjFedy9XTucfUCgLybSBsjw=="],
+
+    "jscpd-linux-arm64-gnu": ["jscpd-linux-arm64-gnu@5.0.12", "https://registry.npmmirror.com/jscpd-linux-arm64-gnu/-/jscpd-linux-arm64-gnu-5.0.12.tgz", { "os": "linux", "cpu": "arm64" }, "sha512-i/usHD0/8twzb2Qo4vFWcnuAD4IDLS6K/mTXwYy1CiJZDw4gmjfH45jtjdKUyoutTAiNs+ZWZgx1gIRljUbFuA=="],
+
+    "jscpd-linux-x64-gnu": ["jscpd-linux-x64-gnu@5.0.12", "https://registry.npmmirror.com/jscpd-linux-x64-gnu/-/jscpd-linux-x64-gnu-5.0.12.tgz", { "os": "linux", "cpu": "x64" }, "sha512-TqaeSTaGawcqyXSrQvYJFtLRn4aQeHgphGGsq2ZtVAg+lPeuMmh81c3bl0yi2dL3gDX1RGBQKBVul1XQknOuoA=="],
+
+    "jscpd-linux-x64-musl": ["jscpd-linux-x64-musl@5.0.12", "https://registry.npmmirror.com/jscpd-linux-x64-musl/-/jscpd-linux-x64-musl-5.0.12.tgz", { "os": "linux", "cpu": "x64" }, "sha512-WelugY1/rdoo0Y0sqJ2XQOIvyIZTfRe+vP3MJe4XvEUwPF0v+9SQoS34FnfblRhsddVixyNkgl7x/sHid9UMJw=="],
+
+    "jscpd-windows-x64-msvc": ["jscpd-windows-x64-msvc@5.0.12", "https://registry.npmmirror.com/jscpd-windows-x64-msvc/-/jscpd-windows-x64-msvc-5.0.12.tgz", { "os": "win32", "cpu": "x64" }, "sha512-01x1klKjvfzI6Of5tI9u72x7TIQZQLLG6kMdsEPJKl/BXbskdknrfCepeTXRBbdFPKs25jfcd0klZ4OdDvww5w=="],
 
     "jsesc": ["jsesc@3.1.0", "https://registry.npmmirror.com/jsesc/-/jsesc-3.1.0.tgz", { "bin": { "jsesc": "bin/jsesc" } }, "sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA=="],
 

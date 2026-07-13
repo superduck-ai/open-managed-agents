@@ -1,0 +1,9 @@
+{
+  "minTokens": 70,
+  "minLines": 12,
+  "mode": "strict",
+  "format": ["typescript", "tsx"],
+  "ignore": ["**/*.test.ts", "**/*.test.tsx", "**/*.suite.ts", "**/*.suite.tsx", "**/*.gen.ts"],
+  "reporters": ["threshold"],
+  "threshold": 1.1
+}

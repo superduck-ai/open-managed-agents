@@ -1,0 +1,9 @@
+{
+  "minTokens": 70,
+  "minLines": 12,
+  "mode": "strict",
+  "format": ["go"],
+  "ignore": ["**/*_test.go"],
+  "reporters": ["threshold"],
+  "threshold": 3.75
+}

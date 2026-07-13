@@ -10,6 +10,7 @@
     "test": "bun test",
     "lint": "eslint .",
     "lint:complexity": "eslint --config eslint.complexity.config.js src",
+    "lint:duplicates": "jscpd --config .jscpd.json --no-tips src",
     "lint:naming": "eslint --config eslint.naming.config.js src",
     "format": "prettier . --write",
     "format:check": "prettier . --check"
@@ -64,6 +65,7 @@
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.6.0",
     "happy-dom": "^20.10.5",
+    "jscpd": "5.0.12",
     "prettier": "3.9.5",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",

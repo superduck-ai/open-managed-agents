@@ -10,8 +10,8 @@
 ## GitHub PR 提交身份
 
 - 本仓库的 Pull Request 必须通过本机已认证的 `gh` CLI 创建；禁止使用 Codex GitHub Connector 或其 GitHub App 创建 PR。
-- 创建 PR 前必须依次运行 `gh auth status` 和 `gh api user --jq .login`，并确认当前登录账号严格等于 `arthur-zhang`。如果账号不匹配，应停止并请求用户处理，不能继续创建 PR。
-- 分支、提交和推送仍使用本地 `git`；分支推送成功后，使用 `gh pr create --draft ...` 创建 Draft PR，并通过 `gh pr view --json author,url,isDraft` 复核作者和状态。
+- 创建 PR 前必须依次运行 `gh auth status` 和 `gh api user --jq .login`，记录当前登录账号。任意已认证账号均可使用；仅当用户明确指定了账号且当前登录账号不匹配时，才应停止并请求用户处理。
+- 分支、提交和推送仍使用本地 `git`；分支推送成功后，使用 `gh pr create --draft ...` 创建 Draft PR，并通过 `gh pr view --json author,url,isDraft` 确认 PR 作者与创建前记录的登录账号一致且状态为 Draft。
 
 ## 前端设计方向
 

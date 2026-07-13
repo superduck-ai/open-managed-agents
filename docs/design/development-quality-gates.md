@@ -2,7 +2,15 @@
 
 ## 目标
 
-Go 后端使用统一、可复现的静态分析门禁，使本地开发与 Pull Request CI 对可疑代码、无效赋值、资源生命周期、日志参数、序列化约束和格式保持相同判断。
+仓库使用统一、可复现的本地提交门禁和 CI 门禁，使本地开发与 Pull Request CI 对格式、文件卫生和 Go 静态分析保持相同判断。
+
+## Pre-commit 门禁
+
+- `.pre-commit-config.yaml` 固定通用 hook 版本，并排除由上游流程生成的 quickstart 请求文件。
+- 通用 hook 检查尾随空白、文件结尾、合并冲突标记、YAML/JSON 语法、私钥、大文件和混合换行符。
+- 暂存 Go 文件先由 `gofmt` 格式化，再对其所属 package 执行仓库 `.golangci.yml` 规则；只检查受影响 package，避免每次提交都扫描整个后端。
+- 暂存前端代码、配置、样式和 Markdown 由 `web` 中固定版本的 Prettier 格式化，并遵循 `web/.prettierignore`。
+- `just hooks-install` 为当前 Git clone 安装 hook，同一 clone 下的 worktree 共用该 hook。若机器尚未安装 `pre-commit`，`scripts/pre-commit.sh` 会通过 `uv` 安装固定版本 `4.6.0`；`just hooks-run` 可对全部跟踪文件复跑门禁。
 
 ## 配置与执行
 
@@ -16,6 +24,8 @@ Go 后端使用统一、可复现的静态分析门禁，使本地开发与 Pull
 ## 验收
 
 ```bash
+just hooks-install
+just hooks-run
 just lint
 go test ./... -count=1
 ```

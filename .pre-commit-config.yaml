@@ -1,0 +1,40 @@
+minimum_pre_commit_version: '4.6.0'
+fail_fast: false
+exclude: ^web/src/features/managed-agents/quickstart/platformQuickstartOfficialRequest\.generated\.ts$
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: Format staged Go files
+        entry: gofmt -w
+        language: system
+        types: [go]
+
+      - id: golangci-lint
+        name: Lint packages containing staged Go files
+        entry: scripts/pre-commit-go-lint.sh
+        language: script
+        types: [go]
+        require_serial: true
+
+      - id: prettier
+        name: Format staged frontend files
+        entry: scripts/pre-commit-web-format.sh
+        language: script
+        files: ^web/.*\.(?:[cm]?[jt]sx?|json|css|md|ya?ml)$
+        require_serial: true

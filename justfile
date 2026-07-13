@@ -47,3 +47,11 @@ web-format:
 
 web-format-check:
   cd web && bun run format:check
+
+# Install the repository-managed pre-commit hook in the current Git clone.
+hooks-install:
+  ./scripts/pre-commit.sh install --install-hooks
+
+# Run every configured pre-commit check against all tracked files.
+hooks-run:
+  ./scripts/pre-commit.sh run --all-files

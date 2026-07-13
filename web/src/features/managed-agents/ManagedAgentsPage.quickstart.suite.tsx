@@ -214,7 +214,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect(promptInput.className).toContain('overflow-y-auto');
   });
 
-  test('keeps Enter for newlines in the initial quickstart composer and submits on Cmd/Ctrl+Enter', async () => {
+  test('sends the initial quickstart prompt on Enter and keeps Shift+Enter for newlines', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
     const api = mockAgentsApi([], {
       quickstartStream: () =>
@@ -234,12 +234,12 @@ export function registerManagedAgentsQuickstartTests() {
     const promptInput = screen.getByLabelText('Describe your agent') as HTMLTextAreaElement;
 
     fireEvent.change(promptInput, { target: { value: 'Build an invoice tracker.' } });
-    fireEvent.keyDown(promptInput, { key: 'Enter' });
+    fireEvent.keyDown(promptInput, { key: 'Enter', shiftKey: true });
     expect(
       api.requests.filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages').length,
     ).toBe(0);
 
-    fireEvent.keyDown(promptInput, { key: 'Enter', ctrlKey: true });
+    fireEvent.keyDown(promptInput, { key: 'Enter' });
 
     await waitFor(() =>
       expect(
@@ -265,7 +265,7 @@ export function registerManagedAgentsQuickstartTests() {
 
     const promptInput = screen.getByLabelText('Describe your agent') as HTMLTextAreaElement;
     fireEvent.change(promptInput, { target: { value: 'Build an invoice tracker.' } });
-    fireEvent.keyDown(promptInput, { key: 'Enter', ctrlKey: true });
+    fireEvent.keyDown(promptInput, { key: 'Enter' });
 
     expect(await screen.findByText('Ready for the next step.')).toBeTruthy();
     const reply = screen.getByLabelText('Reply…') as HTMLTextAreaElement;

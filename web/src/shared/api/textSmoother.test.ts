@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { TextStreamSmoother } from "./textSmoother";
+import { describe, expect, test } from 'bun:test';
+import { TextStreamSmoother } from './textSmoother';
 
-describe("TextStreamSmoother", () => {
-  test("reveals a large arrival over multiple updates", async () => {
+describe('TextStreamSmoother', () => {
+  test('reveals a large arrival over multiple updates', async () => {
     const clock = manualClock();
     const updates: string[] = [];
     const smoother = new TextStreamSmoother({
@@ -11,7 +11,7 @@ describe("TextStreamSmoother", () => {
       sleep: clock.sleep,
       initialCharsPerSecond: 90,
     });
-    const text = "abcdefghijklmnopqrstuvwxyz";
+    const text = 'abcdefghijklmnopqrstuvwxyz';
 
     smoother.setTarget(text);
 
@@ -27,7 +27,7 @@ describe("TextStreamSmoother", () => {
     smoother.dispose();
   });
 
-  test("finishes to the complete text after message stop", async () => {
+  test('finishes to the complete text after message stop', async () => {
     const clock = manualClock();
     const updates: string[] = [];
     const smoother = new TextStreamSmoother({
@@ -36,7 +36,7 @@ describe("TextStreamSmoother", () => {
       sleep: clock.sleep,
       initialCharsPerSecond: 60,
     });
-    const text = "final smoothed workbench response";
+    const text = 'final smoothed workbench response';
 
     smoother.setTarget(text);
     const done = smoother.finish();
@@ -49,14 +49,14 @@ describe("TextStreamSmoother", () => {
     smoother.dispose();
   });
 
-  test("flushes all received text when aborted", () => {
+  test('flushes all received text when aborted', () => {
     const controller = new AbortController();
     const updates: string[] = [];
     const smoother = new TextStreamSmoother({
       onUpdate: (text) => updates.push(text),
       signal: controller.signal,
     });
-    const text = "abort should not hide arrived text";
+    const text = 'abort should not hide arrived text';
 
     smoother.setTarget(text);
     controller.abort();
@@ -65,7 +65,7 @@ describe("TextStreamSmoother", () => {
     smoother.dispose();
   });
 
-  test("continues smoothing at the hidden-tab interval while the document is hidden", async () => {
+  test('continues smoothing at the hidden-tab interval while the document is hidden', async () => {
     const clock = manualClock();
     const updates: string[] = [];
     const smoother = new TextStreamSmoother({
@@ -74,7 +74,7 @@ describe("TextStreamSmoother", () => {
       sleep: clock.sleep,
       isDocumentHidden: () => true,
     });
-    const text = "hidden tab completion should still reveal progressively";
+    const text = 'hidden tab completion should still reveal progressively';
 
     smoother.setTarget(text);
 
@@ -91,7 +91,7 @@ describe("TextStreamSmoother", () => {
     smoother.dispose();
   });
 
-  test("caps visible burst reveal size after a delayed frame", async () => {
+  test('caps visible burst reveal size after a delayed frame', async () => {
     const clock = manualClock();
     const updates: string[] = [];
     const smoother = new TextStreamSmoother({
@@ -103,7 +103,7 @@ describe("TextStreamSmoother", () => {
       maxVisibleCharsPerStep: 12,
     });
 
-    smoother.setTarget("x".repeat(1000));
+    smoother.setTarget('x'.repeat(1000));
     const firstLength = updates.at(-1)?.length ?? 0;
 
     await clock.step(1000);
@@ -112,7 +112,7 @@ describe("TextStreamSmoother", () => {
     smoother.dispose();
   });
 
-  test("caps hidden burst reveal size when browser timers are clamped", async () => {
+  test('caps hidden burst reveal size when browser timers are clamped', async () => {
     const clock = manualClock();
     const updates: string[] = [];
     const smoother = new TextStreamSmoother({
@@ -125,7 +125,7 @@ describe("TextStreamSmoother", () => {
       maxHiddenCharsPerStep: 60,
     });
 
-    smoother.setTarget("x".repeat(1000));
+    smoother.setTarget('x'.repeat(1000));
     const firstLength = updates.at(-1)?.length ?? 0;
 
     await clock.step(1000);
@@ -135,7 +135,7 @@ describe("TextStreamSmoother", () => {
     smoother.dispose();
   });
 
-  test("uses the offscreen interval when output is not visible", () => {
+  test('uses the offscreen interval when output is not visible', () => {
     const clock = manualClock();
     const smoother = new TextStreamSmoother({
       onUpdate: () => undefined,
@@ -144,13 +144,13 @@ describe("TextStreamSmoother", () => {
       isOutputVisible: () => false,
     });
 
-    smoother.setTarget("offscreen throttled text");
+    smoother.setTarget('offscreen throttled text');
 
     expect(clock.sleepDurations.at(-1)).toBe(100);
     smoother.dispose();
   });
 
-  test("ignores an older generation after reset", async () => {
+  test('ignores an older generation after reset', async () => {
     const clock = manualClock();
     const updates: string[] = [];
     const smoother = new TextStreamSmoother({
@@ -160,15 +160,15 @@ describe("TextStreamSmoother", () => {
       initialCharsPerSecond: 80,
     });
 
-    smoother.setTarget("old generation text");
+    smoother.setTarget('old generation text');
     smoother.reset();
-    smoother.setTarget("new");
+    smoother.setTarget('new');
     const afterReset = updates.at(-1);
 
     await clock.step(17);
 
     expect(updates.at(-1)).toBe(afterReset);
-    expect(updates.some((text) => text.includes("old generation tex"))).toBe(false);
+    expect(updates.some((text) => text.includes('old generation tex'))).toBe(false);
     smoother.dispose();
   });
 });

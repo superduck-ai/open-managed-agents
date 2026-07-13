@@ -1,5 +1,5 @@
-import { useI18n } from "../../../shared/i18n";
-import { cn } from "../../../shared/lib/utils";
+import { useI18n } from '../../../shared/i18n';
+import { cn } from '../../../shared/lib/utils';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -7,9 +7,9 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from "../../../shared/ui/breadcrumb";
-import { type ReactNode } from "react";
-import { handleInternalLinkClick } from "../utils";
+} from '../../../shared/ui/breadcrumb';
+import { type ReactNode } from 'react';
+import { handleInternalLinkClick } from '../utils';
 
 export function ManagedDetailBreadcrumb({
   listHref,
@@ -27,7 +27,7 @@ export function ManagedDetailBreadcrumb({
   const { msg } = useI18n();
 
   return (
-    <Breadcrumb aria-label={msg("navigation.breadcrumb", "Breadcrumb")} className={className}>
+    <Breadcrumb aria-label={msg('navigation.breadcrumb', 'Breadcrumb')} className={className}>
       <BreadcrumbList className="min-w-0">
         <BreadcrumbItem>
           <BreadcrumbLink href={listHref} onClick={(event) => handleInternalLinkClick(event, listHref)}>
@@ -38,7 +38,7 @@ export function ManagedDetailBreadcrumb({
           <>
             <BreadcrumbSeparator />
             <BreadcrumbItem className="min-w-0">
-              <BreadcrumbPage className={cn("truncate", currentClassName)}>{currentLabel}</BreadcrumbPage>
+              <BreadcrumbPage className={cn('truncate', currentClassName)}>{currentLabel}</BreadcrumbPage>
             </BreadcrumbItem>
           </>
         ) : null}

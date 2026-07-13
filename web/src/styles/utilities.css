@@ -35,13 +35,13 @@
   background: color-mix(in oklch, var(--muted) 50%, transparent);
 }
 
-.oma-data-table-row[data-state="selected"] .oma-data-table-cell {
+.oma-data-table-row[data-state='selected'] .oma-data-table-cell {
   background: var(--muted);
 }
 
 .oma-data-table-row:hover .oma-copy-id-button,
 .oma-copy-id-button:focus-visible,
-.oma-copy-id-button[data-copied="true"] {
+.oma-copy-id-button[data-copied='true'] {
   opacity: 1 !important;
 }
 
@@ -115,7 +115,7 @@
 }
 
 .dark .oma-session-idle-gap,
-:root[data-theme="dark"] .oma-session-idle-gap {
+:root[data-theme='dark'] .oma-session-idle-gap {
   --oma-session-idle-gap-border-300: 51 16.5% 84.5%;
   --oma-session-idle-gap-text-500: 48 4.8% 59.2%;
 }
@@ -149,7 +149,7 @@
 }
 
 .dark .oma-session-timeline,
-:root[data-theme="dark"] .oma-session-timeline {
+:root[data-theme='dark'] .oma-session-timeline {
   --oma-session-timeline-accent-100: 210 70.9% 51.6%;
   --oma-session-timeline-accent-200: 210 70.9% 51.6%;
   --oma-session-timeline-bg-000: 60 2.1% 18.4%;

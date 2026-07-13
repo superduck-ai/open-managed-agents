@@ -1,8 +1,8 @@
-import { consoleApi } from "../../../../shared/api/client";
-import { normalizeMcpDirectoryServers, type McpDirectoryServer, type McpToolCatalog } from "./model";
+import { consoleApi } from '../../../../shared/api/client';
+import { normalizeMcpDirectoryServers, type McpDirectoryServer, type McpToolCatalog } from './model';
 
 const MCP_DIRECTORY_CACHE_MS = 60 * 60 * 1000;
-const MCP_DIRECTORY_PATH = "/api/directory/servers?type=remote&visibility=commercial&sort=popular&limit=500";
+const MCP_DIRECTORY_PATH = '/api/directory/servers?type=remote&visibility=commercial&sort=popular&limit=500';
 
 let directoryCache: { expiresAt: number; servers: McpDirectoryServer[] } | undefined;
 let directoryRequest: Promise<McpDirectoryServer[]> | undefined;
@@ -49,7 +49,7 @@ export function loadAgentMcpToolCatalogs(
   version: number,
   signal?: AbortSignal,
 ) {
-  const versionQuery = version > 0 ? `?version=${encodeURIComponent(String(version))}` : "";
+  const versionQuery = version > 0 ? `?version=${encodeURIComponent(String(version))}` : '';
   return consoleApi<{ data: McpToolCatalog[]; version: number }>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/mcp_tool_catalogs${versionQuery}`,
     { signal },
@@ -64,11 +64,11 @@ export function refreshAgentMcpToolCatalogs(
   serverName: string,
   csrfToken?: string,
 ) {
-  const versionQuery = version > 0 ? `?version=${encodeURIComponent(String(version))}` : "";
+  const versionQuery = version > 0 ? `?version=${encodeURIComponent(String(version))}` : '';
   return consoleApi<{ data: McpToolCatalog; version: number }>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/mcp_tool_catalogs/refresh${versionQuery}`,
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({ server_name: serverName }),
       csrfToken,
     },

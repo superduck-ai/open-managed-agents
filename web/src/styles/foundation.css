@@ -2,11 +2,11 @@
 
 @theme inline {
   --font-sans:
-    "Geist Variable", Geist, "Anthropic Sans Variable", "Anthropic Sans", ui-sans-serif, system-ui, -apple-system,
-    BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    'Geist Variable', Geist, 'Anthropic Sans Variable', 'Anthropic Sans', ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono:
-    "Geist Mono Variable", "Geist Mono", "Anthropic Mono Variable", "Anthropic Mono", "SF Mono", ui-monospace,
-    SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    'Geist Mono Variable', 'Geist Mono', 'Anthropic Mono Variable', 'Anthropic Mono', 'SF Mono', ui-monospace,
+    SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   --ease-snappy-out: cubic-bezier(0.175, 0.885, 0.32, 1.1);
 
   --color-popover-foreground: var(--popover-foreground);
@@ -113,7 +113,7 @@
 }
 
 .dark,
-:root[data-theme="dark"] {
+:root[data-theme='dark'] {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -259,7 +259,7 @@
   );
 }
 
-:root[data-theme="dark"] .session-shimmer-text {
+:root[data-theme='dark'] .session-shimmer-text {
   background-image: linear-gradient(
     120deg,
     var(--muted-foreground) 25%,
@@ -268,7 +268,7 @@
   );
 }
 
-:root[data-theme="dark"] .session-shimmer-text-secondary {
+:root[data-theme='dark'] .session-shimmer-text-secondary {
   background-image: linear-gradient(
     120deg,
     var(--muted-foreground) 25%,
@@ -409,12 +409,12 @@ select {
   -webkit-tap-highlight-color: transparent;
 }
 
-:where(a, button, input, textarea, select, [role="button"], [role="combobox"], [tabindex]):focus-visible {
+:where(a, button, input, textarea, select, [role='button'], [role='combobox'], [tabindex]):focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
 
-:where([data-slot="input-group-control"]):focus-visible {
+:where([data-slot='input-group-control']):focus-visible {
   outline: none;
   box-shadow: none;
 }

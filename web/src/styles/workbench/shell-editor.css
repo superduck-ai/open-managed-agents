@@ -188,7 +188,7 @@
   color: var(--foreground);
 }
 
-.workbench-toolbar-button[aria-disabled="true"],
+.workbench-toolbar-button[aria-disabled='true'],
 .workbench-toolbar-button:disabled {
   cursor: not-allowed;
   color: var(--muted-foreground);
@@ -241,11 +241,11 @@
   overflow: hidden;
 }
 
-.workbench-system-card[aria-label="Click to open system prompt"] {
+.workbench-system-card[aria-label='Click to open system prompt'] {
   cursor: pointer;
 }
 
-.workbench-system-card[aria-label="Click to open system prompt"]:focus-visible {
+.workbench-system-card[aria-label='Click to open system prompt']:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }

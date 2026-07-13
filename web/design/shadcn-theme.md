@@ -155,8 +155,8 @@ The following is the full default `neutral` theme scaffold. Copy it into your gl
 <CodeCollapsibleWrapper>
 
 ```css showLineNumbers title="app/globals.css"
-@import "tailwindcss";
-@import "shadcn/tailwind.css";
+@import 'tailwindcss';
+@import 'shadcn/tailwind.css';
 
 @custom-variant dark (&:is(.dark *));
 

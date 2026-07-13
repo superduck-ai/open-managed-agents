@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "@tanstack/react-router";
-import clsx from "clsx";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation } from '@tanstack/react-router';
+import clsx from 'clsx';
 import {
   AlertCircle,
   Ban,
@@ -16,10 +16,10 @@ import {
   Trash2,
   Webhook,
   X,
-} from "lucide-react";
-import { Button } from "../../shared/ui/button";
-import { Checkbox } from "../../shared/ui/checkbox";
-import { Alert, AlertDescription } from "../../shared/ui/alert";
+} from 'lucide-react';
+import { Button } from '../../shared/ui/button';
+import { Checkbox } from '../../shared/ui/checkbox';
+import { Alert, AlertDescription } from '../../shared/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,7 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
-} from "../../shared/ui/alert-dialog";
+} from '../../shared/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -38,24 +38,24 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../../shared/ui/dialog";
+} from '../../shared/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../shared/ui/dropdown-menu";
-import { Badge } from "../../shared/ui/badge";
-import { Card, CardContent } from "../../shared/ui/card";
-import { Input } from "../../shared/ui/input";
-import { Label } from "../../shared/ui/label";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../shared/ui/table";
-import { Textarea } from "../../shared/ui/textarea";
-import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "../../shared/ui/sheet";
-import { useI18n } from "../../shared/i18n";
-import { defaultWorkspace, type Workspace } from "../../shared/workspaces/api";
-import { useWorkspace } from "../../shared/workspaces/context";
-import { workspaceIdFromPath } from "../../shared/workspaces/presentation";
+} from '../../shared/ui/dropdown-menu';
+import { Badge } from '../../shared/ui/badge';
+import { Card, CardContent } from '../../shared/ui/card';
+import { Input } from '../../shared/ui/input';
+import { Label } from '../../shared/ui/label';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
+import { Textarea } from '../../shared/ui/textarea';
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '../../shared/ui/sheet';
+import { useI18n } from '../../shared/i18n';
+import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
+import { useWorkspace } from '../../shared/workspaces/context';
+import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
 import {
   createWebhookEndpoint,
   deleteWebhookEndpoint,
@@ -67,13 +67,13 @@ import {
   type UpdateWebhookEndpointInput,
   type WebhookEndpoint,
   type WebhookEndpointStatus,
-} from "./webhooksApi";
+} from './webhooksApi';
 
 type WorkspaceWebhooksContentProps = {
   routeWorkspaceId?: string;
 };
 
-type WebhookAction = "enable" | "disable" | "regenerate" | "delete";
+type WebhookAction = 'enable' | 'disable' | 'regenerate' | 'delete';
 
 type PendingAction = {
   action: WebhookAction;
@@ -82,7 +82,7 @@ type PendingAction = {
 
 type SecretDisclosure = {
   webhook: WebhookEndpoint;
-  source: "created" | "regenerated";
+  source: 'created' | 'regenerated';
 };
 
 type WebhookEvent = {
@@ -102,41 +102,41 @@ type WebhookEventSummaryGroup = {
 
 const webhookEventGroups: WebhookEventGroup[] = [
   {
-    label: "Session lifecycle",
+    label: 'Session lifecycle',
     events: [
-      { label: "Run started", type: "session.status_run_started" },
-      { label: "Rescheduled", type: "session.status_rescheduled" },
-      { label: "Idled", type: "session.status_idled" },
-      { label: "Terminated", type: "session.status_terminated" },
+      { label: 'Run started', type: 'session.status_run_started' },
+      { label: 'Rescheduled', type: 'session.status_rescheduled' },
+      { label: 'Idled', type: 'session.status_idled' },
+      { label: 'Terminated', type: 'session.status_terminated' },
     ],
   },
   {
-    label: "Threads",
+    label: 'Threads',
     events: [
-      { label: "Created", type: "session.thread_created" },
-      { label: "Idled", type: "session.thread_idled" },
-      { label: "Terminated", type: "session.thread_terminated" },
+      { label: 'Created', type: 'session.thread_created' },
+      { label: 'Idled', type: 'session.thread_idled' },
+      { label: 'Terminated', type: 'session.thread_terminated' },
     ],
   },
   {
-    label: "Outcomes",
-    events: [{ label: "Evaluation ended", type: "session.outcome_evaluation_ended" }],
+    label: 'Outcomes',
+    events: [{ label: 'Evaluation ended', type: 'session.outcome_evaluation_ended' }],
   },
   {
-    label: "Vault lifecycle",
+    label: 'Vault lifecycle',
     events: [
-      { label: "Created", type: "vault.created" },
-      { label: "Archived", type: "vault.archived" },
-      { label: "Deleted", type: "vault.deleted" },
+      { label: 'Created', type: 'vault.created' },
+      { label: 'Archived', type: 'vault.archived' },
+      { label: 'Deleted', type: 'vault.deleted' },
     ],
   },
   {
-    label: "Credential lifecycle",
+    label: 'Credential lifecycle',
     events: [
-      { label: "Created", type: "vault_credential.created" },
-      { label: "Archived", type: "vault_credential.archived" },
-      { label: "Deleted", type: "vault_credential.deleted" },
-      { label: "Refresh failed", type: "vault_credential.refresh_failed" },
+      { label: 'Created', type: 'vault_credential.created' },
+      { label: 'Archived', type: 'vault_credential.archived' },
+      { label: 'Deleted', type: 'vault_credential.deleted' },
+      { label: 'Refresh failed', type: 'vault_credential.refresh_failed' },
     ],
   },
 ];
@@ -146,12 +146,12 @@ const allWebhookEventTypes = webhookEventGroups.flatMap((group) => group.events.
 const webhookDetailEventGroups: WebhookEventGroup[] = [
   ...webhookEventGroups.slice(0, 3),
   {
-    label: "Session record",
+    label: 'Session record',
     events: [
-      { label: "Updated", type: "session.updated" },
-      { label: "Deleted", type: "session.deleted" },
-      { label: "Updated", type: "session.record_updated" },
-      { label: "Deleted", type: "session.record_deleted" },
+      { label: 'Updated', type: 'session.updated' },
+      { label: 'Deleted', type: 'session.deleted' },
+      { label: 'Updated', type: 'session.record_updated' },
+      { label: 'Deleted', type: 'session.record_deleted' },
     ],
   },
   ...webhookEventGroups.slice(3),
@@ -179,7 +179,7 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
     [activeWorkspace, routeWorkspaceId, workspaces],
   );
   const queryKey = useMemo(
-    () => ["console", "workspace-webhooks", orgUuid, workspace.id] as const,
+    () => ['console', 'workspace-webhooks', orgUuid, workspace.id] as const,
     [orgUuid, workspace.id],
   );
 
@@ -200,7 +200,7 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
     mutationFn: createWebhookEndpoint,
     onSuccess: async (webhook) => {
       setCreateOpen(false);
-      setSecretDisclosure({ webhook, source: "created" });
+      setSecretDisclosure({ webhook, source: 'created' });
       queryClient.setQueryData<WebhookEndpoint[]>(queryKey, (current) => upsertWebhook(current ?? [], webhook));
       await queryClient.invalidateQueries({ queryKey });
     },
@@ -240,7 +240,7 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
     onSuccess: (response, webhook) => {
       setSecretDisclosure({
         webhook: { ...webhook, signing_secret: response.signing_secret },
-        source: "regenerated",
+        source: 'regenerated',
       });
       void queryClient.invalidateQueries({ queryKey });
     },
@@ -253,14 +253,14 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
   const errorMessage = readableError(webhooksQuery.error);
   const updateDetailsError = readableError(updateDetailsMutation.error);
   const actionError = readableError(
-    pendingAction?.action === "delete"
+    pendingAction?.action === 'delete'
       ? deleteMutation.error
-      : pendingAction?.action === "regenerate"
+      : pendingAction?.action === 'regenerate'
         ? regenerateSecretMutation.error
         : statusMutation.error,
   );
 
-  const handleCreate = async (input: Omit<CreateWebhookEndpointInput, "name"> & { name?: string }) => {
+  const handleCreate = async (input: Omit<CreateWebhookEndpointInput, 'name'> & { name?: string }) => {
     await createMutation.mutateAsync({
       ...input,
       name: input.name?.trim() || deriveWebhookName(input.url),
@@ -275,14 +275,14 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
     if (!pendingAction) {
       return;
     }
-    if (pendingAction.action === "delete") {
+    if (pendingAction.action === 'delete') {
       await deleteMutation.mutateAsync(pendingAction.webhook);
-    } else if (pendingAction.action === "regenerate") {
+    } else if (pendingAction.action === 'regenerate') {
       await regenerateSecretMutation.mutateAsync(pendingAction.webhook);
     } else {
       await statusMutation.mutateAsync({
         webhook: pendingAction.webhook,
-        status: pendingAction.action === "enable" ? "enabled" : "disabled",
+        status: pendingAction.action === 'enable' ? 'enabled' : 'disabled',
       });
     }
     setPendingAction(null);
@@ -304,18 +304,18 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
         <div className="mb-7 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-              {msg("webhooks.title", "Webhooks")}
+              {msg('webhooks.title', 'Webhooks')}
             </h1>
             <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
               {msg(
-                "webhooks.description",
-                "Webhook endpoints receive event notifications when things happen in your workspace.",
+                'webhooks.description',
+                'Webhook endpoints receive event notifications when things happen in your workspace.',
               )}
             </p>
           </div>
           <Button type="button" size="lg" className="shrink-0" onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" aria-hidden />
-            {msg("webhooks.addEndpoint", "Add webhook endpoint")}
+            {msg('webhooks.addEndpoint', 'Add webhook endpoint')}
           </Button>
         </div>
 
@@ -330,22 +330,22 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
             </colgroup>
             <TableHeader className="text-[13px] text-muted-foreground">
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="px-3 py-3 text-muted-foreground">{msg("webhooks.table.id", "ID")}</TableHead>
-                <TableHead className="px-3 py-3 text-muted-foreground">{msg("webhooks.table.name", "Name")}</TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">{msg('webhooks.table.id', 'ID')}</TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">{msg('webhooks.table.name', 'Name')}</TableHead>
                 <TableHead className="px-3 py-3 text-muted-foreground">
-                  {msg("webhooks.table.status", "Status")}
+                  {msg('webhooks.table.status', 'Status')}
                 </TableHead>
                 <TableHead className="px-3 py-3 text-muted-foreground">
-                  {msg("webhooks.table.createdAt", "Created at")}
+                  {msg('webhooks.table.createdAt', 'Created at')}
                 </TableHead>
                 <TableHead className="px-3 py-3 text-right text-muted-foreground">
-                  <span className="sr-only">{msg("common.actions", "Actions")}</span>
+                  <span className="sr-only">{msg('common.actions', 'Actions')}</span>
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {webhooksQuery.isLoading ? (
-                <WebhooksState text={msg("webhooks.loading", "Loading webhooks...")} />
+                <WebhooksState text={msg('webhooks.loading', 'Loading webhooks...')} />
               ) : errorMessage ? (
                 <WebhooksState tone="error" text={errorMessage} />
               ) : webhooks.length > 0 ? (
@@ -360,7 +360,7 @@ export function WorkspaceWebhooksContent({ routeWorkspaceId }: WorkspaceWebhooks
                 ))
               ) : (
                 <WebhooksState
-                  text={msg("webhooks.empty", "No webhook endpoints have been created for {workspaceName}.", {
+                  text={msg('webhooks.empty', 'No webhook endpoints have been created for {workspaceName}.', {
                     workspaceName: workspace.name,
                   })}
                 />
@@ -416,7 +416,7 @@ function WebhookRow({
 }) {
   const { msg } = useI18n();
   const [copied, setCopied] = useState(false);
-  const disabled = webhook.status === "disabled";
+  const disabled = webhook.status === 'disabled';
 
   const copyId = async () => {
     if (navigator.clipboard?.writeText) {
@@ -429,8 +429,8 @@ function WebhookRow({
   return (
     <TableRow
       className={clsx(
-        "h-[58px] cursor-pointer border-border text-sm text-foreground hover:bg-accent",
-        selected && "bg-secondary",
+        'h-[58px] cursor-pointer border-border text-sm text-foreground hover:bg-accent',
+        selected && 'bg-secondary',
       )}
       aria-selected={selected}
       onClick={onSelect}
@@ -441,7 +441,7 @@ function WebhookRow({
           variant="ghost"
           size="sm"
           className="h-auto max-w-full justify-start px-0 py-1 pr-1 text-left font-mono text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
-          aria-label={msg("webhooks.copyId", "Copy {id}", { id: webhook.id })}
+          aria-label={msg('webhooks.copyId', 'Copy {id}', { id: webhook.id })}
           onClick={(event) => {
             event.stopPropagation();
             void copyId();
@@ -449,7 +449,7 @@ function WebhookRow({
         >
           <span className="truncate">{truncateWebhookId(webhook.id)}</span>
           <span role="status" className="sr-only">
-            {copied ? msg("common.copied", "Copied") : ""}
+            {copied ? msg('common.copied', 'Copied') : ''}
           </span>
         </Button>
       </TableCell>
@@ -465,7 +465,7 @@ function WebhookRow({
           }}
         >
           <span className="block truncate font-medium">
-            {webhook.name || msg("webhooks.untitled", "Untitled webhook")}
+            {webhook.name || msg('webhooks.untitled', 'Untitled webhook')}
           </span>
           <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">{webhook.url}</span>
         </Button>
@@ -490,7 +490,7 @@ function WebhookRow({
                 variant="ghost"
                 size="icon"
                 className="text-muted-foreground hover:text-foreground"
-                aria-label={msg("webhooks.actions", "Webhook actions")}
+                aria-label={msg('webhooks.actions', 'Webhook actions')}
                 onClick={(event) => event.stopPropagation()}
               />
             }
@@ -521,15 +521,15 @@ function WebhookDetailInspector({
 }) {
   const { msg } = useI18n();
   const [editing, setEditing] = useState(false);
-  const [copied, setCopied] = useState<"id" | "url" | null>(null);
-  const disabled = webhook.status === "disabled";
+  const [copied, setCopied] = useState<'id' | 'url' | null>(null);
+  const disabled = webhook.status === 'disabled';
 
   useEffect(() => {
     setEditing(false);
     setCopied(null);
   }, [webhook.id]);
 
-  const copyValue = async (value: string, target: "id" | "url") => {
+  const copyValue = async (value: string, target: 'id' | 'url') => {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(value);
     }
@@ -537,7 +537,7 @@ function WebhookDetailInspector({
     window.setTimeout(() => setCopied(null), 1400);
   };
 
-  const displayName = webhook.name || msg("webhooks.untitled", "Untitled webhook");
+  const displayName = webhook.name || msg('webhooks.untitled', 'Untitled webhook');
 
   return (
     <Sheet
@@ -566,7 +566,7 @@ function WebhookDetailInspector({
               </div>
               <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
                 <span>
-                  {msg("webhooks.createdRelative", "Created {time}", {
+                  {msg('webhooks.createdRelative', 'Created {time}', {
                     time: formatRelativeTime(webhook.created_at),
                   })}
                 </span>
@@ -576,13 +576,13 @@ function WebhookDetailInspector({
                   variant="ghost"
                   size="xs"
                   className="h-auto px-0 py-0 font-mono text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
-                  aria-label={msg("webhooks.copyId", "Copy {id}", { id: webhook.id })}
-                  onClick={() => void copyValue(webhook.id, "id")}
+                  aria-label={msg('webhooks.copyId', 'Copy {id}', { id: webhook.id })}
+                  onClick={() => void copyValue(webhook.id, 'id')}
                 >
                   {truncateWebhookId(webhook.id)}
                 </Button>
                 <span role="status" className="sr-only">
-                  {copied === "id" ? msg("common.copied", "Copied") : ""}
+                  {copied === 'id' ? msg('common.copied', 'Copied') : ''}
                 </span>
               </div>
             </div>
@@ -591,7 +591,7 @@ function WebhookDetailInspector({
                 <>
                   <Button
                     type="button"
-                    aria-label={msg("webhooks.edit", "Edit webhook")}
+                    aria-label={msg('webhooks.edit', 'Edit webhook')}
                     variant="ghost"
                     size="icon"
                     className="text-muted-foreground hover:text-foreground"
@@ -606,7 +606,7 @@ function WebhookDetailInspector({
                           variant="ghost"
                           size="icon"
                           className="text-muted-foreground hover:text-foreground"
-                          aria-label={msg("webhooks.moreActions", "More actions")}
+                          aria-label={msg('webhooks.moreActions', 'More actions')}
                         />
                       }
                     >
@@ -620,7 +620,7 @@ function WebhookDetailInspector({
                 render={
                   <Button
                     type="button"
-                    aria-label={msg("webhooks.closeInspector", "Close inspector")}
+                    aria-label={msg('webhooks.closeInspector', 'Close inspector')}
                     variant="ghost"
                     size="icon"
                     className="text-muted-foreground hover:text-foreground"
@@ -636,8 +636,8 @@ function WebhookDetailInspector({
         <div className="mt-8 space-y-8">
           <WebhookEndpointDisplay
             url={webhook.url}
-            copied={copied === "url"}
-            onCopy={() => void copyValue(webhook.url, "url")}
+            copied={copied === 'url'}
+            onCopy={() => void copyValue(webhook.url, 'url')}
           />
 
           {editing ? (
@@ -664,16 +664,16 @@ function WebhookEndpointDisplay({ url, copied, onCopy }: { url: string; copied: 
   const { msg } = useI18n();
   return (
     <section className="border-t border-border pt-8 first:border-t-0 first:pt-0">
-      <h3 className="text-base font-semibold leading-tight text-foreground">{msg("webhooks.endpoint", "Endpoint")}</h3>
+      <h3 className="text-base font-semibold leading-tight text-foreground">{msg('webhooks.endpoint', 'Endpoint')}</h3>
       <p className="mt-2 text-sm leading-5 text-muted-foreground">
-        {msg("webhooks.endpointHelp", "Events are delivered to this URL via HTTPS POST.")}
+        {msg('webhooks.endpointHelp', 'Events are delivered to this URL via HTTPS POST.')}
       </p>
       <Card size="sm" className="mt-5 py-0">
         <CardContent className="flex min-h-[58px] items-center gap-3 px-4 py-3 text-foreground">
           <span className="min-w-0 flex-1 break-all font-mono text-sm leading-5">{url}</span>
           <Button
             type="button"
-            aria-label={msg("webhooks.copyEndpointUrl", "Copy endpoint URL")}
+            aria-label={msg('webhooks.copyEndpointUrl', 'Copy endpoint URL')}
             variant="ghost"
             size="icon"
             className="text-muted-foreground hover:text-foreground"
@@ -695,7 +695,7 @@ function WebhookSubscribedEvents({ events }: { events: string[] }) {
     <section className="border-t border-border pt-8">
       <div className="flex items-center gap-2">
         <h3 className="text-base font-semibold leading-tight text-foreground">
-          {msg("webhooks.subscribedEvents", "Subscribed events")}
+          {msg('webhooks.subscribedEvents', 'Subscribed events')}
         </h3>
         <Badge variant="secondary" className="h-6 min-w-6 rounded-full px-2 font-semibold">
           {events.length}
@@ -703,8 +703,8 @@ function WebhookSubscribedEvents({ events }: { events: string[] }) {
       </div>
       <p className="mt-2 text-sm leading-5 text-muted-foreground">
         {msg(
-          "webhooks.subscribedEventsHelp",
-          "A POST request is sent to the endpoint each time one of these events occurs in this workspace.",
+          'webhooks.subscribedEventsHelp',
+          'A POST request is sent to the endpoint each time one of these events occurs in this workspace.',
         )}
       </p>
 
@@ -716,13 +716,13 @@ function WebhookSubscribedEvents({ events }: { events: string[] }) {
               className="grid min-h-[48px] grid-cols-[minmax(120px,0.7fr)_minmax(0,1.3fr)] items-start gap-4 border-t border-border py-3 text-sm leading-6 first:border-t-0"
             >
               <div className="text-muted-foreground">{group.label}</div>
-              <div className="min-w-0 text-foreground">{group.labels.join(" · ")}</div>
+              <div className="min-w-0 text-foreground">{group.labels.join(' · ')}</div>
             </div>
           ))}
         </div>
       ) : (
         <p className="mt-5 text-sm text-muted-foreground">
-          {msg("webhooks.noSubscribedEvents", "No events selected.")}
+          {msg('webhooks.noSubscribedEvents', 'No events selected.')}
         </p>
       )}
     </section>
@@ -743,14 +743,14 @@ function WebhookDetailEditForm({
   onSave: (input: UpdateWebhookEndpointInput) => Promise<void>;
 }) {
   const { msg } = useI18n();
-  const [name, setName] = useState(webhook.name ?? "");
-  const [description, setDescription] = useState(webhook.description ?? "");
+  const [name, setName] = useState(webhook.name ?? '');
+  const [description, setDescription] = useState(webhook.description ?? '');
   const [selectedEvents, setSelectedEvents] = useState<string[]>(() => orderedEvents(new Set(webhook.enabled_events)));
   const canSubmit = selectedEvents.length > 0 && !isSubmitting;
 
   useEffect(() => {
-    setName(webhook.name ?? "");
-    setDescription(webhook.description ?? "");
+    setName(webhook.name ?? '');
+    setDescription(webhook.description ?? '');
     setSelectedEvents(orderedEvents(new Set(webhook.enabled_events)));
   }, [webhook]);
 
@@ -797,22 +797,22 @@ function WebhookDetailEditForm({
     <form className="border-t border-border pt-8" onSubmit={(event) => void handleSubmit(event).catch(() => undefined)}>
       <div className="space-y-4">
         <Label className="block" htmlFor="webhook-detail-name">
-          {msg("webhooks.nameOptional", "Name (optional)")}
+          {msg('webhooks.nameOptional', 'Name (optional)')}
         </Label>
         <Input
           id="webhook-detail-name"
           value={name}
-          placeholder={msg("webhooks.namePlaceholder", "My webhook endpoint")}
+          placeholder={msg('webhooks.namePlaceholder', 'My webhook endpoint')}
           onChange={(event) => setName(event.target.value)}
         />
 
         <Label className="block" htmlFor="webhook-detail-description">
-          {msg("webhooks.descriptionOptional", "Description (optional)")}
+          {msg('webhooks.descriptionOptional', 'Description (optional)')}
         </Label>
         <Textarea
           id="webhook-detail-description"
           value={description}
-          placeholder={msg("webhooks.descriptionPlaceholder", "Receives session lifecycle events")}
+          placeholder={msg('webhooks.descriptionPlaceholder', 'Receives session lifecycle events')}
           className="min-h-[78px] resize-y"
           onChange={(event) => setDescription(event.target.value)}
         />
@@ -820,7 +820,7 @@ function WebhookDetailEditForm({
 
       <fieldset className="mt-6">
         <legend className="mb-3 text-sm font-medium text-foreground">
-          {msg("webhooks.eventsToSubscribe", "Events to subscribe")}
+          {msg('webhooks.eventsToSubscribe', 'Events to subscribe')}
         </legend>
         <div className="space-y-3 border-t border-border pt-3">
           {webhookEventGroups.map((group) => {
@@ -862,11 +862,11 @@ function WebhookDetailEditForm({
 
       <div className="mt-6 flex justify-end gap-2">
         <Button type="button" variant="outline" size="lg" onClick={onCancel} disabled={isSubmitting}>
-          {msg("common.cancel", "Cancel")}
+          {msg('common.cancel', 'Cancel')}
         </Button>
         <Button type="submit" disabled={!canSubmit} size="lg" className="min-w-[82px]">
           {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-          {msg("common.save", "Save")}
+          {msg('common.save', 'Save')}
         </Button>
       </div>
     </form>
@@ -875,16 +875,16 @@ function WebhookDetailEditForm({
 
 function WebhookStatusBadge({ status }: { status: WebhookEndpointStatus }) {
   const { msg } = useI18n();
-  const disabled = status === "disabled";
+  const disabled = status === 'disabled';
   return (
     <Badge
       variant="secondary"
       className={clsx(
-        "h-6 rounded-md px-2 font-medium",
-        disabled ? "bg-secondary text-muted-foreground" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        'h-6 rounded-md px-2 font-medium',
+        disabled ? 'bg-secondary text-muted-foreground' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
       )}
     >
-      {disabled ? msg("webhooks.disabled", "Disabled") : msg("webhooks.enabled", "Enabled")}
+      {disabled ? msg('webhooks.disabled', 'Disabled') : msg('webhooks.enabled', 'Enabled')}
     </Badge>
   );
 }
@@ -899,18 +899,18 @@ function WebhookActionsMenuContent({
   const { msg } = useI18n();
 
   return (
-    <DropdownMenuContent aria-label={msg("webhooks.actions", "Webhook actions")} align="end" className="w-[232px]">
-      <DropdownMenuItem onClick={() => onAction(disabled ? "enable" : "disable")}>
+    <DropdownMenuContent aria-label={msg('webhooks.actions', 'Webhook actions')} align="end" className="w-[232px]">
+      <DropdownMenuItem onClick={() => onAction(disabled ? 'enable' : 'disable')}>
         {disabled ? <Power className="size-4" aria-hidden /> : <Ban className="size-4" aria-hidden />}
-        <span>{disabled ? msg("webhooks.enable", "Enable") : msg("webhooks.disable", "Disable")}</span>
+        <span>{disabled ? msg('webhooks.enable', 'Enable') : msg('webhooks.disable', 'Disable')}</span>
       </DropdownMenuItem>
-      <DropdownMenuItem onClick={() => onAction("regenerate")}>
+      <DropdownMenuItem onClick={() => onAction('regenerate')}>
         <RotateCcw className="size-4" aria-hidden />
-        <span>{msg("webhooks.regenerateSecret", "Regenerate signing secret")}</span>
+        <span>{msg('webhooks.regenerateSecret', 'Regenerate signing secret')}</span>
       </DropdownMenuItem>
-      <DropdownMenuItem variant="destructive" onClick={() => onAction("delete")}>
+      <DropdownMenuItem variant="destructive" onClick={() => onAction('delete')}>
         <Trash2 className="size-4" aria-hidden />
-        <span>{msg("webhooks.delete", "Delete")}</span>
+        <span>{msg('webhooks.delete', 'Delete')}</span>
       </DropdownMenuItem>
     </DropdownMenuContent>
   );
@@ -925,24 +925,24 @@ function CreateWebhookDialog({
   open: boolean;
   isSubmitting: boolean;
   onClose: () => void;
-  onCreate: (input: Omit<CreateWebhookEndpointInput, "name"> & { name?: string }) => Promise<void>;
+  onCreate: (input: Omit<CreateWebhookEndpointInput, 'name'> & { name?: string }) => Promise<void>;
 }) {
   const { msg } = useI18n();
   const urlRef = useRef<HTMLInputElement>(null);
-  const [url, setUrl] = useState("");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [url, setUrl] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [selectedEvents, setSelectedEvents] = useState<string[]>(allWebhookEventTypes);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const canSubmit = url.trim().length > 0 && selectedEvents.length > 0 && !isSubmitting;
 
   useEffect(() => {
     if (!open) {
-      setUrl("");
-      setName("");
-      setDescription("");
+      setUrl('');
+      setName('');
+      setDescription('');
       setSelectedEvents(allWebhookEventTypes);
-      setError("");
+      setError('');
     }
   }, [open]);
 
@@ -951,7 +951,7 @@ function CreateWebhookDialog({
     if (!canSubmit) {
       return;
     }
-    setError("");
+    setError('');
     try {
       await onCreate({
         url: url.trim(),
@@ -960,7 +960,7 @@ function CreateWebhookDialog({
         enabled_events: selectedEvents,
       });
     } catch (createError) {
-      setError(readableError(createError) ?? msg("webhooks.createFailed", "Failed to create webhook endpoint."));
+      setError(readableError(createError) ?? msg('webhooks.createFailed', 'Failed to create webhook endpoint.'));
     }
   };
 
@@ -1005,11 +1005,11 @@ function CreateWebhookDialog({
         initialFocus={urlRef}
       >
         <DialogHeader>
-          <DialogTitle>{msg("webhooks.createTitle", "Create webhook endpoint")}</DialogTitle>
+          <DialogTitle>{msg('webhooks.createTitle', 'Create webhook endpoint')}</DialogTitle>
         </DialogHeader>
         <form className="space-y-4" onSubmit={handleSubmit}>
           <Label className="block" htmlFor="webhook-url">
-            {msg("webhooks.endpointUrl", "Endpoint URL")}
+            {msg('webhooks.endpointUrl', 'Endpoint URL')}
           </Label>
           <Input
             ref={urlRef}
@@ -1020,29 +1020,29 @@ function CreateWebhookDialog({
           />
 
           <Label className="block" htmlFor="webhook-name">
-            {msg("webhooks.nameOptional", "Name (optional)")}
+            {msg('webhooks.nameOptional', 'Name (optional)')}
           </Label>
           <Input
             id="webhook-name"
             value={name}
-            placeholder={msg("webhooks.namePlaceholder", "My webhook endpoint")}
+            placeholder={msg('webhooks.namePlaceholder', 'My webhook endpoint')}
             onChange={(event) => setName(event.target.value)}
           />
 
           <Label className="block" htmlFor="webhook-description">
-            {msg("webhooks.descriptionOptional", "Description (optional)")}
+            {msg('webhooks.descriptionOptional', 'Description (optional)')}
           </Label>
           <Textarea
             id="webhook-description"
             value={description}
-            placeholder={msg("webhooks.descriptionPlaceholder", "Receives session lifecycle events")}
+            placeholder={msg('webhooks.descriptionPlaceholder', 'Receives session lifecycle events')}
             className="min-h-[78px] resize-y"
             onChange={(event) => setDescription(event.target.value)}
           />
 
           <fieldset>
             <legend className="mb-3 text-sm font-medium text-foreground">
-              {msg("webhooks.eventsToSubscribe", "Events to subscribe")}
+              {msg('webhooks.eventsToSubscribe', 'Events to subscribe')}
             </legend>
             <div className="space-y-3 border-t border-border pt-3">
               {webhookEventGroups.map((group) => {
@@ -1088,7 +1088,7 @@ function CreateWebhookDialog({
           <div className="flex justify-end">
             <Button type="submit" disabled={!canSubmit} size="lg" className="min-w-[82px]">
               {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              {msg("common.create", "Create")}
+              {msg('common.create', 'Create')}
             </Button>
           </div>
         </form>
@@ -1114,11 +1114,11 @@ function GroupCheckbox({
 function WebhookSecretDialog({ disclosure, onClose }: { disclosure: SecretDisclosure | null; onClose: () => void }) {
   const { msg } = useI18n();
   const [copied, setCopied] = useState(false);
-  const secret = disclosure?.webhook.signing_secret ?? "";
+  const secret = disclosure?.webhook.signing_secret ?? '';
   const title =
-    disclosure?.source === "regenerated"
-      ? msg("webhooks.regeneratedTitle", "Signing secret regenerated")
-      : msg("webhooks.createdTitle", "Webhook endpoint created");
+    disclosure?.source === 'regenerated'
+      ? msg('webhooks.regeneratedTitle', 'Signing secret regenerated')
+      : msg('webhooks.createdTitle', 'Webhook endpoint created');
 
   useEffect(() => {
     if (disclosure) {
@@ -1148,7 +1148,7 @@ function WebhookSecretDialog({ disclosure, onClose }: { disclosure: SecretDisclo
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription className="mt-3 text-sm leading-6 text-muted-foreground">
             {msg(
-              "webhooks.copySecret",
+              'webhooks.copySecret',
               "Copy this signing secret now. You won't be able to view it again after closing this window.",
             )}
           </DialogDescription>
@@ -1161,10 +1161,10 @@ function WebhookSecretDialog({ disclosure, onClose }: { disclosure: SecretDisclo
         <DialogFooter>
           <Button type="button" variant="outline" size="lg" onClick={() => void handleCopy()}>
             {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
-            {copied ? msg("common.copied", "Copied") : msg("common.copy", "Copy")}
+            {copied ? msg('common.copied', 'Copied') : msg('common.copy', 'Copy')}
           </Button>
           <Button type="button" size="lg" onClick={onClose}>
-            {msg("common.done", "Done")}
+            {msg('common.done', 'Done')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1186,37 +1186,37 @@ function ConfirmWebhookActionDialog({
   onConfirm: () => Promise<void>;
 }) {
   const { msg } = useI18n();
-  const destructive = pendingAction.action === "delete";
-  const regenerating = pendingAction.action === "regenerate";
+  const destructive = pendingAction.action === 'delete';
+  const regenerating = pendingAction.action === 'regenerate';
   const action = actionLabel(pendingAction.action, msg);
   const icon =
-    pendingAction.action === "delete" ? (
+    pendingAction.action === 'delete' ? (
       <Trash2 className="size-5" aria-hidden />
-    ) : pendingAction.action === "regenerate" ? (
+    ) : pendingAction.action === 'regenerate' ? (
       <RotateCcw className="size-5" aria-hidden />
-    ) : pendingAction.action === "disable" ? (
+    ) : pendingAction.action === 'disable' ? (
       <Ban className="size-5" aria-hidden />
     ) : (
       <Power className="size-5" aria-hidden />
     );
   const title = destructive
-    ? msg("webhooks.deleteTitle", "Delete webhook endpoint")
+    ? msg('webhooks.deleteTitle', 'Delete webhook endpoint')
     : regenerating
-      ? msg("webhooks.regenerateTitle", "Regenerate signing secret?")
-      : msg("webhooks.statusTitle", "{action} webhook endpoint?", { action });
+      ? msg('webhooks.regenerateTitle', 'Regenerate signing secret?')
+      : msg('webhooks.statusTitle', '{action} webhook endpoint?', { action });
   const body = destructive
-    ? msg("webhooks.deleteBody", "Are you sure you want to delete {name}? This action can't be undone.", {
+    ? msg('webhooks.deleteBody', "Are you sure you want to delete {name}? This action can't be undone.", {
         name: pendingAction.webhook.name || pendingAction.webhook.id,
       })
     : regenerating
       ? msg(
-          "webhooks.regenerateBody",
-          "This will replace the current signing secret for {name}. Existing receivers must be updated to verify future deliveries.",
+          'webhooks.regenerateBody',
+          'This will replace the current signing secret for {name}. Existing receivers must be updated to verify future deliveries.',
           {
             name: pendingAction.webhook.name || pendingAction.webhook.id,
           },
         )
-      : msg("webhooks.statusBody", "Are you sure you want to {action} {name}?", {
+      : msg('webhooks.statusBody', 'Are you sure you want to {action} {name}?', {
           action: action.toLowerCase(),
           name: pendingAction.webhook.name || pendingAction.webhook.id,
         });
@@ -1232,7 +1232,7 @@ function ConfirmWebhookActionDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogMedia className={destructive ? "bg-destructive/10 text-destructive" : "text-muted-foreground"}>
+          <AlertDialogMedia className={destructive ? 'bg-destructive/10 text-destructive' : 'text-muted-foreground'}>
             {icon}
           </AlertDialogMedia>
           <AlertDialogTitle>{title}</AlertDialogTitle>
@@ -1241,10 +1241,10 @@ function ConfirmWebhookActionDialog({
         {error ? <InlineError>{error}</InlineError> : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isSubmitting} size="lg">
-            {msg("common.cancel", "Cancel")}
+            {msg('common.cancel', 'Cancel')}
           </AlertDialogCancel>
           <AlertDialogAction
-            variant={destructive ? "destructive" : "default"}
+            variant={destructive ? 'destructive' : 'default'}
             size="lg"
             className="min-w-[82px]"
             onClick={() => void onConfirm().catch(() => undefined)}
@@ -1268,11 +1268,11 @@ function InlineError({ children }: { children: ReactNode }) {
   );
 }
 
-function WebhooksState({ text, tone = "muted" }: { text: string; tone?: "muted" | "error" }) {
+function WebhooksState({ text, tone = 'muted' }: { text: string; tone?: 'muted' | 'error' }) {
   return (
     <TableRow className="border-border hover:bg-transparent">
       <TableCell colSpan={5} className="h-[156px] px-4 py-8 text-center text-sm text-muted-foreground">
-        {tone === "error" ? (
+        {tone === 'error' ? (
           <Alert variant="destructive" className="mx-auto max-w-lg text-left">
             <AlertCircle className="size-4 shrink-0" aria-hidden />
             <AlertDescription>{text}</AlertDescription>
@@ -1351,7 +1351,7 @@ function summarizeWebhookEvents(events: string[]): WebhookEventSummaryGroup[] {
     .filter((eventType) => !consumed.has(eventType) && !knownDetailEventTypes.has(eventType))
     .map(prettyWebhookEventType);
   if (unknownLabels.length > 0) {
-    groups.push({ label: "Other", labels: unknownLabels });
+    groups.push({ label: 'Other', labels: unknownLabels });
   }
 
   return groups;
@@ -1362,7 +1362,7 @@ function prettyWebhookEventType(eventType: string) {
     .split(/[._-]+/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+    .join(' ');
 }
 
 function deriveWebhookName(rawUrl: string) {
@@ -1383,7 +1383,7 @@ function truncateWebhookId(id: string) {
 
 function formatRelativeTime(value?: string | null) {
   if (!value) {
-    return "-";
+    return '-';
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -1391,50 +1391,50 @@ function formatRelativeTime(value?: string | null) {
   }
   const diffMs = date.getTime() - Date.now();
   const absMs = Math.abs(diffMs);
-  const formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
   const minute = 60 * 1000;
   const hour = 60 * minute;
   const day = 24 * hour;
   if (absMs < minute) {
-    return formatter.format(Math.round(diffMs / 1000), "second");
+    return formatter.format(Math.round(diffMs / 1000), 'second');
   }
   if (absMs < hour) {
-    return formatter.format(Math.round(diffMs / minute), "minute");
+    return formatter.format(Math.round(diffMs / minute), 'minute');
   }
   if (absMs < day) {
-    return formatter.format(Math.round(diffMs / hour), "hour");
+    return formatter.format(Math.round(diffMs / hour), 'hour');
   }
   if (absMs < 30 * day) {
-    return formatter.format(Math.round(diffMs / day), "day");
+    return formatter.format(Math.round(diffMs / day), 'day');
   }
   return formatAbsoluteDate(value);
 }
 
 function formatAbsoluteDate(value?: string | null) {
   if (!value) {
-    return "-";
+    return '-';
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
   }).format(date);
 }
 
-function actionLabel(action: WebhookAction, msg: ReturnType<typeof useI18n>["msg"]) {
+function actionLabel(action: WebhookAction, msg: ReturnType<typeof useI18n>['msg']) {
   switch (action) {
-    case "enable":
-      return msg("webhooks.action.enable", "Enable");
-    case "disable":
-      return msg("webhooks.action.disable", "Disable");
-    case "regenerate":
-      return msg("webhooks.action.regenerate", "Regenerate");
-    case "delete":
-      return msg("webhooks.action.delete", "Delete");
+    case 'enable':
+      return msg('webhooks.action.enable', 'Enable');
+    case 'disable':
+      return msg('webhooks.action.disable', 'Disable');
+    case 'regenerate':
+      return msg('webhooks.action.regenerate', 'Regenerate');
+    case 'delete':
+      return msg('webhooks.action.delete', 'Delete');
   }
 }
 
@@ -1445,11 +1445,11 @@ function readableError(error: unknown) {
   if (error instanceof Error) {
     return error.message;
   }
-  if (typeof error === "object" && error !== null && "message" in error) {
+  if (typeof error === 'object' && error !== null && 'message' in error) {
     const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") {
+    if (typeof message === 'string') {
       return message;
     }
   }
-  return "Request failed.";
+  return 'Request failed.';
 }

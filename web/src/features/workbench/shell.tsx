@@ -1,14 +1,14 @@
-import { Box, Check, CirclePlus, Loader2, Lock, Trash2, X } from "lucide-react";
-import { Dispatch, ReactNode, SetStateAction } from "react";
-import clsx from "clsx";
-import type { AuthAccount } from "../../shared/auth/api";
-import { Button } from "@/shared/ui/button";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/shared/ui/command";
-import { Label } from "@/shared/ui/label";
-import { PopoverContent, PopoverHeader, PopoverTitle } from "@/shared/ui/popover";
-import { Switch } from "@/shared/ui/switch";
-import { WorkbenchPromptSummary } from "./api";
-import { formatPromptSummaryDate, promptSummaryDisplayTitle } from "./model";
+import { Box, Check, CirclePlus, Loader2, Lock, Trash2, X } from 'lucide-react';
+import { Dispatch, ReactNode, SetStateAction } from 'react';
+import clsx from 'clsx';
+import type { AuthAccount } from '../../shared/auth/api';
+import { Button } from '@/shared/ui/button';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/shared/ui/command';
+import { Label } from '@/shared/ui/label';
+import { PopoverContent, PopoverHeader, PopoverTitle } from '@/shared/ui/popover';
+import { Switch } from '@/shared/ui/switch';
+import { WorkbenchPromptSummary } from './api';
+import { formatPromptSummaryDate, promptSummaryDisplayTitle } from './model';
 
 export function WorkbenchShell({ children }: { children: ReactNode }) {
   return <section className="workbench-shell">{children}</section>;
@@ -33,7 +33,7 @@ export function WorkbenchAccessUnavailable({ productName }: { productName: strin
             type="button"
             className="mt-5 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
             onClick={() => {
-              window.location.assign("/dashboard");
+              window.location.assign('/dashboard');
             }}
           >
             Go to Dashboard
@@ -119,18 +119,18 @@ export function PromptPicker({
                   <CommandItem
                     key={item.id}
                     role="option"
-                    aria-current={selected ? "true" : undefined}
+                    aria-current={selected ? 'true' : undefined}
                     aria-selected={selected}
                     value={`${title} ${item.id}`}
                     keywords={[
                       item.id,
-                      item.creator?.tagged_id ?? "",
-                      item.creator?.full_name ?? "",
-                      item.creator?.email_address ?? "",
+                      item.creator?.tagged_id ?? '',
+                      item.creator?.full_name ?? '',
+                      item.creator?.email_address ?? '',
                     ]}
                     className={clsx(
-                      "h-auto items-start gap-3 rounded-md px-2.5 py-2",
-                      selected && "bg-accent text-accent-foreground",
+                      'h-auto items-start gap-3 rounded-md px-2.5 py-2',
+                      selected && 'bg-accent text-accent-foreground',
                     )}
                     onSelect={() => void onSelect(item)}
                   >
@@ -184,7 +184,7 @@ export function PromptPicker({
             ) : (
               <CirclePlus className="size-4" aria-hidden />
             )}
-            {isCreating ? "Creating Prompt" : "Create New Prompt"}
+            {isCreating ? 'Creating Prompt' : 'Create New Prompt'}
           </Button>
         </div>
       </Command>

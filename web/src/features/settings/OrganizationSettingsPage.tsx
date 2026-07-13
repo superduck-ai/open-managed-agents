@@ -1,20 +1,20 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate } from "@tanstack/react-router";
-import { Copy, Save, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from "react";
-import { SettingsShell } from "../../app/layout/ConsoleLayout";
-import { LimitsPage, ServiceAccountsPage } from "../dashboard/DashboardPage";
-import { PrivacyControlsPage } from "../dashboard/privacy-controls";
-import { useAuth } from "../../shared/auth/context";
-import { Alert, AlertDescription } from "../../shared/ui/alert";
-import { Button } from "../../shared/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../../shared/ui/card";
-import { Field, FieldLabel } from "../../shared/ui/field";
-import { Input } from "../../shared/ui/input";
-import { Label } from "../../shared/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../shared/ui/select";
-import { Skeleton } from "../../shared/ui/skeleton";
-import { Switch } from "../../shared/ui/switch";
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate } from '@tanstack/react-router';
+import { Copy, Save, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react';
+import { SettingsShell } from '../../app/layout/ConsoleLayout';
+import { LimitsPage, ServiceAccountsPage } from '../dashboard/DashboardPage';
+import { PrivacyControlsPage } from '../dashboard/privacy-controls';
+import { useAuth } from '../../shared/auth/context';
+import { Alert, AlertDescription } from '../../shared/ui/alert';
+import { Button } from '../../shared/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../shared/ui/card';
+import { Field, FieldLabel } from '../../shared/ui/field';
+import { Input } from '../../shared/ui/input';
+import { Label } from '../../shared/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
+import { Skeleton } from '../../shared/ui/skeleton';
+import { Switch } from '../../shared/ui/switch';
 import {
   getOrganization,
   getOrganizationProfile,
@@ -25,26 +25,26 @@ import {
   type OrganizationProfile,
   type UpdateOrganizationInput,
   type UpdateOrganizationProfileInput,
-} from "../../shared/organization/api";
-import { useWorkspace } from "../../shared/workspaces/context";
-import { BillingSettingsPage } from "./BillingSettingsPage";
-import { AdminKeysSettingsPage } from "./AdminKeysSettingsPage";
-import { IdentityAndAccessSettingsPage } from "./IdentityAndAccessSettingsPage";
-import { WorkloadIdentitySettingsPage } from "./WorkloadIdentitySettingsPage";
+} from '../../shared/organization/api';
+import { useWorkspace } from '../../shared/workspaces/context';
+import { BillingSettingsPage } from './BillingSettingsPage';
+import { AdminKeysSettingsPage } from './AdminKeysSettingsPage';
+import { IdentityAndAccessSettingsPage } from './IdentityAndAccessSettingsPage';
+import { WorkloadIdentitySettingsPage } from './WorkloadIdentitySettingsPage';
 import {
   AppearanceSettingsPage,
   ProfileSettingsPage,
   SettingsApiKeysPage,
   settingsSectionFromPath,
   type SettingsPageSection,
-} from "./feature-pages";
-import { OrganizationMembersPage } from "./OrganizationMembersPage";
-import { WorkspacesSettingsPage } from "./WorkspacesSettingsPage";
+} from './feature-pages';
+import { OrganizationMembersPage } from './OrganizationMembersPage';
+import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
 
 const countryOptions = [
-  { value: "US", label: "United States" },
-  { value: "CA", label: "Canada" },
-  { value: "GB", label: "United Kingdom" },
+  { value: 'US', label: 'United States' },
+  { value: 'CA', label: 'Canada' },
+  { value: 'GB', label: 'United Kingdom' },
 ];
 
 type FormState = {
@@ -58,37 +58,37 @@ type FormState = {
 };
 
 const emptyForm: FormState = {
-  name: "",
-  line1: "",
-  line2: "",
-  country: "",
-  state: "",
-  city: "",
-  postalCode: "",
+  name: '',
+  line1: '',
+  line2: '',
+  country: '',
+  state: '',
+  city: '',
+  postalCode: '',
 };
 
 type OrganizationSettingsSection = Extract<
   SettingsPageSection,
-  | "organization"
-  | "limits"
-  | "members"
-  | "workspaces"
-  | "service-accounts"
-  | "profile"
-  | "appearance"
-  | "billing"
-  | "api-keys"
-  | "admin-keys"
-  | "workload-identity"
-  | "privacy-controls"
-  | "identity-and-access"
+  | 'organization'
+  | 'limits'
+  | 'members'
+  | 'workspaces'
+  | 'service-accounts'
+  | 'profile'
+  | 'appearance'
+  | 'billing'
+  | 'api-keys'
+  | 'admin-keys'
+  | 'workload-identity'
+  | 'privacy-controls'
+  | 'identity-and-access'
 >;
 
-export function OrganizationSettingsPage({ section = "organization" }: { section?: OrganizationSettingsSection }) {
+export function OrganizationSettingsPage({ section = 'organization' }: { section?: OrganizationSettingsSection }) {
   const { account, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const resolvedSection = section === "organization" ? settingsSectionFromPath(location.pathname) : section;
+  const resolvedSection = section === 'organization' ? settingsSectionFromPath(location.pathname) : section;
 
   const handleNavigate = async (href: string) => {
     await navigate({ href });
@@ -96,7 +96,7 @@ export function OrganizationSettingsPage({ section = "organization" }: { section
 
   const handleLogout = async () => {
     await logout();
-    await navigate({ to: "/login", search: { returnTo: "/" } });
+    await navigate({ to: '/login', search: { returnTo: '/' } });
   };
 
   return (
@@ -106,19 +106,19 @@ export function OrganizationSettingsPage({ section = "organization" }: { section
       onLogout={handleLogout}
       onNavigate={handleNavigate}
     >
-      {resolvedSection === "profile" ? <ProfileSettingsPage /> : null}
-      {resolvedSection === "appearance" ? <AppearanceSettingsPage /> : null}
-      {resolvedSection === "organization" ? <OrganizationSettingsContent /> : null}
-      {resolvedSection === "members" ? <OrganizationMembersPage /> : null}
-      {resolvedSection === "workspaces" ? <WorkspacesSettingsPage /> : null}
-      {resolvedSection === "billing" ? <BillingSettingsPage /> : null}
-      {resolvedSection === "limits" ? <LimitsPage /> : null}
-      {resolvedSection === "api-keys" ? <SettingsApiKeysPage /> : null}
-      {resolvedSection === "admin-keys" ? <AdminKeysSettingsPage /> : null}
-      {resolvedSection === "service-accounts" ? <ServiceAccountsPage /> : null}
-      {resolvedSection === "workload-identity" ? <WorkloadIdentitySettingsPage /> : null}
-      {resolvedSection === "privacy-controls" ? <PrivacyControlsPage /> : null}
-      {resolvedSection === "identity-and-access" ? <IdentityAndAccessSettingsPage /> : null}
+      {resolvedSection === 'profile' ? <ProfileSettingsPage /> : null}
+      {resolvedSection === 'appearance' ? <AppearanceSettingsPage /> : null}
+      {resolvedSection === 'organization' ? <OrganizationSettingsContent /> : null}
+      {resolvedSection === 'members' ? <OrganizationMembersPage /> : null}
+      {resolvedSection === 'workspaces' ? <WorkspacesSettingsPage /> : null}
+      {resolvedSection === 'billing' ? <BillingSettingsPage /> : null}
+      {resolvedSection === 'limits' ? <LimitsPage /> : null}
+      {resolvedSection === 'api-keys' ? <SettingsApiKeysPage /> : null}
+      {resolvedSection === 'admin-keys' ? <AdminKeysSettingsPage /> : null}
+      {resolvedSection === 'service-accounts' ? <ServiceAccountsPage /> : null}
+      {resolvedSection === 'workload-identity' ? <WorkloadIdentitySettingsPage /> : null}
+      {resolvedSection === 'privacy-controls' ? <PrivacyControlsPage /> : null}
+      {resolvedSection === 'identity-and-access' ? <IdentityAndAccessSettingsPage /> : null}
     </SettingsShell>
   );
 }
@@ -130,19 +130,19 @@ export function OrganizationSettingsContent() {
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrgUuid = orgUuid ?? bootstrapOrganization?.uuid;
   const initialForm = useMemo<FormState>(
-    () => ({ ...emptyForm, name: bootstrapOrganization?.name ?? "" }),
+    () => ({ ...emptyForm, name: bootstrapOrganization?.name ?? '' }),
     [bootstrapOrganization?.name],
   );
 
   const organizationQuery = useQuery({
-    queryKey: ["console", "organization", activeOrgUuid],
-    queryFn: () => getOrganization(activeOrgUuid ?? ""),
+    queryKey: ['console', 'organization', activeOrgUuid],
+    queryFn: () => getOrganization(activeOrgUuid ?? ''),
     enabled: Boolean(activeOrgUuid),
     retry: false,
   });
   const profileQuery = useQuery({
-    queryKey: ["console", "organization-profile", activeOrgUuid],
-    queryFn: () => getOrganizationProfile(activeOrgUuid ?? ""),
+    queryKey: ['console', 'organization-profile', activeOrgUuid],
+    queryFn: () => getOrganizationProfile(activeOrgUuid ?? ''),
     enabled: Boolean(activeOrgUuid),
     retry: false,
   });
@@ -181,19 +181,19 @@ export function OrganizationSettingsContent() {
   }, [activeOrgUuid, organizationQuery.data, profileQuery.data]);
 
   const updateOrganizationMutation = useMutation({
-    mutationFn: (input: UpdateOrganizationInput) => updateOrganization(activeOrgUuid ?? "", input, csrfToken),
+    mutationFn: (input: UpdateOrganizationInput) => updateOrganization(activeOrgUuid ?? '', input, csrfToken),
     onSuccess: async (organization) => {
-      queryClient.setQueryData(["console", "organization", activeOrgUuid], organization);
-      await queryClient.invalidateQueries({ queryKey: ["auth", "bootstrap"] });
+      queryClient.setQueryData(['console', 'organization', activeOrgUuid], organization);
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'bootstrap'] });
       await refresh();
     },
   });
 
   const updateProfileMutation = useMutation({
     mutationFn: (input: UpdateOrganizationProfileInput) =>
-      updateOrganizationProfile(activeOrgUuid ?? "", input, csrfToken),
+      updateOrganizationProfile(activeOrgUuid ?? '', input, csrfToken),
     onSuccess: (profile) => {
-      queryClient.setQueryData(["console", "organization-profile", activeOrgUuid], profile);
+      queryClient.setQueryData(['console', 'organization-profile', activeOrgUuid], profile);
     },
   });
 
@@ -202,8 +202,8 @@ export function OrganizationSettingsContent() {
   const isDirty = !sameForm(normalizedForm, normalizedSavedForm);
   const addressValid = isAddressValid(normalizedForm);
   const isSaving = updateOrganizationMutation.isPending || updateProfileMutation.isPending;
-  const canSave = Boolean(activeOrgUuid) && isDirty && addressValid && normalizedForm.name !== "" && !isSaving;
-  const organizationId = organizationQuery.data?.uuid ?? activeOrgUuid ?? "";
+  const canSave = Boolean(activeOrgUuid) && isDirty && addressValid && normalizedForm.name !== '' && !isSaving;
+  const organizationId = organizationQuery.data?.uuid ?? activeOrgUuid ?? '';
 
   const copyOrganizationId = async () => {
     try {
@@ -377,7 +377,7 @@ export function OrganizationSettingsContent() {
                   <div className="flex flex-wrap items-center gap-3">
                     <Button type="button" size="lg" disabled={!canSave} onClick={handleSave}>
                       <Save className="size-4" aria-hidden />
-                      {isSaving ? "Saving" : "Save changes"}
+                      {isSaving ? 'Saving' : 'Save changes'}
                     </Button>
                     <Button type="button" variant="outline" size="lg" onClick={handleCancel}>
                       <X className="size-4" aria-hidden />
@@ -455,7 +455,7 @@ function TextInput({
 }: {
   value: string;
   onChange: (value: string) => void;
-} & Omit<InputHTMLAttributes<HTMLInputElement>, "onChange" | "value">) {
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value'>) {
   return <Input {...props} value={value} onChange={(event) => onChange(event.target.value)} className="h-10 px-4" />;
 }
 
@@ -487,13 +487,13 @@ function CountryCombobox({ value, onChange }: { value: string; onChange: (value:
 function formFromOrganization(organization: Organization, profile: OrganizationProfile): FormState {
   const address = profile.physical_address;
   return {
-    name: organization.name ?? "",
-    line1: address?.line1 ?? "",
-    line2: address?.line2 ?? "",
-    country: address?.country ?? "",
-    state: address?.state ?? "",
-    city: address?.city ?? "",
-    postalCode: address?.postal_code ?? "",
+    name: organization.name ?? '',
+    line1: address?.line1 ?? '',
+    line2: address?.line2 ?? '',
+    country: address?.country ?? '',
+    state: address?.state ?? '',
+    city: address?.city ?? '',
+    postalCode: address?.postal_code ?? '',
   };
 }
 
@@ -554,8 +554,8 @@ function organizationAllowsApiKeys(organization: Organization) {
 }
 
 function errorMessage(error: unknown) {
-  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
     return error.message;
   }
-  return "Something went wrong. Try again.";
+  return 'Something went wrong. Try again.';
 }

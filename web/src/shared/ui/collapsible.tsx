@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { Collapsible as CollapsiblePrimitive } from "@base-ui/react/collapsible";
+import { Collapsible as CollapsiblePrimitive } from '@base-ui/react/collapsible';
 
-import { cn } from "@/shared/lib/utils";
+import { cn } from '@/shared/lib/utils';
 
 function Collapsible({ ...props }: CollapsiblePrimitive.Root.Props) {
   return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />;
@@ -16,7 +16,7 @@ function CollapsibleContent({ className, ...props }: CollapsiblePrimitive.Panel.
   return (
     <CollapsiblePrimitive.Panel
       data-slot="collapsible-content"
-      className={cn("overflow-hidden", className)}
+      className={cn('overflow-hidden', className)}
       {...props}
     />
   );

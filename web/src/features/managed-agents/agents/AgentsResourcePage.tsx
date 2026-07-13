@@ -1,7 +1,7 @@
-import { type ApiError } from "../../../shared/api/client";
-import { useI18n } from "../../../shared/i18n";
-import { cn } from "../../../shared/lib/utils";
-import { Button } from "../../../shared/ui/button";
+import { type ApiError } from '../../../shared/api/client';
+import { useI18n } from '../../../shared/i18n';
+import { cn } from '../../../shared/lib/utils';
+import { Button } from '../../../shared/ui/button';
 import {
   CopyIdCell,
   DataTableCell,
@@ -10,17 +10,17 @@ import {
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
-} from "../../../shared/ui/data-table-interactions";
+} from '../../../shared/ui/data-table-interactions';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../../shared/ui/dropdown-menu";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../shared/ui/table";
-import { useWorkspace } from "../../../shared/workspaces/context";
-import { Archive, ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+} from '../../../shared/ui/dropdown-menu';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { useWorkspace } from '../../../shared/workspaces/context';
+import { Archive, ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   agentsListLimit,
   archiveAgent,
@@ -30,7 +30,7 @@ import {
   listAgents,
   retrieveAgent,
   searchAgentsByName,
-} from "../api";
+} from '../api';
 import {
   AgentFilterDropdown,
   AgentsEmptyState,
@@ -42,7 +42,7 @@ import {
   ManagedErrorAlert,
   ManagedSearchField,
   ManagedWarningAlert,
-} from "../components/common";
+} from '../components/common';
 import {
   createdFilterLabel,
   createdFilterOptionsFor,
@@ -54,7 +54,7 @@ import {
   resourceTitle,
   statusFilterLabel,
   statusFilterOptionsFor,
-} from "../labels";
+} from '../labels';
 import {
   type AgentApiResponse,
   type AgentCreatedFilter,
@@ -64,9 +64,9 @@ import {
   type CreateAgentInput,
   type PageCursor,
   type ResourceConfig,
-} from "../types";
-import { agentDetailHref, errorMessage, handleInternalLinkClick } from "../utils";
-import { CreateAgentDialog } from "./create-dialog";
+} from '../types';
+import { agentDetailHref, errorMessage, handleInternalLinkClick } from '../utils';
+import { CreateAgentDialog } from './create-dialog';
 import {
   agentMatchesClientFilters,
   agentModelName,
@@ -74,17 +74,17 @@ import {
   emptyAgents,
   relativeTime,
   rowFromAgent,
-} from "./model";
+} from './model';
 
-export { AgentDetailPage } from "./detail";
+export { AgentDetailPage } from './detail';
 export {
   agentDetailCreatedRange,
   agentDetailStatusValues,
   agentModelName,
   compactAgentId,
   relativeTime,
-} from "./model";
-export { BUILT_IN_AGENT_TOOLSETS } from "./tools/model";
+} from './model';
+export { BUILT_IN_AGENT_TOOLSETS } from './tools/model';
 
 export function AgentsResourcePage({
   config,
@@ -96,8 +96,8 @@ export function AgentsResourcePage({
   const { msg } = useI18n();
   const { activeWorkspaceId } = useWorkspace();
   const workspaceId = routeWorkspaceId || activeWorkspaceId;
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [createdFilter, setCreatedFilter] = useState<AgentCreatedFilter>(defaultAgentFilters.created);
   const [statusFilter, setStatusFilter] = useState<AgentStatusFilter>(defaultAgentFilters.status);
   const [openFilterMenu, setOpenFilterMenu] = useState<AgentFilterMenu | null>(null);
@@ -109,13 +109,13 @@ export function AgentsResourcePage({
     data: AgentApiResponse[] | null;
     truncated: boolean;
   }>({
-    workspaceId: "",
-    requestKey: "",
-    mode: "list",
+    workspaceId: '',
+    requestKey: '',
+    mode: 'list',
     data: null,
     truncated: false,
   });
-  const [loadError, setLoadError] = useState<{ mode: "list" | "search"; message: string } | null>(null);
+  const [loadError, setLoadError] = useState<{ mode: 'list' | 'search'; message: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [archivingIds, setArchivingIds] = useState<Set<string>>(() => new Set());
@@ -129,20 +129,20 @@ export function AgentsResourcePage({
     nextPage: PageCursor;
     localPage: number;
   }>({
-    workspaceId: "",
-    requestKey: "",
+    workspaceId: '',
+    requestKey: '',
     cursor: null,
     history: [],
     nextPage: null,
     localPage: 0,
   });
-  const isAgentsPage = config.section === "agents";
+  const isAgentsPage = config.section === 'agents';
   const normalizedSearch = debouncedSearch.trim();
   const agentLoadMode: AgentLoadMode = normalizedSearch
     ? exactAgentIdPattern.test(normalizedSearch)
-      ? "retrieve"
-      : "search"
-    : "list";
+      ? 'retrieve'
+      : 'search'
+    : 'list';
   const agentListFilters = useMemo(
     () => ({ created: createdFilter, status: statusFilter }),
     [createdFilter, statusFilter],
@@ -177,18 +177,18 @@ export function AgentsResourcePage({
   const rows = isAgentsPage ? agentRowsFromApi : (config.rows ?? []);
   const filteredRows = rows.filter((row) =>
     Object.values(row)
-      .map((value) => (typeof value === "string" ? value : ""))
-      .join(" ")
+      .map((value) => (typeof value === 'string' ? value : ''))
+      .join(' ')
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
   const visibleRows = rows.length ? filteredRows : [];
   const visibleAgents = useMemo(
-    () => agentsFromApi.filter((agent) => agentMatchesClientFilters(agent, agentListFilters, agentLoadMode !== "list")),
+    () => agentsFromApi.filter((agent) => agentMatchesClientFilters(agent, agentListFilters, agentLoadMode !== 'list')),
     [agentListFilters, agentLoadMode, agentsFromApi],
   );
   const displayedAgents =
-    agentLoadMode === "search"
+    agentLoadMode === 'search'
       ? visibleAgents.slice(agentLocalPage * agentsListLimit, (agentLocalPage + 1) * agentsListLimit)
       : visibleAgents;
   const title = resourceTitle(config, msg);
@@ -197,18 +197,18 @@ export function AgentsResourcePage({
   const searchPlaceholder = resourceSearchPlaceholder(config, msg);
   const createdOptions = createdFilterOptionsFor(msg);
   const statusOptions = statusFilterOptionsFor(msg);
-  const hasActiveAgentFilters = Boolean(search.trim()) || createdFilter !== "all" || statusFilter !== "active";
-  const searchResultsTruncated = agentLoadMode === "search" && remoteAgentsTruncated;
-  const hasPreviousAgentsPage = agentLoadMode === "search" ? agentLocalPage > 0 : Boolean(agentPageHistory.length);
+  const hasActiveAgentFilters = Boolean(search.trim()) || createdFilter !== 'all' || statusFilter !== 'active';
+  const searchResultsTruncated = agentLoadMode === 'search' && remoteAgentsTruncated;
+  const hasPreviousAgentsPage = agentLoadMode === 'search' ? agentLocalPage > 0 : Boolean(agentPageHistory.length);
   const hasNextAgentsPage =
-    agentLoadMode === "search" ? (agentLocalPage + 1) * agentsListLimit < visibleAgents.length : Boolean(agentNextPage);
+    agentLoadMode === 'search' ? (agentLocalPage + 1) * agentsListLimit < visibleAgents.length : Boolean(agentNextPage);
 
   useEffect(() => {
     if (previousWorkspaceIdRef.current === workspaceId) {
       return;
     }
     previousWorkspaceIdRef.current = workspaceId;
-    setRemoteAgentsState({ workspaceId, requestKey: "", mode: "list", data: null, truncated: false });
+    setRemoteAgentsState({ workspaceId, requestKey: '', mode: 'list', data: null, truncated: false });
     setOpenFilterMenu(null);
     setConfirmArchiveAgentIds(null);
     setArchiveError(null);
@@ -227,7 +227,7 @@ export function AgentsResourcePage({
 
     let active = true;
     const requestWorkspaceId = workspaceId;
-    const pageCursor = agentLoadMode === "list" ? agentPageCursor : null;
+    const pageCursor = agentLoadMode === 'list' ? agentPageCursor : null;
     const requestKey = agentRequestKey;
     setRemoteAgentsState({
       workspaceId: requestWorkspaceId,
@@ -237,7 +237,7 @@ export function AgentsResourcePage({
       truncated: false,
     });
     const request =
-      agentLoadMode === "retrieve"
+      agentLoadMode === 'retrieve'
         ? retrieveAgent(normalizedSearch, requestWorkspaceId)
             .then((agent) => ({ data: [agent], next_page: null, truncated: false }))
             .catch((error: unknown) => {
@@ -247,7 +247,7 @@ export function AgentsResourcePage({
               }
               throw error;
             })
-        : agentLoadMode === "search"
+        : agentLoadMode === 'search'
           ? searchAgentsByName(requestWorkspaceId, normalizedSearch, agentListFilters)
           : listAgents(requestWorkspaceId, pageCursor, agentListFilters).then((page) => ({
               ...page,
@@ -280,7 +280,7 @@ export function AgentsResourcePage({
       })
       .catch((error: unknown) => {
         if (active) {
-          setLoadError({ mode: agentLoadMode === "list" ? "list" : "search", message: errorMessage(error) });
+          setLoadError({ mode: agentLoadMode === 'list' ? 'list' : 'search', message: errorMessage(error) });
           setRemoteAgentsState({
             workspaceId: requestWorkspaceId,
             requestKey,
@@ -339,15 +339,15 @@ export function AgentsResourcePage({
   };
 
   const resetAgentFilters = () => {
-    setSearch("");
-    setDebouncedSearch("");
+    setSearch('');
+    setDebouncedSearch('');
     setCreatedFilter(defaultAgentFilters.created);
     setStatusFilter(defaultAgentFilters.status);
     setOpenFilterMenu(null);
     setArchiveError(null);
     setAgentPageState({
       workspaceId,
-      requestKey: "",
+      requestKey: '',
       cursor: null,
       history: [],
       nextPage: null,
@@ -360,7 +360,7 @@ export function AgentsResourcePage({
     setArchiveError(null);
     setAgentPageState({
       workspaceId,
-      requestKey: "",
+      requestKey: '',
       cursor: null,
       history: [],
       nextPage: null,
@@ -385,7 +385,7 @@ export function AgentsResourcePage({
   };
 
   const goToNextAgentsPage = () => {
-    if (agentLoadMode === "search") {
+    if (agentLoadMode === 'search') {
       if (!hasNextAgentsPage) {
         return;
       }
@@ -415,7 +415,7 @@ export function AgentsResourcePage({
   };
 
   const goToPreviousAgentsPage = () => {
-    if (agentLoadMode === "search") {
+    if (agentLoadMode === 'search') {
       if (agentLocalPage <= 0) {
         return;
       }
@@ -452,7 +452,7 @@ export function AgentsResourcePage({
         ? {
             ...current,
             data:
-              statusFilter === "all"
+              statusFilter === 'all'
                 ? current.data.map((agent) =>
                     archived.has(agent.id)
                       ? { ...agent, archived_at: agent.archived_at ?? archivedAt, updated_at: archivedAt }
@@ -510,7 +510,7 @@ export function AgentsResourcePage({
         <DropdownMenuTrigger
           render={
             <MoreActionsButton
-              label={msg("managedAgents.common.moreActions", "More actions")}
+              label={msg('managedAgents.common.moreActions', 'More actions')}
               disabled={archiving}
               className="disabled:cursor-wait"
             />
@@ -522,7 +522,7 @@ export function AgentsResourcePage({
             onClick={() => requestArchiveAgents([agent.id])}
           >
             <Archive className="size-4" aria-hidden />
-            {msg("managedAgents.agents.archiveAgent", "Archive agent")}
+            {msg('managedAgents.agents.archiveAgent', 'Archive agent')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -553,23 +553,23 @@ export function AgentsResourcePage({
           onChange={handleSearchChange}
         />
         <AgentFilterDropdown
-          label={msg("managedAgents.filters.created", "Created")}
+          label={msg('managedAgents.filters.created', 'Created')}
           valueLabel={createdFilterLabel(createdFilter, msg)}
           options={createdOptions}
           value={createdFilter}
           menu="created"
-          open={openFilterMenu === "created"}
+          open={openFilterMenu === 'created'}
           menuWidthClass="w-[380px]"
           onOpenChange={setOpenFilterMenu}
           onSelect={handleCreatedFilterChange}
         />
         <AgentFilterDropdown
-          label={msg("managedAgents.filters.status", "Status")}
+          label={msg('managedAgents.filters.status', 'Status')}
           valueLabel={statusFilterLabel(statusFilter, msg)}
           options={statusOptions}
           value={statusFilter}
           menu="status"
-          open={openFilterMenu === "status"}
+          open={openFilterMenu === 'status'}
           menuWidthClass="w-[230px]"
           onOpenChange={setOpenFilterMenu}
           onSelect={handleStatusFilterChange}
@@ -581,7 +581,7 @@ export function AgentsResourcePage({
         {searchResultsTruncated && visibleAgents.length ? (
           <ManagedWarningAlert className="mb-3">
             {msg(
-              "managedAgents.agents.searchTruncated",
+              'managedAgents.agents.searchTruncated',
               "Couldn't search every agent. Narrow the search or paste an exact ID.",
             )}
           </ManagedWarningAlert>
@@ -589,41 +589,41 @@ export function AgentsResourcePage({
 
         {loadError && isAgentsPage ? (
           <AgentsListState
-            icon={loadError.mode === "list" ? TriangleAlert : Search}
+            icon={loadError.mode === 'list' ? TriangleAlert : Search}
             title={
-              loadError.mode === "list"
-                ? msg("managedAgents.agents.loadFailed", "Could not load agents")
-                : msg("managedAgents.agents.searchFailed", "Search failed")
+              loadError.mode === 'list'
+                ? msg('managedAgents.agents.loadFailed', 'Could not load agents')
+                : msg('managedAgents.agents.searchFailed', 'Search failed')
             }
             body={loadError.message}
-            actionLabel={msg("common.retry", "Retry")}
+            actionLabel={msg('common.retry', 'Retry')}
             onAction={retryAgentsLoad}
           />
         ) : isAgentsPage ? (
           <Table className={dataTableClassName}>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
-                <TableHead className={cn(dataTableHeaderCellClassName, "w-[185px]")}>
-                  {managedColumnLabel("ID", msg)}
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[185px]')}>
+                  {managedColumnLabel('ID', msg)}
                 </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, "w-auto")}>
-                  {managedColumnLabel("Name", msg)}
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-auto')}>
+                  {managedColumnLabel('Name', msg)}
                 </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, "w-[210px]")}>
-                  {managedColumnLabel("Model", msg)}
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[210px]')}>
+                  {managedColumnLabel('Model', msg)}
                 </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, "w-[120px]")}>
-                  {managedColumnLabel("Status", msg)}
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[120px]')}>
+                  {managedColumnLabel('Status', msg)}
                 </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, "w-[150px]")}>
-                  {managedColumnLabel("Created", msg)}
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>
+                  {managedColumnLabel('Created', msg)}
                 </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, "w-[150px]")}>
-                  {managedColumnLabel("Last updated", msg)}
+                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>
+                  {managedColumnLabel('Last updated', msg)}
                 </TableHead>
                 <TableHead
-                  className={cn(dataTableHeaderCellClassName, "w-[48px] px-2")}
-                  aria-label={managedColumnLabel("Actions", msg)}
+                  className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
+                  aria-label={managedColumnLabel('Actions', msg)}
                 />
               </TableRow>
             </TableHeader>
@@ -631,7 +631,7 @@ export function AgentsResourcePage({
               {remoteAgents === null ? (
                 <TableRow className="border-0 hover:bg-transparent">
                   <TableCell colSpan={7} className="h-[280px] text-center text-sm text-muted-foreground">
-                    {msg("managedAgents.agents.loading", "Loading agents...")}
+                    {msg('managedAgents.agents.loading', 'Loading agents...')}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -643,7 +643,7 @@ export function AgentsResourcePage({
                       <DataTableCell edge="start">
                         <CopyIdCell
                           value={agent.id}
-                          ariaLabel={msg("managedAgents.common.copyIdValue", "Copy {id}", { id: agent.id })}
+                          ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: agent.id })}
                           className="gap-1.5"
                         >
                           <a
@@ -661,7 +661,7 @@ export function AgentsResourcePage({
                           className="underline-offset-4 hover:underline"
                           onClick={(event) => handleInternalLinkClick(event, detailHref)}
                         >
-                          {agent.name || msg("managedAgents.agents.untitled", "Untitled agent")}
+                          {agent.name || msg('managedAgents.agents.untitled', 'Untitled agent')}
                         </a>
                       </DataTableCell>
                       <DataTableCell className="truncate font-mono text-[13px] text-muted-foreground">
@@ -690,7 +690,7 @@ export function AgentsResourcePage({
             <TableHeader>
               <TableRow className="border-border text-muted-foreground hover:bg-transparent">
                 {config.columns.map((column) => (
-                  <TableHead key={column || "select"} className="px-3 text-muted-foreground">
+                  <TableHead key={column || 'select'} className="px-3 text-muted-foreground">
                     {column ? (
                       managedColumnLabel(column, msg)
                     ) : (
@@ -704,7 +704,7 @@ export function AgentsResourcePage({
               {visibleRows.map((row, index) => (
                 <TableRow key={`${config.section}-${index}`} className="border-border text-foreground">
                   {config.columns.map((column) => (
-                    <TableCell key={column || "select"} className="h-11 truncate px-3">
+                    <TableCell key={column || 'select'} className="h-11 truncate px-3">
                       {column ? (
                         row[column]
                       ) : (
@@ -726,7 +726,7 @@ export function AgentsResourcePage({
                 trueEmpty={!hasActiveAgentFilters}
                 truncated={searchResultsTruncated}
                 trueEmptyActionLabel={
-                  resourceEmptyAction(config, msg) ?? msg("managedAgents.agents.emptyAction", "Get started with agents")
+                  resourceEmptyAction(config, msg) ?? msg('managedAgents.agents.emptyAction', 'Get started with agents')
                 }
                 onCreate={() => setDialogOpen(true)}
                 onReset={resetAgentFilters}
@@ -741,7 +741,7 @@ export function AgentsResourcePage({
           disabled={!hasPreviousAgentsPage}
           variant="outline"
           size="icon-lg"
-          aria-label={msg("pagination.previousPage", "Previous page")}
+          aria-label={msg('pagination.previousPage', 'Previous page')}
           onClick={goToPreviousAgentsPage}
         >
           <ChevronLeft className="size-4" aria-hidden />
@@ -751,7 +751,7 @@ export function AgentsResourcePage({
           disabled={!hasNextAgentsPage}
           variant="outline"
           size="icon-lg"
-          aria-label={msg("pagination.nextPage", "Next page")}
+          aria-label={msg('pagination.nextPage', 'Next page')}
           onClick={goToNextAgentsPage}
         >
           <ChevronRight className="size-4" aria-hidden />
@@ -759,7 +759,7 @@ export function AgentsResourcePage({
       </div>
 
       {dialogOpen && createLabel ? (
-        config.section === "agents" ? (
+        config.section === 'agents' ? (
           <CreateAgentDialog
             workspaceId={workspaceId}
             onClose={() => setDialogOpen(false)}

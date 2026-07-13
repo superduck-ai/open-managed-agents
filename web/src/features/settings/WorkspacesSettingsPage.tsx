@@ -1,20 +1,20 @@
-import { AlertCircle, Box, Plus } from "lucide-react";
-import { useState } from "react";
-import { useI18n } from "../../shared/i18n";
-import { CreateWorkspaceDialog } from "../../shared/workspaces/CreateWorkspaceDialog";
+import { AlertCircle, Box, Plus } from 'lucide-react';
+import { useState } from 'react';
+import { useI18n } from '../../shared/i18n';
+import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
 import {
   buildCreateWorkspaceInput,
   workspaceApiKeysPath,
   workspaceColor,
   workspaceWebhooksPath,
-} from "../../shared/workspaces/presentation";
-import { useWorkspace } from "../../shared/workspaces/context";
-import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert";
-import { Badge } from "../../shared/ui/badge";
-import { Button, ButtonLink } from "../../shared/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader } from "../../shared/ui/card";
-import { Skeleton } from "../../shared/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../shared/ui/table";
+} from '../../shared/workspaces/presentation';
+import { useWorkspace } from '../../shared/workspaces/context';
+import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
+import { Badge } from '../../shared/ui/badge';
+import { Button, ButtonLink } from '../../shared/ui/button';
+import { Card, CardAction, CardContent, CardDescription, CardHeader } from '../../shared/ui/card';
+import { Skeleton } from '../../shared/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 
 export function WorkspacesSettingsPage() {
   const { msg } = useI18n();
@@ -49,19 +49,19 @@ export function WorkspacesSettingsPage() {
                 trigger={
                   <Button type="button">
                     <Plus className="size-4" aria-hidden />
-                    {msg("workspace.create.title", "Create workspace")}
+                    {msg('workspace.create.title', 'Create workspace')}
                   </Button>
                 }
               />
             </CardAction>
           ) : null}
           <h1 className="text-xl font-semibold tracking-normal text-foreground">
-            {msg("nav.workspaces", "Workspaces")}
+            {msg('nav.workspaces', 'Workspaces')}
           </h1>
           <CardDescription>
             {msg(
-              "settings.workspaces.description",
-              "Review workspace-specific API keys, webhooks, residency, and create new workspaces from one settings view.",
+              'settings.workspaces.description',
+              'Review workspace-specific API keys, webhooks, residency, and create new workspaces from one settings view.',
             )}
           </CardDescription>
         </CardHeader>
@@ -71,15 +71,15 @@ export function WorkspacesSettingsPage() {
               <AlertCircle className="size-4" aria-hidden />
               <AlertDescription>
                 {msg(
-                  "settings.workspaces.noOrganization",
-                  "No organization is available for workspace management in this session.",
+                  'settings.workspaces.noOrganization',
+                  'No organization is available for workspace management in this session.',
                 )}
               </AlertDescription>
             </Alert>
           ) : error ? (
             <Alert variant="destructive">
               <AlertCircle className="size-4" aria-hidden />
-              <AlertTitle>{msg("settings.workspaces.loadError", "Workspaces could not be loaded.")}</AlertTitle>
+              <AlertTitle>{msg('settings.workspaces.loadError', 'Workspaces could not be loaded.')}</AlertTitle>
               <AlertDescription className="gap-3">
                 <p>{readableError(error)}</p>
                 <Button
@@ -89,12 +89,12 @@ export function WorkspacesSettingsPage() {
                   disabled={retrying}
                   onClick={() => void handleRetry()}
                 >
-                  {retrying ? msg("common.loading", "Loading...") : msg("common.retry", "Retry")}
+                  {retrying ? msg('common.loading', 'Loading...') : msg('common.retry', 'Retry')}
                 </Button>
               </AlertDescription>
             </Alert>
           ) : isLoading ? (
-            <div aria-label={msg("workspace.loading", "Loading workspaces...")} className="space-y-3">
+            <div aria-label={msg('workspace.loading', 'Loading workspaces...')} className="space-y-3">
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
                   key={index}
@@ -120,12 +120,12 @@ export function WorkspacesSettingsPage() {
             </div>
           ) : workspaces.length > 0 ? (
             <div className="overflow-x-auto">
-              <Table aria-label={msg("nav.workspaces", "Workspaces")} className="min-w-[780px]">
+              <Table aria-label={msg('nav.workspaces', 'Workspaces')} className="min-w-[780px]">
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead>{msg("settings.workspaces.workspace", "Workspace")}</TableHead>
-                    <TableHead>{msg("settings.workspaces.residency", "Residency")}</TableHead>
-                    <TableHead className="text-right">{msg("common.actions", "Actions")}</TableHead>
+                    <TableHead>{msg('settings.workspaces.workspace', 'Workspace')}</TableHead>
+                    <TableHead>{msg('settings.workspaces.residency', 'Residency')}</TableHead>
+                    <TableHead className="text-right">{msg('common.actions', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -140,7 +140,7 @@ export function WorkspacesSettingsPage() {
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="truncate font-medium text-foreground">{workspace.name}</span>
                               {workspace.id === activeWorkspaceId ? (
-                                <Badge variant="secondary">{msg("settings.workspaces.current", "Current")}</Badge>
+                                <Badge variant="secondary">{msg('settings.workspaces.current', 'Current')}</Badge>
                               ) : null}
                             </div>
                             <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{workspace.id}</div>
@@ -152,7 +152,7 @@ export function WorkspacesSettingsPage() {
                           {geoLabel(workspace.data_residency?.workspace_geo)}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
-                          {msg("settings.workspaces.defaultInference", "Default inference: {value}", {
+                          {msg('settings.workspaces.defaultInference', 'Default inference: {value}', {
                             value: geoLabel(workspace.data_residency?.default_inference_geo),
                           })}
                         </div>
@@ -160,10 +160,10 @@ export function WorkspacesSettingsPage() {
                       <TableCell className="text-right">
                         <div className="flex flex-wrap justify-end gap-2">
                           <ButtonLink variant="outline" size="sm" href={workspaceApiKeysPath(workspace.id)}>
-                            {msg("nav.apiKeys", "API keys")}
+                            {msg('nav.apiKeys', 'API keys')}
                           </ButtonLink>
                           <ButtonLink variant="ghost" size="sm" href={workspaceWebhooksPath(workspace.id)}>
-                            {msg("nav.webhooks", "Webhooks")}
+                            {msg('nav.webhooks', 'Webhooks')}
                           </ButtonLink>
                         </div>
                       </TableCell>
@@ -176,7 +176,7 @@ export function WorkspacesSettingsPage() {
             <Alert>
               <AlertCircle className="size-4" aria-hidden />
               <AlertDescription>
-                {msg("settings.workspaces.empty", "No workspaces are available for this organization yet.")}
+                {msg('settings.workspaces.empty', 'No workspaces are available for this organization yet.')}
               </AlertDescription>
             </Alert>
           )}
@@ -188,10 +188,10 @@ export function WorkspacesSettingsPage() {
 
 function geoLabel(value?: string | null) {
   if (!value) {
-    return "US";
+    return 'US';
   }
-  if (value.toLowerCase() === "global") {
-    return "Global";
+  if (value.toLowerCase() === 'global') {
+    return 'Global';
   }
   return value.toUpperCase();
 }
@@ -200,5 +200,5 @@ function readableError(error: unknown) {
   if (error instanceof Error && error.message) {
     return error.message;
   }
-  return "Open Managed Agents could not reach the workspace directory.";
+  return 'Open Managed Agents could not reach the workspace directory.';
 }

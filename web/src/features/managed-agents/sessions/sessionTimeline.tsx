@@ -1,9 +1,9 @@
-import { useFormatters, useI18n } from "../../../shared/i18n";
-import { Badge } from "../../../shared/ui/badge";
-import { Button } from "../../../shared/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "../../../shared/ui/tabs";
-import { Toggle } from "../../../shared/ui/toggle";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../../shared/ui/tooltip";
+import { useFormatters, useI18n } from '../../../shared/i18n';
+import { Badge } from '../../../shared/ui/badge';
+import { Button } from '../../../shared/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
+import { Toggle } from '../../../shared/ui/toggle';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 import {
   type DisplayEventType,
   type IconComponent,
@@ -14,9 +14,9 @@ import {
   type SessionTimelineTick,
   type TimelinePickOptions,
   type ToolLifecycle,
-} from "../types";
-import clsx from "clsx";
-import { Ban, ChevronLeft, ChevronRight, CircleX, Database, Loader2, Timer } from "lucide-react";
+} from '../types';
+import clsx from 'clsx';
+import { Ban, ChevronLeft, ChevronRight, CircleX, Database, Loader2, Timer } from 'lucide-react';
 import {
   type CSSProperties,
   type MutableRefObject,
@@ -30,22 +30,22 @@ import {
   useMemo,
   useRef,
   useState,
-} from "react";
+} from 'react';
 import {
   formatCompactTokenCount,
   formatSessionDuration,
   sessionTokenUsageTitle,
   truncateLaneLabel,
-} from "./sessionDetailModel";
-import { outcomeStatusChipClass, outcomeStatusLabel } from "./sessionTraceRows";
+} from './sessionDetailModel';
+import { outcomeStatusChipClass, outcomeStatusLabel } from './sessionTraceRows';
 
-export const SESSION_MAIN_LANE_ID = "";
-const SESSION_MAIN_LANE_TAB_VALUE = "__oma_main_lane__";
+export const SESSION_MAIN_LANE_ID = '';
+const SESSION_MAIN_LANE_TAB_VALUE = '__oma_main_lane__';
 const SESSION_TIMELINE_SINGLE_LANE_HEIGHT_PX = 36;
 const SESSION_TIMELINE_LANE_HEIGHT_PX = 28;
 const SESSION_TIMELINE_LANE_GAP_PX = 4;
 
-export const SESSION_ARCHIVED_LANES_STORAGE_KEY = "oma.sessionDetail.showArchivedLanes";
+export const SESSION_ARCHIVED_LANES_STORAGE_KEY = 'oma.sessionDetail.showArchivedLanes';
 
 export function SessionStatusPill({ status }: { status: string }) {
   const tone = status.toLowerCase();
@@ -53,12 +53,12 @@ export function SessionStatusPill({ status }: { status: string }) {
     <Badge
       variant="secondary"
       className={clsx(
-        "h-6 rounded-md px-2 text-xs font-medium",
-        tone.includes("running") || tone.includes("active")
-          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          : tone.includes("error") || tone.includes("failed")
-            ? "bg-destructive/10 text-destructive"
-            : "bg-secondary text-secondary-foreground",
+        'h-6 rounded-md px-2 text-xs font-medium',
+        tone.includes('running') || tone.includes('active')
+          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+          : tone.includes('error') || tone.includes('failed')
+            ? 'bg-destructive/10 text-destructive'
+            : 'bg-secondary text-secondary-foreground',
       )}
     >
       {status}
@@ -103,7 +103,7 @@ export function EventsMinimap({
   const dragRef = useRef<{ startX: number; pointerId: number; laneId: string; dragging: boolean } | null>(null);
   const hoveredLaneRef = useRef<string | null>(null);
   const isMultiLane = lanes.length > 1;
-  const [boundaryLock, setBoundaryLock] = useState<"start" | "end" | null>(null);
+  const [boundaryLock, setBoundaryLock] = useState<'start' | 'end' | null>(null);
   const [hoveredTickId, setHoveredTickId] = useState<string | null>(null);
   const [hoveredLaneId, setHoveredLaneId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -111,7 +111,7 @@ export function EventsMinimap({
   const [playhead, setPlayhead] = useState<{ leftPct: number; topPx: number; label: string; visible: boolean }>({
     leftPct: 1,
     topPx: 14,
-    label: "",
+    label: '',
     visible: false,
   });
   const hoveredTick = hoveredTickId ? (ticks.find((tick) => tick.id === hoveredTickId) ?? null) : null;
@@ -164,11 +164,11 @@ export function EventsMinimap({
   );
 
   const seekToBoundary = useCallback(
-    (boundary: "start" | "end", laneId = activeLane) => {
+    (boundary: 'start' | 'end', laneId = activeLane) => {
       const laneTicks = ticks.filter(
         (tick) => tick.lane.id === laneId && isTimelineTickSelectable(tick, visibleIds, true),
       );
-      const tick = boundary === "start" ? laneTicks[0] : laneTicks[laneTicks.length - 1];
+      const tick = boundary === 'start' ? laneTicks[0] : laneTicks[laneTicks.length - 1];
       const scroller = scrollerRef.current;
       const row = rowRefs.current.get(laneId);
       const topPx = row ? row.offsetTop + row.offsetHeight / 2 : playhead.topPx;
@@ -176,12 +176,12 @@ export function EventsMinimap({
       setBoundaryLock(boundary);
       onSeek(null);
       if (scroller) {
-        scroller.scrollTop = boundary === "start" ? 0 : Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+        scroller.scrollTop = boundary === 'start' ? 0 : Math.max(0, scroller.scrollHeight - scroller.clientHeight);
       }
       setPlayhead({
-        leftPct: boundary === "start" ? 1 : 99,
+        leftPct: boundary === 'start' ? 1 : 99,
         topPx,
-        label: tick?.relativeTime ?? "",
+        label: tick?.relativeTime ?? '',
         visible: true,
       });
     },
@@ -282,8 +282,8 @@ export function EventsMinimap({
       });
     };
     handleScroll();
-    scroller.addEventListener("scroll", handleScroll, { passive: true });
-    return () => scroller.removeEventListener("scroll", handleScroll);
+    scroller.addEventListener('scroll', handleScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', handleScroll);
   }, [activeLaneTicks, isMultiLane, scrollerRef, suppressScrollSeekUntilRef, updatePlayheadFromTick, visibleIds]);
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -309,11 +309,11 @@ export function EventsMinimap({
     setIsDragging(true);
     const pct = clientXToTimelinePct(event.clientX, trackRef.current);
     if (isMultiLane && pct <= 1.5) {
-      seekToBoundary("start", laneId);
+      seekToBoundary('start', laneId);
       return;
     }
     if (isMultiLane && pct >= 98.5) {
-      seekToBoundary("end", laneId);
+      seekToBoundary('end', laneId);
       return;
     }
     const dragTick = pickTickAtPoint(event.clientX, laneId, true, 1.5);
@@ -358,9 +358,9 @@ export function EventsMinimap({
     const pct = clientXToTimelinePct(event.clientX, trackRef.current);
     if (dragState?.dragging) {
       if (isMultiLane && pct <= 1.5) {
-        seekToBoundary("start", laneId);
+        seekToBoundary('start', laneId);
       } else if (isMultiLane && pct >= 98.5) {
-        seekToBoundary("end", laneId);
+        seekToBoundary('end', laneId);
       }
       return;
     }
@@ -418,7 +418,7 @@ export function EventsMinimap({
       data-testid="events-minimap"
     >
       <div
-        className={clsx(isMultiLane && "mb-5")}
+        className={clsx(isMultiLane && 'mb-5')}
         style={timelineMinHeight ? { minHeight: `${timelineMinHeight}px` } : undefined}
       >
         <div
@@ -426,8 +426,8 @@ export function EventsMinimap({
           data-boundary-lock={boundaryLock ?? undefined}
           data-dragging={isDragging || undefined}
           className={clsx(
-            "relative flex touch-none select-none flex-col gap-1",
-            isDragging ? "cursor-grabbing" : "cursor-grab active:cursor-grabbing",
+            'relative flex touch-none select-none flex-col gap-1',
+            isDragging ? 'cursor-grabbing' : 'cursor-grab active:cursor-grabbing',
           )}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -455,8 +455,8 @@ export function EventsMinimap({
               {playhead.label ? (
                 <div
                   className={clsx(
-                    "oma-session-timeline-playhead-label pointer-events-auto absolute left-1/2 top-2 -translate-x-1/2 whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums shadow-sm ring-2 transition-transform",
-                    isDragging ? "scale-105 cursor-grabbing" : "cursor-grab active:cursor-grabbing",
+                    'oma-session-timeline-playhead-label pointer-events-auto absolute left-1/2 top-2 -translate-x-1/2 whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums shadow-sm ring-2 transition-transform',
+                    isDragging ? 'scale-105 cursor-grabbing' : 'cursor-grab active:cursor-grabbing',
                   )}
                 >
                   {playhead.label}
@@ -482,7 +482,7 @@ export function EventsMinimap({
           ) : (
             lanes.map((lane, index) => (
               <div
-                key={lane.id || "main"}
+                key={lane.id || 'main'}
                 ref={(node) => {
                   if (node) {
                     rowRefs.current.set(lane.id, node);
@@ -494,11 +494,11 @@ export function EventsMinimap({
                 className={clsx(
                   "relative h-7 shrink-0 rounded transition-[background-color,opacity] duration-100 ease-out after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-1 after:h-1 after:content-['']",
                   lane.id === activeLane
-                    ? "oma-session-timeline-track-active"
+                    ? 'oma-session-timeline-track-active'
                     : lane.id === hoveredLaneId
-                      ? "oma-session-timeline-track-hover"
-                      : "oma-session-timeline-track-inactive",
-                  lane.id !== activeLane && "cursor-pointer",
+                      ? 'oma-session-timeline-track-hover'
+                      : 'oma-session-timeline-track-inactive',
+                  lane.id !== activeLane && 'cursor-pointer',
                 )}
                 onPointerDown={(event) => handleInactiveLanePointerDown(lane.id, event)}
                 onPointerEnter={() => handleLanePointerEnter(lane.id)}
@@ -542,22 +542,22 @@ export function SessionTimelineTickMark({
     left: `${tick.leftPct}%`,
     width: `${tick.widthPct}%`,
   };
-  if (tick.type === "status_idle") {
-    style.backgroundColor = "hsl(var(--oma-session-timeline-bg-200))";
+  if (tick.type === 'status_idle') {
+    style.backgroundColor = 'hsl(var(--oma-session-timeline-bg-200))';
     style.backgroundImage =
-      "repeating-linear-gradient(-45deg, transparent 0, transparent 6px, hsl(var(--oma-session-timeline-bg-000)) 6px, hsl(var(--oma-session-timeline-bg-000)) 12px)";
+      'repeating-linear-gradient(-45deg, transparent 0, transparent 6px, hsl(var(--oma-session-timeline-bg-000)) 6px, hsl(var(--oma-session-timeline-bg-000)) 12px)';
   }
   return (
     <span
       data-timeline-tick-id={tick.id}
       data-timeline-tick-type={tick.type}
       className={clsx(
-        "pointer-events-none absolute bottom-0.5 top-0.5 rounded-sm transition-[left,width,opacity] duration-150",
+        'pointer-events-none absolute bottom-0.5 top-0.5 rounded-sm transition-[left,width,opacity] duration-150',
         sessionTimelineTickClass(tick.type),
-        selected && "oma-session-timeline-tick-selected z-30",
-        !selected && hovered && "oma-session-timeline-tick-hovered z-30",
-        !selected && !hovered && "opacity-90",
-        hidden && "!opacity-0",
+        selected && 'oma-session-timeline-tick-selected z-30',
+        !selected && hovered && 'oma-session-timeline-tick-hovered z-30',
+        !selected && !hovered && 'opacity-90',
+        hidden && '!opacity-0',
       )}
       style={style}
       aria-hidden
@@ -584,7 +584,7 @@ export function SessionTimelineTooltip({ tick, row }: { tick: SessionTimelineTic
     >
       <span
         className={clsx(
-          "inline-flex h-4 shrink-0 rounded-sm px-1 text-[10px] font-semibold uppercase leading-4",
+          'inline-flex h-4 shrink-0 rounded-sm px-1 text-[10px] font-semibold uppercase leading-4',
           sessionTimelineTickClass(tick.type),
         )}
       >
@@ -642,55 +642,55 @@ export function sessionTimelineLaneVisualStyle(
 
 export function sessionTimelineTickClass(type: DisplayEventType) {
   switch (type) {
-    case "user":
-      return "oma-session-timeline-tick-user";
-    case "error":
-      return "oma-session-timeline-tick-error";
-    case "agent":
-    case "thinking":
-      return "oma-session-timeline-tick-agent";
-    case "subagent":
-      return "oma-session-timeline-tick-subagent";
-    case "status_idle":
-      return "oma-session-timeline-tick-neutral";
-    case "tool_use":
-    case "result":
-      return "oma-session-timeline-tick-tool";
-    case "thread":
-      return "oma-session-timeline-tick-subagent";
-    case "status_rescheduled":
-    case "interrupt":
-    case "model_request":
-    case "outcome":
-    case "status_running":
-    case "status_terminated":
-    case "root":
-    case "system_message":
-    case "unknown":
+    case 'user':
+      return 'oma-session-timeline-tick-user';
+    case 'error':
+      return 'oma-session-timeline-tick-error';
+    case 'agent':
+    case 'thinking':
+      return 'oma-session-timeline-tick-agent';
+    case 'subagent':
+      return 'oma-session-timeline-tick-subagent';
+    case 'status_idle':
+      return 'oma-session-timeline-tick-neutral';
+    case 'tool_use':
+    case 'result':
+      return 'oma-session-timeline-tick-tool';
+    case 'thread':
+      return 'oma-session-timeline-tick-subagent';
+    case 'status_rescheduled':
+    case 'interrupt':
+    case 'model_request':
+    case 'outcome':
+    case 'status_running':
+    case 'status_terminated':
+    case 'root':
+    case 'system_message':
+    case 'unknown':
     default:
-      return "oma-session-timeline-tick-neutral";
+      return 'oma-session-timeline-tick-neutral';
   }
 }
 
 export function sessionTimelineTypeLabel(type: DisplayEventType) {
   switch (type) {
-    case "model_request":
-      return "model";
-    case "status_rescheduled":
-    case "status_running":
-    case "status_idle":
-    case "status_terminated":
-      return "status";
-    case "system_message":
-      return "system";
+    case 'model_request':
+      return 'model';
+    case 'status_rescheduled':
+    case 'status_running':
+    case 'status_idle':
+    case 'status_terminated':
+      return 'status';
+    case 'system_message':
+      return 'system';
     default:
-      return type.replace(/_/g, " ");
+      return type.replace(/_/g, ' ');
   }
 }
 
 export function formatTimelineDuration(ms: number) {
   if (!Number.isFinite(ms) || ms <= 0) {
-    return "";
+    return '';
   }
   if (ms < 1000) {
     return `${Math.round(ms)} ms`;
@@ -705,11 +705,11 @@ export function visibleSessionEntryIds(scroller: HTMLDivElement) {
   const ids = new Set<string>();
   const top = scroller.scrollTop;
   const bottom = top + scroller.clientHeight;
-  scroller.querySelectorAll<HTMLElement>("[data-event-id]").forEach((node) => {
+  scroller.querySelectorAll<HTMLElement>('[data-event-id]').forEach((node) => {
     const nodeTop = node.offsetTop;
     const nodeBottom = nodeTop + Math.max(node.offsetHeight, 1);
     if (nodeBottom >= top && nodeTop <= bottom) {
-      const id = node.getAttribute("data-event-id");
+      const id = node.getAttribute('data-event-id');
       if (id) {
         ids.add(id);
       }
@@ -722,8 +722,8 @@ export function scrollSessionEntryToOffset(scroller: HTMLDivElement | null, entr
   if (!scroller) {
     return;
   }
-  const target = Array.from(scroller.querySelectorAll<HTMLElement>("[data-event-id]")).find(
-    (node) => node.getAttribute("data-event-id") === entryId,
+  const target = Array.from(scroller.querySelectorAll<HTMLElement>('[data-event-id]')).find(
+    (node) => node.getAttribute('data-event-id') === entryId,
   );
   if (target) {
     scroller.scrollTop = Math.max(0, target.offsetTop - 16);
@@ -731,7 +731,7 @@ export function scrollSessionEntryToOffset(scroller: HTMLDivElement | null, entr
 }
 
 export function sessionTimelineNow() {
-  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+  return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
 }
 
 export function clientXToTimelinePct(clientX: number, track: HTMLDivElement | null) {
@@ -794,7 +794,7 @@ export function isTimelineTickSelectable(tick: SessionTimelineTick, visibleIds?:
   if (visibleIds && !visibleIds.has(tick.id)) {
     return false;
   }
-  if (!includeIdle && tick.type === "status_idle") {
+  if (!includeIdle && tick.type === 'status_idle') {
     return false;
   }
   return true;
@@ -971,19 +971,19 @@ export function LaneTabStrip({
     if (!scroller) {
       return;
     }
-    scroller.addEventListener("scroll", refreshScrollState, { passive: true });
-    window.addEventListener("resize", refreshScrollState);
+    scroller.addEventListener('scroll', refreshScrollState, { passive: true });
+    window.addEventListener('resize', refreshScrollState);
     return () => {
-      scroller.removeEventListener("scroll", refreshScrollState);
-      window.removeEventListener("resize", refreshScrollState);
+      scroller.removeEventListener('scroll', refreshScrollState);
+      window.removeEventListener('resize', refreshScrollState);
     };
   }, [refreshScrollState, laneGroups.length]);
 
   useEffect(() => {
     const activeTab = scrollerRef.current?.querySelector<HTMLElement>(
-      `[data-lane-tab-id="${cssEscape(activeLane || "main")}"]`,
+      `[data-lane-tab-id="${cssEscape(activeLane || 'main')}"]`,
     );
-    activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    activeTab?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     refreshScrollState();
   }, [activeLane, refreshScrollState]);
 
@@ -999,14 +999,14 @@ export function LaneTabStrip({
     onChange(laneId, targetTick?.id ?? null);
   };
 
-  const scrollBy = (direction: "left" | "right") => {
+  const scrollBy = (direction: 'left' | 'right') => {
     const scroller = scrollerRef.current;
     if (!scroller) {
       return;
     }
     scroller.scrollBy({
-      left: direction === "left" ? -Math.floor(scroller.clientWidth * 0.8) : Math.floor(scroller.clientWidth * 0.8),
-      behavior: "smooth",
+      left: direction === 'left' ? -Math.floor(scroller.clientWidth * 0.8) : Math.floor(scroller.clientWidth * 0.8),
+      behavior: 'smooth',
     });
   };
   return (
@@ -1017,12 +1017,12 @@ export function LaneTabStrip({
           variant="ghost"
           size="icon-xs"
           className={clsx(
-            "size-6 text-muted-foreground hover:bg-accent hover:text-foreground",
-            !scrollState.left && "pointer-events-none opacity-30",
+            'size-6 text-muted-foreground hover:bg-accent hover:text-foreground',
+            !scrollState.left && 'pointer-events-none opacity-30',
           )}
-          aria-label={msg("managedAgents.sessions.detail.scrollLanesLeft", "Scroll lane tabs left")}
+          aria-label={msg('managedAgents.sessions.detail.scrollLanesLeft', 'Scroll lane tabs left')}
           disabled={!scrollState.left}
-          onClick={() => scrollBy("left")}
+          onClick={() => scrollBy('left')}
         >
           <ChevronLeft className="size-4" aria-hidden />
         </Button>
@@ -1032,7 +1032,7 @@ export function LaneTabStrip({
         className="subtle-scrollbar flex min-w-0 flex-1 gap-1 overflow-x-auto"
         style={{
           maskImage: scrollState.canScroll
-            ? "linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)"
+            ? 'linear-gradient(90deg, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)'
             : undefined,
         }}
       >
@@ -1042,7 +1042,7 @@ export function LaneTabStrip({
           onValueChange={(nextValue) => selectLane(laneIdFromTabValue(nextValue))}
         >
           <TabsList
-            aria-label={msg("managedAgents.sessions.detail.laneTabs", "Session threads")}
+            aria-label={msg('managedAgents.sessions.detail.laneTabs', 'Session threads')}
             className="h-auto flex-nowrap gap-1 rounded-none bg-transparent p-0"
           >
             {laneGroups.map((group) =>
@@ -1059,7 +1059,7 @@ export function LaneTabStrip({
                   </TabsTrigger>
                 </TimelineTooltip>
               ) : (
-                group.lanes.map((lane) => <LaneTabLabel key={lane.id || "main"} lane={lane} />)
+                group.lanes.map((lane) => <LaneTabLabel key={lane.id || 'main'} lane={lane} />)
               ),
             )}
           </TabsList>
@@ -1069,13 +1069,13 @@ export function LaneTabStrip({
             type="button"
             size="sm"
             className={clsx(
-              "shrink-0 rounded-md text-sm font-medium shadow-none",
-              !showArchivedLanes && "text-muted-foreground",
+              'shrink-0 rounded-md text-sm font-medium shadow-none',
+              !showArchivedLanes && 'text-muted-foreground',
             )}
             pressed={showArchivedLanes}
             onPressedChange={onToggleArchivedLanes}
           >
-            {msg("managedAgents.sessions.detail.archivedLanes", "+{count} archived", { count: archivedLaneCount })}
+            {msg('managedAgents.sessions.detail.archivedLanes', '+{count} archived', { count: archivedLaneCount })}
           </Toggle>
         ) : null}
       </div>
@@ -1085,12 +1085,12 @@ export function LaneTabStrip({
           variant="ghost"
           size="icon-xs"
           className={clsx(
-            "size-6 text-muted-foreground hover:bg-accent hover:text-foreground",
-            !scrollState.right && "pointer-events-none opacity-30",
+            'size-6 text-muted-foreground hover:bg-accent hover:text-foreground',
+            !scrollState.right && 'pointer-events-none opacity-30',
           )}
-          aria-label={msg("managedAgents.sessions.detail.scrollLanesRight", "Scroll lane tabs right")}
+          aria-label={msg('managedAgents.sessions.detail.scrollLanesRight', 'Scroll lane tabs right')}
           disabled={!scrollState.right}
-          onClick={() => scrollBy("right")}
+          onClick={() => scrollBy('right')}
         >
           <ChevronRight className="size-4" aria-hidden />
         </Button>
@@ -1112,11 +1112,11 @@ export function LaneTabLabel({ lane }: { lane: SessionDetailLane }) {
     <TimelineTooltip label={lane.label}>
       <TabsTrigger
         value={laneTabValue(lane.id)}
-        data-lane-tab-id={lane.id || "main"}
+        data-lane-tab-id={lane.id || 'main'}
         className={clsx(
-          "h-8 shrink-0 rounded-md px-2 text-sm font-medium shadow-none after:hidden",
-          "bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground",
-          "data-active:bg-accent data-active:text-foreground data-active:hover:bg-accent",
+          'h-8 shrink-0 rounded-md px-2 text-sm font-medium shadow-none after:hidden',
+          'bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground',
+          'data-active:bg-accent data-active:text-foreground data-active:hover:bg-accent',
         )}
       >
         <span className="block max-w-[88px] truncate">{truncateLaneLabel(lane.label)}</span>
@@ -1128,7 +1128,7 @@ export function LaneTabLabel({ lane }: { lane: SessionDetailLane }) {
 export function buildLaneTabGroups(lanes: SessionDetailLane[], activeLane: string): LaneTabGroup[] {
   const groups: LaneTabGroup[] = [];
   lanes.forEach((lane) => {
-    const key = lane.group || lane.label || lane.id || "main";
+    const key = lane.group || lane.label || lane.id || 'main';
     const existing = groups.find((group) => group.key === key);
     if (existing) {
       existing.lanes.push(lane);
@@ -1146,11 +1146,11 @@ export function buildLaneTabGroups(lanes: SessionDetailLane[], activeLane: strin
 }
 
 export function cssEscape(value: string) {
-  const css = typeof CSS !== "undefined" ? CSS : undefined;
-  if (css && typeof css.escape === "function") {
+  const css = typeof CSS !== 'undefined' ? CSS : undefined;
+  if (css && typeof css.escape === 'function') {
     return css.escape(value);
   }
-  return value.replace(/["\\]/g, "\\$&");
+  return value.replace(/["\\]/g, '\\$&');
 }
 
 export function HeaderRow({
@@ -1169,9 +1169,9 @@ export function HeaderRow({
       data-transcript-header
       pressed={isSelected}
       className={clsx(
-        "flex h-9 w-[calc(100%+2rem)] cursor-pointer justify-start rounded-none border-0 bg-transparent px-4 text-left font-normal active:translate-y-0",
-        "-mx-4",
-        isSelected && "[[data-panel-focused=true]_&]:bg-accent",
+        'flex h-9 w-[calc(100%+2rem)] cursor-pointer justify-start rounded-none border-0 bg-transparent px-4 text-left font-normal active:translate-y-0',
+        '-mx-4',
+        isSelected && '[[data-panel-focused=true]_&]:bg-accent',
       )}
       onPressedChange={() => onSelect()}
     >
@@ -1201,14 +1201,14 @@ export function MetaStrip({
   const formatters = useFormatters();
   const absoluteTime = processedAtMs
     ? formatters.date(processedAtMs, {
-        month: "2-digit",
-        day: "2-digit",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        second: "2-digit",
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
       })
-    : "";
+    : '';
   const inputTokens = usage
     ? usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
     : 0;
@@ -1217,7 +1217,7 @@ export function MetaStrip({
   const durationText = executionMs !== undefined ? formatSessionDuration(executionMs, formatters, msg) : null;
   const durationTitle =
     inferenceMs !== undefined
-      ? msg("managedAgents.sessions.trace.modelInferenceDuration", "Model inference: {duration}", {
+      ? msg('managedAgents.sessions.trace.modelInferenceDuration', 'Model inference: {duration}', {
           duration: formatSessionDuration(inferenceMs, formatters, msg),
         })
       : undefined;
@@ -1226,8 +1226,8 @@ export function MetaStrip({
       className="flex shrink-0 items-center gap-3 text-xs tabular-nums text-muted-foreground"
       data-testid="session-meta-strip"
     >
-      {lifecycle === "running" ? (
-        <InProgressChip label={msg("managedAgents.sessions.trace.running", "Running")} />
+      {lifecycle === 'running' ? (
+        <InProgressChip label={msg('managedAgents.sessions.trace.running', 'Running')} />
       ) : null}
       <ApprovalChip lifecycle={lifecycle} />
       {isError ? <ErrorStateBadge /> : null}
@@ -1263,25 +1263,25 @@ export function ErrorStateBadge() {
   return (
     <span className="inline-flex items-center gap-1 rounded bg-destructive px-1.5 py-0.5 font-sans text-[10px] font-semibold text-background">
       <CircleX className="size-3" aria-hidden />
-      {msg("managedAgents.sessions.trace.error", "Error")}
+      {msg('managedAgents.sessions.trace.error', 'Error')}
     </span>
   );
 }
 
 export function ApprovalChip({ lifecycle }: { lifecycle?: ToolLifecycle }) {
   const { msg } = useI18n();
-  if (lifecycle === "denied") {
+  if (lifecycle === 'denied') {
     return (
       <Badge
         variant="secondary"
         className="h-auto items-center gap-1 rounded px-1.5 py-0.5 font-sans text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400"
       >
         <Ban className="size-3" aria-hidden />
-        {msg("managedAgents.sessions.trace.denied", "denied")}
+        {msg('managedAgents.sessions.trace.denied', 'denied')}
       </Badge>
     );
   }
-  if (lifecycle !== "awaiting_approval") {
+  if (lifecycle !== 'awaiting_approval') {
     return null;
   }
   return (
@@ -1289,7 +1289,7 @@ export function ApprovalChip({ lifecycle }: { lifecycle?: ToolLifecycle }) {
       variant="secondary"
       className="h-auto rounded bg-accent px-1.5 py-0.5 font-sans text-[10px] font-semibold text-accent-foreground"
     >
-      {msg("managedAgents.sessions.trace.awaitingApproval", "awaiting approval")}
+      {msg('managedAgents.sessions.trace.awaitingApproval', 'awaiting approval')}
     </Badge>
   );
 }
@@ -1316,15 +1316,15 @@ export const SESSION_SHIMMER_PERIOD_MS = 3000;
 
 export function SynchronizedShimmerText({
   children,
-  variant = "default",
+  variant = 'default',
   className,
 }: {
   children: ReactNode;
-  variant?: "default" | "secondary";
+  variant?: 'default' | 'secondary';
   className?: string;
 }) {
   const [delay] = useState(() => {
-    if (typeof performance === "undefined") {
+    if (typeof performance === 'undefined') {
       return 0;
     }
     return -(performance.now() % SESSION_SHIMMER_PERIOD_MS);
@@ -1333,8 +1333,8 @@ export function SynchronizedShimmerText({
     <span
       data-cds="ShimmerText"
       className={clsx(
-        "session-shimmer-text bg-clip-text text-transparent motion-reduce:bg-none motion-reduce:text-foreground",
-        variant === "secondary" && "session-shimmer-text-secondary motion-reduce:text-muted-foreground",
+        'session-shimmer-text bg-clip-text text-transparent motion-reduce:bg-none motion-reduce:text-foreground',
+        variant === 'secondary' && 'session-shimmer-text-secondary motion-reduce:text-muted-foreground',
         className,
       )}
       style={{ animationDelay: `${delay}ms` }}
@@ -1353,7 +1353,7 @@ export function OutcomeStatusChip({ status }: { status?: string }) {
     <Badge
       variant="secondary"
       className={clsx(
-        "h-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold",
+        'h-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold',
         outcomeStatusChipClass(status),
       )}
     >

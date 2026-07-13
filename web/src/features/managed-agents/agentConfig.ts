@@ -1,5 +1,5 @@
-import { type ApiError } from "../../shared/api/client";
-import { buildPlatformQuickstartRequest } from "./quickstart/platformQuickstartRequest";
+import { type ApiError } from '../../shared/api/client';
+import { buildPlatformQuickstartRequest } from './quickstart/platformQuickstartRequest';
 import {
   BarChart3,
   Box,
@@ -12,11 +12,11 @@ import {
   MessageCircle,
   Siren,
   Sparkles,
-} from "lucide-react";
-import YAML from "yaml";
-import { z } from "zod";
-import { agentModelName, BUILT_IN_AGENT_TOOLSETS } from "./agents/AgentsResourcePage";
-import { postQuickstartProxyStream } from "./api";
+} from 'lucide-react';
+import YAML from 'yaml';
+import { z } from 'zod';
+import { agentModelName, BUILT_IN_AGENT_TOOLSETS } from './agents/AgentsResourcePage';
+import { postQuickstartProxyStream } from './api';
 import {
   type AgentApiResponse,
   type AgentEditConfig,
@@ -26,14 +26,14 @@ import {
   type CodeFormat,
   type CreateAgentInput,
   type TemplateTag,
-} from "./types";
-import { cloneJsonValue, objectRecord, parseToolInput, toRecord } from "./utils";
+} from './types';
+import { cloneJsonValue, objectRecord, parseToolInput, toRecord } from './utils';
 
 export const agentModelInputSchema = z.union([
-  z.string().trim().min(1, "Model is required."),
+  z.string().trim().min(1, 'Model is required.'),
   z
     .object({
-      id: z.string().trim().min(1, "Model id is required."),
+      id: z.string().trim().min(1, 'Model id is required.'),
       speed: z.string().trim().optional(),
     })
     .strict(),
@@ -43,7 +43,7 @@ export const agentEditObjectSchema = z.record(z.string(), z.unknown());
 
 export const agentEditConfigSchema = z
   .object({
-    name: z.string().trim().min(1, "Name is required."),
+    name: z.string().trim().min(1, 'Name is required.'),
     description: z.string().nullable().optional(),
     model: agentModelInputSchema,
     system: z.string().nullable().optional(),
@@ -56,105 +56,105 @@ export const agentEditConfigSchema = z
   .strict();
 
 export const templateTags = {
-  docs: { label: "docs", icon: FileText, tone: "bg-secondary text-foreground" },
-  data: { label: "data", icon: BarChart3, tone: "bg-secondary text-secondary-foreground" },
-  code: { label: "code", icon: FileJson, tone: "bg-secondary text-foreground" },
-  support: { label: "support", icon: Headphones, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-  incident: { label: "incident", icon: Siren, tone: "bg-destructive/10 text-destructive" },
-  github: { label: "github", icon: GitBranch, tone: "bg-secondary text-foreground" },
-  box: { label: "box", icon: Box, tone: "bg-secondary text-secondary-foreground" },
-  tasks: { label: "tasks", icon: FileCheck2, tone: "bg-secondary text-foreground" },
-  chat: { label: "chat", icon: MessageCircle, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-  research: { label: "research", icon: Sparkles, tone: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  notion: { label: "notion", icon: FileText, tone: "bg-secondary text-foreground" },
-  slack: { label: "slack", icon: MessageCircle, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-  sentry: { label: "sentry", icon: Siren, tone: "bg-destructive/10 text-destructive" },
-  linear: { label: "linear", icon: FileCheck2, tone: "bg-secondary text-foreground" },
-  asana: { label: "asana", icon: FileCheck2, tone: "bg-secondary text-foreground" },
-  intercom: { label: "intercom", icon: Headphones, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-  atlassian: { label: "atlassian", icon: BriefcaseBusiness, tone: "bg-secondary text-secondary-foreground" },
-  docx: { label: "docx", icon: FileText, tone: "bg-secondary text-secondary-foreground" },
-  amplitude: { label: "amplitude", icon: BarChart3, tone: "bg-secondary text-secondary-foreground" },
+  docs: { label: 'docs', icon: FileText, tone: 'bg-secondary text-foreground' },
+  data: { label: 'data', icon: BarChart3, tone: 'bg-secondary text-secondary-foreground' },
+  code: { label: 'code', icon: FileJson, tone: 'bg-secondary text-foreground' },
+  support: { label: 'support', icon: Headphones, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  incident: { label: 'incident', icon: Siren, tone: 'bg-destructive/10 text-destructive' },
+  github: { label: 'github', icon: GitBranch, tone: 'bg-secondary text-foreground' },
+  box: { label: 'box', icon: Box, tone: 'bg-secondary text-secondary-foreground' },
+  tasks: { label: 'tasks', icon: FileCheck2, tone: 'bg-secondary text-foreground' },
+  chat: { label: 'chat', icon: MessageCircle, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  research: { label: 'research', icon: Sparkles, tone: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
+  notion: { label: 'notion', icon: FileText, tone: 'bg-secondary text-foreground' },
+  slack: { label: 'slack', icon: MessageCircle, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  sentry: { label: 'sentry', icon: Siren, tone: 'bg-destructive/10 text-destructive' },
+  linear: { label: 'linear', icon: FileCheck2, tone: 'bg-secondary text-foreground' },
+  asana: { label: 'asana', icon: FileCheck2, tone: 'bg-secondary text-foreground' },
+  intercom: { label: 'intercom', icon: Headphones, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  atlassian: { label: 'atlassian', icon: BriefcaseBusiness, tone: 'bg-secondary text-secondary-foreground' },
+  docx: { label: 'docx', icon: FileText, tone: 'bg-secondary text-secondary-foreground' },
+  amplitude: { label: 'amplitude', icon: BarChart3, tone: 'bg-secondary text-secondary-foreground' },
 } satisfies Record<string, TemplateTag>;
 
 export const agentTemplates: AgentTemplate[] = [
   {
-    id: "blank",
-    slug: "blank-agent",
-    title: "Blank agent config",
-    body: "A blank starting point with the core toolset.",
-    prompt: "Create a blank managed agent config with a core toolset.",
+    id: 'blank',
+    slug: 'blank-agent',
+    title: 'Blank agent config',
+    body: 'A blank starting point with the core toolset.',
+    prompt: 'Create a blank managed agent config with a core toolset.',
   },
   {
-    id: "deep-researcher",
-    slug: "deep-researcher",
-    title: "Deep researcher",
-    body: "Conducts multi-step web research with source synthesis and citations.",
-    prompt: "Build a deep researcher that conducts multi-step web research, synthesizes sources, and cites claims.",
+    id: 'deep-researcher',
+    slug: 'deep-researcher',
+    title: 'Deep researcher',
+    body: 'Conducts multi-step web research with source synthesis and citations.',
+    prompt: 'Build a deep researcher that conducts multi-step web research, synthesizes sources, and cites claims.',
   },
   {
-    id: "structured-extractor",
-    slug: "structured-extractor",
-    title: "Structured extractor",
-    body: "Parses unstructured text into a typed JSON schema.",
-    prompt: "Create an agent that parses unstructured text into a typed JSON schema.",
+    id: 'structured-extractor',
+    slug: 'structured-extractor',
+    title: 'Structured extractor',
+    body: 'Parses unstructured text into a typed JSON schema.',
+    prompt: 'Create an agent that parses unstructured text into a typed JSON schema.',
   },
   {
-    id: "field-monitor",
-    slug: "field-monitor",
-    title: "Field monitor",
-    body: "Scans software blogs for a topic and writes a weekly what-changed brief.",
-    prompt: "Create a field monitor that scans software blogs for a topic and writes a weekly change brief.",
+    id: 'field-monitor',
+    slug: 'field-monitor',
+    title: 'Field monitor',
+    body: 'Scans software blogs for a topic and writes a weekly what-changed brief.',
+    prompt: 'Create a field monitor that scans software blogs for a topic and writes a weekly change brief.',
     tags: [templateTags.notion],
   },
   {
-    id: "support-agent",
-    slug: "support-agent",
-    title: "Support agent",
-    body: "Answers customer questions from your docs and knowledge base, and escalates when needed.",
-    prompt: "Build a support agent that answers customer questions from docs and escalates when needed.",
+    id: 'support-agent',
+    slug: 'support-agent',
+    title: 'Support agent',
+    body: 'Answers customer questions from your docs and knowledge base, and escalates when needed.',
+    prompt: 'Build a support agent that answers customer questions from docs and escalates when needed.',
     tags: [templateTags.notion, templateTags.slack],
   },
   {
-    id: "incident-commander",
-    slug: "incident-commander",
-    title: "Incident commander",
-    body: "Triages a Sentry alert, opens a Linear incident ticket, and runs the Slack war room.",
+    id: 'incident-commander',
+    slug: 'incident-commander',
+    title: 'Incident commander',
+    body: 'Triages a Sentry alert, opens a Linear incident ticket, and runs the Slack war room.',
     prompt:
-      "Create an incident commander agent that triages alerts, opens an incident ticket, and coordinates a war room.",
+      'Create an incident commander agent that triages alerts, opens an incident ticket, and coordinates a war room.',
     tags: [templateTags.sentry, templateTags.linear, templateTags.slack, templateTags.github],
   },
   {
-    id: "contract-tracker",
-    slug: "contract-tracker",
-    title: "Contract tracker",
-    body: "Extracts clauses, sets deadline reminders, and tracks obligations in Asana when given a Box file ID or link.",
-    prompt: "Build a contract tracker that extracts clauses, sets deadline reminders, and tracks obligations.",
+    id: 'contract-tracker',
+    slug: 'contract-tracker',
+    title: 'Contract tracker',
+    body: 'Extracts clauses, sets deadline reminders, and tracks obligations in Asana when given a Box file ID or link.',
+    prompt: 'Build a contract tracker that extracts clauses, sets deadline reminders, and tracks obligations.',
     tags: [templateTags.box, templateTags.asana],
   },
   {
-    id: "retro-facilitator",
-    slug: "sprint-retro-facilitator",
-    title: "Sprint retro facilitator",
-    body: "Pulls a closed sprint from Linear, synthesizes themes, and writes the retro doc before the meeting.",
+    id: 'retro-facilitator',
+    slug: 'sprint-retro-facilitator',
+    title: 'Sprint retro facilitator',
+    body: 'Pulls a closed sprint from Linear, synthesizes themes, and writes the retro doc before the meeting.',
     prompt:
-      "Create a sprint retro facilitator that pulls closed sprint work, synthesizes themes, and drafts the retro doc.",
+      'Create a sprint retro facilitator that pulls closed sprint work, synthesizes themes, and drafts the retro doc.',
     tags: [templateTags.linear, templateTags.slack, templateTags.docx],
   },
   {
-    id: "support-escalator",
-    slug: "support-to-eng-escalator",
-    title: "Support-to-eng escalator",
-    body: "Reads an Intercom conversation, reproduces the bug, and files a linked Jira issue with repro steps.",
-    prompt: "Create a support-to-engineering escalator that reproduces bugs and files linked issues with repro steps.",
+    id: 'support-escalator',
+    slug: 'support-to-eng-escalator',
+    title: 'Support-to-eng escalator',
+    body: 'Reads an Intercom conversation, reproduces the bug, and files a linked Jira issue with repro steps.',
+    prompt: 'Create a support-to-engineering escalator that reproduces bugs and files linked issues with repro steps.',
     tags: [templateTags.intercom, templateTags.atlassian, templateTags.slack],
   },
   {
-    id: "data-analyst",
-    slug: "data-analyst",
-    title: "Data analyst",
-    body: "Load, explore, and visualize data; build reports and answer questions from datasets.",
-    prompt: "Build a data analyst agent that loads, explores, visualizes data, and writes reports from datasets.",
+    id: 'data-analyst',
+    slug: 'data-analyst',
+    title: 'Data analyst',
+    body: 'Load, explore, and visualize data; build reports and answer questions from datasets.',
+    prompt: 'Build a data analyst agent that loads, explores, visualizes data, and writes reports from datasets.',
     tags: [templateTags.amplitude],
   },
 ];
@@ -164,9 +164,9 @@ export const createAgentTemplates = agentTemplates.slice(0, 6);
 export const blankAgentTemplate = createAgentTemplates[0];
 
 export const createTemplateAppTags: Record<string, TemplateTag[]> = {
-  "field-monitor": [templateTags.notion],
-  "support-agent": [templateTags.notion, templateTags.slack],
-  "incident-commander": [templateTags.sentry, templateTags.linear, templateTags.slack, templateTags.github],
+  'field-monitor': [templateTags.notion],
+  'support-agent': [templateTags.notion, templateTags.slack],
+  'incident-commander': [templateTags.sentry, templateTags.linear, templateTags.slack, templateTags.github],
 };
 
 export const structuredExtractorSystem = `You extract structured data from unstructured text. Given raw input (emails, PDFs, logs, transcripts, scraped HTML) and a target JSON schema:
@@ -179,7 +179,7 @@ export const structuredExtractorSystem = `You extract structured data from unstr
 When the input is ambiguous, pick the most conservative interpretation and note the ambiguity in a top-level "_extraction_notes" field only if the schema allows additionalProperties.`;
 
 export function templateSystem(template: AgentTemplate) {
-  if (template.id === "structured-extractor") {
+  if (template.id === 'structured-extractor') {
     return structuredExtractorSystem;
   }
 
@@ -195,30 +195,30 @@ export function jsonForTemplate(template: AgentTemplate) {
 }
 
 export function codeForTemplate(template: AgentTemplate, format: CodeFormat) {
-  return format === "YAML" ? yamlForTemplate(template) : jsonForTemplate(template);
+  return format === 'YAML' ? yamlForTemplate(template) : jsonForTemplate(template);
 }
 
 export function createAgentToolset() {
   return {
-    type: "agent_toolset_20260401",
+    type: 'agent_toolset_20260401',
   };
 }
 
 export function createMcpServer(name: string, url: string) {
   return {
     name,
-    type: "url",
+    type: 'url',
     url,
   };
 }
 
 export function createMcpToolset(name: string) {
   return {
-    type: "mcp_toolset",
+    type: 'mcp_toolset',
     mcp_server_name: name,
     default_config: {
       permission_policy: {
-        type: "always_allow",
+        type: 'always_allow',
       },
     },
   };
@@ -226,19 +226,19 @@ export function createMcpToolset(name: string) {
 
 export const createDialogTemplateConfigs: Record<string, CreateAgentInput> = {
   blank: {
-    name: "Untitled agent",
-    description: "A blank starting point with the core toolset.",
-    model: "claude-sonnet-4-6",
+    name: 'Untitled agent',
+    description: 'A blank starting point with the core toolset.',
+    model: 'claude-sonnet-4-6',
     system:
       "You are a general-purpose agent that can research, write code, run commands, and use connected tools to complete the user's task end to end.",
     mcp_servers: [],
-    tools: [{ type: "agent_toolset_20260401" }],
+    tools: [{ type: 'agent_toolset_20260401' }],
     skills: [],
   },
-  "deep-researcher": {
-    name: "Deep researcher",
-    description: "Conducts multi-step web research with source synthesis and citations.",
-    model: "claude-sonnet-4-6",
+  'deep-researcher': {
+    name: 'Deep researcher',
+    description: 'Conducts multi-step web research with source synthesis and citations.',
+    model: 'claude-sonnet-4-6',
     system: `You are a research agent. Given a question or topic:
 
 1. Decompose it into 3-5 concrete sub-questions that, answered together, cover the topic.
@@ -250,22 +250,22 @@ Be skeptical. If sources conflict, say so and explain which you find more credib
     mcp_servers: [],
     tools: [createAgentToolset()],
     skills: [],
-    metadata: { template: "deep-research" },
+    metadata: { template: 'deep-research' },
   },
-  "structured-extractor": {
-    name: "Structured extractor",
-    description: "Parses unstructured text into a typed JSON schema.",
-    model: "claude-sonnet-4-6",
+  'structured-extractor': {
+    name: 'Structured extractor',
+    description: 'Parses unstructured text into a typed JSON schema.',
+    model: 'claude-sonnet-4-6',
     system: structuredExtractorSystem,
     mcp_servers: [],
     tools: [createAgentToolset()],
     skills: [],
-    metadata: { template: "structured-extractor" },
+    metadata: { template: 'structured-extractor' },
   },
-  "field-monitor": {
-    name: "Field monitor",
-    description: "Scans software blogs for a topic and writes a weekly what-changed brief.",
-    model: "claude-sonnet-4-6",
+  'field-monitor': {
+    name: 'Field monitor',
+    description: 'Scans software blogs for a topic and writes a weekly what-changed brief.',
+    model: 'claude-sonnet-4-6',
     system: `You track a fast-moving technical field. Given a topic and a lookback window (default 7 days):
 
 1. Search arXiv, Hacker News, lobste.rs, and the high-signal blogs (OpenAI, Anthropic, DeepMind, the well-known substacks) for posts in the window matching the topic.
@@ -275,15 +275,15 @@ Be skeptical. If sources conflict, say so and explain which you find more credib
 5. Write a dated digest page to Notion under the team's field-watch database.
 
 Be ruthless about signal. A paper that restates a known result with a new benchmark is noise. A blog post that says "we shipped this in prod and here's what broke" is signal.`,
-    mcp_servers: [createMcpServer("notion", "https://mcp.notion.com/mcp")],
-    tools: [createAgentToolset(), createMcpToolset("notion")],
+    mcp_servers: [createMcpServer('notion', 'https://mcp.notion.com/mcp')],
+    tools: [createAgentToolset(), createMcpToolset('notion')],
     skills: [],
-    metadata: { template: "field-monitor" },
+    metadata: { template: 'field-monitor' },
   },
-  "support-agent": {
-    name: "Support agent",
-    description: "Answers customer questions from your docs and knowledge base, and escalates when needed.",
-    model: "claude-sonnet-4-6",
+  'support-agent': {
+    name: 'Support agent',
+    description: 'Answers customer questions from your docs and knowledge base, and escalates when needed.',
+    model: 'claude-sonnet-4-6',
     system: `You are a customer support agent. For each inbound question:
 
 1. Search the product docs and knowledge base in Notion for an answer. Quote the relevant passage and link to the source — never paraphrase policy from memory.
@@ -292,17 +292,17 @@ Be ruthless about signal. A paper that restates a known result with a new benchm
 
 Match the customer's tone. Be warm but don't pad. One emoji max.`,
     mcp_servers: [
-      createMcpServer("notion", "https://mcp.notion.com/mcp"),
-      createMcpServer("slack", "https://mcp.slack.com/mcp"),
+      createMcpServer('notion', 'https://mcp.notion.com/mcp'),
+      createMcpServer('slack', 'https://mcp.slack.com/mcp'),
     ],
-    tools: [createAgentToolset(), createMcpToolset("notion"), createMcpToolset("slack")],
+    tools: [createAgentToolset(), createMcpToolset('notion'), createMcpToolset('slack')],
     skills: [],
-    metadata: { template: "support-agent" },
+    metadata: { template: 'support-agent' },
   },
-  "incident-commander": {
-    name: "Incident commander",
-    description: "Triages a Sentry alert, opens a Linear incident ticket, and runs the Slack war room.",
-    model: "claude-opus-4-8",
+  'incident-commander': {
+    name: 'Incident commander',
+    description: 'Triages a Sentry alert, opens a Linear incident ticket, and runs the Slack war room.',
+    model: 'claude-opus-4-8',
     system: `You are an on-call incident commander. When handed a Sentry issue ID or an error fingerprint:
 
 1. Pull the full event payload, stack trace, release tag, and affected-user count from Sentry.
@@ -313,26 +313,26 @@ Match the customer's tone. Be warm but don't pad. One emoji max.`,
 
 Be decisive. If you're >70% confident it's a specific deploy, say so and recommend the revert.`,
     mcp_servers: [
-      createMcpServer("sentry", "https://mcp.sentry.dev/mcp"),
-      createMcpServer("linear", "https://mcp.linear.app/mcp"),
-      createMcpServer("slack", "https://mcp.slack.com/mcp"),
-      createMcpServer("github", "https://api.githubcopilot.com/mcp/"),
+      createMcpServer('sentry', 'https://mcp.sentry.dev/mcp'),
+      createMcpServer('linear', 'https://mcp.linear.app/mcp'),
+      createMcpServer('slack', 'https://mcp.slack.com/mcp'),
+      createMcpServer('github', 'https://api.githubcopilot.com/mcp/'),
     ],
     tools: [
       createAgentToolset(),
-      createMcpToolset("sentry"),
-      createMcpToolset("linear"),
-      createMcpToolset("slack"),
-      createMcpToolset("github"),
+      createMcpToolset('sentry'),
+      createMcpToolset('linear'),
+      createMcpToolset('slack'),
+      createMcpToolset('github'),
     ],
     skills: [],
-    metadata: { template: "incident-commander" },
+    metadata: { template: 'incident-commander' },
   },
-  "contract-tracker": {
-    name: "Contract tracker",
+  'contract-tracker': {
+    name: 'Contract tracker',
     description:
-      "Extracts clauses, sets deadline reminders, and tracks obligations in Asana when given a Box file ID or link.",
-    model: "claude-opus-4-8",
+      'Extracts clauses, sets deadline reminders, and tracks obligations in Asana when given a Box file ID or link.',
+    model: 'claude-opus-4-8',
     system: `You are a contract lifecycle assistant. Given a Box file ID or link:
 
 1. Read the file and extract key metadata: parties, effective date, expiration date, contract value, type, and obligations.
@@ -341,15 +341,15 @@ Be decisive. If you're >70% confident it's a specific deploy, say so and recomme
 4. For each obligation or SLA, create an Asana task assigned to the relevant team member, tagged by category (Payment, Delivery, Compliance, Renewal, SLA), with the verbatim contract clause as a comment.
 
 Rules: always quote the original clause text — never paraphrase without it. If a date or clause is ambiguous, flag it rather than assume.`,
-    mcp_servers: [createMcpServer("box", "https://mcp.box.com"), createMcpServer("asana", "https://mcp.asana.com/sse")],
-    tools: [createAgentToolset(), createMcpToolset("box"), createMcpToolset("asana")],
+    mcp_servers: [createMcpServer('box', 'https://mcp.box.com'), createMcpServer('asana', 'https://mcp.asana.com/sse')],
+    tools: [createAgentToolset(), createMcpToolset('box'), createMcpToolset('asana')],
     skills: [],
-    metadata: { template: "contract-clause-extraction" },
+    metadata: { template: 'contract-clause-extraction' },
   },
-  "retro-facilitator": {
-    name: "Sprint retro facilitator",
-    description: "Pulls a closed sprint from Linear, synthesizes themes, and writes the retro doc before the meeting.",
-    model: "claude-sonnet-4-6",
+  'retro-facilitator': {
+    name: 'Sprint retro facilitator',
+    description: 'Pulls a closed sprint from Linear, synthesizes themes, and writes the retro doc before the meeting.',
+    model: 'claude-sonnet-4-6',
     system: `You prep sprint retros. For the sprint just closed:
 
 1. Pull all issues from Linear: what shipped, what slipped, cycle time per ticket, anything re-scoped mid-sprint.
@@ -359,17 +359,17 @@ Rules: always quote the original clause text — never paraphrase without it. If
 
 Be specific. "Communication was bad" is useless; "three tickets were re-assigned mid-sprint without Slack heads-up (LIN-123, LIN-456, LIN-789)" is actionable.`,
     mcp_servers: [
-      createMcpServer("linear", "https://mcp.linear.app/mcp"),
-      createMcpServer("slack", "https://mcp.slack.com/mcp"),
+      createMcpServer('linear', 'https://mcp.linear.app/mcp'),
+      createMcpServer('slack', 'https://mcp.slack.com/mcp'),
     ],
-    tools: [createAgentToolset(), createMcpToolset("linear"), createMcpToolset("slack")],
-    skills: [{ type: "anthropic", skill_id: "docx" }],
-    metadata: { template: "sprint-retro-facilitator" },
+    tools: [createAgentToolset(), createMcpToolset('linear'), createMcpToolset('slack')],
+    skills: [{ type: 'anthropic', skill_id: 'docx' }],
+    metadata: { template: 'sprint-retro-facilitator' },
   },
-  "support-escalator": {
-    name: "Support-to-eng escalator",
-    description: "Reads an Intercom conversation, reproduces the bug, and files a linked Jira issue with repro steps.",
-    model: "claude-sonnet-4-6",
+  'support-escalator': {
+    name: 'Support-to-eng escalator',
+    description: 'Reads an Intercom conversation, reproduces the bug, and files a linked Jira issue with repro steps.',
+    model: 'claude-sonnet-4-6',
     system: `You bridge support and engineering. Given an Intercom conversation ID:
 
 1. Pull the conversation: customer, plan tier, environment details, any attached logs or screenshots, and the support rep's notes.
@@ -380,23 +380,23 @@ Be specific. "Communication was bad" is useless; "three tickets were re-assigned
 
 If you can't repro, say so explicitly and list what you tried — don't file a vague "cannot reproduce" issue.`,
     mcp_servers: [
-      createMcpServer("intercom", "https://mcp.intercom.com/mcp"),
-      createMcpServer("atlassian", "https://mcp.atlassian.com/v1/mcp"),
-      createMcpServer("slack", "https://mcp.slack.com/mcp"),
+      createMcpServer('intercom', 'https://mcp.intercom.com/mcp'),
+      createMcpServer('atlassian', 'https://mcp.atlassian.com/v1/mcp'),
+      createMcpServer('slack', 'https://mcp.slack.com/mcp'),
     ],
     tools: [
       createAgentToolset(),
-      createMcpToolset("intercom"),
-      createMcpToolset("atlassian"),
-      createMcpToolset("slack"),
+      createMcpToolset('intercom'),
+      createMcpToolset('atlassian'),
+      createMcpToolset('slack'),
     ],
     skills: [],
-    metadata: { template: "support-to-eng-escalator" },
+    metadata: { template: 'support-to-eng-escalator' },
   },
-  "data-analyst": {
-    name: "Data analyst",
-    description: "Load, explore, and visualize data; build reports and answer questions from datasets.",
-    model: "claude-sonnet-4-6",
+  'data-analyst': {
+    name: 'Data analyst',
+    description: 'Load, explore, and visualize data; build reports and answer questions from datasets.',
+    model: 'claude-sonnet-4-6',
     system: `You analyze data. Given a dataset (file path, URL, or query) and a question:
 
 1. Load the data and print its shape, column names, dtypes, and a small sample. Always look before you compute.
@@ -406,10 +406,10 @@ If you can't repro, say so explicitly and list what you tried — don't file a v
 5. Save any charts or derived tables to /mnt/session/outputs/ and summarize findings in plain language, including caveats (sample size, missing data, correlation-vs-causation).
 
 Default to simple, readable analysis over clever one-liners. A clear bar chart usually beats a dense heatmap.`,
-    mcp_servers: [createMcpServer("amplitude", "https://mcp.amplitude.com/mcp")],
-    tools: [createAgentToolset(), createMcpToolset("amplitude")],
+    mcp_servers: [createMcpServer('amplitude', 'https://mcp.amplitude.com/mcp')],
+    tools: [createAgentToolset(), createMcpToolset('amplitude')],
     skills: [],
-    metadata: { template: "data-analyst" },
+    metadata: { template: 'data-analyst' },
   },
 };
 
@@ -422,9 +422,9 @@ export function createDialogAgentConfig(
   descriptionOverride?: string | null,
 ): CreateAgentInput {
   const fallbackConfig: CreateAgentInput = {
-    name: template.id === "blank" ? "Untitled agent" : template.title,
+    name: template.id === 'blank' ? 'Untitled agent' : template.title,
     description: template.body,
-    model: "claude-sonnet-4-6",
+    model: 'claude-sonnet-4-6',
     system: templateSystem(template),
     mcp_servers: [],
     tools: [createAgentToolset()],
@@ -436,7 +436,7 @@ export function createDialogAgentConfig(
 
   if (trimmedDescription) {
     config.description = trimmedDescription;
-    config.metadata = { ...(config.metadata ?? {}), source: "description" };
+    config.metadata = { ...(config.metadata ?? {}), source: 'description' };
   }
 
   return config;
@@ -447,16 +447,16 @@ export function quickstartBuildAgentConfigInput(
   fallback: CreateAgentInput,
 ): CreateAgentInput {
   const rawConfig = toRecord(input.config) ?? input;
-  const name = typeof rawConfig.name === "string" && rawConfig.name.trim() ? rawConfig.name.trim() : fallback.name;
+  const name = typeof rawConfig.name === 'string' && rawConfig.name.trim() ? rawConfig.name.trim() : fallback.name;
   const description =
-    typeof rawConfig.description === "string"
+    typeof rawConfig.description === 'string'
       ? rawConfig.description
       : rawConfig.description === null
         ? null
         : (fallback.description ?? null);
   const model = quickstartModelInput(rawConfig.model, fallback.model);
   const system =
-    typeof rawConfig.system === "string"
+    typeof rawConfig.system === 'string'
       ? rawConfig.system
       : rawConfig.system === null
         ? null
@@ -483,14 +483,14 @@ export function quickstartBuildAgentConfigInput(
 }
 
 export function quickstartModelInput(value: unknown, fallback: AgentModelInput): AgentModelInput {
-  if (typeof value === "string" && value.trim()) {
+  if (typeof value === 'string' && value.trim()) {
     return value.trim();
   }
   const record = toRecord(value);
-  if (record && typeof record.id === "string" && record.id.trim()) {
+  if (record && typeof record.id === 'string' && record.id.trim()) {
     return {
       id: record.id.trim(),
-      ...(typeof record.speed === "string" && record.speed.trim() ? { speed: record.speed.trim() } : {}),
+      ...(typeof record.speed === 'string' && record.speed.trim() ? { speed: record.speed.trim() } : {}),
     };
   }
   return fallback;
@@ -511,7 +511,7 @@ export function quickstartMetadata(
   const entries = Object.entries(record)
     .filter(([key]) => Boolean(key.trim()))
     .flatMap(([key, entryValue]) =>
-      typeof entryValue === "string" || typeof entryValue === "number" || typeof entryValue === "boolean"
+      typeof entryValue === 'string' || typeof entryValue === 'number' || typeof entryValue === 'boolean'
         ? ([[key, String(entryValue)]] as const)
         : [],
     );
@@ -522,7 +522,7 @@ export function quickstartMetadata(
 }
 
 export function createAgentConfigText(config: CreateAgentInput, format: CodeFormat) {
-  return format === "YAML" ? yamlStringify(config) : JSON.stringify(config, null, 2);
+  return format === 'YAML' ? yamlStringify(config) : JSON.stringify(config, null, 2);
 }
 
 export function parseCreateAgentConfigText(
@@ -531,21 +531,21 @@ export function parseCreateAgentConfigText(
   fallback: CreateAgentInput,
 ): { ok: true; input: CreateAgentInput } | { ok: false; error: string } {
   if (!text.trim()) {
-    return { ok: false, error: "Agent config is required." };
+    return { ok: false, error: 'Agent config is required.' };
   }
   try {
-    const parsed = format === "YAML" ? YAML.parse(text) : JSON.parse(text);
+    const parsed = format === 'YAML' ? YAML.parse(text) : JSON.parse(text);
     const record = toRecord(parsed);
     if (!record) {
-      return { ok: false, error: "Agent config must be an object." };
+      return { ok: false, error: 'Agent config must be an object.' };
     }
     const input = quickstartBuildAgentConfigInput(record, fallback);
     if (!input.name.trim()) {
-      return { ok: false, error: "Agent config name is required." };
+      return { ok: false, error: 'Agent config name is required.' };
     }
     return { ok: true, input };
   } catch (error) {
-    const message = error instanceof Error && error.message ? error.message : "Invalid config.";
+    const message = error instanceof Error && error.message ? error.message : 'Invalid config.';
     return { ok: false, error: `${format} is not valid: ${message}` };
   }
 }
@@ -565,12 +565,12 @@ export async function generateCreateAgentConfig({
 }) {
   const requestBody = {
     ...buildPlatformQuickstartRequest({
-      step: "agent",
+      step: 'agent',
       deploymentSchedulePlanned: false,
       agentDescription: description,
       agentConfig: currentConfig,
     }),
-    tool_choice: { type: "tool", name: "build_agent_config", disable_parallel_tool_use: true },
+    tool_choice: { type: 'tool', name: 'build_agent_config', disable_parallel_tool_use: true },
   };
   let currentTool: { name: string; input: Record<string, unknown>; inputJson: string } | null = null;
   let generatedConfig: CreateAgentInput | null = null;
@@ -581,28 +581,28 @@ export async function generateCreateAgentConfig({
     body: requestBody,
     signal,
     onEvent: (event) => {
-      const type = typeof event.data.type === "string" ? event.data.type : event.event;
-      if (type === "content_block_start") {
+      const type = typeof event.data.type === 'string' ? event.data.type : event.event;
+      if (type === 'content_block_start') {
         const contentBlock = toRecord(event.data.content_block);
-        if (contentBlock?.type === "tool_use") {
+        if (contentBlock?.type === 'tool_use') {
           currentTool = {
-            name: String(contentBlock.name ?? "unknown_tool"),
+            name: String(contentBlock.name ?? 'unknown_tool'),
             input: toRecord(contentBlock.input) ?? {},
-            inputJson: "",
+            inputJson: '',
           };
         }
         return;
       }
-      if (type === "content_block_delta") {
+      if (type === 'content_block_delta') {
         const delta = toRecord(event.data.delta);
-        if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string" && currentTool) {
+        if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string' && currentTool) {
           currentTool.inputJson += delta.partial_json;
         }
         return;
       }
-      if (type === "content_block_stop" && currentTool) {
+      if (type === 'content_block_stop' && currentTool) {
         const input = parseToolInput(currentTool.inputJson, currentTool.input);
-        if (currentTool.name === "build_agent_config") {
+        if (currentTool.name === 'build_agent_config') {
           generatedConfig = quickstartBuildAgentConfigInput(input, currentConfig);
         }
         currentTool = null;
@@ -611,17 +611,17 @@ export async function generateCreateAgentConfig({
   });
 
   if (!generatedConfig) {
-    throw new Error("The generator did not return an agent config.");
+    throw new Error('The generator did not return an agent config.');
   }
   return generatedConfig;
 }
 
 export function displayAgentConfig(config: CreateAgentInput | AgentApiResponse) {
-  const model = "model" in config ? config.model : "claude-sonnet-4-6";
+  const model = 'model' in config ? config.model : 'claude-sonnet-4-6';
   const displayConfig: Record<string, unknown> = {
     name: config.name,
     description: config.description,
-    model: typeof model === "string" ? model : agentModelName(model),
+    model: typeof model === 'string' ? model : agentModelName(model),
     system: config.system,
   };
   if (Array.isArray(config.tools) && config.tools.length) {
@@ -636,7 +636,7 @@ export function displayAgentConfig(config: CreateAgentInput | AgentApiResponse) 
   if (config.metadata && Object.keys(config.metadata).length) {
     displayConfig.metadata = config.metadata;
   }
-  if ("multiagent" in config && config.multiagent) {
+  if ('multiagent' in config && config.multiagent) {
     displayConfig.multiagent = config.multiagent;
   }
   return displayConfig;
@@ -645,11 +645,11 @@ export function displayAgentConfig(config: CreateAgentInput | AgentApiResponse) 
 export function yamlStringify(value: unknown) {
   const lines: string[] = [];
   writeYamlValue(lines, value, 0);
-  return lines.join("\n");
+  return lines.join('\n');
 }
 
 export function writeYamlValue(lines: string[], value: unknown, indent: number) {
-  const prefix = " ".repeat(indent);
+  const prefix = ' '.repeat(indent);
 
   if (Array.isArray(value)) {
     if (!value.length) {
@@ -665,7 +665,7 @@ export function writeYamlValue(lines: string[], value: unknown, indent: number) 
           return;
         }
         entries.forEach(([key, entryValue], index) => {
-          writeYamlEntry(lines, key, entryValue, index === 0 ? indent : indent + 2, index === 0 ? "- " : "");
+          writeYamlEntry(lines, key, entryValue, index === 0 ? indent : indent + 2, index === 0 ? '- ' : '');
         });
         return;
       }
@@ -694,13 +694,13 @@ export function writeYamlValue(lines: string[], value: unknown, indent: number) 
   lines.push(`${prefix}${yamlScalar(value)}`);
 }
 
-export function writeYamlEntry(lines: string[], key: string, value: unknown, indent: number, itemPrefix = "") {
-  const prefix = " ".repeat(indent);
+export function writeYamlEntry(lines: string[], key: string, value: unknown, indent: number, itemPrefix = '') {
+  const prefix = ' '.repeat(indent);
 
-  if (typeof value === "string" && value.includes("\n")) {
+  if (typeof value === 'string' && value.includes('\n')) {
     lines.push(`${prefix}${itemPrefix}${key}: |-`);
-    value.split("\n").forEach((line) => {
-      lines.push(line ? `${" ".repeat(indent + 2)}${line}` : "");
+    value.split('\n').forEach((line) => {
+      lines.push(line ? `${' '.repeat(indent + 2)}${line}` : '');
     });
     return;
   }
@@ -730,20 +730,20 @@ export function writeYamlEntry(lines: string[], key: string, value: unknown, ind
 }
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function yamlScalar(value: unknown) {
   if (value === null || value === undefined) {
-    return "null";
+    return 'null';
   }
-  if (typeof value === "boolean" || typeof value === "number") {
+  if (typeof value === 'boolean' || typeof value === 'number') {
     return String(value);
   }
-  if (typeof value !== "string") {
+  if (typeof value !== 'string') {
     return JSON.stringify(value);
   }
-  if (value === "") {
+  if (value === '') {
     return '""';
   }
   return value;
@@ -764,18 +764,18 @@ export function agentEditConfig(agent: AgentApiResponse): AgentEditConfig {
   };
 }
 
-export function agentEditModelInput(model: AgentApiResponse["model"]): AgentModelInput {
-  if (typeof model === "string") {
+export function agentEditModelInput(model: AgentApiResponse['model']): AgentModelInput {
+  if (typeof model === 'string') {
     return model;
   }
   return {
     id: agentModelName(model),
-    ...(typeof model.speed === "string" && model.speed.trim() ? { speed: model.speed } : {}),
+    ...(typeof model.speed === 'string' && model.speed.trim() ? { speed: model.speed } : {}),
   };
 }
 
 export function agentEditConfigText(config: AgentEditConfig, format: CodeFormat) {
-  return format === "YAML" ? yamlStringify(config) : JSON.stringify(config, null, 2);
+  return format === 'YAML' ? yamlStringify(config) : JSON.stringify(config, null, 2);
 }
 
 export function parseAgentEditConfigText(
@@ -783,14 +783,14 @@ export function parseAgentEditConfigText(
   format: CodeFormat,
 ): { ok: true; config: AgentEditConfig } | { ok: false; error: string } {
   if (!text.trim()) {
-    return { ok: false, error: "Agent configuration is required." };
+    return { ok: false, error: 'Agent configuration is required.' };
   }
 
   try {
-    const parsed = format === "YAML" ? YAML.parse(text) : JSON.parse(text);
+    const parsed = format === 'YAML' ? YAML.parse(text) : JSON.parse(text);
     const record = toRecord(parsed);
     if (!record) {
-      return { ok: false, error: "Agent configuration must be an object." };
+      return { ok: false, error: 'Agent configuration must be an object.' };
     }
     const result = agentEditConfigSchema.safeParse(record);
     if (!result.success) {
@@ -798,7 +798,7 @@ export function parseAgentEditConfigText(
     }
     return { ok: true, config: result.data };
   } catch (error) {
-    const message = error instanceof Error && error.message ? error.message : "Invalid configuration.";
+    const message = error instanceof Error && error.message ? error.message : 'Invalid configuration.';
     return { ok: false, error: `${format} is not valid: ${message}` };
   }
 }
@@ -806,8 +806,8 @@ export function parseAgentEditConfigText(
 export function agentEditValidationMessage(issues: z.ZodIssue[]) {
   return issues
     .slice(0, 3)
-    .map((issue) => `${issue.path.join(".") || "Agent configuration"}: ${issue.message}`)
-    .join(" ");
+    .map((issue) => `${issue.path.join('.') || 'Agent configuration'}: ${issue.message}`)
+    .join(' ');
 }
 
 export function buildAgentUpdateInput(version: number, config: AgentEditConfig): AgentUpdateInput {
@@ -826,7 +826,7 @@ export function buildAgentUpdateInput(version: number, config: AgentEditConfig):
 }
 
 export function normalizeAgentEditModel(model: AgentModelInput): AgentModelInput {
-  if (typeof model === "string") {
+  if (typeof model === 'string') {
     return model.trim();
   }
   return {
@@ -836,16 +836,16 @@ export function normalizeAgentEditModel(model: AgentModelInput): AgentModelInput
 }
 
 export function nullableTrimmedString(value: string | null | undefined) {
-  return typeof value === "string" && value.trim() ? value : null;
+  return typeof value === 'string' && value.trim() ? value : null;
 }
 
 export function canonicalizeAgentEditTools(tools: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   return tools.map((tool) => {
     const next = cloneJsonValue(tool);
-    const type = typeof next.type === "string" ? next.type : "";
+    const type = typeof next.type === 'string' ? next.type : '';
 
     if (isBuiltInAgentToolsetType(type)) {
-      next.type = "agent_toolset_20260401";
+      next.type = 'agent_toolset_20260401';
     }
 
     if (Array.isArray(next.configs)) {
@@ -858,10 +858,10 @@ export function canonicalizeAgentEditTools(tools: Array<Record<string, unknown>>
 
 export function canonicalizeAgentToolConfig(value: unknown) {
   const config = { ...objectRecord(value) };
-  if ("tool_name" in config) {
+  if ('tool_name' in config) {
     const toolName = config.tool_name;
     delete config.tool_name;
-    if (!("name" in config) && typeof toolName === "string" && toolName.trim()) {
+    if (!('name' in config) && typeof toolName === 'string' && toolName.trim()) {
       config.name = toolName.trim();
     }
   }
@@ -869,24 +869,24 @@ export function canonicalizeAgentToolConfig(value: unknown) {
 }
 
 export function isBuiltInAgentToolsetType(type: string) {
-  return type.startsWith("agent_toolset_") || type in BUILT_IN_AGENT_TOOLSETS;
+  return type.startsWith('agent_toolset_') || type in BUILT_IN_AGENT_TOOLSETS;
 }
 
 export function agentEditSaveErrorMessage(error: unknown) {
-  if (error && typeof error === "object" && "status" in error) {
+  if (error && typeof error === 'object' && 'status' in error) {
     const status = (error as ApiError).status;
     if (status === 409) {
-      return "This agent was updated elsewhere while you were editing. Close and reopen the editor to start from the latest version.";
+      return 'This agent was updated elsewhere while you were editing. Close and reopen the editor to start from the latest version.';
     }
     if (status === 400) {
-      return "Invalid agent configuration. Check your editor for errors.";
+      return 'Invalid agent configuration. Check your editor for errors.';
     }
   }
-  if (error && typeof error === "object" && "message" in error) {
+  if (error && typeof error === 'object' && 'message' in error) {
     const message = (error as Error | ApiError).message;
-    if (typeof message === "string" && message.trim()) {
+    if (typeof message === 'string' && message.trim()) {
       return message;
     }
   }
-  return "Failed to save agent. You can try again.";
+  return 'Failed to save agent. You can try again.';
 }

@@ -1,11 +1,11 @@
-import { useI18n } from "../../shared/i18n";
-import { Toaster } from "../../shared/ui/sonner";
-import { useWorkspace } from "../../shared/workspaces/context";
-import { useEffect } from "react";
-import { AgentQuickstartPage } from "./quickstart/AgentQuickstartPage";
-import { DreamingPage, ManagedResourcePage, resourceConfigs } from "./resources/ManagedResources";
-import { type ManagedAgentSection } from "./types";
-import { currentPathname, managedWorkspaceIdFromPath } from "./utils";
+import { useI18n } from '../../shared/i18n';
+import { Toaster } from '../../shared/ui/sonner';
+import { useWorkspace } from '../../shared/workspaces/context';
+import { useEffect } from 'react';
+import { AgentQuickstartPage } from './quickstart/AgentQuickstartPage';
+import { DreamingPage, ManagedResourcePage, resourceConfigs } from './resources/ManagedResources';
+import { type ManagedAgentSection } from './types';
+import { currentPathname, managedWorkspaceIdFromPath } from './utils';
 
 export function ManagedAgentsPage({ section }: { section: ManagedAgentSection }) {
   const { msg } = useI18n();
@@ -16,7 +16,7 @@ export function ManagedAgentsPage({ section }: { section: ManagedAgentSection })
       position="top-right"
       duration={2200}
       closeButton
-      toastOptions={{ closeButtonAriaLabel: msg("common.close", "Close") }}
+      toastOptions={{ closeButtonAriaLabel: msg('common.close', 'Close') }}
     />
   );
 
@@ -26,7 +26,7 @@ export function ManagedAgentsPage({ section }: { section: ManagedAgentSection })
     }
   }, [activeWorkspaceId, routeWorkspaceId, selectWorkspace]);
 
-  if (section === "quickstart") {
+  if (section === 'quickstart') {
     return (
       <>
         {notifications}
@@ -35,7 +35,7 @@ export function ManagedAgentsPage({ section }: { section: ManagedAgentSection })
     );
   }
 
-  if (section === "dreams") {
+  if (section === 'dreams') {
     return (
       <>
         {notifications}
@@ -52,4 +52,4 @@ export function ManagedAgentsPage({ section }: { section: ManagedAgentSection })
   );
 }
 
-export type { ManagedAgentSection } from "./types";
+export type { ManagedAgentSection } from './types';

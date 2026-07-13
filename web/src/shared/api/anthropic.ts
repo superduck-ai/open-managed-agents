@@ -1,5 +1,5 @@
-import Anthropic, { APIError, type Uploadable } from "@anthropic-ai/sdk";
-import { getConsoleRequestContext, type ApiError } from "./client";
+import Anthropic, { APIError, type Uploadable } from '@anthropic-ai/sdk';
+import { getConsoleRequestContext, type ApiError } from './client';
 
 type AnthropicHeaderValue = string | null;
 type AnthropicHeaders = Record<string, AnthropicHeaderValue>;
@@ -28,26 +28,26 @@ export type AnthropicPageResponse<T> = {
 };
 
 let cachedClient: Anthropic | null = null;
-let cachedBaseURL = "";
+let cachedBaseURL = '';
 
 export function anthropicBaseURL() {
-  if (typeof window !== "undefined" && window.location.origin) {
+  if (typeof window !== 'undefined' && window.location.origin) {
     return window.location.origin;
   }
-  return "http://127.0.0.1";
+  return 'http://127.0.0.1';
 }
 
 function anthropicFetch(input: RequestInfo | URL, init?: RequestInit) {
-  if (typeof input === "string" || input instanceof URL) {
+  if (typeof input === 'string' || input instanceof URL) {
     const value = String(input);
-    if (value.startsWith("http://") || value.startsWith("https://")) {
+    if (value.startsWith('http://') || value.startsWith('https://')) {
       const url = new URL(value);
       if (url.origin === anthropicBaseURL()) {
         return fetch(`${url.pathname}${url.search}${url.hash}`, init);
       }
     }
   }
-  if (typeof Request !== "undefined" && input instanceof Request) {
+  if (typeof Request !== 'undefined' && input instanceof Request) {
     const url = new URL(input.url);
     if (url.origin === anthropicBaseURL()) {
       return fetch(new Request(`${url.pathname}${url.search}${url.hash}`, input), init);
@@ -73,12 +73,12 @@ export function getAnthropicClient() {
     maxRetries: 0,
     dangerouslyAllowBrowser: true,
     defaultHeaders: {
-      "x-api-key": null,
+      'x-api-key': null,
       authorization: null,
     },
     fetch: anthropicFetch,
     fetchOptions: {
-      credentials: "include",
+      credentials: 'include',
     },
   });
   return cachedClient;
@@ -86,7 +86,7 @@ export function getAnthropicClient() {
 
 export function setAnthropicClientForTest(client: Anthropic | null) {
   cachedClient = client;
-  cachedBaseURL = client ? cachedBaseURL : "";
+  cachedBaseURL = client ? cachedBaseURL : '';
 }
 
 export function anthropicRequestHeaders(context: AnthropicRequestContext = {}): AnthropicHeaders {
@@ -98,14 +98,14 @@ export function anthropicRequestHeaders(context: AnthropicRequestContext = {}): 
     activeContext.workspaceId = context.workspaceId;
   }
   const headers: AnthropicHeaders = {
-    "x-api-key": null,
+    'x-api-key': null,
     authorization: null,
   };
   if (activeContext.organizationUuid) {
-    headers["x-organization-uuid"] = activeContext.organizationUuid;
+    headers['x-organization-uuid'] = activeContext.organizationUuid;
   }
   if (activeContext.workspaceId) {
-    headers["x-workspace-id"] = activeContext.workspaceId;
+    headers['x-workspace-id'] = activeContext.workspaceId;
   }
   return headers;
 }
@@ -121,16 +121,16 @@ export function toPlainPage<T>(page: PageLike<T>): AnthropicPageResponse<T> {
     data: page.data ?? [],
     has_more: page.has_more ?? Boolean(page.next_page),
   };
-  if ("first_id" in page) {
+  if ('first_id' in page) {
     response.first_id = page.first_id ?? null;
   }
-  if ("last_id" in page) {
+  if ('last_id' in page) {
     response.last_id = page.last_id ?? null;
   }
-  if ("next_page" in page) {
+  if ('next_page' in page) {
     response.next_page = page.next_page ?? null;
   }
-  if ("prefixes" in page) {
+  if ('prefixes' in page) {
     response.prefixes = page.prefixes ?? [];
   }
   return response;
@@ -156,8 +156,8 @@ function normalizeSdkError(error: unknown) {
     stringValue(nestedError.type) ??
     stringValue(payload.type) ??
     stringValue(payload.code) ??
-    "request_failed";
-  const message = stringValue(nestedError.message) ?? stringValue(payload.message) ?? error.message ?? "Request failed";
+    'request_failed';
+  const message = stringValue(nestedError.message) ?? stringValue(payload.message) ?? error.message ?? 'Request failed';
 
   return {
     status: error.status ?? 0,
@@ -167,11 +167,11 @@ function normalizeSdkError(error: unknown) {
 }
 
 function objectRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function stringValue(value: unknown) {
-  return typeof value === "string" && value ? value : null;
+  return typeof value === 'string' && value ? value : null;
 }
 
 function sdkParams(params: Record<string, unknown>) {

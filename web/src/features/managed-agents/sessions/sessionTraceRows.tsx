@@ -1,6 +1,6 @@
-import { useFormatters, useI18n } from "../../../shared/i18n";
-import { Button } from "../../../shared/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../../shared/ui/tooltip";
+import { useFormatters, useI18n } from '../../../shared/i18n';
+import { Button } from '../../../shared/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 import {
   type DisplayEvent,
   type DisplayEventEntry,
@@ -11,14 +11,14 @@ import {
   type SessionEventListEntry,
   type ToolBatchEntry,
   type ToolCallEntry,
-} from "../types";
-import { compactEntityId, toRecord } from "../utils";
-import clsx from "clsx";
-import { ArrowLeft, ArrowRight } from "lucide-react";
-import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from "react";
-import { SessionDetailDeltaFramesContext } from "./sessionDetailData";
-import { formatSessionDuration, numericValueFromKeys } from "./sessionDetailModel";
-import { HeaderRow, InProgressChip, MetaStrip, OutcomeStatusChip, SynchronizedShimmerText } from "./sessionTimeline";
+} from '../types';
+import { compactEntityId, toRecord } from '../utils';
+import clsx from 'clsx';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { type MouseEvent as ReactMouseEvent, type ReactNode, useContext } from 'react';
+import { SessionDetailDeltaFramesContext } from './sessionDetailData';
+import { formatSessionDuration, numericValueFromKeys } from './sessionDetailModel';
+import { HeaderRow, InProgressChip, MetaStrip, OutcomeStatusChip, SynchronizedShimmerText } from './sessionTimeline';
 import {
   sessionEventFamily,
   sessionEventIsThinking,
@@ -33,8 +33,8 @@ import {
   sessionThinkingPreview,
   sessionThinkingText,
   sessionToolResultText,
-} from "./sessionTraceModel";
-import { EventTypeBadge } from "./SessionTracePanel";
+} from './sessionTraceModel';
+import { EventTypeBadge } from './SessionTracePanel';
 
 export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
   const { msg } = useI18n();
@@ -43,13 +43,13 @@ export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
   return (
     <div
       role="separator"
-      aria-label={msg("managedAgents.sessions.trace.sessionIdleGap", "Session idle for {duration}", { duration })}
+      aria-label={msg('managedAgents.sessions.trace.sessionIdleGap', 'Session idle for {duration}', { duration })}
       data-entry-kind="idle_gap"
       className="oma-session-idle-gap relative my-2 flex h-6 items-center justify-center overflow-hidden rounded-md border text-xs"
     >
       <span className="oma-session-idle-gap-stripes absolute inset-0" aria-hidden />
       <span className="relative">
-        {msg("managedAgents.sessions.trace.sessionIdleDot", "Session idle · {duration}", { duration })}
+        {msg('managedAgents.sessions.trace.sessionIdleDot', 'Session idle · {duration}', { duration })}
       </span>
     </div>
   );
@@ -58,8 +58,8 @@ export function IdleGapRow({ entry }: { entry: IdleGapEntry }) {
 export function QueuedBoundaryRow({ entry }: { entry: QueuedBoundaryEntry }) {
   const { msg } = useI18n();
   const label = msg(
-    "managedAgents.sessions.trace.queuedMessages",
-    "{count, plural, one {# queued message} other {# queued messages}}",
+    'managedAgents.sessions.trace.queuedMessages',
+    '{count, plural, one {# queued message} other {# queued messages}}',
     { count: entry.count },
   );
   return (
@@ -108,7 +108,7 @@ export function DisplayEventRow({
             variant="compact"
           />
         </span>
-        {entry.displayEvent.type === "subagent" ? (
+        {entry.displayEvent.type === 'subagent' ? (
           <SubagentLabel entry={entry} msg={msg} threadNameById={threadNameById} onThreadClick={onThreadClick} />
         ) : (
           <TraceRowText inProgress={textInProgress}>
@@ -116,12 +116,12 @@ export function DisplayEventRow({
           </TraceRowText>
         )}
         {showGenerating ? (
-          <InProgressChip label={msg("managedAgents.sessions.trace.generating", "Generating")} />
+          <InProgressChip label={msg('managedAgents.sessions.trace.generating', 'Generating')} />
         ) : null}
         <MetaStrip
-          usage={entry.kind === "passthrough" || entry.kind === "message" ? entry.usage : undefined}
-          inferenceMs={entry.kind === "passthrough" || entry.kind === "message" ? entry.inferenceMs : undefined}
-          isError={entry.displayEvent.isError && entry.displayEvent.type !== "error"}
+          usage={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.usage : undefined}
+          inferenceMs={entry.kind === 'passthrough' || entry.kind === 'message' ? entry.inferenceMs : undefined}
+          isError={entry.displayEvent.isError && entry.displayEvent.type !== 'error'}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}
         />
@@ -150,7 +150,7 @@ export function ToolCallRow({
         <span className="flex w-14 shrink-0 items-center">
           <EventTypeBadge type="tool_use" variant="compact" />
         </span>
-        <TraceRowText inProgress={entry.lifecycle === "running"} suffix={entry.inputPreview || undefined}>
+        <TraceRowText inProgress={entry.lifecycle === 'running'} suffix={entry.inputPreview || undefined}>
           {entry.name}
         </TraceRowText>
         <MetaStrip
@@ -188,7 +188,7 @@ export function ToolBatchRow({
         <span className="flex w-14 shrink-0 items-center">
           <EventTypeBadge type="tool_use" variant="compact" />
         </span>
-        <TraceRowText inProgress={entry.lifecycle === "running"}>{sessionInlineRowPreview(summary)}</TraceRowText>
+        <TraceRowText inProgress={entry.lifecycle === 'running'}>{sessionInlineRowPreview(summary)}</TraceRowText>
         <MetaStrip
           usage={entry.usage}
           inferenceMs={entry.inferenceMs}
@@ -227,12 +227,12 @@ export function OutcomeRow({
           <EventTypeBadge type="outcome" variant="compact" />
         </span>
         <TraceRowText inProgress={!status}>
-          {msg("managedAgents.sessions.trace.gradingIteration", "Grading iteration {iteration}", { iteration })}
+          {msg('managedAgents.sessions.trace.gradingIteration', 'Grading iteration {iteration}', { iteration })}
         </TraceRowText>
         {status ? (
           <OutcomeStatusChip status={status} />
         ) : (
-          <InProgressChip label={msg("managedAgents.sessions.trace.evaluating", "Evaluating")} />
+          <InProgressChip label={msg('managedAgents.sessions.trace.evaluating', 'Evaluating')} />
         )}
         <MetaStrip
           usage={entry.usage}
@@ -258,8 +258,8 @@ export function SubagentLabel({
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
 }) {
   const eventType = sessionEventType(entry.event);
-  const sent = eventType === "agent.thread_message_sent";
-  const received = eventType === "agent.thread_message_received";
+  const sent = eventType === 'agent.thread_message_sent';
+  const received = eventType === 'agent.thread_message_received';
   const direction = sessionSubagentDirection(entry.event);
   const threadRef = sessionSubagentThreadRef(entry.event);
   const threadId = threadRef.threadId;
@@ -267,16 +267,16 @@ export function SubagentLabel({
     sent || received
       ? threadNameById.get(threadId) ||
         threadRef.agentName ||
-        (threadId ? compactSubagentThreadId(threadId) : msg("managedAgents.sessions.trace.thread", "Thread"))
+        (threadId ? compactSubagentThreadId(threadId) : msg('managedAgents.sessions.trace.thread', 'Thread'))
       : sessionSubagentRowLabel(entry.event, msg);
-  const Icon = direction === "received" ? ArrowLeft : ArrowRight;
+  const Icon = direction === 'received' ? ArrowLeft : ArrowRight;
   const clickable = Boolean(threadId);
   const handleClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (!threadId) {
       return;
     }
     event.stopPropagation();
-    onThreadClick(threadId, entry.processedAtMs, sent ? "agent.thread_message_received" : "agent.thread_message_sent");
+    onThreadClick(threadId, entry.processedAtMs, sent ? 'agent.thread_message_received' : 'agent.thread_message_sent');
   };
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm text-foreground">
@@ -308,7 +308,7 @@ export function TraceRowText({
   inProgress?: boolean;
 }) {
   return (
-    <span className={clsx("min-w-0 flex-1 truncate text-sm", !inProgress && "text-foreground")}>
+    <span className={clsx('min-w-0 flex-1 truncate text-sm', !inProgress && 'text-foreground')}>
       {inProgress ? <SynchronizedShimmerText>{children}</SynchronizedShimmerText> : children}
       {suffix ? (
         inProgress ? (
@@ -324,16 +324,16 @@ export function TraceRowText({
 }
 
 export function sessionToolBatchSummary(entry: ToolBatchEntry) {
-  return entry.toolCounts.map((tool) => (tool.count > 1 ? `${tool.name} ×${tool.count}` : tool.name)).join(", ");
+  return entry.toolCounts.map((tool) => (tool.count > 1 ? `${tool.name} ×${tool.count}` : tool.name)).join(', ');
 }
 
 export function sessionOutcomeIteration(event: QuickstartSessionEvent) {
   const data = toRecord(event.data);
   const metadata = toRecord(event.metadata);
   return (
-    numericValueFromKeys(event, ["iteration", "iteration_index", "index"]) ||
-    (data ? numericValueFromKeys(data, ["iteration", "iteration_index", "index"]) : 0) ||
-    (metadata ? numericValueFromKeys(metadata, ["iteration", "iteration_index", "index"]) : 0) ||
+    numericValueFromKeys(event, ['iteration', 'iteration_index', 'index']) ||
+    (data ? numericValueFromKeys(data, ['iteration', 'iteration_index', 'index']) : 0) ||
+    (metadata ? numericValueFromKeys(metadata, ['iteration', 'iteration_index', 'index']) : 0) ||
     1
   );
 }
@@ -352,24 +352,24 @@ export function sessionOutcomeStatus(event: QuickstartSessionEvent) {
     metadata?.result,
     metadata?.outcome_status,
   ];
-  const status = candidates.find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const status = candidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0);
   return status?.trim();
 }
 
 export function outcomeStatusLabel(status: string, msg: I18nMsg) {
   switch (status.toLowerCase()) {
-    case "satisfied":
-      return msg("managedAgents.sessions.trace.outcomeSatisfied", "Satisfied");
-    case "needs_revision":
-    case "needs-revision":
-      return msg("managedAgents.sessions.trace.outcomeNeedsRevision", "Needs revision");
-    case "max_iterations_reached":
-    case "max-iterations-reached":
-      return msg("managedAgents.sessions.trace.outcomeMaxIterationsReached", "Max iterations reached");
-    case "failed":
-      return msg("managedAgents.sessions.trace.outcomeFailed", "Failed");
-    case "interrupted":
-      return msg("managedAgents.sessions.trace.outcomeInterrupted", "Interrupted");
+    case 'satisfied':
+      return msg('managedAgents.sessions.trace.outcomeSatisfied', 'Satisfied');
+    case 'needs_revision':
+    case 'needs-revision':
+      return msg('managedAgents.sessions.trace.outcomeNeedsRevision', 'Needs revision');
+    case 'max_iterations_reached':
+    case 'max-iterations-reached':
+      return msg('managedAgents.sessions.trace.outcomeMaxIterationsReached', 'Max iterations reached');
+    case 'failed':
+      return msg('managedAgents.sessions.trace.outcomeFailed', 'Failed');
+    case 'interrupted':
+      return msg('managedAgents.sessions.trace.outcomeInterrupted', 'Interrupted');
     default:
       return status;
   }
@@ -377,23 +377,23 @@ export function outcomeStatusLabel(status: string, msg: I18nMsg) {
 
 export function outcomeStatusChipClass(status: string) {
   switch (status.toLowerCase()) {
-    case "satisfied":
-      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
-    case "needs_revision":
-    case "needs-revision":
-      return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
-    case "max_iterations_reached":
-    case "max-iterations-reached":
-      return "bg-secondary text-secondary-foreground";
-    case "failed":
-      return "bg-destructive/10 text-destructive";
+    case 'satisfied':
+      return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+    case 'needs_revision':
+    case 'needs-revision':
+      return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
+    case 'max_iterations_reached':
+    case 'max-iterations-reached':
+      return 'bg-secondary text-secondary-foreground';
+    case 'failed':
+      return 'bg-destructive/10 text-destructive';
     default:
-      return "bg-secondary text-secondary-foreground";
+      return 'bg-secondary text-secondary-foreground';
   }
 }
 
-export function sessionSubagentDirection(event: QuickstartSessionEvent): "sent" | "received" {
-  return sessionEventType(event) === "agent.thread_message_received" ? "received" : "sent";
+export function sessionSubagentDirection(event: QuickstartSessionEvent): 'sent' | 'received' {
+  return sessionEventType(event) === 'agent.thread_message_received' ? 'received' : 'sent';
 }
 
 export function sessionSubagentRowLabel(event: QuickstartSessionEvent, msg: I18nMsg) {
@@ -404,7 +404,7 @@ export function sessionSubagentRowLabel(event: QuickstartSessionEvent, msg: I18n
   const subagent = toRecord(event.subagent);
   const agent = toRecord(event.agent);
   const nameCandidates =
-    direction === "received"
+    direction === 'received'
       ? [
           event.from_agent_name,
           data?.from_agent_name,
@@ -430,7 +430,7 @@ export function sessionSubagentRowLabel(event: QuickstartSessionEvent, msg: I18n
           sessionThread?.role,
         ];
   const name = nameCandidates
-    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
     ?.trim();
   if (name) {
     return name;
@@ -439,12 +439,12 @@ export function sessionSubagentRowLabel(event: QuickstartSessionEvent, msg: I18n
   if (threadId) {
     return compactEntityId(threadId);
   }
-  return msg("managedAgents.sessions.trace.thread", "Thread");
+  return msg('managedAgents.sessions.trace.thread', 'Thread');
 }
 
 export function sessionSubagentThreadRef(event: QuickstartSessionEvent) {
   const type = sessionEventType(event);
-  const sent = type === "agent.thread_message_sent";
+  const sent = type === 'agent.thread_message_sent';
   const data = toRecord(event.data);
   const metadata = toRecord(event.metadata);
   const threadCandidates = sent
@@ -454,10 +454,10 @@ export function sessionSubagentThreadRef(event: QuickstartSessionEvent) {
     ? [event.to_agent_name, data?.to_agent_name, metadata?.to_agent_name]
     : [event.from_agent_name, data?.from_agent_name, metadata?.from_agent_name];
   const threadId =
-    threadCandidates.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ||
+    threadCandidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim() ||
     sessionSubagentThreadId(event);
   const agentName =
-    agentCandidates.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ||
+    agentCandidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim() ||
     sessionSubagentName(event);
   return { threadId, agentName };
 }
@@ -484,19 +484,19 @@ export function TranscriptRow({
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
 }) {
   switch (entry.kind) {
-    case "idle_gap":
+    case 'idle_gap':
       return <IdleGapRow entry={entry} />;
-    case "queued_boundary":
+    case 'queued_boundary':
       return <QueuedBoundaryRow entry={entry} />;
-    case "outcome":
+    case 'outcome':
       return <OutcomeRow entry={entry} selected={selected} onSelect={onSelect} />;
-    case "tool_call":
+    case 'tool_call':
       return <ToolCallRow entry={entry} selected={selected} onSelect={onSelect} />;
-    case "tool_batch":
+    case 'tool_batch':
       return <ToolBatchRow entry={entry} selected={selected} onSelect={onSelect} />;
-    case "message":
-    case "status":
-    case "passthrough":
+    case 'message':
+    case 'status':
+    case 'passthrough':
       return (
         <DisplayEventRow
           entry={entry}
@@ -506,7 +506,7 @@ export function TranscriptRow({
           onThreadClick={onThreadClick}
         />
       );
-    case "debug":
+    case 'debug':
       return null;
   }
 }
@@ -524,8 +524,8 @@ export function DebugRow({
 }) {
   const { msg } = useI18n();
   const title = sessionDisplayEventInlinePreview(entry, msg);
-  const hasDeltas = entry.type === "agent.message" || entry.type === "agent.thinking";
-  const deltasLabel = msg("managedAgents.sessions.trace.openDeltas", "Open deltas");
+  const hasDeltas = entry.type === 'agent.message' || entry.type === 'agent.thinking';
+  const deltasLabel = msg('managedAgents.sessions.trace.openDeltas', 'Open deltas');
   return (
     <div
       data-event-id={entry.traceEntry.id}
@@ -544,7 +544,7 @@ export function DebugRow({
           />
         </span>
         <span
-          className={clsx("min-w-0 flex-1 truncate text-sm", entry.isError ? "text-destructive" : "text-foreground")}
+          className={clsx('min-w-0 flex-1 truncate text-sm', entry.isError ? 'text-destructive' : 'text-foreground')}
         >
           {title}
         </span>
@@ -563,7 +563,7 @@ export function DebugRow({
                       onOpenDeltas();
                     }}
                   >
-                    {msg("managedAgents.sessions.trace.deltas", "Deltas")}
+                    {msg('managedAgents.sessions.trace.deltas', 'Deltas')}
                   </Button>
                 </span>
               }
@@ -572,7 +572,7 @@ export function DebugRow({
           </Tooltip>
         ) : null}
         <MetaStrip
-          isError={entry.displayEvent.isError && entry.displayEvent.type !== "error"}
+          isError={entry.displayEvent.isError && entry.displayEvent.type !== 'error'}
           relativeTime={entry.relativeTime}
           processedAtMs={entry.processedAtMs}
         />
@@ -599,7 +599,7 @@ export function LiveRowPreview({ displayEvent, msg }: { displayEvent: DisplayEve
 }
 
 export function sessionDisplayEventInlinePreview(entry: DisplayEventEntry, msg: I18nMsg) {
-  if (entry.displayEvent.type === "thinking") {
+  if (entry.displayEvent.type === 'thinking') {
     return sessionThinkingPreview(msg);
   }
   const preview =
@@ -611,7 +611,7 @@ export function sessionDisplayEventInlinePreview(entry: DisplayEventEntry, msg: 
 }
 
 export function sessionInlineRowPreview(value: string, maxLength = 80) {
-  const compact = value.replace(/\s+/g, " ").trim();
+  const compact = value.replace(/\s+/g, ' ').trim();
   return compact.length > maxLength ? `${compact.slice(0, maxLength)}…` : compact;
 }
 
@@ -624,24 +624,24 @@ export function sessionDebugBadge(type: string) {
 }
 
 export const sessionDebugBadgeLabels: Record<string, string> = {
-  "agent.thread_message_received": "agent.thread…received",
-  "agent.thread_message_sent": "agent.thread…sent",
-  "agent.thread_context_compacted": "agent.thread…compacted",
-  "agent.custom_tool_use": "agent.custom…use",
-  "agent.mcp_tool_result": "agent.mcp…result",
-  "user.custom_tool_result": "user.custom…result",
-  "user.tool_confirmation": "user.…confirmation",
-  "session.status_idle": "session.…idle",
-  "session.status_running": "session.…running",
-  "session.status_rescheduled": "session.…rescheduled",
-  "session.status_terminated": "session.…terminated",
-  "session.thread_status_idle": "session.thread…idle",
-  "session.thread_status_running": "session.thread…running",
-  "session.thread_status_rescheduled": "session.thread…rescheduled",
-  "session.thread_status_terminated": "session.thread…terminated",
-  "span.model_request_start": "span.model…start",
-  "span.model_request_end": "span.model…end",
-  "span.outcome_evaluation_start": "span.outcome…start",
-  "span.outcome_evaluation_ongoing": "span.outcome…ongoing",
-  "span.outcome_evaluation_end": "span.outcome…end",
+  'agent.thread_message_received': 'agent.thread…received',
+  'agent.thread_message_sent': 'agent.thread…sent',
+  'agent.thread_context_compacted': 'agent.thread…compacted',
+  'agent.custom_tool_use': 'agent.custom…use',
+  'agent.mcp_tool_result': 'agent.mcp…result',
+  'user.custom_tool_result': 'user.custom…result',
+  'user.tool_confirmation': 'user.…confirmation',
+  'session.status_idle': 'session.…idle',
+  'session.status_running': 'session.…running',
+  'session.status_rescheduled': 'session.…rescheduled',
+  'session.status_terminated': 'session.…terminated',
+  'session.thread_status_idle': 'session.thread…idle',
+  'session.thread_status_running': 'session.thread…running',
+  'session.thread_status_rescheduled': 'session.thread…rescheduled',
+  'session.thread_status_terminated': 'session.thread…terminated',
+  'span.model_request_start': 'span.model…start',
+  'span.model_request_end': 'span.model…end',
+  'span.outcome_evaluation_start': 'span.outcome…start',
+  'span.outcome_evaluation_ongoing': 'span.outcome…ongoing',
+  'span.outcome_evaluation_end': 'span.outcome…end',
 };

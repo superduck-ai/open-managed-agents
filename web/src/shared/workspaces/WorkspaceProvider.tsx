@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { setConsoleRequestContext } from "../api/client";
-import { useAuth } from "../auth/context";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { setConsoleRequestContext } from '../api/client';
+import { useAuth } from '../auth/context';
 import {
   createConsoleWorkspace,
   defaultWorkspace,
   listConsoleWorkspaces,
   type CreateWorkspaceInput,
   type Workspace,
-} from "./api";
-import { getPrimaryOrganizationUuid, WorkspaceContext, type WorkspaceContextValue } from "./context";
+} from './api';
+import { getPrimaryOrganizationUuid, WorkspaceContext, type WorkspaceContextValue } from './context';
 
-const activeWorkspaceStorageKey = "oma.activeWorkspaceId";
+const activeWorkspaceStorageKey = 'oma.activeWorkspaceId';
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { account, status } = useAuth();
@@ -20,9 +20,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [preferredWorkspaceId, setPreferredWorkspaceId] = useState(readStoredWorkspaceId);
 
   const workspacesQuery = useQuery({
-    queryKey: ["console", "workspaces", orgUuid],
-    queryFn: () => listConsoleWorkspaces(orgUuid ?? ""),
-    enabled: status === "authenticated" && Boolean(orgUuid),
+    queryKey: ['console', 'workspaces', orgUuid],
+    queryFn: () => listConsoleWorkspaces(orgUuid ?? ''),
+    enabled: status === 'authenticated' && Boolean(orgUuid),
     retry: false,
   });
 
@@ -45,8 +45,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useLayoutEffect(() => {
     setConsoleRequestContext({
-      organizationUuid: status === "authenticated" ? orgUuid : undefined,
-      workspaceId: status === "authenticated" ? activeWorkspaceId : undefined,
+      organizationUuid: status === 'authenticated' ? orgUuid : undefined,
+      workspaceId: status === 'authenticated' ? activeWorkspaceId : undefined,
     });
     return () => setConsoleRequestContext({});
   }, [activeWorkspaceId, orgUuid, status]);
@@ -60,10 +60,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const createWorkspace = useCallback(
     async (input: CreateWorkspaceInput) => {
       if (!orgUuid) {
-        throw new Error("No organization is available for workspace creation.");
+        throw new Error('No organization is available for workspace creation.');
       }
       const created = await createConsoleWorkspace(orgUuid, input);
-      queryClient.setQueryData<Workspace[]>(["console", "workspaces", orgUuid], (current) => {
+      queryClient.setQueryData<Workspace[]>(['console', 'workspaces', orgUuid], (current) => {
         const existing = current ?? [];
         if (existing.some((workspace) => workspace.id === created.id)) {
           return existing.map((workspace) => (workspace.id === created.id ? created : workspace));
@@ -127,7 +127,7 @@ function normalizeWorkspaces(apiWorkspaces: Workspace[] = []) {
 }
 
 function readStoredWorkspaceId() {
-  if (typeof window === "undefined") {
+  if (typeof window === 'undefined') {
     return defaultWorkspace.id;
   }
   try {
@@ -138,7 +138,7 @@ function readStoredWorkspaceId() {
 }
 
 function writeStoredWorkspaceId(workspaceId: string) {
-  if (typeof window === "undefined") {
+  if (typeof window === 'undefined') {
     return;
   }
   try {

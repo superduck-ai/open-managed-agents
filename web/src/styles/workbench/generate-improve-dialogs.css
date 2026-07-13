@@ -265,7 +265,7 @@
 
 .workbench-generate-variables code {
   color: rgba(244, 241, 234, 0.72);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 13px;
 }
 
@@ -285,7 +285,7 @@
   background: rgba(244, 241, 234, 0.08);
   padding: 0 9px;
   color: rgba(244, 241, 234, 0.82);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 13px;
   line-height: 18px;
 }

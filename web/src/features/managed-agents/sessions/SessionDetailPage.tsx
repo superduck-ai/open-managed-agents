@@ -1,15 +1,15 @@
-import { useFormatters, useI18n } from "../../../shared/i18n";
-import { Button } from "../../../shared/ui/button";
+import { useFormatters, useI18n } from '../../../shared/i18n';
+import { Button } from '../../../shared/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../../../shared/ui/dropdown-menu";
-import { toast } from "../../../shared/ui/sonner";
-import { TooltipProvider } from "../../../shared/ui/tooltip";
-import { useWorkspace } from "../../../shared/workspaces/context";
+} from '../../../shared/ui/dropdown-menu';
+import { toast } from '../../../shared/ui/sonner';
+import { TooltipProvider } from '../../../shared/ui/tooltip';
+import { useWorkspace } from '../../../shared/workspaces/context';
 import {
   archiveManagedEntity,
   deleteManagedEntity,
@@ -18,9 +18,9 @@ import {
   retrieveSessionDetailSession,
   SESSION_DETAIL_CHILD_REFETCH_INTERVAL_MS,
   sessionThreadListSignature,
-} from "../api";
-import { ManagedDetailBreadcrumb } from "../components/breadcrumbs";
-import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from "../components/common";
+} from '../api';
+import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
+import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
 import {
   type EventsTabProps,
   type QuickstartSessionEvent,
@@ -32,12 +32,12 @@ import {
   type SessionThreadApiResponse,
   type SessionTraceFilterOption,
   type SessionTraceView,
-} from "../types";
-import { compactEntityId, copyText, errorMessage, managedEntityListHref } from "../utils";
-import clsx from "clsx";
-import { Archive, ChevronDown, Copy, RotateCcw, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SessionDetailDeltaFramesContext, useSessionDetailEventData } from "./sessionDetailData";
+} from '../types';
+import { compactEntityId, copyText, errorMessage, managedEntityListHref } from '../utils';
+import clsx from 'clsx';
+import { Archive, ChevronDown, Copy, RotateCcw, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SessionDetailDeltaFramesContext, useSessionDetailEventData } from './sessionDetailData';
 import {
   buildSessionDetailFilterOptions,
   buildSessionDetailLaneState,
@@ -63,7 +63,7 @@ import {
   sessionStatusFromEventType,
   writeSessionArchivedLanePreference,
   writeSessionDetailUrlState,
-} from "./sessionDetailModel";
+} from './sessionDetailModel';
 import {
   EventsMinimap,
   LaneTabStrip,
@@ -72,13 +72,13 @@ import {
   SessionStatusPill,
   SessionSummaryChip,
   sessionTimelineNow,
-} from "./sessionTimeline";
+} from './sessionTimeline';
 import {
   buildSessionEventEntries,
   compareSessionEvents,
   sessionEventTimestamp,
   sessionEventType,
-} from "./sessionTraceModel";
+} from './sessionTraceModel';
 import {
   EventDetailPanel,
   SessionEventTypeFilter,
@@ -86,14 +86,14 @@ import {
   SessionTraceSearch,
   SessionTraceSkeleton,
   SessionTraceViewMode,
-} from "./SessionTracePanel";
-import { DebugRow, TranscriptRow } from "./sessionTraceRows";
+} from './SessionTracePanel';
+import { DebugRow, TranscriptRow } from './sessionTraceRows';
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
   const { activeWorkspaceId } = useWorkspace();
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const listHref = managedEntityListHref(activeWorkspaceId, "sessions");
+  const listHref = managedEntityListHref(activeWorkspaceId, 'sessions');
   const [session, setSession] = useState<SessionApiResponse | null>(null);
   const [resources, setResources] = useState<SessionResourceApiResponse[]>([]);
   const [threads, setThreads] = useState<SessionThreadApiResponse[]>([]);
@@ -103,13 +103,13 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [view, setView] = useState<SessionTraceView>(readSessionDetailInitialView);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedLaneId, setSelectedLaneId] = useState(readSessionDetailInitialLaneId);
   const [showArchivedLanes, setShowArchivedLanesState] = useState(readSessionArchivedLanePreference);
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(readSessionDetailInitialEventId);
-  const [selectedDetailTab, setSelectedDetailTab] = useState<SessionDebugDetailTab>("content");
-  const [confirmAction, setConfirmAction] = useState<"archive" | "delete" | null>(null);
+  const [selectedDetailTab, setSelectedDetailTab] = useState<SessionDebugDetailTab>('content');
+  const [confirmAction, setConfirmAction] = useState<'archive' | 'delete' | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [metadataLoaded, setMetadataLoaded] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -165,16 +165,16 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 status: nextStatus,
                 updated_at: sessionEventUpdateTimestamp(event, currentSession.updated_at),
                 archived_at:
-                  type === "session.deleted"
+                  type === 'session.deleted'
                     ? (currentSession.archived_at ?? sessionEventUpdateTimestamp(event, currentSession.updated_at))
                     : currentSession.archived_at,
               }
             : currentSession,
         );
       }
-      if (type === "session.thread_created") {
+      if (type === 'session.thread_created') {
         refreshSessionThreads();
-      } else if (type === "session.updated") {
+      } else if (type === 'session.updated') {
         refreshSessionMetadata();
       }
     },
@@ -205,17 +205,17 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         if (!active) {
           return;
         }
-        const loadedThreads = threadsResult.status === "fulfilled" ? (threadsResult.value.data ?? []) : [];
-        if (resourcesResult.status === "fulfilled") {
+        const loadedThreads = threadsResult.status === 'fulfilled' ? (threadsResult.value.data ?? []) : [];
+        if (resourcesResult.status === 'fulfilled') {
           setResources(resourcesResult.value.data ?? []);
         }
-        if (threadsResult.status === "fulfilled") {
+        if (threadsResult.status === 'fulfilled') {
           setThreads(loadedThreads);
         }
         setMetadataLoaded(true);
         const settledResults = [resourcesResult, threadsResult] as PromiseSettledResult<unknown>[];
         const firstRejected = settledResults.find(
-          (result): result is PromiseRejectedResult => result.status === "rejected",
+          (result): result is PromiseRejectedResult => result.status === 'rejected',
         );
         setMetadataError(firstRejected ? errorMessage(firstRejected.reason) : null);
       } catch (error) {
@@ -352,8 +352,8 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
 
   useEffect(() => {
     setSelectedTypes([]);
-    setQuery("");
-    setSelectedDetailTab("content");
+    setQuery('');
+    setSelectedDetailTab('content');
   }, [view]);
 
   useEffect(() => {
@@ -367,7 +367,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     if (!lanes.some((lane) => lane.id === selectedLaneId)) {
       setSelectedLaneId(SESSION_MAIN_LANE_ID);
       setSelectedEntryId(null);
-      setSelectedDetailTab("content");
+      setSelectedDetailTab('content');
     }
   }, [lanes, metadataLoaded, selectedLaneId]);
 
@@ -392,15 +392,15 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       setSelectedEntryId(null);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         setSelectedEntryId(null);
       }
     };
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [selectedEntry]);
 
@@ -434,14 +434,14 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     }
   };
   const handleThreadClick = (threadId: string, processedAtMs: number, eventType: string) => {
-    const laneId = laneIdByThreadId.get(threadId) ?? (lanes.some((lane) => lane.id === threadId) ? threadId : "");
+    const laneId = laneIdByThreadId.get(threadId) ?? (lanes.some((lane) => lane.id === threadId) ? threadId : '');
     if (!laneId) {
       return;
     }
     suppressScrollSeekUntilRef.current = sessionTimelineNow() + 200;
     setSelectedLaneId(laneId);
     const laneEntries = (entriesByLaneId.get(laneId) ?? []).filter(
-      (entry): entry is Extract<SessionEventListEntry, { event: QuickstartSessionEvent }> => "event" in entry,
+      (entry): entry is Extract<SessionEventListEntry, { event: QuickstartSessionEvent }> => 'event' in entry,
     );
     const timedEntries = laneEntries.filter((entry) => Number.isFinite(entry.processedAtMs));
     const matchingEntries = timedEntries.filter(
@@ -452,7 +452,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       processedAtMs,
     );
     setSelectedEntryId(targetEntry?.id ?? null);
-    setSelectedDetailTab("content");
+    setSelectedDetailTab('content');
     if (targetEntry) {
       window.setTimeout(() => scrollSessionEntryIntoView(scrollerRef.current, sessionEventEntryRowId(targetEntry)), 0);
     }
@@ -463,7 +463,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       skipNextAutoFollowRef.current = true;
       setSelectedLaneId(laneId);
       setSelectedEntryId(targetEntryId ?? null);
-      setSelectedDetailTab("content");
+      setSelectedDetailTab('content');
       if (targetEntryId) {
         const targetEntry = resolveSelectedSessionEventEntry(entriesByLaneId.get(laneId) ?? [], targetEntryId);
         window.setTimeout(
@@ -482,18 +482,18 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   );
   const handleTimelineSeek = useCallback((entryId: string | null) => {
     setSelectedEntryId(entryId);
-    setSelectedDetailTab("content");
+    setSelectedDetailTab('content');
   }, []);
   const handleArchive = async () => {
     if (!session) {
       return;
     }
-    setBusyAction("archive");
+    setBusyAction('archive');
     setMutationError(null);
     try {
-      const updated = await archiveManagedEntity("sessions", session.id, activeWorkspaceId);
+      const updated = await archiveManagedEntity('sessions', session.id, activeWorkspaceId);
       setSession(updated as SessionApiResponse);
-      toast.success(msg("managedAgents.sessions.detail.archivedToast", "Session archived"));
+      toast.success(msg('managedAgents.sessions.detail.archivedToast', 'Session archived'));
       setConfirmAction(null);
     } catch (error) {
       setMutationError(errorMessage(error));
@@ -506,10 +506,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     if (!session) {
       return;
     }
-    setBusyAction("delete");
+    setBusyAction('delete');
     setMutationError(null);
     try {
-      await deleteManagedEntity("sessions", session.id, activeWorkspaceId);
+      await deleteManagedEntity('sessions', session.id, activeWorkspaceId);
       setConfirmAction(null);
       setBusyAction(null);
       window.location.assign(listHref);
@@ -525,7 +525,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       <section className="min-h-[calc(100vh-48px)] text-foreground">
         <ManagedDetailBreadcrumb listHref={listHref} listLabel={config.title} />
         <div className="mt-14 text-sm text-muted-foreground">
-          {msg("managedAgents.sessions.detail.loading", "Loading session...")}
+          {msg('managedAgents.sessions.detail.loading', 'Loading session...')}
         </div>
       </section>
     );
@@ -536,7 +536,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
       <section className="min-h-[calc(100vh-48px)] text-foreground">
         <ManagedDetailBreadcrumb listHref={listHref} listLabel={config.title} />
         <ManagedErrorAlert className="mt-6 max-w-xl">
-          {loadError || msg("managedAgents.sessions.detail.notFound", "Session not found")}
+          {loadError || msg('managedAgents.sessions.detail.notFound', 'Session not found')}
         </ManagedErrorAlert>
       </section>
     );
@@ -559,7 +559,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               }
             }}
             onConfirm={() => {
-              if (confirmAction === "archive") {
+              if (confirmAction === 'archive') {
                 void handleArchive();
                 return;
               }
@@ -581,7 +581,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                 {summary.title}
               </h1>
               <SessionStatusPill
-                status={session.archived_at ? msg("common.archived", "Archived") : summary.statusLabel}
+                status={session.archived_at ? msg('common.archived', 'Archived') : summary.statusLabel}
               />
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -601,7 +601,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               onClick={() => setRefreshKey((value) => value + 1)}
             >
               <RotateCcw className="size-4" aria-hidden />
-              {msg("managedAgents.sessions.detail.refresh", "Refresh")}
+              {msg('managedAgents.sessions.detail.refresh', 'Refresh')}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -615,55 +615,55 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
                   />
                 }
               >
-                {msg("common.actions", "Actions")}
+                {msg('common.actions', 'Actions')}
                 <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56 bg-popover">
                 <DropdownMenuItem className="h-9" onClick={() => setRefreshKey((value) => value + 1)}>
                   <RotateCcw className="size-4" aria-hidden />
-                  {msg("managedAgents.sessions.detail.refresh", "Refresh")}
+                  {msg('managedAgents.sessions.detail.refresh', 'Refresh')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="h-9"
                   onClick={() =>
                     void handleCopy(
                       session.id,
-                      msg("managedAgents.sessions.detail.copiedSessionId", "Session ID copied"),
+                      msg('managedAgents.sessions.detail.copiedSessionId', 'Session ID copied'),
                     )
                   }
                 >
                   <Copy className="size-4" aria-hidden />
-                  {msg("managedAgents.sessions.detail.copySessionId", "Copy session ID")}
+                  {msg('managedAgents.sessions.detail.copySessionId', 'Copy session ID')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="h-9"
                   onClick={() =>
                     void handleCopy(
                       copyPayload,
-                      msg("managedAgents.sessions.detail.copiedCurrentView", "Current view copied"),
+                      msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
                     )
                   }
                 >
                   <Copy className="size-4" aria-hidden />
-                  {msg("managedAgents.sessions.detail.copyCurrentView", "Copy current view")}
+                  {msg('managedAgents.sessions.detail.copyCurrentView', 'Copy current view')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="h-9"
-                  disabled={archived || busyAction === "archive"}
-                  onClick={() => setConfirmAction("archive")}
+                  disabled={archived || busyAction === 'archive'}
+                  onClick={() => setConfirmAction('archive')}
                 >
                   <Archive className="size-4" aria-hidden />
-                  {msg("common.archive", "Archive")}
+                  {msg('common.archive', 'Archive')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="h-9"
                   variant="destructive"
-                  disabled={busyAction === "delete"}
-                  onClick={() => setConfirmAction("delete")}
+                  disabled={busyAction === 'delete'}
+                  onClick={() => setConfirmAction('delete')}
                 >
                   <X className="size-4" aria-hidden />
-                  {msg("common.delete", "Delete")}
+                  {msg('common.delete', 'Delete')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -689,23 +689,23 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
             lanes={lanes}
             onClearFilters={() => {
               setSelectedTypes([]);
-              setQuery("");
+              setQuery('');
               handleSelectLane(SESSION_MAIN_LANE_ID, null);
             }}
             onCopyAll={() =>
               void handleCopy(
                 copyPayload,
-                msg("managedAgents.sessions.detail.copiedCurrentView", "Current view copied"),
+                msg('managedAgents.sessions.detail.copiedCurrentView', 'Current view copied'),
               )
             }
             onQueryChange={setQuery}
             onOpenDeltas={(entryId) => {
               setSelectedEntryId(entryId);
-              setSelectedDetailTab("deltas");
+              setSelectedDetailTab('deltas');
             }}
             onSelectEntry={(entryId) => {
               setSelectedEntryId(entryId);
-              setSelectedDetailTab("content");
+              setSelectedDetailTab('content');
             }}
             onSelectLane={handleSelectLane}
             onThreadClick={handleThreadClick}
@@ -799,7 +799,7 @@ export function EventsTabInner({
           onClick={onCopyAll}
         >
           <Copy className="size-4 text-muted-foreground" aria-hidden />
-          {msg("managedAgents.sessions.detail.copyAll", "Copy all")}
+          {msg('managedAgents.sessions.detail.copyAll', 'Copy all')}
         </Button>
       </div>
 
@@ -830,16 +830,16 @@ export function EventsTabInner({
 
         <div
           className={clsx(
-            "grid min-h-[420px]",
-            selectedEntry ? "lg:grid-cols-[minmax(0,1fr)_minmax(360px,44%)]" : "grid-cols-1",
+            'grid min-h-[420px]',
+            selectedEntry ? 'lg:grid-cols-[minmax(0,1fr)_minmax(360px,44%)]' : 'grid-cols-1',
           )}
         >
           <div
             ref={scrollerRef}
             data-testid="session-trace-list-pane"
             className={clsx(
-              "subtle-scrollbar max-h-[calc(100vh-330px)] min-h-[420px] min-w-0 overflow-x-hidden overflow-y-auto px-0 py-3",
-              selectedEntry && "lg:border-r lg:border-border",
+              'subtle-scrollbar max-h-[calc(100vh-330px)] min-h-[420px] min-w-0 overflow-x-hidden overflow-y-auto px-0 py-3',
+              selectedEntry && 'lg:border-r lg:border-border',
             )}
           >
             {childLoading && !events.length ? (
@@ -847,7 +847,7 @@ export function EventsTabInner({
             ) : filteredEntries.length ? (
               <div className="flex flex-col pb-8">
                 {filteredEntries.map((entry) =>
-                  view === "debug" && entry.kind === "debug" ? (
+                  view === 'debug' && entry.kind === 'debug' ? (
                     <DebugRow
                       key={entry.id}
                       entry={entry}
@@ -872,10 +872,10 @@ export function EventsTabInner({
                 message={
                   entries.length === 0
                     ? msg(
-                        "managedAgents.sessions.trace.noEvents",
-                        "No events yet. Events will appear here as they occur.",
+                        'managedAgents.sessions.trace.noEvents',
+                        'No events yet. Events will appear here as they occur.',
                       )
-                    : msg("managedAgents.sessions.trace.noMatchingEvents", "No events match the current filters.")
+                    : msg('managedAgents.sessions.trace.noMatchingEvents', 'No events match the current filters.')
                 }
                 onClear={hasFilter ? onClearFilters : undefined}
               />
@@ -911,9 +911,9 @@ export function KeyboardShortcutsModal() {
   return null;
 }
 
-export * from "./SessionTracePanel";
-export * from "./sessionTraceModel";
-export * from "./sessionDetailData";
-export * from "./sessionTimeline";
-export * from "./sessionTraceRows";
-export * from "./sessionDetailModel";
+export * from './SessionTracePanel';
+export * from './sessionTraceModel';
+export * from './sessionDetailData';
+export * from './sessionTimeline';
+export * from './sessionTraceRows';
+export * from './sessionDetailModel';

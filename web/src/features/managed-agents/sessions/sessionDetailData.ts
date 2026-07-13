@@ -13,11 +13,11 @@ import {
   sleepWithAbort,
   streamSessionEvents,
   syncSessionEventHistory,
-} from "../api";
-import { type QuickstartSessionEvent, type SessionDetailDeltaFrames, type SessionThreadApiResponse } from "../types";
-import { errorMessage } from "../utils";
-import { type QueryClient, useQueryClient } from "@tanstack/react-query";
-import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
+} from '../api';
+import { type QuickstartSessionEvent, type SessionDetailDeltaFrames, type SessionThreadApiResponse } from '../types';
+import { errorMessage } from '../utils';
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
+import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export const SessionDetailDeltaFramesContext = createContext<SessionDetailDeltaFrames>({});
 
@@ -51,8 +51,8 @@ export function useSessionDetailEventData({
         .map((thread) => thread.id),
     [includeArchivedThreads, threads],
   );
-  const scopeThreadIds = useMemo(() => ["", ...childThreadIds], [childThreadIds]);
-  const scopeKey = scopeThreadIds.join("\0");
+  const scopeThreadIds = useMemo(() => ['', ...childThreadIds], [childThreadIds]);
+  const scopeKey = scopeThreadIds.join('\0');
   const bump = useCallback(() => setVersion((value) => value + 1), []);
 
   useEffect(() => {
@@ -63,7 +63,7 @@ export function useSessionDetailEventData({
     let active = true;
     const fromStart = refreshKey !== previousRefreshKeyRef.current;
     previousRefreshKeyRef.current = refreshKey;
-    const syncScope = async (threadId = "") => {
+    const syncScope = async (threadId = '') => {
       await syncSessionEventHistory({
         queryClient,
         sessionId,
@@ -82,7 +82,7 @@ export function useSessionDetailEventData({
     setError(null);
     void (async () => {
       try {
-        await syncScope("");
+        await syncScope('');
       } catch (syncError) {
         if (!controller.signal.aborted && active) {
           setError(errorMessage(syncError));
@@ -117,7 +117,7 @@ export function useSessionDetailEventData({
       return;
     }
     const handleRefetch = () => {
-      if (document.visibilityState && document.visibilityState !== "visible") {
+      if (document.visibilityState && document.visibilityState !== 'visible') {
         return;
       }
       const controller = new AbortController();
@@ -136,11 +136,11 @@ export function useSessionDetailEventData({
         .then(bump)
         .catch(() => undefined);
     };
-    window.addEventListener("online", handleRefetch);
-    document.addEventListener("visibilitychange", handleRefetch);
+    window.addEventListener('online', handleRefetch);
+    document.addEventListener('visibilitychange', handleRefetch);
     return () => {
-      window.removeEventListener("online", handleRefetch);
-      document.removeEventListener("visibilitychange", handleRefetch);
+      window.removeEventListener('online', handleRefetch);
+      document.removeEventListener('visibilitychange', handleRefetch);
     };
   }, [bump, queryClient, scopeThreadIds, sessionId, workspaceId]);
 
@@ -153,14 +153,14 @@ export function useSessionDetailEventData({
       queryClient,
       sessionId,
       workspaceId,
-      threadId: "",
+      threadId: '',
       signal: controller.signal,
       onCacheChange: bump,
       onPrimaryEvent,
     }).catch(() => undefined);
     return () => {
       controller.abort();
-      cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, "");
+      cleanupIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, '');
       bump();
     };
   }, [bump, live, onPrimaryEvent, queryClient, sessionId, workspaceId]);
@@ -171,7 +171,7 @@ export function useSessionDetailEventData({
     }
     const controller = new AbortController();
     const syncChildren = () => {
-      if (controller.signal.aborted || (document.visibilityState && document.visibilityState !== "visible")) {
+      if (controller.signal.aborted || (document.visibilityState && document.visibilityState !== 'visible')) {
         return;
       }
       void Promise.all(

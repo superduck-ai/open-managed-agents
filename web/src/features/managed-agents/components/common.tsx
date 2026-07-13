@@ -1,5 +1,5 @@
-import { useI18n } from "../../../shared/i18n";
-import { Alert, AlertDescription } from "../../../shared/ui/alert";
+import { useI18n } from '../../../shared/i18n';
+import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,10 +10,10 @@ import {
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
-} from "../../../shared/ui/alert-dialog";
-import { Badge } from "../../../shared/ui/badge";
-import { Button } from "../../../shared/ui/button";
-import { Checkbox } from "../../../shared/ui/checkbox";
+} from '../../../shared/ui/alert-dialog';
+import { Badge } from '../../../shared/ui/badge';
+import { Button } from '../../../shared/ui/button';
+import { Checkbox } from '../../../shared/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -21,20 +21,20 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../../../shared/ui/dialog";
+} from '../../../shared/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "../../../shared/ui/dropdown-menu";
-import { Input } from "../../../shared/ui/input";
-import { Label } from "../../../shared/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../shared/ui/table";
-import { Textarea } from "../../../shared/ui/textarea";
-import clsx from "clsx";
+} from '../../../shared/ui/dropdown-menu';
+import { Input } from '../../../shared/ui/input';
+import { Label } from '../../../shared/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { Textarea } from '../../../shared/ui/textarea';
+import clsx from 'clsx';
 import {
   AlertCircle,
   Archive,
@@ -46,11 +46,11 @@ import {
   Trash2,
   TriangleAlert,
   X,
-} from "lucide-react";
-import { type FormEvent, type KeyboardEventHandler, type ReactNode, useRef, useState } from "react";
-import { compactAgentId } from "../agents/AgentsResourcePage";
-import { entityKindLabel, resourceEmptyAction, resourceEmptyBody, resourceEmptyTitle } from "../labels";
-import { entityDisplayName } from "../resources/ManagedResources";
+} from 'lucide-react';
+import { type FormEvent, type KeyboardEventHandler, type ReactNode, useRef, useState } from 'react';
+import { compactAgentId } from '../agents/AgentsResourcePage';
+import { entityKindLabel, resourceEmptyAction, resourceEmptyBody, resourceEmptyTitle } from '../labels';
+import { entityDisplayName } from '../resources/ManagedResources';
 import {
   type AgentApiResponse,
   type EntityOption,
@@ -60,7 +60,7 @@ import {
   type MemoryApiResponse,
   type ResourceConfig,
   type VaultCredentialApiResponse,
-} from "../types";
+} from '../types';
 
 export function ManagedSearchField({
   id,
@@ -79,11 +79,11 @@ export function ManagedSearchField({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const clearSearch = () => {
-    onChange("");
+    onChange('');
     inputRef.current?.focus();
   };
   const handleKeyDown: KeyboardEventHandler<HTMLInputElement> = (event) => {
-    if (event.key === "Escape" && value) {
+    if (event.key === 'Escape' && value) {
       event.preventDefault();
       clearSearch();
       return;
@@ -111,9 +111,9 @@ export function ManagedSearchField({
         value={value}
         placeholder={placeholder}
         className={clsx(
-          "h-9 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border focus-visible:ring-0",
-          prefix ? "pl-[64px]" : "pl-9",
-          value ? "pr-9" : "pr-3",
+          'h-9 border-border bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-border focus-visible:ring-0',
+          prefix ? 'pl-[64px]' : 'pl-9',
+          value ? 'pr-9' : 'pr-3',
         )}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={handleKeyDown}
@@ -162,7 +162,7 @@ export function AgentFilterDropdown<TValue extends string, TMenu extends string>
           <Button
             type="button"
             variant="outline"
-            className={clsx("h-9 gap-2 bg-secondary px-3 text-sm", open && "border-border")}
+            className={clsx('h-9 gap-2 bg-secondary px-3 text-sm', open && 'border-border')}
             data-agent-filter-menu
           />
         }
@@ -255,7 +255,7 @@ export function ManagedErrorAlert({ children, className }: { children: ReactNode
 
 export function ManagedWarningAlert({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <Alert className={clsx("border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400", className)}>
+    <Alert className={clsx('border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400', className)}>
       <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
       <AlertDescription className="text-inherit">{children}</AlertDescription>
     </Alert>
@@ -340,8 +340,8 @@ export function MenuAction({
       disabled={disabled}
       variant="ghost"
       className={clsx(
-        "h-9 w-full justify-start px-2 text-left hover:bg-accent disabled:cursor-not-allowed disabled:text-muted-foreground/70",
-        danger ? "text-destructive" : "text-foreground",
+        'h-9 w-full justify-start px-2 text-left hover:bg-accent disabled:cursor-not-allowed disabled:text-muted-foreground/70',
+        danger ? 'text-destructive' : 'text-foreground',
       )}
       onClick={onClick}
     >
@@ -356,10 +356,10 @@ export function LockedAgentReferenceField({
   variant,
 }: {
   agent: AgentApiResponse;
-  variant: "deployment" | "managed";
+  variant: 'deployment' | 'managed';
 }) {
   const { msg } = useI18n();
-  const label = msg("managedAgents.common.agent", "Agent");
+  const label = msg('managedAgents.common.agent', 'Agent');
   const body = (
     <div className="flex min-h-10 items-center justify-between gap-3 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-foreground">
       <span className="min-w-0 truncate font-medium">{agent.name || agent.id}</span>
@@ -369,7 +369,7 @@ export function LockedAgentReferenceField({
     </div>
   );
 
-  if (variant === "deployment") {
+  if (variant === 'deployment') {
     return (
       <div>
         <DeploymentFieldHeader id="locked-agent-reference" label={label} />
@@ -404,10 +404,10 @@ export function DeploymentFieldHeader({
   return (
     <div className="mb-2 flex items-center justify-between gap-4">
       <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
-        {label}{" "}
+        {label}{' '}
         {optional ? (
           <span className="font-normal text-muted-foreground">
-            {msg("managedAgents.common.optionalParen", "(optional)")}
+            {msg('managedAgents.common.optionalParen', '(optional)')}
           </span>
         ) : null}
       </Label>
@@ -416,7 +416,7 @@ export function DeploymentFieldHeader({
           href={manageHref}
           target="_blank"
           rel="noreferrer"
-          aria-label={msg("managedAgents.common.opensInNewTab", "{label} (opens in new tab)", { label: manageLabel })}
+          aria-label={msg('managedAgents.common.opensInNewTab', '{label} (opens in new tab)', { label: manageLabel })}
           className="inline-flex items-center gap-0.5 text-xs leading-4 text-[#6da7ec] underline-offset-2 hover:underline"
         >
           {manageLabel}
@@ -440,7 +440,7 @@ export function DeploymentTextField({
   autoFocus?: boolean;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   return (
     <div>
       <DeploymentFieldHeader id={id} label={label} />
@@ -469,7 +469,7 @@ export function DeploymentTextArea({
   helpText?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const id = `deployment-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   return (
     <div>
       <DeploymentFieldHeader id={id} label={label} />
@@ -505,10 +505,10 @@ export function DeploymentSelectField({
   manageLabel?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   const selected = options.find((option) => option.id === value);
   const items = [
-    { value: "", label: placeholder },
+    { value: '', label: placeholder },
     ...options.map((option) => ({ value: option.id, label: option.label })),
   ];
   return (
@@ -533,7 +533,7 @@ export function DeploymentSelectField({
           id={id}
           className="h-8 w-full border-0 bg-white/10 px-3 text-sm ring-1 ring-white/10 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <SelectValue className={value ? "text-foreground" : "text-muted-foreground"}>
+          <SelectValue className={value ? 'text-foreground' : 'text-muted-foreground'}>
             {selected?.label ?? placeholder}
           </SelectValue>
         </SelectTrigger>
@@ -572,14 +572,14 @@ export function DeploymentAddSelectField({
   onChange: (value: string[]) => void;
 }) {
   const { msg } = useI18n();
-  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const id = `deployment-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   const availableOptions = options.filter((option) => !selectedIds.includes(option.id));
   const selectedOptions = options.filter((option) => selectedIds.includes(option.id));
   const placeholder = availableOptions.length
-    ? msg("managedAgents.common.addValue", "Add {label}", { label: valueLabel })
-    : msg("managedAgents.common.noValuesAvailable", "No {label}s available", { label: valueLabel });
+    ? msg('managedAgents.common.addValue', 'Add {label}', { label: valueLabel })
+    : msg('managedAgents.common.noValuesAvailable', 'No {label}s available', { label: valueLabel });
   const items = [
-    { value: "", label: placeholder },
+    { value: '', label: placeholder },
     ...availableOptions.map((option) => ({ value: option.id, label: option.label })),
   ];
 
@@ -656,7 +656,7 @@ export function ManagedTextField({
   autoFocus?: boolean;
   onChange: (value: string) => void;
 }) {
-  const id = `managed-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const id = `managed-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   return (
     <div>
       <Label htmlFor={id} className="text-sm font-medium text-foreground">
@@ -686,7 +686,7 @@ export function ManagedTextArea({
   placeholder?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `managed-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const id = `managed-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   return (
     <div>
       <Label htmlFor={id} className="text-sm font-medium text-foreground">
@@ -717,10 +717,10 @@ export function ManagedSelectField({
   options: EntityOption[];
   onChange: (value: string) => void;
 }) {
-  const id = `managed-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const id = `managed-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   const selected = options.find((option) => option.id === value);
   const items = [
-    { value: "", label: placeholder },
+    { value: '', label: placeholder },
     ...options.map((option) => ({ value: option.id, label: option.label })),
   ];
   return (
@@ -741,7 +741,7 @@ export function ManagedSelectField({
           id={id}
           className="managed-resource-field mt-2 h-10 w-full border-border bg-secondary px-3 text-sm text-foreground focus-visible:border-ring focus-visible:ring-0"
         >
-          <SelectValue className={value ? "text-foreground" : "text-muted-foreground"}>
+          <SelectValue className={value ? 'text-foreground' : 'text-muted-foreground'}>
             {selected?.label ?? placeholder}
           </SelectValue>
         </SelectTrigger>
@@ -781,7 +781,7 @@ export function VaultMultiSelect({
   return (
     <div>
       <div className="text-sm font-medium text-foreground">
-        {msg("managedAgents.credentialVaults.title", "Credential vaults")}
+        {msg('managedAgents.credentialVaults.title', 'Credential vaults')}
       </div>
       <div className="mt-2 rounded-lg border border-border bg-secondary p-2">
         {vaults.length ? (
@@ -806,7 +806,7 @@ export function VaultMultiSelect({
           })
         ) : (
           <div className="px-2 py-2 text-sm text-muted-foreground">
-            {msg("managedAgents.credentialVaults.selectOneOrMore", "Select one or more vaults")}
+            {msg('managedAgents.credentialVaults.selectOneOrMore', 'Select one or more vaults')}
           </div>
         )}
       </div>
@@ -823,7 +823,7 @@ export function ConfirmEntityDialog({
   onCancel,
   onConfirm,
 }: {
-  action: "archive" | "delete";
+  action: 'archive' | 'delete';
   section: ManagedEntitySection;
   entity: ManagedEntityApiResponse | VaultCredentialApiResponse | MemoryApiResponse;
   labelOverride?: string;
@@ -833,13 +833,13 @@ export function ConfirmEntityDialog({
 }) {
   const { msg } = useI18n();
   const label = labelOverride ?? entityKindLabel(section, msg);
-  const actionLabel = action === "archive" ? msg("common.archive", "Archive") : msg("common.delete", "Delete");
-  const destructive = action === "delete";
+  const actionLabel = action === 'archive' ? msg('common.archive', 'Archive') : msg('common.delete', 'Delete');
+  const destructive = action === 'delete';
   const icon = destructive ? <Trash2 className="size-5" aria-hidden /> : <Archive className="size-5" aria-hidden />;
   const entityName =
-    "display_name" in entity && typeof entity.display_name === "string"
+    'display_name' in entity && typeof entity.display_name === 'string'
       ? entity.display_name
-      : "path" in entity && typeof entity.path === "string"
+      : 'path' in entity && typeof entity.path === 'string'
         ? entity.path
         : entityDisplayName(section, entity as ManagedEntityApiResponse);
 
@@ -848,35 +848,35 @@ export function ConfirmEntityDialog({
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogMedia
-            className={destructive ? "bg-destructive/10 text-destructive dark:bg-destructive/20" : undefined}
+            className={destructive ? 'bg-destructive/10 text-destructive dark:bg-destructive/20' : undefined}
           >
             {icon}
           </AlertDialogMedia>
           <AlertDialogTitle className="text-[20px] font-semibold text-foreground">
-            {msg("managedAgents.common.confirmEntityTitle", "{action} {label}?", { action: actionLabel, label })}
+            {msg('managedAgents.common.confirmEntityTitle', '{action} {label}?', { action: actionLabel, label })}
           </AlertDialogTitle>
           <AlertDialogDescription className="text-sm leading-5 text-muted-foreground">
-            {action === "archive"
-              ? msg("managedAgents.common.confirmArchiveBody", "{name} will be hidden from active lists.", {
+            {action === 'archive'
+              ? msg('managedAgents.common.confirmArchiveBody', '{name} will be hidden from active lists.', {
                   name: entityName,
                 })
               : msg(
-                  "managedAgents.common.confirmDeleteBody",
-                  "{name} will be permanently removed from this workspace.",
+                  'managedAgents.common.confirmDeleteBody',
+                  '{name} will be permanently removed from this workspace.',
                   { name: entityName },
                 )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>{msg("common.cancel", "Cancel")}</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
           <AlertDialogAction
             type="button"
             disabled={busy}
-            variant={destructive ? "destructive" : "default"}
+            variant={destructive ? 'destructive' : 'default'}
             className="disabled:cursor-wait"
             onClick={onConfirm}
           >
-            {busy ? msg("managedAgents.common.working", "Working...") : actionLabel}
+            {busy ? msg('managedAgents.common.working', 'Working...') : actionLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -898,16 +898,16 @@ export function ConfirmAgentsArchiveDialog({
   const { msg } = useI18n();
   const single = count === 1;
   const title = single
-    ? msg("managedAgents.agents.confirmArchive.title", "Archive agent")
-    : msg("managedAgents.agents.confirmArchive.titlePlural", "Archive agents");
+    ? msg('managedAgents.agents.confirmArchive.title', 'Archive agent')
+    : msg('managedAgents.agents.confirmArchive.titlePlural', 'Archive agents');
   const body = single
     ? msg(
-        "managedAgents.agents.confirmArchive.body",
-        "This agent will be hidden from the default view. Sessions that reference it keep working.",
+        'managedAgents.agents.confirmArchive.body',
+        'This agent will be hidden from the default view. Sessions that reference it keep working.',
       )
     : msg(
-        "managedAgents.agents.confirmArchive.bodyPlural",
-        "{count} agents will be hidden from the default view. Sessions that reference them keep working.",
+        'managedAgents.agents.confirmArchive.bodyPlural',
+        '{count} agents will be hidden from the default view. Sessions that reference them keep working.',
         { count },
       );
   return (
@@ -921,7 +921,7 @@ export function ConfirmAgentsArchiveDialog({
           <AlertDialogDescription className="text-sm leading-5 text-muted-foreground">{body}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>{msg("common.cancel", "Cancel")}</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
           <AlertDialogAction
             type="button"
             disabled={busy}
@@ -929,7 +929,7 @@ export function ConfirmAgentsArchiveDialog({
             className="disabled:cursor-wait"
             onClick={onConfirm}
           >
-            {busy ? msg("managedAgents.agents.confirmArchive.busy", "Archiving...") : msg("common.archive", "Archive")}
+            {busy ? msg('managedAgents.agents.confirmArchive.busy', 'Archiving...') : msg('common.archive', 'Archive')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -957,10 +957,10 @@ export function AgentSelectionCheckbox({
       indeterminate={indeterminate}
       disabled={disabled}
       className={clsx(
-        "size-5 rounded-[5px] border-border bg-transparent hover:border-border",
-        "data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground",
-        "data-indeterminate:border-primary data-indeterminate:bg-primary data-indeterminate:text-primary-foreground",
-        disabled && "cursor-not-allowed opacity-40",
+        'size-5 rounded-[5px] border-border bg-transparent hover:border-border',
+        'data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground',
+        'data-indeterminate:border-primary data-indeterminate:bg-primary data-indeterminate:text-primary-foreground',
+        disabled && 'cursor-not-allowed opacity-40',
       )}
       onCheckedChange={() => onClick()}
     />
@@ -1015,25 +1015,25 @@ export function AgentsEmptyState({
       icon={trueEmpty ? Bot : Search}
       title={
         trueEmpty
-          ? msg("managedAgents.agents.emptyTitle", "No agents yet")
-          : msg("managedAgents.agents.noFilteredResults", "No matching agents")
+          ? msg('managedAgents.agents.emptyTitle', 'No agents yet')
+          : msg('managedAgents.agents.noFilteredResults', 'No matching agents')
       }
       body={
         truncated
           ? msg(
-              "managedAgents.agents.searchTruncatedEmptyBody",
+              'managedAgents.agents.searchTruncatedEmptyBody',
               "Couldn't search every agent. Narrow the search or paste an exact ID.",
             )
           : trueEmpty
-            ? msg("managedAgents.agents.emptyBody", "Create an agent to start building managed workflows.")
-            : msg("managedAgents.agents.noFilteredResultsBody", "Try a different search or reset the filters.")
+            ? msg('managedAgents.agents.emptyBody', 'Create an agent to start building managed workflows.')
+            : msg('managedAgents.agents.noFilteredResultsBody', 'Try a different search or reset the filters.')
       }
       actionLabel={
         truncated
           ? undefined
           : trueEmpty
             ? trueEmptyActionLabel
-            : msg("managedAgents.filters.resetFilters", "Reset filters")
+            : msg('managedAgents.filters.resetFilters', 'Reset filters')
       }
       onAction={truncated ? undefined : trueEmpty ? onCreate : onReset}
     />
@@ -1064,7 +1064,7 @@ export function EmptyState({ config }: { config: ResourceConfig }) {
 
 export function CreateResourceDialog({ title, onClose }: { title: string; onClose: () => void }) {
   const { msg } = useI18n();
-  const [name, setName] = useState("");
+  const [name, setName] = useState('');
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1081,18 +1081,18 @@ export function CreateResourceDialog({ title, onClose }: { title: string; onClos
             <DialogTitle className="text-xl font-semibold">{title}</DialogTitle>
             <DialogDescription>
               {msg(
-                "managedAgents.common.localMockNotice",
-                "This local console mock keeps creation client-side for now.",
+                'managedAgents.common.localMockNotice',
+                'This local console mock keeps creation client-side for now.',
               )}
             </DialogDescription>
           </DialogHeader>
 
           <div>
-            <Label htmlFor="managed-resource-name">{msg("common.name", "Name")}</Label>
+            <Label htmlFor="managed-resource-name">{msg('common.name', 'Name')}</Label>
             <Input
               id="managed-resource-name"
               value={name}
-              placeholder={msg("managedAgents.common.namePlaceholder", "Enter a name")}
+              placeholder={msg('managedAgents.common.namePlaceholder', 'Enter a name')}
               className="mt-2 h-10 border-border bg-secondary placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-0"
               onChange={(event) => setName(event.target.value)}
               autoFocus
@@ -1101,10 +1101,10 @@ export function CreateResourceDialog({ title, onClose }: { title: string; onClos
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
-              {msg("common.cancel", "Cancel")}
+              {msg('common.cancel', 'Cancel')}
             </Button>
             <Button type="submit" disabled={!name.trim()}>
-              {msg("common.create", "Create")}
+              {msg('common.create', 'Create')}
             </Button>
           </DialogFooter>
         </form>
@@ -1119,13 +1119,13 @@ export function AgentStatusBadge({ archived }: { archived: boolean }) {
     <Badge
       variant="secondary"
       className={clsx(
-        "h-6 rounded-md px-2 text-xs font-medium",
+        'h-6 rounded-md px-2 text-xs font-medium',
         archived
-          ? "bg-secondary text-secondary-foreground"
-          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+          ? 'bg-secondary text-secondary-foreground'
+          : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
       )}
     >
-      {archived ? msg("common.archived", "Archived") : msg("common.active", "Active")}
+      {archived ? msg('common.archived', 'Archived') : msg('common.active', 'Active')}
     </Badge>
   );
 }

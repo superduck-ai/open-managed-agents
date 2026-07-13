@@ -1,9 +1,9 @@
-import { platformQuickstartOfficialRequest } from "./platformQuickstartOfficialRequest.generated";
+import { platformQuickstartOfficialRequest } from './platformQuickstartOfficialRequest.generated';
 
-export type QuickstartStep = "agent" | "environment" | "session" | "integrate";
+export type QuickstartStep = 'agent' | 'environment' | 'session' | 'integrate';
 
 export type QuickstartMessage = {
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   content: string | Array<Record<string, unknown>>;
 };
 
@@ -32,7 +32,7 @@ export const platformQuickstartTools = platformQuickstartOfficialRequest.tools;
 export const platformQuickstartToolChoice = platformQuickstartOfficialRequest.tool_choice;
 
 export const platformQuickstartToolNames = platformQuickstartTools.map((tool) =>
-  typeof tool.name === "string" ? tool.name : String(tool.type),
+  typeof tool.name === 'string' ? tool.name : String(tool.type),
 );
 
 export function buildPlatformQuickstartRequest(input: QuickstartRequestInput): PlatformQuickstartRequest {
@@ -49,7 +49,7 @@ export function buildPlatformQuickstartRequest(input: QuickstartRequestInput): P
 
 export function buildInitialQuickstartMessage(input: QuickstartRequestInput): QuickstartMessage {
   return {
-    role: "user",
+    role: 'user',
     content: buildQuickstartTurnContextText(input),
   };
 }
@@ -62,16 +62,16 @@ export function buildQuickstartTurnContextText(input: QuickstartRequestInput): s
 
   return [
     `[Current quickstart step: "${input.step}". Follow this step's instructions from the system prompt.]`,
-    "",
-    `[Deployment schedule planned: ${input.deploymentSchedulePlanned ? "yes" : "no"}.]`,
-    "",
+    '',
+    `[Deployment schedule planned: ${input.deploymentSchedulePlanned ? 'yes' : 'no'}.]`,
+    '',
     ...agentIntro,
-    "",
+    '',
     "Here's the current config:",
     JSON.stringify(input.agentConfig, null, 2),
-    "",
-    "Start from the current quickstart step (see turn context).",
-  ].join("\n");
+    '',
+    'Start from the current quickstart step (see turn context).',
+  ].join('\n');
 }
 
 export function stableStringify(value: unknown) {
@@ -93,5 +93,5 @@ function sortObjectKeys(value: unknown): unknown {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

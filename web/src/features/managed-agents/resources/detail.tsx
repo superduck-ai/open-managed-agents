@@ -1,5 +1,5 @@
-import { useWorkspace } from "../../../shared/workspaces/context";
-import clsx from "clsx";
+import { useWorkspace } from '../../../shared/workspaces/context';
+import clsx from 'clsx';
 import {
   AlertCircle,
   Archive,
@@ -18,25 +18,25 @@ import {
   Pencil,
   Plus,
   X,
-} from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { useI18n } from "../../../shared/i18n";
-import { Alert, AlertDescription } from "../../../shared/ui/alert";
-import { Button } from "../../../shared/ui/button";
-import { Card, CardContent } from "../../../shared/ui/card";
+} from 'lucide-react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { useI18n } from '../../../shared/i18n';
+import { Alert, AlertDescription } from '../../../shared/ui/alert';
+import { Button } from '../../../shared/ui/button';
+import { Card, CardContent } from '../../../shared/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../../shared/ui/dropdown-menu";
-import { Field, FieldLabel } from "../../../shared/ui/field";
-import { Input } from "../../../shared/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select";
-import { toast } from "../../../shared/ui/sonner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs";
-import { Textarea } from "../../../shared/ui/textarea";
-import { relativeTime } from "../agents/AgentsResourcePage";
+} from '../../../shared/ui/dropdown-menu';
+import { Field, FieldLabel } from '../../../shared/ui/field';
+import { Input } from '../../../shared/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
+import { toast } from '../../../shared/ui/sonner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
+import { Textarea } from '../../../shared/ui/textarea';
+import { relativeTime } from '../agents/AgentsResourcePage';
 import {
   archiveManagedEntity,
   archiveVaultCredential,
@@ -58,8 +58,8 @@ import {
   updateManagedEntity,
   updateMemory,
   updateVaultCredential,
-} from "../api";
-import { ManagedDetailBreadcrumb } from "../components/breadcrumbs";
+} from '../api';
+import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import {
   ConfirmEntityDialog,
   DetailCard,
@@ -69,8 +69,8 @@ import {
   ManagedTextField,
   NestedRows,
   StatusPill,
-} from "../components/common";
-import { entityKindLabel } from "../labels";
+} from '../components/common';
+import { entityKindLabel } from '../labels';
 import {
   type CredentialFormValues,
   type DeploymentApiResponse,
@@ -92,7 +92,7 @@ import {
   type SessionThreadApiResponse,
   type VaultApiResponse,
   type VaultCredentialApiResponse,
-} from "../types";
+} from '../types';
 import {
   compactEntityId,
   copyText,
@@ -104,8 +104,8 @@ import {
   managedEntityListHref,
   objectRecord,
   titleCase,
-} from "../utils";
-import { CredentialDialog, MemoryDialog } from "./dialogs";
+} from '../utils';
+import { CredentialDialog, MemoryDialog } from './dialogs';
 import {
   buildMemoryTreeNodes,
   credentialAuthLabel,
@@ -131,7 +131,7 @@ import {
   updateMemoryQueryParam,
   upsertMemoryInBranch,
   upsertMemoryInBranches,
-} from "./model";
+} from './model';
 
 export function ManagedEntityDetailPage({
   config,
@@ -147,7 +147,7 @@ export function ManagedEntityDetailPage({
   const [editing, setEditing] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [confirmAction, setConfirmAction] = useState<"archive" | "delete" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'archive' | 'delete' | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   useEffect(() => {
@@ -185,7 +185,7 @@ export function ManagedEntityDetailPage({
     if (!entity) {
       return;
     }
-    setBusyAction("archive");
+    setBusyAction('archive');
     setMutationError(null);
     try {
       const updated = await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
@@ -204,7 +204,7 @@ export function ManagedEntityDetailPage({
     if (!entity) {
       return;
     }
-    setBusyAction("delete");
+    setBusyAction('delete');
     setMutationError(null);
     try {
       await deleteManagedEntity(config.section, entity.id, activeWorkspaceId);
@@ -251,7 +251,7 @@ export function ManagedEntityDetailPage({
     );
   }
 
-  if (config.section === "memory-stores") {
+  if (config.section === 'memory-stores') {
     return (
       <section className="min-h-[calc(100vh-48px)] text-foreground">
         <MemoryStorePanel
@@ -282,7 +282,7 @@ export function ManagedEntityDetailPage({
             }
           }}
           onConfirm={() => {
-            if (confirmAction === "archive") {
+            if (confirmAction === 'archive') {
               void handleArchive();
               return;
             }
@@ -297,7 +297,7 @@ export function ManagedEntityDetailPage({
         <div className="min-w-0">
           <h1 className="truncate text-[28px] font-semibold leading-tight text-foreground">{label}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-            {config.section === "environments" ? (
+            {config.section === 'environments' ? (
               <span className="text-foreground">Cloud</span>
             ) : (
               <StatusPill>{entityStatusLabel(entity)}</StatusPill>
@@ -313,8 +313,8 @@ export function ManagedEntityDetailPage({
               <span className="truncate">{compactEntityId(entity.id)}</span>
             </Button>
             <span>
-              {config.section === "environments" ? "Last updated" : "Created"}{" "}
-              {relativeTime(config.section === "environments" ? entity.updated_at : entity.created_at)}
+              {config.section === 'environments' ? 'Last updated' : 'Created'}{' '}
+              {relativeTime(config.section === 'environments' ? entity.updated_at : entity.created_at)}
             </span>
           </div>
         </div>
@@ -339,17 +339,17 @@ export function ManagedEntityDetailPage({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-[154px]">
               <DropdownMenuItem
-                disabled={archived || busyAction === "archive"}
-                onClick={() => setConfirmAction("archive")}
+                disabled={archived || busyAction === 'archive'}
+                onClick={() => setConfirmAction('archive')}
               >
                 <Archive className="size-4" aria-hidden />
                 Archive
               </DropdownMenuItem>
-              {config.section !== "deployments" ? (
+              {config.section !== 'deployments' ? (
                 <DropdownMenuItem
                   variant="destructive"
-                  disabled={busyAction === "delete"}
-                  onClick={() => setConfirmAction("delete")}
+                  disabled={busyAction === 'delete'}
+                  onClick={() => setConfirmAction('delete')}
                 >
                   <X className="size-4" aria-hidden />
                   Delete
@@ -419,7 +419,7 @@ export function ManagedEntityOverview({
           </dl>
         </CardContent>
       </Card>
-      {section === "environments" ? <EnvironmentReadOnlySections entity={entity as EnvironmentApiResponse} /> : null}
+      {section === 'environments' ? <EnvironmentReadOnlySections entity={entity as EnvironmentApiResponse} /> : null}
     </DetailCard>
   );
 }
@@ -434,7 +434,7 @@ export function EnvironmentReadOnlySections({ entity }: { entity: EnvironmentApi
       <div>
         <h2 className="text-[20px] font-semibold text-foreground">Networking</h2>
         <p className="mt-1 text-sm text-muted-foreground">Configure network access policies for this environment.</p>
-        <DetailKV label="Type" value={titleCase(String(networking.type || "unrestricted"))} />
+        <DetailKV label="Type" value={titleCase(String(networking.type || 'unrestricted'))} />
       </div>
       <div className="border-t border-border pt-7">
         <h2 className="text-[20px] font-semibold text-foreground">Packages</h2>
@@ -443,7 +443,7 @@ export function EnvironmentReadOnlySections({ entity }: { entity: EnvironmentApi
         </p>
         {packages.length ? (
           <div className="mt-3 text-sm text-foreground">
-            {packages.map((row) => `${row.manager}: ${row.value}`).join("  ")}
+            {packages.map((row) => `${row.manager}: ${row.value}`).join('  ')}
           </div>
         ) : (
           <div className="mt-3 text-sm text-muted-foreground/70">No packages configured</div>
@@ -485,7 +485,7 @@ export function ManagedEntityInlineEditor({
   onSaved: (entity: ManagedEntityApiResponse) => void;
   onSubmit: (values: ManagedEntityFormValues) => Promise<void>;
 }) {
-  if (section === "environments") {
+  if (section === 'environments') {
     return (
       <EnvironmentInlineEditor
         entity={entity as EnvironmentApiResponse}
@@ -513,7 +513,7 @@ export function GenericManagedEntityInlineEditor({
   const [values, setValues] = useState<ManagedEntityFormValues>(() => initialFormValues(section, entity));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hasDescription = section === "deployments" || section === "memory-stores";
+  const hasDescription = section === 'deployments' || section === 'memory-stores';
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -534,7 +534,7 @@ export function GenericManagedEntityInlineEditor({
     <DetailCard title={`Edit ${entityKindLabel(section)}`}>
       <form className="max-w-[760px] space-y-4" onSubmit={submit}>
         <ManagedTextField
-          label={section === "sessions" ? "Title" : "Name"}
+          label={section === 'sessions' ? 'Title' : 'Name'}
           value={values.name}
           onChange={(name) => setValues((current) => ({ ...current, name }))}
           autoFocus
@@ -546,7 +546,7 @@ export function GenericManagedEntityInlineEditor({
             onChange={(description) => setValues((current) => ({ ...current, description }))}
           />
         ) : null}
-        {section === "sessions" || section === "deployments" ? (
+        {section === 'sessions' || section === 'deployments' ? (
           <div className="grid gap-4 md:grid-cols-2">
             <ManagedTextField
               label="Agent"
@@ -563,7 +563,7 @@ export function GenericManagedEntityInlineEditor({
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
         <div className="flex gap-2">
           <Button type="submit" size="lg" disabled={submitting || !values.name.trim()}>
-            {submitting ? "Saving..." : "Save changes"}
+            {submitting ? 'Saving...' : 'Save changes'}
           </Button>
           <Button type="button" variant="secondary" size="lg" onClick={onCancel}>
             Cancel
@@ -606,9 +606,9 @@ export function EnvironmentInlineEditor({
   };
 
   const addPackage = () =>
-    setValues((current) => ({ ...current, packages: [...current.packages, { manager: "pip", value: "" }] }));
+    setValues((current) => ({ ...current, packages: [...current.packages, { manager: 'pip', value: '' }] }));
   const addMetadata = () =>
-    setValues((current) => ({ ...current, metadataRows: [...current.metadataRows, { key: "", value: "" }] }));
+    setValues((current) => ({ ...current, metadataRows: [...current.metadataRows, { key: '', value: '' }] }));
 
   return (
     <form className="max-w-[820px] space-y-7" onSubmit={submit}>
@@ -631,8 +631,8 @@ export function EnvironmentInlineEditor({
               <Select<string>
                 value={values.networkType}
                 items={[
-                  { value: "unrestricted", label: "Unrestricted" },
-                  { value: "limited", label: "Limited" },
+                  { value: 'unrestricted', label: 'Unrestricted' },
+                  { value: 'limited', label: 'Limited' },
                 ]}
                 onValueChange={(networkType) => {
                   if (networkType === null) {
@@ -640,12 +640,12 @@ export function EnvironmentInlineEditor({
                   }
                   setValues((current) => ({
                     ...current,
-                    networkType: networkType === "limited" ? "limited" : "unrestricted",
+                    networkType: networkType === 'limited' ? 'limited' : 'unrestricted',
                   }));
                 }}
               >
                 <SelectTrigger aria-label="Type" className="h-10 w-full px-3 text-sm text-foreground">
-                  <SelectValue>{values.networkType === "limited" ? "Limited" : "Unrestricted"}</SelectValue>
+                  <SelectValue>{values.networkType === 'limited' ? 'Limited' : 'Unrestricted'}</SelectValue>
                 </SelectTrigger>
                 <SelectContent alignItemWithTrigger={false}>
                   <SelectItem value="unrestricted" label="Unrestricted">
@@ -671,7 +671,7 @@ export function EnvironmentInlineEditor({
                 <div key={`${row.manager}-${index}`} className="grid gap-2 md:grid-cols-[160px_1fr_40px]">
                   <Select<string>
                     value={row.manager}
-                    items={["apt", "cargo", "gem", "go", "npm", "pip"].map((manager) => ({
+                    items={['apt', 'cargo', 'gem', 'go', 'npm', 'pip'].map((manager) => ({
                       value: manager,
                       label: manager,
                     }))}
@@ -691,7 +691,7 @@ export function EnvironmentInlineEditor({
                       <SelectValue>{row.manager}</SelectValue>
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>
-                      {["apt", "cargo", "gem", "go", "npm", "pip"].map((manager) => (
+                      {['apt', 'cargo', 'gem', 'go', 'npm', 'pip'].map((manager) => (
                         <SelectItem key={manager} value={manager} label={manager}>
                           {manager}
                         </SelectItem>
@@ -804,7 +804,7 @@ export function EnvironmentInlineEditor({
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <div className="flex gap-2">
         <Button type="submit" size="lg" disabled={submitting || !values.name.trim()}>
-          {submitting ? "Saving..." : "Save changes"}
+          {submitting ? 'Saving...' : 'Save changes'}
         </Button>
         <Button type="button" variant="secondary" size="lg" onClick={onCancel}>
           Cancel
@@ -827,7 +827,7 @@ export function ManagedEntityNestedPanel({
   refreshKey: number;
   onRefresh: () => void;
 }) {
-  if (section === "credential-vaults") {
+  if (section === 'credential-vaults') {
     return (
       <VaultCredentialsPanel
         vault={entity as VaultApiResponse}
@@ -837,7 +837,7 @@ export function ManagedEntityNestedPanel({
       />
     );
   }
-  if (section === "memory-stores") {
+  if (section === 'memory-stores') {
     return (
       <MemoryStorePanel
         store={entity as MemoryStoreApiResponse}
@@ -847,7 +847,7 @@ export function ManagedEntityNestedPanel({
       />
     );
   }
-  if (section === "deployments") {
+  if (section === 'deployments') {
     return (
       <DeploymentRunsPanel
         deployment={entity as DeploymentApiResponse}
@@ -856,7 +856,7 @@ export function ManagedEntityNestedPanel({
       />
     );
   }
-  if (section === "environments") {
+  if (section === 'environments') {
     return (
       <EnvironmentWorkPanel
         environment={entity as EnvironmentApiResponse}
@@ -915,7 +915,7 @@ export function DeploymentRunsPanel({
       loading={state.loading}
       error={state.error}
       emptyTitle="No deployment runs yet"
-      columns={["ID", "Status", "Trigger", "Session", "Created"]}
+      columns={['ID', 'Status', 'Trigger', 'Session', 'Created']}
       rows={state.data.map((run) => [
         compactEntityId(run.id),
         deploymentRunStatus(run),
@@ -923,14 +923,14 @@ export function DeploymentRunsPanel({
         run.session_id ? (
           <a
             className="font-sans text-[13px] text-foreground underline-offset-2 hover:underline"
-            href={`${managedEntityDetailHref(workspaceId, "sessions", run.session_id)}?from_deployment=${encodeURIComponent(deployment.id)}&from_run=${encodeURIComponent(run.id)}`}
+            href={`${managedEntityDetailHref(workspaceId, 'sessions', run.session_id)}?from_deployment=${encodeURIComponent(deployment.id)}&from_run=${encodeURIComponent(run.id)}`}
             target="_blank"
             rel="noreferrer"
           >
             {compactEntityId(run.session_id)}
           </a>
         ) : (
-          "—"
+          '—'
         ),
         relativeTime(run.created_at),
       ])}
@@ -983,12 +983,12 @@ export function EnvironmentWorkPanel({
       loading={state.loading}
       error={state.error}
       emptyTitle="No work queued"
-      columns={["ID", "Status", "Created", "Updated"]}
+      columns={['ID', 'Status', 'Created', 'Updated']}
       rows={state.data.map((work) => [
         compactEntityId(work.id),
-        titleCase(work.status || "queued"),
+        titleCase(work.status || 'queued'),
         relativeTime(work.created_at),
-        work.updated_at ? relativeTime(work.updated_at) : "—",
+        work.updated_at ? relativeTime(work.updated_at) : '—',
       ])}
     />
   );
@@ -1052,11 +1052,11 @@ export function SessionNestedPanel({
         loading={resources.loading}
         error={resources.error}
         emptyTitle="No resources mounted"
-        columns={["ID", "Type", "Created"]}
+        columns={['ID', 'Type', 'Created']}
         rows={resources.data.map((resource) => [
-          String(resource.id || "—"),
-          String(resource.type || resource.resource_type || "resource"),
-          typeof resource.created_at === "string" ? relativeTime(resource.created_at) : "—",
+          String(resource.id || '—'),
+          String(resource.type || resource.resource_type || 'resource'),
+          typeof resource.created_at === 'string' ? relativeTime(resource.created_at) : '—',
         ])}
       />
       <DetailTableCard
@@ -1065,10 +1065,10 @@ export function SessionNestedPanel({
         loading={threads.loading}
         error={threads.error}
         emptyTitle="No threads yet"
-        columns={["ID", "Status", "Created"]}
+        columns={['ID', 'Status', 'Created']}
         rows={threads.data.map((thread) => [
           compactEntityId(thread.id),
-          thread.archived_at ? "Archived" : "Active",
+          thread.archived_at ? 'Archived' : 'Active',
           relativeTime(thread.created_at),
         ])}
       />
@@ -1078,10 +1078,10 @@ export function SessionNestedPanel({
         loading={events.loading}
         error={events.error}
         emptyTitle="No events yet"
-        columns={["Type", "Created", "Payload"]}
+        columns={['Type', 'Created', 'Payload']}
         rows={events.data.map((event) => [
-          String(event.type || "event"),
-          typeof event.created_at === "string" ? relativeTime(event.created_at) : "—",
+          String(event.type || 'event'),
+          typeof event.created_at === 'string' ? relativeTime(event.created_at) : '—',
           JSON.stringify(event).slice(0, 90),
         ])}
       />
@@ -1106,11 +1106,11 @@ export function VaultCredentialsPanel({
     error: null,
     data: [],
   });
-  const [dialog, setDialog] = useState<{ mode: "create" | "edit"; credential?: VaultCredentialApiResponse } | null>(
+  const [dialog, setDialog] = useState<{ mode: 'create' | 'edit'; credential?: VaultCredentialApiResponse } | null>(
     null,
   );
   const [confirmAction, setConfirmAction] = useState<{
-    action: "archive" | "delete";
+    action: 'archive' | 'delete';
     credential: VaultCredentialApiResponse;
   } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -1135,10 +1135,10 @@ export function VaultCredentialsPanel({
     onRefresh();
   };
 
-  const remove = async (credential: VaultCredentialApiResponse, action: "archive" | "delete") => {
+  const remove = async (credential: VaultCredentialApiResponse, action: 'archive' | 'delete') => {
     setBusyId(credential.id);
     try {
-      if (action === "archive") {
+      if (action === 'archive') {
         await archiveVaultCredential(vault.id, credential.id, workspaceId);
       } else {
         await deleteVaultCredential(vault.id, credential.id, workspaceId);
@@ -1161,7 +1161,7 @@ export function VaultCredentialsPanel({
           action={confirmAction.action}
           section="credential-vaults"
           entity={confirmAction.credential}
-          labelOverride={msg("managedAgents.credentialVaults.credentialKind", "credential")}
+          labelOverride={msg('managedAgents.credentialVaults.credentialKind', 'credential')}
           busy={busyId === confirmAction.credential.id}
           onCancel={() => {
             if (!busyId) {
@@ -1177,7 +1177,7 @@ export function VaultCredentialsPanel({
         title="Credentials"
         description="Credentials available to agents that attach this vault."
         action={
-          <Button type="button" size="lg" onClick={() => setDialog({ mode: "create" })}>
+          <Button type="button" size="lg" onClick={() => setDialog({ mode: 'create' })}>
             <Plus className="size-4" aria-hidden />
             Add credential
           </Button>
@@ -1187,7 +1187,7 @@ export function VaultCredentialsPanel({
           loading={state.loading}
           error={state.error}
           emptyTitle="No credentials yet"
-          columns={["ID", "Name", "Auth", "Created", "Actions"]}
+          columns={['ID', 'Name', 'Auth', 'Created', 'Actions']}
           rows={state.data.map((credential) => [
             compactEntityId(credential.id),
             credential.display_name,
@@ -1210,14 +1210,14 @@ export function VaultCredentialsPanel({
                   <MoreVertical className="size-4" aria-hidden />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-[164px]">
-                  <DropdownMenuItem className="h-9" onClick={() => setDialog({ mode: "edit", credential })}>
+                  <DropdownMenuItem className="h-9" onClick={() => setDialog({ mode: 'edit', credential })}>
                     <Pencil className="size-4" aria-hidden />
                     Edit
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="h-9"
                     disabled={busyId === credential.id}
-                    onClick={() => setConfirmAction({ action: "archive", credential })}
+                    onClick={() => setConfirmAction({ action: 'archive', credential })}
                   >
                     <Archive className="size-4" aria-hidden />
                     Archive
@@ -1226,7 +1226,7 @@ export function VaultCredentialsPanel({
                     className="h-9"
                     variant="destructive"
                     disabled={busyId === credential.id}
-                    onClick={() => setConfirmAction({ action: "delete", credential })}
+                    onClick={() => setConfirmAction({ action: 'delete', credential })}
                   >
                     <X className="size-4" aria-hidden />
                     Delete
@@ -1253,14 +1253,14 @@ export function MemoryStorePanel({
   workspaceId,
   refreshKey,
   onRefresh,
-  variant = "nested",
+  variant = 'nested',
   listHref,
 }: {
   store: MemoryStoreApiResponse;
   workspaceId: string;
   refreshKey: number;
   onRefresh: () => void;
-  variant?: "nested" | "page";
+  variant?: 'nested' | 'page';
   listHref?: string;
 }) {
   const { msg } = useI18n();
@@ -1269,9 +1269,9 @@ export function MemoryStorePanel({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [treeBusy, setTreeBusy] = useState(false);
   const [selectedMemoryId, setSelectedMemoryId] = useState(() => initialSelectedMemoryId());
-  const [viewMode, setViewMode] = useState<MemoryViewMode>("preview");
-  const [dialog, setDialog] = useState<{ mode: "create" | "edit"; memory?: MemoryApiResponse } | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ action: "delete"; memory: MemoryApiResponse } | null>(null);
+  const [viewMode, setViewMode] = useState<MemoryViewMode>('preview');
+  const [dialog, setDialog] = useState<{ mode: 'create' | 'edit'; memory?: MemoryApiResponse } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ action: 'delete'; memory: MemoryApiResponse } | null>(null);
   const [fullMemory, setFullMemory] = useState<{
     loading: boolean;
     error: string | null;
@@ -1294,7 +1294,7 @@ export function MemoryStorePanel({
   }, [refreshKey, store.id, workspaceId]);
 
   const memoryRows = useMemo(() => sortMemoryRows(memories.data), [memories.data]);
-  const rootSelectableMemories = useMemo(() => memoryRows.filter((memory) => memory.type === "memory"), [memoryRows]);
+  const rootSelectableMemories = useMemo(() => memoryRows.filter((memory) => memory.type === 'memory'), [memoryRows]);
   const loadedMemoryRows = useMemo(
     () => loadedMemoryRowsFromBranches(memoryRows, folderBranches),
     [folderBranches, memoryRows],
@@ -1335,7 +1335,7 @@ export function MemoryStorePanel({
       setFullMemory({ loading: false, error: null, data: null });
       return;
     }
-    if (selectedMemoryFromTree?.id === memoryId && typeof selectedMemoryFromTree.content === "string") {
+    if (selectedMemoryFromTree?.id === memoryId && typeof selectedMemoryFromTree.content === 'string') {
       setFullMemory({ loading: false, error: null, data: selectedMemoryFromTree });
       return;
     }
@@ -1427,7 +1427,7 @@ export function MemoryStorePanel({
     const updated = memory
       ? await updateMemory(store.id, memory.id, values, workspaceId, memory.content_sha256)
       : await createMemory(store.id, values, workspaceId);
-    setMemories((current) => upsertMemoryInBranch(current, updated, "/"));
+    setMemories((current) => upsertMemoryInBranch(current, updated, '/'));
     setFolderBranches((current) => upsertMemoryInBranches(current, updated));
     setFullMemory({ loading: false, error: null, data: updated });
     setSelectedMemoryId(updated.id);
@@ -1460,11 +1460,11 @@ export function MemoryStorePanel({
     setBusyId(selectedMemory.id);
     try {
       const memory =
-        typeof selectedMemory.content === "string"
+        typeof selectedMemory.content === 'string'
           ? selectedMemory
           : await retrieveMemory(store.id, selectedMemory.id, workspaceId);
       setFullMemory({ loading: false, error: null, data: memory });
-      downloadTextFile(memoryFileName(memory.path), memory.content ?? "");
+      downloadTextFile(memoryFileName(memory.path), memory.content ?? '');
     } catch (error) {
       setMemories((current) => ({ ...current, error: errorMessage(error) }));
     } finally {
@@ -1491,7 +1491,7 @@ export function MemoryStorePanel({
   };
 
   const addMemoryButton = (
-    <Button type="button" size="lg" onClick={() => setDialog({ mode: "create" })}>
+    <Button type="button" size="lg" onClick={() => setDialog({ mode: 'create' })}>
       <Plus className="size-4" aria-hidden />
       Add memory
     </Button>
@@ -1518,7 +1518,7 @@ export function MemoryStorePanel({
           action={confirmAction.action}
           section="memory-stores"
           entity={confirmAction.memory}
-          labelOverride={msg("managedAgents.memoryStores.memoryKind", "memory")}
+          labelOverride={msg('managedAgents.memoryStores.memoryKind', 'memory')}
           busy={busyId === confirmAction.memory.id}
           onCancel={() => {
             if (!busyId) {
@@ -1530,11 +1530,11 @@ export function MemoryStorePanel({
           }}
         />
       ) : null}
-      {variant === "page" ? (
+      {variant === 'page' ? (
         <>
           <ManagedDetailBreadcrumb
-            listHref={listHref ?? managedEntityListHref(workspaceId, "memory-stores")}
-            listLabel={msg("managedAgents.memoryStores.title", "Memory stores")}
+            listHref={listHref ?? managedEntityListHref(workspaceId, 'memory-stores')}
+            listLabel={msg('managedAgents.memoryStores.title', 'Memory stores')}
             currentLabel={store.name || store.id}
             className="mb-5"
           />
@@ -1591,7 +1591,7 @@ export function MemoryStorePanel({
               {folderPaths.length ? (
                 <Button
                   type="button"
-                  aria-label={allFoldersExpanded ? "Collapse all" : "Expand all"}
+                  aria-label={allFoldersExpanded ? 'Collapse all' : 'Expand all'}
                   disabled={treeBusy}
                   variant="ghost"
                   size="icon-sm"
@@ -1611,7 +1611,7 @@ export function MemoryStorePanel({
             ) : treeNodes.length ? (
               <div className="max-h-[560px] overflow-auto p-2">
                 {treeNodes.map((node) =>
-                  node.type === "folder" ? (
+                  node.type === 'folder' ? (
                     <MemoryTreeFolderButton
                       key={`folder:${node.path}`}
                       node={node}
@@ -1657,7 +1657,7 @@ export function MemoryStorePanel({
                           <span className="truncate">{compactEntityId(selectedMemory.id)}</span>
                         </Button>
                         <span>
-                          Updated{" "}
+                          Updated{' '}
                           {selectedMemory.updated_at
                             ? relativeTime(selectedMemory.updated_at)
                             : relativeTime(selectedMemory.created_at)}
@@ -1678,7 +1678,7 @@ export function MemoryStorePanel({
                         size="lg"
                         onClick={() => void saveInlineEdit()}
                       >
-                        {busyId === selectedMemory.id ? "Saving..." : "Save"}
+                        {busyId === selectedMemory.id ? 'Saving...' : 'Save'}
                       </Button>
                     </div>
                   </div>
@@ -1728,7 +1728,7 @@ export function MemoryStorePanel({
                           <span className="truncate">{compactEntityId(selectedMemory.id)}</span>
                         </Button>
                         <span>
-                          Updated{" "}
+                          Updated{' '}
                           {selectedMemory.updated_at
                             ? relativeTime(selectedMemory.updated_at)
                             : relativeTime(selectedMemory.created_at)}
@@ -1774,7 +1774,7 @@ export function MemoryStorePanel({
                           <DropdownMenuItem
                             variant="destructive"
                             disabled={busyId === selectedMemory.id}
-                            onClick={() => setConfirmAction({ action: "delete", memory: selectedMemory })}
+                            onClick={() => setConfirmAction({ action: 'delete', memory: selectedMemory })}
                           >
                             <X className="size-4" aria-hidden />
                             Delete
@@ -1785,7 +1785,7 @@ export function MemoryStorePanel({
                         type="button"
                         variant="secondary"
                         size="lg"
-                        onClick={() => setEditingContent(selectedMemory.content ?? "")}
+                        onClick={() => setEditingContent(selectedMemory.content ?? '')}
                       >
                         <Pencil className="size-4" aria-hidden />
                         Edit
@@ -1806,7 +1806,7 @@ export function MemoryStorePanel({
                           Loading memory...
                         </CardContent>
                       </Card>
-                    ) : viewMode === "preview" ? (
+                    ) : viewMode === 'preview' ? (
                       <TabsContent value="preview" className="mt-0">
                         <div className="max-h-[460px] overflow-auto whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
                           {memoryPreviewContent(selectedMemory)}
@@ -1815,7 +1815,7 @@ export function MemoryStorePanel({
                     ) : (
                       <TabsContent value="source" className="mt-0">
                         <pre className="max-h-[460px] overflow-auto whitespace-pre-wrap break-words font-mono text-sm leading-6 text-foreground">
-                          {selectedMemory.content || ""}
+                          {selectedMemory.content || ''}
                         </pre>
                       </TabsContent>
                     )}
@@ -1850,7 +1850,7 @@ export function MemoryTreeFolderButton({
   node,
   onToggle,
 }: {
-  node: Extract<MemoryTreeNode, { type: "folder" }>;
+  node: Extract<MemoryTreeNode, { type: 'folder' }>;
   onToggle: () => void;
 }) {
   return (
@@ -1858,10 +1858,10 @@ export function MemoryTreeFolderButton({
       type="button"
       variant="ghost"
       aria-expanded={node.expanded}
-      aria-label={`${node.expanded ? "Collapse" : "Expand"} folder ${node.label}`}
+      aria-label={`${node.expanded ? 'Collapse' : 'Expand'} folder ${node.label}`}
       className={clsx(
-        "mb-1 h-auto w-full min-w-0 justify-start gap-2 rounded-md py-1.5 pr-2 text-left text-sm text-foreground hover:bg-accent",
-        node.error && "text-destructive",
+        'mb-1 h-auto w-full min-w-0 justify-start gap-2 rounded-md py-1.5 pr-2 text-left text-sm text-foreground hover:bg-accent',
+        node.error && 'text-destructive',
       )}
       style={{ paddingLeft: `${8 + node.depth * 18}px` }}
       onClick={onToggle}
@@ -1889,7 +1889,7 @@ export function MemoryTreeMemoryButton({
   selected,
   onSelect,
 }: {
-  node: Extract<MemoryTreeNode, { type: "memory" }>;
+  node: Extract<MemoryTreeNode, { type: 'memory' }>;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -1899,8 +1899,8 @@ export function MemoryTreeMemoryButton({
       type="button"
       variant="ghost"
       className={clsx(
-        "mb-1 h-auto w-full min-w-0 justify-between gap-3 rounded-md py-2 pr-2 text-left text-sm",
-        selected ? "bg-accent text-foreground hover:bg-accent" : "text-foreground hover:bg-accent",
+        'mb-1 h-auto w-full min-w-0 justify-between gap-3 rounded-md py-2 pr-2 text-left text-sm',
+        selected ? 'bg-accent text-foreground hover:bg-accent' : 'text-foreground hover:bg-accent',
       )}
       style={{ paddingLeft: `${28 + node.depth * 18}px` }}
       onClick={onSelect}

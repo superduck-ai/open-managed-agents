@@ -1,18 +1,18 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, type ReactNode } from "react";
-import { fetchBootstrap, logout, type BootstrapResponse } from "./api";
-import { AuthContext, type AuthContextValue, type AuthStatus } from "./context";
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, type ReactNode } from 'react';
+import { fetchBootstrap, logout, type BootstrapResponse } from './api';
+import { AuthContext, type AuthContextValue, type AuthStatus } from './context';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const bootstrapQuery = useQuery({
-    queryKey: ["auth", "bootstrap"],
+    queryKey: ['auth', 'bootstrap'],
     queryFn: fetchBootstrap,
     retry: false,
   });
 
   const account = bootstrapQuery.data?.account ?? null;
-  const status: AuthStatus = bootstrapQuery.isLoading ? "loading" : account ? "authenticated" : "anonymous";
+  const status: AuthStatus = bootstrapQuery.isLoading ? 'loading' : account ? 'authenticated' : 'anonymous';
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -25,7 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       logout: async () => {
         await logout();
-        queryClient.setQueryData<BootstrapResponse>(["auth", "bootstrap"], {
+        queryClient.setQueryData<BootstrapResponse>(['auth', 'bootstrap'], {
           account: null,
         });
       },

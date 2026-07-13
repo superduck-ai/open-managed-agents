@@ -1,4 +1,4 @@
-@import "tailwindcss";
-@import "./styles/foundation.css";
-@import "./styles/workbench.css";
-@import "./styles/utilities.css";
+@import 'tailwindcss';
+@import './styles/foundation.css';
+@import './styles/workbench.css';
+@import './styles/utilities.css';

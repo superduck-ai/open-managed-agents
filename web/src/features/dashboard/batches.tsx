@@ -1,10 +1,10 @@
-import { AlertCircle, Ban, Download, Receipt, RefreshCw, X } from "lucide-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { cn } from "@/shared/lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/alert";
-import { Badge } from "@/shared/ui/badge";
-import { Button } from "@/shared/ui/button";
+import { AlertCircle, Ban, Download, Receipt, RefreshCw, X } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { cn } from '@/shared/lib/utils';
+import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
+import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import {
   CopyIdCell,
   DataTableCell,
@@ -12,10 +12,10 @@ import {
   dataTableClassName,
   dataTableHeaderCellClassName,
   dataTableHeaderRowClassName,
-} from "@/shared/ui/data-table-interactions";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/shared/ui/table";
-import { useI18n } from "../../shared/i18n";
-import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from "./frame";
+} from '@/shared/ui/data-table-interactions';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { useI18n } from '../../shared/i18n';
+import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
   batchDetailHref,
   batchRequestProgressClass,
@@ -36,7 +36,7 @@ import {
   useDashboardWorkspaceScope,
   type ConsoleMessageBatch,
   type MessageBatchesPageCursor,
-} from "./model";
+} from './model';
 
 export function BatchesPage() {
   const { msg } = useI18n();
@@ -49,14 +49,14 @@ export function BatchesPage() {
   const previousWorkspaceIdRef = useRef(workspaceId);
   const workspaceMatchesSelection = previousWorkspaceIdRef.current === workspaceId;
   const cursor = workspaceMatchesSelection ? (pageCursors[pageIndex] ?? {}) : {};
-  const workspaceSelectedBatchId = workspaceMatchesSelection ? selectedBatchId : "";
+  const workspaceSelectedBatchId = workspaceMatchesSelection ? selectedBatchId : '';
   const batchesQuery = useQuery({
-    queryKey: ["messageBatches", workspaceId, cursor.afterId ?? "", cursor.beforeId ?? ""],
+    queryKey: ['messageBatches', workspaceId, cursor.afterId ?? '', cursor.beforeId ?? ''],
     queryFn: () => listMessageBatches(cursor, workspaceId),
     retry: false,
   });
   const selectedBatchQuery = useQuery({
-    queryKey: ["messageBatch", workspaceId, workspaceSelectedBatchId],
+    queryKey: ['messageBatch', workspaceId, workspaceSelectedBatchId],
     queryFn: () => retrieveMessageBatch(workspaceSelectedBatchId, workspaceId),
     enabled: Boolean(workspaceSelectedBatchId),
     retry: false,
@@ -71,8 +71,8 @@ export function BatchesPage() {
     const handlePopState = () => {
       setSelectedBatchId(currentBatchId());
     };
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   useEffect(() => {
@@ -84,9 +84,9 @@ export function BatchesPage() {
     setPageCursors([{}]);
     setBatchAction(null);
     if (currentBatchId()) {
-      window.history.replaceState(null, "", clearBatchDetailHref());
+      window.history.replaceState(null, '', clearBatchDetailHref());
     }
-    setSelectedBatchId("");
+    setSelectedBatchId('');
   }, [workspaceId]);
 
   const goNext = () => {
@@ -106,19 +106,19 @@ export function BatchesPage() {
   };
 
   const selectBatch = (batchId: string) => {
-    window.history.pushState(null, "", batchDetailHref(batchId));
+    window.history.pushState(null, '', batchDetailHref(batchId));
     setSelectedBatchId(batchId);
   };
 
   const clearSelectedBatch = () => {
-    window.history.pushState(null, "", clearBatchDetailHref());
-    setSelectedBatchId("");
+    window.history.pushState(null, '', clearBatchDetailHref());
+    setSelectedBatchId('');
   };
 
   const refreshBatches = async (batchId: string) => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["messageBatches", workspaceId] }),
-      queryClient.invalidateQueries({ queryKey: ["messageBatch", workspaceId, batchId] }),
+      queryClient.invalidateQueries({ queryKey: ['messageBatches', workspaceId] }),
+      queryClient.invalidateQueries({ queryKey: ['messageBatch', workspaceId, batchId] }),
     ]);
   };
 
@@ -148,8 +148,8 @@ export function BatchesPage() {
   };
 
   return (
-    <ConsolePageFrame title={msg("batches.title", "Batches")} icon={Receipt}>
-      <div className={workspaceSelectedBatchId ? "grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]" : ""}>
+    <ConsolePageFrame title={msg('batches.title', 'Batches')} icon={Receipt}>
+      <div className={workspaceSelectedBatchId ? 'grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]' : ''}>
         <BatchesTable
           batches={batches}
           workspaceName={workspaceName}
@@ -213,8 +213,8 @@ function BatchesTable({
   const { msg } = useI18n();
 
   return (
-    <section aria-label={msg("batches.listAria", "Batches list")} className="overflow-x-auto">
-      <Table className={cn("min-w-[760px]", dataTableClassName)}>
+    <section aria-label={msg('batches.listAria', 'Batches list')} className="overflow-x-auto">
+      <Table className={cn('min-w-[760px]', dataTableClassName)}>
         <colgroup>
           <col className="w-[28%]" />
           <col className="w-[16%]" />
@@ -223,28 +223,28 @@ function BatchesTable({
         </colgroup>
         <TableHeader>
           <TableRow className={dataTableHeaderRowClassName}>
-            <TableHead className={dataTableHeaderCellClassName}>{msg("common.id", "ID")}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg("common.status", "Status")}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.status', 'Status')}</TableHead>
             <TableHead className={dataTableHeaderCellClassName}>
-              {msg("analytics.table.requests", "Requests")}
+              {msg('analytics.table.requests', 'Requests')}
             </TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg("common.created", "Created")}</TableHead>
+            <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading ? (
-            <TableLoadingRow colSpan={4} label={msg("batches.loading", "Loading batches...")} />
+            <TableLoadingRow colSpan={4} label={msg('batches.loading', 'Loading batches...')} />
           ) : error ? (
             <TableErrorRow
               colSpan={4}
-              title={msg("batches.error", "Batches could not be loaded.")}
+              title={msg('batches.error', 'Batches could not be loaded.')}
               message={errorMessage(error)}
-              retryLabel={msg("common.retry", "Retry")}
+              retryLabel={msg('common.retry', 'Retry')}
               onRetry={onRetry}
             />
           ) : batches.length === 0 ? (
             <TableEmptyRow colSpan={4}>
-              {msg("batches.empty", "No batches have been created in the {workspaceName} workspace.", {
+              {msg('batches.empty', 'No batches have been created in the {workspaceName} workspace.', {
                 workspaceName,
               })}
             </TableEmptyRow>
@@ -263,7 +263,7 @@ function BatchesTable({
                   <DataTableCell edge="start">
                     <CopyIdCell
                       value={batch.id}
-                      ariaLabel={msg("batches.copyAria", "Copy {batchId}", { batchId: batch.id })}
+                      ariaLabel={msg('batches.copyAria', 'Copy {batchId}', { batchId: batch.id })}
                       stopPropagation
                     >
                       <Button
@@ -306,9 +306,9 @@ function BatchesTable({
       </Table>
 
       <CursorPagination
-        previousLabel={msg("pagination.previousPage", "Previous page")}
-        nextLabel={msg("pagination.nextPage", "Next page")}
-        updatingLabel={msg("common.updating", "Updating...")}
+        previousLabel={msg('pagination.previousPage', 'Previous page')}
+        nextLabel={msg('pagination.nextPage', 'Next page')}
+        updatingLabel={msg('common.updating', 'Updating...')}
         canPrevious={canPrevious}
         canNext={canNext}
         isUpdating={isFetching && !isLoading}
@@ -342,18 +342,18 @@ function BatchDetailPanel({
 }) {
   const { msg } = useI18n();
   const panelClassName =
-    "border-t border-border pt-5 xl:min-h-[calc(100vh-5rem)] xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0";
+    'border-t border-border pt-5 xl:min-h-[calc(100vh-5rem)] xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0';
 
   if (isLoading && !batch) {
     return (
       <section
         id="batch-detail-panel"
-        aria-label={msg("batches.details.aria", "Batch details")}
+        aria-label={msg('batches.details.aria', 'Batch details')}
         className={`${panelClassName} text-sm text-muted-foreground`}
       >
         <span className="inline-flex items-center gap-2">
           <RefreshCw className="size-3.5 animate-spin" aria-hidden />
-          {msg("batches.details.loading", "Loading batch...")}
+          {msg('batches.details.loading', 'Loading batch...')}
         </span>
       </section>
     );
@@ -363,22 +363,22 @@ function BatchDetailPanel({
     return (
       <section
         id="batch-detail-panel"
-        aria-label={msg("batches.details.aria", "Batch details")}
+        aria-label={msg('batches.details.aria', 'Batch details')}
         className={panelClassName}
       >
         <Alert variant="destructive" className="max-w-xl">
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <AlertTitle>{msg("batches.details.error", "Batch could not be loaded.")}</AlertTitle>
+          <AlertTitle>{msg('batches.details.error', 'Batch could not be loaded.')}</AlertTitle>
           <AlertDescription>
             <p>{errorMessage(error)}</p>
             <div className="mt-3 flex gap-2">
               <Button type="button" size="sm" variant="outline" onClick={onRetry}>
                 <RefreshCw className="size-3.5" aria-hidden />
-                {msg("common.retry", "Retry")}
+                {msg('common.retry', 'Retry')}
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={onClose}>
                 <X className="size-3.5" aria-hidden />
-                {msg("common.close", "Close")}
+                {msg('common.close', 'Close')}
               </Button>
             </div>
           </AlertDescription>
@@ -390,14 +390,14 @@ function BatchDetailPanel({
   return (
     <section
       id="batch-detail-panel"
-      aria-label={msg("batches.details.aria", "Batch details")}
+      aria-label={msg('batches.details.aria', 'Batch details')}
       className={panelClassName}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold leading-tight text-foreground">
-              {msg("batches.details.title", "Batch details")}
+              {msg('batches.details.title', 'Batch details')}
             </h2>
             <Badge variant="secondary" className={`rounded-md ${batchStatusClass(batch.processing_status)}`}>
               {formatBatchStatus(batch.processing_status, msg)}
@@ -406,7 +406,7 @@ function BatchDetailPanel({
           <CopyIdCell
             value={batch.id}
             displayValue={formatMessageBatchId(batchId)}
-            ariaLabel={msg("batches.copyAria", "Copy {batchId}", { batchId: formatMessageBatchId(batch.id) })}
+            ariaLabel={msg('batches.copyAria', 'Copy {batchId}', { batchId: formatMessageBatchId(batch.id) })}
             className="mt-2"
             textClassName="text-muted-foreground"
             alwaysVisible
@@ -416,7 +416,7 @@ function BatchDetailPanel({
           type="button"
           variant="ghost"
           size="icon"
-          aria-label={msg("batches.details.closeInspector", "Close inspector")}
+          aria-label={msg('batches.details.closeInspector', 'Close inspector')}
           className="shrink-0 text-muted-foreground"
           onClick={onClose}
         >
@@ -432,7 +432,7 @@ function BatchDetailPanel({
         <TableBody>
           <TableRow className="border-border hover:bg-transparent">
             <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground/70">
-              {msg("batches.details.totalRequests", "Total requests")}
+              {msg('batches.details.totalRequests', 'Total requests')}
             </TableCell>
             <TableCell className="px-0 py-3 text-right text-foreground">
               <span className="inline-flex items-center gap-2">
@@ -443,7 +443,7 @@ function BatchDetailPanel({
           </TableRow>
           <TableRow className="border-border hover:bg-transparent">
             <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground/70">
-              {msg("batches.details.createdAt", "Created at")}
+              {msg('batches.details.createdAt', 'Created at')}
             </TableCell>
             <TableCell className="px-0 py-3 text-right text-foreground">
               {formatBatchDateTime(batch.created_at)}
@@ -451,7 +451,7 @@ function BatchDetailPanel({
           </TableRow>
           <TableRow className="border-border hover:bg-transparent">
             <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground/70">
-              {msg("batches.details.endedAt", "Ended at")}
+              {msg('batches.details.endedAt', 'Ended at')}
             </TableCell>
             <TableCell className="px-0 py-3 text-right text-foreground">
               {formatBatchDateTime(batch.ended_at)}
@@ -468,7 +468,7 @@ function BatchDetailPanel({
           onClick={() => onDownloadResults(batch)}
         >
           <Download className="size-3.5" aria-hidden />
-          {msg("batches.actions.downloadResults", "Download Results")}
+          {msg('batches.actions.downloadResults', 'Download Results')}
         </Button>
         {canCancelBatch(batch) ? (
           <Button
@@ -478,7 +478,7 @@ function BatchDetailPanel({
             onClick={() => onCancelBatch(batch)}
           >
             <Ban className="size-3.5" aria-hidden />
-            {msg("batches.actions.cancelBatch", "Cancel batch")}
+            {msg('batches.actions.cancelBatch', 'Cancel batch')}
           </Button>
         ) : null}
       </div>

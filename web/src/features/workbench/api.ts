@@ -1,8 +1,8 @@
-import { anthropicBetaApi } from "../../shared/api/anthropic";
-import { consoleApi } from "../../shared/api/client";
-import { postJsonSseStream, type ServerSentEvent } from "../../shared/api/streaming";
+import { anthropicBetaApi } from '../../shared/api/anthropic';
+import { consoleApi } from '../../shared/api/client';
+import { postJsonSseStream, type ServerSentEvent } from '../../shared/api/streaming';
 
-export type WorkbenchRole = "human" | "assistant";
+export type WorkbenchRole = 'human' | 'assistant';
 
 export type WorkbenchContentBlock = {
   type: string;
@@ -16,8 +16,8 @@ export type WorkbenchMessage = {
 };
 
 export type WorkbenchThinking = {
-  type: "disabled" | "enabled" | "adaptive" | string;
-  effort?: "low" | "medium" | "high" | string;
+  type: 'disabled' | 'enabled' | 'adaptive' | string;
+  effort?: 'low' | 'medium' | 'high' | string;
   budget_tokens?: number;
   [key: string]: unknown;
 };
@@ -131,7 +131,7 @@ export type WorkbenchEvaluation = {
 };
 
 export function getWorkbenchModels(orgUuid: string) {
-  return consoleApi<WorkbenchModelsResponse>(orgPath(orgUuid, "/models"));
+  return consoleApi<WorkbenchModelsResponse>(orgPath(orgUuid, '/models'));
 }
 
 export function listWorkspacePrompts(orgUuid: string, workspaceId: string) {
@@ -141,7 +141,7 @@ export function listWorkspacePrompts(orgUuid: string, workspaceId: string) {
 }
 
 export function listWorkbenchPrompts(orgUuid: string) {
-  return consoleApi<WorkbenchPromptSummary[]>(orgPath(orgUuid, "/workbench/prompts"));
+  return consoleApi<WorkbenchPromptSummary[]>(orgPath(orgUuid, '/workbench/prompts'));
 }
 
 export function createWorkspacePrompt(
@@ -150,7 +150,7 @@ export function createWorkspacePrompt(
   input: { name?: string; latest_revision?: Partial<WorkbenchRevision> } = {},
 ) {
   return consoleApi<WorkbenchPromptDetail>(orgPath(orgUuid, `/workspaces/${encodeURIComponent(workspaceId)}/prompts`), {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify(input),
   });
 }
@@ -165,14 +165,14 @@ export function getWorkbenchPrompt(orgUuid: string, promptId: string) {
 
 export function updateWorkbenchPrompt(orgUuid: string, promptId: string, input: { name?: string }) {
   return consoleApi<WorkbenchPromptDetail>(orgPath(orgUuid, `/workbench/prompts/${encodeURIComponent(promptId)}`), {
-    method: "PUT",
+    method: 'PUT',
     body: JSON.stringify(input),
   });
 }
 
 export function deleteWorkbenchPrompt(orgUuid: string, promptId: string) {
   return consoleApi<Record<string, unknown>>(orgPath(orgUuid, `/workbench/prompts/${encodeURIComponent(promptId)}`), {
-    method: "DELETE",
+    method: 'DELETE',
   });
 }
 
@@ -180,14 +180,14 @@ export function shareWorkbenchPrompt(orgUuid: string, promptId: string) {
   return consoleApi<WorkbenchPromptDetail>(
     orgPath(orgUuid, `/workbench/prompts/${encodeURIComponent(promptId)}/sharing`),
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({}),
     },
   );
 }
 
 export function listWorkbenchRevisions(orgUuid: string, promptId: string, compact = false) {
-  const suffix = compact ? "?compact=true" : "";
+  const suffix = compact ? '?compact=true' : '';
   return consoleApi<WorkbenchRevision[]>(
     orgPath(orgUuid, `/workbench/prompts/${encodeURIComponent(promptId)}/revisions${suffix}`),
   );
@@ -203,7 +203,7 @@ export function createWorkbenchRevision(orgUuid: string, promptId: string, revis
   return consoleApi<WorkbenchRevision>(
     orgPath(orgUuid, `/workbench/prompts/${encodeURIComponent(promptId)}/revisions`),
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify(revision),
     },
   );
@@ -219,7 +219,7 @@ export function setWorkbenchKV(orgUuid: string, promptId: string, key: string, v
   return consoleApi<WorkbenchKVResponse>(
     orgPath(orgUuid, `/workbench/prompts/${encodeURIComponent(promptId)}/kv_store/set/${encodeURIComponent(key)}`),
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({ value, version }),
     },
   );
@@ -235,7 +235,7 @@ export function createWorkbenchEvaluation(orgUuid: string, revisionId: string, b
   return consoleApi<WorkbenchEvaluation>(
     orgPath(orgUuid, `/workbench/revisions/${encodeURIComponent(revisionId)}/evaluations/create`),
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify(body),
     },
   );
@@ -249,7 +249,7 @@ export function updateWorkbenchEvaluationVariables(
   return consoleApi<WorkbenchEvaluation>(
     orgPath(orgUuid, `/workbench/evaluations/${encodeURIComponent(evaluationId)}/update_variables`),
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({ variable_values: variableValues }),
     },
   );
@@ -259,7 +259,7 @@ export function updateWorkbenchEvaluationGoldenAnswer(orgUuid: string, evaluatio
   return consoleApi<WorkbenchEvaluation>(
     orgPath(orgUuid, `/workbench/evaluations/${encodeURIComponent(evaluationId)}/update_golden_answer`),
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({ golden_answer: goldenAnswer }),
     },
   );
@@ -269,7 +269,7 @@ export function saveWorkbenchEvaluationCompletion(orgUuid: string, evaluationId:
   return consoleApi<WorkbenchEvaluation>(
     orgPath(orgUuid, `/workbench/evaluations/${encodeURIComponent(evaluationId)}/save_completion`),
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({ completion_text: completionText }),
     },
   );
@@ -279,14 +279,14 @@ export function deleteWorkbenchEvaluation(orgUuid: string, evaluationId: string)
   return consoleApi<WorkbenchEvaluation>(
     orgPath(orgUuid, `/workbench/evaluations/${encodeURIComponent(evaluationId)}/delete`),
     {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({}),
     },
   );
 }
 
 export function getPrepaidCredits(orgUuid: string) {
-  return consoleApi<Record<string, unknown>>(orgPath(orgUuid, "/prepaid/credits"));
+  return consoleApi<Record<string, unknown>>(orgPath(orgUuid, '/prepaid/credits'));
 }
 
 export function streamWorkbenchCompletion(input: {
@@ -299,7 +299,7 @@ export function streamWorkbenchCompletion(input: {
   return postWorkbenchStream({
     orgUuid: input.orgUuid,
     workspaceId: input.workspaceId,
-    path: "/workbench/completions",
+    path: '/workbench/completions',
     body: input.body,
     signal: input.signal,
     onEvent: input.onEvent,
@@ -312,9 +312,9 @@ export function generateWorkbenchTitle(input: {
   body: { message_content: string; model: string };
   signal?: AbortSignal;
 }) {
-  return consoleApi<{ completion?: string }>(orgPath(input.orgUuid, "/workbench/generate_title"), {
-    method: "POST",
-    headers: input.workspaceId ? { "X-Workspace-ID": input.workspaceId } : undefined,
+  return consoleApi<{ completion?: string }>(orgPath(input.orgUuid, '/workbench/generate_title'), {
+    method: 'POST',
+    headers: input.workspaceId ? { 'X-Workspace-ID': input.workspaceId } : undefined,
     body: JSON.stringify(input.body),
     signal: input.signal,
   });
@@ -330,7 +330,7 @@ export function streamGenerateTestCase(input: {
   return postWorkbenchStream({
     orgUuid: input.orgUuid,
     workspaceId: input.workspaceId,
-    path: "/workbench/evaluations/generate_test_case",
+    path: '/workbench/evaluations/generate_test_case',
     body: input.body,
     signal: input.signal,
     onEvent: input.onEvent,
@@ -347,7 +347,7 @@ export function streamGenerateTestCases(input: {
   return postWorkbenchStream({
     orgUuid: input.orgUuid,
     workspaceId: input.workspaceId,
-    path: "/workbench/metaprompt/generate_test_cases",
+    path: '/workbench/metaprompt/generate_test_cases',
     body: input.body,
     signal: input.signal,
     onEvent: input.onEvent,
@@ -364,7 +364,7 @@ export function streamGeneratePrompt(input: {
   return postWorkbenchStream({
     orgUuid: input.orgUuid,
     workspaceId: input.workspaceId,
-    path: "/workbench/generate_prompt",
+    path: '/workbench/generate_prompt',
     body: input.body,
     signal: input.signal,
     onEvent: input.onEvent,
@@ -387,12 +387,12 @@ async function postWorkbenchStream({
   onEvent: (event: WorkbenchStreamEvent) => void;
 }) {
   const headers = new Headers({
-    Accept: "text/event-stream",
-    "Content-Type": "application/json",
-    "X-Organization-UUID": orgUuid,
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+    'X-Organization-UUID': orgUuid,
   });
   if (workspaceId) {
-    headers.set("X-Workspace-ID", workspaceId);
+    headers.set('X-Workspace-ID', workspaceId);
   }
   await postJsonSseStream<Record<string, unknown>>({
     url: orgPath(orgUuid, path),
@@ -408,16 +408,16 @@ async function workbenchStreamError(response: Response) {
   try {
     const payload = (await response.json()) as Record<string, unknown>;
     const error = payload.error;
-    if (error && typeof error === "object") {
+    if (error && typeof error === 'object') {
       const message = (error as Record<string, unknown>).message;
-      if (typeof message === "string") {
+      if (typeof message === 'string') {
         return new Error(message);
       }
     }
-    if (typeof error === "string") {
+    if (typeof error === 'string') {
       return new Error(error);
     }
-    if (typeof payload.message === "string") {
+    if (typeof payload.message === 'string') {
       return new Error(payload.message);
     }
   } catch {

@@ -1,4 +1,4 @@
-import { Check, Copy, EllipsisVertical } from "lucide-react";
+import { Check, Copy, EllipsisVertical } from 'lucide-react';
 import {
   createContext,
   useContext,
@@ -8,20 +8,20 @@ import {
   type ComponentProps,
   type MouseEvent,
   type ReactNode,
-} from "react";
+} from 'react';
 
-import { copyText } from "@/shared/lib/clipboard";
-import { cn } from "@/shared/lib/utils";
-import { Button } from "@/shared/ui/button";
-import { TableCell, TableRow } from "@/shared/ui/table";
+import { copyText } from '@/shared/lib/clipboard';
+import { cn } from '@/shared/lib/utils';
+import { Button } from '@/shared/ui/button';
+import { TableCell, TableRow } from '@/shared/ui/table';
 
-export const dataTableClassName = "table-fixed border-separate border-spacing-y-px text-left";
-export const dataTableHeaderRowClassName = "border-0 text-muted-foreground hover:bg-transparent";
-export const dataTableHeaderCellClassName = "h-10 px-3 text-muted-foreground";
+export const dataTableClassName = 'table-fixed border-separate border-spacing-y-px text-left';
+export const dataTableHeaderRowClassName = 'border-0 text-muted-foreground hover:bg-transparent';
+export const dataTableHeaderCellClassName = 'h-10 px-3 text-muted-foreground';
 
 const DataTableRowHoverContext = createContext(false);
 
-type DataTableRowProps = ComponentProps<"tr"> & {
+type DataTableRowProps = ComponentProps<'tr'> & {
   selected?: boolean;
   clickable?: boolean;
 };
@@ -39,11 +39,11 @@ export function DataTableRow({
   return (
     <DataTableRowHoverContext.Provider value={hovered}>
       <TableRow
-        data-state={selected ? "selected" : undefined}
-        data-hovered={hovered ? "true" : undefined}
+        data-state={selected ? 'selected' : undefined}
+        data-hovered={hovered ? 'true' : undefined}
         className={cn(
-          "oma-data-table-row border-0 bg-transparent text-foreground hover:bg-transparent data-[state=selected]:bg-transparent",
-          clickable && "cursor-pointer",
+          'oma-data-table-row border-0 bg-transparent text-foreground hover:bg-transparent data-[state=selected]:bg-transparent',
+          clickable && 'cursor-pointer',
           className,
         )}
         onMouseEnter={(event) => {
@@ -60,17 +60,17 @@ export function DataTableRow({
   );
 }
 
-type DataTableCellProps = ComponentProps<"td"> & {
-  edge?: "start" | "end";
+type DataTableCellProps = ComponentProps<'td'> & {
+  edge?: 'start' | 'end';
 };
 
 export function DataTableCell({ edge, className, ...props }: DataTableCellProps) {
   return (
     <TableCell
       className={cn(
-        "oma-data-table-cell h-10 px-3 align-middle transition-colors",
-        edge === "start" && "rounded-l-lg",
-        edge === "end" && "rounded-r-lg",
+        'oma-data-table-cell h-10 px-3 align-middle transition-colors',
+        edge === 'start' && 'rounded-l-lg',
+        edge === 'end' && 'rounded-r-lg',
         className,
       )}
       {...props}
@@ -128,8 +128,8 @@ export function CopyIdCell({
   };
 
   return (
-    <span className={cn("inline-flex min-w-0 max-w-full items-center gap-2", className)}>
-      <span className={cn("min-w-0 truncate font-mono text-xs font-medium text-foreground", textClassName)}>
+    <span className={cn('inline-flex min-w-0 max-w-full items-center gap-2', className)}>
+      <span className={cn('min-w-0 truncate font-mono text-xs font-medium text-foreground', textClassName)}>
         {children ?? displayValue ?? value}
       </span>
       <Button
@@ -138,11 +138,11 @@ export function CopyIdCell({
         size="icon-xs"
         aria-label={ariaLabel}
         data-copy-id-button
-        data-copied={copied ? "true" : undefined}
+        data-copied={copied ? 'true' : undefined}
         style={{ opacity: alwaysVisible || rowHovered || copied || keyboardFocused ? 1 : 0 }}
-        className={cn("oma-copy-id-button shrink-0 text-muted-foreground/70 hover:text-foreground", buttonClassName)}
+        className={cn('oma-copy-id-button shrink-0 text-muted-foreground/70 hover:text-foreground', buttonClassName)}
         onFocus={(event) => {
-          setKeyboardFocused(event.currentTarget.matches(":focus-visible"));
+          setKeyboardFocused(event.currentTarget.matches(':focus-visible'));
         }}
         onBlur={() => setKeyboardFocused(false)}
         onClick={handleCopy}
@@ -159,7 +159,7 @@ export function RowIconButton({
   className,
   iconClassName,
   ...props
-}: Omit<ComponentProps<typeof Button>, "aria-label" | "children"> & {
+}: Omit<ComponentProps<typeof Button>, 'aria-label' | 'children'> & {
   label: string;
   icon: ReactNode;
   iconClassName?: string;
@@ -171,12 +171,12 @@ export function RowIconButton({
       size="icon-sm"
       aria-label={label}
       className={cn(
-        "text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground",
+        'text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground',
         className,
       )}
       {...props}
     >
-      <span className={cn("[&>svg]:size-4", iconClassName)}>{icon}</span>
+      <span className={cn('[&>svg]:size-4', iconClassName)}>{icon}</span>
     </Button>
   );
 }
@@ -185,6 +185,6 @@ export function MoreActionsButton({
   label,
   className,
   ...props
-}: Omit<ComponentProps<typeof Button>, "aria-label" | "children"> & { label: string }) {
+}: Omit<ComponentProps<typeof Button>, 'aria-label' | 'children'> & { label: string }) {
   return <RowIconButton label={label} icon={<EllipsisVertical aria-hidden />} className={className} {...props} />;
 }

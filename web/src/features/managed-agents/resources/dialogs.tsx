@@ -1,7 +1,7 @@
-import { useI18n } from "../../../shared/i18n";
-import { Button } from "../../../shared/ui/button";
-import { Card, CardContent } from "../../../shared/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../../shared/ui/collapsible";
+import { useI18n } from '../../../shared/i18n';
+import { Button } from '../../../shared/ui/button';
+import { Card, CardContent } from '../../../shared/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import {
   Dialog,
   DialogClose,
@@ -10,11 +10,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "../../../shared/ui/dialog";
-import { ChevronDown, X } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
-import { compactAgentId } from "../agents/AgentsResourcePage";
-import { listAgents, listManagedEntities, localTimezone } from "../api";
+} from '../../../shared/ui/dialog';
+import { ChevronDown, X } from 'lucide-react';
+import { type FormEvent, useEffect, useState } from 'react';
+import { compactAgentId } from '../agents/AgentsResourcePage';
+import { listAgents, listManagedEntities, localTimezone } from '../api';
 import {
   DeploymentAddSelectField,
   DeploymentSelectField,
@@ -25,8 +25,8 @@ import {
   ManagedTextArea,
   ManagedTextField,
   VaultMultiSelect,
-} from "../components/common";
-import { entityDialogSubtitle, submitLabel } from "../labels";
+} from '../components/common';
+import { entityDialogSubtitle, submitLabel } from '../labels';
 import {
   type AgentApiResponse,
   type AgentPageResponse,
@@ -42,9 +42,9 @@ import {
   type PageResponse,
   type VaultApiResponse,
   type VaultCredentialApiResponse,
-} from "../types";
-import { errorMessage } from "../utils";
-import { credentialFormValues, initialFormValues } from "./model";
+} from '../types';
+import { errorMessage } from '../utils';
+import { credentialFormValues, initialFormValues } from './model';
 
 export function CredentialDialog({
   credential,
@@ -60,7 +60,7 @@ export function CredentialDialog({
   const [error, setError] = useState<string | null>(null);
   const canSubmit =
     values.displayName.trim() &&
-    (values.authType === "static_bearer"
+    (values.authType === 'static_bearer'
       ? values.mcpServerUrl.trim() && values.token.trim()
       : values.secretName.trim() && values.secretValue.trim());
 
@@ -84,7 +84,7 @@ export function CredentialDialog({
       <DialogContent className="sm:max-w-[520px]">
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>{credential ? "Edit credential" : "Add credential"}</DialogTitle>
+            <DialogTitle>{credential ? 'Edit credential' : 'Add credential'}</DialogTitle>
             <DialogDescription>Store a credential for MCP servers or environment variables.</DialogDescription>
           </DialogHeader>
           <div className="mt-5 space-y-4">
@@ -99,17 +99,17 @@ export function CredentialDialog({
               value={values.authType}
               placeholder="Auth type"
               options={[
-                { id: "static_bearer", label: "Static bearer" },
-                { id: "environment_variable", label: "Environment variable" },
+                { id: 'static_bearer', label: 'Static bearer' },
+                { id: 'environment_variable', label: 'Environment variable' },
               ]}
               onChange={(authType) =>
                 setValues((current) => ({
                   ...current,
-                  authType: authType === "environment_variable" ? "environment_variable" : "static_bearer",
+                  authType: authType === 'environment_variable' ? 'environment_variable' : 'static_bearer',
                 }))
               }
             />
-            {values.authType === "static_bearer" ? (
+            {values.authType === 'static_bearer' ? (
               <>
                 <ManagedTextField
                   label="MCP server URL"
@@ -147,7 +147,7 @@ export function CredentialDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!canSubmit || submitting}>
-              {submitting ? "Saving..." : credential ? "Save changes" : "Add credential"}
+              {submitting ? 'Saving...' : credential ? 'Save changes' : 'Add credential'}
             </Button>
           </DialogFooter>
         </form>
@@ -166,8 +166,8 @@ export function MemoryDialog({
   onSubmit: (values: MemoryFormValues) => Promise<void>;
 }) {
   const [values, setValues] = useState<MemoryFormValues>(() => ({
-    path: memory?.path || "",
-    content: memory?.content || "",
+    path: memory?.path || '',
+    content: memory?.content || '',
   }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -191,7 +191,7 @@ export function MemoryDialog({
       <DialogContent className="sm:max-w-[560px]">
         <form onSubmit={submit}>
           <DialogHeader>
-            <DialogTitle>{memory ? "Edit memory" : "Add memory"}</DialogTitle>
+            <DialogTitle>{memory ? 'Edit memory' : 'Add memory'}</DialogTitle>
             <DialogDescription>Persist a path and content value in this memory store.</DialogDescription>
           </DialogHeader>
           <div className="mt-5 space-y-4">
@@ -215,7 +215,7 @@ export function MemoryDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!canSubmit || submitting}>
-              {submitting ? "Saving..." : memory ? "Save changes" : "Add memory"}
+              {submitting ? 'Saving...' : memory ? 'Save changes' : 'Add memory'}
             </Button>
           </DialogFooter>
         </form>
@@ -250,11 +250,11 @@ export function ManagedEntityDialog({
   const [environments, setEnvironments] = useState<EntityOption[]>([]);
   const [vaults, setVaults] = useState<EntityOption[]>([]);
   const [memoryStores, setMemoryStores] = useState<EntityOption[]>([]);
-  const [loadingOptions, setLoadingOptions] = useState(section === "sessions" || section === "deployments");
+  const [loadingOptions, setLoadingOptions] = useState(section === 'sessions' || section === 'deployments');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [resourceDisclosureOpen, setResourceDisclosureOpen] = useState(false);
-  const needsReferences = section === "sessions" || section === "deployments";
+  const needsReferences = section === 'sessions' || section === 'deployments';
 
   useEffect(() => {
     if (!needsReferences) {
@@ -272,10 +272,10 @@ export function ManagedEntityDialog({
       try {
         const [agentPage, environmentPage, vaultPage, memoryStorePage] = await Promise.all([
           lockedAgent ? Promise.resolve({ data: [], next_page: null } as AgentPageResponse) : listAgents(workspaceId),
-          listManagedEntities("environments", workspaceId),
-          listManagedEntities("credential-vaults", workspaceId),
-          section === "deployments"
-            ? listManagedEntities("memory-stores", workspaceId)
+          listManagedEntities('environments', workspaceId),
+          listManagedEntities('credential-vaults', workspaceId),
+          section === 'deployments'
+            ? listManagedEntities('memory-stores', workspaceId)
             : Promise.resolve({ data: [], next_page: null } as PageResponse<ManagedEntityApiResponse>),
         ]);
         if (!active) {
@@ -315,8 +315,8 @@ export function ManagedEntityDialog({
         setMemoryStores(memoryStoreOptions);
         setValues((current) => ({
           ...current,
-          agentId: lockedAgent?.id || current.agentId || (section === "sessions" ? agentOptions[0]?.id || "" : ""),
-          environmentId: current.environmentId || (section === "sessions" ? environmentOptions[0]?.id || "" : ""),
+          agentId: lockedAgent?.id || current.agentId || (section === 'sessions' ? agentOptions[0]?.id || '' : ''),
+          environmentId: current.environmentId || (section === 'sessions' ? environmentOptions[0]?.id || '' : ''),
         }));
         setLoadingOptions(false);
       } catch (error) {
@@ -333,18 +333,18 @@ export function ManagedEntityDialog({
   }, [lockedAgent, needsReferences, section, workspaceId]);
 
   const canSubmit =
-    section === "deployments"
+    section === 'deployments'
       ? values.name.trim().length > 0 &&
         values.agentId.trim().length > 0 &&
         values.environmentId.trim().length > 0 &&
         values.initialMessage.trim().length > 0 &&
-        (values.triggerType === "manual" ||
-          (values.triggerType === "schedule" &&
+        (values.triggerType === 'manual' ||
+          (values.triggerType === 'schedule' &&
             values.cronExpression.trim().length > 0 &&
             values.timezone.trim().length > 0)) &&
         !submitting &&
         !loadingOptions
-      : section === "sessions"
+      : section === 'sessions'
         ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
           !submitting &&
           !loadingOptions
@@ -369,7 +369,7 @@ export function ManagedEntityDialog({
   };
   const dialogSubtitleText = entityDialogSubtitle(section, msg);
 
-  if (section === "deployments") {
+  if (section === 'deployments') {
     return (
       <Dialog open onOpenChange={(open) => !open && onClose()}>
         <DialogContent
@@ -383,7 +383,7 @@ export function ManagedEntityDialog({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label={msg("common.close", "Close")}
+                  aria-label={msg('common.close', 'Close')}
                   className="absolute right-0 top-0 text-foreground hover:bg-accent"
                 />
               }
@@ -395,17 +395,17 @@ export function ManagedEntityDialog({
               <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">{title}</DialogTitle>
               <DialogDescription className="mt-1 text-sm leading-5 text-muted-foreground">
                 {msg(
-                  "managedAgents.deployments.dialogSubtitle",
-                  "Deploy an agent with a trigger, environment, and credentials.",
+                  'managedAgents.deployments.dialogSubtitle',
+                  'Deploy an agent with a trigger, environment, and credentials.',
                 )}
               </DialogDescription>
             </div>
 
             <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-[18px] overflow-y-auto pr-1">
               <DeploymentTextField
-                label={msg("common.name", "Name")}
+                label={msg('common.name', 'Name')}
                 value={values.name}
-                placeholder={msg("managedAgents.deployments.namePlaceholder", "Nightly inbox triage")}
+                placeholder={msg('managedAgents.deployments.namePlaceholder', 'Nightly inbox triage')}
                 onChange={(name) => setValues((current) => ({ ...current, name }))}
                 autoFocus
               />
@@ -413,90 +413,90 @@ export function ManagedEntityDialog({
                 <LockedAgentReferenceField agent={lockedAgent} variant="deployment" />
               ) : (
                 <DeploymentSelectField
-                  label={msg("managedAgents.common.agent", "Agent")}
+                  label={msg('managedAgents.common.agent', 'Agent')}
                   value={values.agentId}
                   placeholder={
                     loadingOptions
-                      ? msg("managedAgents.agents.loading", "Loading agents...")
-                      : msg("managedAgents.deployments.selectAgent", "Select an agent")
+                      ? msg('managedAgents.agents.loading', 'Loading agents...')
+                      : msg('managedAgents.deployments.selectAgent', 'Select an agent')
                   }
                   options={agents}
                   manageHref={`/workspaces/${workspaceId}/agents`}
-                  manageLabel={msg("managedAgents.agents.manage", "Manage agents")}
+                  manageLabel={msg('managedAgents.agents.manage', 'Manage agents')}
                   onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
                 />
               )}
               <DeploymentTextArea
-                label={msg("managedAgents.deployments.initialMessage", "Initial message")}
+                label={msg('managedAgents.deployments.initialMessage', 'Initial message')}
                 value={values.initialMessage}
                 placeholder={msg(
-                  "managedAgents.deployments.initialMessagePlaceholder",
+                  'managedAgents.deployments.initialMessagePlaceholder',
                   "Summarize today's support tickets and post to #digest",
                 )}
                 helpText={msg(
-                  "managedAgents.deployments.initialMessageHelp",
-                  "Sent to the agent at the start of every run.",
+                  'managedAgents.deployments.initialMessageHelp',
+                  'Sent to the agent at the start of every run.',
                 )}
                 onChange={(initialMessage) => setValues((current) => ({ ...current, initialMessage }))}
               />
               <DeploymentSelectField
-                label={msg("managedAgents.environments.kindTitle", "Environment")}
+                label={msg('managedAgents.environments.kindTitle', 'Environment')}
                 value={values.environmentId}
                 placeholder={
                   loadingOptions
-                    ? msg("managedAgents.environments.loading", "Loading environments...")
-                    : msg("managedAgents.quickstart.selectEnvironment", "Select an environment")
+                    ? msg('managedAgents.environments.loading', 'Loading environments...')
+                    : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
                 }
                 options={environments}
                 manageHref={`/workspaces/${workspaceId}/environments`}
-                manageLabel={msg("managedAgents.environments.manage", "Manage environments")}
+                manageLabel={msg('managedAgents.environments.manage', 'Manage environments')}
                 onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
               />
               <DeploymentAddSelectField
-                label={msg("managedAgents.credentialVaults.title", "Credential vaults")}
+                label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
                 optional
-                valueLabel={msg("managedAgents.credentialVaults.kind", "vault")}
+                valueLabel={msg('managedAgents.credentialVaults.kind', 'vault')}
                 selectedIds={values.vaultIds}
                 options={vaults}
                 manageHref={`/workspaces/${workspaceId}/vaults`}
-                manageLabel={msg("managedAgents.credentialVaults.manage", "Manage credential vaults")}
+                manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
                 onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
               />
               <DeploymentAddSelectField
-                label={msg("managedAgents.memoryStores.title", "Memory stores")}
+                label={msg('managedAgents.memoryStores.title', 'Memory stores')}
                 optional
-                valueLabel={msg("managedAgents.memoryStores.kind", "memory store")}
+                valueLabel={msg('managedAgents.memoryStores.kind', 'memory store')}
                 selectedIds={values.memoryStoreIds}
                 options={memoryStores}
                 manageHref={`/workspaces/${workspaceId}/memory-stores`}
-                manageLabel={msg("managedAgents.memoryStores.manage", "Manage memory stores")}
+                manageLabel={msg('managedAgents.memoryStores.manage', 'Manage memory stores')}
                 onChange={(memoryStoreIds) => setValues((current) => ({ ...current, memoryStoreIds }))}
               />
               <DeploymentSelectField
-                label={msg("managedAgents.common.trigger", "Trigger")}
+                label={msg('managedAgents.common.trigger', 'Trigger')}
                 value={values.triggerType}
-                placeholder={msg("managedAgents.deployments.selectTrigger", "Select a trigger")}
+                placeholder={msg('managedAgents.deployments.selectTrigger', 'Select a trigger')}
                 options={[
-                  { id: "manual", label: msg("managedAgents.deployments.trigger.manual", "Manual") },
-                  { id: "schedule", label: msg("managedAgents.deployments.trigger.scheduled", "Scheduled") },
+                  { id: 'manual', label: msg('managedAgents.deployments.trigger.manual', 'Manual') },
+                  { id: 'schedule', label: msg('managedAgents.deployments.trigger.scheduled', 'Scheduled') },
                 ]}
                 onChange={(triggerType) =>
                   setValues((current) => ({
                     ...current,
-                    triggerType: triggerType === "schedule" ? "schedule" : triggerType === "manual" ? "manual" : "",
+                    triggerType: triggerType === 'schedule' ? 'schedule' : triggerType === 'manual' ? 'manual' : '',
                   }))
                 }
               />
-              {values.triggerType === "schedule" ? (
+              {values.triggerType === 'schedule' ? (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <DeploymentTextField
-                    label={msg("managedAgents.deployments.cronExpression", "Cron expression")}
+                    label={msg('managedAgents.deployments.cronExpression', 'Cron expression')}
                     value={values.cronExpression}
                     placeholder="0 9 * * 1"
                     onChange={(cronExpression) => setValues((current) => ({ ...current, cronExpression }))}
                   />
                   <DeploymentTextField
-                    label={msg("managedAgents.deployments.timezone", "Timezone")}
+                    label={msg('managedAgents.deployments.timezone', 'Timezone')}
                     value={values.timezone}
                     placeholder={localTimezone()}
                     onChange={(timezone) => setValues((current) => ({ ...current, timezone }))}
@@ -509,7 +509,7 @@ export function ManagedEntityDialog({
 
             <div className="mt-5 flex justify-end">
               <Button type="submit" disabled={!canSubmit}>
-                {submitting ? msg("common.saving", "Saving...") : submitLabel(section, Boolean(entity), msg)}
+                {submitting ? msg('common.saving', 'Saving...') : submitLabel(section, Boolean(entity), msg)}
               </Button>
             </div>
           </form>
@@ -531,7 +531,7 @@ export function ManagedEntityDialog({
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label={msg("common.close", "Close")}
+                aria-label={msg('common.close', 'Close')}
                 className="absolute right-0 top-0 text-foreground hover:bg-accent"
               />
             }
@@ -551,40 +551,40 @@ export function ManagedEntityDialog({
           <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <ManagedTextField
               label={
-                section === "sessions" ? msg("managedAgents.sessions.fieldTitle", "Title") : msg("common.name", "Name")
+                section === 'sessions' ? msg('managedAgents.sessions.fieldTitle', 'Title') : msg('common.name', 'Name')
               }
               value={values.name}
               placeholder={
-                section === "sessions"
-                  ? msg("managedAgents.sessions.titlePlaceholder", "Optional - name this run")
-                  : msg("managedAgents.common.namePlaceholder", "Enter a name")
+                section === 'sessions'
+                  ? msg('managedAgents.sessions.titlePlaceholder', 'Optional - name this run')
+                  : msg('managedAgents.common.namePlaceholder', 'Enter a name')
               }
               onChange={(name) => setValues((current) => ({ ...current, name }))}
               autoFocus
             />
 
-            {section === "environments" ? (
+            {section === 'environments' ? (
               <>
                 <ManagedTextField
-                  label={msg("managedAgents.environments.hostingType", "Hosting type")}
-                  value={msg("managedAgents.environments.cloud", "Cloud")}
+                  label={msg('managedAgents.environments.hostingType', 'Hosting type')}
+                  value={msg('managedAgents.environments.cloud', 'Cloud')}
                   disabled
                   onChange={() => undefined}
                 />
                 <ManagedTextArea
-                  label={msg("common.description", "Description")}
+                  label={msg('common.description', 'Description')}
                   value={values.description}
-                  placeholder={msg("managedAgents.common.descriptionPlaceholder", "Add a description")}
+                  placeholder={msg('managedAgents.common.descriptionPlaceholder', 'Add a description')}
                   onChange={(description) => setValues((current) => ({ ...current, description }))}
                 />
               </>
             ) : null}
 
-            {section === "memory-stores" ? (
+            {section === 'memory-stores' ? (
               <ManagedTextArea
-                label={msg("common.description", "Description")}
+                label={msg('common.description', 'Description')}
                 value={values.description}
-                placeholder={msg("managedAgents.common.descriptionPlaceholder", "Add a description")}
+                placeholder={msg('managedAgents.common.descriptionPlaceholder', 'Add a description')}
                 onChange={(description) => setValues((current) => ({ ...current, description }))}
               />
             ) : null}
@@ -595,24 +595,24 @@ export function ManagedEntityDialog({
                   <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
                 ) : (
                   <ManagedSelectField
-                    label={msg("managedAgents.common.agent", "Agent")}
+                    label={msg('managedAgents.common.agent', 'Agent')}
                     value={values.agentId}
                     placeholder={
                       loadingOptions
-                        ? msg("managedAgents.agents.loading", "Loading agents...")
-                        : msg("managedAgents.deployments.selectAgent", "Select an agent")
+                        ? msg('managedAgents.agents.loading', 'Loading agents...')
+                        : msg('managedAgents.deployments.selectAgent', 'Select an agent')
                     }
                     options={agents}
                     onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
                   />
                 )}
                 <ManagedSelectField
-                  label={msg("managedAgents.environments.kindTitle", "Environment")}
+                  label={msg('managedAgents.environments.kindTitle', 'Environment')}
                   value={values.environmentId}
                   placeholder={
                     loadingOptions
-                      ? msg("managedAgents.environments.loading", "Loading environments...")
-                      : msg("managedAgents.quickstart.selectEnvironment", "Select an environment")
+                      ? msg('managedAgents.environments.loading', 'Loading environments...')
+                      : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
                   }
                   options={environments}
                   onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
@@ -629,17 +629,17 @@ export function ManagedEntityDialog({
                       className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
                     >
                       <ChevronDown
-                        className={`size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none ${resourceDisclosureOpen ? "" : "-rotate-90"}`}
+                        className={`size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none ${resourceDisclosureOpen ? '' : '-rotate-90'}`}
                         aria-hidden
                       />
-                      <span>{msg("managedAgents.common.resource", "Resource")}</span>
+                      <span>{msg('managedAgents.common.resource', 'Resource')}</span>
                     </CollapsibleTrigger>
                     <CollapsibleContent className="border-t border-border">
                       <CardContent className="px-3 pb-3 pt-2">
                         <p className="text-sm leading-5 text-muted-foreground">
                           {msg(
-                            "managedAgents.common.noResourceAttachments",
-                            "No resource attachments are configured. Add files, repositories, or memory stores after creation.",
+                            'managedAgents.common.noResourceAttachments',
+                            'No resource attachments are configured. Add files, repositories, or memory stores after creation.',
                           )}
                         </p>
                       </CardContent>
@@ -649,11 +649,11 @@ export function ManagedEntityDialog({
               </>
             ) : null}
 
-            {section === "credential-vaults" ? (
+            {section === 'credential-vaults' ? (
               <p className="text-sm leading-5 text-muted-foreground">
                 {msg(
-                  "managedAgents.credentialVaults.createHint",
-                  "Continue after creating the vault to add credentials for tools and MCP servers.",
+                  'managedAgents.credentialVaults.createHint',
+                  'Continue after creating the vault to add credentials for tools and MCP servers.',
                 )}
               </p>
             ) : null}
@@ -663,10 +663,10 @@ export function ManagedEntityDialog({
 
           <div className="mt-5 flex justify-end gap-2">
             <DialogClose render={<Button type="button" variant="outline" />}>
-              {msg("common.cancel", "Cancel")}
+              {msg('common.cancel', 'Cancel')}
             </DialogClose>
             <Button type="submit" disabled={!canSubmit}>
-              {submitting ? msg("common.saving", "Saving...") : submitLabel(section, Boolean(entity), msg)}
+              {submitting ? msg('common.saving', 'Saving...') : submitLabel(section, Boolean(entity), msg)}
             </Button>
           </div>
         </form>

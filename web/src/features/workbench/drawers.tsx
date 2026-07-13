@@ -12,27 +12,27 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
-} from "lucide-react";
-import { Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
-import clsx from "clsx";
-import { Button } from "@/shared/ui/button";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/shared/ui/command";
+} from 'lucide-react';
+import { Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import clsx from 'clsx';
+import { Button } from '@/shared/ui/button';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/shared/ui/command';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "@/shared/ui/dropdown-menu";
-import { Input } from "@/shared/ui/input";
-import { Label } from "@/shared/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
-import { RadioGroup, RadioGroupItem } from "@/shared/ui/radio-group";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
-import { Slider } from "@/shared/ui/slider";
-import { Textarea } from "@/shared/ui/textarea";
-import { hljs } from "./highlight";
-import { listWorkbenchRevisions, WorkbenchModel, WorkbenchRevision, WorkbenchTool } from "./api";
+} from '@/shared/ui/dropdown-menu';
+import { Input } from '@/shared/ui/input';
+import { Label } from '@/shared/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
+import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Slider } from '@/shared/ui/slider';
+import { Textarea } from '@/shared/ui/textarea';
+import { hljs } from './highlight';
+import { listWorkbenchRevisions, WorkbenchModel, WorkbenchRevision, WorkbenchTool } from './api';
 import {
   capitalize,
   clampThinkingBudgetTokens,
@@ -55,24 +55,24 @@ import {
   webSearchToolSummary,
   WORKBENCH_MAX_TOKENS,
   WorkbenchExample,
-} from "./model";
-import { IconButton, ToggleRow } from "./components";
+} from './model';
+import { IconButton, ToggleRow } from './components';
 
 const webSearchRestrictionOptions: Array<{ value: WebSearchRestriction; label: string; description: string }> = [
-  { value: "none", label: "None", description: "Search any domain" },
-  { value: "allowed_domains", label: "Allow domains", description: "Only search allowed domains" },
-  { value: "blocked_domains", label: "Blocked domains", description: "Do not search blocked domains" },
+  { value: 'none', label: 'None', description: 'Search any domain' },
+  { value: 'allowed_domains', label: 'Allow domains', description: 'Only search allowed domains' },
+  { value: 'blocked_domains', label: 'Blocked domains', description: 'Do not search blocked domains' },
 ];
 
 const exampleToolMenuItems = [
-  { value: "weather", label: "get_weather" },
-  { value: "stock_price", label: "get_stock_price" },
-  { value: "time", label: "get_time" },
+  { value: 'weather', label: 'get_weather' },
+  { value: 'stock_price', label: 'get_stock_price' },
+  { value: 'time', label: 'get_time' },
 ] as const;
 
-type ExampleToolKind = (typeof exampleToolMenuItems)[number]["value"];
+type ExampleToolKind = (typeof exampleToolMenuItems)[number]['value'];
 
-const thinkingTypeOptions = ["disabled", "enabled", "adaptive"] as const;
+const thinkingTypeOptions = ['disabled', 'enabled', 'adaptive'] as const;
 
 function firstSliderValue(value: number | readonly number[]) {
   return Array.isArray(value) ? (value[0] ?? 0) : value;
@@ -93,7 +93,7 @@ export function ModelDrawer({
 }) {
   const thinkingType = thinkingMode(draft.thinking);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [modelSearch, setModelSearch] = useState("");
+  const [modelSearch, setModelSearch] = useState('');
   const modelOptions = useMemo(() => {
     if (models.some((model) => model.model_name === draft.model_name)) {
       return models;
@@ -107,15 +107,15 @@ export function ModelDrawer({
     }
     return modelOptions.filter((model) => {
       const description = modelDescription(model);
-      return `${model.model_name} ${model.display_name ?? ""} ${description}`.toLowerCase().includes(query);
+      return `${model.model_name} ${model.display_name ?? ''} ${description}`.toLowerCase().includes(query);
     });
   }, [modelOptions, modelSearch]);
-  const currentEffort = String(draft.thinking?.effort ?? "high");
-  const currentTemperature = typeof draft.temperature === "number" ? draft.temperature : 1;
+  const currentEffort = String(draft.thinking?.effort ?? 'high');
+  const currentTemperature = typeof draft.temperature === 'number' ? draft.temperature : 1;
   const currentBudgetTokens = clampThinkingBudgetTokens(draft.thinking?.budget_tokens);
   const closeModelMenu = () => {
     setModelMenuOpen(false);
-    setModelSearch("");
+    setModelSearch('');
   };
 
   return (
@@ -126,7 +126,7 @@ export function ModelDrawer({
           onOpenChange={(nextOpen) => {
             setModelMenuOpen(nextOpen);
             if (!nextOpen) {
-              setModelSearch("");
+              setModelSearch('');
             }
           }}
         >
@@ -139,7 +139,7 @@ export function ModelDrawer({
                 aria-label={draft.model_name}
                 aria-expanded={modelMenuOpen}
                 aria-controls="workbench-model-listbox"
-                className={clsx("workbench-model-select workbench-model-combobox", modelMenuOpen && "is-open")}
+                className={clsx('workbench-model-select workbench-model-combobox', modelMenuOpen && 'is-open')}
               />
             }
           >
@@ -173,7 +173,7 @@ export function ModelDrawer({
                           role="option"
                           aria-selected={selected}
                           value={model.model_name}
-                          keywords={[model.display_name ?? "", model.name ?? "", description]}
+                          keywords={[model.display_name ?? '', model.name ?? '', description]}
                           className="h-auto gap-3 rounded-md px-2.5 py-2"
                           onSelect={() => {
                             setDraft((current) => ({ ...current, model_name: model.model_name }));
@@ -198,7 +198,7 @@ export function ModelDrawer({
         </Popover>
       </div>
 
-      {thinkingType === "disabled" ? (
+      {thinkingType === 'disabled' ? (
         <section className="workbench-model-section">
           <div className="workbench-model-row">
             <div className="workbench-model-label-with-help">
@@ -272,7 +272,7 @@ export function ModelDrawer({
         />
       </section>
 
-      <section className={clsx("workbench-model-section", thinkingType === "enabled" && "is-thinking-enabled")}>
+      <section className={clsx('workbench-model-section', thinkingType === 'enabled' && 'is-thinking-enabled')}>
         <div className="workbench-model-radio-row">
           <span className="workbench-model-label">Thinking</span>
           <RadioGroup
@@ -300,7 +300,7 @@ export function ModelDrawer({
             })}
           </RadioGroup>
         </div>
-        {thinkingType === "enabled" ? (
+        {thinkingType === 'enabled' ? (
           <div className="workbench-model-budget-block">
             <div className="workbench-model-row">
               <div className="workbench-model-label-with-help">
@@ -325,7 +325,7 @@ export function ModelDrawer({
                   const value = clampThinkingBudgetTokens(event.currentTarget.value);
                   setDraft((current) => ({
                     ...current,
-                    thinking: { ...current.thinking, type: "enabled", budget_tokens: value },
+                    thinking: { ...current.thinking, type: 'enabled', budget_tokens: value },
                   }));
                 }}
                 className="workbench-model-number"
@@ -341,7 +341,7 @@ export function ModelDrawer({
                 const value = clampThinkingBudgetTokens(firstSliderValue(nextValue));
                 setDraft((current) => ({
                   ...current,
-                  thinking: { ...current.thinking, type: "enabled", budget_tokens: value },
+                  thinking: { ...current.thinking, type: 'enabled', budget_tokens: value },
                 }));
               }}
             />
@@ -420,16 +420,16 @@ export function ModelDrawer({
 
 export function modelDescription(model: WorkbenchModel) {
   switch (model.model_name) {
-    case "claude-fable-5":
-      return "Next generation of intelligence for the hardest knowledge work and coding problems";
-    case "claude-opus-4-8":
-      return "Powerful, large model for complex challenges";
-    case "claude-sonnet-4-6":
-      return "Smart, efficient model for everyday use";
-    case "claude-haiku-4-5-20251001":
-      return "Fastest model for daily tasks";
+    case 'claude-fable-5':
+      return 'Next generation of intelligence for the hardest knowledge work and coding problems';
+    case 'claude-opus-4-8':
+      return 'Powerful, large model for complex challenges';
+    case 'claude-sonnet-4-6':
+      return 'Smart, efficient model for everyday use';
+    case 'claude-haiku-4-5-20251001':
+      return 'Fastest model for daily tasks';
     default:
-      return model.display_name ?? model.name ?? "Available model";
+      return model.display_name ?? model.name ?? 'Available model';
   }
 }
 
@@ -476,8 +476,8 @@ export function VariablesDrawer({
         <Braces className="mb-3 size-7 text-muted-foreground/70" aria-hidden />
         <h3>No variables</h3>
         <p>
-          Use variables to test the prompt across different scenarios. You can create a variable inline like this:{" "}
-          {"{{variable_name}}"}.
+          Use variables to test the prompt across different scenarios. You can create a variable inline like this:{' '}
+          {'{{variable_name}}'}.
         </p>
       </div>
     );
@@ -494,7 +494,7 @@ export function VariablesDrawer({
               autoFocus={index === 0}
               placeholder="Enter an example value…"
               aria-invalid={!values[name]?.trim()}
-              value={values[name] ?? ""}
+              value={values[name] ?? ''}
               onChange={(event) => {
                 const value = event.currentTarget.value;
                 setValues((current) => ({ ...current, [name]: value }));
@@ -503,7 +503,7 @@ export function VariablesDrawer({
             />
           </label>
         ))}
-        <section className={clsx("workbench-variable-logic", generationLogicOpen && "is-open")}>
+        <section className={clsx('workbench-variable-logic', generationLogicOpen && 'is-open')}>
           <Button
             type="button"
             variant="ghost"
@@ -591,17 +591,17 @@ export function ToolsDrawer({
   const toolsPanelRef = useRef<HTMLDivElement>(null);
   const customToolNameRef = useRef<HTMLInputElement>(null);
   const canAddWebSearch = true;
-  const hasWebSearchTool = tools.some((tool) => tool.type === "web_search_v0");
+  const hasWebSearchTool = tools.some((tool) => tool.type === 'web_search_v0');
   const applyExampleTool = (kind: ExampleToolKind) => {
     const examples: Record<typeof kind, { name: string; description: string; schema: string }> = {
       weather: {
-        name: "get_weather",
-        description: "Get current weather for a location.",
+        name: 'get_weather',
+        description: 'Get current weather for a location.',
         schema: defaultSchema,
       },
       stock_price: {
-        name: "get_stock_price",
-        description: "Get the latest stock price for a ticker symbol.",
+        name: 'get_stock_price',
+        description: 'Get the latest stock price for a ticker symbol.',
         schema: `{
   "type": "object",
   "properties": {
@@ -614,8 +614,8 @@ export function ToolsDrawer({
         }`,
       },
       time: {
-        name: "get_time",
-        description: "Get the current time for a timezone or location.",
+        name: 'get_time',
+        description: 'Get the current time for a timezone or location.',
         schema: `{
   "type": "object",
   "properties": {
@@ -638,7 +638,7 @@ export function ToolsDrawer({
       return;
     }
     scrollRoot.scrollTop = 0;
-    if (toolForm === "custom") {
+    if (toolForm === 'custom') {
       customToolNameRef.current?.focus();
     }
   }, [toolForm]);
@@ -652,7 +652,7 @@ export function ToolsDrawer({
   const startEditingWebSearchTool = (index: number, tool: WorkbenchTool) => {
     setWebSearchTool(webSearchToolFormFromTool(tool));
     setEditingWebSearchIndex(index);
-    setToolForm("web_search");
+    setToolForm('web_search');
   };
 
   const submitWebSearchTool = () => {
@@ -664,14 +664,14 @@ export function ToolsDrawer({
   };
 
   return (
-    <div ref={toolsPanelRef} className={clsx("workbench-tools-panel", toolForm && "is-form-open")}>
+    <div ref={toolsPanelRef} className={clsx('workbench-tools-panel', toolForm && 'is-form-open')}>
       <div className="workbench-tools-actions">
         <Button
           type="button"
           variant="outline"
           className="workbench-tool-choice"
           disabled={toolForm !== null}
-          onClick={() => setToolForm("custom")}
+          onClick={() => setToolForm('custom')}
         >
           <Plus className="size-4" aria-hidden />
           Custom
@@ -682,7 +682,7 @@ export function ToolsDrawer({
             variant="outline"
             className="workbench-tool-choice"
             disabled={toolForm !== null}
-            onClick={() => setToolForm("web_search")}
+            onClick={() => setToolForm('web_search')}
           >
             <Plus className="size-4" aria-hidden />
             Web search
@@ -694,7 +694,7 @@ export function ToolsDrawer({
         <div className="workbench-tools-empty">
           <h3>No tools defined</h3>
           <p>
-            Tools let you equip Claude with a variety of tasks.{" "}
+            Tools let you equip Claude with a variety of tasks.{' '}
             <a
               href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview"
               target="_blank"
@@ -706,7 +706,7 @@ export function ToolsDrawer({
         </div>
       ) : null}
 
-      {toolForm === "custom" ? (
+      {toolForm === 'custom' ? (
         <div className="workbench-tool-form-card">
           <h3>Custom Tool</h3>
           <label className="workbench-tool-field">
@@ -797,7 +797,7 @@ export function ToolsDrawer({
         </div>
       ) : null}
 
-      {toolForm === "web_search" ? (
+      {toolForm === 'web_search' ? (
         <div className="workbench-tool-form-card">
           <div>
             <h3>Web search</h3>
@@ -817,7 +817,7 @@ export function ToolsDrawer({
                 setWebSearchTool((current) => ({
                   ...current,
                   searchRestriction: nextValue,
-                  domains: nextValue === "none" ? "" : current.domains,
+                  domains: nextValue === 'none' ? '' : current.domains,
                 }));
               }}
             >
@@ -836,7 +836,7 @@ export function ToolsDrawer({
               </SelectContent>
             </Select>
           </div>
-          {webSearchTool.searchRestriction !== "none" ? (
+          {webSearchTool.searchRestriction !== 'none' ? (
             <Textarea
               value={webSearchTool.domains}
               onChange={(event) => {
@@ -876,7 +876,7 @@ export function ToolsDrawer({
                 Cancel
               </Button>
               <Button type="button" size="lg" disabled={!canAddWebSearch} onClick={submitWebSearchTool}>
-                {editingWebSearchIndex === null ? "Add tool" : "Save tool"}
+                {editingWebSearchIndex === null ? 'Add tool' : 'Save tool'}
               </Button>
             </div>
           </div>
@@ -884,7 +884,7 @@ export function ToolsDrawer({
       ) : null}
 
       {tools.map((tool, index) =>
-        tool.type === "web_search_v0" ? (
+        tool.type === 'web_search_v0' ? (
           <div key={tool.id ?? `${tool.name}-${index}`} className="workbench-tool-web-card">
             <div className="workbench-tool-web-header">
               <h3>Web search</h3>
@@ -947,7 +947,7 @@ export function ToolsDrawer({
 
 export function JsonSchemaEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const highlightedSchema = useMemo(
-    () => hljs.highlight(value, { language: "json", ignoreIllegals: true }).value,
+    () => hljs.highlight(value, { language: 'json', ignoreIllegals: true }).value,
     [value],
   );
   const highlightRef = useRef<HTMLPreElement>(null);
@@ -955,7 +955,7 @@ export function JsonSchemaEditor({ value, onChange }: { value: string; onChange:
   return (
     <div className="workbench-tool-schema">
       <pre ref={highlightRef} className="workbench-tool-schema-highlight subtle-scrollbar" aria-hidden>
-        <code className="language-json hljs" dangerouslySetInnerHTML={{ __html: highlightedSchema || " " }} />
+        <code className="language-json hljs" dangerouslySetInnerHTML={{ __html: highlightedSchema || ' ' }} />
       </pre>
       <Textarea
         aria-label="Input Schema"
@@ -1031,7 +1031,7 @@ export function ExamplesDrawer({
         <div className="workbench-examples-empty">
           <h3>No examples defined</h3>
           <p>
-            Examples help Claude understand the task better.{" "}
+            Examples help Claude understand the task better.{' '}
             <a
               href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/multishot-prompting"
               target="_blank"
@@ -1059,7 +1059,7 @@ export function ExamplesDrawer({
         {formOpen ? (
           <div className="workbench-example-form">
             <div className="workbench-example-form-header">
-              <h3>{isEditing ? "Edit example" : "Add example"}</h3>
+              <h3>{isEditing ? 'Edit example' : 'Add example'}</h3>
               <Button type="button" variant="outline" size="lg" disabled={isGenerating} onClick={onGenerate}>
                 {isGenerating ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -1076,7 +1076,7 @@ export function ExamplesDrawer({
                 <Textarea
                   aria-label={`{{${name}}}`}
                   placeholder="Enter an example value..."
-                  value={values[name] ?? ""}
+                  value={values[name] ?? ''}
                   onChange={(event) => {
                     const value = event.currentTarget.value;
                     setValues((current) => ({ ...current, [name]: value }));
@@ -1120,7 +1120,7 @@ export function ExamplesDrawer({
                 Cancel
               </Button>
               <Button type="button" disabled={!canAdd} onClick={onAdd}>
-                {isEditing ? "Save changes" : "Add Example"}
+                {isEditing ? 'Save changes' : 'Add Example'}
               </Button>
             </div>
           </div>
@@ -1134,9 +1134,9 @@ export function ExamplesDrawer({
                       <span
                         key={name}
                         className="workbench-example-value-pill"
-                        title={`${name}: ${example.values[name] || ""}`}
+                        title={`${name}: ${example.values[name] || ''}`}
                       >
-                        {name}: {example.values[name] || ""}
+                        {name}: {example.values[name] || ''}
                       </span>
                     ))}
                   </div>
@@ -1246,7 +1246,7 @@ export function HistoryDrawer({
             <span className="workbench-history-row-meta">{formatHistoryTimestamp(currentDraft.created_at)}</span>
             <span className="workbench-history-row-preview">
               <Code2 className="size-3.5" aria-hidden />
-              {draftPreviewText.kind === "variables" ? (
+              {draftPreviewText.kind === 'variables' ? (
                 <span className="workbench-history-variables">
                   {draftPreviewText.values.map((value) => (
                     <span key={value}>{`{{${value.toUpperCase()}}}`}</span>
@@ -1258,7 +1258,7 @@ export function HistoryDrawer({
             </span>
           </Button>
           <p className="workbench-history-draft-note">
-            You are currently editing a draft version.{" "}
+            You are currently editing a draft version.{' '}
             <Button
               type="button"
               variant="link"
@@ -1266,9 +1266,9 @@ export function HistoryDrawer({
               disabled={!canSave || isSaving}
               onClick={() => void onSave()}
             >
-              {isSaving ? "Saving" : "Save"}
-            </Button>{" "}
-            or{" "}
+              {isSaving ? 'Saving' : 'Save'}
+            </Button>{' '}
+            or{' '}
             <Button
               type="button"
               variant="link"
@@ -1276,8 +1276,8 @@ export function HistoryDrawer({
               disabled={discardingDraft}
               onClick={() => void discardDraftFromHistory()}
             >
-              {discardingDraft ? "discarding" : "discard"}
-            </Button>{" "}
+              {discardingDraft ? 'discarding' : 'discard'}
+            </Button>{' '}
             your changes before viewing or renaming a previous version.
           </p>
         </>
@@ -1285,7 +1285,7 @@ export function HistoryDrawer({
       {revisions.length ? (
         <>
           <h3 className="workbench-history-day">
-            {hasUnsavedChanges ? "Previously" : historyDayLabel(revisions[0]?.created_at)}
+            {hasUnsavedChanges ? 'Previously' : historyDayLabel(revisions[0]?.created_at)}
           </h3>
           <div className="workbench-history-list subtle-scrollbar">
             {revisions.map((revision, index) => {
@@ -1298,9 +1298,9 @@ export function HistoryDrawer({
                   key={revision.id}
                   type="button"
                   variant="ghost"
-                  className={clsx("workbench-history-row", current && "is-current")}
+                  className={clsx('workbench-history-row', current && 'is-current')}
                   aria-label={`Revision v${versionNumber}`}
-                  aria-current={current ? "true" : undefined}
+                  aria-current={current ? 'true' : undefined}
                   disabled={!!restoringRevisionId && !restoring}
                   onClick={() => void restoreRevisionFromHistory(revision)}
                 >
@@ -1315,7 +1315,7 @@ export function HistoryDrawer({
                     ) : (
                       <Code2 className="size-3.5" aria-hidden />
                     )}
-                    {previewText.kind === "variables" ? (
+                    {previewText.kind === 'variables' ? (
                       <span className="workbench-history-variables">
                         {previewText.values.map((value) => (
                           <span key={value}>{`{{${value.toUpperCase()}}}`}</span>
@@ -1332,7 +1332,7 @@ export function HistoryDrawer({
         </>
       ) : (
         <div className="workbench-history-empty">
-          {hasUnsavedChanges ? "No previous versions" : "No saved versions"}
+          {hasUnsavedChanges ? 'No previous versions' : 'No saved versions'}
         </div>
       )}
     </div>

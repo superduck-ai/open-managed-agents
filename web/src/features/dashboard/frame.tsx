@@ -1,16 +1,16 @@
-import { AlertCircle, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
-import type { ReactNode } from "react";
-import { cn } from "@/shared/lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/alert";
-import { Badge } from "@/shared/ui/badge";
-import { Button, ButtonLink } from "@/shared/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
-import { Field, FieldLabel } from "@/shared/ui/field";
-import { Pagination, PaginationContent, PaginationItem } from "@/shared/ui/pagination";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/shared/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
-import type { IconComponent } from "./model";
+import { AlertCircle, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { cn } from '@/shared/lib/utils';
+import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
+import { Badge } from '@/shared/ui/badge';
+import { Button, ButtonLink } from '@/shared/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/shared/ui/empty';
+import { Field, FieldLabel } from '@/shared/ui/field';
+import { Pagination, PaginationContent, PaginationItem } from '@/shared/ui/pagination';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import type { IconComponent } from './model';
 
 export function ConsolePageFrame({
   title,
@@ -64,12 +64,12 @@ export function PrimaryAction({ href, icon: Icon, label }: { href: string; icon:
 }
 
 export function SecondaryAction({ href, icon: Icon, label }: { href: string; icon: IconComponent; label: string }) {
-  const external = href.startsWith("http");
+  const external = href.startsWith('http');
   return (
     <ButtonLink
       href={href}
-      target={external ? "_blank" : undefined}
-      rel={external ? "noreferrer" : undefined}
+      target={external ? '_blank' : undefined}
+      rel={external ? 'noreferrer' : undefined}
       variant="outline"
       size="lg"
     >
@@ -238,7 +238,7 @@ export function TableEmptyRow({ colSpan, children }: { colSpan: number; children
 
 export function DataTableCard({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <Card className={cn("overflow-hidden py-0", className)}>
+    <Card className={cn('overflow-hidden py-0', className)}>
       <CardContent className="p-0">{children}</CardContent>
     </Card>
   );
@@ -259,7 +259,7 @@ export function DataTable({ columns, rows }: { columns: string[]; rows: string[]
         </TableHeader>
         <TableBody>
           {rows.map((row) => (
-            <TableRow key={row.join("|")} className="border-b border-border text-foreground last:border-0">
+            <TableRow key={row.join('|')} className="border-b border-border text-foreground last:border-0">
               {row.map((cell, index) => (
                 <TableCell key={`${cell}-${index}`} className="px-5 py-4 align-top">
                   {cell}
@@ -303,12 +303,12 @@ export function PanelCard({
   contentClassName?: string;
 }) {
   return (
-    <Card className={cn("gap-0 rounded-lg p-4", className)}>
-      <CardHeader className={cn("mb-4 flex flex-row items-center justify-between gap-3 p-0", headerClassName)}>
-        <CardTitle className={cn("text-sm font-semibold text-foreground", titleClassName)}>{title}</CardTitle>
+    <Card className={cn('gap-0 rounded-lg p-4', className)}>
+      <CardHeader className={cn('mb-4 flex flex-row items-center justify-between gap-3 p-0', headerClassName)}>
+        <CardTitle className={cn('text-sm font-semibold text-foreground', titleClassName)}>{title}</CardTitle>
         {action}
       </CardHeader>
-      <CardContent className={cn("p-0", contentClassName)}>{children}</CardContent>
+      <CardContent className={cn('p-0', contentClassName)}>{children}</CardContent>
     </Card>
   );
 }

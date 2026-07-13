@@ -18,8 +18,8 @@ import {
   Shield,
   UsersRound,
   WalletCards,
-} from "lucide-react";
-import { Outlet, useLocation, useNavigate } from "@tanstack/react-router";
+} from 'lucide-react';
+import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import {
   useCallback,
   useEffect,
@@ -28,10 +28,10 @@ import {
   type AnchorHTMLAttributes,
   type MouseEvent,
   type ReactNode,
-} from "react";
-import clsx from "clsx";
-import { Badge } from "@/shared/ui/badge";
-import { Button } from "@/shared/ui/button";
+} from 'react';
+import clsx from 'clsx';
+import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import {
   Sidebar as AppSidebar,
   SidebarContent as AppSidebarContent,
@@ -51,7 +51,7 @@ import {
   SidebarProvider,
   SidebarRail,
   useSidebar,
-} from "@/shared/ui/sidebar";
+} from '@/shared/ui/sidebar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,20 +66,20 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "@/shared/ui/dropdown-menu";
-import { useAuth } from "../../shared/auth/context";
-import type { AuthAccount } from "../../shared/auth/api";
-import { useWorkspace } from "../../shared/workspaces/context";
-import type { Workspace } from "../../shared/workspaces/api";
-import { CreateWorkspaceDialog } from "../../shared/workspaces/CreateWorkspaceDialog";
+} from '@/shared/ui/dropdown-menu';
+import { useAuth } from '../../shared/auth/context';
+import type { AuthAccount } from '../../shared/auth/api';
+import { useWorkspace } from '../../shared/workspaces/context';
+import type { Workspace } from '../../shared/workspaces/api';
+import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
 import {
   buildCreateWorkspaceInput,
   workspaceApiKeysPath,
   workspaceIdFromPath,
   workspaceWebhooksPath,
-} from "../../shared/workspaces/presentation";
-import { useI18n, useLocale } from "../../shared/i18n";
-import { consoleNavigation, settingsNavigation, type NavLinkItem } from "./navigation";
+} from '../../shared/workspaces/presentation';
+import { useI18n, useLocale } from '../../shared/i18n';
+import { consoleNavigation, settingsNavigation, type NavLinkItem } from './navigation';
 
 type ConsoleShellProps = {
   account?: AuthAccount | null;
@@ -90,11 +90,11 @@ type ConsoleShellProps = {
 };
 
 type NavigateHandler = (href: string) => Promise<void> | void;
-type ShellLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
+type ShellLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & {
   href: string;
   onNavigate?: NavigateHandler;
 };
-const interactiveMotionClass = "transition-colors duration-200 ease-snappy-out motion-reduce:transition-none";
+const interactiveMotionClass = 'transition-colors duration-200 ease-snappy-out motion-reduce:transition-none';
 
 const ShellLink = forwardRef<HTMLAnchorElement, ShellLinkProps>(function ShellLink(
   { href, onNavigate, onClick, target, children, ...props },
@@ -140,7 +140,7 @@ export function ConsoleLayout() {
 
   const handleLogout = async () => {
     await logout();
-    await navigate({ to: "/login", search: { returnTo: "/" } });
+    await navigate({ to: '/login', search: { returnTo: '/' } });
   };
 
   return (
@@ -150,7 +150,7 @@ export function ConsoleLayout() {
   );
 }
 
-export function ConsoleShell({ account, currentPath = "/", children, onLogout, onNavigate }: ConsoleShellProps) {
+export function ConsoleShell({ account, currentPath = '/', children, onLogout, onNavigate }: ConsoleShellProps) {
   const isWide = isWideConsolePath(currentPath);
   const { msg } = useI18n();
 
@@ -159,13 +159,13 @@ export function ConsoleShell({ account, currentPath = "/", children, onLogout, o
       <ConsoleSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarInset className="min-h-screen text-foreground">
         <ShellMobileBar
-          title={msg("app.productName", "Open Managed Agents")}
-          toggleLabel={msg("common.expand", "Expand")}
-          activeToggleLabel={msg("common.collapse", "Collapse")}
+          title={msg('app.productName', 'Open Managed Agents')}
+          toggleLabel={msg('common.expand', 'Expand')}
+          activeToggleLabel={msg('common.collapse', 'Collapse')}
           href="/dashboard"
           onNavigate={onNavigate}
         />
-        <div className={clsx(isWide ? "px-6 py-6 lg:px-8" : "mx-auto max-w-[928px] px-6 py-12 lg:px-0")}>
+        <div className={clsx(isWide ? 'px-6 py-6 lg:px-8' : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0')}>
           {children}
         </div>
       </SidebarInset>
@@ -177,7 +177,7 @@ type SettingsShellProps = ConsoleShellProps;
 
 export function SettingsShell({
   account,
-  currentPath = "/settings/organization",
+  currentPath = '/settings/organization',
   children,
   onLogout,
   onNavigate,
@@ -189,9 +189,9 @@ export function SettingsShell({
       <SettingsSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarInset className="min-h-screen text-foreground">
         <ShellMobileBar
-          title={msg("account.organizationSettings", "Organization settings")}
-          toggleLabel={msg("common.expand", "Expand")}
-          activeToggleLabel={msg("common.collapse", "Collapse")}
+          title={msg('account.organizationSettings', 'Organization settings')}
+          toggleLabel={msg('common.expand', 'Expand')}
+          activeToggleLabel={msg('common.collapse', 'Collapse')}
           href="/settings/organization"
           onNavigate={onNavigate}
         />
@@ -201,16 +201,16 @@ export function SettingsShell({
   );
 }
 
-function ConsoleSidebar({ account, currentPath = "/", onLogout, onNavigate }: Omit<ConsoleShellProps, "children">) {
+function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
   const { activeWorkspaceId, selectWorkspace, workspaces } = useWorkspace();
   const { setOpen, state } = useSidebar();
-  const collapsed = state === "collapsed";
+  const collapsed = state === 'collapsed';
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     Build: true,
-    "Managed Agents": true,
+    'Managed Agents': true,
     Analytics: true,
-    "Claude Code": true,
+    'Claude Code': true,
     Manage: true,
   });
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
@@ -228,16 +228,16 @@ function ConsoleSidebar({ account, currentPath = "/", onLogout, onNavigate }: Om
     <AppSidebar
       collapsible="icon"
       className="border-r border-sidebar-border"
-      data-sidebar-state={collapsed ? "collapsed" : "expanded"}
+      data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
       <AppSidebarContent className="sidebar-scroll-area px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
-            <nav aria-label={msg("nav.consoleNavigation", "Console navigation")}>
+            <nav aria-label={msg('nav.consoleNavigation', 'Console navigation')}>
               <SidebarMenu>
                 {consoleNavigation.map((item) => {
-                  if (item.type === "link") {
+                  if (item.type === 'link') {
                     return (
                       <SidebarLink
                         key={item.href}
@@ -322,19 +322,19 @@ function ConsoleSidebar({ account, currentPath = "/", onLogout, onNavigate }: Om
 
 function SettingsSidebar({
   account,
-  currentPath = "/settings/organization",
+  currentPath = '/settings/organization',
   onLogout,
   onNavigate,
-}: Omit<ConsoleShellProps, "children">) {
+}: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
   const { state } = useSidebar();
-  const collapsed = state === "collapsed";
+  const collapsed = state === 'collapsed';
 
   return (
     <AppSidebar
       collapsible="icon"
       className="border-r border-sidebar-border"
-      data-sidebar-state={collapsed ? "collapsed" : "expanded"}
+      data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
       <AppSidebarContent className="sidebar-scroll-area px-2 py-2" data-sidebar-scroll-area="true">
@@ -344,12 +344,12 @@ function SettingsSidebar({
               <SidebarMenuItem>
                 <SidebarMenuButton
                   render={<ShellLink href="/dashboard" onNavigate={onNavigate} />}
-                  tooltip={msg("nav.backToApp", "Back to app")}
+                  tooltip={msg('nav.backToApp', 'Back to app')}
                   className={interactiveMotionClass}
-                  aria-label={collapsed ? msg("nav.backToApp", "Back to app") : undefined}
+                  aria-label={collapsed ? msg('nav.backToApp', 'Back to app') : undefined}
                 >
                   <ArrowLeft className="size-4" aria-hidden />
-                  {collapsed ? null : <span className="truncate">{msg("nav.backToApp", "Back to app")}</span>}
+                  {collapsed ? null : <span className="truncate">{msg('nav.backToApp', 'Back to app')}</span>}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -358,10 +358,10 @@ function SettingsSidebar({
         <SidebarGroup className="mt-2 p-0">
           <SidebarGroupLabel className="gap-2 px-2 text-sidebar-foreground">
             <Settings className="size-4" aria-hidden />
-            {msg("account.organizationSettings", "Organization settings")}
+            {msg('account.organizationSettings', 'Organization settings')}
           </SidebarGroupLabel>
           <SidebarGroupContent>
-            <nav aria-label={msg("nav.settingsNavigation", "Settings navigation")}>
+            <nav aria-label={msg('nav.settingsNavigation', 'Settings navigation')}>
               <SidebarMenu>
                 {settingsNavigation.map((item) => (
                   <SidebarMenuItem key={item.href}>
@@ -443,7 +443,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const { isMobile, state } = useSidebar();
-  const collapsed = state === "collapsed";
+  const collapsed = state === 'collapsed';
   const { workspaces, activeWorkspace, activeWorkspaceId, selectWorkspace, isLoading, createWorkspace } =
     useWorkspace();
 
@@ -467,11 +467,11 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
               <SidebarMenuButton
                 type="button"
                 size="lg"
-                tooltip={msg("workspace.switcher", "Switch workspace")}
+                tooltip={msg('workspace.switcher', 'Switch workspace')}
                 className={clsx(
-                  "text-sidebar-foreground data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-sidebar-accent-foreground",
+                  'text-sidebar-foreground data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-sidebar-accent-foreground',
                   interactiveMotionClass,
-                  collapsed ? "justify-center" : "justify-start",
+                  collapsed ? 'justify-center' : 'justify-start',
                 )}
                 aria-label={activeWorkspace.name}
               />
@@ -485,7 +485,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                 <span className="grid min-w-0 flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">{activeWorkspace.name}</span>
                   <span className="truncate text-xs text-sidebar-foreground/70">
-                    {msg("settings.workspaces.workspace", "Workspace")}
+                    {msg('settings.workspaces.workspace', 'Workspace')}
                   </span>
                 </span>
                 <ChevronsUpDown className="ml-auto size-4 shrink-0 text-sidebar-foreground/70" aria-hidden />
@@ -494,19 +494,19 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="start"
-            side={isMobile ? "bottom" : "right"}
+            side={isMobile ? 'bottom' : 'right'}
             sideOffset={4}
             className="w-(--anchor-width) min-w-56 max-w-[calc(100vw-2rem)] rounded-lg p-1"
           >
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-xs text-muted-foreground">
-                {msg("nav.workspaces", "Workspaces")}
+                {msg('nav.workspaces', 'Workspaces')}
               </DropdownMenuLabel>
               <div className="subtle-scrollbar max-h-[240px] overflow-y-auto pr-0.5">
                 {workspaces.map((workspace, index) => (
                   <DropdownMenuItem
                     key={workspace.id}
-                    aria-current={workspace.id === activeWorkspaceId ? "true" : undefined}
+                    aria-current={workspace.id === activeWorkspaceId ? 'true' : undefined}
                     className="gap-2 p-2"
                     onClick={() => handleSelect(workspace)}
                   >
@@ -533,13 +533,13 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                 <Plus className="size-4" aria-hidden />
               </span>
               <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
-                {msg("workspace.create.title", "Create workspace")}
+                {msg('workspace.create.title', 'Create workspace')}
               </span>
             </DropdownMenuItem>
 
             {isLoading ? (
               <div className="px-3 pt-2 text-xs text-muted-foreground">
-                {msg("workspace.loading", "Loading workspaces...")}
+                {msg('workspace.loading', 'Loading workspaces...')}
               </div>
             ) : null}
           </DropdownMenuContent>
@@ -605,12 +605,12 @@ function SidebarFooter({
         <SidebarMenuItem>
           <SidebarMenuButton
             render={<a href="https://docs.anthropic.com/" target="_blank" rel="noreferrer" />}
-            tooltip={msg("nav.documentation", "Documentation")}
+            tooltip={msg('nav.documentation', 'Documentation')}
             className={interactiveMotionClass}
-            aria-label={collapsed ? msg("nav.documentation", "Documentation") : undefined}
+            aria-label={collapsed ? msg('nav.documentation', 'Documentation') : undefined}
           >
             <BookOpen className="size-4" aria-hidden />
-            {collapsed ? null : <span className="truncate">{msg("nav.documentation", "Documentation")}</span>}
+            {collapsed ? null : <span className="truncate">{msg('nav.documentation', 'Documentation')}</span>}
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -620,34 +620,34 @@ function SidebarFooter({
 }
 
 function SettingsNavigationIcon({ href }: { href: string }) {
-  if (href === "/settings/appearance") {
+  if (href === '/settings/appearance') {
     return <Palette className="size-4" aria-hidden />;
   }
-  if (href === "/settings/organization") {
+  if (href === '/settings/organization') {
     return <Building2 className="size-4" aria-hidden />;
   }
-  if (href === "/settings/members") {
+  if (href === '/settings/members') {
     return <UsersRound className="size-4" aria-hidden />;
   }
-  if (href === "/settings/workspaces") {
+  if (href === '/settings/workspaces') {
     return <Box className="size-4" aria-hidden />;
   }
-  if (href === "/settings/billing") {
+  if (href === '/settings/billing') {
     return <WalletCards className="size-4" aria-hidden />;
   }
-  if (href === "/settings/limits") {
+  if (href === '/settings/limits') {
     return <Gauge className="size-4" aria-hidden />;
   }
-  if (href === "/settings/api-keys" || href === "/settings/admin-keys") {
+  if (href === '/settings/api-keys' || href === '/settings/admin-keys') {
     return <KeyRound className="size-4" aria-hidden />;
   }
-  if (href === "/settings/service-accounts") {
+  if (href === '/settings/service-accounts') {
     return <LockKeyhole className="size-4" aria-hidden />;
   }
   if (
-    href === "/settings/workload-identity" ||
-    href === "/settings/privacy-controls" ||
-    href === "/settings/identity-and-access"
+    href === '/settings/workload-identity' ||
+    href === '/settings/privacy-controls' ||
+    href === '/settings/identity-and-access'
   ) {
     return <Shield className="size-4" aria-hidden />;
   }
@@ -679,7 +679,7 @@ export function AccountMenu({
       await onNavigate(href);
       return;
     }
-    if (typeof window !== "undefined") {
+    if (typeof window !== 'undefined') {
       window.location.assign(href);
     }
   };
@@ -704,8 +704,8 @@ export function AccountMenu({
                 size="lg"
                 className={clsx(
                   interactiveMotionClass,
-                  "data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-sidebar-accent-foreground",
-                  collapsed ? "justify-center" : "",
+                  'data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-sidebar-accent-foreground',
+                  collapsed ? 'justify-center' : '',
                 )}
                 aria-label={collapsed ? identity.name : undefined}
               />
@@ -719,7 +719,7 @@ export function AccountMenu({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
                   <span className="block truncate text-xs text-sidebar-foreground/70">
-                    {msg("account.subtitle", "Admin · {workspaceName}", { workspaceName: activeWorkspace.name })}
+                    {msg('account.subtitle', 'Admin · {workspaceName}', { workspaceName: activeWorkspace.name })}
                   </span>
                 </span>
                 <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
@@ -729,7 +729,7 @@ export function AccountMenu({
 
           <DropdownMenuContent
             align="end"
-            side={isMobile ? "bottom" : "right"}
+            side={isMobile ? 'bottom' : 'right'}
             sideOffset={6}
             className="w-[288px] overflow-visible p-1"
           >
@@ -746,7 +746,7 @@ export function AccountMenu({
                 <Building2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{activeWorkspace.name}</span>
-                  <span className="block text-xs text-muted-foreground">{msg("account.apiPlan", "API plan")}</span>
+                  <span className="block text-xs text-muted-foreground">{msg('account.apiPlan', 'API plan')}</span>
                 </span>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
@@ -755,18 +755,18 @@ export function AccountMenu({
 
             <DropdownMenuItem
               className="h-8 gap-3 px-3"
-              onClick={() => void handleMenuNavigation("/settings/organization")}
+              onClick={() => void handleMenuNavigation('/settings/organization')}
             >
               <Settings className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 truncate">
-                {msg("account.organizationSettings", "Organization settings")}
+                {msg('account.organizationSettings', 'Organization settings')}
               </span>
             </DropdownMenuItem>
 
             <DropdownMenuSub>
               <DropdownMenuSubTrigger openOnHover className="h-8 gap-3 px-3">
                 <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="min-w-0 flex-1 truncate">{msg("language.label", "Language")}</span>
+                <span className="min-w-0 flex-1 truncate">{msg('language.label', 'Language')}</span>
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="min-w-[228px]">
                 <DropdownMenuRadioGroup value={locale}>
@@ -782,8 +782,8 @@ export function AccountMenu({
                     >
                       <span className="min-w-0 flex-1 truncate">
                         {msg(
-                          option === "zh-CN" ? "language.simplifiedChinese" : "language.english",
-                          option === "zh-CN" ? "Simplified Chinese" : "English",
+                          option === 'zh-CN' ? 'language.simplifiedChinese' : 'language.english',
+                          option === 'zh-CN' ? 'Simplified Chinese' : 'English',
                         )}
                       </span>
                     </DropdownMenuRadioItem>
@@ -802,7 +802,7 @@ export function AccountMenu({
             >
               <LogOut className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1 truncate">
-                {loggingOut ? msg("account.loggingOut", "Logging out...") : msg("account.logout", "Log out")}
+                {loggingOut ? msg('account.loggingOut', 'Logging out...') : msg('account.logout', 'Log out')}
               </span>
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -813,51 +813,51 @@ export function AccountMenu({
 }
 
 const managedAgentPathByHref: Record<string, string> = {
-  "/quickstart": "agent-quickstart",
-  "/agents": "agents",
-  "/sessions": "sessions",
-  "/deployments": "deployments",
-  "/environments": "environments",
-  "/credential-vaults": "vaults",
-  "/memory-stores": "memory-stores",
-  "/dreams": "dreams",
+  '/quickstart': 'agent-quickstart',
+  '/agents': 'agents',
+  '/sessions': 'sessions',
+  '/deployments': 'deployments',
+  '/environments': 'environments',
+  '/credential-vaults': 'vaults',
+  '/memory-stores': 'memory-stores',
+  '/dreams': 'dreams',
 };
 
 const workspaceBuildPathByHref: Record<string, string> = {
-  "/playground": "playground",
-  "/files": "files",
-  "/skills": "skills",
-  "/batches": "batches",
+  '/playground': 'playground',
+  '/files': 'files',
+  '/skills': 'skills',
+  '/batches': 'batches',
 };
 
 function navigationHref(href: string, workspaceId: string) {
-  if (href === "/api-keys") {
+  if (href === '/api-keys') {
     return workspaceApiKeysPath(workspaceId);
   }
-  if (href === "/webhooks") {
+  if (href === '/webhooks') {
     return workspaceWebhooksPath(workspaceId);
   }
 
   const buildPath = workspaceBuildPathByHref[href];
   if (buildPath) {
-    return `/workspaces/${encodeURIComponent(workspaceId || "default")}/${buildPath}`;
+    return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/${buildPath}`;
   }
 
   const managedPath = managedAgentPathByHref[href];
   if (managedPath) {
-    return `/workspaces/${encodeURIComponent(workspaceId || "default")}/${managedPath}`;
+    return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/${managedPath}`;
   }
 
   return href;
 }
 
 async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId: string, onNavigate?: NavigateHandler) {
-  const encodedWorkspaceId = encodeURIComponent(workspaceId || "default");
+  const encodedWorkspaceId = encodeURIComponent(workspaceId || 'default');
   let nextPath: string | undefined;
 
-  if (currentPath === "/api-keys") {
+  if (currentPath === '/api-keys') {
     nextPath = workspaceApiKeysPath(workspaceId);
-  } else if (currentPath === "/webhooks") {
+  } else if (currentPath === '/webhooks') {
     nextPath = workspaceWebhooksPath(workspaceId);
   } else {
     for (const [href, buildPath] of Object.entries(workspaceBuildPathByHref)) {
@@ -893,14 +893,14 @@ async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId:
     return;
   }
 
-  if (typeof window !== "undefined") {
+  if (typeof window !== 'undefined') {
     window.location.assign(nextPath);
   }
 }
 
 function getIdentity(account?: AuthAccount | null) {
-  const email = account?.email_address ?? "test@openmanagedagent.local";
-  const emailName = email.split("@")[0] || "test";
+  const email = account?.email_address ?? 'test@openmanagedagent.local';
+  const emailName = email.split('@')[0] || 'test';
   return {
     email,
     name: account?.display_name ?? account?.full_name ?? emailName,
@@ -908,29 +908,29 @@ function getIdentity(account?: AuthAccount | null) {
 }
 
 function isActivePath(currentPath: string, href: string) {
-  if (href === "/dashboard") {
-    return currentPath === "/" || currentPath === "/dashboard";
+  if (href === '/dashboard') {
+    return currentPath === '/' || currentPath === '/dashboard';
   }
-  if (href === "/api-keys") {
-    return currentPath === "/api-keys" || /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath);
+  if (href === '/api-keys') {
+    return currentPath === '/api-keys' || /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath);
   }
-  if (href === "/webhooks") {
-    return currentPath === "/webhooks" || /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath);
+  if (href === '/webhooks') {
+    return currentPath === '/webhooks' || /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath);
   }
-  if (href === "/usage") {
-    return currentPath === "/usage";
+  if (href === '/usage') {
+    return currentPath === '/usage';
   }
-  if (href === "/usage/cache") {
-    return currentPath === "/usage/cache" || currentPath === "/caching";
+  if (href === '/usage/cache') {
+    return currentPath === '/usage/cache' || currentPath === '/caching';
   }
-  if (href === "/usage/limits") {
-    return currentPath === "/usage/limits" || currentPath === "/rate-limits";
+  if (href === '/usage/limits') {
+    return currentPath === '/usage/limits' || currentPath === '/rate-limits';
   }
-  if (href === "/cost") {
-    return currentPath === "/cost" || /^\/workspaces\/[^/]+\/cost(\/|$)/.test(currentPath);
+  if (href === '/cost') {
+    return currentPath === '/cost' || /^\/workspaces\/[^/]+\/cost(\/|$)/.test(currentPath);
   }
-  if (href === "/logs") {
-    return currentPath === "/logs" || /^\/workspaces\/[^/]+\/logs(\/|$)/.test(currentPath);
+  if (href === '/logs') {
+    return currentPath === '/logs' || /^\/workspaces\/[^/]+\/logs(\/|$)/.test(currentPath);
   }
   const buildPath = workspaceBuildPathByHref[href];
   if (buildPath) {
@@ -953,9 +953,9 @@ function isActivePath(currentPath: string, href: string) {
 
 function isWideConsolePath(currentPath: string) {
   return (
-    currentPath === "/api-keys" ||
+    currentPath === '/api-keys' ||
     /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath) ||
-    currentPath === "/webhooks" ||
+    currentPath === '/webhooks' ||
     /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath) ||
     isBuildPath(currentPath) ||
     isAnalyticsPath(currentPath) ||
@@ -965,15 +965,15 @@ function isWideConsolePath(currentPath: string) {
 
 function isBuildPath(currentPath: string) {
   return (
-    ["/workbench", "/playground", "/files", "/skills", "/batches"].includes(currentPath) ||
-    currentPath.startsWith("/workbench/") ||
+    ['/workbench', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
+    currentPath.startsWith('/workbench/') ||
     /^\/workspaces\/[^/]+\/(?:playground|files|skills|batches)(\/|$)/.test(currentPath)
   );
 }
 
 function isAnalyticsPath(currentPath: string) {
   return (
-    ["/usage", "/usage/cache", "/usage/limits", "/caching", "/rate-limits", "/cost", "/logs"].includes(currentPath) ||
+    ['/usage', '/usage/cache', '/usage/limits', '/caching', '/rate-limits', '/cost', '/logs'].includes(currentPath) ||
     /^\/workspaces\/[^/]+\/(?:cost|logs)(\/|$)/.test(currentPath)
   );
 }
@@ -981,14 +981,14 @@ function isAnalyticsPath(currentPath: string) {
 function isManagedAgentsPath(currentPath: string) {
   return (
     [
-      "/quickstart",
-      "/agents",
-      "/sessions",
-      "/deployments",
-      "/environments",
-      "/credential-vaults",
-      "/memory-stores",
-      "/dreams",
+      '/quickstart',
+      '/agents',
+      '/sessions',
+      '/deployments',
+      '/environments',
+      '/credential-vaults',
+      '/memory-stores',
+      '/dreams',
     ].includes(currentPath) ||
     /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
       currentPath,

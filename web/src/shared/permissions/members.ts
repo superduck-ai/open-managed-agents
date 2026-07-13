@@ -1,11 +1,11 @@
-import type { AuthAccount } from "../auth/api";
+import type { AuthAccount } from '../auth/api';
 
 type AccountWithPermissions = AuthAccount & {
   permissions?: string[];
   account_permissions?: Array<string | { permission?: string; name?: string }>;
 };
 
-const memberManagementRoles = new Set(["admin", "owner", "primary_owner", "membership_admin"]);
+const memberManagementRoles = new Set(['admin', 'owner', 'primary_owner', 'membership_admin']);
 
 export function canManageMembers(account: AuthAccount | null | undefined) {
   if (!account) {
@@ -13,7 +13,7 @@ export function canManageMembers(account: AuthAccount | null | undefined) {
   }
 
   const permissions = permissionNames(account as AccountWithPermissions);
-  if (permissions.has("members:manage") || permissions.has("membership_admins:manage")) {
+  if (permissions.has('members:manage') || permissions.has('membership_admins:manage')) {
     return true;
   }
 
@@ -26,7 +26,7 @@ function permissionNames(account: AccountWithPermissions) {
     names.add(permission);
   }
   for (const permission of account.account_permissions ?? []) {
-    if (typeof permission === "string") {
+    if (typeof permission === 'string') {
       names.add(permission);
       continue;
     }
@@ -41,5 +41,5 @@ function permissionNames(account: AccountWithPermissions) {
 }
 
 function normalizeRole(role: string | undefined) {
-  return (role ?? "").trim().toLowerCase();
+  return (role ?? '').trim().toLowerCase();
 }

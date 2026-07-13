@@ -10,9 +10,9 @@ import {
   Sparkles,
   Trash2,
   Upload,
-} from "lucide-react";
-import { Editor, EditorContent, JSONContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
+} from 'lucide-react';
+import { Editor, EditorContent, JSONContent, useEditor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
 import {
   ChangeEvent,
   Dispatch,
@@ -23,9 +23,9 @@ import {
   useMemo,
   useRef,
   useState,
-} from "react";
-import clsx from "clsx";
-import { Button } from "@/shared/ui/button";
+} from 'react';
+import clsx from 'clsx';
+import { Button } from '@/shared/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,19 +34,19 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "@/shared/ui/dropdown-menu";
-import { Input } from "@/shared/ui/input";
-import { Label } from "@/shared/ui/label";
-import { WorkbenchMessage } from "./api";
+} from '@/shared/ui/dropdown-menu';
+import { Input } from '@/shared/ui/input';
+import { Label } from '@/shared/ui/label';
+import { WorkbenchMessage } from './api';
 import {
   messageAttachments,
   messageText,
   splitVariableText,
   WorkbenchAttachmentKind,
   WorkbenchPromptGeneratorWarning,
-} from "./model";
-import { Dialog } from "./dialogs";
-import { IconButton } from "./components";
+} from './model';
+import { Dialog } from './dialogs';
+import { IconButton } from './components';
 
 export const workbenchPlainTextStarterKit = StarterKit.configure({
   blockquote: false,
@@ -94,11 +94,11 @@ export function TiptapTextInput({
       editable: !isReadOnly,
       editorProps: {
         attributes: {
-          role: "textbox",
-          "aria-label": ariaLabel,
-          "aria-multiline": "true",
-          spellcheck: "false",
-          class: clsx(className, isReadOnly && "is-read-only"),
+          role: 'textbox',
+          'aria-label': ariaLabel,
+          'aria-multiline': 'true',
+          spellcheck: 'false',
+          class: clsx(className, isReadOnly && 'is-read-only'),
         },
       },
       onUpdate: ({ editor: updatedEditor }) => {
@@ -128,7 +128,7 @@ export function TiptapTextInput({
       return;
     }
     editor.setEditable(!isReadOnly);
-    (editor.view.dom as HTMLElement).classList.toggle("is-read-only", isReadOnly);
+    (editor.view.dom as HTMLElement).classList.toggle('is-read-only', isReadOnly);
   }, [editor, isReadOnly]);
 
   useEffect(() => {
@@ -147,8 +147,8 @@ export function TiptapTextInput({
     }
     const editorElement = editor.view.dom as HTMLElement;
     installTiptapTextValueShim(editorElement, editor);
-    editorElement.addEventListener("change", syncTextFromEditor);
-    return () => editorElement.removeEventListener("change", syncTextFromEditor);
+    editorElement.addEventListener('change', syncTextFromEditor);
+    return () => editorElement.removeEventListener('change', syncTextFromEditor);
   }, [editor, syncTextFromEditor]);
 
   return <EditorContent editor={editor} className="workbench-tiptap-shell" />;
@@ -233,7 +233,7 @@ export function MessageEditor({
   isUploading?: boolean;
   uploadError?: string | null;
 }) {
-  const label = message.role === "assistant" ? "Assistant" : "User";
+  const label = message.role === 'assistant' ? 'Assistant' : 'User';
   const removalLabel = messageRemovalLabel(messages, index, label);
   const imageUploadInputRef = useRef<HTMLInputElement | null>(null);
   const pdfUploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -242,13 +242,13 @@ export function MessageEditor({
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [urlDialogKind, setUrlDialogKind] = useState<WorkbenchAttachmentKind | null>(null);
-  const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [attachmentUrl, setAttachmentUrl] = useState('');
   const attachments = messageAttachments(message);
   const text = messageText(message);
   const variableParts = useMemo(() => splitVariableText(text), [text]);
-  const hasVariableTokens = variableParts.some((part) => part.type === "variable");
-  const isFirstUserMessage = message.role === "human" && index === 0;
-  const showPlaceholder = message.role === "human" && text.length === 0 && !hasVariableTokens;
+  const hasVariableTokens = variableParts.some((part) => part.type === 'variable');
+  const isFirstUserMessage = message.role === 'human' && index === 0;
+  const showPlaceholder = message.role === 'human' && text.length === 0 && !hasVariableTokens;
 
   const uploadFiles = (files: FileList | File[]) => {
     if (isReadOnly) {
@@ -263,7 +263,7 @@ export function MessageEditor({
   const handleUploadChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.currentTarget.files;
     const file = files?.[0];
-    event.currentTarget.value = "";
+    event.currentTarget.value = '';
     if (file && !isReadOnly) {
       const replacementBlockIndex = replacementBlockIndexRef.current;
       replacementBlockIndexRef.current = null;
@@ -280,7 +280,7 @@ export function MessageEditor({
     }
     replacementBlockIndexRef.current = replacementBlockIndex;
     setAttachmentMenuOpen(false);
-    if (kind === "image") {
+    if (kind === 'image') {
       imageUploadInputRef.current?.click();
     } else {
       pdfUploadInputRef.current?.click();
@@ -290,13 +290,13 @@ export function MessageEditor({
     if (isReadOnly) {
       return;
     }
-    setAttachmentUrl("");
+    setAttachmentUrl('');
     setUrlDialogKind(kind);
     setAttachmentMenuOpen(false);
   };
   const closeUrlDialog = () => {
     setUrlDialogKind(null);
-    setAttachmentUrl("");
+    setAttachmentUrl('');
   };
   const addUrlAttachment = () => {
     const url = attachmentUrl.trim();
@@ -306,9 +306,9 @@ export function MessageEditor({
     onAddUrl(index, urlDialogKind, url);
     closeUrlDialog();
   };
-  const hasDraggedFiles = (event: DragEvent<HTMLElement>) => Array.from(event.dataTransfer.types).includes("Files");
+  const hasDraggedFiles = (event: DragEvent<HTMLElement>) => Array.from(event.dataTransfer.types).includes('Files');
   const handleDragEnter = (event: DragEvent<HTMLElement>) => {
-    if (isReadOnly || message.role !== "human" || !hasDraggedFiles(event)) {
+    if (isReadOnly || message.role !== 'human' || !hasDraggedFiles(event)) {
       return;
     }
     event.preventDefault();
@@ -316,15 +316,15 @@ export function MessageEditor({
     setIsDragOver(true);
   };
   const handleDragOver = (event: DragEvent<HTMLElement>) => {
-    if (isReadOnly || message.role !== "human" || !hasDraggedFiles(event)) {
+    if (isReadOnly || message.role !== 'human' || !hasDraggedFiles(event)) {
       return;
     }
     event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
+    event.dataTransfer.dropEffect = 'copy';
     setIsDragOver(true);
   };
   const handleDragLeave = (event: DragEvent<HTMLElement>) => {
-    if (isReadOnly || message.role !== "human" || !hasDraggedFiles(event)) {
+    if (isReadOnly || message.role !== 'human' || !hasDraggedFiles(event)) {
       return;
     }
     event.preventDefault();
@@ -334,7 +334,7 @@ export function MessageEditor({
     }
   };
   const handleDrop = (event: DragEvent<HTMLElement>) => {
-    if (isReadOnly || message.role !== "human" || !event.dataTransfer.files.length) {
+    if (isReadOnly || message.role !== 'human' || !event.dataTransfer.files.length) {
       return;
     }
     event.preventDefault();
@@ -345,7 +345,7 @@ export function MessageEditor({
   return (
     <>
       <section
-        className={clsx("workbench-message-card", message.role === "human" && isDragOver && "is-drag-over")}
+        className={clsx('workbench-message-card', message.role === 'human' && isDragOver && 'is-drag-over')}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -354,7 +354,7 @@ export function MessageEditor({
         <div className="workbench-message-header">
           <h2 className="workbench-message-title">{label}</h2>
           <div className="flex items-center gap-1">
-            {message.role === "human" ? (
+            {message.role === 'human' ? (
               <>
                 <input
                   ref={imageUploadInputRef}
@@ -389,7 +389,7 @@ export function MessageEditor({
                           aria-label="Upload up to 100 files, 20MB per file."
                           title="Upload up to 100 files, 20MB per file."
                           aria-expanded={attachmentMenuOpen}
-                          className={clsx("workbench-attachment-trigger", attachmentMenuOpen && "is-open")}
+                          className={clsx('workbench-attachment-trigger', attachmentMenuOpen && 'is-open')}
                           disabled={isUploading || isReadOnly}
                         />
                       }
@@ -431,7 +431,7 @@ export function MessageEditor({
             ) : null}
           </div>
         </div>
-        {message.role === "human" ? (
+        {message.role === 'human' ? (
           <div className="workbench-message-drop-target" aria-hidden={!isDragOver}>
             <Paperclip className="size-4" aria-hidden />
             <span>Drop here to insert into user message</span>
@@ -440,18 +440,18 @@ export function MessageEditor({
         ) : null}
         <div
           className={clsx(
-            "workbench-message-input-wrap",
-            hasVariableTokens && "has-variable-layer",
-            showPlaceholder && "has-placeholder",
-            showPlaceholder && isFirstUserMessage && "has-generator-placeholder",
+            'workbench-message-input-wrap',
+            hasVariableTokens && 'has-variable-layer',
+            showPlaceholder && 'has-placeholder',
+            showPlaceholder && isFirstUserMessage && 'has-generator-placeholder',
           )}
         >
           {showPlaceholder ? (
             <MessageEditorPlaceholder
               placeholder={
                 isFirstUserMessage
-                  ? "or enter instructions or prompt for Claude…"
-                  : "Enter instructions or prompt for Claude…"
+                  ? 'or enter instructions or prompt for Claude…'
+                  : 'Enter instructions or prompt for Claude…'
               }
               showGeneratePrompt={isFirstUserMessage}
               warning={promptGeneratorWarning}
@@ -463,7 +463,7 @@ export function MessageEditor({
           {hasVariableTokens ? (
             <div className="workbench-message-variable-layer">
               {variableParts.map((part, partIndex) =>
-                part.type === "variable" ? (
+                part.type === 'variable' ? (
                   <span key={`${part.name}-${partIndex}`} className="workbench-message-variable-token">
                     <span className="workbench-message-variable-name" aria-hidden>
                       {part.name}
@@ -494,7 +494,7 @@ export function MessageEditor({
             {attachments.map((attachment) => (
               <div key={attachment.id} className="workbench-message-attachment">
                 <span className="workbench-message-attachment-thumb" aria-hidden>
-                  {attachment.kind === "image" ? <ImageIcon className="size-4" /> : <Paperclip className="size-4" />}
+                  {attachment.kind === 'image' ? <ImageIcon className="size-4" /> : <Paperclip className="size-4" />}
                 </span>
                 <span className="workbench-message-attachment-name">{attachment.label}</span>
                 <span className="workbench-message-attachment-actions">
@@ -514,7 +514,7 @@ export function MessageEditor({
                     aria-label={`Replace ${attachment.label}`}
                     disabled={isUploading || isReadOnly}
                     onClick={() =>
-                      openUploadPicker(attachment.kind === "image" ? "image" : "pdf", attachment.blockIndex)
+                      openUploadPicker(attachment.kind === 'image' ? 'image' : 'pdf', attachment.blockIndex)
                     }
                   >
                     <RefreshCw className="size-3.5" aria-hidden />
@@ -560,7 +560,7 @@ export function AttachmentTypeSubmenu({
   onUpload: (kind: WorkbenchAttachmentKind) => void;
   onAddUrl: (kind: WorkbenchAttachmentKind) => void;
 }) {
-  const TypeIcon = kind === "image" ? ImageIcon : FileText;
+  const TypeIcon = kind === 'image' ? ImageIcon : FileText;
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger className="min-h-9 gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium">
@@ -600,9 +600,9 @@ export function AttachmentUrlDialog({
   onSubmit: () => void;
   onClose: () => void;
 }) {
-  const isImage = kind === "image";
-  const title = isImage ? "Add an image via URL" : "Add a PDF via URL";
-  const placeholder = isImage ? "https://example.com/image.jpg" : "https://example.com/document.pdf";
+  const isImage = kind === 'image';
+  const title = isImage ? 'Add an image via URL' : 'Add a PDF via URL';
+  const placeholder = isImage ? 'https://example.com/image.jpg' : 'https://example.com/document.pdf';
   return (
     <Dialog title={title} onClose={onClose} size="attachmentUrl">
       <form
@@ -653,7 +653,7 @@ export function MessageEditorPlaceholder({
 }) {
   const disabled = isReadOnly || isGenerating || Boolean(warning);
   return (
-    <div className={clsx("workbench-message-placeholder", showGeneratePrompt && "has-generator")}>
+    <div className={clsx('workbench-message-placeholder', showGeneratePrompt && 'has-generator')}>
       {showGeneratePrompt ? (
         <span className="workbench-generate-prompt-tooltip" title={warning?.title}>
           <Button
@@ -687,7 +687,7 @@ export function MessageEditorPlaceholder({
 export function messageRemovalLabel(messages: WorkbenchMessage[], index: number, label: string) {
   const [startIndex, endIndex] = messageRemovalRange(messages, index);
   if (endIndex > startIndex) {
-    return "Delete both to maintain user & assistant alternation";
+    return 'Delete both to maintain user & assistant alternation';
   }
   return `Remove ${label.toLowerCase()} message`;
 }
@@ -697,34 +697,34 @@ export function messageRemovalRange(messages: WorkbenchMessage[], index: number)
   if (!message) {
     return [index, index];
   }
-  if (message.role === "assistant" && messages[index + 1]?.role === "human") {
+  if (message.role === 'assistant' && messages[index + 1]?.role === 'human') {
     return [index, index + 1];
   }
-  if (message.role === "human" && messages[index - 1]?.role === "assistant") {
+  if (message.role === 'human' && messages[index - 1]?.role === 'assistant') {
     return [index - 1, index];
   }
   return [index, index];
 }
 
 export function plainTextToTiptapDoc(text: string): JSONContent {
-  const lines = normalizeEditorText(text).split("\n");
+  const lines = normalizeEditorText(text).split('\n');
   return {
-    type: "doc",
+    type: 'doc',
     content: lines.map((line) => ({
-      type: "paragraph",
-      ...(line ? { content: [{ type: "text", text: line }] } : {}),
+      type: 'paragraph',
+      ...(line ? { content: [{ type: 'text', text: line }] } : {}),
     })),
   };
 }
 
 export function normalizeEditorText(text: unknown) {
-  return String(text ?? "")
-    .replace(/\r\n?/g, "\n")
-    .replace(/\u00a0/g, " ");
+  return String(text ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u00a0/g, ' ');
 }
 
 export function readTiptapEditorText(editor: Editor) {
-  return normalizeEditorText(editor.state.doc.textBetween(0, editor.state.doc.content.size, "\n", "\n"));
+  return normalizeEditorText(editor.state.doc.textBetween(0, editor.state.doc.content.size, '\n', '\n'));
 }
 
 export function setTiptapEditorText(editor: Editor, text: string, emitUpdate: boolean) {
@@ -732,15 +732,15 @@ export function setTiptapEditorText(editor: Editor, text: string, emitUpdate: bo
 }
 
 export function installTiptapTextValueShim(element: HTMLElement, editor: Editor) {
-  Object.defineProperty(element, "value", {
+  Object.defineProperty(element, 'value', {
     configurable: true,
     get: () => readTiptapEditorText(editor),
     set: (value) => {
       setTiptapEditorText(editor, normalizeEditorText(value), false);
     },
   });
-  Object.defineProperty(element, "placeholder", {
+  Object.defineProperty(element, 'placeholder', {
     configurable: true,
-    get: () => element.querySelector("[data-placeholder]")?.getAttribute("data-placeholder") ?? "",
+    get: () => element.querySelector('[data-placeholder]')?.getAttribute('data-placeholder') ?? '',
   });
 }

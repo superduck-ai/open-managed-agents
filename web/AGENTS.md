@@ -17,6 +17,7 @@
   - `bun run build`
   - `bun test`
   - `bun run lint:complexity`
+  - `bun run lint:duplicates`
   - `bun run lint:naming`
   - `bun run format`
   - `bun run format:check`
@@ -197,6 +198,11 @@
 - 修改生产 TypeScript/TSX 后运行 `bun run lint:complexity`。新文件和未列入历史预算的文件最多 500 个有效行，单函数最多 200 个有效行，并采用 modified cyclomatic complexity 上限 20；空行和纯注释不计入行数。
 - `eslint.complexity.config.js` 中的历史文件、函数长度和复杂度预算是只能下降的 ratchet，不是目标值；不得为了通过检查提高预算或扩大匹配范围。
 - 复杂函数优先拆成领域判断、数据归一化、事件处理和展示组件。保持 API 请求、状态流、路由语义、文案与样式不变，并用对应功能测试和 `bun run build` 验证机械拆分。
+
+## 重复代码预算
+
+- 修改生产 TypeScript/TSX 后运行 `bun run lint:duplicates`，或从仓库根目录运行 `just duplicates` 同时检查 Go 和前端。jscpd 以 strict token 模式检测至少 12 行且至少 70 token 的复制代码，前端生产代码重复率上限为 1.1%。
+- 测试、suite 和生成文件不计入生产重复率。不要通过扩大 ignore、提高阈值或机械改名绕过检查；只有共享业务语义与演进方向一致时才抽取共享实现。
 
 ## 本地开发
 

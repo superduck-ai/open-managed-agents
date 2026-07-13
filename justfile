@@ -36,6 +36,9 @@ lint:
 dead-code:
   ./scripts/go-dead-code.sh
 
+duplicates:
+  ./scripts/check-duplicates.sh
+
 complexity: go-file-lines go-complexity web-complexity
 
 go-file-lines:

@@ -1,4 +1,4 @@
-minimum_pre_commit_version: '4.6.0'
+minimum_pre_commit_version: "4.6.0"
 fail_fast: false
 exclude: ^web/src/features/managed-agents/quickstart/platformQuickstartOfficialRequest\.generated\.ts$
 
@@ -53,6 +53,14 @@ repos:
         entry: scripts/check-go-file-lines.sh
         language: script
         files: ^(?:.*\.go|scripts/(?:check-go-file-lines\.sh|go-file-line-budgets\.txt|tests/check-go-file-lines_test\.sh))$
+        pass_filenames: false
+        require_serial: true
+
+      - id: duplicate-code
+        name: Enforce Go and TypeScript duplicate-code budgets
+        entry: scripts/check-duplicates.sh
+        language: script
+        files: ^(?:.*\.go|web/src/.*\.tsx?|\.jscpd\.json|web/\.jscpd\.json|web/(?:package\.json|bun\.lock)|scripts/check-duplicates\.sh)$
         pass_filenames: false
         require_serial: true
 

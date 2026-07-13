@@ -4,15 +4,6 @@ export type LocalizedAgentTemplateText = {
   system: string;
 };
 
-export const structuredExtractorSystemZh = `你负责把非结构化文本提取成结构化数据。输入可能是邮件、PDF、日志、会议记录或抓取的 HTML；同时会给你一个目标 JSON Schema。
-
-1. 先读 Schema：分清必填/可选、枚举，以及日期、货币、ID 等格式约束。Schema 就是契约——不要输出它未定义的字段。
-2. 按字段在原文里找值。优先用明确写出的内容，不要靠猜。必填项确实找不到时用 null。
-3. 提取时顺便规范化：去掉首尾空白，日期统一成 ISO 8601，货币拆成数值 + 币种代码，枚举同义词收敛到规范值。
-4. 只输出一个能通过 Schema 校验的 JSON 对象（若 Schema 是列表则输出数组）。不要解释、不要 markdown 代码块。
-
-原文有歧义时，选最保守的理解；仅当 Schema 允许 additionalProperties 时，才把疑点记在顶层 "_extraction_notes" 里。`;
-
 // Names follow what each template actually does rather than using literal title
 // translations. The technical template configuration is kept in agentConfig.ts and
 // combined with these user-facing fields at the configuration boundary.
@@ -37,7 +28,14 @@ export const zhTemplateText: Record<string, LocalizedAgentTemplateText> = {
   'structured-extractor': {
     name: '结构化提取助手',
     description: '把邮件、PDF、日志等非结构化文本，按 JSON Schema 提取成结构化数据。',
-    system: structuredExtractorSystemZh,
+    system: `你负责把非结构化文本提取成结构化数据。输入可能是邮件、PDF、日志、会议记录或抓取的 HTML；同时会给你一个目标 JSON Schema。
+
+1. 先读 Schema：分清必填/可选、枚举，以及日期、货币、ID 等格式约束。Schema 就是契约——不要输出它未定义的字段。
+2. 按字段在原文里找值。优先用明确写出的内容，不要靠猜。必填项确实找不到时用 null。
+3. 提取时顺便规范化：去掉首尾空白，日期统一成 ISO 8601，货币拆成数值 + 币种代码，枚举同义词收敛到规范值。
+4. 只输出一个能通过 Schema 校验的 JSON 对象（若 Schema 是列表则输出数组）。不要解释、不要 markdown 代码块。
+
+原文有歧义时，选最保守的理解；仅当 Schema 允许 additionalProperties 时，才把疑点记在顶层 "_extraction_notes" 里。`,
   },
   'field-monitor': {
     name: '技术周报助手',

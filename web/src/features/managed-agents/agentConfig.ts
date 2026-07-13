@@ -1,6 +1,6 @@
 import { type ApiError } from '../../shared/api/client';
 import { type Locale } from '../../shared/i18n';
-import { structuredExtractorSystemZh, zhTemplateText } from './agentConfigTemplateText';
+import { zhTemplateText } from './agentConfigTemplateText';
 import { buildPlatformQuickstartRequest } from './quickstart/platformQuickstartRequest';
 import YAML from 'yaml';
 import { z } from 'zod';
@@ -17,7 +17,6 @@ import {
 } from './types';
 import { cloneJsonValue, objectRecord, parseToolInput, toRecord } from './utils';
 
-export { structuredExtractorSystemZh } from './agentConfigTemplateText';
 export {
   agentTemplates,
   blankAgentTemplate,
@@ -51,27 +50,6 @@ export const agentEditConfigSchema = z
     multiagent: agentEditObjectSchema.nullable().optional(),
   })
   .strict();
-
-export const structuredExtractorSystem = `You extract structured data from unstructured text. Given raw input (emails, PDFs, logs, transcripts, scraped HTML) and a target JSON schema:
-
-1. Read the schema first. Note required vs optional fields, enums, and format constraints (dates, currencies, IDs). The schema is the contract — never emit a key it doesn't define.
-2. Scan the input for each field. Prefer explicit values over inferred ones. If a required field is genuinely absent, use null rather than guessing.
-3. Normalize as you extract: trim whitespace, coerce dates to ISO 8601, strip currency symbols into numeric + code, collapse enum synonyms to their canonical value.
-4. Emit a single JSON object (or array, if the schema is a list) that validates against the schema. No prose, no markdown fences — just the JSON.
-
-When the input is ambiguous, pick the most conservative interpretation and note the ambiguity in a top-level "_extraction_notes" field only if the schema allows additionalProperties.`;
-
-export function templateSystem(template: AgentTemplate, locale: Locale = 'en') {
-  const zh = locale === 'zh-CN';
-  if (template.id === 'structured-extractor') {
-    return zh ? structuredExtractorSystemZh : structuredExtractorSystem;
-  }
-
-  if (zh) {
-    return `${template.prompt} 输出保持简洁；相关时引用工具结果；不可逆操作前先确认。`;
-  }
-  return `${template.prompt} Keep outputs concise, cite tool results when relevant, and ask for clarification before taking irreversible action.`;
-}
 
 export function yamlForTemplate(template: AgentTemplate, locale: Locale = 'en') {
   return yamlStringify(displayAgentConfig(createDialogAgentConfig(template, locale)));
@@ -143,7 +121,14 @@ Be skeptical. If sources conflict, say so and explain which you find more credib
     name: 'Structured extractor',
     description: 'Parses unstructured text into a typed JSON schema.',
     model: 'claude-sonnet-4-6',
-    system: structuredExtractorSystem,
+    system: `You extract structured data from unstructured text. Given raw input (emails, PDFs, logs, transcripts, scraped HTML) and a target JSON schema:
+
+1. Read the schema first. Note required vs optional fields, enums, and format constraints (dates, currencies, IDs). The schema is the contract — never emit a key it doesn't define.
+2. Scan the input for each field. Prefer explicit values over inferred ones. If a required field is genuinely absent, use null rather than guessing.
+3. Normalize as you extract: trim whitespace, coerce dates to ISO 8601, strip currency symbols into numeric + code, collapse enum synonyms to their canonical value.
+4. Emit a single JSON object (or array, if the schema is a list) that validates against the schema. No prose, no markdown fences — just the JSON.
+
+When the input is ambiguous, pick the most conservative interpretation and note the ambiguity in a top-level "_extraction_notes" field only if the schema allows additionalProperties.`,
     mcp_servers: [],
     tools: [createAgentToolset()],
     skills: [],
@@ -317,24 +302,43 @@ export const createDialogTemplateConfigsZh: Record<string, CreateAgentInput> = O
   }),
 );
 
+function templateConfigsForLocale(locale: Locale) {
+  return locale === 'zh-CN' ? createDialogTemplateConfigsZh : createDialogTemplateConfigs;
+}
+
+function fallbackTemplateSystem(template: AgentTemplate, locale: Locale) {
+  if (locale === 'zh-CN') {
+    return `${template.prompt} 输出保持简洁；相关时引用工具结果；不可逆操作前先确认。`;
+  }
+
+  return `${template.prompt} Keep outputs concise, cite tool results when relevant, and ask for clarification before taking irreversible action.`;
+}
+
+export function templateSystem(template: AgentTemplate, locale: Locale = 'en') {
+  const configuredSystem = templateConfigsForLocale(locale)[template.id]?.system;
+
+  return typeof configuredSystem === 'string' ? configuredSystem : fallbackTemplateSystem(template, locale);
+}
+
 export function createDialogAgentConfig(
   template: AgentTemplate,
   locale: Locale = 'en',
   descriptionOverride?: string | null,
 ): CreateAgentInput {
   const zh = locale === 'zh-CN';
-  const table = zh ? createDialogTemplateConfigsZh : createDialogTemplateConfigs;
-  const fallbackConfig: CreateAgentInput = {
-    name: template.id === 'blank' ? (zh ? '未命名 Agent' : 'Untitled agent') : template.title,
-    description: template.body,
-    model: 'claude-sonnet-4-6',
-    system: templateSystem(template, locale),
-    mcp_servers: [],
-    tools: [createAgentToolset()],
-    skills: [],
-    metadata: { template: template.slug },
-  };
-  const config = cloneCreateAgentInput(table[template.id] ?? fallbackConfig);
+  const configuredTemplate = templateConfigsForLocale(locale)[template.id];
+  const config = cloneCreateAgentInput(
+    configuredTemplate ?? {
+      name: template.id === 'blank' ? (zh ? '未命名 Agent' : 'Untitled agent') : template.title,
+      description: template.body,
+      model: 'claude-sonnet-4-6',
+      system: fallbackTemplateSystem(template, locale),
+      mcp_servers: [],
+      tools: [createAgentToolset()],
+      skills: [],
+      metadata: { template: template.slug },
+    },
+  );
   const trimmedDescription = descriptionOverride?.trim();
 
   if (trimmedDescription) {

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { I18nProvider, useI18n } from '../../shared/i18n';
-import { createDialogTemplateConfigsZh, templateTags } from './agentConfig';
+import { agentTemplates, createDialogTemplateConfigsZh, templateTags } from './agentConfig';
 import { TemplateCard } from './components/CodeBlocks';
 import { clampQuickstartInspectorPaneWidth } from './quickstart/AgentQuickstartPage';
 import {
@@ -98,6 +98,28 @@ export function registerManagedAgentsQuickstartTests() {
 
     expect(screen.getByRole('button', { name: /故障指挥官/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /数据分析师/i })).toBeNull();
+  });
+
+  test('shows the localized template description in the Chinese quickstart chat', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    mockAgentsApi([]);
+    renderManagedAgentsPage('quickstart', 'zh-CN');
+    const template = agentTemplates.find((candidate) => candidate.id === 'structured-extractor');
+    const localizedDescription = createDialogTemplateConfigsZh['structured-extractor'].description;
+
+    if (!template || typeof localizedDescription !== 'string') {
+      throw new Error('Structured extractor localization fixture is missing.');
+    }
+    fireEvent.click(screen.getByRole('button', { name: /结构化提取助手/i }));
+    fireEvent.click(screen.getByRole('button', { name: '使用模板' }));
+
+    const chatContent = await screen.findByTestId('quickstart-chat-content');
+    const userMessage = within(chatContent)
+      .getByText(localizedDescription)
+      .closest('[data-slot="message"]') as HTMLElement | null;
+    expect(userMessage).toBeTruthy();
+    expect(userMessage?.getAttribute('data-align')).toBe('end');
+    expect(within(chatContent).queryByText(template.body)).toBeNull();
   });
 
   test('renders the agents list controls and empty state in Chinese', async () => {

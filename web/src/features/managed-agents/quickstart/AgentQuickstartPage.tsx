@@ -37,7 +37,7 @@ import {
   postQuickstartProxyStream,
   postQuickstartSessionMessage,
 } from '../api';
-import { quickstartStepLabel, templateSearchText } from '../labels';
+import { quickstartStepLabel, templateBody, templateSearchText } from '../labels';
 import {
   type AgentApiResponse,
   type AgentPanelTab,
@@ -592,7 +592,7 @@ export function AgentQuickstartPage() {
           id: quickstartItemId('user'),
           type: 'message',
           role: 'user',
-          content: descriptionOverride?.trim() || template.body,
+          content: descriptionOverride?.trim() || templateBody(template, msg),
         },
         { id: quickstartItemId('create_agent_result'), type: 'create_agent_result', agentConfig: config },
       ]);

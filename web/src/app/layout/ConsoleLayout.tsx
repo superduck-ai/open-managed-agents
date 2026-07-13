@@ -6,17 +6,14 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
-  CircleHelp,
   Gauge,
   Globe2,
   KeyRound,
   ListTree,
   LockKeyhole,
   LogOut,
-  MessageSquare,
   Palette,
   Plus,
-  Scale,
   Settings,
   Shield,
   UsersRound,
@@ -799,19 +796,6 @@ export function AccountMenu({
           <span className="min-w-0 flex-1 truncate">{msg('account.organizationSettings', 'Organization settings')}</span>
         </DropdownMenuItem>
 
-        <DropdownMenuItem className="h-8 gap-3 px-3" onClick={() => setOpen(false)}>
-          <MessageSquare className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="min-w-0 flex-1 truncate">{msg('account.feedback', 'Feedback')}</span>
-        </DropdownMenuItem>
-
-        <DropdownMenuItem
-          className="h-8 gap-3 px-3"
-          render={<a href="https://support.anthropic.com/" target="_blank" rel="noreferrer" />}
-        >
-          <CircleHelp className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="min-w-0 flex-1 truncate">{msg('account.getHelp', 'Get help')}</span>
-        </DropdownMenuItem>
-
         <DropdownMenuSub>
           <DropdownMenuSubTrigger openOnHover className="h-8 gap-3 px-3">
             <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -841,24 +825,6 @@ export function AccountMenu({
           </DropdownMenuSubContent>
         </DropdownMenuSub>
 
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger openOnHover className="h-8 gap-3 px-3">
-            <Scale className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">{msg('account.legalCenter', 'Legal center')}</span>
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="min-w-[190px]">
-            {legalMenuItems.map((item) => (
-              <DropdownMenuItem
-                key={item.labelId}
-                className="h-8 px-3 text-foreground"
-                render={<a href={item.href} target="_blank" rel="noreferrer" />}
-              >
-                <span className="truncate">{msg(item.labelId, item.label)}</span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
@@ -878,22 +844,6 @@ export function AccountMenu({
     </SidebarMenu>
   );
 }
-
-const legalMenuItems = [
-  {
-    label: 'Commercial Terms',
-    labelId: 'account.commercialTerms',
-    href: 'https://www.anthropic.com/legal/commercial-terms'
-  },
-  { label: 'Usage Policy', labelId: 'account.usagePolicy', href: 'https://www.anthropic.com/legal/aup' },
-  { label: 'Privacy Policy', labelId: 'account.privacyPolicy', href: 'https://www.anthropic.com/legal/privacy' },
-  {
-    label: 'Data retention',
-    labelId: 'account.dataRetention',
-    href: 'https://support.anthropic.com/en/articles/7996866-how-long-do-you-store-personal-data'
-  },
-  { label: 'Your Privacy Choices', labelId: 'account.privacyChoices', href: 'https://www.anthropic.com/privacy' }
-];
 
 const managedAgentPathByHref: Record<string, string> = {
   '/quickstart': 'agent-quickstart',

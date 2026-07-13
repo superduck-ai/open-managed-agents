@@ -165,10 +165,10 @@ describe('ConsoleShell', () => {
     expect(menu.closest('[data-sidebar-state]')).toBeNull();
     expect(screen.getByRole('menuitemradio', { name: /Default API plan/i }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('menuitem', { name: 'Organization settings' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Feedback' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Get help' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Language' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Legal center' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Feedback' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Get help' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Legal center' })).toBeNull();
     expect(screen.queryByText('Theme')).toBeNull();
 
     fireEvent.click(screen.getByRole('menuitem', { name: /Log out/i }));
@@ -176,7 +176,7 @@ describe('ConsoleShell', () => {
     await waitFor(() => expect(logout).toHaveBeenCalled());
   });
 
-  test('opens account menu submenus to the right', async () => {
+  test('opens the language submenu to the right', async () => {
     resetTestDom('https://oma.duck.ai/dashboard');
 
     renderWithWorkspaces(
@@ -198,17 +198,6 @@ describe('ConsoleShell', () => {
 
     expect(screen.getByRole('menu', { name: 'Language' })).toBeTruthy();
     expect(screen.getByRole('menuitemradio', { name: 'English' }).getAttribute('aria-checked')).toBe('true');
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Legal center' }));
-    });
-
-    expect(screen.getByRole('menu', { name: 'Legal center' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Commercial Terms' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Usage Policy' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Privacy Policy' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Data retention' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Your Privacy Choices' })).toBeTruthy();
   });
 
   test('closes the account menu when clicking outside', async () => {

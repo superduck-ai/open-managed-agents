@@ -41,7 +41,7 @@ export function CreateAgentDialog({
   onClose: () => void;
   onCreate: (input: CreateAgentInput) => Promise<AgentApiResponse>;
 }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
   const { orgUuid } = useWorkspace();
   const [startingPointOpen, setStartingPointOpen] = useState(true);
   const [mode, setMode] = useState<'describe' | 'template'>('describe');
@@ -49,9 +49,11 @@ export function CreateAgentDialog({
   const [format, setFormat] = useState<CodeFormat>('YAML');
   const [description, setDescription] = useState('');
   const [generatedConfig, setGeneratedConfig] = useState<CreateAgentInput | null>(null);
-  const [configInput, setConfigInput] = useState<CreateAgentInput>(() => createDialogAgentConfig(blankAgentTemplate));
+  const [configInput, setConfigInput] = useState<CreateAgentInput>(() =>
+    createDialogAgentConfig(blankAgentTemplate, locale),
+  );
   const [configText, setConfigText] = useState(() =>
-    createAgentConfigText(createDialogAgentConfig(blankAgentTemplate), 'YAML'),
+    createAgentConfigText(createDialogAgentConfig(blankAgentTemplate, locale), 'YAML'),
   );
   const [configError, setConfigError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -125,9 +127,9 @@ export function CreateAgentDialog({
     setMode(nextMode);
     if (nextMode === 'describe') {
       setGeneratedConfig(null);
-      hydrateConfig(createDialogAgentConfig(blankAgentTemplate));
+      hydrateConfig(createDialogAgentConfig(blankAgentTemplate, locale));
     } else {
-      hydrateConfig(createDialogAgentConfig(selectedTemplate));
+      hydrateConfig(createDialogAgentConfig(selectedTemplate, locale));
     }
     setCreateError(null);
   };
@@ -136,7 +138,7 @@ export function CreateAgentDialog({
     setSelectedTemplateId(template.id);
     setMode('template');
     setGeneratedConfig(null);
-    hydrateConfig(createDialogAgentConfig(template));
+    hydrateConfig(createDialogAgentConfig(template, locale));
     setStartingPointOpen(false);
   };
 
@@ -146,7 +148,9 @@ export function CreateAgentDialog({
       return;
     }
     if (!orgUuid) {
-      setCreateError('No organization is available for agent generation.');
+      setCreateError(
+        msg('managedAgents.agents.createDialog.noOrganization', 'No organization is available for agent generation.'),
+      );
       return;
     }
     const baseConfig = parseCurrentConfig() ?? configInput;
@@ -162,6 +166,7 @@ export function CreateAgentDialog({
         description: prompt,
         currentConfig: baseConfig,
         signal: controller.signal,
+        locale,
       });
       setGeneratedConfig(nextConfig);
       hydrateConfig(nextConfig);

@@ -1,4 +1,4 @@
-import { useI18n } from '../../../shared/i18n';
+import { type Locale, useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Badge } from '../../../shared/ui/badge';
 import { Bubble, BubbleContent } from '../../../shared/ui/bubble';
@@ -92,9 +92,6 @@ import {
   type SessionApiResponse,
 } from '../types';
 import { copyText, errorMessage, managedEntityDetailHref, titleCase, toRecord } from '../utils';
-
-export const quickstartEnvironmentSearchQuery =
-  "An environment is a reusable template for the container where your agent's tools execute — things like networking policy and package access. Let me check what environments you already have.";
 
 type PromptComposerSubmitShortcut = 'enter' | 'mod-enter';
 
@@ -428,45 +425,12 @@ export function stripQuickstartInternalNarration(content: string) {
   if (!trimmed) {
     return '';
   }
-  const searchResult = normalizeQuickstartSearchResultText(trimmed);
-  if (searchResult !== null) {
-    return searchResult;
+  // Upstream search tools can emit this transient narration before their tool block.
+  // The tool card already communicates the operation, so do not display or persist it.
+  if (/^(?:Search results for query:\s*)+/i.test(trimmed)) {
+    return '';
   }
   return stripQuickstartInternalSentences(trimmed);
-}
-
-export function normalizeQuickstartSearchResultText(content: string) {
-  const prefixMatch = /^(?:(?:Search results for query:\s*)+)/i.exec(content);
-  if (!prefixMatch) {
-    return null;
-  }
-  const query = content.slice(prefixMatch[0].length).trim();
-  return query ? `Search results for query: ${query}` : '';
-}
-
-export function assistantTextWithQuickstartToolContext(content: string, call: QuickstartToolCall) {
-  const trimmed = content.trimEnd();
-  if (call.name === 'list_environments' && /Search results for query:\s*$/i.test(trimmed)) {
-    return `${trimmed} ${quickstartEnvironmentSearchQuery}`;
-  }
-  if (call.name !== 'web_search') {
-    return content;
-  }
-  const query = quickstartWebSearchQuery(call.input);
-  if (!query) {
-    return content;
-  }
-  if (!trimmed) {
-    return `Search results for query: ${query}`;
-  }
-  if (/Search results for query:\s*$/i.test(trimmed)) {
-    return `${trimmed} ${query}`;
-  }
-  return content;
-}
-
-export function quickstartWebSearchQuery(input: Record<string, unknown>) {
-  return typeof input.query === 'string' ? input.query.trim() : '';
 }
 
 export function stripQuickstartInternalSentences(content: string) {
@@ -1782,7 +1746,10 @@ curl -N "https://api.anthropic.com/v1/sessions/SESSION_ID/events/stream?beta=tru
   };
 }
 
-export function integrationScaffoldPrompt(agentId: string, environmentId: string) {
+export function integrationScaffoldPrompt(agentId: string, environmentId: string, locale: Locale = 'en') {
+  if (locale === 'zh-CN') {
+    return `使用 managed-agents skill（先调用 /managed-agents）。脚手架搭建一个最小应用，通过 Anthropic SDK 与 Anthropic agent ${agentId} 通信。用 client.beta.sessions.create（environment_id ${environmentId}）创建一个 session，打开 client.beta.sessions.events.stream，通过 client.beta.sessions.events.send 发送一个 user.message 事件，并在 agent.message 文本流式返回时打印它。处理 session.status_idle 以结束，处理错误以干净退出。`;
+  }
   return `Use the managed-agents skill (invoke /managed-agents first). Scaffold a minimal app that talks to Anthropic agent ${agentId} via the Anthropic SDK. Create a session with client.beta.sessions.create (environment_id ${environmentId}), open client.beta.sessions.events.stream, send a user.message event via client.beta.sessions.events.send, and print agent.message text as it streams. Handle session.status_idle to finish and errors to exit cleanly.`;
 }
 
@@ -1797,7 +1764,7 @@ export function IntegrationExitsCard({
   environment: EnvironmentApiResponse | null;
   onSelectExit: (call: QuickstartToolCall, exit: 'scaffold' | 'go_to_agent') => Promise<void>;
 }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
   const agentId = agent?.id || (typeof call.input.agent_id === 'string' ? call.input.agent_id : 'agent_id');
   const environmentId =
     environment?.id || (typeof call.input.environment_id === 'string' ? call.input.environment_id : 'env_...');
@@ -1809,7 +1776,10 @@ export function IntegrationExitsCard({
   );
   const [language, setLanguage] = useState<IntegrationSnippetLanguage>('cli');
   const sampleCode = snippets[language];
-  const scaffoldPrompt = useMemo(() => integrationScaffoldPrompt(agentId, environmentId), [agentId, environmentId]);
+  const scaffoldPrompt = useMemo(
+    () => integrationScaffoldPrompt(agentId, environmentId, locale),
+    [agentId, environmentId, locale],
+  );
   const [copiedScaffold, setCopiedScaffold] = useState(false);
   const chooseScaffold = async () => {
     await copyText(scaffoldPrompt);
@@ -1887,7 +1857,8 @@ export function IntegrationExitsCard({
 }
 
 export function GenericQuickstartToolCard({ call }: { call: QuickstartToolCall }) {
-  const meta = quickstartToolMeta(call.name);
+  const { msg } = useI18n();
+  const meta = quickstartToolMeta(call.name, msg);
   return (
     <QuickstartAssistantTurn>
       <div className="rounded-lg bg-card p-3 shadow-sm">
@@ -2050,11 +2021,14 @@ export function awaitingQuickstartToolCalls(items: QuickstartChatItem[]) {
     .map((item) => item.call);
 }
 
-export function quickstartChatReplyToolResult(call: QuickstartToolCall, reply: string) {
+export function quickstartChatReplyToolResult(call: QuickstartToolCall, reply: string, locale: Locale = 'en') {
+  const zh = locale === 'zh-CN';
   if (call.name === 'build_agent_config') {
-    return `User sent a message instead: "${reply}"`;
+    // Keep this phrase in sync with the "session is STILL RUNNING" instruction in the
+    // localized Agent Builder system prompt (quickstartPromptText.ts).
+    return zh ? `用户改为发送了消息："${reply}"` : `User sent a message instead: "${reply}"`;
   }
-  return `User replied in chat: ${reply}`;
+  return zh ? `用户在聊天中回复：${reply}` : `User replied in chat: ${reply}`;
 }
 
 export function toolResultBlock(toolUseId: string, result: QuickstartToolExecutionResult) {
@@ -2124,28 +2098,32 @@ export function quickstartMcpServerUrl(agentConfig: CreateAgentInput | null, ser
   return '';
 }
 
-export function quickstartToolMeta(name: string): { label: string; icon: IconComponent } {
+export function quickstartToolMeta(name: string, msg?: I18nMsg): { label: string; icon: IconComponent } {
+  const t = (id: string, fallback: string) => (msg ? msg(id, fallback) : fallback);
   switch (name) {
     case 'list_environments':
-      return { label: 'List environments', icon: Cloud };
+      return { label: t('managedAgents.quickstart.toolMeta.listEnvironments', 'List environments'), icon: Cloud };
     case 'create_environment':
-      return { label: 'Create environment', icon: Cloud };
+      return { label: t('managedAgents.quickstart.toolMeta.createEnvironment', 'Create environment'), icon: Cloud };
     case 'vault_sharing_notice':
-      return { label: 'Vault sharing notice', icon: LockKeyhole };
+      return {
+        label: t('managedAgents.quickstart.toolMeta.vaultSharingNotice', 'Vault sharing notice'),
+        icon: LockKeyhole,
+      };
     case 'list_vaults':
-      return { label: 'List vaults', icon: LockKeyhole };
+      return { label: t('managedAgents.quickstart.toolMeta.listVaults', 'List vaults'), icon: LockKeyhole };
     case 'select_vault':
-      return { label: 'Select vault', icon: LockKeyhole };
+      return { label: t('managedAgents.quickstart.toolMeta.selectVault', 'Select vault'), icon: LockKeyhole };
     case 'create_vault':
-      return { label: 'Create vault', icon: LockKeyhole };
+      return { label: t('managedAgents.quickstart.toolMeta.createVault', 'Create vault'), icon: LockKeyhole };
     case 'create_vault_credential':
-      return { label: 'Create credential', icon: LockKeyhole };
+      return { label: t('managedAgents.quickstart.toolMeta.createCredential', 'Create credential'), icon: LockKeyhole };
     case 'flag_schedule_intent':
-      return { label: 'Schedule intent', icon: CalendarClock };
+      return { label: t('managedAgents.quickstart.toolMeta.scheduleIntent', 'Schedule intent'), icon: CalendarClock };
     case 'create_deployment':
-      return { label: 'Create deployment', icon: Play };
+      return { label: t('managedAgents.quickstart.toolMeta.createDeployment', 'Create deployment'), icon: Play };
     case 'web_search':
-      return { label: 'Search web', icon: Search };
+      return { label: t('managedAgents.quickstart.toolMeta.searchWeb', 'Search web'), icon: Search };
     default:
       return { label: name.replace(/_/g, ' '), icon: Terminal };
   }
@@ -2394,8 +2372,8 @@ export function TemplateDetailPanel({
   onUseTemplate: () => void;
   isUsing: boolean;
 }) {
-  const { msg } = useI18n();
-  const code = codeForTemplate(template, format);
+  const { msg, locale } = useI18n();
+  const code = codeForTemplate(template, format, locale);
   const title = templateTitle(template, msg);
   return (
     <Card className="h-full min-h-0 overflow-hidden py-0 shadow-sm">
@@ -2477,8 +2455,8 @@ export function CreatedAgentConfigPanel({
   onFormatChange: (format: CodeFormat) => void;
   onTabChange: (tab: AgentPanelTab) => void;
 }) {
-  const { msg } = useI18n();
-  const displayedConfig = displayAgentConfig(agentConfig ?? createDialogAgentConfig(template));
+  const { msg, locale } = useI18n();
+  const displayedConfig = displayAgentConfig(agentConfig ?? createDialogAgentConfig(template, locale));
   const code = format === 'YAML' ? yamlStringify(displayedConfig) : JSON.stringify(displayedConfig, null, 2);
   return (
     <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-sm">

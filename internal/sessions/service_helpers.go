@@ -278,62 +278,73 @@ func allowedPublicEventType(eventType string) bool {
 }
 
 func validatePublicInputEvent(eventType string, payload map[string]any) error {
+	var err error
 	switch eventType {
 	case "user.message":
-		if err := validateContentBlocks(payload, "content", true); err != nil {
-			return err
-		}
+		err = validateContentBlocks(payload, "content", true)
 	case "system.message":
-		if err := validateContentBlocks(payload, "content", true); err != nil {
-			return err
-		}
+		err = validateContentBlocks(payload, "content", true)
 	case "user.interrupt":
 		return nil
 	case "user.tool_confirmation":
-		if requiredStringValue(payload, "tool_use_id") == "" {
-			return errors.New("tool_use_id is required")
-		}
-		result := requiredStringValue(payload, "result")
-		if result != "allow" && result != "deny" {
-			return errors.New("result must be allow or deny")
-		}
-		if _, ok := payload["deny_message"]; ok {
-			if _, ok := payload["deny_message"].(string); !ok && payload["deny_message"] != nil {
-				return errors.New("deny_message must be a string")
-			}
-		}
+		err = validateToolConfirmationPayload(payload)
 	case "user.tool_result":
-		if requiredStringValue(payload, "tool_use_id") == "" {
-			return errors.New("tool_use_id is required")
-		}
-		if err := validateContentBlocks(payload, "content", false); err != nil {
-			return err
-		}
+		err = validateToolResultPayload(payload, "tool_use_id")
 	case "user.custom_tool_result":
-		if requiredStringValue(payload, "custom_tool_use_id") == "" {
-			return errors.New("custom_tool_use_id is required")
-		}
-		if err := validateContentBlocks(payload, "content", false); err != nil {
-			return err
-		}
+		err = validateToolResultPayload(payload, "custom_tool_use_id")
 	case "user.define_outcome":
-		if requiredStringValue(payload, "description") == "" {
-			return errors.New("description is required")
-		}
-		rubric, ok := payload["rubric"]
-		if !ok || rubric == nil {
-			return errors.New("rubric is required")
-		}
-		if rubricText, ok := rubric.(string); ok && strings.TrimSpace(rubricText) == "" {
-			return errors.New("rubric is required")
-		}
-		if rawMax, ok := payload["max_iterations"]; ok && rawMax != nil {
-			max, ok := rawMax.(float64)
-			if !ok || max < 1 || max != float64(int(max)) {
-				return errors.New("max_iterations must be a positive integer")
-			}
+		err = validateDefineOutcomePayload(payload)
+	}
+	if err != nil {
+		return err
+	}
+	return validateSessionThreadIDPayload(payload)
+}
+
+func validateToolConfirmationPayload(payload map[string]any) error {
+	if requiredStringValue(payload, "tool_use_id") == "" {
+		return errors.New("tool_use_id is required")
+	}
+	result := requiredStringValue(payload, "result")
+	if result != "allow" && result != "deny" {
+		return errors.New("result must be allow or deny")
+	}
+	if _, ok := payload["deny_message"]; ok {
+		if _, ok := payload["deny_message"].(string); !ok && payload["deny_message"] != nil {
+			return errors.New("deny_message must be a string")
 		}
 	}
+	return nil
+}
+
+func validateToolResultPayload(payload map[string]any, idField string) error {
+	if requiredStringValue(payload, idField) == "" {
+		return fmt.Errorf("%s is required", idField)
+	}
+	return validateContentBlocks(payload, "content", false)
+}
+
+func validateDefineOutcomePayload(payload map[string]any) error {
+	if requiredStringValue(payload, "description") == "" {
+		return errors.New("description is required")
+	}
+	rubric, ok := payload["rubric"]
+	if !ok || rubric == nil {
+		return errors.New("rubric is required")
+	}
+	if rubricText, ok := rubric.(string); ok && strings.TrimSpace(rubricText) == "" {
+		return errors.New("rubric is required")
+	}
+	if rawMax, ok := payload["max_iterations"]; ok && rawMax != nil {
+		max, ok := rawMax.(float64)
+		if !ok || max < 1 || max != float64(int(max)) {
+			return errors.New("max_iterations must be a positive integer")
+		}
+	}
+	return nil
+}
+
+func validateSessionThreadIDPayload(payload map[string]any) error {
 	if value, ok := payload["session_thread_id"]; ok && value != nil {
 		threadID, ok := value.(string)
 		if !ok || strings.TrimSpace(threadID) == "" {

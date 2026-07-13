@@ -1,0 +1,22 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: false
+
+linters:
+  default: none
+  enable:
+    - cyclop
+    - funlen
+  settings:
+    cyclop:
+      max-complexity: 30
+    funlen:
+      lines: 163
+      statements: 100
+      ignore-comments: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

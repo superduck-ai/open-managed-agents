@@ -758,68 +758,25 @@ export function sessionToolResultIsError(event?: QuickstartSessionEvent) {
 export function normalizedToolPermission(event: QuickstartSessionEvent): 'ask' | 'allow' | 'deny' {
   const data = toRecord(event.data);
   const metadata = toRecord(event.metadata);
-  const permissionRecord =
-    toRecord(event.evaluated_permission) ??
-    toRecord(event.permission) ??
-    toRecord(event.permission_policy) ??
-    toRecord(event.permission_decision) ??
-    toRecord(event.confirmation) ??
-    (data ? toRecord(data.evaluated_permission) : null) ??
-    (data ? toRecord(data.permission) : null) ??
-    (data ? toRecord(data.permission_policy) : null) ??
-    (metadata ? toRecord(metadata.evaluated_permission) : null) ??
-    (metadata ? toRecord(metadata.permission) : null) ??
-    (metadata ? toRecord(metadata.permission_policy) : null);
-  const requiresActionDetails =
-    toRecord(event.requires_action_details) ??
-    (data ? toRecord(data.requires_action_details) : null) ??
-    (metadata ? toRecord(metadata.requires_action_details) : null);
-  const stopReason =
-    toRecord(event.stop_reason) ??
-    (data ? toRecord(data.stop_reason) : null) ??
-    (metadata ? toRecord(metadata.stop_reason) : null);
-  const permissionRaw = [
-    event.evaluated_permission,
-    event.permission,
-    event.permission_policy,
-    event.permission_decision,
-    event.confirmation,
-    data?.evaluated_permission,
-    data?.permission,
-    data?.permission_policy,
-    data?.permission_decision,
-    metadata?.evaluated_permission,
-    metadata?.permission,
-    metadata?.permission_policy,
-    metadata?.permission_decision,
-    permissionRecord?.result,
-    permissionRecord?.decision,
-    permissionRecord?.type,
-    permissionRecord?.policy,
-    permissionRecord?.state,
-    permissionRecord?.status,
-  ]
-    .map(normalizedStringValue)
-    .find(Boolean);
-  const requiresActionRaw = [
-    requiresActionDetails?.type,
-    requiresActionDetails?.status,
-    stopReason?.type,
-    stopReason?.status,
-  ]
-    .map(normalizedStringValue)
-    .find(Boolean);
-  const statusRaw = [
-    event.status,
-    event.lifecycle,
-    data?.status,
-    data?.lifecycle,
-    metadata?.status,
-    metadata?.lifecycle,
-  ]
-    .map(normalizedStringValue)
-    .find(Boolean);
-  const raw = permissionRaw || requiresActionRaw || statusRaw;
+  const permissionRecord = toolPermissionRecord(event, data, metadata);
+  const requiresActionDetails = nestedEventRecord(event, data, metadata, 'requires_action_details');
+  const stopReason = nestedEventRecord(event, data, metadata, 'stop_reason');
+  const raw =
+    toolPermissionValue(event, data, metadata, permissionRecord) ||
+    firstNormalizedString([
+      requiresActionDetails?.type,
+      requiresActionDetails?.status,
+      stopReason?.type,
+      stopReason?.status,
+    ]) ||
+    firstNormalizedString([
+      event.status,
+      event.lifecycle,
+      data?.status,
+      data?.lifecycle,
+      metadata?.status,
+      metadata?.lifecycle,
+    ]);
 
   switch (raw) {
     case 'ask':
@@ -843,6 +800,84 @@ export function normalizedToolPermission(event: QuickstartSessionEvent): 'ask' |
     default:
       return event.requires_action === true ? 'ask' : 'allow';
   }
+}
+
+function toolPermissionRecord(
+  event: QuickstartSessionEvent,
+  data: Record<string, unknown> | null,
+  metadata: Record<string, unknown> | null,
+) {
+  return firstRecord([
+    event.evaluated_permission,
+    event.permission,
+    event.permission_policy,
+    event.permission_decision,
+    event.confirmation,
+    data?.evaluated_permission,
+    data?.permission,
+    data?.permission_policy,
+    metadata?.evaluated_permission,
+    metadata?.permission,
+    metadata?.permission_policy,
+  ]);
+}
+
+function nestedEventRecord(
+  event: QuickstartSessionEvent,
+  data: Record<string, unknown> | null,
+  metadata: Record<string, unknown> | null,
+  field: string,
+) {
+  return firstRecord([event[field], data?.[field], metadata?.[field]]);
+}
+
+function firstRecord(values: unknown[]) {
+  for (const value of values) {
+    const record = toRecord(value);
+    if (record) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function toolPermissionValue(
+  event: QuickstartSessionEvent,
+  data: Record<string, unknown> | null,
+  metadata: Record<string, unknown> | null,
+  permissionRecord: Record<string, unknown> | null,
+) {
+  return firstNormalizedString([
+    event.evaluated_permission,
+    event.permission,
+    event.permission_policy,
+    event.permission_decision,
+    event.confirmation,
+    data?.evaluated_permission,
+    data?.permission,
+    data?.permission_policy,
+    data?.permission_decision,
+    metadata?.evaluated_permission,
+    metadata?.permission,
+    metadata?.permission_policy,
+    metadata?.permission_decision,
+    permissionRecord?.result,
+    permissionRecord?.decision,
+    permissionRecord?.type,
+    permissionRecord?.policy,
+    permissionRecord?.state,
+    permissionRecord?.status,
+  ]);
+}
+
+function firstNormalizedString(values: unknown[]) {
+  for (const value of values) {
+    const normalized = normalizedStringValue(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return undefined;
 }
 
 export function normalizedToolConfirmationResult(event?: QuickstartSessionEvent): 'allow' | 'deny' | undefined {

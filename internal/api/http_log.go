@@ -124,10 +124,17 @@ func detectRequestClientKind(r *http.Request) string {
 	clientApp := normalizedLogHeader(r, "Anthropic-Client-App")
 	userAgent := normalizedLogHeader(r, "User-Agent")
 
-	if strings.Contains(clientPlatform, "ios") ||
-		strings.Contains(clientPlatform, "iphone") ||
-		strings.Contains(clientPlatform, "ipad") ||
-		strings.Contains(clientPlatform, "ipod") {
+	if kind := clientKindFromPlatform(clientPlatform); kind != "" {
+		return kind
+	}
+	if kind := clientKindFromApp(clientApp); kind != "" {
+		return kind
+	}
+	return clientKindFromUserAgent(r, userAgent)
+}
+
+func clientKindFromPlatform(clientPlatform string) string {
+	if containsAnyLogValue(clientPlatform, "ios", "iphone", "ipad", "ipod") {
 		return "ios"
 	}
 	if strings.Contains(clientPlatform, "android") {
@@ -139,57 +146,54 @@ func detectRequestClientKind(r *http.Request) string {
 	if strings.Contains(clientPlatform, "web") || clientPlatform == "claude_ai" || clientPlatform == "claude-ai" {
 		return "web"
 	}
+	return ""
+}
 
-	if strings.Contains(clientApp, "ios") ||
-		strings.Contains(clientApp, "iphone") ||
-		strings.Contains(clientApp, "ipad") ||
-		strings.Contains(clientApp, "ipod") {
+func clientKindFromApp(clientApp string) string {
+	if containsAnyLogValue(clientApp, "ios", "iphone", "ipad", "ipod") {
 		return "ios"
 	}
 	if strings.Contains(clientApp, "android") {
 		return "android"
 	}
-	if strings.Contains(clientApp, "claudefordesktop") ||
-		strings.Contains(clientApp, "desktop") ||
-		strings.Contains(clientApp, "electron") ||
-		strings.Contains(clientApp, "todesktop") {
+	if containsAnyLogValue(clientApp, "claudefordesktop", "desktop", "electron", "todesktop") {
 		return "desktop"
 	}
+	return ""
+}
 
-	if strings.Contains(userAgent, "iphone") ||
-		strings.Contains(userAgent, "ipad") ||
-		strings.Contains(userAgent, "ipod") ||
-		strings.Contains(userAgent, "cfnetwork") {
+func clientKindFromUserAgent(r *http.Request, userAgent string) string {
+	if containsAnyLogValue(userAgent, "iphone", "ipad", "ipod", "cfnetwork") {
 		return "ios"
 	}
 	if strings.Contains(userAgent, "android") {
 		return "android"
 	}
-	if (strings.Contains(userAgent, "claude") || strings.Contains(userAgent, "anthropic")) &&
-		(strings.Contains(userAgent, "desktop") || strings.Contains(userAgent, "nest")) {
+	if containsAnyLogValue(userAgent, "claude", "anthropic") && containsAnyLogValue(userAgent, "desktop", "nest") {
 		return "desktop"
 	}
-	if strings.Contains(userAgent, "electron") ||
-		strings.Contains(userAgent, "todesktop") ||
-		strings.Contains(userAgent, "claudefordesktop") {
+	if containsAnyLogValue(userAgent, "electron", "todesktop", "claudefordesktop") {
 		return "desktop"
 	}
 	if hasStainlessClientHeader(r) || apiClientUserAgentPattern.MatchString(userAgent) {
 		return "api"
 	}
-	if strings.Contains(userAgent, "mozilla") ||
-		strings.Contains(userAgent, "chrome") ||
-		strings.Contains(userAgent, "chromium") ||
-		strings.Contains(userAgent, "safari") ||
-		strings.Contains(userAgent, "firefox") ||
-		strings.Contains(userAgent, "edg") ||
-		strings.Contains(userAgent, "opera") {
+	if containsAnyLogValue(userAgent, "mozilla", "chrome", "chromium", "safari", "firefox", "edg", "opera") {
 		return "web"
 	}
 	if userAgent != "" {
 		return "api"
 	}
 	return "unknown"
+}
+
+func containsAnyLogValue(value string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if strings.Contains(value, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedLogHeader(r *http.Request, name string) string {

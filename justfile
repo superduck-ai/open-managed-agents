@@ -33,6 +33,17 @@ test:
 lint:
   golangci-lint run --config .golangci.yml ./...
 
+complexity: go-file-lines go-complexity web-complexity
+
+go-file-lines:
+  ./scripts/check-go-file-lines.sh
+
+test-go-file-lines:
+  ./scripts/tests/check-go-file-lines_test.sh
+
+go-complexity:
+  ./scripts/go-complexity.sh
+
 web-build:
   cd web && bun run build
 
@@ -41,6 +52,9 @@ web-test:
 
 web-lint:
   cd web && bun run lint
+
+web-complexity:
+  cd web && bun run lint:complexity
 
 web-lint-naming:
   cd web && bun run lint:naming

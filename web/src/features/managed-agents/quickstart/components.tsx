@@ -127,7 +127,7 @@ export function InitialPromptPane({
         label={msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
         placeholder={msg('managedAgents.quickstart.initial.placeholder', 'Describe your agent…')}
         isBusy={isCreating}
-        submitShortcut="mod-enter"
+        submitShortcut="enter"
         onChange={onPromptChange}
         onSubmit={onSubmit}
       />

@@ -22,8 +22,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Test large file guardrail
-        run: ./scripts/tests/check-large-files_test.sh
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: '0.11.16'
 
       - name: Check tracked files
-        run: ./scripts/check-large-files.sh
+        run: ./scripts/pre-commit.sh run check-added-large-files --all-files

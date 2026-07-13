@@ -13,19 +13,12 @@ repos:
       - id: check-json
       - id: detect-private-key
       - id: check-added-large-files
-        args: [--maxkb=1024]
+        args: [--maxkb=1024, --enforce-all]
       - id: mixed-line-ending
         args: [--fix=lf]
 
   - repo: local
     hooks:
-      - id: tracked-file-size
-        name: Check all tracked file size budgets
-        entry: scripts/check-large-files.sh
-        language: script
-        pass_filenames: false
-        always_run: true
-
       - id: gofmt
         name: Format staged Go files
         entry: gofmt -w

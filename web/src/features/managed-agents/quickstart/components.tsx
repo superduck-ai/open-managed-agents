@@ -2119,8 +2119,8 @@ export function quickstartMcpServerUrl(agentConfig: CreateAgentInput | null, ser
   return '';
 }
 
-export function quickstartToolMeta(name: string, msg?: I18nMsg): { label: string; icon: IconComponent } {
-  const t = (id: string, fallback: string) => (msg ? msg(id, fallback) : fallback);
+export function quickstartToolMeta(name: string, msg: I18nMsg): { label: string; icon: IconComponent } {
+  const t = (id: string, fallback: string) => msg(id, fallback);
   switch (name) {
     case 'list_environments':
       return { label: t('managedAgents.quickstart.toolMeta.listEnvironments', 'List environments'), icon: Cloud };

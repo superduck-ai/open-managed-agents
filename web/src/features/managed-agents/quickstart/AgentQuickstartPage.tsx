@@ -403,7 +403,7 @@ export function AgentQuickstartPage() {
         case 'build_agent_config': {
           const nextConfig = quickstartBuildAgentConfigInput(
             call.input,
-            createdAgentConfigRef.current ?? createDialogAgentConfig(blankAgentTemplate, locale),
+            createdAgentConfigRef.current ?? createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current),
           );
           setCreatedAgentConfig(nextConfig);
           createdAgentConfigRef.current = nextConfig;
@@ -723,7 +723,7 @@ export function AgentQuickstartPage() {
   const createAgentFromBuildConfig = async (call: QuickstartToolCall) => {
     const config = quickstartBuildAgentConfigInput(
       call.input,
-      createdAgentConfigRef.current ?? createDialogAgentConfig(blankAgentTemplate, locale),
+      createdAgentConfigRef.current ?? createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current),
     );
     setCreatedAgentConfig(config);
     createdAgentConfigRef.current = config;

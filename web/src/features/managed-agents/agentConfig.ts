@@ -1,18 +1,7 @@
 import { type ApiError } from '../../shared/api/client';
+import { type Locale } from '../../shared/i18n';
+import { zhTemplateText } from './agentConfigTemplateText';
 import { buildPlatformQuickstartRequest } from './quickstart/platformQuickstartRequest';
-import {
-  BarChart3,
-  Box,
-  BriefcaseBusiness,
-  FileCheck2,
-  FileJson,
-  FileText,
-  GitBranch,
-  Headphones,
-  MessageCircle,
-  Siren,
-  Sparkles,
-} from 'lucide-react';
 import YAML from 'yaml';
 import { z } from 'zod';
 import { agentModelName, BUILT_IN_AGENT_TOOLSETS } from './agents/AgentsResourcePage';
@@ -25,9 +14,16 @@ import {
   type AgentUpdateInput,
   type CodeFormat,
   type CreateAgentInput,
-  type TemplateTag,
 } from './types';
 import { cloneJsonValue, objectRecord, parseToolInput, toRecord } from './utils';
+
+export {
+  agentTemplates,
+  blankAgentTemplate,
+  createAgentTemplates,
+  createTemplateAppTags,
+  templateTags,
+} from './agentTemplateCatalog';
 
 export const agentModelInputSchema = z.union([
   z.string().trim().min(1, 'Model is required.'),
@@ -55,147 +51,16 @@ export const agentEditConfigSchema = z
   })
   .strict();
 
-export const templateTags = {
-  docs: { label: 'docs', icon: FileText, tone: 'bg-secondary text-foreground' },
-  data: { label: 'data', icon: BarChart3, tone: 'bg-secondary text-secondary-foreground' },
-  code: { label: 'code', icon: FileJson, tone: 'bg-secondary text-foreground' },
-  support: { label: 'support', icon: Headphones, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-  incident: { label: 'incident', icon: Siren, tone: 'bg-destructive/10 text-destructive' },
-  github: { label: 'github', icon: GitBranch, tone: 'bg-secondary text-foreground' },
-  box: { label: 'box', icon: Box, tone: 'bg-secondary text-secondary-foreground' },
-  tasks: { label: 'tasks', icon: FileCheck2, tone: 'bg-secondary text-foreground' },
-  chat: { label: 'chat', icon: MessageCircle, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-  research: { label: 'research', icon: Sparkles, tone: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
-  notion: { label: 'notion', icon: FileText, tone: 'bg-secondary text-foreground' },
-  slack: { label: 'slack', icon: MessageCircle, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-  sentry: { label: 'sentry', icon: Siren, tone: 'bg-destructive/10 text-destructive' },
-  linear: { label: 'linear', icon: FileCheck2, tone: 'bg-secondary text-foreground' },
-  asana: { label: 'asana', icon: FileCheck2, tone: 'bg-secondary text-foreground' },
-  intercom: { label: 'intercom', icon: Headphones, tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-  atlassian: { label: 'atlassian', icon: BriefcaseBusiness, tone: 'bg-secondary text-secondary-foreground' },
-  docx: { label: 'docx', icon: FileText, tone: 'bg-secondary text-secondary-foreground' },
-  amplitude: { label: 'amplitude', icon: BarChart3, tone: 'bg-secondary text-secondary-foreground' },
-} satisfies Record<string, TemplateTag>;
-
-export const agentTemplates: AgentTemplate[] = [
-  {
-    id: 'blank',
-    slug: 'blank-agent',
-    title: 'Blank agent config',
-    body: 'A blank starting point with the core toolset.',
-    prompt: 'Create a blank managed agent config with a core toolset.',
-  },
-  {
-    id: 'deep-researcher',
-    slug: 'deep-researcher',
-    title: 'Deep researcher',
-    body: 'Conducts multi-step web research with source synthesis and citations.',
-    prompt: 'Build a deep researcher that conducts multi-step web research, synthesizes sources, and cites claims.',
-  },
-  {
-    id: 'structured-extractor',
-    slug: 'structured-extractor',
-    title: 'Structured extractor',
-    body: 'Parses unstructured text into a typed JSON schema.',
-    prompt: 'Create an agent that parses unstructured text into a typed JSON schema.',
-  },
-  {
-    id: 'field-monitor',
-    slug: 'field-monitor',
-    title: 'Field monitor',
-    body: 'Scans software blogs for a topic and writes a weekly what-changed brief.',
-    prompt: 'Create a field monitor that scans software blogs for a topic and writes a weekly change brief.',
-    tags: [templateTags.notion],
-  },
-  {
-    id: 'support-agent',
-    slug: 'support-agent',
-    title: 'Support agent',
-    body: 'Answers customer questions from your docs and knowledge base, and escalates when needed.',
-    prompt: 'Build a support agent that answers customer questions from docs and escalates when needed.',
-    tags: [templateTags.notion, templateTags.slack],
-  },
-  {
-    id: 'incident-commander',
-    slug: 'incident-commander',
-    title: 'Incident commander',
-    body: 'Triages a Sentry alert, opens a Linear incident ticket, and runs the Slack war room.',
-    prompt:
-      'Create an incident commander agent that triages alerts, opens an incident ticket, and coordinates a war room.',
-    tags: [templateTags.sentry, templateTags.linear, templateTags.slack, templateTags.github],
-  },
-  {
-    id: 'contract-tracker',
-    slug: 'contract-tracker',
-    title: 'Contract tracker',
-    body: 'Extracts clauses, sets deadline reminders, and tracks obligations in Asana when given a Box file ID or link.',
-    prompt: 'Build a contract tracker that extracts clauses, sets deadline reminders, and tracks obligations.',
-    tags: [templateTags.box, templateTags.asana],
-  },
-  {
-    id: 'retro-facilitator',
-    slug: 'sprint-retro-facilitator',
-    title: 'Sprint retro facilitator',
-    body: 'Pulls a closed sprint from Linear, synthesizes themes, and writes the retro doc before the meeting.',
-    prompt:
-      'Create a sprint retro facilitator that pulls closed sprint work, synthesizes themes, and drafts the retro doc.',
-    tags: [templateTags.linear, templateTags.slack, templateTags.docx],
-  },
-  {
-    id: 'support-escalator',
-    slug: 'support-to-eng-escalator',
-    title: 'Support-to-eng escalator',
-    body: 'Reads an Intercom conversation, reproduces the bug, and files a linked Jira issue with repro steps.',
-    prompt: 'Create a support-to-engineering escalator that reproduces bugs and files linked issues with repro steps.',
-    tags: [templateTags.intercom, templateTags.atlassian, templateTags.slack],
-  },
-  {
-    id: 'data-analyst',
-    slug: 'data-analyst',
-    title: 'Data analyst',
-    body: 'Load, explore, and visualize data; build reports and answer questions from datasets.',
-    prompt: 'Build a data analyst agent that loads, explores, visualizes data, and writes reports from datasets.',
-    tags: [templateTags.amplitude],
-  },
-];
-
-export const createAgentTemplates = agentTemplates.slice(0, 6);
-
-export const blankAgentTemplate = createAgentTemplates[0];
-
-export const createTemplateAppTags: Record<string, TemplateTag[]> = {
-  'field-monitor': [templateTags.notion],
-  'support-agent': [templateTags.notion, templateTags.slack],
-  'incident-commander': [templateTags.sentry, templateTags.linear, templateTags.slack, templateTags.github],
-};
-
-export const structuredExtractorSystem = `You extract structured data from unstructured text. Given raw input (emails, PDFs, logs, transcripts, scraped HTML) and a target JSON schema:
-
-1. Read the schema first. Note required vs optional fields, enums, and format constraints (dates, currencies, IDs). The schema is the contract — never emit a key it doesn't define.
-2. Scan the input for each field. Prefer explicit values over inferred ones. If a required field is genuinely absent, use null rather than guessing.
-3. Normalize as you extract: trim whitespace, coerce dates to ISO 8601, strip currency symbols into numeric + code, collapse enum synonyms to their canonical value.
-4. Emit a single JSON object (or array, if the schema is a list) that validates against the schema. No prose, no markdown fences — just the JSON.
-
-When the input is ambiguous, pick the most conservative interpretation and note the ambiguity in a top-level "_extraction_notes" field only if the schema allows additionalProperties.`;
-
-export function templateSystem(template: AgentTemplate) {
-  if (template.id === 'structured-extractor') {
-    return structuredExtractorSystem;
-  }
-
-  return `${template.prompt} Keep outputs concise, cite tool results when relevant, and ask for clarification before taking irreversible action.`;
+export function yamlForTemplate(template: AgentTemplate, locale: Locale = 'en') {
+  return yamlStringify(displayAgentConfig(createDialogAgentConfig(template, locale)));
 }
 
-export function yamlForTemplate(template: AgentTemplate) {
-  return yamlStringify(displayAgentConfig(createDialogAgentConfig(template)));
+export function jsonForTemplate(template: AgentTemplate, locale: Locale = 'en') {
+  return JSON.stringify(displayAgentConfig(createDialogAgentConfig(template, locale)), null, 2);
 }
 
-export function jsonForTemplate(template: AgentTemplate) {
-  return JSON.stringify(displayAgentConfig(createDialogAgentConfig(template)), null, 2);
-}
-
-export function codeForTemplate(template: AgentTemplate, format: CodeFormat) {
-  return format === 'YAML' ? yamlForTemplate(template) : jsonForTemplate(template);
+export function codeForTemplate(template: AgentTemplate, format: CodeFormat, locale: Locale = 'en') {
+  return format === 'YAML' ? yamlForTemplate(template, locale) : jsonForTemplate(template, locale);
 }
 
 export function createAgentToolset() {
@@ -256,7 +121,14 @@ Be skeptical. If sources conflict, say so and explain which you find more credib
     name: 'Structured extractor',
     description: 'Parses unstructured text into a typed JSON schema.',
     model: 'claude-sonnet-4-6',
-    system: structuredExtractorSystem,
+    system: `You extract structured data from unstructured text. Given raw input (emails, PDFs, logs, transcripts, scraped HTML) and a target JSON schema:
+
+1. Read the schema first. Note required vs optional fields, enums, and format constraints (dates, currencies, IDs). The schema is the contract — never emit a key it doesn't define.
+2. Scan the input for each field. Prefer explicit values over inferred ones. If a required field is genuinely absent, use null rather than guessing.
+3. Normalize as you extract: trim whitespace, coerce dates to ISO 8601, strip currency symbols into numeric + code, collapse enum synonyms to their canonical value.
+4. Emit a single JSON object (or array, if the schema is a list) that validates against the schema. No prose, no markdown fences — just the JSON.
+
+When the input is ambiguous, pick the most conservative interpretation and note the ambiguity in a top-level "_extraction_notes" field only if the schema allows additionalProperties.`,
     mcp_servers: [],
     tools: [createAgentToolset()],
     skills: [],
@@ -417,21 +289,56 @@ export function cloneCreateAgentInput(config: CreateAgentInput): CreateAgentInpu
   return JSON.parse(JSON.stringify(config)) as CreateAgentInput;
 }
 
+export const createDialogTemplateConfigsZh: Record<string, CreateAgentInput> = Object.fromEntries(
+  Object.entries(createDialogTemplateConfigs).map(([id, config]) => {
+    const text = zhTemplateText[id];
+    if (!text) {
+      return [id, config];
+    }
+    return [
+      id,
+      { ...cloneCreateAgentInput(config), name: text.name, description: text.description, system: text.system },
+    ];
+  }),
+);
+
+function templateConfigsForLocale(locale: Locale) {
+  return locale === 'zh-CN' ? createDialogTemplateConfigsZh : createDialogTemplateConfigs;
+}
+
+function fallbackTemplateSystem(template: AgentTemplate, locale: Locale) {
+  if (locale === 'zh-CN') {
+    return `${template.prompt} 输出保持简洁；相关时引用工具结果；不可逆操作前先确认。`;
+  }
+
+  return `${template.prompt} Keep outputs concise, cite tool results when relevant, and ask for clarification before taking irreversible action.`;
+}
+
+export function templateSystem(template: AgentTemplate, locale: Locale = 'en') {
+  const configuredSystem = templateConfigsForLocale(locale)[template.id]?.system;
+
+  return typeof configuredSystem === 'string' ? configuredSystem : fallbackTemplateSystem(template, locale);
+}
+
 export function createDialogAgentConfig(
   template: AgentTemplate,
+  locale: Locale = 'en',
   descriptionOverride?: string | null,
 ): CreateAgentInput {
-  const fallbackConfig: CreateAgentInput = {
-    name: template.id === 'blank' ? 'Untitled agent' : template.title,
-    description: template.body,
-    model: 'claude-sonnet-4-6',
-    system: templateSystem(template),
-    mcp_servers: [],
-    tools: [createAgentToolset()],
-    skills: [],
-    metadata: { template: template.slug },
-  };
-  const config = cloneCreateAgentInput(createDialogTemplateConfigs[template.id] ?? fallbackConfig);
+  const zh = locale === 'zh-CN';
+  const configuredTemplate = templateConfigsForLocale(locale)[template.id];
+  const config = cloneCreateAgentInput(
+    configuredTemplate ?? {
+      name: template.id === 'blank' ? (zh ? '未命名 Agent' : 'Untitled agent') : template.title,
+      description: template.body,
+      model: 'claude-sonnet-4-6',
+      system: fallbackTemplateSystem(template, locale),
+      mcp_servers: [],
+      tools: [createAgentToolset()],
+      skills: [],
+      metadata: { template: template.slug },
+    },
+  );
   const trimmedDescription = descriptionOverride?.trim();
 
   if (trimmedDescription) {
@@ -556,12 +463,14 @@ export async function generateCreateAgentConfig({
   description,
   currentConfig,
   signal,
+  locale = 'en',
 }: {
   orgUuid: string;
   workspaceId: string;
   description: string;
   currentConfig: CreateAgentInput;
   signal: AbortSignal;
+  locale?: Locale;
 }) {
   const requestBody = {
     ...buildPlatformQuickstartRequest({
@@ -569,6 +478,7 @@ export async function generateCreateAgentConfig({
       deploymentSchedulePlanned: false,
       agentDescription: description,
       agentConfig: currentConfig,
+      locale,
     }),
     tool_choice: { type: 'tool', name: 'build_agent_config', disable_parallel_tool_use: true },
   };

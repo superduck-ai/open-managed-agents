@@ -1,0 +1,5 @@
+node_modules/
+dist/
+coverage/
+bun.lock
+src/features/managed-agents/quickstart/platformQuickstartOfficialRequest.generated.ts

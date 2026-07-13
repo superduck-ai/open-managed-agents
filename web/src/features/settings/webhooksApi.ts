@@ -1,10 +1,10 @@
-import { webhooksApi } from '../../shared/api/client';
+import { webhooksApi } from "../../shared/api/client";
 
-export type WebhookEndpointStatus = 'enabled' | 'disabled';
+export type WebhookEndpointStatus = "enabled" | "disabled";
 
 export type WebhookEndpoint = {
   id: string;
-  type: 'webhook';
+  type: "webhook";
   url: string;
   name: string;
   description: string;
@@ -40,14 +40,14 @@ type WebhookEndpointPage = {
 };
 
 export async function listWebhookEndpoints() {
-  const page = await webhooksApi<WebhookEndpointPage>('/v1/webhooks?beta=true');
+  const page = await webhooksApi<WebhookEndpointPage>("/v1/webhooks?beta=true");
   return page.data;
 }
 
 export function createWebhookEndpoint(input: CreateWebhookEndpointInput) {
-  return webhooksApi<WebhookEndpoint>('/v1/webhooks?beta=true', {
-    method: 'POST',
-    body: JSON.stringify(input)
+  return webhooksApi<WebhookEndpoint>("/v1/webhooks?beta=true", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 
@@ -57,8 +57,8 @@ export function updateWebhookEndpointStatus(id: string, status: WebhookEndpointS
 
 export function updateWebhookEndpoint(id: string, input: UpdateWebhookEndpointInput) {
   return webhooksApi<WebhookEndpoint>(`/v1/webhooks/${encodeURIComponent(id)}?beta=true`, {
-    method: 'POST',
-    body: JSON.stringify(input)
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 
@@ -66,14 +66,14 @@ export function regenerateWebhookSigningSecret(id: string) {
   return webhooksApi<RegenerateWebhookSigningSecretResponse>(
     `/v1/webhooks/${encodeURIComponent(id)}/regenerate_signing_secret?beta=true`,
     {
-      method: 'POST',
-      body: JSON.stringify({})
-    }
+      method: "POST",
+      body: JSON.stringify({}),
+    },
   );
 }
 
 export function deleteWebhookEndpoint(id: string) {
-  return webhooksApi<{ id: string; type: 'webhook_deleted' }>(`/v1/webhooks/${encodeURIComponent(id)}?beta=true`, {
-    method: 'DELETE'
+  return webhooksApi<{ id: string; type: "webhook_deleted" }>(`/v1/webhooks/${encodeURIComponent(id)}?beta=true`, {
+    method: "DELETE",
   });
 }

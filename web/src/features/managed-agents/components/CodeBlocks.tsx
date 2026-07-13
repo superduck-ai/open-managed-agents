@@ -1,39 +1,39 @@
-import { useI18n } from '../../../shared/i18n';
-import { Button } from '../../../shared/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
-import clsx from 'clsx';
-import hljs from 'highlight.js/lib/core';
-import bash from 'highlight.js/lib/languages/bash';
-import javascript from 'highlight.js/lib/languages/javascript';
-import json from 'highlight.js/lib/languages/json';
-import python from 'highlight.js/lib/languages/python';
-import typescript from 'highlight.js/lib/languages/typescript';
-import yamlLanguage from 'highlight.js/lib/languages/yaml';
-import { Check, Copy } from 'lucide-react';
-import { useState } from 'react';
-import { templateBody, templateTitle } from '../labels';
-import { looksLikeJson } from '../sessions/SessionDetailPage';
-import { type AgentTemplate, type CodeFormat, type HighlightLanguage } from '../types';
-import { copyText } from '../utils';
+import { useI18n } from "../../../shared/i18n";
+import { Button } from "../../../shared/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../shared/ui/select";
+import clsx from "clsx";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import python from "highlight.js/lib/languages/python";
+import typescript from "highlight.js/lib/languages/typescript";
+import yamlLanguage from "highlight.js/lib/languages/yaml";
+import { Check, Copy } from "lucide-react";
+import { useState } from "react";
+import { templateBody, templateTitle } from "../labels";
+import { looksLikeJson } from "../sessions/SessionDetailPage";
+import { type AgentTemplate, type CodeFormat, type HighlightLanguage } from "../types";
+import { copyText } from "../utils";
 
-hljs.registerLanguage('bash', bash);
+hljs.registerLanguage("bash", bash);
 
-hljs.registerLanguage('shell', bash);
+hljs.registerLanguage("shell", bash);
 
-hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage("javascript", javascript);
 
-hljs.registerLanguage('json', json);
+hljs.registerLanguage("json", json);
 
-hljs.registerLanguage('python', python);
+hljs.registerLanguage("python", python);
 
-hljs.registerLanguage('typescript', typescript);
+hljs.registerLanguage("typescript", typescript);
 
-hljs.registerLanguage('yaml', yamlLanguage);
+hljs.registerLanguage("yaml", yamlLanguage);
 
 export function SyntaxCodeBlock({
   value,
   language,
-  maxHeightClassName
+  maxHeightClassName,
 }: {
   value: string;
   language?: string;
@@ -44,9 +44,9 @@ export function SyntaxCodeBlock({
     <pre
       data-testid="session-trace-code-block"
       className={clsx(
-        'rounded-lg border border-border bg-muted p-3 font-mono text-[13px] leading-[19px] text-foreground whitespace-pre-wrap break-words overflow-x-hidden',
-        maxHeightClassName ? 'subtle-scrollbar overflow-y-auto' : 'overflow-visible',
-        maxHeightClassName
+        "rounded-lg border border-border bg-muted p-3 font-mono text-[13px] leading-[19px] text-foreground whitespace-pre-wrap break-words overflow-x-hidden",
+        maxHeightClassName ? "subtle-scrollbar overflow-y-auto" : "overflow-visible",
+        maxHeightClassName,
       )}
     >
       <HighlightedCode code={value} language={highlightLanguage} />
@@ -55,73 +55,95 @@ export function SyntaxCodeBlock({
 }
 
 export function codeFormatLanguage(format: CodeFormat): HighlightLanguage {
-  return format === 'YAML' ? 'yaml' : 'json';
+  return format === "YAML" ? "yaml" : "json";
 }
 
 export function normalizeHighlightLanguage(language: string | undefined, value: string): HighlightLanguage {
   const normalized = language?.toLowerCase();
-  if (normalized === 'yaml' || normalized === 'yml') {
-    return 'yaml';
+  if (normalized === "yaml" || normalized === "yml") {
+    return "yaml";
   }
-  if (normalized === 'json') {
-    return 'json';
+  if (normalized === "json") {
+    return "json";
   }
-  if (normalized === 'bash' || normalized === 'shell' || normalized === 'sh' || normalized === 'zsh' || normalized === 'cli' || normalized === 'curl') {
-    return 'bash';
+  if (
+    normalized === "bash" ||
+    normalized === "shell" ||
+    normalized === "sh" ||
+    normalized === "zsh" ||
+    normalized === "cli" ||
+    normalized === "curl"
+  ) {
+    return "bash";
   }
-  if (normalized === 'py' || normalized === 'python') {
-    return 'python';
+  if (normalized === "py" || normalized === "python") {
+    return "python";
   }
-  if (normalized === 'ts' || normalized === 'tsx' || normalized === 'typescript') {
-    return 'typescript';
+  if (normalized === "ts" || normalized === "tsx" || normalized === "typescript") {
+    return "typescript";
   }
-  if (normalized === 'js' || normalized === 'jsx' || normalized === 'javascript') {
-    return 'javascript';
+  if (normalized === "js" || normalized === "jsx" || normalized === "javascript") {
+    return "javascript";
   }
-  return looksLikeJson(value) ? 'json' : 'plaintext';
+  return looksLikeJson(value) ? "json" : "plaintext";
 }
 
-export function HighlightedCode({ code, language, className }: { code: string; language: HighlightLanguage; className?: string }) {
-  const codeLanguage = language === 'bash-yaml' ? 'bash' : language;
+export function HighlightedCode({
+  code,
+  language,
+  className,
+}: {
+  code: string;
+  language: HighlightLanguage;
+  className?: string;
+}) {
+  const codeLanguage = language === "bash-yaml" ? "bash" : language;
   return (
     <code
-      className={clsx('whitespace-pre-wrap break-words', className, codeLanguage !== 'plaintext' && `language-${codeLanguage}`)}
+      className={clsx(
+        "whitespace-pre-wrap break-words",
+        className,
+        codeLanguage !== "plaintext" && `language-${codeLanguage}`,
+      )}
       dangerouslySetInnerHTML={{ __html: highlightCodeHtml(code, language) }}
     />
   );
 }
 
 export function highlightCodeHtml(code: string, language: HighlightLanguage): string {
-  if (language === 'plaintext') {
+  if (language === "plaintext") {
     return escapeHtml(code);
   }
-  if (language === 'bash-yaml') {
+  if (language === "bash-yaml") {
     return highlightBashYamlCommand(code);
   }
   return highlightRegisteredLanguage(code, language);
 }
 
 export function highlightBashYamlCommand(code: string): string {
-  const heredocStart = code.indexOf('<<YAML\n');
+  const heredocStart = code.indexOf("<<YAML\n");
   if (heredocStart < 0) {
-    return highlightRegisteredLanguage(code, 'bash');
+    return highlightRegisteredLanguage(code, "bash");
   }
 
-  const bodyStart = heredocStart + '<<YAML\n'.length;
+  const bodyStart = heredocStart + "<<YAML\n".length;
   const beforeYaml = code.slice(0, bodyStart);
   const rest = code.slice(bodyStart);
   const closingMatch = rest.match(/([\s\S]*?)(\nYAML)$/);
-  const yamlBody = closingMatch ? closingMatch[1] ?? '' : rest;
-  const closingYaml = closingMatch?.[2] ?? '';
+  const yamlBody = closingMatch ? (closingMatch[1] ?? "") : rest;
+  const closingYaml = closingMatch?.[2] ?? "";
 
   return [
-    highlightRegisteredLanguage(beforeYaml, 'bash'),
-    highlightRegisteredLanguage(yamlBody, 'yaml'),
-    closingYaml ? highlightRegisteredLanguage(closingYaml, 'bash') : ''
-  ].join('');
+    highlightRegisteredLanguage(beforeYaml, "bash"),
+    highlightRegisteredLanguage(yamlBody, "yaml"),
+    closingYaml ? highlightRegisteredLanguage(closingYaml, "bash") : "",
+  ].join("");
 }
 
-export function highlightRegisteredLanguage(code: string, language: Exclude<HighlightLanguage, 'bash-yaml' | 'plaintext'>): string {
+export function highlightRegisteredLanguage(
+  code: string,
+  language: Exclude<HighlightLanguage, "bash-yaml" | "plaintext">,
+): string {
   if (!hljs.getLanguage(language)) {
     return escapeHtml(code);
   }
@@ -134,32 +156,32 @@ export function highlightRegisteredLanguage(code: string, language: Exclude<High
 
 export function escapeHtml(value: string): string {
   return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 export function FormatSelect({
   value,
   onChange,
   compact = false,
-  align = 'right',
+  align = "right",
   buttonClassName,
-  menuClassName
+  menuClassName,
 }: {
   value: CodeFormat;
   onChange: (value: CodeFormat) => void;
   compact?: boolean;
-  align?: 'left' | 'right';
+  align?: "left" | "right";
   buttonClassName?: string;
   menuClassName?: string;
 }) {
   const { msg } = useI18n();
   const items: Array<{ value: CodeFormat; label: CodeFormat }> = [
-    { value: 'YAML', label: 'YAML' },
-    { value: 'JSON', label: 'JSON' }
+    { value: "YAML", label: "YAML" },
+    { value: "JSON", label: "JSON" },
   ];
 
   return (
@@ -173,21 +195,21 @@ export function FormatSelect({
       }}
     >
       <SelectTrigger
-        aria-label={msg('managedAgents.codeBlocks.codeFormat', 'Code format')}
+        aria-label={msg("managedAgents.codeBlocks.codeFormat", "Code format")}
         size="sm"
         className={clsx(
-          'h-7 w-auto min-w-[4.5rem] border-transparent bg-transparent px-2 text-sm text-foreground shadow-none hover:bg-accent',
-          compact ? 'rounded-md px-2' : 'px-2.5',
-          buttonClassName
+          "h-7 w-auto min-w-[4.5rem] border-transparent bg-transparent px-2 text-sm text-foreground shadow-none hover:bg-accent",
+          compact ? "rounded-md px-2" : "px-2.5",
+          buttonClassName,
         )}
       >
         <SelectValue>{value}</SelectValue>
       </SelectTrigger>
       <SelectContent
-        align={align === 'left' ? 'start' : 'end'}
+        align={align === "left" ? "start" : "end"}
         alignItemWithTrigger={false}
         sideOffset={6}
-        className={clsx('w-28 min-w-[7rem]', menuClassName)}
+        className={clsx("w-28 min-w-[7rem]", menuClassName)}
       >
         {items.map((item) => (
           <SelectItem key={item.value} value={item.value} label={item.label}>
@@ -214,7 +236,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
       type="button"
       variant="ghost"
       size="icon-sm"
-      aria-label={copied ? msg('common.copied', 'Copied') : label}
+      aria-label={copied ? msg("common.copied", "Copied") : label}
       className="text-foreground hover:bg-accent hover:text-foreground"
       onClick={handleCopy}
     >
@@ -254,21 +276,15 @@ export function ScrollableCodeBlock({ code, language }: { code: string; language
 
 const maxVisibleTemplateTags = 4;
 
-export function TemplateCard({
-  template,
-  onClick
-}: {
-  template: AgentTemplate;
-  onClick: () => void;
-}) {
+export function TemplateCard({ template, onClick }: { template: AgentTemplate; onClick: () => void }) {
   const { msg } = useI18n();
   const title = templateTitle(template, msg);
   const body = templateBody(template, msg);
-  const label = [title, body, ...(template.tags?.map((tag) => tag.label) ?? [])].join(' ');
+  const label = [title, body, ...(template.tags?.map((tag) => tag.label) ?? [])].join(" ");
   const tags = template.tags ?? [];
   const visibleTags = tags.slice(0, maxVisibleTemplateTags);
   const hiddenTagCount = tags.length - visibleTags.length;
-  const hiddenTagTitle = `${hiddenTagCount} more ${hiddenTagCount === 1 ? 'tag' : 'tags'}`;
+  const hiddenTagTitle = `${hiddenTagCount} more ${hiddenTagCount === 1 ? "tag" : "tags"}`;
   return (
     <Button
       type="button"
@@ -286,7 +302,7 @@ export function TemplateCard({
             return (
               <span
                 key={tag.label}
-                className={clsx('grid size-5 place-items-center rounded-full border border-border', tag.tone)}
+                className={clsx("grid size-5 place-items-center rounded-full border border-border", tag.tone)}
                 title={tag.label}
               >
                 <Icon className="size-3" aria-hidden />

@@ -37,3 +37,9 @@ web-test:
 
 web-lint:
   cd web && bun run lint
+
+web-format:
+  cd web && bun run format
+
+web-format-check:
+  cd web && bun run format:check

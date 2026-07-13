@@ -1,16 +1,10 @@
-import * as React from "react"
-import { cva, type VariantProps } from "class-variance-authority"
+import * as React from "react";
+import { cva, type VariantProps } from "class-variance-authority";
 
-import { cn } from "@/shared/lib/utils"
+import { cn } from "@/shared/lib/utils";
 
 function BubbleGroup({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="bubble-group"
-      className={cn("flex min-w-0 flex-col gap-2", className)}
-      {...props}
-    />
-  )
+  return <div data-slot="bubble-group" className={cn("flex min-w-0 flex-col gap-2", className)} {...props} />;
 }
 
 const bubbleVariants = cva(
@@ -30,8 +24,8 @@ const bubbleVariants = cva(
     defaultVariants: {
       variant: "default",
     },
-  }
-)
+  },
+);
 
 function Bubble({
   variant = "default",
@@ -40,7 +34,7 @@ function Bubble({
   ...props
 }: React.ComponentProps<"div"> &
   VariantProps<typeof bubbleVariants> & {
-    align?: "start" | "end"
+    align?: "start" | "end";
   }) {
   return (
     <div
@@ -50,7 +44,7 @@ function Bubble({
       className={cn(bubbleVariants({ variant }), className)}
       {...props}
     />
-  )
+  );
 }
 
 function BubbleContent({ className, ...props }: React.ComponentProps<"div">) {
@@ -68,11 +62,11 @@ function BubbleContent({ className, ...props }: React.ComponentProps<"div">) {
         "group-data-[variant=ghost]/bubble:rounded-none group-data-[variant=ghost]/bubble:border-transparent group-data-[variant=ghost]/bubble:bg-transparent group-data-[variant=ghost]/bubble:px-0 group-data-[variant=ghost]/bubble:py-0 group-data-[variant=ghost]/bubble:text-foreground",
         "group-data-[variant=destructive]/bubble:bg-destructive/10 group-data-[variant=destructive]/bubble:text-destructive dark:group-data-[variant=destructive]/bubble:bg-destructive/20",
         "[button]:text-left [button,a]:outline-none [button,a]:transition-colors [button,a]:focus-visible:border-ring [button,a]:focus-visible:ring-3 [button,a]:focus-visible:ring-ring/30",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 const bubbleReactionsVariants = cva(
@@ -92,8 +86,8 @@ const bubbleReactionsVariants = cva(
       side: "bottom",
       align: "end",
     },
-  }
-)
+  },
+);
 
 function BubbleReactions({
   side = "bottom",
@@ -101,8 +95,8 @@ function BubbleReactions({
   className,
   ...props
 }: React.ComponentProps<"div"> & {
-  align?: "start" | "end"
-  side?: "top" | "bottom"
+  align?: "start" | "end";
+  side?: "top" | "bottom";
 }) {
   return (
     <div
@@ -112,7 +106,7 @@ function BubbleReactions({
       className={cn(bubbleReactionsVariants({ side, align }), className)}
       {...props}
     />
-  )
+  );
 }
 
-export { BubbleGroup, Bubble, BubbleContent, BubbleReactions }
+export { BubbleGroup, Bubble, BubbleContent, BubbleReactions };

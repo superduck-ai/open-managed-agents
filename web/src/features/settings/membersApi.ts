@@ -1,9 +1,9 @@
-import { consoleApi } from '../../shared/api/client';
-import type { PlatformRole } from '../../shared/permissions/roles';
+import { consoleApi } from "../../shared/api/client";
+import type { PlatformRole } from "../../shared/permissions/roles";
 
 export type OrganizationMember = {
   id: string;
-  type?: 'user';
+  type?: "user";
   email: string;
   name: string;
   role: PlatformRole | string;
@@ -12,40 +12,33 @@ export type OrganizationMember = {
 
 export type OrganizationInvite = {
   id: string;
-  type?: 'invite';
+  type?: "invite";
   email: string;
   role: PlatformRole | string;
   invited_at: string;
   expires_at: string;
-  status: 'pending' | 'accepted' | 'expired' | 'deleted' | string;
+  status: "pending" | "accepted" | "expired" | "deleted" | string;
 };
 
 export type DeletedOrganizationInvite = {
   id: string;
-  type: 'invite_deleted';
+  type: "invite_deleted";
 };
 
 export function listOrganizationMembers(orgUuid: string) {
   return consoleApi<OrganizationMember[]>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/members`);
 }
 
-export function listOrganizationInvites(orgUuid: string, status = 'pending') {
-  const query = status ? `?status=${encodeURIComponent(status)}` : '';
-  return consoleApi<OrganizationInvite[]>(
-    `/api/console/organizations/${encodeURIComponent(orgUuid)}/invites${query}`
-  );
+export function listOrganizationInvites(orgUuid: string, status = "pending") {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return consoleApi<OrganizationInvite[]>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/invites${query}`);
 }
 
-export function createOrganizationInvite(
-  orgUuid: string,
-  email: string,
-  role: PlatformRole,
-  csrfToken?: string
-) {
+export function createOrganizationInvite(orgUuid: string, email: string, role: PlatformRole, csrfToken?: string) {
   return consoleApi<OrganizationInvite>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/invites`, {
-    method: 'POST',
+    method: "POST",
     csrfToken,
-    body: JSON.stringify({ email, role })
+    body: JSON.stringify({ email, role }),
   });
 }
 
@@ -53,9 +46,9 @@ export function resendOrganizationInvite(orgUuid: string, inviteId: string, csrf
   return consoleApi<OrganizationInvite>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/invites/${encodeURIComponent(inviteId)}`,
     {
-      method: 'PUT',
-      csrfToken
-    }
+      method: "PUT",
+      csrfToken,
+    },
   );
 }
 
@@ -63,9 +56,9 @@ export function deleteOrganizationInvite(orgUuid: string, inviteId: string, csrf
   return consoleApi<DeletedOrganizationInvite>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/invites/${encodeURIComponent(inviteId)}`,
     {
-      method: 'DELETE',
-      csrfToken
-    }
+      method: "DELETE",
+      csrfToken,
+    },
   );
 }
 
@@ -73,14 +66,14 @@ export function updateOrganizationMemberRole(
   orgUuid: string,
   memberId: string,
   role: PlatformRole,
-  csrfToken?: string
+  csrfToken?: string,
 ) {
   return consoleApi<OrganizationMember>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/members/${encodeURIComponent(memberId)}`,
     {
-      method: 'POST',
+      method: "POST",
       csrfToken,
-      body: JSON.stringify({ role })
-    }
+      body: JSON.stringify({ role }),
+    },
   );
 }

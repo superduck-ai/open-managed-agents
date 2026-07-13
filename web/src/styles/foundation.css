@@ -106,8 +106,7 @@
   --syntax-title: #8250df;
   --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.06);
   --shadow-popover:
-    0 1px 2px oklch(0 0 0 / 0.04), 0 8px 20px -10px oklch(0 0 0 / 0.2),
-    0 24px 48px -24px oklch(0 0 0 / 0.24);
+    0 1px 2px oklch(0 0 0 / 0.04), 0 8px 20px -10px oklch(0 0 0 / 0.2), 0 24px 48px -24px oklch(0 0 0 / 0.24);
   --focus-ring: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
   --workbench-field-weight: 400;
   --color-scheme: light;
@@ -165,8 +164,7 @@
   --syntax-title: #dcdcaa;
   --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.22);
   --shadow-popover:
-    0 1px 2px oklch(0 0 0 / 0.3), 0 8px 20px -10px oklch(0 0 0 / 0.5),
-    0 24px 48px -24px oklch(0 0 0 / 0.6);
+    0 1px 2px oklch(0 0 0 / 0.3), 0 8px 20px -10px oklch(0 0 0 / 0.5), 0 24px 48px -24px oklch(0 0 0 / 0.6);
   --focus-ring: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
   --workbench-field-weight: 300;
   --color-scheme: dark;
@@ -224,8 +222,7 @@
     --syntax-title: #dcdcaa;
     --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.22);
     --shadow-popover:
-      0 1px 2px oklch(0 0 0 / 0.3), 0 8px 20px -10px oklch(0 0 0 / 0.5),
-      0 24px 48px -24px oklch(0 0 0 / 0.6);
+      0 1px 2px oklch(0 0 0 / 0.3), 0 8px 20px -10px oklch(0 0 0 / 0.5), 0 24px 48px -24px oklch(0 0 0 / 0.6);
     --focus-ring: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
     --workbench-field-weight: 300;
     --color-scheme: dark;
@@ -534,7 +531,9 @@ select {
   font-size: 14px;
   font-weight: 600;
   color: var(--background);
-  transition: opacity 140ms ease, background-color 140ms ease;
+  transition:
+    opacity 140ms ease,
+    background-color 140ms ease;
 }
 
 .primary-button:hover {
@@ -559,7 +558,9 @@ select {
   font-size: 14px;
   font-weight: 500;
   color: var(--foreground);
-  transition: background-color 140ms ease, color 140ms ease;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
 .secondary-button:hover,

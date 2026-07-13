@@ -1,6 +1,6 @@
-import { createContext, useContext } from 'react';
-import type { AuthAccount } from '../auth/api';
-import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from './api';
+import { createContext, useContext } from "react";
+import type { AuthAccount } from "../auth/api";
+import { defaultWorkspace, type CreateWorkspaceInput, type Workspace } from "./api";
 
 export type WorkspaceContextValue = {
   orgUuid?: string;
@@ -23,13 +23,13 @@ const fallbackWorkspaceContext: WorkspaceContextValue = {
   selectWorkspace: () => undefined,
   createWorkspace: async (input) => ({
     ...defaultWorkspace,
-    id: `wrkspc_${input.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+    id: `wrkspc_${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
     name: input.name,
     display_color: input.display_color,
     color: input.display_color,
-    data_residency: input.data_residency
+    data_residency: input.data_residency,
   }),
-  refreshWorkspaces: async () => undefined
+  refreshWorkspaces: async () => undefined,
 };
 
 export const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);

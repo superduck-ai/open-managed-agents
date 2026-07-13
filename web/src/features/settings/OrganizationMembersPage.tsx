@@ -1,12 +1,7 @@
-import {
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  useReactTable
-} from '@tanstack/react-table';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, MoreVertical, Plus, Send, Trash2 } from 'lucide-react';
-import { useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, MoreVertical, Plus, Send, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,47 +10,29 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle
-} from '../../shared/ui/alert-dialog';
-import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
-import { Badge } from '../../shared/ui/badge';
-import { Button } from '../../shared/ui/button';
-import { Card, CardContent, CardHeader } from '../../shared/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle
-} from '../../shared/ui/dialog';
+  AlertDialogTitle,
+} from "../../shared/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert";
+import { Badge } from "../../shared/ui/badge";
+import { Button } from "../../shared/ui/button";
+import { Card, CardContent, CardHeader } from "../../shared/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../shared/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger
-} from '../../shared/ui/dropdown-menu';
-import { Label } from '../../shared/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '../../shared/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from '../../shared/ui/table';
-import { Textarea } from '../../shared/ui/textarea';
-import { Skeleton } from '../../shared/ui/skeleton';
-import { toast, Toaster } from '../../shared/ui/sonner';
-import { useAuth } from '../../shared/auth/context';
-import { canManageMembers } from '../../shared/permissions/members';
-import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
-import { useWorkspace } from '../../shared/workspaces/context';
+  DropdownMenuTrigger,
+} from "../../shared/ui/dropdown-menu";
+import { Label } from "../../shared/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../shared/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../shared/ui/table";
+import { Textarea } from "../../shared/ui/textarea";
+import { Skeleton } from "../../shared/ui/skeleton";
+import { toast, Toaster } from "../../shared/ui/sonner";
+import { useAuth } from "../../shared/auth/context";
+import { canManageMembers } from "../../shared/permissions/members";
+import { roleOptions, type PlatformRole } from "../../shared/permissions/roles";
+import { useWorkspace } from "../../shared/workspaces/context";
 import {
   createOrganizationInvite,
   deleteOrganizationInvite,
@@ -64,8 +41,8 @@ import {
   resendOrganizationInvite,
   updateOrganizationMemberRole,
   type OrganizationInvite,
-  type OrganizationMember
-} from './membersApi';
+  type OrganizationMember,
+} from "./membersApi";
 
 type OrganizationMemberRow = OrganizationMember | OrganizationInvite;
 type SelectOption<T extends string> = {
@@ -74,15 +51,13 @@ type SelectOption<T extends string> = {
   description?: ReactNode;
   disabled?: boolean;
 };
-type InviteValidationError =
-  | { type: 'invalid-email'; emails: string[] }
-  | { type: 'too-many' };
+type InviteValidationError = { type: "invalid-email"; emails: string[] } | { type: "too-many" };
 
 const memberColumnHelper = createColumnHelper<OrganizationMemberRow>();
 const roleSelectOptions = roleOptions.map<SelectOption<PlatformRole>>((role) => ({
   value: role.value,
   label: role.label,
-  description: role.description
+  description: role.description,
 }));
 
 export function OrganizationMembersPage() {
@@ -96,72 +71,76 @@ export function OrganizationMembersPage() {
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
   const [inviteToRevoke, setInviteToRevoke] = useState<OrganizationInvite | null>(null);
   const [pendingRoleMemberId, setPendingRoleMemberId] = useState<string | null>(null);
-  const membersQueryKey = ['console', 'organization-members', activeOrgUuid] as const;
-  const invitesQueryKey = ['console', 'organization-invites', activeOrgUuid, 'pending'] as const;
+  const membersQueryKey = ["console", "organization-members", activeOrgUuid] as const;
+  const invitesQueryKey = ["console", "organization-invites", activeOrgUuid, "pending"] as const;
 
   const membersQuery = useQuery({
     queryKey: membersQueryKey,
-    queryFn: () => listOrganizationMembers(activeOrgUuid ?? ''),
+    queryFn: () => listOrganizationMembers(activeOrgUuid ?? ""),
     enabled: Boolean(activeOrgUuid),
-    retry: false
+    retry: false,
   });
 
   const invitesQuery = useQuery({
     queryKey: invitesQueryKey,
-    queryFn: () => listOrganizationInvites(activeOrgUuid ?? '', 'pending'),
+    queryFn: () => listOrganizationInvites(activeOrgUuid ?? "", "pending"),
     enabled: Boolean(activeOrgUuid) && canManage,
-    retry: false
+    retry: false,
   });
 
   const updateRoleMutation = useMutation({
     mutationFn: ({ member, role }: { member: OrganizationMember; role: PlatformRole }) =>
-      updateOrganizationMemberRole(activeOrgUuid ?? '', member.id, role, csrfToken),
+      updateOrganizationMemberRole(activeOrgUuid ?? "", member.id, role, csrfToken),
     onMutate: ({ member }) => {
       setPendingRoleMemberId(member.id);
     },
     onSuccess: (updatedMember) => {
-      queryClient.setQueryData<OrganizationMember[]>(membersQueryKey, (current) =>
-        current?.map((member) => (member.id === updatedMember.id ? updatedMember : member)) ?? [updatedMember]
+      queryClient.setQueryData<OrganizationMember[]>(
+        membersQueryKey,
+        (current) =>
+          current?.map((member) => (member.id === updatedMember.id ? updatedMember : member)) ?? [updatedMember],
       );
     },
     onSettled: () => {
       setPendingRoleMemberId(null);
-    }
+    },
   });
 
   const resendInviteMutation = useMutation({
-    mutationFn: (invite: OrganizationInvite) => resendOrganizationInvite(activeOrgUuid ?? '', invite.id, csrfToken),
+    mutationFn: (invite: OrganizationInvite) => resendOrganizationInvite(activeOrgUuid ?? "", invite.id, csrfToken),
     onSuccess: (updatedInvite) => {
-      queryClient.setQueryData<OrganizationInvite[]>(invitesQueryKey, (current) =>
-        current?.map((invite) => (invite.id === updatedInvite.id ? updatedInvite : invite)) ?? [updatedInvite]
+      queryClient.setQueryData<OrganizationInvite[]>(
+        invitesQueryKey,
+        (current) =>
+          current?.map((invite) => (invite.id === updatedInvite.id ? updatedInvite : invite)) ?? [updatedInvite],
       );
       setInviteActionError(null);
-      toast.success('Invite reminder sent.');
+      toast.success("Invite reminder sent.");
     },
     onError: (error) => {
       setInviteActionError(errorMessage(error));
-    }
+    },
   });
 
   const deleteInviteMutation = useMutation({
-    mutationFn: (invite: OrganizationInvite) => deleteOrganizationInvite(activeOrgUuid ?? '', invite.id, csrfToken),
+    mutationFn: (invite: OrganizationInvite) => deleteOrganizationInvite(activeOrgUuid ?? "", invite.id, csrfToken),
     onSuccess: (_deletedInvite, invite) => {
       queryClient.setQueryData<OrganizationInvite[]>(
         invitesQueryKey,
-        (current) => current?.filter((existingInvite) => existingInvite.id !== invite.id) ?? []
+        (current) => current?.filter((existingInvite) => existingInvite.id !== invite.id) ?? [],
       );
       setInviteToRevoke(null);
       setInviteActionError(null);
-      toast.success('Invitation revoked.');
+      toast.success("Invitation revoked.");
     },
     onError: (error) => {
       setInviteActionError(errorMessage(error));
-    }
+    },
   });
 
   const tableRows = useMemo<OrganizationMemberRow[]>(
     () => [...(canManage ? (invitesQuery.data ?? []) : []), ...(membersQuery.data ?? [])],
-    [canManage, invitesQuery.data, membersQuery.data]
+    [canManage, invitesQuery.data, membersQuery.data],
   );
   const isInitialLoading =
     (membersQuery.isLoading && !membersQuery.data) || (canManage && invitesQuery.isLoading && !invitesQuery.data);
@@ -177,8 +156,8 @@ export function OrganizationMembersPage() {
   const columns = useMemo(
     () => [
       memberColumnHelper.display({
-        id: 'name',
-        header: 'Name',
+        id: "name",
+        header: "Name",
         cell: ({ row }) => {
           if (isInviteRow(row.original)) {
             return (
@@ -198,16 +177,16 @@ export function OrganizationMembersPage() {
               <span className="truncate text-foreground">{name || row.original.email}</span>
             </div>
           );
-        }
+        },
       }),
       memberColumnHelper.display({
-        id: 'email',
-        header: 'Email',
-        cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>
+        id: "email",
+        header: "Email",
+        cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>,
       }),
       memberColumnHelper.display({
-        id: 'role',
-        header: 'Role',
+        id: "role",
+        header: "Role",
         cell: ({ row }) => {
           if (isInviteRow(row.original)) {
             return <span className="text-foreground">{roleLabel(normalizePlatformRole(row.original.role))}</span>;
@@ -235,11 +214,11 @@ export function OrganizationMembersPage() {
               }}
             />
           );
-        }
+        },
       }),
       memberColumnHelper.display({
-        id: 'actions',
-        header: '',
+        id: "actions",
+        header: "",
         cell: ({ row }) =>
           isInviteRow(row.original) ? (
             <InviteActionsMenu
@@ -256,10 +235,10 @@ export function OrganizationMembersPage() {
             />
           ) : (
             <span aria-hidden className="block h-8 w-8" />
-          )
-      })
+          ),
+      }),
     ],
-    [account, canManage, deleteInviteMutation, pendingRoleMemberId, resendInviteMutation, updateRoleMutation]
+    [account, canManage, deleteInviteMutation, pendingRoleMemberId, resendInviteMutation, updateRoleMutation],
   );
 
   // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
@@ -267,7 +246,7 @@ export function OrganizationMembersPage() {
   const table = useReactTable({
     data: tableRows,
     columns,
-    getCoreRowModel: getCoreRowModel()
+    getCoreRowModel: getCoreRowModel(),
   });
 
   if (!activeOrgUuid) {
@@ -287,12 +266,7 @@ export function OrganizationMembersPage() {
 
   return (
     <section className="mx-auto w-full max-w-[1180px]" data-testid="organization-members-page">
-      <Toaster
-        position="top-right"
-        duration={2200}
-        closeButton
-        toastOptions={{ closeButtonAriaLabel: 'Close' }}
-      />
+      <Toaster position="top-right" duration={2200} closeButton toastOptions={{ closeButtonAriaLabel: "Close" }} />
       <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
         <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
           <span>Members</span>
@@ -314,9 +288,7 @@ export function OrganizationMembersPage() {
         ) : null}
       </div>
 
-      {updateRoleMutation.isError ? (
-        <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice>
-      ) : null}
+      {updateRoleMutation.isError ? <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice> : null}
       {inviteActionError ? <InlineNotice>{inviteActionError}</InlineNotice> : null}
 
       <div className="overflow-hidden border-y border-border">
@@ -380,9 +352,9 @@ export function OrganizationMembersPage() {
         onInvited={(createdInvites) => {
           queryClient.setQueryData<OrganizationInvite[]>(invitesQueryKey, (current) => [
             ...createdInvites,
-            ...(current ?? [])
+            ...(current ?? []),
           ]);
-          toast.success(createdInvites.length === 1 ? 'Invite sent.' : `${createdInvites.length} invites sent.`);
+          toast.success(createdInvites.length === 1 ? "Invite sent." : `${createdInvites.length} invites sent.`);
         }}
       />
       <InviteRevokeDialog
@@ -408,7 +380,7 @@ function InviteMembersDialog({
   activeOrgUuid,
   csrfToken,
   onOpenChange,
-  onInvited
+  onInvited,
 }: {
   open: boolean;
   activeOrgUuid: string;
@@ -416,8 +388,8 @@ function InviteMembersDialog({
   onOpenChange: (open: boolean) => void;
   onInvited: (createdInvites: OrganizationInvite[]) => void;
 }) {
-  const [emailsValue, setEmailsValue] = useState('');
-  const [role, setRole] = useState<PlatformRole>('user');
+  const [emailsValue, setEmailsValue] = useState("");
+  const [role, setRole] = useState<PlatformRole>("user");
   const [submitValidationError, setSubmitValidationError] = useState<InviteValidationError | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const parsedEmails = parseEmailAddresses(emailsValue);
@@ -431,12 +403,12 @@ function InviteMembersDialog({
       return createdInvites;
     },
     onSuccess: (createdInvites) => {
-      setEmailsValue('');
-      setRole('user');
+      setEmailsValue("");
+      setRole("user");
       setSubmitValidationError(null);
       onOpenChange(false);
       onInvited(createdInvites);
-    }
+    },
   });
 
   const canSubmit = parsedEmails.length > 0 && !inviteMutation.isPending;
@@ -444,8 +416,8 @@ function InviteMembersDialog({
   const closeDialog = (nextOpen: boolean) => {
     onOpenChange(nextOpen);
     if (!nextOpen) {
-      setEmailsValue('');
-      setRole('user');
+      setEmailsValue("");
+      setRole("user");
       setSubmitValidationError(null);
       inviteMutation.reset();
     }
@@ -457,12 +429,12 @@ function InviteMembersDialog({
       return;
     }
     if (parsedEmails.length > 50) {
-      setSubmitValidationError({ type: 'too-many' });
+      setSubmitValidationError({ type: "too-many" });
       return;
     }
     const invalidEmails = parsedEmails.filter((email) => !isEmailLike(email));
     if (invalidEmails.length > 0) {
-      setSubmitValidationError({ type: 'invalid-email', emails: invalidEmails });
+      setSubmitValidationError({ type: "invalid-email", emails: invalidEmails });
       return;
     }
     setSubmitValidationError(null);
@@ -491,7 +463,7 @@ function InviteMembersDialog({
                 setEmailsValue(event.target.value);
                 inviteMutation.reset();
               }}
-              placeholder={'claude.shannon@example.com\nshannon.claude@example.com'}
+              placeholder={"claude.shannon@example.com\nshannon.claude@example.com"}
               className="min-h-[132px] resize-y"
               disabled={inviteMutation.isPending}
               aria-invalid={submitValidationError ? true : undefined}
@@ -522,7 +494,7 @@ function InviteMembersDialog({
 
           <div className="flex justify-end">
             <Button type="submit" size="lg" disabled={!canSubmit}>
-              {inviteMutation.isPending ? 'Inviting...' : 'Invite'}
+              {inviteMutation.isPending ? "Inviting..." : "Invite"}
             </Button>
           </div>
         </form>
@@ -537,7 +509,7 @@ function RoleSelect({
   disabled,
   className,
   contentClassName,
-  onChange
+  onChange,
 }: {
   ariaLabel: string;
   value: PlatformRole;
@@ -601,7 +573,7 @@ function InviteActionsMenu({
   invite,
   disabled,
   onResend,
-  onRevoke
+  onRevoke,
 }: {
   invite: OrganizationInvite;
   disabled: boolean;
@@ -636,7 +608,7 @@ function InviteRevokeDialog({
   invite,
   isSubmitting,
   onCancel,
-  onConfirm
+  onConfirm,
 }: {
   invite: OrganizationInvite | null;
   isSubmitting: boolean;
@@ -668,7 +640,7 @@ function InviteRevokeDialog({
             Cancel
           </AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={isSubmitting} onClick={onConfirm}>
-            {isSubmitting ? 'Revoking...' : 'Revoke'}
+            {isSubmitting ? "Revoking..." : "Revoke"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -677,7 +649,7 @@ function InviteRevokeDialog({
 }
 
 function InviteValidationNotice({ error }: { error: InviteValidationError }) {
-  if (error.type === 'too-many') {
+  if (error.type === "too-many") {
     return (
       <Alert variant="destructive">
         <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -689,7 +661,7 @@ function InviteValidationNotice({ error }: { error: InviteValidationError }) {
   return (
     <Alert variant="destructive">
       <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <AlertTitle>{error.emails.length === 1 ? 'Invalid email address:' : 'Invalid email addresses:'}</AlertTitle>
+      <AlertTitle>{error.emails.length === 1 ? "Invalid email address:" : "Invalid email addresses:"}</AlertTitle>
       <AlertDescription>
         {error.emails.map((email) => (
           <p key={email}>{email}</p>
@@ -719,31 +691,31 @@ function MemberAvatar({ member }: { member: OrganizationMember }) {
 }
 
 function isInviteRow(row: OrganizationMemberRow): row is OrganizationInvite {
-  return row.type === 'invite';
+  return row.type === "invite";
 }
 
 function headerClassName(columnId: string) {
   switch (columnId) {
-    case 'name':
-      return 'w-[34%] px-3 py-2.5 text-muted-foreground';
-    case 'email':
-      return 'w-[38%] px-3 py-2.5 text-muted-foreground';
-    case 'role':
-      return 'w-[22%] px-3 py-2.5 text-muted-foreground';
+    case "name":
+      return "w-[34%] px-3 py-2.5 text-muted-foreground";
+    case "email":
+      return "w-[38%] px-3 py-2.5 text-muted-foreground";
+    case "role":
+      return "w-[22%] px-3 py-2.5 text-muted-foreground";
     default:
-      return 'w-10 px-3 py-2.5 text-muted-foreground';
+      return "w-10 px-3 py-2.5 text-muted-foreground";
   }
 }
 
 function cellClassName(columnId: string) {
   switch (columnId) {
-    case 'name':
-    case 'email':
-      return 'min-w-0 whitespace-normal px-3 py-2.5';
-    case 'role':
-      return 'px-3 py-2.5';
+    case "name":
+    case "email":
+      return "min-w-0 whitespace-normal px-3 py-2.5";
+    case "role":
+      return "px-3 py-2.5";
     default:
-      return 'px-3 py-2.5';
+      return "px-3 py-2.5";
   }
 }
 
@@ -752,22 +724,22 @@ function roleLabel(role: PlatformRole) {
 }
 
 function normalizePlatformRole(role: unknown): PlatformRole {
-  const value = typeof role === 'string' ? role.trim().toLowerCase() : '';
-  return roleOptions.some((option) => option.value === value) ? (value as PlatformRole) : 'user';
+  const value = typeof role === "string" ? role.trim().toLowerCase() : "";
+  return roleOptions.some((option) => option.value === value) ? (value as PlatformRole) : "user";
 }
 
 function displayMemberName(member: OrganizationMember) {
-  return member.name || member.email || 'member';
+  return member.name || member.email || "member";
 }
 
-function isCurrentAccountMember(account: ReturnType<typeof useAuth>['account'], member: OrganizationMember) {
+function isCurrentAccountMember(account: ReturnType<typeof useAuth>["account"], member: OrganizationMember) {
   if (!account) {
     return false;
   }
   return (
     member.id === account.uuid ||
     member.id === account.tagged_id ||
-    (member.email !== '' && member.email.toLowerCase() === account.email_address.toLowerCase())
+    (member.email !== "" && member.email.toLowerCase() === account.email_address.toLowerCase())
   );
 }
 
@@ -785,7 +757,7 @@ function isEmailLike(value: string) {
 function initials(value: string) {
   const parts = value.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
-    return '?';
+    return "?";
   }
   if (parts.length === 1) {
     return parts[0].slice(0, 2);
@@ -795,15 +767,15 @@ function initials(value: string) {
 
 function titleizeRole(role: string) {
   return role
-    .split('_')
+    .split("_")
     .filter(Boolean)
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(' ');
+    .join(" ");
 }
 
 function errorMessage(error: unknown) {
-  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
     return error.message;
   }
-  return 'Something went wrong.';
+  return "Something went wrong.";
 }

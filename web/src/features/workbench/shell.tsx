@@ -1,22 +1,14 @@
-import {
-  Box,
-  Check,
-  CirclePlus,
-  Loader2,
-  Lock,
-  Trash2,
-  X
-} from 'lucide-react';
-import { Dispatch, ReactNode, SetStateAction } from 'react';
-import clsx from 'clsx';
-import type { AuthAccount } from '../../shared/auth/api';
-import { Button } from '@/shared/ui/button';
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/shared/ui/command';
-import { Label } from '@/shared/ui/label';
-import { PopoverContent, PopoverHeader, PopoverTitle } from '@/shared/ui/popover';
-import { Switch } from '@/shared/ui/switch';
-import { WorkbenchPromptSummary } from './api';
-import { formatPromptSummaryDate, promptSummaryDisplayTitle } from './model';
+import { Box, Check, CirclePlus, Loader2, Lock, Trash2, X } from "lucide-react";
+import { Dispatch, ReactNode, SetStateAction } from "react";
+import clsx from "clsx";
+import type { AuthAccount } from "../../shared/auth/api";
+import { Button } from "@/shared/ui/button";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/shared/ui/command";
+import { Label } from "@/shared/ui/label";
+import { PopoverContent, PopoverHeader, PopoverTitle } from "@/shared/ui/popover";
+import { Switch } from "@/shared/ui/switch";
+import { WorkbenchPromptSummary } from "./api";
+import { formatPromptSummaryDate, promptSummaryDisplayTitle } from "./model";
 
 export function WorkbenchShell({ children }: { children: ReactNode }) {
   return <section className="workbench-shell">{children}</section>;
@@ -31,7 +23,9 @@ export function WorkbenchAccessUnavailable({ productName }: { productName: strin
             <Lock className="size-5" aria-hidden />
           </div>
           <h1 className="text-xl font-semibold text-foreground">Workbench access unavailable</h1>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">{productName} doesn't include access to the Workbench.</p>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            {productName} doesn't include access to the Workbench.
+          </p>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             Your organization has disabled Workbench access for your user role.
           </p>
@@ -39,7 +33,7 @@ export function WorkbenchAccessUnavailable({ productName }: { productName: strin
             type="button"
             className="mt-5 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90"
             onClick={() => {
-              window.location.assign('/dashboard');
+              window.location.assign("/dashboard");
             }}
           >
             Go to Dashboard
@@ -63,7 +57,7 @@ export function PromptPicker({
   onCreate,
   isCreating,
   onSelect,
-  onRequestDelete
+  onRequestDelete,
 }: {
   prompts: WorkbenchPromptSummary[];
   selectedPromptId?: string;
@@ -125,13 +119,18 @@ export function PromptPicker({
                   <CommandItem
                     key={item.id}
                     role="option"
-                    aria-current={selected ? 'true' : undefined}
+                    aria-current={selected ? "true" : undefined}
                     aria-selected={selected}
                     value={`${title} ${item.id}`}
-                    keywords={[item.id, item.creator?.tagged_id ?? '', item.creator?.full_name ?? '', item.creator?.email_address ?? '']}
+                    keywords={[
+                      item.id,
+                      item.creator?.tagged_id ?? "",
+                      item.creator?.full_name ?? "",
+                      item.creator?.email_address ?? "",
+                    ]}
                     className={clsx(
-                      'h-auto items-start gap-3 rounded-md px-2.5 py-2',
-                      selected && 'bg-accent text-accent-foreground'
+                      "h-auto items-start gap-3 rounded-md px-2.5 py-2",
+                      selected && "bg-accent text-accent-foreground",
                     )}
                     onSelect={() => void onSelect(item)}
                   >
@@ -180,8 +179,12 @@ export function PromptPicker({
             disabled={isCreating}
             onClick={() => void onCreate()}
           >
-            {isCreating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <CirclePlus className="size-4" aria-hidden />}
-            {isCreating ? 'Creating Prompt' : 'Create New Prompt'}
+            {isCreating ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <CirclePlus className="size-4" aria-hidden />
+            )}
+            {isCreating ? "Creating Prompt" : "Create New Prompt"}
           </Button>
         </div>
       </Command>

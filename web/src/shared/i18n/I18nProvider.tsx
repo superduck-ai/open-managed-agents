@@ -1,33 +1,33 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   IntlProvider,
   ReactIntlErrorCode,
   createIntl,
   createIntlCache,
   type IntlConfig,
-  type MessageDescriptor
-} from 'react-intl';
+  type MessageDescriptor,
+} from "react-intl";
 import {
   I18nContext,
   defaultLocale,
   supportedLocales,
   type I18nContextValue,
   type Locale,
-  type MessageValues
-} from './context';
-import enMessages from './messages/en.json';
-import zhCnMessages from './messages/zh-CN.json';
+  type MessageValues,
+} from "./context";
+import enMessages from "./messages/en.json";
+import zhCnMessages from "./messages/zh-CN.json";
 
-const storageKey = 'oma.locale';
+const storageKey = "oma.locale";
 const intlCache = createIntlCache();
 
 const messageCatalogs: Record<Locale, Record<string, string>> = {
   en: enMessages,
-  'zh-CN': zhCnMessages
+  "zh-CN": zhCnMessages,
 };
 
 export function initializeLocale() {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return;
   }
   applyLocale(readLocale());
@@ -43,11 +43,11 @@ export function I18nProvider({ children, initialLocale }: { children: ReactNode;
           locale,
           defaultLocale,
           messages,
-          onError: handleIntlError
+          onError: handleIntlError,
         },
-        intlCache
+        intlCache,
       ),
-    [locale, messages]
+    [locale, messages],
   );
 
   useEffect(() => {
@@ -66,16 +66,16 @@ export function I18nProvider({ children, initialLocale }: { children: ReactNode;
   const msg = useCallback(
     (id: string, defaultMessage: string, values?: MessageValues) =>
       intl.formatMessage({ id, defaultMessage } as MessageDescriptor, values),
-    [intl]
+    [intl],
   );
 
   const value = useMemo<I18nContextValue>(
     () => ({
       locale,
       setLocale,
-      msg
+      msg,
     }),
-    [locale, msg, setLocale]
+    [locale, msg, setLocale],
   );
 
   return (
@@ -86,7 +86,7 @@ export function I18nProvider({ children, initialLocale }: { children: ReactNode;
 }
 
 export function readLocale(): Locale {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return defaultLocale;
   }
 
@@ -116,23 +116,23 @@ export function normalizeLocale(value: string | null | undefined): Locale | null
   if (!value) {
     return null;
   }
-  const normalized = value.replace('_', '-').toLowerCase();
-  if (normalized === 'en' || normalized.startsWith('en-')) {
-    return 'en';
+  const normalized = value.replace("_", "-").toLowerCase();
+  if (normalized === "en" || normalized.startsWith("en-")) {
+    return "en";
   }
-  if (normalized === 'zh' || normalized.startsWith('zh-')) {
-    return 'zh-CN';
+  if (normalized === "zh" || normalized.startsWith("zh-")) {
+    return "zh-CN";
   }
   return supportedLocales.find((locale) => locale.toLowerCase() === normalized) ?? null;
 }
 
 function applyLocale(locale: Locale) {
   document.documentElement.lang = locale;
-  document.documentElement.dir = 'ltr';
+  document.documentElement.dir = "ltr";
   document.documentElement.dataset.locale = locale;
 }
 
-function handleIntlError(error: Parameters<NonNullable<IntlConfig['onError']>>[0]) {
+function handleIntlError(error: Parameters<NonNullable<IntlConfig["onError"]>>[0]) {
   if (error.code === ReactIntlErrorCode.MISSING_TRANSLATION) {
     return;
   }

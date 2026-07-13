@@ -10,17 +10,10 @@ import {
   ShieldCheck,
   ShoppingBag,
   TriangleAlert,
-  X
-} from 'lucide-react';
-import {
-  Dispatch,
-  ReactNode,
-  SetStateAction,
-  useEffect,
-  useMemo,
-  useRef
-} from 'react';
-import clsx from 'clsx';
+  X,
+} from "lucide-react";
+import { Dispatch, ReactNode, SetStateAction, useEffect, useMemo, useRef } from "react";
+import clsx from "clsx";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,22 +22,17 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle
-} from '@/shared/ui/alert-dialog';
-import { Button } from '@/shared/ui/button';
-import { Checkbox } from '@/shared/ui/checkbox';
-import {
-  Dialog as DialogRoot,
-  DialogContent,
-  DialogHeader,
-  DialogTitle
-} from '@/shared/ui/dialog';
-import { Label } from '@/shared/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
-import { Textarea } from '@/shared/ui/textarea';
-import { hljs } from './highlight';
-import { AuthAccount } from '../../shared/auth/api';
-import { WorkbenchPromptDetail, WorkbenchRevision } from './api';
+  AlertDialogTitle,
+} from "@/shared/ui/alert-dialog";
+import { Button } from "@/shared/ui/button";
+import { Checkbox } from "@/shared/ui/checkbox";
+import { Dialog as DialogRoot, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
+import { Label } from "@/shared/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
+import { Textarea } from "@/shared/ui/textarea";
+import { hljs } from "./highlight";
+import { AuthAccount } from "../../shared/auth/api";
+import { WorkbenchPromptDetail, WorkbenchRevision } from "./api";
 import {
   codeForRevision,
   CodeLanguage,
@@ -56,15 +44,15 @@ import {
   GeneratePromptStep,
   isPromptCreator,
   promptCreatorLabel,
-  WorkbenchPromptGeneratorWarning
-} from './model';
-import { IconButton } from './components';
+  WorkbenchPromptGeneratorWarning,
+} from "./model";
+import { IconButton } from "./components";
 
 export function CodeModal({
   language,
   setLanguage,
   revision,
-  onClose
+  onClose,
 }: {
   language: CodeLanguage;
   setLanguage: Dispatch<SetStateAction<CodeLanguage>>;
@@ -72,15 +60,15 @@ export function CodeModal({
   onClose: () => void;
 }) {
   const code = useMemo(() => codeForRevision(language, revision), [language, revision]);
-  const selectedLanguageLabel = codeLanguageOptions.find((option) => option.value === language)?.label ?? 'Python';
+  const selectedLanguageLabel = codeLanguageOptions.find((option) => option.value === language)?.label ?? "Python";
   const hlLanguage =
-    language === 'curl'
-      ? 'bash'
-      : language === 'typescript' || language === 'bedrock-typescript' || language === 'vertex-typescript'
-        ? 'typescript'
-        : 'python';
+    language === "curl"
+      ? "bash"
+      : language === "typescript" || language === "bedrock-typescript" || language === "vertex-typescript"
+        ? "typescript"
+        : "python";
   const highlighted = useMemo(() => hljs.highlight(code, { language: hlLanguage }).value, [code, hlLanguage]);
-  const highlightedLines = useMemo(() => highlighted.split('\n'), [highlighted]);
+  const highlightedLines = useMemo(() => highlighted.split("\n"), [highlighted]);
 
   return (
     <Dialog title="Code for Claude API" onClose={onClose} size="code">
@@ -96,16 +84,15 @@ export function CodeModal({
                 }
               }}
             >
-              <SelectTrigger aria-label="Code language" className="h-10 w-full px-3 text-[15px] font-normal text-foreground">
+              <SelectTrigger
+                aria-label="Code language"
+                className="h-10 w-full px-3 text-[15px] font-normal text-foreground"
+              >
                 <SelectValue>{selectedLanguageLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent sideOffset={6} align="start" alignItemWithTrigger={false} className="min-w-[240px]">
                 {codeLanguageOptions.map((option) => (
-                  <SelectItem
-                    key={option.value}
-                    value={option.value}
-                    label={option.label}
-                  >
+                  <SelectItem key={option.value} value={option.value} label={option.label}>
                     {option.label}
                   </SelectItem>
                 ))}
@@ -116,7 +103,7 @@ export function CodeModal({
             type="button"
             variant="ghost"
             className="h-8 min-w-[106px] text-foreground hover:bg-accent"
-            onClick={() => window.open('https://docs.anthropic.com/en/api/messages', '_blank', 'noopener,noreferrer')}
+            onClick={() => window.open("https://docs.anthropic.com/en/api/messages", "_blank", "noopener,noreferrer")}
           >
             <BookOpen className="size-4" aria-hidden />
             View Docs
@@ -140,10 +127,7 @@ export function CodeModal({
                   <span className="workbench-code-line-number" aria-hidden>
                     {index + 1}
                   </span>
-                  <span
-                    className="workbench-code-line-content"
-                    dangerouslySetInnerHTML={{ __html: line || ' ' }}
-                  />
+                  <span className="workbench-code-line-content" dangerouslySetInnerHTML={{ __html: line || " " }} />
                 </span>
               ))}
             </code>
@@ -173,7 +157,7 @@ export function GeneratePromptDialog({
   onOpen,
   onSelectExample,
   onBuyCredits,
-  onClose
+  onClose,
 }: {
   step: GeneratePromptStep;
   task: string;
@@ -198,7 +182,7 @@ export function GeneratePromptDialog({
   const hasOutput = Boolean(output.trim());
   const canGenerate = Boolean(task.trim()) && !isGenerating && !warning;
   const visibleExamples = examplesExpanded ? generatePromptExamples : generatePromptExamples.slice(0, 3);
-  const isOutputStep = step === 'output';
+  const isOutputStep = step === "output";
   const outputVariables = extractVariablesFromText(output);
   const outputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -212,7 +196,7 @@ export function GeneratePromptDialog({
 
   return (
     <Dialog title="Generate a prompt" onClose={onClose} size="generate">
-      <div className={clsx('workbench-generate-modal', isOutputStep ? 'is-output' : 'is-input')}>
+      <div className={clsx("workbench-generate-modal", isOutputStep ? "is-output" : "is-input")}>
         <form
           id="workbench-generate-form"
           className="workbench-generate-modal-main"
@@ -247,10 +231,10 @@ export function GeneratePromptDialog({
                 <h3>Your prompt</h3>
                 <p>You'll be able to make further changes and improvements later too.</p>
               </div>
-              <div className={clsx('workbench-generate-error', !error && 'is-empty')} aria-hidden={!error}>
+              <div className={clsx("workbench-generate-error", !error && "is-empty")} aria-hidden={!error}>
                 {error}
               </div>
-              <div className={clsx('workbench-generate-output', isGenerating && 'is-streaming')}>
+              <div className={clsx("workbench-generate-output", isGenerating && "is-streaming")}>
                 {output ? (
                   <Textarea
                     ref={outputTextareaRef}
@@ -333,18 +317,10 @@ export function GeneratePromptDialog({
         <div className="workbench-generate-footer">
           {isOutputStep ? (
             <>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={isGenerating ? onStop : onEdit}
-              >
-                {isGenerating ? 'Cancel' : 'Back'}
+              <Button type="button" variant="outline" onClick={isGenerating ? onStop : onEdit}>
+                {isGenerating ? "Cancel" : "Back"}
               </Button>
-              <Button
-                type="submit"
-                form="workbench-generate-form"
-                disabled={!hasOutput || isGenerating}
-              >
+              <Button type="submit" form="workbench-generate-form" disabled={!hasOutput || isGenerating}>
                 Continue
               </Button>
             </>
@@ -369,8 +345,9 @@ export function GeneratePromptVariables({ variables }: { variables: string[] }) 
     <div className="workbench-generate-variables">
       <h4>Variables</h4>
       <p>
-        Variables are placeholder values that make your prompt flexible and reusable. Variables in Workbench are enclosed
-        in double brackets like so: <code>{'{{VARIABLE_NAME}}'}</code>. The prompt above has the following variables:
+        Variables are placeholder values that make your prompt flexible and reusable. Variables in Workbench are
+        enclosed in double brackets like so: <code>{"{{VARIABLE_NAME}}"}</code>. The prompt above has the following
+        variables:
       </p>
       {variables.length ? (
         <div className="workbench-generate-variable-list" aria-label="Generated prompt variables">
@@ -386,23 +363,23 @@ export function GeneratePromptVariables({ variables }: { variables: string[] }) 
 export function PromptGeneratorConfirmDialog({
   kind,
   onCancel,
-  onConfirm
+  onConfirm,
 }: {
-  kind: 'close' | 'edit';
+  kind: "close" | "edit";
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const copy =
-    kind === 'close'
+    kind === "close"
       ? {
-          title: 'Close prompt generator?',
-          description: 'By closing this modal, you will lose any progress made.',
-          actionLabel: 'Close'
+          title: "Close prompt generator?",
+          description: "By closing this modal, you will lose any progress made.",
+          actionLabel: "Close",
         }
       : {
-          title: 'Clear generated prompt?',
-          description: 'Editing this page will clear the existing generated/converted prompt.',
-          actionLabel: 'Clear prompt'
+          title: "Clear generated prompt?",
+          description: "Editing this page will clear the existing generated/converted prompt.",
+          actionLabel: "Clear prompt",
         };
 
   return (
@@ -439,7 +416,7 @@ export function ImprovePromptDialog({
   showMultiTurnWarning,
   isImproving,
   onImprove,
-  onClose
+  onClose,
 }: {
   feedback: string;
   setFeedback: Dispatch<SetStateAction<string>>;
@@ -507,7 +484,7 @@ export function SharePromptDialog({
   isSharing,
   error,
   onShare,
-  onClose
+  onClose,
 }: {
   prompt: WorkbenchPromptDetail;
   promptTitle: string;
@@ -523,14 +500,12 @@ export function SharePromptDialog({
   const isCreator = isPromptCreator(prompt, account);
   return (
     <Dialog title="Share Prompt" onClose={onClose} size="share">
-      <div className={clsx('workbench-share-content', !shared && !isCreator && 'is-readonly')}>
+      <div className={clsx("workbench-share-content", !shared && !isCreator && "is-readonly")}>
         <section className="workbench-share-summary" aria-label="Prompt summary">
           <div className="workbench-share-title">{promptTitle}</div>
           <div className="workbench-share-meta">
             <Box className="size-3.5 text-primary" aria-hidden />
-            <span>
-              {createdAt ? `${createdAt} by ${creator}` : `by ${creator}`}
-            </span>
+            <span>{createdAt ? `${createdAt} by ${creator}` : `by ${creator}`}</span>
           </div>
         </section>
 
@@ -566,7 +541,7 @@ export function WorkbenchDrawer({
   kind,
   children,
   headerAction,
-  onClose
+  onClose,
 }: {
   title: string;
   kind: DrawerName;
@@ -575,7 +550,7 @@ export function WorkbenchDrawer({
   onClose: () => void;
 }) {
   return (
-    <aside className={clsx('workbench-drawer-panel', `is-${kind}`)} aria-label={title}>
+    <aside className={clsx("workbench-drawer-panel", `is-${kind}`)} aria-label={title}>
       <div className="workbench-drawer-header">
         <h2>{title}</h2>
         <div className="workbench-drawer-header-actions">
@@ -587,12 +562,12 @@ export function WorkbenchDrawer({
       </div>
       <div
         className={clsx(
-          'workbench-drawer-body subtle-scrollbar',
-          kind === 'model' && 'is-model',
-          kind === 'variables' && 'is-variables',
-          kind === 'tools' && 'is-tools',
-          kind === 'examples' && 'is-examples',
-          kind === 'history' && 'is-history'
+          "workbench-drawer-body subtle-scrollbar",
+          kind === "model" && "is-model",
+          kind === "variables" && "is-variables",
+          kind === "tools" && "is-tools",
+          kind === "examples" && "is-examples",
+          kind === "history" && "is-history",
         )}
       >
         {children}
@@ -604,7 +579,7 @@ export function WorkbenchDrawer({
 export function DeletePromptDialog({
   isDeleting,
   onCancel,
-  onDelete
+  onDelete,
 }: {
   isDeleting: boolean;
   onCancel: () => void;
@@ -622,14 +597,12 @@ export function DeletePromptDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete prompt</AlertDialogTitle>
-          <AlertDialogDescription>
-            Are you sure you want to permanently delete this prompt?
-          </AlertDialogDescription>
+          <AlertDialogDescription>Are you sure you want to permanently delete this prompt?</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={isDeleting} onClick={onDelete}>
-            {isDeleting ? 'Deleting' : 'Delete'}
+            {isDeleting ? "Deleting" : "Delete"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -641,12 +614,12 @@ export function Dialog({
   title,
   children,
   onClose,
-  size = 'normal'
+  size = "normal",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
-  size?: 'normal' | 'wide' | 'code' | 'improve' | 'generate' | 'share' | 'rename' | 'attachmentUrl';
+  size?: "normal" | "wide" | "code" | "improve" | "generate" | "share" | "rename" | "attachmentUrl";
 }) {
   return (
     <DialogRoot
@@ -661,49 +634,53 @@ export function Dialog({
         aria-label={title}
         showCloseButton={false}
         className={clsx(
-          'max-h-[90vh] gap-0 overflow-hidden rounded-lg border-border bg-popover p-0 shadow-xl sm:max-w-none',
-          size === 'code'
-            ? 'workbench-code-dialog'
-            : size === 'improve'
-              ? 'workbench-improve-dialog'
-              : size === 'generate'
-                ? 'workbench-generate-dialog'
-                : size === 'share'
-                  ? 'workbench-share-dialog'
-                  : size === 'rename'
-                    ? 'workbench-rename-dialog'
-                    : size === 'attachmentUrl'
-                      ? 'workbench-attachment-url-dialog'
-                      : size === 'wide'
-                        ? 'w-full max-w-[780px]'
-                        : 'w-full max-w-[420px]'
+          "max-h-[90vh] gap-0 overflow-hidden rounded-lg border-border bg-popover p-0 shadow-xl sm:max-w-none",
+          size === "code"
+            ? "workbench-code-dialog"
+            : size === "improve"
+              ? "workbench-improve-dialog"
+              : size === "generate"
+                ? "workbench-generate-dialog"
+                : size === "share"
+                  ? "workbench-share-dialog"
+                  : size === "rename"
+                    ? "workbench-rename-dialog"
+                    : size === "attachmentUrl"
+                      ? "workbench-attachment-url-dialog"
+                      : size === "wide"
+                        ? "w-full max-w-[780px]"
+                        : "w-full max-w-[420px]",
         )}
       >
         <DialogHeader
           className={clsx(
-            'flex h-14 flex-row items-center justify-between border-b border-border px-4',
-            size === 'code' && 'workbench-code-dialog-header',
-            size === 'improve' && 'workbench-improve-dialog-header',
-            size === 'generate' && 'workbench-generate-dialog-header',
-            size === 'share' && 'workbench-share-dialog-header',
-            size === 'rename' && 'workbench-rename-dialog-header',
-            size === 'attachmentUrl' && 'workbench-attachment-url-dialog-header'
+            "flex h-14 flex-row items-center justify-between border-b border-border px-4",
+            size === "code" && "workbench-code-dialog-header",
+            size === "improve" && "workbench-improve-dialog-header",
+            size === "generate" && "workbench-generate-dialog-header",
+            size === "share" && "workbench-share-dialog-header",
+            size === "rename" && "workbench-rename-dialog-header",
+            size === "attachmentUrl" && "workbench-attachment-url-dialog-header",
           )}
         >
           <DialogTitle
             className={clsx(
-              'text-sm font-semibold text-foreground',
-              size === 'code' && 'workbench-code-dialog-title',
-              size === 'generate' && 'sr-only',
-              size === 'share' && 'workbench-share-dialog-title',
-              size === 'rename' && 'workbench-rename-dialog-title',
-              size === 'attachmentUrl' && 'workbench-attachment-url-dialog-title',
-              size === 'improve' && 'sr-only'
+              "text-sm font-semibold text-foreground",
+              size === "code" && "workbench-code-dialog-title",
+              size === "generate" && "sr-only",
+              size === "share" && "workbench-share-dialog-title",
+              size === "rename" && "workbench-rename-dialog-title",
+              size === "attachmentUrl" && "workbench-attachment-url-dialog-title",
+              size === "improve" && "sr-only",
             )}
           >
             {title}
           </DialogTitle>
-          {size === 'code' || size === 'rename' || size === 'share' || size === 'generate' || size === 'attachmentUrl' ? (
+          {size === "code" ||
+          size === "rename" ||
+          size === "share" ||
+          size === "generate" ||
+          size === "attachmentUrl" ? (
             <Button
               type="button"
               variant="ghost"
@@ -711,31 +688,31 @@ export function Dialog({
               aria-label="Close"
               title="Close"
               className={clsx(
-                'workbench-code-dialog-close',
-                size === 'rename' && 'workbench-rename-dialog-close',
-                size === 'share' && 'workbench-share-dialog-close',
-                size === 'generate' && 'workbench-generate-dialog-close',
-                size === 'attachmentUrl' && 'workbench-attachment-url-dialog-close'
+                "workbench-code-dialog-close",
+                size === "rename" && "workbench-rename-dialog-close",
+                size === "share" && "workbench-share-dialog-close",
+                size === "generate" && "workbench-generate-dialog-close",
+                size === "attachmentUrl" && "workbench-attachment-url-dialog-close",
               )}
               onClick={onClose}
             >
               <X className="size-4" aria-hidden />
             </Button>
           ) : (
-            <IconButton label={size === 'improve' ? 'Close' : 'Close dialog'} onClick={onClose}>
+            <IconButton label={size === "improve" ? "Close" : "Close dialog"} onClick={onClose}>
               <X className="size-4" aria-hidden />
             </IconButton>
           )}
         </DialogHeader>
         <div
           className={clsx(
-            'subtle-scrollbar max-h-[calc(90vh-56px)] overflow-y-auto p-4',
-            size === 'code' && 'workbench-code-dialog-body',
-            size === 'improve' && 'workbench-improve-dialog-body',
-            size === 'generate' && 'workbench-generate-dialog-body',
-            size === 'share' && 'workbench-share-dialog-body',
-            size === 'rename' && 'workbench-rename-dialog-body',
-            size === 'attachmentUrl' && 'workbench-attachment-url-dialog-body'
+            "subtle-scrollbar max-h-[calc(90vh-56px)] overflow-y-auto p-4",
+            size === "code" && "workbench-code-dialog-body",
+            size === "improve" && "workbench-improve-dialog-body",
+            size === "generate" && "workbench-generate-dialog-body",
+            size === "share" && "workbench-share-dialog-body",
+            size === "rename" && "workbench-rename-dialog-body",
+            size === "attachmentUrl" && "workbench-attachment-url-dialog-body",
           )}
         >
           {children}
@@ -745,10 +722,10 @@ export function Dialog({
   );
 }
 
-export const promptExampleIcons: Record<(typeof generatePromptExamples)[number]['id'], typeof FileText> = {
+export const promptExampleIcons: Record<(typeof generatePromptExamples)[number]["id"], typeof FileText> = {
   summarize: FileText,
   email: Mail,
-  'translate-code': Code2,
-  'content-moderation': ShieldCheck,
-  'recommend-product': ShoppingBag
+  "translate-code": Code2,
+  "content-moderation": ShieldCheck,
+  "recommend-product": ShoppingBag,
 };

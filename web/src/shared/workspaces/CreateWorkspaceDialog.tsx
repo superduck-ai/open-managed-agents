@@ -1,8 +1,8 @@
-import { AlertCircle } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
-import { useI18n } from '../i18n';
-import { Alert, AlertDescription } from '../ui/alert';
-import { Button } from '../ui/button';
+import { AlertCircle } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useI18n } from "../i18n";
+import { Alert, AlertDescription } from "../ui/alert";
+import { Button } from "../ui/button";
 import {
   Dialog,
   DialogClose,
@@ -11,12 +11,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger
-} from '../ui/dialog';
-import { Field, FieldDescription, FieldLabel } from '../ui/field';
-import { Input } from '../ui/input';
-import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
-import { workspaceColors } from './presentation';
+  DialogTrigger,
+} from "../ui/dialog";
+import { Field, FieldDescription, FieldLabel } from "../ui/field";
+import { Input } from "../ui/input";
+import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
+import { workspaceColors } from "./presentation";
 
 type CreateWorkspaceDialogProps = {
   open: boolean;
@@ -27,20 +27,20 @@ type CreateWorkspaceDialogProps = {
 
 export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }: CreateWorkspaceDialogProps) {
   const { msg } = useI18n();
-  const [name, setName] = useState('');
+  const [name, setName] = useState("");
   const [selectedColor, setSelectedColor] = useState(workspaceColors[1].value);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const canCreate = name.trim().length > 0 && !submitting;
 
   useEffect(() => {
     if (open) {
       return;
     }
-    setName('');
+    setName("");
     setSelectedColor(workspaceColors[1].value);
     setSubmitting(false);
-    setError('');
+    setError("");
   }, [open]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -49,12 +49,16 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
       return;
     }
     setSubmitting(true);
-    setError('');
+    setError("");
     try {
       await onCreate(name.trim(), selectedColor);
       onOpenChange(false);
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : msg('workspace.create.error', 'Failed to create workspace.'));
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : msg("workspace.create.error", "Failed to create workspace."),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -65,28 +69,28 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
       {trigger ? <DialogTrigger render={trigger} /> : null}
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>{msg('workspace.create.title', 'Create workspace')}</DialogTitle>
+          <DialogTitle>{msg("workspace.create.title", "Create workspace")}</DialogTitle>
           <DialogDescription className="max-w-[430px]">
-            {msg('workspace.create.body', 'Workspaces allow you to separate API Keys and configurations by use case.')}
+            {msg("workspace.create.body", "Workspaces allow you to separate API Keys and configurations by use case.")}
           </DialogDescription>
         </DialogHeader>
 
         <form className="space-y-5" onSubmit={handleSubmit}>
           <Field className="gap-2">
-            <FieldLabel htmlFor="workspace-name">{msg('common.name', 'Name')}</FieldLabel>
+            <FieldLabel htmlFor="workspace-name">{msg("common.name", "Name")}</FieldLabel>
             <Input
               id="workspace-name"
               value={name}
-              placeholder={msg('workspace.create.namePlaceholder', 'Enter a name for your workspace')}
+              placeholder={msg("workspace.create.namePlaceholder", "Enter a name for your workspace")}
               onChange={(event) => setName(event.target.value)}
               autoFocus
             />
           </Field>
 
           <Field className="gap-2">
-            <FieldLabel>{msg('common.color', 'Color')}</FieldLabel>
+            <FieldLabel>{msg("common.color", "Color")}</FieldLabel>
             <RadioGroup
-              aria-label={msg('workspace.colorAria', 'Workspace color')}
+              aria-label={msg("workspace.colorAria", "Workspace color")}
               value={selectedColor}
               onValueChange={(nextValue) => {
                 if (nextValue) {
@@ -108,12 +112,12 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
           </Field>
 
           <Field className="gap-2">
-            <FieldLabel htmlFor="workspace-geo">{msg('workspace.geo', 'Workspace geo')}</FieldLabel>
+            <FieldLabel htmlFor="workspace-geo">{msg("workspace.geo", "Workspace geo")}</FieldLabel>
             <Input id="workspace-geo" value="US" readOnly aria-readonly="true" />
             <FieldDescription>
               {msg(
-                'workspace.geoHelp',
-                "Control where your workspace data, including files, conversation history, and workspace artifacts, is stored. This can't be changed after creation."
+                "workspace.geoHelp",
+                "Control where your workspace data, including files, conversation history, and workspace artifacts, is stored. This can't be changed after creation.",
               )}
             </FieldDescription>
           </Field>
@@ -127,10 +131,10 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
 
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>
-              {msg('common.cancel', 'Cancel')}
+              {msg("common.cancel", "Cancel")}
             </DialogClose>
             <Button type="submit" disabled={!canCreate}>
-              {submitting ? msg('common.creating', 'Creating...') : msg('common.create', 'Create')}
+              {submitting ? msg("common.creating", "Creating...") : msg("common.create", "Create")}
             </Button>
           </DialogFooter>
         </form>

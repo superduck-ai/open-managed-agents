@@ -1,15 +1,15 @@
-import { ReactNode } from 'react';
-import clsx from 'clsx';
-import { Button } from '@/shared/ui/button';
-import { Label } from '@/shared/ui/label';
-import { Switch } from '@/shared/ui/switch';
+import { ReactNode } from "react";
+import clsx from "clsx";
+import { Button } from "@/shared/ui/button";
+import { Label } from "@/shared/ui/label";
+import { Switch } from "@/shared/ui/switch";
 
 export function IconButton({
   label,
   children,
   onClick,
   disabled = false,
-  compact = false
+  compact = false,
 }: {
   label: string;
   children: ReactNode;
@@ -24,8 +24,8 @@ export function IconButton({
       title={label}
       variant="ghost"
       className={clsx(
-        'grid shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground',
-        compact ? 'size-8' : 'size-9'
+        "grid shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
+        compact ? "size-8" : "size-9",
       )}
       onClick={onClick}
       disabled={disabled}
@@ -38,7 +38,7 @@ export function IconButton({
 export function ToggleRow({
   label,
   checked,
-  onChange
+  onChange,
 }: {
   label: string;
   checked: boolean;
@@ -47,10 +47,7 @@ export function ToggleRow({
   return (
     <Label className="workbench-tool-switch-row">
       <span>{label}</span>
-      <Switch
-        checked={checked}
-        onCheckedChange={onChange}
-      />
+      <Switch checked={checked} onCheckedChange={onChange} />
     </Label>
   );
 }

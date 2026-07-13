@@ -16,6 +16,8 @@
   - `bun run dev`
   - `bun run build`
   - `bun test`
+  - `bun run format`
+  - `bun run format:check`
 - 修改 `web/` 下的前端代码后，在使用浏览器或 SuperDuck 验证前，需要先在仓库根目录运行 `./restart-web.sh` 重启前端开发服务器。
 - 生产环境产物应为 `web/dist` 下的静态文件，由 Nginx 或其他静态服务器提供服务。
 - 除非用户明确调整架构，否则不要引入 Next.js、Remix、Node 服务或 Bun HTTP 服务。
@@ -90,13 +92,13 @@
 
 使用以下角色标签和值：
 
-| 标签 | 值 | 说明 |
-| --- | --- | --- |
-| User | `user` | Use Workbench |
-| Claude Code | `claude_code_user` | Use Workbench and Claude Code |
-| Developer | `developer` | Use Workbench, Claude Code and manage API keys |
-| Billing | `billing` | Use Workbench and manage billing details |
-| Admin | `admin` | Do all of the above, plus manage users |
+| 标签        | 值                 | 说明                                           |
+| ----------- | ------------------ | ---------------------------------------------- |
+| User        | `user`             | Use Workbench                                  |
+| Claude Code | `claude_code_user` | Use Workbench and Claude Code                  |
+| Developer   | `developer`        | Use Workbench, Claude Code and manage API keys |
+| Billing     | `billing`          | Use Workbench and manage billing details       |
+| Admin       | `admin`            | Do all of the above, plus manage users         |
 
 - 前端中的权限检查只用于 UX。
 - 后端 RBAC 才是权威来源。
@@ -176,6 +178,7 @@
 - 在可行情况下，工具函数、API client、权限和组件逻辑使用 Bun test。
 - 应用外壳可用后，浏览器流程使用 Playwright。
 - 完成前端修改前，运行：
+  - `bun run format:check`
   - `bun test`
   - `bun run build`
 - 如果 UI 变更涉及层级、响应式行为或交互保真度，需要打开浏览器验证。

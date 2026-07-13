@@ -59,7 +59,9 @@
   font-weight: 400;
   line-height: 20px;
   text-align: left;
-  transition: color 120ms ease, background 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
 }
 
 .workbench-variable-logic-toggle:hover {

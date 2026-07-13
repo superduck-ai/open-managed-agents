@@ -1,4 +1,4 @@
-const defaultReturnTo = '/';
+const defaultReturnTo = "/";
 
 export function normalizeReturnTo(value: string | null | undefined) {
   if (!value) {
@@ -6,16 +6,16 @@ export function normalizeReturnTo(value: string | null | undefined) {
   }
 
   const trimmed = value.trim();
-  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) {
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.includes("\\")) {
     return defaultReturnTo;
   }
 
   try {
-    const url = new URL(trimmed, 'https://open-managed-agent.local');
-    if (url.origin !== 'https://open-managed-agent.local') {
+    const url = new URL(trimmed, "https://open-managed-agent.local");
+    if (url.origin !== "https://open-managed-agent.local") {
       return defaultReturnTo;
     }
-    if (url.pathname === '/login') {
+    if (url.pathname === "/login") {
       return defaultReturnTo;
     }
     return `${url.pathname}${url.search}${url.hash}`;
@@ -25,9 +25,9 @@ export function normalizeReturnTo(value: string | null | undefined) {
 }
 
 export function returnToFromSearch(search: string) {
-  const normalizedSearch = search.startsWith('?') ? search.slice(1) : search;
+  const normalizedSearch = search.startsWith("?") ? search.slice(1) : search;
   const params = new URLSearchParams(normalizedSearch);
-  return normalizeReturnTo(params.get('returnTo'));
+  return normalizeReturnTo(params.get("returnTo"));
 }
 
 export function loginHrefForReturnTo(returnTo: string) {

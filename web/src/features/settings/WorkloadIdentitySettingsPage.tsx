@@ -1,20 +1,5 @@
-import {
-  Ban,
-  Copy,
-  Info,
-  MoreVertical,
-  Network,
-  Plus,
-  RotateCcw,
-  Trash2,
-} from "lucide-react";
-import {
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { Ban, Copy, Info, MoreVertical, Network, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useI18n } from "../../shared/i18n";
 import {
   AlertDialog,
@@ -30,13 +15,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert";
 import { Badge } from "../../shared/ui/badge";
 import { Button, ButtonLink } from "../../shared/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-} from "../../shared/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader } from "../../shared/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -52,43 +31,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../shared/ui/dropdown-menu";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "../../shared/ui/empty";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../../shared/ui/empty";
 import { Field, FieldDescription, FieldLabel } from "../../shared/ui/field";
 import { Input } from "../../shared/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../shared/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../../shared/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../shared/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../shared/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../shared/ui/tabs";
 import { Textarea } from "../../shared/ui/textarea";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../../shared/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../shared/ui/tooltip";
 
 type WorkloadIdentityStatus = "active" | "disabled";
-type WorkloadIdentityProviderType =
-  "aws" | "azure" | "gcp" | "github-actions" | "kubernetes";
+type WorkloadIdentityProviderType = "aws" | "azure" | "gcp" | "github-actions" | "kubernetes";
 
 type WorkloadIdentityRecord = {
   id: string;
@@ -103,9 +56,7 @@ type WorkloadIdentityRecord = {
 };
 
 type WorkloadIdentityConfirmation =
-  | { kind: "disable"; record: WorkloadIdentityRecord }
-  | { kind: "delete"; record: WorkloadIdentityRecord }
-  | null;
+  { kind: "disable"; record: WorkloadIdentityRecord } | { kind: "delete"; record: WorkloadIdentityRecord } | null;
 
 const providerSeeds: Record<
   WorkloadIdentityProviderType,
@@ -123,8 +74,7 @@ const providerSeeds: Record<
   },
   gcp: {
     issuer: "https://sts.googleapis.com",
-    audience:
-      "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/claude/providers/default",
+    audience: "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/claude/providers/default",
     subjectPattern: "attribute.repository/open-managed-agent/*",
   },
   "github-actions": {
@@ -145,22 +95,15 @@ export function WorkloadIdentitySettingsPage() {
   const [activeTab, setActiveTab] = useState<WorkloadIdentityStatus>("active");
   const [records, setRecords] = useState<WorkloadIdentityRecord[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
-  const [detailRecord, setDetailRecord] =
-    useState<WorkloadIdentityRecord | null>(null);
-  const [confirmation, setConfirmation] =
-    useState<WorkloadIdentityConfirmation>(null);
+  const [detailRecord, setDetailRecord] = useState<WorkloadIdentityRecord | null>(null);
+  const [confirmation, setConfirmation] = useState<WorkloadIdentityConfirmation>(null);
   const [copiedRecordId, setCopiedRecordId] = useState<string | null>(null);
   const copiedResetRef = useRef<number | null>(null);
   const [draftName, setDraftName] = useState("");
-  const [draftProvider, setDraftProvider] =
-    useState<WorkloadIdentityProviderType>("aws");
+  const [draftProvider, setDraftProvider] = useState<WorkloadIdentityProviderType>("aws");
   const [draftIssuer, setDraftIssuer] = useState(providerSeeds.aws.issuer);
-  const [draftAudience, setDraftAudience] = useState(
-    providerSeeds.aws.audience,
-  );
-  const [draftSubjectPattern, setDraftSubjectPattern] = useState(
-    providerSeeds.aws.subjectPattern,
-  );
+  const [draftAudience, setDraftAudience] = useState(providerSeeds.aws.audience);
+  const [draftSubjectPattern, setDraftSubjectPattern] = useState(providerSeeds.aws.subjectPattern);
 
   const providerOptions = useMemo(
     () =>
@@ -176,10 +119,7 @@ export function WorkloadIdentitySettingsPage() {
         },
         {
           value: "github-actions",
-          label: msg(
-            "workloadIdentity.provider.githubActions",
-            "GitHub Actions",
-          ),
+          label: msg("workloadIdentity.provider.githubActions", "GitHub Actions"),
         },
         {
           value: "kubernetes",
@@ -189,10 +129,7 @@ export function WorkloadIdentitySettingsPage() {
     [msg],
   );
 
-  const visibleRecords = useMemo(
-    () => records.filter((record) => record.status === activeTab),
-    [activeTab, records],
-  );
+  const visibleRecords = useMemo(() => records.filter((record) => record.status === activeTab), [activeTab, records]);
 
   const resetDraft = () => {
     setDraftName("");
@@ -318,28 +255,14 @@ export function WorkloadIdentitySettingsPage() {
 
   return (
     <TooltipProvider>
-      <section
-        className="mx-auto w-full max-w-[1100px] space-y-4"
-        data-testid="settings-workload-identity-page"
-      >
+      <section className="mx-auto w-full max-w-[1100px] space-y-4" data-testid="settings-workload-identity-page">
         <Card>
           <CardHeader className="space-y-3">
             <CardAction className="flex flex-wrap gap-2">
-              <ButtonLink
-                variant="outline"
-                size="sm"
-                href="/settings/service-accounts"
-              >
-                {msg(
-                  "workloadIdentity.actions.viewServiceAccounts",
-                  "View service accounts",
-                )}
+              <ButtonLink variant="outline" size="sm" href="/settings/service-accounts">
+                {msg("workloadIdentity.actions.viewServiceAccounts", "View service accounts")}
               </ButtonLink>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => openCreateDialog(true)}
-              >
+              <Button type="button" size="sm" onClick={() => openCreateDialog(true)}>
                 <Plus className="size-4" aria-hidden />
                 {msg("workloadIdentity.create", "Create provider")}
               </Button>
@@ -362,12 +285,7 @@ export function WorkloadIdentitySettingsPage() {
           <CardContent className="space-y-4">
             <Alert>
               <Info className="size-4" aria-hidden />
-              <AlertTitle>
-                {msg(
-                  "workloadIdentity.notice.title",
-                  "Prefer federation over stored secrets",
-                )}
-              </AlertTitle>
+              <AlertTitle>{msg("workloadIdentity.notice.title", "Prefer federation over stored secrets")}</AlertTitle>
               <AlertDescription>
                 {msg(
                   "workloadIdentity.notice.body",
@@ -378,18 +296,12 @@ export function WorkloadIdentitySettingsPage() {
 
             <Tabs
               value={activeTab}
-              onValueChange={(nextValue) =>
-                nextValue && setActiveTab(nextValue as WorkloadIdentityStatus)
-              }
+              onValueChange={(nextValue) => nextValue && setActiveTab(nextValue as WorkloadIdentityStatus)}
               className="gap-4"
             >
               <TabsList>
-                <TabsTrigger value="active">
-                  {msg("common.active", "Active")}
-                </TabsTrigger>
-                <TabsTrigger value="disabled">
-                  {msg("workloadIdentity.disabled", "Disabled")}
-                </TabsTrigger>
+                <TabsTrigger value="active">{msg("common.active", "Active")}</TabsTrigger>
+                <TabsTrigger value="disabled">{msg("workloadIdentity.disabled", "Disabled")}</TabsTrigger>
               </TabsList>
               <TabsContent value="active">
                 {visibleRecords.length ? (
@@ -397,35 +309,22 @@ export function WorkloadIdentitySettingsPage() {
                     locale={locale}
                     records={visibleRecords}
                     onViewTrustPolicy={openDetailDialog}
-                    onDisable={(record) =>
-                      setConfirmation({ kind: "disable", record })
-                    }
+                    onDisable={(record) => setConfirmation({ kind: "disable", record })}
                     onRestore={handleRestore}
-                    onDelete={(record) =>
-                      setConfirmation({ kind: "delete", record })
-                    }
+                    onDelete={(record) => setConfirmation({ kind: "delete", record })}
                   />
                 ) : (
                   <WorkloadIdentityEmptyState
                     icon={Network}
-                    title={msg(
-                      "workloadIdentity.empty.activeTitle",
-                      "No providers yet",
-                    )}
+                    title={msg("workloadIdentity.empty.activeTitle", "No providers yet")}
                     body={msg(
                       "workloadIdentity.empty.activeBody",
                       "Create a provider when workloads need to exchange cloud or CI identity for Claude access.",
                     )}
                     action={
-                      <Button
-                        type="button"
-                        onClick={() => openCreateDialog(true)}
-                      >
+                      <Button type="button" onClick={() => openCreateDialog(true)}>
                         <Plus className="size-4" aria-hidden />
-                        {msg(
-                          "workloadIdentity.createFirst",
-                          "Create first provider",
-                        )}
+                        {msg("workloadIdentity.createFirst", "Create first provider")}
                       </Button>
                     }
                   />
@@ -437,35 +336,21 @@ export function WorkloadIdentitySettingsPage() {
                     locale={locale}
                     records={visibleRecords}
                     onViewTrustPolicy={openDetailDialog}
-                    onDisable={(record) =>
-                      setConfirmation({ kind: "disable", record })
-                    }
+                    onDisable={(record) => setConfirmation({ kind: "disable", record })}
                     onRestore={handleRestore}
-                    onDelete={(record) =>
-                      setConfirmation({ kind: "delete", record })
-                    }
+                    onDelete={(record) => setConfirmation({ kind: "delete", record })}
                   />
                 ) : (
                   <WorkloadIdentityEmptyState
                     icon={Ban}
-                    title={msg(
-                      "workloadIdentity.empty.disabledTitle",
-                      "No disabled providers",
-                    )}
+                    title={msg("workloadIdentity.empty.disabledTitle", "No disabled providers")}
                     body={msg(
                       "workloadIdentity.empty.disabledBody",
                       "Disabled providers appear here after you pause a trust policy.",
                     )}
                     action={
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setActiveTab("active")}
-                      >
-                        {msg(
-                          "workloadIdentity.showActive",
-                          "Show active providers",
-                        )}
+                      <Button type="button" variant="outline" onClick={() => setActiveTab("active")}>
+                        {msg("workloadIdentity.showActive", "Show active providers")}
                       </Button>
                     }
                   />
@@ -475,256 +360,202 @@ export function WorkloadIdentitySettingsPage() {
           </CardContent>
         </Card>
 
-      <Dialog open={createOpen} onOpenChange={openCreateDialog}>
-        <DialogContent className="sm:max-w-[620px]">
-          <DialogHeader>
-            <DialogTitle>
-              {msg("workloadIdentity.createDialog.title", "Create provider")}
-            </DialogTitle>
-            <DialogDescription>
-              {msg(
-                "workloadIdentity.createDialog.description",
-                "Set up a local preview federation provider by naming the trust policy and the external identity claims it accepts.",
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <form className="space-y-5" onSubmit={handleCreate}>
-            <Field className="gap-2">
-              <FieldLabel htmlFor="workload-identity-provider">
-                {msg("workloadIdentity.createDialog.providerLabel", "Provider")}
-              </FieldLabel>
-              <Select<WorkloadIdentityProviderType>
-                value={draftProvider}
-                items={providerOptions}
-                onValueChange={(nextValue) => {
-                  if (nextValue !== null) {
-                    applyProviderPreset(nextValue);
-                  }
-                }}
-              >
-                <SelectTrigger
-                  id="workload-identity-provider"
-                  aria-label={msg(
-                    "workloadIdentity.createDialog.providerLabel",
-                    "Provider",
-                  )}
-                  className="w-full"
+        <Dialog open={createOpen} onOpenChange={openCreateDialog}>
+          <DialogContent className="sm:max-w-[620px]">
+            <DialogHeader>
+              <DialogTitle>{msg("workloadIdentity.createDialog.title", "Create provider")}</DialogTitle>
+              <DialogDescription>
+                {msg(
+                  "workloadIdentity.createDialog.description",
+                  "Set up a local preview federation provider by naming the trust policy and the external identity claims it accepts.",
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <form className="space-y-5" onSubmit={handleCreate}>
+              <Field className="gap-2">
+                <FieldLabel htmlFor="workload-identity-provider">
+                  {msg("workloadIdentity.createDialog.providerLabel", "Provider")}
+                </FieldLabel>
+                <Select<WorkloadIdentityProviderType>
+                  value={draftProvider}
+                  items={providerOptions}
+                  onValueChange={(nextValue) => {
+                    if (nextValue !== null) {
+                      applyProviderPreset(nextValue);
+                    }
+                  }}
                 >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
-                  {providerOptions.map((option) => (
-                    <SelectItem
-                      key={option.value}
-                      value={option.value}
-                      label={option.label}
-                    >
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FieldDescription>
-                {msg(
-                  "workloadIdentity.createDialog.providerHelp",
-                  "Choose the external identity issuer your workloads already trust today.",
-                )}
-              </FieldDescription>
-            </Field>
+                  <SelectTrigger
+                    id="workload-identity-provider"
+                    aria-label={msg("workloadIdentity.createDialog.providerLabel", "Provider")}
+                    className="w-full"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    {providerOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value} label={option.label}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  {msg(
+                    "workloadIdentity.createDialog.providerHelp",
+                    "Choose the external identity issuer your workloads already trust today.",
+                  )}
+                </FieldDescription>
+              </Field>
 
-            <Field className="gap-2">
-              <FieldLabel htmlFor="workload-identity-name">
-                {msg("common.name", "Name")}
-              </FieldLabel>
-              <Input
-                id="workload-identity-name"
-                value={draftName}
-                onChange={(event) => setDraftName(event.target.value)}
-                placeholder={msg(
-                  "workloadIdentity.createDialog.namePlaceholder",
-                  "Production deploy federation",
-                )}
-              />
-              <FieldDescription>
-                {msg(
-                  "workloadIdentity.createDialog.nameHelp",
-                  "Use a short name that identifies the workload or automation path this provider is for.",
-                )}
-              </FieldDescription>
-            </Field>
-
-            <Field className="gap-2">
-              <FieldLabel htmlFor="workload-identity-issuer">
-                {msg("workloadIdentity.createDialog.issuerLabel", "Issuer URL")}
-              </FieldLabel>
-              <Input
-                id="workload-identity-issuer"
-                value={draftIssuer}
-                onChange={(event) => setDraftIssuer(event.target.value)}
-              />
-              <FieldDescription>
-                {msg(
-                  "workloadIdentity.createDialog.issuerHelp",
-                  "This issuer identifies the cloud, CI, or cluster identity system that mints upstream tokens.",
-                )}
-              </FieldDescription>
-            </Field>
-
-            <Field className="gap-2">
-              <FieldLabel htmlFor="workload-identity-audience">
-                {msg("workloadIdentity.createDialog.audienceLabel", "Audience")}
-              </FieldLabel>
-              <Input
-                id="workload-identity-audience"
-                value={draftAudience}
-                onChange={(event) => setDraftAudience(event.target.value)}
-                className="font-mono text-xs"
-              />
-              <FieldDescription>
-                {msg(
-                  "workloadIdentity.createDialog.audienceHelp",
-                  "The audience claim is what your workloads request when they exchange tokens for Claude access.",
-                )}
-              </FieldDescription>
-            </Field>
-
-            <Field className="gap-2">
-              <FieldLabel htmlFor="workload-identity-subject">
-                {msg(
-                  "workloadIdentity.createDialog.subjectLabel",
-                  "Trusted subject",
-                )}
-              </FieldLabel>
-              <Textarea
-                id="workload-identity-subject"
-                value={draftSubjectPattern}
-                onChange={(event) => setDraftSubjectPattern(event.target.value)}
-                className="min-h-[112px] resize-y font-mono text-xs"
-                placeholder={msg(
-                  "workloadIdentity.createDialog.subjectPlaceholder",
-                  "repo:open-managed-agent/*:ref:refs/heads/main",
-                )}
-              />
-              <FieldDescription>
-                {msg(
-                  "workloadIdentity.createDialog.subjectHelp",
-                  "Limit exchange to the exact repository, role, or service account subjects that should receive Claude access.",
-                )}
-              </FieldDescription>
-            </Field>
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => openCreateDialog(false)}
-              >
-                {msg("common.cancel", "Cancel")}
-              </Button>
-              <Button type="submit" disabled={!draftName.trim()}>
-                {msg("common.create", "Create")}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={detailRecord !== null}
-        onOpenChange={(nextOpen) => !nextOpen && openDetailDialog(null)}
-      >
-        <DialogContent className="sm:max-w-[640px]">
-          <DialogHeader>
-            <DialogTitle>
-              {msg("workloadIdentity.trustDialog.title", "Trust policy")}
-            </DialogTitle>
-            <DialogDescription>
-              {msg(
-                "workloadIdentity.trustDialog.description",
-                "Review the issuer, audience, and trusted subject pattern for {name}.",
-                { name: detailRecord?.name ?? "" },
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-5">
-            <Field className="gap-2">
-              <FieldLabel>
-                {msg("workloadIdentity.trustDialog.provider", "Provider")}
-              </FieldLabel>
-              <Input
-                value={
-                  detailRecord ? providerLabel(detailRecord.provider, msg) : ""
-                }
-                readOnly
-                aria-readonly="true"
-              />
-            </Field>
-            <Field className="gap-2">
-              <FieldLabel>
-                {msg("workloadIdentity.trustDialog.issuer", "Issuer URL")}
-              </FieldLabel>
-              <Input
-                value={detailRecord?.issuer ?? ""}
-                readOnly
-                aria-readonly="true"
-                className="font-mono text-xs"
-              />
-            </Field>
-            <Field className="gap-2">
-              <FieldLabel>
-                {msg("workloadIdentity.trustDialog.audience", "Audience")}
-              </FieldLabel>
-              <div className="flex gap-2">
+              <Field className="gap-2">
+                <FieldLabel htmlFor="workload-identity-name">{msg("common.name", "Name")}</FieldLabel>
                 <Input
-                  value={detailRecord?.audience ?? ""}
-                  readOnly
-                  aria-readonly="true"
+                  id="workload-identity-name"
+                  value={draftName}
+                  onChange={(event) => setDraftName(event.target.value)}
+                  placeholder={msg("workloadIdentity.createDialog.namePlaceholder", "Production deploy federation")}
+                />
+                <FieldDescription>
+                  {msg(
+                    "workloadIdentity.createDialog.nameHelp",
+                    "Use a short name that identifies the workload or automation path this provider is for.",
+                  )}
+                </FieldDescription>
+              </Field>
+
+              <Field className="gap-2">
+                <FieldLabel htmlFor="workload-identity-issuer">
+                  {msg("workloadIdentity.createDialog.issuerLabel", "Issuer URL")}
+                </FieldLabel>
+                <Input
+                  id="workload-identity-issuer"
+                  value={draftIssuer}
+                  onChange={(event) => setDraftIssuer(event.target.value)}
+                />
+                <FieldDescription>
+                  {msg(
+                    "workloadIdentity.createDialog.issuerHelp",
+                    "This issuer identifies the cloud, CI, or cluster identity system that mints upstream tokens.",
+                  )}
+                </FieldDescription>
+              </Field>
+
+              <Field className="gap-2">
+                <FieldLabel htmlFor="workload-identity-audience">
+                  {msg("workloadIdentity.createDialog.audienceLabel", "Audience")}
+                </FieldLabel>
+                <Input
+                  id="workload-identity-audience"
+                  value={draftAudience}
+                  onChange={(event) => setDraftAudience(event.target.value)}
                   className="font-mono text-xs"
                 />
-                <Button type="button" variant="outline" onClick={copyAudience}>
-                  <Copy className="size-4" aria-hidden />
-                  {copiedRecordId === detailRecord?.id
-                    ? msg("common.copied", "Copied")
-                    : msg("common.copy", "Copy")}
-                </Button>
-              </div>
-            </Field>
-            <Field className="gap-2">
-              <FieldLabel>
-                {msg("workloadIdentity.trustDialog.subject", "Trusted subject")}
-              </FieldLabel>
-              <Textarea
-                value={detailRecord?.subjectPattern ?? ""}
-                readOnly
-                aria-readonly="true"
-                className="min-h-[112px] resize-none font-mono text-xs"
-              />
-            </Field>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => openDetailDialog(null)}
-            >
-              {msg("common.close", "Close")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                <FieldDescription>
+                  {msg(
+                    "workloadIdentity.createDialog.audienceHelp",
+                    "The audience claim is what your workloads request when they exchange tokens for Claude access.",
+                  )}
+                </FieldDescription>
+              </Field>
 
-        <AlertDialog
-          open={confirmation !== null}
-          onOpenChange={(nextOpen) => !nextOpen && setConfirmation(null)}
-        >
+              <Field className="gap-2">
+                <FieldLabel htmlFor="workload-identity-subject">
+                  {msg("workloadIdentity.createDialog.subjectLabel", "Trusted subject")}
+                </FieldLabel>
+                <Textarea
+                  id="workload-identity-subject"
+                  value={draftSubjectPattern}
+                  onChange={(event) => setDraftSubjectPattern(event.target.value)}
+                  className="min-h-[112px] resize-y font-mono text-xs"
+                  placeholder={msg(
+                    "workloadIdentity.createDialog.subjectPlaceholder",
+                    "repo:open-managed-agent/*:ref:refs/heads/main",
+                  )}
+                />
+                <FieldDescription>
+                  {msg(
+                    "workloadIdentity.createDialog.subjectHelp",
+                    "Limit exchange to the exact repository, role, or service account subjects that should receive Claude access.",
+                  )}
+                </FieldDescription>
+              </Field>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => openCreateDialog(false)}>
+                  {msg("common.cancel", "Cancel")}
+                </Button>
+                <Button type="submit" disabled={!draftName.trim()}>
+                  {msg("common.create", "Create")}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={detailRecord !== null} onOpenChange={(nextOpen) => !nextOpen && openDetailDialog(null)}>
+          <DialogContent className="sm:max-w-[640px]">
+            <DialogHeader>
+              <DialogTitle>{msg("workloadIdentity.trustDialog.title", "Trust policy")}</DialogTitle>
+              <DialogDescription>
+                {msg(
+                  "workloadIdentity.trustDialog.description",
+                  "Review the issuer, audience, and trusted subject pattern for {name}.",
+                  { name: detailRecord?.name ?? "" },
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-5">
+              <Field className="gap-2">
+                <FieldLabel>{msg("workloadIdentity.trustDialog.provider", "Provider")}</FieldLabel>
+                <Input
+                  value={detailRecord ? providerLabel(detailRecord.provider, msg) : ""}
+                  readOnly
+                  aria-readonly="true"
+                />
+              </Field>
+              <Field className="gap-2">
+                <FieldLabel>{msg("workloadIdentity.trustDialog.issuer", "Issuer URL")}</FieldLabel>
+                <Input value={detailRecord?.issuer ?? ""} readOnly aria-readonly="true" className="font-mono text-xs" />
+              </Field>
+              <Field className="gap-2">
+                <FieldLabel>{msg("workloadIdentity.trustDialog.audience", "Audience")}</FieldLabel>
+                <div className="flex gap-2">
+                  <Input
+                    value={detailRecord?.audience ?? ""}
+                    readOnly
+                    aria-readonly="true"
+                    className="font-mono text-xs"
+                  />
+                  <Button type="button" variant="outline" onClick={copyAudience}>
+                    <Copy className="size-4" aria-hidden />
+                    {copiedRecordId === detailRecord?.id ? msg("common.copied", "Copied") : msg("common.copy", "Copy")}
+                  </Button>
+                </div>
+              </Field>
+              <Field className="gap-2">
+                <FieldLabel>{msg("workloadIdentity.trustDialog.subject", "Trusted subject")}</FieldLabel>
+                <Textarea
+                  value={detailRecord?.subjectPattern ?? ""}
+                  readOnly
+                  aria-readonly="true"
+                  className="min-h-[112px] resize-none font-mono text-xs"
+                />
+              </Field>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => openDetailDialog(null)}>
+                {msg("common.close", "Close")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <AlertDialog open={confirmation !== null} onOpenChange={(nextOpen) => !nextOpen && setConfirmation(null)}>
           <AlertDialogContent size="sm">
             <AlertDialogHeader>
               <AlertDialogMedia>
-                {confirmation?.kind === "disable" ? (
-                  <Ban aria-hidden />
-                ) : (
-                  <Trash2 aria-hidden />
-                )}
+                {confirmation?.kind === "disable" ? <Ban aria-hidden /> : <Trash2 aria-hidden />}
               </AlertDialogMedia>
               <AlertDialogTitle>{confirmationTitle}</AlertDialogTitle>
               <AlertDialogDescription>{confirmationBody}</AlertDialogDescription>
@@ -734,9 +565,7 @@ export function WorkloadIdentitySettingsPage() {
                 {msg("common.cancel", "Cancel")}
               </AlertDialogCancel>
               <AlertDialogAction
-                variant={
-                  confirmation?.kind === "delete" ? "destructive" : "default"
-                }
+                variant={confirmation?.kind === "delete" ? "destructive" : "default"}
                 onClick={() => {
                   if (!confirmation) {
                     return;
@@ -780,55 +609,29 @@ function WorkloadIdentityTable({
   return (
     <Card className="overflow-hidden">
       <CardContent className="p-0">
-        <Table
-          aria-label={msg(
-            "workloadIdentity.table.ariaLabel",
-            "Workload identity providers",
-          )}
-        >
+        <Table aria-label={msg("workloadIdentity.table.ariaLabel", "Workload identity providers")}>
           <TableHeader className="text-muted-foreground">
             <TableRow className="hover:bg-transparent">
-              <TableHead className="px-5 py-3">
-                {msg("common.name", "Name")}
-              </TableHead>
-              <TableHead className="px-5 py-3">
-                {msg("workloadIdentity.table.provider", "Provider")}
-              </TableHead>
-              <TableHead className="px-5 py-3">
-                {msg("workloadIdentity.table.issuer", "Issuer")}
-              </TableHead>
-              <TableHead className="px-5 py-3">
-                {msg("workloadIdentity.table.audience", "Audience")}
-              </TableHead>
-              <TableHead className="px-5 py-3">
-                {msg("workloadIdentity.table.lastExchange", "Last exchange")}
-              </TableHead>
-              <TableHead className="px-5 py-3">
-                {msg("workloadIdentity.table.status", "Status")}
-              </TableHead>
+              <TableHead className="px-5 py-3">{msg("common.name", "Name")}</TableHead>
+              <TableHead className="px-5 py-3">{msg("workloadIdentity.table.provider", "Provider")}</TableHead>
+              <TableHead className="px-5 py-3">{msg("workloadIdentity.table.issuer", "Issuer")}</TableHead>
+              <TableHead className="px-5 py-3">{msg("workloadIdentity.table.audience", "Audience")}</TableHead>
+              <TableHead className="px-5 py-3">{msg("workloadIdentity.table.lastExchange", "Last exchange")}</TableHead>
+              <TableHead className="px-5 py-3">{msg("workloadIdentity.table.status", "Status")}</TableHead>
               <TableHead className="w-14 px-5 py-3" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {records.map((record) => (
-              <TableRow
-                key={record.id}
-                className="text-foreground last:border-0"
-              >
+              <TableRow key={record.id} className="text-foreground last:border-0">
                 <TableCell className="px-5 py-4 align-top">
                   <div className="min-w-0 space-y-1">
-                    <div className="font-medium text-foreground">
-                      {record.name}
-                    </div>
-                    <p className="font-mono text-xs text-muted-foreground">
-                      {record.id}
-                    </p>
+                    <div className="font-medium text-foreground">{record.name}</div>
+                    <p className="font-mono text-xs text-muted-foreground">{record.id}</p>
                   </div>
                 </TableCell>
                 <TableCell className="px-5 py-4 align-top">
-                  <Badge variant="outline">
-                    {providerLabel(record.provider, msg)}
-                  </Badge>
+                  <Badge variant="outline">{providerLabel(record.provider, msg)}</Badge>
                 </TableCell>
                 <TableCell className="w-[220px] max-w-[220px] px-5 py-4 align-top">
                   <WorkloadIdentityValuePreview value={record.issuer} />
@@ -842,11 +645,7 @@ function WorkloadIdentityTable({
                     : msg("workloadIdentity.table.neverExchanged", "Never")}
                 </TableCell>
                 <TableCell className="px-5 py-4 align-top">
-                  <Badge
-                    variant={
-                      record.status === "active" ? "secondary" : "outline"
-                    }
-                  >
+                  <Badge variant={record.status === "active" ? "secondary" : "outline"}>
                     {record.status === "active"
                       ? msg("common.active", "Active")
                       : msg("workloadIdentity.disabled", "Disabled")}
@@ -878,9 +677,7 @@ function WorkloadIdentityValuePreview({ value }: { value: string }) {
           <span className="block truncate">{value}</span>
         </span>
       </TooltipTrigger>
-      <TooltipContent className="max-w-sm break-all font-mono text-[11px] leading-5">
-        {value}
-      </TooltipContent>
+      <TooltipContent className="max-w-sm break-all font-mono text-[11px] leading-5">{value}</TooltipContent>
     </Tooltip>
   );
 }
@@ -909,13 +706,9 @@ function WorkloadIdentityActionsMenu({
             variant="ghost"
             size="icon"
             className="text-muted-foreground"
-            aria-label={msg(
-              "workloadIdentity.moreActions",
-              "More actions for {name}",
-              {
-                name: record.name,
-              },
-            )}
+            aria-label={msg("workloadIdentity.moreActions", "More actions for {name}", {
+              name: record.name,
+            })}
           />
         }
       >
@@ -924,9 +717,7 @@ function WorkloadIdentityActionsMenu({
       <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuItem onClick={() => onViewTrustPolicy(record)}>
           <Network className="size-4" aria-hidden />
-          <span>
-            {msg("workloadIdentity.viewTrustPolicy", "View trust policy")}
-          </span>
+          <span>{msg("workloadIdentity.viewTrustPolicy", "View trust policy")}</span>
         </DropdownMenuItem>
         {record.status === "active" ? (
           <>
@@ -943,14 +734,9 @@ function WorkloadIdentityActionsMenu({
               <span>{msg("workloadIdentity.restore", "Restore provider")}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => onDelete(record)}
-            >
+            <DropdownMenuItem variant="destructive" onClick={() => onDelete(record)}>
               <Trash2 className="size-4" aria-hidden />
-              <span>
-                {msg("workloadIdentity.deletePreview", "Delete preview row")}
-              </span>
+              <span>{msg("workloadIdentity.deletePreview", "Delete preview row")}</span>
             </DropdownMenuItem>
           </>
         )}
@@ -980,9 +766,7 @@ function WorkloadIdentityEmptyState({
           <Icon className="size-5" aria-hidden />
         </EmptyMedia>
         <EmptyTitle>
-          <h2 className="text-[20px] font-semibold leading-7 text-foreground">
-            {title}
-          </h2>
+          <h2 className="text-[20px] font-semibold leading-7 text-foreground">{title}</h2>
         </EmptyTitle>
         <EmptyDescription className="max-w-[520px]">{body}</EmptyDescription>
       </EmptyHeader>
@@ -993,11 +777,7 @@ function WorkloadIdentityEmptyState({
 
 function providerLabel(
   provider: WorkloadIdentityProviderType,
-  msg: (
-    key: string,
-    fallback: string,
-    params?: Record<string, string | number>,
-  ) => string,
+  msg: (key: string, fallback: string, params?: Record<string, string | number>) => string,
 ) {
   switch (provider) {
     case "aws":

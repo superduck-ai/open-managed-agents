@@ -1,4 +1,4 @@
-import { consoleApi } from '../api/client';
+import { consoleApi } from "../api/client";
 
 export type OrganizationSettings = {
   default_workspace_settings?: {
@@ -60,9 +60,9 @@ export function getOrganization(orgUuid: string) {
 
 export function updateOrganization(orgUuid: string, input: UpdateOrganizationInput, csrfToken?: string) {
   return consoleApi<Organization>(`/api/organizations/${encodeURIComponent(orgUuid)}`, {
-    method: 'PUT',
+    method: "PUT",
     csrfToken,
-    body: JSON.stringify(input)
+    body: JSON.stringify(input),
   });
 }
 
@@ -70,14 +70,10 @@ export function getOrganizationProfile(orgUuid: string) {
   return consoleApi<OrganizationProfile>(`/api/organizations/${encodeURIComponent(orgUuid)}/profile`);
 }
 
-export function updateOrganizationProfile(
-  orgUuid: string,
-  input: UpdateOrganizationProfileInput,
-  csrfToken?: string
-) {
+export function updateOrganizationProfile(orgUuid: string, input: UpdateOrganizationProfileInput, csrfToken?: string) {
   return consoleApi<OrganizationProfile>(`/api/organizations/${encodeURIComponent(orgUuid)}/profile`, {
-    method: 'PUT',
+    method: "PUT",
     csrfToken,
-    body: JSON.stringify(input)
+    body: JSON.stringify(input),
   });
 }

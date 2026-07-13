@@ -48,8 +48,8 @@ export class TextStreamSmoother {
   private readonly alpha = 0.99;
   private readonly abortHandler = () => this.abort();
 
-  private target = '';
-  private visible = '';
+  private target = "";
+  private visible = "";
   private x = 0;
   private v: number;
   private start: number | null = null;
@@ -86,7 +86,7 @@ export class TextStreamSmoother {
       if (this.signal.aborted) {
         this.forceDone = true;
       } else {
-        this.signal.addEventListener('abort', this.abortHandler, { once: true });
+        this.signal.addEventListener("abort", this.abortHandler, { once: true });
       }
     }
   }
@@ -134,8 +134,8 @@ export class TextStreamSmoother {
 
   reset() {
     this.generation += 1;
-    this.target = '';
-    this.visible = '';
+    this.target = "";
+    this.visible = "";
     this.x = 0;
     this.v = this.initialCharsPerSecond;
     this.start = null;
@@ -163,7 +163,7 @@ export class TextStreamSmoother {
   }
 
   dispose() {
-    this.signal?.removeEventListener('abort', this.abortHandler);
+    this.signal?.removeEventListener("abort", this.abortHandler);
     this.forceDone = true;
     this.generation += 1;
     this.running = false;
@@ -183,14 +183,18 @@ export class TextStreamSmoother {
     while (this.generation === generation && !this.forceDone && !this.signal?.aborted) {
       const hidden = this.isDocumentHidden();
       const outputVisible = !hidden && this.isOutputVisible();
-      const intervalMs = hidden ? this.hiddenIntervalMs : outputVisible ? this.frameIntervalMs : this.offscreenIntervalMs;
+      const intervalMs = hidden
+        ? this.hiddenIntervalMs
+        : outputVisible
+          ? this.frameIntervalMs
+          : this.offscreenIntervalMs;
       const changed = this.advance({
         intervalMs,
         maxCharsPerStep: hidden
           ? this.maxHiddenCharsPerStep
           : outputVisible
             ? this.maxVisibleCharsPerStep
-            : this.maxOffscreenCharsPerStep
+            : this.maxOffscreenCharsPerStep,
       });
       if (changed) {
         this.deliver();
@@ -275,7 +279,7 @@ export class TextStreamSmoother {
     }
     this.arrivals.push({
       t: (this.now() - this.start) / 1000,
-      length: this.target.length
+      length: this.target.length,
     });
   }
 
@@ -296,11 +300,7 @@ export class TextStreamSmoother {
 }
 
 function sleepForReveal(ms: number) {
-  if (
-    ms <= 1000 / 30 &&
-    !globalThis.document?.hidden &&
-    typeof globalThis.requestAnimationFrame === 'function'
-  ) {
+  if (ms <= 1000 / 30 && !globalThis.document?.hidden && typeof globalThis.requestAnimationFrame === "function") {
     return new Promise<void>((resolve) => {
       globalThis.requestAnimationFrame(() => resolve());
     });

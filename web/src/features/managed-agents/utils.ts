@@ -1,7 +1,7 @@
-import { type ApiError } from '../../shared/api/client';
-import { copyText } from '../../shared/lib/clipboard';
-import { type MouseEvent } from 'react';
-import { type ManagedEntitySection } from './types';
+import { type ApiError } from "../../shared/api/client";
+import { copyText } from "../../shared/lib/clipboard";
+import { type MouseEvent } from "react";
+import { type ManagedEntitySection } from "./types";
 
 export { copyText };
 
@@ -17,26 +17,26 @@ export function parseToolInput(inputJson: string, fallback: Record<string, unkno
 }
 
 export function toRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 export function errorMessage(error: unknown) {
-  if (error && typeof error === 'object' && 'message' in error) {
+  if (error && typeof error === "object" && "message" in error) {
     const message = (error as ApiError | Error).message;
-    if (typeof message === 'string' && message.trim()) {
+    if (typeof message === "string" && message.trim()) {
       return message;
     }
   }
-  return 'Request failed. Please try again.';
+  return "Request failed. Please try again.";
 }
 
 export function currentPathname() {
-  return typeof window === 'undefined' ? '' : window.location.pathname;
+  return typeof window === "undefined" ? "" : window.location.pathname;
 }
 
 export function managedWorkspaceIdFromPath(pathname: string) {
   const match = pathname.match(
-    /^\/workspaces\/([^/]+)\/(?:agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)(?:\/|$)/
+    /^\/workspaces\/([^/]+)\/(?:agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)(?:\/|$)/,
   );
   return match ? decodeURIComponent(match[1]) : undefined;
 }
@@ -49,12 +49,12 @@ export function managedAgentIdFromPath(pathname: string) {
 }
 
 export function downloadTextFile(filename: string, content: string) {
-  if (typeof document === 'undefined' || typeof window === 'undefined') {
+  if (typeof document === "undefined" || typeof window === "undefined") {
     return;
   }
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
   const url = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
+  const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
   document.body.append(anchor);
@@ -64,12 +64,12 @@ export function downloadTextFile(filename: string, content: string) {
 }
 
 export function isContentSha256(value?: string | null) {
-  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
 export function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
-    return '0 B';
+    return "0 B";
   }
   if (bytes < 1024) {
     return `${Math.round(bytes)} B`;
@@ -84,27 +84,27 @@ export function formatBytes(bytes: number) {
 
 export function formatKilobytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
-    return '0.0kB';
+    return "0.0kB";
   }
   return `${(Math.ceil(bytes / 100) / 10).toFixed(1)}kB`;
 }
 
 export function managedEntityIdFromPath(section: ManagedEntitySection) {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return null;
   }
-  const parts = window.location.pathname.split('/').filter(Boolean);
+  const parts = window.location.pathname.split("/").filter(Boolean);
   const segment = sectionPathSegment(section);
   const index = parts.lastIndexOf(segment);
   if (index === -1) {
     return null;
   }
   const id = parts[index + 1];
-  return id && !id.includes('/') ? decodeURIComponent(id) : null;
+  return id && !id.includes("/") ? decodeURIComponent(id) : null;
 }
 
 export function managedEntityListHref(workspaceId: string, section: ManagedEntitySection) {
-  return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/${sectionPathSegment(section)}`;
+  return `/workspaces/${encodeURIComponent(workspaceId || "default")}/${sectionPathSegment(section)}`;
 }
 
 export function managedEntityDetailHref(workspaceId: string, section: ManagedEntitySection, entityId: string) {
@@ -113,21 +113,21 @@ export function managedEntityDetailHref(workspaceId: string, section: ManagedEnt
 
 export function sectionPathSegment(section: ManagedEntitySection) {
   switch (section) {
-    case 'credential-vaults':
-      return 'vaults';
-    case 'memory-stores':
-      return 'memory-stores';
+    case "credential-vaults":
+      return "vaults";
+    case "memory-stores":
+      return "memory-stores";
     default:
       return section;
   }
 }
 
 export function agentDetailHref(workspaceId: string, agentId: string) {
-  return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/agents/${encodeURIComponent(agentId)}`;
+  return `/workspaces/${encodeURIComponent(workspaceId || "default")}/agents/${encodeURIComponent(agentId)}`;
 }
 
 export function navigateToAgentConfig(workspaceId: string, agentId: string) {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return;
   }
   const href = `${agentDetailHref(workspaceId, agentId)}?tab=config`;
@@ -143,7 +143,7 @@ export function handleInternalLinkClick(event: MouseEvent<HTMLAnchorElement>, hr
     event.altKey ||
     event.ctrlKey ||
     event.shiftKey ||
-    typeof window === 'undefined'
+    typeof window === "undefined"
   ) {
     return;
   }
@@ -158,12 +158,12 @@ export function handleInternalLinkClick(event: MouseEvent<HTMLAnchorElement>, hr
 }
 
 export function navigateToInternalHref(href: string) {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return;
   }
-  window.history.pushState(null, '', href);
+  window.history.pushState(null, "", href);
   const event =
-    typeof window.PopStateEvent === 'function' ? new window.PopStateEvent('popstate') : new window.Event('popstate');
+    typeof window.PopStateEvent === "function" ? new window.PopStateEvent("popstate") : new window.Event("popstate");
   window.dispatchEvent(event);
 }
 
@@ -172,7 +172,7 @@ export function cloneJsonValue<T>(value: T): T {
 }
 
 export function objectRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 export function compactEntityId(id: string) {

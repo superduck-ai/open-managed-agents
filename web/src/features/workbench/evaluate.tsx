@@ -1,23 +1,13 @@
+import { AlertCircle, ChevronDown, Code2, Loader2, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { ChangeEvent, Dispatch, SetStateAction, useEffect, useRef, useState } from "react";
+import clsx from "clsx";
 import {
-  AlertCircle,
-  ChevronDown,
-  Code2,
-  Loader2,
-  Plus,
-  Sparkles,
-  Trash2,
-  X
-} from 'lucide-react';
-import {
-  ChangeEvent,
-  Dispatch,
-  SetStateAction,
-  useEffect,
-  useRef,
-  useState
-} from 'react';
-import clsx from 'clsx';
-import { listWorkbenchRevisions, WorkbenchEvaluation, WorkbenchMessage, WorkbenchRevision, WorkbenchStreamEvent } from './api';
+  listWorkbenchRevisions,
+  WorkbenchEvaluation,
+  WorkbenchMessage,
+  WorkbenchRevision,
+  WorkbenchStreamEvent,
+} from "./api";
 import {
   buildRevisionPayload,
   EvaluateComparison,
@@ -29,20 +19,20 @@ import {
   normalizeRevision,
   titleMessageContent,
   WorkbenchExample,
-  workbenchId
-} from './model';
-import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
-import { Button } from '@/shared/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/shared/ui/dropdown-menu';
-import { Switch } from '@/shared/ui/switch';
-import { Textarea } from '@/shared/ui/textarea';
+  workbenchId,
+} from "./model";
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/alert";
+import { Button } from "@/shared/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/shared/ui/dropdown-menu";
+import { Switch } from "@/shared/ui/switch";
+import { Textarea } from "@/shared/ui/textarea";
 
 export function ResponsePreview({
   isRunning,
   error,
   responseText,
   showCreatePrompt,
-  onCreatePrompt
+  onCreatePrompt,
 }: {
   isRunning: boolean;
   error: string | null;
@@ -79,7 +69,13 @@ export function ResponsePreview({
           {showCreatePrompt ? (
             <>
               <span className="workbench-empty-response-or">or</span>
-              <Button type="button" variant="outline" size="lg" className="bg-secondary" onClick={() => void onCreatePrompt()}>
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                className="bg-secondary"
+                onClick={() => void onCreatePrompt()}
+              >
                 Create New Prompt
               </Button>
             </>
@@ -110,7 +106,7 @@ export function EvaluateView({
   onUpdateVariables,
   onUpdateIdealOutput,
   onDeleteRow,
-  onGenerateTestCases
+  onGenerateTestCases,
 }: {
   variables: string[];
   promptTitle: string;
@@ -141,10 +137,11 @@ export function EvaluateView({
   const [isLoadingComparisons, setIsLoadingComparisons] = useState(false);
   const [isGeneratingTestCases, setIsGeneratingTestCases] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const visibleVariables = variables.length ? variables : ['VARIABLE'];
-  const variableLabel = visibleVariables.length === 1 ? `{{${visibleVariables[0]}}}` : 'Variables';
+  const visibleVariables = variables.length ? variables : ["VARIABLE"];
+  const variableLabel = visibleVariables.length === 1 ? `{{${visibleVariables[0]}}}` : "Variables";
   const availableComparisonRevisions = comparisonRevisions.filter(
-    (revision) => revision.id !== currentRevisionId && !comparisons.some((comparison) => comparison.revisionId === revision.id)
+    (revision) =>
+      revision.id !== currentRevisionId && !comparisons.some((comparison) => comparison.revisionId === revision.id),
   );
   useEffect(() => {
     if (!isReadOnly) {
@@ -154,14 +151,16 @@ export function EvaluateView({
     setGenerateMenuOpen(false);
   }, [isReadOnly]);
   const columnTemplate = [
-    '26px',
-    showPrompt ? 'minmax(260px, 1fr)' : null,
-    'minmax(220px, 0.9fr)',
-    'minmax(320px, 1.2fr)',
-    ...comparisons.map(() => 'minmax(320px, 1.2fr)'),
-    showIdealOutputs ? 'minmax(260px, 1fr)' : null,
-    '148px'
-  ].filter(Boolean).join(' ');
+    "26px",
+    showPrompt ? "minmax(260px, 1fr)" : null,
+    "minmax(220px, 0.9fr)",
+    "minmax(320px, 1.2fr)",
+    ...comparisons.map(() => "minmax(320px, 1.2fr)"),
+    showIdealOutputs ? "minmax(260px, 1fr)" : null,
+    "148px",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const handleComparisonMenuOpenChange = async (nextOpen: boolean) => {
     setComparisonMenuOpen(nextOpen);
     if (!nextOpen || isReadOnly) {
@@ -172,9 +171,11 @@ export function EvaluateView({
     }
     setIsLoadingComparisons(true);
     try {
-      setComparisonRevisions((await listWorkbenchRevisions(orgUuid, promptId, false)).map((revision) =>
-        normalizeRevision(revision, fallbackModelName)
-      ));
+      setComparisonRevisions(
+        (await listWorkbenchRevisions(orgUuid, promptId, false)).map((revision) =>
+          normalizeRevision(revision, fallbackModelName),
+        ),
+      );
     } catch {
       setComparisonRevisions([]);
     } finally {
@@ -189,18 +190,20 @@ export function EvaluateView({
     const comparison: EvaluateComparison = {
       id: revision.id,
       revisionId: revision.id,
-      label: revisionIndex >= 0 ? `v${comparisonRevisions.length - revisionIndex}` : 'Version',
-      revision
+      label: revisionIndex >= 0 ? `v${comparisonRevisions.length - revisionIndex}` : "Version",
+      revision,
     };
-    setComparisons((current) => current.some((item) => item.revisionId === revision.id) ? current : [...current, comparison]);
+    setComparisons((current) =>
+      current.some((item) => item.revisionId === revision.id) ? current : [...current, comparison],
+    );
     setRows((current) =>
       current.map((row) => ({
         ...row,
         comparisonOutputs: {
           ...row.comparisonOutputs,
-          [comparison.id]: row.comparisonOutputs[comparison.id] ?? emptyComparisonOutput()
-        }
-      }))
+          [comparison.id]: row.comparisonOutputs[comparison.id] ?? emptyComparisonOutput(),
+        },
+      })),
     );
     setComparisonMenuOpen(false);
   };
@@ -213,7 +216,7 @@ export function EvaluateView({
       current.map((row) => {
         const { [comparisonId]: _removed, ...comparisonOutputs } = row.comparisonOutputs;
         return { ...row, comparisonOutputs };
-      })
+      }),
     );
   };
   const addRows = (count: number) => {
@@ -221,10 +224,7 @@ export function EvaluateView({
       return;
     }
     const createdRows = Array.from({ length: count }, () => createEvaluateRow(visibleVariables));
-    setRows((current) => [
-      ...current,
-      ...createdRows
-    ]);
+    setRows((current) => [...current, ...createdRows]);
     createdRows.forEach((row) => void onCreateRow(row));
     setGenerateMenuOpen(false);
   };
@@ -245,9 +245,7 @@ export function EvaluateView({
       return;
     }
     const nextRow = { ...row, values: { ...row.values, [variable]: value } };
-    setRows((current) =>
-      current.map((item) => (item.id === row.id ? { ...item, values: nextRow.values } : item))
-    );
+    setRows((current) => current.map((item) => (item.id === row.id ? { ...item, values: nextRow.values } : item)));
     void onUpdateVariables(nextRow);
   };
   const updateIdealOutput = (row: EvaluateTestCase, value: string) => {
@@ -267,7 +265,7 @@ export function EvaluateView({
   };
   const importRows = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = '';
+    event.currentTarget.value = "";
     if (!file || isReadOnly) {
       return;
     }
@@ -285,11 +283,11 @@ export function EvaluateView({
     if (!rows.length) {
       return;
     }
-    const blob = new Blob([evaluateRowsToCsv(rows, visibleVariables)], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob([evaluateRowsToCsv(rows, visibleVariables)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
-    link.download = `${slugifyFileName(promptTitle || 'workbench')}-test-cases.csv`;
+    link.download = `${slugifyFileName(promptTitle || "workbench")}-test-cases.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -320,8 +318,8 @@ export function EvaluateView({
       {isReadOnly ? (
         <div className="workbench-evaluate-stale-card">
           <p>
-            Prompt has been updated, and the evaluation table below has become stale and is read-only.
-            Create a new revision with your changes to evaluate.
+            Prompt has been updated, and the evaluation table below has become stale and is read-only. Create a new
+            revision with your changes to evaluate.
           </p>
           <Button type="button" className="mx-auto mt-4" disabled={!canSaveRevision} onClick={onSaveRevision}>
             Save Changes as {saveRevisionLabel}
@@ -330,7 +328,10 @@ export function EvaluateView({
       ) : null}
 
       <div className="workbench-evaluate-table" aria-label="Evaluation results">
-        <div className="workbench-evaluate-row workbench-evaluate-version-row" style={{ gridTemplateColumns: columnTemplate }}>
+        <div
+          className="workbench-evaluate-row workbench-evaluate-version-row"
+          style={{ gridTemplateColumns: columnTemplate }}
+        >
           <div className="workbench-evaluate-row-label">Row</div>
           {showPrompt ? <div /> : null}
           <div />
@@ -361,9 +362,12 @@ export function EvaluateView({
           {showIdealOutputs ? <div /> : null}
           <div>
             <div className="workbench-evaluate-comparison-anchor">
-              <DropdownMenu open={comparisonMenuOpen} onOpenChange={(nextOpen) => void handleComparisonMenuOpenChange(nextOpen)}>
+              <DropdownMenu
+                open={comparisonMenuOpen}
+                onOpenChange={(nextOpen) => void handleComparisonMenuOpenChange(nextOpen)}
+              >
                 <DropdownMenuTrigger
-                  render={(
+                  render={
                     <Button
                       type="button"
                       variant="ghost"
@@ -372,17 +376,16 @@ export function EvaluateView({
                       aria-expanded={comparisonMenuOpen}
                       disabled={isReadOnly || !orgUuid || !promptId}
                     />
-                  )}
+                  }
                 >
-                  {isLoadingComparisons ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Plus className="size-4" aria-hidden />}
+                  {isLoadingComparisons ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Plus className="size-4" aria-hidden />
+                  )}
                   Add Comparison
                 </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  side="bottom"
-                  sideOffset={8}
-                  className="w-auto min-w-[238px]"
-                >
+                <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="w-auto min-w-[238px]">
                   {isLoadingComparisons ? (
                     <div className="workbench-evaluate-comparison-empty">Loading versions</div>
                   ) : availableComparisonRevisions.length ? (
@@ -395,9 +398,11 @@ export function EvaluateView({
                           onClick={() => addComparison(revision)}
                         >
                           <span className="text-[13px] font-semibold leading-[18px]">
-                            {index >= 0 ? `Version ${comparisonRevisions.length - index}` : 'Version'}
+                            {index >= 0 ? `Version ${comparisonRevisions.length - index}` : "Version"}
                           </span>
-                          <span className="text-xs leading-4 text-muted-foreground">{formatDate(revision.created_at)}</span>
+                          <span className="text-xs leading-4 text-muted-foreground">
+                            {formatDate(revision.created_at)}
+                          </span>
                         </DropdownMenuItem>
                       );
                     })
@@ -428,14 +433,14 @@ export function EvaluateView({
               style={{ gridTemplateColumns: columnTemplate }}
             >
               <div className="workbench-evaluate-row-label">{rowIndex + 1}</div>
-              {showPrompt ? <div className="workbench-evaluate-prompt-cell">{promptText || 'Prompt'}</div> : null}
+              {showPrompt ? <div className="workbench-evaluate-prompt-cell">{promptText || "Prompt"}</div> : null}
               <div className="workbench-evaluate-variable-cell">
                 {visibleVariables.map((name) => (
                   <label key={name} className="workbench-evaluate-variable-field">
                     <span>{visibleVariables.length === 1 ? variableLabel : `{{${name}}}`}</span>
                     <Textarea
                       aria-label={`${name} row ${rowIndex + 1}`}
-                      value={row.values[name] ?? ''}
+                      value={row.values[name] ?? ""}
                       onChange={(event) => updateRowValue(row, name, event.currentTarget.value)}
                       placeholder="Enter an example value..."
                       disabled={isReadOnly}
@@ -512,11 +517,11 @@ export function EvaluateView({
             ) : (
               <Sparkles className="size-4" aria-hidden />
             )}
-            {isGeneratingTestCases ? 'Generating' : 'Generate Test Case'}
+            {isGeneratingTestCases ? "Generating" : "Generate Test Case"}
           </Button>
           <DropdownMenu open={generateMenuOpen} onOpenChange={setGenerateMenuOpen}>
             <DropdownMenuTrigger
-              render={(
+              render={
                 <Button
                   type="button"
                   variant="outline"
@@ -526,16 +531,11 @@ export function EvaluateView({
                   aria-expanded={generateMenuOpen}
                   disabled={isReadOnly || isGeneratingTestCases}
                 />
-              )}
+              }
             >
               <ChevronDown className="size-4" aria-hidden />
             </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              side="top"
-              sideOffset={6}
-              className="w-auto min-w-[180px]"
-            >
+            <DropdownMenuContent align="start" side="top" sideOffset={6} className="w-auto min-w-[180px]">
               <DropdownMenuItem className="px-2 py-1.5 text-sm" onClick={() => void generateRows(1)}>
                 Generate 1 test case
               </DropdownMenuItem>
@@ -569,7 +569,7 @@ export function EvaluateView({
 export function EvaluateOutputCell({
   output,
   error,
-  isRunning
+  isRunning,
 }: {
   output: string;
   error: string | null;
@@ -578,10 +578,10 @@ export function EvaluateOutputCell({
   return (
     <div
       className={clsx(
-        'workbench-evaluate-output-cell',
-        output && 'has-output',
-        error && 'has-error',
-        isRunning && 'is-running'
+        "workbench-evaluate-output-cell",
+        output && "has-output",
+        error && "has-error",
+        isRunning && "is-running",
       )}
     >
       {isRunning ? (
@@ -594,7 +594,7 @@ export function EvaluateOutputCell({
       ) : output ? (
         output
       ) : (
-        'Run All to generate model output.'
+        "Run All to generate model output."
       )}
     </div>
   );
@@ -602,33 +602,33 @@ export function EvaluateOutputCell({
 
 export function createEvaluateRow(variables: string[], sampleIndex?: number): EvaluateTestCase {
   const values = Object.fromEntries(
-    variables.map((name) => [name, sampleIndex ? `${name} sample ${sampleIndex}` : ''])
+    variables.map((name) => [name, sampleIndex ? `${name} sample ${sampleIndex}` : ""]),
   );
   return createEvaluateRowFromValues(variables, values);
 }
 
 export function createEvaluateRowFromValues(variables: string[], values: Record<string, string>): EvaluateTestCase {
-  const id = workbenchId('eval-local');
+  const id = workbenchId("eval-local");
   return {
     id,
     evaluationId: id,
     testCaseId: id,
-    values: Object.fromEntries(variables.map((name) => [name, values[name] ?? ''])),
-    idealOutput: '',
-    modelOutput: '',
-    rating: '',
+    values: Object.fromEntries(variables.map((name) => [name, values[name] ?? ""])),
+    idealOutput: "",
+    modelOutput: "",
+    rating: "",
     runError: null,
     isRunning: false,
-    comparisonOutputs: {}
+    comparisonOutputs: {},
   };
 }
 
 export function emptyComparisonOutput(): EvaluateComparisonOutput {
   return {
-    modelOutput: '',
-    rating: '',
+    modelOutput: "",
+    rating: "",
     runError: null,
-    isRunning: false
+    isRunning: false,
   };
 }
 
@@ -643,44 +643,46 @@ export function evaluateRowFromEvaluation(evaluation: WorkbenchEvaluation, varia
   if (!evaluationId.trim()) {
     return null;
   }
-  const rawValues = evaluation.variable_values && typeof evaluation.variable_values === 'object'
-    ? evaluation.variable_values
-    : {};
+  const rawValues =
+    evaluation.variable_values && typeof evaluation.variable_values === "object" ? evaluation.variable_values : {};
   const row = createEvaluateRowFromValues(
     variables,
-    Object.fromEntries(variables.map((name) => [name, generatedValueString(rawValues[name])]))
+    Object.fromEntries(variables.map((name) => [name, generatedValueString(rawValues[name])])),
   );
   return mergeEvaluationIntoRow(
     {
       ...row,
       id: evaluationId,
       evaluationId,
-      testCaseId: generatedValueString(evaluation.test_case_id).trim() || evaluationId
+      testCaseId: generatedValueString(evaluation.test_case_id).trim() || evaluationId,
     },
     evaluation,
-    variables
+    variables,
   );
 }
 
 export function mergeEvaluationIntoRow(row: EvaluateTestCase, evaluation: WorkbenchEvaluation, variables: string[]) {
-  const rawValues = evaluation.variable_values && typeof evaluation.variable_values === 'object'
-    ? evaluation.variable_values
-    : row.values;
+  const rawValues =
+    evaluation.variable_values && typeof evaluation.variable_values === "object"
+      ? evaluation.variable_values
+      : row.values;
   return {
     ...row,
     evaluationId: generatedValueString(evaluation.id).trim() || row.evaluationId,
     testCaseId: generatedValueString(evaluation.test_case_id).trim() || row.testCaseId,
-    values: Object.fromEntries(variables.map((name) => [
-      name,
-      hasOwn(rawValues, name) ? generatedValueString(rawValues[name]) : row.values[name] || ''
-    ])),
-    idealOutput: hasOwn(evaluation, 'golden_answer') ? generatedValueString(evaluation.golden_answer) : row.idealOutput,
-    modelOutput: hasOwn(evaluation, 'completion_text')
+    values: Object.fromEntries(
+      variables.map((name) => [
+        name,
+        hasOwn(rawValues, name) ? generatedValueString(rawValues[name]) : row.values[name] || "",
+      ]),
+    ),
+    idealOutput: hasOwn(evaluation, "golden_answer") ? generatedValueString(evaluation.golden_answer) : row.idealOutput,
+    modelOutput: hasOwn(evaluation, "completion_text")
       ? generatedValueString(evaluation.completion_text)
-      : hasOwn(evaluation, 'completion')
+      : hasOwn(evaluation, "completion")
         ? generatedValueString(evaluation.completion)
         : row.modelOutput,
-    rating: hasOwn(evaluation, 'rating') ? generatedValueString(evaluation.rating) : row.rating
+    rating: hasOwn(evaluation, "rating") ? generatedValueString(evaluation.rating) : row.rating,
   };
 }
 
@@ -689,27 +691,34 @@ export function mergeCreatedEvaluationIntoRow(row: EvaluateTestCase, evaluation:
     ...row,
     evaluationId: generatedValueString(evaluation.id).trim() || row.evaluationId,
     testCaseId: generatedValueString(evaluation.test_case_id).trim() || row.testCaseId,
-    rating: hasOwn(evaluation, 'rating') ? generatedValueString(evaluation.rating) : row.rating
+    rating: hasOwn(evaluation, "rating") ? generatedValueString(evaluation.rating) : row.rating,
   };
 }
 
-export function mergeEvaluationVariablesIntoRow(row: EvaluateTestCase, evaluation: WorkbenchEvaluation, variables: string[]) {
-  const rawValues = evaluation.variable_values && typeof evaluation.variable_values === 'object'
-    ? evaluation.variable_values
-    : row.values;
+export function mergeEvaluationVariablesIntoRow(
+  row: EvaluateTestCase,
+  evaluation: WorkbenchEvaluation,
+  variables: string[],
+) {
+  const rawValues =
+    evaluation.variable_values && typeof evaluation.variable_values === "object"
+      ? evaluation.variable_values
+      : row.values;
   return {
     ...mergeEvaluationMetadataIntoRow(row, evaluation),
-    values: Object.fromEntries(variables.map((name) => [
-      name,
-      hasOwn(rawValues, name) ? generatedValueString(rawValues[name]) : row.values[name] || ''
-    ]))
+    values: Object.fromEntries(
+      variables.map((name) => [
+        name,
+        hasOwn(rawValues, name) ? generatedValueString(rawValues[name]) : row.values[name] || "",
+      ]),
+    ),
   };
 }
 
 export function mergeEvaluationGoldenAnswerIntoRow(row: EvaluateTestCase, evaluation: WorkbenchEvaluation) {
   return {
     ...mergeEvaluationMetadataIntoRow(row, evaluation),
-    idealOutput: hasOwn(evaluation, 'golden_answer') ? generatedValueString(evaluation.golden_answer) : row.idealOutput
+    idealOutput: hasOwn(evaluation, "golden_answer") ? generatedValueString(evaluation.golden_answer) : row.idealOutput,
   };
 }
 
@@ -717,7 +726,7 @@ export function mergeEvaluationMetadataIntoRow(row: EvaluateTestCase, evaluation
   return {
     ...row,
     evaluationId: generatedValueString(evaluation.id).trim() || row.evaluationId,
-    testCaseId: generatedValueString(evaluation.test_case_id).trim() || row.testCaseId
+    testCaseId: generatedValueString(evaluation.test_case_id).trim() || row.testCaseId,
   };
 }
 
@@ -728,7 +737,7 @@ export function evaluateRowRequestBody(row: EvaluateTestCase): Partial<Workbench
     variable_values: row.values,
     golden_answer: row.idealOutput,
     completion_text: row.modelOutput,
-    rating: row.rating
+    rating: row.rating,
   };
 }
 
@@ -740,60 +749,68 @@ export function buildGenerateTestCasesPayload(draft: WorkbenchRevision, count: n
     existing_examples: examples.map((example) => ({
       variable_values: example.values,
       ideal_output: example.idealOutput,
-      additional_context: example.additionalContext
-    }))
+      additional_context: example.additionalContext,
+    })),
   };
 }
 
-export function buildGenerateVariablePayload(draft: WorkbenchRevision, examples: WorkbenchExample[], customChainOfThought: string) {
+export function buildGenerateVariablePayload(
+  draft: WorkbenchRevision,
+  examples: WorkbenchExample[],
+  customChainOfThought: string,
+) {
   return {
     ...buildRevisionPayload(draft, { includeEmptyMessages: false }),
     custom_chain_of_thought: customChainOfThought,
     existing_examples: examples.map((example) => ({
       variable_values: example.values,
       ideal_output: example.idealOutput,
-      additional_context: example.additionalContext
-    }))
+      additional_context: example.additionalContext,
+    })),
   };
 }
 
-export function buildGenerateExamplePayload(draft: WorkbenchRevision, examples: WorkbenchExample[], customChainOfThought: string) {
+export function buildGenerateExamplePayload(
+  draft: WorkbenchRevision,
+  examples: WorkbenchExample[],
+  customChainOfThought: string,
+) {
   return {
-    system_prompt: draft.system_prompt || '',
+    system_prompt: draft.system_prompt || "",
     messages: buildGenerateExampleMessages(draft),
     custom_chain_of_thought: customChainOfThought,
     existing_examples: examples.map((example) => ({
       variable_values: example.values,
       ideal_output: example.idealOutput,
-      additional_context: example.additionalContext
-    }))
+      additional_context: example.additionalContext,
+    })),
   };
 }
 
 export function buildGenerateExampleMessages(draft: WorkbenchRevision): WorkbenchMessage[] {
   const messages = buildRevisionPayload(draft, { includeEmptyMessages: false }).messages;
-  if (messages.some((message) => message.role === 'assistant')) {
+  if (messages.some((message) => message.role === "assistant")) {
     return messages;
   }
   return [
     ...messages,
     {
-      role: 'assistant',
-      content: [{ type: 'text', text: '' }]
-    }
+      role: "assistant",
+      content: [{ type: "text", text: "" }],
+    },
   ];
 }
 
 export function evaluateRowFromGeneratedEvent(event: WorkbenchStreamEvent, variables: string[]) {
-  if (event.event && event.event !== 'test_case') {
+  if (event.event && event.event !== "test_case") {
     return null;
   }
   const rawValues = event.data.variable_values;
-  if (!rawValues || typeof rawValues !== 'object' || Array.isArray(rawValues)) {
+  if (!rawValues || typeof rawValues !== "object" || Array.isArray(rawValues)) {
     return null;
   }
   const values = Object.fromEntries(
-    variables.map((name) => [name, generatedValueString((rawValues as Record<string, unknown>)[name])])
+    variables.map((name) => [name, generatedValueString((rawValues as Record<string, unknown>)[name])]),
   );
   if (variables.every((name) => !values[name])) {
     return null;
@@ -802,14 +819,14 @@ export function evaluateRowFromGeneratedEvent(event: WorkbenchStreamEvent, varia
 }
 
 export function evaluateRowsToCsv(rows: EvaluateTestCase[], variables: string[]) {
-  const headers = [...variables.map((name) => `{{${name}}}`), 'ideal_output'];
+  const headers = [...variables.map((name) => `{{${name}}}`), "ideal_output"];
   const lines = [
-    headers.map(escapeCsvCell).join(','),
+    headers.map(escapeCsvCell).join(","),
     ...rows.map((row) =>
-      [...variables.map((name) => row.values[name] ?? ''), row.idealOutput].map(escapeCsvCell).join(',')
-    )
+      [...variables.map((name) => row.values[name] ?? ""), row.idealOutput].map(escapeCsvCell).join(","),
+    ),
   ];
-  return `${lines.join('\n')}\n`;
+  return `${lines.join("\n")}\n`;
 }
 
 export function parseEvaluateCsv(text: string, variables: string[]) {
@@ -818,27 +835,28 @@ export function parseEvaluateCsv(text: string, variables: string[]) {
     return [];
   }
   const headers = records[0].map(normalizeEvaluateCsvHeader);
-  const idealIndex = headers.findIndex((header) => header === 'ideal_output' || header === 'ideal output');
+  const idealIndex = headers.findIndex((header) => header === "ideal_output" || header === "ideal output");
   const variableIndexes = variables.map((name) => {
     const normalizedName = normalizeEvaluateCsvHeader(name);
     const bracedName = normalizeEvaluateCsvHeader(`{{${name}}}`);
     return headers.findIndex((header) => header === normalizedName || header === bracedName);
   });
-  return records.slice(1)
+  return records
+    .slice(1)
     .filter((record) => record.some((cell) => cell.trim()))
     .map((record) => ({
       ...createEvaluateRowFromValues(
         variables,
-        Object.fromEntries(variables.map((name, index) => [name, record[variableIndexes[index]] ?? '']))
+        Object.fromEntries(variables.map((name, index) => [name, record[variableIndexes[index]] ?? ""])),
       ),
-      idealOutput: idealIndex >= 0 ? record[idealIndex] ?? '' : ''
+      idealOutput: idealIndex >= 0 ? (record[idealIndex] ?? "") : "",
     }));
 }
 
 export function parseCsvRecords(text: string) {
   const records: string[][] = [];
   let record: string[] = [];
-  let cell = '';
+  let cell = "";
   let quoted = false;
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
@@ -854,15 +872,15 @@ export function parseCsvRecords(text: string) {
       }
     } else if (char === '"') {
       quoted = true;
-    } else if (char === ',') {
+    } else if (char === ",") {
       record.push(cell);
-      cell = '';
-    } else if (char === '\n') {
+      cell = "";
+    } else if (char === "\n") {
       record.push(cell);
       records.push(record);
       record = [];
-      cell = '';
-    } else if (char !== '\r') {
+      cell = "";
+    } else if (char !== "\r") {
       cell += char;
     }
   }
@@ -881,10 +899,18 @@ export function escapeCsvCell(value: string) {
 }
 
 export function normalizeEvaluateCsvHeader(value: string) {
-  return value.trim().replace(/^{{\s*/, '').replace(/\s*}}$/, '').toLowerCase();
+  return value
+    .trim()
+    .replace(/^{{\s*/, "")
+    .replace(/\s*}}$/, "")
+    .toLowerCase();
 }
 
 export function slugifyFileName(value: string) {
-  const slug = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  return slug || 'workbench';
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || "workbench";
 }

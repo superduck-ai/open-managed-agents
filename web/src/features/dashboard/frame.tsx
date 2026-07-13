@@ -1,34 +1,16 @@
-import { AlertCircle, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { cn } from '@/shared/lib/utils';
-import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
-import { Badge } from '@/shared/ui/badge';
-import { Button, ButtonLink } from '@/shared/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle
-} from '@/shared/ui/empty';
-import { Field, FieldLabel } from '@/shared/ui/field';
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem
-} from '@/shared/ui/pagination';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from '@/shared/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
-import type { IconComponent } from './model';
+import { AlertCircle, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import type { ReactNode } from "react";
+import { cn } from "@/shared/lib/utils";
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/alert";
+import { Badge } from "@/shared/ui/badge";
+import { Button, ButtonLink } from "@/shared/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
+import { Field, FieldLabel } from "@/shared/ui/field";
+import { Pagination, PaginationContent, PaginationItem } from "@/shared/ui/pagination";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/shared/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
+import type { IconComponent } from "./model";
 
 export function ConsolePageFrame({
   title,
@@ -37,7 +19,7 @@ export function ConsolePageFrame({
   eyebrow,
   meta,
   actions,
-  children
+  children,
 }: {
   title: string;
   icon: IconComponent;
@@ -59,7 +41,9 @@ export function ConsolePageFrame({
               <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>
               {eyebrow ? <Badge>{eyebrow}</Badge> : null}
             </div>
-            {description ? <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p> : null}
+            {description ? (
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
+            ) : null}
             {meta ? <div className="mt-3">{meta}</div> : null}
           </div>
         </div>
@@ -80,12 +64,12 @@ export function PrimaryAction({ href, icon: Icon, label }: { href: string; icon:
 }
 
 export function SecondaryAction({ href, icon: Icon, label }: { href: string; icon: IconComponent; label: string }) {
-  const external = href.startsWith('http');
+  const external = href.startsWith("http");
   return (
     <ButtonLink
       href={href}
-      target={external ? '_blank' : undefined}
-      rel={external ? 'noreferrer' : undefined}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noreferrer" : undefined}
       variant="outline"
       size="lg"
     >
@@ -97,12 +81,7 @@ export function SecondaryAction({ href, icon: Icon, label }: { href: string; ico
 
 export function BackLink({ href, label }: { href: string; label: string }) {
   return (
-    <ButtonLink
-      href={href}
-      variant="ghost"
-      size="sm"
-      className="-ml-2 text-muted-foreground hover:text-foreground"
-    >
+    <ButtonLink href={href} variant="ghost" size="sm" className="-ml-2 text-muted-foreground hover:text-foreground">
       <ChevronLeft className="size-4" aria-hidden />
       {label}
     </ButtonLink>
@@ -113,7 +92,7 @@ export function EmptyState({
   icon: Icon,
   title,
   body,
-  action
+  action,
 }: {
   icon: IconComponent;
   title: string;
@@ -123,7 +102,10 @@ export function EmptyState({
   return (
     <Empty className="min-h-[260px] rounded-lg border border-dashed border-border bg-card px-6 py-12">
       <EmptyHeader>
-        <EmptyMedia variant="icon" className="size-12 rounded-full border border-border bg-secondary text-muted-foreground">
+        <EmptyMedia
+          variant="icon"
+          className="size-12 rounded-full border border-border bg-secondary text-muted-foreground"
+        >
           <Icon className="size-5" aria-hidden />
         </EmptyMedia>
         <EmptyTitle>
@@ -151,7 +133,7 @@ export function CursorPagination({
   canNext,
   isUpdating,
   onPrevious,
-  onNext
+  onNext,
 }: {
   previousLabel: string;
   nextLabel: string;
@@ -217,7 +199,7 @@ export function TableErrorRow({
   title,
   message,
   retryLabel,
-  onRetry
+  onRetry,
 }: {
   colSpan: number;
   title: string;
@@ -256,7 +238,7 @@ export function TableEmptyRow({ colSpan, children }: { colSpan: number; children
 
 export function DataTableCard({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <Card className={cn('overflow-hidden py-0', className)}>
+    <Card className={cn("overflow-hidden py-0", className)}>
       <CardContent className="p-0">{children}</CardContent>
     </Card>
   );
@@ -277,7 +259,7 @@ export function DataTable({ columns, rows }: { columns: string[]; rows: string[]
         </TableHeader>
         <TableBody>
           {rows.map((row) => (
-            <TableRow key={row.join('|')} className="border-b border-border text-foreground last:border-0">
+            <TableRow key={row.join("|")} className="border-b border-border text-foreground last:border-0">
               {row.map((cell, index) => (
                 <TableCell key={`${cell}-${index}`} className="px-5 py-4 align-top">
                   {cell}
@@ -291,15 +273,7 @@ export function DataTable({ columns, rows }: { columns: string[]; rows: string[]
   );
 }
 
-export function NoticeCard({
-  icon: Icon,
-  title,
-  action
-}: {
-  icon: IconComponent;
-  title: string;
-  action?: ReactNode;
-}) {
+export function NoticeCard({ icon: Icon, title, action }: { icon: IconComponent; title: string; action?: ReactNode }) {
   return (
     <Card className="flex-row flex-wrap items-center justify-between gap-4 rounded-lg p-4">
       <div className="flex items-center gap-3 text-sm text-foreground">
@@ -318,7 +292,7 @@ export function PanelCard({
   className,
   headerClassName,
   titleClassName,
-  contentClassName
+  contentClassName,
 }: {
   title: ReactNode;
   action?: ReactNode;
@@ -329,12 +303,12 @@ export function PanelCard({
   contentClassName?: string;
 }) {
   return (
-    <Card className={cn('gap-0 rounded-lg p-4', className)}>
-      <CardHeader className={cn('mb-4 flex flex-row items-center justify-between gap-3 p-0', headerClassName)}>
-        <CardTitle className={cn('text-sm font-semibold text-foreground', titleClassName)}>{title}</CardTitle>
+    <Card className={cn("gap-0 rounded-lg p-4", className)}>
+      <CardHeader className={cn("mb-4 flex flex-row items-center justify-between gap-3 p-0", headerClassName)}>
+        <CardTitle className={cn("text-sm font-semibold text-foreground", titleClassName)}>{title}</CardTitle>
         {action}
       </CardHeader>
-      <CardContent className={cn('p-0', contentClassName)}>{children}</CardContent>
+      <CardContent className={cn("p-0", contentClassName)}>{children}</CardContent>
     </Card>
   );
 }
@@ -356,7 +330,7 @@ export function SettingRow({
   title,
   body,
   detail,
-  action
+  action,
 }: {
   title: ReactNode;
   body: string;

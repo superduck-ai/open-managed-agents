@@ -1,22 +1,66 @@
-import { anthropicBetaApi } from '../../shared/api/anthropic';
-import { consoleApi } from '../../shared/api/client';
-import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
-import { type QueryClient } from '@tanstack/react-query';
-import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
-import { credentialAuthBody, environmentConfigBody, environmentMetadataBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
-import { compareSessionEvents, sessionEventType } from './sessions/SessionDetailPage';
-import { type AgentApiResponse, type AgentCreatedFilter, type AgentDetailDeploymentFilters, type AgentDetailSessionFilters, type AgentListFilters, type AgentPageResponse, type AgentSearchResponse, type AgentSessionAnalyticsOverview, type AgentSessionAnalyticsTimeseries, type AgentUpdateInput, type CreateAgentInput, type CredentialFormValues, type DeploymentApiResponse, type DeploymentRunApiResponse, type EnvironmentApiResponse, type EnvironmentEditValues, type EnvironmentWorkApiResponse, type ManagedEntityApiResponse, type ManagedEntityFormValues, type ManagedEntityListFilters, type ManagedEntitySection, type MemoryApiResponse, type MemoryFormValues, type MemoryStoreApiResponse, type PageCursor, type PageResponse, type QuickstartCreateEnvironmentInput, type QuickstartDeploymentInput, type QuickstartSessionEvent, type QuickstartStreamEvent, type SessionApiResponse, type SessionDetailDeltaFrames, type SessionDetailEventCache, type SessionEventCachePatch, type SessionResourceApiResponse, type SessionThreadApiResponse, type VaultApiResponse, type VaultCredentialApiResponse } from './types';
-import { isContentSha256, objectRecord, toRecord } from './utils';
+import { anthropicBetaApi } from "../../shared/api/anthropic";
+import { consoleApi } from "../../shared/api/client";
+import { consumeSseBuffer, postJsonSseStream } from "../../shared/api/streaming";
+import { type QueryClient } from "@tanstack/react-query";
+import { agentDetailCreatedRange, agentDetailStatusValues } from "./agents/AgentsResourcePage";
+import {
+  credentialAuthBody,
+  environmentConfigBody,
+  environmentMetadataBody,
+  normalizeMemoryFolderPath,
+} from "./resources/ManagedResources";
+import { compareSessionEvents, sessionEventType } from "./sessions/SessionDetailPage";
+import {
+  type AgentApiResponse,
+  type AgentCreatedFilter,
+  type AgentDetailDeploymentFilters,
+  type AgentDetailSessionFilters,
+  type AgentListFilters,
+  type AgentPageResponse,
+  type AgentSearchResponse,
+  type AgentSessionAnalyticsOverview,
+  type AgentSessionAnalyticsTimeseries,
+  type AgentUpdateInput,
+  type CreateAgentInput,
+  type CredentialFormValues,
+  type DeploymentApiResponse,
+  type DeploymentRunApiResponse,
+  type EnvironmentApiResponse,
+  type EnvironmentEditValues,
+  type EnvironmentWorkApiResponse,
+  type ManagedEntityApiResponse,
+  type ManagedEntityFormValues,
+  type ManagedEntityListFilters,
+  type ManagedEntitySection,
+  type MemoryApiResponse,
+  type MemoryFormValues,
+  type MemoryStoreApiResponse,
+  type PageCursor,
+  type PageResponse,
+  type QuickstartCreateEnvironmentInput,
+  type QuickstartDeploymentInput,
+  type QuickstartSessionEvent,
+  type QuickstartStreamEvent,
+  type SessionApiResponse,
+  type SessionDetailDeltaFrames,
+  type SessionDetailEventCache,
+  type SessionEventCachePatch,
+  type SessionResourceApiResponse,
+  type SessionThreadApiResponse,
+  type VaultApiResponse,
+  type VaultCredentialApiResponse,
+} from "./types";
+import { isContentSha256, objectRecord, toRecord } from "./utils";
 
 export function workspaceHeaders(workspaceId: string) {
-  return workspaceId ? { 'x-workspace-id': workspaceId } : undefined;
+  return workspaceId ? { "x-workspace-id": workspaceId } : undefined;
 }
 
 export function sdkBody(value: object): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export const defaultAgentFilters: AgentListFilters = { created: 'all', status: 'active' };
+export const defaultAgentFilters: AgentListFilters = { created: "all", status: "active" };
 
 export const agentsListLimit = 20;
 
@@ -28,10 +72,10 @@ export const exactAgentIdPattern = /^agent_(?:staging_|local_)?[0-9a-zA-Z]{20,}$
 
 export function createdFilterStartISOString(filter: AgentCreatedFilter) {
   const now = Date.now();
-  if (filter === 'last7') {
+  if (filter === "last7") {
     return new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
   }
-  if (filter === 'last30') {
+  if (filter === "last30") {
     return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
   }
   return null;
@@ -40,11 +84,11 @@ export function createdFilterStartISOString(filter: AgentCreatedFilter) {
 export function listAgents(workspaceId: string, page?: PageCursor, filters: AgentListFilters = defaultAgentFilters) {
   const params: Record<string, string | number | boolean> = {
     limit: agentsListLimit,
-    include_archived: filters.status === 'all'
+    include_archived: filters.status === "all",
   };
   const createdAtGTE = createdFilterStartISOString(filters.created);
   if (createdAtGTE) {
-    params['created_at[gte]'] = createdAtGTE;
+    params["created_at[gte]"] = createdAtGTE;
   }
   if (page) {
     params.page = page;
@@ -57,17 +101,17 @@ export function searchAgentsByNamePage(
   name: string,
   limit: number,
   page?: PageCursor,
-  filters: AgentListFilters = defaultAgentFilters
+  filters: AgentListFilters = defaultAgentFilters,
 ) {
-  return consoleApi<AgentPageResponse>('/v1/agents:search?beta=true', {
-    method: 'POST',
+  return consoleApi<AgentPageResponse>("/v1/agents:search?beta=true", {
+    method: "POST",
     headers: workspaceHeaders(workspaceId),
     body: JSON.stringify({
       name,
       limit,
-      include_archived: filters.status === 'all',
-      ...(page ? { page } : {})
-    })
+      include_archived: filters.status === "all",
+      ...(page ? { page } : {}),
+    }),
   });
 }
 
@@ -82,7 +126,11 @@ export function dedupeAgentsById(agents: AgentApiResponse[]) {
   });
 }
 
-export async function searchAgentsByName(workspaceId: string, name: string, filters: AgentListFilters = defaultAgentFilters): Promise<AgentSearchResponse> {
+export async function searchAgentsByName(
+  workspaceId: string,
+  name: string,
+  filters: AgentListFilters = defaultAgentFilters,
+): Promise<AgentSearchResponse> {
   const rows: AgentApiResponse[] = [];
   let cursor: PageCursor = null;
   let nextPage: PageCursor = null;
@@ -106,7 +154,7 @@ export async function searchAgentsByName(workspaceId: string, name: string, filt
   return {
     data: dedupeAgentsById(rows).slice(0, agentSearchLimit),
     next_page: nextPage,
-    truncated
+    truncated,
   };
 }
 
@@ -127,12 +175,16 @@ export function retrieveAgent(agentId: string, workspaceId: string, version?: nu
 }
 
 export function listAgentVersions(agentId: string, workspaceId: string) {
-  return anthropicBetaApi.agents.versions.list<AgentApiResponse>(agentId, { limit: 100 }, workspaceId) as Promise<AgentPageResponse>;
+  return anthropicBetaApi.agents.versions.list<AgentApiResponse>(
+    agentId,
+    { limit: 100 },
+    workspaceId,
+  ) as Promise<AgentPageResponse>;
 }
 
 export type AgentSkillApiResponse = {
   id: string;
-  type: 'skill';
+  type: "skill";
   display_title: string;
   latest_version: string;
   source: string;
@@ -152,14 +204,14 @@ export function listAgentDetailSessions(agentId: string, workspaceId: string, fi
   const statuses = agentDetailStatusValues(filters.status);
   const params: Record<string, unknown> = {
     limit: 8,
-    agent_id: agentId
+    agent_id: agentId,
   };
   const createdRange = agentDetailCreatedRange(filters.created);
   if (createdRange.gte) {
-    params['created_at[gte]'] = createdRange.gte;
+    params["created_at[gte]"] = createdRange.gte;
   }
   if (createdRange.lte) {
-    params['created_at[lte]'] = createdRange.lte;
+    params["created_at[lte]"] = createdRange.lte;
   }
   if (filters.version) {
     params.agent_version = filters.version;
@@ -170,77 +222,98 @@ export function listAgentDetailSessions(agentId: string, workspaceId: string, fi
   if (statuses.length) {
     params.statuses = statuses;
   }
-  if (statuses.includes('terminated')) {
+  if (statuses.includes("terminated")) {
     params.include_archived = true;
   }
   if (filters.cursor) {
     params.page = filters.cursor;
   }
-  return anthropicBetaApi.sessions.list<SessionApiResponse>(params, workspaceId) as Promise<PageResponse<SessionApiResponse>>;
+  return anthropicBetaApi.sessions.list<SessionApiResponse>(params, workspaceId) as Promise<
+    PageResponse<SessionApiResponse>
+  >;
 }
 
-export function listAgentDetailDeployments(agentId: string, workspaceId: string, filters: AgentDetailDeploymentFilters) {
+export function listAgentDetailDeployments(
+  agentId: string,
+  workspaceId: string,
+  filters: AgentDetailDeploymentFilters,
+) {
   const params: Record<string, string | number | boolean> = {
     limit: 20,
     agent_id: agentId,
-    include_archived: true
+    include_archived: true,
   };
   if (filters.cursor) {
     params.page = filters.cursor;
   }
-  return anthropicBetaApi.deployments.list<DeploymentApiResponse>(params, workspaceId) as Promise<PageResponse<DeploymentApiResponse>>;
+  return anthropicBetaApi.deployments.list<DeploymentApiResponse>(params, workspaceId) as Promise<
+    PageResponse<DeploymentApiResponse>
+  >;
 }
 
-export function createAgentDetailSession(agent: AgentApiResponse, values: ManagedEntityFormValues, workspaceId: string) {
+export function createAgentDetailSession(
+  agent: AgentApiResponse,
+  values: ManagedEntityFormValues,
+  workspaceId: string,
+) {
   return anthropicBetaApi.sessions.create<SessionApiResponse>(
     {
       title: values.name.trim() || undefined,
-      agent: { type: 'agent', id: agent.id },
+      agent: { type: "agent", id: agent.id },
       environment_id: values.environmentId,
-      vault_ids: values.vaultIds.length ? values.vaultIds : undefined
+      vault_ids: values.vaultIds.length ? values.vaultIds : undefined,
     },
-    workspaceId
+    workspaceId,
   );
 }
 
-export function createAgentDetailDeployment(agent: AgentApiResponse, values: ManagedEntityFormValues, workspaceId: string) {
+export function createAgentDetailDeployment(
+  agent: AgentApiResponse,
+  values: ManagedEntityFormValues,
+  workspaceId: string,
+) {
   return anthropicBetaApi.deployments.create<DeploymentApiResponse>(
     {
       name: values.name.trim(),
       description: values.description.trim() || null,
-      agent: { type: 'agent', id: agent.id, version: agent.version },
+      agent: { type: "agent", id: agent.id, version: agent.version },
       environment_id: values.environmentId,
       vault_ids: values.vaultIds,
       metadata: {},
       resources: deploymentResources(values.memoryStoreIds),
       initial_events: deploymentInitialEvents(values.initialMessage),
-      schedule: deploymentSchedule(values)
+      schedule: deploymentSchedule(values),
     },
-    workspaceId
+    workspaceId,
   );
 }
 
 export function getAgentSessionAnalyticsOverview(orgUuid: string, agentId: string) {
   const params = new URLSearchParams({ agent_id: agentId });
   return consoleApi<AgentSessionAnalyticsOverview>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/analytics/sessions/overview?${params.toString()}`
+    `/api/organizations/${encodeURIComponent(orgUuid)}/analytics/sessions/overview?${params.toString()}`,
   );
 }
 
 export function getAgentSessionAnalyticsTimeseries(orgUuid: string, agentId: string, groupBy?: string) {
   const params = new URLSearchParams({ agent_id: agentId });
   if (groupBy) {
-    params.set('group_by', groupBy);
+    params.set("group_by", groupBy);
   }
   return consoleApi<AgentSessionAnalyticsTimeseries>(
-    `/api/organizations/${encodeURIComponent(orgUuid)}/analytics/sessions/timeseries?${params.toString()}`
+    `/api/organizations/${encodeURIComponent(orgUuid)}/analytics/sessions/timeseries?${params.toString()}`,
   );
 }
 
-export function listManagedEntities(section: ManagedEntitySection, workspaceId: string, page?: PageCursor, filters?: ManagedEntityListFilters) {
+export function listManagedEntities(
+  section: ManagedEntitySection,
+  workspaceId: string,
+  page?: PageCursor,
+  filters?: ManagedEntityListFilters,
+) {
   const params: Record<string, unknown> = {
     limit: 5,
-    include_archived: filters?.includeArchived ?? false
+    include_archived: filters?.includeArchived ?? false,
   };
   if (page) {
     params.page = page;
@@ -248,13 +321,13 @@ export function listManagedEntities(section: ManagedEntitySection, workspaceId: 
   if (filters?.created) {
     const createdRange = agentDetailCreatedRange(filters.created);
     if (createdRange.gte) {
-      params['created_at[gte]'] = createdRange.gte;
+      params["created_at[gte]"] = createdRange.gte;
     }
     if (createdRange.lte) {
-      params['created_at[lte]'] = createdRange.lte;
+      params["created_at[lte]"] = createdRange.lte;
     }
   }
-  if (section === 'sessions') {
+  if (section === "sessions") {
     if (filters?.agentId) {
       params.agent_id = filters.agentId;
     }
@@ -265,103 +338,184 @@ export function listManagedEntities(section: ManagedEntitySection, workspaceId: 
       params.statuses = filters.statuses;
     }
   }
-  if (section === 'deployments') {
+  if (section === "deployments") {
     if (filters?.agentId) {
       params.agent_id = filters.agentId;
     }
-    if (filters?.status === 'all') {
+    if (filters?.status === "all") {
       params.include_archived = true;
     } else if (filters?.status) {
       params.status = filters.status;
     }
   }
   switch (section) {
-    case 'sessions':
-      return anthropicBetaApi.sessions.list<SessionApiResponse>(params, workspaceId) as Promise<PageResponse<ManagedEntityApiResponse>>;
-    case 'deployments':
-      return anthropicBetaApi.deployments.list<DeploymentApiResponse>(params, workspaceId) as Promise<PageResponse<ManagedEntityApiResponse>>;
-    case 'environments':
-      return anthropicBetaApi.environments.list<EnvironmentApiResponse>(params, workspaceId) as Promise<PageResponse<ManagedEntityApiResponse>>;
-    case 'credential-vaults':
-      return anthropicBetaApi.vaults.list<VaultApiResponse>(params, workspaceId) as Promise<PageResponse<ManagedEntityApiResponse>>;
-    case 'memory-stores':
-      return anthropicBetaApi.memoryStores.list<MemoryStoreApiResponse>(params, workspaceId) as Promise<PageResponse<ManagedEntityApiResponse>>;
+    case "sessions":
+      return anthropicBetaApi.sessions.list<SessionApiResponse>(params, workspaceId) as Promise<
+        PageResponse<ManagedEntityApiResponse>
+      >;
+    case "deployments":
+      return anthropicBetaApi.deployments.list<DeploymentApiResponse>(params, workspaceId) as Promise<
+        PageResponse<ManagedEntityApiResponse>
+      >;
+    case "environments":
+      return anthropicBetaApi.environments.list<EnvironmentApiResponse>(params, workspaceId) as Promise<
+        PageResponse<ManagedEntityApiResponse>
+      >;
+    case "credential-vaults":
+      return anthropicBetaApi.vaults.list<VaultApiResponse>(params, workspaceId) as Promise<
+        PageResponse<ManagedEntityApiResponse>
+      >;
+    case "memory-stores":
+      return anthropicBetaApi.memoryStores.list<MemoryStoreApiResponse>(params, workspaceId) as Promise<
+        PageResponse<ManagedEntityApiResponse>
+      >;
   }
 }
 
 export function retrieveManagedEntity(section: ManagedEntitySection, entityId: string, workspaceId: string) {
   switch (section) {
-    case 'sessions':
-      return anthropicBetaApi.sessions.retrieve<SessionApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'deployments':
-      return anthropicBetaApi.deployments.retrieve<DeploymentApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'environments':
-      return anthropicBetaApi.environments.retrieve<EnvironmentApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'credential-vaults':
-      return anthropicBetaApi.vaults.retrieve<VaultApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'memory-stores':
-      return anthropicBetaApi.memoryStores.retrieve<MemoryStoreApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
+    case "sessions":
+      return anthropicBetaApi.sessions.retrieve<SessionApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "deployments":
+      return anthropicBetaApi.deployments.retrieve<DeploymentApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "environments":
+      return anthropicBetaApi.environments.retrieve<EnvironmentApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "credential-vaults":
+      return anthropicBetaApi.vaults.retrieve<VaultApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "memory-stores":
+      return anthropicBetaApi.memoryStores.retrieve<MemoryStoreApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
   }
 }
 
-export function createManagedEntity(section: ManagedEntitySection, values: ManagedEntityFormValues, workspaceId: string) {
+export function createManagedEntity(
+  section: ManagedEntitySection,
+  values: ManagedEntityFormValues,
+  workspaceId: string,
+) {
   const body = createManagedEntityBody(section, values);
   switch (section) {
-    case 'sessions':
-      return anthropicBetaApi.sessions.create<SessionApiResponse>(body, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'deployments':
-      return anthropicBetaApi.deployments.create<DeploymentApiResponse>(body, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'environments':
-      return anthropicBetaApi.environments.create<EnvironmentApiResponse>(body, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'credential-vaults':
+    case "sessions":
+      return anthropicBetaApi.sessions.create<SessionApiResponse>(
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "deployments":
+      return anthropicBetaApi.deployments.create<DeploymentApiResponse>(
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "environments":
+      return anthropicBetaApi.environments.create<EnvironmentApiResponse>(
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "credential-vaults":
       return anthropicBetaApi.vaults.create<VaultApiResponse>(body, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'memory-stores':
-      return anthropicBetaApi.memoryStores.create<MemoryStoreApiResponse>(body, workspaceId) as Promise<ManagedEntityApiResponse>;
+    case "memory-stores":
+      return anthropicBetaApi.memoryStores.create<MemoryStoreApiResponse>(
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
   }
 }
 
-export function updateManagedEntity(section: ManagedEntitySection, entityId: string, values: ManagedEntityFormValues, workspaceId: string) {
+export function updateManagedEntity(
+  section: ManagedEntitySection,
+  entityId: string,
+  values: ManagedEntityFormValues,
+  workspaceId: string,
+) {
   const body = updateManagedEntityBody(section, values);
   switch (section) {
-    case 'sessions':
-      return anthropicBetaApi.sessions.update<SessionApiResponse>(entityId, body, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'deployments':
-      return anthropicBetaApi.deployments.update<DeploymentApiResponse>(entityId, body, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'environments':
-      return anthropicBetaApi.environments.update<EnvironmentApiResponse>(entityId, body, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'credential-vaults':
-      return anthropicBetaApi.vaults.update<VaultApiResponse>(entityId, body, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'memory-stores':
-      return anthropicBetaApi.memoryStores.update<MemoryStoreApiResponse>(entityId, body, workspaceId) as Promise<ManagedEntityApiResponse>;
+    case "sessions":
+      return anthropicBetaApi.sessions.update<SessionApiResponse>(
+        entityId,
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "deployments":
+      return anthropicBetaApi.deployments.update<DeploymentApiResponse>(
+        entityId,
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "environments":
+      return anthropicBetaApi.environments.update<EnvironmentApiResponse>(
+        entityId,
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "credential-vaults":
+      return anthropicBetaApi.vaults.update<VaultApiResponse>(
+        entityId,
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "memory-stores":
+      return anthropicBetaApi.memoryStores.update<MemoryStoreApiResponse>(
+        entityId,
+        body,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
   }
 }
 
 export function archiveManagedEntity(section: ManagedEntitySection, entityId: string, workspaceId: string) {
   switch (section) {
-    case 'sessions':
-      return anthropicBetaApi.sessions.archive<SessionApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'deployments':
-      return anthropicBetaApi.deployments.archive<DeploymentApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'environments':
-      return anthropicBetaApi.environments.archive<EnvironmentApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'credential-vaults':
-      return anthropicBetaApi.vaults.archive<VaultApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
-    case 'memory-stores':
-      return anthropicBetaApi.memoryStores.archive<MemoryStoreApiResponse>(entityId, workspaceId) as Promise<ManagedEntityApiResponse>;
+    case "sessions":
+      return anthropicBetaApi.sessions.archive<SessionApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "deployments":
+      return anthropicBetaApi.deployments.archive<DeploymentApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "environments":
+      return anthropicBetaApi.environments.archive<EnvironmentApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "credential-vaults":
+      return anthropicBetaApi.vaults.archive<VaultApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
+    case "memory-stores":
+      return anthropicBetaApi.memoryStores.archive<MemoryStoreApiResponse>(
+        entityId,
+        workspaceId,
+      ) as Promise<ManagedEntityApiResponse>;
   }
 }
 
 export function deleteManagedEntity(section: ManagedEntitySection, entityId: string, workspaceId: string) {
   switch (section) {
-    case 'sessions':
+    case "sessions":
       return anthropicBetaApi.sessions.delete<{ id: string; type: string }>(entityId, workspaceId);
-    case 'environments':
+    case "environments":
       return anthropicBetaApi.environments.delete<{ id: string; type: string }>(entityId, workspaceId);
-    case 'credential-vaults':
+    case "credential-vaults":
       return anthropicBetaApi.vaults.delete<{ id: string; type: string }>(entityId, workspaceId);
-    case 'memory-stores':
+    case "memory-stores":
       return anthropicBetaApi.memoryStores.delete<{ id: string; type: string }>(entityId, workspaceId);
-    case 'deployments':
+    case "deployments":
       return anthropicBetaApi.deployments.archive<{ id: string; type: string }>(entityId, workspaceId);
   }
 }
@@ -381,7 +535,7 @@ export function unpauseDeployment(deploymentId: string, workspaceId: string) {
 export function listDeploymentRuns(deploymentId: string, workspaceId: string) {
   return anthropicBetaApi.deploymentRuns.list<DeploymentRunApiResponse>(
     { limit: 60, deployment_id: deploymentId },
-    workspaceId
+    workspaceId,
   ) as Promise<PageResponse<DeploymentRunApiResponse>>;
 }
 
@@ -389,16 +543,14 @@ export function listEnvironmentWork(environmentId: string, workspaceId: string) 
   return anthropicBetaApi.environments.work.list<EnvironmentWorkApiResponse>(
     environmentId,
     { limit: 50 },
-    workspaceId
+    workspaceId,
   ) as Promise<PageResponse<EnvironmentWorkApiResponse>>;
 }
 
 export function listSessionResources(sessionId: string, workspaceId: string) {
-  return anthropicBetaApi.sessions.resources.list<SessionResourceApiResponse>(
-    sessionId,
-    {},
-    workspaceId
-  ) as Promise<PageResponse<SessionResourceApiResponse>>;
+  return anthropicBetaApi.sessions.resources.list<SessionResourceApiResponse>(sessionId, {}, workspaceId) as Promise<
+    PageResponse<SessionResourceApiResponse>
+  >;
 }
 
 export const SESSION_DETAIL_EVENT_PAGE_LIMIT = 500;
@@ -426,8 +578,9 @@ export function sessionDetailSingleFlight<T>(key: string, load: () => Promise<T>
 }
 
 export function retrieveSessionDetailSession(sessionId: string, workspaceId: string) {
-  return sessionDetailSingleFlight(`session:${workspaceId}:${sessionId}`, () =>
-    retrieveManagedEntity('sessions', sessionId, workspaceId) as Promise<SessionApiResponse>
+  return sessionDetailSingleFlight(
+    `session:${workspaceId}:${sessionId}`,
+    () => retrieveManagedEntity("sessions", sessionId, workspaceId) as Promise<SessionApiResponse>,
   );
 }
 
@@ -435,7 +588,7 @@ export function listSessionThreads(sessionId: string, workspaceId: string, page?
   return anthropicBetaApi.sessions.threads.list<SessionThreadApiResponse>(
     sessionId,
     page ? { limit, page } : { limit },
-    workspaceId
+    workspaceId,
   ) as Promise<PageResponse<SessionThreadApiResponse>>;
 }
 
@@ -453,16 +606,18 @@ export async function listAllSessionThreads(sessionId: string, workspaceId: stri
 }
 
 export function listSessionResourcesForDetail(sessionId: string, workspaceId: string) {
-  return sessionDetailSingleFlight(`resources:${workspaceId}:${sessionId}`, () => listSessionResources(sessionId, workspaceId));
+  return sessionDetailSingleFlight(`resources:${workspaceId}:${sessionId}`, () =>
+    listSessionResources(sessionId, workspaceId),
+  );
 }
 
 export function listSessionEvents(
   sessionId: string,
   workspaceId: string,
-  order: 'asc' | 'desc' = 'desc',
+  order: "asc" | "desc" = "desc",
   limit = 50,
   page?: PageCursor,
-  signal?: AbortSignal
+  signal?: AbortSignal,
 ) {
   return fetchSessionEventsPage({ sessionId, workspaceId, order, limit, page, signal });
 }
@@ -471,46 +626,48 @@ export async function fetchSessionEventsPage({
   sessionId,
   threadId,
   workspaceId,
-  order = 'asc',
+  order = "asc",
   limit = SESSION_DETAIL_EVENT_PAGE_LIMIT,
   page,
-  signal
+  signal,
 }: {
   sessionId: string;
   threadId?: string;
   workspaceId: string;
-  order?: 'asc' | 'desc';
+  order?: "asc" | "desc";
   limit?: number;
   page?: PageCursor;
   signal?: AbortSignal;
 }): Promise<PageResponse<QuickstartSessionEvent>> {
   const params = new URLSearchParams({
-    beta: 'true',
+    beta: "true",
     limit: String(limit),
-    order
+    order,
   });
   if (page) {
-    params.set('page', page);
+    params.set("page", page);
   }
   const headers = new Headers();
   if (workspaceId) {
-    headers.set('X-Workspace-ID', workspaceId);
+    headers.set("X-Workspace-ID", workspaceId);
   }
   const path = threadId
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/events?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events?${params.toString()}`;
   const response = await fetch(path, {
-    credentials: 'include',
+    credentials: "include",
     headers,
-    signal
+    signal,
   });
   if (!response.ok) {
     throw new Error(`Could not list session events (${response.status})`);
   }
   const payload = (await response.json()) as Partial<PageResponse<QuickstartSessionEvent>>;
   return {
-    data: Array.isArray(payload.data) ? payload.data.map((event) => sessionEventWithResponseThread(event, threadId)) : [],
-    next_page: typeof payload.next_page === 'string' ? payload.next_page : null
+    data: Array.isArray(payload.data)
+      ? payload.data.map((event) => sessionEventWithResponseThread(event, threadId))
+      : [],
+    next_page: typeof payload.next_page === "string" ? payload.next_page : null,
   };
 }
 
@@ -519,8 +676,8 @@ export function sessionEventWithResponseThread(event: QuickstartSessionEvent, th
     return event;
   }
   const hasOwner =
-    (typeof event.session_thread_id === 'string' && event.session_thread_id.trim()) ||
-    (typeof event.thread_id === 'string' && event.thread_id.trim());
+    (typeof event.session_thread_id === "string" && event.session_thread_id.trim()) ||
+    (typeof event.thread_id === "string" && event.thread_id.trim());
   return hasOwner ? event : { ...event, session_thread_id: threadId };
 }
 
@@ -529,36 +686,39 @@ export function sessionThreadShouldFetchEvents(thread: SessionThreadApiResponse,
 }
 
 export function sessionThreadIsChild(thread: SessionThreadApiResponse) {
-  return typeof thread.parent_thread_id === 'string' && thread.parent_thread_id.trim().length > 0;
+  return typeof thread.parent_thread_id === "string" && thread.parent_thread_id.trim().length > 0;
 }
 
 export function sessionThreadIsArchived(thread: SessionThreadApiResponse) {
-  return typeof thread.archived_at === 'string' && thread.archived_at.trim().length > 0;
+  return typeof thread.archived_at === "string" && thread.archived_at.trim().length > 0;
 }
 
 export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) {
   return threads
-    .map((thread) => `${thread.id}:${thread.type}:${thread.archived_at ?? ''}:${thread.parent_thread_id ?? ''}`)
-    .join('|');
+    .map((thread) => `${thread.id}:${thread.type}:${thread.archived_at ?? ""}:${thread.parent_thread_id ?? ""}`)
+    .join("|");
 }
 
 export function createQuickstartEnvironment(input: QuickstartCreateEnvironmentInput, workspaceId: string) {
-  const reuseEnvironmentId = typeof input.reuse_environment_id === 'string' ? input.reuse_environment_id.trim() : '';
+  const reuseEnvironmentId = typeof input.reuse_environment_id === "string" ? input.reuse_environment_id.trim() : "";
   if (reuseEnvironmentId) {
-    return retrieveManagedEntity('environments', reuseEnvironmentId, workspaceId) as Promise<EnvironmentApiResponse>;
+    return retrieveManagedEntity("environments", reuseEnvironmentId, workspaceId) as Promise<EnvironmentApiResponse>;
   }
-  return anthropicBetaApi.environments.create<EnvironmentApiResponse>(quickstartEnvironmentRequestBody(input), workspaceId);
+  return anthropicBetaApi.environments.create<EnvironmentApiResponse>(
+    quickstartEnvironmentRequestBody(input),
+    workspaceId,
+  );
 }
 
 export function quickstartEnvironmentRequestBody(input: QuickstartCreateEnvironmentInput | Record<string, unknown>) {
-  const name = typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Quickstart environment';
+  const name = typeof input.name === "string" && input.name.trim() ? input.name.trim() : "Quickstart environment";
   const body: Record<string, unknown> = {
     name,
     metadata: {},
-    scope: 'organization',
-    config: quickstartEnvironmentConfig(input.config)
+    scope: "organization",
+    config: quickstartEnvironmentConfig(input.config),
   };
-  if (typeof input.description === 'string' && input.description.trim()) {
+  if (typeof input.description === "string" && input.description.trim()) {
     body.description = input.description.trim();
   }
   return body;
@@ -566,13 +726,13 @@ export function quickstartEnvironmentRequestBody(input: QuickstartCreateEnvironm
 
 export function quickstartEnvironmentConfig(configValue: unknown) {
   const config = objectRecord(configValue);
-  if (config.type === 'self_hosted') {
-    return { type: 'self_hosted' };
+  if (config.type === "self_hosted") {
+    return { type: "self_hosted" };
   }
   return {
-    type: 'cloud',
+    type: "cloud",
     packages: quickstartEnvironmentPackages(config.packages),
-    networking: quickstartEnvironmentNetworking(config.networking)
+    networking: quickstartEnvironmentNetworking(config.networking),
   };
 }
 
@@ -584,55 +744,55 @@ export function quickstartEnvironmentPackages(packagesValue: unknown) {
     apt: quickstartPackageList(packages.apt),
     cargo: quickstartPackageList(packages.cargo),
     gem: quickstartPackageList(packages.gem),
-    go: quickstartPackageList(packages.go)
+    go: quickstartPackageList(packages.go),
   };
 }
 
 export function quickstartPackageList(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 export function quickstartEnvironmentNetworking(networkingValue: unknown) {
   const networking = objectRecord(networkingValue);
-  if (networking.type === 'limited') {
+  if (networking.type === "limited") {
     const allowedHosts = Array.isArray(networking.allowed_hosts)
-      ? networking.allowed_hosts.filter((host): host is string => typeof host === 'string')
+      ? networking.allowed_hosts.filter((host): host is string => typeof host === "string")
       : [];
     return {
-      type: 'limited',
+      type: "limited",
       allow_mcp_servers: networking.allow_mcp_servers === true,
       allow_package_managers: networking.allow_package_managers === true,
-      allowed_hosts: allowedHosts
+      allowed_hosts: allowedHosts,
     };
   }
-  return { type: 'unrestricted' };
+  return { type: "unrestricted" };
 }
 
 export function createQuickstartVault(input: Record<string, unknown>, workspaceId: string) {
   const displayName =
-    typeof input.display_name === 'string' && input.display_name.trim()
+    typeof input.display_name === "string" && input.display_name.trim()
       ? input.display_name.trim()
-      : typeof input.name === 'string' && input.name.trim()
+      : typeof input.name === "string" && input.name.trim()
         ? input.name.trim()
-        : 'Quickstart vault';
+        : "Quickstart vault";
   return anthropicBetaApi.vaults.create<VaultApiResponse>({ display_name: displayName, metadata: {} }, workspaceId);
 }
 
 export function createQuickstartVaultCredential(vaultId: string, input: Record<string, unknown>, workspaceId: string) {
   const displayName =
-    typeof input.display_name === 'string' && input.display_name.trim()
+    typeof input.display_name === "string" && input.display_name.trim()
       ? input.display_name.trim()
-      : typeof input.name === 'string' && input.name.trim()
+      : typeof input.name === "string" && input.name.trim()
         ? input.name.trim()
-        : 'Quickstart credential';
-  const auth = input.auth && typeof input.auth === 'object' && !Array.isArray(input.auth) ? input.auth : null;
+        : "Quickstart credential";
+  const auth = input.auth && typeof input.auth === "object" && !Array.isArray(input.auth) ? input.auth : null;
   if (!auth) {
-    throw new Error('Credential auth is required before a vault credential can be created.');
+    throw new Error("Credential auth is required before a vault credential can be created.");
   }
   return anthropicBetaApi.vaults.credentials.create<VaultCredentialApiResponse>(
     vaultId,
     { display_name: displayName, auth, metadata: {} },
-    workspaceId
+    workspaceId,
   );
 }
 
@@ -640,18 +800,18 @@ export function createQuickstartSession(
   agent: AgentApiResponse,
   environmentId: string,
   vaultIds: string[],
-  workspaceId: string
+  workspaceId: string,
 ) {
   return anthropicBetaApi.sessions.create<SessionApiResponse>(
     {
       title: null,
-      agent: { type: 'agent', id: agent.id, version: agent.version },
+      agent: { type: "agent", id: agent.id, version: agent.version },
       environment_id: environmentId,
       vault_ids: vaultIds,
       metadata: {},
-      resources: []
+      resources: [],
     },
-    workspaceId
+    workspaceId,
   );
 }
 
@@ -659,9 +819,9 @@ export function postQuickstartSessionMessage(sessionId: string, message: string,
   return anthropicBetaApi.sessions.events.send<unknown>(
     sessionId,
     {
-      events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }]
+      events: [{ type: "user.message", content: [{ type: "text", text: message }] }],
     },
-    workspaceId
+    workspaceId,
   );
 }
 
@@ -669,9 +829,9 @@ export function interruptQuickstartSession(sessionId: string, workspaceId: strin
   return anthropicBetaApi.sessions.events.send<unknown>(
     sessionId,
     {
-      events: [{ type: 'user.interrupt' }]
+      events: [{ type: "user.interrupt" }],
     },
-    workspaceId
+    workspaceId,
   );
 }
 
@@ -679,21 +839,21 @@ export async function streamQuickstartSessionEvents({
   sessionId,
   workspaceId,
   signal,
-  onEvent
+  onEvent,
 }: {
   sessionId: string;
   workspaceId: string;
   signal: AbortSignal;
   onEvent: (event: QuickstartSessionEvent) => void;
 }) {
-  const headers = new Headers({ Accept: 'text/event-stream' });
+  const headers = new Headers({ Accept: "text/event-stream" });
   if (workspaceId) {
-    headers.set('X-Workspace-ID', workspaceId);
+    headers.set("X-Workspace-ID", workspaceId);
   }
   const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?beta=true`, {
-    credentials: 'include',
+    credentials: "include",
     headers,
-    signal
+    signal,
   });
 
   if (!response.ok || !response.body) {
@@ -702,7 +862,7 @@ export async function streamQuickstartSessionEvents({
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
   for (;;) {
     const { value, done } = await reader.read();
     if (done) {
@@ -723,7 +883,7 @@ export async function streamSessionEvents({
   workspaceId,
   signal,
   onOpen,
-  onEvent
+  onEvent,
 }: {
   sessionId: string;
   threadId?: string;
@@ -732,21 +892,21 @@ export async function streamSessionEvents({
   onOpen?: () => void;
   onEvent: (event: QuickstartSessionEvent) => void;
 }) {
-  const headers = new Headers({ Accept: 'text/event-stream' });
+  const headers = new Headers({ Accept: "text/event-stream" });
   if (workspaceId) {
-    headers.set('X-Workspace-ID', workspaceId);
+    headers.set("X-Workspace-ID", workspaceId);
   }
-  const params = new URLSearchParams({ beta: 'true' });
-  params.append('event_deltas[]', 'agent.message');
-  params.append('event_deltas[]', 'agent.thinking');
+  const params = new URLSearchParams({ beta: "true" });
+  params.append("event_deltas[]", "agent.message");
+  params.append("event_deltas[]", "agent.thinking");
   const path = threadId
     ? `/v1/sessions/${encodeURIComponent(sessionId)}/threads/${encodeURIComponent(threadId)}/stream?${params.toString()}`
     : `/v1/sessions/${encodeURIComponent(sessionId)}/events/stream?${params.toString()}`;
   const streamSignal = sessionLinkedAbortSignal(signal, SESSION_DETAIL_STREAM_IDLE_TIMEOUT_MS);
   const response = await fetch(path, {
-    credentials: 'include',
+    credentials: "include",
     headers,
-    signal: streamSignal.signal
+    signal: streamSignal.signal,
   });
   if (!response.ok || !response.body) {
     streamSignal.dispose();
@@ -755,7 +915,7 @@ export async function streamSessionEvents({
   onOpen?.();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
   try {
     streamSignal.touch();
     for (;;) {
@@ -771,7 +931,7 @@ export async function streamSessionEvents({
     }
     buffer += decoder.decode();
     consumeSseBuffer<QuickstartSessionEvent>(`${buffer}\n\n`).events.forEach((event) =>
-      onEvent(sessionEventWithResponseThread(event.data, threadId))
+      onEvent(sessionEventWithResponseThread(event.data, threadId)),
     );
   } finally {
     streamSignal.dispose();
@@ -799,20 +959,20 @@ export function sessionLinkedAbortSignal(parent: AbortSignal, idleTimeoutMs: num
   };
   const touch = () => {
     clear();
-    timeout = window.setTimeout(() => controller.abort(new Error('Session event stream timed out')), idleTimeoutMs);
+    timeout = window.setTimeout(() => controller.abort(new Error("Session event stream timed out")), idleTimeoutMs);
   };
   if (parent.aborted) {
     abort();
   } else {
-    parent.addEventListener('abort', abort, { once: true });
+    parent.addEventListener("abort", abort, { once: true });
   }
   return {
     signal: controller.signal,
     touch,
     dispose: () => {
       clear();
-      parent.removeEventListener('abort', abort);
-    }
+      parent.removeEventListener("abort", abort);
+    },
   };
 }
 
@@ -821,22 +981,22 @@ export function emptySessionDetailEventCache(): SessionDetailEventCache {
     events: [],
     syncedThrough: null,
     historyComplete: false,
-    sawTerminated: false
+    sawTerminated: false,
   };
 }
 
-export function sessionDetailEventCacheKey(workspaceId: string, sessionId: string, threadId = '') {
-  return ['managed-agents', 'session-detail-events', workspaceId, sessionId, threadId] as const;
+export function sessionDetailEventCacheKey(workspaceId: string, sessionId: string, threadId = "") {
+  return ["managed-agents", "session-detail-events", workspaceId, sessionId, threadId] as const;
 }
 
-export function sessionDetailDeltaFramesKey(workspaceId: string, sessionId: string, threadId = '') {
-  return ['managed-agents', 'session-detail-delta-frames', workspaceId, sessionId, threadId] as const;
+export function sessionDetailDeltaFramesKey(workspaceId: string, sessionId: string, threadId = "") {
+  return ["managed-agents", "session-detail-delta-frames", workspaceId, sessionId, threadId] as const;
 }
 
 export function mergeSessionEventCache(
   cache: SessionDetailEventCache | undefined,
   incoming: QuickstartSessionEvent[],
-  patch: SessionEventCachePatch = {}
+  patch: SessionEventCachePatch = {},
 ): SessionDetailEventCache {
   const current = cache ?? emptySessionDetailEventCache();
   const indexById = new Map<string, number>();
@@ -854,7 +1014,7 @@ export function mergeSessionEventCache(
     if (!id) {
       continue;
     }
-    if (sessionEventType(event) === 'session.status_terminated') {
+    if (sessionEventType(event) === "session.status_terminated") {
       sawTerminated = true;
     }
     const existingIndex = indexById.get(id);
@@ -886,12 +1046,12 @@ export function mergeSessionEventCache(
     events: nextEvents ?? current.events,
     syncedThrough,
     historyComplete,
-    sawTerminated
+    sawTerminated,
   };
 }
 
 export function sessionStableEventId(event: QuickstartSessionEvent) {
-  return typeof event.id === 'string' && event.id ? event.id : null;
+  return typeof event.id === "string" && event.id ? event.id : null;
 }
 
 export function sessionIncomingEventShouldReplace(existing: QuickstartSessionEvent, incoming: QuickstartSessionEvent) {
@@ -907,17 +1067,17 @@ export function sessionIncomingEventShouldReplace(existing: QuickstartSessionEve
 }
 
 export function sessionNullableProcessedAt(event: QuickstartSessionEvent) {
-  return typeof event.processed_at === 'string' && event.processed_at ? event.processed_at : null;
+  return typeof event.processed_at === "string" && event.processed_at ? event.processed_at : null;
 }
 
 export async function syncSessionEventHistory({
   queryClient,
   sessionId,
   workspaceId,
-  threadId = '',
+  threadId = "",
   signal,
   fromStart = false,
-  force = false
+  force = false,
 }: {
   queryClient: QueryClient;
   sessionId: string;
@@ -932,8 +1092,8 @@ export async function syncSessionEventHistory({
   if (!fromStart && !force && current?.historyComplete) {
     return current;
   }
-  const initialPage = fromStart ? null : current?.syncedThrough ?? null;
-  const requestKey = `events:${workspaceId}:${sessionId}:${threadId}:${fromStart ? 'start' : force ? 'force' : initialPage ?? 'tail'}`;
+  const initialPage = fromStart ? null : (current?.syncedThrough ?? null);
+  const requestKey = `events:${workspaceId}:${sessionId}:${threadId}:${fromStart ? "start" : force ? "force" : (initialPage ?? "tail")}`;
   return sessionDetailSingleFlight(requestKey, async () => {
     if (signal?.aborted) {
       throw signal.reason;
@@ -952,16 +1112,21 @@ export async function syncSessionEventHistory({
         sessionId,
         threadId: threadId || undefined,
         workspaceId,
-        order: 'asc',
+        order: "asc",
         limit: SESSION_DETAIL_EVENT_PAGE_LIMIT,
-        page
+        page,
       });
       const nextPage = response.next_page ?? null;
-      sawTerminated = sawTerminated || response.data.some((event) => sessionEventType(event) === 'session.status_terminated');
+      sawTerminated =
+        sawTerminated || response.data.some((event) => sessionEventType(event) === "session.status_terminated");
       queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) =>
-        mergeSessionEventCache(cache, response.data, nextPage
-          ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
-          : { historyComplete: true, sawTerminated })
+        mergeSessionEventCache(
+          cache,
+          response.data,
+          nextPage
+            ? { historyComplete: false, syncedThrough: nextPage, sawTerminated }
+            : { historyComplete: true, sawTerminated },
+        ),
       );
       page = nextPage;
     } while (page && !signal?.aborted);
@@ -974,10 +1139,10 @@ export function mergeSessionStreamFrame(
   workspaceId: string,
   sessionId: string,
   threadId: string,
-  event: QuickstartSessionEvent
+  event: QuickstartSessionEvent,
 ) {
   const eventType = sessionEventType(event);
-  if (eventType === 'event_start' || eventType === 'event_delta') {
+  if (eventType === "event_start" || eventType === "event_delta") {
     mergeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, event);
     return;
   }
@@ -990,27 +1155,33 @@ export function sessionEventHistoryShouldSkipStream(events: QuickstartSessionEve
   for (let index = orderedEvents.length - 1; index >= 0; index -= 1) {
     const type = sessionEventType(orderedEvents[index]);
     if (threadId) {
-      if (type === 'session.thread_status_idle' || type === 'session.thread_status_terminated') {
+      if (type === "session.thread_status_idle" || type === "session.thread_status_terminated") {
         return true;
       }
-      if (type === 'session.thread_status_running' || type === 'session.thread_status_rescheduled') {
+      if (type === "session.thread_status_running" || type === "session.thread_status_rescheduled") {
         return false;
       }
       continue;
     }
-    if (type === 'session.status_idle' || type === 'session.status_terminated' || type === 'session.deleted') {
+    if (type === "session.status_idle" || type === "session.status_terminated" || type === "session.deleted") {
       return true;
     }
-    if (type === 'session.status_running' || type === 'session.status_rescheduled') {
+    if (type === "session.status_running" || type === "session.status_rescheduled") {
       return false;
     }
   }
   return false;
 }
 
-export function sessionPrimaryHistoryShouldSkipStream(queryClient: QueryClient, workspaceId: string, sessionId: string) {
-  const primaryCache = queryClient.getQueryData<SessionDetailEventCache>(sessionDetailEventCacheKey(workspaceId, sessionId, ''));
-  return primaryCache ? sessionEventHistoryShouldSkipStream(primaryCache.events, '') : false;
+export function sessionPrimaryHistoryShouldSkipStream(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+) {
+  const primaryCache = queryClient.getQueryData<SessionDetailEventCache>(
+    sessionDetailEventCacheKey(workspaceId, sessionId, ""),
+  );
+  return primaryCache ? sessionEventHistoryShouldSkipStream(primaryCache.events, "") : false;
 }
 
 export function mergeSessionDeltaFrame(
@@ -1018,10 +1189,10 @@ export function mergeSessionDeltaFrame(
   workspaceId: string,
   sessionId: string,
   threadId: string,
-  event: QuickstartSessionEvent
+  event: QuickstartSessionEvent,
 ) {
   const deltaKey = sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId);
-  if (sessionEventType(event) === 'event_start') {
+  if (sessionEventType(event) === "event_start") {
     const started = sessionStreamingMessageFromStart(event, threadId);
     const id = sessionStableEventId(started);
     if (!id) {
@@ -1029,16 +1200,16 @@ export function mergeSessionDeltaFrame(
     }
     queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => ({
       ...(cache ?? {}),
-      [id]: { message: started, frames: [event] }
+      [id]: { message: started, frames: [event] },
     }));
     const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
     queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) =>
-      mergeSessionEventCache(cache, [{ ...started, processed_at: null, is_streaming: true }])
+      mergeSessionEventCache(cache, [{ ...started, processed_at: null, is_streaming: true }]),
     );
     return;
   }
 
-  const eventId = typeof event.event_id === 'string' ? event.event_id : '';
+  const eventId = typeof event.event_id === "string" ? event.event_id : "";
   if (!eventId) {
     return;
   }
@@ -1051,52 +1222,63 @@ export function mergeSessionDeltaFrame(
       ...(cache ?? {}),
       [eventId]: {
         message: sessionStreamingMessageFromDelta(current.message, event),
-        frames: [...current.frames, event]
-      }
+        frames: [...current.frames, event],
+      },
     };
   });
 }
 
-export function sessionStreamingMessageFromStart(event: QuickstartSessionEvent, threadId: string): QuickstartSessionEvent {
+export function sessionStreamingMessageFromStart(
+  event: QuickstartSessionEvent,
+  threadId: string,
+): QuickstartSessionEvent {
   const started = toRecord(event.event) ?? {};
   const type = sessionEventType(started);
   const content = Array.isArray(started.content) ? started.content : [];
   return sessionEventWithResponseThread(
     {
       ...started,
-      type: type === 'agent.thinking' ? 'agent.thinking' : 'agent.message',
-      content
+      type: type === "agent.thinking" ? "agent.thinking" : "agent.message",
+      content,
     },
-    threadId || undefined
+    threadId || undefined,
   );
 }
 
-export function sessionStreamingMessageFromDelta(message: QuickstartSessionEvent, event: QuickstartSessionEvent): QuickstartSessionEvent {
+export function sessionStreamingMessageFromDelta(
+  message: QuickstartSessionEvent,
+  event: QuickstartSessionEvent,
+): QuickstartSessionEvent {
   const delta = toRecord(event.delta);
   const contentDelta = toRecord(delta?.content);
   if (!contentDelta) {
     return message;
   }
-  const index = typeof delta?.index === 'number' ? delta.index : 0;
+  const index = typeof delta?.index === "number" ? delta.index : 0;
   const content = Array.isArray(message.content) ? [...message.content] : [];
   const currentBlock = toRecord(content[index]);
   if (!currentBlock) {
     content[index] = { ...contentDelta };
     return { ...message, content };
   }
-  if (contentDelta.type === 'text' && currentBlock.type === 'text') {
-    content[index] = { ...currentBlock, text: `${currentBlock.text ?? ''}${contentDelta.text ?? ''}` };
+  if (contentDelta.type === "text" && currentBlock.type === "text") {
+    content[index] = { ...currentBlock, text: `${currentBlock.text ?? ""}${contentDelta.text ?? ""}` };
     return { ...message, content };
   }
-  if (contentDelta.type === 'thinking' && currentBlock.type === 'thinking') {
-    const nextThinking = `${currentBlock.thinking ?? currentBlock.text ?? ''}${contentDelta.thinking ?? contentDelta.text ?? ''}`;
+  if (contentDelta.type === "thinking" && currentBlock.type === "thinking") {
+    const nextThinking = `${currentBlock.thinking ?? currentBlock.text ?? ""}${contentDelta.thinking ?? contentDelta.text ?? ""}`;
     content[index] = { ...currentBlock, thinking: nextThinking };
     return { ...message, content };
   }
   return message;
 }
 
-export function cleanupIncompleteSessionStreamEvents(queryClient: QueryClient, workspaceId: string, sessionId: string, threadId = '') {
+export function cleanupIncompleteSessionStreamEvents(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadId = "",
+) {
   const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId, threadId);
   queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => {
     if (!cache) {
@@ -1104,26 +1286,40 @@ export function cleanupIncompleteSessionStreamEvents(queryClient: QueryClient, w
     }
     const events = cache.events.filter((event) => {
       const type = sessionEventType(event);
-      return (type !== 'agent.message' && type !== 'agent.thinking') || sessionNullableProcessedAt(event) !== null;
+      return (type !== "agent.message" && type !== "agent.thinking") || sessionNullableProcessedAt(event) !== null;
     });
     return events.length === cache.events.length ? cache : { ...cache, events };
   });
 }
 
-export function sessionDetailScopeEvents(queryClient: QueryClient, workspaceId: string, sessionId: string, threadIds: string[]) {
+export function sessionDetailScopeEvents(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadIds: string[],
+) {
   const events = threadIds.flatMap((threadId) => {
-    const cache = queryClient.getQueryData<SessionDetailEventCache>(sessionDetailEventCacheKey(workspaceId, sessionId, threadId));
+    const cache = queryClient.getQueryData<SessionDetailEventCache>(
+      sessionDetailEventCacheKey(workspaceId, sessionId, threadId),
+    );
     return cache?.events ?? [];
   });
   return mergeSessionEventsById(events);
 }
 
-export function sessionDetailDeltaFrames(queryClient: QueryClient, workspaceId: string, sessionId: string, threadIds: string[]) {
+export function sessionDetailDeltaFrames(
+  queryClient: QueryClient,
+  workspaceId: string,
+  sessionId: string,
+  threadIds: string[],
+) {
   const frames: SessionDetailDeltaFrames = {};
   threadIds.forEach((threadId) => {
     Object.assign(
       frames,
-      queryClient.getQueryData<SessionDetailDeltaFrames>(sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId)) ?? {}
+      queryClient.getQueryData<SessionDetailDeltaFrames>(
+        sessionDetailDeltaFramesKey(workspaceId, sessionId, threadId),
+      ) ?? {},
     );
   });
   return frames;
@@ -1156,33 +1352,33 @@ export function coalesceSessionCrossPostedToolEvents(events: QuickstartSessionEv
 
 export function sessionCrossPostedToolEventKey(event: QuickstartSessionEvent) {
   const type = sessionEventType(event);
-  if (type !== 'agent.tool_use' && type !== 'agent.mcp_tool_use' && type !== 'agent.custom_tool_use') {
-    return '';
+  if (type !== "agent.tool_use" && type !== "agent.mcp_tool_use" && type !== "agent.custom_tool_use") {
+    return "";
   }
   const threadId = sessionEventOwnerThreadId(event);
   const toolUseId = sessionEventToolUseId(event);
   if (!threadId || !toolUseId) {
-    return '';
+    return "";
   }
   return `${type}:${threadId}:${toolUseId}`;
 }
 
 export function sessionEventOwnerThreadId(event: QuickstartSessionEvent) {
-  return sessionEventStringField(event, 'session_thread_id') || sessionEventStringField(event, 'thread_id');
+  return sessionEventStringField(event, "session_thread_id") || sessionEventStringField(event, "thread_id");
 }
 
 export function sessionEventToolUseId(event: QuickstartSessionEvent) {
   return (
-    sessionEventStringField(event, 'tool_use_id') ||
-    sessionEventStringField(event, 'mcp_tool_use_id') ||
-    sessionEventStringField(event, 'custom_tool_use_id') ||
-    sessionEventStringField(event, 'id')
+    sessionEventStringField(event, "tool_use_id") ||
+    sessionEventStringField(event, "mcp_tool_use_id") ||
+    sessionEventStringField(event, "custom_tool_use_id") ||
+    sessionEventStringField(event, "id")
   );
 }
 
 export function sessionEventStringField(event: QuickstartSessionEvent, field: string) {
   const value = event[field];
-  return typeof value === 'string' ? value.trim() : '';
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export function sessionStreamShouldStop(error: unknown) {
@@ -1208,10 +1404,10 @@ export function sleepWithAbort(ms: number, signal: AbortSignal) {
       reject(signal.reason);
     };
     timer = window.setTimeout(() => {
-      signal.removeEventListener('abort', abort);
+      signal.removeEventListener("abort", abort);
       resolve();
     }, ms);
-    signal.addEventListener('abort', abort, { once: true });
+    signal.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -1220,31 +1416,31 @@ export function createQuickstartDeployment(
   environmentId: string,
   vaultIds: string[],
   input: QuickstartDeploymentInput,
-  workspaceId: string
+  workspaceId: string,
 ) {
   const timezone =
-    typeof input.timezone === 'string' && input.timezone.trim()
+    typeof input.timezone === "string" && input.timezone.trim()
       ? input.timezone.trim()
       : Intl.DateTimeFormat().resolvedOptions().timeZone;
   return anthropicBetaApi.deployments.create<DeploymentApiResponse>(
     {
-      name: input.name?.trim() || 'Quickstart deployment',
-      agent: { type: 'agent', id: agent.id, version: agent.version },
+      name: input.name?.trim() || "Quickstart deployment",
+      agent: { type: "agent", id: agent.id, version: agent.version },
       environment_id: environmentId,
       ...(vaultIds.length ? { vault_ids: vaultIds } : {}),
       initial_events: [
         {
-          type: 'user.message',
-          content: [{ type: 'text', text: input.initial_message?.trim() || 'Run the scheduled quickstart task.' }]
-        }
+          type: "user.message",
+          content: [{ type: "text", text: input.initial_message?.trim() || "Run the scheduled quickstart task." }],
+        },
       ],
       schedule: {
-        type: 'cron',
-        expression: input.cron_expression?.trim() || '0 9 * * 1',
-        timezone
-      }
+        type: "cron",
+        expression: input.cron_expression?.trim() || "0 9 * * 1",
+        timezone,
+      },
     },
-    workspaceId
+    workspaceId,
   );
 }
 
@@ -1253,7 +1449,7 @@ export async function postQuickstartProxyStream({
   workspaceId,
   body,
   signal,
-  onEvent
+  onEvent,
 }: {
   orgUuid: string;
   workspaceId: string;
@@ -1262,12 +1458,12 @@ export async function postQuickstartProxyStream({
   onEvent: (event: QuickstartStreamEvent) => void;
 }) {
   const headers = new Headers({
-    Accept: 'text/event-stream',
-    'Content-Type': 'application/json',
-    'X-Organization-UUID': orgUuid
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+    "X-Organization-UUID": orgUuid,
   });
   if (workspaceId) {
-    headers.set('X-Workspace-ID', workspaceId);
+    headers.set("X-Workspace-ID", workspaceId);
   }
   await postJsonSseStream<Record<string, unknown>>({
     url: `/api/organizations/${encodeURIComponent(orgUuid)}/proxy/v1/messages`,
@@ -1275,7 +1471,7 @@ export async function postQuickstartProxyStream({
     body,
     signal,
     onEvent,
-    errorFromResponse: quickstartStreamError
+    errorFromResponse: quickstartStreamError,
   });
 }
 
@@ -1283,10 +1479,10 @@ export async function quickstartStreamError(response: Response) {
   try {
     const payload = (await response.json()) as Record<string, unknown>;
     const error = payload.error;
-    if (error && typeof error === 'object' && typeof (error as Record<string, unknown>).message === 'string') {
+    if (error && typeof error === "object" && typeof (error as Record<string, unknown>).message === "string") {
       return new Error(String((error as Record<string, unknown>).message));
     }
-    if (typeof payload.message === 'string') {
+    if (typeof payload.message === "string") {
       return new Error(payload.message);
     }
   } catch {
@@ -1299,7 +1495,7 @@ export function listVaultCredentials(vaultId: string, workspaceId: string) {
   return anthropicBetaApi.vaults.credentials.list<VaultCredentialApiResponse>(
     vaultId,
     { limit: 50, include_archived: false },
-    workspaceId
+    workspaceId,
   ) as Promise<PageResponse<VaultCredentialApiResponse>>;
 }
 
@@ -1307,16 +1503,21 @@ export function createVaultCredential(vaultId: string, values: CredentialFormVal
   return anthropicBetaApi.vaults.credentials.create<VaultCredentialApiResponse>(
     vaultId,
     { display_name: values.displayName.trim(), auth: credentialAuthBody(values, true), metadata: {} },
-    workspaceId
+    workspaceId,
   );
 }
 
-export function updateVaultCredential(vaultId: string, credentialId: string, values: CredentialFormValues, workspaceId: string) {
+export function updateVaultCredential(
+  vaultId: string,
+  credentialId: string,
+  values: CredentialFormValues,
+  workspaceId: string,
+) {
   return anthropicBetaApi.vaults.credentials.update<VaultCredentialApiResponse>(
     vaultId,
     credentialId,
     { display_name: values.displayName.trim(), auth: credentialAuthBody(values, false), metadata: {} },
-    workspaceId
+    workspaceId,
   );
 }
 
@@ -1328,47 +1529,51 @@ export function deleteVaultCredential(vaultId: string, credentialId: string, wor
   return anthropicBetaApi.vaults.credentials.delete<unknown>(vaultId, credentialId, workspaceId);
 }
 
-export function listMemories(memoryStoreId: string, workspaceId: string, pathPrefix = '/') {
+export function listMemories(memoryStoreId: string, workspaceId: string, pathPrefix = "/") {
   const query = {
     path_prefix: normalizeMemoryFolderPath(pathPrefix),
-    depth: '1',
+    depth: "1",
     limit: 100,
-    order_by: 'path'
+    order_by: "path",
   };
-  return anthropicBetaApi.memoryStores.memories.list<MemoryApiResponse>(
-    memoryStoreId,
-    query,
-    workspaceId
-  ) as Promise<PageResponse<MemoryApiResponse>>;
+  return anthropicBetaApi.memoryStores.memories.list<MemoryApiResponse>(memoryStoreId, query, workspaceId) as Promise<
+    PageResponse<MemoryApiResponse>
+  >;
 }
 
 export function retrieveMemory(memoryStoreId: string, memoryId: string, workspaceId: string) {
   return anthropicBetaApi.memoryStores.memories.retrieve<MemoryApiResponse>(
     memoryStoreId,
     memoryId,
-    { view: 'full' },
-    workspaceId
+    { view: "full" },
+    workspaceId,
   );
 }
 
 export function createMemory(memoryStoreId: string, values: MemoryFormValues, workspaceId: string) {
   return anthropicBetaApi.memoryStores.memories.create<MemoryApiResponse>(
     memoryStoreId,
-    { path: values.path.trim(), content: values.content, view: 'full' },
-    workspaceId
+    { path: values.path.trim(), content: values.content, view: "full" },
+    workspaceId,
   );
 }
 
-export function updateMemory(memoryStoreId: string, memoryId: string, values: MemoryFormValues, workspaceId: string, expectedContentSha256?: string | null) {
+export function updateMemory(
+  memoryStoreId: string,
+  memoryId: string,
+  values: MemoryFormValues,
+  workspaceId: string,
+  expectedContentSha256?: string | null,
+) {
   const body: Record<string, unknown> = { path: values.path.trim(), content: values.content };
   if (isContentSha256(expectedContentSha256)) {
-    body.precondition = { type: 'content_sha256', content_sha256: expectedContentSha256 };
+    body.precondition = { type: "content_sha256", content_sha256: expectedContentSha256 };
   }
   return anthropicBetaApi.memoryStores.memories.update<MemoryApiResponse>(
     memoryStoreId,
     memoryId,
-    { ...body, view: 'full' },
-    workspaceId
+    { ...body, view: "full" },
+    workspaceId,
   );
 }
 
@@ -1380,16 +1585,16 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
   const name = values.name.trim();
   const description = values.description.trim();
   switch (section) {
-    case 'sessions':
+    case "sessions":
       return {
         title: name || null,
         agent: values.agentId,
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: []
+        resources: [],
       };
-    case 'deployments':
+    case "deployments":
       return {
         name,
         description: description || null,
@@ -1399,30 +1604,30 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         metadata: {},
         resources: deploymentResources(values.memoryStoreIds),
         initial_events: deploymentInitialEvents(values.initialMessage),
-        schedule: deploymentSchedule(values)
+        schedule: deploymentSchedule(values),
       };
-    case 'environments':
+    case "environments":
       return {
         name,
         description,
-        scope: 'workspace',
+        scope: "workspace",
         metadata: {},
         config: {
-          type: 'cloud',
-          packages: { type: 'packages', apt: [], cargo: [], gem: [], go: [], npm: [], pip: [] },
-          networking: { type: 'unrestricted' }
-        }
+          type: "cloud",
+          packages: { type: "packages", apt: [], cargo: [], gem: [], go: [], npm: [], pip: [] },
+          networking: { type: "unrestricted" },
+        },
       };
-    case 'credential-vaults':
+    case "credential-vaults":
       return {
         display_name: name,
-        metadata: {}
+        metadata: {},
       };
-    case 'memory-stores':
+    case "memory-stores":
       return {
         name,
         description,
-        metadata: {}
+        metadata: {},
       };
   }
 }
@@ -1431,14 +1636,14 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
   const name = values.name.trim();
   const description = values.description.trim();
   switch (section) {
-    case 'sessions':
+    case "sessions":
       return {
         title: name || null,
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
-        vault_ids: values.vaultIds
+        vault_ids: values.vaultIds,
       };
-    case 'deployments':
+    case "deployments":
       return {
         name,
         description: description || null,
@@ -1447,13 +1652,13 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         vault_ids: values.vaultIds,
         resources: deploymentResources(values.memoryStoreIds),
         initial_events: deploymentInitialEvents(values.initialMessage),
-        schedule: deploymentSchedule(values)
+        schedule: deploymentSchedule(values),
       };
-    case 'environments':
+    case "environments":
       return { name, description };
-    case 'credential-vaults':
+    case "credential-vaults":
       return { display_name: name };
-    case 'memory-stores':
+    case "memory-stores":
       return { name, description };
   }
 }
@@ -1461,35 +1666,35 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
 export function deploymentInitialEvents(initialMessage: string) {
   return [
     {
-      type: 'user.message',
-      content: [{ type: 'text', text: initialMessage.trim() }]
-    }
+      type: "user.message",
+      content: [{ type: "text", text: initialMessage.trim() }],
+    },
   ];
 }
 
 export function deploymentResources(memoryStoreIds: string[]) {
   return memoryStoreIds.map((memoryStoreId) => ({
-    type: 'memory_store',
-    memory_store_id: memoryStoreId
+    type: "memory_store",
+    memory_store_id: memoryStoreId,
   }));
 }
 
 export function deploymentSchedule(values: ManagedEntityFormValues) {
-  if (values.triggerType !== 'schedule') {
+  if (values.triggerType !== "schedule") {
     return null;
   }
   return {
-    type: 'cron',
+    type: "cron",
     expression: values.cronExpression.trim(),
-    timezone: values.timezone.trim() || localTimezone()
+    timezone: values.timezone.trim() || localTimezone(),
   };
 }
 
 export function localTimezone() {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   } catch {
-    return 'UTC';
+    return "UTC";
   }
 }
 
@@ -1500,8 +1705,8 @@ export function updateEnvironmentDetail(environmentId: string, values: Environme
       name: values.name.trim(),
       description: values.description,
       config: environmentConfigBody(values),
-      metadata: environmentMetadataBody(values)
+      metadata: environmentMetadataBody(values),
     },
-    workspaceId
+    workspaceId,
   );
 }

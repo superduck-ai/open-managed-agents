@@ -1,8 +1,8 @@
-import { consoleApi } from '../api/client';
+import { consoleApi } from "../api/client";
 
 export type Workspace = {
   id: string;
-  type: 'workspace';
+  type: "workspace";
   name: string;
   display_color?: string;
   color?: string;
@@ -17,12 +17,12 @@ export type CreateWorkspaceInput = {
   name: string;
   display_color: string;
   data_residency: {
-    workspace_geo: 'us';
+    workspace_geo: "us";
   };
 };
 
 export type WorkspaceApiKey = {
-  type?: 'api_key';
+  type?: "api_key";
   id: string;
   workspace_id?: string | null;
   name: string;
@@ -45,20 +45,20 @@ export type CreateWorkspaceApiKeyInput = {
 };
 
 export type UpdateWorkspaceApiKeyStatusInput = {
-  status: 'active' | 'inactive' | 'archived';
+  status: "active" | "inactive" | "archived";
 };
 
 export const defaultWorkspace: Workspace = {
-  id: 'default',
-  type: 'workspace',
-  name: 'Default',
-  display_color: '#9B87F5',
-  color: '#9B87F5',
+  id: "default",
+  type: "workspace",
+  name: "Default",
+  display_color: "#9B87F5",
+  color: "#9B87F5",
   data_residency: {
-    workspace_geo: 'us',
-    allowed_inference_geos: 'unrestricted',
-    default_inference_geo: 'global'
-  }
+    workspace_geo: "us",
+    allowed_inference_geos: "unrestricted",
+    default_inference_geo: "global",
+  },
 };
 
 export function listConsoleWorkspaces(orgUuid: string) {
@@ -67,14 +67,14 @@ export function listConsoleWorkspaces(orgUuid: string) {
 
 export function createConsoleWorkspace(orgUuid: string, input: CreateWorkspaceInput) {
   return consoleApi<Workspace>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces`, {
-    method: 'POST',
-    body: JSON.stringify(input)
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 
 export function listWorkspaceApiKeys(orgUuid: string, workspaceId: string) {
   return consoleApi<WorkspaceApiKey[]>(
-    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/api_keys`
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/api_keys`,
   );
 }
 
@@ -82,9 +82,9 @@ export function createWorkspaceApiKey(orgUuid: string, workspaceId: string, inpu
   return consoleApi<WorkspaceApiKey>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/api_keys`,
     {
-      method: 'POST',
-      body: JSON.stringify(input)
-    }
+      method: "POST",
+      body: JSON.stringify(input),
+    },
   );
 }
 
@@ -92,13 +92,13 @@ export function updateWorkspaceApiKeyStatus(
   orgUuid: string,
   workspaceId: string,
   apiKeyId: string,
-  input: UpdateWorkspaceApiKeyStatusInput
+  input: UpdateWorkspaceApiKeyStatusInput,
 ) {
   return consoleApi<WorkspaceApiKey>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/api_keys/${encodeURIComponent(apiKeyId)}`,
     {
-      method: 'POST',
-      body: JSON.stringify(input)
-    }
+      method: "POST",
+      body: JSON.stringify(input),
+    },
   );
 }

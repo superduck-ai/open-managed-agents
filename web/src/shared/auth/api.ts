@@ -1,4 +1,4 @@
-import { consoleApi } from '../api/client';
+import { consoleApi } from "../api/client";
 
 export type AuthAccount = {
   uuid: string;
@@ -42,31 +42,31 @@ export type VerifyMagicLinkResponse = {
 };
 
 export function fetchBootstrap() {
-  return consoleApi<BootstrapResponse>('/api/bootstrap');
+  return consoleApi<BootstrapResponse>("/api/bootstrap");
 }
 
 export function sendMagicLink(emailAddress: string) {
-  return consoleApi<SendMagicLinkResponse>('/api/auth/send_magic_link', {
-    method: 'POST',
-    body: JSON.stringify({ email_address: emailAddress })
+  return consoleApi<SendMagicLinkResponse>("/api/auth/send_magic_link", {
+    method: "POST",
+    body: JSON.stringify({ email_address: emailAddress }),
   });
 }
 
 export function verifyMagicLink(emailAddress: string, code: string) {
-  return consoleApi<VerifyMagicLinkResponse>('/api/auth/verify_magic_link', {
-    method: 'POST',
+  return consoleApi<VerifyMagicLinkResponse>("/api/auth/verify_magic_link", {
+    method: "POST",
     body: JSON.stringify({
       credentials: {
-        method: 'code',
+        method: "code",
         code,
-        email_address: emailAddress
-      }
-    })
+        email_address: emailAddress,
+      },
+    }),
   });
 }
 
 export function logout() {
-  return consoleApi<{ ok: boolean }>('/api/auth/logout', {
-    method: 'POST'
+  return consoleApi<{ ok: boolean }>("/api/auth/logout", {
+    method: "POST",
   });
 }

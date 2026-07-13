@@ -1,26 +1,41 @@
-import { useI18n } from '../../../shared/i18n';
-import { Badge } from '../../../shared/ui/badge';
-import { Button } from '../../../shared/ui/button';
-import { Card, CardContent } from '../../../shared/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../shared/ui/dialog';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
-import { useWorkspace } from '../../../shared/workspaces/context';
-import clsx from 'clsx';
-import { ChevronDown, Loader2, Sparkles, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { blankAgentTemplate, createAgentConfigText, createAgentTemplates, createDialogAgentConfig, createTemplateAppTags, generateCreateAgentConfig, parseCreateAgentConfigText } from '../agentConfig';
-import { AgentConfigEditor } from '../components/AgentConfigEditor';
-import { CopyButton } from '../components/CodeBlocks';
-import { templateBody, templateTitle } from '../labels';
-import { type AgentApiResponse, type AgentTemplate, type CodeFormat, type CreateAgentInput } from '../types';
-import { errorMessage, navigateToAgentConfig } from '../utils';
+import { useI18n } from "../../../shared/i18n";
+import { Badge } from "../../../shared/ui/badge";
+import { Button } from "../../../shared/ui/button";
+import { Card, CardContent } from "../../../shared/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../../shared/ui/collapsible";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../../../shared/ui/dialog";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "../../../shared/ui/input-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs";
+import { useWorkspace } from "../../../shared/workspaces/context";
+import clsx from "clsx";
+import { ChevronDown, Loader2, Sparkles, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  blankAgentTemplate,
+  createAgentConfigText,
+  createAgentTemplates,
+  createDialogAgentConfig,
+  createTemplateAppTags,
+  generateCreateAgentConfig,
+  parseCreateAgentConfigText,
+} from "../agentConfig";
+import { AgentConfigEditor } from "../components/AgentConfigEditor";
+import { CopyButton } from "../components/CodeBlocks";
+import { templateBody, templateTitle } from "../labels";
+import { type AgentApiResponse, type AgentTemplate, type CodeFormat, type CreateAgentInput } from "../types";
+import { errorMessage, navigateToAgentConfig } from "../utils";
 
 export function CreateAgentDialog({
   workspaceId,
   onClose,
-  onCreate
+  onCreate,
 }: {
   workspaceId: string;
   onClose: () => void;
@@ -29,23 +44,26 @@ export function CreateAgentDialog({
   const { msg } = useI18n();
   const { orgUuid } = useWorkspace();
   const [startingPointOpen, setStartingPointOpen] = useState(true);
-  const [mode, setMode] = useState<'describe' | 'template'>('describe');
+  const [mode, setMode] = useState<"describe" | "template">("describe");
   const [selectedTemplateId, setSelectedTemplateId] = useState(blankAgentTemplate.id);
-  const [format, setFormat] = useState<CodeFormat>('YAML');
-  const [description, setDescription] = useState('');
+  const [format, setFormat] = useState<CodeFormat>("YAML");
+  const [description, setDescription] = useState("");
   const [generatedConfig, setGeneratedConfig] = useState<CreateAgentInput | null>(null);
   const [configInput, setConfigInput] = useState<CreateAgentInput>(() => createDialogAgentConfig(blankAgentTemplate));
-  const [configText, setConfigText] = useState(() => createAgentConfigText(createDialogAgentConfig(blankAgentTemplate), 'YAML'));
+  const [configText, setConfigText] = useState(() =>
+    createAgentConfigText(createDialogAgentConfig(blankAgentTemplate), "YAML"),
+  );
   const [configError, setConfigError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const generateAbortRef = useRef<AbortController | null>(null);
   const configInputRef = useRef(configInput);
-  const selectedTemplate = createAgentTemplates.find((template) => template.id === selectedTemplateId) ?? blankAgentTemplate;
+  const selectedTemplate =
+    createAgentTemplates.find((template) => template.id === selectedTemplateId) ?? blankAgentTemplate;
   const startingPointName =
-    mode === 'describe'
-      ? generatedConfig?.name?.trim() || msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')
+    mode === "describe"
+      ? generatedConfig?.name?.trim() || msg("managedAgents.quickstart.initial.inputLabel", "Describe your agent")
       : templateTitle(selectedTemplate, msg);
   const createDisabled = Boolean(configError) || isGenerating || isCreating;
 
@@ -100,12 +118,12 @@ export function CreateAgentDialog({
     setCreateError(null);
   };
 
-  const selectMode = (nextMode: 'describe' | 'template') => {
+  const selectMode = (nextMode: "describe" | "template") => {
     if (nextMode === mode) {
       return;
     }
     setMode(nextMode);
-    if (nextMode === 'describe') {
+    if (nextMode === "describe") {
       setGeneratedConfig(null);
       hydrateConfig(createDialogAgentConfig(blankAgentTemplate));
     } else {
@@ -116,7 +134,7 @@ export function CreateAgentDialog({
 
   const selectTemplate = (template: AgentTemplate) => {
     setSelectedTemplateId(template.id);
-    setMode('template');
+    setMode("template");
     setGeneratedConfig(null);
     hydrateConfig(createDialogAgentConfig(template));
     setStartingPointOpen(false);
@@ -128,7 +146,7 @@ export function CreateAgentDialog({
       return;
     }
     if (!orgUuid) {
-      setCreateError('No organization is available for agent generation.');
+      setCreateError("No organization is available for agent generation.");
       return;
     }
     const baseConfig = parseCurrentConfig() ?? configInput;
@@ -143,12 +161,12 @@ export function CreateAgentDialog({
         workspaceId,
         description: prompt,
         currentConfig: baseConfig,
-        signal: controller.signal
+        signal: controller.signal,
       });
       setGeneratedConfig(nextConfig);
       hydrateConfig(nextConfig);
     } catch (error) {
-      if ((error as DOMException).name !== 'AbortError') {
+      if ((error as DOMException).name !== "AbortError") {
         setCreateError(errorMessage(error));
       }
     } finally {
@@ -180,13 +198,13 @@ export function CreateAgentDialog({
     () => () => {
       generateAbortRef.current?.abort();
     },
-    []
+    [],
   );
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        aria-label={msg('managedAgents.agents.createLabel', 'Create agent')}
+        aria-label={msg("managedAgents.agents.createLabel", "Create agent")}
         className="h-[min(720px,calc(100dvh-2rem))] max-w-[720px] overflow-hidden rounded-[17px] p-0 sm:max-w-[720px]"
         showCloseButton={false}
       >
@@ -202,15 +220,15 @@ export function CreateAgentDialog({
             }
           >
             <X className="size-[22px]" aria-hidden />
-            <span className="sr-only">{msg('common.close', 'Close')}</span>
+            <span className="sr-only">{msg("common.close", "Close")}</span>
           </DialogClose>
 
           <DialogHeader className="pr-8">
             <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
-              {msg('managedAgents.agents.createLabel', 'Create agent')}
+              {msg("managedAgents.agents.createLabel", "Create agent")}
             </DialogTitle>
             <DialogDescription className="mt-1 text-sm leading-5 text-muted-foreground">
-              {msg('managedAgents.agents.createDialog.description', 'Start from a template or describe what you need.')}
+              {msg("managedAgents.agents.createDialog.description", "Start from a template or describe what you need.")}
             </DialogDescription>
           </DialogHeader>
 
@@ -226,31 +244,38 @@ export function CreateAgentDialog({
               >
                 <ChevronDown
                   className={clsx(
-                    'size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none',
-                    startingPointOpen ? '' : '-rotate-90'
+                    "size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none",
+                    startingPointOpen ? "" : "-rotate-90",
                   )}
                   aria-hidden
                 />
-                <span>{msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}</span>
+                <span>{msg("managedAgents.agents.createDialog.startingPoint", "Starting point")}</span>
               </CollapsibleTrigger>
               {!startingPointOpen ? (
-                <Badge variant="secondary" className="max-w-[220px] shrink-0 justify-start truncate rounded-md px-2 py-1 text-xs font-medium text-muted-foreground">
+                <Badge
+                  variant="secondary"
+                  className="max-w-[220px] shrink-0 justify-start truncate rounded-md px-2 py-1 text-xs font-medium text-muted-foreground"
+                >
                   {startingPointName}
                 </Badge>
               ) : null}
             </div>
 
             <CollapsibleContent className="border-t border-border/60 px-3 pb-3 pt-3">
-              <Tabs value={mode} onValueChange={(nextValue) => nextValue && selectMode(nextValue as 'describe' | 'template')} className="gap-4">
+              <Tabs
+                value={mode}
+                onValueChange={(nextValue) => nextValue && selectMode(nextValue as "describe" | "template")}
+                className="gap-4"
+              >
                 <TabsList
-                  aria-label={msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}
+                  aria-label={msg("managedAgents.agents.createDialog.startingPoint", "Starting point")}
                   className="grid h-10 w-full grid-cols-2"
                 >
                   <TabsTrigger value="describe" className="px-3 text-sm font-semibold">
-                    {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
+                    {msg("managedAgents.quickstart.initial.inputLabel", "Describe your agent")}
                   </TabsTrigger>
                   <TabsTrigger value="template" className="px-3 text-sm font-semibold">
-                    {msg('managedAgents.quickstart.templateSuffix', 'Template')}
+                    {msg("managedAgents.quickstart.templateSuffix", "Template")}
                   </TabsTrigger>
                 </TabsList>
 
@@ -263,22 +288,22 @@ export function CreateAgentDialog({
                     }}
                   >
                     <label htmlFor="create-agent-description-input" className="sr-only">
-                      {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
+                      {msg("managedAgents.quickstart.initial.inputLabel", "Describe your agent")}
                     </label>
                     <InputGroup className="min-h-[156px] items-stretch gap-0 rounded-[20px] border border-border/70 bg-background/70 px-3 py-3 shadow-sm transition-colors hover:border-border focus-within:border-ring/60">
                       <InputGroupTextarea
                         id="create-agent-description-input"
                         value={description}
                         rows={1}
-                        placeholder={msg('managedAgents.agents.createDialog.describePlaceholder', 'Summarizes new GitHub PRs and posts a digest to Slack.')}
+                        placeholder={msg(
+                          "managedAgents.agents.createDialog.describePlaceholder",
+                          "Summarizes new GitHub PRs and posts a digest to Slack.",
+                        )}
                         className="subtle-scrollbar min-h-[108px] max-h-[176px] overflow-y-auto overscroll-contain px-1 py-1 text-[15px] leading-6 placeholder:text-muted-foreground/70"
                         onChange={(event) => setDescription(event.target.value)}
                         autoFocus
                       />
-                      <InputGroupAddon
-                        align="block-end"
-                        className="cursor-default justify-end gap-0 px-0 pb-0 pt-3"
-                      >
+                      <InputGroupAddon align="block-end" className="cursor-default justify-end gap-0 px-0 pb-0 pt-3">
                         <InputGroupButton
                           type="submit"
                           variant="secondary"
@@ -286,8 +311,14 @@ export function CreateAgentDialog({
                           disabled={!description.trim() || isGenerating}
                           className="rounded-lg px-4 text-[13px] font-semibold"
                         >
-                          {isGenerating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Sparkles className="size-4" aria-hidden />}
-                          {isGenerating ? msg('managedAgents.agents.createDialog.generating', 'Generating...') : msg('managedAgents.agents.createDialog.generate', 'Generate')}
+                          {isGenerating ? (
+                            <Loader2 className="size-4 animate-spin" aria-hidden />
+                          ) : (
+                            <Sparkles className="size-4" aria-hidden />
+                          )}
+                          {isGenerating
+                            ? msg("managedAgents.agents.createDialog.generating", "Generating...")
+                            : msg("managedAgents.agents.createDialog.generate", "Generate")}
                         </InputGroupButton>
                       </InputGroupAddon>
                     </InputGroup>
@@ -312,12 +343,19 @@ export function CreateAgentDialog({
 
           <div className="mt-5 flex min-h-0 flex-1 basis-[304px] flex-col">
             <div className="text-sm font-semibold leading-5 text-foreground">
-              {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
+              {msg("managedAgents.agents.createDialog.agentConfig", "Agent config")}
             </div>
             <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/70 bg-popover shadow-sm">
-              <Tabs value={format} onValueChange={(nextValue) => nextValue && selectFormat(nextValue as CodeFormat)} className="h-full gap-0">
+              <Tabs
+                value={format}
+                onValueChange={(nextValue) => nextValue && selectFormat(nextValue as CodeFormat)}
+                className="h-full gap-0"
+              >
                 <div className="flex h-11 items-center justify-between border-b border-border/60 px-3">
-                  <TabsList aria-label={msg('managedAgents.agents.createDialog.configFormat', 'Config format')} className="h-8">
+                  <TabsList
+                    aria-label={msg("managedAgents.agents.createDialog.configFormat", "Config format")}
+                    className="h-8"
+                  >
                     <TabsTrigger value="YAML" className="px-4 text-[14px] font-semibold">
                       YAML
                     </TabsTrigger>
@@ -325,10 +363,10 @@ export function CreateAgentDialog({
                       JSON
                     </TabsTrigger>
                   </TabsList>
-                  <CopyButton value={configText} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
+                  <CopyButton value={configText} label={msg("managedAgents.quickstart.copyCode", "Copy code")} />
                 </div>
                 <TabsContent value="YAML" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-                  {format === 'YAML' ? (
+                  {format === "YAML" ? (
                     <div className="min-h-0 flex-1 overflow-hidden">
                       <AgentConfigEditor
                         value={configText}
@@ -341,7 +379,7 @@ export function CreateAgentDialog({
                   ) : null}
                 </TabsContent>
                 <TabsContent value="JSON" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-                  {format === 'JSON' ? (
+                  {format === "JSON" ? (
                     <div className="min-h-0 flex-1 overflow-hidden">
                       <AgentConfigEditor
                         value={configText}
@@ -365,12 +403,16 @@ export function CreateAgentDialog({
               disabled={createDisabled}
               size="sm"
               className={clsx(
-                'px-3 text-[14px] font-semibold leading-5',
-                createDisabled ? 'cursor-not-allowed bg-accent text-muted-foreground/70' : 'bg-foreground text-background hover:bg-muted'
+                "px-3 text-[14px] font-semibold leading-5",
+                createDisabled
+                  ? "cursor-not-allowed bg-accent text-muted-foreground/70"
+                  : "bg-foreground text-background hover:bg-muted",
               )}
               onClick={handleCreate}
             >
-              {isCreating ? msg('common.creating', 'Creating...') : msg('managedAgents.agents.createLabel', 'Create agent')}
+              {isCreating
+                ? msg("common.creating", "Creating...")
+                : msg("managedAgents.agents.createLabel", "Create agent")}
             </Button>
           </div>
         </div>
@@ -382,7 +424,7 @@ export function CreateAgentDialog({
 export function CreateAgentTemplateCard({
   template,
   selected,
-  onSelect
+  onSelect,
 }: {
   template: AgentTemplate;
   selected: boolean;
@@ -398,15 +440,15 @@ export function CreateAgentTemplateCard({
       type="button"
       variant="ghost"
       className={clsx(
-        'h-auto w-full items-stretch justify-stretch whitespace-normal rounded-xl border-0 bg-transparent p-0 text-left shadow-none hover:bg-transparent'
+        "h-auto w-full items-stretch justify-stretch whitespace-normal rounded-xl border-0 bg-transparent p-0 text-left shadow-none hover:bg-transparent",
       )}
       onClick={onSelect}
     >
       <Card
         className={clsx(
-          'h-full w-full gap-0 rounded-xl py-0 text-left shadow-none transition-[background-color,box-shadow,ring-color]',
-          hasApps ? 'min-h-[116px]' : 'min-h-[104px]',
-          selected ? 'bg-muted/80 ring-ring/30 shadow-sm' : 'bg-card/70 group-hover/button:bg-muted/60'
+          "h-full w-full gap-0 rounded-xl py-0 text-left shadow-none transition-[background-color,box-shadow,ring-color]",
+          hasApps ? "min-h-[116px]" : "min-h-[104px]",
+          selected ? "bg-muted/80 ring-ring/30 shadow-sm" : "bg-card/70 group-hover/button:bg-muted/60",
         )}
       >
         <CardContent className="flex h-full flex-col gap-1 px-3 py-3">
@@ -434,10 +476,7 @@ export function CreateTemplateApps({ templateId }: { templateId: string }) {
           <Badge
             key={app.label}
             variant="secondary"
-            className={clsx(
-              'size-5 shrink-0 rounded-full border border-border p-0',
-              app.tone
-            )}
+            className={clsx("size-5 shrink-0 rounded-full border border-border p-0", app.tone)}
             title={app.label}
           >
             <Icon className="size-3" aria-hidden />

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLocation } from '@tanstack/react-router';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "@tanstack/react-router";
 import {
   AlertCircle,
   Ban,
@@ -13,13 +13,13 @@ import {
   MoreVertical,
   Plus,
   Power,
-  Trash2
-} from 'lucide-react';
-import { useAuth } from '../../shared/auth/context';
-import { Alert, AlertDescription } from '../../shared/ui/alert';
-import { Badge } from '../../shared/ui/badge';
-import { Button } from '../../shared/ui/button';
-import { Card, CardContent } from '../../shared/ui/card';
+  Trash2,
+} from "lucide-react";
+import { useAuth } from "../../shared/auth/context";
+import { Alert, AlertDescription } from "../../shared/ui/alert";
+import { Badge } from "../../shared/ui/badge";
+import { Button } from "../../shared/ui/button";
+import { Card, CardContent } from "../../shared/ui/card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,50 +29,43 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogMedia,
-  AlertDialogTitle
-} from '../../shared/ui/alert-dialog';
+  AlertDialogTitle,
+} from "../../shared/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle
-} from '../../shared/ui/dialog';
+  DialogTitle,
+} from "../../shared/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger
-} from '../../shared/ui/dropdown-menu';
-import { Field, FieldDescription, FieldError, FieldLabel } from '../../shared/ui/field';
-import { Input } from '../../shared/ui/input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from '../../shared/ui/table';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../shared/ui/tooltip';
+  DropdownMenuTrigger,
+} from "../../shared/ui/dropdown-menu";
+import { Field, FieldDescription, FieldError, FieldLabel } from "../../shared/ui/field";
+import { Input } from "../../shared/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../shared/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../shared/ui/tooltip";
 import {
   createWorkspaceApiKey,
   defaultWorkspace,
   listWorkspaceApiKeys,
   updateWorkspaceApiKeyStatus,
   type Workspace,
-  type WorkspaceApiKey
-} from '../../shared/workspaces/api';
-import { useI18n } from '../../shared/i18n';
-import { useWorkspace } from '../../shared/workspaces/context';
-import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
+  type WorkspaceApiKey,
+} from "../../shared/workspaces/api";
+import { useI18n } from "../../shared/i18n";
+import { useWorkspace } from "../../shared/workspaces/context";
+import { workspaceIdFromPath } from "../../shared/workspaces/presentation";
 
 type WorkspaceApiKeysContentProps = {
   routeWorkspaceId?: string;
 };
 
-type KeyAction = 'disable' | 'enable' | 'delete';
+type KeyAction = "disable" | "enable" | "delete";
 
 type PendingAction = {
   action: KeyAction;
@@ -99,11 +92,11 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const workspace = useMemo(
     () => resolveWorkspace(routeWorkspaceId, workspaces, activeWorkspace),
-    [activeWorkspace, routeWorkspaceId, workspaces]
+    [activeWorkspace, routeWorkspaceId, workspaces],
   );
   const queryKey = useMemo(
-    () => ['console', 'workspace-api-keys', orgUuid, workspace.id] as const,
-    [orgUuid, workspace.id]
+    () => ["console", "workspace-api-keys", orgUuid, workspace.id] as const,
+    [orgUuid, workspace.id],
   );
 
   useEffect(() => {
@@ -114,15 +107,15 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
 
   const keysQuery = useQuery({
     queryKey,
-    queryFn: () => listWorkspaceApiKeys(orgUuid ?? '', workspace.id),
+    queryFn: () => listWorkspaceApiKeys(orgUuid ?? "", workspace.id),
     enabled: Boolean(orgUuid && workspace.id),
-    retry: false
+    retry: false,
   });
 
   const createMutation = useMutation({
     mutationFn: async (name: string) => {
       if (!orgUuid) {
-        throw new Error(msg('apiKeys.noOrganizationCreate', 'No organization is available for API key creation.'));
+        throw new Error(msg("apiKeys.noOrganizationCreate", "No organization is available for API key creation."));
       }
       return createWorkspaceApiKey(orgUuid, workspace.id, { name });
     },
@@ -130,20 +123,20 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
       setCreateOpen(false);
       setCreatedKey(apiKey);
       await queryClient.invalidateQueries({ queryKey });
-    }
+    },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ apiKey, status }: { apiKey: WorkspaceApiKey; status: 'active' | 'inactive' | 'archived' }) => {
+    mutationFn: async ({ apiKey, status }: { apiKey: WorkspaceApiKey; status: "active" | "inactive" | "archived" }) => {
       if (!orgUuid) {
-        throw new Error(msg('apiKeys.noOrganizationUpdate', 'No organization is available for API key updates.'));
+        throw new Error(msg("apiKeys.noOrganizationUpdate", "No organization is available for API key updates."));
       }
       return updateWorkspaceApiKeyStatus(orgUuid, workspace.id, apiKey.id, { status });
     },
     onSuccess: (updatedApiKey, variables) => {
       queryClient.setQueryData<WorkspaceApiKey[]>(queryKey, (current) => {
         const keys = current ?? [];
-        if (variables.status === 'archived' || isArchivedKey(updatedApiKey)) {
+        if (variables.status === "archived" || isArchivedKey(updatedApiKey)) {
           return keys.filter((apiKey) => apiKey.id !== variables.apiKey.id);
         }
         let replaced = false;
@@ -157,7 +150,7 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
         return replaced ? next : [updatedApiKey, ...next];
       });
       void queryClient.invalidateQueries({ queryKey });
-    }
+    },
   });
 
   const keys = useMemo(() => (keysQuery.data ?? []).filter((apiKey) => !isArchivedKey(apiKey)), [keysQuery.data]);
@@ -184,13 +177,13 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-                {msg('apiKeys.title', 'API keys')}
+                {msg("apiKeys.title", "API keys")}
               </h1>
               <Badge
                 variant="secondary"
                 className="h-6 min-w-6 rounded-md px-2 text-muted-foreground"
-                aria-label={msg('apiKeys.countAria', '{count, plural, one {# API key} other {# API keys}}', {
-                  count: keys.length
+                aria-label={msg("apiKeys.countAria", "{count, plural, one {# API key} other {# API keys}}", {
+                  count: keys.length,
                 })}
               >
                 {keys.length}
@@ -198,18 +191,14 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
             </div>
             <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
               {msg(
-                'apiKeys.description',
-                'API keys are owned by workspaces and remain active even after the creator is removed'
+                "apiKeys.description",
+                "API keys are owned by workspaces and remain active even after the creator is removed",
               )}
             </p>
           </div>
-          <Button
-            type="button"
-            size="lg"
-            onClick={() => setCreateOpen(true)}
-          >
+          <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" aria-hidden />
-            {msg('apiKeys.create', 'Create key')}
+            {msg("apiKeys.create", "Create key")}
           </Button>
         </div>
 
@@ -226,22 +215,36 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
               </colgroup>
               <TableHeader className="text-[13px] text-muted-foreground">
                 <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.key', 'Key')}</TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.createdBy', 'Created by')}</TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.createdAt', 'Created at')}</TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.lastUsedAt', 'Last used at')}</TableHead>
+                  <TableHead className="px-3 py-3 text-muted-foreground">{msg("apiKeys.key", "Key")}</TableHead>
+                  <TableHead className="px-3 py-3 text-muted-foreground">
+                    {msg("apiKeys.createdBy", "Created by")}
+                  </TableHead>
+                  <TableHead className="px-3 py-3 text-muted-foreground">
+                    {msg("apiKeys.createdAt", "Created at")}
+                  </TableHead>
+                  <TableHead className="px-3 py-3 text-muted-foreground">
+                    {msg("apiKeys.lastUsedAt", "Last used at")}
+                  </TableHead>
                   <TableHead className="px-3 py-3 text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
-                      {msg('analytics.cost.title', 'Cost')}
-                      <InfoTooltip label={msg('apiKeys.costTooltip', 'API key cost attribution appears after usage is recorded.')} />
+                      {msg("analytics.cost.title", "Cost")}
+                      <InfoTooltip
+                        label={msg("apiKeys.costTooltip", "API key cost attribution appears after usage is recorded.")}
+                      />
                     </span>
                   </TableHead>
-                  <TableHead className="px-3 py-3 text-right text-muted-foreground">{msg('common.actions', 'Actions')}</TableHead>
+                  <TableHead className="px-3 py-3 text-right text-muted-foreground">
+                    {msg("common.actions", "Actions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {keysQuery.isLoading ? (
-                  <ApiKeysState text={msg('apiKeys.loading', 'Loading {workspaceName} API keys...', { workspaceName: workspace.name })} />
+                  <ApiKeysState
+                    text={msg("apiKeys.loading", "Loading {workspaceName} API keys...", {
+                      workspaceName: workspace.name,
+                    })}
+                  />
                 ) : errorMessage ? (
                   <ApiKeysState tone="error" text={errorMessage} />
                 ) : keys.length > 0 ? (
@@ -254,7 +257,11 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
                     />
                   ))
                 ) : (
-                  <ApiKeysState text={msg('apiKeys.empty', 'No API keys have been created for {workspaceName}.', { workspaceName: workspace.name })} />
+                  <ApiKeysState
+                    text={msg("apiKeys.empty", "No API keys have been created for {workspaceName}.", {
+                      workspaceName: workspace.name,
+                    })}
+                  />
                 )}
               </TableBody>
             </Table>
@@ -289,7 +296,7 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
 function ApiKeyRow({
   apiKey,
   identity,
-  onAction
+  onAction,
 }: {
   apiKey: WorkspaceApiKey;
   identity: Identity;
@@ -297,19 +304,19 @@ function ApiKeyRow({
 }) {
   const { msg } = useI18n();
   const status = normalizeKeyStatus(apiKey);
-  const inactive = status === 'inactive';
+  const inactive = status === "inactive";
   const creator = displayCreator(apiKey, identity);
 
   return (
     <TableRow
-      className={`h-[58px] border-border text-sm hover:bg-accent ${inactive ? 'text-muted-foreground/70' : 'text-foreground'}`}
+      className={`h-[58px] border-border text-sm hover:bg-accent ${inactive ? "text-muted-foreground/70" : "text-foreground"}`}
     >
       <TableCell className="min-w-0 px-3 py-2.5 align-middle">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate font-medium">{apiKey.name || msg('apiKeys.untitledKey', 'Untitled key')}</span>
+          <span className="truncate font-medium">{apiKey.name || msg("apiKeys.untitledKey", "Untitled key")}</span>
           {inactive ? (
             <Badge variant="secondary" className="h-5 shrink-0 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground">
-              {msg('apiKeys.inactive', 'Inactive')}
+              {msg("apiKeys.inactive", "Inactive")}
             </Badge>
           ) : null}
         </div>
@@ -321,7 +328,7 @@ function ApiKeyRow({
       </TableCell>
       <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">{formatDate(apiKey.created_at)}</TableCell>
       <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">
-        {apiKey.last_used_at ? formatDate(apiKey.last_used_at) : msg('common.never', 'Never')}
+        {apiKey.last_used_at ? formatDate(apiKey.last_used_at) : msg("common.never", "Never")}
       </TableCell>
       <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">-</TableCell>
       <TableCell className="px-3 py-2.5 text-right align-middle">
@@ -332,8 +339,8 @@ function ApiKeyRow({
                 variant="ghost"
                 size="icon"
                 className="text-muted-foreground hover:text-foreground"
-                aria-label={msg('apiKeys.moreActionsAria', 'More actions for {keyName}', {
-                  keyName: apiKey.name || msg('apiKeys.thisKey', 'this key')
+                aria-label={msg("apiKeys.moreActionsAria", "More actions for {keyName}", {
+                  keyName: apiKey.name || msg("apiKeys.thisKey", "this key"),
                 })}
               />
             }
@@ -341,13 +348,15 @@ function ApiKeyRow({
             <MoreVertical className="size-4" aria-hidden />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem onClick={() => onAction(inactive ? 'enable' : 'disable')}>
+            <DropdownMenuItem onClick={() => onAction(inactive ? "enable" : "disable")}>
               {inactive ? <Power className="size-4" aria-hidden /> : <Ban className="size-4" aria-hidden />}
-              <span>{inactive ? msg('apiKeys.enable', 'Enable API key') : msg('apiKeys.disable', 'Disable API key')}</span>
+              <span>
+                {inactive ? msg("apiKeys.enable", "Enable API key") : msg("apiKeys.disable", "Disable API key")}
+              </span>
             </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onClick={() => onAction('delete')}>
+            <DropdownMenuItem variant="destructive" onClick={() => onAction("delete")}>
               <Trash2 className="size-4" aria-hidden />
-              <span>{msg('apiKeys.delete', 'Delete API key')}</span>
+              <span>{msg("apiKeys.delete", "Delete API key")}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -360,7 +369,7 @@ function CreateApiKeyModal({
   workspace,
   isSubmitting,
   onClose,
-  onCreate
+  onCreate,
 }: {
   workspace: Workspace;
   isSubmitting: boolean;
@@ -368,8 +377,8 @@ function CreateApiKeyModal({
   onCreate: (name: string) => Promise<void>;
 }) {
   const { msg } = useI18n();
-  const [name, setName] = useState('');
-  const [error, setError] = useState('');
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
   const canSubmit = name.trim().length > 0 && !isSubmitting;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -377,12 +386,12 @@ function CreateApiKeyModal({
     if (!canSubmit) {
       return;
     }
-    setError('');
+    setError("");
     try {
       await onCreate(name.trim());
-      setName('');
+      setName("");
     } catch (createError) {
-      setError(readableError(createError) ?? msg('apiKeys.createFailed', 'Failed to create API key.'));
+      setError(readableError(createError) ?? msg("apiKeys.createFailed", "Failed to create API key."));
     }
   };
 
@@ -397,30 +406,34 @@ function CreateApiKeyModal({
     >
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>{msg('apiKeys.createTitle', 'Create API key')}</DialogTitle>
+          <DialogTitle>{msg("apiKeys.createTitle", "Create API key")}</DialogTitle>
         </DialogHeader>
 
         <form className="space-y-5" onSubmit={handleSubmit}>
           <Field className="gap-2">
             <FieldLabel className="flex items-center gap-1.5">
-              {msg('apiKeys.workspace', 'Workspace')}
-              <InfoTooltip label={msg('apiKeys.workspaceTooltip', 'This key will be scoped to the selected workspace.')} />
+              {msg("apiKeys.workspace", "Workspace")}
+              <InfoTooltip
+                label={msg("apiKeys.workspaceTooltip", "This key will be scoped to the selected workspace.")}
+              />
             </FieldLabel>
             <FieldDescription className="flex h-5 items-center gap-2 text-sm text-foreground">
-              <Box className="size-4 shrink-0" style={{ color: workspace.display_color || workspace.color }} aria-hidden />
+              <Box
+                className="size-4 shrink-0"
+                style={{ color: workspace.display_color || workspace.color }}
+                aria-hidden
+              />
               <span className="truncate">{workspace.name}</span>
             </FieldDescription>
           </Field>
 
           <Field data-invalid={Boolean(error)}>
-            <FieldLabel htmlFor="api-key-name">
-              {msg('common.name', 'Name')}
-            </FieldLabel>
+            <FieldLabel htmlFor="api-key-name">{msg("common.name", "Name")}</FieldLabel>
             <Input
               id="api-key-name"
               value={name}
               aria-invalid={Boolean(error) || undefined}
-              placeholder={msg('apiKeys.namePlaceholder', 'my-secret-key')}
+              placeholder={msg("apiKeys.namePlaceholder", "my-secret-key")}
               onChange={(event) => setName(event.target.value)}
             />
             <FieldError className="text-destructive">{error}</FieldError>
@@ -429,7 +442,7 @@ function CreateApiKeyModal({
           <DialogFooter>
             <Button type="submit" disabled={!canSubmit} className="min-w-[52px]">
               {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              {msg('apiKeys.add', 'Add')}
+              {msg("apiKeys.add", "Add")}
             </Button>
           </DialogFooter>
         </form>
@@ -442,7 +455,7 @@ function RawApiKeyModal({ apiKey, onClose }: { apiKey: WorkspaceApiKey; onClose:
   const { msg } = useI18n();
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
-  const rawKey = apiKey.raw_key ?? '';
+  const rawKey = apiKey.raw_key ?? "";
 
   const handleCopy = async () => {
     setCopyFailed(false);
@@ -467,12 +480,9 @@ function RawApiKeyModal({ apiKey, onClose }: { apiKey: WorkspaceApiKey; onClose:
     >
       <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>{msg('apiKeys.createdTitle', 'API key created')}</DialogTitle>
+          <DialogTitle>{msg("apiKeys.createdTitle", "API key created")}</DialogTitle>
           <DialogDescription className="leading-6">
-            {msg(
-              'apiKeys.copyRaw',
-              "Copy this key now. You won't be able to view it again after closing this window."
-            )}
+            {msg("apiKeys.copyRaw", "Copy this key now. You won't be able to view it again after closing this window.")}
           </DialogDescription>
         </DialogHeader>
         <Card size="sm" className="mt-5 py-0">
@@ -484,13 +494,13 @@ function RawApiKeyModal({ apiKey, onClose }: { apiKey: WorkspaceApiKey; onClose:
           <Button type="button" variant="outline" onClick={handleCopy}>
             {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
             {copied
-              ? msg('common.copied', 'Copied')
+              ? msg("common.copied", "Copied")
               : copyFailed
-                ? msg('common.copyFailed', 'Copy failed')
-                : msg('common.copy', 'Copy')}
+                ? msg("common.copyFailed", "Copy failed")
+                : msg("common.copy", "Copy")}
           </Button>
           <Button type="button" onClick={onClose}>
-            {msg('common.done', 'Done')}
+            {msg("common.done", "Done")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -507,11 +517,11 @@ async function copyTextToClipboard(text: string) {
       const didCopy = await Promise.race([
         navigator.clipboard.writeText(text).then(
           () => true,
-          () => false
+          () => false,
         ),
         new Promise<boolean>((resolve) => {
           window.setTimeout(() => resolve(false), 300);
-        })
+        }),
       ]);
       if (didCopy) {
         return true;
@@ -521,18 +531,18 @@ async function copyTextToClipboard(text: string) {
     // Fall back below when browser clipboard permission is denied.
   }
 
-  const textArea = document.createElement('textarea');
+  const textArea = document.createElement("textarea");
   textArea.value = text;
-  textArea.setAttribute('readonly', '');
-  textArea.style.position = 'fixed';
-  textArea.style.top = '0';
-  textArea.style.left = '-9999px';
-  textArea.style.opacity = '0';
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.top = "0";
+  textArea.style.left = "-9999px";
+  textArea.style.opacity = "0";
   document.body.appendChild(textArea);
   textArea.focus();
   textArea.select();
   try {
-    return document.execCommand('copy');
+    return document.execCommand("copy");
   } catch {
     return false;
   } finally {
@@ -545,7 +555,7 @@ function ConfirmKeyActionModal({
   isSubmitting,
   error,
   onClose,
-  onConfirm
+  onConfirm,
 }: {
   pendingAction: PendingAction;
   isSubmitting: boolean;
@@ -554,27 +564,27 @@ function ConfirmKeyActionModal({
   onConfirm: () => Promise<void>;
 }) {
   const { msg } = useI18n();
-  const destructive = pendingAction.action === 'delete';
+  const destructive = pendingAction.action === "delete";
   const action = actionLabel(pendingAction.action, msg);
   const actionVerb = actionVerbLabel(pendingAction.action, msg);
-  const keyName = pendingAction.apiKey.name || msg('apiKeys.thisKey', 'this key');
+  const keyName = pendingAction.apiKey.name || msg("apiKeys.thisKey", "this key");
   const title =
-    pendingAction.action === 'delete'
-      ? msg('apiKeys.deleteTitle', 'Delete API key')
-      : msg('apiKeys.actionTitle', '{action} key?', { action });
+    pendingAction.action === "delete"
+      ? msg("apiKeys.deleteTitle", "Delete API key")
+      : msg("apiKeys.actionTitle", "{action} key?", { action });
   const body =
-    pendingAction.action === 'delete'
-      ? msg('apiKeys.deleteBody', "Are you sure you want to delete {keyName}? This action can't be undone.", {
-          keyName
+    pendingAction.action === "delete"
+      ? msg("apiKeys.deleteBody", "Are you sure you want to delete {keyName}? This action can't be undone.", {
+          keyName,
         })
-      : msg('apiKeys.confirmBody', 'Are you sure you want to {action} {keyName}?', {
+      : msg("apiKeys.confirmBody", "Are you sure you want to {action} {keyName}?", {
           action: actionVerb,
-          keyName
+          keyName,
         });
   const icon =
-    pendingAction.action === 'delete' ? (
+    pendingAction.action === "delete" ? (
       <Trash2 className="size-5" aria-hidden />
-    ) : pendingAction.action === 'disable' ? (
+    ) : pendingAction.action === "disable" ? (
       <Ban className="size-5" aria-hidden />
     ) : (
       <Power className="size-5" aria-hidden />
@@ -592,9 +602,7 @@ function ConfirmKeyActionModal({
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogMedia
-            className={
-              destructive ? 'bg-destructive/10 text-destructive dark:bg-destructive/20' : undefined
-            }
+            className={destructive ? "bg-destructive/10 text-destructive dark:bg-destructive/20" : undefined}
           >
             {icon}
           </AlertDialogMedia>
@@ -603,12 +611,10 @@ function ConfirmKeyActionModal({
         </AlertDialogHeader>
         {error ? <InlineError>{error}</InlineError> : null}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isSubmitting}>
-            {msg('common.cancel', 'Cancel')}
-          </AlertDialogCancel>
+          <AlertDialogCancel disabled={isSubmitting}>{msg("common.cancel", "Cancel")}</AlertDialogCancel>
           <AlertDialogAction
             type="button"
-            variant={destructive ? 'destructive' : 'default'}
+            variant={destructive ? "destructive" : "default"}
             className="min-w-[82px]"
             onClick={() => void onConfirm().catch(() => undefined)}
             disabled={isSubmitting}
@@ -636,7 +642,13 @@ function InfoTooltip({ label }: { label: string }) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button type="button" variant="ghost" size="icon-xs" aria-label={label} className="-m-1 text-muted-foreground hover:text-foreground">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={label}
+            className="-m-1 text-muted-foreground hover:text-foreground"
+          >
             <Info className="size-3.5" aria-hidden />
           </Button>
         }
@@ -646,12 +658,12 @@ function InfoTooltip({ label }: { label: string }) {
   );
 }
 
-function ApiKeysState({ text, tone = 'muted' }: { text: string; tone?: 'muted' | 'error' }) {
+function ApiKeysState({ text, tone = "muted" }: { text: string; tone?: "muted" | "error" }) {
   return (
     <TableRow className="border-border hover:bg-transparent">
       <TableCell colSpan={6} className="h-[156px] px-4 py-8 text-center text-sm text-muted-foreground">
         <div>
-          {tone === 'error' ? (
+          {tone === "error" ? (
             <AlertCircle className="mx-auto mb-3 size-6 text-destructive" aria-hidden />
           ) : (
             <KeyRound className="mx-auto mb-3 size-6 text-muted-foreground/70" aria-hidden />
@@ -677,7 +689,7 @@ function resolveWorkspace(routeWorkspaceId: string | undefined, workspaces: Work
   return {
     ...defaultWorkspace,
     id: routeWorkspaceId,
-    name: routeWorkspaceId
+    name: routeWorkspaceId,
   };
 }
 
@@ -686,31 +698,31 @@ function keyHint(apiKey: WorkspaceApiKey) {
     return apiKey.partial_key_hint;
   }
   if (apiKey.key_prefix || apiKey.key_suffix) {
-    return `${apiKey.key_prefix ?? 'sk-ant'}...${apiKey.key_suffix ?? ''}`;
+    return `${apiKey.key_prefix ?? "sk-ant"}...${apiKey.key_suffix ?? ""}`;
   }
-  return 'sk-ant-api03-...';
+  return "sk-ant-api03-...";
 }
 
 function formatDate(value?: string | null) {
   if (!value) {
-    return '-';
+    return "-";
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat('en', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   }).format(date);
 }
 
 function displayIdentity(account: { email_address?: string; display_name?: string; full_name?: string } | null) {
-  const email = account?.email_address ?? 'test@openmanagedagent.local';
+  const email = account?.email_address ?? "test@openmanagedagent.local";
   return {
     email,
-    name: account?.display_name ?? account?.full_name ?? email.split('@')[0] ?? 'test'
+    name: account?.display_name ?? account?.full_name ?? email.split("@")[0] ?? "test",
   };
 }
 
@@ -719,55 +731,55 @@ function displayCreator(apiKey: WorkspaceApiKey, fallback: Identity) {
   const email = createdBy?.email ?? fallback.email;
   return {
     email,
-    name: createdBy?.name ?? email.split('@')[0] ?? fallback.name
+    name: createdBy?.name ?? email.split("@")[0] ?? fallback.name,
   };
 }
 
 function normalizeKeyStatus(apiKey: WorkspaceApiKey) {
   if (apiKey.archived_at) {
-    return 'archived';
+    return "archived";
   }
   const status = apiKey.status?.toLowerCase();
-  if (status === 'inactive' || status === 'archived') {
+  if (status === "inactive" || status === "archived") {
     return status;
   }
-  return 'active';
+  return "active";
 }
 
 function isArchivedKey(apiKey: WorkspaceApiKey) {
-  return normalizeKeyStatus(apiKey) === 'archived';
+  return normalizeKeyStatus(apiKey) === "archived";
 }
 
 function statusForAction(action: KeyAction) {
   switch (action) {
-    case 'enable':
-      return 'active';
-    case 'disable':
-      return 'inactive';
-    case 'delete':
-      return 'archived';
+    case "enable":
+      return "active";
+    case "disable":
+      return "inactive";
+    case "delete":
+      return "archived";
   }
 }
 
-function actionLabel(action: KeyAction, msg: ReturnType<typeof useI18n>['msg']) {
+function actionLabel(action: KeyAction, msg: ReturnType<typeof useI18n>["msg"]) {
   switch (action) {
-    case 'enable':
-      return msg('apiKeys.action.enable', 'Enable');
-    case 'disable':
-      return msg('apiKeys.action.disable', 'Disable');
-    case 'delete':
-      return msg('apiKeys.action.delete', 'Delete');
+    case "enable":
+      return msg("apiKeys.action.enable", "Enable");
+    case "disable":
+      return msg("apiKeys.action.disable", "Disable");
+    case "delete":
+      return msg("apiKeys.action.delete", "Delete");
   }
 }
 
-function actionVerbLabel(action: KeyAction, msg: ReturnType<typeof useI18n>['msg']) {
+function actionVerbLabel(action: KeyAction, msg: ReturnType<typeof useI18n>["msg"]) {
   switch (action) {
-    case 'enable':
-      return msg('apiKeys.verb.enable', 'enable');
-    case 'disable':
-      return msg('apiKeys.verb.disable', 'disable');
-    case 'delete':
-      return msg('apiKeys.verb.delete', 'delete');
+    case "enable":
+      return msg("apiKeys.verb.enable", "enable");
+    case "disable":
+      return msg("apiKeys.verb.disable", "disable");
+    case "delete":
+      return msg("apiKeys.verb.delete", "delete");
   }
 }
 
@@ -778,11 +790,11 @@ function readableError(error: unknown) {
   if (error instanceof Error) {
     return error.message;
   }
-  if (typeof error === 'object' && error !== null && 'message' in error) {
+  if (typeof error === "object" && error !== null && "message" in error) {
     const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string') {
+    if (typeof message === "string") {
       return message;
     }
   }
-  return 'Request failed.';
+  return "Request failed.";
 }

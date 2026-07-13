@@ -14,24 +14,24 @@ import {
   SlidersHorizontal,
   Sparkles,
   WandSparkles,
-  Wrench
-} from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import clsx from 'clsx';
-import { useAuth } from '../../shared/auth/context';
-import { useWorkspace } from '../../shared/workspaces/context';
-import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
-import { Button } from '@/shared/ui/button';
+  Wrench,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import clsx from "clsx";
+import { useAuth } from "../../shared/auth/context";
+import { useWorkspace } from "../../shared/workspaces/context";
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/alert";
+import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from '@/shared/ui/dropdown-menu';
-import { Input } from '@/shared/ui/input';
-import { Popover, PopoverTrigger } from '@/shared/ui/popover';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
+import { Input } from "@/shared/ui/input";
+import { Popover, PopoverTrigger } from "@/shared/ui/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import {
   createWorkbenchEvaluation,
   createWorkbenchRevision,
@@ -65,8 +65,8 @@ import {
   WorkbenchPromptDetail,
   WorkbenchPromptSummary,
   WorkbenchRevision,
-  WorkbenchStreamEvent
-} from './api';
+  WorkbenchStreamEvent,
+} from "./api";
 import {
   appendFileBlockToMessageContent,
   appendUrlBlockToMessageContent,
@@ -137,10 +137,10 @@ import {
   workbenchExamplesFromPromptDetail,
   workbenchId,
   WorkbenchMode,
-  workbenchPromptGeneratorWarning
-} from './model';
-import { PromptPicker, WorkbenchAccessUnavailable, WorkbenchShell } from './shell';
-import { MessageEditor, messageRemovalRange, SystemPromptEditableInput } from './editor';
+  workbenchPromptGeneratorWarning,
+} from "./model";
+import { PromptPicker, WorkbenchAccessUnavailable, WorkbenchShell } from "./shell";
+import { MessageEditor, messageRemovalRange, SystemPromptEditableInput } from "./editor";
 import {
   buildGenerateExamplePayload,
   buildGenerateTestCasesPayload,
@@ -154,9 +154,9 @@ import {
   mergeCreatedEvaluationIntoRow,
   mergeEvaluationGoldenAnswerIntoRow,
   mergeEvaluationVariablesIntoRow,
-  ResponsePreview
-} from './evaluate';
-import { ExamplesDrawer, HistoryDrawer, ModelDrawer, ToolsDrawer, VariablesDrawer } from './drawers';
+  ResponsePreview,
+} from "./evaluate";
+import { ExamplesDrawer, HistoryDrawer, ModelDrawer, ToolsDrawer, VariablesDrawer } from "./drawers";
 import {
   CodeModal,
   DeletePromptDialog,
@@ -165,8 +165,8 @@ import {
   ImprovePromptDialog,
   PromptGeneratorConfirmDialog,
   SharePromptDialog,
-  WorkbenchDrawer
-} from './dialogs';
+  WorkbenchDrawer,
+} from "./dialogs";
 
 export function WorkbenchPage() {
   const { account } = useAuth();
@@ -178,33 +178,33 @@ export function WorkbenchPage() {
   const [defaultModelName, setDefaultModelName] = useState(fallbackModels[0].model_name);
   const [promptList, setPromptList] = useState<WorkbenchPromptSummary[]>([]);
   const [prompt, setPrompt] = useState<WorkbenchPromptDetail | null>(null);
-  const [promptName, setPromptName] = useState('Untitled');
+  const [promptName, setPromptName] = useState("Untitled");
   const [draft, setDraft] = useState<WorkbenchRevision>(() => createDefaultRevision());
   const [draftVersion, setDraftVersion] = useState<unknown>(undefined);
   const [promptRevisionCount, setPromptRevisionCount] = useState(1);
-  const [saveStatus, setSaveStatus] = useState('Loading');
+  const [saveStatus, setSaveStatus] = useState("Loading");
   const [activeMode, setActiveMode] = useState<WorkbenchMode>(() => currentRouteTab());
   const [systemOpen, setSystemOpen] = useState(false);
   const [promptMenuOpen, setPromptMenuOpen] = useState(false);
   const [promptPickerOpen, setPromptPickerOpen] = useState(false);
-  const [promptSearch, setPromptSearch] = useState('');
+  const [promptSearch, setPromptSearch] = useState("");
   const [promptOnlyMine, setPromptOnlyMine] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<DrawerName | null>(null);
   const [toolForm, setToolForm] = useState<ToolForm>(null);
-  const [responseTab, setResponseTab] = useState<ResponseTab>('preview');
-  const [responseText, setResponseText] = useState('');
+  const [responseTab, setResponseTab] = useState<ResponseTab>("preview");
+  const [responseText, setResponseText] = useState("");
   const [runError, setRunError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [streamEvents, setStreamEvents] = useState<WorkbenchStreamEvent[]>([]);
   const [lastRunRequest, setLastRunRequest] = useState<Record<string, unknown> | null>(null);
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [variableGenerationLogicOpen, setVariableGenerationLogicOpen] = useState(false);
-  const [variableGenerationLogic, setVariableGenerationLogic] = useState('');
+  const [variableGenerationLogic, setVariableGenerationLogic] = useState("");
   const [isGeneratingVariableLogic, setIsGeneratingVariableLogic] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
-  const [codeLanguage, setCodeLanguage] = useState<CodeLanguage>('python');
+  const [codeLanguage, setCodeLanguage] = useState<CodeLanguage>("python");
   const [renameOpen, setRenameOpen] = useState(false);
-  const [renameValue, setRenameValue] = useState('');
+  const [renameValue, setRenameValue] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletePromptTarget, setDeletePromptTarget] = useState<WorkbenchPromptSummary | null>(null);
   const [isDeletingPrompt, setIsDeletingPrompt] = useState(false);
@@ -212,9 +212,9 @@ export function WorkbenchPage() {
   const [isSharingPrompt, setIsSharingPrompt] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [customTool, setCustomTool] = useState({
-    name: '',
-    description: '',
-    schema: defaultSchema
+    name: "",
+    description: "",
+    schema: defaultSchema,
   });
   const [webSearchTool, setWebSearchTool] = useState<WebSearchToolForm>(() => defaultWebSearchToolForm());
   const [examples, setExamples] = useState<WorkbenchExample[]>([]);
@@ -222,20 +222,20 @@ export function WorkbenchPage() {
   const [evaluateComparisons, setEvaluateComparisons] = useState<EvaluateComparison[]>([]);
   const [exampleFormOpen, setExampleFormOpen] = useState(false);
   const [exampleValues, setExampleValues] = useState<Record<string, string>>({});
-  const [exampleIdealOutput, setExampleIdealOutput] = useState('');
-  const [exampleAdditionalContext, setExampleAdditionalContext] = useState('');
+  const [exampleIdealOutput, setExampleIdealOutput] = useState("");
+  const [exampleAdditionalContext, setExampleAdditionalContext] = useState("");
   const [exampleContextOpen, setExampleContextOpen] = useState(false);
   const [editingExampleId, setEditingExampleId] = useState<string | null>(null);
   const [isGeneratingExample, setIsGeneratingExample] = useState(false);
   const [improveOpen, setImproveOpen] = useState(false);
-  const [improveFeedback, setImproveFeedback] = useState('');
+  const [improveFeedback, setImproveFeedback] = useState("");
   const [improveThinkingEnabled, setImproveThinkingEnabled] = useState(false);
   const [isImproving, setIsImproving] = useState(false);
   const [promptGeneratorOpen, setPromptGeneratorOpen] = useState(false);
-  const [promptGeneratorStep, setPromptGeneratorStep] = useState<GeneratePromptStep>('generate');
-  const [promptGeneratorTask, setPromptGeneratorTask] = useState('');
-  const [promptGeneratorOutput, setPromptGeneratorOutput] = useState('');
-  const [promptGeneratorConfirmAction, setPromptGeneratorConfirmAction] = useState<'close' | 'edit' | null>(null);
+  const [promptGeneratorStep, setPromptGeneratorStep] = useState<GeneratePromptStep>("generate");
+  const [promptGeneratorTask, setPromptGeneratorTask] = useState("");
+  const [promptGeneratorOutput, setPromptGeneratorOutput] = useState("");
+  const [promptGeneratorConfirmAction, setPromptGeneratorConfirmAction] = useState<"close" | "edit" | null>(null);
   const [promptGeneratorExamplesExpanded, setPromptGeneratorExamplesExpanded] = useState(false);
   const [promptGeneratorError, setPromptGeneratorError] = useState<string | null>(null);
   const [promptGeneratorThinkingEnabled, setPromptGeneratorThinkingEnabled] = useState(false);
@@ -260,19 +260,21 @@ export function WorkbenchPage() {
   const hasPromptText = hasRunnableMessage(draft);
   const hasVariables = variables.length > 0;
   const canEvaluate = hasVariables && draft.tools.length === 0;
-  const evaluateUnavailableReason = 'Run a prompt with at least one variable and no tools to use ‘Evaluate’.';
+  const evaluateUnavailableReason = "Run a prompt with at least one variable and no tools to use ‘Evaluate’.";
   const canRun = Boolean(orgUuid) && hasPromptText && !isLoading;
   const hasMissingVariableValues = variables.some((name) => !variableValues[name]?.trim());
   const canRunWithVariables = canRun && !hasMissingVariableValues;
   const currentDraftKey = prompt ? workbenchDraftAutosaveKey(prompt.id, draft) : null;
   const hasUnsavedChanges = Boolean(prompt && latestRevisionDraftKeyRef.current !== currentDraftKey);
-  const canRunAllEvaluations = Boolean(orgUuid) && hasPromptText && evaluateRows.length > 0 && !isLoading && !hasUnsavedChanges;
-  const canAddPrefillResponse = hasPromptText && variables.length === 0 && draft.messages[draft.messages.length - 1]?.role !== 'assistant';
-  const canSaveCurrentRevision = Boolean(orgUuid && prompt && hasUnsavedChanges && saveStatus !== 'Saving');
+  const canRunAllEvaluations =
+    Boolean(orgUuid) && hasPromptText && evaluateRows.length > 0 && !isLoading && !hasUnsavedChanges;
+  const canAddPrefillResponse =
+    hasPromptText && variables.length === 0 && draft.messages[draft.messages.length - 1]?.role !== "assistant";
+  const canSaveCurrentRevision = Boolean(orgUuid && prompt && hasUnsavedChanges && saveStatus !== "Saving");
   const isPromptReadOnly = draft.is_latest === false;
   const promptGeneratorWarning = useMemo(
     () => workbenchPromptGeneratorWarning(account, orgUuid, prepaidCreditAmount),
-    [account, orgUuid, prepaidCreditAmount]
+    [account, orgUuid, prepaidCreditAmount],
   );
   const nextRevisionLabel = `v${Math.max(2, promptRevisionCount + 1)}`;
   const visiblePromptList = useMemo(() => {
@@ -291,87 +293,88 @@ export function WorkbenchPage() {
       return `${title} ${item.id}`.toLowerCase().includes(query);
     });
   }, [account, prompt?.id, promptList, promptOnlyMine, promptSearch, promptTitle]);
-  const saveMeta = saveStatus.startsWith('Saved ')
-    ? `Last saved ${saveStatus.slice('Saved '.length)}`
-    : saveStatus === 'Saved'
+  const saveMeta = saveStatus.startsWith("Saved ")
+    ? `Last saved ${saveStatus.slice("Saved ".length)}`
+    : saveStatus === "Saved"
       ? savedPromptMeta(prompt, draft)
       : saveStatus;
   const showResponseCreatePrompt = useMemo(() => isBlankWorkbenchDraft(draft), [draft]);
 
-  const applyPromptState = useCallback((
-    detail: WorkbenchPromptDetail,
-    nextDraft: WorkbenchRevision,
-    nextDraftVersion?: unknown,
-    options: { markSaved?: boolean; latestSavedDraft?: WorkbenchRevision } = {}
-  ) => {
-    if (options.markSaved !== false) {
-      lastSavedDraftKeyRef.current = workbenchDraftAutosaveKey(detail.id, nextDraft);
-    }
-    const latestSavedDraft = options.latestSavedDraft ?? normalizeRevision(detail.latest_revision, nextDraft.model_name);
-    latestRevisionDraftKeyRef.current = workbenchDraftAutosaveKey(
-      detail.id,
-      latestSavedDraft
-    );
-    activePromptIdRef.current = detail.id;
-    setPrompt(detail);
-    setPromptName(detail.name?.trim() || 'Untitled');
-    setDraft(nextDraft);
-    setDraftVersion(nextDraftVersion);
-    const nextVariables = extractVariables(nextDraft);
-    setPromptRevisionCount(1);
-    const routeWantsEvaluate = currentRouteTab() === 'evaluate';
-    const nextMode = routeWantsEvaluate && canEvaluateRevision(nextDraft) ? 'evaluate' : 'prompt';
-    setActiveMode(nextMode);
-    if (routeWantsEvaluate && nextMode === 'prompt') {
-      syncWorkbenchTabUrl('prompt', 'replace');
-    }
-    setSystemOpen(Boolean(nextDraft.system_prompt?.trim()));
-    setActiveDrawer(null);
-    setToolForm(null);
-    setExampleFormOpen(false);
-    setExamples(workbenchExamplesFromPromptDetail(detail, nextVariables));
-    setEvaluateRows([]);
-    setEvaluateComparisons([]);
-    setExampleValues({});
-    setExampleIdealOutput('');
-    setExampleAdditionalContext('');
-    setExampleContextOpen(false);
-    setEditingExampleId(null);
-    setIsGeneratingExample(false);
-    setImproveOpen(false);
-    setImproveFeedback('');
-    setImproveThinkingEnabled(false);
-    setPromptGeneratorOpen(false);
-    setPromptGeneratorStep('generate');
-    setPromptGeneratorTask('');
-    setPromptGeneratorOutput('');
-    setPromptGeneratorExamplesExpanded(false);
-    setPromptGeneratorError(null);
-    setIsGeneratingPrompt(false);
-    setUploadingMessageIndex(null);
-    setUploadErrorByMessage({});
-    setPromptMenuOpen(false);
-    setPromptPickerOpen(false);
-    setPromptSearch('');
-    setPromptOnlyMine(false);
-    setCodeOpen(false);
-    setDeleteConfirmOpen(false);
-    setDeletePromptTarget(null);
-    setShareOpen(false);
-    setShareError(null);
-    setResponseTab('preview');
-    setResponseText('');
-    setRunError(null);
-    setStreamEvents([]);
-    setLastRunRequest(null);
-    setVariableValues({});
-    setVariableGenerationLogic(stringValue(detail.kv_store?.test_case_generation_logic));
-    setVariableGenerationLogicOpen(false);
-    setIsGeneratingVariableLogic(false);
-    setCustomTool({ name: '', description: '', schema: defaultSchema });
-    setWebSearchTool(defaultWebSearchToolForm());
-    setSaveStatus('Saved');
-  }, []);
+  const applyPromptState = useCallback(
+    (
+      detail: WorkbenchPromptDetail,
+      nextDraft: WorkbenchRevision,
+      nextDraftVersion?: unknown,
+      options: { markSaved?: boolean; latestSavedDraft?: WorkbenchRevision } = {},
+    ) => {
+      if (options.markSaved !== false) {
+        lastSavedDraftKeyRef.current = workbenchDraftAutosaveKey(detail.id, nextDraft);
+      }
+      const latestSavedDraft =
+        options.latestSavedDraft ?? normalizeRevision(detail.latest_revision, nextDraft.model_name);
+      latestRevisionDraftKeyRef.current = workbenchDraftAutosaveKey(detail.id, latestSavedDraft);
+      activePromptIdRef.current = detail.id;
+      setPrompt(detail);
+      setPromptName(detail.name?.trim() || "Untitled");
+      setDraft(nextDraft);
+      setDraftVersion(nextDraftVersion);
+      const nextVariables = extractVariables(nextDraft);
+      setPromptRevisionCount(1);
+      const routeWantsEvaluate = currentRouteTab() === "evaluate";
+      const nextMode = routeWantsEvaluate && canEvaluateRevision(nextDraft) ? "evaluate" : "prompt";
+      setActiveMode(nextMode);
+      if (routeWantsEvaluate && nextMode === "prompt") {
+        syncWorkbenchTabUrl("prompt", "replace");
+      }
+      setSystemOpen(Boolean(nextDraft.system_prompt?.trim()));
+      setActiveDrawer(null);
+      setToolForm(null);
+      setExampleFormOpen(false);
+      setExamples(workbenchExamplesFromPromptDetail(detail, nextVariables));
+      setEvaluateRows([]);
+      setEvaluateComparisons([]);
+      setExampleValues({});
+      setExampleIdealOutput("");
+      setExampleAdditionalContext("");
+      setExampleContextOpen(false);
+      setEditingExampleId(null);
+      setIsGeneratingExample(false);
+      setImproveOpen(false);
+      setImproveFeedback("");
+      setImproveThinkingEnabled(false);
+      setPromptGeneratorOpen(false);
+      setPromptGeneratorStep("generate");
+      setPromptGeneratorTask("");
+      setPromptGeneratorOutput("");
+      setPromptGeneratorExamplesExpanded(false);
+      setPromptGeneratorError(null);
+      setIsGeneratingPrompt(false);
+      setUploadingMessageIndex(null);
+      setUploadErrorByMessage({});
+      setPromptMenuOpen(false);
+      setPromptPickerOpen(false);
+      setPromptSearch("");
+      setPromptOnlyMine(false);
+      setCodeOpen(false);
+      setDeleteConfirmOpen(false);
+      setDeletePromptTarget(null);
+      setShareOpen(false);
+      setShareError(null);
+      setResponseTab("preview");
+      setResponseText("");
+      setRunError(null);
+      setStreamEvents([]);
+      setLastRunRequest(null);
+      setVariableValues({});
+      setVariableGenerationLogic(stringValue(detail.kv_store?.test_case_generation_logic));
+      setVariableGenerationLogicOpen(false);
+      setIsGeneratingVariableLogic(false);
+      setCustomTool({ name: "", description: "", schema: defaultSchema });
+      setWebSearchTool(defaultWebSearchToolForm());
+      setSaveStatus("Saved");
+    },
+    [],
+  );
 
   const handlePromptPickerOpenChange = useCallback((open: boolean) => {
     setPromptPickerOpen(open);
@@ -387,11 +390,11 @@ export function WorkbenchPage() {
     activePromptIdRef.current = null;
     setLoadError(null);
     setPrompt(null);
-    setPromptName('Untitled');
+    setPromptName("Untitled");
     setDraft(nextDraft);
     setDraftVersion(undefined);
     setPromptRevisionCount(1);
-    setActiveMode('prompt');
+    setActiveMode("prompt");
     setSystemOpen(false);
     setActiveDrawer(null);
     setToolForm(null);
@@ -400,19 +403,19 @@ export function WorkbenchPage() {
     setEvaluateRows([]);
     setEvaluateComparisons([]);
     setExampleValues({});
-    setExampleIdealOutput('');
-    setExampleAdditionalContext('');
+    setExampleIdealOutput("");
+    setExampleAdditionalContext("");
     setExampleContextOpen(false);
     setEditingExampleId(null);
     setIsGeneratingExample(false);
     setImproveOpen(false);
-    setImproveFeedback('');
+    setImproveFeedback("");
     setImproveThinkingEnabled(false);
     setIsImproving(false);
     setPromptGeneratorOpen(false);
-    setPromptGeneratorStep('generate');
-    setPromptGeneratorTask('');
-    setPromptGeneratorOutput('');
+    setPromptGeneratorStep("generate");
+    setPromptGeneratorTask("");
+    setPromptGeneratorOutput("");
     setPromptGeneratorExamplesExpanded(false);
     setPromptGeneratorError(null);
     setIsGeneratingPrompt(false);
@@ -420,7 +423,7 @@ export function WorkbenchPage() {
     setUploadErrorByMessage({});
     setPromptMenuOpen(false);
     setPromptPickerOpen(false);
-    setPromptSearch('');
+    setPromptSearch("");
     setPromptOnlyMine(false);
     setCodeOpen(false);
     setRenameOpen(false);
@@ -428,18 +431,18 @@ export function WorkbenchPage() {
     setDeletePromptTarget(null);
     setShareOpen(false);
     setShareError(null);
-    setResponseTab('preview');
-    setResponseText('');
+    setResponseTab("preview");
+    setResponseText("");
     setRunError(null);
     setStreamEvents([]);
     setLastRunRequest(null);
     setVariableValues({});
-    setVariableGenerationLogic('');
+    setVariableGenerationLogic("");
     setVariableGenerationLogicOpen(false);
     setIsGeneratingVariableLogic(false);
-    setCustomTool({ name: '', description: '', schema: defaultSchema });
+    setCustomTool({ name: "", description: "", schema: defaultSchema });
     setWebSearchTool(defaultWebSearchToolForm());
-    setSaveStatus('Creating');
+    setSaveStatus("Creating");
   }, []);
 
   const openCodeModal = useCallback(() => {
@@ -453,8 +456,8 @@ export function WorkbenchPage() {
     }
     setPromptPickerOpen(false);
     setActiveDrawer(null);
-    setImproveFeedback('');
-    setImproveThinkingEnabled(thinkingMode(draft.thinking) !== 'disabled');
+    setImproveFeedback("");
+    setImproveThinkingEnabled(thinkingMode(draft.thinking) !== "disabled");
     setImproveOpen(true);
   }, [draft.thinking, isPromptReadOnly]);
 
@@ -464,12 +467,12 @@ export function WorkbenchPage() {
     }
     setPromptPickerOpen(false);
     setActiveDrawer(null);
-    setPromptGeneratorStep('generate');
-    setPromptGeneratorTask('');
-    setPromptGeneratorOutput('');
+    setPromptGeneratorStep("generate");
+    setPromptGeneratorTask("");
+    setPromptGeneratorOutput("");
     setPromptGeneratorExamplesExpanded(false);
     setPromptGeneratorError(null);
-    setPromptGeneratorThinkingEnabled(thinkingMode(draft.thinking) !== 'disabled');
+    setPromptGeneratorThinkingEnabled(thinkingMode(draft.thinking) !== "disabled");
     setPromptGeneratorOpen(true);
   }, [draft.thinking, isPromptReadOnly, promptGeneratorWarning]);
 
@@ -482,7 +485,7 @@ export function WorkbenchPage() {
     }
     if (!orgUuid) {
       setIsLoading(false);
-      setLoadError('No organization is available for Workbench.');
+      setLoadError("No organization is available for Workbench.");
       return;
     }
 
@@ -492,7 +495,7 @@ export function WorkbenchPage() {
       const routeIsWorkbenchIndex = currentRouteIsWorkbenchIndex();
       const [modelsResponse, availablePrompts] = await Promise.all([
         getWorkbenchModels(orgUuid),
-        routeIsWorkbenchIndex ? listWorkbenchPrompts(orgUuid) : listWorkspacePrompts(orgUuid, activeWorkspaceId)
+        routeIsWorkbenchIndex ? listWorkbenchPrompts(orgUuid) : listWorkspacePrompts(orgUuid, activeWorkspaceId),
       ]);
       if (!isCurrentLoad()) {
         return;
@@ -511,10 +514,10 @@ export function WorkbenchPage() {
         const mostRecentPrompt = mostRecentPromptForWorkbenchEntry(summaries, activeWorkspaceId, account);
         if (mostRecentPrompt) {
           promptId = mostRecentPrompt.id;
-          syncWorkbenchPromptUrl(promptId, 'replace', { resetTab: true });
+          syncWorkbenchPromptUrl(promptId, "replace", { resetTab: true });
         } else {
           routeRequestsNewPrompt = true;
-          syncWorkbenchNewUrl('replace');
+          syncWorkbenchNewUrl("replace");
         }
       } else if (!promptId && !routeRequestsNewPrompt) {
         promptId = summaries[0]?.id;
@@ -530,21 +533,18 @@ export function WorkbenchPage() {
           return;
         }
         summaries = mergePromptSummaries(summaries, detail);
-        syncWorkbenchPromptUrl(promptId, 'replace', { resetTab: true });
+        syncWorkbenchPromptUrl(promptId, "replace", { resetTab: true });
         normalizedDraft = normalizeNewPromptRevision(detail.latest_revision, nextDefaultModelName);
       } else {
         detail = await getWorkbenchPrompt(orgUuid, promptId);
         if (!routePromptId && promptId) {
-          syncWorkbenchPromptUrl(promptId, 'replace');
+          syncWorkbenchPromptUrl(promptId, "replace");
         }
 
-        const draftKV = await getWorkbenchKV(orgUuid, promptId, 'draft_revision').catch(() => null);
+        const draftKV = await getWorkbenchKV(orgUuid, promptId, "draft_revision").catch(() => null);
         draftVersion = draftKV?.version;
         const parsedDraft = parseDraftRevision(draftKV?.value) ?? parseDraftRevision(detail.kv_store?.draft_revision);
-        normalizedDraft = normalizeRevision(
-          parsedDraft ?? detail.latest_revision,
-          nextDefaultModelName
-        );
+        normalizedDraft = normalizeRevision(parsedDraft ?? detail.latest_revision, nextDefaultModelName);
         storedEvaluations = await listWorkbenchEvaluations(orgUuid, normalizedDraft.id).catch(() => []);
       }
       if (!isCurrentLoad()) {
@@ -555,7 +555,7 @@ export function WorkbenchPage() {
         detail,
         normalizedDraft,
         draftVersion,
-        routeRequestsNewPrompt ? { latestSavedDraft: normalizedDraft } : undefined
+        routeRequestsNewPrompt ? { latestSavedDraft: normalizedDraft } : undefined,
       );
       setEvaluateRows(evaluateRowsFromEvaluations(storedEvaluations, extractVariables(normalizedDraft)));
       setPromptList(summaries);
@@ -608,26 +608,26 @@ export function WorkbenchPage() {
     }
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
-      event.returnValue = 'Changes made will not be saved.';
+      event.returnValue = "Changes made will not be saved.";
       return event.returnValue;
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isGeneratingPrompt]);
 
   useEffect(() => {
     setVariableValues((current) => {
       const next: Record<string, string> = {};
       variables.forEach((name) => {
-        next[name] = current[name] ?? '';
+        next[name] = current[name] ?? "";
       });
       return next;
     });
     setEvaluateRows((current) =>
       current.map((row) => ({
         ...row,
-        values: Object.fromEntries(variables.map((name) => [name, row.values[name] ?? '']))
-      }))
+        values: Object.fromEntries(variables.map((name) => [name, row.values[name] ?? ""])),
+      })),
     );
   }, [variables]);
 
@@ -635,7 +635,7 @@ export function WorkbenchPage() {
     setExampleValues((current) => {
       const next: Record<string, string> = {};
       variables.forEach((name) => {
-        next[name] = current[name] ?? '';
+        next[name] = current[name] ?? "";
       });
       return next;
     });
@@ -645,20 +645,23 @@ export function WorkbenchPage() {
     if (isLoading) {
       return;
     }
-    if (activeMode === 'evaluate' && !canEvaluate) {
-      setActiveMode('prompt');
-      syncWorkbenchTabUrl('prompt', 'replace');
+    if (activeMode === "evaluate" && !canEvaluate) {
+      setActiveMode("prompt");
+      syncWorkbenchTabUrl("prompt", "replace");
     }
   }, [activeMode, canEvaluate, isLoading]);
 
-  const changeMode = useCallback((nextMode: string) => {
-    if (nextMode === 'evaluate' && !canEvaluate) {
-      return;
-    }
-    const normalizedMode: WorkbenchMode = nextMode === 'evaluate' ? 'evaluate' : 'prompt';
-    setActiveMode(normalizedMode);
-    syncWorkbenchTabUrl(normalizedMode, 'push');
-  }, [canEvaluate]);
+  const changeMode = useCallback(
+    (nextMode: string) => {
+      if (nextMode === "evaluate" && !canEvaluate) {
+        return;
+      }
+      const normalizedMode: WorkbenchMode = nextMode === "evaluate" ? "evaluate" : "prompt";
+      setActiveMode(normalizedMode);
+      syncWorkbenchTabUrl(normalizedMode, "push");
+    },
+    [canEvaluate],
+  );
 
   useEffect(() => {
     if (!prompt || !orgUuid || isLoading) {
@@ -669,10 +672,10 @@ export function WorkbenchPage() {
       return;
     }
     window.clearTimeout(saveTimerRef.current);
-    setSaveStatus('Unsaved');
+    setSaveStatus("Unsaved");
     saveTimerRef.current = window.setTimeout(() => {
       const payload = buildRevisionPayload(draft, { includeEmptyMessages: true });
-      void setWorkbenchKV(orgUuid, prompt.id, 'draft_revision', JSON.stringify(payload), draftVersion)
+      void setWorkbenchKV(orgUuid, prompt.id, "draft_revision", JSON.stringify(payload), draftVersion)
         .then((response) => {
           if (activePromptIdRef.current !== prompt.id) {
             return;
@@ -683,7 +686,7 @@ export function WorkbenchPage() {
         })
         .catch(() => {
           if (activePromptIdRef.current === prompt.id) {
-            setSaveStatus('Save failed');
+            setSaveStatus("Save failed");
           }
         });
     }, 900);
@@ -698,7 +701,7 @@ export function WorkbenchPage() {
   const setMessageText = useCallback((index: number, text: string) => {
     setDraft((current) => {
       const messages = current.messages.map((message, messageIndex) =>
-        messageIndex === index ? { ...message, content: replaceMessageText(message.content, text) } : message
+        messageIndex === index ? { ...message, content: replaceMessageText(message.content, text) } : message,
       );
       return { ...current, messages };
     });
@@ -724,8 +727,8 @@ export function WorkbenchPage() {
         messages: current.messages.map((message, index) =>
           index === messageIndex
             ? { ...message, content: appendFileBlockToMessageContent(message.content, uploaded) }
-            : message
-        )
+            : message,
+        ),
       }));
     } catch (error) {
       setUploadErrorByMessage((current) => ({ ...current, [messageIndex]: errorMessage(error) }));
@@ -740,8 +743,8 @@ export function WorkbenchPage() {
       messages: current.messages.map((message, index) =>
         index === messageIndex
           ? { ...message, content: appendUrlBlockToMessageContent(message.content, kind, url) }
-          : message
-      )
+          : message,
+      ),
     }));
   }, []);
 
@@ -758,8 +761,8 @@ export function WorkbenchPage() {
         messages: current.messages.map((message, index) =>
           index === messageIndex
             ? { ...message, content: replaceFileBlockInMessageContent(message.content, blockIndex, uploaded) }
-            : message
-        )
+            : message,
+        ),
       }));
     } catch (error) {
       setUploadErrorByMessage((current) => ({ ...current, [messageIndex]: errorMessage(error) }));
@@ -774,8 +777,8 @@ export function WorkbenchPage() {
       messages: current.messages.map((message, index) =>
         index === messageIndex
           ? { ...message, content: removeContentBlockFromMessageContent(message.content, blockIndex) }
-          : message
-      )
+          : message,
+      ),
     }));
   }, []);
 
@@ -784,16 +787,16 @@ export function WorkbenchPage() {
       ...current,
       messages: [
         ...current.messages,
-        { role: 'assistant', content: [{ type: 'text', text: '' }] },
-        { role: 'human', content: [{ type: 'text', text: '' }] }
-      ]
+        { role: "assistant", content: [{ type: "text", text: "" }] },
+        { role: "human", content: [{ type: "text", text: "" }] },
+      ],
     }));
   }, []);
 
   const addPrefillResponse = useCallback(() => {
     setDraft((current) => ({
       ...current,
-      messages: [...current.messages, { role: 'assistant', content: [{ type: 'text', text: '' }] }]
+      messages: [...current.messages, { role: "assistant", content: [{ type: "text", text: "" }] }],
     }));
   }, []);
 
@@ -805,7 +808,7 @@ export function WorkbenchPage() {
       const [startIndex, endIndex] = messageRemovalRange(current.messages, index);
       return {
         ...current,
-        messages: current.messages.filter((_, messageIndex) => messageIndex < startIndex || messageIndex > endIndex)
+        messages: current.messages.filter((_, messageIndex) => messageIndex < startIndex || messageIndex > endIndex),
       };
     });
     setUploadingMessageIndex(null);
@@ -813,10 +816,10 @@ export function WorkbenchPage() {
   }, []);
 
   const saveCurrentRevision = useCallback(async () => {
-    if (!orgUuid || !prompt || !hasUnsavedChanges || saveStatus === 'Saving') {
+    if (!orgUuid || !prompt || !hasUnsavedChanges || saveStatus === "Saving") {
       return;
     }
-    setSaveStatus('Saving');
+    setSaveStatus("Saving");
     const payload = buildRevisionPayload(draft, { includeEmptyMessages: true, newRevisionId: true });
     try {
       const saved = await createWorkbenchRevision(orgUuid, prompt.id, payload);
@@ -824,7 +827,11 @@ export function WorkbenchPage() {
       lastSavedDraftKeyRef.current = workbenchDraftAutosaveKey(prompt.id, normalizedSaved);
       latestRevisionDraftKeyRef.current = workbenchDraftAutosaveKey(prompt.id, normalizedSaved);
       setDraft(normalizedSaved);
-      setPrompt((current) => (current ? { ...current, latest_revision: normalizedSaved, updated_at: saved.created_at ?? current.updated_at } : current));
+      setPrompt((current) =>
+        current
+          ? { ...current, latest_revision: normalizedSaved, updated_at: saved.created_at ?? current.updated_at }
+          : current,
+      );
       setPromptRevisionCount((current) => Math.max(2, current + 1));
       setSaveStatus(`Saved ${shortTime()}`);
       setDraftVersion(undefined);
@@ -848,9 +855,9 @@ export function WorkbenchPage() {
             workspaceId: activeWorkspaceId,
             body: {
               message_content: messageContent,
-              model: revision.model_name
+              model: revision.model_name,
             },
-            signal: new AbortController().signal
+            signal: new AbortController().signal,
           });
           const generatedTitle = result.completion?.trim();
           if (generatedTitle) {
@@ -867,8 +874,13 @@ export function WorkbenchPage() {
         const updatedPrompt = { ...targetPrompt, ...updated, name: updatedName };
         setPrompt((current) =>
           current?.id === targetPrompt.id
-            ? { ...current, ...updated, name: updatedName, latest_revision: current.latest_revision ?? updated.latest_revision }
-            : current
+            ? {
+                ...current,
+                ...updated,
+                name: updatedName,
+                latest_revision: current.latest_revision ?? updated.latest_revision,
+              }
+            : current,
         );
         setPromptName(updatedName);
         setPromptList((current) => mergePromptSummaries(current, updatedPrompt));
@@ -876,7 +888,7 @@ export function WorkbenchPage() {
         // Title generation should not block running or opening a generated prompt.
       }
     },
-    [activeWorkspaceId, orgUuid]
+    [activeWorkspaceId, orgUuid],
   );
 
   const discardDraftChanges = useCallback(async () => {
@@ -891,31 +903,31 @@ export function WorkbenchPage() {
     latestRevisionDraftKeyRef.current = latestDraftKey;
     setDraft(latestDraft);
     setDraftVersion(undefined);
-    setVariableValues(Object.fromEntries(latestVariables.map((name) => [name, ''])));
+    setVariableValues(Object.fromEntries(latestVariables.map((name) => [name, ""])));
     setEvaluateComparisons([]);
-    setResponseTab('preview');
-    setResponseText('');
+    setResponseTab("preview");
+    setResponseText("");
     setRunError(null);
     setStreamEvents([]);
     setLastRunRequest(null);
-    if (activeMode === 'evaluate' && !canEvaluateRevision(latestDraft)) {
-      setActiveMode('prompt');
-      syncWorkbenchTabUrl('prompt', 'replace');
+    if (activeMode === "evaluate" && !canEvaluateRevision(latestDraft)) {
+      setActiveMode("prompt");
+      syncWorkbenchTabUrl("prompt", "replace");
     }
-    setSaveStatus('Saved');
+    setSaveStatus("Saved");
     const storedEvaluations = await listWorkbenchEvaluations(orgUuid, latestDraft.id).catch(() => []);
     setEvaluateRows(evaluateRowsFromEvaluations(storedEvaluations, latestVariables));
     try {
       const response = await setWorkbenchKV(
         orgUuid,
         prompt.id,
-        'draft_revision',
+        "draft_revision",
         JSON.stringify(buildRevisionPayload(latestDraft, { includeEmptyMessages: true })),
-        draftVersion
+        draftVersion,
       );
       setDraftVersion(response.version);
     } catch {
-      setSaveStatus('Save failed');
+      setSaveStatus("Save failed");
     }
   }, [activeMode, draft.model_name, draftVersion, orgUuid, prompt]);
 
@@ -925,11 +937,11 @@ export function WorkbenchPage() {
       return;
     }
     if (!orgUuid || !prompt) {
-      setRunError('No organization or prompt is available.');
+      setRunError("No organization or prompt is available.");
       return;
     }
     if (hasMissingVariableValues) {
-      setActiveDrawer('variables');
+      setActiveDrawer("variables");
       setToolForm(null);
       return;
     }
@@ -940,10 +952,10 @@ export function WorkbenchPage() {
     runControllerRef.current = controller;
     setIsRunning(true);
     setRunError(null);
-    setResponseText('');
+    setResponseText("");
     setStreamEvents([]);
     setLastRunRequest(submittedRevision);
-    setResponseTab('preview');
+    setResponseTab("preview");
 
     try {
       if (shouldGenerateTitle) {
@@ -959,11 +971,11 @@ export function WorkbenchPage() {
             workspaceId: activeWorkspaceId,
             body: submittedRevision,
             signal: controller.signal,
-            onEvent
-          })
+            onEvent,
+          }),
       });
     } catch (error) {
-      if ((error as { name?: string }).name !== 'AbortError') {
+      if ((error as { name?: string }).name !== "AbortError") {
         setRunError(errorMessage(error));
       }
     } finally {
@@ -972,13 +984,24 @@ export function WorkbenchPage() {
       const [revisionsResult] = await Promise.allSettled([
         listWorkbenchRevisions(orgUuid, prompt.id, true),
         listWorkbenchEvaluations(orgUuid, submittedRevision.id),
-        getPrepaidCredits(orgUuid)
+        getPrepaidCredits(orgUuid),
       ]);
-      if (revisionsResult.status === 'fulfilled' && revisionsResult.value.length > 0) {
+      if (revisionsResult.status === "fulfilled" && revisionsResult.value.length > 0) {
         setPromptList((current) => mergePromptSummaries(current, prompt));
       }
     }
-  }, [activeWorkspaceId, autoTitlePrompt, draft, examples, hasMissingVariableValues, isPromptReadOnly, isRunning, orgUuid, prompt, variableValues]);
+  }, [
+    activeWorkspaceId,
+    autoTitlePrompt,
+    draft,
+    examples,
+    hasMissingVariableValues,
+    isPromptReadOnly,
+    isRunning,
+    orgUuid,
+    prompt,
+    variableValues,
+  ]);
 
   const runEvaluateRows = useCallback(async () => {
     if (isRunning) {
@@ -995,15 +1018,15 @@ export function WorkbenchPage() {
     runControllerRef.current = controller;
     setIsRunning(true);
     setRunError(null);
-    setResponseText('');
+    setResponseText("");
     setStreamEvents([]);
-    setResponseTab('preview');
+    setResponseTab("preview");
     setEvaluateRows((current) =>
       current.map((row) =>
         rowsToRun.some((candidate) => candidate.id === row.id)
           ? {
               ...row,
-              modelOutput: '',
+              modelOutput: "",
               runError: null,
               isRunning: true,
               comparisonOutputs: {
@@ -1013,16 +1036,16 @@ export function WorkbenchPage() {
                     comparison.id,
                     {
                       ...(row.comparisonOutputs[comparison.id] ?? emptyComparisonOutput()),
-                      modelOutput: '',
+                      modelOutput: "",
                       runError: null,
-                      isRunning: true
-                    }
-                  ])
-                )
-              }
+                      isRunning: true,
+                    },
+                  ]),
+                ),
+              },
             }
-          : row
-      )
+          : row,
+      ),
     );
 
     try {
@@ -1032,7 +1055,7 @@ export function WorkbenchPage() {
         }
         let rowAborted = false;
         const submittedRevision = buildRunRevisionPayload(draft, row.values, examples);
-        let rowOutput = '';
+        let rowOutput = "";
         setLastRunRequest(submittedRevision);
         try {
           rowOutput = await streamSmoothedWorkbenchText({
@@ -1040,7 +1063,7 @@ export function WorkbenchPage() {
             onEvent: (event) => setStreamEvents((current) => [...current, event]),
             onDisplayText: (displayText) => {
               setEvaluateRows((current) =>
-                current.map((item) => (item.id === row.id ? { ...item, modelOutput: displayText } : item))
+                current.map((item) => (item.id === row.id ? { ...item, modelOutput: displayText } : item)),
               );
             },
             stream: (onEvent) =>
@@ -1049,23 +1072,23 @@ export function WorkbenchPage() {
                 workspaceId: activeWorkspaceId,
                 body: submittedRevision,
                 signal: controller.signal,
-                onEvent
-              })
+                onEvent,
+              }),
           });
           if (rowOutput && row.evaluationId) {
             await saveWorkbenchEvaluationCompletion(orgUuid, row.evaluationId, rowOutput).catch(() => undefined);
           }
         } catch (error) {
-          if ((error as { name?: string }).name === 'AbortError') {
+          if ((error as { name?: string }).name === "AbortError") {
             rowAborted = true;
             break;
           }
           setEvaluateRows((current) =>
-            current.map((item) => (item.id === row.id ? { ...item, runError: errorMessage(error) } : item))
+            current.map((item) => (item.id === row.id ? { ...item, runError: errorMessage(error) } : item)),
           );
         } finally {
           setEvaluateRows((current) =>
-            current.map((item) => (item.id === row.id ? { ...item, isRunning: false } : item))
+            current.map((item) => (item.id === row.id ? { ...item, isRunning: false } : item)),
           );
         }
 
@@ -1078,7 +1101,7 @@ export function WorkbenchPage() {
             break;
           }
           const submittedComparison = buildRunRevisionPayload(comparison.revision, row.values, examples);
-          let comparisonOutput = '';
+          let comparisonOutput = "";
           setLastRunRequest(submittedComparison);
           try {
             comparisonOutput = await streamSmoothedWorkbenchText({
@@ -1099,11 +1122,11 @@ export function WorkbenchPage() {
                           ...existing,
                           modelOutput: displayText,
                           runError: null,
-                          isRunning: true
-                        }
-                      }
+                          isRunning: true,
+                        },
+                      },
                     };
-                  })
+                  }),
                 );
               },
               stream: (onEvent) =>
@@ -1112,8 +1135,8 @@ export function WorkbenchPage() {
                   workspaceId: activeWorkspaceId,
                   body: submittedComparison,
                   signal: controller.signal,
-                  onEvent
-                })
+                  onEvent,
+                }),
             });
             if (!comparisonOutput) {
               setEvaluateRows((current) =>
@@ -1127,15 +1150,15 @@ export function WorkbenchPage() {
                       ...item.comparisonOutputs,
                       [comparison.id]: {
                         ...(item.comparisonOutputs[comparison.id] ?? emptyComparisonOutput()),
-                        isRunning: false
-                      }
-                    }
+                        isRunning: false,
+                      },
+                    },
                   };
-                })
+                }),
               );
             }
           } catch (error) {
-            if ((error as { name?: string }).name === 'AbortError') {
+            if ((error as { name?: string }).name === "AbortError") {
               break;
             }
             setEvaluateRows((current) =>
@@ -1149,11 +1172,11 @@ export function WorkbenchPage() {
                     ...item.comparisonOutputs,
                     [comparison.id]: {
                       ...(item.comparisonOutputs[comparison.id] ?? emptyComparisonOutput()),
-                      runError: errorMessage(error)
-                    }
-                  }
+                      runError: errorMessage(error),
+                    },
+                  },
                 };
-              })
+              }),
             );
           } finally {
             setEvaluateRows((current) =>
@@ -1167,11 +1190,11 @@ export function WorkbenchPage() {
                     ...item.comparisonOutputs,
                     [comparison.id]: {
                       ...(item.comparisonOutputs[comparison.id] ?? emptyComparisonOutput()),
-                      isRunning: false
-                    }
-                  }
+                      isRunning: false,
+                    },
+                  },
                 };
-              })
+              }),
             );
           }
         }
@@ -1186,25 +1209,35 @@ export function WorkbenchPage() {
           comparisonOutputs: Object.fromEntries(
             Object.entries(row.comparisonOutputs).map(([comparisonId, output]) => [
               comparisonId,
-              { ...output, isRunning: false }
-            ])
-          )
-        }))
+              { ...output, isRunning: false },
+            ]),
+          ),
+        })),
       );
       const [revisionsResult] = await Promise.allSettled([
         listWorkbenchRevisions(orgUuid, prompt.id, true),
         listWorkbenchEvaluations(orgUuid, draft.id),
-        getPrepaidCredits(orgUuid)
+        getPrepaidCredits(orgUuid),
       ]);
-      if (revisionsResult.status === 'fulfilled' && revisionsResult.value.length > 0) {
+      if (revisionsResult.status === "fulfilled" && revisionsResult.value.length > 0) {
         setPromptList((current) => mergePromptSummaries(current, prompt));
       }
     }
-  }, [activeWorkspaceId, draft, evaluateComparisons, evaluateRows, examples, hasUnsavedChanges, isRunning, orgUuid, prompt]);
+  }, [
+    activeWorkspaceId,
+    draft,
+    evaluateComparisons,
+    evaluateRows,
+    examples,
+    hasUnsavedChanges,
+    isRunning,
+    orgUuid,
+    prompt,
+  ]);
 
   useEffect(() => {
     const handleWorkbenchShortcut = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === "Escape") {
         if (promptMenuOpen || promptPickerOpen || activeDrawer) {
           event.preventDefault();
           setPromptMenuOpen(false);
@@ -1216,22 +1249,30 @@ export function WorkbenchPage() {
         return;
       }
 
-      if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey)) {
+      if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) {
         return;
       }
-      if (codeOpen || renameOpen || deleteConfirmOpen || shareOpen || improveOpen || promptPickerOpen || isCreatingPrompt) {
+      if (
+        codeOpen ||
+        renameOpen ||
+        deleteConfirmOpen ||
+        shareOpen ||
+        improveOpen ||
+        promptPickerOpen ||
+        isCreatingPrompt
+      ) {
         return;
       }
       event.preventDefault();
-      if (activeMode === 'evaluate') {
+      if (activeMode === "evaluate") {
         void runEvaluateRows();
       } else {
         void runPrompt();
       }
     };
 
-    window.addEventListener('keydown', handleWorkbenchShortcut);
-    return () => window.removeEventListener('keydown', handleWorkbenchShortcut);
+    window.addEventListener("keydown", handleWorkbenchShortcut);
+    return () => window.removeEventListener("keydown", handleWorkbenchShortcut);
   }, [
     activeDrawer,
     activeMode,
@@ -1244,7 +1285,7 @@ export function WorkbenchPage() {
     renameOpen,
     shareOpen,
     runEvaluateRows,
-    runPrompt
+    runPrompt,
   ]);
 
   const renamePrompt = useCallback(async () => {
@@ -1281,7 +1322,7 @@ export function WorkbenchPage() {
       setDeletePromptTarget(null);
       setPromptList((current) => current.filter((item) => item.id !== targetPrompt.id));
       if (targetPrompt.id === prompt?.id) {
-        syncWorkbenchIndexUrl('replace');
+        syncWorkbenchIndexUrl("replace");
         await loadWorkbench();
       } else {
         try {
@@ -1317,14 +1358,14 @@ export function WorkbenchPage() {
     runControllerRef.current = null;
     setIsRunning(false);
     resetCreatingPromptState(normalizeNewPromptRevision(undefined, defaultModelName));
-    syncWorkbenchNewUrl('push');
+    syncWorkbenchNewUrl("push");
     try {
       const created = await createWorkspacePrompt(orgUuid, activeWorkspaceId);
       if (!isCurrentCreation()) {
         return;
       }
       const normalizedDraft = normalizeNewPromptRevision(created.latest_revision, defaultModelName);
-      syncWorkbenchPromptUrl(created.id, 'replace', { resetTab: true });
+      syncWorkbenchPromptUrl(created.id, "replace", { resetTab: true });
       applyPromptState(created, normalizedDraft, undefined, { latestSavedDraft: normalizedDraft });
       try {
         const refreshedPrompts = await listWorkbenchPrompts(orgUuid);
@@ -1347,46 +1388,51 @@ export function WorkbenchPage() {
     }
   }, [activeWorkspaceId, applyPromptState, defaultModelName, orgUuid, resetCreatingPromptState]);
 
-  const selectPrompt = useCallback(async (item: WorkbenchPromptSummary) => {
-    setPromptPickerOpen(false);
-    if (!orgUuid) {
-      return;
-    }
-    const loadSeq = ++workbenchLoadSeqRef.current;
-    const isCurrentLoad = () => workbenchLoadSeqRef.current === loadSeq;
-    const detail = await getWorkbenchPrompt(orgUuid, item.id);
-    const draftKV = await getWorkbenchKV(orgUuid, item.id, 'draft_revision').catch(() => null);
-    const normalizedDraft = normalizeRevision(
-      parseDraftRevision(draftKV?.value) ?? parseDraftRevision(detail.kv_store?.draft_revision) ?? detail.latest_revision,
-      defaultModelName
-    );
-    const [storedEvaluations, revisions] = await Promise.all([
-      listWorkbenchEvaluations(orgUuid, normalizedDraft.id).catch(() => []),
-      listWorkbenchRevisions(orgUuid, item.id, true).catch(() => [])
-    ]);
-    if (!isCurrentLoad()) {
-      return;
-    }
-    syncWorkbenchPromptUrl(detail.id, 'push');
-    applyPromptState(detail, normalizedDraft, draftKV?.version);
-    setPromptRevisionCount(Math.max(1, revisions.length));
-    setEvaluateRows(evaluateRowsFromEvaluations(storedEvaluations, extractVariables(normalizedDraft)));
-  }, [applyPromptState, defaultModelName, orgUuid]);
+  const selectPrompt = useCallback(
+    async (item: WorkbenchPromptSummary) => {
+      setPromptPickerOpen(false);
+      if (!orgUuid) {
+        return;
+      }
+      const loadSeq = ++workbenchLoadSeqRef.current;
+      const isCurrentLoad = () => workbenchLoadSeqRef.current === loadSeq;
+      const detail = await getWorkbenchPrompt(orgUuid, item.id);
+      const draftKV = await getWorkbenchKV(orgUuid, item.id, "draft_revision").catch(() => null);
+      const normalizedDraft = normalizeRevision(
+        parseDraftRevision(draftKV?.value) ??
+          parseDraftRevision(detail.kv_store?.draft_revision) ??
+          detail.latest_revision,
+        defaultModelName,
+      );
+      const [storedEvaluations, revisions] = await Promise.all([
+        listWorkbenchEvaluations(orgUuid, normalizedDraft.id).catch(() => []),
+        listWorkbenchRevisions(orgUuid, item.id, true).catch(() => []),
+      ]);
+      if (!isCurrentLoad()) {
+        return;
+      }
+      syncWorkbenchPromptUrl(detail.id, "push");
+      applyPromptState(detail, normalizedDraft, draftKV?.version);
+      setPromptRevisionCount(Math.max(1, revisions.length));
+      setEvaluateRows(evaluateRowsFromEvaluations(storedEvaluations, extractVariables(normalizedDraft)));
+    },
+    [applyPromptState, defaultModelName, orgUuid],
+  );
 
   const copyPrompt = useCallback(async () => {
     if (!orgUuid || !prompt) {
       return;
     }
     setPromptMenuOpen(false);
-    setSaveStatus('Creating');
+    setSaveStatus("Creating");
     try {
       const savedSourceDraft = normalizeRevision(prompt.latest_revision, draft.model_name);
       const savedSourcePayload = buildRevisionPayload(savedSourceDraft, { includeEmptyMessages: true });
       const currentDraftPayload = buildRevisionPayload(draft, { includeEmptyMessages: true });
-      const copyName = prompt.name?.trim() ? `${prompt.name.trim()} copy` : '';
+      const copyName = prompt.name?.trim() ? `${prompt.name.trim()} copy` : "";
       const created = await createWorkspacePrompt(orgUuid, activeWorkspaceId, {
         name: copyName,
-        latest_revision: buildRevisionPayload(savedSourceDraft, { includeEmptyMessages: true, newRevisionId: true })
+        latest_revision: buildRevisionPayload(savedSourceDraft, { includeEmptyMessages: true, newRevisionId: true }),
       });
       const savedDraft = normalizeRevision(created.latest_revision ?? savedSourceDraft, draft.model_name);
       const copiedDraft = normalizeRevision(
@@ -1394,14 +1440,16 @@ export function WorkbenchPage() {
           ? savedDraft
           : {
               ...currentDraftPayload,
-              id: workbenchId('workbench-revision'),
+              id: workbenchId("workbench-revision"),
               created_at: new Date().toISOString(),
-              is_latest: true
+              is_latest: true,
             },
-        draft.model_name
+        draft.model_name,
       );
-      syncWorkbenchPromptUrl(created.id, 'push');
-      applyPromptState({ ...created, latest_revision: savedDraft }, copiedDraft, undefined, { latestSavedDraft: savedDraft });
+      syncWorkbenchPromptUrl(created.id, "push");
+      applyPromptState({ ...created, latest_revision: savedDraft }, copiedDraft, undefined, {
+        latestSavedDraft: savedDraft,
+      });
       try {
         setPromptList(await listWorkbenchPrompts(orgUuid));
       } catch {
@@ -1429,44 +1477,50 @@ export function WorkbenchPage() {
     }
   }, [orgUuid, prompt]);
 
-  const restoreRevision = useCallback(async (revisionId: string) => {
-    if (!orgUuid || !prompt) {
-      return;
-    }
-    setSaveStatus('Loading version');
-    try {
-      const restored = normalizeRevision(await getWorkbenchRevision(orgUuid, prompt.id, revisionId), draft.model_name);
-      const revisionVariables = extractVariables(restored);
-      const storedEvaluations = await listWorkbenchEvaluations(orgUuid, restored.id).catch(() => []);
-      lastSavedDraftKeyRef.current = null;
-      setDraft(restored);
-      setDraftVersion(undefined);
-      setVariableValues(Object.fromEntries(revisionVariables.map((name) => [name, ''])));
-      setEvaluateRows(evaluateRowsFromEvaluations(storedEvaluations, revisionVariables));
-      setEvaluateComparisons([]);
-      const nextMode = currentRouteTab() === 'evaluate' && canEvaluateRevision(restored) ? 'evaluate' : 'prompt';
-      setActiveMode(nextMode);
-      if (nextMode === 'prompt') {
-        syncWorkbenchTabUrl('prompt', 'replace');
+  const restoreRevision = useCallback(
+    async (revisionId: string) => {
+      if (!orgUuid || !prompt) {
+        return;
       }
-      setResponseTab('preview');
-      setResponseText('');
-      setRunError(null);
-      setStreamEvents([]);
-      setLastRunRequest(null);
-      setActiveDrawer(null);
-      setSaveStatus('Unsaved');
-    } catch (error) {
-      setSaveStatus(errorMessage(error));
-    }
-  }, [draft.model_name, orgUuid, prompt]);
+      setSaveStatus("Loading version");
+      try {
+        const restored = normalizeRevision(
+          await getWorkbenchRevision(orgUuid, prompt.id, revisionId),
+          draft.model_name,
+        );
+        const revisionVariables = extractVariables(restored);
+        const storedEvaluations = await listWorkbenchEvaluations(orgUuid, restored.id).catch(() => []);
+        lastSavedDraftKeyRef.current = null;
+        setDraft(restored);
+        setDraftVersion(undefined);
+        setVariableValues(Object.fromEntries(revisionVariables.map((name) => [name, ""])));
+        setEvaluateRows(evaluateRowsFromEvaluations(storedEvaluations, revisionVariables));
+        setEvaluateComparisons([]);
+        const nextMode = currentRouteTab() === "evaluate" && canEvaluateRevision(restored) ? "evaluate" : "prompt";
+        setActiveMode(nextMode);
+        if (nextMode === "prompt") {
+          syncWorkbenchTabUrl("prompt", "replace");
+        }
+        setResponseTab("preview");
+        setResponseText("");
+        setRunError(null);
+        setStreamEvents([]);
+        setLastRunRequest(null);
+        setActiveDrawer(null);
+        setSaveStatus("Unsaved");
+      } catch (error) {
+        setSaveStatus(errorMessage(error));
+      }
+    },
+    [draft.model_name, orgUuid, prompt],
+  );
 
   const addCustomTool = useCallback(() => {
     let parsedSchema: Record<string, unknown>;
     try {
       parsedSchema = JSON.parse(customTool.schema) as Record<string, unknown>;
     } catch {
-      parsedSchema = { type: 'object', additionalProperties: true };
+      parsedSchema = { type: "object", additionalProperties: true };
     }
     const name = customTool.name.trim();
     if (!name) {
@@ -1477,14 +1531,14 @@ export function WorkbenchPage() {
       tools: [
         ...current.tools,
         {
-          id: workbenchId('tool'),
+          id: workbenchId("tool"),
           name,
           description: customTool.description.trim(),
-          input_schema: parsedSchema
-        }
-      ]
+          input_schema: parsedSchema,
+        },
+      ],
     }));
-    setCustomTool({ name: '', description: '', schema: defaultSchema });
+    setCustomTool({ name: "", description: "", schema: defaultSchema });
     setToolForm(null);
     setActiveDrawer(null);
   }, [customTool]);
@@ -1492,24 +1546,27 @@ export function WorkbenchPage() {
   const addWebSearchTool = useCallback(() => {
     setDraft((current) => ({
       ...current,
-      tools: [...current.tools, webSearchToolFromForm(webSearchTool, workbenchId('tool'))]
+      tools: [...current.tools, webSearchToolFromForm(webSearchTool, workbenchId("tool"))],
     }));
     setWebSearchTool(defaultWebSearchToolForm());
     setToolForm(null);
     setActiveDrawer(null);
   }, [webSearchTool]);
 
-  const updateWebSearchTool = useCallback((index: number) => {
-    setDraft((current) => ({
-      ...current,
-      tools: current.tools.map((tool, toolIndex) =>
-        toolIndex === index ? webSearchToolFromForm(webSearchTool, tool.id ?? workbenchId('tool')) : tool
-      )
-    }));
-    setWebSearchTool(defaultWebSearchToolForm());
-    setToolForm(null);
-    setActiveDrawer(null);
-  }, [webSearchTool]);
+  const updateWebSearchTool = useCallback(
+    (index: number) => {
+      setDraft((current) => ({
+        ...current,
+        tools: current.tools.map((tool, toolIndex) =>
+          toolIndex === index ? webSearchToolFromForm(webSearchTool, tool.id ?? workbenchId("tool")) : tool,
+        ),
+      }));
+      setWebSearchTool(defaultWebSearchToolForm());
+      setToolForm(null);
+      setActiveDrawer(null);
+    },
+    [webSearchTool],
+  );
 
   const removeTool = useCallback((index: number) => {
     setDraft((current) => ({ ...current, tools: current.tools.filter((_, toolIndex) => toolIndex !== index) }));
@@ -1520,7 +1577,7 @@ export function WorkbenchPage() {
       return;
     }
     const controller = new AbortController();
-    let streamedText = '';
+    let streamedText = "";
     await streamGenerateTestCase({
       orgUuid,
       workspaceId: activeWorkspaceId,
@@ -1531,7 +1588,7 @@ export function WorkbenchPage() {
         if (delta) {
           streamedText += delta;
         }
-      }
+      },
     }).catch(() => undefined);
     const tagged = parseTaggedVariables(streamedText, variables);
     setVariableValues((current) => {
@@ -1541,7 +1598,7 @@ export function WorkbenchPage() {
       });
       return next;
     });
-    const planning = parseTaggedValue(streamedText, 'planning');
+    const planning = parseTaggedValue(streamedText, "planning");
     if (planning && variableGenerationLogicOpen && !variableGenerationLogic.trim()) {
       setVariableGenerationLogic(planning);
     }
@@ -1554,7 +1611,7 @@ export function WorkbenchPage() {
     setVariableGenerationLogicOpen(true);
     setIsGeneratingVariableLogic(true);
     const controller = new AbortController();
-    let streamedText = '';
+    let streamedText = "";
     try {
       await streamGenerateTestCase({
         orgUuid,
@@ -1566,13 +1623,18 @@ export function WorkbenchPage() {
           if (delta) {
             streamedText += delta;
           }
-        }
+        },
       });
-      const planning = parseTaggedValue(streamedText, 'planning');
-      const fallbackLogic = stripTaggedVariables(streamedText, ['planning', ...variables]).trim();
-      setVariableGenerationLogic(planning || fallbackLogic || variableGenerationLogic || 'Describe how to create realistic values for this test case.');
+      const planning = parseTaggedValue(streamedText, "planning");
+      const fallbackLogic = stripTaggedVariables(streamedText, ["planning", ...variables]).trim();
+      setVariableGenerationLogic(
+        planning ||
+          fallbackLogic ||
+          variableGenerationLogic ||
+          "Describe how to create realistic values for this test case.",
+      );
     } catch {
-      setVariableGenerationLogic((current) => current || 'Describe how to create realistic values for this test case.');
+      setVariableGenerationLogic((current) => current || "Describe how to create realistic values for this test case.");
     } finally {
       setIsGeneratingVariableLogic(false);
     }
@@ -1584,7 +1646,7 @@ export function WorkbenchPage() {
     }
     setIsGeneratingExample(true);
     const controller = new AbortController();
-    let streamedText = '';
+    let streamedText = "";
     await streamGenerateTestCase({
       orgUuid,
       workspaceId: activeWorkspaceId,
@@ -1595,7 +1657,7 @@ export function WorkbenchPage() {
         if (delta) {
           streamedText += delta;
         }
-      }
+      },
     }).catch(() => undefined);
     const tagged = parseTaggedVariables(streamedText, variables);
     setExampleValues((current) => {
@@ -1605,136 +1667,158 @@ export function WorkbenchPage() {
       });
       return next;
     });
-    const untagged = stripTaggedVariables(streamedText, ['planning', ...variables]).trim();
+    const untagged = stripTaggedVariables(streamedText, ["planning", ...variables]).trim();
     if (untagged && !exampleIdealOutput.trim()) {
       setExampleIdealOutput(untagged);
     }
     setIsGeneratingExample(false);
   }, [activeWorkspaceId, draft, exampleIdealOutput, examples, orgUuid, prompt, variables]);
 
-  const createEvaluateRowRecord = useCallback(async (row: EvaluateTestCase) => {
-    if (!orgUuid || !draft.id) {
-      return;
-    }
-    try {
-      const created = await createWorkbenchEvaluation(orgUuid, draft.id, evaluateRowRequestBody(row));
-      setEvaluateRows((current) =>
-        current.map((item) => (item.id === row.id ? mergeCreatedEvaluationIntoRow(item, created) : item))
-      );
-    } catch {
-      // Keep the local row editable when persistence is unavailable.
-    }
-  }, [draft.id, orgUuid, variables]);
-
-  const updateEvaluateRowVariables = useCallback(async (row: EvaluateTestCase) => {
-    if (!orgUuid || !row.evaluationId) {
-      return;
-    }
-    try {
-      const updated = await updateWorkbenchEvaluationVariables(orgUuid, row.evaluationId, row.values);
-      setEvaluateRows((current) =>
-        current.map((item) => (item.id === row.id ? mergeEvaluationVariablesIntoRow(item, updated, variables) : item))
-      );
-    } catch {
-      // Local edits remain visible even if the backend rejects the patch.
-    }
-  }, [orgUuid, variables]);
-
-  const updateEvaluateRowIdealOutput = useCallback(async (row: EvaluateTestCase) => {
-    if (!orgUuid || !row.evaluationId) {
-      return;
-    }
-    try {
-      const updated = await updateWorkbenchEvaluationGoldenAnswer(orgUuid, row.evaluationId, row.idealOutput);
-      setEvaluateRows((current) =>
-        current.map((item) => (item.id === row.id ? mergeEvaluationGoldenAnswerIntoRow(item, updated) : item))
-      );
-    } catch {
-      // Local edits remain visible even if the backend rejects the patch.
-    }
-  }, [orgUuid, variables]);
-
-  const deleteEvaluateRowRecord = useCallback(async (row: EvaluateTestCase) => {
-    if (!orgUuid || !row.evaluationId) {
-      return;
-    }
-    try {
-      await deleteWorkbenchEvaluation(orgUuid, row.evaluationId);
-    } catch {
-      // Deletion is already reflected locally; the next list refresh can reconcile it.
-    }
-  }, [orgUuid]);
-
-  const generateEvaluateTestCases = useCallback(async (count: number) => {
-    if (!orgUuid || !variables.length) {
-      return;
-    }
-    const controller = new AbortController();
-    const generatedRows: EvaluateTestCase[] = [];
-    await streamGenerateTestCases({
-      orgUuid,
-      workspaceId: activeWorkspaceId,
-      body: buildGenerateTestCasesPayload(draft, count, examples),
-      signal: controller.signal,
-      onEvent: (event) => {
-        const row = evaluateRowFromGeneratedEvent(event, variables);
-        if (row) {
-          generatedRows.push(row);
-        }
+  const createEvaluateRowRecord = useCallback(
+    async (row: EvaluateTestCase) => {
+      if (!orgUuid || !draft.id) {
+        return;
       }
-    }).catch(() => undefined);
-    const fallbackRows = Array.from(
-      { length: Math.max(0, count - generatedRows.length) },
-      (_, index) => createEvaluateRow(variables, generatedRows.length + index + 1)
-    );
-    const rowsToCreate = [...generatedRows, ...fallbackRows];
-    setEvaluateRows((current) => [...current, ...rowsToCreate]);
-    await Promise.all(rowsToCreate.map((row) => createEvaluateRowRecord(row)));
-  }, [activeWorkspaceId, createEvaluateRowRecord, draft, examples, orgUuid, variables]);
+      try {
+        const created = await createWorkbenchEvaluation(orgUuid, draft.id, evaluateRowRequestBody(row));
+        setEvaluateRows((current) =>
+          current.map((item) => (item.id === row.id ? mergeCreatedEvaluationIntoRow(item, created) : item)),
+        );
+      } catch {
+        // Keep the local row editable when persistence is unavailable.
+      }
+    },
+    [draft.id, orgUuid, variables],
+  );
+
+  const updateEvaluateRowVariables = useCallback(
+    async (row: EvaluateTestCase) => {
+      if (!orgUuid || !row.evaluationId) {
+        return;
+      }
+      try {
+        const updated = await updateWorkbenchEvaluationVariables(orgUuid, row.evaluationId, row.values);
+        setEvaluateRows((current) =>
+          current.map((item) =>
+            item.id === row.id ? mergeEvaluationVariablesIntoRow(item, updated, variables) : item,
+          ),
+        );
+      } catch {
+        // Local edits remain visible even if the backend rejects the patch.
+      }
+    },
+    [orgUuid, variables],
+  );
+
+  const updateEvaluateRowIdealOutput = useCallback(
+    async (row: EvaluateTestCase) => {
+      if (!orgUuid || !row.evaluationId) {
+        return;
+      }
+      try {
+        const updated = await updateWorkbenchEvaluationGoldenAnswer(orgUuid, row.evaluationId, row.idealOutput);
+        setEvaluateRows((current) =>
+          current.map((item) => (item.id === row.id ? mergeEvaluationGoldenAnswerIntoRow(item, updated) : item)),
+        );
+      } catch {
+        // Local edits remain visible even if the backend rejects the patch.
+      }
+    },
+    [orgUuid, variables],
+  );
+
+  const deleteEvaluateRowRecord = useCallback(
+    async (row: EvaluateTestCase) => {
+      if (!orgUuid || !row.evaluationId) {
+        return;
+      }
+      try {
+        await deleteWorkbenchEvaluation(orgUuid, row.evaluationId);
+      } catch {
+        // Deletion is already reflected locally; the next list refresh can reconcile it.
+      }
+    },
+    [orgUuid],
+  );
+
+  const generateEvaluateTestCases = useCallback(
+    async (count: number) => {
+      if (!orgUuid || !variables.length) {
+        return;
+      }
+      const controller = new AbortController();
+      const generatedRows: EvaluateTestCase[] = [];
+      await streamGenerateTestCases({
+        orgUuid,
+        workspaceId: activeWorkspaceId,
+        body: buildGenerateTestCasesPayload(draft, count, examples),
+        signal: controller.signal,
+        onEvent: (event) => {
+          const row = evaluateRowFromGeneratedEvent(event, variables);
+          if (row) {
+            generatedRows.push(row);
+          }
+        },
+      }).catch(() => undefined);
+      const fallbackRows = Array.from({ length: Math.max(0, count - generatedRows.length) }, (_, index) =>
+        createEvaluateRow(variables, generatedRows.length + index + 1),
+      );
+      const rowsToCreate = [...generatedRows, ...fallbackRows];
+      setEvaluateRows((current) => [...current, ...rowsToCreate]);
+      await Promise.all(rowsToCreate.map((row) => createEvaluateRowRecord(row)));
+    },
+    [activeWorkspaceId, createEvaluateRowRecord, draft, examples, orgUuid, variables],
+  );
 
   const resetExampleForm = useCallback(() => {
     setExampleFormOpen(false);
     setEditingExampleId(null);
-    setExampleValues(Object.fromEntries(variables.map((name) => [name, ''])));
-    setExampleIdealOutput('');
-    setExampleAdditionalContext('');
+    setExampleValues(Object.fromEntries(variables.map((name) => [name, ""])));
+    setExampleIdealOutput("");
+    setExampleAdditionalContext("");
     setExampleContextOpen(false);
   }, [variables]);
 
   const openNewExampleForm = useCallback(() => {
     setEditingExampleId(null);
-    setExampleValues(Object.fromEntries(variables.map((name) => [name, ''])));
-    setExampleIdealOutput('');
-    setExampleAdditionalContext('');
+    setExampleValues(Object.fromEntries(variables.map((name) => [name, ""])));
+    setExampleIdealOutput("");
+    setExampleAdditionalContext("");
     setExampleContextOpen(false);
     setExampleFormOpen(true);
   }, [variables]);
 
-  const editExample = useCallback((example: WorkbenchExample) => {
-    setEditingExampleId(example.id);
-    setExampleValues(Object.fromEntries(variables.map((name) => [name, example.values[name] ?? ''])));
-    setExampleIdealOutput(example.idealOutput);
-    setExampleAdditionalContext(example.additionalContext);
-    setExampleContextOpen(Boolean(example.additionalContext.trim()));
-    setExampleFormOpen(true);
-  }, [variables]);
+  const editExample = useCallback(
+    (example: WorkbenchExample) => {
+      setEditingExampleId(example.id);
+      setExampleValues(Object.fromEntries(variables.map((name) => [name, example.values[name] ?? ""])));
+      setExampleIdealOutput(example.idealOutput);
+      setExampleAdditionalContext(example.additionalContext);
+      setExampleContextOpen(Boolean(example.additionalContext.trim()));
+      setExampleFormOpen(true);
+    },
+    [variables],
+  );
 
-  const removeExample = useCallback((exampleId: string) => {
-    setExamples((current) => current.filter((example) => example.id !== exampleId));
-    if (editingExampleId === exampleId) {
-      resetExampleForm();
-    }
-  }, [editingExampleId, resetExampleForm]);
+  const removeExample = useCallback(
+    (exampleId: string) => {
+      setExamples((current) => current.filter((example) => example.id !== exampleId));
+      if (editingExampleId === exampleId) {
+        resetExampleForm();
+      }
+    },
+    [editingExampleId, resetExampleForm],
+  );
 
   const addExample = useCallback(() => {
     if (!variables.every((name) => exampleValues[name]?.trim()) || !exampleIdealOutput.trim()) {
       return;
     }
     const nextExample = {
-      id: editingExampleId ?? workbenchId('example'),
-      values: Object.fromEntries(variables.map((name) => [name, exampleValues[name] ?? ''])),
+      id: editingExampleId ?? workbenchId("example"),
+      values: Object.fromEntries(variables.map((name) => [name, exampleValues[name] ?? ""])),
       idealOutput: exampleIdealOutput.trim(),
-      additionalContext: exampleAdditionalContext.trim()
+      additionalContext: exampleAdditionalContext.trim(),
     };
     setExamples((current) => {
       if (!editingExampleId) {
@@ -1752,7 +1836,7 @@ export function WorkbenchPage() {
     setIsImproving(true);
     const controller = new AbortController();
     const originalPromptText = messageText(draft.messages[0]);
-    let generated = '';
+    let generated = "";
     try {
       generated = await streamSmoothedWorkbenchText({
         signal: controller.signal,
@@ -1768,11 +1852,11 @@ export function WorkbenchPage() {
             body: {
               ...buildRevisionPayload(draft, { includeEmptyMessages: false }),
               feedback: improveFeedback,
-              thinking_enabled: improveThinkingEnabled
+              thinking_enabled: improveThinkingEnabled,
             },
             signal: controller.signal,
-            onEvent
-          })
+            onEvent,
+          }),
       });
       if (generated.trim()) {
         setMessageText(0, generated.trim());
@@ -1782,8 +1866,17 @@ export function WorkbenchPage() {
     }
     setIsImproving(false);
     setImproveOpen(false);
-    setImproveFeedback('');
-  }, [activeWorkspaceId, draft, hasPromptText, improveFeedback, improveThinkingEnabled, isPromptReadOnly, orgUuid, setMessageText]);
+    setImproveFeedback("");
+  }, [
+    activeWorkspaceId,
+    draft,
+    hasPromptText,
+    improveFeedback,
+    improveThinkingEnabled,
+    isPromptReadOnly,
+    orgUuid,
+    setMessageText,
+  ]);
 
   const generatePromptFromTask = useCallback(async () => {
     const task = promptGeneratorTask.trim();
@@ -1792,17 +1885,17 @@ export function WorkbenchPage() {
     }
     clearPromptGeneratorOutputFallback();
     setIsGeneratingPrompt(true);
-    setPromptGeneratorStep('output');
-    setPromptGeneratorOutput('');
+    setPromptGeneratorStep("output");
+    setPromptGeneratorOutput("");
     setPromptGeneratorError(null);
     const controller = new AbortController();
     promptGeneratorControllerRef.current = controller;
     promptGeneratorOutputFallbackRef.current = window.setTimeout(() => {
-      setPromptGeneratorStep('output');
+      setPromptGeneratorStep("output");
       promptGeneratorOutputFallbackRef.current = undefined;
     }, 4000);
-    let rawOutput = '';
-    let generatedInstructions = '';
+    let rawOutput = "";
+    let generatedInstructions = "";
     try {
       rawOutput = await streamSmoothedWorkbenchText({
         signal: controller.signal,
@@ -1812,7 +1905,7 @@ export function WorkbenchPage() {
         onDisplayText: (displayText) => {
           if (displayText) {
             clearPromptGeneratorOutputFallback();
-            setPromptGeneratorStep('output');
+            setPromptGeneratorStep("output");
             setPromptGeneratorOutput(displayText);
           }
         },
@@ -1824,24 +1917,24 @@ export function WorkbenchPage() {
             body: {
               task,
               target_thinking_mode: promptGeneratorThinkingEnabled,
-              isPromptConversion: false
+              isPromptConversion: false,
             },
             signal: controller.signal,
-            onEvent
-          })
+            onEvent,
+          }),
       });
       generatedInstructions = extractGeneratedPromptInstructions(rawOutput);
       clearPromptGeneratorOutputFallback();
       if (generatedInstructions.trim()) {
-        setPromptGeneratorStep('output');
+        setPromptGeneratorStep("output");
         setPromptGeneratorOutput(generatedInstructions.trim());
       } else if (rawOutput.trim()) {
-        setPromptGeneratorStep('output');
+        setPromptGeneratorStep("output");
         setPromptGeneratorOutput(rawOutput.trim());
-        setPromptGeneratorError('Generated prompt is malformed, displaying raw output');
+        setPromptGeneratorError("Generated prompt is malformed, displaying raw output");
       } else {
-        setPromptGeneratorStep('generate');
-        setPromptGeneratorError('Claude did not return a prompt. Try adding more detail.');
+        setPromptGeneratorStep("generate");
+        setPromptGeneratorError("Claude did not return a prompt. Try adding more detail.");
       }
     } catch (error) {
       clearPromptGeneratorOutputFallback();
@@ -1849,10 +1942,10 @@ export function WorkbenchPage() {
       if (!controller.signal.aborted) {
         setPromptGeneratorError(errorMessage(error));
         if (!generatedInstructions.trim() && !rawOutput.trim()) {
-          setPromptGeneratorStep('generate');
+          setPromptGeneratorStep("generate");
         }
       } else if (!generatedInstructions.trim() && !rawOutput.trim()) {
-        setPromptGeneratorStep('generate');
+        setPromptGeneratorStep("generate");
       }
     } finally {
       clearPromptGeneratorOutputFallback();
@@ -1878,9 +1971,9 @@ export function WorkbenchPage() {
     setIsGeneratingPrompt(false);
     setPromptGeneratorConfirmAction(null);
     setPromptGeneratorOpen(false);
-    setPromptGeneratorStep('generate');
-    setPromptGeneratorTask('');
-    setPromptGeneratorOutput('');
+    setPromptGeneratorStep("generate");
+    setPromptGeneratorTask("");
+    setPromptGeneratorOutput("");
     setPromptGeneratorExamplesExpanded(false);
     setPromptGeneratorError(null);
     setPromptGeneratorThinkingEnabled(false);
@@ -1892,14 +1985,14 @@ export function WorkbenchPage() {
     clearPromptGeneratorOutputFallback();
     setIsGeneratingPrompt(false);
     setPromptGeneratorConfirmAction(null);
-    setPromptGeneratorOutput('');
+    setPromptGeneratorOutput("");
     setPromptGeneratorError(null);
-    setPromptGeneratorStep('generate');
+    setPromptGeneratorStep("generate");
   }, [clearPromptGeneratorOutputFallback]);
 
   const closePromptGenerator = useCallback(() => {
     if (isGeneratingPrompt) {
-      setPromptGeneratorConfirmAction('close');
+      setPromptGeneratorConfirmAction("close");
       return;
     }
     resetPromptGenerator();
@@ -1911,24 +2004,24 @@ export function WorkbenchPage() {
     clearPromptGeneratorOutputFallback();
     setIsGeneratingPrompt(false);
     if (!promptGeneratorOutput.trim()) {
-      setPromptGeneratorStep('generate');
+      setPromptGeneratorStep("generate");
     }
   }, [clearPromptGeneratorOutputFallback, promptGeneratorOutput]);
 
   const editPromptGeneratorInstructions = useCallback(() => {
     if (promptGeneratorOutput.trim()) {
-      setPromptGeneratorConfirmAction('edit');
+      setPromptGeneratorConfirmAction("edit");
       return;
     }
     resetPromptGeneratorOutput();
   }, [promptGeneratorOutput, resetPromptGeneratorOutput]);
 
   const confirmPromptGeneratorAction = useCallback(() => {
-    if (promptGeneratorConfirmAction === 'close') {
+    if (promptGeneratorConfirmAction === "close") {
       resetPromptGenerator();
       return;
     }
-    if (promptGeneratorConfirmAction === 'edit') {
+    if (promptGeneratorConfirmAction === "edit") {
       resetPromptGeneratorOutput();
     }
   }, [promptGeneratorConfirmAction, resetPromptGenerator, resetPromptGeneratorOutput]);
@@ -1940,13 +2033,13 @@ export function WorkbenchPage() {
     }
     const nextMessages: WorkbenchMessage[] = draft.messages.length
       ? draft.messages.map((message, index) =>
-          index === 0 ? { ...message, content: replaceMessageText(message.content, generatedPrompt) } : message
+          index === 0 ? { ...message, content: replaceMessageText(message.content, generatedPrompt) } : message,
         )
-      : [{ role: 'human', content: [{ type: 'text', text: generatedPrompt }] }];
+      : [{ role: "human", content: [{ type: "text", text: generatedPrompt }] }];
     const nextDraft: WorkbenchRevision = {
       ...draft,
       messages: nextMessages,
-      variables: extractVariables({ ...draft, messages: nextMessages })
+      variables: extractVariables({ ...draft, messages: nextMessages }),
     };
     setDraft(nextDraft);
     resetPromptGenerator();
@@ -1958,14 +2051,16 @@ export function WorkbenchPage() {
       const saved = await createWorkbenchRevision(
         orgUuid,
         prompt.id,
-        buildRevisionPayload(nextDraft, { includeEmptyMessages: true, newRevisionId: true })
+        buildRevisionPayload(nextDraft, { includeEmptyMessages: true, newRevisionId: true }),
       );
       const normalizedSaved = normalizeRevision(saved, nextDraft.model_name);
       lastSavedDraftKeyRef.current = workbenchDraftAutosaveKey(prompt.id, normalizedSaved);
       latestRevisionDraftKeyRef.current = workbenchDraftAutosaveKey(prompt.id, normalizedSaved);
       setDraft(normalizedSaved);
       setPrompt((current) =>
-        current ? { ...current, latest_revision: normalizedSaved, updated_at: saved.created_at ?? current.updated_at } : current
+        current
+          ? { ...current, latest_revision: normalizedSaved, updated_at: saved.created_at ?? current.updated_at }
+          : current,
       );
       setPromptRevisionCount((current) => Math.max(2, current + 1));
       setSaveStatus(`Saved ${shortTime()}`);
@@ -1977,11 +2072,11 @@ export function WorkbenchPage() {
   }, [autoTitlePrompt, draft, orgUuid, prompt, promptGeneratorOutput, resetPromptGenerator]);
 
   const selectPromptGeneratorExample = useCallback((example: (typeof generatePromptExamples)[number]) => {
-    trackWorkbenchEvent('metaprompter.example.selected', { example: example.id });
+    trackWorkbenchEvent("metaprompter.example.selected", { example: example.id });
     setPromptGeneratorTask(example.task);
-    setPromptGeneratorOutput('');
+    setPromptGeneratorOutput("");
     setPromptGeneratorError(null);
-    setPromptGeneratorStep('generate');
+    setPromptGeneratorStep("generate");
   }, []);
 
   if (!workbenchAccess.hasAccess) {
@@ -1991,7 +2086,10 @@ export function WorkbenchPage() {
   if (isLoading) {
     return (
       <WorkbenchShell>
-        <div className="flex h-full items-center justify-center text-sm text-muted-foreground" data-testid="workbench_main_loader">
+        <div
+          className="flex h-full items-center justify-center text-sm text-muted-foreground"
+          data-testid="workbench_main_loader"
+        >
           <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
           Loading Workbench
         </div>
@@ -2034,7 +2132,7 @@ export function WorkbenchPage() {
                       aria-label="Open prompt list"
                       title="Open prompt list"
                       aria-expanded={promptPickerOpen}
-                      className={clsx('workbench-mini-button', promptPickerOpen && 'bg-accent')}
+                      className={clsx("workbench-mini-button", promptPickerOpen && "bg-accent")}
                     />
                   }
                 >
@@ -2068,7 +2166,11 @@ export function WorkbenchPage() {
                 disabled={isCreatingPrompt}
                 onClick={createNewPrompt}
               >
-                {isCreatingPrompt ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Plus className="size-4" aria-hidden />}
+                {isCreatingPrompt ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <Plus className="size-4" aria-hidden />
+                )}
               </Button>
             </div>
 
@@ -2110,7 +2212,7 @@ export function WorkbenchPage() {
                   <DropdownMenuItem disabled={!canSaveCurrentRevision} onClick={saveCurrentRevision}>
                     Save
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setActiveDrawer('history')}>Version history</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setActiveDrawer("history")}>Version history</DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={copyPrompt}>Make a copy</DropdownMenuItem>
                   <DropdownMenuItem
@@ -2129,7 +2231,7 @@ export function WorkbenchPage() {
               <div className="workbench-save-meta">
                 <Lock className="size-3.5" aria-hidden />
                 <span>{saveMeta}</span>
-                {hasUnsavedChanges || saveStatus === 'Saving' ? (
+                {hasUnsavedChanges || saveStatus === "Saving" ? (
                   <>
                     <span className="workbench-save-separator" aria-hidden>
                       &middot;
@@ -2148,7 +2250,6 @@ export function WorkbenchPage() {
               </div>
             </div>
           </div>
-
         </header>
 
         <Tabs value={activeMode} onValueChange={changeMode} className="h-full min-h-0 gap-0">
@@ -2170,25 +2271,23 @@ export function WorkbenchPage() {
 
           <TabsContent value="prompt" className="mt-0 min-h-0">
             <div className="workbench-header-actions">
-              <Button
-                type="button"
-                variant="outline"
-                size="lg"
-                className="bg-transparent px-4"
-                onClick={openCodeModal}
-              >
+              <Button type="button" variant="outline" size="lg" className="bg-transparent px-4" onClick={openCodeModal}>
                 Get Code
               </Button>
               <Button
                 type="button"
-                aria-label={isRunning ? 'Stop' : 'Run ⌘ + ⏎'}
+                aria-label={isRunning ? "Stop" : "Run ⌘ + ⏎"}
                 size="lg"
                 className="px-4"
                 disabled={!canRun}
                 onClick={runPrompt}
               >
-                {isRunning ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Play className="size-4" fill="currentColor" strokeWidth={0} aria-hidden />}
-                <span>{isRunning ? 'Stop' : 'Run'}</span>
+                {isRunning ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <Play className="size-4" fill="currentColor" strokeWidth={0} aria-hidden />
+                )}
+                <span>{isRunning ? "Stop" : "Run"}</span>
                 {isRunning ? null : <span className="text-xs font-medium text-primary-foreground/70">⌘ + ⏎</span>}
               </Button>
             </div>
@@ -2201,8 +2300,11 @@ export function WorkbenchPage() {
                     variant="ghost"
                     aria-label="Model settings"
                     title="Model settings"
-                    className={clsx('workbench-toolbar-button workbench-toolbar-model-button', activeDrawer === 'model' && 'is-active')}
-                    onClick={() => setActiveDrawer('model')}
+                    className={clsx(
+                      "workbench-toolbar-button workbench-toolbar-model-button",
+                      activeDrawer === "model" && "is-active",
+                    )}
+                    onClick={() => setActiveDrawer("model")}
                   >
                     <SlidersHorizontal className="size-4" aria-hidden />
                     {modelDisplayName(selectedModel)}
@@ -2212,8 +2314,8 @@ export function WorkbenchPage() {
                     variant="ghost"
                     aria-label="Variables"
                     title="Variables"
-                    className={clsx('workbench-toolbar-button', activeDrawer === 'variables' && 'is-active')}
-                    onClick={() => setActiveDrawer('variables')}
+                    className={clsx("workbench-toolbar-button", activeDrawer === "variables" && "is-active")}
+                    onClick={() => setActiveDrawer("variables")}
                   >
                     <Braces className="size-4" aria-hidden />
                     <span className="sr-only">Variables</span>
@@ -2224,8 +2326,11 @@ export function WorkbenchPage() {
                     variant="ghost"
                     aria-label="Tools"
                     title="Tools"
-                    className={clsx('workbench-toolbar-button workbench-toolbar-icon-button', activeDrawer === 'tools' && 'is-active')}
-                    onClick={() => setActiveDrawer('tools')}
+                    className={clsx(
+                      "workbench-toolbar-button workbench-toolbar-icon-button",
+                      activeDrawer === "tools" && "is-active",
+                    )}
+                    onClick={() => setActiveDrawer("tools")}
                   >
                     <Wrench className="size-4" aria-hidden />
                     <span className="sr-only">Tools</span>
@@ -2234,12 +2339,14 @@ export function WorkbenchPage() {
                   <Button
                     type="button"
                     variant="ghost"
-                    className={clsx('workbench-toolbar-button', activeDrawer === 'examples' && 'is-active')}
+                    className={clsx("workbench-toolbar-button", activeDrawer === "examples" && "is-active")}
                     disabled={!hasVariables}
-                    aria-label={hasVariables ? 'Help Claude understand the task better' : 'Requires at least one variable'}
-                    title={hasVariables ? 'Help Claude understand the task better' : 'Requires at least one variable'}
+                    aria-label={
+                      hasVariables ? "Help Claude understand the task better" : "Requires at least one variable"
+                    }
+                    title={hasVariables ? "Help Claude understand the task better" : "Requires at least one variable"}
                     onClick={() => {
-                      setActiveDrawer('examples');
+                      setActiveDrawer("examples");
                       setExampleFormOpen(false);
                     }}
                   >
@@ -2252,8 +2359,16 @@ export function WorkbenchPage() {
                     variant="ghost"
                     className="workbench-toolbar-button"
                     disabled={!hasPromptText || isPromptReadOnly}
-                    aria-label={hasPromptText ? 'Use Claude to optimize your prompt' : 'Add some text to the prompt to use this feature'}
-                    title={hasPromptText ? 'Use Claude to optimize your prompt' : 'Add some text to the prompt to use this feature'}
+                    aria-label={
+                      hasPromptText
+                        ? "Use Claude to optimize your prompt"
+                        : "Add some text to the prompt to use this feature"
+                    }
+                    title={
+                      hasPromptText
+                        ? "Use Claude to optimize your prompt"
+                        : "Add some text to the prompt to use this feature"
+                    }
                     onClick={openImprovePrompt}
                   >
                     <WandSparkles className="size-4" aria-hidden />
@@ -2263,15 +2378,15 @@ export function WorkbenchPage() {
 
                 <div className="workbench-editor-stack">
                   <div
-                    className={clsx('workbench-system-card', systemOpen && 'is-open')}
-                    aria-label={systemOpen ? undefined : 'Click to open system prompt'}
+                    className={clsx("workbench-system-card", systemOpen && "is-open")}
+                    aria-label={systemOpen ? undefined : "Click to open system prompt"}
                     tabIndex={systemOpen ? undefined : 0}
                     onClick={systemOpen ? undefined : () => setSystemOpen(true)}
                     onKeyDown={
                       systemOpen
                         ? undefined
                         : (event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
+                            if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
                               setSystemOpen(true);
                             }
@@ -2284,12 +2399,18 @@ export function WorkbenchPage() {
                           <div className="workbench-system-expanded-title">System Prompt</div>
                           <SystemPromptEditableInput
                             text={draft.system_prompt}
-                            onChange={(nextText) => setDraftField('system_prompt', nextText)}
+                            onChange={(nextText) => setDraftField("system_prompt", nextText)}
                             isReadOnly={isPromptReadOnly}
                           />
                         </div>
                         <span className="workbench-system-expanded-icons">
-                          <Button type="button" variant="ghost" size="icon" aria-label="System prompt info" className="workbench-system-icon-button">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="System prompt info"
+                            className="workbench-system-icon-button"
+                          >
                             <Info className="size-4" aria-hidden />
                           </Button>
                           <Button
@@ -2350,9 +2471,9 @@ export function WorkbenchPage() {
                       onReplaceFile={replaceFileInMessage}
                       onRemoveFile={removeFileFromMessage}
                       onVariableClick={(name) => {
-                        setVariableValues((current) => ({ ...current, [name]: current[name] ?? '' }));
+                        setVariableValues((current) => ({ ...current, [name]: current[name] ?? "" }));
                         setToolForm(null);
-                        setActiveDrawer('variables');
+                        setActiveDrawer("variables");
                       }}
                       isReadOnly={isPromptReadOnly}
                       onShowPromptGenerator={openPromptGenerator}
@@ -2391,7 +2512,7 @@ export function WorkbenchPage() {
               <aside className="workbench-response-panel">
                 <h2 className="sr-only">Response</h2>
                 <div className="workbench-response-body subtle-scrollbar">
-                  {responseTab === 'preview' ? (
+                  {responseTab === "preview" ? (
                     <ResponsePreview
                       isRunning={isRunning}
                       error={runError}
@@ -2413,14 +2534,18 @@ export function WorkbenchPage() {
             <div className="workbench-header-actions">
               <Button
                 type="button"
-                aria-label={isRunning ? 'Stop' : 'Run All ⌘ + ⏎'}
+                aria-label={isRunning ? "Stop" : "Run All ⌘ + ⏎"}
                 size="lg"
                 className="px-4"
                 disabled={!canRunAllEvaluations && !isRunning}
                 onClick={runEvaluateRows}
               >
-                {isRunning ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Play className="size-4" fill="currentColor" strokeWidth={0} aria-hidden />}
-                <span>{isRunning ? 'Stop' : 'Run All'}</span>
+                {isRunning ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <Play className="size-4" fill="currentColor" strokeWidth={0} aria-hidden />
+                )}
+                <span>{isRunning ? "Stop" : "Run All"}</span>
                 {isRunning ? null : <span className="text-xs font-medium text-primary-foreground/70">⌘ + ⏎</span>}
               </Button>
             </div>
@@ -2457,8 +2582,15 @@ export function WorkbenchPage() {
             title={drawerTitle(activeDrawer)}
             kind={activeDrawer}
             headerAction={
-              activeDrawer === 'variables' ? (
-                <Button type="button" variant="ghost" size="sm" className="px-1.5" disabled={!variables.length} onClick={generateTestCase}>
+              activeDrawer === "variables" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="px-1.5"
+                  disabled={!variables.length}
+                  onClick={generateTestCase}
+                >
                   <Sparkles className="size-4" aria-hidden />
                   Generate
                 </Button>
@@ -2466,16 +2598,10 @@ export function WorkbenchPage() {
             }
             onClose={() => setActiveDrawer(null)}
           >
-            {activeDrawer === 'model' ? (
-              <ModelDrawer
-                draft={draft}
-                models={models}
-                setDraft={setDraft}
-                onRun={runPrompt}
-                isRunning={isRunning}
-              />
+            {activeDrawer === "model" ? (
+              <ModelDrawer draft={draft} models={models} setDraft={setDraft} onRun={runPrompt} isRunning={isRunning} />
             ) : null}
-            {activeDrawer === 'variables' ? (
+            {activeDrawer === "variables" ? (
               <VariablesDrawer
                 variables={variables}
                 values={variableValues}
@@ -2486,7 +2612,7 @@ export function WorkbenchPage() {
                 setGenerationLogic={setVariableGenerationLogic}
                 onGenerateGenerationLogic={generateVariableLogic}
                 onClearGenerationLogic={() => {
-                  setVariableGenerationLogic('');
+                  setVariableGenerationLogic("");
                   setVariableGenerationLogicOpen(false);
                 }}
                 isGeneratingGenerationLogic={isGeneratingVariableLogic}
@@ -2495,7 +2621,7 @@ export function WorkbenchPage() {
                 canRun={canRunWithVariables}
               />
             ) : null}
-            {activeDrawer === 'tools' ? (
+            {activeDrawer === "tools" ? (
               <ToolsDrawer
                 tools={draft.tools}
                 toolForm={toolForm}
@@ -2513,7 +2639,7 @@ export function WorkbenchPage() {
                 canRun={canRun}
               />
             ) : null}
-            {activeDrawer === 'examples' ? (
+            {activeDrawer === "examples" ? (
               <ExamplesDrawer
                 variables={variables}
                 examples={examples}
@@ -2539,7 +2665,7 @@ export function WorkbenchPage() {
                 canRun={canRun}
               />
             ) : null}
-            {activeDrawer === 'history' ? (
+            {activeDrawer === "history" ? (
               <HistoryDrawer
                 promptId={prompt?.id}
                 orgUuid={orgUuid}
@@ -2547,7 +2673,7 @@ export function WorkbenchPage() {
                 currentRevisionId={draft.id}
                 hasUnsavedChanges={hasUnsavedChanges}
                 canSave={canSaveCurrentRevision}
-                isSaving={saveStatus === 'Saving'}
+                isSaving={saveStatus === "Saving"}
                 onSave={saveCurrentRevision}
                 onDiscard={discardDraftChanges}
                 onRestore={restoreRevision}
@@ -2651,7 +2777,7 @@ export function WorkbenchPage() {
           onOpen={openGeneratedPromptInWorkbench}
           onSelectExample={selectPromptGeneratorExample}
           onBuyCredits={() => {
-            window.location.href = '/settings/billing';
+            window.location.href = "/settings/billing";
           }}
           onClose={closePromptGenerator}
         />

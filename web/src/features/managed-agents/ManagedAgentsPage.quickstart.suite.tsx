@@ -459,15 +459,15 @@ export function registerManagedAgentsQuickstartTests() {
     expect(progress.className).toContain('justify-self-center');
     expect(progress.className).toContain('max-w-full');
     expect(progress.className).toContain('px-2');
-    expect(progress.className).toContain('2xl:px-4');
+    expect(progress.className.split(' ')).toContain('xl:px-4');
     expect(progress.parentElement?.className).toContain('grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]');
     expect(within(progress).getByText('1').getAttribute('aria-current')).toBe('step');
     const createAgentStepLabel = within(progress).getByText('Create agent');
     expect(createAgentStepLabel.className).toContain('sr-only');
-    expect(createAgentStepLabel.className).toContain('2xl:not-sr-only');
+    expect(createAgentStepLabel.className.split(' ')).toContain('xl:not-sr-only');
     const firstConnector = within(progress).getByText('Create agent').closest('li')?.querySelector('[aria-hidden]');
     expect(firstConnector?.className).toContain('w-4');
-    expect(firstConnector?.className).toContain('2xl:w-10');
+    expect(firstConnector?.className.split(' ')).toContain('xl:w-10');
     const browserHeading = screen.getByRole('heading', { name: 'Browse templates' });
     const browserCard = browserHeading.closest('[data-slot="card"]') as HTMLElement | null;
     expect(browserHeading).toBeTruthy();

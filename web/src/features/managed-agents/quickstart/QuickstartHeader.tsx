@@ -39,7 +39,7 @@ export function QuickstartHeader({
       <ol
         data-testid="quickstart-progress"
         aria-label={msg('managedAgents.quickstart.title', 'Quickstart')}
-        className="col-start-2 flex max-w-full items-center justify-self-center rounded-full border border-border bg-card px-2 py-2 shadow-xs sm:px-3 2xl:px-4"
+        className="col-start-2 flex max-w-full items-center justify-self-center rounded-full border border-border bg-card px-2 py-2 shadow-xs sm:px-3 xl:px-4"
       >
         {quickstartSteps.map((step, index) => {
           const isComplete = hasTemplate && activeStep > index;
@@ -60,7 +60,7 @@ export function QuickstartHeader({
                 </span>
                 <span
                   className={clsx(
-                    'sr-only whitespace-nowrap text-sm 2xl:not-sr-only',
+                    'sr-only whitespace-nowrap text-sm xl:not-sr-only',
                     isActive
                       ? 'font-medium text-foreground'
                       : isComplete
@@ -74,7 +74,7 @@ export function QuickstartHeader({
               {index < quickstartSteps.length - 1 ? (
                 <span
                   className={clsx(
-                    'mx-1.5 h-px w-4 shrink-0 sm:mx-2 sm:w-6 2xl:mx-3 2xl:w-10',
+                    'mx-1.5 h-px w-4 shrink-0 sm:mx-2 sm:w-6 xl:mx-3 xl:w-10',
                     activeStep > index ? 'bg-foreground/70' : 'bg-border',
                   )}
                   aria-hidden

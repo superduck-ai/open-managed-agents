@@ -83,6 +83,7 @@ stateDiagram-v2
 
 ### 宽屏
 
+- 从 Tailwind `xl` 断点（`1280px`）开始使用宽屏呈现，覆盖 14 寸 MacBook 常见的 `1512px` CSS 视口。
 - 显示步骤编号或完成勾、完整的本地化步骤名称以及标准宽度连接线。
 - active step 使用 `aria-current="step"`；completed step 使用完成勾。
 

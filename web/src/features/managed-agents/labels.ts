@@ -1,4 +1,4 @@
-import { quickstartSteps } from './quickstart/AgentQuickstartPage';
+import { type QuickstartStepName } from './quickstart/steps';
 import {
   type AgentCreatedFilter,
   type AgentStatusFilter,
@@ -48,7 +48,7 @@ export function templateSearchText(template: AgentTemplate, msg: I18nMsg) {
   ].join(' ');
 }
 
-export function quickstartStepLabel(step: (typeof quickstartSteps)[number], msg: I18nMsg) {
+export function quickstartStepLabel(step: QuickstartStepName, msg: I18nMsg) {
   switch (step) {
     case 'Create agent':
       return msg('managedAgents.quickstart.steps.createAgent', step);

@@ -1,7 +1,46 @@
 import { type Locale, useI18n } from '../../../shared/i18n';
+import {
+  appendQuickstartStatus,
+  awaitingQuickstartToolCalls,
+  cleanQuickstartAssistantText,
+  hasAwaitingQuickstartQuestionSet,
+  quickstartChatReplyToolResult,
+  quickstartItemId,
+  stripQuickstartInternalNarration,
+  stripQuickstartInternalSentences,
+  stripQuickstartThinking,
+  toolResultBlock,
+  updateQuickstartMessage,
+  updateQuickstartTool,
+} from './chatModel';
+import { parseQuestionInput, parseSubmittedQuestionAnswers } from './questionModel';
+import { quickstartToolMeta, quickstartToolPresentation } from './toolPresentation';
+import { presentQuickstartTranscript } from './transcriptModel';
+import { quickstartMcpServerUrl, quickstartVaultIdsFromInput, quickstartVaultLabelsFromInput } from './vaultModel';
+
+export {
+  AskUserQuestionsCard,
+  appendQuickstartStatus,
+  awaitingQuickstartToolCalls,
+  cleanQuickstartAssistantText,
+  hasAwaitingQuickstartQuestionSet,
+  parseQuestionInput,
+  parseSubmittedQuestionAnswers,
+  quickstartChatReplyToolResult,
+  quickstartItemId,
+  quickstartMcpServerUrl,
+  stripQuickstartInternalNarration,
+  stripQuickstartInternalSentences,
+  stripQuickstartThinking,
+  toolResultBlock,
+  updateQuickstartMessage,
+  updateQuickstartTool,
+  quickstartVaultIdsFromInput,
+  quickstartVaultLabelsFromInput,
+  quickstartToolMeta,
+};
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Badge } from '../../../shared/ui/badge';
-import { Bubble, BubbleContent } from '../../../shared/ui/bubble';
 import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Card, CardContent, CardDescription, CardTitle } from '../../../shared/ui/card';
 import { Checkbox } from '../../../shared/ui/checkbox';
@@ -9,8 +48,6 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../sh
 import { Input } from '../../../shared/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
 import { Label } from '../../../shared/ui/label';
-import { Marker, MarkerContent, MarkerIcon } from '../../../shared/ui/marker';
-import { Message, MessageAvatar, MessageContent, MessageHeader } from '../../../shared/ui/message';
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -19,14 +56,12 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from '../../../shared/ui/message-scroller';
-import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import clsx from 'clsx';
 import {
   AlertCircle,
   ArrowUp,
   ArrowUpRight,
-  CalendarClock,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -36,21 +71,15 @@ import {
   FileText,
   Loader2,
   LockKeyhole,
-  Pencil,
   Play,
   Plus,
   Search,
-  Sparkles,
-  Terminal,
   TriangleAlert,
-  UserRound,
 } from 'lucide-react';
 import {
-  type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
-  type SetStateAction,
   useEffect,
   useMemo,
   useRef,
@@ -82,17 +111,26 @@ import {
   type EnvironmentApiResponse,
   type HighlightLanguage,
   type I18nMsg,
-  type IconComponent,
   type IntegrationSnippetLanguage,
   type QuickstartChatItem,
-  type QuickstartQuestion,
   type QuickstartSessionEvent,
   type QuickstartToolCall,
   type QuickstartToolExecutionResult,
   type SessionApiResponse,
 } from '../types';
-import { copyText, errorMessage, managedEntityDetailHref, titleCase, toRecord } from '../utils';
+import { copyText, errorMessage, managedEntityDetailHref, titleCase } from '../utils';
+import {
+  QuickstartAssistantTurn,
+  QuickstartErrorTurn,
+  QuickstartStreamingTurn,
+  QuickstartTextTurn,
+  QuickstartTurnGroup,
+  StatusLine,
+  ToolRunningTurn,
+  ToolFailedTurn,
+} from './chatLayout';
 import { type QuickstartInteractionResultText } from './quickstartPromptText';
+import { AskUserQuestionsCard } from './questions/AskUserQuestionsCard';
 
 type PromptComposerSubmitShortcut = 'enter' | 'mod-enter';
 
@@ -128,6 +166,9 @@ export function InitialPromptPane({
         submitShortcut="enter"
         onChange={onPromptChange}
         onSubmit={onSubmit}
+        formClassName="shrink-0 p-4 mt-auto"
+        contentClassName="mx-auto w-full max-w-3xl"
+        frameClassName="min-h-[84px] rounded-xl border-border bg-background shadow-xs"
       />
     </div>
   );
@@ -141,6 +182,7 @@ export function QuickstartChatPane({
   chatItems,
   interactionResultText,
   isStreaming,
+  isReplyBlocked,
   error,
   reply,
   onReplyChange,
@@ -166,6 +208,7 @@ export function QuickstartChatPane({
   chatItems: QuickstartChatItem[];
   interactionResultText: QuickstartInteractionResultText;
   isStreaming: boolean;
+  isReplyBlocked: boolean;
   error: string | null;
   reply: string;
   onReplyChange: (value: string) => void;
@@ -189,12 +232,9 @@ export function QuickstartChatPane({
   showCreateAgentNext: boolean;
 }) {
   const { msg } = useI18n();
-  const pinnedInteractionItem = [...chatItems].reverse().find(isPinnedQuickstartInteraction);
-  const streamItems = pinnedInteractionItem
-    ? chatItems.filter((item) => item.id !== pinnedInteractionItem.id)
-    : chatItems;
+  const transcript = presentQuickstartTranscript(chatItems);
 
-  const renderToolCard = (item: Extract<QuickstartChatItem, { type: 'tool' }>, pinned = false) => (
+  const renderToolCard = (item: Extract<QuickstartChatItem, { type: 'tool' }>) => (
     <QuickstartToolCard
       key={item.id}
       call={item.call}
@@ -203,7 +243,6 @@ export function QuickstartChatPane({
       environment={environment}
       session={session}
       interactionResultText={interactionResultText}
-      pinned={pinned}
       onCompleteTool={onCompleteTool}
       onCompleteEnvironmentTool={onCompleteEnvironmentTool}
       onConfirmVaultSelection={onConfirmVaultSelection}
@@ -222,17 +261,25 @@ export function QuickstartChatPane({
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
       <MessageScrollerProvider autoScroll defaultScrollPosition="end">
         <MessageScroller className="min-h-0 flex-1">
-          <MessageScrollerViewport data-testid="quickstart-chat-stream" className="subtle-scrollbar-auto pb-6">
-            <MessageScrollerContent data-testid="quickstart-chat-content" className="mt-8 w-full gap-0 px-4">
-              {streamItems.map((item, index) => {
+          <MessageScrollerViewport
+            data-testid="quickstart-chat-stream"
+            className="subtle-scrollbar-auto bg-background/50"
+          >
+            <MessageScrollerContent
+              data-testid="quickstart-chat-content"
+              className="mx-auto w-full max-w-3xl justify-end gap-0 px-4 py-6 self-center"
+            >
+              {transcript.entries.map(({ item, continued }, index) => {
                 if (item.type === 'message') {
                   return (
                     <MessageScrollerItem
                       key={item.id}
                       messageId={item.id}
-                      scrollAnchor={!isStreaming && !error && index === streamItems.length - 1}
+                      scrollAnchor={!isStreaming && !error && index === transcript.entries.length - 1}
                     >
-                      <QuickstartMessageBubble item={item} />
+                      <QuickstartTurnGroup continued={continued}>
+                        <QuickstartMessageBubble item={item} />
+                      </QuickstartTurnGroup>
                     </MessageScrollerItem>
                   );
                 }
@@ -241,7 +288,7 @@ export function QuickstartChatPane({
                     <MessageScrollerItem
                       key={item.id}
                       messageId={item.id}
-                      scrollAnchor={!isStreaming && !error && index === streamItems.length - 1}
+                      scrollAnchor={!isStreaming && !error && index === transcript.entries.length - 1}
                     >
                       <StatusLine className="mt-5" tone={item.tone}>
                         {item.content}
@@ -254,50 +301,43 @@ export function QuickstartChatPane({
                     <MessageScrollerItem
                       key={item.id}
                       messageId={item.id}
-                      scrollAnchor={!isStreaming && !error && index === streamItems.length - 1}
+                      scrollAnchor={!isStreaming && !error && index === transcript.entries.length - 1}
                     >
-                      <CreateAgentResultCard
-                        agentConfig={item.agentConfig}
-                        isStreaming={isStreaming}
-                        showNext={showCreateAgentNext}
-                        onNext={onStartEnvironmentStep}
-                      />
+                      <QuickstartTurnGroup continued={continued}>
+                        <CreateAgentResultCard
+                          agentConfig={item.agentConfig}
+                          isStreaming={isStreaming}
+                          showNext={showCreateAgentNext}
+                          onNext={onStartEnvironmentStep}
+                        />
+                      </QuickstartTurnGroup>
                     </MessageScrollerItem>
                   );
-                }
-                if (isHiddenQuickstartTool(item.call.name)) {
-                  return null;
                 }
                 return (
                   <MessageScrollerItem
                     key={item.id}
                     messageId={item.id}
-                    scrollAnchor={!isStreaming && !error && index === streamItems.length - 1}
+                    scrollAnchor={!isStreaming && !error && index === transcript.entries.length - 1}
                   >
-                    {renderToolCard(item)}
+                    <QuickstartTurnGroup continued={continued}>{renderToolCard(item)}</QuickstartTurnGroup>
                   </MessageScrollerItem>
                 );
               })}
 
               {isStreaming ? (
                 <MessageScrollerItem key="quickstart-streaming" messageId="quickstart-streaming" scrollAnchor>
-                  <Marker className="mt-5 text-muted-foreground/70">
-                    <MarkerIcon>
-                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                    </MarkerIcon>
-                    <MarkerContent>{msg('managedAgents.quickstart.thinking', 'Thinking')}</MarkerContent>
-                  </Marker>
+                  <QuickstartTurnGroup continued={transcript.lastSpeaker === 'assistant'}>
+                    <QuickstartStreamingTurn />
+                  </QuickstartTurnGroup>
                 </MessageScrollerItem>
               ) : null}
 
               {error ? (
                 <MessageScrollerItem key="quickstart-error" messageId="quickstart-error" scrollAnchor>
-                  <Marker className="mt-5 text-destructive">
-                    <MarkerIcon>
-                      <AlertCircle className="size-4" aria-hidden />
-                    </MarkerIcon>
-                    <MarkerContent>{error}</MarkerContent>
-                  </Marker>
+                  <QuickstartTurnGroup continued={transcript.lastSpeaker === 'assistant'}>
+                    <QuickstartErrorTurn>{error}</QuickstartErrorTurn>
+                  </QuickstartTurnGroup>
                 </MessageScrollerItem>
               ) : null}
             </MessageScrollerContent>
@@ -306,181 +346,25 @@ export function QuickstartChatPane({
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {pinnedInteractionItem && !isHiddenQuickstartTool(pinnedInteractionItem.call.name) ? (
-        <div data-testid="quickstart-pinned-interaction" className="shrink-0 px-3 pb-3">
-          {renderToolCard(pinnedInteractionItem, true)}
-        </div>
-      ) : null}
-
       <PromptComposer
         value={reply}
         label={msg('managedAgents.quickstart.reply.label', 'Reply…')}
         placeholder={msg('managedAgents.quickstart.reply.placeholder', 'Reply…')}
         isBusy={isStreaming}
+        isSubmitBlocked={isReplyBlocked}
         submitShortcut="enter"
         onChange={onReplyChange}
         onSubmit={onSubmitReply}
-        formClassName="shrink-0 p-3 pt-0"
+        formClassName="shrink-0 p-4 mt-auto"
+        contentClassName="mx-auto w-full max-w-3xl"
+        frameClassName="min-h-[84px] rounded-xl border-border bg-background shadow-xs"
       />
     </div>
   );
 }
 
 export function QuickstartMessageBubble({ item }: { item: Extract<QuickstartChatItem, { type: 'message' }> }) {
-  const { msg } = useI18n();
-  const content = item.role === 'assistant' ? cleanQuickstartAssistantText(item.content) : item.content;
-  if (!content.trim()) {
-    return null;
-  }
-  const isUser = item.role === 'user';
-  const label = isUser
-    ? msg('managedAgents.quickstart.chat.youLabel', 'You')
-    : msg('managedAgents.quickstart.chat.quickstartLabel', 'Quickstart');
-  const avatar = isUser ? (
-    <UserRound className="size-3.5" aria-hidden />
-  ) : (
-    <Sparkles className="size-3.5" aria-hidden />
-  );
-  if (item.role === 'user') {
-    return (
-      <Message align="end" className="mt-5">
-        <MessageAvatar className="size-7 border border-border/70 bg-secondary text-secondary-foreground shadow-sm">
-          {avatar}
-        </MessageAvatar>
-        <MessageContent className="gap-1.5">
-          <MessageHeader className="justify-end pb-0.5">{label}</MessageHeader>
-          <Bubble align="end" variant="secondary" className="max-w-[85%]">
-            <BubbleContent className="text-[15px] leading-6 text-foreground">{content}</BubbleContent>
-          </Bubble>
-        </MessageContent>
-      </Message>
-    );
-  }
-  return (
-    <Message className="mt-5">
-      <MessageAvatar className="size-7 border border-primary/15 bg-primary/10 text-primary shadow-sm">
-        {avatar}
-      </MessageAvatar>
-      <MessageContent className="gap-1.5">
-        <MessageHeader className="pb-0.5">{label}</MessageHeader>
-        <Bubble variant="outline" className="max-w-[85%]">
-          <BubbleContent className="text-[15px] leading-6 text-foreground">{content}</BubbleContent>
-        </Bubble>
-      </MessageContent>
-    </Message>
-  );
-}
-
-function QuickstartAssistantTurn({
-  children,
-  className,
-  contentClassName,
-}: {
-  children: ReactNode;
-  className?: string;
-  contentClassName?: string;
-}) {
-  const { msg } = useI18n();
-  return (
-    <Message className={clsx('mt-5', className)}>
-      <MessageAvatar className="size-7 border border-primary/15 bg-primary/10 text-primary shadow-sm">
-        <Sparkles className="size-3.5" aria-hidden />
-      </MessageAvatar>
-      <MessageContent className="gap-1.5">
-        <MessageHeader className="pb-0.5">
-          {msg('managedAgents.quickstart.chat.quickstartLabel', 'Quickstart')}
-        </MessageHeader>
-        <Bubble variant="ghost" className="w-full max-w-full">
-          <BubbleContent
-            className={clsx(
-              'w-full overflow-visible rounded-none border-none bg-transparent px-0 py-0',
-              contentClassName,
-            )}
-          >
-            {children}
-          </BubbleContent>
-        </Bubble>
-      </MessageContent>
-    </Message>
-  );
-}
-
-export function isPinnedQuickstartInteraction(
-  item: QuickstartChatItem,
-): item is Extract<QuickstartChatItem, { type: 'tool' }> {
-  return item.type === 'tool' && item.call.name === 'ask_user_questions' && item.call.status === 'awaiting_user';
-}
-
-export function cleanQuickstartAssistantText(content: string) {
-  return stripQuickstartInternalNarration(stripQuickstartThinking(content))
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-export function stripQuickstartThinking(content: string) {
-  return content
-    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
-    .replace(/<think\b[^>]*>[\s\S]*$/gi, '')
-    .replace(/<\/think>/gi, '');
-}
-
-export function stripQuickstartInternalNarration(content: string) {
-  const trimmed = content.trim();
-  if (!trimmed) {
-    return '';
-  }
-  // Upstream search tools can emit this transient narration before their tool block.
-  // The tool card already communicates the operation, so do not display or persist it.
-  if (/^(?:Search results for query:\s*)+/i.test(trimmed)) {
-    return '';
-  }
-  return stripQuickstartInternalSentences(trimmed);
-}
-
-export function stripQuickstartInternalSentences(content: string) {
-  const trimmed = content.trim();
-  if (!trimmed) {
-    return '';
-  }
-  return trimmed
-    .replace(
-      /(?:^|[.!?]\s+|\n+)(?:Thinking\b|The user\b|User (?:wants|chose|selected|asked|said|is|has)\b|I see\b|I (?:need|should|will|can)\b|I'll\b|Let me\b|Creating\b|Now\b)[\s\S]*$/i,
-      '',
-    )
-    .trim();
-}
-
-export function StatusLine({
-  children,
-  className,
-  tone = 'muted',
-}: {
-  children: ReactNode;
-  className?: string;
-  tone?: 'muted' | 'success' | 'error';
-}) {
-  return (
-    <Marker
-      className={clsx(
-        'gap-2 text-sm',
-        tone === 'error'
-          ? 'text-destructive'
-          : tone === 'success'
-            ? 'text-muted-foreground'
-            : 'text-muted-foreground/70',
-        className,
-      )}
-    >
-      <MarkerIcon>
-        {tone === 'error' ? (
-          <AlertCircle className="size-3.5" aria-hidden />
-        ) : (
-          <Check className="size-3.5" aria-hidden />
-        )}
-      </MarkerIcon>
-      <MarkerContent>{children}</MarkerContent>
-    </Marker>
-  );
+  return <QuickstartTextTurn content={item.content} role={item.role} />;
 }
 
 export function QuickstartToolCard({
@@ -501,7 +385,6 @@ export function QuickstartToolCard({
   onSendTestRunMessage,
   onIntegrationExit,
   offerNextStepLabel,
-  pinned = false,
 }: {
   call: QuickstartToolCall;
   agent: AgentApiResponse | null;
@@ -509,7 +392,6 @@ export function QuickstartToolCard({
   environment: EnvironmentApiResponse | null;
   session: SessionApiResponse | null;
   interactionResultText: QuickstartInteractionResultText;
-  pinned?: boolean;
   onCompleteTool: (call: QuickstartToolCall, result: QuickstartToolExecutionResult) => Promise<void>;
   onCompleteEnvironmentTool: (call: QuickstartToolCall) => Promise<void>;
   onConfirmVaultSelection: (call: QuickstartToolCall) => Promise<void>;
@@ -528,7 +410,12 @@ export function QuickstartToolCard({
 }) {
   const results = interactionResultText;
   if (call.name === 'ask_user_questions') {
-    return <AskUserQuestionsCard call={call} pinned={pinned} results={results} onCompleteTool={onCompleteTool} />;
+    const questions = parseQuestionInput(call.input);
+    return questions.length ? (
+      <AskUserQuestionsCard call={call} questions={questions} results={results} onCompleteTool={onCompleteTool} />
+    ) : (
+      <GenericQuickstartToolCard call={call} />
+    );
   }
   if (call.name === 'build_agent_config') {
     return (
@@ -541,8 +428,12 @@ export function QuickstartToolCard({
       />
     );
   }
-  if (call.name === 'list_environments' || call.name === 'list_vaults') {
+  const presentation = quickstartToolPresentation(call.name);
+  if (presentation.layout === 'status-line') {
     return <QuickstartStatusToolLine call={call} />;
+  }
+  if (presentation.layout === 'compact-status') {
+    return <QuickstartCompactToolStatus call={call} />;
   }
   if (call.name === 'agent_ready') {
     return (
@@ -596,10 +487,6 @@ export function QuickstartToolCard({
   return <GenericQuickstartToolCard call={call} />;
 }
 
-export function isHiddenQuickstartTool(name: string) {
-  return name === 'flag_schedule_intent';
-}
-
 export function QuickstartStatusToolLine({ call }: { call: QuickstartToolCall }) {
   const { msg } = useI18n();
   const fallback =
@@ -629,6 +516,25 @@ export function QuickstartStatusToolLine({ call }: { call: QuickstartToolCall })
   );
 }
 
+export function QuickstartCompactToolStatus({ call }: { call: QuickstartToolCall }) {
+  const { msg } = useI18n();
+  const meta = quickstartToolMeta(call.name, msg);
+  const text = (call.error || call.result || meta.label).replace(/\.$/, '');
+  if (call.status === 'running') {
+    return (
+      <div role="status" className="mt-2 flex h-6 items-center gap-3 text-sm leading-5 text-muted-foreground/70">
+        <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+        <span className="truncate">{meta.label}</span>
+      </div>
+    );
+  }
+  return (
+    <StatusLine className="mt-2 h-6 text-muted-foreground/70" tone={call.status === 'failed' ? 'error' : 'muted'}>
+      <span className="truncate">{text}</span>
+    </StatusLine>
+  );
+}
+
 function QuickstartWarningAlert({ className, children }: { className?: string; children: ReactNode }) {
   return (
     <Alert className={clsx('border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400', className)}>
@@ -641,24 +547,26 @@ function QuickstartWarningAlert({ className, children }: { className?: string; c
 export function VaultSharingNoticeCard({ call: _call }: { call: QuickstartToolCall }) {
   const { msg } = useI18n();
   return (
-    <QuickstartWarningAlert className="my-2">
-      <p>
-        {msg(
-          'managedAgents.quickstart.vaultSharingNotice',
-          'Vaults are shared across this workspace. Credentials added to a vault will be usable by anyone with API key access. Learn more',
-        )}{' '}
-        <a
-          className="underline underline-offset-2 hover:text-amber-600 dark:text-amber-400"
-          href="/docs/en/managed-agents/vaults"
-          target="_blank"
-          rel="noreferrer"
-        >
-          {msg('managedAgents.quickstart.here', 'here')}
-          <span className="sr-only">{msg('managedAgents.common.opensInNewTabParen', '(opens in new tab)')}</span>
-        </a>
-        .
-      </p>
-    </QuickstartWarningAlert>
+    <QuickstartAssistantTurn>
+      <QuickstartWarningAlert className="my-2">
+        <p>
+          {msg(
+            'managedAgents.quickstart.vaultSharingNotice',
+            'Vaults are shared across this workspace. Credentials added to a vault will be usable by anyone with API key access. Learn more',
+          )}{' '}
+          <a
+            className="underline underline-offset-2 hover:text-amber-600 dark:text-amber-400"
+            href="/docs/en/managed-agents/vaults"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {msg('managedAgents.quickstart.here', 'here')}
+            <span className="sr-only">{msg('managedAgents.common.opensInNewTabParen', '(opens in new tab)')}</span>
+          </a>
+          .
+        </p>
+      </QuickstartWarningAlert>
+    </QuickstartAssistantTurn>
   );
 }
 
@@ -682,41 +590,43 @@ export function SelectVaultAckCard({
 
   if (call.status !== 'awaiting_user') {
     return (
-      <div className="mt-5">
+      <QuickstartAssistantTurn>
         <ToolStatus call={call} />
-      </div>
+      </QuickstartAssistantTurn>
     );
   }
 
   return (
-    <div className="mt-5 flex w-full flex-col gap-3 rounded-xl bg-secondary/80 p-4 shadow-sm">
-      <p className="text-sm text-foreground">
-        {msg('managedAgents.quickstart.selected', 'Selected')}:{' '}
-        <span className="font-semibold text-foreground">{label}</span>
-      </p>
-      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3">
-        <Label className="cursor-pointer items-start gap-3 text-sm leading-5 font-normal text-amber-600 dark:text-amber-400">
-          <Checkbox
-            aria-label={ackLabel}
-            className="mt-0.5 border-amber-500/40 data-checked:border-amber-500/40 data-checked:bg-amber-500/10 data-checked:text-amber-600 dark:text-amber-400"
-            checked={acknowledged}
-            onCheckedChange={(checked) => setAcknowledged(checked === true)}
-          />
-          <span>{ackLabel}</span>
-        </Label>
+    <QuickstartAssistantTurn>
+      <div className="flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-xs">
+        <p className="text-xs text-foreground">
+          {msg('managedAgents.quickstart.selected', 'Selected')}:{' '}
+          <span className="font-semibold text-foreground">{label}</span>
+        </p>
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+          <Label className="cursor-pointer items-start gap-3 text-xs leading-4 font-normal text-amber-600 dark:text-amber-400">
+            <Checkbox
+              aria-label={ackLabel}
+              className="mt-0.5 border-amber-500/40 data-checked:border-amber-500/40 data-checked:bg-amber-500/10 data-checked:text-amber-600 dark:text-amber-400"
+              checked={acknowledged}
+              onCheckedChange={(checked) => setAcknowledged(checked === true)}
+            />
+            <span>{ackLabel}</span>
+          </Label>
+        </div>
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            size="sm"
+            className="disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/70"
+            disabled={!acknowledged}
+            onClick={() => onConfirm(call)}
+          >
+            {msg('common.confirm', 'Confirm')}
+          </Button>
+        </div>
       </div>
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          size="sm"
-          className="disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/70"
-          disabled={!acknowledged}
-          onClick={() => onConfirm(call)}
-        >
-          {msg('common.confirm', 'Confirm')}
-        </Button>
-      </div>
-    </div>
+    </QuickstartAssistantTurn>
   );
 }
 
@@ -755,11 +665,13 @@ export function VaultCredentialCard({
   if (call.status === 'completed' && call.result) {
     const compactResult = call.result.split(' — ')[0];
     return (
-      <div className="mt-5 flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground">
-        <Check className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        <LockKeyhole className="size-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
-        <span className="min-w-0 flex-1 truncate">{compactResult}</span>
-      </div>
+      <QuickstartAssistantTurn>
+        <div className="flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground">
+          <Check className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <LockKeyhole className="size-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
+          <span className="min-w-0 flex-1 break-words">{compactResult}</span>
+        </div>
+      </QuickstartAssistantTurn>
     );
   }
 
@@ -794,111 +706,113 @@ export function VaultCredentialCard({
   };
 
   return (
-    <div className="mt-5 flex w-full flex-col gap-2 rounded-xl border border-border bg-card p-3 text-sm text-foreground">
-      <p className="text-sm font-medium leading-5 text-foreground">
-        {msg('managedAgents.quickstart.authorizationRequired', 'Authorization required to use this MCP')}
-      </p>
-      <div className="rounded-lg border border-border bg-secondary p-3">
-        <div className="flex items-center gap-2">
-          <div className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-accent text-foreground">
-            <FileText className="size-4" aria-hidden />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm leading-5 text-foreground">
-              {msg('managedAgents.quickstart.addCredentialFor', 'Add credential for')}{' '}
-              <span className="font-semibold text-foreground">{serverName}</span>
-            </p>
-            <p className="mt-0.5 text-xs leading-4 text-muted-foreground">{reason}</p>
+    <QuickstartAssistantTurn>
+      <div className="flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-xs text-xs text-foreground">
+        <p className="text-xs font-semibold leading-5 text-foreground">
+          {msg('managedAgents.quickstart.authorizationRequired', 'Authorization required to use this MCP')}
+        </p>
+        <div className="rounded-lg border border-border bg-secondary p-3">
+          <div className="flex items-center gap-2">
+            <div className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-accent text-foreground">
+              <FileText className="size-4" aria-hidden />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-medium leading-5 text-foreground">
+                {msg('managedAgents.quickstart.addCredentialFor', 'Add credential for')}{' '}
+                <span className="font-semibold text-foreground">{serverName}</span>
+              </p>
+              <p className="mt-0.5 text-xs leading-4 text-muted-foreground">{reason}</p>
+            </div>
           </div>
         </div>
-      </div>
-      <CredentialDisclosure
-        title={msg('managedAgents.quickstart.accessToken', 'Access token')}
-        open={accessTokenOpen}
-        onOpenChange={setAccessTokenOpen}
-      >
-        <Input
-          type="password"
-          value={accessToken}
-          placeholder={msg('managedAgents.quickstart.oauthAccessToken', 'OAuth access token')}
-          className="h-7 border-transparent bg-secondary text-sm placeholder:text-muted-foreground/70 focus-visible:border-ring"
-          onChange={(event) => setAccessToken(event.target.value)}
-        />
-      </CredentialDisclosure>
-      <CredentialDisclosure
-        title={msg('managedAgents.quickstart.oauthClientCredentials', 'OAuth client credentials')}
-        open={oauthOpen}
-        onOpenChange={setOauthOpen}
-      >
-        <Input
-          type="text"
-          value={clientId}
-          placeholder={msg('managedAgents.quickstart.clientId', 'Client ID')}
-          className="h-7 border-transparent bg-secondary text-sm placeholder:text-muted-foreground/70 focus-visible:border-ring"
-          onChange={(event) => setClientId(event.target.value)}
-        />
-        <Input
-          type="password"
-          value={clientSecret}
-          placeholder={msg('managedAgents.quickstart.clientSecret', 'Client secret')}
-          className="mt-2 h-7 border-border bg-secondary text-sm placeholder:text-muted-foreground/70 focus-visible:border-ring"
-          onChange={(event) => setClientSecret(event.target.value)}
-        />
-      </CredentialDisclosure>
-      <QuickstartWarningAlert>
-        <p>
-          {msg(
-            'managedAgents.quickstart.credentialSharingNotice',
-            'This credential will be shared across this workspace. Anyone with API key access can use this credential in an agent session to access the service associated with the credential - including reading data and taking actions on behalf of the credential owner. Learn more',
-          )}{' '}
-          <a
-            className="underline underline-offset-2 hover:text-amber-600 dark:text-amber-400"
-            href="/docs/en/managed-agents/vaults"
-            target="_blank"
-            rel="noreferrer"
+        <CredentialDisclosure
+          title={msg('managedAgents.quickstart.accessToken', 'Access token')}
+          open={accessTokenOpen}
+          onOpenChange={setAccessTokenOpen}
+        >
+          <Input
+            type="password"
+            value={accessToken}
+            placeholder={msg('managedAgents.quickstart.oauthAccessToken', 'OAuth access token')}
+            className="h-7 border-transparent bg-secondary text-xs placeholder:text-muted-foreground/70 focus-visible:border-ring"
+            onChange={(event) => setAccessToken(event.target.value)}
+          />
+        </CredentialDisclosure>
+        <CredentialDisclosure
+          title={msg('managedAgents.quickstart.oauthClientCredentials', 'OAuth client credentials')}
+          open={oauthOpen}
+          onOpenChange={setOauthOpen}
+        >
+          <Input
+            type="text"
+            value={clientId}
+            placeholder={msg('managedAgents.quickstart.clientId', 'Client ID')}
+            className="h-7 border-transparent bg-secondary text-xs placeholder:text-muted-foreground/70 focus-visible:border-ring"
+            onChange={(event) => setClientId(event.target.value)}
+          />
+          <Input
+            type="password"
+            value={clientSecret}
+            placeholder={msg('managedAgents.quickstart.clientSecret', 'Client secret')}
+            className="mt-2 h-7 border-border bg-secondary text-xs placeholder:text-muted-foreground/70 focus-visible:border-ring"
+            onChange={(event) => setClientSecret(event.target.value)}
+          />
+        </CredentialDisclosure>
+        <QuickstartWarningAlert className="text-xs">
+          <p>
+            {msg(
+              'managedAgents.quickstart.credentialSharingNotice',
+              'This credential will be shared across this workspace. Anyone with API key access can use this credential in an agent session to access the service associated with the credential - including reading data and taking actions on behalf of the credential owner. Learn more',
+            )}{' '}
+            <a
+              className="underline underline-offset-2 hover:text-amber-600 dark:text-amber-400"
+              href="/docs/en/managed-agents/vaults"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {msg('managedAgents.quickstart.here', 'here')}
+              <span className="sr-only">{msg('managedAgents.common.opensInNewTabParen', '(opens in new tab)')}</span>
+            </a>
+          </p>
+        </QuickstartWarningAlert>
+        <Label className="cursor-pointer items-start gap-2 text-xs leading-4 font-normal text-foreground">
+          <Checkbox
+            aria-label={credentialAckLabel}
+            className="mt-0.5 size-5 rounded border-border"
+            checked={acknowledged}
+            onCheckedChange={(checked) => setAcknowledged(checked === true)}
+          />
+          <span>{credentialAckLabel}</span>
+        </Label>
+        {call.error ? <p className="text-sm text-destructive">{call.error}</p> : null}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            aria-label={msg('managedAgents.quickstart.authorizeCredential', 'Authorize {name} credential', {
+              name: serverName,
+            })}
+            size="sm"
+            className="disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/70"
+            disabled={!canConnect}
+            onClick={submitCredential}
           >
-            {msg('managedAgents.quickstart.here', 'here')}
-            <span className="sr-only">{msg('managedAgents.common.opensInNewTabParen', '(opens in new tab)')}</span>
-          </a>
-        </p>
-      </QuickstartWarningAlert>
-      <Label className="cursor-pointer items-start gap-2 text-sm leading-5 font-normal text-foreground">
-        <Checkbox
-          aria-label={credentialAckLabel}
-          className="mt-0.5 size-5 rounded border-border"
-          checked={acknowledged}
-          onCheckedChange={(checked) => setAcknowledged(checked === true)}
-        />
-        <span>{credentialAckLabel}</span>
-      </Label>
-      {call.error ? <p className="text-sm text-destructive">{call.error}</p> : null}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          aria-label={msg('managedAgents.quickstart.authorizeCredential', 'Authorize {name} credential', {
-            name: serverName,
-          })}
-          size="sm"
-          className="disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground/70"
-          disabled={!canConnect}
-          onClick={submitCredential}
-        >
-          {busy
-            ? msg('managedAgents.quickstart.connecting', 'Connecting')
-            : msg('managedAgents.quickstart.connect', 'Connect')}
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="disabled:cursor-wait"
-          disabled={busy}
-          onClick={() => void onSkip(call)}
-        >
-          {msg('managedAgents.quickstart.skipForNow', 'Skip for now')}
-        </Button>
+            {busy
+              ? msg('managedAgents.quickstart.connecting', 'Connecting')
+              : msg('managedAgents.quickstart.connect', 'Connect')}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="disabled:cursor-wait"
+            disabled={busy}
+            onClick={() => void onSkip(call)}
+          >
+            {msg('managedAgents.quickstart.skipForNow', 'Skip for now')}
+          </Button>
+        </div>
       </div>
-    </div>
+    </QuickstartAssistantTurn>
   );
 }
 
@@ -922,7 +836,7 @@ export function CredentialDisclosure({
     >
       <CollapsibleTrigger
         type="button"
-        className="flex h-[46px] w-full items-center justify-start gap-2 rounded-lg px-3 text-left text-sm leading-5 text-muted-foreground transition-colors hover:bg-transparent hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none motion-reduce:transition-none"
+        className="flex h-9 w-full items-center justify-start gap-2 rounded-lg px-3 text-left text-xs leading-5 text-muted-foreground transition-colors hover:bg-transparent hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none motion-reduce:transition-none"
       >
         <ChevronDown
           className={clsx(
@@ -953,23 +867,21 @@ export function EnvironmentStepCard({
   const isReuse = typeof call.input.reuse_environment_id === 'string' && call.input.reuse_environment_id.trim();
   if (call.status === 'running') {
     return (
-      <QuickstartAssistantTurn>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground/70">
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          {isReuse
+      <ToolRunningTurn
+        message={
+          isReuse
             ? msg('managedAgents.quickstart.selectingEnvironment', 'Selecting environment')
-            : msg('managedAgents.quickstart.creatingEnvironment', 'Creating environment')}
-        </div>
-      </QuickstartAssistantTurn>
+            : msg('managedAgents.quickstart.creatingEnvironment', 'Creating environment')
+        }
+      />
     );
   }
   if (call.status === 'failed') {
     return (
-      <QuickstartAssistantTurn>
-        <StatusLine tone="error">
-          {call.error ?? msg('managedAgents.quickstart.environmentSetupFailed', 'Environment setup failed.')}
-        </StatusLine>
-      </QuickstartAssistantTurn>
+      <ToolFailedTurn
+        error={call.error}
+        fallbackMessage={msg('managedAgents.quickstart.environmentSetupFailed', 'Environment setup failed.')}
+      />
     );
   }
   const status = isReuse
@@ -999,264 +911,6 @@ export function EnvironmentStepCard({
     </QuickstartAssistantTurn>
   );
 }
-
-export function AskUserQuestionsCard({
-  call,
-  pinned = false,
-  results,
-  onCompleteTool,
-}: {
-  call: QuickstartToolCall;
-  pinned?: boolean;
-  results: QuickstartInteractionResultText;
-  onCompleteTool: (call: QuickstartToolCall, result: QuickstartToolExecutionResult) => Promise<void>;
-}) {
-  const { msg } = useI18n();
-  const questions = parseQuestionInput(call.input);
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [selected, setSelected] = useState<Record<number, string[]>>({});
-  const [otherValues, setOtherValues] = useState<Record<number, string>>({});
-  const activeQuestion = questions[questionIndex];
-  const activeSelected = selected[questionIndex] ?? [];
-  const submitted = call.status === 'completed';
-  const immediateSingleChoice = Boolean(activeQuestion && !activeQuestion.multiSelect && questions.length === 1);
-  const submittedAnswers = submitted ? parseSubmittedQuestionAnswers(call.result) : [];
-  const activeSubmittedAnswer = submittedAnswers[questionIndex] ?? submittedAnswers[0];
-
-  const completeWithAnswers = async (
-    answersByQuestion: Record<number, string[]>,
-    otherAnswers: Record<number, string> = otherValues,
-  ) => {
-    const answers = questions.map((question, index) => {
-      const labels = answersByQuestion[index] ?? [];
-      const other = otherAnswers[index]?.trim();
-      return {
-        header: question.header,
-        question: question.question,
-        answers: other ? [...labels, other] : labels,
-      };
-    });
-    await onCompleteTool(call, { content: JSON.stringify({ answers }) });
-  };
-
-  const toggleOption = (label: string) => {
-    if (submitted || !activeQuestion) {
-      return;
-    }
-    if (immediateSingleChoice) {
-      void completeWithAnswers({ [questionIndex]: [label] });
-      return;
-    }
-    setSelected((current) => {
-      const values = current[questionIndex] ?? [];
-      if (!activeQuestion.multiSelect) {
-        return { ...current, [questionIndex]: [label] };
-      }
-      return {
-        ...current,
-        [questionIndex]: values.includes(label) ? values.filter((value) => value !== label) : [...values, label],
-      };
-    });
-  };
-
-  const setMultiSelectOption = (label: string, nextChecked: boolean) => {
-    if (submitted || !activeQuestion?.multiSelect) {
-      return;
-    }
-    setSelected((current) => {
-      const values = current[questionIndex] ?? [];
-      const nextValues = nextChecked
-        ? values.includes(label)
-          ? values
-          : [...values, label]
-        : values.filter((value) => value !== label);
-      return { ...current, [questionIndex]: nextValues };
-    });
-  };
-
-  const submit = async () => {
-    await completeWithAnswers(selected);
-  };
-
-  const questionControlName = `quickstart-question-${call.id}-${questionIndex}`;
-  const questionGroupLabel = activeQuestion.question;
-  const activeRadioValue = activeSelected[0] ?? '';
-
-  if (!activeQuestion) {
-    return <GenericQuickstartToolCard call={call} />;
-  }
-
-  return (
-    <div
-      data-testid="quickstart-question-card"
-      className={clsx(
-        'flex flex-col gap-3 rounded-lg border border-border bg-card p-3 shadow-sm outline-none',
-        pinned ? 'mx-auto w-full' : 'mt-5',
-      )}
-    >
-      <div className="flex items-center justify-between gap-3 px-2">
-        <p className="text-[15px] font-medium text-foreground">{activeQuestion.question}</p>
-        {questions.length > 1 ? (
-          <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
-            {questionIndex + 1}/{questions.length}
-          </div>
-        ) : null}
-      </div>
-
-      {submitted ? (
-        <p className="px-2 text-sm text-muted-foreground">
-          {activeSubmittedAnswer
-            ? activeSubmittedAnswer.answers.join(', ') || msg('managedAgents.quickstart.skipped', 'Skipped')
-            : call.result}
-        </p>
-      ) : (
-        <>
-          {activeQuestion.multiSelect ? (
-            <div role="group" aria-label={questionGroupLabel} className="-my-1">
-              {activeQuestion.options.map((option, index) => {
-                const checked = activeSelected.includes(option.label);
-                const optionId = `${questionControlName}-checkbox-${index}`;
-                return (
-                  <div key={option.label} className="relative">
-                    {index > 0 ? <span className="absolute inset-x-2 top-0 h-px bg-secondary" /> : null}
-                    <div
-                      className={clsx(
-                        'flex items-start gap-3 rounded-lg px-2 py-3 text-left hover:bg-accent',
-                        checked && 'bg-accent',
-                      )}
-                    >
-                      <Checkbox
-                        id={optionId}
-                        checked={checked}
-                        onCheckedChange={(nextChecked) => setMultiSelectOption(option.label, nextChecked === true)}
-                        className="mt-1 size-5 rounded-md border-border bg-accent text-primary"
-                      />
-                      <Label htmlFor={optionId} className="min-w-0 cursor-pointer items-start leading-6 font-normal">
-                        <span className="block text-[15px] text-foreground">{option.label}</span>
-                        <span className="mt-0.5 block text-sm text-muted-foreground">{option.description}</span>
-                      </Label>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <RadioGroup
-              aria-label={questionGroupLabel}
-              name={questionControlName}
-              value={activeRadioValue}
-              onValueChange={(value) => toggleOption(value)}
-              className="-my-1 gap-0"
-            >
-              {activeQuestion.options.map((option, index) => {
-                const checked = activeRadioValue === option.label;
-                const optionId = `${questionControlName}-radio-${index}`;
-                return (
-                  <div key={option.label} className="relative">
-                    {index > 0 ? <span className="absolute inset-x-2 top-0 h-px bg-secondary" /> : null}
-                    <Label
-                      htmlFor={optionId}
-                      className={clsx(
-                        'w-full cursor-pointer items-start gap-3 rounded-lg px-2 py-3 text-left leading-6 font-normal hover:bg-accent',
-                        checked && 'bg-accent',
-                      )}
-                    >
-                      <RadioGroupItem
-                        id={optionId}
-                        value={option.label}
-                        className="mt-1 size-5 border-border bg-accent text-primary"
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-[15px] text-foreground">{option.label}</span>
-                        <span className="mt-0.5 block text-sm text-muted-foreground">{option.description}</span>
-                      </span>
-                    </Label>
-                  </div>
-                );
-              })}
-            </RadioGroup>
-          )}
-          <div className="relative -my-1">
-            <span className="absolute inset-x-2 top-0 h-px bg-secondary" />
-            <Label
-              htmlFor={`${questionControlName}-other`}
-              className="w-full items-center gap-3 rounded-lg px-2 py-3 text-left leading-6 font-normal"
-            >
-              <span className="grid size-6 shrink-0 place-items-center rounded-md border border-border bg-accent text-muted-foreground">
-                <Pencil className="size-3.5" aria-hidden />
-              </span>
-              <Input
-                id={`${questionControlName}-other`}
-                value={otherValues[questionIndex] ?? ''}
-                placeholder={msg('managedAgents.quickstart.somethingElse', 'Something else')}
-                className="h-auto rounded-none border-none bg-transparent p-0 text-[15px] placeholder:text-muted-foreground/70 focus-visible:ring-0"
-                onChange={(event) => setOtherValues((current) => ({ ...current, [questionIndex]: event.target.value }))}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && immediateSingleChoice) {
-                    event.preventDefault();
-                    const value = event.currentTarget.value.trim();
-                    if (value) {
-                      void completeWithAnswers({ [questionIndex]: [] }, { ...otherValues, [questionIndex]: value });
-                    }
-                  }
-                }}
-              />
-            </Label>
-          </div>
-          <div className="flex items-center gap-2 px-2">
-            <div className="flex items-center gap-2">
-              {questions.length > 1 ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="text-foreground hover:bg-accent"
-                    disabled={questionIndex === 0}
-                    onClick={() => setQuestionIndex((index) => Math.max(0, index - 1))}
-                  >
-                    <ChevronLeft className="size-4" aria-hidden />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="text-foreground hover:bg-accent"
-                    disabled={questionIndex === questions.length - 1}
-                    onClick={() => setQuestionIndex((index) => Math.min(questions.length - 1, index + 1))}
-                  >
-                    <ChevronRight className="size-4" aria-hidden />
-                  </Button>
-                </>
-              ) : null}
-              {!immediateSingleChoice ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={msg('managedAgents.quickstart.submitAnswer', 'Submit answer')}
-                  className="bg-primary text-primary-foreground hover:bg-primary/80"
-                  onClick={submit}
-                >
-                  <ArrowUp className="size-4" aria-hidden />
-                </Button>
-              ) : null}
-            </div>
-            <Button
-              type="button"
-              variant="secondary"
-              className="ml-auto hover:bg-popover"
-              onClick={() => onCompleteTool(call, { content: results.questionSkipped })}
-            >
-              {msg('managedAgents.quickstart.skip', 'Skip')}
-            </Button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 export function BuildAgentConfigCard({
   call,
   agent,
@@ -1276,26 +930,24 @@ export function BuildAgentConfigCard({
     ? msg('managedAgents.quickstart.useThisConfig', 'Use this config')
     : msg('managedAgents.quickstart.createThisAgent', 'Create this agent');
   if (call.status === 'running') {
-    return (
-      <QuickstartAssistantTurn>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground/70">
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          {msg('managedAgents.quickstart.updatingAgent', 'Updating agent...')}
-        </div>
-      </QuickstartAssistantTurn>
-    );
+    return <ToolRunningTurn message={msg('managedAgents.quickstart.updatingAgent', 'Updating agent...')} />;
   }
   if (call.status === 'failed') {
     return (
+      <ToolFailedTurn
+        error={call.error}
+        fallbackMessage={msg('managedAgents.quickstart.agentCreationFailed', 'Agent creation failed.')}
+      />
+    );
+  }
+  if (call.status === 'completed') {
+    return (
       <QuickstartAssistantTurn>
-        <StatusLine tone="error">
-          {call.error ?? msg('managedAgents.quickstart.agentCreationFailed', 'Agent creation failed.')}
+        <StatusLine tone="success">
+          {call.result ?? msg('managedAgents.quickstart.agentConfigurationUpdated', 'Agent configuration updated')}
         </StatusLine>
       </QuickstartAssistantTurn>
     );
-  }
-  if (call.status !== 'awaiting_user') {
-    return null;
   }
 
   return (
@@ -1411,22 +1063,14 @@ export function shellYamlCommand(resource: string, body: unknown) {
 export function CreateVaultResultCard({ call }: { call: QuickstartToolCall }) {
   const { msg } = useI18n();
   if (call.status === 'running') {
-    return (
-      <QuickstartAssistantTurn>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground/70">
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          {msg('managedAgents.quickstart.creatingVault', 'Creating vault')}
-        </div>
-      </QuickstartAssistantTurn>
-    );
+    return <ToolRunningTurn message={msg('managedAgents.quickstart.creatingVault', 'Creating vault')} />;
   }
   if (call.status === 'failed') {
     return (
-      <QuickstartAssistantTurn>
-        <StatusLine tone="error">
-          {call.error ?? msg('managedAgents.quickstart.vaultCreationFailed', 'Vault creation failed.')}
-        </StatusLine>
-      </QuickstartAssistantTurn>
+      <ToolFailedTurn
+        error={call.error}
+        fallbackMessage={msg('managedAgents.quickstart.vaultCreationFailed', 'Vault creation failed.')}
+      />
     );
   }
   const displayName =
@@ -1507,22 +1151,14 @@ export function AgentReadyCard({
 export function CreateDeploymentResultCard({ call }: { call: QuickstartToolCall }) {
   const { msg } = useI18n();
   if (call.status === 'running') {
-    return (
-      <QuickstartAssistantTurn>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground/70">
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          {msg('managedAgents.quickstart.creatingDeployment', 'Creating deployment')}
-        </div>
-      </QuickstartAssistantTurn>
-    );
+    return <ToolRunningTurn message={msg('managedAgents.quickstart.creatingDeployment', 'Creating deployment')} />;
   }
   if (call.status === 'failed') {
     return (
-      <QuickstartAssistantTurn>
-        <StatusLine tone="error">
-          {call.error ?? msg('managedAgents.quickstart.deploymentCreationFailed', 'Deployment creation failed.')}
-        </StatusLine>
-      </QuickstartAssistantTurn>
+      <ToolFailedTurn
+        error={call.error}
+        fallbackMessage={msg('managedAgents.quickstart.deploymentCreationFailed', 'Deployment creation failed.')}
+      />
     );
   }
   const deploymentYaml = {
@@ -1939,224 +1575,16 @@ export function ToolStatus({ call }: { call: QuickstartToolCall }) {
   );
 }
 
-export function parseQuestionInput(input: Record<string, unknown>): QuickstartQuestion[] {
-  const questions = Array.isArray(input.questions) ? input.questions : [];
-  return questions
-    .map((item): QuickstartQuestion | null => {
-      const question = toRecord(item);
-      if (!question) {
-        return null;
-      }
-      const options = Array.isArray(question.options)
-        ? question.options
-            .map((option) => {
-              const typedOption = toRecord(option);
-              if (!typedOption || typeof typedOption.label !== 'string') {
-                return null;
-              }
-              return {
-                label: typedOption.label,
-                description: typeof typedOption.description === 'string' ? typedOption.description : '',
-              };
-            })
-            .filter((option): option is { label: string; description: string } => Boolean(option))
-        : [];
-      return {
-        header: typeof question.header === 'string' ? question.header : 'Question',
-        question: typeof question.question === 'string' ? question.question : 'Choose an option.',
-        multiSelect: question.multiSelect === true,
-        options,
-      };
-    })
-    .filter((question): question is QuickstartQuestion => Boolean(question));
-}
-
-export function parseSubmittedQuestionAnswers(result?: string) {
-  if (!result) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(result);
-    const answers = toRecord(parsed)?.answers;
-    if (!Array.isArray(answers)) {
-      return [];
-    }
-    return answers
-      .map((item) => {
-        const answer = toRecord(item);
-        if (!answer) {
-          return null;
-        }
-        const labels = Array.isArray(answer.answers)
-          ? answer.answers.filter((label): label is string => typeof label === 'string' && Boolean(label.trim()))
-          : [];
-        return {
-          question: typeof answer.question === 'string' ? answer.question : '',
-          answers: labels,
-        };
-      })
-      .filter((answer): answer is { question: string; answers: string[] } => Boolean(answer));
-  } catch {
-    return [];
-  }
-}
-
-export function quickstartItemId(prefix: string) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function appendQuickstartStatus(
-  setChatItems: Dispatch<SetStateAction<QuickstartChatItem[]>>,
-  content: string,
-  tone: 'muted' | 'success' | 'error' = 'muted',
-) {
-  setChatItems((current) => [...current, { id: quickstartItemId('status'), type: 'status', content, tone }]);
-}
-
-export function updateQuickstartMessage(
-  items: QuickstartChatItem[],
-  itemId: string,
-  content: string,
-): QuickstartChatItem[] {
-  return items.map((item) => (item.id === itemId && item.type === 'message' ? { ...item, content } : item));
-}
-
-export function updateQuickstartTool(
-  setChatItems: Dispatch<SetStateAction<QuickstartChatItem[]>>,
-  toolUseId: string,
-  patch: Partial<QuickstartToolCall>,
-) {
-  setChatItems((current) =>
-    current.map((item) =>
-      item.type === 'tool' && item.call.id === toolUseId ? { ...item, call: { ...item.call, ...patch } } : item,
-    ),
-  );
-}
-
-export function awaitingQuickstartToolCalls(items: QuickstartChatItem[]) {
-  return items
-    .filter(
-      (item): item is Extract<QuickstartChatItem, { type: 'tool' }> =>
-        item.type === 'tool' && item.call.status === 'awaiting_user',
-    )
-    .map((item) => item.call);
-}
-
-export function quickstartChatReplyToolResult(call: QuickstartToolCall, reply: string, locale: Locale = 'en') {
-  const zh = locale === 'zh-CN';
-  if (call.name === 'build_agent_config') {
-    // Keep this phrase in sync with the "session is STILL RUNNING" instruction in the
-    // localized Agent Builder system prompt (quickstartPromptText.ts).
-    return zh ? `用户改为发送了消息："${reply}"` : `User sent a message instead: "${reply}"`;
-  }
-  return zh ? `用户在聊天中回复：${reply}` : `User replied in chat: ${reply}`;
-}
-
-export function toolResultBlock(toolUseId: string, result: QuickstartToolExecutionResult) {
-  return {
-    type: 'tool_result',
-    tool_use_id: toolUseId,
-    content: result.content,
-    ...(result.isError ? { is_error: true } : {}),
-  };
-}
-
-export function quickstartVaultIdsFromInput(input: Record<string, unknown>) {
-  if (Array.isArray(input.vault_ids)) {
-    return input.vault_ids
-      .filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
-      .map((id) => id.trim());
-  }
-  if (typeof input.vault_id === 'string' && input.vault_id.trim()) {
-    return [input.vault_id.trim()];
-  }
-  if (typeof input.id === 'string' && input.id.trim()) {
-    return [input.id.trim()];
-  }
-  return [];
-}
-
-export function quickstartVaultLabelsFromInput(input: Record<string, unknown>) {
-  if (Array.isArray(input.vault_names)) {
-    const names = input.vault_names
-      .filter((name): name is string => typeof name === 'string' && Boolean(name.trim()))
-      .map((name) => name.trim());
-    if (names.length) {
-      return names;
-    }
-  }
-  if (Array.isArray(input.vaults)) {
-    const names = input.vaults
-      .map((vault) => toRecord(vault))
-      .map((vault) => {
-        if (!vault) {
-          return '';
-        }
-        if (typeof vault.display_name === 'string' && vault.display_name.trim()) {
-          return vault.display_name.trim();
-        }
-        if (typeof vault.name === 'string' && vault.name.trim()) {
-          return vault.name.trim();
-        }
-        return typeof vault.id === 'string' ? vault.id.trim() : '';
-      })
-      .filter(Boolean);
-    if (names.length) {
-      return names;
-    }
-  }
-  return quickstartVaultIdsFromInput(input);
-}
-
-export function quickstartMcpServerUrl(agentConfig: CreateAgentInput | null, serverName: string) {
-  const servers = Array.isArray(agentConfig?.mcp_servers) ? agentConfig.mcp_servers : [];
-  for (const server of servers) {
-    const record = toRecord(server);
-    if (record?.name === serverName && typeof record.url === 'string') {
-      return record.url;
-    }
-  }
-  return '';
-}
-
-export function quickstartToolMeta(name: string, msg: I18nMsg): { label: string; icon: IconComponent } {
-  const t = (id: string, fallback: string) => msg(id, fallback);
-  switch (name) {
-    case 'list_environments':
-      return { label: t('managedAgents.quickstart.toolMeta.listEnvironments', 'List environments'), icon: Cloud };
-    case 'create_environment':
-      return { label: t('managedAgents.quickstart.toolMeta.createEnvironment', 'Create environment'), icon: Cloud };
-    case 'vault_sharing_notice':
-      return {
-        label: t('managedAgents.quickstart.toolMeta.vaultSharingNotice', 'Vault sharing notice'),
-        icon: LockKeyhole,
-      };
-    case 'list_vaults':
-      return { label: t('managedAgents.quickstart.toolMeta.listVaults', 'List vaults'), icon: LockKeyhole };
-    case 'select_vault':
-      return { label: t('managedAgents.quickstart.toolMeta.selectVault', 'Select vault'), icon: LockKeyhole };
-    case 'create_vault':
-      return { label: t('managedAgents.quickstart.toolMeta.createVault', 'Create vault'), icon: LockKeyhole };
-    case 'create_vault_credential':
-      return { label: t('managedAgents.quickstart.toolMeta.createCredential', 'Create credential'), icon: LockKeyhole };
-    case 'flag_schedule_intent':
-      return { label: t('managedAgents.quickstart.toolMeta.scheduleIntent', 'Schedule intent'), icon: CalendarClock };
-    case 'create_deployment':
-      return { label: t('managedAgents.quickstart.toolMeta.createDeployment', 'Create deployment'), icon: Play };
-    case 'web_search':
-      return { label: t('managedAgents.quickstart.toolMeta.searchWeb', 'Search web'), icon: Search };
-    default:
-      return { label: name.replace(/_/g, ' '), icon: Terminal };
-  }
-}
-
 export function PromptComposer({
   value,
   label,
   placeholder,
   isBusy = false,
+  isSubmitBlocked = false,
   submitShortcut,
   formClassName = 'absolute inset-x-0 bottom-0 p-3 pt-0',
+  contentClassName,
+  frameClassName,
   onChange,
   onSubmit,
 }: {
@@ -2164,15 +1592,18 @@ export function PromptComposer({
   label: string;
   placeholder: string;
   isBusy?: boolean;
+  isSubmitBlocked?: boolean;
   submitShortcut?: PromptComposerSubmitShortcut;
   formClassName?: string;
+  contentClassName?: string;
+  frameClassName?: string;
   onChange: (value: string) => void;
   onSubmit?: () => void;
 }) {
   const { msg } = useI18n();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const promptId = `${label.toLowerCase().replace(/\s+/g, '-')}-prompt`;
-  const canSubmit = !isBusy && value.trim().length > 0;
+  const canSubmit = !isBusy && !isSubmitBlocked && value.trim().length > 0;
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -2205,6 +1636,10 @@ export function PromptComposer({
     } else if ((!event.metaKey && !event.ctrlKey) || isBusy) {
       return;
     }
+    if (isSubmitBlocked) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     if (event.repeat) {
       return;
@@ -2220,40 +1655,42 @@ export function PromptComposer({
         submitPrompt();
       }}
     >
-      <label htmlFor={promptId} className="sr-only">
-        {label}
-      </label>
-      <InputGroup className={clsx(quickstartComposerFrameClassName, 'items-stretch gap-0 p-0 pl-0')}>
-        <InputGroupTextarea
-          ref={textareaRef}
-          id={promptId}
-          value={value}
-          rows={1}
-          placeholder={placeholder}
-          className={clsx(
-            quickstartComposerTextareaClassName,
-            'subtle-scrollbar-auto block max-h-52 overflow-y-auto px-4 pb-2 pt-4 text-[15px] leading-6',
-          )}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={handleTextareaKeyDown}
-        />
-        <InputGroupAddon align="block-end" className="justify-end px-3 pb-3 pt-0">
-          <InputGroupButton
-            type="submit"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={msg('managedAgents.quickstart.sendMessage', 'Send message')}
-            disabled={!canSubmit}
-            className={quickstartComposerSendButtonClassName}
-          >
-            {isBusy ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <ArrowUp className="size-4" aria-hidden />
+      <div className={contentClassName}>
+        <label htmlFor={promptId} className="sr-only">
+          {label}
+        </label>
+        <InputGroup className={clsx(quickstartComposerFrameClassName, 'items-stretch gap-0 p-0 pl-0', frameClassName)}>
+          <InputGroupTextarea
+            ref={textareaRef}
+            id={promptId}
+            value={value}
+            rows={1}
+            placeholder={placeholder}
+            className={clsx(
+              quickstartComposerTextareaClassName,
+              'subtle-scrollbar-auto block max-h-52 overflow-y-auto px-4 pb-2 pt-4 text-[15px] leading-6',
             )}
-          </InputGroupButton>
-        </InputGroupAddon>
-      </InputGroup>
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={handleTextareaKeyDown}
+          />
+          <InputGroupAddon align="block-end" className="justify-end px-3 pb-3 pt-0">
+            <InputGroupButton
+              type="submit"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={msg('managedAgents.quickstart.sendMessage', 'Send message')}
+              disabled={!canSubmit}
+              className={quickstartComposerSendButtonClassName}
+            >
+              {isBusy ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <ArrowUp className="size-4" aria-hidden />
+              )}
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+      </div>
     </form>
   );
 }
@@ -2308,7 +1745,7 @@ export function BrowseTemplatesPanel({
   };
 
   return (
-    <Card className="relative h-full min-h-0 overflow-hidden py-0 shadow-sm">
+    <Card className="relative h-full min-h-0 overflow-hidden border border-border bg-card py-0 shadow-sm ring-0">
       <CardContent className="flex h-full min-h-0 flex-col p-4">
         <div className="mb-4 flex items-center justify-between gap-4">
           <h2 className="text-[18px] font-semibold leading-none text-foreground">
@@ -2337,7 +1774,7 @@ export function BrowseTemplatesPanel({
         {visibleTemplates.length > 0 ? (
           <div
             ref={listRef}
-            className="subtle-scrollbar-auto mt-4 grid min-h-0 flex-1 auto-rows-[136px] content-start items-stretch grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3 overflow-y-auto pr-1"
+            className="subtle-scrollbar-auto mt-4 grid min-h-0 flex-1 auto-rows-[136px] content-start items-start grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3 overflow-y-auto pr-1"
           >
             {visibleTemplates.map((template) => (
               <TemplateCard key={template.id} template={template} onClick={() => onTemplateClick(template)} />
@@ -2397,7 +1834,7 @@ export function TemplateDetailPanel({
   const code = codeForTemplate(template, format, locale);
   const title = templateTitle(template, msg);
   return (
-    <Card className="h-full min-h-0 overflow-hidden py-0 shadow-sm">
+    <Card className="relative h-full min-h-0 overflow-hidden border border-border bg-card py-0 shadow-sm ring-0">
       <CardContent className="flex h-full min-h-0 flex-col p-0">
         <div className="flex h-11 items-center gap-2 border-b border-border px-3">
           <Button

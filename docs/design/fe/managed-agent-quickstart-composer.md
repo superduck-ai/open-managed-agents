@@ -4,6 +4,8 @@
 
 本文定义 `/workspaces/{workspace_id}/agent-quickstart` 中首次描述输入框和后续回复输入框的键盘行为。两种输入框共享一致的发送语义，避免用户在 quickstart 的不同阶段切换操作习惯。
 
+问题集的显式确认、transcript 呈现和顶部进度条响应式规则见 [Managed Agent Quickstart 交互与响应式布局](./managed-agent-quickstart-interactions.md)。
+
 ## 交互契约
 
 | 操作 | 首次描述输入框 | 后续回复输入框 |

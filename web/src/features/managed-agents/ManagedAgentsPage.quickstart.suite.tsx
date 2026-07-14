@@ -3,6 +3,17 @@ import { I18nProvider, useI18n } from '../../shared/i18n';
 import { agentTemplates, createDialogTemplateConfigsZh, templateTags } from './agentConfig';
 import { TemplateCard } from './components/CodeBlocks';
 import { clampQuickstartInspectorPaneWidth } from './quickstart/AgentQuickstartPage';
+import { BuildAgentConfigCard, SelectVaultAckCard } from './quickstart/components';
+import {
+  QuickstartAssistantTurn,
+  QuickstartErrorTurn,
+  QuickstartStreamingTurn,
+  QuickstartTurnGroup,
+} from './quickstart/chatLayout';
+import { presentQuickstartTranscript } from './quickstart/transcriptModel';
+import { quickstartToolResultText } from './quickstart/quickstartPromptText';
+import { quickstartToolMeta } from './quickstart/toolPresentation';
+import { Terminal } from 'lucide-react';
 import {
   ManagedAgentsPage,
   WorkspaceContext,
@@ -83,6 +94,106 @@ function QuickstartLocaleTestToggle() {
 }
 
 export function registerManagedAgentsQuickstartTests() {
+  test('groups turns from visible transcript entries only', () => {
+    const userThenResult = presentQuickstartTranscript([
+      { id: 'user', type: 'message', role: 'user', content: 'Create an agent.' },
+      { id: 'hidden', type: 'message', role: 'assistant', content: '<think>internal only</think>' },
+      {
+        id: 'result',
+        type: 'create_agent_result',
+        agentConfig: createAgentRequestFixture({ name: 'Visible result' }),
+      },
+    ]);
+
+    expect(userThenResult.entries.map((entry) => entry.item.id)).toEqual(['user', 'result']);
+    expect(userThenResult.entries[1]?.continued).toBe(false);
+
+    const assistantStatusThenResult = presentQuickstartTranscript([
+      { id: 'assistant', type: 'message', role: 'assistant', content: 'The configuration is ready.' },
+      { id: 'status', type: 'status', content: 'Working' },
+      {
+        id: 'result',
+        type: 'create_agent_result',
+        agentConfig: createAgentRequestFixture({ name: 'Continued result' }),
+      },
+    ]);
+
+    expect(assistantStatusThenResult.entries[2]?.continued).toBe(true);
+    expect(assistantStatusThenResult.lastSpeaker).toBe('assistant');
+  });
+
+  test('keeps transcript continuation chrome behind the turn-group interface', () => {
+    render(
+      <I18nProvider initialLocale="en">
+        <QuickstartTurnGroup continued={false}>
+          <QuickstartAssistantTurn>Assistant reply</QuickstartAssistantTurn>
+        </QuickstartTurnGroup>
+        <QuickstartTurnGroup continued>
+          <QuickstartStreamingTurn />
+        </QuickstartTurnGroup>
+        <QuickstartTurnGroup continued>
+          <QuickstartErrorTurn>Stream failed</QuickstartErrorTurn>
+        </QuickstartTurnGroup>
+      </I18nProvider>,
+    );
+
+    expect(screen.getAllByText('Quickstart')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-slot="message-avatar"]')).toHaveLength(1);
+  });
+
+  test('preserves the human-readable fallback for unknown quickstart tools', () => {
+    const meta = quickstartToolMeta('unknown_tool', (_id, fallback) => fallback);
+
+    expect(meta.label).toBe('unknown tool');
+    expect(meta.icon).toBe(Terminal);
+  });
+
+  test('keeps completed build-agent tools visible in the transcript', () => {
+    render(
+      <BuildAgentConfigCard
+        call={{
+          id: 'tool_build_agent_config',
+          name: 'build_agent_config',
+          input: {},
+          status: 'completed',
+          result: 'Agent configuration updated',
+        }}
+        agent={null}
+        results={quickstartToolResultText('en')}
+        onCompleteTool={async () => undefined}
+        onCreateAgent={async () => undefined}
+      />,
+    );
+
+    expect(screen.getByText('Agent configuration updated')).toBeTruthy();
+    expect(screen.getByText('Quickstart')).toBeTruthy();
+  });
+
+  test('keeps completed vault selection inside assistant turn chrome', () => {
+    render(
+      <I18nProvider initialLocale="en">
+        <QuickstartTurnGroup continued={false}>
+          <SelectVaultAckCard
+            call={{
+              id: 'tool_select_vault',
+              name: 'select_vault',
+              input: { vault_ids: ['vault_option123456'] },
+              status: 'completed',
+              result: 'Vault selected',
+            }}
+            onConfirm={async () => undefined}
+          />
+        </QuickstartTurnGroup>
+      </I18nProvider>,
+    );
+
+    const completedStatus = screen.getByText('Done');
+    const assistantMessage = completedStatus.closest('[data-slot="message"]') as HTMLElement | null;
+    expect(assistantMessage).toBeTruthy();
+    expect(within(assistantMessage as HTMLElement).getByText('Quickstart')).toBeTruthy();
+    expect((assistantMessage as HTMLElement).querySelector('[data-slot="message-avatar"]')).toBeTruthy();
+  });
+
   test('renders the quickstart template browser in Chinese', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
     renderManagedAgentsPage('quickstart', 'zh-CN');
@@ -343,22 +454,39 @@ export function registerManagedAgentsQuickstartTests() {
     expect(screen.getByText('Quickstart')).toBeTruthy();
     expect(screen.getByText('Create agent')).toBeTruthy();
     expect(screen.getByText('What do you want to build?')).toBeTruthy();
+    const progress = screen.getByTestId('quickstart-progress');
+    expect(progress.className).toContain('col-start-2');
+    expect(progress.className).toContain('justify-self-center');
+    expect(progress.className).toContain('max-w-full');
+    expect(progress.className).toContain('px-2');
+    expect(progress.className).toContain('2xl:px-4');
+    expect(progress.parentElement?.className).toContain('grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]');
+    expect(within(progress).getByText('1').getAttribute('aria-current')).toBe('step');
+    const createAgentStepLabel = within(progress).getByText('Create agent');
+    expect(createAgentStepLabel.className).toContain('sr-only');
+    expect(createAgentStepLabel.className).toContain('2xl:not-sr-only');
+    const firstConnector = within(progress).getByText('Create agent').closest('li')?.querySelector('[aria-hidden]');
+    expect(firstConnector?.className).toContain('w-4');
+    expect(firstConnector?.className).toContain('2xl:w-10');
     const browserHeading = screen.getByRole('heading', { name: 'Browse templates' });
     const browserCard = browserHeading.closest('[data-slot="card"]') as HTMLElement | null;
     expect(browserHeading).toBeTruthy();
     expect(browserCard?.getAttribute('data-slot')).toBe('card');
     expect(browserCard?.className).toContain('h-full');
+    expect(browserCard?.className).toContain('border-border');
+    expect(browserCard?.className).toContain('ring-0');
     expect(screen.queryByRole('button', { name: 'Browse templates' })).toBeNull();
     expect(screen.getByRole('button', { name: /Deep researcher/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Send message/i }).hasAttribute('disabled')).toBe(true);
     const fieldMonitorTemplate = screen.getByRole('button', { name: /Field monitor/i });
     const templateGrid = fieldMonitorTemplate.parentElement as HTMLElement | null;
     const fieldMonitorDescription = within(fieldMonitorTemplate).getByText(/Scans software blogs for a topic/i);
-    expect(fieldMonitorTemplate.className).toContain('h-full');
-    expect(fieldMonitorTemplate.className).toContain('min-h-0');
+    expect(fieldMonitorTemplate.className).toContain('h-[136px]');
+    expect(fieldMonitorTemplate.className).toContain('min-h-[136px]');
     expect(fieldMonitorTemplate.className).toContain('overflow-hidden');
     expect(templateGrid?.className).toContain('auto-rows-[136px]');
-    expect(templateGrid?.className).toContain('items-stretch');
+    expect(templateGrid?.className).toContain('auto-fill');
+    expect(templateGrid?.className).toContain('items-start');
     expect(fieldMonitorDescription.className).toContain('line-clamp-2');
     expect(fieldMonitorTemplate.querySelector('[title="notion"]')).toBeTruthy();
 
@@ -385,8 +513,8 @@ export function registerManagedAgentsQuickstartTests() {
     expect(promptInput.className).toContain('pt-4');
     expect(promptInput.className).toContain('pb-2');
     expect(promptInput.className).toContain('max-h-52');
-    expect(promptGroup?.className).toContain('rounded-lg');
-    expect(promptGroup?.className).toContain('border-input');
+    expect(promptGroup?.className).toContain('rounded-xl');
+    expect(promptGroup?.className).toContain('border-border');
     expect(promptGroup?.className).toContain('shadow-xs');
     expect(promptGroup?.className).toContain('dark:bg-input/30');
     expect(promptGroup?.className).not.toContain('bg-popover');
@@ -493,7 +621,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect(JSON.stringify(latestProxyRequest?.body?.messages)).toContain('Use limited networking.');
   });
 
-  test('anchors the initial quickstart composer inside a full-height primary pane', () => {
+  test('keeps the initial quickstart composer at the bottom of the full-height primary pane', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
     render(<ManagedAgentsPage section="quickstart" />);
 
@@ -501,9 +629,9 @@ export function registerManagedAgentsQuickstartTests() {
     const promptForm = promptInput.closest('form');
     const promptPane = promptForm?.parentElement;
 
-    expect(promptForm?.className).toContain('absolute inset-x-0 bottom-0');
-    expect(promptForm?.className).toContain('p-3');
-    expect(promptForm?.className).toContain('pt-0');
+    expect(promptForm?.className).toContain('mt-auto');
+    expect(promptForm?.className).toContain('shrink-0');
+    expect(promptForm?.className).toContain('p-4');
     expect(promptPane?.className).toContain('h-full');
     expect(promptPane?.className).toContain('min-h-0');
     expect(promptPane?.className).toContain('flex-col');
@@ -514,13 +642,23 @@ export function registerManagedAgentsQuickstartTests() {
     render(<ManagedAgentsPage section="quickstart" />);
 
     const layout = screen.getByTestId('quickstart-layout');
-    const divider = screen.getByRole('separator', { name: 'Resize quickstart panels' });
+    const resizeHandle = screen.getByRole('separator', { name: 'Resize quickstart panels' });
 
     expect(layout.dataset.inspectorWidth).toBe('720');
     expect(screen.getByTestId('quickstart-resizable-panels')).toBeTruthy();
-    expect(divider.getAttribute('data-slot')).toBe('resizable-handle');
-    expect(divider.getAttribute('aria-orientation')).toBe('vertical');
-    expect(divider.querySelector('svg')).toBeNull();
+    expect(resizeHandle.getAttribute('data-slot')).toBe('resizable-handle');
+    expect(resizeHandle.getAttribute('aria-orientation')).toBe('vertical');
+    expect(resizeHandle.className).toContain('bg-transparent');
+    expect(resizeHandle.className.split(' ')).not.toContain('bg-border');
+    const gripIcon = resizeHandle.querySelector('svg');
+    expect(gripIcon).toBeTruthy();
+    expect(resizeHandle.className).toContain('cursor-col-resize');
+    expect(resizeHandle.className).toContain('focus-visible:[&>div]:ring-2');
+    expect(gripIcon?.parentElement?.className).toContain('h-6');
+    expect(gripIcon?.parentElement?.className).toContain('w-4');
+    expect(gripIcon?.parentElement?.className).toContain('rounded-md');
+    expect(gripIcon?.parentElement?.className).toContain('bg-background/95');
+    expect(gripIcon?.parentElement?.className).toContain('shadow-none');
   });
 
   test('clamps quickstart inspector widths against the container bounds', () => {
@@ -550,10 +688,10 @@ export function registerManagedAgentsQuickstartTests() {
     expect(chatStream.className).toContain('subtle-scrollbar-auto');
     expect(chatContent.getAttribute('data-slot')).toBe('message-scroller-content');
     expect(chatContent.className).toContain('w-full');
+    expect(chatContent.className).toContain('max-w-3xl');
+    expect(chatContent.className).toContain('justify-end');
     expect(chatContent.className).toContain('px-4');
     expect(chatContent.className).not.toContain('w-[432px]');
-    expect(chatContent.className).not.toContain('max-w-');
-    expect(chatContent.className).not.toContain('px-6');
     expect(codeBlockContaining('ant beta:agents create')?.className).toContain('subtle-scrollbar-auto');
 
     const userMessage = within(chatContent)
@@ -562,20 +700,45 @@ export function registerManagedAgentsQuickstartTests() {
     expect(userMessage).toBeTruthy();
     expect(userMessage?.getAttribute('data-align')).toBe('end');
     expect(within(userMessage as HTMLElement).getByText('You')).toBeTruthy();
-    expect((userMessage as HTMLElement).querySelector('[data-slot="message-avatar"]')).toBeTruthy();
+    const userAvatar = (userMessage as HTMLElement).querySelector('[data-slot="message-avatar"]');
+    expect(userAvatar).toBeTruthy();
+    expect(userAvatar?.getAttribute('aria-label')).toBe('You');
+    expect(userAvatar?.className).toContain('border-border');
+    expect(userAvatar?.innerHTML).toContain('var(--chart-');
+    expect(userAvatar?.innerHTML).not.toContain('#F59E0B');
 
     const userBubble = within(userMessage as HTMLElement)
       .getByText('Parses unstructured text into a typed JSON schema.')
       .closest('[data-slot="bubble"]') as HTMLElement | null;
     expect(userBubble).toBeTruthy();
     expect(userBubble?.getAttribute('data-align')).toBe('end');
-    expect(userBubble?.getAttribute('data-variant')).toBe('secondary');
+    expect(userBubble?.getAttribute('data-variant')).toBe('default');
     expect(userBubble?.className).toContain('w-fit');
-    expect(userBubble?.className).toContain('max-w-[85%]');
+    expect(userBubble?.className).toContain('max-w-full');
     const userBubbleContent = within(userMessage as HTMLElement)
       .getByText('Parses unstructured text into a typed JSON schema.')
       .closest('[data-slot="bubble-content"]') as HTMLElement | null;
-    expect(userBubbleContent?.className).toContain('rounded-3xl');
+    expect(userBubbleContent?.className).toContain('rounded-2xl');
+    expect(userBubbleContent?.className).toContain('rounded-tr-sm');
+  });
+
+  test('renders a request failure once as a temporary assistant turn', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    mockAgentsApi([], { quickstartStreamErrorOnce: true });
+    renderManagedAgentsPage('quickstart');
+
+    fireEvent.click(screen.getByRole('button', { name: /Structured extractor/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use template' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Next: Configure environment/i }));
+
+    await waitFor(() => expect(screen.getAllByText('forced quickstart failure')).toHaveLength(1));
+    expect(screen.getByText('forced quickstart failure').closest('[role="alert"]')).toBeTruthy();
+
+    const reply = screen.getByLabelText('Reply…') as HTMLTextAreaElement;
+    fireEvent.change(reply, { target: { value: 'Try again.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(screen.queryByText('forced quickstart failure')).toBeNull());
   });
 
   test('renders assistant quickstart replies with chat bubble chrome', async () => {
@@ -624,12 +787,16 @@ export function registerManagedAgentsQuickstartTests() {
     const assistantMessage = assistantText.closest('[data-slot="message"]') as HTMLElement | null;
     expect(assistantMessage).toBeTruthy();
     expect(assistantMessage?.getAttribute('data-align')).toBe('start');
-    expect(within(assistantMessage as HTMLElement).getByText('Quickstart')).toBeTruthy();
-    expect((assistantMessage as HTMLElement).querySelector('[data-slot="message-avatar"]')).toBeTruthy();
+    expect(within(assistantMessage as HTMLElement).queryByText('Quickstart')).toBeNull();
+    expect((assistantMessage as HTMLElement).querySelector('[data-slot="message-avatar"]')).toBeNull();
+    expect((assistantMessage as HTMLElement).querySelector('[data-slot="message-content"]')?.className).toContain(
+      'ml-10',
+    );
     const assistantBubble = assistantText.closest('[data-slot="bubble"]') as HTMLElement | null;
     expect(assistantBubble).toBeTruthy();
     expect(assistantBubble?.getAttribute('data-variant')).toBe('outline');
-    expect(assistantBubble?.className).toContain('max-w-[85%]');
+    expect(assistantBubble?.className).toContain('max-w-full');
+    expect(assistantText.closest('[data-slot="bubble-content"]')?.className).toContain('rounded-tl-sm');
   });
 
   test('renders assistant quickstart action cards with shared chat chrome', async () => {
@@ -673,7 +840,9 @@ export function registerManagedAgentsQuickstartTests() {
     expect(buildConfigMessage).toBeTruthy();
     expect(buildConfigMessage?.getAttribute('data-align')).toBe('start');
     expect(within(buildConfigMessage as HTMLElement).getByText('Quickstart')).toBeTruthy();
-    expect((buildConfigMessage as HTMLElement).querySelector('[data-slot="message-avatar"]')).toBeTruthy();
+    const assistantAvatar = (buildConfigMessage as HTMLElement).querySelector('[data-slot="message-avatar"]');
+    expect(assistantAvatar).toBeTruthy();
+    expect(assistantAvatar?.getAttribute('aria-label')).toBe('Quickstart');
 
     fireEvent.click(createButton);
 
@@ -1051,23 +1220,30 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(await screen.findByRole('button', { name: /Next: Configure environment/i }));
 
     expect(await screen.findByText('Does this agent need to access external services?')).toBeTruthy();
-    const pinnedInteraction = screen.getByTestId('quickstart-pinned-interaction');
-    expect(within(pinnedInteraction).getByText('Does this agent need to access external services?')).toBeTruthy();
-    expect(within(pinnedInteraction).getByTestId('quickstart-question-card').className).toContain('border-border');
-    const networkingChoices = within(pinnedInteraction).getByRole('radiogroup', {
+    expect(screen.queryByTestId('quickstart-pinned-interaction')).toBeNull();
+    const chatStream = screen.getByTestId('quickstart-chat-stream');
+    expect(within(chatStream).getByText('Does this agent need to access external services?')).toBeTruthy();
+    expect(within(chatStream).getByTestId('quickstart-question-card').className).toContain('border-border');
+    const networkingChoices = within(chatStream).getByRole('radiogroup', {
       name: 'Does this agent need to access external services?',
     });
     expect(within(networkingChoices).getByRole('radio', { name: /Limited networking/i })).toBeTruthy();
     expect(within(networkingChoices).getByRole('radio', { name: /Unrestricted networking/i })).toBeTruthy();
-    expect(
-      within(screen.getByTestId('quickstart-chat-stream')).queryByText(
-        'Does this agent need to access external services?',
-      ),
-    ).toBeNull();
+    const blockedReply = screen.getByLabelText('Reply…') as HTMLTextAreaElement;
+    fireEvent.change(blockedReply, { target: { value: 'Bypass the question card.' } });
+    expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true);
+    expect(fireEvent.keyDown(blockedReply, { key: 'Enter', code: 'Enter', shiftKey: true })).toBe(true);
+    expect(fireEvent.keyDown(blockedReply, { key: 'Enter', code: 'Enter', isComposing: true })).toBe(true);
+    expect(fireEvent.keyDown(blockedReply, { key: 'Enter', code: 'Enter' })).toBe(false);
+    expect(proxyCalls).toBe(1);
+    fireEvent.change(blockedReply, { target: { value: '' } });
     fireEvent.click(screen.getByRole('radio', { name: /Limited networking/i }));
+    expect(screen.queryByText("Thanks, I'll continue from there.")).toBeNull();
+    const confirmButton = screen.getByRole('button', { name: 'Confirm' });
+    expect(confirmButton.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(confirmButton);
 
     expect(await screen.findByText("Thanks, I'll continue from there.")).toBeTruthy();
-    await waitFor(() => expect(screen.queryByTestId('quickstart-pinned-interaction')).toBeNull());
     expect(within(screen.getByTestId('quickstart-chat-stream')).getByText('Limited networking')).toBeTruthy();
     expect(screen.queryByText(/\{"answers"/)).toBeNull();
 
@@ -1137,13 +1313,13 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(within(servicesGroup).getByRole('checkbox', { name: /Slack/i }));
     fireEvent.click(within(servicesGroup).getByRole('checkbox', { name: /Notion/i }));
     fireEvent.change(screen.getByPlaceholderText('Something else'), { target: { value: 'Linear' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit answer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     expect(await screen.findByText('Slack, Notion, Linear')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Review answers' })).toBeNull();
     expect(await screen.findByText('Can we skip this decision?')).toBeTruthy();
     expect(screen.getByRole('radiogroup', { name: 'Can we skip this decision?' })).toBeTruthy();
     const skipButton = screen.getAllByRole('button', { name: 'Skip' }).at(-1)!;
-    expect(skipButton.className).toContain('ml-auto');
     fireEvent.click(skipButton);
 
     await waitFor(() => expect(screen.getAllByText('Skipped.').length).toBeGreaterThan(0));
@@ -1155,6 +1331,77 @@ export function registerManagedAgentsQuickstartTests() {
     expect(questionResultMessages).toContain('Slack');
     expect(questionResultMessages).toContain('Notion');
     expect(questionResultMessages).toContain('Linear');
+  });
+
+  test('keeps multi-question drafts while navigating and submits the set only on Confirm', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    let proxyCalls = 0;
+    const api = mockAgentsApi([], {
+      quickstartStream: () => {
+        proxyCalls += 1;
+        if (proxyCalls === 1) {
+          return quickstartToolStream('ask_user_questions', {
+            questions: [
+              {
+                question: 'Which team owns this agent?',
+                header: 'Owner',
+                multiSelect: false,
+                options: [
+                  { label: 'Operations', description: 'The operations team owns it.' },
+                  { label: 'Engineering', description: 'The engineering team owns it.' },
+                ],
+              },
+              {
+                question: 'How often should it report?',
+                header: 'Cadence',
+                multiSelect: false,
+                options: [
+                  { label: 'Daily', description: 'Send one report each day.' },
+                  { label: 'Weekly', description: 'Send one report each week.' },
+                ],
+              },
+            ],
+          });
+        }
+        return quickstartTextStream('Question set confirmed.');
+      },
+    });
+    renderManagedAgentsPage('quickstart');
+
+    fireEvent.click(screen.getByRole('button', { name: /Structured extractor/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use template' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Next: Configure environment/i }));
+
+    expect(await screen.findByText('Which team owns this agent?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: /Operations/i }));
+    expect(screen.queryByText('Question set confirmed.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Next', exact: true }));
+
+    expect(screen.getByText('How often should it report?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: /Weekly/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+
+    expect(screen.getByRole('radio', { name: /Operations/i }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Next', exact: true }));
+    expect(screen.getByRole('radio', { name: /Weekly/i }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText('Question set confirmed.')).toBeTruthy();
+    expect(screen.getByText('Question set completed')).toBeTruthy();
+    expect(screen.queryByText('Operations')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Review answers' }));
+    expect(screen.getByText('Which team owns this agent?')).toBeTruthy();
+    expect(screen.getByText('Operations')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next', exact: true }));
+    expect(screen.getByText('How often should it report?')).toBeTruthy();
+    expect(screen.getByText('Weekly')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide answers' })).toBeTruthy();
+    const confirmationRequest = api.requests
+      .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
+      .at(-1);
+    expect(JSON.stringify(confirmationRequest?.body?.messages)).toContain('Operations');
+    expect(JSON.stringify(confirmationRequest?.body?.messages)).toContain('Weekly');
   });
 
   test('removes model thinking tags from visible quickstart text and continuation messages', async () => {
@@ -1419,8 +1666,8 @@ export function registerManagedAgentsQuickstartTests() {
     const reply = screen.getByLabelText('Reply…') as HTMLTextAreaElement;
     expect(reply.className).toContain('focus-visible:ring-0');
     expect(reply.parentElement?.dataset.slot).toBe('input-group');
-    expect(reply.closest('form')?.className).toContain('p-3');
-    expect(reply.closest('form')?.className).toContain('pt-0');
+    expect(reply.closest('form')?.className).toContain('mt-auto');
+    expect(reply.closest('form')?.className).toContain('p-4');
     fireEvent.change(reply, { target: { value: 'Keep the current setup and continue.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
@@ -1511,7 +1758,8 @@ export function registerManagedAgentsQuickstartTests() {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm' }).hasAttribute('disabled')).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(screen.queryByText('Selected:')).toBeNull());
-    expect(screen.queryByText('Deployment schedule intent cleared.')).toBeNull();
+    const scheduleStatus = await screen.findByText('Deployment schedule intent cleared');
+    expect(scheduleStatus.closest('[data-slot="marker"]')).toBeTruthy();
     expect(await screen.findByText('Authorization required to use this MCP')).toBeTruthy();
     expect(screen.getByText('Notion access is needed for this agent.')).toBeTruthy();
     const accessTokenDisclosure = screen.getByRole('button', { name: /Access token/ });
@@ -1662,8 +1910,8 @@ export function registerManagedAgentsQuickstartTests() {
     const integrationMessage = exitQuickstartButton.closest('[data-slot="message"]') as HTMLElement | null;
     expect(integrationMessage).toBeTruthy();
     expect(integrationMessage?.getAttribute('data-align')).toBe('start');
-    expect(within(integrationMessage as HTMLElement).getByText('Quickstart')).toBeTruthy();
-    expect((integrationMessage as HTMLElement).querySelector('[data-slot="message-avatar"]')).toBeTruthy();
+    expect(within(integrationMessage as HTMLElement).queryByText('Quickstart')).toBeNull();
+    expect((integrationMessage as HTMLElement).querySelector('[data-slot="message-avatar"]')).toBeNull();
     expect(screen.getAllByText(/agent_created123456/).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(/agent_model_wrong123456/)).toHaveLength(0);
     fireEvent.click(screen.getByRole('tab', { name: 'Python' }));
@@ -1936,7 +2184,10 @@ export function registerManagedAgentsQuickstartTests() {
 
     fireEvent.change(screen.getByPlaceholderText('Search templates'), { target: { value: 'incident' } });
 
-    expect(screen.getByRole('button', { name: /Incident commander/i })).toBeTruthy();
+    const incidentTemplate = screen.getByRole('button', { name: /Incident commander/i });
+    expect(incidentTemplate).toBeTruthy();
+    expect(incidentTemplate.className).toContain('h-[136px]');
+    expect(incidentTemplate.parentElement?.className).toContain('auto-fill');
     expect(screen.queryByRole('button', { name: /Data analyst/i })).toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText('Search templates'), { target: { value: 'no-match-template' } });

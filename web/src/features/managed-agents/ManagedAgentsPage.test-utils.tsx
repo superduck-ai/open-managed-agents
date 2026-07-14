@@ -1,6 +1,7 @@
 import { expect, mock } from 'bun:test';
 import type { EditorView } from '@codemirror/view';
 import { resetTestDom } from '../../test/setup';
+import type { AuthContextValue } from '../../shared/auth/context';
 
 export { resetTestDom };
 export { mock };
@@ -12,10 +13,22 @@ const { defaultWorkspace } = await import('../../shared/workspaces/api');
 const { setConsoleRequestContext } = await import('../../shared/api/client');
 const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
+const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 
 export const { act, cleanup, fireEvent, screen, waitFor, within } = testingLibrary;
 const originalFetch = globalThis.fetch;
+const managedAgentsAuthContextValue: AuthContextValue = {
+  account: {
+    uuid: 'acct_managed_agents_test',
+    email_address: 'managed-agents-test@example.com',
+    display_name: 'Managed Agents Test User',
+  },
+  status: 'authenticated',
+  csrfToken: 'csrf_managed_agents_test',
+  refresh: async () => undefined,
+  logout: async () => undefined,
+};
 
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
@@ -27,7 +40,12 @@ export function render(
       mutations: { retry: false },
     },
   });
-  return testingLibrary.render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>, options);
+  return testingLibrary.render(
+    <AuthContext.Provider value={managedAgentsAuthContextValue}>
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    </AuthContext.Provider>,
+    options,
+  );
 }
 
 export function resetManagedAgentsTestState() {
@@ -171,6 +189,7 @@ export type MockAgentsApiOptions = {
   analyticsOverview?: Record<string, unknown>;
   analyticsTimeseries?: Array<Record<string, unknown>>;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
+  quickstartStreamErrorOnce?: boolean;
   agentUpdateErrorStatus?: number;
   agentsListErrorOnce?: boolean;
   agentsSearchErrorOnce?: boolean;
@@ -192,6 +211,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
+  let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
   let mcpToolCatalogs = options.mcpToolCatalogs?.map((catalog) => ({ ...catalog }));
   const now = new Date().toISOString();
   const skillDetails = new Map((options.skills ?? []).map((skill) => [skill.id, skillResponse(skill)]));
@@ -646,6 +666,10 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     }
 
     if (url.match(/^\/api\/organizations\/[^/]+\/proxy\/v1\/messages$/) && method === 'POST') {
+      if (quickstartStreamErrorsRemaining > 0) {
+        quickstartStreamErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'forced quickstart failure' } }, 500);
+      }
       const stream =
         typeof options.quickstartStream === 'function'
           ? options.quickstartStream(body ?? {})

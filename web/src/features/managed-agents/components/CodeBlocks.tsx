@@ -290,7 +290,7 @@ export function TemplateCard({ template, onClick }: { template: AgentTemplate; o
       type="button"
       variant="ghost"
       aria-label={label}
-      className="h-full min-h-0 w-full flex-col items-start justify-start gap-0 overflow-hidden whitespace-normal rounded-lg border border-border bg-card p-3 text-left shadow-sm transition-colors hover:border-border hover:bg-card"
+      className="h-[136px] min-h-[136px] w-full self-start flex-col items-start justify-start gap-0 overflow-hidden whitespace-normal rounded-lg border border-border bg-card p-3 text-left shadow-xs transition-[border-color,background-color,box-shadow] hover:border-ring/40 hover:bg-accent/40 hover:shadow-sm"
       onClick={onClick}
     >
       <div className="line-clamp-2 w-full min-w-0 text-[15px] font-medium leading-5 text-foreground">{title}</div>

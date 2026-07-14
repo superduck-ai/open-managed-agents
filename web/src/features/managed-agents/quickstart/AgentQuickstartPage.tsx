@@ -1,5 +1,4 @@
 import { type Locale, useI18n } from '../../../shared/i18n';
-import { Button } from '../../../shared/ui/button';
 import {
   ResizableHandle,
   ResizablePanel,
@@ -16,8 +15,6 @@ import {
   type QuickstartStep,
 } from './platformQuickstartRequest';
 import { quickstartToolResultText } from './quickstartPromptText';
-import clsx from 'clsx';
-import { Check, Play, RotateCcw, Square } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   agentTemplates,
@@ -37,7 +34,7 @@ import {
   postQuickstartProxyStream,
   postQuickstartSessionMessage,
 } from '../api';
-import { quickstartStepLabel, templateBody, templateSearchText } from '../labels';
+import { templateBody, templateSearchText } from '../labels';
 import {
   type AgentApiResponse,
   type AgentPanelTab,
@@ -57,6 +54,7 @@ import {
   BrowseTemplatesPanel,
   cleanQuickstartAssistantText,
   CreatedAgentConfigPanel,
+  hasAwaitingQuickstartQuestionSet,
   InitialPromptPane,
   QuickstartChatPane,
   quickstartChatReplyToolResult,
@@ -67,8 +65,9 @@ import {
   updateQuickstartMessage,
   updateQuickstartTool,
 } from './components';
+import { QuickstartHeader } from './QuickstartHeader';
 
-export const quickstartSteps = ['Create agent', 'Configure environment', 'Start session', 'Integrate'] as const;
+export { quickstartSteps } from './steps';
 
 export const quickstartPrimaryPaneMinWidth = 360;
 
@@ -197,7 +196,15 @@ export function AgentQuickstartPage() {
     if (!quickstartGridWidth) {
       return;
     }
-    const nextWidth = clampQuickstartInspectorPaneWidth(quickstartInspectorPaneWidth, quickstartGridWidth);
+    let targetWidth = quickstartInspectorPaneWidth;
+    // Start narrower layouts with equal-width work areas.
+    if (quickstartInspectorPaneWidth === quickstartInspectorPaneDefaultWidth) {
+      const halfWidth = Math.round(quickstartGridWidth / 2);
+      if (halfWidth < quickstartInspectorPaneDefaultWidth) {
+        targetWidth = halfWidth;
+      }
+    }
+    const nextWidth = clampQuickstartInspectorPaneWidth(targetWidth, quickstartGridWidth);
     if (nextWidth === quickstartInspectorPaneWidth) {
       return;
     }
@@ -234,7 +241,6 @@ export function AgentQuickstartPage() {
     if (!orgUuid) {
       const noOrgMessage = quickstartResultText().noOrganization;
       setChatError(noOrgMessage);
-      appendQuickstartStatus(setChatItems, noOrgMessage, 'error');
       return;
     }
 
@@ -380,7 +386,6 @@ export function AgentQuickstartPage() {
       if ((error as DOMException).name !== 'AbortError') {
         const message = errorMessage(error);
         setChatError(message);
-        appendQuickstartStatus(setChatItems, message, 'error');
       }
     } finally {
       if (abortRef.current === controller) {
@@ -636,7 +641,7 @@ export function AgentQuickstartPage() {
 
   const sendChatReply = async () => {
     const trimmedReply = reply.trim();
-    if (!trimmedReply || isChatStreaming) {
+    if (!trimmedReply || isChatStreaming || hasAwaitingQuickstartQuestionSet(chatItems)) {
       return;
     }
     setReply('');
@@ -739,6 +744,12 @@ export function AgentQuickstartPage() {
       setFormat('YAML');
       setAgentTab('config');
       setChatItems((current) => {
+        const toolIndex = current.findIndex((item) => item.type === 'tool' && item.call.id === call.id);
+        if (toolIndex >= 0) {
+          return current.map((item, index) =>
+            index === toolIndex ? { id: item.id, type: 'create_agent_result' as const, agentConfig: config } : item,
+          );
+        }
         if (current.some((item) => item.type === 'create_agent_result')) {
           return current.map((item) => (item.type === 'create_agent_result' ? { ...item, agentConfig: config } : item));
         }
@@ -935,6 +946,7 @@ export function AgentQuickstartPage() {
   const hasAwaitingOfferNextStep = chatItems.some(
     (item) => item.type === 'tool' && item.call.name === 'offer_next_step' && item.call.status === 'awaiting_user',
   );
+  const isReplyBlocked = hasAwaitingQuickstartQuestionSet(chatItems);
 
   const sendPreviewTestRunMessage = async () => {
     if (isChatStreaming) {
@@ -958,7 +970,6 @@ export function AgentQuickstartPage() {
     } catch (error) {
       const errorText = errorMessage(error);
       setChatError(errorText);
-      appendQuickstartStatus(setChatItems, errorText, 'error');
     }
   };
 
@@ -989,7 +1000,6 @@ export function AgentQuickstartPage() {
     } catch (error) {
       const message = errorMessage(error);
       setChatError(message);
-      appendQuickstartStatus(setChatItems, message, 'error');
     }
   };
 
@@ -1006,7 +1016,6 @@ export function AgentQuickstartPage() {
     } catch (error) {
       const message = errorMessage(error);
       setChatError(message);
-      appendQuickstartStatus(setChatItems, message, 'error');
     }
     if (activeAwaitTestRunCall) {
       await completeAwaitingTool(activeAwaitTestRunCall, {
@@ -1017,68 +1026,21 @@ export function AgentQuickstartPage() {
 
   return (
     <section className="relative flex h-[calc(100vh-48px)] min-h-[650px] flex-col text-foreground">
-      <header className="relative grid min-h-8 grid-cols-[240px_minmax(0,1fr)] items-center gap-5">
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-max justify-start px-0 text-sm font-semibold text-foreground hover:bg-transparent hover:text-foreground"
-          onClick={createdTemplate ? resetQuickstart : () => searchRef.current?.focus()}
-        >
-          {msg('managedAgents.quickstart.title', 'Quickstart')}
-          {createdTemplate ? <RotateCcw className="size-3.5 text-muted-foreground" aria-hidden /> : null}
-        </Button>
-        <ol className="flex items-center gap-3 pr-32 text-sm">
-          {quickstartSteps.map((step, index) => (
-            <li key={step} className="flex min-w-0 items-center gap-3">
-              <span
-                className={clsx(
-                  'grid size-6 shrink-0 place-items-center rounded-full text-xs font-semibold',
-                  createdTemplate && activeStep > index
-                    ? 'bg-foreground text-background'
-                    : index === activeStep
-                      ? 'bg-foreground text-background'
-                      : 'bg-secondary text-muted-foreground',
-                )}
-              >
-                {createdTemplate && activeStep > index ? <Check className="size-3.5" aria-hidden /> : index + 1}
-              </span>
-              <span
-                className={clsx(
-                  'truncate',
-                  index === activeStep ? 'font-medium text-foreground' : 'text-muted-foreground/70',
-                )}
-              >
-                {quickstartStepLabel(step, msg)}
-              </span>
-              {index < quickstartSteps.length - 1 ? <span className="h-px w-10 bg-accent" aria-hidden /> : null}
-            </li>
-          ))}
-        </ol>
-        {createdTemplate && createdAgent ? (
-          <Button
-            type="button"
-            size="sm"
-            disabled={!selectedEnvironment}
-            className="absolute right-0 top-0 gap-2"
-            onClick={() => {
-              if (session && !testRunStopped) {
-                void stopTestRun();
-                return;
-              }
-              void startHeaderTestRun();
-            }}
-          >
-            {session && !testRunStopped ? (
-              <Square className="size-3.5" aria-hidden />
-            ) : (
-              <Play className="size-3.5 fill-current" aria-hidden />
-            )}
-            {session && !testRunStopped
-              ? msg('managedAgents.quickstart.stopSession', 'Stop session')
-              : msg('managedAgents.quickstart.testRun', 'Test run')}
-          </Button>
-        ) : null}
-      </header>
+      <QuickstartHeader
+        activeStep={activeStep}
+        canTestRun={Boolean(selectedEnvironment)}
+        hasAgent={Boolean(createdAgent)}
+        hasTemplate={Boolean(createdTemplate)}
+        isTestRunActive={Boolean(session && !testRunStopped)}
+        onTitleClick={createdTemplate ? resetQuickstart : () => searchRef.current?.focus()}
+        onToggleTestRun={() => {
+          if (session && !testRunStopped) {
+            void stopTestRun();
+            return;
+          }
+          void startHeaderTestRun();
+        }}
+      />
 
       <div
         ref={quickstartGridRef}
@@ -1107,6 +1069,7 @@ export function AgentQuickstartPage() {
                 chatItems={chatItems}
                 interactionResultText={quickstartResultText()}
                 isStreaming={isChatStreaming}
+                isReplyBlocked={isReplyBlocked}
                 error={chatError}
                 reply={reply}
                 onReplyChange={setReply}
@@ -1141,7 +1104,12 @@ export function AgentQuickstartPage() {
             )}
           </ResizablePanel>
 
-          <ResizableHandle aria-label={msg('managedAgents.quickstart.resizePanels', 'Resize quickstart panels')} />
+          <ResizableHandle
+            aria-label={msg('managedAgents.quickstart.resizePanels', 'Resize quickstart panels')}
+            withHandle
+            className="cursor-col-resize bg-transparent focus-visible:[&>div]:ring-2 focus-visible:[&>div]:ring-ring/50"
+            handleClassName="h-6 w-4 rounded-md border-border/70 bg-background/95 text-muted-foreground/70 shadow-none transition-[background-color,border-color,color] hover:border-border hover:bg-accent hover:text-accent-foreground [&_svg]:size-2.5"
+          />
 
           <ResizablePanel
             id="quickstart-inspector"

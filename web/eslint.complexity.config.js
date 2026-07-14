@@ -108,12 +108,12 @@ const legacyMaintainabilityBudgets = [
   { file: 'src/features/managed-agents/components/common.tsx', maxLines: 1111 },
   {
     file: 'src/features/managed-agents/quickstart/AgentQuickstartPage.tsx',
-    maxLines: 1178,
-    maxFunctionLines: 1098,
+    maxLines: 1121,
+    maxFunctionLines: 1042,
   },
   {
     file: 'src/features/managed-agents/quickstart/components.tsx',
-    maxLines: 2708,
+    maxLines: 2178,
     maxFunctionLines: 287,
   },
   {

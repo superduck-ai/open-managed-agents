@@ -1125,9 +1125,14 @@ export function mockManagedResourceApi() {
       {
         id: 'env_one123456',
         archived_at: null,
-        config: { type: 'cloud' },
+        config: {
+          type: 'cloud',
+          networking: { type: 'unrestricted' },
+          packages: { type: 'packages', apt: [], cargo: [], gem: [], go: [], npm: [], pip: ['httpx==1.0.0'] },
+        },
         created_at: now,
         description: 'Primary environment',
+        metadata: { Owner: 'Platform' },
         name: 'Environment one',
         scope: 'workspace',
         state: 'active',
@@ -1137,9 +1142,10 @@ export function mockManagedResourceApi() {
       {
         id: 'env_option123456',
         archived_at: null,
-        config: { type: 'cloud' },
+        config: { type: 'cloud', networking: { type: 'limited' }, packages: { type: 'packages' } },
         created_at: now,
         description: 'Option environment',
+        metadata: {},
         name: 'Option environment',
         scope: 'workspace',
         state: 'active',
@@ -1147,6 +1153,16 @@ export function mockManagedResourceApi() {
         updated_at: now,
       },
     ],
+    environmentWork: ['queued', 'starting', 'active', 'stopping', 'stopped', 'failed', 'awaiting_review'].map(
+      (state, index) => ({
+        id: `work_${state}123456`,
+        created_at: new Date(Date.now() - (index + 2) * 60_000).toISOString(),
+        environment_id: 'env_one123456',
+        state,
+        type: 'environment_work',
+        updated_at: new Date(Date.now() - (index + 1) * 60_000).toISOString(),
+      }),
+    ),
     vaults: [
       {
         id: 'vlt_one123456',
@@ -1320,9 +1336,23 @@ export function mockManagedResourceApi() {
       const environment = resources.environments.find((item) => item.id === environmentId);
       return environment ? jsonResponse(environment) : jsonResponse({ error: { message: 'not found' } }, 404);
     }
+    if (retrieveEnvironmentMatch && method === 'POST') {
+      const environmentId = decodeURIComponent(retrieveEnvironmentMatch[1]);
+      const existing = resources.environments.find((item) => item.id === environmentId) ?? resources.environments[0];
+      const updated = {
+        ...existing,
+        config: body?.config ?? existing.config,
+        description: typeof body?.description === 'string' ? body.description : existing.description,
+        metadata: body?.metadata ?? existing.metadata,
+        name: typeof body?.name === 'string' ? body.name : existing.name,
+        updated_at: new Date().toISOString(),
+      };
+      resources.environments = [updated, ...resources.environments.filter((item) => item.id !== environmentId)];
+      return jsonResponse(updated);
+    }
     const environmentWorkMatch = url.match(/^\/v1\/environments\/([^/?]+)\/work\?/);
     if (environmentWorkMatch && method === 'GET') {
-      return jsonResponse({ data: [], next_page: null });
+      return jsonResponse({ data: resources.environmentWork, next_page: null });
     }
     if (url.startsWith('/v1/vaults?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;

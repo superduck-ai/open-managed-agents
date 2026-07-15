@@ -20,7 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
-import { useI18n } from '../../../shared/i18n';
+import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import { Card, CardContent } from '../../../shared/ui/card';
@@ -30,9 +30,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
-import { Field, FieldLabel } from '../../../shared/ui/field';
-import { Input } from '../../../shared/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { toast } from '../../../shared/ui/sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Textarea } from '../../../shared/ui/textarea';
@@ -46,7 +43,6 @@ import {
   deleteMemory,
   deleteVaultCredential,
   listDeploymentRuns,
-  listEnvironmentWork,
   listMemories,
   listSessionEvents,
   listSessionResources,
@@ -54,7 +50,6 @@ import {
   listVaultCredentials,
   retrieveManagedEntity,
   retrieveMemory,
-  updateEnvironmentDetail,
   updateManagedEntity,
   updateMemory,
   updateVaultCredential,
@@ -63,20 +58,18 @@ import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import {
   ConfirmEntityDialog,
   DetailCard,
-  DetailKV,
   DetailTableCard,
   ManagedTextArea,
   ManagedTextField,
   NestedRows,
   StatusPill,
 } from '../components/common';
-import { entityKindLabel } from '../labels';
+import { entityKindLabel, managedToastMessage, resourceTitle } from '../labels';
 import {
   type CredentialFormValues,
   type DeploymentApiResponse,
   type DeploymentRunApiResponse,
   type EnvironmentApiResponse,
-  type EnvironmentWorkApiResponse,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
   type ManagedEntitySection,
@@ -102,7 +95,6 @@ import {
   formatKilobytes,
   managedEntityDetailHref,
   managedEntityListHref,
-  objectRecord,
   titleCase,
 } from '../utils';
 import { CredentialDialog, MemoryDialog } from './dialogs';
@@ -114,8 +106,6 @@ import {
   entityDescription,
   entityDisplayName,
   entityStatusLabel,
-  environmentEditValues,
-  environmentPackageRows,
   initialFormValues,
   initialSelectedMemoryId,
   loadedMemoryRowsFromBranches,
@@ -132,6 +122,9 @@ import {
   upsertMemoryInBranch,
   upsertMemoryInBranches,
 } from './model';
+import { EnvironmentArchivedNotice, EnvironmentReadOnlySections, EnvironmentWorkPanel } from './environment-details';
+import { EnvironmentInlineEditor } from './environment';
+import { environmentErrorMessage, localizedRelativeTime } from './environment-model';
 
 export function ManagedEntityDetailPage({
   config,
@@ -140,6 +133,8 @@ export function ManagedEntityDetailPage({
   config: ResourceConfig & { section: ManagedEntitySection };
   entityId: string;
 }) {
+  const { msg } = useI18n();
+  const formatters = useFormatters();
   const { activeWorkspaceId } = useWorkspace();
   const [entity, setEntity] = useState<ManagedEntityApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -168,7 +163,9 @@ export function ManagedEntityDetailPage({
       } catch (error) {
         if (active) {
           setEntity(null);
-          setLoadError(errorMessage(error));
+          setLoadError(
+            config.section === 'environments' ? environmentErrorMessage(error, 'load', msg) : errorMessage(error),
+          );
           setLoading(false);
         }
       }
@@ -176,9 +173,10 @@ export function ManagedEntityDetailPage({
     return () => {
       active = false;
     };
-  }, [activeWorkspaceId, config.section, entityId, refreshKey]);
+  }, [activeWorkspaceId, config.section, entityId, msg, refreshKey]);
 
   const listHref = managedEntityListHref(activeWorkspaceId, config.section);
+  const listLabel = resourceTitle(config, msg);
   const label = entity ? entityDisplayName(config.section, entity) : entityId;
 
   const handleArchive = async () => {
@@ -191,9 +189,11 @@ export function ManagedEntityDetailPage({
       const updated = await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
       setEntity(updated);
       setConfirmAction(null);
-      toast.success(`${entityKindLabel(config.section)} archived`);
+      toast.success(managedToastMessage(config.section, 'archived', msg));
     } catch (error) {
-      setMutationError(errorMessage(error));
+      setMutationError(
+        config.section === 'environments' ? environmentErrorMessage(error, 'archive', msg) : errorMessage(error),
+      );
       setConfirmAction(null);
     } finally {
       setBusyAction(null);
@@ -212,7 +212,9 @@ export function ManagedEntityDetailPage({
       setBusyAction(null);
       window.location.assign(listHref);
     } catch (error) {
-      setMutationError(errorMessage(error));
+      setMutationError(
+        config.section === 'environments' ? environmentErrorMessage(error, 'delete', msg) : errorMessage(error),
+      );
       setConfirmAction(null);
       setBusyAction(null);
     }
@@ -226,15 +228,19 @@ export function ManagedEntityDetailPage({
     const updated = await updateManagedEntity(config.section, entity.id, values, activeWorkspaceId);
     setEntity(updated);
     setEditing(false);
-    toast.success(`${entityKindLabel(config.section)} updated`);
+    toast.success(managedToastMessage(config.section, 'updated', msg));
     setRefreshKey((value) => value + 1);
   };
 
   if (loading) {
     return (
       <section className="min-h-[calc(100vh-48px)] text-foreground">
-        <ManagedDetailBreadcrumb listHref={listHref} listLabel={config.title} />
-        <div className="mt-14 text-sm text-muted-foreground">Loading {entityKindLabel(config.section)}...</div>
+        <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
+        <div className="mt-14 text-sm text-muted-foreground">
+          {config.section === 'environments'
+            ? msg('managedAgents.environments.loadingSingle', 'Loading environment...')
+            : `Loading ${entityKindLabel(config.section)}...`}
+        </div>
       </section>
     );
   }
@@ -242,10 +248,15 @@ export function ManagedEntityDetailPage({
   if (!entity || loadError) {
     return (
       <section className="min-h-[calc(100vh-48px)] text-foreground">
-        <ManagedDetailBreadcrumb listHref={listHref} listLabel={config.title} />
+        <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
         <Alert variant="destructive" className="mt-6 max-w-xl">
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <AlertDescription>{loadError || `${titleCase(entityKindLabel(config.section))} not found`}</AlertDescription>
+          <AlertDescription>
+            {loadError ||
+              (config.section === 'environments'
+                ? msg('managedAgents.environments.errors.notFound', 'Environment not found.')
+                : `${titleCase(entityKindLabel(config.section))} not found`)}
+          </AlertDescription>
         </Alert>
       </section>
     );
@@ -291,14 +302,14 @@ export function ManagedEntityDetailPage({
         />
       ) : null}
 
-      <ManagedDetailBreadcrumb listHref={listHref} listLabel={config.title} currentLabel={label} className="mb-5" />
+      <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} currentLabel={label} className="mb-5" />
 
       <header className="mb-7 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="truncate text-[28px] font-semibold leading-tight text-foreground">{label}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             {config.section === 'environments' ? (
-              <span className="text-foreground">Cloud</span>
+              <span className="text-foreground">{msg('managedAgents.environments.cloud', 'Cloud')}</span>
             ) : (
               <StatusPill>{entityStatusLabel(entity)}</StatusPill>
             )}
@@ -313,14 +324,16 @@ export function ManagedEntityDetailPage({
               <span className="truncate">{compactEntityId(entity.id)}</span>
             </Button>
             <span>
-              {config.section === 'environments' ? 'Last updated' : 'Created'}{' '}
-              {relativeTime(config.section === 'environments' ? entity.updated_at : entity.created_at)}
+              {config.section === 'environments' ? msg('managedAgents.common.lastUpdated', 'Last updated') : 'Created'}{' '}
+              {config.section === 'environments'
+                ? localizedRelativeTime(entity.updated_at, formatters.relativeTime)
+                : relativeTime(entity.created_at)}
             </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Button type="button" size="lg" disabled={archived} onClick={() => setEditing(true)}>
-            Edit
+            {config.section === 'environments' ? msg('common.edit', 'Edit') : 'Edit'}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -329,7 +342,11 @@ export function ManagedEntityDetailPage({
                   type="button"
                   variant="outline"
                   size="icon-lg"
-                  aria-label="More actions"
+                  aria-label={
+                    config.section === 'environments'
+                      ? msg('managedAgents.common.moreActions', 'More actions')
+                      : 'More actions'
+                  }
                   disabled={Boolean(busyAction)}
                   className="text-foreground disabled:cursor-wait disabled:text-muted-foreground/70"
                 />
@@ -343,7 +360,7 @@ export function ManagedEntityDetailPage({
                 onClick={() => setConfirmAction('archive')}
               >
                 <Archive className="size-4" aria-hidden />
-                Archive
+                {config.section === 'environments' ? msg('common.archive', 'Archive') : 'Archive'}
               </DropdownMenuItem>
               {config.section !== 'deployments' ? (
                 <DropdownMenuItem
@@ -352,7 +369,7 @@ export function ManagedEntityDetailPage({
                   onClick={() => setConfirmAction('delete')}
                 >
                   <X className="size-4" aria-hidden />
-                  Delete
+                  {config.section === 'environments' ? msg('common.delete', 'Delete') : 'Delete'}
                 </DropdownMenuItem>
               ) : null}
             </DropdownMenuContent>
@@ -367,6 +384,8 @@ export function ManagedEntityDetailPage({
         </Alert>
       ) : null}
 
+      {config.section === 'environments' && archived ? <EnvironmentArchivedNotice /> : null}
+
       {editing ? (
         <ManagedEntityInlineEditor
           section={config.section}
@@ -376,7 +395,7 @@ export function ManagedEntityDetailPage({
           onSaved={(updated) => {
             setEntity(updated);
             setEditing(false);
-            toast.success(`${entityKindLabel(config.section)} updated`);
+            toast.success(managedToastMessage(config.section, 'updated', msg));
             setRefreshKey((value) => value + 1);
           }}
           onSubmit={handleSave}
@@ -404,9 +423,37 @@ export function ManagedEntityOverview({
   section: ManagedEntitySection;
   entity: ManagedEntityApiResponse;
 }) {
-  const rows = detailRowsForEntity(section, entity);
+  const { msg } = useI18n();
+  const formatters = useFormatters();
+  const rows =
+    section === 'environments'
+      ? [
+          {
+            label: msg('common.status', 'Status'),
+            value: entity.archived_at ? msg('common.archived', 'Archived') : msg('common.active', 'Active'),
+          },
+          {
+            label: msg('managedAgents.environments.overview.type', 'Type'),
+            value: msg('managedAgents.environments.cloud', 'Cloud'),
+          },
+          {
+            label: msg('managedAgents.environments.overview.scope', 'Scope'),
+            value:
+              (entity as EnvironmentApiResponse).scope === 'workspace'
+                ? msg('managedAgents.environments.workspace', 'Workspace')
+                : (entity as EnvironmentApiResponse).scope || '—',
+          },
+          {
+            label: msg('common.created', 'Created'),
+            value: localizedRelativeTime(entity.created_at, formatters.relativeTime),
+          },
+        ]
+      : detailRowsForEntity(section, entity);
   return (
-    <DetailCard title="Overview" description={entityDescription(entity) || undefined}>
+    <DetailCard
+      title={section === 'environments' ? msg('managedAgents.environments.overview.title', 'Overview') : 'Overview'}
+      description={entityDescription(entity) || undefined}
+    >
       <Card size="sm" className="gap-0 py-0">
         <CardContent className="px-0">
           <dl className="grid gap-px bg-border md:grid-cols-2">
@@ -421,52 +468,6 @@ export function ManagedEntityOverview({
       </Card>
       {section === 'environments' ? <EnvironmentReadOnlySections entity={entity as EnvironmentApiResponse} /> : null}
     </DetailCard>
-  );
-}
-
-export function EnvironmentReadOnlySections({ entity }: { entity: EnvironmentApiResponse }) {
-  const config = objectRecord(entity.config);
-  const networking = objectRecord(config.networking);
-  const packages = environmentPackageRows(config.packages);
-  const metadata = objectRecord((entity as EnvironmentApiResponse & { metadata?: unknown }).metadata);
-  return (
-    <div className="mt-7 space-y-7">
-      <div>
-        <h2 className="text-[20px] font-semibold text-foreground">Networking</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Configure network access policies for this environment.</p>
-        <DetailKV label="Type" value={titleCase(String(networking.type || 'unrestricted'))} />
-      </div>
-      <div className="border-t border-border pt-7">
-        <h2 className="text-[20px] font-semibold text-foreground">Packages</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Specify packages and their versions available in this environment. Separate multiple values with spaces.
-        </p>
-        {packages.length ? (
-          <div className="mt-3 text-sm text-foreground">
-            {packages.map((row) => `${row.manager}: ${row.value}`).join('  ')}
-          </div>
-        ) : (
-          <div className="mt-3 text-sm text-muted-foreground/70">No packages configured</div>
-        )}
-      </div>
-      <div className="border-t border-border pt-7">
-        <h2 className="text-[20px] font-semibold text-foreground">Metadata</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Add custom key-value pairs to tag and organize this environment. Keys must be lowercase.
-        </p>
-        {Object.keys(metadata).length ? (
-          <div className="mt-3 grid gap-2 text-sm text-foreground">
-            {Object.entries(metadata).map(([key, value]) => (
-              <div key={key} className="font-mono">
-                {key}: {String(value)}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="mt-3 text-sm text-muted-foreground/70">No metadata</div>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -571,246 +572,6 @@ export function GenericManagedEntityInlineEditor({
         </div>
       </form>
     </DetailCard>
-  );
-}
-
-export function EnvironmentInlineEditor({
-  entity,
-  workspaceId,
-  onCancel,
-  onSaved,
-}: {
-  entity: EnvironmentApiResponse;
-  workspaceId: string;
-  onCancel: () => void;
-  onSaved: (entity: ManagedEntityApiResponse) => void;
-}) {
-  const [values, setValues] = useState(() => environmentEditValues(entity));
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!values.name.trim()) {
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      const updated = await updateEnvironmentDetail(entity.id, values, workspaceId);
-      onSaved(updated);
-    } catch (submitError) {
-      setError(errorMessage(submitError));
-      setSubmitting(false);
-    }
-  };
-
-  const addPackage = () =>
-    setValues((current) => ({ ...current, packages: [...current.packages, { manager: 'pip', value: '' }] }));
-  const addMetadata = () =>
-    setValues((current) => ({ ...current, metadataRows: [...current.metadataRows, { key: '', value: '' }] }));
-
-  return (
-    <form className="max-w-[820px] space-y-7" onSubmit={submit}>
-      <ManagedTextField
-        label="Environment name"
-        value={values.name}
-        onChange={(name) => setValues((current) => ({ ...current, name }))}
-        autoFocus
-      />
-      <ManagedTextArea
-        label="Description"
-        value={values.description}
-        onChange={(description) => setValues((current) => ({ ...current, description }))}
-      />
-      <DetailCard title="Networking" description="Configure network access policies for this environment.">
-        <Card size="sm" className="py-0">
-          <CardContent className="p-3">
-            <Field className="gap-2">
-              <FieldLabel>Type</FieldLabel>
-              <Select<string>
-                value={values.networkType}
-                items={[
-                  { value: 'unrestricted', label: 'Unrestricted' },
-                  { value: 'limited', label: 'Limited' },
-                ]}
-                onValueChange={(networkType) => {
-                  if (networkType === null) {
-                    return;
-                  }
-                  setValues((current) => ({
-                    ...current,
-                    networkType: networkType === 'limited' ? 'limited' : 'unrestricted',
-                  }));
-                }}
-              >
-                <SelectTrigger aria-label="Type" className="h-10 w-full px-3 text-sm text-foreground">
-                  <SelectValue>{values.networkType === 'limited' ? 'Limited' : 'Unrestricted'}</SelectValue>
-                </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectItem value="unrestricted" label="Unrestricted">
-                    Unrestricted
-                  </SelectItem>
-                  <SelectItem value="limited" label="Limited">
-                    Limited
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          </CardContent>
-        </Card>
-      </DetailCard>
-      <DetailCard
-        title="Packages"
-        description="Specify packages and their versions available in this environment. Separate multiple values with spaces."
-      >
-        <Card size="sm" className="py-0">
-          <CardContent className="space-y-3 p-3">
-            <div className="space-y-2">
-              {values.packages.map((row, index) => (
-                <div key={`${row.manager}-${index}`} className="grid gap-2 md:grid-cols-[160px_1fr_40px]">
-                  <Select<string>
-                    value={row.manager}
-                    items={['apt', 'cargo', 'gem', 'go', 'npm', 'pip'].map((manager) => ({
-                      value: manager,
-                      label: manager,
-                    }))}
-                    onValueChange={(manager) => {
-                      if (manager === null) {
-                        return;
-                      }
-                      setValues((current) => ({
-                        ...current,
-                        packages: current.packages.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, manager } : item,
-                        ),
-                      }));
-                    }}
-                  >
-                    <SelectTrigger aria-label="Manager" className="h-10 w-full px-3 text-sm text-foreground">
-                      <SelectValue>{row.manager}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      {['apt', 'cargo', 'gem', 'go', 'npm', 'pip'].map((manager) => (
-                        <SelectItem key={manager} value={manager} label={manager}>
-                          {manager}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    aria-label="package package==1.0.0"
-                    value={row.value}
-                    placeholder="package==1.0.0"
-                    className="h-10"
-                    onChange={(event) =>
-                      setValues((current) => ({
-                        ...current,
-                        packages: current.packages.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, value: event.target.value } : item,
-                        ),
-                      }))
-                    }
-                  />
-                  <Button
-                    type="button"
-                    aria-label="Remove package"
-                    disabled={values.packages.length <= 1}
-                    variant="secondary"
-                    size="icon-lg"
-                    className="size-10"
-                    onClick={() =>
-                      setValues((current) => ({
-                        ...current,
-                        packages: current.packages.filter((_, itemIndex) => itemIndex !== index),
-                      }))
-                    }
-                  >
-                    <X className="size-4" aria-hidden />
-                  </Button>
-                </div>
-              ))}
-            </div>
-            <Button type="button" variant="secondary" size="lg" onClick={addPackage}>
-              <Plus className="size-4" aria-hidden />
-              Add package
-            </Button>
-          </CardContent>
-        </Card>
-      </DetailCard>
-      <DetailCard
-        title="Metadata"
-        description="Add custom key-value pairs to tag and organize this environment. Keys must be lowercase."
-      >
-        <Card size="sm" className="py-0">
-          <CardContent className="space-y-3 p-3">
-            <div className="space-y-2">
-              {values.metadataRows.map((row, index) => (
-                <div key={`${row.key}-${index}`} className="grid gap-2 md:grid-cols-[1fr_1fr_40px]">
-                  <Input
-                    aria-label={`Metadata key ${index + 1}`}
-                    value={row.key}
-                    placeholder="key"
-                    className="h-10"
-                    onChange={(event) =>
-                      setValues((current) => ({
-                        ...current,
-                        metadataRows: current.metadataRows.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, key: event.target.value } : item,
-                        ),
-                      }))
-                    }
-                  />
-                  <Input
-                    aria-label={`Metadata value ${index + 1}`}
-                    value={row.value}
-                    placeholder="value"
-                    className="h-10"
-                    onChange={(event) =>
-                      setValues((current) => ({
-                        ...current,
-                        metadataRows: current.metadataRows.map((item, itemIndex) =>
-                          itemIndex === index ? { ...item, value: event.target.value } : item,
-                        ),
-                      }))
-                    }
-                  />
-                  <Button
-                    type="button"
-                    aria-label={`Remove metadata row ${index + 1}`}
-                    disabled={values.metadataRows.length <= 1}
-                    variant="secondary"
-                    size="icon-lg"
-                    className="size-10"
-                    onClick={() =>
-                      setValues((current) => ({
-                        ...current,
-                        metadataRows: current.metadataRows.filter((_, itemIndex) => itemIndex !== index),
-                      }))
-                    }
-                  >
-                    <X className="size-4" aria-hidden />
-                  </Button>
-                </div>
-              ))}
-            </div>
-            <Button type="button" variant="secondary" size="lg" onClick={addMetadata}>
-              <Plus className="size-4" aria-hidden />
-              Add metadata entry
-            </Button>
-          </CardContent>
-        </Card>
-      </DetailCard>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <div className="flex gap-2">
-        <Button type="submit" size="lg" disabled={submitting || !values.name.trim()}>
-          {submitting ? 'Saving...' : 'Save changes'}
-        </Button>
-        <Button type="button" variant="secondary" size="lg" onClick={onCancel}>
-          Cancel
-        </Button>
-      </div>
-    </form>
   );
 }
 
@@ -933,62 +694,6 @@ export function DeploymentRunsPanel({
           '—'
         ),
         relativeTime(run.created_at),
-      ])}
-    />
-  );
-}
-
-export function EnvironmentWorkPanel({
-  environment,
-  workspaceId,
-  refreshKey,
-}: {
-  environment: EnvironmentApiResponse;
-  workspaceId: string;
-  refreshKey: number;
-}) {
-  const [state, setState] = useState<{ loading: boolean; error: string | null; data: EnvironmentWorkApiResponse[] }>({
-    loading: true,
-    error: null,
-    data: [],
-  });
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      await Promise.resolve();
-      if (!active) {
-        return;
-      }
-      setState((current) => ({ ...current, loading: true, error: null }));
-      try {
-        const page = await listEnvironmentWork(environment.id, workspaceId);
-        if (active) {
-          setState({ loading: false, error: null, data: page.data ?? [] });
-        }
-      } catch (error) {
-        if (active) {
-          setState({ loading: false, error: errorMessage(error), data: [] });
-        }
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [environment.id, refreshKey, workspaceId]);
-
-  return (
-    <DetailTableCard
-      title="Work queue"
-      description="Inspect pending or claimed work for this environment."
-      loading={state.loading}
-      error={state.error}
-      emptyTitle="No work queued"
-      columns={['ID', 'Status', 'Created', 'Updated']}
-      rows={state.data.map((work) => [
-        compactEntityId(work.id),
-        titleCase(work.status || 'queued'),
-        relativeTime(work.created_at),
-        work.updated_at ? relativeTime(work.updated_at) : '—',
       ])}
     />
   );

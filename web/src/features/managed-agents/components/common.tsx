@@ -47,7 +47,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
-import { type FormEvent, type KeyboardEventHandler, type ReactNode, useRef, useState } from 'react';
+import { type FormEvent, type KeyboardEventHandler, type ReactNode, useId, useRef, useState } from 'react';
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { entityKindLabel, resourceEmptyAction, resourceEmptyBody, resourceEmptyTitle } from '../labels';
 import { entityDisplayName } from '../resources/ManagedResources';
@@ -656,7 +656,7 @@ export function ManagedTextField({
   autoFocus?: boolean;
   onChange: (value: string) => void;
 }) {
-  const id = `managed-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `managed-field-${useId()}`;
   return (
     <div>
       <Label htmlFor={id} className="text-sm font-medium text-foreground">
@@ -686,7 +686,7 @@ export function ManagedTextArea({
   placeholder?: string;
   onChange: (value: string) => void;
 }) {
-  const id = `managed-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `managed-field-${useId()}`;
   return (
     <div>
       <Label htmlFor={id} className="text-sm font-medium text-foreground">
@@ -717,7 +717,7 @@ export function ManagedSelectField({
   options: EntityOption[];
   onChange: (value: string) => void;
 }) {
-  const id = `managed-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = `managed-select-${useId()}`;
   const selected = options.find((option) => option.id === value);
   const items = [
     { value: '', label: placeholder },

@@ -4,15 +4,14 @@ import { Card, CardContent } from '../../../shared/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '../../../shared/ui/dialog';
-import { ChevronDown, X } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { listAgents, listManagedEntities, localTimezone } from '../api';
 import {
@@ -26,7 +25,7 @@ import {
   ManagedTextField,
   VaultMultiSelect,
 } from '../components/common';
-import { entityDialogSubtitle, submitLabel } from '../labels';
+import { entityDialogSubtitle } from '../labels';
 import {
   type AgentApiResponse,
   type AgentPageResponse,
@@ -45,6 +44,20 @@ import {
 } from '../types';
 import { errorMessage } from '../utils';
 import { credentialFormValues, initialFormValues } from './model';
+import {
+  EnvironmentDialogCloseControl,
+  UnsavedEnvironmentChangesDialog,
+  useEnvironmentDialogDiscardGuard,
+} from './environment-form';
+import { environmentErrorMessage } from './environment-model';
+import {
+  DeploymentDialogActions,
+  DeploymentDialogCloseControl,
+  DeploymentDialogHeader,
+  EnvironmentCreationFields,
+  ManagedDialogHeader,
+  ManagedEntityDialogActions,
+} from './environment-dialog-fields';
 
 export function CredentialDialog({
   credential,
@@ -242,10 +255,14 @@ export function ManagedEntityDialog({
   onSubmit: (values: ManagedEntityFormValues) => Promise<void>;
 }) {
   const { msg } = useI18n();
-  const [values, setValues] = useState<ManagedEntityFormValues>(() => ({
-    ...initialFormValues(section, entity),
-    ...(lockedAgent ? { agentId: lockedAgent.id } : {}),
-  }));
+  const initialValues = useMemo<ManagedEntityFormValues>(
+    () => ({
+      ...initialFormValues(section, entity),
+      ...(lockedAgent ? { agentId: lockedAgent.id } : {}),
+    }),
+    [entity, lockedAgent, section],
+  );
+  const [values, setValues] = useState<ManagedEntityFormValues>(initialValues);
   const [agents, setAgents] = useState<EntityOption[]>([]);
   const [environments, setEnvironments] = useState<EntityOption[]>([]);
   const [vaults, setVaults] = useState<EntityOption[]>([]);
@@ -253,8 +270,16 @@ export function ManagedEntityDialog({
   const [loadingOptions, setLoadingOptions] = useState(section === 'sessions' || section === 'deployments');
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [resourceDisclosureOpen, setResourceDisclosureOpen] = useState(false);
   const needsReferences = section === 'sessions' || section === 'deployments';
+  const discardGuard = useEnvironmentDialogDiscardGuard({
+    section,
+    values,
+    initialValues,
+    submitting,
+    onClose,
+  });
 
   useEffect(() => {
     if (!needsReferences) {
@@ -355,15 +380,21 @@ export function ManagedEntityDialog({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSubmit) {
+    if (!canSubmit || submittingRef.current) {
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     try {
       await onSubmit(values);
     } catch (error) {
-      setSubmitError(errorMessage(error));
+      setSubmitError(
+        section === 'environments'
+          ? environmentErrorMessage(error, entity ? 'update' : 'create', msg)
+          : errorMessage(error),
+      );
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -377,29 +408,9 @@ export function ManagedEntityDialog({
           showCloseButton={false}
         >
           <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
-            <DialogClose
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={msg('common.close', 'Close')}
-                  className="absolute right-0 top-0 text-foreground hover:bg-accent"
-                />
-              }
-            >
-              <X className="size-[22px]" aria-hidden />
-            </DialogClose>
+            <DeploymentDialogCloseControl />
 
-            <div className="pr-8">
-              <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">{title}</DialogTitle>
-              <DialogDescription className="mt-1 text-sm leading-5 text-muted-foreground">
-                {msg(
-                  'managedAgents.deployments.dialogSubtitle',
-                  'Deploy an agent with a trigger, environment, and credentials.',
-                )}
-              </DialogDescription>
-            </div>
+            <DeploymentDialogHeader title={title} />
 
             <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-[18px] overflow-y-auto pr-1">
               <DeploymentTextField
@@ -507,11 +518,7 @@ export function ManagedEntityDialog({
 
             {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
 
-            <div className="mt-5 flex justify-end">
-              <Button type="submit" disabled={!canSubmit}>
-                {submitting ? msg('common.saving', 'Saving...') : submitLabel(section, Boolean(entity), msg)}
-              </Button>
-            </div>
+            <DeploymentDialogActions editing={Boolean(entity)} submitting={submitting} canSubmit={canSubmit} />
           </form>
         </DialogContent>
       </Dialog>
@@ -519,158 +526,144 @@ export function ManagedEntityDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]"
-        showCloseButton={false}
+    <>
+      <UnsavedEnvironmentChangesDialog
+        open={discardGuard.confirmOpen}
+        onContinue={discardGuard.continueEditing}
+        onDiscard={discardGuard.discard}
+      />
+      <Dialog
+        open
+        onOpenChange={(open) => !open && (section === 'environments' ? discardGuard.requestDiscard() : onClose())}
       >
-        <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
-          <DialogClose
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={msg('common.close', 'Close')}
-                className="absolute right-0 top-0 text-foreground hover:bg-accent"
-              />
-            }
-          >
-            <X className="size-[22px]" aria-hidden />
-          </DialogClose>
-
-          <div className="pr-8">
-            <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">{title}</DialogTitle>
-            {dialogSubtitleText ? (
-              <DialogDescription className="mt-1 text-sm leading-5 text-muted-foreground">
-                {dialogSubtitleText}
-              </DialogDescription>
-            ) : null}
-          </div>
-
-          <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-            <ManagedTextField
-              label={
-                section === 'sessions' ? msg('managedAgents.sessions.fieldTitle', 'Title') : msg('common.name', 'Name')
-              }
-              value={values.name}
-              placeholder={
-                section === 'sessions'
-                  ? msg('managedAgents.sessions.titlePlaceholder', 'Optional - name this run')
-                  : msg('managedAgents.common.namePlaceholder', 'Enter a name')
-              }
-              onChange={(name) => setValues((current) => ({ ...current, name }))}
-              autoFocus
+        <DialogContent
+          className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]"
+          showCloseButton={false}
+        >
+          <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
+            <EnvironmentDialogCloseControl
+              environment={section === 'environments'}
+              submitting={submitting}
+              onRequestClose={discardGuard.requestDiscard}
             />
 
-            {section === 'environments' ? (
-              <>
-                <ManagedTextField
-                  label={msg('managedAgents.environments.hostingType', 'Hosting type')}
-                  value={msg('managedAgents.environments.cloud', 'Cloud')}
-                  disabled
-                  onChange={() => undefined}
+            <ManagedDialogHeader title={title} subtitle={dialogSubtitleText} />
+
+            <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+              <ManagedTextField
+                label={
+                  section === 'sessions'
+                    ? msg('managedAgents.sessions.fieldTitle', 'Title')
+                    : msg('common.name', 'Name')
+                }
+                value={values.name}
+                placeholder={
+                  section === 'sessions'
+                    ? msg('managedAgents.sessions.titlePlaceholder', 'Optional - name this run')
+                    : msg('managedAgents.common.namePlaceholder', 'Enter a name')
+                }
+                onChange={(name) => setValues((current) => ({ ...current, name }))}
+                autoFocus
+              />
+
+              {section === 'environments' ? (
+                <EnvironmentCreationFields
+                  description={values.description}
+                  onDescriptionChange={(description) => setValues((current) => ({ ...current, description }))}
                 />
+              ) : null}
+
+              {section === 'memory-stores' ? (
                 <ManagedTextArea
                   label={msg('common.description', 'Description')}
                   value={values.description}
                   placeholder={msg('managedAgents.common.descriptionPlaceholder', 'Add a description')}
                   onChange={(description) => setValues((current) => ({ ...current, description }))}
                 />
-              </>
-            ) : null}
+              ) : null}
 
-            {section === 'memory-stores' ? (
-              <ManagedTextArea
-                label={msg('common.description', 'Description')}
-                value={values.description}
-                placeholder={msg('managedAgents.common.descriptionPlaceholder', 'Add a description')}
-                onChange={(description) => setValues((current) => ({ ...current, description }))}
-              />
-            ) : null}
-
-            {needsReferences ? (
-              <>
-                {lockedAgent ? (
-                  <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
-                ) : (
+              {needsReferences ? (
+                <>
+                  {lockedAgent ? (
+                    <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
+                  ) : (
+                    <ManagedSelectField
+                      label={msg('managedAgents.common.agent', 'Agent')}
+                      value={values.agentId}
+                      placeholder={
+                        loadingOptions
+                          ? msg('managedAgents.agents.loading', 'Loading agents...')
+                          : msg('managedAgents.deployments.selectAgent', 'Select an agent')
+                      }
+                      options={agents}
+                      onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
+                    />
+                  )}
                   <ManagedSelectField
-                    label={msg('managedAgents.common.agent', 'Agent')}
-                    value={values.agentId}
+                    label={msg('managedAgents.environments.kindTitle', 'Environment')}
+                    value={values.environmentId}
                     placeholder={
                       loadingOptions
-                        ? msg('managedAgents.agents.loading', 'Loading agents...')
-                        : msg('managedAgents.deployments.selectAgent', 'Select an agent')
+                        ? msg('managedAgents.environments.loading', 'Loading environments...')
+                        : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
                     }
-                    options={agents}
-                    onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
+                    options={environments}
+                    onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
                   />
-                )}
-                <ManagedSelectField
-                  label={msg('managedAgents.environments.kindTitle', 'Environment')}
-                  value={values.environmentId}
-                  placeholder={
-                    loadingOptions
-                      ? msg('managedAgents.environments.loading', 'Loading environments...')
-                      : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
-                  }
-                  options={environments}
-                  onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
-                />
-                <VaultMultiSelect
-                  vaults={vaults}
-                  selectedIds={values.vaultIds}
-                  onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
-                />
-                <Collapsible open={resourceDisclosureOpen} onOpenChange={setResourceDisclosureOpen}>
-                  <Card size="sm" className="gap-0 py-0">
-                    <CollapsibleTrigger
-                      type="button"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-                    >
-                      <ChevronDown
-                        className={`size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none ${resourceDisclosureOpen ? '' : '-rotate-90'}`}
-                        aria-hidden
-                      />
-                      <span>{msg('managedAgents.common.resource', 'Resource')}</span>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="border-t border-border">
-                      <CardContent className="px-3 pb-3 pt-2">
-                        <p className="text-sm leading-5 text-muted-foreground">
-                          {msg(
-                            'managedAgents.common.noResourceAttachments',
-                            'No resource attachments are configured. Add files, repositories, or memory stores after creation.',
-                          )}
-                        </p>
-                      </CardContent>
-                    </CollapsibleContent>
-                  </Card>
-                </Collapsible>
-              </>
-            ) : null}
+                  <VaultMultiSelect
+                    vaults={vaults}
+                    selectedIds={values.vaultIds}
+                    onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
+                  />
+                  <Collapsible open={resourceDisclosureOpen} onOpenChange={setResourceDisclosureOpen}>
+                    <Card size="sm" className="gap-0 py-0">
+                      <CollapsibleTrigger
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                      >
+                        <ChevronDown
+                          className={`size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none ${resourceDisclosureOpen ? '' : '-rotate-90'}`}
+                          aria-hidden
+                        />
+                        <span>{msg('managedAgents.common.resource', 'Resource')}</span>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="border-t border-border">
+                        <CardContent className="px-3 pb-3 pt-2">
+                          <p className="text-sm leading-5 text-muted-foreground">
+                            {msg(
+                              'managedAgents.common.noResourceAttachments',
+                              'No resource attachments are configured. Add files, repositories, or memory stores after creation.',
+                            )}
+                          </p>
+                        </CardContent>
+                      </CollapsibleContent>
+                    </Card>
+                  </Collapsible>
+                </>
+              ) : null}
 
-            {section === 'credential-vaults' ? (
-              <p className="text-sm leading-5 text-muted-foreground">
-                {msg(
-                  'managedAgents.credentialVaults.createHint',
-                  'Continue after creating the vault to add credentials for tools and MCP servers.',
-                )}
-              </p>
-            ) : null}
-          </div>
+              {section === 'credential-vaults' ? (
+                <p className="text-sm leading-5 text-muted-foreground">
+                  {msg(
+                    'managedAgents.credentialVaults.createHint',
+                    'Continue after creating the vault to add credentials for tools and MCP servers.',
+                  )}
+                </p>
+              ) : null}
+            </div>
 
-          {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+            {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
 
-          <div className="mt-5 flex justify-end gap-2">
-            <DialogClose render={<Button type="button" variant="outline" />}>
-              {msg('common.cancel', 'Cancel')}
-            </DialogClose>
-            <Button type="submit" disabled={!canSubmit}>
-              {submitting ? msg('common.saving', 'Saving...') : submitLabel(section, Boolean(entity), msg)}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+            <ManagedEntityDialogActions
+              section={section}
+              editing={Boolean(entity)}
+              submitting={submitting}
+              canSubmit={canSubmit}
+              onRequestClose={discardGuard.requestDiscard}
+            />
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

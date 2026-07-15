@@ -68,14 +68,9 @@ import {
 } from '../types';
 import { compactEntityId, copyText, errorMessage, handleInternalLinkClick, managedEntityDetailHref } from '../utils';
 import { ManagedEntityDialog } from './dialogs';
-import {
-  cellsForEntity,
-  columnWidth,
-  entityAgentId,
-  entityAgentLabel,
-  entityDisplayName,
-  entityStatusLabel,
-} from './model';
+import { useManagedEntityCells } from './environment-list';
+import { managedEntityErrorMessage } from './environment-model';
+import { columnWidth, entityAgentId, entityAgentLabel, entityDisplayName, entityStatusLabel } from './model';
 
 type ManagedFilterMenu = 'agent' | 'created' | 'deployment' | 'status';
 type DeploymentStatusFilter = NonNullable<ManagedEntityListFilters['status']>;
@@ -365,7 +360,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       } catch (error) {
         if (active) {
           setEntities([]);
-          setLoadError(errorMessage(error));
+          setLoadError(managedEntityErrorMessage(config.section, error, 'list', msg));
           setEntityPageState((current) => ({
             workspaceId: activeWorkspaceId,
             section: config.section,
@@ -382,7 +377,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     return () => {
       active = false;
     };
-  }, [activeWorkspaceId, config.section, entityPageCursor, managedEntityListFilters, refreshKey]);
+  }, [activeWorkspaceId, config.section, entityPageCursor, managedEntityListFilters, msg, refreshKey]);
 
   useEffect(() => {
     setSelectedEntityIds(new Set());
@@ -690,7 +685,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       toast.success(managedToastMessage(config.section, action === 'archive' ? 'archived' : 'deleted', msg));
       setConfirmState(null);
     } catch (error) {
-      setMutationError(errorMessage(error));
+      setMutationError(managedEntityErrorMessage(config.section, error, action, msg));
     } finally {
       setBusyAction(null);
     }
@@ -905,7 +900,7 @@ export function ManagedEntityRow({
   onUnpauseDeployment: () => void;
 }) {
   const { msg } = useI18n();
-  const cells = cellsForEntity(config.section, entity);
+  const cells = useManagedEntityCells(config.section, entity);
   const archived = Boolean(entity.archived_at);
   const busy = Boolean(busyAction?.endsWith(`:${entity.id}`));
   const deployment = config.section === 'deployments' ? (entity as DeploymentApiResponse) : null;

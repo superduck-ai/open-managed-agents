@@ -1806,10 +1806,190 @@ export function registerManagedAgentsResourceTests() {
     expect(metadataCard?.className).toContain('bg-card');
 
     expect(screen.getByRole('combobox', { name: 'Type' }).className).not.toContain('bg-secondary');
-    expect(screen.getByRole('combobox', { name: 'Manager' }).className).not.toContain('bg-secondary');
-    expect(screen.getByRole('textbox', { name: 'package package==1.0.0' }).className).not.toContain('bg-secondary');
+    expect(screen.getByRole('combobox', { name: 'Package manager' }).className).not.toContain('bg-secondary');
+    expect(screen.getByRole('textbox', { name: 'Package value 1' }).className).not.toContain('bg-secondary');
     expect(screen.getByRole('textbox', { name: 'Metadata key 1' }).className).not.toContain('bg-secondary');
     expect(screen.getByRole('textbox', { name: 'Metadata value 1' }).className).not.toContain('bg-secondary');
+  });
+
+  test('localizes environment details, work states, and relative times in Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('environments', 'zh-CN');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: '环境' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '概览' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '网络访问' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '软件包' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '元数据' })).toBeTruthy();
+    expect(screen.queryByText(/lowercase/i)).toBeNull();
+    expect(await screen.findByRole('heading', { name: '工作队列' })).toBeTruthy();
+    for (const status of ['排队中', '启动中', '运行中', '停止中', '已停止', '失败']) {
+      expect(screen.getByText(status)).toBeTruthy();
+    }
+    expect(screen.getByText('Awaiting review (awaiting_review)')).toBeTruthy();
+    expect(document.body.textContent).toMatch(/分钟前|现在/);
+  });
+
+  test('validates environment edits, guards dirty exits, and submits only once', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    const api = mockManagedResourceApi();
+    renderManagedAgentsPage('environments');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const nameInput = screen.getByRole('textbox', { name: 'Environment name' });
+    fireEvent.change(nameInput, { target: { value: '   ' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
+      target: { value: 'x'.repeat(256) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'Owner' } });
+
+    expect(window.dispatchEvent(new window.Event('beforeunload', { cancelable: true }))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Continue editing' }));
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(screen.getByText('Enter an environment name.')).toBeTruthy();
+    expect(screen.getByText('Each package token must be 255 characters or fewer.')).toBeTruthy();
+    expect(screen.getAllByText('Metadata keys must be unique.')).toHaveLength(2);
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), {
+      target: { value: 'k'.repeat(65) },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), {
+      target: { value: 'v'.repeat(513) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(screen.getByText('Metadata keys must be between 1 and 64 characters.')).toBeTruthy();
+    expect(screen.getByText('Metadata values must be 512 characters or fewer.')).toBeTruthy();
+
+    fireEvent.change(nameInput, { target: { value: 'Environment Updated' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
+      target: { value: 'httpx==2.0.0' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'Team' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), { target: { value: 'Runtime' } });
+    const addMetadataButton = screen.getByRole('button', { name: 'Add metadata entry' });
+    for (let index = 0; index < 14; index += 1) {
+      fireEvent.click(addMetadataButton);
+    }
+    expect((addMetadataButton as HTMLButtonElement).disabled).toBe(true);
+
+    const form = screen.getByRole('button', { name: 'Save changes' }).closest('form') as HTMLFormElement;
+    fireEvent.submit(form);
+    expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.submit(form);
+    expect(await screen.findByRole('heading', { name: 'Environment Updated' })).toBeTruthy();
+    const updateRequests = api.requests.filter(
+      (request) => request.url === '/v1/environments/env_one123456?beta=true' && request.method === 'POST',
+    );
+    expect(updateRequests).toHaveLength(1);
+    expect(updateRequests[0]?.body?.metadata).toEqual({ Owner: 'Platform', Team: 'Runtime' });
+    expect(updateRequests[0]?.body?.config).toMatchObject({
+      type: 'cloud',
+      networking: { type: 'unrestricted' },
+      packages: { pip: ['httpx==2.0.0'] },
+    });
+    expect(screen.getAllByText('Environment updated')).toHaveLength(1);
+    expect(window.dispatchEvent(new window.Event('beforeunload', { cancelable: true }))).toBe(true);
+  });
+
+  test('keeps failed environment edits for retry and localizes known and unknown server errors', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    mockManagedResourceApi();
+    const baseFetch = globalThis.fetch;
+    let responseMode: 'known' | 'unknown' = 'known';
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input) === '/v1/environments/env_one123456?beta=true' && requestMethod(input, init) === 'POST') {
+        const message = responseMode === 'known' ? 'Environment name already exists' : 'upstream exploded';
+        return new Response(JSON.stringify({ error: { message } }), {
+          status: responseMode === 'known' ? 409 : 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    renderManagedAgentsPage('environments', 'zh-CN');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    const nameInput = screen.getByRole('textbox', { name: '环境名称' });
+    fireEvent.change(nameInput, { target: { value: '重复名称' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+    expect(await screen.findByText('已存在同名环境。')).toBeTruthy();
+    expect((nameInput as HTMLInputElement).value).toBe('重复名称');
+
+    responseMode = 'unknown';
+    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+    expect(await screen.findByText('无法保存环境。 服务器详情：upstream exploded')).toBeTruthy();
+    expect((nameInput as HTMLInputElement).value).toBe('重复名称');
+  });
+
+  test('renders archived environments as localized read-only details', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.environments[0] = {
+      ...api.resources.environments[0],
+      archived_at: new Date().toISOString(),
+      state: 'archived',
+    };
+    renderManagedAgentsPage('environments', 'zh-CN');
+
+    expect(await screen.findByText('此环境为只读状态。其配置和工作队列仍可供查看。')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '编辑' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('heading', { name: '网络访问' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '软件包' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '元数据' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '工作队列' })).toBeTruthy();
+    expect(screen.queryByText(/Snapshot|Version|Diff|Rollback/i)).toBeNull();
+  });
+
+  test('keeps environment creation fields and default payload unchanged in Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments');
+    const api = mockManagedResourceApi();
+    renderManagedAgentsPage('environments', 'zh-CN');
+
+    expect(await screen.findByText('Environment one')).toBeTruthy();
+    expect(screen.getAllByText('云端').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('活跃').length).toBeGreaterThan(0);
+    expect(document.body.textContent).toContain('现在');
+    fireEvent.click(screen.getByRole('button', { name: '创建环境' }));
+    const dialog = screen.getByRole('dialog', { name: '创建环境' });
+    expect(within(dialog).getByText('创建可供 Agent 工具复用的云端容器模板。')).toBeTruthy();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '中文环境' } });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '描述' }), { target: { value: '用于测试' } });
+    expect(within(dialog).getByRole('textbox', { name: '托管类型' })).toBeTruthy();
+    expect(within(dialog).queryByText('网络访问')).toBeNull();
+    expect(within(dialog).queryByText('软件包')).toBeNull();
+    expect(within(dialog).queryByText('元数据')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    const discardDialog = await screen.findByRole('alertdialog', { name: '放弃未保存的更改？' });
+    fireEvent.click(within(discardDialog).getByRole('button', { name: '继续编辑' }));
+
+    const form = within(dialog).getByRole('button', { name: '创建' }).closest('form') as HTMLFormElement;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    await waitFor(() =>
+      expect(
+        api.requests.filter((request) => request.url === '/v1/environments?beta=true' && request.method === 'POST'),
+      ).toHaveLength(1),
+    );
+    const request = api.requests.find((item) => item.url === '/v1/environments?beta=true' && item.method === 'POST');
+    expect(request?.body).toMatchObject({
+      name: '中文环境',
+      description: '用于测试',
+      metadata: {},
+      config: {
+        type: 'cloud',
+        networking: { type: 'unrestricted' },
+        packages: { type: 'packages', apt: [], cargo: [], gem: [], go: [], npm: [], pip: [] },
+      },
+    });
   });
 
   test('runs and pauses deployments from the official-style action menu', async () => {

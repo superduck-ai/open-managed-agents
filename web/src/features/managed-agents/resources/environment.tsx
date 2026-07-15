@@ -41,7 +41,7 @@ export function EnvironmentInlineEditor({
   const [error, setError] = useState<string | null>(null);
   const submittingRef = useRef(false);
   const dirty = environmentFormFingerprint(values) !== initialFingerprint;
-  const validation = attempted ? validateEnvironment(values, msg) : { packages: {}, metadataRows: {} };
+  const validation = attempted ? validateEnvironment(values, msg, initialValues) : { packages: {}, metadataRows: {} };
   const guard = useUnsavedChangesGuard({ blocked: submitting, dirty, onDiscard: onCancel });
 
   const updateValues = (update: (current: EnvironmentEditValues) => EnvironmentEditValues) => {
@@ -56,7 +56,7 @@ export function EnvironmentInlineEditor({
       return;
     }
     setAttempted(true);
-    const nextValidation = validateEnvironment(values, msg);
+    const nextValidation = validateEnvironment(values, msg, initialValues);
     if (hasEnvironmentValidationErrors(nextValidation)) {
       return;
     }

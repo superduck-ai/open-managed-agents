@@ -121,8 +121,13 @@ export function managedEntityErrorMessage(
   return section === 'environments' ? environmentErrorMessage(error, operation, msg) : errorMessage(error);
 }
 
-export function validateEnvironment(values: EnvironmentEditValues, msg: I18nMsg): EnvironmentValidationErrors {
+export function validateEnvironment(
+  values: EnvironmentEditValues,
+  msg: I18nMsg,
+  initialValues?: EnvironmentEditValues,
+): EnvironmentValidationErrors {
   const errors: EnvironmentValidationErrors = { packages: {}, metadataRows: {} };
+  const initialMetadata = initialValues ? environmentMetadataBody(initialValues) : {};
   if (!values.name.trim()) {
     errors.name = msg('managedAgents.environments.validation.nameRequired', 'Enter an environment name.');
   }
@@ -165,7 +170,12 @@ export function validateEnvironment(values: EnvironmentEditValues, msg: I18nMsg)
         'Metadata keys must be unique.',
       );
     }
-    if (utf8ByteLength(row.value) > 512) {
+    if (key && row.value === '' && initialMetadata[key] !== '') {
+      rowErrors.value = msg(
+        'managedAgents.environments.validation.metadataValueRequiredOnUpdate',
+        'Enter a metadata value, or remove the row to delete this entry.',
+      );
+    } else if (utf8ByteLength(row.value) > 512) {
       rowErrors.value = msg(
         'managedAgents.environments.validation.metadataValueLength',
         'Metadata values must be 512 UTF-8 bytes or fewer.',

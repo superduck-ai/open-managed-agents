@@ -21,10 +21,16 @@ export function updateEnvironmentDetail(
 }
 
 function environmentMetadataPatch(values: EnvironmentEditValues, initialValues: EnvironmentEditValues) {
-  const metadata: Record<string, string | null> = environmentMetadataBody(values);
+  const currentMetadata = environmentMetadataBody(values);
   const initialMetadata = environmentMetadataBody(initialValues);
+  const metadata: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(currentMetadata)) {
+    if (initialMetadata[key] !== value) {
+      metadata[key] = value;
+    }
+  }
   for (const key of Object.keys(initialMetadata)) {
-    if (!(key in metadata)) {
+    if (!(key in currentMetadata)) {
       metadata[key] = null;
     }
   }

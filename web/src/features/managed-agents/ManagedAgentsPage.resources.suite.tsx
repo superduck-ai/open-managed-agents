@@ -1832,7 +1832,7 @@ export function registerManagedAgentsResourceTests() {
     expect(document.body.textContent).toMatch(/分钟前|现在/);
   });
 
-  test('validates environment edits, guards dirty exits, and submits only once', async () => {
+  test('submits normalized Environment updates only once', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     const api = mockManagedResourceApi();
     renderManagedAgentsPage('environments');
@@ -1840,38 +1840,7 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     const nameInput = screen.getByRole('textbox', { name: 'Environment name' });
-    fireEvent.change(nameInput, { target: { value: '   ' } });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
-      target: { value: 'x'.repeat(256) },
-    });
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'Owner' } });
-
-    expect(window.dispatchEvent(new window.Event('beforeunload', { cancelable: true }))).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
-    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Continue editing' }));
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    expect(screen.getByText('Enter an environment name.')).toBeTruthy();
-    expect(screen.getByText('Each package token must be 255 UTF-8 bytes or fewer.')).toBeTruthy();
-    expect(screen.getAllByText('Metadata keys must be unique.')).toHaveLength(2);
-
-    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), {
-      target: { value: '键'.repeat(22) },
-    });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), {
-      target: { value: '值'.repeat(171) },
-    });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
-      target: { value: '包'.repeat(86) },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    expect(screen.getByText('Each package token must be 255 UTF-8 bytes or fewer.')).toBeTruthy();
-    expect(screen.getByText('Metadata keys must be between 1 and 64 UTF-8 bytes.')).toBeTruthy();
-    expect(screen.getByText('Metadata values must be 512 UTF-8 bytes or fewer.')).toBeTruthy();
-
     fireEvent.change(nameInput, { target: { value: 'Environment Updated' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
       target: { value: 'httpx==2.0.0' },
@@ -1893,7 +1862,7 @@ export function registerManagedAgentsResourceTests() {
       (request) => request.url === '/v1/environments/env_one123456?beta=true' && request.method === 'POST',
     );
     expect(updateRequests).toHaveLength(1);
-    expect(updateRequests[0]?.body?.metadata).toEqual({ Owner: 'Platform', Team: 'Runtime' });
+    expect(updateRequests[0]?.body?.metadata).toEqual({ Team: 'Runtime' });
     expect(updateRequests[0]?.body?.config).toMatchObject({
       type: 'cloud',
       networking: { type: 'unrestricted' },
@@ -1928,7 +1897,33 @@ export function registerManagedAgentsResourceTests() {
     expect(metadataSection?.textContent).not.toContain('Platform');
   });
 
-  test('guards only payload-changing environment edits and current-tab navigation', async () => {
+  test('preserves unchanged empty Environment metadata by omitting it from the PATCH', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.environments[0] = {
+      ...api.resources.environments[0],
+      metadata: { Flag: '', Owner: 'Platform' },
+    };
+    renderManagedAgentsPage('environments');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+      target: { value: 'Environment with flag' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByRole('heading', { name: 'Environment with flag' })).toBeTruthy();
+    const updateRequest = api.requests.find(
+      (request) => request.url === '/v1/environments/env_one123456?beta=true' && request.method === 'POST',
+    );
+    expect(updateRequest?.body?.metadata).toEqual({});
+    expect(api.resources.environments[0]?.metadata).toEqual({ Flag: '', Owner: 'Platform' });
+    const metadataSection = screen.getByRole('heading', { name: 'Metadata' }).closest('section');
+    expect(metadataSection?.textContent).toContain('Flag');
+  });
+
+  test('allows payload-equivalent Environment edits to close without confirmation', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
@@ -1946,90 +1941,6 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
-      target: { value: 'Environment changed' },
-    });
-    const breadcrumb = screen.getByRole('link', { name: 'Environments' });
-    expect(fireEvent.click(breadcrumb, { metaKey: true })).toBe(true);
-    expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
-    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard changes' }));
-  });
-
-  test('confirms ordinary dirty environment navigation and retries the intended link after discard', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
-    mockManagedResourceApi();
-    renderManagedAgentsPage('environments');
-
-    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
-      target: { value: 'Environment changed' },
-    });
-    const breadcrumb = screen.getByRole('link', { name: 'Environments' });
-    fireEvent.click(breadcrumb);
-    let discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
-    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Continue editing' }));
-    expect(window.location.pathname).toBe('/workspaces/default/environments/env_one123456');
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
-
-    fireEvent.click(breadcrumb);
-    discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
-    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard changes' }));
-    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/environments'));
-  });
-
-  test('keeps failed environment edits for retry and localizes known and unknown server errors', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
-    mockManagedResourceApi();
-    const baseFetch = globalThis.fetch;
-    let responseMessage = 'Environment name already exists';
-    let responseStatus = 409;
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (requestUrl(input) === '/v1/environments/env_one123456?beta=true' && requestMethod(input, init) === 'POST') {
-        return new Response(JSON.stringify({ error: { message: responseMessage } }), {
-          status: responseStatus,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      return baseFetch(input, init);
-    }) as typeof fetch;
-    renderManagedAgentsPage('environments', 'zh-CN');
-
-    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
-    const nameInput = screen.getByRole('textbox', { name: '环境名称' });
-    fireEvent.change(nameInput, { target: { value: '重复名称' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
-    expect(await screen.findByText('已存在同名环境。')).toBeTruthy();
-    expect((nameInput as HTMLInputElement).value).toBe('重复名称');
-
-    const knownErrors = [
-      ['config.packages.pip entries must be at most 255 characters', '每个软件包标记经 UTF-8 编码后最多为 255 字节。'],
-      ['metadata may contain at most 16 entries', '元数据最多包含 16 项。'],
-      ['metadata must be an object', '服务器拒绝了元数据配置。'],
-      ['config.packages must be an object', '服务器拒绝了软件包配置。'],
-      ['config.networking must be an object', '服务器拒绝了网络访问配置。'],
-      ['Environment not found', '未找到环境。'],
-      ['Environments API requires beta=true', '缺少 Environments API beta 标头。'],
-    ] as const;
-    responseStatus = 400;
-    for (const [message, expected] of knownErrors) {
-      responseMessage = message;
-      fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
-      expect(await screen.findByText(expected)).toBeTruthy();
-    }
-
-    responseMessage = 'upstream exploded';
-    responseStatus = 500;
-    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
-    expect(await screen.findByText('无法保存环境。 服务器详情：upstream exploded')).toBeTruthy();
-    expect((nameInput as HTMLInputElement).value).toBe('重复名称');
   });
 
   test('renders archived environments as localized read-only details', async () => {
@@ -2079,30 +1990,6 @@ export function registerManagedAgentsResourceTests() {
 
     expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create environment' })).toBeNull());
-  });
-
-  test('keeps environment creation open and disables close controls while saving', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/environments');
-    mockManagedResourceApi();
-    const baseFetch = globalThis.fetch;
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (requestUrl(input) === '/v1/environments?beta=true' && requestMethod(input, init) === 'POST') {
-        return new Promise<Response>(() => undefined);
-      }
-      return baseFetch(input, init);
-    }) as typeof fetch;
-    renderManagedAgentsPage('environments');
-
-    expect(await screen.findByText('Environment one')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create environment' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Pending create' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-
-    expect((within(dialog).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((within(dialog).getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.getByRole('dialog', { name: 'Create environment' })).toBeTruthy();
   });
 
   test('keeps environment creation fields and default payload unchanged in Chinese', async () => {

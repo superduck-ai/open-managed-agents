@@ -37,7 +37,7 @@
 1. 保持当前 API、路由、鉴权、删除语义和 Environment 原地更新语义，不修改 Go 后端合同。
 2. 在现有 Managed Agents feature slice 内完成 i18n key、文案映射、校验、错误转换和 dirty/submitting 状态；页面继续通过已有公共入口组合这些模块。
 3. 已知错误按 Environment 操作和后端错误内容映射到稳定的本地化消息；未知错误由“本地化摘要 + 服务端详情”组成，不吞掉诊断信息。
-4. Metadata 在转为 API object 前先校验条数、key/value 长度和 key 唯一性；更新时按后端 PATCH 合同为从初始基线移除的 key 发送 `null` 删除哨兵，新增和保留项发送当前字符串值；后端仍是最终校验权威。
+4. Metadata 在转为 API object 前先校验条数、key/value 长度和 key 唯一性；更新时按后端 PATCH 合同省略未变化项、为从初始基线移除的 key 发送 `null` 删除哨兵，并为新增或变化项发送非空字符串值。后端把空字符串也解释为删除，因此更新表单对新增或改为空值的行给出明确校验，API 中原有且未变化的空值则通过省略 PATCH 字段予以保留；后端仍是最终校验权威。
 5. dirty 判定基于规范化的可提交表单值与打开编辑器时的基线比较；保存成功先重置基线/dirty，再关闭编辑器。
 6. 应用内放弃修改使用项目已有 shadcn/Base UI `AlertDialog`；浏览器级离开只使用标准 `beforeunload`，不承诺浏览器自定义提示文本。
 7. Work 状态由受控的已知状态映射与未知状态 fallback 共同处理；不根据 Sandbox 字段推导额外诊断状态。

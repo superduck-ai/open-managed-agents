@@ -585,6 +585,7 @@
   "managedAgents.environments.validation.metadataKeyRequired": "请输入元数据键。",
   "managedAgents.environments.validation.metadataLimit": "元数据最多包含 16 项。",
   "managedAgents.environments.validation.metadataValueLength": "元数据值经 UTF-8 编码后最多为 512 字节。",
+  "managedAgents.environments.validation.metadataValueRequiredOnUpdate": "请输入元数据值，或移除此行以删除该项。",
   "managedAgents.environments.validation.nameRequired": "请输入环境名称。",
   "managedAgents.environments.validation.packageRequired": "软件包值必须包含非空的软件包标记。",
   "managedAgents.environments.validation.packageTooLong": "每个软件包标记经 UTF-8 编码后最多为 255 字节。",

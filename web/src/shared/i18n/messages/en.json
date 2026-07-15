@@ -585,6 +585,7 @@
   "managedAgents.environments.validation.metadataKeyRequired": "Enter a metadata key.",
   "managedAgents.environments.validation.metadataLimit": "Metadata can contain at most 16 entries.",
   "managedAgents.environments.validation.metadataValueLength": "Metadata values must be 512 UTF-8 bytes or fewer.",
+  "managedAgents.environments.validation.metadataValueRequiredOnUpdate": "Enter a metadata value, or remove the row to delete this entry.",
   "managedAgents.environments.validation.nameRequired": "Enter an environment name.",
   "managedAgents.environments.validation.packageRequired": "Package values must contain non-empty package tokens.",
   "managedAgents.environments.validation.packageTooLong": "Each package token must be 255 UTF-8 bytes or fewer.",

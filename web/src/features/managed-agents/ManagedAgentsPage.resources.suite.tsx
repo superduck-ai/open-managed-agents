@@ -1855,18 +1855,22 @@ export function registerManagedAgentsResourceTests() {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(screen.getByText('Enter an environment name.')).toBeTruthy();
-    expect(screen.getByText('Each package token must be 255 characters or fewer.')).toBeTruthy();
+    expect(screen.getByText('Each package token must be 255 UTF-8 bytes or fewer.')).toBeTruthy();
     expect(screen.getAllByText('Metadata keys must be unique.')).toHaveLength(2);
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), {
-      target: { value: 'k'.repeat(65) },
+      target: { value: '键'.repeat(22) },
     });
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), {
-      target: { value: 'v'.repeat(513) },
+      target: { value: '值'.repeat(171) },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
+      target: { value: '包'.repeat(86) },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    expect(screen.getByText('Metadata keys must be between 1 and 64 characters.')).toBeTruthy();
-    expect(screen.getByText('Metadata values must be 512 characters or fewer.')).toBeTruthy();
+    expect(screen.getByText('Each package token must be 255 UTF-8 bytes or fewer.')).toBeTruthy();
+    expect(screen.getByText('Metadata keys must be between 1 and 64 UTF-8 bytes.')).toBeTruthy();
+    expect(screen.getByText('Metadata values must be 512 UTF-8 bytes or fewer.')).toBeTruthy();
 
     fireEvent.change(nameInput, { target: { value: 'Environment Updated' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
@@ -1897,6 +1901,39 @@ export function registerManagedAgentsResourceTests() {
     });
     expect(screen.getAllByText('Environment updated')).toHaveLength(1);
     expect(window.dispatchEvent(new window.Event('beforeunload', { cancelable: true }))).toBe(true);
+  });
+
+  test('guards only payload-changing environment edits and current-tab navigation', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('environments');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const packageInput = screen.getByRole('textbox', { name: 'Package value 1' }) as HTMLInputElement;
+    fireEvent.change(packageInput, { target: { value: `  ${packageInput.value}  ` } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add package' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+      target: { value: 'Environment changed' },
+    });
+    const breadcrumb = screen.getByRole('link', { name: 'Environments' });
+    expect(fireEvent.click(breadcrumb, { metaKey: true })).toBe(true);
+    expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard changes' }));
   });
 
   test('keeps failed environment edits for retry and localizes known and unknown server errors', async () => {

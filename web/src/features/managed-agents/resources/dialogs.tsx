@@ -45,19 +45,14 @@ import {
 import { errorMessage } from '../utils';
 import { credentialFormValues, initialFormValues } from './model';
 import {
-  EnvironmentDialogCloseControl,
+  EnvironmentDialogActions,
   UnsavedEnvironmentChangesDialog,
   useEnvironmentDialogDiscardGuard,
 } from './environment-form';
 import { environmentErrorMessage } from './environment-model';
-import {
-  DeploymentDialogActions,
-  DeploymentDialogCloseControl,
-  DeploymentDialogHeader,
-  EnvironmentCreationFields,
-  ManagedDialogHeader,
-  ManagedEntityDialogActions,
-} from './environment-dialog-fields';
+import { EnvironmentCreationFields } from './environment-dialog-fields';
+import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
+import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
 
 export function CredentialDialog({
   credential,
@@ -408,7 +403,7 @@ export function ManagedEntityDialog({
           showCloseButton={false}
         >
           <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
-            <DeploymentDialogCloseControl />
+            <ManagedDialogCloseControl />
 
             <DeploymentDialogHeader title={title} />
 
@@ -541,10 +536,9 @@ export function ManagedEntityDialog({
           showCloseButton={false}
         >
           <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
-            <EnvironmentDialogCloseControl
-              environment={section === 'environments'}
-              submitting={submitting}
-              onRequestClose={discardGuard.requestDiscard}
+            <ManagedDialogCloseControl
+              disabled={section === 'environments' && submitting}
+              onClick={section === 'environments' ? discardGuard.requestDiscard : undefined}
             />
 
             <ManagedDialogHeader title={title} subtitle={dialogSubtitleText} />
@@ -654,13 +648,21 @@ export function ManagedEntityDialog({
 
             {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
 
-            <ManagedEntityDialogActions
-              section={section}
-              editing={Boolean(entity)}
-              submitting={submitting}
-              canSubmit={canSubmit}
-              onRequestClose={discardGuard.requestDiscard}
-            />
+            {section === 'environments' ? (
+              <EnvironmentDialogActions
+                editing={Boolean(entity)}
+                submitting={submitting}
+                canSubmit={canSubmit}
+                onRequestClose={discardGuard.requestDiscard}
+              />
+            ) : (
+              <ManagedEntityDialogActions
+                section={section}
+                editing={Boolean(entity)}
+                submitting={submitting}
+                canSubmit={canSubmit}
+              />
+            )}
           </form>
         </DialogContent>
       </Dialog>

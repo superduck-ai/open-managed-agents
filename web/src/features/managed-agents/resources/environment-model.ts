@@ -1,5 +1,6 @@
 import { type I18nMsg, type EnvironmentEditValues, type ManagedEntitySection } from '../types';
 import { errorMessage } from '../utils';
+import { environmentConfigBody, environmentMetadataBody } from './model';
 
 export type EnvironmentOperation = 'archive' | 'create' | 'delete' | 'list' | 'load' | 'update' | 'work';
 
@@ -34,7 +35,7 @@ const environmentErrorPatterns: Array<{ pattern: RegExp; key: string; fallback: 
   {
     pattern: /config\.packages\..+ entries must be at most 255 characters/i,
     key: 'managedAgents.environments.validation.packageTooLong',
-    fallback: 'Each package token must be 255 characters or fewer.',
+    fallback: 'Each package token must be 255 UTF-8 bytes or fewer.',
   },
   {
     pattern: /metadata may contain at most 16 entries/i,
@@ -44,12 +45,12 @@ const environmentErrorPatterns: Array<{ pattern: RegExp; key: string; fallback: 
   {
     pattern: /metadata keys must be between 1 and 64 characters/i,
     key: 'managedAgents.environments.validation.metadataKeyLength',
-    fallback: 'Metadata keys must be between 1 and 64 characters.',
+    fallback: 'Metadata keys must be between 1 and 64 UTF-8 bytes.',
   },
   {
     pattern: /metadata values must be at most 512 characters/i,
     key: 'managedAgents.environments.validation.metadataValueLength',
-    fallback: 'Metadata values must be 512 characters or fewer.',
+    fallback: 'Metadata values must be 512 UTF-8 bytes or fewer.',
   },
   {
     pattern: /metadata must be an object/i,
@@ -88,6 +89,12 @@ const operationMessages: Record<EnvironmentOperation, { key: string; fallback: s
   work: { key: 'managedAgents.environments.errors.work', fallback: 'Could not load the work queue.' },
 };
 
+const utf8Encoder = new TextEncoder();
+
+function utf8ByteLength(value: string) {
+  return utf8Encoder.encode(value).length;
+}
+
 export function environmentErrorMessage(error: unknown, operation: EnvironmentOperation, msg: I18nMsg) {
   const detail = errorMessage(error);
   const known = environmentErrorPatterns.find(({ pattern }) => pattern.test(detail));
@@ -121,10 +128,10 @@ export function validateEnvironment(values: EnvironmentEditValues, msg: I18nMsg)
   }
   values.packages.forEach((row, index) => {
     const tokens = row.value.split(/\s+/).filter(Boolean);
-    if (tokens.some((token) => token.length > 255)) {
+    if (tokens.some((token) => utf8ByteLength(token) > 255)) {
       errors.packages[index] = msg(
         'managedAgents.environments.validation.packageTooLong',
-        'Each package token must be 255 characters or fewer.',
+        'Each package token must be 255 UTF-8 bytes or fewer.',
       );
     }
   });
@@ -147,10 +154,10 @@ export function validateEnvironment(values: EnvironmentEditValues, msg: I18nMsg)
     const rowErrors: { key?: string; value?: string } = {};
     if (active && !key) {
       rowErrors.key = msg('managedAgents.environments.validation.metadataKeyRequired', 'Enter a metadata key.');
-    } else if (key.length > 64) {
+    } else if (utf8ByteLength(key) > 64) {
       rowErrors.key = msg(
         'managedAgents.environments.validation.metadataKeyLength',
-        'Metadata keys must be between 1 and 64 characters.',
+        'Metadata keys must be between 1 and 64 UTF-8 bytes.',
       );
     } else if (key && (keyCounts.get(key) ?? 0) > 1) {
       rowErrors.key = msg(
@@ -158,10 +165,10 @@ export function validateEnvironment(values: EnvironmentEditValues, msg: I18nMsg)
         'Metadata keys must be unique.',
       );
     }
-    if (row.value.length > 512) {
+    if (utf8ByteLength(row.value) > 512) {
       rowErrors.value = msg(
         'managedAgents.environments.validation.metadataValueLength',
-        'Metadata values must be 512 characters or fewer.',
+        'Metadata values must be 512 UTF-8 bytes or fewer.',
       );
     }
     if (rowErrors.key || rowErrors.value) {
@@ -178,10 +185,14 @@ export function hasEnvironmentValidationErrors(errors: EnvironmentValidationErro
 }
 
 export function environmentFormFingerprint(values: EnvironmentEditValues) {
+  const metadata = environmentMetadataBody(values);
   return JSON.stringify({
-    ...values,
     name: values.name.trim(),
-    metadataRows: values.metadataRows.map((row) => ({ key: row.key.trim(), value: row.value })),
+    description: values.description,
+    config: environmentConfigBody(values),
+    metadata: Object.fromEntries(
+      Object.entries(metadata).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
+    ),
   });
 }
 

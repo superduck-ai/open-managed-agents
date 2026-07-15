@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
-import { DialogClose } from '../../../shared/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,8 +12,8 @@ import {
   AlertDialogTitle,
 } from '../../../shared/ui/alert-dialog';
 import { navigateToInternalHref } from '../utils';
-import { X } from 'lucide-react';
 import { type ManagedEntityFormValues, type ManagedEntitySection } from '../types';
+import { submitLabel } from '../labels';
 
 type UnsavedChangesGuardOptions = {
   blocked: boolean;
@@ -44,7 +43,15 @@ export function useUnsavedChangesGuard({ blocked, dirty, onDiscard }: UnsavedCha
       return;
     }
     const handleDocumentClick = (event: MouseEvent) => {
-      if (bypassRef.current || event.defaultPrevented || event.button !== 0) {
+      if (
+        bypassRef.current ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
         return;
       }
       const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;
@@ -162,61 +169,26 @@ export function useEnvironmentDialogDiscardGuard({
   return useUnsavedChangesGuard({ blocked: submitting, dirty, onDiscard: onClose });
 }
 
-export function EnvironmentDialogCloseControl({
-  environment,
+export function EnvironmentDialogActions({
+  editing,
   submitting,
+  canSubmit,
   onRequestClose,
 }: {
-  environment: boolean;
+  editing: boolean;
   submitting: boolean;
+  canSubmit: boolean;
   onRequestClose: () => void;
 }) {
   const { msg } = useI18n();
-  const button = (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      aria-label={msg('common.close', 'Close')}
-      disabled={environment && submitting}
-      className="absolute right-0 top-0 text-foreground hover:bg-accent"
-      onClick={environment ? onRequestClose : undefined}
-    />
-  );
-  return environment ? (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      aria-label={msg('common.close', 'Close')}
-      disabled={submitting}
-      className="absolute right-0 top-0 text-foreground hover:bg-accent"
-      onClick={onRequestClose}
-    >
-      <X className="size-[22px]" aria-hidden />
-    </Button>
-  ) : (
-    <DialogClose render={button}>
-      <X className="size-[22px]" aria-hidden />
-    </DialogClose>
-  );
-}
-
-export function EnvironmentDialogCancelControl({
-  environment,
-  submitting,
-  onRequestClose,
-}: {
-  environment: boolean;
-  submitting: boolean;
-  onRequestClose: () => void;
-}) {
-  const { msg } = useI18n();
-  return environment ? (
-    <Button type="button" variant="outline" disabled={submitting} onClick={onRequestClose}>
-      {msg('common.cancel', 'Cancel')}
-    </Button>
-  ) : (
-    <DialogClose render={<Button type="button" variant="outline" />}>{msg('common.cancel', 'Cancel')}</DialogClose>
+  return (
+    <div className="mt-5 flex justify-end gap-2">
+      <Button type="button" variant="outline" disabled={submitting} onClick={onRequestClose}>
+        {msg('common.cancel', 'Cancel')}
+      </Button>
+      <Button type="submit" disabled={!canSubmit}>
+        {submitting ? msg('common.saving', 'Saving...') : submitLabel('environments', editing, msg)}
+      </Button>
+    </div>
   );
 }

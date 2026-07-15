@@ -1943,6 +1943,34 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
   });
 
+  test('exits environment editing after archiving from the detail page', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    const api = mockManagedResourceApi();
+    renderManagedAgentsPage('environments');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+      target: { value: 'Environment changed' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url === '/v1/environments/env_one123456/archive?beta=true')).toBe(
+        true,
+      ),
+    );
+    expect(
+      await screen.findByText(
+        'This environment is read-only. Its configuration and work queue remain available for reference.',
+      ),
+    ).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Edit' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  });
+
   test('renders archived environments as localized read-only details', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     const api = mockManagedResourceApi();

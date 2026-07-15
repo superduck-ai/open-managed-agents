@@ -119,6 +119,7 @@ export function EnvironmentWorkPanel({
   });
   useEffect(() => {
     let active = true;
+    setState({ loading: true, error: null, data: [] });
     void listEnvironmentWork(environment.id, workspaceId)
       .then((page) => active && setState({ loading: false, error: null, data: page.data ?? [] }))
       .catch(

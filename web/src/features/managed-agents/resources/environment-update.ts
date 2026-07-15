@@ -12,7 +12,7 @@ export function updateEnvironmentDetail(
     environmentId,
     {
       name: values.name.trim(),
-      description: values.description,
+      description: values.description.trim(),
       config: environmentConfigBody(values),
       metadata: environmentMetadataPatch(values, initialValues),
     },
@@ -30,7 +30,7 @@ function environmentMetadataPatch(values: EnvironmentEditValues, initialValues: 
     }
   }
   for (const key of Object.keys(initialMetadata)) {
-    if (!(key in currentMetadata)) {
+    if (!Object.prototype.hasOwnProperty.call(currentMetadata, key)) {
       metadata[key] = null;
     }
   }

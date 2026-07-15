@@ -188,6 +188,7 @@ export function ManagedEntityDetailPage({
     try {
       const updated = await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
       setEntity(updated);
+      setEditing(false);
       setConfirmAction(null);
       toast.success(managedToastMessage(config.section, 'archived', msg));
     } catch (error) {

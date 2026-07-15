@@ -198,7 +198,7 @@ export function environmentFormFingerprint(values: EnvironmentEditValues) {
   const metadata = environmentMetadataBody(values);
   return JSON.stringify({
     name: values.name.trim(),
-    description: values.description,
+    description: values.description.trim(),
     config: environmentConfigBody(values),
     metadata: Object.fromEntries(
       Object.entries(metadata).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),

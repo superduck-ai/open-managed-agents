@@ -1338,7 +1338,10 @@ export function mockManagedResourceApi() {
     }
     if (retrieveEnvironmentMatch && method === 'POST') {
       const environmentId = decodeURIComponent(retrieveEnvironmentMatch[1]);
-      const existing = resources.environments.find((item) => item.id === environmentId) ?? resources.environments[0];
+      const existing = resources.environments.find((item) => item.id === environmentId);
+      if (!existing) {
+        return jsonResponse({ error: { message: 'not found' } }, 404);
+      }
       const updated = {
         ...existing,
         config: body?.config ?? existing.config,
@@ -1352,7 +1355,11 @@ export function mockManagedResourceApi() {
     }
     const environmentWorkMatch = url.match(/^\/v1\/environments\/([^/?]+)\/work\?/);
     if (environmentWorkMatch && method === 'GET') {
-      return jsonResponse({ data: resources.environmentWork, next_page: null });
+      const environmentId = decodeURIComponent(environmentWorkMatch[1]);
+      return jsonResponse({
+        data: resources.environmentWork.filter((work) => work.environment_id === environmentId),
+        next_page: null,
+      });
     }
     if (url.startsWith('/v1/vaults?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;

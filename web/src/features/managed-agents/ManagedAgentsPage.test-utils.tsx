@@ -1343,7 +1343,7 @@ export function mockManagedResourceApi() {
         ...existing,
         config: body?.config ?? existing.config,
         description: typeof body?.description === 'string' ? body.description : existing.description,
-        metadata: body?.metadata ?? existing.metadata,
+        metadata: applyMetadataPatch(existing.metadata, body?.metadata),
         name: typeof body?.name === 'string' ? body.name : existing.name,
         updated_at: new Date().toISOString(),
       };
@@ -1810,6 +1810,26 @@ export function parseBody(body: BodyInit | null | undefined) {
     return undefined;
   }
   return JSON.parse(body) as Record<string, unknown>;
+}
+
+function applyMetadataPatch(current: unknown, patch: unknown) {
+  const metadata: Record<string, string> =
+    current && typeof current === 'object' && !Array.isArray(current)
+      ? Object.fromEntries(
+          Object.entries(current).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+        )
+      : {};
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return metadata;
+  }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null || value === '') {
+      delete metadata[key];
+    } else if (typeof value === 'string') {
+      metadata[key] = value;
+    }
+  }
+  return metadata;
 }
 
 export function persistedSessionEvents<T extends Record<string, unknown>>(events: T[]) {

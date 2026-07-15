@@ -3,12 +3,7 @@ import { consoleApi } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
-import {
-  credentialAuthBody,
-  environmentConfigBody,
-  environmentMetadataBody,
-  normalizeMemoryFolderPath,
-} from './resources/ManagedResources';
+import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { compareSessionEvents, sessionEventType } from './sessions/SessionDetailPage';
 import {
   type AgentApiResponse,
@@ -26,7 +21,6 @@ import {
   type DeploymentApiResponse,
   type DeploymentRunApiResponse,
   type EnvironmentApiResponse,
-  type EnvironmentEditValues,
   type EnvironmentWorkApiResponse,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
@@ -1696,17 +1690,4 @@ export function localTimezone() {
   } catch {
     return 'UTC';
   }
-}
-
-export function updateEnvironmentDetail(environmentId: string, values: EnvironmentEditValues, workspaceId: string) {
-  return anthropicBetaApi.environments.update<EnvironmentApiResponse>(
-    environmentId,
-    {
-      name: values.name.trim(),
-      description: values.description,
-      config: environmentConfigBody(values),
-      metadata: environmentMetadataBody(values),
-    },
-    workspaceId,
-  );
 }

@@ -12,8 +12,8 @@ import {
   AlertDialogTitle,
 } from '../../../shared/ui/alert-dialog';
 import { navigateToInternalHref } from '../utils';
-import { type ManagedEntityFormValues, type ManagedEntitySection } from '../types';
-import { submitLabel } from '../labels';
+import { type ManagedEntityFormValues } from '../types';
+import { ManagedDialogSubmitButton } from './dialog-components';
 
 type UnsavedChangesGuardOptions = {
   blocked: boolean;
@@ -151,22 +151,22 @@ export function UnsavedEnvironmentChangesDialog({
 }
 
 export function useEnvironmentDialogDiscardGuard({
-  section,
   values,
   initialValues,
   submitting,
   onClose,
 }: {
-  section: ManagedEntitySection;
   values: ManagedEntityFormValues;
   initialValues: ManagedEntityFormValues;
   submitting: boolean;
   onClose: () => void;
 }) {
-  const dirty =
-    section === 'environments' &&
-    (values.name.trim() !== initialValues.name.trim() || values.description !== initialValues.description);
+  const dirty = environmentDialogFingerprint(values) !== environmentDialogFingerprint(initialValues);
   return useUnsavedChangesGuard({ blocked: submitting, dirty, onDiscard: onClose });
+}
+
+function environmentDialogFingerprint(values: ManagedEntityFormValues) {
+  return JSON.stringify({ name: values.name.trim(), description: values.description.trim() });
 }
 
 export function EnvironmentDialogActions({
@@ -186,9 +186,12 @@ export function EnvironmentDialogActions({
       <Button type="button" variant="outline" disabled={submitting} onClick={onRequestClose}>
         {msg('common.cancel', 'Cancel')}
       </Button>
-      <Button type="submit" disabled={!canSubmit}>
-        {submitting ? msg('common.saving', 'Saving...') : submitLabel('environments', editing, msg)}
-      </Button>
+      <ManagedDialogSubmitButton
+        section="environments"
+        editing={editing}
+        submitting={submitting}
+        canSubmit={canSubmit}
+      />
     </div>
   );
 }

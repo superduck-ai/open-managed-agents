@@ -7,10 +7,10 @@ import { Card, CardContent } from '../../../shared/ui/card';
 import { Field, FieldError, FieldLabel } from '../../../shared/ui/field';
 import { Input } from '../../../shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
-import { updateEnvironmentDetail } from '../api';
 import { DetailCard, ManagedTextArea } from '../components/common';
 import { type EnvironmentApiResponse, type EnvironmentEditValues, type ManagedEntityApiResponse } from '../types';
 import { environmentEditValues } from './model';
+import { updateEnvironmentDetail } from './environment-update';
 import { UnsavedEnvironmentChangesDialog, useUnsavedChangesGuard } from './environment-form';
 import {
   environmentErrorMessage,
@@ -64,7 +64,7 @@ export function EnvironmentInlineEditor({
     setSubmitting(true);
     setError(null);
     try {
-      const updated = await updateEnvironmentDetail(entity.id, values, workspaceId);
+      const updated = await updateEnvironmentDetail(entity.id, values, initialValues, workspaceId);
       onSaved(updated);
     } catch (submitError) {
       setError(environmentErrorMessage(submitError, 'update', msg));

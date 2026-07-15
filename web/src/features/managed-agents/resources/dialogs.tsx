@@ -44,15 +44,9 @@ import {
 } from '../types';
 import { errorMessage } from '../utils';
 import { credentialFormValues, initialFormValues } from './model';
-import {
-  EnvironmentDialogActions,
-  UnsavedEnvironmentChangesDialog,
-  useEnvironmentDialogDiscardGuard,
-} from './environment-form';
-import { environmentErrorMessage } from './environment-model';
-import { EnvironmentCreationFields } from './environment-dialog-fields';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
+import { EnvironmentEntityDialog } from './environment-dialog';
 
 export function CredentialDialog({
   credential,
@@ -232,15 +226,7 @@ export function MemoryDialog({
   );
 }
 
-export function ManagedEntityDialog({
-  section,
-  title,
-  entity,
-  lockedAgent,
-  workspaceId,
-  onClose,
-  onSubmit,
-}: {
+type ManagedEntityDialogProps = {
   section: ManagedEntitySection;
   title: string;
   entity?: ManagedEntityApiResponse;
@@ -248,7 +234,31 @@ export function ManagedEntityDialog({
   workspaceId: string;
   onClose: () => void;
   onSubmit: (values: ManagedEntityFormValues) => Promise<void>;
-}) {
+};
+
+export function ManagedEntityDialog(props: ManagedEntityDialogProps) {
+  if (props.section === 'environments') {
+    return (
+      <EnvironmentEntityDialog
+        title={props.title}
+        entity={props.entity}
+        onClose={props.onClose}
+        onSubmit={props.onSubmit}
+      />
+    );
+  }
+  return <GenericManagedEntityDialog {...props} />;
+}
+
+function GenericManagedEntityDialog({
+  section,
+  title,
+  entity,
+  lockedAgent,
+  workspaceId,
+  onClose,
+  onSubmit,
+}: ManagedEntityDialogProps) {
   const { msg } = useI18n();
   const initialValues = useMemo<ManagedEntityFormValues>(
     () => ({
@@ -268,14 +278,6 @@ export function ManagedEntityDialog({
   const submittingRef = useRef(false);
   const [resourceDisclosureOpen, setResourceDisclosureOpen] = useState(false);
   const needsReferences = section === 'sessions' || section === 'deployments';
-  const discardGuard = useEnvironmentDialogDiscardGuard({
-    section,
-    values,
-    initialValues,
-    submitting,
-    onClose,
-  });
-
   useEffect(() => {
     if (!needsReferences) {
       return;
@@ -384,11 +386,7 @@ export function ManagedEntityDialog({
     try {
       await onSubmit(values);
     } catch (error) {
-      setSubmitError(
-        section === 'environments'
-          ? environmentErrorMessage(error, entity ? 'update' : 'create', msg)
-          : errorMessage(error),
-      );
+      setSubmitError(errorMessage(error));
       submittingRef.current = false;
       setSubmitting(false);
     }
@@ -521,151 +519,120 @@ export function ManagedEntityDialog({
   }
 
   return (
-    <>
-      <UnsavedEnvironmentChangesDialog
-        open={discardGuard.confirmOpen}
-        onContinue={discardGuard.continueEditing}
-        onDiscard={discardGuard.discard}
-      />
-      <Dialog
-        open
-        onOpenChange={(open) => !open && (section === 'environments' ? discardGuard.requestDiscard() : onClose())}
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]"
+        showCloseButton={false}
       >
-        <DialogContent
-          className="flex max-h-[min(760px,calc(100dvh-2rem))] flex-col sm:max-w-[560px]"
-          showCloseButton={false}
-        >
-          <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
-            <ManagedDialogCloseControl
-              disabled={section === 'environments' && submitting}
-              onClick={section === 'environments' ? discardGuard.requestDiscard : undefined}
+        <form className="relative flex min-h-0 flex-col" onSubmit={handleSubmit}>
+          <ManagedDialogCloseControl />
+
+          <ManagedDialogHeader title={title} subtitle={dialogSubtitleText} />
+
+          <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+            <ManagedTextField
+              label={
+                section === 'sessions' ? msg('managedAgents.sessions.fieldTitle', 'Title') : msg('common.name', 'Name')
+              }
+              value={values.name}
+              placeholder={
+                section === 'sessions'
+                  ? msg('managedAgents.sessions.titlePlaceholder', 'Optional - name this run')
+                  : msg('managedAgents.common.namePlaceholder', 'Enter a name')
+              }
+              onChange={(name) => setValues((current) => ({ ...current, name }))}
+              autoFocus
             />
 
-            <ManagedDialogHeader title={title} subtitle={dialogSubtitleText} />
-
-            <div className="subtle-scrollbar mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-              <ManagedTextField
-                label={
-                  section === 'sessions'
-                    ? msg('managedAgents.sessions.fieldTitle', 'Title')
-                    : msg('common.name', 'Name')
-                }
-                value={values.name}
-                placeholder={
-                  section === 'sessions'
-                    ? msg('managedAgents.sessions.titlePlaceholder', 'Optional - name this run')
-                    : msg('managedAgents.common.namePlaceholder', 'Enter a name')
-                }
-                onChange={(name) => setValues((current) => ({ ...current, name }))}
-                autoFocus
+            {section === 'memory-stores' ? (
+              <ManagedTextArea
+                label={msg('common.description', 'Description')}
+                value={values.description}
+                placeholder={msg('managedAgents.common.descriptionPlaceholder', 'Add a description')}
+                onChange={(description) => setValues((current) => ({ ...current, description }))}
               />
+            ) : null}
 
-              {section === 'environments' ? (
-                <EnvironmentCreationFields
-                  description={values.description}
-                  onDescriptionChange={(description) => setValues((current) => ({ ...current, description }))}
-                />
-              ) : null}
-
-              {section === 'memory-stores' ? (
-                <ManagedTextArea
-                  label={msg('common.description', 'Description')}
-                  value={values.description}
-                  placeholder={msg('managedAgents.common.descriptionPlaceholder', 'Add a description')}
-                  onChange={(description) => setValues((current) => ({ ...current, description }))}
-                />
-              ) : null}
-
-              {needsReferences ? (
-                <>
-                  {lockedAgent ? (
-                    <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
-                  ) : (
-                    <ManagedSelectField
-                      label={msg('managedAgents.common.agent', 'Agent')}
-                      value={values.agentId}
-                      placeholder={
-                        loadingOptions
-                          ? msg('managedAgents.agents.loading', 'Loading agents...')
-                          : msg('managedAgents.deployments.selectAgent', 'Select an agent')
-                      }
-                      options={agents}
-                      onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
-                    />
-                  )}
+            {needsReferences ? (
+              <>
+                {lockedAgent ? (
+                  <LockedAgentReferenceField agent={lockedAgent} variant="managed" />
+                ) : (
                   <ManagedSelectField
-                    label={msg('managedAgents.environments.kindTitle', 'Environment')}
-                    value={values.environmentId}
+                    label={msg('managedAgents.common.agent', 'Agent')}
+                    value={values.agentId}
                     placeholder={
                       loadingOptions
-                        ? msg('managedAgents.environments.loading', 'Loading environments...')
-                        : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
+                        ? msg('managedAgents.agents.loading', 'Loading agents...')
+                        : msg('managedAgents.deployments.selectAgent', 'Select an agent')
                     }
-                    options={environments}
-                    onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
+                    options={agents}
+                    onChange={(agentId) => setValues((current) => ({ ...current, agentId }))}
                   />
-                  <VaultMultiSelect
-                    vaults={vaults}
-                    selectedIds={values.vaultIds}
-                    onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
-                  />
-                  <Collapsible open={resourceDisclosureOpen} onOpenChange={setResourceDisclosureOpen}>
-                    <Card size="sm" className="gap-0 py-0">
-                      <CollapsibleTrigger
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-                      >
-                        <ChevronDown
-                          className={`size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none ${resourceDisclosureOpen ? '' : '-rotate-90'}`}
-                          aria-hidden
-                        />
-                        <span>{msg('managedAgents.common.resource', 'Resource')}</span>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="border-t border-border">
-                        <CardContent className="px-3 pb-3 pt-2">
-                          <p className="text-sm leading-5 text-muted-foreground">
-                            {msg(
-                              'managedAgents.common.noResourceAttachments',
-                              'No resource attachments are configured. Add files, repositories, or memory stores after creation.',
-                            )}
-                          </p>
-                        </CardContent>
-                      </CollapsibleContent>
-                    </Card>
-                  </Collapsible>
-                </>
-              ) : null}
+                )}
+                <ManagedSelectField
+                  label={msg('managedAgents.environments.kindTitle', 'Environment')}
+                  value={values.environmentId}
+                  placeholder={
+                    loadingOptions
+                      ? msg('managedAgents.environments.loading', 'Loading environments...')
+                      : msg('managedAgents.quickstart.selectEnvironment', 'Select an environment')
+                  }
+                  options={environments}
+                  onChange={(environmentId) => setValues((current) => ({ ...current, environmentId }))}
+                />
+                <VaultMultiSelect
+                  vaults={vaults}
+                  selectedIds={values.vaultIds}
+                  onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
+                />
+                <Collapsible open={resourceDisclosureOpen} onOpenChange={setResourceDisclosureOpen}>
+                  <Card size="sm" className="gap-0 py-0">
+                    <CollapsibleTrigger
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                    >
+                      <ChevronDown
+                        className={`size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none ${resourceDisclosureOpen ? '' : '-rotate-90'}`}
+                        aria-hidden
+                      />
+                      <span>{msg('managedAgents.common.resource', 'Resource')}</span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="border-t border-border">
+                      <CardContent className="px-3 pb-3 pt-2">
+                        <p className="text-sm leading-5 text-muted-foreground">
+                          {msg(
+                            'managedAgents.common.noResourceAttachments',
+                            'No resource attachments are configured. Add files, repositories, or memory stores after creation.',
+                          )}
+                        </p>
+                      </CardContent>
+                    </CollapsibleContent>
+                  </Card>
+                </Collapsible>
+              </>
+            ) : null}
 
-              {section === 'credential-vaults' ? (
-                <p className="text-sm leading-5 text-muted-foreground">
-                  {msg(
-                    'managedAgents.credentialVaults.createHint',
-                    'Continue after creating the vault to add credentials for tools and MCP servers.',
-                  )}
-                </p>
-              ) : null}
-            </div>
+            {section === 'credential-vaults' ? (
+              <p className="text-sm leading-5 text-muted-foreground">
+                {msg(
+                  'managedAgents.credentialVaults.createHint',
+                  'Continue after creating the vault to add credentials for tools and MCP servers.',
+                )}
+              </p>
+            ) : null}
+          </div>
 
-            {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
+          {submitError ? <p className="mt-4 text-sm text-destructive">{submitError}</p> : null}
 
-            {section === 'environments' ? (
-              <EnvironmentDialogActions
-                editing={Boolean(entity)}
-                submitting={submitting}
-                canSubmit={canSubmit}
-                onRequestClose={discardGuard.requestDiscard}
-              />
-            ) : (
-              <ManagedEntityDialogActions
-                section={section}
-                editing={Boolean(entity)}
-                submitting={submitting}
-                canSubmit={canSubmit}
-              />
-            )}
-          </form>
-        </DialogContent>
-      </Dialog>
-    </>
+          <ManagedEntityDialogActions
+            section={section}
+            editing={Boolean(entity)}
+            submitting={submitting}
+            canSubmit={canSubmit}
+          />
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

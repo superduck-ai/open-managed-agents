@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+tool=$(basename "$0")
+state_dir=${OMA_TEST_STATE_DIR:?}
+
+if [[ -n ${OMA_TEST_FORBIDDEN_ENV_NAME:-} ]]; then
+  forbidden_env_name=$OMA_TEST_FORBIDDEN_ENV_NAME
+  while IFS='=' read -r environment_name _; do
+    if [[ $environment_name == "$forbidden_env_name" ]]; then
+      printf 'forbidden environment variable reached %s: %s\n' "$tool" "$forbidden_env_name" >&2
+      exit 96
+    fi
+  done < <(env)
+fi
+
+is_available() {
+  local runtime=$1
+  local version=$2
+  case "${runtime}:${version}" in
+    python:3.12|python:3.11|node:22|node:20|ruby:3.4.4|ruby:3.3.8|rust:1.89.0|rust:1.88.0|go:1.25.1|go:1.24.3|bun:1.2.14|php:8.4|php:8.3|java:21.0.8|java:17.0.15|swift:6.1|swift:5.10) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+read_state() {
+  local runtime=$1
+  local fallback=$2
+  if [[ -f "${state_dir}/${runtime}" ]]; then
+    cat "${state_dir}/${runtime}"
+  else
+    printf '%s\n' "$fallback"
+  fi
+}
+
+write_state() {
+  printf '%s\n' "$2" >"${state_dir}/$1"
+}
+
+if [[ ${OMA_TEST_CONFLICTING_RUNTIME_CONFIG:-} == 1 ]]; then
+  case "$tool" in
+    python|python3)
+      expected_path="${PYENV_ROOT}/versions/$(read_state python 3.12)/bin/${tool}"
+      ;;
+    node)
+      expected_path="${NVM_DIR}/versions/node/v$(read_state node 22).0.0/bin/node"
+      ;;
+    ruby|go|bun|java)
+      expected_path="${MISE_DATA_DIR}/installs/"*"/bin/${tool}"
+      ;;
+    rustc)
+      expected_path="${RUSTUP_HOME}/toolchains/"*"/bin/rustc"
+      ;;
+    php)
+      expected_path="${PHPENV_ROOT}/versions/$(read_state php 8.4)snapshot/bin/php"
+      ;;
+    swift)
+      expected_path="${SWIFTLY_BIN_DIR}/swift"
+      ;;
+  esac
+  if [[ -n ${expected_path:-} ]]; then
+      case "$0" in
+        $expected_path) ;;
+        *)
+          printf 'workspace Runtime config intercepted %s shim\n' "$tool" >&2
+          exit 91
+          ;;
+      esac
+  fi
+fi
+
+case "$tool" in
+  pyenv)
+    case "${1:-}" in
+      prefix)
+        is_available python "$2"
+        printf '%s/versions/%s\n' "$PYENV_ROOT" "$2"
+        ;;
+      global) write_state python "$2" ;;
+      exec)
+        [[ ${2:-} == python && ${3:-} == --version ]]
+        printf 'Python %s.9\n' "$(read_state python 3.12)"
+        ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  nvm)
+    case "${1:-}" in
+      version)
+        if is_available node "$2"; then printf 'v%s.0.0\n' "$2"; else printf 'N/A\n'; fi
+        ;;
+      alias) write_state node "$3" ;;
+      use) write_state node "${*: -1}" ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  mise)
+    if [[ ${OMA_TEST_REQUIRE_MISE_OFFLINE:-} == 1 && ${MISE_OFFLINE:-} != 1 ]]; then
+      printf 'mise command was not forced offline\n' >&2
+      exit 94
+    fi
+    if [[ ${OMA_TEST_REQUIRE_MISE_NO_CONFIG:-} == 1 && ${MISE_NO_CONFIG:-} != 1 ]]; then
+      printf 'mise command loaded workspace configuration\n' >&2
+      exit 92
+    fi
+    case "${1:-}" in
+      ls)
+        runtime=${*: -1}
+        for version in 3.4.4 3.3.8 1.25.1 1.24.3 1.2.14 21.0.8 17.0.15; do
+          if is_available "$runtime" "$version"; then
+            printf '%s %s\n' "$runtime" "$version"
+          fi
+        done
+        ;;
+      use)
+        selector=${*: -1}
+        runtime=${selector%@*}
+        version=${selector#*@}
+        is_available "$runtime" "$version"
+        if [[ $runtime == java ]]; then
+          write_state "$runtime" "${version%%.*}"
+        else
+          write_state "$runtime" "$version"
+        fi
+        ;;
+      where)
+        printf 'mise where must not be used for installed-version checks\n' >&2
+        exit 93
+        ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  rustup)
+    case "${1:-}" in
+      toolchain)
+        [[ ${2:-} == list ]]
+        printf '1.89.0-x86_64-unknown-linux-gnu (default)\n1.88.0-x86_64-unknown-linux-gnu\n'
+        ;;
+      default)
+        version=${2%%-*}
+        is_available rust "$version"
+        write_state rust "$version"
+        ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  phpenv)
+    case "${1:-}" in
+      prefix)
+        version=${2%snapshot}
+        is_available php "$version"
+        printf '%s/versions/%s\n' "$PHPENV_ROOT" "$2"
+        ;;
+      global) write_state php "${2%snapshot}" ;;
+      rehash) ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  swiftly)
+    case "${1:-}" in
+      list) printf '6.1\n5.10\n' ;;
+      use) is_available swift "$2" && write_state swift "$2" ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  python|python3)
+    printf 'Python %s.9\n' "$(read_state python 3.12)"
+    ;;
+  node)
+    printf 'v%s.7.0\n' "$(read_state node 22)"
+    ;;
+  ruby)
+    [[ ${1:-} == --version ]]
+    printf 'ruby %sp0\n' "$(read_state ruby 3.4.4)"
+    ;;
+  rustc)
+    printf 'rustc %s (fake)\n' "$(read_state rust 1.89.0)"
+    ;;
+  go)
+    [[ ${1:-} == version ]]
+    if [[ ${OMA_TEST_REQUIRE_LOCAL_GO_TOOLCHAIN:-} == 1 && ${GOTOOLCHAIN:-} != local ]]; then
+      printf 'go version probe did not disable automatic toolchain downloads\n' >&2
+      exit 95
+    fi
+    printf 'go version go%s linux/amd64\n' "$(read_state go 1.25.1)"
+    ;;
+  bun)
+    [[ ${1:-} == --version ]]
+    printf '%s\n' "$(read_state bun 1.2.14)"
+    ;;
+  php)
+    printf 'PHP %s.9 (cli)\n' "$(read_state php 8.4)"
+    ;;
+  java)
+    [[ ${1:-} == --version ]]
+    printf 'openjdk version "%s.0.1"\n' "$(read_state java 21)"
+    ;;
+  swift)
+    printf 'Swift version %s (fake)\n' "$(read_state swift 6.1)"
+    ;;
+  curl|wget)
+    printf 'network access attempted through %s\n' "$tool" >&2
+    exit 97
+    ;;
+  *)
+    printf 'unexpected fake tool invocation: %s\n' "$tool" >&2
+    exit 98
+    ;;
+esac

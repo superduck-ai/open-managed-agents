@@ -133,3 +133,31 @@
   - TypeScript SDK：`./node_modules/.bin/jest tests/api-resources/beta/files.test.ts --runInBand`
   - Python SDK：`.venv/bin/pytest tests/api_resources/beta/test_files.py -q`
 - 结束前停止所有为 E2E 启动的本地服务。
+
+## Cursor Cloud specific instructions
+
+工具链与基础设施（Go 1.26.2 toolchain、`bun`、`just`、`uv`、`golangci-lint` v2.12.2、PostgreSQL 17、Redis、MinIO）已经装进 VM 快照。依赖刷新由启动时的 update script（`go mod download` + `web` 目录 `bun install`）负责，无需手动安装。
+
+### 启动依赖服务（每个会话必做，不会自动拉起）
+
+本 VM 用 `tini` 作为 init，没有 systemd，所以 Postgres / Redis / MinIO 不会自动启动。运行后端或测试前先手动拉起：
+
+- PostgreSQL：`sudo pg_ctlcluster 17 main start`
+- Redis：`sudo redis-server --daemonize yes`
+- MinIO：在后台运行 `MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server /home/ubuntu/minio-data --console-address ":9001"`（例如放进 tmux 会话）
+
+`pg_hba.conf` 已配置为对本地连接 `trust`，因此后端/测试首次连接时会用默认 `POSTGRES_ADMIN_URL` 自动创建 `claude` 角色与 `claude_api` 数据库，无需手工 createdb。
+
+### 运行服务
+
+后端、前端的标准命令见 README.cn.md 与 `justfile`（`just restart-server` → `127.0.0.1:38080`，`just restart-web` → `127.0.0.1:5173`，Vite 代理 `/api`、`/v1` 到后端）。控制台本地登录是无密码 magic-link：任意邮箱 + 任意 6 位验证码即可登录（后端忽略验证码，仅用邮箱 find-or-create 用户/组织）。
+
+E2B 沙箱（真实 agent 代码执行）在本环境未配置，需要 host 网络的 Docker + 外部镜像；agent/文件/元数据等非沙箱流程无需它即可工作。
+
+### 测试与 lint 的注意事项
+
+- `go test ./...` 里的集成测试用 `config.Load()` 默认值直连本地 **Postgres + MinIO**（会 migrate + seed 到同一个开发库 `claude_api`，共用 `claude-files` bucket），会话用内存 store，所以测试**不需要 Redis 但需要 Postgres + MinIO 已启动**。
+- `just lint`（`golangci-lint ... ./...`）在跑过 `bun install` 后会把 `web/node_modules/flatted/*.go` 也纳入，产生 2 个 govet 误报；CI 不装 node_modules 所以不受影响。只想 lint 项目代码时用：`golangci-lint run --config .golangci.yml . ./cmd/... ./internal/... ./tests/...`。
+- `golangci-lint` 必须用 go ≥ 1.26 构建（仓库 target 1.26.2），否则会报 "Go language version ... lower than the targeted Go version" 而拒绝运行。
+- 已知既有失败（与本环境无关，clean tree 上稳定复现）：`go test ./tests` 中 `TestFilesAPI/routing_group_auth_applies_only_to_v1`（`GET /v1/unknown` 无 key 期望 401，实际 404）。
+- `just web-lint`（eslint）在当前提交上有既有报错；CI 实际门禁是 `just web-format-check`（Prettier）和 `just web-lint-naming`，二者可通过。

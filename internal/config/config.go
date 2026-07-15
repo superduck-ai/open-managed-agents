@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -92,6 +93,14 @@ type Config struct {
 	DefaultUserExternalID               string
 	DefaultAPIKeyExternalID             string
 	OfficialSDKResourceAPIKeyExternalID string
+
+	// CodeSessionUpstreamProxyMITMEnabled 开启后，CCR CONNECT 会在服务端终止客户端 TLS，按 HTTP 转发，再独立验证真实上游 TLS。
+	CodeSessionUpstreamProxyMITMEnabled bool
+	// CodeSessionUpstreamProxyCAKeyFile 是外部提供的稳定 CA 私钥，启动前必须存在，且只能挂载到 API server。
+	// 服务启动时读取私钥并在内存中签发根证书；私钥绝不能进入 sandbox。
+	CodeSessionUpstreamProxyCAKeyFile string
+	// CodeSessionUpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
+	CodeSessionUpstreamProxyDisableSSRFProtection bool
 }
 
 type SeedAPIKey struct {
@@ -178,6 +187,10 @@ func Load() (Config, error) {
 		DefaultUserExternalID:               "user_default",
 		DefaultAPIKeyExternalID:             "api_key_default",
 		OfficialSDKResourceAPIKeyExternalID: "api_key_official_sdk_resource_tests",
+
+		CodeSessionUpstreamProxyMITMEnabled:           envBool("CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED", false),
+		CodeSessionUpstreamProxyCAKeyFile:             env("CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE", ""),
+		CodeSessionUpstreamProxyDisableSSRFProtection: envBool("CODE_SESSION_UPSTREAM_PROXY_DISABLE_SSRF_PROTECTION", false),
 	}
 	cfg.S3ForcePathStyle = envBool("S3_FORCE_PATH_STYLE", true)
 	cfg.WebhookWorkerEnabled = envBool("WEBHOOK_WORKER_ENABLED", cfg.WebhookEndpointURL != "" && cfg.WebhookSigningKey != "")
@@ -198,7 +211,31 @@ func Load() (Config, error) {
 	if cfg.S3AccessKeyID == "" || cfg.S3SecretAccessKey == "" {
 		return Config{}, errors.New("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required")
 	}
+	if err := validateCodeSessionUpstreamProxyMITMConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// validateCodeSessionUpstreamProxyMITMConfig 校验稳定私钥输入合同：
+// 开启 MITM 时必须提供私钥；显式提供的私钥必须是已存在的普通文件，且不会被本服务改写。
+func validateCodeSessionUpstreamProxyMITMConfig(cfg Config) error {
+	keyFile := strings.TrimSpace(cfg.CodeSessionUpstreamProxyCAKeyFile)
+	if cfg.CodeSessionUpstreamProxyMITMEnabled && keyFile == "" {
+		return errors.New("CCR upstream proxy MITM requires a stable CA private key")
+	}
+	if keyFile == "" {
+		return nil
+	}
+
+	keyInfo, err := os.Stat(keyFile)
+	if err != nil {
+		return fmt.Errorf("CCR upstream proxy stable CA private key must be an existing regular file: %w", err)
+	}
+	if !keyInfo.Mode().IsRegular() {
+		return errors.New("CCR upstream proxy stable CA private key must be an existing regular file")
+	}
+	return nil
 }
 
 func loadDotEnv() error {

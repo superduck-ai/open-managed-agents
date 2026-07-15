@@ -1,48 +1,39 @@
 package api
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-func TestAPIEntrypointRouterDispatchesByAuth(t *testing.T) {
-	handler := apiEntrypointRouter{
-		service: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("service"))
-		}),
-		platform: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("platform"))
-		}),
-	}
+func TestV1AuthenticationSelection(t *testing.T) {
 	tests := []struct {
-		name       string
-		host       string
-		apiKey     string
-		sessionKey string
-		want       string
+		name        string
+		host        string
+		apiKey      string
+		sessionKey  string
+		wantService bool
 	}{
 		// ---- API key → service (always) ----
-		{name: "api key on any host", host: "localhost:5173", apiKey: "sk-ant-local-test", want: "service"},
-		{name: "bearer token on any host", host: "localhost:5173", apiKey: "Bearer sk-ant-local-test", want: "service"},
-		{name: "api key on api host", host: "api.anthropic.com", apiKey: "sk-ant-test", want: "service"},
+		{name: "api key on any host", host: "localhost:5173", apiKey: "sk-ant-local-test", wantService: true},
+		{name: "bearer token on any host", host: "localhost:5173", apiKey: "Bearer sk-ant-local-test", wantService: true},
+		{name: "api key on api host", host: "api.anthropic.com", apiKey: "sk-ant-test", wantService: true},
 
 		// ---- Session cookie → platform (always) ----
-		{name: "session on localhost", host: "localhost:5173", sessionKey: "sk-ant-sid-test", want: "platform"},
-		{name: "session on server port", host: "localhost:38080", sessionKey: "sk-ant-sid-test", want: "platform"},
-		{name: "session on oma domain", host: "oma.duck.ai", sessionKey: "sk-ant-sid-test", want: "platform"},
-		{name: "session on api host", host: "api.anthropic.com", sessionKey: "sk-ant-sid-test", want: "platform"},
+		{name: "session on localhost", host: "localhost:5173", sessionKey: "sk-ant-sid-test"},
+		{name: "session on server port", host: "localhost:38080", sessionKey: "sk-ant-sid-test"},
+		{name: "session on oma domain", host: "oma.duck.ai", sessionKey: "sk-ant-sid-test"},
+		{name: "session on api host", host: "api.anthropic.com", sessionKey: "sk-ant-sid-test"},
 
 		// ---- API key + session cookie → API key wins ----
-		{name: "api key wins over session", host: "localhost:5173", apiKey: "sk-ant-local-test", sessionKey: "sk-ant-sid-test", want: "service"},
+		{name: "api key wins over session", host: "localhost:5173", apiKey: "sk-ant-local-test", sessionKey: "sk-ant-sid-test", wantService: true},
 
 		// ---- No credential → platform (default, has unauthenticated routes) ----
-		{name: "no auth localhost", host: "localhost:5173", want: "platform"},
-		{name: "no auth oma", host: "oma.duck.ai", want: "platform"},
-		{name: "no auth api host", host: "api.anthropic.com", want: "platform"},
-		{name: "no auth empty host", host: "", want: "platform"},
+		{name: "no auth localhost", host: "localhost:5173"},
+		{name: "no auth oma", host: "oma.duck.ai"},
+		{name: "no auth api host", host: "api.anthropic.com"},
+		{name: "no auth empty host", host: ""},
 	}
 
 	for _, tt := range tests {
@@ -57,24 +48,9 @@ func TestAPIEntrypointRouterDispatchesByAuth(t *testing.T) {
 			if tt.sessionKey != "" {
 				req.AddCookie(&http.Cookie{Name: "sessionKey", Value: tt.sessionKey})
 			}
-			rec := httptest.NewRecorder()
-
-			handler.ServeHTTP(rec, req)
-
-			got := string(mustReadAll(t, rec.Result().Body))
-			if got != tt.want {
-				t.Fatalf("entrypoint = %q, want %q", got, tt.want)
+			if got := usesServiceAuthentication(req); got != tt.wantService {
+				t.Fatalf("uses service authentication = %t, want %t", got, tt.wantService)
 			}
 		})
 	}
-}
-
-func mustReadAll(t *testing.T, body io.ReadCloser) []byte {
-	t.Helper()
-	defer body.Close()
-	data, err := io.ReadAll(body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	return data
 }

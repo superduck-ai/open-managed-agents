@@ -41,7 +41,7 @@ func NewRunnerWithConfigAndStore(database *db.DB, provider e2bruntime.Provider, 
 		db:           database,
 		provider:     provider,
 		cfg:          cfg,
-		codeSessions: codesessions.NewService(cfg, database),
+		codeSessions: codesessions.NewService(database),
 		skills:       skillsapi.NewRuntimeResolver(cfg, database, store),
 	}
 }

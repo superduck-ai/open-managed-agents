@@ -34,16 +34,14 @@ func TestDecodeOTLPRequestRejectsMalformedPayloads(t *testing.T) {
 
 func TestRecordCodeSessionWorkerOTLPFileLogRecordsDecodeErrors(t *testing.T) {
 	root := t.TempDir()
-	service := &Service{
-		cfg: config.Config{
-			CodeSessionOTLPFileLogEnabled: true,
-			CodeSessionOTLPLogRoot:        root,
-		},
-	}
+	handler := NewHandler(config.Config{
+		CodeSessionOTLPFileLogEnabled: true,
+		CodeSessionOTLPLogRoot:        root,
+	}, NewService(nil))
 	req := httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_bad/worker/otlp/logs", bytes.NewReader([]byte(`{"resourceLogs":[`)))
 	req.Header.Set("Content-Type", "application/json")
 
-	service.recordCodeSessionWorkerOTLP(req, "cse_bad", []byte(`{"resourceLogs":[`), true, "query:worker_epoch", "7")
+	handler.recordCodeSessionWorkerOTLP(req, "cse_bad", []byte(`{"resourceLogs":[`), true, "query:worker_epoch", "7")
 
 	requestLines := readJSONLObjects(t, filepath.Join(root, "cse_bad", "otlp", "requests.jsonl"))
 	if len(requestLines) != 1 {
@@ -145,13 +143,11 @@ func TestOTLPBodyLooksTextUsesParsedMediaType(t *testing.T) {
 
 func TestRecordCodeSessionWorkerOTLPFileLogWritesRequestAndExpandedRecords(t *testing.T) {
 	root := t.TempDir()
-	service := &Service{
-		cfg: config.Config{
-			CodeSessionOTLPFileLogEnabled:      true,
-			CodeSessionOTLPLogRoot:             root,
-			CodeSessionOTLPLogBodyPreviewBytes: 8,
-		},
-	}
+	handler := NewHandler(config.Config{
+		CodeSessionOTLPFileLogEnabled:      true,
+		CodeSessionOTLPLogRoot:             root,
+		CodeSessionOTLPLogBodyPreviewBytes: 8,
+	}, NewService(nil))
 
 	metricsBody, err := proto.Marshal(testOTLPMetricsRequest())
 	if err != nil {
@@ -159,7 +155,7 @@ func TestRecordCodeSessionWorkerOTLPFileLogWritesRequestAndExpandedRecords(t *te
 	}
 	metricsReq := httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_test/worker/otlp/metrics", bytes.NewReader(metricsBody))
 	metricsReq.Header.Set("Content-Type", "application/x-protobuf")
-	service.recordCodeSessionWorkerOTLP(metricsReq, "cse_test", metricsBody, true, "header:x-worker-epoch", "1")
+	handler.recordCodeSessionWorkerOTLP(metricsReq, "cse_test", metricsBody, true, "header:x-worker-epoch", "1")
 
 	logsJSON, err := protojson.Marshal(testOTLPLogsRequest())
 	if err != nil {
@@ -167,7 +163,7 @@ func TestRecordCodeSessionWorkerOTLPFileLogWritesRequestAndExpandedRecords(t *te
 	}
 	logsReq := httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_test/worker/otlp/logs", bytes.NewReader(logsJSON))
 	logsReq.Header.Set("Content-Type", "application/json")
-	service.recordCodeSessionWorkerOTLP(logsReq, "cse_test", logsJSON, false, "", "")
+	handler.recordCodeSessionWorkerOTLP(logsReq, "cse_test", logsJSON, false, "", "")
 
 	requestLines := readJSONLObjects(t, filepath.Join(root, "cse_test", "otlp", "requests.jsonl"))
 	if len(requestLines) != 2 {

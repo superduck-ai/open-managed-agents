@@ -44,22 +44,23 @@ func (r apiEntrypointRouter) ServeHTTP(w http.ResponseWriter, req *http.Request)
 
 ### 2.1 核心思路
 
-**不看 Host，看凭证。** 客户端带什么凭证，就进什么路由：
+**不看 Host，看凭证。** `/v1` 资源只注册一次，请求携带什么凭证，就使用对应的鉴权链：
 
 ```go
-// 修复后
-func (r apiEntrypointRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-    if auth.ExtractAPIKey(req) != "" {
-        r.service.ServeHTTP(w, req)
-        return
-    }
-    if auth.ExtractPlatformSessionKey(req) != "" {
-        r.platform.ServeHTTP(w, req)
-        return
-    }
-    r.platform.ServeHTTP(w, req)
+func (s *Server) v1AuthMiddleware(next http.Handler) http.Handler {
+    service := s.serviceAuthMiddleware(next)
+    platform := s.platformAuthMiddleware(next)
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if auth.ExtractAPIKey(r) != "" {
+            service.ServeHTTP(w, r)
+            return
+        }
+        platform.ServeHTTP(w, r)
+    })
 }
 ```
+
+`registerVersionedAPIRoutes` 在一个 `/v1` chi 子路由中完成组装：`codesessions.Handler` 注册 runtime 路由并执行各自的鉴权策略，privacy consent 保持开放，其余资源统一放入 `v1AuthMiddleware` 路由组。实现不再创建结构相同的 service/platform 两套路由。
 
 ### 2.2 凭证提取
 
@@ -75,7 +76,7 @@ func ExtractPlatformSessionKey(r *http.Request) string
 
 ### 2.3 路由决策表
 
-| API Key | Session Cookie | 路由 | 原因 |
+| API Key | Session Cookie | 鉴权链 | 原因 |
 |---------|---------------|------|------|
 | ✓ | — | service | SDK/CLI 调用，token 鉴权 |
 | ✓ | ✓ | **service** | API key 优先，明确的服务调用意图 |
@@ -96,7 +97,7 @@ func ExtractPlatformSessionKey(r *http.Request) string
 
 ### 2.5 为什么 API key + session cookie 同时存在时选 service
 
-当两个凭证都存在时（例如开发者用 curl 带 API key 调试，但浏览器也留下了 cookie），API key 是更强的调用意图信号 — 客户端明确选择了 service 调用方式。选择 service 路由也符合最小惊讶原则。
+当两个凭证都存在时（例如开发者用 curl 带 API key 调试，但浏览器也留下了 cookie），API key 是更强的调用意图信号 — 客户端明确选择了 service 调用方式。选择 service 鉴权链也符合最小惊讶原则。
 
 ---
 
@@ -104,7 +105,7 @@ func ExtractPlatformSessionKey(r *http.Request) string
 
 ### 3.1 认证中间件中的 `isPlatformHost` 残留
 
-入口路由已改为凭证驱动，但认证中间件内部仍按 `isPlatformHost(r.Host)` 判断是否清除无效 session cookie 或恢复 mirror session。这导致非 platform host 上的无效 session 不会被清理，mirror session 也无法恢复。
+入口鉴权已改为凭证驱动，但认证中间件内部仍按 `isPlatformHost(r.Host)` 判断是否清除无效 session cookie 或恢复 mirror session。这导致非 platform host 上的无效 session 不会被清理，mirror session 也无法恢复。
 
 清理了4处残留检查：
 
@@ -165,7 +166,7 @@ http.SetCookie(w, &http.Cookie{
 
 ### 5.1 单元测试
 
-`internal/api/auth_test.go` — `TestAPIEntrypointRouterDispatchesByAuth`（12个用例）：
+`internal/api/auth_test.go` — `TestV1AuthenticationSelection`（12个用例）：
 
 覆盖：
 
@@ -196,7 +197,7 @@ http.SetCookie(w, &http.Cookie{
 
 | 文件 | 变更 |
 |------|------|
-| `internal/api/server.go` | `apiEntrypointRouter.ServeHTTP` 改为凭证驱动路由；移除中间件中4处 `isPlatformHost` 检查；删除 `isPlatformHost`、`isExternalPlatformHost`、`isLocalFrontendPlatformHost`、`normalizedRequestHost`、`normalizedRequestHostParts` 五个死函数；移除 `net` 导入 |
+| `internal/api/server.go` | `/v1` 资源统一注册到 `registerVersionedAPIRoutes`；持有 `codesessions.Handler`，并把同一个底层 `codesessions.Service` 注入 sessions handler；`v1AuthMiddleware` 按凭证选择鉴权链；移除双 router 入口分流；移除中间件中4处 `isPlatformHost` 检查；删除 Host 判断相关死函数 |
 | `internal/api/auth_test.go` | 测试用例从 host 驱动改为凭证驱动，12个用例覆盖 API key、session cookie、双凭证、无凭证场景 |
 | `tests/files_api_test.go` | 更新2个集成测试用例：api key 在任意 host 返回 200，session cookie 在任意 host 返回 200 |
 | `internal/platformapi/platform_auth_routes.go` | `sessionKey` cookie 添加 `HttpOnly: true` 和 `SameSite: Lax` |

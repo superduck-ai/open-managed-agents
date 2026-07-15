@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -19,19 +18,12 @@ import (
 	"github.com/google/uuid"
 )
 
-type PublicEventSink interface {
-	PublishCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error
-}
-
+// Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
+// 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
-	cfg                 config.Config
-	db                  *db.DB
-	bridgeAuthenticator BridgeAuthenticator
-
-	mu   sync.Mutex
-	sink PublicEventSink
-
-	otlpLogMu sync.Mutex
+	db     *db.DB
+	sinkMu sync.Mutex
+	sink   PublicEventSink
 }
 
 type ManagedAgentCreateInput struct {
@@ -57,20 +49,9 @@ type workerOutputEvent struct {
 	Ephemeral bool
 }
 
-func NewService(cfg config.Config, database *db.DB) *Service {
-	return &Service{
-		cfg: cfg,
-		db:  database,
-	}
-}
-
-func (s *Service) SetPublicEventSink(sink PublicEventSink) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sink = sink
+// NewService 创建只依赖持久化边界的 code-session 业务服务。
+func NewService(database *db.DB) *Service {
+	return &Service{db: database}
 }
 
 func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input ManagedAgentCreateInput) (ManagedAgentCreateResult, error) {
@@ -449,9 +430,9 @@ func (s *Service) publishPublicPayloadsToSink(ctx context.Context, codeSessionID
 	if err != nil {
 		return db.CodeSession{}, err
 	}
-	s.mu.Lock()
+	s.sinkMu.Lock()
 	sink := s.sink
-	s.mu.Unlock()
+	s.sinkMu.Unlock()
 	if sink == nil {
 		return codeSession, nil
 	}

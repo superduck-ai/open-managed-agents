@@ -45,7 +45,7 @@ type Server struct {
 	admin          *adminapi.Handler
 	agents         *agents.Handler
 	batch          *batches.Handler
-	codeSessions   *codesessions.Service
+	codeSessions   *codesessions.Handler
 	deployments    *deploymentsapi.Handler
 	deploymentRuns *deploymentsapi.RunsHandler
 	envs           *environments.Handler
@@ -56,11 +56,6 @@ type Server struct {
 	skills         *skillsapi.Handler
 	vaults         *vaultsapi.Handler
 	webhooks       *webhooksapi.Handler
-}
-
-type apiEntrypointRouter struct {
-	service  http.Handler
-	platform http.Handler
 }
 
 func NewServer(cfg config.Config, database *db.DB, objectStore storage.ObjectStore) *Server {
@@ -75,7 +70,7 @@ func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectSto
 	if platformStore == nil {
 		platformStore = platformsession.NewMemoryStore()
 	}
-	codeSessionService := codesessions.NewService(cfg, database)
+	codeSessionService := codesessions.NewService(database)
 	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(database)
 	s := &Server{
 		cfg:            cfg,
@@ -84,7 +79,7 @@ func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectSto
 		admin:          adminapi.NewHandler(cfg, database),
 		agents:         agents.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
 		batch:          batches.NewHandler(cfg, database, objectStore),
-		codeSessions:   codeSessionService,
+		codeSessions:   codesessions.NewHandler(cfg, codeSessionService),
 		deployments:    deploymentsapi.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
 		deploymentRuns: deploymentsapi.NewRunsHandler(cfg, database),
 		envs:           environments.NewHandler(cfg, database),
@@ -96,7 +91,7 @@ func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectSto
 		vaults:         vaultsapi.NewHandler(cfg, database),
 		webhooks:       webhooksapi.NewHandler(cfg, database),
 	}
-	codeSessionService.SetBridgeAuthenticator(s.authenticateCodeSessionBridge)
+	s.codeSessions.SetBridgeAuthenticator(s.authenticateCodeSessionBridge)
 
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
@@ -109,19 +104,8 @@ func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectSto
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	codeSessionService.RegisterRoutes(router)
-	v1Entrypoints := s.v1EntrypointRouter()
-	router.Handle("/v1", v1Entrypoints)
-	router.Handle("/v1/*", v1Entrypoints)
-	platformConsoleAPI := s.platformConsoleAPIRouter()
-	router.Handle("/api", platformConsoleAPI)
-	router.Handle("/api/*", platformConsoleAPI)
-	router.Handle("/auth", platformConsoleAPI)
-	router.Handle("/auth/*", platformConsoleAPI)
-	router.Handle("/oauth", platformConsoleAPI)
-	router.Handle("/oauth/*", platformConsoleAPI)
-	router.Handle("/web-api", platformConsoleAPI)
-	router.Handle("/web-api/*", platformConsoleAPI)
+	s.registerVersionedAPIRoutes(router)
+	s.registerPlatformConsoleRoutes(router)
 	s.router = router
 	return s
 }
@@ -134,55 +118,22 @@ func notFound(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
 }
 
-func (s *Server) v1EntrypointRouter() http.Handler {
-	return apiEntrypointRouter{
-		service:  s.serviceAPIRouter(),
-		platform: s.platformAPIRouter(),
-	}
-}
-
-func (r apiEntrypointRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Route by authentication credential.
-	if auth.ExtractAPIKey(req) != "" {
-		r.service.ServeHTTP(w, req)
-		return
-	}
-	if auth.ExtractPlatformSessionKey(req) != "" {
-		r.platform.ServeHTTP(w, req)
-		return
-	}
-	r.platform.ServeHTTP(w, req)
-}
-
-func (s *Server) serviceAPIRouter() chi.Router {
-	router := chi.NewRouter()
+func (s *Server) registerVersionedAPIRoutes(router chi.Router) {
 	router.Route("/v1", func(r chi.Router) {
-		r.Use(s.serviceAuthMiddleware)
-		r.NotFound(notFound)
-		r.MethodNotAllowed(notFound)
-		s.mountServiceV1Resources(r)
-	})
-	return router
-}
-
-func (s *Server) platformAPIRouter() chi.Router {
-	router := chi.NewRouter()
-	router.Route("/v1", func(r chi.Router) {
-		r.NotFound(notFound)
-		r.MethodNotAllowed(notFound)
+		// code-session runtime、worker 与旧版 ingress 各自执行协议鉴权，因此注册在 workspace/service 通用鉴权组之外。
+		s.codeSessions.RegisterV1Routes(r)
 		platformapi.RegisterPlatformPrivacyConsentRoutes(r)
 		r.Group(func(r chi.Router) {
-			r.Use(s.platformAuthMiddleware)
-			s.mountPlatformV1Resources(r)
+			r.Use(s.v1AuthMiddleware)
+			s.registerAuthenticatedV1Routes(r)
 		})
+		// 未知的 /v1 路径也先鉴权，保持 API 级鉴权边界一致。
+		r.With(s.v1AuthMiddleware).NotFound(notFound)
 	})
-	return router
+	router.Route("/v2", s.codeSessions.RegisterV2Routes)
 }
 
-func (s *Server) platformConsoleAPIRouter() chi.Router {
-	router := chi.NewRouter()
-	router.NotFound(notFound)
-	router.MethodNotAllowed(notFound)
+func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
@@ -221,18 +172,9 @@ func (s *Server) platformConsoleAPIRouter() chi.Router {
 		})
 		r.Get("/web-api/sessions/{sessionId}/stream", s.handlePlatformWebSessionStream)
 	})
-	return router
 }
 
-func (s *Server) mountServiceV1Resources(r chi.Router) {
-	s.mountSharedV1Resources(r)
-}
-
-func (s *Server) mountPlatformV1Resources(r chi.Router) {
-	s.mountSharedV1Resources(r)
-}
-
-func (s *Server) mountSharedV1Resources(r chi.Router) {
+func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Post("/agents:search", s.agents.Search)
 	r.Mount("/agents", s.agents)
 	r.Mount("/deployment_runs", s.deploymentRuns)
@@ -280,6 +222,23 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) serviceAuthMiddleware(next http.Handler) http.Handler {
 	return s.authenticated(next, s.authenticateService)
+}
+
+// v1AuthMiddleware 优先把携带 API key 的请求送入 service 鉴权，否则使用 platform session，使资源路由不必注册两次。
+func (s *Server) v1AuthMiddleware(next http.Handler) http.Handler {
+	service := s.serviceAuthMiddleware(next)
+	platform := s.platformAuthMiddleware(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if usesServiceAuthentication(r) {
+			service.ServeHTTP(w, r)
+			return
+		}
+		platform.ServeHTTP(w, r)
+	})
+}
+
+func usesServiceAuthentication(r *http.Request) bool {
+	return auth.ExtractAPIKey(r) != ""
 }
 
 func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {

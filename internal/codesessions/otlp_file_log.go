@@ -81,8 +81,8 @@ type otlpFileLogBatch struct {
 	Logs     []any
 }
 
-func (s *Service) recordCodeSessionWorkerOTLP(r *http.Request, codeSessionID string, body []byte, epochFound bool, epochSource string, epochValue string) {
-	if s == nil || !s.cfg.CodeSessionOTLPFileLogEnabled {
+func (h *Handler) recordCodeSessionWorkerOTLP(r *http.Request, codeSessionID string, body []byte, epochFound bool, epochSource string, epochValue string) {
+	if h == nil || !h.cfg.CodeSessionOTLPFileLogEnabled {
 		return
 	}
 	signal := otlpSignalFromPath("")
@@ -93,7 +93,7 @@ func (s *Service) recordCodeSessionWorkerOTLP(r *http.Request, codeSessionID str
 		query = r.URL.RawQuery
 		signal = otlpSignalFromPath(path)
 	}
-	previewBytes := s.cfg.CodeSessionOTLPLogBodyPreviewBytes
+	previewBytes := h.cfg.CodeSessionOTLPLogBodyPreviewBytes
 	if previewBytes <= 0 {
 		previewBytes = maxLoggedWorkerRequestBytes
 	}
@@ -124,22 +124,22 @@ func (s *Service) recordCodeSessionWorkerOTLP(r *http.Request, codeSessionID str
 		decoded.Summary.Error = err.Error()
 	}
 	batch := buildOTLPFileLogBatch(meta, decoded)
-	if err := s.appendOTLPFileLogBatch(codeSessionID, batch); err != nil {
+	if err := h.appendOTLPFileLogBatch(codeSessionID, batch); err != nil {
 		log.Printf("write code session worker otlp file log request_id=%s code_session_id=%s signal=%s: %v", meta.RequestID, codeSessionID, signal, err)
 	}
 }
 
-func (s *Service) appendOTLPFileLogBatch(codeSessionID string, batch otlpFileLogBatch) error {
+func (h *Handler) appendOTLPFileLogBatch(codeSessionID string, batch otlpFileLogBatch) error {
 	if len(batch.Requests) == 0 && len(batch.Metrics) == 0 && len(batch.Logs) == 0 {
 		return nil
 	}
-	root := strings.TrimSpace(s.cfg.CodeSessionOTLPLogRoot)
+	root := strings.TrimSpace(h.cfg.CodeSessionOTLPLogRoot)
 	if root == "" {
 		root = "logs"
 	}
 	dir := filepath.Join(root, safeOTLPPathSegment(codeSessionID), "otlp")
-	s.otlpLogMu.Lock()
-	defer s.otlpLogMu.Unlock()
+	h.otlpLogMu.Lock()
+	defer h.otlpLogMu.Unlock()
 	if len(batch.Requests) > 0 {
 		if err := appendJSONLLines(filepath.Join(dir, "requests.jsonl"), batch.Requests); err != nil {
 			return err

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -131,6 +132,85 @@ func TestLoadCodeSessionOTLPFileLogOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadCodeSessionUpstreamProxySSRFProtectionOverride(t *testing.T) {
+	prepareLoadTest(t)
+
+	// 默认必须保持保护开启，避免新部署在未配置时意外获得私网访问能力。
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.CodeSessionUpstreamProxyDisableSSRFProtection {
+		t.Fatal("CodeSessionUpstreamProxyDisableSSRFProtection = true, want false by default")
+	}
+
+	// 只有运维显式设置危险开关时才允许本地 fake-IP/TUN 排障模式。
+	t.Setenv("CODE_SESSION_UPSTREAM_PROXY_DISABLE_SSRF_PROTECTION", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("load config with SSRF override: %v", err)
+	}
+	if !cfg.CodeSessionUpstreamProxyDisableSSRFProtection {
+		t.Fatal("CodeSessionUpstreamProxyDisableSSRFProtection = false, want true")
+	}
+}
+
+func TestLoadCodeSessionUpstreamProxyMITMRejectsInvalidCAKey(t *testing.T) {
+	t.Run("MITM enabled without private key", func(t *testing.T) {
+		prepareLoadTest(t)
+		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED", "true")
+
+		if _, err := Load(); err == nil {
+			t.Fatal("Load() error = nil, want missing stable CA private key error")
+		}
+	})
+
+	t.Run("private key does not exist", func(t *testing.T) {
+		prepareLoadTest(t)
+		directory := t.TempDir()
+		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE", filepath.Join(directory, "missing-key.pem"))
+
+		if _, err := Load(); err == nil {
+			t.Fatal("Load() error = nil, want missing stable CA private key file error")
+		}
+	})
+
+	t.Run("private key is not a regular file", func(t *testing.T) {
+		prepareLoadTest(t)
+		directory := t.TempDir()
+		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE", directory)
+
+		if _, err := Load(); err == nil {
+			t.Fatal("Load() error = nil, want non-regular stable CA private key error")
+		}
+	})
+}
+
+func TestLoadCodeSessionUpstreamProxyMITMConfiguration(t *testing.T) {
+	t.Run("stable private key exists", func(t *testing.T) {
+		prepareLoadTest(t)
+		keyFile := writeConfigTestFile(t, filepath.Join(t.TempDir(), "ca-key.pem"))
+		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED", "true")
+		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE", keyFile)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if !cfg.CodeSessionUpstreamProxyMITMEnabled || cfg.CodeSessionUpstreamProxyCAKeyFile != keyFile {
+			t.Fatalf("unexpected MITM config: enabled=%t key=%q", cfg.CodeSessionUpstreamProxyMITMEnabled, cfg.CodeSessionUpstreamProxyCAKeyFile)
+		}
+	})
+}
+
+func writeConfigTestFile(t *testing.T, path string) string {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+		t.Fatalf("write config fixture %q: %v", path, err)
+	}
+	return path
+}
+
 func prepareLoadTest(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())
@@ -140,6 +220,9 @@ func prepareLoadTest(t *testing.T) {
 		"CODE_SESSION_OTLP_FILE_LOG_ENABLED",
 		"CODE_SESSION_OTLP_LOG_ROOT",
 		"CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES",
+		"CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED",
+		"CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE",
+		"CODE_SESSION_UPSTREAM_PROXY_DISABLE_SSRF_PROTECTION",
 		"DATABASE_URL",
 		"S3_ENDPOINT",
 		"S3_BUCKET",

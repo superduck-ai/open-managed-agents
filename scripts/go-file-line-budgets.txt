@@ -4,7 +4,7 @@
 1921 internal/deployments/handler.go
 1829 internal/memory/handler.go
 1815 internal/codesessions/ingress.go
-1544 internal/environments/handler.go
+1227 internal/environments/handler.go
 1489 internal/vaults/handler.go
 1376 tests/files_api_test.go
 1369 internal/db/code_sessions.go

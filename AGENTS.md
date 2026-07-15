@@ -133,3 +133,37 @@
   - TypeScript SDK：`./node_modules/.bin/jest tests/api-resources/beta/files.test.ts --runInBand`
   - Python SDK：`.venv/bin/pytest tests/api_resources/beta/test_files.py -q`
 - 结束前停止所有为 E2E 启动的本地服务。
+
+## Cursor Cloud specific instructions
+
+这些是为 Cursor Cloud 环境准备的补充说明。系统依赖（Go 1.26.2、Bun、`just`、`golangci-lint` v2.12.2、`uv`、PostgreSQL 16、Redis、MinIO/`mc`）已经安装在 VM 快照中，启动脚本（update script）只负责刷新 `go mod download` 和 `web` 的 `bun install`，不会启动任何服务。
+
+### 每次会话开始时先启动基础设施
+
+后端启动时会 **自动建库、自动迁移（dev 默认 `DB_AUTO_MIGRATE=true`）、自动 seed API key、自动创建 MinIO bucket**，所以只要把三项基础设施拉起来即可，无需手动建 `claude_api` 库或 `claude-files` bucket。这三项 **不会** 在 VM 启动时自动运行，需要手动启动一次（都写好了默认连接串，见 `internal/config/config.go`）：
+
+```bash
+sudo pg_ctlcluster 16 main start || true          # PostgreSQL :5432
+sudo redis-server --daemonize yes --port 6379 --dir /var/lib/redis
+# MinIO 前台进程，建议放到 tmux/后台：
+MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
+  minio server /home/ubuntu/minio-data --address :9000 --console-address :9001
+```
+
+- PostgreSQL 的 `pg_hba.conf` 已改为对 `127.0.0.1/32` 和 `::1/128` 使用 `trust`，因此 `postgres` 管理连接（`POSTGRES_ADMIN_URL`）和 `claude:123456` 业务连接都能免密/按默认串直接连上。
+- 起服务用现成的 `just restart-server`（后端 `127.0.0.1:38080`）和 `just restart-web`（前端 `127.0.0.1:5173`，`/api` 与 `/v1` 反代到后端）。两者都是前台阻塞命令，在 Cloud 环境里请放进 tmux 或后台运行。
+
+### 控制台登录（本地 magic-link）
+
+- 本地登录是 dev 版 magic-link：登录页输入任意邮箱（如 `demo@example.com`）+ 任意 6 位验证码（如 `000000`）即可，后端 `verify_magic_link` 会直接创建用户并下发 session cookie。
+- 已知的前端遗留问题：点击 “Verify email” 完成登录跳转的一瞬间，前端可能报 `Maximum update depth exceeded` 并白屏（后端此时已返回 200 且 cookie 已写入）。**刷新一次页面即可进入已登录的控制台**，属于既有前端行为，与环境配置无关。
+
+### Lint 的 node_modules 误报
+
+- 执行过 `web` 的 `bun install` 后，`just lint`（即 `golangci-lint run ./...`）会对 `web/node_modules/flatted/golang/...` 里一个自带的 `.go` 文件报 `govet` 误报。CI 的 Go lint job 不安装前端依赖，所以不受影响。
+- 想在本地复现 CI 的 Go lint 结果，把范围限定到仓库自身的 Go 源码目录即可：`golangci-lint run --config .golangci.yml ./ ./cmd/... ./internal/... ./tests/...`（`go test`/`go list` 本身会忽略 `node_modules`，不受影响）。
+
+### 其它注意点
+
+- Files API 需要带 header `anthropic-beta: files-api-2025-04-14`，否则返回 400（`?beta=true` 单独不够）。
+- 已知既有失败用例：`go test ./... -count=1` 中 `TestFilesAPI/routing_group_auth_applies_only_to_v1` 会失败（未鉴权访问 `/v1/unknown` 期望 401，实际返回 404）。这是当前 base 分支上与环境无关的既有行为，其余用例通过。

@@ -60,6 +60,7 @@ flowchart TD
 - 最后一题使用 Confirm；确认时按原始问题顺序一次性提交整个问题集的答案。
 - 在 Confirm 之前，不向模型发送部分答案，也不启动下一轮模型请求。
 - 存在等待确认的 Question set 时，底部 Reply composer 保持可编辑但禁止发送；发送按钮、Enter 路径和提交 handler 使用同一阻断条件，不能通过自由文本绕过 Explicit confirmation。
+- 如果 `ask_user_questions` 的输入无法解析为可渲染的 Question set，Interaction card 降级为通用工具卡，但不阻断 Reply composer；用户可以通过自由文本完成等待中的工具调用，避免 Quickstart 进入没有可用操作的等待状态。
 - 多问题确认完成后，卡片默认收起为完成摘要。用户可以点击 Review answers 展开只读结果；展开时从第一题开始，并可用 Previous/Next 在全部已提交答案之间切换。
 - 单问题完成卡继续直接显示结果，不增加可折叠回看交互；多问题专属的折叠与只读导航不会改变单问题行为。
 

@@ -1,6 +1,7 @@
 import { type Dispatch, type SetStateAction } from 'react';
 import { type Locale } from '../../../shared/i18n';
 import { type QuickstartChatItem, type QuickstartToolCall, type QuickstartToolExecutionResult } from '../types';
+import { parseQuestionInput } from './questionModel';
 
 export function cleanQuickstartAssistantText(content: string) {
   return stripQuickstartInternalNarration(stripQuickstartThinking(content))
@@ -82,7 +83,11 @@ export function awaitingQuickstartToolCalls(items: QuickstartChatItem[]) {
 
 export function hasAwaitingQuickstartQuestionSet(items: QuickstartChatItem[]) {
   return items.some(
-    (item) => item.type === 'tool' && item.call.name === 'ask_user_questions' && item.call.status === 'awaiting_user',
+    (item) =>
+      item.type === 'tool' &&
+      item.call.name === 'ask_user_questions' &&
+      item.call.status === 'awaiting_user' &&
+      parseQuestionInput(item.call.input).length > 0,
   );
 }
 

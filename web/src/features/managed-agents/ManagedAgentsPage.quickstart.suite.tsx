@@ -1262,6 +1262,45 @@ export function registerManagedAgentsQuickstartTests() {
     expect(JSON.stringify(latestProxyRequest?.body?.messages)).toContain('Use limited networking.');
   });
 
+  test('allows a chat reply when an awaiting question set cannot be rendered', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    let proxyCalls = 0;
+    const api = mockAgentsApi([], {
+      quickstartStream: () => {
+        proxyCalls += 1;
+        if (proxyCalls === 1) {
+          return quickstartToolStream('ask_user_questions', { questions: 'malformed' });
+        }
+        return quickstartTextStream('Fallback reply accepted.');
+      },
+    });
+    render(
+      <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+        <ManagedAgentsPage section="quickstart" />
+      </WorkspaceContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Structured extractor/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use template' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Next: Configure environment/i }));
+
+    expect(await screen.findByText('ask_user_questions')).toBeTruthy();
+    expect(screen.queryByTestId('quickstart-question-card')).toBeNull();
+    const reply = screen.getByLabelText('Reply…') as HTMLTextAreaElement;
+    fireEvent.change(reply, { target: { value: 'Continue with defaults.' } });
+    const sendButton = screen.getByRole('button', { name: 'Send message' });
+    expect(sendButton.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(sendButton);
+
+    expect(await screen.findByText('Fallback reply accepted.')).toBeTruthy();
+    const latestProxyRequest = api.requests
+      .filter((request) => request.url === '/api/organizations/org_test/proxy/v1/messages')
+      .at(-1);
+    expect(JSON.stringify(latestProxyRequest?.body?.messages)).toContain(
+      'User replied in chat: Continue with defaults.',
+    );
+  });
+
   test('supports multi-select, Other, Skip, and submitted question display', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
     let proxyCalls = 0;

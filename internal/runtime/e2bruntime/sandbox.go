@@ -9,6 +9,7 @@ import (
 	pathpkg "path"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -37,10 +38,10 @@ func newE2BSandboxOperations(cfg config.Config) *e2bSandboxOperations {
 }
 
 func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolved Resolution) (Sandbox, error) {
-	if strings.TrimSpace(p.cfg.E2BAPIKey) == "" && !p.cfg.E2BDebug {
+	if isBlank(p.cfg.E2BAPIKey) && !p.cfg.E2BDebug {
 		return Sandbox{}, errors.New("E2B_API_KEY is required to create a sandbox")
 	}
-	if strings.TrimSpace(resolved.Template) == "" {
+	if isBlank(resolved.Template) {
 		var err error
 		resolved, err = p.Resolve(env, work)
 		if err != nil {
@@ -77,27 +78,27 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 }
 
 func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
-	if strings.TrimSpace(sandboxID) == "" {
+	if isBlank(sandboxID) {
 		return nil
 	}
 	return p.sandboxOperations().Kill(ctx, sandboxID)
 }
 
 func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
-	if strings.TrimSpace(sandboxID) == "" {
+	if isBlank(sandboxID) {
 		return errors.New("sandbox id is required")
 	}
-	if strings.TrimSpace(filePath) == "" {
+	if isBlank(filePath) {
 		return errors.New("sandbox file path is required")
 	}
 	return p.sandboxOperations().WriteFile(ctx, sandboxID, filePath, data)
 }
 
 func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command string) error {
-	if strings.TrimSpace(sandboxID) == "" {
+	if isBlank(sandboxID) {
 		return errors.New("sandbox id is required")
 	}
-	if strings.TrimSpace(command) == "" {
+	if isBlank(command) {
 		return errors.New("sandbox command is required")
 	}
 	timeoutMs := int(p.cfg.E2BRequestTimeout / time.Millisecond)
@@ -217,7 +218,7 @@ func skillMountFromWork(work *db.EnvironmentWork) (*SkillMount, bool) {
 	if err := json.Unmarshal(raw, &mount); err != nil {
 		return nil, false
 	}
-	if strings.TrimSpace(mount.VolumeName) == "" {
+	if isBlank(mount.VolumeName) {
 		return nil, false
 	}
 	return &mount, true
@@ -230,11 +231,19 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+func isBlank(value string) bool {
+	return strings.TrimSpace(value) == ""
+}
+
 func truncateCommandOutput(value string) string {
-	value = strings.TrimSpace(value)
+	value = strings.ToValidUTF8(strings.TrimSpace(value), "\uFFFD")
 	const limit = 2048
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit] + "...[truncated]"
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut] + "...[truncated]"
 }

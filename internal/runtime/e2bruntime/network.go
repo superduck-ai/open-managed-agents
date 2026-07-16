@@ -5,30 +5,17 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/environmentconfig"
 
+	"github.com/samber/lo"
 	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
 
-func resolveNetwork(raw json.RawMessage, mcpAllowedHosts []string) (*e2b.SandboxNetworkOpts, bool, error) {
-	var config struct {
-		Type       string `json:"type"`
-		Networking *struct {
-			Type                 string   `json:"type"`
-			AllowedHosts         []string `json:"allowed_hosts"`
-			AllowPackageManagers bool     `json:"allow_package_managers"`
-			AllowMCPServers      bool     `json:"allow_mcp_servers"`
-		} `json:"networking"`
-	}
-	if len(raw) == 0 {
+func resolveNetwork(config environmentconfig.Config, mcpAllowedHosts []string) (*e2b.SandboxNetworkOpts, bool, error) {
+	if config.Type != environmentconfig.TypeCloud || config.Networking == nil || config.Networking.Type == environmentconfig.NetworkTypeUnrestricted {
 		return nil, true, nil
 	}
-	if err := json.Unmarshal(raw, &config); err != nil {
-		return nil, false, err
-	}
-	if config.Type != "cloud" || config.Networking == nil || config.Networking.Type == "unrestricted" {
-		return nil, true, nil
-	}
-	if config.Networking.Type != "limited" {
+	if config.Networking.Type != environmentconfig.NetworkTypeLimited {
 		return nil, false, nil
 	}
 	hosts := append([]string(nil), config.Networking.AllowedHosts...)
@@ -80,18 +67,9 @@ func packageManagerHosts() []string {
 }
 
 func uniqueStrings(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
+	values = lo.FilterMap(values, func(value string, _ int) (string, bool) {
 		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
+		return value, value != ""
+	})
+	return lo.Uniq(values)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,11 +12,164 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
+
+	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
+
+func TestE2BProviderPropagatesSandboxOperationFailure(t *testing.T) {
+	wantErr := errors.New("run failed")
+	fake := &fakeSandboxOperations{runErr: wantErr}
+	provider := &E2BProvider{
+		cfg:       config.Config{E2BRequestTimeout: 17 * time.Second},
+		sandboxes: fake,
+	}
+
+	err := provider.RunCommand(context.Background(), "sandbox-test", "exit 1")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("RunCommand error = %v, want %v", err, wantErr)
+	}
+	if fake.runTimeoutMs != 17000 {
+		t.Fatalf("RunCommand timeout = %d, want 17000", fake.runTimeoutMs)
+	}
+}
+
+func TestE2BProviderDelegatesSandboxOperationsWithoutCredentials(t *testing.T) {
+	fake := &fakeSandboxOperations{createResult: Sandbox{ID: "sandbox-created"}}
+	provider := &E2BProvider{cfg: config.Config{E2BDebug: true}, sandboxes: fake}
+	resolved := Resolution{
+		Template:            "template-test",
+		Metadata:            map[string]string{"environment_id": "env-test"},
+		Envs:                map[string]string{"ENV_NODE_VERSION": "22"},
+		Timeout:             2 * time.Minute,
+		AllowInternetAccess: true,
+		Network:             &e2b.SandboxNetworkOpts{AllowOut: []string{"api.example.com"}},
+	}
+
+	sandbox, err := provider.Create(context.Background(), db.Environment{}, nil, resolved)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if sandbox.ID != "sandbox-created" || fake.createTemplate != "template-test" {
+		t.Fatalf("Create result/template = %#v/%q", sandbox, fake.createTemplate)
+	}
+	if fake.createOpts == nil || fake.createOpts.TimeoutMs == nil || *fake.createOpts.TimeoutMs != 120000 {
+		t.Fatalf("Create opts = %#v, want 120000ms timeout", fake.createOpts)
+	}
+	if !reflect.DeepEqual(fake.createOpts.Metadata, resolved.Metadata) || !reflect.DeepEqual(fake.createOpts.Envs, resolved.Envs) || !reflect.DeepEqual(fake.createOpts.Network, resolved.Network) {
+		t.Fatalf("Create opts = %#v, want resolved metadata/env/network", fake.createOpts)
+	}
+	if fake.createOpts.AllowInternetAccess == nil || !*fake.createOpts.AllowInternetAccess {
+		t.Fatalf("Create AllowInternetAccess = %#v, want true", fake.createOpts.AllowInternetAccess)
+	}
+
+	payload := []byte("payload")
+	if err := provider.WriteFile(context.Background(), sandbox.ID, "/tmp/input", payload); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if fake.writeSandboxID != sandbox.ID || fake.writePath != "/tmp/input" || !reflect.DeepEqual(fake.writeData, payload) {
+		t.Fatalf("WriteFile delegation = id=%q path=%q data=%q", fake.writeSandboxID, fake.writePath, fake.writeData)
+	}
+	if err := provider.RunCommand(context.Background(), sandbox.ID, "echo ready"); err != nil {
+		t.Fatalf("RunCommand: %v", err)
+	}
+	if fake.runSandboxID != sandbox.ID || fake.runCommand != "echo ready" || fake.runTimeoutMs != 60000 {
+		t.Fatalf("RunCommand delegation = id=%q command=%q timeout=%d", fake.runSandboxID, fake.runCommand, fake.runTimeoutMs)
+	}
+	if err := provider.Kill(context.Background(), sandbox.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if fake.killSandboxID != sandbox.ID {
+		t.Fatalf("Kill sandbox ID = %q, want %q", fake.killSandboxID, sandbox.ID)
+	}
+}
+
+type fakeSandboxOperations struct {
+	createTemplate string
+	createOpts     *e2b.SandboxOpts
+	createResult   Sandbox
+	createErr      error
+	killSandboxID  string
+	killErr        error
+	writeSandboxID string
+	writePath      string
+	writeData      []byte
+	writeErr       error
+	runSandboxID   string
+	runCommand     string
+	runTimeoutMs   int
+	runErr         error
+}
+
+func (fake *fakeSandboxOperations) Create(_ context.Context, template string, opts *e2b.SandboxOpts) (Sandbox, error) {
+	fake.createTemplate = template
+	fake.createOpts = opts
+	return fake.createResult, fake.createErr
+}
+
+func (fake *fakeSandboxOperations) Kill(_ context.Context, sandboxID string) error {
+	fake.killSandboxID = sandboxID
+	return fake.killErr
+}
+
+func (fake *fakeSandboxOperations) WriteFile(_ context.Context, sandboxID string, filePath string, data []byte) error {
+	fake.writeSandboxID = sandboxID
+	fake.writePath = filePath
+	fake.writeData = append([]byte(nil), data...)
+	return fake.writeErr
+}
+
+func (fake *fakeSandboxOperations) RunCommand(_ context.Context, sandboxID string, command string, timeoutMs int) error {
+	fake.runSandboxID = sandboxID
+	fake.runCommand = command
+	fake.runTimeoutMs = timeoutMs
+	return fake.runErr
+}
+
+func TestTruncateCommandOutputNormalizesInvalidUTF8(t *testing.T) {
+	got := truncateCommandOutput(string([]byte{'o', 'k', 0xff}))
+	if got != "ok\uFFFD" {
+		t.Fatalf("truncateCommandOutput = %q, want %q", got, "ok\uFFFD")
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateCommandOutput returned invalid UTF-8: %q", got)
+	}
+}
+
+func TestTruncateCommandOutputDoesNotSplitUTF8Rune(t *testing.T) {
+	got := truncateCommandOutput(strings.Repeat("a", 2047) + "界tail")
+	want := strings.Repeat("a", 2047) + "...[truncated]"
+	if got != want {
+		t.Fatalf("truncateCommandOutput = %q, want %q", got, want)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateCommandOutput returned invalid UTF-8: %q", got)
+	}
+}
+
+func TestTruncateCommandOutputDoesNotSplitEmoji(t *testing.T) {
+	got := truncateCommandOutput(strings.Repeat("a", 2046) + "🐥tail")
+	want := strings.Repeat("a", 2046) + "...[truncated]"
+	if got != want {
+		t.Fatalf("truncateCommandOutput = %q, want %q", got, want)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateCommandOutput returned invalid UTF-8: %q", got)
+	}
+}
+
+func TestUniqueStringsTrimsFiltersAndKeepsFirstOrder(t *testing.T) {
+	got := uniqueStrings([]string{" b ", "a", "b", "", " a ", "c"})
+	want := []string{"b", "a", "c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("uniqueStrings = %#v, want %#v", got, want)
+	}
+}
 
 func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
 	tests := []struct {

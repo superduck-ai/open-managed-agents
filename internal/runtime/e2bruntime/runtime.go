@@ -8,6 +8,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/environmentconfig"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 
 	e2b "github.com/superduck-ai/e2b-go-sdk"
@@ -70,7 +71,11 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 		resolved.Envs["ANTHROPIC_WORK_ID"] = work.ExternalID
 	}
 
-	network, allowInternet, err := resolveNetwork(env.Config, mcpAllowedHostsFromWork(work))
+	environmentConfig, err := environmentconfig.DecodeStored(env.Config)
+	if err != nil {
+		return Resolution{}, err
+	}
+	network, allowInternet, err := resolveNetwork(environmentConfig, mcpAllowedHostsFromWork(work))
 	if err != nil {
 		return Resolution{}, err
 	}

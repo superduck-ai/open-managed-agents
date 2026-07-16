@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/environmentconfig"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
@@ -26,8 +26,6 @@ import (
 
 const maxEnvironmentBodySize = 4 << 20
 
-var allowedHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
-
 type Handler struct {
 	cfg    config.Config
 	db     *db.DB
@@ -35,17 +33,17 @@ type Handler struct {
 }
 
 type environmentResponse struct {
-	ID          string          `json:"id"`
-	ArchivedAt  *string         `json:"archived_at"`
-	Config      json.RawMessage `json:"config"`
-	CreatedAt   string          `json:"created_at"`
-	Description string          `json:"description"`
-	Metadata    json.RawMessage `json:"metadata"`
-	Name        string          `json:"name"`
-	Scope       string          `json:"scope"`
-	State       string          `json:"state"`
-	Type        string          `json:"type"`
-	UpdatedAt   string          `json:"updated_at"`
+	ID          string                     `json:"id"`
+	ArchivedAt  *string                    `json:"archived_at"`
+	Config      environmentconfig.Response `json:"config"`
+	CreatedAt   string                     `json:"created_at"`
+	Description string                     `json:"description"`
+	Metadata    json.RawMessage            `json:"metadata"`
+	Name        string                     `json:"name"`
+	Scope       string                     `json:"scope"`
+	State       string                     `json:"state"`
+	Type        string                     `json:"type"`
+	UpdatedAt   string                     `json:"updated_at"`
 }
 
 type environmentPageResponse struct {
@@ -164,7 +162,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	configRaw, err := normalizeConfigForCreate(fields["config"])
+	environmentConfig, err := environmentconfig.NormalizeCreate(fields["config"])
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
+	}
+	configRaw, err := environmentconfig.EncodeStored(environmentConfig)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -337,7 +340,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 		}
 	}
 	if raw, ok := fields["config"]; ok {
-		next.Config, err = normalizeConfigForUpdate(current.Config, raw)
+		environmentConfig, normalizeErr := environmentconfig.NormalizeUpdate(current.Config, raw)
+		if normalizeErr != nil {
+			writeBadRequest(w, r, normalizeErr)
+			return
+		}
+		next.Config, err = environmentconfig.EncodeStored(environmentConfig)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -747,7 +755,7 @@ func (h *Handler) authorizeWork(w http.ResponseWriter, r *http.Request) (db.Envi
 				WorkspaceID:      principal.WorkspaceID,
 				Name:             "python-data-analysis",
 				Description:      "Fixture environment",
-				Config:           defaultCloudConfig(),
+				Config:           environmentconfig.DefaultCloudStored(),
 				Metadata:         json.RawMessage(`{}`),
 				Provider:         "e2b",
 				ResolvedTemplate: h.resolvedTemplate(nil),
@@ -799,7 +807,7 @@ func responseFromEnvironment(env db.Environment) environmentResponse {
 	return environmentResponse{
 		ID:          env.ExternalID,
 		ArchivedAt:  optionalTime(env.ArchivedAt),
-		Config:      platformEnvironmentConfigForResponse(env.Config),
+		Config:      environmentconfig.ResponseFromStored(env.Config),
 		CreatedAt:   formatTime(env.CreatedAt),
 		Description: env.Description,
 		Metadata:    platformEnvironmentMetadataForResponse(env.Metadata),
@@ -853,7 +861,7 @@ func (h *Handler) fixtureEnvironment(environmentID string, archived bool) enviro
 	return environmentResponse{
 		ID:          environmentID,
 		ArchivedAt:  archivedAt,
-		Config:      platformEnvironmentConfigForResponse(defaultCloudConfig()),
+		Config:      environmentconfig.ResponseFromStored(environmentconfig.DefaultCloudStored()),
 		CreatedAt:   now,
 		Description: "Fixture environment",
 		Metadata:    json.RawMessage(`{}`),
@@ -870,70 +878,6 @@ func environmentStateForArchived(archived bool) string {
 		return "archived"
 	}
 	return "active"
-}
-
-func platformEnvironmentConfigForResponse(raw json.RawMessage) json.RawMessage {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return platformDefaultCloudConfigForResponse()
-	}
-	configType := rawStringOrEmpty(fields["type"])
-	switch configType {
-	case "self_hosted":
-		out, _ := marshalRaw(map[string]any{"type": "self_hosted"})
-		return out
-	case "", "cloud":
-		out, _ := marshalRaw(map[string]any{
-			"type":        "cloud",
-			"packages":    platformPackagesForResponse(fields["packages"]),
-			"networking":  platformNetworkingForResponse(fields["networking"]),
-			"init_script": rawStringOrEmpty(fields["init_script"]),
-			"environment": platformObjectForResponse(fields["environment"]),
-		})
-		return out
-	default:
-		return raw
-	}
-}
-
-func platformDefaultCloudConfigForResponse() json.RawMessage {
-	out, _ := marshalRaw(map[string]any{
-		"type":        "cloud",
-		"packages":    platformPackagesForResponse(nil),
-		"networking":  platformNetworkingForResponse(nil),
-		"init_script": "",
-		"environment": map[string]any{},
-	})
-	return out
-}
-
-func platformPackagesForResponse(raw json.RawMessage) map[string]any {
-	var fields map[string]json.RawMessage
-	if len(raw) > 0 && !isJSONNull(raw) {
-		_ = json.Unmarshal(raw, &fields)
-	}
-	out := emptyPackages()
-	for _, manager := range []string{"apt", "cargo", "gem", "go", "npm", "pip"} {
-		out[manager] = platformStringArrayForResponse(fields[manager])
-	}
-	return out
-}
-
-func platformNetworkingForResponse(raw json.RawMessage) map[string]any {
-	var fields map[string]json.RawMessage
-	if len(raw) > 0 && !isJSONNull(raw) {
-		_ = json.Unmarshal(raw, &fields)
-	}
-	networkType := rawStringOrEmpty(fields["type"])
-	if networkType == "" {
-		networkType = "limited"
-	}
-	return map[string]any{
-		"type":                   networkType,
-		"allow_mcp_servers":      platformBoolForResponse(fields["allow_mcp_servers"]),
-		"allow_package_managers": platformBoolForResponse(fields["allow_package_managers"]),
-		"allowed_hosts":          platformStringArrayForResponse(fields["allowed_hosts"]),
-	}
 }
 
 func platformEnvironmentMetadataForResponse(raw json.RawMessage) json.RawMessage {
@@ -957,31 +901,6 @@ func platformObjectForResponse(raw json.RawMessage) map[string]any {
 func platformObjectRawForResponse(raw json.RawMessage) json.RawMessage {
 	out, _ := marshalRaw(platformObjectForResponse(raw))
 	return out
-}
-
-func platformStringArrayForResponse(raw json.RawMessage) []string {
-	var values []string
-	if len(raw) == 0 || isJSONNull(raw) {
-		return []string{}
-	}
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return []string{}
-	}
-	if values == nil {
-		return []string{}
-	}
-	return values
-}
-
-func platformBoolForResponse(raw json.RawMessage) bool {
-	var value bool
-	if len(raw) == 0 || isJSONNull(raw) {
-		return false
-	}
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return false
-	}
-	return value
 }
 
 func platformWorkersPollingForResponse(value *int) *int {
@@ -1095,196 +1014,6 @@ func parseScope(raw json.RawMessage) (*string, error) {
 	return &value, nil
 }
 
-func normalizeConfigForCreate(raw json.RawMessage) (json.RawMessage, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return defaultCloudConfig(), nil
-	}
-	return normalizeFullConfig(raw)
-}
-
-func normalizeConfigForUpdate(current json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
-	if isJSONNull(raw) {
-		return defaultCloudConfig(), nil
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, errors.New("config must be an object")
-	}
-	configType := rawStringOrEmpty(fields["type"])
-	if configType == "" {
-		configType = rawConfigType(current)
-	}
-	if configType == "self_hosted" {
-		return marshalRaw(map[string]any{"type": "self_hosted"})
-	}
-	if configType != "cloud" {
-		return nil, errors.New("config.type must be cloud or self_hosted")
-	}
-	base := normalizedCloudValue(defaultCloudConfig())
-	if rawConfigType(current) == "cloud" {
-		base = normalizedCloudValue(current)
-	}
-	if rawPackages, ok := fields["packages"]; ok {
-		packages, err := normalizePackages(rawPackages)
-		if err != nil {
-			return nil, err
-		}
-		base["packages"] = packages
-	}
-	if rawNetworking, ok := fields["networking"]; ok {
-		networking, err := normalizeNetworking(rawNetworking)
-		if err != nil {
-			return nil, err
-		}
-		base["networking"] = networking
-	}
-	return marshalRaw(base)
-}
-
-func normalizeFullConfig(raw json.RawMessage) (json.RawMessage, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, errors.New("config must be an object")
-	}
-	configType := rawStringOrEmpty(fields["type"])
-	if configType == "" {
-		configType = "cloud"
-	}
-	switch configType {
-	case "self_hosted":
-		return marshalRaw(map[string]any{"type": "self_hosted"})
-	case "cloud":
-		packages, err := normalizePackages(fields["packages"])
-		if err != nil {
-			return nil, err
-		}
-		networking, err := normalizeNetworking(fields["networking"])
-		if err != nil {
-			return nil, err
-		}
-		return marshalRaw(map[string]any{"type": "cloud", "packages": packages, "networking": networking})
-	default:
-		return nil, errors.New("config.type must be cloud or self_hosted")
-	}
-}
-
-func defaultCloudConfig() json.RawMessage {
-	raw, _ := marshalRaw(map[string]any{
-		"type":       "cloud",
-		"packages":   emptyPackages(),
-		"networking": map[string]any{"type": "unrestricted"},
-	})
-	return raw
-}
-
-func normalizedCloudValue(raw json.RawMessage) map[string]any {
-	var value map[string]any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		value = map[string]any{}
-	}
-	if _, ok := value["packages"]; !ok {
-		value["packages"] = emptyPackages()
-	}
-	if _, ok := value["networking"]; !ok {
-		value["networking"] = map[string]any{"type": "unrestricted"}
-	}
-	value["type"] = "cloud"
-	return value
-}
-
-func emptyPackages() map[string]any {
-	return map[string]any{
-		"type":  "packages",
-		"apt":   []string{},
-		"cargo": []string{},
-		"gem":   []string{},
-		"go":    []string{},
-		"npm":   []string{},
-		"pip":   []string{},
-	}
-}
-
-func normalizePackages(raw json.RawMessage) (map[string]any, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return emptyPackages(), nil
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, errors.New("config.packages must be an object or null")
-	}
-	out := emptyPackages()
-	for _, manager := range []string{"apt", "cargo", "gem", "go", "npm", "pip"} {
-		rawList, ok := fields[manager]
-		if !ok || isJSONNull(rawList) {
-			continue
-		}
-		values, err := stringArray(rawList, "config.packages."+manager)
-		if err != nil {
-			return nil, err
-		}
-		out[manager] = values
-	}
-	return out, nil
-}
-
-func normalizeNetworking(raw json.RawMessage) (map[string]any, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return map[string]any{"type": "unrestricted"}, nil
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, errors.New("config.networking must be an object or null")
-	}
-	networkType := rawStringOrEmpty(fields["type"])
-	if networkType == "" {
-		networkType = "unrestricted"
-	}
-	switch networkType {
-	case "unrestricted":
-		return map[string]any{"type": "unrestricted"}, nil
-	case "limited":
-		hosts := []string{}
-		if rawHosts, ok := fields["allowed_hosts"]; ok && !isJSONNull(rawHosts) {
-			values, err := stringArray(rawHosts, "config.networking.allowed_hosts")
-			if err != nil {
-				return nil, err
-			}
-			for _, host := range values {
-				if err := validateAllowedHost(host); err != nil {
-					return nil, err
-				}
-			}
-			hosts = values
-		}
-		allowMCP, err := optionalBool(fields["allow_mcp_servers"], false, "config.networking.allow_mcp_servers")
-		if err != nil {
-			return nil, err
-		}
-		allowPackages, err := optionalBool(fields["allow_package_managers"], false, "config.networking.allow_package_managers")
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{
-			"type":                   "limited",
-			"allowed_hosts":          hosts,
-			"allow_mcp_servers":      allowMCP,
-			"allow_package_managers": allowPackages,
-		}, nil
-	default:
-		return nil, errors.New("config.networking.type must be unrestricted or limited")
-	}
-}
-
-func validateAllowedHost(host string) error {
-	if strings.Contains(host, "://") || strings.Contains(host, "/") || !allowedHostPattern.MatchString(host) {
-		return errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
-	}
-	if len(host) > 253 {
-		return errors.New("config.networking.allowed_hosts entries must be at most 253 characters")
-	}
-	return nil
-}
-
 func normalizeMetadata(raw json.RawMessage) (json.RawMessage, error) {
 	if isJSONNull(raw) {
 		return json.RawMessage(`{}`), nil
@@ -1339,52 +1068,6 @@ func validateMetadata(metadata map[string]string) error {
 		}
 	}
 	return nil
-}
-
-func stringArray(raw json.RawMessage, name string) ([]string, error) {
-	var values []string
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return nil, fmt.Errorf("%s must be an array of strings", name)
-	}
-	for _, value := range values {
-		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("%s entries must be non-empty strings", name)
-		}
-		if len(value) > 255 {
-			return nil, fmt.Errorf("%s entries must be at most 255 characters", name)
-		}
-	}
-	return values, nil
-}
-
-func optionalBool(raw json.RawMessage, fallback bool, name string) (bool, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return fallback, nil
-	}
-	var value bool
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return false, fmt.Errorf("%s must be a boolean", name)
-	}
-	return value, nil
-}
-
-func rawStringOrEmpty(raw json.RawMessage) string {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return ""
-	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return value
-}
-
-func rawConfigType(raw json.RawMessage) string {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return ""
-	}
-	return rawStringOrEmpty(fields["type"])
 }
 
 func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {

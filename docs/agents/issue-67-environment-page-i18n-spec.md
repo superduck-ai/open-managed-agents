@@ -13,6 +13,7 @@
 - 中文界面统一采用：Environment「环境」、Networking「网络访问」、Packages「软件包」、Package manager「包管理器」、Metadata「元数据」、Work queue「工作队列」、Work「工作项」、Sandbox「沙箱」、Cloud「云端」、Unrestricted「不受限」、Limited「受限」、Workspace「工作区」。API 字段名、枚举值、ID、`pip`、`npm` 等保持原文。
 - 创建能力保持不变：对话框只展示 Name、Hosting type 和 Description，仍提交默认 unrestricted Networking、空 Packages 与空 Metadata。
 - Environment 列表、详情和 Work queue 的相对时间使用现有基于 `Intl.RelativeTimeFormat` 的 locale-aware formatter，不扩展为全应用时间重构。
+- Environment 详情概览中的 Scope 对已知 `organization`、`account`、`workspace` 枚举显示本地化标签，API 原值保持不变；未知 scope 保留原始值用于诊断。
 - 编辑表单保存初始基线并计算 dirty 状态。未修改时允许直接关闭；有修改时，应用内取消、关闭、普通内部链接、浏览器 Back/Forward 与 TanStack Router 程序化导航显示本地化 `AlertDialog`，刷新、关闭标签页或离站使用原生 `beforeunload`。保存成功后解除保护；保存期间禁止关闭。
 - 提交时显示本地化 Saving 状态，并在 handler 入口使用 `submitting` guard。连续提交只产生一个请求和一个成功 Toast，不额外显示“重复提交”错误；请求失败保留输入并允许重试。
 - 客户端校验与当前 Go 后端 `len` 语义一致：Name trim 后非空；单个 Package token 经 UTF-8 编码后最长 255 字节；Metadata 最多 16 项；key 必填且经 UTF-8 编码后最长 64 字节；value 经 UTF-8 编码后最长 512 字节；重复 key 拒绝提交，避免 map 序列化时静默覆盖。不限制 lowercase，并替换现有不准确的 lowercase 帮助文案。
@@ -56,6 +57,7 @@
 - 未修改直接关闭、dirty 时继续编辑/放弃修改、普通内部链接、浏览器 Back/Forward、TanStack Router 程序化导航、`beforeunload` 注册与移除、保存成功后解除保护、保存期间不可关闭。
 - 连续提交只发出一个请求并只显示一次成功 Toast；失败后输入保留且可重试。
 - 所有已知 Work 状态、未知状态 fallback，以及 English/Chinese locale-aware 相对时间。
+- Environment 详情中 `organization`、`account`、`workspace` scope 的 English/Chinese 标签，以及未知 scope 的原值 fallback。
 - 归档 Environment 的只读 Alert、禁用 Edit、配置与 Work queue 仍可见，并且页面不存在 Version、Snapshot、Diff 或 Rollback 入口。
 - 复用 `web/src/shared/i18n/I18nProvider.test.tsx` 的 English/Chinese key-parity 守卫。
 

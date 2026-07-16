@@ -124,7 +124,7 @@ import {
 } from './model';
 import { EnvironmentArchivedNotice, EnvironmentReadOnlySections, EnvironmentWorkPanel } from './environment-details';
 import { EnvironmentInlineEditor } from './environment';
-import { environmentErrorMessage, localizedRelativeTime } from './environment-model';
+import { environmentErrorMessage, environmentScopeLabel, localizedRelativeTime } from './environment-model';
 
 export function ManagedEntityDetailPage({
   config,
@@ -439,10 +439,7 @@ export function ManagedEntityOverview({
           },
           {
             label: msg('managedAgents.environments.overview.scope', 'Scope'),
-            value:
-              (entity as EnvironmentApiResponse).scope === 'workspace'
-                ? msg('managedAgents.environments.workspace', 'Workspace')
-                : (entity as EnvironmentApiResponse).scope || '—',
+            value: environmentScopeLabel((entity as EnvironmentApiResponse).scope, msg),
           },
           {
             label: msg('common.created', 'Created'),

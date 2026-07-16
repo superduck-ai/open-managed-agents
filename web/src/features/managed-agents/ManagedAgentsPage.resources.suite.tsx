@@ -1814,7 +1814,8 @@ export function registerManagedAgentsResourceTests() {
 
   test('localizes environment details, work states, and relative times in Chinese', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
-    mockManagedResourceApi();
+    const { resources } = mockManagedResourceApi();
+    resources.environments[0].scope = 'organization';
     renderManagedAgentsPage('environments', 'zh-CN');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
@@ -1823,6 +1824,8 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('heading', { name: '网络访问' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '软件包' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '元数据' })).toBeTruthy();
+    expect(screen.getByText('组织')).toBeTruthy();
+    expect(screen.queryByText('organization')).toBeNull();
     expect(screen.queryByText(/lowercase/i)).toBeNull();
     expect(await screen.findByRole('heading', { name: '工作队列' })).toBeTruthy();
     for (const status of ['排队中', '启动中', '运行中', '停止中', '已停止', '失败']) {

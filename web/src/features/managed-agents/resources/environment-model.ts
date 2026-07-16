@@ -245,3 +245,17 @@ export function environmentWorkStatusLabel(status: string | undefined, msg: I18n
   }
   return msg('managedAgents.environments.work.status.unknown', 'Unknown status ({status})', { status: value });
 }
+
+export function environmentScopeLabel(scope: string | undefined, msg: I18nMsg) {
+  const value = scope?.trim();
+  if (!value) {
+    return '—';
+  }
+  const known: Record<string, [string, string]> = {
+    account: ['managedAgents.environments.account', 'Account'],
+    organization: ['managedAgents.environments.organization', 'Organization'],
+    workspace: ['managedAgents.environments.workspace', 'Workspace'],
+  };
+  const translation = known[value.toLowerCase()];
+  return translation ? msg(translation[0], translation[1]) : value;
+}

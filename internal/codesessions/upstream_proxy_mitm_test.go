@@ -60,6 +60,19 @@ func TestLoadUpstreamProxyCertificateAuthorityRejectsInvalidPrivateKey(t *testin
 	}
 }
 
+func TestUpstreamProxyMITMTransportBoundsResponseHeaderWait(t *testing.T) {
+	t.Parallel()
+
+	transport := newUpstreamProxyMITMTransport(&upstreamProxyMITMTLSDialer{})
+	if transport.ResponseHeaderTimeout != upstreamProxyMITMHeaderTimeout {
+		t.Fatalf(
+			"ResponseHeaderTimeout = %s, want %s",
+			transport.ResponseHeaderTimeout,
+			upstreamProxyMITMHeaderTimeout,
+		)
+	}
+}
+
 func TestParseUpstreamProxyCAPrivateKeySupportsDeploymentPEMFormats(t *testing.T) {
 	t.Parallel()
 

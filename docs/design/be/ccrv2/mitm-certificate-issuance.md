@@ -307,6 +307,7 @@ TLS 解密后使用 `httputil.ReverseProxy` 转发 HTTP/1.1，并执行以下限
 - 删除 `Proxy-Authorization` 和 `Proxy-Connection`，防止 CCR 凭证泄漏给真实网站；
 - 不自动启用 HTTP/2；
 - request header 读取超时 15 秒；
+- 真实上游在请求写完后必须于 15 秒内返回 response header；该限制不约束后续响应体和 SSE 流；
 - idle timeout 为 2 分钟；
 - 当前不记录解密后的请求 header、响应 header 或 body。
 
@@ -385,6 +386,7 @@ sequenceDiagram
 | 真实上游 TLS | 拨号、证书链、hostname 或 handshake 失败 | framed `502`，不返回 CONNECT `200` |
 | Sandbox TLS | SNI 不匹配或不信任根 CA | TLS handshake 失败 |
 | 解密后 HTTP | Host/URL 跨目标 | HTTP `421` |
+| 解密后 HTTP | 真实上游 15 秒内未返回响应头 | HTTP `502`；终止该次上游请求 |
 
 ## 测试与验收
 

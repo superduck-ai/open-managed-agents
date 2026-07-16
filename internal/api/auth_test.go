@@ -5,7 +5,38 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
+
+func TestV1FallbacksRequireAuthentication(t *testing.T) {
+	t.Parallel()
+
+	server := NewServer(config.Config{}, nil, nil)
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "unknown path", method: http.MethodGet, path: "/v1/not-existing"},
+		{name: "unsupported method", method: http.MethodDelete, path: "/v1/messages"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			request := httptest.NewRequest(test.method, test.path, nil)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
+			}
+			if body := response.Body.String(); !strings.Contains(body, `"type":"authentication_error"`) {
+				t.Fatalf("body = %q, want authentication_error", body)
+			}
+		})
+	}
+}
 
 func TestV1AuthenticationSelection(t *testing.T) {
 	tests := []struct {

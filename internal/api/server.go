@@ -123,12 +123,12 @@ func (s *Server) registerVersionedAPIRoutes(router chi.Router) {
 		// code-session runtime、worker 与旧版 ingress 各自执行协议鉴权，因此注册在 workspace/service 通用鉴权组之外。
 		s.codeSessions.RegisterV1Routes(r)
 		platformapi.RegisterPlatformPrivacyConsentRoutes(r)
-		r.Group(func(r chi.Router) {
-			r.Use(s.v1AuthMiddleware)
+		r.With(s.v1AuthMiddleware).Group(func(r chi.Router) {
 			s.registerAuthenticatedV1Routes(r)
 		})
-		// 未知的 /v1 路径也先鉴权，保持 API 级鉴权边界一致。
+		// 未知路径和错误 method 的 fallback 也先鉴权，保持统一的 API 级鉴权边界和错误语义。
 		r.With(s.v1AuthMiddleware).NotFound(notFound)
+		r.With(s.v1AuthMiddleware).MethodNotAllowed(notFound)
 	})
 	router.Route("/v2", s.codeSessions.RegisterV2Routes)
 }

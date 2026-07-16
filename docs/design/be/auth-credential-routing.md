@@ -60,7 +60,7 @@ func (s *Server) v1AuthMiddleware(next http.Handler) http.Handler {
 }
 ```
 
-`registerVersionedAPIRoutes` 在一个 `/v1` chi 子路由中完成组装：`codesessions.Handler` 注册 runtime 路由并执行各自的鉴权策略，privacy consent 保持开放，其余资源统一放入 `v1AuthMiddleware` 路由组。实现不再创建结构相同的 service/platform 两套路由。
+`registerVersionedAPIRoutes` 在一个 `/v1` chi 子路由中完成组装：`codesessions.Handler` 注册 runtime 路由并执行各自的鉴权策略，privacy consent 保持开放，其余资源统一放入 `v1AuthMiddleware` 路由组。实现不再创建结构相同的 service/platform 两套路由。子路由的 `NotFound` 与 `MethodNotAllowed` fallback 也通过 `v1AuthMiddleware`，保证未知路径和已知路径上的错误 method 不会绕过 API 级鉴权边界。
 
 ### 2.2 凭证提取
 
@@ -166,7 +166,7 @@ http.SetCookie(w, &http.Cookie{
 
 ### 5.1 单元测试
 
-`internal/api/auth_test.go` — `TestV1AuthenticationSelection`（12个用例）：
+`internal/api/auth_test.go` — `TestV1AuthenticationSelection`（12个用例）和 `TestV1FallbacksRequireAuthentication`：
 
 覆盖：
 
@@ -175,6 +175,7 @@ http.SetCookie(w, &http.Cookie{
 - session cookie 在 `localhost:5173`、`localhost:38080`、`oma.duck.ai`、`api.anthropic.com` 上都进 platform
 - API key + session cookie 同时存在 → API key 胜出，进 service
 - 无凭证时默认进 platform（保留开放路由）
+- 未知 `/v1` 路径和已知路径上的错误 method 都先鉴权，未携带凭证时返回 `401`
 
 ### 5.2 集成测试
 
@@ -197,8 +198,8 @@ http.SetCookie(w, &http.Cookie{
 
 | 文件 | 变更 |
 |------|------|
-| `internal/api/server.go` | `/v1` 资源统一注册到 `registerVersionedAPIRoutes`；持有 `codesessions.Handler`，并把同一个底层 `codesessions.Service` 注入 sessions handler；`v1AuthMiddleware` 按凭证选择鉴权链；移除双 router 入口分流；移除中间件中4处 `isPlatformHost` 检查；删除 Host 判断相关死函数 |
-| `internal/api/auth_test.go` | 测试用例从 host 驱动改为凭证驱动，12个用例覆盖 API key、session cookie、双凭证、无凭证场景 |
+| `internal/api/server.go` | `/v1` 资源统一注册到 `registerVersionedAPIRoutes`；持有 `codesessions.Handler`，并把同一个底层 `codesessions.Service` 注入 sessions handler；`v1AuthMiddleware` 按凭证选择鉴权链并保护 NotFound/MethodNotAllowed fallback；移除双 router 入口分流；移除中间件中4处 `isPlatformHost` 检查；删除 Host 判断相关死函数 |
+| `internal/api/auth_test.go` | 测试用例从 host 驱动改为凭证驱动，覆盖 API key、session cookie、双凭证、无凭证场景及两个 `/v1` 鉴权 fallback |
 | `tests/files_api_test.go` | 更新2个集成测试用例：api key 在任意 host 返回 200，session cookie 在任意 host 返回 200 |
 | `internal/platformapi/platform_auth_routes.go` | `sessionKey` cookie 添加 `HttpOnly: true` 和 `SameSite: Lax` |
 | `docs/design/be/auth-credential-routing.md` | 本设计文档 |

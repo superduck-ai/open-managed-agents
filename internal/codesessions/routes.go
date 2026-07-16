@@ -32,23 +32,27 @@ func (h *Handler) registerRuntimeRoutes(router chi.Router) {
 }
 
 func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
-	const sessionPath = "/code/sessions/{code_session_id}"
-
-	router.Get(sessionPath, h.handleCodeSession)
-	router.Post(sessionPath, h.handleCodeSession)
-	router.Put(sessionPath, h.handleCodeSession)
-	router.Post(sessionPath+"/bridge", h.handleCodeSessionBridge)
-	router.Get(sessionPath+"/worker", h.handleGetCodeSessionWorker)
-	router.Put(sessionPath+"/worker", h.handlePutCodeSessionWorker)
-	router.HandleFunc(sessionPath+"/worker/internal-events", h.handleCodeSessionWorkerInternalEvents)
-	router.Get(sessionPath+"/worker/events/stream", h.handleCodeSessionWorkerEventsStream)
-	router.Post(sessionPath+"/worker/register", h.handleCodeSessionWorkerRegister)
-	router.Post(sessionPath+"/worker/events", h.handleCodeSessionWorkerEvents)
-	router.Post(sessionPath+"/worker/events/delivery", h.handleCodeSessionWorkerDelivery)
-	router.Post(sessionPath+"/worker/diagnostics", h.handleCodeSessionWorkerDiagnostics)
-	router.Post(sessionPath+"/worker/heartbeat", h.handleCodeSessionWorkerHeartbeat)
-	router.Post(sessionPath+"/worker/otlp/metrics", h.handleCodeSessionWorkerOTLP)
-	router.Post(sessionPath+"/worker/otlp/logs", h.handleCodeSessionWorkerOTLP)
+	// code-session ID 只在资源根路径声明一次；bridge 和 worker 都作为该 session 的子资源注册，
+	// 避免通过字符串拼接重复完整路径，并让后续资源级中间件可以挂载在明确的 chi 子路由上。
+	router.Route("/code/sessions/{code_session_id}", func(sessionRouter chi.Router) {
+		sessionRouter.Get("/", h.handleCodeSession)
+		sessionRouter.Post("/", h.handleCodeSession)
+		sessionRouter.Put("/", h.handleCodeSession)
+		sessionRouter.Post("/bridge", h.handleCodeSessionBridge)
+		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
+			workerRouter.Get("/", h.handleGetCodeSessionWorker)
+			workerRouter.Put("/", h.handlePutCodeSessionWorker)
+			workerRouter.HandleFunc("/internal-events", h.handleCodeSessionWorkerInternalEvents)
+			workerRouter.Get("/events/stream", h.handleCodeSessionWorkerEventsStream)
+			workerRouter.Post("/register", h.handleCodeSessionWorkerRegister)
+			workerRouter.Post("/events", h.handleCodeSessionWorkerEvents)
+			workerRouter.Post("/events/delivery", h.handleCodeSessionWorkerDelivery)
+			workerRouter.Post("/diagnostics", h.handleCodeSessionWorkerDiagnostics)
+			workerRouter.Post("/heartbeat", h.handleCodeSessionWorkerHeartbeat)
+			workerRouter.Post("/otlp/metrics", h.handleCodeSessionWorkerOTLP)
+			workerRouter.Post("/otlp/logs", h.handleCodeSessionWorkerOTLP)
+		})
+	})
 }
 
 func (h *Handler) registerSessionIngressRoutes(router chi.Router) {

@@ -154,7 +154,7 @@ MITM 模式当前只协商 HTTP/1.1：
 3. 同一主机名的并发 cache miss 通过 `singleflight` 合并为一次签发；不同主机名可以并行生成 leaf，不使用覆盖证书生成过程的全局锁。
 4. TLS ClientHello SNI、HTTP `Host` 与 CONNECT 目标必须一致；不同域名返回 TLS 错误或 `421 Misdirected Request`。
 5. 真实上游连接使用系统根证书、TLS 1.2+、精确 `ServerName` 并只拨号 SSRF 校验后锁定的 IP，避免 DNS rebinding。
-6. HTTP 使用 `httputil.ReverseProxy` 流式转发；删除 `Proxy-Authorization` 与 `Proxy-Connection`，不把 CCR 凭证传给目标网站。
+6. HTTP 使用 `httputil.ReverseProxy` 流式转发；删除 `Proxy-Authorization` 与 `Proxy-Connection`，不把 CCR 凭证传给目标网站；请求写完后最多等待 15 秒接收真实上游响应头，收到响应头后不限制 SSE 等流式响应体时长。
 7. 当前不记录请求/响应 header 或 body。后续策略引擎可以在解密后的 handler 边界按 method/path/header 决策，但必须单独定义脱敏、审计和凭证注入规则。
 
 不兼容边界：只接受 HTTP/2 的客户端、证书固定（certificate pinning）以及客户端证书认证（mTLS）目标可能失败。此类域名后续应增加显式 pass-through 策略，而不是降低上游证书校验强度。

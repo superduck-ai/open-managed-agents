@@ -148,7 +148,11 @@ func newUpstreamProxyMITMTransport(dialer *upstreamProxyMITMTLSDialer) *http.Tra
 		DisableCompression:  true,
 		MaxIdleConns:        1,
 		MaxIdleConnsPerHost: 1,
-		IdleConnTimeout:     upstreamProxyMITMIdleTimeout,
+		// IdleConnTimeout 只回收已经空闲的 keep-alive 连接；真实目标完成 TLS 后如果一直
+		// 不返回 HTTP 响应头，请求仍属于活跃状态。单独限制响应头等待时间，避免恶意或
+		// 故障目标长期占用 tunnel、连接和 goroutine，同时不限制随后可能长期存在的 SSE body。
+		ResponseHeaderTimeout: upstreamProxyMITMHeaderTimeout,
+		IdleConnTimeout:       upstreamProxyMITMIdleTimeout,
 	}
 }
 

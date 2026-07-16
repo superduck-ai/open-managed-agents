@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
-	e2b "github.com/superduck-ai/e2b-go-sdk"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
+
+	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
 
 const (
@@ -427,7 +428,6 @@ func resolveNetwork(raw json.RawMessage, mcpAllowedHosts []string) (*e2b.Sandbox
 	if config.Networking.AllowMCPServers {
 		hosts = append(hosts, mcpAllowedHosts...)
 	}
-	// E2B Cloud requires DenyOut to block traffic not in AllowOut.
 	return &e2b.SandboxNetworkOpts{
 		AllowOut: uniqueStrings(hosts),
 		DenyOut:  []string{e2b.ALL_TRAFFIC},

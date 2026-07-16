@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+  act,
   fireEvent,
   mock,
   mockManagedResourceApi,
@@ -22,6 +23,14 @@ function errorResponse(message: string, status = 400) {
   return new Response(JSON.stringify({ error: { message } }), {
     status,
     headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+async function openDirtyEnvironmentEditor() {
+  expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+    target: { value: 'Environment changed' },
   });
 }
 
@@ -114,11 +123,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
 
-    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
-      target: { value: 'Environment changed' },
-    });
+    await openDirtyEnvironmentEditor();
     expect(window.dispatchEvent(new window.Event('beforeunload', { cancelable: true }))).toBe(false);
     const breadcrumb = screen.getByRole('link', { name: 'Environments' });
     fireEvent.click(breadcrumb);
@@ -144,10 +149,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     router.history.flush();
     router.history.push(detailHref);
     router.history.flush();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
-      target: { value: 'Environment changed' },
-    });
+    await openDirtyEnvironmentEditor();
     router.history.back();
 
     const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
@@ -169,10 +171,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
       window.addEventListener('popstate', () => resolve(), { once: true });
       router.history.back({ ignoreBlocker: true });
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
-      target: { value: 'Environment changed' },
-    });
+    await openDirtyEnvironmentEditor();
     router.history.forward();
 
     const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
@@ -187,17 +186,27 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     mockManagedResourceApi();
     const { router } = renderManagedAgentsPage('environments');
 
-    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
-      target: { value: 'Environment changed' },
-    });
-    void router.navigate({
-      to: '/workspaces/$workspaceId/environments',
-      params: { workspaceId: 'default' },
-    });
+    await openDirtyEnvironmentEditor();
+    const navigateToList = () =>
+      router.navigate({
+        to: '/workspaces/$workspaceId/environments',
+        params: { workspaceId: 'default' },
+      });
+    const canceledNavigation = navigateToList();
 
-    const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    let discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    await act(async () => {
+      fireEvent.click(within(discardDialog).getByRole('button', { name: 'Continue editing' }));
+      await canceledNavigation;
+    });
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull());
+    expect(router.history.location.pathname).toBe(detailHref);
+    expect((screen.getByRole('textbox', { name: 'Environment name' }) as HTMLInputElement).value).toBe(
+      'Environment changed',
+    );
+
+    void navigateToList();
+    discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
     fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard changes' }));
     await waitFor(() => expect(router.history.location.pathname).toBe(listHref));
   });

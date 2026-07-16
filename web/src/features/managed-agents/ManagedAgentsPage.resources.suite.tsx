@@ -1832,6 +1832,14 @@ export function registerManagedAgentsResourceTests() {
     expect(document.body.textContent).toMatch(/分钟前|现在/);
   });
 
+  test('uses the English fallback for unknown environment work statuses', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('environments');
+
+    expect(await screen.findByText('Unknown status (awaiting_review)')).toBeTruthy();
+  });
+
   test('submits normalized Environment updates only once', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     const api = mockManagedResourceApi();

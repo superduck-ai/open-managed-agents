@@ -17,12 +17,12 @@ import { type ManagedEntityFormValues } from '../types';
 import { ManagedDialogSubmitButton } from './dialog-components';
 
 type UnsavedChangesGuardOptions = {
-  blocked: boolean;
   dirty: boolean;
+  interactionBlocked: boolean;
   onDiscard: () => void;
 };
 
-export function useUnsavedChangesGuard({ blocked, dirty, onDiscard }: UnsavedChangesGuardOptions) {
+export function useUnsavedChangesGuard({ dirty, interactionBlocked, onDiscard }: UnsavedChangesGuardOptions) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const bypassRef = useRef(false);
@@ -34,12 +34,12 @@ export function useUnsavedChangesGuard({ blocked, dirty, onDiscard }: UnsavedCha
   });
 
   useEffect(() => {
-    if (navigationBlocker.status !== 'blocked' || blocked) {
+    if (navigationBlocker.status !== 'blocked' || interactionBlocked) {
       return;
     }
     setPendingHref(null);
     setConfirmOpen(true);
-  }, [blocked, navigationBlocker.status]);
+  }, [interactionBlocked, navigationBlocker.status]);
 
   useEffect(() => {
     if (!dirty) {
@@ -67,17 +67,17 @@ export function useUnsavedChangesGuard({ blocked, dirty, onDiscard }: UnsavedCha
       }
       event.preventDefault();
       event.stopPropagation();
-      if (!blocked) {
+      if (!interactionBlocked) {
         setPendingHref(url.href);
         setConfirmOpen(true);
       }
     };
     document.addEventListener('click', handleDocumentClick, true);
     return () => document.removeEventListener('click', handleDocumentClick, true);
-  }, [blocked, dirty]);
+  }, [dirty, interactionBlocked]);
 
   const requestDiscard = () => {
-    if (blocked) {
+    if (interactionBlocked) {
       return;
     }
     if (dirty) {
@@ -173,7 +173,7 @@ export function useEnvironmentDialogDiscardGuard({
   onClose: () => void;
 }) {
   const dirty = environmentDialogFingerprint(values) !== environmentDialogFingerprint(initialValues);
-  return useUnsavedChangesGuard({ blocked: submitting, dirty, onDiscard: onClose });
+  return useUnsavedChangesGuard({ dirty, interactionBlocked: submitting, onDiscard: onClose });
 }
 
 function environmentDialogFingerprint(values: ManagedEntityFormValues) {

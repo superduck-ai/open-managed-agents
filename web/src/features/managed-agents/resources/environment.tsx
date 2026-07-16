@@ -42,7 +42,7 @@ export function EnvironmentInlineEditor({
   const submittingRef = useRef(false);
   const dirty = environmentFormFingerprint(values) !== initialFingerprint;
   const validation = attempted ? validateEnvironment(values, msg, initialValues) : { packages: {}, metadataRows: {} };
-  const guard = useUnsavedChangesGuard({ blocked: submitting, dirty, onDiscard: onCancel });
+  const guard = useUnsavedChangesGuard({ dirty, interactionBlocked: submitting, onDiscard: onCancel });
 
   const updateValues = (update: (current: EnvironmentEditValues) => EnvironmentEditValues) => {
     setValues(update);

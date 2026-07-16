@@ -10,11 +10,10 @@ import (
 	"strings"
 	"time"
 
+	e2b "github.com/superduck-ai/e2b-go-sdk"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
-
-	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
 
 const (

@@ -12,6 +12,7 @@ import (
 )
 
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
+	// 故意给配置放入可识别的上游密钥，后续断言它不会进入 payload 或 shell 命令。
 	cfg := config.Config{
 		CodeSessionAPIBaseURL:        "http://127.0.0.1:18081/",
 		CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/",
@@ -35,10 +36,12 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		t.Fatalf("unexpected startup context: %#v", startup)
 	}
 	startupEnv := startup["environment_variables"].(map[string]any)
-	if startupEnv["CLAUDE_CODE_SESSION_ACCESS_TOKEN"] != "cse_test" ||
+	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" ||
+		startupEnv["CLAUDE_CODE_SESSION_ACCESS_TOKEN"] != "cse_test" ||
 		startupEnv["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] != "1" ||
 		startupEnv["CLAUDE_CODE_USE_CCR_V2"] != "1" ||
-		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" {
+		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" ||
+		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
 	}
 	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
@@ -59,13 +62,18 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if sessionAuth["type"] != "session_ingress" || sessionAuth["token"] != "cse_test" {
 		t.Fatalf("unexpected session auth: %#v", sessionAuth)
 	}
+	anthropicAuth := auths[1].(map[string]any)
+	if anthropicAuth["type"] != "anthropic_api" || anthropicAuth["token"] != "cse_test" {
+		t.Fatalf("unexpected anthropic auth: %#v", anthropicAuth)
+	}
 	environment := body["environment"].(map[string]any)
 	if environment["cwd"] != "/workspace/widgets" || environment["environment_type"] != "anthropic" {
 		t.Fatalf("unexpected environment: %#v", environment)
 	}
-	claudeEnv := environment["environment"].(map[string]any)
-	if claudeEnv["ANTHROPIC_BASE_URL"] != "https://api.anthropic.test" || claudeEnv["ANTHROPIC_API_KEY"] != "sk-ant-test-secret" {
-		t.Fatalf("unexpected claude env: %#v", claudeEnv)
+	// sandbox 只能看到 Open Managed Agents 的 api_base_url 与 code-session token，
+	// 不得看到服务端保存的 ANTHROPIC_UPSTREAM_API_KEY/ANTHROPIC_BASE_URL。
+	if _, ok := environment["environment"]; ok {
+		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
 
 	command := buildEnvironmentManagerCommand("cse_session with 'quote'/and/slash", cfg, payload)

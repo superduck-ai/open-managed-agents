@@ -20,12 +20,6 @@ const (
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
 )
 
-type environmentManagerCommand struct {
-	StdinPath    string
-	Payload      []byte
-	ShellCommand string
-}
-
 func managedAgentSessionConfig(session db.Session, resources []db.SessionResource) json.RawMessage {
 	agentSnapshot := rawJSONObject(session.AgentSnapshot)
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
@@ -299,6 +293,7 @@ func modelIDFromAgentSnapshot(raw json.RawMessage) string {
 	return strings.TrimSpace(stringFromMap(model, "id"))
 }
 
+// buildEnvironmentManagerV0Payload 把 code session 映射为 environment-manager v0 合同；relay、runtime API 与 ingress 绑定同一 external ID，真实上游凭证不进入 sandbox。
 func buildEnvironmentManagerV0Payload(codeSessionID string, workDir string, sessionConfig json.RawMessage, cfg config.Config) ([]byte, error) {
 	startupContext := map[string]any{}
 	if len(sessionConfig) > 0 && string(sessionConfig) != "null" {
@@ -310,10 +305,12 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, workDir string, sess
 	startupContext["use_code_sessions"] = true
 	startupContext["session_id"] = codeSessionID
 	environmentVariables := mapStringAnyValue(startupContext["environment_variables"])
+	environmentVariables["CLAUDE_CODE_REMOTE"] = "true" // 进入 remote-session 路径并初始化 CCR relay。
 	environmentVariables["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] = "1"
-	environmentVariables["CLAUDE_CODE_SESSION_ACCESS_TOKEN"] = codeSessionID
+	environmentVariables["CLAUDE_CODE_SESSION_ACCESS_TOKEN"] = codeSessionID // 随机 external ID，仅供本服务鉴权，不是真实上游密钥。
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
 	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
+	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1" // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
 	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, "1")
 	startupContext["environment_variables"] = environmentVariables
 	if _, ok := startupContext["sources"]; !ok {
@@ -322,44 +319,27 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, workDir string, sess
 	if _, ok := startupContext["outcomes"]; !ok {
 		startupContext["outcomes"] = []any{}
 	}
-
-	environment := map[string]any{
+	environment := map[string]any{ // 上游地址和 API key 不进入 environment；Claude 回连 startup_context.api_base_url。
 		"environment_type": "anthropic",
 		"cwd":              firstNonEmpty(strings.TrimSpace(workDir), defaultEnvironmentWorkDir),
 	}
-	if claudeEnv := claudeRuntimeEnvironment(cfg); len(claudeEnv) > 0 {
-		environment["environment"] = claudeEnv
-	}
-
-	auth := []any{
-		map[string]any{
-			"type":  "session_ingress",
-			"token": codeSessionID,
+	// 两种 auth 值相同但用途独立：session_ingress 供 worker/relay；anthropic_api 通过 API-key FD 鉴权 /v1/messages。
+	auth := []AuthConfig{
+		{
+			Type:  "session_ingress",
+			Token: codeSessionID,
+		},
+		{
+			Type:  "anthropic_api",
+			Token: codeSessionID,
 		},
 	}
-	if strings.TrimSpace(cfg.AnthropicUpstreamAPIKey) != "" {
-		auth = append(auth, map[string]any{
-			"type":  "anthropic_api",
-			"token": strings.TrimSpace(cfg.AnthropicUpstreamAPIKey),
-		})
-	}
-
+	// environment-manager 将 session_ingress 接入 ingress/relay 路径，并以独立 API-key FD 传递 anthropic_api，不能合并语义。
 	return json.Marshal(map[string]any{
 		"startup_context": startupContext,
 		"environment":     environment,
 		"auth":            auth,
 	})
-}
-
-func claudeRuntimeEnvironment(cfg config.Config) map[string]string {
-	env := map[string]string{}
-	if baseURL := strings.TrimRight(strings.TrimSpace(cfg.AnthropicUpstreamBaseURL), "/"); baseURL != "" {
-		env["ANTHROPIC_BASE_URL"] = baseURL
-	}
-	if apiKey := strings.TrimSpace(cfg.AnthropicUpstreamAPIKey); apiKey != "" {
-		env["ANTHROPIC_API_KEY"] = apiKey
-	}
-	return env
 }
 
 func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBaseURL string, codeSessionID string, workerEpoch string) {

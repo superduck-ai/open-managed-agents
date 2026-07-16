@@ -11,10 +11,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func NewHandler(cfg config.Config, database *db.DB, codeSessionServices ...*codesessions.Service) *Handler {
-	codeSessionService := codesessions.NewService(cfg, database)
-	if len(codeSessionServices) > 0 && codeSessionServices[0] != nil {
-		codeSessionService = codeSessionServices[0]
+// NewHandler 要求显式注入与 environment runner 和 code-session HTTP Handler 共用的 Service，
+// 并把自身注册为公开事件 sink；这样 worker 输出会进入同一 session stream，而不会落到另一份 Service 状态。
+func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesessions.Service) *Handler {
+	if codeSessionService == nil {
+		panic("sessions: code-session service is required")
 	}
 	h := &Handler{cfg: cfg, db: database, codeSessions: codeSessionService, streams: newStreamHub()}
 	codeSessionService.SetPublicEventSink(h)

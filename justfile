@@ -47,6 +47,13 @@ go-file-lines:
 test-go-file-lines:
   ./scripts/tests/check-go-file-lines_test.sh
 
+# Generate the stable CCRv2 MITM CA key. Example: just generate-upstream-proxy-ca-key /secure/path/ccrv2-mitm-ca-key.pem
+generate-upstream-proxy-ca-key output:
+  ./scripts/generate-upstream-proxy-ca-key.sh "{{ output }}"
+
+test-generate-upstream-proxy-ca-key:
+  ./scripts/tests/generate-upstream-proxy-ca-key_test.sh
+
 go-complexity:
   ./scripts/go-complexity.sh
 

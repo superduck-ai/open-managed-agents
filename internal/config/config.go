@@ -96,8 +96,8 @@ type Config struct {
 
 	// CodeSessionUpstreamProxyMITMEnabled 开启后，CCR CONNECT 会在服务端终止客户端 TLS，按 HTTP 转发，再独立验证真实上游 TLS。
 	CodeSessionUpstreamProxyMITMEnabled bool
-	// CodeSessionUpstreamProxyCAKeyFile 是外部提供的稳定 CA 私钥，启动前必须存在，且只能挂载到 API server。
-	// 服务启动时读取私钥并在内存中签发根证书；私钥绝不能进入 sandbox。
+	// CodeSessionUpstreamProxyCAKeyFile 是外部提供的稳定 CA 私钥，仅在 MITM 开启时校验和读取，且只能挂载到 API server。
+	// MITM 开启后，服务启动时读取私钥并在内存中签发根证书；私钥绝不能进入 sandbox。
 	CodeSessionUpstreamProxyCAKeyFile string
 	// CodeSessionUpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
 	CodeSessionUpstreamProxyDisableSSRFProtection bool
@@ -217,15 +217,15 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// validateCodeSessionUpstreamProxyMITMConfig 校验稳定私钥输入合同：
-// 开启 MITM 时必须提供私钥；显式提供的私钥必须是已存在的普通文件，且不会被本服务改写。
+// validateCodeSessionUpstreamProxyMITMConfig 只在 MITM 开启时校验稳定私钥输入合同：
+// 私钥必须配置为已存在的普通文件，且不会被本服务改写；MITM 关闭时该配置保持休眠。
 func validateCodeSessionUpstreamProxyMITMConfig(cfg Config) error {
-	keyFile := strings.TrimSpace(cfg.CodeSessionUpstreamProxyCAKeyFile)
-	if cfg.CodeSessionUpstreamProxyMITMEnabled && keyFile == "" {
-		return errors.New("CCR upstream proxy MITM requires a stable CA private key")
-	}
-	if keyFile == "" {
+	if !cfg.CodeSessionUpstreamProxyMITMEnabled {
 		return nil
+	}
+	keyFile := strings.TrimSpace(cfg.CodeSessionUpstreamProxyCAKeyFile)
+	if keyFile == "" {
+		return errors.New("CCR upstream proxy MITM requires a stable CA private key")
 	}
 
 	keyInfo, err := os.Stat(keyFile)

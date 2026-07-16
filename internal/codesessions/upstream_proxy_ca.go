@@ -84,7 +84,7 @@ func newUpstreamProxyRuntime() upstreamProxyRuntime {
 // loadUpstreamProxyCA 在 Handler 生命周期内只加载或生成一次 CA。
 // sync.Once 同时缓存成功结果和失败结果，避免并发请求重复读取私钥文件或生成不同的临时信任锚。
 func (h *Handler) loadUpstreamProxyCA() (*upstreamProxyCertificateAuthority, error) {
-	// 配置稳定私钥时在启动期签发根证书；未配置且 MITM 关闭时保留临时 CA，
+	// MITM 开启时使用稳定私钥签发根证书；关闭时忽略休眠的私钥路径并生成临时 CA，
 	// 兼容只要求 CA 下载成功的旧透传模式。
 	h.upstreamProxy.caOnce.Do(func() {
 		h.upstreamProxy.ca, h.upstreamProxy.caErr = loadOrGenerateUpstreamProxyCA(h.cfg)
@@ -92,16 +92,16 @@ func (h *Handler) loadUpstreamProxyCA() (*upstreamProxyCertificateAuthority, err
 	return h.upstreamProxy.ca, h.upstreamProxy.caErr
 }
 
-// loadOrGenerateUpstreamProxyCA 根据配置选择稳定私钥驱动的启动期 CA 或临时 CA。
-// 配置稳定私钥时，根证书在启动期签发并仅保存在内存；MITM 关闭且未配置私钥时，
-// 仍允许生成进程生命周期内的临时 CA，以兼容 CA 下载合同。
+// loadOrGenerateUpstreamProxyCA 根据 MITM 开关选择稳定私钥驱动的 CA 或临时 CA。
+// MITM 关闭时不检查或读取休眠的私钥路径，始终生成进程生命周期内的临时 CA；
+// 开启时根证书在启动期签发并仅保存在内存。
 func loadOrGenerateUpstreamProxyCA(cfg config.Config) (*upstreamProxyCertificateAuthority, error) {
+	if !cfg.CodeSessionUpstreamProxyMITMEnabled {
+		return generateUpstreamProxyCertificateAuthority()
+	}
 	keyFile := strings.TrimSpace(cfg.CodeSessionUpstreamProxyCAKeyFile)
 	if keyFile == "" {
-		if cfg.CodeSessionUpstreamProxyMITMEnabled {
-			return nil, errors.New("MITM CA private key is required")
-		}
-		return generateUpstreamProxyCertificateAuthority()
+		return nil, errors.New("MITM CA private key is required")
 	}
 	keyPEM, err := os.ReadFile(keyFile)
 	if err != nil {

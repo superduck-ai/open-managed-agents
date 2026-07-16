@@ -11,7 +11,7 @@
 当前实现采用“稳定根私钥 + 启动期自签根证书 + 按目标主机惰性签发 leaf”的模型：
 
 - 部署侧只提供长期稳定的根 CA private key，不再预生成或分发根 CA certificate。
-- 每次构造 `codesessions.Handler` 时，API server 都使用该私钥及其公钥重新自签一张有效期一年的根证书，并只保存在进程内存中；不会落盘，也不会在启动时预签发所有域名。
+- MITM 开启时，每次构造 `codesessions.Handler`，API server 都使用该私钥及其公钥重新自签一张有效期一年的根证书，并只保存在进程内存中；不会落盘，也不会在启动时预签发所有域名。
 - 每次启动生成的根证书使用稳定的 Subject 和 Subject Key Identifier（SKI），但 serial number、有效期和证书原始字节可以不同。
 - 第一次收到某个目标主机的合法 CONNECT 时，API server 才为该主机生成独立私钥并签发短期 leaf certificate。
 - 根 CA certificate 是公开信任材料，可以下载到 sandbox；根 CA private key 只允许存在于 API server 的受保护文件和进程内存中。
@@ -81,16 +81,16 @@ CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE=/run/secrets/ccrv2-mitm-ca-key.pem
 
 | 配置 | 内容 | 保密级别 | 用途 |
 | --- | --- | --- | --- |
-| `CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE` | 长期稳定、由部署侧提供的 private key | 最高机密 | 启动期自签根证书，并作为动态 leaf 的 signer |
+| `CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE` | 长期稳定、由部署侧提供的 private key | 最高机密 | MITM 开启时用于启动期自签根证书，并作为动态 leaf 的 signer |
 
 配置规则如下：
 
-1. `MITM_ENABLED=true` 时 private key 路径不可为空；MITM 关闭但显式配置 private key 时，Handler 仍在启动期生成并加载该 CA。
-2. private key 必须已经存在且是普通文件。
+1. `MITM_ENABLED=true` 时 private key 路径不可为空；MITM 关闭时不会检查或读取该路径，即使部署环境中残留了无效值也不影响服务启动。
+2. MITM 开启时，private key 必须已经存在且是普通文件。
 3. 建议 private key 权限为 `0600` 并以只读 Secret 挂载。
 4. 根证书只保存在 API server 内存中，通过公开 CA 下载接口分发给 sandbox，不创建 certificate 输出文件。
 
-private key 文件必须只包含一个未加密 PEM block。当前支持 PKCS#8 `PRIVATE KEY`、SEC1 `EC PRIVATE KEY` 和 PKCS#1 `RSA PRIVATE KEY`；解析后的密钥必须实现 `crypto.Signer`。加密私钥、多 PEM block 和尾随非空内容都会使服务拒绝启动。
+MITM 开启时，private key 文件必须只包含一个未加密 PEM block。当前支持 PKCS#8 `PRIVATE KEY`、SEC1 `EC PRIVATE KEY` 和 PKCS#1 `RSA PRIVATE KEY`；解析后的密钥必须实现 `crypto.Signer`。加密私钥、多 PEM block 和尾随非空内容都会使服务拒绝启动。
 
 当前配置校验不强制检查 Unix mode、文件 owner 或 Secret 来源；这些属于部署安全基线。
 
@@ -112,14 +112,15 @@ private key 文件必须只包含一个未加密 PEM block。当前支持 PKCS#8
 
 ### 启动签发与内存生命周期
 
-当配置了 private key 时，`codesessions.NewHandler` 在构造阶段立即调用 `loadUpstreamProxyCA()`。初始化使用 `sync.Once`，同一个 Handler 生命周期只签发一次；成功结果和失败结果都会被缓存。服务每次启动都会重新签发，生成的 certificate、PEM 和 signer 只保存在当前 Handler 的内存中。
+当 MITM 开启并配置了 private key 时，`codesessions.NewHandler` 在构造阶段立即调用 `loadUpstreamProxyCA()`。初始化使用 `sync.Once`，同一个 Handler 生命周期只签发一次；成功结果和失败结果都会被缓存。服务每次启动都会重新签发，生成的 certificate、PEM 和 signer 只保存在当前 Handler 的内存中。
 
 ```mermaid
 flowchart TD
-    Start[构造 codesessions.Handler] --> Key{是否配置稳定 key}
-    Key -->|否| MITM{MITM 是否开启}
-    MITM -->|否| Lazy[保留惰性临时 CA]
-    MITM -->|是| Fail
+    Start[构造 codesessions.Handler] --> MITM{MITM 是否开启}
+    MITM -->|否| Ignore[忽略休眠的 key 路径]
+    Ignore --> Lazy[保留惰性临时 CA]
+    MITM -->|是| Key{是否配置稳定 key}
+    Key -->|否| Fail
     Key -->|是| Read[读取并解析稳定 private key]
     Read --> Signer{是否实现 crypto.Signer}
     Signer -->|否| Fail
@@ -140,11 +141,11 @@ flowchart TD
 | `BasicConstraints` | `CA:TRUE`、path length 为零 |
 | `KeyUsage` | `DigitalSignature`、`CertSign`、`CRLSign` |
 
-SKI 计算中的 SHA-1 仅用于生成公钥标识符，不是根证书或 leaf 的签名算法。签发完成后，certificate 与 PEM 同时构造成不可变的 CA runtime，再由下载接口直接返回内存中的完整 PEM；任何 private key 解析或签名错误都会使 Handler 构造 panic，让错误在启动期暴露，而不是延迟到第一条 CONNECT 请求。
+SKI 计算中的 SHA-1 仅用于生成公钥标识符，不是根证书或 leaf 的签名算法。签发完成后，certificate 与 PEM 同时构造成不可变的 CA runtime，再由下载接口直接返回内存中的完整 PEM；MITM 开启时，任何 private key 解析或签名错误都会使 Handler 构造 panic，让错误在启动期暴露，而不是延迟到第一条 CONNECT 请求。
 
 ### MITM 关闭时的临时 CA
 
-当 MITM 关闭且未配置 private key 时，`GET /v1/code/upstreamproxy/ca-cert` 仍需要满足 Claude relay 的初始化合同，因此服务会惰性创建一套进程生命周期内的临时 CA：
+当 MITM 关闭时，`CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE` 不参与校验或加载；无论该配置为空、有效还是残留了无效路径，`GET /v1/code/upstreamproxy/ca-cert` 都会为满足 Claude relay 的初始化合同而惰性创建一套进程生命周期内的临时 CA：
 
 - ECDSA P-256；
 - 128-bit 随机序列号；
@@ -378,7 +379,7 @@ sequenceDiagram
 | 阶段 | 失败场景 | 当前结果 |
 | --- | --- | --- |
 | 配置加载 | MITM 开启但未配置 key、key 不存在或不是普通文件 | 配置加载失败 |
-| Handler 构造 | private key 解析或根证书签名失败 | 启动期 panic，服务拒绝启动 |
+| Handler 构造 | MITM 开启时 private key 解析或根证书签名失败 | 启动期 panic，服务拒绝启动 |
 | CA 下载 | 临时 CA 生成失败 | HTTP `500`；Claude relay 保持禁用 |
 | CONNECT 鉴权 | session token 或 Basic credential 错误 | HTTP/WS framed `401` 或 `407` |
 | 目标检查 | 非 443、非法地址、受限网络 | framed `403` |

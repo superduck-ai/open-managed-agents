@@ -38,10 +38,9 @@ func NewHandler(cfg config.Config, service *Service) *Handler {
 		upstreamProxy:      newUpstreamProxyRuntime(),
 		upstreamHTTPClient: &http.Client{Transport: newRuntimeModelProxyTransport()},
 	}
-	// MITM 已开启或配置了稳定私钥时，在构造阶段立即读取私钥并在内存中签发一年期根证书，
-	// 使缺失或畸形私钥在启动期失败，而不是延迟到第一个 CONNECT 隧道。
-	// 只有 MITM 关闭且未配置私钥时，才保留临时 CA 的惰性生成兼容行为。
-	if cfg.CodeSessionUpstreamProxyMITMEnabled || cfg.CodeSessionUpstreamProxyCAKeyFile != "" {
+	// 只有 MITM 开启时才在构造阶段读取稳定私钥并签发一年期根证书，使配置错误在启动期失败。
+	// MITM 关闭时私钥路径完全休眠，由 CA 下载接口按需生成进程级临时 CA。
+	if cfg.CodeSessionUpstreamProxyMITMEnabled {
 		if _, err := handler.loadUpstreamProxyCA(); err != nil {
 			panic("codesessions: load upstream proxy CA: " + err.Error())
 		}

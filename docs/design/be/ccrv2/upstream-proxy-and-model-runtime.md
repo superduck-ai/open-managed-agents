@@ -99,8 +99,8 @@ environment-manager 只在 remote CCRv2 proxy 开关开启时，原子写入 `/r
 
 接口不鉴权，因为当前 Claude relay 下载 CA 时不会携带 token；CA 证书是公开材料，不包含私钥。
 
-- MITM 关闭且未配置 private key 时，服务端生成进程生命周期内稳定的临时 ECDSA P-256 CA，仅用于兼容 relay 初始化合同。
-- 配置生产 CA 时，部署侧只提供长期稳定的 private key；`codesessions.Handler` 每次构造都使用该 key 重新自签一张一年期根证书，并仅保存在内存中。接口返回本次启动生成的 certificate。
+- MITM 关闭时，服务端忽略 `CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE`，生成进程生命周期内稳定的临时 ECDSA P-256 CA，仅用于兼容 relay 初始化合同。
+- MITM 开启并配置生产 CA 时，部署侧只提供长期稳定的 private key；`codesessions.Handler` 每次构造都使用该 key 重新自签一张一年期根证书，并仅保存在内存中。接口返回本次启动生成的 certificate。
 - 根证书固定使用 `O=Open Managed Agents, CN=Open Managed Agents CCRv2 MITM CA`，SKI 从同一公钥稳定派生；不同启动的随机 serial number、有效期和 certificate 原始字节可以不同。
 - 所有 API server 实例共享同一把只读 private key；各实例在内存中独立持有本次启动生成的 certificate。private key 不得进入数据库 API 响应、environment-manager stdin、sandbox 环境变量或 Claude 子进程。
 
@@ -111,7 +111,7 @@ CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED=true
 CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE=/run/secrets/ccrv2-mitm-ca-key.pem
 ```
 
-private key 必须已经存在并以只读 Secret 挂载。Handler 构造阶段立即解析 key、自签根证书，并把 certificate、PEM 和 signer 保存在进程内存；任一解析或签名错误都会在启动期拒绝启动。私钥文件永远不会由 HTTP 接口返回，根证书也不会写入本地文件。
+MITM 开启时，private key 必须已经存在并以只读 Secret 挂载。Handler 构造阶段立即解析 key、自签根证书，并把 certificate、PEM 和 signer 保存在进程内存；任一解析或签名错误都会在启动期拒绝启动。MITM 关闭时不会检查或读取该路径。私钥文件永远不会由 HTTP 接口返回，根证书也不会写入本地文件。
 
 使用相同 key、完全相同的 `RawSubject` DER、SKI 和 CA/`CertSign` 约束后，已运行 Claude 只信任旧根证书时仍可以验证服务重启或其他实例新签发的 leaf，但只能持续到旧根证书自身过期。SKI 只是链候选匹配辅助，不能替代 issuer/subject、签名、有效期和 CA 约束校验。服务端重新签发不会延长已下载旧根的 `NotAfter`，因此 code session 生命周期必须远小于一年，API server 需要至少每年、并在当前根到期前计划重启。本方案只处理证书有效期更新，不处理 private key 泄露、更换 key 或双根过渡。
 

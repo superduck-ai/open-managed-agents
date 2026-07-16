@@ -60,6 +60,20 @@ func TestLoadUpstreamProxyCertificateAuthorityRejectsInvalidPrivateKey(t *testin
 	}
 }
 
+func TestUpstreamProxyCertificateAuthorityIgnoresDormantPrivateKey(t *testing.T) {
+	t.Parallel()
+
+	missingKeyFile := filepath.Join(t.TempDir(), "missing-key.pem")
+	handler := NewHandler(config.Config{CodeSessionUpstreamProxyCAKeyFile: missingKeyFile}, NewService(nil))
+	authority, err := handler.loadUpstreamProxyCA()
+	if err != nil {
+		t.Fatalf("loadUpstreamProxyCA() error = %v", err)
+	}
+	if authority == nil || authority.certificate == nil {
+		t.Fatal("loadUpstreamProxyCA() returned no temporary certificate authority")
+	}
+}
+
 func TestUpstreamProxyMITMTransportBoundsResponseHeaderWait(t *testing.T) {
 	t.Parallel()
 

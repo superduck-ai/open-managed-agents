@@ -168,6 +168,7 @@ func TestLoadCodeSessionUpstreamProxyMITMRejectsInvalidCAKey(t *testing.T) {
 	t.Run("private key does not exist", func(t *testing.T) {
 		prepareLoadTest(t)
 		directory := t.TempDir()
+		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED", "true")
 		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE", filepath.Join(directory, "missing-key.pem"))
 
 		if _, err := Load(); err == nil {
@@ -178,6 +179,7 @@ func TestLoadCodeSessionUpstreamProxyMITMRejectsInvalidCAKey(t *testing.T) {
 	t.Run("private key is not a regular file", func(t *testing.T) {
 		prepareLoadTest(t)
 		directory := t.TempDir()
+		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED", "true")
 		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE", directory)
 
 		if _, err := Load(); err == nil {
@@ -187,6 +189,20 @@ func TestLoadCodeSessionUpstreamProxyMITMRejectsInvalidCAKey(t *testing.T) {
 }
 
 func TestLoadCodeSessionUpstreamProxyMITMConfiguration(t *testing.T) {
+	t.Run("MITM disabled ignores dormant private key path", func(t *testing.T) {
+		prepareLoadTest(t)
+		missingKeyFile := filepath.Join(t.TempDir(), "missing-key.pem")
+		t.Setenv("CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE", missingKeyFile)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.CodeSessionUpstreamProxyMITMEnabled || cfg.CodeSessionUpstreamProxyCAKeyFile != missingKeyFile {
+			t.Fatalf("unexpected dormant MITM config: enabled=%t key=%q", cfg.CodeSessionUpstreamProxyMITMEnabled, cfg.CodeSessionUpstreamProxyCAKeyFile)
+		}
+	})
+
 	t.Run("stable private key exists", func(t *testing.T) {
 		prepareLoadTest(t)
 		keyFile := writeConfigTestFile(t, filepath.Join(t.TempDir(), "ca-key.pem"))

@@ -243,10 +243,5 @@ export function environmentWorkStatusLabel(status: string | undefined, msg: I18n
   if (translation) {
     return msg(translation[0], translation[1]);
   }
-  const humanized = value
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^./, (character) => character.toUpperCase());
-  return humanized === value ? value : `${humanized} (${value})`;
+  return msg('managedAgents.environments.work.status.unknown', 'Unknown status ({status})', { status: value });
 }

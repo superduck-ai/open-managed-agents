@@ -13,12 +13,12 @@
 - 中文界面统一采用：Environment「环境」、Networking「网络访问」、Packages「软件包」、Package manager「包管理器」、Metadata「元数据」、Work queue「工作队列」、Work「工作项」、Sandbox「沙箱」、Cloud「云端」、Unrestricted「不受限」、Limited「受限」、Workspace「工作区」。API 字段名、枚举值、ID、`pip`、`npm` 等保持原文。
 - 创建能力保持不变：对话框只展示 Name、Hosting type 和 Description，仍提交默认 unrestricted Networking、空 Packages 与空 Metadata。
 - Environment 列表、详情和 Work queue 的相对时间使用现有基于 `Intl.RelativeTimeFormat` 的 locale-aware formatter，不扩展为全应用时间重构。
-- 编辑表单保存初始基线并计算 dirty 状态。未修改时允许直接关闭；有修改时，应用内取消、关闭和可拦截导航显示本地化 `AlertDialog`，刷新、关闭标签页或离站使用原生 `beforeunload`。保存成功后解除保护；保存期间禁止关闭。
+- 编辑表单保存初始基线并计算 dirty 状态。未修改时允许直接关闭；有修改时，应用内取消、关闭、普通内部链接、浏览器 Back/Forward 与 TanStack Router 程序化导航显示本地化 `AlertDialog`，刷新、关闭标签页或离站使用原生 `beforeunload`。保存成功后解除保护；保存期间禁止关闭。
 - 提交时显示本地化 Saving 状态，并在 handler 入口使用 `submitting` guard。连续提交只产生一个请求和一个成功 Toast，不额外显示“重复提交”错误；请求失败保留输入并允许重试。
 - 客户端校验与当前 Go 后端 `len` 语义一致：Name trim 后非空；单个 Package token 经 UTF-8 编码后最长 255 字节；Metadata 最多 16 项；key 必填且经 UTF-8 编码后最长 64 字节；value 经 UTF-8 编码后最长 512 字节；重复 key 拒绝提交，避免 map 序列化时静默覆盖。不限制 lowercase，并替换现有不准确的 lowercase 帮助文案。
 - 已知 Environment 校验、冲突和资源错误提供完整中英文映射。未知后端错误显示本地化的操作摘要，同时保留安全的服务端错误详情用于诊断。
 - 归档 Environment 显示明确的本地化只读 Alert，Edit 按钮保留但禁用，配置和 Work queue 继续可见；Delete 保持现有 API 与确认行为。
-- Work queue 本地化 `queued`、`starting`、`active`、`stopping`、`stopped`、`failed`。未知状态保留原值并安全 humanize，避免新状态显示为空。
+- Work queue 本地化 `queued`、`starting`、`active`、`stopping`、`stopped`、`failed`。未知状态使用本地化 fallback 并保留原值，例如 English 显示 `Unknown status (awaiting_review)`、中文显示 `未知状态（awaiting_review）`，避免新状态显示为空或混入另一种语言。
 
 ## User Stories
 
@@ -39,8 +39,8 @@
 3. 已知错误按 Environment 操作和后端错误内容映射到稳定的本地化消息；未知错误由“本地化摘要 + 服务端详情”组成，不吞掉诊断信息。
 4. Metadata 在转为 API object 前先校验条数、key/value 长度和 key 唯一性；更新时按后端 PATCH 合同省略未变化项、为从初始基线移除的 key 发送 `null` 删除哨兵，并为新增或变化项发送非空字符串值。后端把空字符串也解释为删除，因此更新表单对新增或改为空值的行给出明确校验，API 中原有且未变化的空值则通过省略 PATCH 字段予以保留；后端仍是最终校验权威。
 5. dirty 判定基于规范化的可提交表单值与打开编辑器时的基线比较；保存成功先重置基线/dirty，再关闭编辑器。
-6. 应用内放弃修改使用项目已有 shadcn/Base UI `AlertDialog`；浏览器级离开只使用标准 `beforeunload`，不承诺浏览器自定义提示文本。
-7. Work 状态由受控的已知状态映射与未知状态 fallback 共同处理；不根据 Sandbox 字段推导额外诊断状态。
+6. 应用内放弃修改使用项目已有 shadcn/Base UI `AlertDialog`；TanStack Router blocker 负责 PUSH、REPLACE、Back、Forward 和程序化导航，既有原始 history 内部链接辅助函数继续由 capture-phase 链接拦截保护；浏览器级离开只使用标准 `beforeunload`，不承诺浏览器自定义提示文本。
+7. Work 状态由受控的已知状态映射与本地化未知状态 fallback 共同处理，fallback 保留后端原始状态值；不根据 Sandbox 字段推导额外诊断状态。
 8. 列表、详情和 Work queue 复用现有 locale-aware formatter。此次不改造 Managed Agents 之外的相对时间实现。
 9. English 与 `zh-CN` 同步增加相同 key；既有 `I18nProvider.test.tsx` parity guard 继续作为目录级合同。
 
@@ -53,7 +53,7 @@
 - English 与 `zh-CN` 下的创建、列表、详情、编辑、Networking、Packages、Metadata、Work queue 和归档只读文案。
 - Name、Package 长度、Metadata 条数、key/value 长度和重复 key 校验；确认客户端不限制 lowercase。
 - 已知后端错误的完整本地化，以及未知错误的本地化摘要与原始详情保留。
-- 未修改直接关闭、dirty 时继续编辑/放弃修改、`beforeunload` 注册与移除、保存成功后解除保护、保存期间不可关闭。
+- 未修改直接关闭、dirty 时继续编辑/放弃修改、普通内部链接、浏览器 Back/Forward、TanStack Router 程序化导航、`beforeunload` 注册与移除、保存成功后解除保护、保存期间不可关闭。
 - 连续提交只发出一个请求并只显示一次成功 Toast；失败后输入保留且可重试。
 - 所有已知 Work 状态、未知状态 fallback，以及 English/Chinese locale-aware 相对时间。
 - 归档 Environment 的只读 Alert、禁用 Edit、配置与 Work queue 仍可见，并且页面不存在 Version、Snapshot、Diff 或 Rollback 入口。

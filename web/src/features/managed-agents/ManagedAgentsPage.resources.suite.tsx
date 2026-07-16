@@ -1828,7 +1828,7 @@ export function registerManagedAgentsResourceTests() {
     for (const status of ['排队中', '启动中', '运行中', '停止中', '已停止', '失败']) {
       expect(screen.getByText(status)).toBeTruthy();
     }
-    expect(screen.getByText('Awaiting review (awaiting_review)')).toBeTruthy();
+    expect(screen.getByText('未知状态（awaiting_review）')).toBeTruthy();
     expect(document.body.textContent).toMatch(/分钟前|现在/);
   });
 

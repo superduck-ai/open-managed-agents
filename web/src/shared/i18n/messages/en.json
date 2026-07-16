@@ -598,6 +598,7 @@
   "managedAgents.environments.work.status.starting": "Starting",
   "managedAgents.environments.work.status.stopped": "Stopped",
   "managedAgents.environments.work.status.stopping": "Stopping",
+  "managedAgents.environments.work.status.unknown": "Unknown status ({status})",
   "managedAgents.environments.work.title": "Work queue",
   "managedAgents.environments.workspace": "Workspace",
   "managedAgents.filters.agentAll": "Agent  All",

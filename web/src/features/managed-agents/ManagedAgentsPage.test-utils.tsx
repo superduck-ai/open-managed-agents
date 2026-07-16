@@ -1,5 +1,6 @@
 import { expect, mock } from 'bun:test';
 import type { EditorView } from '@codemirror/view';
+import type { ReactNode } from 'react';
 import { resetTestDom } from '../../test/setup';
 import type { AuthContextValue } from '../../shared/auth/context';
 
@@ -15,6 +16,28 @@ const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
 const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+const { RouterContextProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
+  await import('@tanstack/react-router');
+const { useEffect } = await import('react');
+
+const managedAgentsTestRootRoute = createRootRoute();
+const managedAgentsTestEnvironmentListRoute = createRoute({
+  getParentRoute: () => managedAgentsTestRootRoute,
+  path: 'workspaces/$workspaceId/environments',
+});
+const managedAgentsTestEnvironmentDetailRoute = createRoute({
+  getParentRoute: () => managedAgentsTestRootRoute,
+  path: 'workspaces/$workspaceId/environments/$environmentId',
+});
+const managedAgentsTestFallbackRoute = createRoute({
+  getParentRoute: () => managedAgentsTestRootRoute,
+  path: '$',
+});
+const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
+  managedAgentsTestEnvironmentListRoute,
+  managedAgentsTestEnvironmentDetailRoute,
+  managedAgentsTestFallbackRoute,
+]);
 
 export const { act, cleanup, fireEvent, screen, waitFor, within } = testingLibrary;
 const originalFetch = globalThis.fetch;
@@ -113,15 +136,31 @@ export function renderManagedAgentsPage(
       },
     },
   });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <I18nProvider initialLocale={locale}>
-        <WorkspaceContext.Provider value={workspaceContextValue('default')}>
-          <ManagedAgentsPage section={section} />
-        </WorkspaceContext.Provider>
-      </I18nProvider>
-    </QueryClientProvider>,
+  const history = createBrowserHistory({ window });
+  const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
+  const result = render(
+    <ManagedAgentsTestRouterProvider router={router}>
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider initialLocale={locale}>
+          <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+            <ManagedAgentsPage section={section} />
+          </WorkspaceContext.Provider>
+        </I18nProvider>
+      </QueryClientProvider>
+    </ManagedAgentsTestRouterProvider>,
   );
+  return Object.assign(result, { router });
+}
+
+function ManagedAgentsTestRouterProvider({
+  router,
+  children,
+}: {
+  router: ReturnType<typeof createRouter<typeof managedAgentsTestRouteTree>>;
+  children: ReactNode;
+}) {
+  useEffect(() => () => router.history.destroy(), [router]);
+  return <RouterContextProvider router={router}>{children}</RouterContextProvider>;
 }
 
 export type AgentFixture = {

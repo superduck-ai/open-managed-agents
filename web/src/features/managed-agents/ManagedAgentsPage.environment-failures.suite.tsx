@@ -132,6 +132,76 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/environments'));
   });
 
+  test('guards dirty Environment edits across browser Back navigation', async () => {
+    const detailHref = '/workspaces/default/environments/env_one123456';
+    const listHref = '/workspaces/default/environments';
+    resetTestDom(`https://oma.duck.ai${detailHref}`);
+    mockManagedResourceApi();
+    const { router } = renderManagedAgentsPage('environments');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    router.history.replace(listHref);
+    router.history.flush();
+    router.history.push(detailHref);
+    router.history.flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+      target: { value: 'Environment changed' },
+    });
+    router.history.back();
+
+    const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(router.history.location.pathname).toBe(listHref));
+  });
+
+  test('guards dirty Environment edits across browser Forward navigation', async () => {
+    const detailHref = '/workspaces/default/environments/env_one123456';
+    const listHref = '/workspaces/default/environments';
+    resetTestDom(`https://oma.duck.ai${detailHref}`);
+    mockManagedResourceApi();
+    const { router } = renderManagedAgentsPage('environments');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    router.history.push(listHref);
+    router.history.flush();
+    await new Promise<void>((resolve) => {
+      window.addEventListener('popstate', () => resolve(), { once: true });
+      router.history.back({ ignoreBlocker: true });
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+      target: { value: 'Environment changed' },
+    });
+    router.history.forward();
+
+    const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(router.history.location.pathname).toBe(listHref));
+  });
+
+  test('guards dirty Environment edits across programmatic router navigation', async () => {
+    const detailHref = '/workspaces/default/environments/env_one123456';
+    const listHref = '/workspaces/default/environments';
+    resetTestDom(`https://oma.duck.ai${detailHref}`);
+    mockManagedResourceApi();
+    const { router } = renderManagedAgentsPage('environments');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+      target: { value: 'Environment changed' },
+    });
+    void router.navigate({
+      to: '/workspaces/$workspaceId/environments',
+      params: { workspaceId: 'default' },
+    });
+
+    const discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(router.history.location.pathname).toBe(listHref));
+  });
+
   test('does not intercept modified Environment navigation while dirty', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();

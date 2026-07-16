@@ -598,6 +598,7 @@
   "managedAgents.environments.work.status.starting": "启动中",
   "managedAgents.environments.work.status.stopped": "已停止",
   "managedAgents.environments.work.status.stopping": "停止中",
+  "managedAgents.environments.work.status.unknown": "未知状态（{status}）",
   "managedAgents.environments.work.title": "工作队列",
   "managedAgents.environments.workspace": "工作区",
   "managedAgents.filters.agentAll": "Agent  全部",

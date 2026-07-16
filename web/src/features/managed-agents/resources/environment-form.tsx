@@ -1,3 +1,4 @@
+import { useBlocker } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
@@ -25,18 +26,20 @@ export function useUnsavedChangesGuard({ blocked, dirty, onDiscard }: UnsavedCha
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const bypassRef = useRef(false);
+  const navigationBlocker = useBlocker({
+    shouldBlockFn: () => dirty && !bypassRef.current,
+    enableBeforeUnload: dirty,
+    disabled: !dirty,
+    withResolver: true,
+  });
 
   useEffect(() => {
-    if (!dirty) {
+    if (navigationBlocker.status !== 'blocked' || blocked) {
       return;
     }
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [dirty]);
+    setPendingHref(null);
+    setConfirmOpen(true);
+  }, [blocked, navigationBlocker.status]);
 
   useEffect(() => {
     if (!dirty) {
@@ -90,6 +93,11 @@ export function useUnsavedChangesGuard({ blocked, dirty, onDiscard }: UnsavedCha
     bypassRef.current = true;
     setConfirmOpen(false);
     setPendingHref(null);
+    if (navigationBlocker.status === 'blocked') {
+      navigationBlocker.proceed();
+      onDiscard();
+      return;
+    }
     onDiscard();
     if (!href) {
       return;
@@ -107,6 +115,9 @@ export function useUnsavedChangesGuard({ blocked, dirty, onDiscard }: UnsavedCha
     requestDiscard,
     discard,
     continueEditing: () => {
+      if (navigationBlocker.status === 'blocked') {
+        navigationBlocker.reset();
+      }
       setConfirmOpen(false);
       setPendingHref(null);
     },

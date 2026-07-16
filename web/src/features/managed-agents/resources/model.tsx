@@ -593,9 +593,8 @@ export function environmentConfigBody(values: EnvironmentEditValues) {
 export function environmentMetadataBody(values: EnvironmentEditValues) {
   const metadata: Record<string, string> = {};
   for (const row of values.metadataRows) {
-    const key = row.key.trim();
-    if (key) {
-      metadata[key] = row.value;
+    if (row.key.trim()) {
+      metadata[row.key] = row.value;
     }
   }
   return metadata;

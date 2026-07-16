@@ -16,7 +16,7 @@
 - Environment 详情概览中的 Scope 对已知 `organization`、`account`、`workspace` 枚举显示本地化标签，API 原值保持不变；未知 scope 保留原始值用于诊断。
 - 编辑表单保存初始基线并计算 dirty 状态。未修改时允许直接关闭；有修改时，应用内取消、关闭、普通内部链接、浏览器 Back/Forward 与 TanStack Router 程序化导航显示本地化 `AlertDialog`，刷新、关闭标签页或离站使用原生 `beforeunload`。保存成功后解除保护；保存期间禁止关闭。
 - 提交时显示本地化 Saving 状态，并在 handler 入口使用 `submitting` guard。连续提交只产生一个请求和一个成功 Toast，不额外显示“重复提交”错误；请求失败保留输入并允许重试。
-- 客户端校验与当前 Go 后端 `len` 语义一致：Name trim 后非空；单个 Package token 经 UTF-8 编码后最长 255 字节；Metadata 最多 16 项；key 必填且经 UTF-8 编码后最长 64 字节；value 经 UTF-8 编码后最长 512 字节；重复 key 拒绝提交，避免 map 序列化时静默覆盖。不限制 lowercase，并替换现有不准确的 lowercase 帮助文案。
+- 客户端校验与当前 Go 后端 `len` 语义一致：Name trim 后非空；单个 Package token 经 UTF-8 编码后最长 255 字节；Metadata 最多 16 项；key 必填并保留原始值，原始 key 经 UTF-8 编码后最长 64 字节；value 经 UTF-8 编码后最长 512 字节；按原始 key 判断重复并拒绝提交，避免 map 序列化时静默覆盖。不限制 lowercase，也不静默 trim key，并替换现有不准确的 lowercase 帮助文案。
 - 已知 Environment 校验、冲突和资源错误提供完整中英文映射。未知后端错误显示本地化的操作摘要，同时保留安全的服务端错误详情用于诊断。
 - 归档 Environment 显示明确的本地化只读 Alert，Edit 按钮保留但禁用，配置和 Work queue 继续可见；Delete 保持现有 API 与确认行为。
 - Work queue 本地化 `queued`、`starting`、`active`、`stopping`、`stopped`、`failed`。未知状态使用本地化 fallback 并保留原值，例如 English 显示 `Unknown status (awaiting_review)`、中文显示 `未知状态（awaiting_review）`，避免新状态显示为空或混入另一种语言。
@@ -38,7 +38,7 @@
 1. 保持当前 API、路由、鉴权、删除语义和 Environment 原地更新语义，不修改 Go 后端合同。
 2. 在现有 Managed Agents feature slice 内完成 i18n key、文案映射、校验、错误转换和 dirty/submitting 状态；页面继续通过已有公共入口组合这些模块。
 3. 已知错误按 Environment 操作和后端错误内容映射到稳定的本地化消息；未知错误由“本地化摘要 + 服务端详情”组成，不吞掉诊断信息。
-4. Metadata 在转为 API object 前先校验条数、key/value 长度和 key 唯一性；更新时按后端 PATCH 合同省略未变化项、为从初始基线移除的 key 发送 `null` 删除哨兵，并为新增或变化项发送非空字符串值。后端把空字符串也解释为删除，因此更新表单对新增或改为空值的行给出明确校验，API 中原有且未变化的空值则通过省略 PATCH 字段予以保留；后端仍是最终校验权威。
+4. Metadata 在转为 API object 前先校验条数、原始 key/value 长度和原始 key 唯一性；仅使用 trim 判断 key 是否为空白，不改变非空 key 的身份或 PATCH 字段名。更新时按后端 PATCH 合同省略未变化项、为从初始基线移除的 key 发送 `null` 删除哨兵，并为新增或变化项发送非空字符串值。后端把空字符串也解释为删除，因此更新表单对新增或改为空值的行给出明确校验，API 中原有且未变化的空值则通过省略 PATCH 字段予以保留；后端仍是最终校验权威。
 5. dirty 判定基于规范化的可提交表单值与打开编辑器时的基线比较；保存成功先重置基线/dirty，再关闭编辑器。
 6. 应用内放弃修改使用项目已有 shadcn/Base UI `AlertDialog`；TanStack Router blocker 负责 PUSH、REPLACE、Back、Forward 和程序化导航，既有原始 history 内部链接辅助函数继续由 capture-phase 链接拦截保护；浏览器级离开只使用标准 `beforeunload`，不承诺浏览器自定义提示文本。
 7. Work 状态由受控的已知状态映射与本地化未知状态 fallback 共同处理，fallback 保留后端原始状态值；不根据 Sandbox 字段推导额外诊断状态。

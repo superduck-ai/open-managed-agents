@@ -111,6 +111,15 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     expect(screen.getByText('Each package token must be 255 UTF-8 bytes or fewer.')).toBeTruthy();
     expect(screen.getByText('Metadata keys must be between 1 and 64 UTF-8 bytes.')).toBeTruthy();
     expect(screen.getByText('Metadata values must be 512 UTF-8 bytes or fewer.')).toBeTruthy();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), {
+      target: { value: ` ${'x'.repeat(63)} ` },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), {
+      target: { value: 'valid' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(screen.getByText('Metadata keys must be between 1 and 64 UTF-8 bytes.')).toBeTruthy();
     expect(
       api.requests.some(
         (request) => request.url === '/v1/environments/env_one123456?beta=true' && request.method === 'POST',

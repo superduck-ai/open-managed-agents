@@ -148,29 +148,30 @@ export function validateEnvironment(
   }
   const keyCounts = new Map<string, number>();
   values.metadataRows.forEach((row) => {
-    const key = row.key.trim();
-    if (key) {
+    const key = row.key;
+    if (key.trim()) {
       keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
     }
   });
   values.metadataRows.forEach((row, index) => {
-    const key = row.key.trim();
-    const active = Boolean(key || row.value);
+    const key = row.key;
+    const keyPresent = Boolean(key.trim());
+    const active = Boolean(keyPresent || row.value);
     const rowErrors: { key?: string; value?: string } = {};
-    if (active && !key) {
+    if (active && !keyPresent) {
       rowErrors.key = msg('managedAgents.environments.validation.metadataKeyRequired', 'Enter a metadata key.');
     } else if (utf8ByteLength(key) > 64) {
       rowErrors.key = msg(
         'managedAgents.environments.validation.metadataKeyLength',
         'Metadata keys must be between 1 and 64 UTF-8 bytes.',
       );
-    } else if (key && (keyCounts.get(key) ?? 0) > 1) {
+    } else if (keyPresent && (keyCounts.get(key) ?? 0) > 1) {
       rowErrors.key = msg(
         'managedAgents.environments.validation.metadataKeyDuplicate',
         'Metadata keys must be unique.',
       );
     }
-    if (key && row.value === '' && initialMetadata[key] !== '') {
+    if (keyPresent && row.value === '' && initialMetadata[key] !== '') {
       rowErrors.value = msg(
         'managedAgents.environments.validation.metadataValueRequiredOnUpdate',
         'Enter a metadata value, or remove the row to delete this entry.',

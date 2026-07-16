@@ -1934,6 +1934,31 @@ export function registerManagedAgentsResourceTests() {
     expect(metadataSection?.textContent).toContain('Flag');
   });
 
+  test('preserves Metadata key whitespace as part of PATCH identity', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.environments[0] = {
+      ...api.resources.environments[0],
+      metadata: { ' FOO': 'left' },
+    };
+    renderManagedAgentsPage('environments');
+
+    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 1' }), { target: { value: 'updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'FOO' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), { target: { value: 'right' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByRole('heading', { name: 'Metadata' })).toBeTruthy();
+    const updateRequest = api.requests.find(
+      (request) => request.url === '/v1/environments/env_one123456?beta=true' && request.method === 'POST',
+    );
+    expect(updateRequest?.body?.metadata).toEqual({ ' FOO': 'updated', FOO: 'right' });
+    expect(api.resources.environments[0]?.metadata).toEqual({ ' FOO': 'updated', FOO: 'right' });
+  });
+
   test('allows payload-equivalent Environment edits to close without confirmation', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();

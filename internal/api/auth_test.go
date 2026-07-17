@@ -6,13 +6,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 func TestV1FallbacksRequireAuthentication(t *testing.T) {
 	t.Parallel()
 
-	server := NewServer(config.Config{}, nil, nil)
+	credentials, err := codesessions.NewSessionCredentials(config.Config{})
+	if err != nil {
+		t.Fatalf("create code session credentials: %v", err)
+	}
+	server := NewServerWithPlatformSessionsAndCredentials(config.Config{}, nil, nil, nil, nil, credentials)
 	for _, test := range []struct {
 		name   string
 		method string

@@ -13,6 +13,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
@@ -174,7 +175,18 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		t.Fatalf("sandbox command stdout = %q, want sandbox-ok; stderr=%q", got, result.Stderr)
 	}
 
-	server := httptest.NewServer(api.NewServer(cfg, database, newFakeStore("e2b-integration-fake")))
+	credentials, err := codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		t.Fatalf("create code session credentials: %v", err)
+	}
+	server := httptest.NewServer(api.NewServerWithPlatformSessionsAndCredentials(
+		cfg,
+		database,
+		newFakeStore("e2b-integration-fake"),
+		nil,
+		nil,
+		credentials,
+	))
 	defer server.Close()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/environments/"+env.ExternalID+"/work/"+work.ExternalID+"/stop?beta=true", strings.NewReader(`{"force":true}`))
 	if err != nil {

@@ -103,7 +103,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	}
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-bridge"}
-	runner := environments.NewRunnerWithConfig(app.db, provider, cfg)
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -250,7 +250,7 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-skills"}
-	runner := environments.NewRunnerWithConfigAndStore(app.db, provider, cfg, store)
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, store, app.credentials)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-skills-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -353,7 +353,7 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-should-not-start"}
-	runner := environments.NewRunnerWithConfig(app.db, provider, cfg)
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-no-resolver-test")
 	if err == nil || !strings.Contains(err.Error(), "custom skill resolver is unavailable") {
 		t.Fatalf("RunOnce error = %v, want custom resolver error", err)
@@ -413,7 +413,7 @@ func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) 
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-network-order"}
-	runner := environments.NewRunnerWithConfig(app.db, provider, cfg)
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-network-order-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -491,7 +491,7 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 		sandboxID:  "sandbox-should-not-start",
 		resolveErr: fmt.Errorf("network config invalid"),
 	}
-	runner := environments.NewRunnerWithConfig(app.db, provider, cfg)
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-resolve-failure-test")
 	if err == nil || !strings.Contains(err.Error(), "network config invalid") {
 		t.Fatalf("RunOnce error = %v, want resolve error", err)

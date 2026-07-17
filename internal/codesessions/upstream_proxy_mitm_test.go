@@ -64,7 +64,7 @@ func TestUpstreamProxyCertificateAuthorityIgnoresDormantPrivateKey(t *testing.T)
 	t.Parallel()
 
 	missingKeyFile := filepath.Join(t.TempDir(), "missing-key.pem")
-	handler := NewHandler(config.Config{CodeSessionUpstreamProxyCAKeyFile: missingKeyFile}, NewService(nil))
+	handler := NewHandler(config.Config{CodeSessionUpstreamProxyCAKeyFile: missingKeyFile}, newTestService(t, nil))
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("loadUpstreamProxyCA() error = %v", err)
@@ -243,7 +243,7 @@ func TestUpstreamProxyCACertificateHandlerReturnsGeneratedCertificate(t *testing
 	t.Parallel()
 
 	files := writeTestUpstreamProxyCA(t, "handler")
-	handler := NewHandler(files.config(), NewService(nil))
+	handler := NewHandler(files.config(), newTestService(t, nil))
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("load generated handler CA: %v", err)
@@ -279,7 +279,7 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	files := writeTestUpstreamProxyCA(t, "tunnel")
 	upstreamRequests := make(chan *http.Request, 1)
 	dialTargets := make(chan string, 1)
-	handler := NewHandler(files.config(), NewService(nil))
+	handler := NewHandler(files.config(), newTestService(t, nil))
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("load generated tunnel CA: %v", err)

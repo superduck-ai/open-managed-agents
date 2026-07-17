@@ -60,23 +60,6 @@ type Server struct {
 	webhooks       *webhooksapi.Handler
 }
 
-func NewServer(cfg config.Config, database *db.DB, objectStore storage.ObjectStore) *Server {
-	return NewServerWithLogger(cfg, database, objectStore, nil)
-}
-
-func NewServerWithLogger(cfg config.Config, database *db.DB, objectStore storage.ObjectStore, logger *slog.Logger) *Server {
-	return NewServerWithPlatformSessions(cfg, database, objectStore, logger, platformsession.NewMemoryStore())
-}
-
-func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectStore storage.ObjectStore, logger *slog.Logger, platformStore platformsession.Store) *Server {
-	// 便捷构造器按运行环境加载签名密钥；main 使用下方显式注入版本与 runner 共享同一实例。
-	credentials, err := codesessions.NewSessionCredentials(cfg)
-	if err != nil {
-		panic(err)
-	}
-	return NewServerWithPlatformSessionsAndCredentials(cfg, database, objectStore, logger, platformStore, credentials)
-}
-
 func NewServerWithPlatformSessionsAndCredentials(cfg config.Config, database *db.DB, objectStore storage.ObjectStore, logger *slog.Logger, platformStore platformsession.Store, credentials *codesessions.SessionCredentials) *Server {
 	// 显式注入 SessionCredentials，保证 HTTP 验签与 sandbox 启动签发使用同一公钥身份。
 	if platformStore == nil {

@@ -79,11 +79,42 @@ S3_FORCE_PATH_STYLE=true
 ANTHROPIC_UPSTREAM_API_KEY=
 PUBLIC_BASE_URL=
 E2B_API_KEY=
-# 生产环境必填：just generate-code-session-jwt-key /run/secrets/code-session-jwt-key.pem
+
 CODE_SESSION_JWT_SIGNING_KEY_FILE=/run/secrets/code-session-jwt-key.pem
+
+# 仅在启用 CCRv2 HTTPS MITM 时需要
+CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED=true
+CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE=/run/secrets/ccrv2-mitm-ca-key.pem
 ```
 
-`CODE_SESSION_JWT_SIGNING_KEY_FILE` 必须指向 PKCS#8 PEM 格式的 Ed25519 私钥。可以运行 `just generate-code-session-jwt-key <安全输出路径>` 生成；脚本不会覆盖已有文件。开发和测试环境省略时会在进程内生成临时密钥；生产环境缺失会拒绝启动，且重启服务后旧的临时签名不会继续有效。
+### 创建 code session 私钥
+
+先创建一个只有当前用户可访问的目录，再使用仓库脚本生成两份私钥：
+
+```bash
+mkdir -p "$HOME/.config/open-managed-agents"
+chmod 700 "$HOME/.config/open-managed-agents"
+
+just generate-code-session-jwt-key \
+  "$HOME/.config/open-managed-agents/code-session-jwt-ed25519.pem"
+
+just generate-upstream-proxy-ca-key \
+  "$HOME/.config/open-managed-agents/ccrv2-mitm-ca-key.pem"
+```
+
+两个脚本都会将文件权限设置为 `0600`，并在目标文件已经存在时拒绝覆盖，避免意外轮换密钥。然后在 `.env` 中配置私钥的绝对路径；不要写 `$HOME`，因为 `.env` 不负责 shell 变量展开：
+
+```env
+CODE_SESSION_JWT_SIGNING_KEY_FILE=/Users/your-name/.config/open-managed-agents/code-session-jwt-ed25519.pem
+
+# 只有启用 CCRv2 HTTPS MITM 时才需要下面两项
+CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED=true
+CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE=/Users/your-name/.config/open-managed-agents/ccrv2-mitm-ca-key.pem
+```
+
+`CODE_SESSION_JWT_SIGNING_KEY_FILE` 是 PKCS#8 PEM 格式的 Ed25519 私钥，用于签发 session-ingress JWT。开发和测试环境省略时会在进程内生成临时密钥；生产环境缺失会拒绝启动。
+
+`CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE` 是 PKCS#8 PEM 格式的 ECDSA P-256 私钥。只有 `CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED=true` 时才需要配置；服务启动时使用它在内存中签发根证书，不会在磁盘上生成证书文件。
 
 更完整的配置入口在 `internal/config/config.go`。开发环境默认 `DB_AUTO_MIGRATE=true`，生产环境默认关闭自动迁移。
 
@@ -110,7 +141,7 @@ curl http://127.0.0.1:38080/healthz
 预期返回：
 
 ```json
-{"status":"ok"}
+{ "status": "ok" }
 ```
 
 ## 启动前端

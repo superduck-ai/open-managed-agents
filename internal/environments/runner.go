@@ -32,19 +32,6 @@ func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
 	return &Runner{db: database, provider: provider}
 }
 
-func NewRunnerWithConfig(database *db.DB, provider e2bruntime.Provider, cfg config.Config) *Runner {
-	return NewRunnerWithConfigAndStore(database, provider, cfg, nil)
-}
-
-func NewRunnerWithConfigAndStore(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore) *Runner {
-	// Runner 与 API server 必须使用同一签发配置，否则 sandbox 拿到的 ingress JWT 无法被回连入口验证。
-	credentials, err := codesessions.NewSessionCredentials(cfg)
-	if err != nil {
-		panic(err)
-	}
-	return NewRunnerWithConfigStoreAndCredentials(database, provider, cfg, store, credentials)
-}
-
 func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore, credentials *codesessions.SessionCredentials) *Runner {
 	// 显式注入用于 main 和测试，确保不会在同一进程中意外创建第二套签名身份。
 	return &Runner{
@@ -54,18 +41,6 @@ func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime
 		codeSessions: codesessions.NewServiceWithCredentials(database, credentials),
 		skills:       skillsapi.NewRuntimeResolver(cfg, database, store),
 	}
-}
-
-func StartRunner(ctx context.Context, database *db.DB, cfg config.Config) {
-	StartRunnerWithStore(ctx, database, nil, cfg)
-}
-
-func StartRunnerWithStore(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config) {
-	credentials, err := codesessions.NewSessionCredentials(cfg)
-	if err != nil {
-		panic(err)
-	}
-	StartRunnerWithStoreAndCredentials(ctx, database, store, cfg, credentials)
 }
 
 func StartRunnerWithStoreAndCredentials(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, credentials *codesessions.SessionCredentials) {

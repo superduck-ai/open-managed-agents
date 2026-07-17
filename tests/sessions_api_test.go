@@ -3422,7 +3422,7 @@ func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string
 	ctx := context.Background()
 	cfg := app.cfg
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-" + strings.TrimPrefix(sessionID, "sesn_")}
-	runner := environments.NewRunnerWithConfig(app.db, provider, cfg)
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		processed, err := runner.RunOnce(ctx, "sessions-code-session-test")
@@ -3469,13 +3469,24 @@ func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string,
 	if err != nil {
 		return "", err
 	}
-	credentials, err := codesessions.NewSessionCredentials(app.cfg)
+	credentialContext, err := app.db.GetCodeSessionCredentialContextForIssue(
+		ctx,
+		record.OrganizationID,
+		record.WorkspaceID,
+		codeSessionID,
+	)
 	if err != nil {
 		return "", err
 	}
-	service := codesessions.NewServiceWithCredentials(app.db, credentials)
-	token, _, err := service.IssueSessionIngressToken(ctx, record.OrganizationID, record.WorkspaceID, codeSessionID)
-	return token, err
+	return app.credentials.Issue(codesessions.SessionCredentialIdentity{
+		SessionID:        credentialContext.CodeSessionExternalID,
+		PublicSessionID:  credentialContext.PublicSessionExternalID,
+		AgentID:          credentialContext.AgentExternalID,
+		AgentVersion:     credentialContext.AgentVersion,
+		OrganizationUUID: credentialContext.OrganizationUUID,
+		WorkspaceUUID:    credentialContext.WorkspaceUUID,
+		AccountEmail:     credentialContext.AccountEmail,
+	})
 }
 
 func postCodeSessionIngressEvents(t *testing.T, app *testApp, codeSessionID string, body string) {

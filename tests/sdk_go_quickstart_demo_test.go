@@ -259,7 +259,7 @@ func quickstartRunRealSandbox(t *testing.T, ctx context.Context, app *testApp, e
 		}
 	}()
 
-	runner := environments.NewRunnerWithConfig(app.db, provider, app.cfg)
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, app.cfg, nil, app.credentials)
 	processed, err := runner.RunOnce(ctx, "quickstart-real-e2b")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)

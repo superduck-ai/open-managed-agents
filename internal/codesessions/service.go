@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -31,16 +30,6 @@ type Service struct {
 type workerOutputEvent struct {
 	Payload   json.RawMessage
 	Ephemeral bool
-}
-
-// NewService 创建只依赖持久化边界的 code-session 业务服务。
-func NewService(database *db.DB) *Service {
-	// 默认构造器用于无需外部配置的开发/测试调用；生产入口应显式注入稳定签发器。
-	credentials, err := NewSessionCredentials(config.Config{})
-	if err != nil {
-		panic(err)
-	}
-	return NewServiceWithCredentials(database, credentials)
 }
 
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials) *Service {

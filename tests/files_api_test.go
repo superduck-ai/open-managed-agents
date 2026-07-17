@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -37,13 +38,14 @@ const defaultTestKey = config.DefaultAPIKey
 const onePixelGIFBase64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 
 type testApp struct {
-	cfg      config.Config
-	db       *db.DB
-	store    storage.ObjectStore
-	sessions *platformsession.MemoryStore
-	server   *httptest.Server
-	baseURL  string
-	client   *http.Client
+	cfg         config.Config
+	db          *db.DB
+	store       storage.ObjectStore
+	sessions    *platformsession.MemoryStore
+	credentials *codesessions.SessionCredentials
+	server      *httptest.Server
+	baseURL     string
+	client      *http.Client
 }
 
 type errorResponse struct {
@@ -945,12 +947,17 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 		t.Fatalf("seed database: %v", err)
 	}
 	platformSessions := platformsession.NewMemoryStore()
+	credentials, err := codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		database.Close()
+		t.Fatalf("create code session credentials: %v", err)
+	}
 	if err := store.EnsureBucket(ctx); err != nil {
 		database.Close()
 		t.Fatalf("ensure object store bucket: %v", err)
 	}
-	server := httptest.NewServer(api.NewServerWithPlatformSessions(cfg, database, store, nil, platformSessions))
-	return &testApp{cfg: cfg, db: database, store: store, sessions: platformSessions, server: server, baseURL: server.URL, client: server.Client()}
+	server := httptest.NewServer(api.NewServerWithPlatformSessionsAndCredentials(cfg, database, store, nil, platformSessions, credentials))
+	return &testApp{cfg: cfg, db: database, store: store, sessions: platformSessions, credentials: credentials, server: server, baseURL: server.URL, client: server.Client()}
 }
 
 func (a *testApp) close() {

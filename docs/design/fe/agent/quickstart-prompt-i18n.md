@@ -27,7 +27,7 @@
 - **技术标识不翻译**：`model` ID、tool 名、MCP server 名与 URL、step key（`agent` / `environment` / `session` / `deploy` / `integrate`）、JSON 字段、metadata key、协议枚举在中英两套配置中逐字段一致。
 - **Block 0 API 参考保持英文**：系统提示词由两个 text block 组成，Block 0（约 127KB）是纯 Managed Agents API 参考文档，用户不可见、且全是技术标识；翻译它成本高、风险大、收益为零，且与"不翻译技术标识"约束冲突，故保留英文。只本地化 Block 1（Agent Builder 行为指令，约 38KB）。
 - **Builder 流程语言与生成内容语言分离**：Builder 自身的说明、澄清问题和模型可见流程文本使用 Builder 启动时的 UI locale；最终生成内容不被 UI locale 强制限定，模型根据用户输入语言与显式要求决定 `name` / `description` / `system` 的语言。中文 Builder 指令只负责清楚说明该规则，不追加粗暴的"请用中文输出"。
-- **后端零改动**：提示词经 `/api/organizations/{orgUuid}/proxy/v1/messages` 透传给 Anthropic，代理只读 `stream` 字段、不解析 system/messages/tools 内容；模板仍走现有 `/v1/agents` 创建接口。
+- **后端合同不变**：提示词继续经管理后台独立路径 `/api/organizations/{orgUuid}/proxy/v1/messages` 透传给 Anthropic；模板仍走现有 `/v1/agents` 创建接口。
 
 ## 现状梳理
 

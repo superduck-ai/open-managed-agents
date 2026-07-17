@@ -53,6 +53,7 @@ type Provider interface {
 	Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error)
 	WriteFile(ctx context.Context, sandboxID string, path string, data []byte) error
 	RunCommand(ctx context.Context, sandboxID string, command string) error
+	StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error
 }
 
 type SkillMountPreparer interface {
@@ -200,6 +201,45 @@ func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command 
 	}
 	if result.ExitCode != 0 {
 		return fmt.Errorf("sandbox command exited with code %d: %s stdout=%q stderr=%q", result.ExitCode, strings.TrimSpace(result.Error), truncateCommandOutput(result.Stdout), truncateCommandOutput(result.Stderr))
+	}
+	return nil
+}
+
+// StartBackgroundCommand 通过 E2B 进程 API 启动后台命令，并把敏感启动数据直接写入其 stdin。
+func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error {
+	if strings.TrimSpace(sandboxID) == "" {
+		return errors.New("sandbox id is required")
+	}
+	if strings.TrimSpace(command) == "" {
+		return errors.New("sandbox command is required")
+	}
+	if len(stdin) == 0 {
+		return errors.New("sandbox command stdin is required")
+	}
+	sandbox, err := p.connect(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+	stdinEnabled := true
+	execution, err := sandbox.Commands.Run(ctx, command, &e2b.CommandStartOpts{
+		Background: true,
+		Stdin:      &stdinEnabled,
+	})
+	if err != nil {
+		return fmt.Errorf("start sandbox background command: %w", err)
+	}
+	handle, ok := execution.(*e2b.CommandHandle)
+	if !ok {
+		return fmt.Errorf("sandbox background command execution type = %T, want *e2b.CommandHandle", execution)
+	}
+	defer handle.Disconnect()
+	if err := sandbox.Commands.SendStdin(ctx, handle.Pid, stdin, nil); err != nil {
+		_, _ = handle.Kill()
+		return fmt.Errorf("send sandbox command stdin: %w", err)
+	}
+	if err := sandbox.Commands.CloseStdin(ctx, handle.Pid, nil); err != nil {
+		_, _ = handle.Kill()
+		return fmt.Errorf("close sandbox command stdin: %w", err)
 	}
 	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
+	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
@@ -51,6 +52,7 @@ type Server struct {
 	envs           *environments.Handler
 	files          *files.Handler
 	memory         *memoryapi.Handler
+	messages       *messagesapi.Handler
 	models         *modelsapi.Handler
 	sessions       *sessionsapi.Handler
 	skills         *skillsapi.Handler
@@ -67,10 +69,20 @@ func NewServerWithLogger(cfg config.Config, database *db.DB, objectStore storage
 }
 
 func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectStore storage.ObjectStore, logger *slog.Logger, platformStore platformsession.Store) *Server {
+	// 便捷构造器按运行环境加载签名密钥；main 使用下方显式注入版本与 runner 共享同一实例。
+	credentials, err := codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return NewServerWithPlatformSessionsAndCredentials(cfg, database, objectStore, logger, platformStore, credentials)
+}
+
+func NewServerWithPlatformSessionsAndCredentials(cfg config.Config, database *db.DB, objectStore storage.ObjectStore, logger *slog.Logger, platformStore platformsession.Store, credentials *codesessions.SessionCredentials) *Server {
+	// 显式注入 SessionCredentials，保证 HTTP 验签与 sandbox 启动签发使用同一公钥身份。
 	if platformStore == nil {
 		platformStore = platformsession.NewMemoryStore()
 	}
-	codeSessionService := codesessions.NewService(database)
+	codeSessionService := codesessions.NewServiceWithCredentials(database, credentials)
 	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(database)
 	s := &Server{
 		cfg:            cfg,
@@ -85,14 +97,13 @@ func NewServerWithPlatformSessions(cfg config.Config, database *db.DB, objectSto
 		envs:           environments.NewHandler(cfg, database),
 		files:          files.NewHandler(cfg, database, objectStore),
 		memory:         memoryapi.NewHandler(cfg, database, objectStore),
+		messages:       messagesapi.NewHandler(cfg),
 		models:         modelsapi.NewHandler(),
 		sessions:       sessionsapi.NewHandler(cfg, database, codeSessionService),
 		skills:         skillsapi.NewHandlerWithSkillPrewarm(cfg, database, objectStore, skillPrewarmEnqueuer),
 		vaults:         vaultsapi.NewHandler(cfg, database),
 		webhooks:       webhooksapi.NewHandler(cfg, database),
 	}
-	s.codeSessions.SetBridgeAuthenticator(s.authenticateCodeSessionBridge)
-
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
 	if logger != nil {
@@ -182,6 +193,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/environments", s.envs)
 	r.Mount("/files", s.files)
 	r.Mount("/memory_stores", s.memory)
+	r.Post("/messages", s.messages.Create)
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)
@@ -331,74 +343,6 @@ func setPlatformRecoveredSessionCookies(w http.ResponseWriter, principal auth.Pr
 		Path:   "/",
 		MaxAge: int(platformsession.DefaultTTL.Seconds()),
 	})
-}
-
-func (s *Server) authenticateService(r *http.Request) (auth.Principal, *httpapi.Error) {
-	apiKey := auth.ExtractAPIKey(r)
-	if apiKey == "" {
-		return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key")
-	}
-	key, err := s.db.GetAPIKey(r.Context(), auth.HashAPIKey(apiKey))
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			if isEnvironmentCredentialPath(r.URL.Path) {
-				envKey, envErr := s.db.GetEnvironmentKey(r.Context(), auth.HashAPIKey(apiKey))
-				if envErr == nil {
-					return auth.Principal{
-						CredentialType:         auth.CredentialTypeEnvironmentKey,
-						EnvironmentKeyID:       envKey.ID,
-						OrganizationID:         envKey.OrganizationID,
-						OrganizationExternalID: envKey.OrganizationExternalID,
-						WorkspaceID:            envKey.WorkspaceID,
-						WorkspaceUUID:          envKey.WorkspaceUUID,
-						WorkspaceExternalID:    envKey.WorkspaceExternalID,
-						EnvironmentID:          envKey.EnvironmentID,
-						EnvironmentExternalID:  envKey.EnvironmentExternalID,
-					}, nil
-				}
-				if envErr != nil && !errors.Is(envErr, db.ErrNotFound) {
-					log.Printf("authenticate environment key: %v", envErr)
-					return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-				}
-			}
-			return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
-		}
-		log.Printf("authenticate api key: %v", err)
-		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	return auth.Principal{
-		CredentialType:         auth.CredentialTypeAPIKey,
-		APIKeyID:               key.ID,
-		APIKeyExternalID:       key.ExternalID,
-		OrganizationID:         key.OrganizationID,
-		OrganizationExternalID: key.OrganizationExternalID,
-		WorkspaceID:            key.WorkspaceID,
-		WorkspaceUUID:          key.WorkspaceUUID,
-		WorkspaceExternalID:    key.WorkspaceExternalID,
-	}, nil
-}
-
-func (s *Server) authenticateCodeSessionBridge(r *http.Request, codeSessionID string) (auth.Principal, *httpapi.Error) {
-	principal, apiErr := s.authenticateService(r)
-	if apiErr != nil {
-		return auth.Principal{}, apiErr
-	}
-	codeSessionID = strings.TrimSpace(codeSessionID)
-	if codeSessionID == "" {
-		return auth.Principal{}, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found")
-	}
-	record, err := s.db.GetCodeSession(r.Context(), codeSessionID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return auth.Principal{}, httpapi.NewError(http.StatusNotFound, "not_found_error", "Code session not found")
-		}
-		log.Printf("authenticate code session bridge: %v", err)
-		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
-	}
-	if record.OrganizationID != principal.OrganizationID || record.WorkspaceID != principal.WorkspaceID {
-		return auth.Principal{}, httpapi.NewError(http.StatusNotFound, "not_found_error", "Code session not found")
-	}
-	return principal, nil
 }
 
 func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *httpapi.Error) {

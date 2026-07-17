@@ -60,7 +60,7 @@
 
 > 批量端点：多条回执攒一批发（`maxBatchSize = 64`），不是一个一发。
 >
-> 服务端实现必须拒绝 `worker_epoch: 0`。Claude Code 内部默认值可能是 0，但正常 worker 写请求必须先经过 `/worker/register` 或 `/bridge` 获取 `1+` 的 epoch。
+> 服务端实现必须拒绝 `worker_epoch: 0`。Claude Code 内部默认值可能是 0，但正常 worker 写请求必须先经过 `/worker/register` 获取 `1+` 的 epoch。
 
 ### 3.3 服务端 body 处理
 
@@ -243,7 +243,7 @@ SSE 推送 user_message(event_id=E)
 - 不应在同一条健康 SSE 连接内立即重复推送，避免制造重复 prompt；
 - 如果后续收到 `processing` 或 `processed`，按隐含状态补齐 `received`；
 - 当前实现没有专门的 ACK lag metric 或自动切 epoch 逻辑；
-- worker 活性仍由 heartbeat/lease 判断；新 worker register/bridge bump epoch 后，再按 stream 重发规则处理未完成事件。
+- worker 活性仍由 heartbeat/lease 判断；新 worker register bump epoch 后，再按 stream 重发规则处理未完成事件。
 
 ---
 

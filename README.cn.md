@@ -75,11 +75,15 @@ S3_ACCESS_KEY_ID=minioadmin
 S3_SECRET_ACCESS_KEY=minioadmin
 S3_FORCE_PATH_STYLE=true
 
-# 需要真实上游或真实沙箱时再配置
+# 需要真实上游或真实沙箱时再配置；上游 key 只由服务端持有
 ANTHROPIC_UPSTREAM_API_KEY=
 PUBLIC_BASE_URL=
 E2B_API_KEY=
+# 生产环境必填：just generate-code-session-jwt-key /run/secrets/code-session-jwt-key.pem
+CODE_SESSION_JWT_SIGNING_KEY_FILE=/run/secrets/code-session-jwt-key.pem
 ```
+
+`CODE_SESSION_JWT_SIGNING_KEY_FILE` 必须指向 PKCS#8 PEM 格式的 Ed25519 私钥。可以运行 `just generate-code-session-jwt-key <安全输出路径>` 生成；脚本不会覆盖已有文件。开发和测试环境省略时会在进程内生成临时密钥；生产环境缺失会拒绝启动，且重启服务后旧的临时签名不会继续有效。
 
 更完整的配置入口在 `internal/config/config.go`。开发环境默认 `DB_AUTO_MIGRATE=true`，生产环境默认关闭自动迁移。
 
@@ -181,6 +185,7 @@ TEST_API_BASE_URL=http://127.0.0.1:38080 \
 - `/v1/deployments`
 - `/v1/deployment_runs`
 - `/v1/memory_stores`
+- `POST /v1/messages`
 - `/v1/messages/batches`
 - `/v1/skills`
 - `/v1/vaults`

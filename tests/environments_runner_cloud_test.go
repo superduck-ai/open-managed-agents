@@ -34,6 +34,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	cfg.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.ClaudeAgentVersion = "2.1.120"
 	cfg.E2BTemplate = "fake-template"
+	cfg.AnthropicUpstreamAPIKey = "sk-ant-upstream-must-not-enter-sandbox"
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-bucket"))
 	defer app.close()
@@ -141,14 +142,11 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatalf("initial worker event was not converted: %#v", initial)
 	}
 
-	if len(provider.writes) != 1 || provider.writes[0].sandboxID != "sandbox-runner-bridge" {
-		t.Fatalf("unexpected sandbox writes: %#v", provider.writes)
-	}
-	if !strings.HasSuffix(provider.writes[0].path, "/environment-manager.v0.json") {
-		t.Fatalf("unexpected stdin path: %s", provider.writes[0].path)
+	if len(provider.launches) != 1 || provider.launches[0].sandboxID != "sandbox-runner-bridge" {
+		t.Fatalf("unexpected sandbox launches: %#v", provider.launches)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(provider.writes[0].data, &payload); err != nil {
+	if err := json.Unmarshal(provider.launches[0].stdin, &payload); err != nil {
 		t.Fatalf("decode environment-manager payload: %v", err)
 	}
 	startup := payload["startup_context"].(map[string]any)
@@ -157,11 +155,29 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	}
 	auths := payload["auth"].([]any)
 	sessionAuth := auths[0].(map[string]any)
-	if sessionAuth["type"] != "session_ingress" || sessionAuth["token"] != codeSession.ExternalID {
+	sessionIngressToken, _ := sessionAuth["token"].(string)
+	if sessionAuth["type"] != "session_ingress" || !strings.HasPrefix(sessionIngressToken, "sk-ant-si-") {
 		t.Fatalf("unexpected session auth: %#v", sessionAuth)
 	}
-	if len(provider.commands) != 1 || !strings.Contains(provider.commands[0], "--session '"+codeSession.ExternalID+"'") {
-		t.Fatalf("unexpected sandbox commands: %#v", provider.commands)
+	modelAuth := auths[1].(map[string]any)
+	modelAccessToken, _ := modelAuth["token"].(string)
+	if modelAuth["type"] != "anthropic_oauth" || !strings.HasPrefix(modelAccessToken, "sk-ant-oat01-") {
+		t.Fatalf("unexpected model auth: %#v", modelAuth)
+	}
+	startupEnvironment := startup["environment_variables"].(map[string]any)
+	if _, ok := startupEnvironment["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
+		t.Fatalf("startup environment masks WebSocket auth FD: %#v", startupEnvironment)
+	}
+	if _, ok := payload["environment"].(map[string]any)["environment"]; ok {
+		t.Fatalf("environment-manager payload should not contain Claude credential environment variables: %#v", payload["environment"])
+	}
+	if strings.Contains(string(provider.launches[0].stdin), cfg.AnthropicUpstreamAPIKey) {
+		t.Fatalf("environment-manager payload leaked upstream key: %s", provider.launches[0].stdin)
+	}
+	if !strings.Contains(provider.launches[0].command, "--session '"+codeSession.ExternalID+"'") ||
+		strings.Contains(provider.launches[0].command, "nohup") ||
+		strings.Contains(provider.launches[0].command, "environment-manager.v0.json") {
+		t.Fatalf("unexpected sandbox background command: %#v", provider.launches[0])
 	}
 
 	stored, err := app.db.GetSession(ctx, apiKey.WorkspaceID, session.ID)
@@ -243,11 +259,8 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 		t.Fatal("runner did not process queued session work")
 	}
 
-	if len(provider.writes) != 1 {
-		t.Fatalf("sandbox writes = %#v, want only environment-manager stdin", provider.writes)
-	}
-	if !strings.HasSuffix(provider.writes[0].path, "/environment-manager.v0.json") {
-		t.Fatalf("first write path = %s, want environment-manager stdin", provider.writes[0].path)
+	if len(provider.launches) != 1 {
+		t.Fatalf("sandbox launches = %#v, want one environment-manager background process", provider.launches)
 	}
 	if len(provider.skillMounts) != 1 {
 		t.Fatalf("skill mounts = %#v, want one prepared mount", provider.skillMounts)
@@ -277,10 +290,9 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if rawMount["mount_path"] != e2bruntime.SandboxSkillsMountPath || rawMount["volume_name"] != mount.VolumeName {
 		t.Fatalf("unexpected work skill mount metadata: %#v", rawMount)
 	}
-	if len(provider.commands) != 1 ||
-		strings.Contains(provider.commands[0], "installed managed agent skills") ||
-		strings.Contains(provider.commands[0], "$HOME/.claude/skills") {
-		t.Fatalf("sandbox command should not install managed agent skills directly:\n%v", provider.commands)
+	if strings.Contains(provider.launches[0].command, "installed managed agent skills") ||
+		strings.Contains(provider.launches[0].command, "$HOME/.claude/skills") {
+		t.Fatalf("sandbox command should not install managed agent skills directly: launches=%v", provider.launches)
 	}
 }
 
@@ -349,8 +361,8 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if len(provider.creates) != 0 || len(provider.writes) != 0 || len(provider.commands) != 0 {
-		t.Fatalf("provider should not be called after missing resolver: creates=%#v writes=%#v commands=%#v", provider.creates, provider.writes, provider.commands)
+	if len(provider.creates) != 0 || len(provider.commands) != 0 || len(provider.launches) != 0 {
+		t.Fatalf("provider should not be called after missing resolver: creates=%#v commands=%#v launches=%#v", provider.creates, provider.commands, provider.launches)
 	}
 }
 
@@ -487,8 +499,8 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if len(provider.creates) != 0 || len(provider.writes) != 0 || len(provider.commands) != 0 {
-		t.Fatalf("provider should not create sandbox after resolve failure: creates=%#v writes=%#v commands=%#v", provider.creates, provider.writes, provider.commands)
+	if len(provider.creates) != 0 || len(provider.commands) != 0 || len(provider.launches) != 0 {
+		t.Fatalf("provider should not create sandbox after resolve failure: creates=%#v commands=%#v launches=%#v", provider.creates, provider.commands, provider.launches)
 	}
 	ids := getDefaultDBIDs(t, app.db)
 	if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID); !errors.Is(err, db.ErrNotFound) {
@@ -500,8 +512,8 @@ type recordingRunnerProvider struct {
 	sandboxID   string
 	resolveErr  error
 	resolves    []recordedSandboxResolve
-	writes      []recordedSandboxWrite
 	commands    []string
+	launches    []recordedSandboxLaunch
 	creates     []recordedSandboxCreate
 	skillMounts []recordedSkillMount
 }
@@ -511,10 +523,10 @@ type recordedSandboxResolve struct {
 	resolution e2bruntime.Resolution
 }
 
-type recordedSandboxWrite struct {
+type recordedSandboxLaunch struct {
 	sandboxID string
-	path      string
-	data      []byte
+	command   string
+	stdin     []byte
 }
 
 type recordedSandboxCreate struct {
@@ -564,8 +576,16 @@ func (p *recordingRunnerProvider) Kill(context.Context, string) error {
 	return nil
 }
 
-func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID string, path string, data []byte) error {
-	p.writes = append(p.writes, recordedSandboxWrite{sandboxID: sandboxID, path: path, data: append([]byte(nil), data...)})
+func (p *recordingRunnerProvider) WriteFile(context.Context, string, string, []byte) error {
+	return errors.New("unexpected sandbox file write")
+}
+
+func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, command string) error {
+	if sandboxID != p.sandboxID {
+		p.commands = append(p.commands, "wrong sandbox: "+sandboxID)
+		return nil
+	}
+	p.commands = append(p.commands, command)
 	return nil
 }
 
@@ -596,12 +616,16 @@ func (p *recordingRunnerProvider) PrepareSkillMount(ctx context.Context, runtime
 	return &mount, nil
 }
 
-func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, command string) error {
+func (p *recordingRunnerProvider) StartBackgroundCommand(_ context.Context, sandboxID string, command string, stdin []byte) error {
 	if sandboxID != p.sandboxID {
-		p.commands = append(p.commands, "wrong sandbox: "+sandboxID)
+		p.launches = append(p.launches, recordedSandboxLaunch{sandboxID: sandboxID, command: "wrong sandbox: " + command})
 		return nil
 	}
-	p.commands = append(p.commands, command)
+	p.launches = append(p.launches, recordedSandboxLaunch{
+		sandboxID: sandboxID,
+		command:   command,
+		stdin:     append([]byte(nil), stdin...),
+	})
 	return nil
 }
 

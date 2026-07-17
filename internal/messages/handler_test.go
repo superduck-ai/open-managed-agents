@@ -1,4 +1,4 @@
-package codesessions
+package messages
 
 import (
 	"errors"
@@ -10,29 +10,29 @@ import (
 	"testing"
 )
 
-type runtimeProxyErrorReader struct {
+type proxyErrorReader struct {
 	err error
 }
 
-func (r runtimeProxyErrorReader) Read([]byte) (int, error) {
+func (r proxyErrorReader) Read([]byte) (int, error) {
 	return 0, r.err
 }
 
-func TestWriteRuntimeProxyResponseReturnsBodyReadError(t *testing.T) {
+func TestWriteProxyResponseReturnsBodyReadError(t *testing.T) {
 	wantErr := errors.New("upstream body failed")
 	response := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
-		Body:       io.NopCloser(runtimeProxyErrorReader{err: wantErr}),
+		Body:       io.NopCloser(proxyErrorReader{err: wantErr}),
 	}
 
-	err := writeRuntimeProxyResponse(httptest.NewRecorder(), response)
+	err := writeProxyResponse(httptest.NewRecorder(), response)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("write response error = %v, want %v", err, wantErr)
 	}
 }
 
-func TestWriteRuntimeProxyResponseCopiesAndFlushes(t *testing.T) {
+func TestWriteProxyResponseCopiesAndFlushes(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	response := &http.Response{
 		StatusCode: http.StatusAccepted,
@@ -48,7 +48,7 @@ func TestWriteRuntimeProxyResponseCopiesAndFlushes(t *testing.T) {
 	}
 	originalHeaders := response.Header.Clone()
 
-	if err := writeRuntimeProxyResponse(recorder, response); err != nil {
+	if err := writeProxyResponse(recorder, response); err != nil {
 		t.Fatalf("write response: %v", err)
 	}
 	result := recorder.Result()

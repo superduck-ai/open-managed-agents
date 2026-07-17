@@ -17,11 +17,11 @@ POST /v1/code/sessions/{code_session_id}/worker/otlp/logs
 
 当前实现目标是先打通客户端 exporter，不在该接口内解析或持久化 OTLP payload：
 
-1. 验证 session ingress token：`Authorization: Bearer {code_session_id}`。
+1. 验证 `Authorization: Bearer sk-ant-si-<JWT>` 的固定算法、`kid`、签名、issuer、audience，并要求 JWT `session_id` 与 path 中的 `code_session_id` 一致。
 2. 限制请求体大小，读取并丢弃 OTLP body。
-3. 如果请求显式提供 worker epoch，则按当前 epoch 更新 `last_worker_activity_at`。
-4. 如果请求未提供 worker epoch，则作为已认证的 best-effort telemetry 更新 activity，不返回 400。
-5. 旧 worker epoch 返回 `409 conflict_error`；epoch 格式非法返回 `400 invalid_request_error`。
+3. 强制读取 worker epoch，并要求它等于当前 epoch 且对应 worker lease 未过期。
+4. 缺失或格式非法的 epoch 返回 `400 invalid_request_error`。
+5. 旧 worker epoch 返回 `409 conflict_error`，租约过期返回 `410 session_expired`。
 6. 请求 `Content-Type` 包含 `json`，或 `Accept` 包含 `application/json` 时成功返回 `{}`；其他成功响应返回 200 protobuf 空 body。
 
 实现文件：
@@ -69,14 +69,14 @@ POST /v1/code/sessions/{code_session_id}/worker/otlp/logs
 
 | Header | 必需 | 描述 |
 |--------|------|------|
-| `Authorization: Bearer {code_session_id}` | 是 | session ingress token，与 path 中的 `code_session_id` 一致 |
-| `X-Worker-Epoch: {epoch}` | 推荐 | 当前 worker epoch，用于拒绝旧 worker 写入；缺失时 OTLP 按 best-effort telemetry 接受 |
+| `Authorization: Bearer sk-ant-si-<JWT>` | 是 | session-ingress JWT，必须通过签名和标准 claims 校验，且 `session_id` 必须与 path 一致 |
+| `X-Worker-Epoch: {epoch}` | 是 | 当前 worker epoch，用于拒绝旧 worker 写入并检查 lease |
 | `Content-Type` | 是 | `application/x-protobuf` 或 `application/json` |
 | `Accept` | 否 | 如果包含 `application/json`，即使请求是 protobuf，成功响应也会返回 JSON |
 
 成功响应选择规则以 `writeOTLPSuccess()` 为准：请求 `Content-Type` 包含 `json`，或 `Accept` 包含 `application/json` 时返回 JSON `{}`；否则返回 `application/x-protobuf` 和空 body。
 
-`worker_epoch` 仍可从 query 参数读取，便于兼容已有调用；但不应作为 OpenTelemetry JS HTTP exporter 的配置方式。客户端代码使用的 Node HTTP transport 会从 endpoint URL 中取 `pathname`，query string 不会稳定出现在最终请求里，因此实际运行应通过 header 传 epoch。若 exporter 未带 epoch，服务端仍接受请求以避免 telemetry 影响主流程，但无法做旧 worker epoch 拒绝。
+`worker_epoch` 仍可从 query 参数读取，便于兼容已有调用；但不应作为 OpenTelemetry JS HTTP exporter 的配置方式。客户端代码使用的 Node HTTP transport 会从 endpoint URL 中取 `pathname`，query string 不会稳定出现在最终请求里，因此实际运行应通过 header 传 epoch。exporter 未带 epoch 时服务端返回 `400`。
 
 ---
 
@@ -237,7 +237,6 @@ function getOTLPExporterConfig() {
 
 ```bash
 CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
-CLAUDE_CODE_SESSION_ACCESS_TOKEN={code_session_id}
 CLAUDE_CODE_USE_CCR_V2=1
 CLAUDE_CODE_WORKER_EPOCH=1
 ```
@@ -248,7 +247,7 @@ CLAUDE_CODE_WORKER_EPOCH=1
 OTEL_METRICS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT={api_base_url}/v1/code/sessions/{code_session_id}/worker/otlp/metrics
-OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
+OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {session_ingress_token},x-worker-epoch=1
 ```
 
 如果没有显式配置 `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_ENDPOINT`，并且 `OTEL_LOGS_EXPORTER` 未设置或包含 `otlp`，后端会默认注入：
@@ -257,7 +256,7 @@ OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer {code_session_id},x-work
 OTEL_LOGS_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT={api_base_url}/v1/code/sessions/{code_session_id}/worker/otlp/logs
-OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer {code_session_id},x-worker-epoch=1
+OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer {session_ingress_token},x-worker-epoch=1
 ```
 
 保留用户自定义配置的规则：
@@ -520,12 +519,12 @@ config.headers = async () => {
 }
 ```
 
-Code session OTLP 端点运行时建议同时具备：
+Code session OTLP 端点运行时必须同时具备：
 
-1. `Authorization: Bearer {code_session_id}`，用于 session ingress 认证。
+1. `Authorization: Bearer sk-ant-si-<JWT>`，并要求签名 JWT 的 `session_id` 与 OTLP URL path 一致。
 2. `X-Worker-Epoch: {epoch}`，用于拒绝旧 worker 写入。
 
-`Authorization` 仍然是硬性要求；`X-Worker-Epoch` 缺失时请求会被当作已认证的 best-effort telemetry 接受。`worker_epoch` query 参数仅作为兼容入口，不应作为实际 Claude Code OTel exporter 配置。
+两者都是硬性要求；`worker_epoch` query 参数仅作为兼容入口，不应作为实际 Claude Code OTel exporter 配置。
 
 ---
 
@@ -535,10 +534,10 @@ Code session OTLP 端点运行时建议同时具备：
 
 当前实现位于 `internal/codesessions/ingress.go` 和 `internal/codesessions/otlp_file_log.go`：
 
-1. 校验 `Authorization: Bearer {code_session_id}`。
+1. 校验 `Authorization: Bearer sk-ant-si-<JWT>` 的固定算法、`kid`、签名、issuer、audience，以及 `session_id` 与请求 path 的绑定。
 2. 使用既有 `maxIngressBodySize` 读取 body。
-3. 如果 query/header 中存在 epoch，解析后调用 `TouchCodeSessionWorkerActivityForEpoch()`；显式 stale epoch 仍返回 `409 conflict_error`。
-4. 如果缺失 epoch，调用 `TouchCodeSessionWorkerActivity()`，按已认证 best-effort telemetry 接受。
+3. 从 query/header 读取并解析 epoch；缺失或非法值返回 `400 invalid_request_error`。
+4. 调用 `TouchCodeSessionWorkerActivityForActiveLease()`；stale epoch 返回 `409 conflict_error`，过期 lease 返回 `410 session_expired`。
 5. activity/epoch 检查成功后，按 `Content-Type` 解码 OTLP JSON/protobuf body，并 best-effort 追加写入本地 JSONL。
 6. 解码失败或文件写入失败不会改变 HTTP 响应；服务端日志记录失败原因。
 7. JSON 请求或 `Accept: application/json` 返回 `{}`；protobuf 请求返回 200 空 body。
@@ -548,13 +547,14 @@ Code session OTLP 端点运行时建议同时具备：
 | 场景 | 状态码 | error type |
 |------|--------|------------|
 | token 缺失或不匹配 | 401 | `authentication_error` |
-| epoch 缺失 | 200 | best-effort telemetry success |
+| epoch 缺失 | 400 | `invalid_request_error` |
 | epoch 格式非法 | 400 | `invalid_request_error` |
 | session 不存在 | 404 | `not_found_error` |
 | epoch 与当前 worker 不匹配 | 409 | `conflict_error` |
+| 当前 worker lease 已过期 | 410 | `session_expired` |
 | body 超过限制 | 413 | `invalid_request_error` |
 
-调试日志会在 body 读取失败、epoch 解析失败、DB/epoch 拒绝以及缺失 epoch 的 best-effort 接受路径打印。日志包含 request id、signal、path/query、content type、accept、user agent、content length、body byte 数、epoch presence/value/source 和 reason；不会打印 `Authorization` 或完整原始 headers。body 会按 `maxLoggedWorkerRequestBytes` 截断：JSON/text-like 请求以 UTF-8 文本打印，protobuf/binary 请求以 base64 预览打印，并记录 `body_truncated`。
+调试日志会在 body 读取失败、epoch 解析失败以及 DB/epoch/lease 拒绝路径打印。日志包含 request id、signal、path/query、content type、accept、user agent、content length、body byte 数、epoch presence/value/source 和 reason；不会打印 `Authorization` 或完整原始 headers。body 会按 `maxLoggedWorkerRequestBytes` 截断：JSON/text-like 请求以 UTF-8 文本打印，protobuf/binary 请求以 base64 预览打印，并记录 `body_truncated`。
 
 ### 当前成功响应
 
@@ -802,7 +802,7 @@ LIMIT 20;
 POST /v1/code/sessions/cse_abc123/worker/otlp/metrics HTTP/1.1
 Host: telemetry.example.com
 Content-Type: application/json
-Authorization: Bearer cse_abc123
+Authorization: Bearer sk-ant-si-<signed-session-ingress-jwt>
 X-Worker-Epoch: 1
 
 {
@@ -943,7 +943,7 @@ claude
 # 使用 curl 测试 HTTP/JSON 端点
 curl -X POST http://127.0.0.1:38080/v1/code/sessions/cse_abc123/worker/otlp/metrics \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer cse_abc123" \
+  -H "Authorization: Bearer ${SESSION_INGRESS_TOKEN}" \
   -H "X-Worker-Epoch: 1" \
   -d '{"resourceMetrics": []}'
 ```
@@ -968,9 +968,9 @@ curl -X POST http://127.0.0.1:38080/v1/code/sessions/cse_abc123/worker/otlp/metr
 1. **当前协议**：支持 session-scoped HTTP/JSON 和 HTTP/Protobuf；暂不支持该端点的 gRPC。
 2. **端点**：`/v1/code/sessions/{code_session_id}/worker/otlp/metrics` 与 `/v1/code/sessions/{code_session_id}/worker/otlp/logs`
 3. **导出间隔**：默认 60 秒
-4. **认证**：`Authorization: Bearer {code_session_id}`
+4. **认证**：`Authorization: Bearer sk-ant-si-<JWT>`，校验签名和 claims，并把 `session_id` 绑定到请求 path
 5. **时间聚合**：默认 DELTA（增量）
-6. **worker 防护**：推荐通过 `X-Worker-Epoch` 传当前 epoch，query 参数仅兼容旧调用；缺失 epoch 时 OTLP 按 best-effort telemetry 接受
+6. **worker 防护**：必须通过 `X-Worker-Epoch` 传当前 epoch，query 参数仅兼容旧调用；服务端同时要求当前 lease 有效
 
 ### 配置常量
 
@@ -982,12 +982,12 @@ curl -X POST http://127.0.0.1:38080/v1/code/sessions/cse_abc123/worker/otlp/metr
 
 ### 当前服务端要求
 
-1. 校验 session ingress token。
-2. 如果请求带 `worker_epoch`，优先使用 `X-Worker-Epoch` header 校验当前 epoch。
+1. 校验 session-ingress JWT，并要求 JWT `session_id` 与 path 中的 `code_session_id` 一致。
+2. 必须读取 `worker_epoch`，优先使用 `X-Worker-Epoch` header 校验当前 epoch。
 3. 读取请求体并受 `maxIngressBodySize` 保护。
-4. 带 epoch 时调用 `TouchCodeSessionWorkerActivityForEpoch()`，缺 epoch 时调用 `TouchCodeSessionWorkerActivity()`。
+4. 调用 `TouchCodeSessionWorkerActivityForActiveLease()`，同时检查当前 epoch 与未过期 lease。
 5. JSON 请求返回 `{}`；protobuf 请求返回 200 空 body。
-6. stale epoch 返回 `409 conflict_error`；epoch 格式非法返回 `400 invalid_request_error`。
+6. stale epoch 返回 `409 conflict_error`；缺失或非法 epoch 返回 `400 invalid_request_error`；过期 lease 返回 `410 session_expired`。
 7. 调试日志记录 OTLP 请求元数据和有界 body 预览；JSON/text-like body 以 UTF-8 打印，protobuf/binary body 以 base64 打印。
 8. 成功通过认证与 activity/epoch 检查后，best-effort 解码 OTLP JSON/protobuf，并写入本地 JSONL；未知 OTLP JSON 字段按兼容字段忽略，解码或文件写入失败不改变 HTTP 响应。
 9. 本地 JSONL 使用安全路径段、`0700` 目录和 `0600` 文件权限，避免 session id 影响日志根目录边界并降低本机敏感 telemetry 暴露面。

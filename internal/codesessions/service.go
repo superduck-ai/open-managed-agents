@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -21,27 +22,10 @@ import (
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
-	db     *db.DB
-	sinkMu sync.Mutex
-	sink   PublicEventSink
-}
-
-type ManagedAgentCreateInput struct {
-	Session                    db.Session
-	Environment                db.Environment
-	Model                      string
-	Title                      string
-	WorkDir                    string
-	PermissionMode             string
-	DangerouslySkipPermissions bool
-	Config                     json.RawMessage
-	InitialEvents              []json.RawMessage
-}
-
-type ManagedAgentCreateResult struct {
-	CodeSessionID   string
-	PublicSessionID string
-	SDKURLPath      string
+	db          *db.DB
+	credentials *SessionCredentials
+	sinkMu      sync.Mutex
+	sink        PublicEventSink
 }
 
 type workerOutputEvent struct {
@@ -51,57 +35,20 @@ type workerOutputEvent struct {
 
 // NewService 创建只依赖持久化边界的 code-session 业务服务。
 func NewService(database *db.DB) *Service {
-	return &Service{db: database}
+	// 默认构造器用于无需外部配置的开发/测试调用；生产入口应显式注入稳定签发器。
+	credentials, err := NewSessionCredentials(config.Config{})
+	if err != nil {
+		panic(err)
+	}
+	return NewServiceWithCredentials(database, credentials)
 }
 
-func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input ManagedAgentCreateInput) (ManagedAgentCreateResult, error) {
-	codeSessionID, err := ids.New("cse_")
-	if err != nil {
-		return ManagedAgentCreateResult{}, err
+func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials) *Service {
+	// 显式注入避免 Service 在同一进程中各自生成临时 Ed25519 密钥。
+	if credentials == nil {
+		panic("codesessions: session credentials are required")
 	}
-	now := time.Now().UTC()
-	configObject := rawObject(input.Config)
-	metadata, err := marshalRaw(map[string]any{
-		"source":                         "managed_agents_local",
-		"public_session_id":              input.Session.ExternalID,
-		"environment_id":                 input.Environment.ExternalID,
-		"title":                          input.Title,
-		"config":                         configObject,
-		"dangerously_skip_permissions":   input.DangerouslySkipPermissions,
-		"managed_agent_session_work_dir": strings.TrimSpace(input.WorkDir),
-	})
-	if err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
-	record, err := s.db.CreateCodeSession(ctx, db.CreateCodeSessionInput{
-		ExternalID:            codeSessionID,
-		OrganizationID:        input.Session.OrganizationID,
-		WorkspaceID:           input.Session.WorkspaceID,
-		SessionID:             input.Session.ID,
-		SessionExternalID:     input.Session.ExternalID,
-		EnvironmentID:         input.Environment.ID,
-		EnvironmentExternalID: input.Environment.ExternalID,
-		WorkDir:               strings.TrimSpace(input.WorkDir),
-		PermissionMode:        strings.TrimSpace(input.PermissionMode),
-		Model:                 strings.TrimSpace(input.Model),
-		Status:                "active",
-		Metadata:              metadata,
-		CreatedAt:             now,
-	})
-	if err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
-	if err := s.queueInitialize(ctx, record, input.Config, now); err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
-	if err := s.queueInitialPublicSessionEvents(ctx, record, input.InitialEvents, now); err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
-	return ManagedAgentCreateResult{
-		CodeSessionID:   record.ExternalID,
-		PublicSessionID: record.SessionExternalID,
-		SDKURLPath:      "/v1/code/sessions/" + record.ExternalID,
-	}, nil
+	return &Service{db: database, credentials: credentials}
 }
 
 func (s *Service) queueInitialPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage, now time.Time) error {

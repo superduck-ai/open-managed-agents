@@ -12,9 +12,10 @@ type contextKey struct{}
 type platformMirrorOrganizationAliasKey struct{}
 
 const (
-	CredentialTypeAPIKey          = "api_key"
-	CredentialTypeEnvironmentKey  = "environment_key"
-	CredentialTypePlatformSession = "platform_session"
+	CredentialTypeAPIKey           = "api_key"
+	CredentialTypeCodeSessionOAuth = "code_session_oauth"
+	CredentialTypeEnvironmentKey   = "environment_key"
+	CredentialTypePlatformSession  = "platform_session"
 )
 
 type Principal struct {
@@ -33,6 +34,15 @@ type Principal struct {
 	EnvironmentKeyID          int64
 	EnvironmentID             int64
 	EnvironmentExternalID     string
+	// code-session OAuth 鉴权会填充以下关联字段，供 Messages 请求审计使用；
+	// 实际授权仍由 active session 数据库查询决定，不能只信任这些上下文值。
+	CodeSessionID           int64
+	CodeSessionExternalID   string
+	PublicSessionID         int64
+	PublicSessionExternalID string
+	AgentID                 int64
+	AgentExternalID         string
+	AgentVersion            int
 }
 
 func HashSecret(secret string) string {

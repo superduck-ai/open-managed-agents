@@ -12,8 +12,8 @@ import (
 func (h *Handler) RegisterV1Routes(router chi.Router) {
 	h.registerRuntimeRoutes(router)
 	h.registerCodeSessionRoutes(router)
-	// 旧版 HTTP session_ingress 继续只校验 session token；CCR v2 的 worker 归属与 epoch
-	// 约束只在 /worker/* 路由执行，避免改变兼容接口语义。
+	// HTTP session_ingress 校验签名 token 与请求路径；CCR v2 的 worker epoch/lease
+	// 约束由对应 /worker/* handler 的状态机执行。
 	h.registerSessionIngressRoutes(router)
 }
 
@@ -24,7 +24,6 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 }
 
 func (h *Handler) registerRuntimeRoutes(router chi.Router) {
-	router.Post("/messages", h.handleRuntimeMessagesProxy)
 	router.Route("/code/upstreamproxy", func(router chi.Router) {
 		router.Get("/ca-cert", h.handleUpstreamProxyCACertificate)
 		router.Get("/ws", h.handleUpstreamProxyWebSocket)
@@ -32,13 +31,12 @@ func (h *Handler) registerRuntimeRoutes(router chi.Router) {
 }
 
 func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
-	// code-session ID 只在资源根路径声明一次；bridge 和 worker 都作为该 session 的子资源注册，
+	// code-session ID 只在资源根路径声明一次；worker 作为该 session 的子资源注册，
 	// 避免通过字符串拼接重复完整路径，并让后续资源级中间件可以挂载在明确的 chi 子路由上。
 	router.Route("/code/sessions/{code_session_id}", func(sessionRouter chi.Router) {
 		sessionRouter.Get("/", h.handleCodeSession)
 		sessionRouter.Post("/", h.handleCodeSession)
 		sessionRouter.Put("/", h.handleCodeSession)
-		sessionRouter.Post("/bridge", h.handleCodeSessionBridge)
 		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
 			workerRouter.Get("/", h.handleGetCodeSessionWorker)
 			workerRouter.Put("/", h.handlePutCodeSessionWorker)

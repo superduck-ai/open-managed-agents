@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
@@ -71,18 +72,23 @@ func main() {
 	if err := objectStore.EnsureBucket(ctx); err != nil {
 		log.Fatalf("ensure object store bucket: %v", err)
 	}
+	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
+	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		log.Fatalf("load code-session credentials: %v", err)
+	}
 	cleanup.StartObjectCleanupWorker(ctx, database, objectStore, 30*time.Second)
 	if cfg.BatchWorkerEnabled {
 		batches.StartBatchWorker(ctx, database, objectStore, cfg)
 		batches.StartBatchExpirySweep(ctx, database, cfg)
 	}
-	environments.StartRunnerWithStore(ctx, database, objectStore, cfg)
+	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials)
 	skillprewarm.StartWorker(ctx, database, objectStore, cfg)
 	webhooks.StartWorker(ctx, database, cfg)
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           api.NewServerWithPlatformSessions(cfg, database, objectStore, logger, platformSessions),
+		Handler:           api.NewServerWithPlatformSessionsAndCredentials(cfg, database, objectStore, logger, platformSessions, codeSessionCredentials),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,
 		WriteTimeout:      10 * time.Minute,

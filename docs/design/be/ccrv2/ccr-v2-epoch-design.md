@@ -1,10 +1,10 @@
 # CCR v2 Worker Epoch 机制后端设计文档
 
-本文记录 code-session worker ingress 的 epoch 所有权机制。目标是让同一个 code session 在任意时刻只有当前 epoch 的 worker 可以写入；旧 worker 一旦被新 register 或 bridge 抢占，后续写请求必须返回 `409 Conflict`。
+本文记录 code-session worker ingress 的 epoch 所有权机制。目标是让同一个 code session 在任意时刻只有当前 epoch 的 worker 可以写入；旧 worker 一旦被新 register 抢占，后续写请求必须返回 `409 Conflict`。
 
 ## 1. 设计目标
 
-CCR v2 下，一个 Claude Code worker 可能因为容器重启、transport 重建、OAuth/worker credential 刷新或 lease 过期后的重新调度而被替换。服务端需要提供一个强一致的所有权边界：
+CCR v2 下，一个 Claude Code worker 可能因为容器重启、transport 重建或 lease 过期后的重新调度而被替换。服务端需要提供一个强一致的所有权边界：
 
 - epoch 是 code session 级别的单调小整数 counter。
 - 每次 worker register 都递增该 code session 的 epoch。
@@ -48,17 +48,16 @@ create index if not exists code_sessions_worker_lease_expiry_v1_idx
 | # | 不变量 | 服务端要求 |
 |---|---|---|
 | 1 | epoch 是 per-code-session 的 | 不同 `cse_*` 独立计数，互不影响 |
-| 2 | register/bridge 递增 epoch | 每次合法 register 都在事务内 `current_worker_epoch + 1` |
+| 2 | register 递增 epoch | 每次合法 register 都在事务内 `current_worker_epoch + 1` |
 | 3 | epoch 单调递增 | 不回退，不使用 timestamp、UUID 或随机数 |
 | 4 | 只有当前 epoch 可以写 | 不匹配返回 `409 conflict_error` |
-| 5 | lease 过期不自动 bump | 只有下一次 register/bridge 才 bump |
+| 5 | lease 过期不自动 bump | 只有下一次 register 才 bump |
 
-## 4. Register 与 Bridge
+## 4. Register
 
-两个入口都表示新 worker 注册，都必须 bump epoch：
+新 worker 通过以下入口注册并 bump epoch：
 
 - `POST /v1/code/sessions/{code_session_id}/worker/register`
-- `POST /v1/code/sessions/{code_session_id}/bridge`
 
 `RegisterCodeSessionWorker(ctx, codeSessionID, binding, leaseTTL)` 是唯一 epoch 变更入口。它必须在单个 DB 事务中：
 
@@ -237,7 +236,7 @@ lease 过期本身不修改 epoch。UI 或观测状态用 `worker_lease_expires_
 
 `GET/PUT /worker` 的 worker state patch/read 契约记录在
 `docs/design/ccr-v2-api-worker-state.md`。本节只保留 epoch ownership
-和 register/bridge 的跨接口语义。
+和 register 的跨接口语义。
 
 `POST /worker/register` 返回：
 
@@ -246,25 +245,6 @@ lease 过期本身不修改 epoch。UI 或观测状态用 `worker_lease_expires_
   "worker_epoch": "1"
 }
 ```
-
-`POST /bridge` 返回：
-
-```json
-{
-  "worker_jwt": "cse_...",
-  "worker_token": "cse_...",
-  "worker_token_type": "session_ingress_token",
-  "api_base_url": "https://example.com",
-  "expires_in": 60,
-  "worker_epoch": "2"
-}
-```
-
-每次 `/bridge` 都 bump epoch。不要因为已有活 worker 就复用 epoch，否则无法抢占旧 worker。
-
-`worker_jwt` 当前保留为 claude-code 兼容字段，因为 `/bridge` client contract 仍要求该字段存在。简化 token 模式下它与 `worker_token` 一样承载 code session ingress token；后续如果切换到真实 JWT，可以保持 `worker_token`/`worker_token_type` 作为显式语义字段。
-
-`api_base_url` 优先使用服务端配置的 `CODE_SESSION_API_BASE_URL`，其次使用 `PUBLIC_BASE_URL`，最后才从请求 host/proto 推导，避免反向代理或测试环境误把内部地址泄漏给 worker。
 
 ## 11. Legacy 兼容边界
 
@@ -279,7 +259,7 @@ legacy WebSocket transport 已移除，包括：
 CCR v2 worker 使用持久化 inbound event 队列和带 epoch 的
 `/v1/code/sessions/{code_session_id}/worker/events/stream`，不依赖进程内 WebSocket worker 连接。
 
-以下 legacy HTTP 入口仍保留 token-only 行为，用于兼容旧 session ingress 客户端，不属于 CCR v2 worker epoch 所有权面：
+以下 legacy HTTP 入口仍保留“不要求 worker epoch”的行为，用于兼容旧 session ingress 客户端，但鉴权同样要求有效的 `sk-ant-si-<JWT>`，不再接受原始 `cse_...` token；这些入口不属于 CCR v2 worker epoch 所有权面：
 
 - `/v1/session_ingress/session/{code_session_id}`
 - `/v2/session_ingress/session/{code_session_id}`
@@ -302,7 +282,6 @@ CCR v2 worker 使用持久化 inbound event 队列和带 epoch 的
 - heartbeat 当前 epoch 更新 heartbeat/lease 时间。
 - heartbeat 旧 epoch 返回 `409` 且不更新 lease。
 - lease 过期不自动 bump，下一次 register 才 bump。
-- `/bridge` 每次返回 worker credentials 和递增 epoch。
 - 事务内保护回归：旧 epoch 已经通过 HTTP 预校验后，若新 register 先 bump，旧 epoch append event 仍必须返回 `ErrWorkerEpochMismatch` 且不插入事件。
 - 状态写入回归：无 epoch 的读路径不刷新 `connection_status`；旧 epoch 的 connected/disconnected 更新不能覆盖当前 worker 状态。
 - SSE stream 回归：带旧 epoch 的 stream 在新 register 后停止，且不能消费或标记新 epoch 之后的 queued inbound event。
@@ -312,15 +291,15 @@ CCR v2 worker 使用持久化 inbound event 队列和带 epoch 的
 相关测试命令：
 
 ```bash
-go test ./tests -run 'TestCodeSessionWorker|TestCodeSessionBridge' -count=1 -v
+go test ./tests -run 'TestCodeSessionWorker' -count=1 -v
 go test ./internal/db ./internal/codesessions -count=1
 ```
 
 ## 13. 实现 Checklist
 
 - [x] `current_worker_epoch` 存在于 `code_sessions`，初始 0。
-- [x] register/bridge 通过同一个 DB 方法 bump epoch。
-- [x] register/bridge 的 bump、lease、binding 更新在同一事务和同一行锁内完成。
+- [x] register 通过唯一的 DB 方法 bump epoch。
+- [x] register 的 bump、lease、binding 更新在同一事务和同一行锁内完成。
 - [x] worker 写请求解析并校验 `worker_epoch`。
 - [x] 落库 worker event 的 append 事务内再次检查 epoch。
 - [x] 旧 epoch append 不查 idempotency、不 insert event、不更新 sequence。
@@ -332,5 +311,4 @@ go test ./internal/db ./internal/codesessions -count=1
 - [x] `/worker/events/delivery` 解析 ACK updates，并在当前 epoch 事务内单调推进 delivery 状态。
 - [x] 不持久化 `worker_alive`，读时由 lease deadline 推导。
 - [x] `worker_binding` 不存原始 token。
-- [x] `/bridge` 保留 `worker_jwt` 兼容字段，并补充显式 `worker_token`/`worker_token_type`。
 - [x] epoch 返回值兼容 JSON string/number，保持 JS safe integer 范围。

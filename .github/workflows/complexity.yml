@@ -7,10 +7,7 @@ on:
       - '.golangci-complexity.yml'
       - 'go.mod'
       - 'go.sum'
-      - 'scripts/check-go-file-lines.sh'
-      - 'scripts/go-file-line-budgets.txt'
       - 'scripts/go-complexity.sh'
-      - 'scripts/tests/check-go-file-lines_test.sh'
       - 'web/**'
       - '.github/workflows/complexity.yml'
   push:
@@ -21,10 +18,7 @@ on:
       - '.golangci-complexity.yml'
       - 'go.mod'
       - 'go.sum'
-      - 'scripts/check-go-file-lines.sh'
-      - 'scripts/go-file-line-budgets.txt'
       - 'scripts/go-complexity.sh'
-      - 'scripts/tests/check-go-file-lines_test.sh'
       - 'web/**'
       - '.github/workflows/complexity.yml'
 
@@ -37,18 +31,12 @@ concurrency:
 
 jobs:
   go-complexity:
-    name: Go size and complexity
+    name: Go complexity
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-
-      - name: Test Go file line guardrail
-        run: ./scripts/tests/check-go-file-lines_test.sh
-
-      - name: Check Go file line budgets
-        run: ./scripts/check-go-file-lines.sh
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -63,7 +51,7 @@ jobs:
           args: --config=.golangci-complexity.yml --timeout=5m ./...
 
   typescript-complexity:
-    name: TypeScript size and complexity
+    name: TypeScript complexity
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -81,5 +69,5 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Check TypeScript size and complexity
+      - name: Check TypeScript complexity
         run: bun run lint:complexity

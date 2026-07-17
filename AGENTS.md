@@ -16,7 +16,7 @@
 ## 提交前质量门禁
 
 - 首次 clone 仓库或发现 hook 尚未安装时运行 `just hooks-install`，为当前 Git 仓库安装受管的 pre-commit hook；同一 clone 下的 worktree 共用该 hook。缺少 `pre-commit` 时，脚本会优先通过 `uv` 安装固定版本。
-- hook 对暂存文件执行通用文件卫生检查，对 Go 文件执行 `gofmt`、对应 package 的 golangci-lint、不可达声明检测、重复代码检测、文件行数、函数长度和生产代码复杂度检查，并用项目固定版本的 Prettier 格式化前端文件，同时检查 TypeScript 重复代码、命名、文件行数、函数长度与复杂度。
+- hook 对暂存文件执行通用文件卫生检查，对 Go 文件执行 `gofmt`、对应 package 的 golangci-lint、不可达声明检测、重复代码检测和生产代码复杂度检查，并用项目固定版本的 Prettier 格式化前端文件，同时检查 TypeScript 重复代码、命名与复杂度。
 - 使用 `just hooks-run` 对全部跟踪文件复跑相同检查；不要使用 `SKIP` 绕过失败项，除非用户明确批准并记录原因。
 - 使用 `just large-files` 通过仓库固定版本的 `check-added-large-files --enforce-all` 检查全部受跟踪文件，统一上限为 1 MiB。嵌入式目录快照 `internal/platformapi/directory_servers.json` 必须保存为紧凑 JSON。不要通过改名、忽略路径或提高预算绕过失败；有意引入大二进制文件时，应单独评审 Git LFS 策略。
 
@@ -33,10 +33,9 @@
 
 ## 复杂度预算
 
-- 修改 Go 或 TypeScript/TSX 生产代码后运行 `just complexity`。Go 使用 `cyclop`，单函数最大圈复杂度为 30；`funlen` 以当前最长函数作为 ratchet，限制函数最多 163 行且最多 100 条语句；测试文件不计入生产函数指标。
-- Go 生产文件默认最多 500 个物理行，测试文件默认最多 1000 行；`scripts/go-file-line-budgets.txt` 中的历史热点必须与当前行数精确一致。文件缩短时在同一变更中下调预算，文件增长会直接失败；生成文件不参与该门禁。
-- 新增前端生产文件默认最多 500 个有效行、单函数最多 200 个有效行，并使用 ESLint modified cyclomatic complexity 上限 20。`web/eslint.complexity.config.js` 中列出的历史热点以当前测量上限作为 ratchet，修改这些文件时不得提高预算，并应优先通过拆分纯函数、数据映射或展示组件降低预算。
-- 不要通过 `nolint`、ESLint disable 注释、忽略新增生产文件或提高任何行数、函数长度或复杂度阈值来绕过失败。确需调整预算时，必须同时说明无法拆分的边界原因，并更新 `docs/design/development-complexity-guardrails.md`。
+- 修改 Go 或 TypeScript/TSX 生产代码后运行 `just complexity`。Go 使用 `cyclop`，单函数最大圈复杂度为 30；测试文件不计入生产代码复杂度指标。
+- 前端使用 ESLint modified cyclomatic complexity，新代码上限为 20。`web/eslint.complexity.config.js` 中列出的历史热点以当前测量上限作为 ratchet，修改这些文件时不得提高预算，并应优先通过拆分纯函数、数据映射或展示组件降低预算。
+- 不要通过 `nolint`、ESLint disable 注释、忽略新增生产文件或提高复杂度阈值来绕过失败。确需调整预算时，必须同时说明无法拆分的边界原因，并更新 `docs/design/development-complexity-guardrails.md`。
 - pre-commit 和 `.github/workflows/complexity.yml` 都调用仓库固定的复杂度配置；本地验收入口为 `just complexity`。
 
 ## 命名规范

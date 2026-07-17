@@ -74,7 +74,7 @@
 | `updates[].event_id` | string | 是 | 被 ACK 的 `client_event` ID |
 | `updates[].status` | enum | 是 | `received`、`processing`、`processed` |
 
-> Claude Code 客户端对象内部可能以 `0` 初始化 epoch，但实际写请求必须先通过 `/worker/register` 或 `/bridge` 获得 `1+` 的 epoch。服务端 HTTP parser 和 DB ownership helper 都拒绝 `0`。
+> Claude Code 客户端对象内部可能以 `0` 初始化 epoch，但实际写请求必须先通过 `/worker/register` 获得 `1+` 的 epoch。服务端 HTTP parser 和 DB ownership helper 都拒绝 `0`。
 
 ### 2.4 Response
 

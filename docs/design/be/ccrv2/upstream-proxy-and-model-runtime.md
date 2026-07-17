@@ -34,10 +34,10 @@ sequenceDiagram
     participant Relay as Local CONNECT relay
     participant Child as Claude child process
 
-    API->>EM: v0 payload<br/>api_base_url + code-session token
+    API->>EM: v0 payload<br/>api_base_url + OAuth token + ingress JWT
     Note over API,EM: CLAUDE_CODE_REMOTE=true<br/>CCR_UPSTREAM_PROXY_ENABLED=1
     EM->>EM: write /run/ccr/session_token (0600)
-    EM->>Claude: ANTHROPIC_BASE_URL=api_base_url<br/>REMOTE_SESSION_ID=code-session ID<br/>API key FD=code-session token
+    EM->>Claude: ANTHROPIC_BASE_URL=api_base_url<br/>REMOTE_SESSION_ID=code-session ID<br/>OAuth FD + WebSocket auth FD
     Claude->>API: GET /v1/code/upstreamproxy/ca-cert
     Claude->>Relay: start 127.0.0.1 ephemeral CONNECT listener
     Claude->>Claude: unlink /run/ccr/session_token after relay is ready
@@ -61,7 +61,6 @@ sequenceDiagram
 CLAUDE_CODE_REMOTE=true
 CCR_UPSTREAM_PROXY_ENABLED=1
 CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2=1
-CLAUDE_CODE_SESSION_ACCESS_TOKEN={code_session_id}
 CLAUDE_CODE_USE_CCR_V2=1
 CLAUDE_CODE_WORKER_EPOCH=1
 ```
@@ -70,26 +69,30 @@ CLAUDE_CODE_WORKER_EPOCH=1
 
 environment-manager 启动 Claude 时还会根据 executor 的 session ID 设置 `CLAUDE_CODE_SESSION_ID` 与 `CLAUDE_CODE_REMOTE_SESSION_ID`。后者是 relay 的必要条件；缺失时 Claude 会记录 `CLAUDE_CODE_REMOTE_SESSION_ID unset; proxy disabled`，即使 token 文件和其他开关都存在也不会注入代理环境。
 
-payload 同时提供两种 auth，二者当前都使用 code session external ID：
+payload 同时提供两种用途独立的 auth：
 
-- `session_ingress`：CCR worker 与 upstream proxy relay 鉴权。
-- `anthropic_api`：通过 Claude 的 API key 文件描述符访问本地 `/v1/messages` 模型代理。
+- `session_ingress`：使用 Ed25519 签名的 `sk-ant-si-<JWT>`，通过 `CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR` 供 CCR worker 与 upstream proxy relay 鉴权。
+- `anthropic_oauth`：使用只保存 hash、由 CCR worker lease 决定生命周期的 `sk-ant-oat01-...` token，通过 `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` 访问本地 `/v1/messages` 模型代理。
+
+payload 不再包含 `anthropic_api` 或 `CLAUDE_CODE_SESSION_ACCESS_TOKEN`。后者会优先于 WebSocket FD，被删除是为了保证 Claude 实际读取签名 ingress JWT。`cse_...` 只作为 URL 和 session 标识，不再作为 OTLP Bearer 凭证。
+
+Runner 把 environment-manager 作为 E2B 后台进程启动。包含双凭证的 payload 通过进程 PID 直接写入 stdin，随后显式关闭 EOF；payload 不写入沙箱文件系统。stdin 发送或关闭失败时，Runner 终止尚未完整初始化的后台进程并按沙箱启动失败处理。
 
 environment-manager 只在 remote CCRv2 proxy 开关开启时，原子写入 `/run/ccr/session_token`。目录权限为 `0700`，文件权限为 `0600`；Claude relay 启动成功后删除文件，executor 销毁时也执行兜底清理。
 
 ## HTTP 接口
 
-以下 Claude runtime 端点由长生命周期的 `codesessions.Handler.RegisterV1Routes` 注册到统一的 `/v1` chi 子路由；精确资源在 handler 内执行 code-session 鉴权，通用 API 资源则由同一组内的凭据感知中间件选择 service 或 platform 鉴权。`internal/api` 只负责版本路由组装、依赖注入和鉴权入口选择。
+Claude worker 与 upstream proxy 端点由长生命周期的 `codesessions.Handler.RegisterV1Routes` 注册到统一的 `/v1` chi 子路由并执行 code-session 鉴权；`/v1/messages` 由 `internal/messages` 注册在通用凭据感知中间件内。`internal/api` 只负责版本路由组装、依赖注入和鉴权入口选择。
 
-`codesessions.Handler` 持有 WebSocket、MITM CA/leaf cache、上游 HTTP client 与 OTLP 文件锁等协议状态；不参与 HTTP 的 `codesessions.Service` 只持有数据库与公开事件 sink。API server 创建一个 Service，并同时注入 code-session Handler 与 sessions Handler，保证 worker 输出仍能发布到公开 session stream。environment runner 也只依赖 Service，因此不会耦合 HTTP 或 MITM 生命周期。
+`codesessions.Handler` 持有 WebSocket、MITM CA/leaf cache 与 OTLP 文件锁等协议状态；不参与 HTTP 的 `codesessions.Service` 只持有数据库与公开事件 sink。API server 创建一个 Service，并同时注入 code-session Handler 与 sessions Handler，保证 worker 输出仍能发布到公开 session stream。environment runner 也只依赖 Service，因此不会耦合 HTTP 或 MITM 生命周期。
 
 ### `POST /v1/messages`
 
-这是 Claude runtime 专用模型代理，不经过普通 workspace API key 中间件。
+这是普通 SDK、platform session 与 Claude runtime 共用的模型代理，经过统一的凭据感知中间件。
 
-1. 从 `X-Api-Key` 或 `Authorization: Bearer` 提取 code-session token。
-2. 使用 token 查询未删除的 `code_sessions.external_id`；不存在时返回 `401 authentication_error`。
-3. 当请求声明 `Content-Length` 时，超过 16 MiB 直接返回 `413`；合法请求体不预读、不落盘，直接流式转发。未声明长度的流式请求不在本层做额外大小探测。
+1. workspace API key、platform `sessionKey` cookie 按原鉴权链处理；lifecycle-bound code-session token 只在此 `POST` 路径被接受。
+2. code-session token 按 hash 查询，且 code session 必须 active、public session 未 terminated、`worker_lease_expires_at > now()`；失败返回 `401 authentication_error`。
+3. 请求体通过 `http.MaxBytesReader` 边计数边流式转发，超过 32 MiB 返回 `413`；不预读、不落盘，也不解析或校验 `model`。
 4. 目标为 `{ANTHROPIC_UPSTREAM_BASE_URL}/v1/messages`。
 5. 删除下游 `Authorization`、`X-Api-Key` 和所有 hop-by-hop headers。
 6. 设置服务端 `ANTHROPIC_UPSTREAM_API_KEY` 为上游 `X-Api-Key`。
@@ -119,8 +122,8 @@ MITM 开启时，private key 必须已经存在并以只读 Secret 挂载。Hand
 
 升级前要求：
 
-- `Authorization: Bearer {code_session_id}` 或同等 `X-Api-Key`。
-- token 对应现存 code session。
+- `Authorization: Bearer sk-ant-si-<JWT>` 或同等 `X-Api-Key`。
+- JWT 必须通过 EdDSA、`kid`、issuer、audience 校验，并将签名 `session_id` 绑定到 CONNECT Basic username；当前不回查数据库 session 状态或 CCR worker lease。新 JWT 不设置独立墙钟 `exp`。
 - `Content-Type: application/proto`。
 
 WebSocket payload 使用 Claude relay 的单字段 protobuf wire format：
@@ -135,10 +138,10 @@ message UpstreamProxyChunk {
 
 ```http
 CONNECT example.com:443 HTTP/1.1
-Proxy-Authorization: Basic base64(code_session_id:code_session_id)
+Proxy-Authorization: Basic base64(code_session_id:session_ingress_jwt)
 ```
 
-服务端同时校验 WebSocket bearer token、Basic username 和 Basic password。空 chunk 是 keepalive，最大 chunk 为 512 KiB。
+服务端要求 Basic username 等于 JWT 的 `session_id`，并使用常量时间比较确认 Basic password 与 WebSocket Bearer 是完全相同的 ingress JWT。空 chunk 是 keepalive，最大 chunk 为 512 KiB。
 
 - MITM 关闭：拨号成功后返回 framed `HTTP/1.1 200 Connection Established`，后续 chunk 作为原始 TCP bytes 双向转发。
 - MITM 开启：先加载 CA、动态签发目标 leaf certificate，并完成真实上游 TLS 握手；全部成功后才返回 `200`。服务端随后把 framed WebSocket 适配为 `net.Conn`，作为 TLS server 解密客户端 HTTP，并使用独立 TLS client 验证真实目标证书。
@@ -193,5 +196,5 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - environment-manager 单元测试覆盖开关判断、token 原子替换、权限和空值拒绝。
 - API 单元测试覆盖 protobuf、CONNECT、Basic 双字段鉴权、私网/端口拒绝、CA 解析和二进制隧道往返。
 - MITM 单元测试覆盖稳定 private key 驱动的启动期根证书签发、旧根验证新 leaf、动态 leaf 信任链、LRU 淘汰、同域并发签发合并、异域并行签发、客户端 TLS 解密、path/query 转发和代理凭证剥离。
-- API 集成测试覆盖无 token、私网 CONNECT、公开 CA 和 `/v1/messages` 上游密钥替换。
+- API 集成测试覆盖无 token、私网 CONNECT、公开 CA，以及 `/v1/messages` 的多凭证鉴权、上游密钥替换和流式转发。
 - linux/amd64 镜像验收通过真实 Claude CLI 和 Bash tool call 确认：relay 从 `/run/ccr/session_token` 读取 token 并启动，Claude 子进程同时具有指向同一 `127.0.0.1` relay 的 `HTTPS_PROXY`、`https_proxy`，以及 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`。

@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -12,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
 	"golang.org/x/net/websocket"
 )
@@ -79,6 +82,21 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 	defer cleanupEnvironmentRows(t, app.db, environment.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(environment.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	messagesToken, err := ids.New("sk-ant-oat01-ccrv2-")
+	if err != nil {
+		t.Fatalf("generate code session Messages token: %v", err)
+	}
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		update code_sessions
+		set oauth_access_token_hash = $2
+		where external_id = $1
+	`, codeSessionID, auth.HashAPIKey(messagesToken)); err != nil {
+		t.Fatalf("set code session Messages token: %v", err)
+	}
+	sessionIngressToken := codeSessionIngressToken(t, app, codeSessionID)
+	if !strings.HasPrefix(sessionIngressToken, "sk-ant-si-") {
+		t.Fatalf("unexpected session ingress credential: %q", sessionIngressToken)
+	}
 
 	t.Run("failure model proxy requires code session token", func(t *testing.T) {
 		response := postRuntimeModelRequest(t, app, "", "")
@@ -102,9 +120,9 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 
 	t.Run("failure websocket blocks private CONNECT targets", func(t *testing.T) {
 		// 默认配置必须拒绝 loopback，即使 WebSocket Bearer 和 CONNECT Basic 都合法。
-		connection := dialCCRV2UpstreamProxy(t, app, codeSessionID)
+		connection := dialCCRV2UpstreamProxy(t, app, sessionIngressToken)
 		defer connection.Close()
-		authorization := base64.StdEncoding.EncodeToString([]byte(codeSessionID + ":" + codeSessionID))
+		authorization := base64.StdEncoding.EncodeToString([]byte(codeSessionID + ":" + sessionIngressToken))
 		connectHead := "CONNECT 127.0.0.1:443 HTTP/1.1\r\nProxy-Authorization: Basic " + authorization + "\r\n\r\n"
 		if err := websocket.Message.Send(connection, encodeCCRV2TestChunk([]byte(connectHead))); err != nil {
 			t.Fatalf("send private CONNECT request: %v", err)
@@ -115,20 +133,35 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 		}
 	})
 
+	t.Run("failure websocket requires matching Basic token", func(t *testing.T) {
+		connection := dialCCRV2UpstreamProxy(t, app, sessionIngressToken)
+		defer connection.Close()
+		authorization := base64.StdEncoding.EncodeToString([]byte(codeSessionID + ":sk-ant-si-other"))
+		connectHead := "CONNECT 1.1.1.1:443 HTTP/1.1\r\nProxy-Authorization: Basic " + authorization + "\r\n\r\n"
+		if err := websocket.Message.Send(connection, encodeCCRV2TestChunk([]byte(connectHead))); err != nil {
+			t.Fatalf("send mismatched CONNECT request: %v", err)
+		}
+		status := receiveCCRV2TestChunk(t, connection)
+		if !strings.HasPrefix(string(status), "HTTP/1.1 407 Proxy Authentication Required") {
+			t.Fatalf("mismatched CONNECT status = %q", status)
+		}
+	})
+	registerCodeSessionWorker(t, app, codeSessionID)
+
 	t.Run("failure model proxy rejects declared oversized body", func(t *testing.T) {
-		const declaredSize = (16 << 20) + 1
+		const declaredSize = (32 << 20) + 1
 		body := io.LimitReader(repeatedRuntimeModelByteReader{}, declaredSize)
 		request, err := http.NewRequest(http.MethodPost, app.baseURL+"/v1/messages", body)
 		if err != nil {
 			t.Fatalf("new oversized model request: %v", err)
 		}
 		request.ContentLength = declaredSize
-		request.Header.Set("X-Api-Key", codeSessionID)
+		request.Header.Set("X-Api-Key", messagesToken)
 		response, err := app.client.Do(request)
 		if err != nil {
 			t.Fatalf("oversized model request: %v", err)
 		}
-		assertError(t, response, http.StatusRequestEntityTooLarge, "invalid_request_error")
+		assertError(t, response, http.StatusRequestEntityTooLarge, "request_too_large")
 	})
 
 	t.Run("success CA certificate is publicly downloadable", func(t *testing.T) {
@@ -186,7 +219,7 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 			t.Fatalf("new streaming model request: %v", err)
 		}
 		request.ContentLength = int64(len(firstChunk) + len(secondChunk))
-		request.Header.Set("X-Api-Key", codeSessionID)
+		request.Header.Set("X-Api-Key", messagesToken)
 		request.Header.Set("X-Test-Streaming", "true")
 		response, err := app.client.Do(request)
 		if err != nil {
@@ -207,7 +240,7 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 
 	t.Run("success model proxy keeps upstream secret server-side", func(t *testing.T) {
 		body := `{"model":"claude-opus-4-6","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`
-		response := postRuntimeModelRequest(t, app, codeSessionID, body)
+		response := postRuntimeModelRequest(t, app, messagesToken, body)
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("model proxy status = %d, want 200: %s", response.StatusCode, readAll(t, response.Body))
@@ -225,15 +258,15 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 	})
 }
 
-func postRuntimeModelRequest(t *testing.T, app *testApp, codeSessionID string, body string) *http.Response {
+func postRuntimeModelRequest(t *testing.T, app *testApp, messagesToken string, body string) *http.Response {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, app.baseURL+"/v1/messages", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("new runtime model request: %v", err)
 	}
-	if codeSessionID != "" {
-		request.Header.Set("X-Api-Key", codeSessionID)
-		request.Header.Set("Authorization", "Bearer "+codeSessionID)
+	if messagesToken != "" {
+		request.Header.Set("X-Api-Key", messagesToken)
+		request.Header.Set("Authorization", "Bearer "+messagesToken)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("anthropic-version", "2023-06-01")
@@ -244,14 +277,14 @@ func postRuntimeModelRequest(t *testing.T, app *testApp, codeSessionID string, b
 	return response
 }
 
-func dialCCRV2UpstreamProxy(t *testing.T, app *testApp, codeSessionID string) *websocket.Conn {
+func dialCCRV2UpstreamProxy(t *testing.T, app *testApp, sessionIngressToken string) *websocket.Conn {
 	t.Helper()
 	location := "ws" + strings.TrimPrefix(app.baseURL, "http") + "/v1/code/upstreamproxy/ws"
 	config, err := websocket.NewConfig(location, app.baseURL)
 	if err != nil {
 		t.Fatalf("new upstream proxy websocket config: %v", err)
 	}
-	config.Header.Set("Authorization", "Bearer "+codeSessionID)
+	config.Header.Set("Authorization", "Bearer "+sessionIngressToken)
 	config.Header.Set("Content-Type", "application/proto")
 	connection, err := websocket.DialConfig(config)
 	if err != nil {

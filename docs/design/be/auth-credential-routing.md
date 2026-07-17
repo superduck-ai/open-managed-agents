@@ -74,6 +74,10 @@ func ExtractAPIKey(r *http.Request) string
 func ExtractPlatformSessionKey(r *http.Request) string
 ```
 
+`ExtractAPIKey` 只负责入口分流。service auth 首先按 workspace API key 校验；普通 API key 未命中时，仅对 `POST /v1/messages` 继续校验 `sk-ant-oat01-...` OAuth-compatible token。该 token 不能访问其他 `/v1/*` 资源，具体见 [messages-proxy.md](./messages-proxy.md)。
+
+worker、session ingress、OTLP 与 upstream proxy 不走这条 OAuth-compatible fallback。它们统一校验 `sk-ant-si-<JWT>` 的固定 EdDSA 算法、`kid`、签名、issuer、audience，以及 JWT `session_id` 与请求路径的绑定。新 JWT 不设置独立 `exp`，也不携带 repository/resource sources；当前凭证校验本身不回查数据库中的 session 状态或 worker lease，JWT claims 仅作为签名身份快照。worker epoch、heartbeat grace 等状态约束由对应 handler 执行，其中 OTLP 还要求当前 worker epoch 与未过期 lease。
+
 ### 2.3 路由决策表
 
 | API Key | Session Cookie | 鉴权链 | 原因 |
@@ -157,7 +161,7 @@ http.SetCookie(w, &http.Cookie{
 ## 4. 不影响的范围
 
 1. **`/v1/*` 以外的路由** — 不受影响。
-2. **service auth middleware 逻辑** — 不变。API key 验证、权限、scope 均无变化。
+2. **workspace API key 逻辑** — 原验证、权限和 scope 不变；`POST /v1/messages` 额外接受受路径、active session 与 CCR worker lease 约束的 OAuth-compatible token，不额外限制请求中的模型。
 3. **platform session 解析逻辑** — 不变。session 验证、组织上下文注入均无变化。
 
 ---

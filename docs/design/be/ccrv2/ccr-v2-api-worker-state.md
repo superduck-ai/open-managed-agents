@@ -18,7 +18,7 @@
 | `PUT /v1/code/sessions/{session_id}/worker` | 按当前 epoch patch worker state / metadata |
 | `GET /v1/code/sessions/{session_id}/worker` | 读取当前持久化 worker state；可选校验 epoch |
 
-所有入口仍使用现有 ingress auth：Bearer token 必须通过 `authorizeIngress`，通常是 code session ingress token。
+所有入口使用统一 ingress auth：Bearer token 必须是 OMA 签发的 `sk-ant-si-<JWT>`，并通过签名、固定 claims 和 session path 绑定校验；当前不在 JWT 鉴权阶段回查数据库 session 状态或 worker lease。
 
 ## 2. 数据模型
 
@@ -128,7 +128,7 @@ DB 行为：
 2. 若 request `worker_epoch != current_worker_epoch`，返回 `409 conflict_error`。
 3. 匹配时才应用 state patch。
 
-`PUT` 不会 bump epoch；只有 `/worker/register` 和 `/bridge` 会注册新 worker 并递增 epoch。
+`PUT` 不会 bump epoch；只有 `/worker/register` 会注册新 worker 并递增 epoch。
 
 ### Patch 语义
 

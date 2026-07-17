@@ -63,6 +63,7 @@ type Config struct {
 	CodeSessionOTLPFileLogEnabled       bool
 	CodeSessionOTLPLogRoot              string
 	CodeSessionOTLPLogBodyPreviewBytes  int
+	CodeSessionJWTSigningKeyFile        string
 	WebhookEndpointURL                  string
 	WebhookSigningKey                   string
 	WebhookEventTypes                   []string
@@ -159,6 +160,7 @@ func Load() (Config, error) {
 		CodeSessionOTLPFileLogEnabled:       envBool("CODE_SESSION_OTLP_FILE_LOG_ENABLED", defaultCodeSessionOTLPFileLogEnabled(appEnv)),
 		CodeSessionOTLPLogRoot:              env("CODE_SESSION_OTLP_LOG_ROOT", "logs"),
 		CodeSessionOTLPLogBodyPreviewBytes:  envInt("CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES", 256*1024),
+		CodeSessionJWTSigningKeyFile:        env("CODE_SESSION_JWT_SIGNING_KEY_FILE", ""),
 		WebhookEndpointURL:                  env("WEBHOOK_ENDPOINT_URL", ""),
 		WebhookSigningKey:                   env("ANTHROPIC_WEBHOOK_SIGNING_KEY", ""),
 		WebhookEventTypes:                   envCSV("WEBHOOK_EVENT_TYPES", defaultWebhookEventTypes()),

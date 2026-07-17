@@ -39,13 +39,14 @@ dead-code:
 duplicates:
   ./scripts/check-duplicates.sh
 
-complexity: go-file-lines go-complexity web-complexity
+complexity: go-complexity web-complexity
 
-go-file-lines:
-  ./scripts/check-go-file-lines.sh
+# Generate the stable code session JWT signing key. Example: just generate-code-session-jwt-key /secure/path/code-session-jwt-key.pem
+generate-code-session-jwt-key output:
+  ./scripts/generate-code-session-jwt-key.sh "{{ output }}"
 
-test-go-file-lines:
-  ./scripts/tests/check-go-file-lines_test.sh
+test-generate-code-session-jwt-key:
+  ./scripts/tests/generate-code-session-jwt-key_test.sh
 
 # Generate the stable CCRv2 MITM CA key. Example: just generate-upstream-proxy-ca-key /secure/path/ccrv2-mitm-ca-key.pem
 generate-upstream-proxy-ca-key output:

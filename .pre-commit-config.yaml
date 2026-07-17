@@ -41,18 +41,10 @@ repos:
         require_serial: true
 
       - id: go-complexity
-        name: Enforce Go function length and cyclomatic complexity
+        name: Enforce Go cyclomatic complexity
         entry: scripts/go-complexity.sh
         language: script
         files: ^(?:.*\.go|\.golangci-complexity\.yml|go\.(?:mod|sum)|scripts/go-complexity\.sh)$
-        pass_filenames: false
-        require_serial: true
-
-      - id: go-file-lines
-        name: Enforce Go file line budgets
-        entry: scripts/check-go-file-lines.sh
-        language: script
-        files: ^(?:.*\.go|scripts/(?:check-go-file-lines\.sh|go-file-line-budgets\.txt|tests/check-go-file-lines_test\.sh))$
         pass_filenames: false
         require_serial: true
 

@@ -91,7 +91,7 @@ func (h *Handler) handleUpstreamProxyCACertificate(w http.ResponseWriter, r *htt
 
 func (h *Handler) handleUpstreamProxyWebSocket(w http.ResponseWriter, r *http.Request) {
 	// 必须在升级协议前完成 Bearer/X-Api-Key 鉴权，避免未授权客户端占用长连接。
-	record, ok := h.authenticateRuntimeSession(w, r)
+	codeSessionID, sessionIngressToken, ok := h.authenticateRuntimeSession(w, r)
 	if !ok {
 		return
 	}
@@ -106,14 +106,14 @@ func (h *Handler) handleUpstreamProxyWebSocket(w http.ResponseWriter, r *http.Re
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 		Handler: func(connection *websocket.Conn) {
 			connection.MaxPayloadBytes = maxUpstreamProxyChunkBytes + 16
-			// CONNECT Basic 的用户名和密码在本协议中都绑定同一个 code-session external ID。
-			h.serveUpstreamProxyTunnel(connection, record.ExternalID)
+			// CONNECT Basic 用户名绑定 code-session ID，密码必须与 WebSocket Bearer 是同一个 ingress JWT。
+			h.serveUpstreamProxyTunnel(connection, codeSessionID, sessionIngressToken)
 		},
 	}
 	server.ServeHTTP(w, r)
 }
 
-func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, sessionID string) {
+func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, sessionID string, sessionIngressToken string) {
 	// 首个 WebSocket message 必须完整承载 CONNECT head。后续 message 才视为原始 TLS 字节流。
 	firstChunk, err := receiveUpstreamProxyChunk(connection)
 	if err != nil || len(firstChunk) > maxUpstreamProxyConnectHeadBytes {
@@ -127,7 +127,7 @@ func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, sessionID
 	}
 	// WebSocket Bearer 鉴权之后仍校验 CONNECT Basic 的用户名和密码，确保 relay 不能把
 	// 一个 session 的已升级连接改造成另一个 session 的出口。
-	if !upstreamProxyCredentialsMatch(connectRequest, sessionID) {
+	if !upstreamProxyCredentialsMatch(connectRequest, sessionID, sessionIngressToken) {
 		_ = sendUpstreamProxyHTTPStatus(connection, http.StatusProxyAuthRequired)
 		return
 	}
@@ -219,12 +219,11 @@ func parseUpstreamProxyAuthorization(value string) (string, string, error) {
 	return sessionID, token, nil
 }
 
-func upstreamProxyCredentialsMatch(request upstreamProxyConnectRequest, expected string) bool {
+func upstreamProxyCredentialsMatch(request upstreamProxyConnectRequest, expectedSessionID string, expectedToken string) bool {
 	// 对等长凭证使用常量时间比较，避免在首个不同字节处提前返回。
 	// code-session external ID 的长度不作为秘密，因此长度不一致仍会立即失败。
-	// CONNECT Basic 的用户名和密码在本协议中都绑定同一个 code-session external ID。
-	return subtle.ConstantTimeCompare([]byte(request.SessionID), []byte(expected)) == 1 &&
-		subtle.ConstantTimeCompare([]byte(request.Token), []byte(expected)) == 1
+	return subtle.ConstantTimeCompare([]byte(request.SessionID), []byte(expectedSessionID)) == 1 &&
+		subtle.ConstantTimeCompare([]byte(request.Token), []byte(expectedToken)) == 1
 }
 
 func resolveUpstreamProxyTarget(ctx context.Context, target string, disableSSRFProtection bool) (string, error) {

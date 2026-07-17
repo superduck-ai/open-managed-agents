@@ -37,11 +37,21 @@ func NewRunnerWithConfig(database *db.DB, provider e2bruntime.Provider, cfg conf
 }
 
 func NewRunnerWithConfigAndStore(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore) *Runner {
+	// Runner 与 API server 必须使用同一签发配置，否则 sandbox 拿到的 ingress JWT 无法被回连入口验证。
+	credentials, err := codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return NewRunnerWithConfigStoreAndCredentials(database, provider, cfg, store, credentials)
+}
+
+func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore, credentials *codesessions.SessionCredentials) *Runner {
+	// 显式注入用于 main 和测试，确保不会在同一进程中意外创建第二套签名身份。
 	return &Runner{
 		db:           database,
 		provider:     provider,
 		cfg:          cfg,
-		codeSessions: codesessions.NewService(database),
+		codeSessions: codesessions.NewServiceWithCredentials(database, credentials),
 		skills:       skillsapi.NewRuntimeResolver(cfg, database, store),
 	}
 }
@@ -51,6 +61,14 @@ func StartRunner(ctx context.Context, database *db.DB, cfg config.Config) {
 }
 
 func StartRunnerWithStore(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config) {
+	credentials, err := codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		panic(err)
+	}
+	StartRunnerWithStoreAndCredentials(ctx, database, store, cfg, credentials)
+}
+
+func StartRunnerWithStoreAndCredentials(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, credentials *codesessions.SessionCredentials) {
 	if !cfg.EnvironmentRunnerEnabled {
 		return
 	}
@@ -58,7 +76,7 @@ func StartRunnerWithStore(ctx context.Context, database *db.DB, store storage.Ob
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	runner := NewRunnerWithConfigAndStore(database, e2bruntime.NewProvider(cfg), cfg, store)
+	runner := NewRunnerWithConfigStoreAndCredentials(database, e2bruntime.NewProvider(cfg), cfg, store, credentials)
 	for i := 0; i < concurrency; i++ {
 		workerID := fmt.Sprintf("environment-runner-%d", i+1)
 		go runner.loop(ctx, workerID)
@@ -160,21 +178,23 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		}
 		*work = updatedWork
 	}
-	if launch != nil {
-		if err := r.provider.WriteFile(ctx, providerSandboxID, launch.StdinPath, launch.Payload); err != nil {
-			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, err
-		}
-		if err := r.provider.RunCommand(ctx, providerSandboxID, launch.ShellCommand); err != nil {
-			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, err
-		}
-	}
 	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
-	_, err = r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
-	return true, err
+	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	if launch != nil {
+		// 先建立 environment runtime 状态，再把双凭证直接写入后台进程 stdin。
+		// environment-manager 会在启动 Claude 前 register worker，建立首个 CCR lease。
+		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.ShellCommand, launch.Payload); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+	}
+	return true, nil
 }
 
 func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
@@ -227,6 +247,7 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	local, err := r.codeSessions.CreateManagedAgentCodeSession(ctx, codesessions.ManagedAgentCreateInput{
 		Session:                    session,
 		Environment:                env,
+		EnvironmentWork:            *work,
 		Model:                      modelIDFromAgentSnapshot(session.AgentSnapshot),
 		Title:                      title,
 		WorkDir:                    workDir,
@@ -234,6 +255,7 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 		DangerouslySkipPermissions: true,
 		Config:                     sessionConfig,
 		InitialEvents:              events,
+		Resources:                  resources,
 	})
 	if err != nil {
 		return nil, err
@@ -273,7 +295,7 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	}
 	*work = updatedWork
 
-	payload, err := buildEnvironmentManagerV0Payload(local.CodeSessionID, workDir, sessionConfig, r.cfg)
+	payload, err := buildEnvironmentManagerV0Payload(local.CodeSessionID, local.SessionIngressToken, local.OAuthAccessToken, workDir, sessionConfig, r.cfg)
 	if err != nil {
 		return nil, err
 	}

@@ -33,7 +33,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Verify pinned source contract
+      - name: Verify pinned source and version consistency
         run: ./scripts/sandbox-image.sh verify-source
 
       - name: Check Dockerfile

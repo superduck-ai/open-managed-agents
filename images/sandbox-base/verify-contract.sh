@@ -64,6 +64,58 @@ assert_cargo_builds() {
   [[ "$output" == 'cargo-linker-ok' ]] || fail "Cargo probe returned unexpected output: $output"
 }
 
+assert_yarn_uses_npmmirror() {
+  local output probe_dir
+  probe_dir="$(mktemp -d)"
+  printf '%s\n' '{"name":"oma-yarn-registry-probe","version":"1.0.0"}' >"$probe_dir/package.json"
+
+  output="$(cd "$probe_dir" && YARN_CACHE_FOLDER="$probe_dir/cache" \
+    yarn add is-number@7.0.0 --ignore-scripts --non-interactive --verbose 2>&1)" || {
+    rm -rf "$probe_dir"
+    fail "Yarn registry probe failed: $output"
+  }
+  rm -rf "$probe_dir"
+  grep -Fq 'https://registry.npmmirror.com/' <<<"$output" || fail "Yarn did not request npmmirror"
+  ! grep -Fq 'https://registry.yarnpkg.com/' <<<"$output" || fail "Yarn requested registry.yarnpkg.com"
+  ! grep -Fq 'https://registry.npmjs.org/' <<<"$output" || fail "Yarn requested registry.npmjs.org"
+}
+
+assert_bun_uses_npmmirror() {
+  local output probe_dir
+  probe_dir="$(mktemp -d)"
+  printf '%s\n' '{"dependencies":{"is-number":"7.0.0"}}' >"$probe_dir/package.json"
+
+  output="$(cd "$probe_dir" && BUN_INSTALL_CACHE_DIR="$probe_dir/cache" \
+    bun install --ignore-scripts --verbose 2>&1)" || {
+    rm -rf "$probe_dir"
+    fail "Bun registry probe failed: $output"
+  }
+  rm -rf "$probe_dir"
+  grep -Fq 'https://registry.npmmirror.com/' <<<"$output" || fail "Bun did not request npmmirror"
+  ! grep -Fq 'https://registry.npmjs.org/' <<<"$output" || fail "Bun requested registry.npmjs.org"
+}
+
+assert_bundler_uses_mirror() {
+  local output probe_dir
+  probe_dir="$(mktemp -d)"
+  printf '%s\n' 'source "https://rubygems.org"' 'gem "rake", "13.2.1"' >"$probe_dir/Gemfile"
+
+  output="$(cd "$probe_dir" && BUNDLE_APP_CONFIG="$probe_dir/app-config" \
+    BUNDLE_PATH="$probe_dir/vendor" bundle lock --verbose 2>&1)" || {
+    rm -rf "$probe_dir"
+    fail "Bundler mirror probe failed: $output"
+  }
+  rm -rf "$probe_dir"
+  grep -Fq 'HTTP GET https://mirrors.cloud.tencent.com/rubygems/' <<<"$output" || \
+    fail "Bundler did not request the configured mirror"
+  ! grep -Fq 'HTTP GET https://rubygems.org/' <<<"$output" || fail "Bundler requested rubygems.org"
+}
+
+VERSIONS_FILE=/etc/oma-sandbox-versions.env
+[[ -r "$VERSIONS_FILE" ]] || fail "missing image version contract: $VERSIONS_FILE"
+# shellcheck source=/dev/null
+source "$VERSIONS_FILE"
+
 [[ "$(uname -m)" == "x86_64" ]] || fail "platform is not linux/amd64"
 [[ "$(id -un)" == "root" ]] || fail "default user is not root"
 [[ "$(id -u)" == "0" ]] || fail "root UID is not 0"
@@ -97,8 +149,10 @@ assert_output_equals 'user:x:1000:claude' getent group user
 [[ "$PIP_CONFIG_FILE" == "/etc/pip.conf" ]] || fail "PIP_CONFIG_FILE is not the shared pip config"
 [[ "$PYTHONUNBUFFERED" == "1" ]] || fail "PYTHONUNBUFFERED is not enabled"
 [[ "$IS_SANDBOX" == "yes" ]] || fail "IS_SANDBOX is not enabled"
+[[ "$BUN_CONFIG_REGISTRY" == "https://registry.npmmirror.com" ]] || fail "Bun registry is not npmmirror"
 [[ "$NODE_PATH" == "/home/claude/.npm-global/lib/node_modules" ]] || fail "NODE_PATH is not Claude-compatible"
 [[ "$GEMRC" == "/home/user/.gemrc" ]] || fail "GEMRC does not use the shared configuration"
+[[ "$BUNDLE_USER_CONFIG" == "/home/user/.bundle/config" ]] || fail "Bundler does not use the shared configuration"
 [[ "$MAVEN_ARGS" == "-s /home/user/.m2/settings.xml" ]] || fail "MAVEN_ARGS does not use the shared settings"
 [[ "$GRADLE_USER_HOME" == "/home/user/.gradle" ]] || fail "GRADLE_USER_HOME does not use the shared configuration"
 [[ "$COMPOSER_HOME" == "/home/user/.config/composer" ]] || fail "COMPOSER_HOME does not use the shared configuration"
@@ -122,7 +176,9 @@ sudo -n -H -u user bash -lc '
   cd "$HOME"
   [[ "$PWD" == "/home/user" ]]
   [[ "$PIP_CACHE_DIR" == "/home/claude/.cache/pip" ]]
+  [[ "$BUN_CONFIG_REGISTRY" == "https://registry.npmmirror.com" ]]
   [[ "$NODE_PATH" == "/home/claude/.npm-global/lib/node_modules" ]]
+  [[ "$BUNDLE_USER_CONFIG" == "/home/user/.bundle/config" ]]
   for dir in /home/claude/.cache/pip /home/claude/.claude /home/claude/.local/bin /home/claude/.npm /home/claude/.npm-global/bin /home/claude/.npm-global/lib/node_modules /home/claude/project; do
     probe="$dir/.oma-sandbox-contract-user-$$"
     : >"$probe"
@@ -137,7 +193,9 @@ sudo -n -H -u claude bash -lc '
   cd "$HOME"
   [[ "$PWD" == "/home/claude" ]]
   [[ "$PIP_CACHE_DIR" == "/home/claude/.cache/pip" ]]
+  [[ "$BUN_CONFIG_REGISTRY" == "https://registry.npmmirror.com" ]]
   [[ "$NODE_PATH" == "/home/claude/.npm-global/lib/node_modules" ]]
+  [[ "$BUNDLE_USER_CONFIG" == "/home/user/.bundle/config" ]]
   [[ -w /home/user ]]
   for dir in .cache/pip .claude .local/bin .npm .npm-global/bin .npm-global/lib/node_modules project; do
     probe="$HOME/$dir/.oma-sandbox-contract-claude-$$"
@@ -147,52 +205,59 @@ sudo -n -H -u claude bash -lc '
   sudo -n true
 ' || fail "claude account contract failed"
 
-assert_output_contains 'Python 3.13.14' python --version
+assert_output_contains "Python ${PYTHON_VERSION}" python --version
 assert_output_contains 'pip ' python -m pip --version
-assert_output_contains 'uv 0.7.13' uv --version
-assert_output_contains 'v24.18.0' node --version
-assert_output_contains '1.22.22' yarn --version
-assert_output_contains '10.12.1' pnpm --version
+assert_output_contains "uv ${UV_VERSION}" uv --version
+assert_output_contains "v${NODE_VERSION}" node --version
+assert_output_contains "${YARN_VERSION}" yarn --version
+assert_output_contains "${PNPM_VERSION}" pnpm --version
 assert_output_equals '/home/claude/.npm-global' npm config get prefix
 assert_output_equals '/home/claude/.npm' npm config get cache
-assert_output_contains 'go1.26.5' go version
-assert_output_contains '25.0.3' java -version
-assert_output_contains 'Apache Maven 3.9.11' mvn --version
-assert_output_contains 'Gradle 9.2.1' gradle --version
-assert_output_contains 'PHP 8.5.8' php --version
-assert_output_contains 'Composer version 2.8.11' composer --version
-assert_output_contains '14.2.0' gcc --version
-assert_output_contains '14.2.0' cc --version
-assert_output_contains '14.2.0' g++ --version
-assert_output_contains '14.2.0' c++ --version
-assert_output_contains 'cmake version 3.28.3' cmake --version
-assert_output_contains '1.3.14' bun --version
-assert_output_contains 'rustc 1.97.0' rustc --version
-assert_output_contains 'cargo 1.97.0' cargo --version
+assert_output_equals 'https://registry.npmmirror.com' npm config get registry
+assert_output_equals 'https://registry.npmmirror.com' pnpm config get registry
+assert_output_contains "go${GO_VERSION}" go version
+assert_output_contains "${JAVA_VERSION%%+*}" java -version
+assert_output_contains "Apache Maven ${MAVEN_VERSION}" mvn --version
+assert_output_contains "Gradle ${GRADLE_VERSION}" gradle --version
+assert_output_contains "PHP ${PHP_VERSION}" php --version
+assert_output_contains "Composer version ${COMPOSER_VERSION}" composer --version
+assert_output_contains "${GCC_VERSION}" gcc --version
+assert_output_contains "${GCC_VERSION}" cc --version
+assert_output_contains "${GCC_VERSION}" g++ --version
+assert_output_contains "${GCC_VERSION}" c++ --version
+assert_output_contains 'cmake version ' cmake --version
+assert_output_contains "${BUN_VERSION}" bun --version
+assert_output_contains "rustc ${RUST_VERSION}" rustc --version
+assert_output_contains "cargo ${RUST_VERSION}" cargo --version
 assert_output_contains 'rustfmt ' rustfmt --version
 assert_output_contains 'rustfmt ' cargo fmt --version
 assert_output_contains 'clippy ' cargo clippy --version
 assert_output_contains 'rust-analyzer ' rust-analyzer --version
 rust_sysroot="$(rustc --print sysroot)"
 for llvm_tool in llvm-cov llvm-profdata; do
-  [[ -x "$rust_sysroot/lib/rustlib/x86_64-unknown-linux-gnu/bin/$llvm_tool" ]] || fail "missing Rust LLVM tool: $llvm_tool"
+  [[ -x "$rust_sysroot/lib/rustlib/${RUST_TARGET}/bin/$llvm_tool" ]] || fail "missing Rust LLVM tool: $llvm_tool"
 done
 assert_cargo_builds
-assert_output_contains 'ruby 3.4.10' ruby --version
+assert_output_contains "ruby ${RUBY_VERSION}" ruby --version
 assert_command gem
 assert_command bundle
+assert_output_contains 'https://mirrors.cloud.tencent.com/rubygems/' gem sources --list
+assert_output_contains 'https://mirrors.cloud.tencent.com/rubygems/' bundle config get mirror.https://rubygems.org
+if grep -Fq 'FALLBACK_TIMEOUT' "$BUNDLE_USER_CONFIG"; then
+  fail "Bundler mirror fallback must not be configured"
+fi
 [[ -L /usr/local/bin/claude ]] || fail "claude command is not a compatibility symlink"
 assert_output_equals '/opt/claude-code/bin/claude' readlink /usr/local/bin/claude
-assert_output_equals '2.1.120 (Claude Code)' claude --version
-assert_output_equals '2.1.120 (Claude Code)' /opt/claude-code/bin/claude --version
-assert_output_equals '2.1.120 (Claude Code)' sudo -n -H -u user claude --version
-assert_output_equals '2.1.120 (Claude Code)' sudo -n -H -u claude /opt/claude-code/bin/claude --version
+assert_output_equals "${CLAUDE_VERSION} (Claude Code)" claude --version
+assert_output_equals "${CLAUDE_VERSION} (Claude Code)" /opt/claude-code/bin/claude --version
+assert_output_equals "${CLAUDE_VERSION} (Claude Code)" sudo -n -H -u user claude --version
+assert_output_equals "${CLAUDE_VERSION} (Claude Code)" sudo -n -H -u claude /opt/claude-code/bin/claude --version
 
 [[ -x /opt/env-runner/environment-manager ]] || fail "environment-manager payload is not executable"
 [[ -L /usr/local/bin/environment-manager ]] || fail "environment-manager command is not a compatibility symlink"
 assert_output_equals '/opt/env-runner/environment-manager' readlink /usr/local/bin/environment-manager
-assert_output_contains 'environment-runner version 1e71969' /usr/local/bin/environment-manager --version
-assert_output_contains 'environment-runner version 1e71969' sudo -n -H -u claude /usr/local/bin/environment-manager --version
+assert_output_contains "environment-runner version ${ENVIRONMENT_MANAGER_VERSION}" /usr/local/bin/environment-manager --version
+assert_output_contains "environment-runner version ${ENVIRONMENT_MANAGER_VERSION}" sudo -n -H -u claude /usr/local/bin/environment-manager --version
 manager_task_help="$(/usr/local/bin/environment-manager task-run --help 2>&1)" || fail "environment-manager task-run help failed"
 for manager_flag in --session --session-mode --local-testing --claude-agent-version --claude-path; do
   grep -Fq -- "$manager_flag" <<<"$manager_task_help" || fail "environment-manager task-run is missing $manager_flag"
@@ -208,10 +273,14 @@ grep -Fq 'https://registry.npmmirror.com' /etc/npmrc || fail "npm does not use n
 grep -Fq 'https://goproxy.cn,direct' /etc/environment || fail "Go proxy is not configured"
 grep -Fq 'sparse+https://rsproxy.cn/index/' /home/user/.cargo/config.toml || fail "Cargo does not use RSProxy"
 grep -Fq 'https://maven.aliyun.com/repository/public' /home/user/.m2/settings.xml || fail "Maven does not use Aliyun"
-grep -Fq 'https://mirrors.tuna.tsinghua.edu.cn/rubygems/' /home/user/.gemrc || fail "RubyGems does not use TUNA"
+grep -Fq 'https://mirrors.cloud.tencent.com/rubygems/' /home/user/.gemrc || fail "RubyGems does not use Tencent Cloud"
 grep -Fq 'https://mirrors.aliyun.com/composer/' /home/user/.config/composer/config.json || fail "Composer does not use Aliyun"
 [[ ! -e /etc/apt/apt.conf.d/docker-clean ]] || fail "APT docker-clean defeats BuildKit package caching"
 grep -Fq 'APT::Keep-Downloaded-Packages "true"' /etc/apt/apt.conf.d/keep-cache || fail "APT package caching is not enabled"
+
+assert_yarn_uses_npmmirror
+assert_bun_uses_npmmirror
+assert_bundler_uses_mirror
 
 assert_absent codex
 assert_absent dockerd

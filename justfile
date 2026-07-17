@@ -78,6 +78,19 @@ web-format:
 web-format-check:
   cd web && bun run format:check
 
+# Validate the fixed sandbox-image source contract and Dockerfile.
+sandbox-image-check:
+  ./scripts/sandbox-image.sh verify-source
+  ./scripts/sandbox-image.sh check
+
+# Build the fixed linux/amd64 sandbox image. ENVIRONMENT_MANAGER_BINARY must match the repository-pinned SHA-256.
+sandbox-image-build:
+  ./scripts/sandbox-image.sh build
+
+# Enforce platform, uncompressed size, and runtime contracts on the local image.
+sandbox-image-test:
+  ./scripts/sandbox-image.sh test-image "${SANDBOX_IMAGE_TAG:-oma/managed-agent-sandbox:latest}"
+
 # Check every tracked file with the repository-pinned pre-commit hook.
 large-files:
   ./scripts/pre-commit.sh run check-added-large-files --all-files

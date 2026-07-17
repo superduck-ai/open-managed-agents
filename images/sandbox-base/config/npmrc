@@ -1,0 +1,6 @@
+registry=https://registry.npmmirror.com
+cache=/home/claude/.npm
+prefix=/home/claude/.npm-global
+fund=false
+audit=false
+update-notifier=false

@@ -1,0 +1,7 @@
+---
+:sources:
+- https://mirrors.tuna.tsinghua.edu.cn/rubygems/
+:update_sources: true
+:backtrace: false
+:bulk_threshold: 1000
+gem: --no-document

@@ -3464,12 +3464,17 @@ func codeSessionIngressToken(t *testing.T, app *testApp, codeSessionID string) s
 }
 
 func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string, error) {
+	ctx := context.Background()
+	record, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return "", err
+	}
 	credentials, err := codesessions.NewSessionCredentials(app.cfg)
 	if err != nil {
 		return "", err
 	}
 	service := codesessions.NewServiceWithCredentials(app.db, credentials)
-	token, _, err := service.IssueSessionIngressToken(context.Background(), codeSessionID)
+	token, _, err := service.IssueSessionIngressToken(ctx, record.OrganizationID, record.WorkspaceID, codeSessionID)
 	return token, err
 }
 

@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,28 @@ func TestMessagesAPIFailures(t *testing.T) {
 	cfg.AnthropicUpstreamAPIKey = "sk-ant-messages-failure-upstream"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("messages-failures-bucket"))
 	defer app.close()
+
+	t.Run("failure credential issue rejects mismatched tenant", func(t *testing.T) {
+		credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
+		_, err := app.db.GetCodeSessionCredentialContextForIssue(
+			context.Background(),
+			credential.OrganizationID+1,
+			credential.WorkspaceID,
+			credential.CodeSessionID,
+		)
+		if !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("issue credential with mismatched organization error = %v, want ErrNotFound", err)
+		}
+		_, err = app.db.GetCodeSessionCredentialContextForIssue(
+			context.Background(),
+			credential.OrganizationID,
+			credential.WorkspaceID+1,
+			credential.CodeSessionID,
+		)
+		if !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("issue credential with mismatched workspace error = %v, want ErrNotFound", err)
+		}
+	})
 
 	t.Run("failure session credential cannot access other resources", func(t *testing.T) {
 		credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
@@ -247,6 +270,8 @@ type messagesCodeSessionCredential struct {
 	Token           string
 	CodeSessionID   string
 	PublicSessionID int64
+	OrganizationID  int64
+	WorkspaceID     int64
 }
 
 func createMessagesCodeSessionCredential(t *testing.T, app *testApp, model string) messagesCodeSessionCredential {
@@ -297,6 +322,8 @@ func createMessagesCodeSessionCredential(t *testing.T, app *testApp, model strin
 		Token:           token,
 		CodeSessionID:   codeSessionID,
 		PublicSessionID: sessionID,
+		OrganizationID:  apiKey.OrganizationID,
+		WorkspaceID:     apiKey.WorkspaceID,
 	}
 }
 

@@ -10,8 +10,8 @@ import (
 
 // IssueSessionIngressToken 是进程内 Service 能力，不对应公开的 token 换发接口；
 // 当前主要供受控测试构造与 code session 身份一致的合法凭证。
-func (s *Service) IssueSessionIngressToken(ctx context.Context, codeSessionID string) (string, int, error) {
-	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(ctx, codeSessionID)
+func (s *Service) IssueSessionIngressToken(ctx context.Context, organizationID, workspaceID int64, codeSessionID string) (string, int, error) {
+	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(ctx, organizationID, workspaceID, codeSessionID)
 	if err != nil {
 		return "", 0, err
 	}

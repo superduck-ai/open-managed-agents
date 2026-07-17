@@ -12,7 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
-// ManagedAgentCreateInput 汇总创建 code session、构造审计 claims 和计算凭证期限所需的上下文。
+// ManagedAgentCreateInput 汇总为 managed agent 创建 code session 和签发 sandbox 凭证所需的上下文。
 type ManagedAgentCreateInput struct {
 	Session                    db.Session
 	Environment                db.Environment
@@ -24,7 +24,6 @@ type ManagedAgentCreateInput struct {
 	DangerouslySkipPermissions bool
 	Config                     json.RawMessage
 	InitialEvents              []json.RawMessage
-	Resources                  []db.SessionResource
 }
 
 // ManagedAgentCreateResult 只在创建链路内短暂携带两份明文凭证，调用方应立即交给
@@ -82,7 +81,12 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err := s.queueInitialPublicSessionEvents(ctx, record, input.InitialEvents, now); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(ctx, record.ExternalID)
+	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(
+		ctx,
+		input.Session.OrganizationID,
+		input.Session.WorkspaceID,
+		record.ExternalID,
+	)
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}

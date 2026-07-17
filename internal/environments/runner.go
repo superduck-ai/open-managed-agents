@@ -255,7 +255,6 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 		DangerouslySkipPermissions: true,
 		Config:                     sessionConfig,
 		InitialEvents:              events,
-		Resources:                  resources,
 	})
 	if err != nil {
 		return nil, err

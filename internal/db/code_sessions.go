@@ -255,47 +255,54 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 		status, jsonArg(input.Metadata), oauthAccessTokenHash, now))
 }
 
+// codeSessionCredentialContextSelect 查询 code session 的鉴权身份信息。
+// OAuth token 鉴权和 session-ingress JWT 签发都会使用这些信息。
+// JOIN 中同时校验 organization、workspace 和 session 的归属，防止跨租户查询。
+// worker lease 不在这里校验：OAuth 鉴权要求有效 lease，首次签发 JWT 时还没有 lease。
+const codeSessionCredentialContextSelect = `
+	select cs.id, cs.external_id,
+		cs.organization_id, o.uuid::text, o.external_id,
+		cs.workspace_id, w.uuid::text, w.external_id,
+		s.id, s.external_id, s.agent_id, s.agent_external_id, s.agent_version,
+		coalesce(u.email, '')
+	from code_sessions cs
+	join organizations o on o.id = cs.organization_id
+	join workspaces w on w.id = cs.workspace_id and w.organization_id = cs.organization_id
+	join sessions s on s.id = cs.session_id
+		and s.workspace_id = cs.workspace_id
+		and s.organization_id = cs.organization_id
+		and s.deleted_at is null
+	left join api_keys ak on ak.id = s.created_by_api_key_id and ak.workspace_id = s.workspace_id
+	left join users u on u.id = ak.created_by_user_id
+		and u.organization_id = cs.organization_id
+		and u.deleted_at is null
+`
+
+// activeCodeSessionCredentialConditions 保证凭证只关联仍可运行的 code session 和 public session。
+const activeCodeSessionCredentialConditions = `
+	and cs.status = 'active'
+	and cs.deleted_at is null
+	and s.status <> 'terminated'
+`
+
 // GetCodeSessionByOAuthAccessTokenHash 只返回 session 与 CCR worker lease 仍存活的凭证上下文。
 func (d *DB) GetCodeSessionByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (CodeSessionCredentialContext, error) {
 	// 调用方只传 SHA-256 hash，明文 OAuth-compatible token 不进入数据库边界。
-	return d.getCodeSessionCredentialContext(ctx, "cs.oauth_access_token_hash = $1", strings.TrimSpace(tokenHash), true)
+	row := d.Pool.QueryRow(ctx, codeSessionCredentialContextSelect+`
+		where cs.oauth_access_token_hash = $1
+	`+activeCodeSessionCredentialConditions+`
+		and cs.worker_lease_expires_at > now()
+	`, strings.TrimSpace(tokenHash))
+	return scanCodeSessionCredentialContext(row)
 }
 
-// GetCodeSessionCredentialContextForIssue 用于初始 session-ingress JWT 签发。
-func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
-	return d.getCodeSessionCredentialContext(ctx, "cs.external_id = $1", strings.TrimSpace(codeSessionExternalID), false)
-}
-
-func (d *DB) getCodeSessionCredentialContext(ctx context.Context, predicate string, value any, requireWorkerLease bool) (CodeSessionCredentialContext, error) {
-	// predicate 只由本文件内的固定入口提供；值始终参数化。JOIN 条件显式重复租户
-	// 约束，因为项目不依赖 PostgreSQL 外键来保证 organization/workspace 归属。
-	leasePredicate := ""
-	if requireWorkerLease {
-		leasePredicate = "and cs.worker_lease_expires_at > now()"
-	}
-	row := d.Pool.QueryRow(ctx, `
-		select cs.id, cs.external_id,
-			cs.organization_id, o.uuid::text, o.external_id,
-			cs.workspace_id, w.uuid::text, w.external_id,
-			s.id, s.external_id, s.agent_id, s.agent_external_id, s.agent_version,
-			coalesce(u.email, '')
-		from code_sessions cs
-		join organizations o on o.id = cs.organization_id
-		join workspaces w on w.id = cs.workspace_id and w.organization_id = cs.organization_id
-		join sessions s on s.id = cs.session_id
-			and s.workspace_id = cs.workspace_id
-			and s.organization_id = cs.organization_id
-			and s.deleted_at is null
-		left join api_keys ak on ak.id = s.created_by_api_key_id and ak.workspace_id = s.workspace_id
-		left join users u on u.id = ak.created_by_user_id
-			and u.organization_id = cs.organization_id
-			and u.deleted_at is null
-		where `+predicate+`
-			and cs.status = 'active'
-			and cs.deleted_at is null
-			and s.status <> 'terminated'
-			`+leasePredicate+`
-	`, value)
+// GetCodeSessionCredentialContextForIssue 用于初始 session-ingress JWT 签发，并将查询绑定到预期租户。
+func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
+	row := d.Pool.QueryRow(ctx, codeSessionCredentialContextSelect+`
+		where cs.external_id = $1
+			and cs.organization_id = $2
+			and cs.workspace_id = $3
+	`+activeCodeSessionCredentialConditions, strings.TrimSpace(codeSessionExternalID), organizationID, workspaceID)
 	return scanCodeSessionCredentialContext(row)
 }
 

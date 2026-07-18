@@ -6,6 +6,8 @@
 
 `versions.env` 是可执行镜像合同中所有平台、运行时、工具版本、下载坐标、校验和和 revision 的唯一值来源。构建 wrapper 从该文件统一生成 BuildKit 参数；Dockerfile 中对应的 `ARG` 不提供重复默认值。相同文件会复制到镜像内的 `/etc/oma-sandbox-versions.env`，供运行时 verifier 读取。固定运行时通过 `/opt/<runtime>/current` 稳定链接暴露，因此 profile、`PATH` 和 verifier 不需要再次硬编码具体版本目录。
 
+构建期 APT 统一读取 `versions.env` 固定时间点的 Ubuntu 官方 snapshot，避免滚动镜像索引使固定的 GCC/G++ 包版本突然不可解析；最终镜像会把 APT source 恢复为 TUNA，供运行时 `packages.apt` 使用。用于启动 TLS 的 curl CA extract 使用带日期的不可变 URL 和 SHA-256，Composer 则直接下载带版本路径的 `composer.phar` 并校验 SHA-256，不执行可变的在线 installer。
+
 该文件同时固定 Ubuntu AMD64 manifest 和干净的 Environment Manager 制品身份。独立拥有的 Environment Manager 不会提交到本仓库。请提供字节内容与固定 SHA-256 匹配的 Linux AMD64 二进制文件：
 
 ```console
@@ -34,7 +36,7 @@ SANDBOX_IMAGE_TAG=oma/managed-agent-sandbox:latest just sandbox-image-test
 
 由 containerd 支持的引擎可能会在新加载的层首次挂载并解包前暂时报告零大小，因此测量过程会先运行一个不执行实际操作的 `/bin/true` 容器。随后读取两次 `docker image history --human=false`，并拒绝不稳定结果。它从 `RootFS.Layers` 推导权威的非空文件系统层数（将 OCI 标准空 tar DiffID 计算在内），并要求 history 在汇总精确字节数前，恰好包含这么多非零大小条目。即使截断后的响应所含总条目数仍与 RootFS 层数一样多，这也能拒绝稳定截断。三 GiB（`3,221,225,472` 字节）是报告目标，而不是硬性验收限制：命令会输出 `size_target_status=at_or_below_target` 或 `size_target_status=above_target`，但不会因此拒绝其他方面均有效的镜像。`docker image inspect .Size` 会另外报告为 `storage_size_bytes`，因为由 containerd 支持的引擎可能会在这里暴露压缩后或存储实现特定的值；该值不能替代未压缩体积测量。执行 verifier 前，会先按 SHA-256 比较仓库当前 `versions.env` 与镜像内 `/etc/oma-sandbox-versions.env`，再比较仓库与镜像内 verifier。这样即使旧镜像自己的版本合同和 verifier 彼此一致，也无法针对较新的仓库合同假通过。
 
-2026-07-18 验证的最终本地构建为 `sha256:e428d823477056878f7e675ac7ad399728fd53b930d546925715f6bbbd9f1f12`，包含 `3,401,670,656` 字节的未压缩层数据，比 3 GiB 参考目标高 `180,445,184` 字节。对于同一个镜像，OrbStack 报告的存储大小为 `1,266,108,077` 字节。与只安装 `rustc`、Cargo 和标准库的旧构建相比，保留单版本 rustfmt、Clippy、rust-analyzer 和 LLVM tools 使未压缩镜像增加 `285,638,656` 字节（约 272.4 MiB）；随后加入 `claude` 兼容账号、两个 home 的共享权限、sudoers 及旧 Claude 目录布局合计只再增加 `40,960` 字节（40 KiB），其中恢复 npm/pip/状态目录和 Environment Manager 链接布局只比账号版本增加 `4,096` 字节。切换为 root、补充稳定的 `claude`/`cc`/`c++` 命令和对应合同验证后，未压缩数据相对上一版增加 `28,672` 字节；为 root 初始化 Claude 配置路径又增加 `4,096` 字节。引入镜像内版本合同和固定 runtime 的 `current` 链接后又增加 `32,768` 字节。这些实测成本被接受，不会触发硬性失败。
+2026-07-18 验证的最终本地构建为 `sha256:31ac308c0bd7e302ada4b723e9aa4bf51ced17694180c0a96d9a09f7cb52177f`，包含 `3,401,588,736` 字节的未压缩层数据，比 3 GiB 参考目标高 `180,363,264` 字节。对于同一个镜像，OrbStack 报告的存储大小为 `1,266,076,935` 字节。与只安装 `rustc`、Cargo 和标准库的旧构建相比，保留单版本 rustfmt、Clippy、rust-analyzer 和 LLVM tools 使未压缩镜像增加 `285,638,656` 字节（约 272.4 MiB）；随后加入 `claude` 兼容账号、两个 home 的共享权限、sudoers 及旧 Claude 目录布局合计只再增加 `40,960` 字节（40 KiB），其中恢复 npm/pip/状态目录和 Environment Manager 链接布局只比账号版本增加 `4,096` 字节。切换为 root、补充稳定的 `claude`/`cc`/`c++` 命令和对应合同验证后，未压缩数据相对上一版增加 `28,672` 字节；为 root 初始化 Claude 配置路径又增加 `4,096` 字节。引入镜像内版本合同和固定 runtime 的 `current` 链接后又增加 `32,768` 字节。这些实测成本被接受，不会触发硬性失败。
 
 ## 构建与运行时性能
 
@@ -42,6 +44,6 @@ Dockerfile 将从源码构建的运行时和可下载运行时制品拆分到独
 
 ## 发布与部署
 
-`Sandbox base image` workflow 始终会在相关 Pull Request 上检查来源合同和版本单一真源一致性，包括 BuildKit 参数覆盖、无重复 Dockerfile 默认值、动态制品 URL、稳定 runtime 路径，以及 verifier 对镜像内版本合同的读取。手动触发会执行完整 AMD64 构建和直接容器合同验证。显式启用其 `publish` 输入后，它会推送经过验证的同一个 daemon 镜像，确认已发布 descriptor（OCI index）或 config（单 manifest）的身份等于经过测试的本地身份，并记录不可变 registry manifest digest。
+`Sandbox base image` workflow 始终会在相关 Pull Request 上检查来源合同和版本单一真源一致性，包括 BuildKit 参数覆盖、无重复 Dockerfile 默认值、固定 Ubuntu snapshot、不可变制品 URL、稳定 runtime 路径，以及 verifier 对镜像内版本合同的读取。发布 workflow 使用 commit SHA 固定第三方 Actions，并禁止 checkout 在工作目录中持久化凭据。手动触发会执行完整 AMD64 构建和直接容器合同验证。显式启用其 `publish` 输入后，它会推送经过验证的同一个 daemon 镜像，确认已发布 descriptor（OCI index）或 config（单 manifest）的身份等于经过测试的本地身份，并记录不可变 registry manifest digest。
 
 发布过程不会部署或替换 E2B Base Template。提升操作被有意设计为独立步骤，必须使用经过验证的 `image@sha256:...` 身份，并获得单独授权。

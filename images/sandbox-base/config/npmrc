@@ -2,5 +2,6 @@ registry=https://registry.npmmirror.com
 cache=/home/claude/.npm
 prefix=/home/claude/.npm-global
 fund=false
+# npmmirror does not implement npm's audit endpoint; avoid a guaranteed 404 during installs.
 audit=false
 update-notifier=false

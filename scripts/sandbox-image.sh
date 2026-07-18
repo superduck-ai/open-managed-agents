@@ -10,7 +10,7 @@ source "$ROOT_DIR/images/sandbox-base/versions.env"
 # versions.env. Dockerfile ARG declarations intentionally have no defaults, so
 # this wrapper and the copied in-image contract cannot silently diverge.
 SANDBOX_BUILD_ARG_NAMES=(
-  SANDBOX_PLATFORM UBUNTU_DIGEST CA_BUNDLE_URL CA_BUNDLE_SHA256
+  SANDBOX_PLATFORM UBUNTU_DIGEST UBUNTU_SNAPSHOT_TIMESTAMP CA_BUNDLE_URL CA_BUNDLE_SHA256
   RUNTIME_REVISION CODEX_UNIVERSAL_RECIPE_REVISION
   PYTHON_VERSION PYTHON_SHA256 NODE_VERSION NODE_SHA256 GO_VERSION GO_SHA256
   JAVA_VERSION JAVA_RELEASE_TAG JAVA_ARCHIVE JAVA_SHA256 PHP_VERSION PHP_SHA256
@@ -18,7 +18,7 @@ SANDBOX_BUILD_ARG_NAMES=(
   RUST_VERSION RUST_TARGET RUST_SHA256 RUBY_VERSION RUBY_SERIES RUBY_SHA256
   CLAUDE_VERSION CLAUDE_SHA256 UV_VERSION UV_SHA256 YARN_VERSION PNPM_VERSION
   MAVEN_VERSION MAVEN_SHA512 GRADLE_VERSION GRADLE_SHA256
-  COMPOSER_VERSION COMPOSER_INSTALLER_SHA384 DOCKER_CLI_VERSION DOCKER_CLI_SHA256
+  COMPOSER_VERSION COMPOSER_SHA256 DOCKER_CLI_VERSION DOCKER_CLI_SHA256
   ENVIRONMENT_MANAGER_SHA256 ENVIRONMENT_MANAGER_REVISION ENVIRONMENT_MANAGER_VERSION
 )
 
@@ -42,6 +42,7 @@ metadata() {
     "platform=$SANDBOX_PLATFORM" \
     "target_image_size_bytes=$TARGET_IMAGE_SIZE_BYTES" \
     "ubuntu_digest=$UBUNTU_DIGEST" \
+    "ubuntu_snapshot_timestamp=$UBUNTU_SNAPSHOT_TIMESTAMP" \
     "runtime_revision=$RUNTIME_REVISION" \
     "codex_universal_recipe_revision=$CODEX_UNIVERSAL_RECIPE_REVISION" \
     "environment_manager_revision=$ENVIRONMENT_MANAGER_REVISION" \
@@ -65,6 +66,20 @@ require_literal() {
 
   grep -Fq -- "$literal" "$file" || {
     printf 'source contract failed: %s does not contain %s\n' "$file" "$literal" >&2
+    return 1
+  }
+}
+
+require_literal_count() {
+  local file="$1"
+  local literal="$2"
+  local expected_count="$3"
+  local actual_count
+
+  actual_count="$(grep -Fc -- "$literal" "$file" || true)"
+  [[ "$actual_count" == "$expected_count" ]] || {
+    printf 'source contract failed: %s contains %s copies of %s, expected %s\n' \
+      "$file" "$actual_count" "$literal" "$expected_count" >&2
     return 1
   }
 }
@@ -98,6 +113,19 @@ verify_curl_retry_policy() {
   [[ "$curl_count" -gt 0 && "$retry_count" == "$curl_count" ]] || {
     printf 'source contract failed: %s has %s curl downloads but %s complete retry policies\n' \
       "$file" "$curl_count" "$retry_count" >&2
+    return 1
+  }
+}
+
+verify_workflow_action_pins() {
+  local file="$1"
+  local action_count pinned_action_count
+
+  action_count="$(grep -Ec '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]+[^.]' "$file" || true)"
+  pinned_action_count="$(grep -Ec '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]+[^[:space:]@]+@[0-9a-f]{40}([[:space:]]+#.*)?$' "$file" || true)"
+  [[ "$action_count" -gt 0 && "$pinned_action_count" == "$action_count" ]] || {
+    printf 'source contract failed: %s has %s third-party Actions but %s immutable commit pins\n' \
+      "$file" "$action_count" "$pinned_action_count" >&2
     return 1
   }
 }
@@ -142,6 +170,10 @@ verify_version_contract_sources() {
   require_literal "$dockerfile" 'ubuntu@${UBUNTU_DIGEST} AS base'
   require_literal "$dockerfile" 'ADD --checksum=${CA_BUNDLE_SHA256}'
   require_literal "$dockerfile" '${CA_BUNDLE_URL} /etc/ssl/certs/ca-certificates.crt'
+  require_literal "$dockerfile" 'https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT_TIMESTAMP}/'
+  require_literal "$dockerfile" 'https://mirrors.tuna.tsinghua.edu.cn/ubuntu/'
+  require_literal "$dockerfile" '"https://getcomposer.org/download/${COMPOSER_VERSION}/composer.phar"'
+  reject_literal "$dockerfile" 'https://getcomposer.org/installer'
   require_literal "$dockerfile" '"https://github.com/adoptium/temurin25-binaries/releases/download/${JAVA_RELEASE_TAG}/${JAVA_ARCHIVE}"'
   require_literal "$dockerfile" '"https://cache.ruby-lang.org/pub/ruby/${RUBY_SERIES}/ruby-${RUBY_VERSION}.tar.xz"'
   require_literal "$dockerfile" 'gcc-${GCC_MAJOR}=${GCC_APT_VERSION}'
@@ -173,12 +205,16 @@ verify_version_relationships() {
     printf 'source contract failed: UBUNTU_DIGEST is not an immutable SHA-256 identity\n' >&2
     return 1
   }
-  [[ "$CA_BUNDLE_URL" =~ ^https://[^[:space:]]+$ ]] || {
-    printf 'source contract failed: CA_BUNDLE_URL must use HTTPS\n' >&2
+  [[ "$CA_BUNDLE_URL" =~ ^https://curl\.se/ca/cacert-[0-9]{4}-[0-9]{2}-[0-9]{2}\.pem$ ]] || {
+    printf 'source contract failed: CA_BUNDLE_URL must use a versioned curl CA extract\n' >&2
     return 1
   }
   [[ "$CA_BUNDLE_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || {
     printf 'source contract failed: CA_BUNDLE_SHA256 is not an immutable SHA-256 identity\n' >&2
+    return 1
+  }
+  [[ "$UBUNTU_SNAPSHOT_TIMESTAMP" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || {
+    printf 'source contract failed: UBUNTU_SNAPSHOT_TIMESTAMP must use YYYYMMDDTHHMMSSZ\n' >&2
     return 1
   }
   [[ "$RUNTIME_REVISION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
@@ -278,6 +314,7 @@ verify_source() {
   require_literal "$bundler_config" 'BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/: "https://mirrors.cloud.tencent.com/rubygems/"'
   reject_literal "$bundler_config" 'FALLBACK_TIMEOUT'
   require_literal "$gemrc" 'https://mirrors.cloud.tencent.com/rubygems/'
+  require_literal_count "$workflow" 'persist-credentials: false' 2
   reject_literal "$dockerfile" 'python -m pip install --no-cache-dir --upgrade pip'
   reject_literal "$dockerfile" 'gem install --no-document bundler'
   reject_literal "$dockerfile" 'PIP_CONFIG_FILE=/root/'
@@ -285,6 +322,7 @@ verify_source() {
   reject_literal "$dockerfile" 'GOSUMDB=off'
   verify_curl_retry_policy "$dockerfile"
   verify_curl_retry_policy "$workflow"
+  verify_workflow_action_pins "$workflow"
   verify_version_contract_sources "$dockerfile" "$verifier"
   verify_version_relationships
 
@@ -303,16 +341,12 @@ verify_source() {
   local checksum_name
   for checksum_name in \
     PYTHON_SHA256 NODE_SHA256 GO_SHA256 JAVA_SHA256 PHP_SHA256 BUN_SHA256 \
-    RUST_SHA256 RUBY_SHA256 CLAUDE_SHA256 UV_SHA256 GRADLE_SHA256 DOCKER_CLI_SHA256; do
+    RUST_SHA256 RUBY_SHA256 CLAUDE_SHA256 UV_SHA256 GRADLE_SHA256 COMPOSER_SHA256 DOCKER_CLI_SHA256; do
     verify_sha256_value "$checksum_name"
   done
 
   [[ "$MAVEN_SHA512" =~ ^[0-9a-f]{128}$ ]] || {
     printf 'source contract failed: MAVEN_SHA512 is not a SHA-512\n' >&2
-    return 1
-  }
-  [[ "$COMPOSER_INSTALLER_SHA384" =~ ^[0-9a-f]{96}$ ]] || {
-    printf 'source contract failed: COMPOSER_INSTALLER_SHA384 is not a SHA-384\n' >&2
     return 1
   }
   [[ "$CODEX_UNIVERSAL_RECIPE_REVISION" =~ ^[0-9a-f]{40}$ ]] || {

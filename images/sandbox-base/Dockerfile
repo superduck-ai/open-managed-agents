@@ -7,13 +7,14 @@ ARG UBUNTU_DIGEST
 FROM --platform=${SANDBOX_PLATFORM} ubuntu@${UBUNTU_DIGEST} AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG UBUNTU_SNAPSHOT_TIMESTAMP
 ARG CA_BUNDLE_URL
 ARG CA_BUNDLE_SHA256
 ENV LANG=C.UTF-8
 
 # Ubuntu's minimal image does not include a CA bundle. Bootstrap one through
 # BuildKit with a content checksum, then install Ubuntu's managed bundle from
-# the configured HTTPS mirror. Disable docker-clean so later cache mounts keep
+# the fixed official snapshot. Disable docker-clean so later cache mounts keep
 # package archives outside the resulting image instead of serializing empty
 # caches across the source-build stages.
 ADD --checksum=${CA_BUNDLE_SHA256} \
@@ -22,10 +23,13 @@ ADD --checksum=${CA_BUNDLE_SHA256} \
 RUN chmod 0644 /etc/ssl/certs/ca-certificates.crt \
     && rm -f /etc/apt/apt.conf.d/docker-clean \
     && printf '%s\n' 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
-    && sed -i \
-      -e 's|http://archive.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
-      -e 's|http://security.ubuntu.com/ubuntu/|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
-      /etc/apt/sources.list.d/ubuntu.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT_TIMESTAMP}/" \
+      'Suites: noble noble-updates noble-backports noble-security' \
+      'Components: main universe restricted multiverse' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl xz-utils unzip \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
@@ -208,7 +212,7 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
 
 ### DEVELOPMENT TOOL ASSETS ###
 
-# Collect uv, Maven, Gradle, the Composer installer, and the Docker CLI for the
+# Collect uv, Maven, Gradle, Composer, and the Docker CLI for the
 # final runtime stage without retaining their downloaded archives.
 
 FROM base AS tool_assets
@@ -219,7 +223,7 @@ ARG MAVEN_SHA512
 ARG GRADLE_VERSION
 ARG GRADLE_SHA256
 ARG COMPOSER_VERSION
-ARG COMPOSER_INSTALLER_SHA384
+ARG COMPOSER_SHA256
 ARG DOCKER_CLI_VERSION
 ARG DOCKER_CLI_SHA256
 RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
@@ -243,9 +247,11 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
     && unzip -q /tmp/gradle.zip -d /tmp \
     && mkdir -p "/opt/gradle/${GRADLE_VERSION}" \
     && cp -a "/tmp/gradle-${GRADLE_VERSION}/." "/opt/gradle/${GRADLE_VERSION}/" \
-    && curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 https://getcomposer.org/installer -o /tmp/composer-setup.php \
-    && echo "${COMPOSER_INSTALLER_SHA384}  /tmp/composer-setup.php" | sha384sum --check --strict \
-    && mkdir -p /opt/composer \
+    && curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
+      "https://getcomposer.org/download/${COMPOSER_VERSION}/composer.phar" \
+      -o /tmp/composer.phar \
+    && echo "${COMPOSER_SHA256}  /tmp/composer.phar" | sha256sum --check --strict \
+    && install -Dm0755 /tmp/composer.phar /opt/tools/bin/composer \
     && curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
       "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
       -o /tmp/docker.tgz \
@@ -300,7 +306,6 @@ ARG YARN_VERSION
 ARG PNPM_VERSION
 ARG MAVEN_VERSION
 ARG GRADLE_VERSION
-ARG COMPOSER_VERSION
 ARG ENVIRONMENT_MANAGER_REVISION
 ARG ENVIRONMENT_MANAGER_VERSION
 ENV HOME=/home/user \
@@ -341,7 +346,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && ln -sf "/usr/bin/gcc-${GCC_MAJOR}" /usr/local/bin/gcc \
     && ln -sf "/usr/bin/gcc-${GCC_MAJOR}" /usr/local/bin/cc \
     && ln -sf "/usr/bin/g++-${GCC_MAJOR}" /usr/local/bin/g++ \
-    && ln -sf "/usr/bin/g++-${GCC_MAJOR}" /usr/local/bin/c++
+    && ln -sf "/usr/bin/g++-${GCC_MAJOR}" /usr/local/bin/c++ \
+    && printf '%s\n' \
+      'Types: deb' \
+      'URIs: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/' \
+      'Suites: noble noble-updates noble-backports noble-security' \
+      'Components: main universe restricted multiverse' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/ubuntu.sources
 
 ### RUNTIME AND TOOL ARTIFACTS ###
 
@@ -356,7 +368,6 @@ COPY --from=rust_asset /opt/rust/ /opt/rust/
 COPY --from=tool_assets /opt/tools/bin/ /usr/local/bin/
 COPY --from=tool_assets /opt/maven/ /opt/maven/
 COPY --from=tool_assets /opt/gradle/ /opt/gradle/
-COPY --from=tool_assets /tmp/composer-setup.php /tmp/composer-setup.php
 COPY --from=claude_asset /opt/claude-code/ /opt/claude-code/
 COPY --from=environment_manager_source /environment-manager /opt/env-runner/environment-manager
 
@@ -453,13 +464,7 @@ RUN test -n "$ENVIRONMENT_MANAGER_SHA256" \
       'MAVEN_ARGS=-s /home/user/.m2/settings.xml' \
       'GRADLE_USER_HOME=/home/user/.gradle' \
       'COMPOSER_HOME=/home/user/.config/composer' \
-      >> /etc/environment \
-    && "/opt/php/${PHP_VERSION}/bin/php" /tmp/composer-setup.php \
-      --quiet \
-      --version="${COMPOSER_VERSION}" \
-      --install-dir=/usr/local/bin \
-      --filename=composer \
-    && rm -f /tmp/composer-setup.php
+      >> /etc/environment
 
 ### CLAUDE-COMPATIBLE PROCESS ENVIRONMENT ###
 

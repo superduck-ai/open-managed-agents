@@ -12,8 +12,11 @@ import (
 // every console API key scoped to that workspace. This mirrors the Anthropic
 // workspace semantics where archiving immediately revokes all associated API
 // keys. The write is idempotent (coalesce preserves the original archived_at)
-// and isolated to the workspace's organization via orgUUID. A missing workspace
-// yields ErrNotFound.
+// and isolated to the workspace's organization via orgUUID. The organization's
+// default workspace (name = "default") is never archivable: the WHERE clause
+// excludes it so the invariant holds regardless of which identifier the caller
+// supplied (the "default" alias or the workspace's real external_id), and such
+// a request surfaces as ErrNotFound. A missing workspace also yields ErrNotFound.
 func (d *DB) ArchiveConsoleWorkspace(ctx context.Context, orgUUID, workspaceID string) (platform.ConsoleWorkspace, error) {
 	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(workspaceID) == "" {
 		return platform.ConsoleWorkspace{}, ErrNotFound
@@ -32,6 +35,7 @@ func (d *DB) ArchiveConsoleWorkspace(ctx context.Context, orgUUID, workspaceID s
 		 where w.organization_id = o.id
 		   and (o.external_id = $1 or o.uuid::text = $1)
 		   and w.external_id = $2
+		   and lower(coalesce(w.name, '')) <> 'default'
 		returning
 			w.external_id,
 			o.uuid::text,

@@ -2,11 +2,13 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/platform"
 )
 
 func TestConsoleWorkspaceArchive(t *testing.T) {
@@ -23,11 +25,39 @@ func TestConsoleWorkspaceArchive(t *testing.T) {
 	}
 	base := "/api/console/organizations/" + orgUUID
 
-	t.Run("default workspace cannot be archived", func(t *testing.T) {
+	t.Run("default workspace alias cannot be archived", func(t *testing.T) {
 		resp := app.doPlatformConsole(t, http.MethodPost, base+"/workspaces/default/archive", nil, cookies)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusConflict {
 			t.Fatalf("status = %d, want 409: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+	})
+
+	t.Run("default workspace cannot be archived by external_id", func(t *testing.T) {
+		// The handler blocks the "default" alias; the DB-layer invariant must
+		// also hold when the caller passes a default workspace's real
+		// external_id, so the guard cannot be bypassed by knowing the id.
+		// Exercised directly at the DB layer to avoid the HTTP session's
+		// own-workspace guard, which the alias case already covers.
+		var defaultWSExternalID string
+		if err := app.db.Pool.QueryRow(context.Background(), `
+			select external_id from workspaces where organization_id = $1 and name = 'default'
+			limit 1
+		`, orgID).Scan(&defaultWSExternalID); err != nil {
+			t.Fatalf("load default workspace external_id: %v", err)
+		}
+		_, err := app.db.ArchiveConsoleWorkspace(context.Background(), orgUUID, defaultWSExternalID)
+		if !errors.Is(err, platform.ErrNotFound) {
+			t.Fatalf("ArchiveConsoleWorkspace err = %v, want ErrNotFound", err)
+		}
+		var archivedAt *time.Time
+		if err := app.db.Pool.QueryRow(context.Background(), `
+			select archived_at from workspaces where external_id = $1
+		`, defaultWSExternalID).Scan(&archivedAt); err != nil {
+			t.Fatalf("reload default workspace archived_at: %v", err)
+		}
+		if archivedAt != nil {
+			t.Fatalf("default workspace %q was archived despite the invariant", defaultWSExternalID)
 		}
 	})
 
@@ -36,6 +66,16 @@ func TestConsoleWorkspaceArchive(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+	})
+
+	t.Run("archive is isolated by organization", func(t *testing.T) {
+		otherOrgID := seedArchiveOrganization(t, app, "org_archive_isolation_"+uniqueAdminSuffix())
+		otherWS := seedArchiveTargetWorkspace(t, app, otherOrgID, "Other Org WS")
+		resp := app.doPlatformConsole(t, http.MethodPost, base+"/workspaces/"+otherWS+"/archive", nil, cookies)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 (org isolation): %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 	})
 
@@ -84,16 +124,6 @@ func TestConsoleWorkspaceArchive(t *testing.T) {
 		}
 		if !secondArchivedAt.Equal(firstArchivedAt) {
 			t.Fatalf("archived_at changed on repeat archive: first=%s second=%s", firstArchivedAt, secondArchivedAt)
-		}
-	})
-
-	t.Run("isolated by organization", func(t *testing.T) {
-		otherOrgID := seedArchiveOrganization(t, app, "org_archive_isolation_"+uniqueAdminSuffix())
-		otherWS := seedArchiveTargetWorkspace(t, app, otherOrgID, "Other Org WS")
-		resp := app.doPlatformConsole(t, http.MethodPost, base+"/workspaces/"+otherWS+"/archive", nil, cookies)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404 (org isolation): %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 	})
 }

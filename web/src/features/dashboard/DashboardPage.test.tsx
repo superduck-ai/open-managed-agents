@@ -1630,7 +1630,6 @@ function makeWorkspaceContextValue(workspace?: Partial<Workspace>): WorkspaceCon
       name: input.name,
       display_color: input.display_color,
       color: input.display_color,
-      data_residency: input.data_residency,
     }),
     refreshWorkspaces: async () => undefined,
   };

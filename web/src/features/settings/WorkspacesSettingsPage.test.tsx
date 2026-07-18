@@ -25,10 +25,6 @@ describe('Workspaces settings page', () => {
       name: 'foo',
       display_color: '#8CCDB5',
       color: '#8CCDB5',
-      data_residency: {
-        workspace_geo: 'us',
-        default_inference_geo: 'global',
-      },
     };
 
     const { container } = renderWorkspacesSettings({
@@ -49,7 +45,6 @@ describe('Workspaces settings page', () => {
     expect(screen.getByRole('button', { name: 'Create workspace' })).toBeTruthy();
     const table = screen.getByRole('table', { name: 'Workspaces' });
     expect(within(table).getByRole('columnheader', { name: 'Workspace' })).toBeTruthy();
-    expect(within(table).getByRole('columnheader', { name: 'Residency' })).toBeTruthy();
     expect(within(table).getByText('Default')).toBeTruthy();
     expect(within(table).getByText('foo')).toBeTruthy();
     expect(within(table).getByText('Current')).toBeTruthy();
@@ -64,13 +59,10 @@ describe('Workspaces settings page', () => {
     expect(container.querySelector('.surface-card')).toBeNull();
   });
 
-  test('builds the shared workspace create payload with name, color, and US residency', () => {
+  test('builds the shared workspace create payload with name and color', () => {
     expect(buildCreateWorkspaceInput('bar', '#D8D2A6')).toEqual({
       name: 'bar',
       display_color: '#D8D2A6',
-      data_residency: {
-        workspace_geo: 'us',
-      },
     });
   });
 

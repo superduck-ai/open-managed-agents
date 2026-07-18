@@ -364,7 +364,7 @@ describe('ConsoleShell', () => {
     await waitFor(() => expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy());
   });
 
-  test('creates a workspace with color and US residency', async () => {
+  test('creates a workspace with name and color', async () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     const createWorkspace = mock(async (input: CreateWorkspaceInput) => ({
       id: 'wrkspc_bar',
@@ -372,7 +372,6 @@ describe('ConsoleShell', () => {
       name: input.name,
       display_color: input.display_color,
       color: input.display_color,
-      data_residency: input.data_residency,
     }));
 
     renderWithWorkspaces(
@@ -399,9 +398,6 @@ describe('ConsoleShell', () => {
     expect(createWorkspace.mock.calls[0][0]).toEqual({
       name: 'bar',
       display_color: '#D8D2A6',
-      data_residency: {
-        workspace_geo: 'us',
-      },
     });
     expect(getWorkspaceMenuButton(/bar/i)).toBeTruthy();
   });
@@ -469,7 +465,6 @@ function WorkspaceHarness({
               name: input.name,
               display_color: input.display_color,
               color: input.display_color,
-              data_residency: input.data_residency,
             };
         setWorkspaces((current) => [...current, created]);
         setActiveWorkspaceId(created.id);

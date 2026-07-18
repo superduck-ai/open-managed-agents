@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../ui/dialog';
-import { Field, FieldDescription, FieldLabel } from '../ui/field';
+import { Field, FieldLabel } from '../ui/field';
 import { Input } from '../ui/input';
 import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
 import { workspaceColors } from './presentation';
@@ -109,17 +109,6 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreate, trigger }:
                 />
               ))}
             </RadioGroup>
-          </Field>
-
-          <Field className="gap-2">
-            <FieldLabel htmlFor="workspace-geo">{msg('workspace.geo', 'Workspace geo')}</FieldLabel>
-            <Input id="workspace-geo" value="US" readOnly aria-readonly="true" />
-            <FieldDescription>
-              {msg(
-                'workspace.geoHelp',
-                "Control where your workspace data, including files, conversation history, and workspace artifacts, is stored. This can't be changed after creation.",
-              )}
-            </FieldDescription>
           </Field>
 
           {error ? (

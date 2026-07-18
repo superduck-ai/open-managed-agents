@@ -52,7 +52,7 @@ type Provider interface {
 	Kill(ctx context.Context, sandboxID string) error
 	Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error)
 	WriteFile(ctx context.Context, sandboxID string, path string, data []byte) error
-	RunCommand(ctx context.Context, sandboxID string, command string) error
+	RunCommand(ctx context.Context, sandboxID string, command string, timeout time.Duration) error
 	StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error
 }
 
@@ -74,7 +74,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 		template = strings.TrimSpace(p.cfg.E2BTemplate)
 	}
 	if template == "" {
-		template = "claude-code-interpreter"
+		template = config.DefaultE2BTemplate
 	}
 	resolved := Resolution{
 		Template:            template,
@@ -172,39 +172,6 @@ func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath 
 	return err
 }
 
-func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command string) error {
-	if strings.TrimSpace(sandboxID) == "" {
-		return errors.New("sandbox id is required")
-	}
-	if strings.TrimSpace(command) == "" {
-		return errors.New("sandbox command is required")
-	}
-	sandbox, err := p.connect(ctx, sandboxID)
-	if err != nil {
-		return err
-	}
-	timeoutMs := int(p.cfg.E2BRequestTimeout / time.Millisecond)
-	if timeoutMs <= 0 {
-		timeoutMs = int((60 * time.Second) / time.Millisecond)
-	}
-	execution, err := sandbox.Commands.Run(ctx, command, &e2b.CommandStartOpts{TimeoutMs: &timeoutMs})
-	if err != nil {
-		var exitErr *e2b.CommandExitError
-		if errors.As(err, &exitErr) {
-			return fmt.Errorf("sandbox command exited with code %d: %s stdout=%q stderr=%q", exitErr.ExitCode, strings.TrimSpace(exitErr.Message), truncateCommandOutput(exitErr.Stdout), truncateCommandOutput(exitErr.Stderr))
-		}
-		return err
-	}
-	result, ok := execution.(*e2b.CommandResult)
-	if !ok {
-		return fmt.Errorf("sandbox command execution type = %T, want *e2b.CommandResult", execution)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("sandbox command exited with code %d: %s stdout=%q stderr=%q", result.ExitCode, strings.TrimSpace(result.Error), truncateCommandOutput(result.Stdout), truncateCommandOutput(result.Stderr))
-	}
-	return nil
-}
-
 // StartBackgroundCommand 通过 E2B 进程 API 启动后台命令，并把敏感启动数据直接写入其 stdin。
 func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error {
 	if strings.TrimSpace(sandboxID) == "" {
@@ -243,7 +210,6 @@ func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID stri
 	}
 	return nil
 }
-
 func (p *E2BProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*SkillMount, error) {
 	if len(runtimeSkills) == 0 {
 		return nil, nil

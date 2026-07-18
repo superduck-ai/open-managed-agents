@@ -782,7 +782,7 @@ func isWorkspaceCredential(principal auth.Principal) bool {
 
 func (h *Handler) resolvedTemplate(json.RawMessage) string {
 	if strings.TrimSpace(h.cfg.E2BTemplate) == "" {
-		return "claude-code-interpreter"
+		return config.DefaultE2BTemplate
 	}
 	return h.cfg.E2BTemplate
 }
@@ -1190,41 +1190,6 @@ func normalizedCloudValue(raw json.RawMessage) map[string]any {
 	}
 	value["type"] = "cloud"
 	return value
-}
-
-func emptyPackages() map[string]any {
-	return map[string]any{
-		"type":  "packages",
-		"apt":   []string{},
-		"cargo": []string{},
-		"gem":   []string{},
-		"go":    []string{},
-		"npm":   []string{},
-		"pip":   []string{},
-	}
-}
-
-func normalizePackages(raw json.RawMessage) (map[string]any, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return emptyPackages(), nil
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, errors.New("config.packages must be an object or null")
-	}
-	out := emptyPackages()
-	for _, manager := range []string{"apt", "cargo", "gem", "go", "npm", "pip"} {
-		rawList, ok := fields[manager]
-		if !ok || isJSONNull(rawList) {
-			continue
-		}
-		values, err := stringArray(rawList, "config.packages."+manager)
-		if err != nil {
-			return nil, err
-		}
-		out[manager] = values
-	}
-	return out, nil
 }
 
 func normalizeNetworking(raw json.RawMessage) (map[string]any, error) {

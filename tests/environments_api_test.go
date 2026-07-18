@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/uuid"
 )
 
@@ -72,6 +75,65 @@ type environmentWorkStatsAPIResponse struct {
 	WorkersPolling *int    `json:"workers_polling"`
 }
 
+func TestOfficialSDKEnvironmentPackagesRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("environment-sdk-packages-bucket"))
+	defer app.close()
+	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
+	created, err := client.Beta.Environments.New(ctx, anthropic.BetaEnvironmentNewParams{
+		Name: "sdk-packages-" + strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", ""),
+		Config: anthropic.BetaEnvironmentNewParamsConfigUnion{OfCloud: &anthropic.BetaCloudConfigParams{
+			Networking: anthropic.BetaCloudConfigParamsNetworkingUnion{OfUnrestricted: &anthropic.BetaUnrestrictedNetworkParam{}},
+			Packages: anthropic.BetaPackagesParams{
+				Type: anthropic.BetaPackagesParamsTypePackages, Apt: []string{"ffmpeg"}, Cargo: []string{"ripgrep@14.1.1"},
+				Gem: []string{"rake:13.2.1"}, Go: []string{"golang.org/x/tools/cmd/goimports@v0.35.0"},
+				Npm: []string{"typescript@5.9.3"}, Pip: []string{"numpy==2.3.5"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SDK create environment: %v", err)
+	}
+	defer cleanupEnvironmentRows(t, app.db, created.ID)
+	defer client.Beta.Environments.Delete(context.Background(), created.ID, anthropic.BetaEnvironmentDeleteParams{})
+	assertSDKPackages(t, created.Config.Packages, []string{"ffmpeg"}, []string{"numpy==2.3.5"})
+
+	updated, err := client.Beta.Environments.Update(ctx, created.ID, anthropic.BetaEnvironmentUpdateParams{
+		Config: anthropic.BetaEnvironmentUpdateParamsConfigUnion{OfCloud: &anthropic.BetaCloudConfigParams{
+			Packages: anthropic.BetaPackagesParams{Type: anthropic.BetaPackagesParamsTypePackages, Apt: []string{"jq"}, Pip: []string{"httpx==0.28.1"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SDK update environment: %v", err)
+	}
+	assertSDKPackages(t, updated.Config.Packages, []string{"jq"}, []string{"httpx==0.28.1"})
+
+	got, err := client.Beta.Environments.Get(ctx, created.ID, anthropic.BetaEnvironmentGetParams{})
+	if err != nil {
+		t.Fatalf("SDK get environment: %v", err)
+	}
+	assertSDKPackages(t, got.Config.Packages, []string{"jq"}, []string{"httpx==0.28.1"})
+
+	page, err := client.Beta.Environments.List(ctx, anthropic.BetaEnvironmentListParams{})
+	if err != nil {
+		t.Fatalf("SDK list environments: %v", err)
+	}
+	for _, environment := range page.Data {
+		if environment.ID == created.ID {
+			assertSDKPackages(t, environment.Config.Packages, []string{"jq"}, []string{"httpx==0.28.1"})
+			return
+		}
+	}
+	t.Fatalf("SDK list did not include environment %s", created.ID)
+}
+
+func assertSDKPackages(t *testing.T, packages anthropic.BetaPackages, wantAPT, wantPIP []string) {
+	t.Helper()
+	if packages.Type != anthropic.BetaPackagesTypePackages || !slices.Equal(packages.Apt, wantAPT) || !slices.Equal(packages.Pip, wantPIP) {
+		t.Fatalf("SDK packages = %#v, want apt=%#v pip=%#v", packages, wantAPT, wantPIP)
+	}
+}
+
 func TestEnvironmentsAPI(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("environments-bucket"))
 	defer app.close()
@@ -96,6 +158,12 @@ func TestEnvironmentsAPI(t *testing.T) {
 
 	t.Run("failure invalid limited host", func(t *testing.T) {
 		body := `{"name":"bad-host","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["https://example.com"]}}}`
+		resp := doEnvironmentRequest(t, app, http.MethodPost, "/v1/environments?beta=true", strings.NewReader(body), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("failure package URL credentials", func(t *testing.T) {
+		body := `{"name":"bad-package-credentials","config":{"type":"cloud","packages":{"pip":["pkg @ https://user:secret-token@example.test/private.whl"]}}}`
 		resp := doEnvironmentRequest(t, app, http.MethodPost, "/v1/environments?beta=true", strings.NewReader(body), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})

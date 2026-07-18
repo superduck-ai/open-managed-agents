@@ -1,4 +1,4 @@
-//go:build e2b_integration
+//go:build e2b_integration && e2e
 
 package tests
 
@@ -23,7 +23,7 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 		t.Skip("skipping real E2B managed-agent bridge integration test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	cfg, err := config.Load()
@@ -31,11 +31,13 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	requireFullE2BBridgeConfig(t, cfg)
+	cfg.CodeSessionSandboxAPIBaseURL = ""
+	cfg.E2BTemplate = config.DefaultE2BTemplate
 	if cfg.E2BRequestTimeout < 2*time.Minute {
 		cfg.E2BRequestTimeout = 2 * time.Minute
 	}
-	if cfg.E2BSandboxTimeout < 2*time.Minute {
-		cfg.E2BSandboxTimeout = 2 * time.Minute
+	if cfg.E2BSandboxTimeout < 15*time.Minute {
+		cfg.E2BSandboxTimeout = 15 * time.Minute
 	}
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("full-e2b-bridge-bucket"))
@@ -72,6 +74,18 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 				Networking: anthropic.BetaCloudConfigParamsNetworkingUnion{
 					OfUnrestricted: &anthropic.BetaUnrestrictedNetworkParam{},
 				},
+				Packages: anthropic.BetaPackagesParams{
+					Type:  anthropic.BetaPackagesParamsTypePackages,
+					Apt:   []string{"ffmpeg"},
+					Cargo: []string{"ripgrep@14.1.1"},
+					Gem:   []string{"rake:13.2.1"},
+					Go: []string{
+						"golang.org/x/tools/cmd/goimports@v0.35.0",
+						"github.com/google/addlicense@v1.1.1",
+					},
+					Npm: []string{"typescript@5.9.3"},
+					Pip: []string{"numpy==2.3.5"},
+				},
 			},
 		},
 	})
@@ -89,6 +103,8 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+	const agentPrompt = "Run rg --version and write only its first output line to /home/user/package-agent-proof.txt. Do not install any package."
+	sendManagedAgentUserMessage(t, ctx, client, session.ID, agentPrompt)
 
 	workID := quickstartFindSessionEnvironmentWorkID(t, app, environment.ID, session.ID)
 
@@ -134,9 +150,94 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 
 	probe := waitForEnvironmentManagerProcess(t, ctx, sandbox, codeSessionID)
 	t.Logf("environment-manager started for code session %s in sandbox %s:\n%s", codeSessionID, providerSandboxID, probe)
+	packageProbe := probeInstalledPackages(t, ctx, sandbox)
+	t.Logf("all environment packages are usable before/during agent runtime:\n%s", packageProbe)
+	agentProbe := waitForPackageAgentProof(t, ctx, sandbox)
+	t.Logf("Claude Agent used the installed package:\n%s", agentProbe)
+	transcript, err := quickstartWaitForSessionTranscript(t, ctx, app, session.ID, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("wait for Claude Agent transcript: %v", err)
+	}
+	if !strings.Contains(transcript, "Agent finished.") {
+		t.Fatalf("Claude Agent did not reach idle after using installed package:\n%s", transcript)
+	}
 
 	quickstartStopEnvironmentWork(t, ctx, app, environment.ID, workID)
 	stopped = true
+}
+
+func sendManagedAgentUserMessage(t *testing.T, ctx context.Context, client anthropic.Client, sessionID, prompt string) {
+	t.Helper()
+	sent, err := client.Beta.Sessions.Events.Send(ctx, sessionID, anthropic.BetaSessionEventSendParams{
+		Events: []anthropic.BetaManagedAgentsEventParamsUnion{{
+			OfUserMessage: &anthropic.BetaManagedAgentsUserMessageEventParams{
+				Type: anthropic.BetaManagedAgentsUserMessageEventParamsTypeUserMessage,
+				Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{{
+					OfText: &anthropic.BetaManagedAgentsTextBlockParam{
+						Type: anthropic.BetaManagedAgentsTextBlockTypeText,
+						Text: prompt,
+					},
+				}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("send managed-agent user message: %v", err)
+	}
+	if len(sent.Data) != 1 || sent.Data[0].Type != "user.message" {
+		t.Fatalf("unexpected managed-agent send response: %+v", sent.Data)
+	}
+}
+
+func waitForPackageAgentProof(t *testing.T, ctx context.Context, sandbox *e2b.Sandbox) string {
+	t.Helper()
+	const command = `
+set +e
+if [ -f /home/user/package-agent-proof.txt ]; then
+  printf 'package_agent_proof='
+  cat /home/user/package-agent-proof.txt
+fi
+printf '\n--- processes ---\n'
+ps -eo pid=,args=ww | grep -E '[e]nvironment-manager task-run|[/]opt/claude-code/bin/claude' || true
+`
+	deadline := time.Now().Add(4 * time.Minute)
+	var last string
+	for {
+		stdout, stderr, err := runE2BCommand(ctx, sandbox, command, 30*time.Second)
+		last = strings.TrimSpace(stdout + "\n" + stderr)
+		if err == nil && strings.Contains(stdout, "package_agent_proof=ripgrep 14.1.1") {
+			return last
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Claude Agent did not create package proof with installed ripgrep: %v\n%s", err, last)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("waiting for Claude Agent package proof: %v\n%s", ctx.Err(), last)
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+func probeInstalledPackages(t *testing.T, ctx context.Context, sandbox *e2b.Sandbox) string {
+	t.Helper()
+	command := `
+set -eu
+ffmpeg -version | head -n 1
+rg --version | head -n 1
+ruby -e 'gem "rake", "=13.2.1"; require "rake"; puts "rake #{Rake::VERSION}"'
+	goimports -h >/dev/null 2>&1 || [ "$?" -eq 2 ]
+	printf 'goimports available\n'
+	command -v addlicense >/dev/null
+	printf 'addlicense available\n'
+tsc --version
+python3 -c 'import numpy; assert numpy.__version__ == "2.3.5"; print("numpy " + numpy.__version__)'
+`
+	stdout, stderr, err := runE2BCommand(ctx, sandbox, command, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("probe installed packages: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	return strings.TrimSpace(stdout + "\n" + stderr)
 }
 
 func requireFullE2BBridgeConfig(t *testing.T, cfg config.Config) {

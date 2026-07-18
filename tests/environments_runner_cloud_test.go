@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -191,6 +192,103 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if metadata["claude_code_session_id"] != codeSession.ExternalID || metadata["claude_code_sdk_url_path"] != "/v1/code/sessions/"+codeSession.ExternalID || metadata["runtime"] != "claude_code_local" {
 		t.Fatalf("session metadata was not patched: %#v", metadata)
 	}
+}
+
+func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
+	t.Run("failure terminates sandbox before manager startup", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironment(t, errors.New("gem install failed"))
+		if !processed || err == nil || !strings.Contains(err.Error(), "provision environment packages") {
+			t.Fatalf("RunOnce() = (%t, %v), want processed provisioning failure", processed, err)
+		}
+		if len(provider.writes) != 2 || len(provider.commands) != 1 || len(provider.launches) != 0 {
+			t.Fatalf("failure writes/commands/launches = %d/%d/%d, want manifest+provisioner, one command, no manager launch", len(provider.writes), len(provider.commands), len(provider.launches))
+		}
+		if strings.Contains(provider.commands[0], "@scope/package") || strings.Contains(provider.commands[0], "touch /tmp") {
+			t.Fatalf("provision command contains package data: %q", provider.commands[0])
+		}
+		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
+			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
+		}
+	})
+
+	t.Run("success starts manager after fixed provisioner", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironment(t, nil)
+		if err != nil || !processed {
+			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
+		}
+		if len(provider.writes) != 2 || len(provider.commands) != 1 || len(provider.launches) != 1 {
+			t.Fatalf("success writes/commands/launches = %d/%d/%d, want manifest+provisioner, one provision command, one manager launch", len(provider.writes), len(provider.commands), len(provider.launches))
+		}
+		if !strings.HasSuffix(provider.writes[0].path, "/packages.v1.json") || !strings.HasSuffix(provider.writes[1].path, "/package-provisioner.v1.py") {
+			t.Fatalf("sandbox write order = %#v", provider.writes)
+		}
+		if !strings.Contains(provider.commands[0], "package-provisioner.v1.py") || !strings.Contains(provider.launches[0].command, "task-run") {
+			t.Fatalf("sandbox command/launch order = %#v/%#v", provider.commands, provider.launches)
+		}
+		if !reflect.DeepEqual(provider.operations, []string{"write:packages", "write:provisioner", "command:provision", "launch:manager"}) {
+			t.Fatalf("sandbox operation order = %#v", provider.operations)
+		}
+		var manifest struct {
+			Version  int `json:"version"`
+			Packages struct {
+				NPM []string `json:"npm"`
+				PIP []string `json:"pip"`
+			} `json:"packages"`
+		}
+		if err := json.Unmarshal(provider.writes[0].data, &manifest); err != nil {
+			t.Fatalf("decode package manifest: %v", err)
+		}
+		if manifest.Version != 1 || !reflect.DeepEqual(manifest.Packages.NPM, []string{"@scope/package@5.9.3"}) ||
+			!reflect.DeepEqual(manifest.Packages.PIP, []string{`requests[socks] @ https://example.test/a.whl ; python_version >= "3.11"`, "name; touch /tmp/oma-package-shell"}) {
+			t.Fatalf("package manifest changed specs: %#v", manifest)
+		}
+		if len(provider.kills) != 0 {
+			t.Fatalf("successful sandbox was killed: %#v", provider.kills)
+		}
+	})
+}
+
+func runPackageEnvironment(t *testing.T, commandErr error) (*recordingRunnerProvider, bool, error) {
+	t.Helper()
+	ctx := context.Background()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
+	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
+	cfg.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.ClaudeAgentVersion = "2.1.120"
+	cfg.E2BTemplate = "fake-template"
+	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-package-bucket"))
+	t.Cleanup(app.close)
+	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Package Agent"}`)
+	t.Cleanup(func() { archiveAgent(t, app, agent.ID) })
+	environment := createEnvironment(t, app, `{
+		"name":"runner-packages-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`",
+		"config":{"type":"cloud","networking":{"type":"unrestricted"},"packages":{
+			"type":"packages","apt":["ffmpeg"],"cargo":["ripgrep@14.1.1"],"gem":["rake:13.2.1"],
+			"go":["golang.org/x/tools/cmd/goimports@v0.35.0"],"npm":["@scope/package@5.9.3"],
+			"pip":["requests[socks] @ https://example.test/a.whl ; python_version >= \"3.11\"","name; touch /tmp/oma-package-shell"]
+		}}
+	}`)
+	t.Cleanup(func() { cleanupEnvironmentRows(t, app.db, environment.ID) })
+	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
+	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+		Agent: anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)}, EnvironmentID: environment.ID,
+		Title: anthropic.String("Runner package session"),
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+	})
+	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-packages", commandErr: commandErr}
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, app.store, app.credentials)
+	processed, runErr := runner.RunOnce(ctx, "runner-package-test")
+	return provider, processed, runErr
 }
 
 func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
@@ -511,11 +609,15 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 type recordingRunnerProvider struct {
 	sandboxID   string
 	resolveErr  error
+	commandErr  error
 	resolves    []recordedSandboxResolve
+	writes      []recordedSandboxWrite
 	commands    []string
 	launches    []recordedSandboxLaunch
+	operations  []string
 	creates     []recordedSandboxCreate
 	skillMounts []recordedSkillMount
+	kills       []string
 }
 
 type recordedSandboxResolve struct {
@@ -527,6 +629,12 @@ type recordedSandboxLaunch struct {
 	sandboxID string
 	command   string
 	stdin     []byte
+}
+
+type recordedSandboxWrite struct {
+	sandboxID string
+	path      string
+	data      []byte
 }
 
 type recordedSandboxCreate struct {
@@ -572,20 +680,38 @@ func (p *recordingRunnerProvider) Create(_ context.Context, _ db.Environment, wo
 	return e2bruntime.Sandbox{ID: p.sandboxID}, nil
 }
 
-func (p *recordingRunnerProvider) Kill(context.Context, string) error {
+func (p *recordingRunnerProvider) Kill(_ context.Context, sandboxID string) error {
+	p.kills = append(p.kills, sandboxID)
 	return nil
 }
 
-func (p *recordingRunnerProvider) WriteFile(context.Context, string, string, []byte) error {
-	return errors.New("unexpected sandbox file write")
+func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID string, path string, data []byte) error {
+	p.writes = append(p.writes, recordedSandboxWrite{sandboxID: sandboxID, path: path, data: append([]byte(nil), data...)})
+	switch {
+	case strings.HasSuffix(path, "/packages.v1.json"):
+		p.operations = append(p.operations, "write:packages")
+	case strings.HasSuffix(path, "/package-provisioner.v1.py"):
+		p.operations = append(p.operations, "write:provisioner")
+	default:
+		p.operations = append(p.operations, "write:other")
+	}
+	return nil
 }
 
-func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, command string) error {
+func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, command string, _ time.Duration) error {
 	if sandboxID != p.sandboxID {
 		p.commands = append(p.commands, "wrong sandbox: "+sandboxID)
 		return nil
 	}
 	p.commands = append(p.commands, command)
+	if strings.Contains(command, "package-provisioner.v1.py") {
+		p.operations = append(p.operations, "command:provision")
+	} else {
+		p.operations = append(p.operations, "command:other")
+	}
+	if p.commandErr != nil {
+		return p.commandErr
+	}
 	return nil
 }
 
@@ -626,6 +752,7 @@ func (p *recordingRunnerProvider) StartBackgroundCommand(_ context.Context, sand
 		command:   command,
 		stdin:     append([]byte(nil), stdin...),
 	})
+	p.operations = append(p.operations, "launch:manager")
 	return nil
 }
 

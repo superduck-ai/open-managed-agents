@@ -41,6 +41,20 @@ func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
 	}
 }
 
+func TestResolveUsesManagedAgentSandboxTagByDefault(t *testing.T) {
+	resolution, err := NewProvider(config.Config{}).Resolve(db.Environment{
+		ExternalID:  "env_default_template",
+		WorkspaceID: 42,
+		Config:      json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolution.Template != config.DefaultE2BTemplate {
+		t.Fatalf("template = %q, want %q", resolution.Template, config.DefaultE2BTemplate)
+	}
+}
+
 func TestSandboxVolumeMountsIncludesManagedAgentSkills(t *testing.T) {
 	provider := NewProvider(config.Config{})
 	work := &db.EnvironmentWork{

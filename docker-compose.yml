@@ -178,7 +178,7 @@ services:
       S3_FORCE_PATH_STYLE: "true"
       E2B_API_URL: http://host.docker.internal:3099
       E2B_SANDBOX_URL: http://host.docker.internal:3099
-      E2B_TEMPLATE: claude-code-interpreter
+      E2B_TEMPLATE: ${E2B_TEMPLATE:-managed-agent-sandbox:latest}
       # 调试模式默认关闭，需要时在 .env 中设置 E2B_DEBUG=true
       E2B_DEBUG: ${E2B_DEBUG:-false}
       ANTHROPIC_UPSTREAM_API_KEY: ${ANTHROPIC_UPSTREAM_API_KEY:-}

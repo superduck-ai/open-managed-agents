@@ -68,7 +68,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 
 	template := strings.TrimSpace(cfg.E2BTemplate)
 	if template == "" {
-		template = "claude-code-interpreter"
+		template = config.DefaultE2BTemplate
 	}
 	envID, err := ids.New("env_")
 	if err != nil {

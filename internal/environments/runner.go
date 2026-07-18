@@ -153,6 +153,17 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		}
 		*work = updatedWork
 	}
+	manifest, provision, err := buildPackageManifest(env.Config)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	if provision {
+		if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+	}
 	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
@@ -170,6 +181,19 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte) error {
+	if err := r.provider.WriteFile(ctx, sandboxID, packageManifestPath, manifest); err != nil {
+		return fmt.Errorf("write packages manifest: %w", err)
+	}
+	if err := r.provider.WriteFile(ctx, sandboxID, packageProvisionerPath, packageProvisionerV1); err != nil {
+		return fmt.Errorf("write package provisioner: %w", err)
+	}
+	if err := r.provider.RunCommand(ctx, sandboxID, packageProvisionCommand, r.cfg.E2BSandboxTimeout); err != nil {
+		return fmt.Errorf("provision environment packages: %w", err)
+	}
+	return nil
 }
 
 func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {

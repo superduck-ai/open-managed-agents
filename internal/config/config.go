@@ -104,6 +104,8 @@ type Config struct {
 	CodeSessionUpstreamProxyDisableSSRFProtection bool
 }
 
+const DefaultE2BTemplate = "managed-agent-sandbox:latest"
+
 type SeedAPIKey struct {
 	ExternalID string
 	Key        string
@@ -147,7 +149,7 @@ func Load() (Config, error) {
 		E2BAPIURL:                           env("E2B_API_URL", ""),
 		E2BSandboxURL:                       env("E2B_SANDBOX_URL", ""),
 		E2BDebug:                            envBool("E2B_DEBUG", false),
-		E2BTemplate:                         env("E2B_TEMPLATE", "claude-code-interpreter"),
+		E2BTemplate:                         env("E2B_TEMPLATE", DefaultE2BTemplate),
 		E2BRequestTimeout:                   envDuration("E2B_REQUEST_TIMEOUT", 60*time.Second),
 		E2BSandboxTimeout:                   envDuration("E2B_SANDBOX_TIMEOUT", 5*time.Minute),
 		EnvironmentRunnerEnabled:            envBool("ENVIRONMENT_RUNNER_ENABLED", true),

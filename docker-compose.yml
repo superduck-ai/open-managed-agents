@@ -141,7 +141,7 @@ services:
       '
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./configs/e2b-local.yaml:/etc/e2b-local/config.yaml:ro
+      - ./deploy/docker-compose/e2b-local.yaml:/etc/e2b-local/config.yaml:ro
       - ${PWD}/envd-bin:${PWD}/envd-bin:ro
     restart: unless-stopped
 
@@ -200,8 +200,8 @@ services:
     environment:
       - CADDY_HOST_PORT=${CADDY_HOST_PORT:-28080}
     volumes:
-      - ./configs/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./configs/caddy-entrypoint.sh:/entrypoint.sh:ro
+      - ./deploy/docker-compose/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/docker-compose/caddy-entrypoint.sh:/entrypoint.sh:ro
       - webdist:/usr/share/caddy/html:ro
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     restart: unless-stopped

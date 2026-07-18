@@ -97,11 +97,11 @@ oma-server 在 compose 网络中，e2b-local 在 host 网络中。`extra_hosts` 
 
 > **注意**：`extra_hosts` 中的 `host.docker.internal` 会覆盖 Docker Desktop/OrbStack 内置的同名 DNS 记录。在 OrbStack 上实测两者解析到相同 IP（`0.250.250.254`），不影响使用。
 
-**e2b-local 必须监听 `0.0.0.0`**：从 compose bridge 网络过来的流量目标地址是 `host-gateway` IP（如 `172.17.0.1`），而非 `127.0.0.1`。因此 `configs/e2b-local.yaml` 中 `server.addr` 需设为 `0.0.0.0:3099`（已完成）。
+**e2b-local 必须监听 `0.0.0.0`**：从 compose bridge 网络过来的流量目标地址是 `host-gateway` IP（如 `172.17.0.1`），而非 `127.0.0.1`。因此 `deploy/docker-compose/e2b-local.yaml` 中 `server.addr` 需设为 `0.0.0.0:3099`（已完成）。
 
 ### 4.3 envd_binary 占位符替换
 
-e2b-local 配置文件 `configs/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制。
+e2b-local 配置文件 `deploy/docker-compose/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制。
 
 ### 4.4 前端内建到 oma-server 镜像
 

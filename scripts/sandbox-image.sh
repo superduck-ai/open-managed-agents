@@ -16,7 +16,8 @@ SANDBOX_BUILD_ARG_NAMES=(
   JAVA_VERSION JAVA_RELEASE_TAG JAVA_ARCHIVE JAVA_SHA256 PHP_VERSION PHP_SHA256
   GCC_VERSION GCC_MAJOR GCC_APT_VERSION BUN_VERSION BUN_SHA256
   RUST_VERSION RUST_TARGET RUST_SHA256 RUBY_VERSION RUBY_SERIES RUBY_SHA256
-  CLAUDE_VERSION CLAUDE_SHA256 UV_VERSION UV_SHA256 YARN_VERSION PNPM_VERSION
+  CLAUDE_VERSION CLAUDE_SHA256 UV_VERSION UV_SHA256
+  YARN_VERSION YARN_TARBALL_URL YARN_SHA256 PNPM_VERSION PNPM_TARBALL_URL PNPM_SHA256
   MAVEN_VERSION MAVEN_SHA512 GRADLE_VERSION GRADLE_SHA256
   COMPOSER_VERSION COMPOSER_SHA256 DOCKER_CLI_VERSION DOCKER_CLI_SHA256
   ENVIRONMENT_MANAGER_SHA256 ENVIRONMENT_MANAGER_REVISION ENVIRONMENT_MANAGER_VERSION
@@ -178,6 +179,10 @@ verify_version_contract_sources() {
   require_literal "$dockerfile" '"https://cache.ruby-lang.org/pub/ruby/${RUBY_SERIES}/ruby-${RUBY_VERSION}.tar.xz"'
   require_literal "$dockerfile" 'gcc-${GCC_MAJOR}=${GCC_APT_VERSION}'
   require_literal "$dockerfile" 'g++-${GCC_MAJOR}=${GCC_APT_VERSION}'
+  require_literal "$dockerfile" '"${YARN_TARBALL_URL}" -o /tmp/yarn.tgz'
+  require_literal "$dockerfile" '"${PNPM_TARBALL_URL}" -o /tmp/pnpm.tgz'
+  require_literal "$dockerfile" 'echo "${YARN_SHA256}  /tmp/yarn.tgz" | sha256sum --check --strict'
+  require_literal "$dockerfile" 'echo "${PNPM_SHA256}  /tmp/pnpm.tgz" | sha256sum --check --strict'
   require_literal "$dockerfile" '/opt/python/current/bin'
   require_literal "$dockerfile" '/opt/ruby/current/bin'
   require_literal "$profile" '/opt/python/current/bin'
@@ -231,6 +236,14 @@ verify_version_relationships() {
   }
   [[ "$RUBY_SERIES" == "${RUBY_VERSION%.*}" ]] || {
     printf 'source contract failed: RUBY_SERIES does not match RUBY_VERSION\n' >&2
+    return 1
+  }
+  [[ "$YARN_TARBALL_URL" == "https://registry.npmmirror.com/yarn/-/yarn-${YARN_VERSION}.tgz" ]] || {
+    printf 'source contract failed: YARN_TARBALL_URL does not match YARN_VERSION\n' >&2
+    return 1
+  }
+  [[ "$PNPM_TARBALL_URL" == "https://registry.npmmirror.com/pnpm/-/pnpm-${PNPM_VERSION}.tgz" ]] || {
+    printf 'source contract failed: PNPM_TARBALL_URL does not match PNPM_VERSION\n' >&2
     return 1
   }
   [[ "$GCC_MAJOR" == "${GCC_VERSION%%.*}" && "$GCC_APT_VERSION" == "${GCC_VERSION}-"* ]] || {
@@ -317,6 +330,7 @@ verify_source() {
   require_literal_count "$workflow" 'persist-credentials: false' 2
   reject_literal "$dockerfile" 'python -m pip install --no-cache-dir --upgrade pip'
   reject_literal "$dockerfile" 'gem install --no-document bundler'
+  reject_literal "$dockerfile" 'npm install --global --ignore-scripts "yarn@'
   reject_literal "$dockerfile" 'PIP_CONFIG_FILE=/root/'
   reject_literal "$dockerfile" 'trusted-host'
   reject_literal "$dockerfile" 'GOSUMDB=off'
@@ -341,7 +355,8 @@ verify_source() {
   local checksum_name
   for checksum_name in \
     PYTHON_SHA256 NODE_SHA256 GO_SHA256 JAVA_SHA256 PHP_SHA256 BUN_SHA256 \
-    RUST_SHA256 RUBY_SHA256 CLAUDE_SHA256 UV_SHA256 GRADLE_SHA256 COMPOSER_SHA256 DOCKER_CLI_SHA256; do
+    RUST_SHA256 RUBY_SHA256 CLAUDE_SHA256 UV_SHA256 YARN_SHA256 PNPM_SHA256 \
+    GRADLE_SHA256 COMPOSER_SHA256 DOCKER_CLI_SHA256; do
     verify_sha256_value "$checksum_name"
   done
 

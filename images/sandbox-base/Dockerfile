@@ -192,6 +192,32 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
     && install -Dm0755 /tmp/bun/bun-linux-x64-baseline/bun /opt/bun/bin/bun \
     && ln -s bun /opt/bun/bin/bunx
 
+### NODE PACKAGE MANAGERS ###
+
+FROM base AS node_package_manager_assets
+ARG YARN_VERSION
+ARG YARN_TARBALL_URL
+ARG YARN_SHA256
+ARG PNPM_VERSION
+ARG PNPM_TARBALL_URL
+ARG PNPM_SHA256
+RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
+      "${YARN_TARBALL_URL}" -o /tmp/yarn.tgz \
+    && echo "${YARN_SHA256}  /tmp/yarn.tgz" | sha256sum --check --strict \
+    && tar -xOf /tmp/yarn.tgz package/package.json | grep -Fq "\"version\": \"${YARN_VERSION}\"" \
+    && mkdir -p /opt/node-package-managers/lib/node_modules/yarn \
+    && tar -xzf /tmp/yarn.tgz -C /opt/node-package-managers/lib/node_modules/yarn --strip-components=1 \
+    && curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
+      "${PNPM_TARBALL_URL}" -o /tmp/pnpm.tgz \
+    && echo "${PNPM_SHA256}  /tmp/pnpm.tgz" | sha256sum --check --strict \
+    && tar -xOf /tmp/pnpm.tgz package/package.json | grep -Fq "\"version\": \"${PNPM_VERSION}\"" \
+    && mkdir -p /opt/node-package-managers/lib/node_modules/pnpm /opt/node-package-managers/bin \
+    && tar -xzf /tmp/pnpm.tgz -C /opt/node-package-managers/lib/node_modules/pnpm --strip-components=1 \
+    && ln -s ../lib/node_modules/yarn/bin/yarn.js /opt/node-package-managers/bin/yarn \
+    && ln -s ../lib/node_modules/yarn/bin/yarn.js /opt/node-package-managers/bin/yarnpkg \
+    && ln -s ../lib/node_modules/pnpm/bin/pnpm.cjs /opt/node-package-managers/bin/pnpm \
+    && ln -s ../lib/node_modules/pnpm/bin/pnpx.cjs /opt/node-package-managers/bin/pnpx
+
 ### RUST ###
 
 FROM base AS rust_asset
@@ -302,8 +328,6 @@ ARG RUST_VERSION
 ARG RUST_TARGET
 ARG RUBY_VERSION
 ARG CLAUDE_VERSION
-ARG YARN_VERSION
-ARG PNPM_VERSION
 ARG MAVEN_VERSION
 ARG GRADLE_VERSION
 ARG ENVIRONMENT_MANAGER_REVISION
@@ -364,6 +388,7 @@ COPY --from=node_asset /opt/node/ /opt/node/
 COPY --from=go_asset /opt/go/ /opt/go/
 COPY --from=java_asset /opt/java/ /opt/java/
 COPY --from=bun_asset /opt/bun/ /opt/bun/
+COPY --from=node_package_manager_assets /opt/node-package-managers/ /home/claude/.npm-global/
 COPY --from=rust_asset /opt/rust/ /opt/rust/
 COPY --from=tool_assets /opt/tools/bin/ /usr/local/bin/
 COPY --from=tool_assets /opt/maven/ /opt/maven/
@@ -482,8 +507,6 @@ USER user
 WORKDIR /home/user
 
 RUN "/opt/python/${PYTHON_VERSION}/bin/python3" -m venv "$VIRTUAL_ENV" \
-    && npm install --global --ignore-scripts "yarn@${YARN_VERSION}" "pnpm@${PNPM_VERSION}" \
-    && npm cache clean --force \
     && rm -rf \
       /home/user/.cache \
       /home/claude/.npm/_cacache \

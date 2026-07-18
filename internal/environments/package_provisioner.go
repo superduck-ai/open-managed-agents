@@ -26,12 +26,12 @@ type packageManifest struct {
 
 type environmentPackages struct {
 	Type  string   `json:"type"`
-	APT   []string `json:"apt"`
-	Cargo []string `json:"cargo"`
-	Gem   []string `json:"gem"`
-	Go    []string `json:"go"`
-	NPM   []string `json:"npm"`
-	PIP   []string `json:"pip"`
+	APT   []string `json:"apt,omitempty"`
+	Cargo []string `json:"cargo,omitempty"`
+	Gem   []string `json:"gem,omitempty"`
+	Go    []string `json:"go,omitempty"`
+	NPM   []string `json:"npm,omitempty"`
+	PIP   []string `json:"pip,omitempty"`
 }
 
 func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {

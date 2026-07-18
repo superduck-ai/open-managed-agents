@@ -294,6 +294,9 @@ func runE2BCommand(ctx context.Context, sandbox *e2b.Sandbox, command string, ti
 	if !ok {
 		return "", "", fmt.Errorf("command execution type = %T, want *e2b.CommandResult", execution)
 	}
+	if result.ExitCode != 0 {
+		return result.Stdout, result.Stderr, fmt.Errorf("command exited with code %d: %s", result.ExitCode, strings.TrimSpace(result.Error))
+	}
 	return result.Stdout, result.Stderr, nil
 }
 

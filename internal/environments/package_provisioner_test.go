@@ -11,6 +11,15 @@ import (
 	"testing"
 )
 
+func TestNormalizePackages(t *testing.T) {
+	t.Run("invalid type is rejected", func(t *testing.T) {
+		packages, err := normalizePackages(json.RawMessage(`{"type":"other","pip":["numpy"]}`))
+		if err == nil || packages != nil || !strings.Contains(err.Error(), `type must be "packages"`) {
+			t.Fatalf("normalizePackages() = (%#v, %v), want invalid type error", packages, err)
+		}
+	})
+}
+
 func TestBuildPackageManifest(t *testing.T) {
 	t.Run("credential-bearing URL is rejected without echoing the spec", func(t *testing.T) {
 		secretSpec := "git+https://user:secret-token@example.test/private.git"
@@ -66,6 +75,9 @@ func TestBuildPackageManifest(t *testing.T) {
 		}
 		if strings.Contains(packageProvisionCommand, specs[0]) || strings.Contains(packageProvisionCommand, specs[2]) {
 			t.Fatalf("fixed provision command contains a package spec: %q", packageProvisionCommand)
+		}
+		if bytes.Contains(manifest, []byte(":null")) {
+			t.Fatalf("manifest contains null package manager arrays: %s", manifest)
 		}
 	})
 }

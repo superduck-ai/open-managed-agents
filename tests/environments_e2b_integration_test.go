@@ -82,7 +82,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		"type":       "cloud",
 		"runtime":    "self_hosted",
 		"image":      template,
-		"packages":   []any{},
+		"packages":   map[string]any{"type": "packages"},
 		"networking": map[string]any{"type": "unrestricted"},
 	})
 	now := time.Now().UTC()

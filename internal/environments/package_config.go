@@ -28,6 +28,12 @@ func normalizePackages(raw json.RawMessage) (map[string]any, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, errors.New("config.packages must be an object or null")
 	}
+	if rawType, ok := fields["type"]; ok && !isJSONNull(rawType) {
+		var packageType string
+		if err := json.Unmarshal(rawType, &packageType); err != nil || packageType != "packages" {
+			return nil, errors.New(`config.packages.type must be "packages"`)
+		}
+	}
 	out := emptyPackages()
 	for _, manager := range packageManagerNames {
 		rawList, ok := fields[manager]

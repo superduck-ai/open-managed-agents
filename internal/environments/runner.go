@@ -164,11 +164,18 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 			return true, err
 		}
 	}
-	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
+	heartbeat, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
+	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
-	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
+	if !heartbeat.LeaseExtended {
+		if err := r.stopCreatedSandbox(record, work, providerSandboxID); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
@@ -194,6 +201,28 @@ func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manife
 		return fmt.Errorf("provision environment packages: %w", err)
 	}
 	return nil
+}
+
+func (r *Runner) stopCreatedSandbox(record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) error {
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if strings.TrimSpace(providerSandboxID) != "" {
+		if err := r.db.UpdateEnvironmentSandboxState(stopCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
+			return err
+		}
+		if err := r.provider.Kill(stopCtx, providerSandboxID); err != nil {
+			message := err.Error()
+			_ = r.db.UpdateEnvironmentSandboxState(stopCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, nil)
+			_, _ = r.db.StopEnvironmentWork(stopCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+			return err
+		}
+	}
+	stoppedAt := time.Now().UTC()
+	if err := r.db.UpdateEnvironmentSandboxState(stopCtx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt); err != nil {
+		return err
+	}
+	_, err := r.db.StopEnvironmentWork(stopCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	return err
 }
 
 func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {

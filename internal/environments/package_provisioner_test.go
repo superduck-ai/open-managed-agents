@@ -21,6 +21,20 @@ func TestNormalizePackages(t *testing.T) {
 }
 
 func TestBuildPackageManifest(t *testing.T) {
+	t.Run("invalid type uses the normalization error", func(t *testing.T) {
+		_, normalizeErr := normalizePackages(json.RawMessage(`{"type":"other"}`))
+		manifest, provision, manifestErr := buildPackageManifest(json.RawMessage(`{
+			"type":"cloud",
+			"packages":{"type":"other"}
+		}`))
+		if normalizeErr == nil || manifestErr == nil || provision || manifest != nil {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), normalize error = %v", manifest, provision, manifestErr, normalizeErr)
+		}
+		if manifestErr.Error() != normalizeErr.Error() {
+			t.Fatalf("manifest error = %q, want normalization error %q", manifestErr, normalizeErr)
+		}
+	})
+
 	t.Run("credential-bearing URL is rejected without echoing the spec", func(t *testing.T) {
 		secretSpec := "git+https://user:secret-token@example.test/private.git"
 		manifest, provision, err := buildPackageManifest(mustPackageJSON(t, map[string]any{
@@ -35,6 +49,16 @@ func TestBuildPackageManifest(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), secretSpec) || strings.Contains(err.Error(), "secret-token") {
 			t.Fatalf("manifest error leaked package credentials: %v", err)
+		}
+	})
+
+	t.Run("legacy empty package array skips provisioning", func(t *testing.T) {
+		manifest, provision, err := buildPackageManifest(json.RawMessage(`{
+			"type":"cloud",
+			"packages":[]
+		}`))
+		if err != nil || provision || manifest != nil {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want (nil, false, nil)", manifest, provision, err)
 		}
 	})
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -99,6 +100,29 @@ func TestResolveLimitedNetworkIncludesMCPHostsWhenAllowed(t *testing.T) {
 	want := []string{"api.example.com", "mcp.notion.com", "api.githubcopilot.com"}
 	if !reflect.DeepEqual(resolution.Network.AllowOut, want) {
 		t.Fatalf("AllowOut = %#v, want %#v", resolution.Network.AllowOut, want)
+	}
+}
+
+func TestResolveLimitedNetworkIncludesCargoStaticCDNWhenPackageManagersAllowed(t *testing.T) {
+	provider := NewProvider(config.Config{})
+	resolution, err := provider.Resolve(db.Environment{
+		ExternalID:       "env_packages",
+		WorkspaceID:      42,
+		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allow_package_managers":true}}`),
+		ResolvedTemplate: "template_test",
+	}, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolution.Network == nil {
+		t.Fatal("expected limited network options")
+	}
+	allowedHosts, ok := resolution.Network.AllowOut.([]string)
+	if !ok {
+		t.Fatalf("AllowOut = %#v, want []string", resolution.Network.AllowOut)
+	}
+	if !slices.Contains(allowedHosts, "static.crates.io") {
+		t.Fatalf("AllowOut = %#v, want Cargo static CDN", allowedHosts)
 	}
 }
 

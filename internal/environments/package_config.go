@@ -8,6 +8,8 @@ import (
 
 var packageManagerNames = [...]string{"apt", "cargo", "gem", "go", "npm", "pip"}
 
+const invalidPackagesTypeMessage = `config.packages.type must be "packages"`
+
 func emptyPackages() map[string]any {
 	return map[string]any{
 		"type":  "packages",
@@ -31,7 +33,7 @@ func normalizePackages(raw json.RawMessage) (map[string]any, error) {
 	if rawType, ok := fields["type"]; ok && !isJSONNull(rawType) {
 		var packageType string
 		if err := json.Unmarshal(rawType, &packageType); err != nil || packageType != "packages" {
-			return nil, errors.New(`config.packages.type must be "packages"`)
+			return nil, errors.New(invalidPackagesTypeMessage)
 		}
 	}
 	out := emptyPackages()

@@ -34,13 +34,18 @@ sequenceDiagram
             Provisioner-->>Runner: non-zero + manager/stage/exit code 诊断
             Runner->>E2B: Kill
         else 全部成功
-            Runner->>Manager: 写入 startup payload 并运行 task-run
-            Manager->>Agent: 启动 Claude Agent
+            Runner->>Runner: Heartbeat 并重新检查 Work stop 状态
+            alt 安装期间收到 stop 请求
+                Runner->>E2B: Kill
+            else Work 仍可运行
+                Runner->>Manager: 写入 startup payload 并运行 task-run
+                Manager->>Agent: 启动 Claude Agent
+            end
         end
     end
 ```
 
-空 Packages 不写 manifest/provisioner，也不运行安装命令，因此保持原启动路径。Environment 更新不会进入已创建 Sandbox；runner 在创建新 Sandbox 时读取 Environment 当前配置，所以只影响之后创建的 Sandbox。每个 Session 仍通过一次独立的 E2B `Create` 获得隔离文件系统。
+空 Packages 不写 manifest/provisioner，也不运行安装命令，因此保持原启动路径。Environment 更新不会进入已创建 Sandbox；runner 在创建新 Sandbox 时读取 Environment 当前配置，所以只影响之后创建的 Sandbox。每个 Session 仍通过一次独立的 E2B `Create` 获得隔离文件系统。Packages 安装结束后，runner 必须检查 heartbeat 的 `lease_extended`；如果安装期间 work 已进入 `stopping` 或 `stopped`，则终止刚创建的 Sandbox，并且不启动 Environment Manager。
 
 ## 3. Manifest 与执行安全
 
@@ -75,6 +80,8 @@ OMA 写入 `/tmp/open-managed-agents/packages.v1.json`，结构为：
 | 6 | pip | `pip install ...` |
 
 空 manager 数组跳过；首个非零退出立即停止后续 manager。安装命令最长使用 `E2B_SANDBOX_TIMEOUT`，普通 Environment Manager 启动命令继续使用 `E2B_REQUEST_TIMEOUT`。
+
+对于已有的 limited networking 配置，`allow_package_managers: true` 继续只放行受信任的 registry/CDN host。Cargo 除 `crates.io` 与 `index.crates.io` 外还需要 `static.crates.io` 下载 crate archive，因此该静态 CDN 包含在 Package Manager 白名单中；其他 limited-network Packages 策略仍不在本次设计范围内。
 
 ## 4. 失败状态与诊断
 

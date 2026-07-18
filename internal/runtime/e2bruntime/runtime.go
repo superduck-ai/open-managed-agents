@@ -471,6 +471,7 @@ func packageManagerHosts() []string {
 		"sum.golang.org",
 		"crates.io",
 		"index.crates.io",
+		"static.crates.io",
 		"rubygems.org",
 	}
 }

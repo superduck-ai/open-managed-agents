@@ -36,8 +36,8 @@ type environmentPackages struct {
 
 func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {
 	var cloud struct {
-		Type     string              `json:"type"`
-		Packages environmentPackages `json:"packages"`
+		Type     string          `json:"type"`
+		Packages json.RawMessage `json:"packages"`
 	}
 	if err := json.Unmarshal(config, &cloud); err != nil {
 		return nil, false, fmt.Errorf("decode environment packages: %w", err)
@@ -45,9 +45,12 @@ func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {
 	if cloud.Type != "cloud" {
 		return nil, false, nil
 	}
-	packages := cloud.Packages
+	packages, err := decodeEnvironmentPackages(cloud.Packages)
+	if err != nil {
+		return nil, false, fmt.Errorf("decode environment packages: %w", err)
+	}
 	if packages.Type != "" && packages.Type != "packages" {
-		return nil, false, errors.New("config.packages.type must be packages")
+		return nil, false, errors.New(invalidPackagesTypeMessage)
 	}
 	if packages.hasCredentialURL() {
 		return nil, false, errors.New("config.packages entries must not contain URL credentials")
@@ -61,6 +64,21 @@ func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("encode packages manifest: %w", err)
 	}
 	return data, true, nil
+}
+
+func decodeEnvironmentPackages(raw json.RawMessage) (environmentPackages, error) {
+	if len(raw) == 0 || isJSONNull(raw) {
+		return environmentPackages{}, nil
+	}
+	var packages environmentPackages
+	if err := json.Unmarshal(raw, &packages); err != nil {
+		var legacy []json.RawMessage
+		if legacyErr := json.Unmarshal(raw, &legacy); legacyErr == nil && len(legacy) == 0 {
+			return environmentPackages{}, nil
+		}
+		return environmentPackages{}, err
+	}
+	return packages, nil
 }
 
 func (p environmentPackages) hasCredentialURL() bool {

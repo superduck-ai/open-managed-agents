@@ -9,11 +9,11 @@
   min-width: 320px;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #080807;
+  background: var(--popover);
   color: var(--foreground);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.12);
 }
 
 .workbench-drawer-panel.is-tools {

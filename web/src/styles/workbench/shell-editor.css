@@ -153,7 +153,7 @@
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 0 8px;
-  color: rgb(195, 194, 183);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 400;
   line-height: 16px;
@@ -171,7 +171,8 @@
 }
 
 .workbench-toolbar-button svg {
-  color: rgb(137, 135, 129);
+  color: var(--muted-foreground);
+  opacity: 0.7;
 }
 
 .workbench-toolbar-button:hover {
@@ -180,12 +181,13 @@
 
 .workbench-toolbar-button.is-active {
   border-color: var(--border);
-  background: #151515;
-  color: var(--foreground);
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 .workbench-toolbar-button.is-active svg {
-  color: var(--foreground);
+  color: var(--accent-foreground);
+  opacity: 1;
 }
 
 .workbench-toolbar-button[aria-disabled='true'],

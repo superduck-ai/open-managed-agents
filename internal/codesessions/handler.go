@@ -1,6 +1,7 @@
 package codesessions
 
 import (
+	"context"
 	"sync"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -14,7 +15,9 @@ type Handler struct {
 	db            *db.DB
 	service       *Service
 	upstreamProxy upstreamProxyRuntime
-	otlpLogMu     sync.Mutex
+	// loadPolicyContext 解析 CONNECT 授权所需的策略上下文；测试可替换为 fixture。
+	loadPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
+	otlpLogMu         sync.Mutex
 }
 
 // NewHandler 创建长生命周期的 HTTP handler。Handler 直接复用 Service 的数据库依赖，
@@ -29,6 +32,7 @@ func NewHandler(cfg config.Config, service *Service) *Handler {
 		service:       service,
 		upstreamProxy: newUpstreamProxyRuntime(),
 	}
+	handler.loadPolicyContext = handler.loadUpstreamProxyPolicyContext
 	// 只有 MITM 开启时才在构造阶段读取稳定私钥并签发一年期根证书，使配置错误在启动期失败。
 	// MITM 关闭时私钥路径完全休眠，由 CA 下载接口按需生成进程级临时 CA。
 	if cfg.CodeSession.UpstreamProxyMITMEnabled {

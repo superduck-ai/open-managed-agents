@@ -353,9 +353,6 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	if len(vaultIDs) != 1 || vaultIDs[0] != "vault_cred_123" {
 		t.Fatalf("unexpected vault ids: %#v", vaultIDs)
 	}
-	if hosts := managedAgentMCPAllowedHosts(session.AgentSnapshot); !reflect.DeepEqual(hosts, []string{"mcp.notion.com"}) {
-		t.Fatalf("mcp hosts = %#v", hosts)
-	}
 	claudeArgs := body["claude_code_args"].(map[string]any)
 	if claudeArgs["mcp-config"] != managedAgentMCPConfigPath {
 		t.Fatalf("claude args = %#v", claudeArgs)

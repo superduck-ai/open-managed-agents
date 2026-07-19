@@ -176,6 +176,38 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 
 本地 fake-IP/TUN DNS 可能把公网域名解析到 `198.18.0.0/15`，从而触发上述保护。仅用于临时排障时，可以设置 `code_session.upstream_proxy_disable_ssrf_protection: true` 关闭目标 IP 过滤；默认值为 `false`。该开关仍然只允许端口 `443`，但会允许 loopback、私网、link-local 与 fake-IP，因此不得在生产环境启用。
 
+## Environment 网络策略执行
+
+upstream proxy 是 Environment networking（`unrestricted` / `limited`）的**主要执行点**；E2B Provider 的 `SandboxNetworkOpts` 映射只作为纵深防御的薄 Adapter，策略语义以 proxy 为准（见 `docs/adr/0006`）。
+
+### 策略来源与解析时机
+
+- 策略模块是 `internal/networkpolicy`：纯函数深模块，不访问数据库。调用方组装只包含 Environment 配置与 Session AgentSnapshot 的 `Subject`，模块返回带机器可测 reason 的 `Decision`；org/workspace/environment 标识保留在 `codesessions` 的策略上下文中用于数据库作用域与审计日志。
+- proxy 在 CONNECT Basic 双重凭证校验**之后**、DNS 解析与拨号**之前**，保留经 JWT 验证的 code session ID、organization UUID 与 workspace UUID，并通过单条租户作用域查询同时校验 `CodeSession` → Environment / Session 的内部 ID、external ID、organization 和 workspace 关系，读取 Environment 当前配置与 Session AgentSnapshot。该查询在**每次 CONNECT 新鲜执行**（不缓存）。Environment 编辑因此对存活 Sandbox 的代理出口即时生效；E2B 层仍是 Sandbox 创建时的固定快照，两层语义差异是有意取舍（收紧即时生效优先于两层严格一致）。
+- Code Session、Environment、Session 任一读取失败，Environment 配置畸形，或 `allow_mcp_servers=true` 时 Session AgentSnapshot / 非空 MCP URL 无法解析，都必须 **fail-closed**：拒绝 CONNECT 并记录 `policy_unavailable`，绝不降级为 unrestricted 或跳过坏条目后部分放行。`networking` 对象存在但 `type` 未知（含空串）同样 fail-closed；只有顶层 `type` 为 `cloud` 的 Environment 配置才评估 networking（非 cloud Environment 没有受管 Sandbox 出口，视为 unrestricted）。整条链从已认证的 Code Session 行出发，relay 提交的任何 environment ID 或 allowlist 都不被信任，跨 workspace 借用 allowlist 在结构上不可能。
+
+### limited 语义
+
+`limited` 默认拒绝，三类 host 合并放行：
+
+1. 显式 `allowed_hosts`；
+2. `allow_mcp_servers=true` 时，从 Session AgentSnapshot 的 `mcp_servers[].url` **现场提取**的 MCP hosts（stdio 类无 URL 自然排除；与 runner 写入 work metadata 共用同一提取函数）；
+3. `allow_package_managers=true` 时，共享 catalog 中的受信任 package registry 与镜像 host 并集（官方上游与国内基线镜像，版本控制在策略模块内）。catalog 不包含 `github.com` 等 VCS host：Go `goproxy.cn,direct` 的 `direct` miss 在 limited 下显式失败，这是已知限制，精细化授权留给未来的 MITM path 级策略。
+
+匹配规则：`*.example.com` 匹配任意深度子域但**不含 apex**（`example.com` 需单独列出）；带非 443 端口的条目对 proxy 惰性（CONNECT 只放行 443）；allowlist 条目在策略解析时先校验端口范围和完整 hostname label 语义，任一非法条目使整份策略 fail-closed。合法 allowlist 条目与 CONNECT target 匹配前统一归一化（小写、去尾点、IDNA→punycode）；IP 字面量只做精确匹配且仍须通过 SSRF/公网 IP 检查。策略授权不替代既有 443 端口、SSRF、公网 IP、DNS rebinding 与 MITM Host/SNI 检查。
+
+`unrestricted` 保持既有行为：允许通过 SSRF 安全检查的任意公网 `host:443`。
+
+### 拒绝语义与观测
+
+- 策略拒绝时在 DNS 解析/拨号之前返回 framed `403` 并关闭 tunnel；relay 只见到通用代理拒绝，**reason 不进 framed 响应**（避免向 Sandbox 内进程泄露策略结构）。
+- 服务端为每次 deny 记录一条结构化审计日志：JWT 中已验签的 organization/workspace UUID、查询成功时的 organization/workspace internal ID、environment external ID、code session ID、归一化 host、reason（`explicit_host` / `mcp_host` / `package_manager_host` / `unrestricted` / `host_not_allowed` / `invalid_target` / `policy_unavailable`）。不记录 credential、URL query、header 或 body。
+- 观测只依赖结构化日志（公司日志平台聚合）；server 侧 metrics 管线不在本阶段范围。
+
+### 绕过边界（best-effort 声明）
+
+`HTTPS_PROXY` 继承是应用层约定：Sandbox 内进程可以 unset 代理或直接 socket 出网。**在部署级出口约束（只允许 Sandbox 访问 OMA proxy/control plane、拒绝直连公网）落地之前，本机制是 best-effort proxy policy，不构成完整安全隔离。** 该约束位于独立 egress gateway、云网络 ACL 或 Provider 外部网络层，不在本仓库的 e2b-local 内复刻；落地前所有对外表述不得宣称"安全隔离"。
+
 ## 失败语义
 
 | 场景 | 结果 |
@@ -185,6 +217,8 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 | CONNECT/protobuf 格式错误 | framed `400` |
 | Basic session/token 不匹配 | framed `407` |
 | 非 443 或非公网目标 | framed `403` |
+| Environment 策略拒绝（limited 未授权 host） | framed `403`（拨号前），reason 仅进服务端审计日志 |
+| 策略解析失败（Code Session/Environment/Session 读取错误、配置畸形） | framed `403`，fail-closed 记 `policy_unavailable` |
 | DNS、拨号失败 | framed `502` |
 | CA key 不合法、路径冲突或 certificate 无法写入 | 配置加载或 Handler 构造阶段拒绝启动 |
 | 真实上游 TLS 验证失败 | framed `502` |
@@ -198,4 +232,7 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - API 单元测试覆盖 protobuf、CONNECT、Basic 双字段鉴权、私网/端口拒绝、CA 解析和二进制隧道往返。
 - MITM 单元测试覆盖稳定 private key 驱动的启动期根证书签发、旧根验证新 leaf、动态 leaf 信任链、LRU 淘汰、同域并发签发合并、异域并行签发、客户端 TLS 解密、path/query 转发和代理凭证剥离。
 - API 集成测试覆盖无 token、私网 CONNECT、公开 CA，以及 `/v1/messages` 的多凭证鉴权、上游密钥替换和流式转发。
+- `internal/networkpolicy` 单元测试先覆盖纯策略失败场景（空 allowlist、未知类型、畸形 JSON、非法 allowed host、畸形 AgentSnapshot/MCP URL、通配符越界、未授权 host、非法 target），再覆盖成功场景（显式 host、MCP host、package catalog、unrestricted）。
+- `internal/codesessions` 与 DB-backed proxy 集成测试覆盖策略上下文边界：JWT org/workspace 作用域、Code Session 与 Environment/Session 绑定、不能借用另一 Environment allowlist、Environment/Session 缺失与持久化配置畸形时 fail-closed。
+- proxy 集成测试证明：limited 下授权目标能进入拨号路径、未授权目标在 DNS/拨号前收到 framed `403`、unrestricted 行为与现状兼容、Environment 更新对存活 Code Session 的下一次 CONNECT 即时生效。
 - linux/amd64 镜像验收通过真实 Claude CLI 和 Bash tool call 确认：relay 从 `/run/ccr/session_token` 读取 token 并启动，Claude 子进程同时具有指向同一 `127.0.0.1` relay 的 `HTTPS_PROXY`、`https_proxy`，以及 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`。

@@ -84,6 +84,19 @@ func TestSandboxVolumeMountsIncludesManagedAgentSkills(t *testing.T) {
 	}
 }
 
+func TestResolveLimitedNetworkFailsClosedOnInvalidAllowedHost(t *testing.T) {
+	provider := NewProvider(config.Config{})
+	_, err := provider.Resolve(db.Environment{
+		ExternalID:       "env_invalid_network",
+		WorkspaceID:      42,
+		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["bad/path","api.example.com"]}}`),
+		ResolvedTemplate: "template_test",
+	}, nil)
+	if err == nil {
+		t.Fatal("invalid allowed_hosts policy must fail closed")
+	}
+}
+
 func TestResolveLimitedNetworkIncludesMCPHostsWhenAllowed(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	env := db.Environment{

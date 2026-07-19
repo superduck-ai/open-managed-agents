@@ -363,7 +363,7 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	}
 }
 
-func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) {
+func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := config.Load()
@@ -420,8 +420,8 @@ func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) 
 	if len(provider.resolves) != 1 {
 		t.Fatalf("resolves = %#v, want one", provider.resolves)
 	}
-	if hasJSONKey(provider.resolves[0].metadata, "mcp_allowed_hosts") {
-		t.Fatalf("Resolve saw managed-agent MCP metadata: %s", provider.resolves[0].metadata)
+	if !hasJSONKey(provider.resolves[0].metadata, "mcp_allowed_hosts") {
+		t.Fatalf("Resolve did not receive managed-agent MCP metadata: %s", provider.resolves[0].metadata)
 	}
 	if len(provider.creates) != 1 {
 		t.Fatalf("creates = %#v, want one", provider.creates)
@@ -439,8 +439,101 @@ func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) 
 	if !ok {
 		t.Fatalf("Create resolution AllowOut = %#v, want []string", provider.creates[0].resolution.Network.AllowOut)
 	}
-	if slices.Contains(allowOut, "mcp.notion.com") {
-		t.Fatalf("Create resolution allowed agent MCP host: %#v", allowOut)
+	if !slices.Contains(allowOut, "mcp.notion.com") {
+		t.Fatalf("Create resolution did not allow agent MCP host: %#v", allowOut)
+	}
+}
+
+func TestEnvironmentRunnerClearsStaleMCPHostsWhenCurrentSnapshotIsEmpty(t *testing.T) {
+	ctx := context.Background()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
+	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
+	cfg.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.ClaudeAgentVersion = "2.1.120"
+	cfg.E2BTemplate = "fake-template"
+
+	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-stale-mcp-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{
+		"model":"claude-opus-4-8",
+		"name":"Runner Empty MCP Network Agent"
+	}`)
+	defer archiveAgent(t, app, agent.ID)
+	environment := createEnvironment(t, app, `{
+		"name":"runner-empty-mcp-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`",
+		"config":{
+			"type":"cloud",
+			"networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}
+		}
+	}`)
+	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+
+	client := anthropic.NewClient(
+		option.WithBaseURL(app.baseURL),
+		option.WithAPIKey(defaultTestKey),
+	)
+	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
+		EnvironmentID: environment.ID,
+		Title:         anthropic.String("Runner empty MCP network session"),
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+
+	ids := getDefaultDBIDs(t, app.db)
+	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
+	if err != nil {
+		t.Fatalf("load environment work: %v", err)
+	}
+	if _, err := app.db.UpdateEnvironmentWorkMetadata(
+		ctx,
+		ids.WorkspaceID,
+		environment.ID,
+		work.ExternalID,
+		json.RawMessage(`{"mcp_allowed_hosts":["stale.example.com"]}`),
+	); err != nil {
+		t.Fatalf("seed stale MCP metadata: %v", err)
+	}
+
+	provider := &recordingRunnerProvider{sandboxID: "sandbox-empty-mcp"}
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
+	processed, err := runner.RunOnce(ctx, "runner-cloud-empty-mcp-test")
+	if err != nil {
+		t.Fatalf("run once: %v", err)
+	}
+	if !processed {
+		t.Fatal("runner did not process queued session work")
+	}
+	if len(provider.resolves) != 1 {
+		t.Fatalf("resolves = %#v, want one", provider.resolves)
+	}
+	var metadata struct {
+		MCPAllowedHosts []string `json:"mcp_allowed_hosts"`
+	}
+	if err := json.Unmarshal(provider.resolves[0].metadata, &metadata); err != nil {
+		t.Fatalf("decode Resolve metadata: %v", err)
+	}
+	if len(metadata.MCPAllowedHosts) != 0 {
+		t.Fatalf("Resolve retained stale MCP hosts: %#v", metadata.MCPAllowedHosts)
+	}
+	if len(provider.creates) != 1 || provider.creates[0].resolution.Network == nil {
+		t.Fatalf("creates = %#v, want one limited network resolution", provider.creates)
+	}
+	allowOut, ok := provider.creates[0].resolution.Network.AllowOut.([]string)
+	if !ok {
+		t.Fatalf("Create resolution AllowOut = %#v, want []string", provider.creates[0].resolution.Network.AllowOut)
+	}
+	if slices.Contains(allowOut, "stale.example.com") {
+		t.Fatalf("Create resolution retained stale MCP host: %#v", allowOut)
 	}
 }
 

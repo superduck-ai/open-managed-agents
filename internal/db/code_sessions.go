@@ -84,6 +84,17 @@ type CodeSessionCredentialContext struct {
 	AccountEmail            string
 }
 
+// CodeSessionNetworkPolicyContext 是 upstream proxy 每次 CONNECT 授权所需的
+// 数据库投影。查询必须同时绑定已验签 JWT 中的 organization/workspace UUID，
+// 并校验 Code Session 与 Environment、Session 的内部租户关系。
+type CodeSessionNetworkPolicyContext struct {
+	OrganizationID        int64
+	WorkspaceID           int64
+	EnvironmentExternalID string
+	EnvironmentConfig     json.RawMessage
+	AgentSnapshot         json.RawMessage
+}
+
 type CodeSessionWorkerBinding struct {
 	TokenSessionID string          `json:"token_session_id,omitempty"`
 	AuthMode       string          `json:"auth_mode,omitempty"`
@@ -304,6 +315,63 @@ func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organi
 			and cs.workspace_id = $3
 	`+activeCodeSessionCredentialConditions, strings.TrimSpace(codeSessionExternalID), organizationID, workspaceID)
 	return scanCodeSessionCredentialContext(row)
+}
+
+// GetCodeSessionNetworkPolicyContext 从已验签的租户身份出发，一次性加载并校验
+// Code Session、Environment 与 Session 的策略关系。项目不使用数据库外键，因此
+// 每个 join 都显式约束 organization/workspace 与内部 ID；任一关系缺失都 fail closed。
+func (d *DB) GetCodeSessionNetworkPolicyContext(
+	ctx context.Context,
+	codeSessionExternalID string,
+	organizationUUID string,
+	workspaceUUID string,
+) (CodeSessionNetworkPolicyContext, error) {
+	row := d.Pool.QueryRow(ctx, `
+		select cs.organization_id, cs.workspace_id, e.external_id, e.config, s.agent_snapshot
+		from code_sessions cs
+		join organizations o
+			on o.id = cs.organization_id
+		join workspaces w
+			on w.id = cs.workspace_id
+			and w.organization_id = cs.organization_id
+		join environments e
+			on e.id = cs.environment_id
+			and e.external_id = cs.environment_external_id
+			and e.organization_id = cs.organization_id
+			and e.workspace_id = cs.workspace_id
+			and e.deleted_at is null
+		join sessions s
+			on s.id = cs.session_id
+			and s.external_id = cs.session_external_id
+			and s.organization_id = cs.organization_id
+			and s.workspace_id = cs.workspace_id
+			and s.environment_id = cs.environment_id
+			and s.environment_external_id = cs.environment_external_id
+			and s.deleted_at is null
+		where cs.external_id = $1
+			and o.uuid::text = $2
+			and w.uuid::text = $3
+			and cs.deleted_at is null
+	`, strings.TrimSpace(codeSessionExternalID), strings.TrimSpace(organizationUUID), strings.TrimSpace(workspaceUUID))
+	var value CodeSessionNetworkPolicyContext
+	var environmentConfig []byte
+	var agentSnapshot []byte
+	err := row.Scan(
+		&value.OrganizationID,
+		&value.WorkspaceID,
+		&value.EnvironmentExternalID,
+		&environmentConfig,
+		&agentSnapshot,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CodeSessionNetworkPolicyContext{}, ErrNotFound
+	}
+	if err != nil {
+		return CodeSessionNetworkPolicyContext{}, err
+	}
+	value.EnvironmentConfig = copyRaw(environmentConfig)
+	value.AgentSnapshot = copyRaw(agentSnapshot)
+	return value, nil
 }
 
 func scanCodeSessionCredentialContext(row rowScanner) (CodeSessionCredentialContext, error) {

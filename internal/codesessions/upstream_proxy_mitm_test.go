@@ -282,6 +282,7 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	upstreamRequests := make(chan *http.Request, 1)
 	dialTargets := make(chan string, 1)
 	handler := NewHandler(files.config(), newTestService(t, nil))
+	stubUnrestrictedPolicyContext(handler)
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("load generated tunnel CA: %v", err)
@@ -295,7 +296,7 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	server := httptest.NewServer(websocket.Server{
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 		Handler: func(connection *websocket.Conn) {
-			handler.serveUpstreamProxyTunnel(connection, "cse_test", "sk-ant-si-test")
+			handler.serveUpstreamProxyTunnel(connection, testUpstreamProxyIdentity(), "sk-ant-si-test")
 		},
 	})
 	defer server.Close()

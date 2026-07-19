@@ -185,6 +185,7 @@ func TestUpstreamProxyTunnelForwardsBinaryChunks(t *testing.T) {
 	targetConnections := make(chan net.Conn, 1)
 	dialTargets := make(chan string, 1)
 	handler := NewHandler(config.Config{}, newTestService(t, nil))
+	stubUnrestrictedPolicyContext(handler)
 	handler.upstreamProxy = upstreamProxyRuntime{
 		dial: func(_ context.Context, target string) (net.Conn, error) {
 			dialTargets <- target
@@ -196,7 +197,7 @@ func TestUpstreamProxyTunnelForwardsBinaryChunks(t *testing.T) {
 	server := httptest.NewServer(websocket.Server{
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 		Handler: func(connection *websocket.Conn) {
-			handler.serveUpstreamProxyTunnel(connection, "cse_test", "sk-ant-si-test")
+			handler.serveUpstreamProxyTunnel(connection, testUpstreamProxyIdentity(), "sk-ant-si-test")
 		},
 	})
 	defer server.Close()

@@ -450,13 +450,13 @@ export function CostPage() {
 export function LogsPage() {
   const { msg } = useI18n();
   const routeWorkspaceId = getWorkspaceIdFromPath();
-  const workspaceLabel = useWorkspaceLabel(routeWorkspaceId);
+  const { workspaces } = useWorkspace();
   const allWorkspacesLabel = msg('workspace.all', 'All workspaces');
   const workspaceOptions: FilterOption[] = routeWorkspaceId
-    ? [{ value: 'current', label: workspaceLabel }]
+    ? [{ value: routeWorkspaceId, label: workspaces.find((w) => w.id === routeWorkspaceId)?.name ?? routeWorkspaceId }]
     : [
         { value: 'all-workspaces', label: allWorkspacesLabel },
-        { value: 'default', label: workspaceLabel },
+        ...workspaces.map((w) => ({ value: w.id, label: w.name })),
       ];
   const modelOptions: FilterOption[] = [{ value: 'all', label: msg('common.all', 'All') }, ...analyticsModelOptions];
   const serviceAccountOptions: FilterOption[] = [
@@ -481,7 +481,7 @@ export function LogsPage() {
     { value: 'last-30-days', label: msg('analytics.filter.last30Days', 'Last 30 days') },
   ];
   const [filters, setFilters] = useState({
-    workspace: routeWorkspaceId ? 'current' : 'all-workspaces',
+    workspace: routeWorkspaceId ?? 'all-workspaces',
     model: 'all',
     serviceAccount: 'all',
     range: 'last-24-hours',

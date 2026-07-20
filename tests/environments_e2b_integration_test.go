@@ -36,17 +36,17 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if strings.TrimSpace(cfg.E2BAPIKey) == "" {
-		t.Fatal("E2B_API_KEY is required for the real E2B integration test")
+	if strings.TrimSpace(cfg.E2B.APIKey) == "" {
+		t.Fatal("e2b.api_key is required in config/config.yaml for the real E2B integration test")
 	}
-	if cfg.E2BDebug {
-		t.Fatal("E2B_DEBUG must be false for the real E2B integration test")
+	if cfg.E2B.Debug {
+		t.Fatal("e2b.debug must be false for the real E2B integration test")
 	}
-	if cfg.E2BRequestTimeout < 2*time.Minute {
-		cfg.E2BRequestTimeout = 2 * time.Minute
+	if cfg.E2B.RequestTimeout < 2*time.Minute {
+		cfg.E2B.RequestTimeout = 2 * time.Minute
 	}
-	if cfg.E2BSandboxTimeout < time.Minute {
-		cfg.E2BSandboxTimeout = time.Minute
+	if cfg.E2B.SandboxTimeout < time.Minute {
+		cfg.E2B.SandboxTimeout = time.Minute
 	}
 
 	database, err := db.Open(ctx, cfg)
@@ -57,7 +57,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if err := database.Migrate(ctx); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
-	if err := database.Seed(ctx, cfg.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		t.Fatalf("seed database: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		t.Fatalf("load default api key: %v", err)
 	}
 
-	template := strings.TrimSpace(cfg.E2BTemplate)
+	template := strings.TrimSpace(cfg.E2B.Template)
 	if template == "" {
 		template = config.DefaultE2BTemplate
 	}
@@ -121,7 +121,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		t.Fatalf("create environment work: %v", err)
 	}
 
-	provider := e2bruntime.NewProvider(cfg)
+	provider := e2bruntime.NewProvider(cfg.E2B)
 	runner := environments.NewRunner(database, provider)
 	processed, err := runner.RunOnce(ctx, "e2b-integration-test")
 	if err != nil {
@@ -155,7 +155,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	}()
 
 	connected, err := e2b.Connect(ctx, sandboxID, &e2b.SandboxConnectOpts{
-		ConnectionOpts: e2bConnectionOptsFromConfig(cfg),
+		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(cfg.E2B),
 	})
 	if err != nil {
 		t.Fatalf("connect to real sandbox %s: %v", sandboxID, err)
@@ -222,7 +222,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	}
 
 	_, err = e2b.Connect(ctx, sandboxID, &e2b.SandboxConnectOpts{
-		ConnectionOpts: e2bConnectionOptsFromConfig(cfg),
+		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(cfg.E2B),
 	})
 	if err == nil {
 		_ = provider.Kill(context.Background(), sandboxID)
@@ -237,20 +237,6 @@ func mustJSON(t *testing.T, value any) json.RawMessage {
 		t.Fatalf("marshal json: %v", err)
 	}
 	return data
-}
-
-func e2bConnectionOptsFromConfig(cfg config.Config) e2b.ConnectionOpts {
-	requestTimeoutMs := int(cfg.E2BRequestTimeout / time.Millisecond)
-	debug := cfg.E2BDebug
-	return e2b.ConnectionOpts{
-		ApiKey:           cfg.E2BAPIKey,
-		AccessToken:      cfg.E2BAccessToken,
-		Domain:           cfg.E2BDomain,
-		ApiUrl:           cfg.E2BAPIURL,
-		SandboxUrl:       cfg.E2BSandboxURL,
-		Debug:            &debug,
-		RequestTimeoutMs: &requestTimeoutMs,
-	}
 }
 
 func loadE2BSandboxRow(t *testing.T, database *db.DB, envID, workID string) (providerSandboxID, externalID, state, template, lastError string) {

@@ -7,7 +7,7 @@ usage() {
   ./scripts/generate-code-session-jwt-key.sh <私钥输出路径>
 
 示例：
-  ./scripts/generate-code-session-jwt-key.sh /var/lib/open-managed-agents/secrets/code-session-jwt-key.pem
+  ./scripts/generate-code-session-jwt-key.sh config/secrets/code-session-jwt-ed25519.pem
 
 脚本生成未加密的 Ed25519 PKCS#8 PEM 私钥，文件权限为 0600。
 为避免意外轮换 JWT 签名密钥，如果目标路径已经存在，脚本会直接失败且不会覆盖。
@@ -70,4 +70,4 @@ rm -f -- "$temporary_file"
 trap - EXIT HUP INT TERM
 
 echo "已生成 code session JWT 签名私钥：$output_file"
-echo "请将 CODE_SESSION_JWT_SIGNING_KEY_FILE 指向该文件，并以只读方式提供给 oma-server。"
+echo "请将 code_session.jwt_signing_private_key_file 指向该文件，并以只读方式提供给 oma-server。"

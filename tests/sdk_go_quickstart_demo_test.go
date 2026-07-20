@@ -29,17 +29,14 @@ func TestGoSDKManagedAgentsQuickstartDemo(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	if !quickstartShouldRunRealSandbox(cfg) {
-		t.Skip("real quickstart requires E2B_API_KEY and E2B_DEBUG=false")
+		t.Skip("real quickstart requires e2b.api_key and e2b.debug=false")
 	}
-	//if externalBaseURL := strings.TrimSpace(os.Getenv("TEST_API_BASE_URL")); externalBaseURL != "" {
-	//	t.Logf("Ignoring TEST_API_BASE_URL=%s; this test starts its own in-process API server so it can run the environment runner and inspect E2B sandbox state", externalBaseURL)
-	//}
 	quickstartRequireRealSandboxConfig(t, cfg)
-	if cfg.E2BRequestTimeout < 2*time.Minute {
-		cfg.E2BRequestTimeout = 2 * time.Minute
+	if cfg.E2B.RequestTimeout < 2*time.Minute {
+		cfg.E2B.RequestTimeout = 2 * time.Minute
 	}
-	if cfg.E2BSandboxTimeout < 2*time.Minute {
-		cfg.E2BSandboxTimeout = 2 * time.Minute
+	if cfg.E2B.SandboxTimeout < 2*time.Minute {
+		cfg.E2B.SandboxTimeout = 2 * time.Minute
 	}
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("quickstart-demo-bucket"))
@@ -165,17 +162,17 @@ func TestGoSDKManagedAgentsQuickstartDemo(t *testing.T) {
 }
 
 func quickstartShouldRunRealSandbox(cfg config.Config) bool {
-	return strings.TrimSpace(cfg.E2BAPIKey) != "" &&
-		!cfg.E2BDebug
+	return strings.TrimSpace(cfg.E2B.APIKey) != "" &&
+		!cfg.E2B.Debug
 }
 
 func quickstartRequireRealSandboxConfig(t *testing.T, cfg config.Config) {
 	t.Helper()
-	if strings.TrimSpace(cfg.E2BAPIKey) == "" && !cfg.E2BDebug {
-		t.Fatal("E2B_API_KEY is required in the current .env for the real quickstart sandbox run")
+	if strings.TrimSpace(cfg.E2B.APIKey) == "" && !cfg.E2B.Debug {
+		t.Fatal("e2b.api_key is required in config/config.yaml for the real quickstart sandbox run")
 	}
-	if cfg.E2BDebug {
-		t.Fatal("E2B_DEBUG must be false for the real quickstart sandbox run")
+	if cfg.E2B.Debug {
+		t.Fatal("e2b.debug must be false for the real quickstart sandbox run")
 	}
 	if baseURL := quickstartConfiguredSandboxIngressBaseURL(cfg); quickstartLooksLikeLoopbackURL(baseURL) {
 		t.Fatalf("code session ingress URL used inside E2B must be reachable from inside E2B, got %q", baseURL)
@@ -186,16 +183,11 @@ func quickstartSandboxIngressBaseURL(cfg config.Config) string {
 	if baseURL := quickstartConfiguredSandboxIngressBaseURL(cfg); baseURL != "" {
 		return baseURL
 	}
-	return quickstartHostDockerBaseURLFromAddr(cfg.Addr)
+	return quickstartHostDockerBaseURLFromAddr(cfg.Server.Addr)
 }
 
 func quickstartConfiguredSandboxIngressBaseURL(cfg config.Config) string {
-	for _, value := range []string{cfg.CodeSessionSandboxAPIBaseURL, cfg.CodeSessionAPIBaseURL, cfg.PublicBaseURL} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return strings.TrimRight(trimmed, "/")
-		}
-	}
-	return ""
+	return strings.TrimRight(strings.TrimSpace(cfg.CodeSession.SandboxAPIBaseURL), "/")
 }
 
 func quickstartHostDockerBaseURLFromAddr(addr string) string {
@@ -247,7 +239,7 @@ func quickstartRunRealSandbox(t *testing.T, ctx context.Context, app *testApp, e
 
 	workID := quickstartFindSessionEnvironmentWorkID(t, app, environmentID, sessionID)
 
-	provider := e2bruntime.NewProvider(app.cfg)
+	provider := e2bruntime.NewProvider(app.cfg.E2B)
 	var providerSandboxID string
 	stopped := false
 	defer func() {
@@ -282,7 +274,7 @@ func quickstartRunRealSandbox(t *testing.T, ctx context.Context, app *testApp, e
 	}
 
 	sandbox, err := e2b.Connect(ctx, providerSandboxID, &e2b.SandboxConnectOpts{
-		ConnectionOpts: quickstartE2BConnectionOptsFromConfig(app.cfg),
+		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(app.cfg.E2B),
 	})
 	if err != nil {
 		t.Fatalf("connect to real sandbox %s: %v", providerSandboxID, err)
@@ -313,7 +305,7 @@ func quickstartEnsureSandboxIngress(t *testing.T, app *testApp) {
 	if err != nil {
 		t.Fatalf("derive host.docker.internal ingress URL from test API server %q: %v", app.baseURL, err)
 	}
-	app.cfg.CodeSessionSandboxAPIBaseURL = baseURL
+	app.cfg.CodeSession.SandboxAPIBaseURL = baseURL
 	t.Logf("Using local sandbox ingress URL %s for in-process API server %s", baseURL, app.baseURL)
 }
 
@@ -448,20 +440,6 @@ if [ -f %[1]s ]; then grep -Ei 'sdk url|code session|session|worker|epoch|error|
 			t.Fatalf("waiting for environment-manager process: %v\n%s", ctx.Err(), last)
 		case <-time.After(2 * time.Second):
 		}
-	}
-}
-
-func quickstartE2BConnectionOptsFromConfig(cfg config.Config) e2b.ConnectionOpts {
-	requestTimeoutMs := int(cfg.E2BRequestTimeout / time.Millisecond)
-	debug := cfg.E2BDebug
-	return e2b.ConnectionOpts{
-		ApiKey:           cfg.E2BAPIKey,
-		AccessToken:      cfg.E2BAccessToken,
-		Domain:           cfg.E2BDomain,
-		ApiUrl:           cfg.E2BAPIURL,
-		SandboxUrl:       cfg.E2BSandboxURL,
-		Debug:            &debug,
-		RequestTimeoutMs: &requestTimeoutMs,
 	}
 }
 

@@ -1,0 +1,120 @@
+# Open Managed Agents complete process-configuration reference.
+#
+# This file documents every YAML field accepted by internal/config.Config. It is
+# not a recommended startup template: copy config/config.example.yaml for normal local
+# use and add fields from here only when their behavior must be overridden.
+# Values below are safe examples. Connection and deployment identity fields are
+# required; operational tuning fields show their code defaults.
+
+env: dev
+
+server:
+  addr: 127.0.0.1:38080
+
+database:
+  url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
+  # Derived default: true for dev and false for prod.
+  auto_migrate: true
+
+redis:
+  url: redis://localhost:6379
+
+storage:
+  type: s3
+  s3:
+    endpoint: http://localhost:9000
+    bucket: claude-files
+    region: us-east-1
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    force_path_style: true
+  max_file_bytes: 524288000
+  workspace_limit_bytes: 536870912000
+
+anthropic_upstream:
+  base_url: https://api.anthropic.com
+  api_key: ""
+
+batch:
+  worker_enabled: true
+  worker_concurrency: 2
+  max_requests: 100000
+  max_body_bytes: 268435456
+  result_retention_days: 29
+  upstream_timeout: 10m
+  job_lease_duration: 2m
+  job_lease_heartbeat_interval: 30s
+  expiry_sweep_interval: 5m
+
+e2b:
+  api_key: ""
+  access_token: ""
+  domain: ""
+  api_url: ""
+  sandbox_url: ""
+  debug: false
+  template: managed-agent-sandbox:latest
+  request_timeout: 60s
+  sandbox_timeout: 5m
+
+environment_runner:
+  enabled: true
+  concurrency: 2
+  manager_path: /usr/local/bin/environment-manager
+  claude_agent_version: 2.1.120
+  claude_path: /opt/claude-code/bin/claude
+
+code_session:
+  # Set when a sandbox must call this service through a specific reachable URL.
+  sandbox_api_base_url: ""
+  # Derived default: true for dev and false for prod.
+  otlp_file_log_enabled: true
+  otlp_log_root: logs
+  otlp_log_body_preview_bytes: 262144
+  # Required in prod; dev creates an in-memory key when this is empty.
+  jwt_signing_private_key_file: ""
+  upstream_proxy_mitm_enabled: false
+  # Required only when upstream_proxy_mitm_enabled is true.
+  upstream_proxy_ca_key_file: ""
+  # Dangerous local fake-IP/TUN diagnostic switch; keep false in production.
+  upstream_proxy_disable_ssrf_protection: false
+
+webhook:
+  endpoint_url: ""
+  signing_key: ""
+  event_types:
+    - session.created
+  # Derived default: true only when endpoint_url and signing_key are both set.
+  worker_enabled: false
+  timeout: 10s
+  max_attempts: 10
+  allow_insecure: false
+
+bootstrap:
+  seed_api_keys:
+    - external_id: api_key_default
+      key: sk-ant-local-default
+  workspace_name: default
+  organization_name: default
+  organization_external_id: org_default
+  workspace_external_id: workspace_default
+  user_external_id: user_default
+  api_key_external_id: api_key_default
+
+sdk_fixtures:
+  file_id: file_id
+  batch_id: message_batch_id
+  agent_id: agent_011CZkYpogX7uDKUyvBTophP
+  reference_agent_id: agent_011CZkYqphY8vELVzwCUpqiQ
+  environment_id: env_011CZkZ9X2dpNyB7HsEFoRfW
+  work_id: work_id
+  session_id: sesn_011CZkZAtmR3yMPDzynEDxu7
+  session_resource_id: sesrsc_011CZkZBJq5dWxk9fVLNcPht
+  session_thread_id: sthr_011CZkZVWa6oIjw0rgXZpnBt
+  session_event_id: sevt_011CZkZbF9oBV2h6c7qWZfnE
+  skill_id: skill_id
+  skill_version: version
+  deployment_id: deployment_id
+  deployment_run_id: deployment_run_id
+  api_key: my-anthropic-api-key
+  api_key_external_id: api_key_official_sdk_resource_tests

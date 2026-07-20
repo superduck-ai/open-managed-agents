@@ -137,7 +137,7 @@ func TestAuthenticateSessionIngressUsesSignedIdentityWithoutDatabaseLifecycle(t 
 }
 
 func TestSessionCredentialsConfiguration(t *testing.T) {
-	if _, err := NewSessionCredentials(config.Config{AppEnv: "production"}); err == nil {
+	if _, err := NewSessionCredentials(config.Config{Env: config.EnvironmentProd}); err == nil {
 		t.Fatal("NewSessionCredentials() accepted missing production signing key")
 	}
 
@@ -153,7 +153,10 @@ func TestSessionCredentialsConfiguration(t *testing.T) {
 	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded}), 0o600); err != nil {
 		t.Fatalf("write signing key: %v", err)
 	}
-	credentials, err := NewSessionCredentials(config.Config{AppEnv: "production", CodeSessionJWTSigningKeyFile: keyFile})
+	credentials, err := NewSessionCredentials(config.Config{
+		Env:         config.EnvironmentProd,
+		CodeSession: config.CodeSessionConfig{JWTSigningPrivateKeyFile: keyFile},
+	})
 	if err != nil {
 		t.Fatalf("NewSessionCredentials() error = %v", err)
 	}

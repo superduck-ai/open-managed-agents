@@ -1,0 +1,40 @@
+# Git-tracked Docker Compose template. Never put real secrets in this file.
+# Run `just init-compose-config` and edit oma-server.local.yaml instead.
+# This topology is for local development: env=dev intentionally uses a
+# process-local session-ingress signing key that rotates when oma-server restarts.
+# Production must use env=prod and mount a stable jwt_signing_private_key_file.
+
+env: dev
+
+server:
+  addr: :8080
+
+database:
+  url: postgresql://claude:123456@postgres:5432/claude_api?sslmode=disable
+  auto_migrate: true
+
+redis:
+  url: redis://redis:6379
+
+storage:
+  type: s3
+  s3:
+    endpoint: http://minio:9000
+    bucket: claude-files
+    region: us-east-1
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    force_path_style: true
+
+anthropic_upstream:
+  base_url: https://api.anthropic.com
+  api_key: ""
+
+e2b:
+  api_url: http://host.docker.internal:3099
+  sandbox_url: http://host.docker.internal:3099
+  template: managed-agent-sandbox:latest
+
+code_session:
+  sandbox_api_base_url: http://host.docker.internal:38080
+  otlp_file_log_enabled: false

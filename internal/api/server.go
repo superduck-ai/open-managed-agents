@@ -85,7 +85,7 @@ func NewServerWithPlatformSessionsAndCredentials(cfg config.Config, database *db
 		sessions:       sessionsapi.NewHandler(cfg, database, codeSessionService),
 		skills:         skillsapi.NewHandlerWithSkillPrewarm(cfg, database, objectStore, skillPrewarmEnqueuer),
 		vaults:         vaultsapi.NewHandler(cfg, database),
-		webhooks:       webhooksapi.NewHandler(cfg, database),
+		webhooks:       webhooksapi.NewHandler(cfg.Webhook, database),
 	}
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
@@ -147,7 +147,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 			platformapi.RegisterOrganizationBillingRoutes(r)
 			platformapi.RegisterOrganizationAnalyticsRoutes(r)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.cfg)
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db)
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 		})
 		r.Route("/api/oauth/organizations/{orgUuid}", func(r chi.Router) {

@@ -45,16 +45,16 @@ type APIKey struct {
 }
 
 func Open(ctx context.Context, cfg config.Config) (*DB, error) {
-	pool, err := openPool(ctx, cfg.DatabaseURL)
+	pool, err := openPool(ctx, cfg.Database.URL)
 	if err == nil {
 		return &DB{Pool: pool}, nil
 	}
 
-	if bootstrapErr := EnsureDatabase(ctx, cfg.DatabaseURL, cfg.PostgresAdminURL); bootstrapErr != nil {
+	if bootstrapErr := EnsureDatabase(ctx, cfg.Database.URL); bootstrapErr != nil {
 		return nil, fmt.Errorf("connect database: %w; bootstrap database: %v", err, bootstrapErr)
 	}
 
-	pool, err = openPool(ctx, cfg.DatabaseURL)
+	pool, err = openPool(ctx, cfg.Database.URL)
 	if err != nil {
 		return nil, fmt.Errorf("connect database after bootstrap: %w", err)
 	}
@@ -84,14 +84,14 @@ func (d *DB) Close() {
 	}
 }
 
-func EnsureDatabase(ctx context.Context, databaseURL, adminURL string) error {
-	candidates := []string{adminURL}
+func EnsureDatabase(ctx context.Context, databaseURL string) error {
+	var candidates []string
 	for _, maintenanceDB := range []string{"postgres", "template1"} {
 		if candidate, err := maintenanceURL(databaseURL, maintenanceDB); err == nil && !slices.Contains(candidates, candidate) {
 			candidates = append(candidates, candidate)
 		}
 	}
-	for _, candidate := range currentUserAdminURLs(databaseURL) {
+	for _, candidate := range currentUserMaintenanceURLs(databaseURL) {
 		if !slices.Contains(candidates, candidate) {
 			candidates = append(candidates, candidate)
 		}
@@ -99,56 +99,56 @@ func EnsureDatabase(ctx context.Context, databaseURL, adminURL string) error {
 
 	var errs []string
 	for _, candidate := range candidates {
-		if err := ensureDatabaseWithAdmin(ctx, databaseURL, candidate); err != nil {
+		if err := ensureDatabaseWithMaintenanceConnection(ctx, databaseURL, candidate); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", redactPassword(candidate), err))
 			continue
 		}
 		return nil
 	}
-	return fmt.Errorf("all admin connection attempts failed: %s", strings.Join(errs, "; "))
+	return fmt.Errorf("all database bootstrap connection attempts failed: %s", strings.Join(errs, "; "))
 }
 
-func ensureDatabaseWithAdmin(ctx context.Context, databaseURL, adminURL string) error {
+func ensureDatabaseWithMaintenanceConnection(ctx context.Context, databaseURL, maintenanceDatabaseURL string) error {
 	target, err := url.Parse(databaseURL)
 	if err != nil {
-		return fmt.Errorf("parse DATABASE_URL: %w", err)
+		return fmt.Errorf("parse database URL: %w", err)
 	}
 	dbName := strings.TrimPrefix(target.Path, "/")
 	if dbName == "" {
-		return errors.New("DATABASE_URL must include a database name")
+		return errors.New("database URL must include a database name")
 	}
 	role := target.User.Username()
 	password, _ := target.User.Password()
 	if role == "" {
-		return errors.New("DATABASE_URL must include a database user")
+		return errors.New("database URL must include a database user")
 	}
 
-	adminPool, err := openPool(ctx, adminURL)
+	maintenancePool, err := openPool(ctx, maintenanceDatabaseURL)
 	if err != nil {
-		return fmt.Errorf("connect POSTGRES_ADMIN_URL: %w", err)
+		return fmt.Errorf("connect maintenance database: %w", err)
 	}
-	defer adminPool.Close()
+	defer maintenancePool.Close()
 
 	var roleExists bool
-	if err := adminPool.QueryRow(ctx, "select exists(select 1 from pg_roles where rolname=$1)", role).Scan(&roleExists); err != nil {
+	if err := maintenancePool.QueryRow(ctx, "select exists(select 1 from pg_roles where rolname=$1)", role).Scan(&roleExists); err != nil {
 		return fmt.Errorf("check role: %w", err)
 	}
 	if !roleExists {
-		if _, err := adminPool.Exec(ctx, fmt.Sprintf("create role %s login password %s", quoteIdent(role), quoteLiteral(password))); err != nil {
+		if _, err := maintenancePool.Exec(ctx, fmt.Sprintf("create role %s login password %s", quoteIdent(role), quoteLiteral(password))); err != nil {
 			return fmt.Errorf("create role %s: %w", role, err)
 		}
 	} else if password != "" {
-		if _, err := adminPool.Exec(ctx, fmt.Sprintf("alter role %s with password %s", quoteIdent(role), quoteLiteral(password))); err != nil {
+		if _, err := maintenancePool.Exec(ctx, fmt.Sprintf("alter role %s with password %s", quoteIdent(role), quoteLiteral(password))); err != nil {
 			return fmt.Errorf("alter role %s password: %w", role, err)
 		}
 	}
 
 	var dbExists bool
-	if err := adminPool.QueryRow(ctx, "select exists(select 1 from pg_database where datname=$1)", dbName).Scan(&dbExists); err != nil {
+	if err := maintenancePool.QueryRow(ctx, "select exists(select 1 from pg_database where datname=$1)", dbName).Scan(&dbExists); err != nil {
 		return fmt.Errorf("check database: %w", err)
 	}
 	if !dbExists {
-		if _, err := adminPool.Exec(ctx, fmt.Sprintf("create database %s owner %s", quoteIdent(dbName), quoteIdent(role))); err != nil {
+		if _, err := maintenancePool.Exec(ctx, fmt.Sprintf("create database %s owner %s", quoteIdent(dbName), quoteIdent(role))); err != nil {
 			return fmt.Errorf("create database %s: %w", dbName, err)
 		}
 	}
@@ -164,7 +164,7 @@ func maintenanceURL(databaseURL, databaseName string) (string, error) {
 	return parsed.String(), nil
 }
 
-func currentUserAdminURLs(databaseURL string) []string {
+func currentUserMaintenanceURLs(databaseURL string) []string {
 	current, err := user.Current()
 	if err != nil || current.Username == "" {
 		return nil

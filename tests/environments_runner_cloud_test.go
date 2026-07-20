@@ -29,13 +29,12 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
-	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	cfg.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.ClaudeAgentVersion = "2.1.120"
-	cfg.E2BTemplate = "fake-template"
-	cfg.AnthropicUpstreamAPIKey = "sk-ant-upstream-must-not-enter-sandbox"
+	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+	cfg.E2B.Template = "fake-template"
+	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-must-not-enter-sandbox"
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-bucket"))
 	defer app.close()
@@ -172,7 +171,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if _, ok := payload["environment"].(map[string]any)["environment"]; ok {
 		t.Fatalf("environment-manager payload should not contain Claude credential environment variables: %#v", payload["environment"])
 	}
-	if strings.Contains(string(provider.launches[0].stdin), cfg.AnthropicUpstreamAPIKey) {
+	if strings.Contains(string(provider.launches[0].stdin), cfg.AnthropicUpstream.APIKey) {
 		t.Fatalf("environment-manager payload leaked upstream key: %s", provider.launches[0].stdin)
 	}
 	if !strings.Contains(provider.launches[0].command, "--session '"+codeSession.ExternalID+"'") ||
@@ -293,12 +292,11 @@ func runPackageEnvironmentWithHook(
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
-	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	cfg.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.ClaudeAgentVersion = "2.1.120"
-	cfg.E2BTemplate = "fake-template"
+	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+	cfg.E2B.Template = "fake-template"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-package-bucket"))
 	t.Cleanup(app.close)
 	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Package Agent"}`)
@@ -339,12 +337,11 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
-	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	cfg.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.ClaudeAgentVersion = "2.1.120"
-	cfg.E2BTemplate = "fake-template"
+	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+	cfg.E2B.Template = "fake-template"
 
 	store := newFakeStore("runner-cloud-skills-bucket")
 	app := newTestAppWithStore(t, &cfg, store)
@@ -442,12 +439,11 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
-	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	cfg.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.ClaudeAgentVersion = "2.1.120"
-	cfg.E2BTemplate = "fake-template"
+	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+	cfg.E2B.Template = "fake-template"
 
 	store := newFakeStore("runner-cloud-missing-resolver-bucket")
 	app := newTestAppWithStore(t, &cfg, store)
@@ -512,12 +508,11 @@ func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) 
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
-	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	cfg.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.ClaudeAgentVersion = "2.1.120"
-	cfg.E2BTemplate = "fake-template"
+	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+	cfg.E2B.Template = "fake-template"
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-network-order-bucket"))
 	defer app.close()
@@ -594,12 +589,11 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
-	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	cfg.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.ClaudeAgentVersion = "2.1.120"
-	cfg.E2BTemplate = "fake-template"
+	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+	cfg.E2B.Template = "fake-template"
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-resolve-failure-bucket"))
 	defer app.close()
@@ -698,7 +692,7 @@ func (p *recordingRunnerProvider) Resolve(env db.Environment, work *db.Environme
 		p.resolves = append(p.resolves, record)
 		return e2bruntime.Resolution{}, p.resolveErr
 	}
-	resolution, err := e2bruntime.NewProvider(config.Config{E2BTemplate: "fake-template"}).Resolve(env, work)
+	resolution, err := e2bruntime.NewProvider(config.E2BConfig{Template: "fake-template"}).Resolve(env, work)
 	if err != nil {
 		p.resolves = append(p.resolves, record)
 		return e2bruntime.Resolution{}, err

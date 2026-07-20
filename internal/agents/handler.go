@@ -1242,12 +1242,12 @@ func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, ag
 }
 
 func (h *Handler) isOfficialSDKFixtureID(principal auth.Principal, agentID string) bool {
-	return principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID && agentID == h.cfg.OfficialSDKFixtureAgentID
+	return principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID && agentID == h.cfg.SDKFixtures.AgentID
 }
 
 func (h *Handler) isOfficialSDKFixtureReference(principal auth.Principal, agentID string) bool {
-	return principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID &&
-		(agentID == h.cfg.OfficialSDKFixtureAgentID || agentID == h.cfg.OfficialSDKFixtureReferenceAgentID)
+	return principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID &&
+		(agentID == h.cfg.SDKFixtures.AgentID || agentID == h.cfg.SDKFixtures.ReferenceAgentID)
 }
 
 func (h *Handler) fixtureAgent(agentID string, version int, archived bool) agentResponse {
@@ -1266,7 +1266,7 @@ func (h *Handler) fixtureAgent(agentID string, version int, archived bool) agent
 		MCPServers:  json.RawMessage(`[{"name":"example-mcp","type":"url","url":"https://example-server.modelcontextprotocol.io/sse"}]`),
 		Metadata:    json.RawMessage(`{"foo":"bar"}`),
 		Model:       json.RawMessage(`{"id":"claude-opus-4-6","speed":"standard"}`),
-		Multiagent:  json.RawMessage(fmt.Sprintf(`{"agents":[{"id":%q,"type":"agent","version":1}],"type":"coordinator"}`, h.cfg.OfficialSDKFixtureReferenceAgentID)),
+		Multiagent:  json.RawMessage(fmt.Sprintf(`{"agents":[{"id":%q,"type":"agent","version":1}],"type":"coordinator"}`, h.cfg.SDKFixtures.ReferenceAgentID)),
 		Name:        "My First Agent",
 		Skills:      json.RawMessage(`[{"skill_id":"xlsx","type":"anthropic","version":"1"}]`),
 		System:      &system,

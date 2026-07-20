@@ -32,13 +32,13 @@ func TestE2BEnvironmentUpdateAndSessionFilesystemIsolation(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	requireFullE2BBridgeConfig(t, cfg)
-	cfg.CodeSessionSandboxAPIBaseURL = ""
-	cfg.E2BTemplate = config.DefaultE2BTemplate
-	if cfg.E2BRequestTimeout < 2*time.Minute {
-		cfg.E2BRequestTimeout = 2 * time.Minute
+	cfg.CodeSession.SandboxAPIBaseURL = ""
+	cfg.E2B.Template = config.DefaultE2BTemplate
+	if cfg.E2B.RequestTimeout < 2*time.Minute {
+		cfg.E2B.RequestTimeout = 2 * time.Minute
 	}
-	if cfg.E2BSandboxTimeout < 10*time.Minute {
-		cfg.E2BSandboxTimeout = 10 * time.Minute
+	if cfg.E2B.SandboxTimeout < 10*time.Minute {
+		cfg.E2B.SandboxTimeout = 10 * time.Minute
 	}
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("package-lifecycle-e2e-bucket"))

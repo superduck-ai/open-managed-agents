@@ -696,30 +696,7 @@ func rawNonEmptyJSONObjectValue(raw json.RawMessage) (json.RawMessage, bool) {
 }
 
 func (h *Handler) codeSessionResponseBaseURL(r *http.Request) string {
-	if h != nil {
-		if baseURL := strings.TrimSpace(h.cfg.CodeSessionAPIBaseURL); baseURL != "" {
-			return strings.TrimRight(baseURL, "/")
-		}
-		if baseURL := strings.TrimSpace(h.cfg.PublicBaseURL); baseURL != "" {
-			return strings.TrimRight(baseURL, "/")
-		}
-	}
-	return codeSessionRequestBaseURL(r)
-}
-
-func codeSessionRequestBaseURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if forwardedProto := strings.TrimSpace(r.Header.Get("x-forwarded-proto")); forwardedProto != "" {
-		scheme = strings.Split(forwardedProto, ",")[0]
-	}
-	host := strings.TrimSpace(r.Host)
-	if forwardedHost := strings.TrimSpace(r.Header.Get("x-forwarded-host")); forwardedHost != "" {
-		host = strings.Split(forwardedHost, ",")[0]
-	}
-	return scheme + "://" + strings.TrimSpace(host)
+	return httpapi.RequestBaseURL(r)
 }
 
 func writeCodeSessionWorkerSSEEvent(w io.Writer, flusher http.Flusher, event db.CodeSessionEvent) error {

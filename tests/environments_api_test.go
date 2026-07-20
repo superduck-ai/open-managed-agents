@@ -323,14 +323,14 @@ func TestEnvironmentsOfficialSDKFixture(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("environments-fixture-bucket"))
 	defer app.close()
 
-	resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments/"+app.cfg.OfficialSDKFixtureEnvironmentID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true)
+	resp := doEnvironmentRequest(t, app, http.MethodGet, "/v1/environments/"+app.cfg.SDKFixtures.EnvironmentID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("fixture environment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 	var env environmentAPIResponse
 	decodeJSON(t, resp.Body, &env)
-	if env.ID != app.cfg.OfficialSDKFixtureEnvironmentID {
+	if env.ID != app.cfg.SDKFixtures.EnvironmentID {
 		t.Fatalf("unexpected fixture environment: %+v", env)
 	}
 	if env.State != "active" {

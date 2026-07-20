@@ -622,13 +622,13 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	webhooks.Enqueue(r.Context(), h.db, h.cfg, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.created", session.ExternalID, nil)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.pending", session.ExternalID, nil)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.status_idled", session.ExternalID, nil)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_created", session.ExternalID, &thread.ExternalID)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_idled", session.ExternalID, &thread.ExternalID)
+	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.created", session.ExternalID, nil)
+	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.pending", session.ExternalID, nil)
+	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.status_idled", session.ExternalID, nil)
+	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_created", session.ExternalID, &thread.ExternalID)
+	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_idled", session.ExternalID, &thread.ExternalID)
 	if outcomesChanged(createdEvents) {
-		webhooks.Enqueue(r.Context(), h.db, h.cfg, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.outcome_evaluation_ended", session.ExternalID, nil)
+		webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.outcome_evaluation_ended", session.ExternalID, nil)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromRun(run))
 }
@@ -724,7 +724,7 @@ func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	runID := chi.URLParam(r, "deployment_run_id")
 	if h.isOfficialSDKFixtureRun(principal, runID) {
-		httpapi.WriteJSON(w, http.StatusOK, fixtureRun(h.cfg, h.cfg.OfficialSDKFixtureDeploymentID, &h.cfg.OfficialSDKFixtureSessionID))
+		httpapi.WriteJSON(w, http.StatusOK, fixtureRun(h.cfg, h.cfg.SDKFixtures.DeploymentID, &h.cfg.SDKFixtures.SessionID))
 		return
 	}
 	run, err := h.db.GetDeploymentRun(r.Context(), principal.WorkspaceID, runID)
@@ -1495,8 +1495,8 @@ func fixtureRun(cfg config.Config, deploymentID string, sessionID *string) deplo
 	now := time.Now().UTC()
 	var errRaw json.RawMessage
 	return deploymentRunResponse{
-		ID:             cfg.OfficialSDKFixtureDeploymentRunID,
-		Agent:          json.RawMessage(fmt.Sprintf(`{"id":%q,"type":"agent","version":1}`, cfg.OfficialSDKFixtureAgentID)),
+		ID:             cfg.SDKFixtures.DeploymentRunID,
+		Agent:          json.RawMessage(fmt.Sprintf(`{"id":%q,"type":"agent","version":1}`, cfg.SDKFixtures.AgentID)),
 		CreatedAt:      httpapi.FormatTime(now),
 		DeploymentID:   deploymentID,
 		Error:          errRaw,
@@ -1508,7 +1508,7 @@ func fixtureRun(cfg config.Config, deploymentID string, sessionID *string) deplo
 
 func (h *Handler) fixtureDeploymentRun(deploymentID string, sessionID *string) deploymentRunResponse {
 	if sessionID == nil {
-		sessionID = &h.cfg.OfficialSDKFixtureSessionID
+		sessionID = &h.cfg.SDKFixtures.SessionID
 	}
 	return fixtureRun(h.cfg, deploymentID, sessionID)
 }
@@ -1532,7 +1532,7 @@ func (h *Handler) fixtureDeployment(fields map[string]json.RawMessage, status st
 			description = *parsed
 		}
 	}
-	environmentID := h.cfg.OfficialSDKFixtureEnvironmentID
+	environmentID := h.cfg.SDKFixtures.EnvironmentID
 	if fields != nil {
 		if parsed, err := parseRequiredRawString(fields["environment_id"], "environment_id"); err == nil {
 			environmentID = parsed
@@ -1563,8 +1563,8 @@ func (h *Handler) fixtureDeployment(fields map[string]json.RawMessage, status st
 		pausedReason = json.RawMessage(`{"type":"manual"}`)
 	}
 	return deploymentResponse{
-		ID:            h.cfg.OfficialSDKFixtureDeploymentID,
-		Agent:         json.RawMessage(fmt.Sprintf(`{"id":%q,"type":"agent","version":1}`, h.cfg.OfficialSDKFixtureAgentID)),
+		ID:            h.cfg.SDKFixtures.DeploymentID,
+		Agent:         json.RawMessage(fmt.Sprintf(`{"id":%q,"type":"agent","version":1}`, h.cfg.SDKFixtures.AgentID)),
 		ArchivedAt:    archivedAt,
 		CreatedAt:     httpapi.FormatTime(now),
 		Description:   description,
@@ -1606,17 +1606,17 @@ func stripFixtureResourceSecrets(raw json.RawMessage) json.RawMessage {
 }
 
 func (h *Handler) isOfficialSDKFixturePrincipal(principal auth.Principal) bool {
-	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID
+	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
 }
 
 func (h *Handler) isOfficialSDKFixtureDeployment(principal auth.Principal, deploymentID string) bool {
-	return h.isOfficialSDKFixturePrincipal(principal) && deploymentID == h.cfg.OfficialSDKFixtureDeploymentID
+	return h.isOfficialSDKFixturePrincipal(principal) && deploymentID == h.cfg.SDKFixtures.DeploymentID
 }
 
 func (h *RunsHandler) isOfficialSDKFixtureRun(principal auth.Principal, runID string) bool {
 	return principal.CredentialType == "api_key" &&
-		principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID &&
-		runID == h.cfg.OfficialSDKFixtureDeploymentRunID
+		principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID &&
+		runID == h.cfg.SDKFixtures.DeploymentRunID
 }
 
 func requireAPIKey(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {

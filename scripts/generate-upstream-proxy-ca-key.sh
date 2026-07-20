@@ -7,7 +7,7 @@ usage() {
   ./scripts/generate-upstream-proxy-ca-key.sh <私钥输出路径>
 
 示例：
-  ./scripts/generate-upstream-proxy-ca-key.sh /var/lib/open-managed-agents/secrets/ccrv2-mitm-ca-key.pem
+  ./scripts/generate-upstream-proxy-ca-key.sh config/secrets/upstream-proxy-ca-key.pem
 
 脚本生成未加密的 ECDSA P-256 PKCS#8 PEM 私钥，文件权限为 0600。
 为避免意外轮换长期稳定私钥，如果目标路径已经存在，脚本会直接失败且不会覆盖。

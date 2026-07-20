@@ -34,25 +34,34 @@ type MinIOStore struct {
 	region string
 }
 
-func NewMinIO(cfg config.Config) (*MinIOStore, error) {
-	endpoint, secure, err := normalizeEndpoint(cfg.S3Endpoint)
+func New(cfg config.StorageConfig) (ObjectStore, error) {
+	switch cfg.Type {
+	case config.StorageTypeS3:
+		return newS3(cfg.S3)
+	default:
+		return nil, fmt.Errorf("unsupported object storage type %q", cfg.Type)
+	}
+}
+
+func newS3(cfg config.S3Config) (*MinIOStore, error) {
+	endpoint, secure, err := normalizeEndpoint(cfg.Endpoint)
 	if err != nil {
 		return nil, err
 	}
 	bucketLookup := minio.BucketLookupAuto
-	if cfg.S3ForcePathStyle {
+	if cfg.ForcePathStyle {
 		bucketLookup = minio.BucketLookupPath
 	}
 	client, err := minio.New(endpoint, &minio.Options{
-		Creds:        credentials.NewStaticV4(cfg.S3AccessKeyID, cfg.S3SecretAccessKey, ""),
+		Creds:        credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		Secure:       secure,
-		Region:       cfg.S3Region,
+		Region:       cfg.Region,
 		BucketLookup: bucketLookup,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &MinIOStore{client: client, core: &minio.Core{Client: client}, bucket: cfg.S3Bucket, region: cfg.S3Region}, nil
+	return &MinIOStore{client: client, core: &minio.Core{Client: client}, bucket: cfg.Bucket, region: cfg.Region}, nil
 }
 
 func (s *MinIOStore) Bucket() string {
@@ -102,10 +111,10 @@ func normalizeEndpoint(raw string) (endpoint string, secure bool, err error) {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return "", false, fmt.Errorf("parse S3_ENDPOINT: %w", err)
+		return "", false, fmt.Errorf("parse storage.s3.endpoint: %w", err)
 	}
 	if parsed.Host == "" {
-		return "", false, fmt.Errorf("S3_ENDPOINT %q is missing host", raw)
+		return "", false, fmt.Errorf("storage.s3.endpoint %q is missing host", raw)
 	}
 	switch parsed.Scheme {
 	case "http":
@@ -113,6 +122,6 @@ func normalizeEndpoint(raw string) (endpoint string, secure bool, err error) {
 	case "https":
 		return parsed.Host, true, nil
 	default:
-		return "", false, fmt.Errorf("S3_ENDPOINT scheme %q is unsupported", parsed.Scheme)
+		return "", false, fmt.Errorf("storage.s3.endpoint scheme %q is unsupported", parsed.Scheme)
 	}
 }

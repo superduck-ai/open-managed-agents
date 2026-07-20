@@ -93,25 +93,26 @@ Claude worker 与 upstream proxy 端点由长生命周期的 `codesessions.Handl
 1. workspace API key、platform `sessionKey` cookie 按原鉴权链处理；lifecycle-bound code-session token 只在此 `POST` 路径被接受。
 2. code-session token 按 hash 查询，且 code session 必须 active、public session 未 terminated、`worker_lease_expires_at > now()`；失败返回 `401 authentication_error`。
 3. 请求体通过 `http.MaxBytesReader` 边计数边流式转发，超过 32 MiB 返回 `413`；不预读、不落盘，也不解析或校验 `model`。
-4. 目标为 `{ANTHROPIC_UPSTREAM_BASE_URL}/v1/messages`。
+4. 目标为 `{anthropic_upstream.base_url}/v1/messages`。
 5. 删除下游 `Authorization`、`X-Api-Key` 和所有 hop-by-hop headers。
-6. 设置服务端 `ANTHROPIC_UPSTREAM_API_KEY` 为上游 `X-Api-Key`。
+6. 设置服务端 `anthropic_upstream.api_key` 为上游 `X-Api-Key`。
 7. 原样转发上游状态、end-to-end headers 和响应流；提交状态后立即 flush，之后每次写入继续 flush，以支持 SSE。响应一旦提交，流错误只记录并终止连接，不再尝试改写 HTTP 状态。
 
 ### `GET /v1/code/upstreamproxy/ca-cert`
 
 接口不鉴权，因为当前 Claude relay 下载 CA 时不会携带 token；CA 证书是公开材料，不包含私钥。
 
-- MITM 关闭时，服务端忽略 `CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE`，生成进程生命周期内稳定的临时 ECDSA P-256 CA，仅用于兼容 relay 初始化合同。
+- MITM 关闭时，服务端忽略 `code_session.upstream_proxy_ca_key_file`，生成进程生命周期内稳定的临时 ECDSA P-256 CA，仅用于兼容 relay 初始化合同。
 - MITM 开启并配置生产 CA 时，部署侧只提供长期稳定的 private key；`codesessions.Handler` 每次构造都使用该 key 重新自签一张一年期根证书，并仅保存在内存中。接口返回本次启动生成的 certificate。
 - 根证书固定使用 `O=Open Managed Agents, CN=Open Managed Agents CCRv2 MITM CA`，SKI 从同一公钥稳定派生；不同启动的随机 serial number、有效期和 certificate 原始字节可以不同。
 - 所有 API server 实例共享同一把只读 private key；各实例在内存中独立持有本次启动生成的 certificate。private key 不得进入数据库 API 响应、environment-manager stdin、sandbox 环境变量或 Claude 子进程。
 
 启用配置：
 
-```text
-CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED=true
-CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE=/run/secrets/ccrv2-mitm-ca-key.pem
+```yaml
+code_session:
+  upstream_proxy_mitm_enabled: true
+  upstream_proxy_ca_key_file: /run/secrets/upstream-proxy-ca-key.pem
 ```
 
 MITM 开启时，private key 必须已经存在并以只读 Secret 挂载。Handler 构造阶段立即解析 key、自签根证书，并把 certificate、PEM 和 signer 保存在进程内存；任一解析或签名错误都会在启动期拒绝启动。MITM 关闭时不会检查或读取该路径。私钥文件永远不会由 HTTP 接口返回，根证书也不会写入本地文件。
@@ -173,7 +174,7 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - MITM 默认关闭；开启后只解密通过 code-session 双重鉴权且通过 SSRF 校验的 CONNECT 流量。
 - 即使开启 MITM，也不会信任动态 CA 作为真实上游根证书；服务端到目标网站始终使用系统信任链。
 
-本地 fake-IP/TUN DNS 可能把公网域名解析到 `198.18.0.0/15`，从而触发上述保护。仅用于临时排障时，可以设置 `CODE_SESSION_UPSTREAM_PROXY_DISABLE_SSRF_PROTECTION=true` 关闭目标 IP 过滤；默认值为 `false`。该开关仍然只允许端口 `443`，但会允许 loopback、私网、link-local 与 fake-IP，因此不得在生产环境启用。
+本地 fake-IP/TUN DNS 可能把公网域名解析到 `198.18.0.0/15`，从而触发上述保护。仅用于临时排障时，可以设置 `code_session.upstream_proxy_disable_ssrf_protection: true` 关闭目标 IP 过滤；默认值为 `false`。该开关仍然只允许端口 `443`，但会允许 loopback、私网、link-local 与 fake-IP，因此不得在生产环境启用。
 
 ## 失败语义
 

@@ -15,7 +15,7 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 - 后端：Go `1.26.2`、`chi`、`pgx`、`goose`、MinIO SDK、Redis、Anthropic Go SDK。
 - 前端：Bun、Vite、React、TypeScript、Tailwind CSS、TanStack Router/Query/Table、Base UI、shadcn/ui 风格组件。
 - 存储：PostgreSQL、Redis、S3 兼容对象存储，默认本地使用 MinIO。
-- 沙箱：E2B 相关能力通过 `E2B_*` 环境变量启用；没有配置时，多数 API/单元测试仍可在 fake store 或非真实沙箱路径下运行。
+- 沙箱：E2B 相关能力通过 `config/config.yaml` 的 `e2b` 节点启用；没有配置时，多数 API/单元测试仍可在 fake store 或非真实沙箱路径下运行。
 
 ## 目录结构
 
@@ -28,6 +28,7 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 ├── internal/db                 # PostgreSQL 数据访问、seed、goose migrations
 ├── internal/httpapi            # Console API、兼容错误响应、HTTP 辅助函数
 ├── internal/storage            # S3/MinIO 对象存储边界
+├── config                      # 本地运行配置、示例和忽略提交的私钥
 ├── assets/skills               # 内置和示例 skill 包
 ├── tests                       # Go API/SDK/E2E 测试
 └── web                         # 前端控制台
@@ -37,13 +38,19 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 
 ## Docker Compose 一键部署
 
-项目支持通过 `docker compose up -d` 一条命令启动完整环境（PostgreSQL、Redis、MinIO、e2b-local 沙箱网关、oma-server 以及前端 Caddy 反代）。详见 `docs/design/docker-compose-deployment.md`。
+项目支持通过 Docker Compose 启动完整环境（PostgreSQL、Redis、MinIO、e2b-local 沙箱网关、oma-server 以及前端 Caddy 反代）。首次启动先从无密钥模板创建本地运行配置：
 
 ```bash
+just init-compose-config
+# 只编辑 deploy/docker-compose/oma-server.local.yaml 填写真实凭证
 docker compose up -d
 ```
 
-启动后前端访问 `http://localhost:28080`（端口可通过 `CADDY_HOST_PORT` 环境变量配置），API 访问 `http://localhost:38080`。
+初始化命令不会覆盖已经存在的本地配置，并将新文件权限设置为 `0600`。受 Git 跟踪的 `deploy/docker-compose/oma-server.yaml` 只是不含真实密钥的完整模板；Compose 只读挂载已加入 `.gitignore` 的 `deploy/docker-compose/oma-server.local.yaml`。应用不会合并两个 YAML，数据库、Redis、对象存储、E2B 和上游凭证等业务配置都从这份本地完整配置读取。详见 `docs/design/docker-compose-deployment.md`。
+
+默认 Compose 拓扑明确用于本地开发：`env: dev`、自动迁移开启，并省略持久化的 Code Session JWT 私钥。oma-server 每次重启都会生成新的进程级 Ed25519 密钥，重启前签发的 session-ingress JWT 将不再受信任；该行为不适用于需要跨重启维持信任的生产部署。生产环境必须改用 `env: prod`，关闭自动迁移，并通过只读 Secret 挂载稳定的 `code_session.jwt_signing_private_key_file`。
+
+启动后前端访问 `http://localhost:28080`，API 访问 `http://localhost:38080`。
 
 > **平台要求**：仅支持 Linux Docker Engine 20.10+ 或 OrbStack（macOS）。
 
@@ -57,66 +64,83 @@ docker compose up -d
 - Redis，默认 `redis://localhost:6379`。
 - MinIO 或其他 S3 兼容存储，默认 `http://localhost:9000`、bucket `claude-files`、账号密码 `minioadmin/minioadmin`。
 
-服务启动时会尝试用 `POSTGRES_ADMIN_URL` 创建默认数据库和角色；如果你的本地 PostgreSQL 不允许默认的 `postgres` 用户免密连接，请在 `.env` 中显式配置可用的管理连接串。
+启动服务前通常应确保 `database.url` 指向的 PostgreSQL 数据库和角色已经可用。首次连接失败时，应用只会尝试使用该 URL 派生的 `postgres`/`template1` 连接以及当前系统用户完成本地初始化，不再接受独立的管理员连接串。
 
 ## 配置
 
-项目会从当前目录向上查找 `.env`，直到遇到 `go.mod`。常用本地配置如下：
+复制示例文件后再按需修改：
 
-```env
-ADDR=127.0.0.1:38080
-DATABASE_URL=postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
-POSTGRES_ADMIN_URL=postgresql://postgres@localhost:5432/postgres?sslmode=disable
-REDIS_URL=redis://localhost:6379
-S3_ENDPOINT=http://localhost:9000
-S3_BUCKET=claude-files
-S3_REGION=us-east-1
-S3_ACCESS_KEY_ID=minioadmin
-S3_SECRET_ACCESS_KEY=minioadmin
-S3_FORCE_PATH_STYLE=true
-
-# 需要真实上游或真实沙箱时再配置；上游 key 只由服务端持有
-ANTHROPIC_UPSTREAM_API_KEY=
-PUBLIC_BASE_URL=
-E2B_API_KEY=
-
-CODE_SESSION_JWT_SIGNING_KEY_FILE=/run/secrets/code-session-jwt-key.pem
-
-# 仅在启用 CCRv2 HTTPS MITM 时需要
-CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED=true
-CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE=/run/secrets/ccrv2-mitm-ca-key.pem
+```bash
+cp config/config.example.yaml config/config.yaml
 ```
+
+应用会从当前目录向上查找 `config/config.yaml`，直到遇到 `go.mod`；也可以用 `CONFIG_FILE=/path/to/config.yaml` 显式指定。配置文件是必需的，未找到时拒绝启动。YAML 采用严格字段校验，写错字段名会拒绝启动；顶层 `env` 只接受 `dev` 或 `prod`。常用本地配置如下：
+
+```yaml
+env: dev
+
+server:
+  addr: 127.0.0.1:38080
+
+database:
+  url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
+
+redis:
+  url: redis://localhost:6379
+
+storage:
+  type: s3
+  s3:
+    endpoint: http://localhost:9000
+    bucket: claude-files
+    region: us-east-1
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    force_path_style: true
+
+anthropic_upstream:
+  api_key: ""
+
+e2b:
+  api_key: ""
+  api_url: ""
+```
+
+加载优先级为“代码默认值 < `config/config.yaml`”。业务环境变量不会覆盖 YAML；`CONFIG_FILE` 只负责选择配置文件，路径字段中的 `${HOME}` 等变量只用于路径展开。生产环境应把完整 YAML 作为只读 Secret 挂载，并限制文件权限。
+
+从仍使用 `.env` 或业务环境变量的旧版本升级属于 breaking change：升级前必须先生成并验证完整 YAML，当前版本不会回退读取旧变量。字段映射、已移除配置和回滚步骤见 [`docs/design/be/runtime-configuration.md`](docs/design/be/runtime-configuration.md#从-env-迁移)。
 
 ### 创建 code session 私钥
 
 先创建一个只有当前用户可访问的目录，再使用仓库脚本生成两份私钥：
 
 ```bash
-mkdir -p "$HOME/.config/open-managed-agents"
-chmod 700 "$HOME/.config/open-managed-agents"
+mkdir -p config/secrets
+chmod 700 config/secrets
 
 just generate-code-session-jwt-key \
-  "$HOME/.config/open-managed-agents/code-session-jwt-ed25519.pem"
+  config/secrets/code-session-jwt-ed25519.pem
 
 just generate-upstream-proxy-ca-key \
-  "$HOME/.config/open-managed-agents/ccrv2-mitm-ca-key.pem"
+  config/secrets/upstream-proxy-ca-key.pem
 ```
 
-两个脚本都会将文件权限设置为 `0600`，并在目标文件已经存在时拒绝覆盖，避免意外轮换密钥。然后在 `.env` 中配置私钥的绝对路径；不要写 `$HOME`，因为 `.env` 不负责 shell 变量展开：
+两个脚本都会将文件权限设置为 `0600`，并在目标文件已经存在时拒绝覆盖，避免意外轮换密钥。`config/config.yaml` 和 `config/secrets/` 下的真实私钥均被 Git 忽略。YAML 路径支持 `${HOME}`、`~/`，相对路径以配置文件所在目录为基准：
 
-```env
-CODE_SESSION_JWT_SIGNING_KEY_FILE=/Users/your-name/.config/open-managed-agents/code-session-jwt-ed25519.pem
+```yaml
+code_session:
+  jwt_signing_private_key_file: secrets/code-session-jwt-ed25519.pem
 
-# 只有启用 CCRv2 HTTPS MITM 时才需要下面两项
-CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED=true
-CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE=/Users/your-name/.config/open-managed-agents/ccrv2-mitm-ca-key.pem
+  # 只有启用 CCRv2 HTTPS MITM 时才需要下面两项
+  upstream_proxy_mitm_enabled: true
+  upstream_proxy_ca_key_file: secrets/upstream-proxy-ca-key.pem
 ```
 
-`CODE_SESSION_JWT_SIGNING_KEY_FILE` 是 PKCS#8 PEM 格式的 Ed25519 私钥，用于签发 session-ingress JWT。开发和测试环境省略时会在进程内生成临时密钥；生产环境缺失会拒绝启动。
+`code_session.jwt_signing_private_key_file` 指向 PKCS#8 PEM 格式的 Ed25519 私钥，用于签发 session-ingress JWT。开发和测试环境省略时会在进程内生成临时密钥；生产环境缺失会拒绝启动。
 
-`CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE` 是 PKCS#8 PEM 格式的 ECDSA P-256 私钥。只有 `CODE_SESSION_UPSTREAM_PROXY_MITM_ENABLED=true` 时才需要配置；服务启动时使用它在内存中签发根证书，不会在磁盘上生成证书文件。
+`code_session.upstream_proxy_ca_key_file` 指向 PKCS#8 PEM 格式的 ECDSA P-256 私钥。只有 `code_session.upstream_proxy_mitm_enabled: true` 时才需要配置；服务启动时使用它在内存中签发根证书，不会在磁盘上生成证书文件。
 
-更完整的配置入口在 `internal/config/config.go`。开发环境默认 `DB_AUTO_MIGRATE=true`，生产环境默认关闭自动迁移。
+`config/config.example.yaml` 是正常本地开发使用的最小可运行示例；Batch、Webhook、Environment Runner 等通常无需调整的字段继续使用代码默认值，不放入该文件。全部支持字段及其安全示例值见 `docs/configuration-reference.yaml`。配置加载入口在 `internal/config/config.go`，领域类型位于 `internal/config/types.go`；运行时配置按数据库、存储、Batch、Code Session、Webhook 等职责分组。未显式配置 `database.auto_migrate` 时，开发环境默认开启，生产环境默认关闭。
 
 ## 启动后端
 
@@ -126,10 +150,12 @@ CODE_SESSION_UPSTREAM_PROXY_CA_KEY_FILE=/Users/your-name/.config/open-managed-ag
 ./scripts/restart-server.sh
 ```
 
-默认监听 `127.0.0.1:38080`。也可以覆盖端口：
+脚本要求存在 `config/config.yaml`，并在释放端口前完成检查；缺失时会直接退出。首次运行先执行 `cp config/config.example.yaml config/config.yaml`。
+
+监听地址由 `config/config.yaml` 的 `server.addr` 决定。修改端口后，用 `PORT` 告诉重启脚本释放对应监听端口：
 
 ```bash
-PORT=18080 ADDR=127.0.0.1:18080 ./scripts/restart-server.sh
+PORT=18080 ./scripts/restart-server.sh
 ```
 
 健康检查：
@@ -202,7 +228,7 @@ TEST_API_BASE_URL=http://127.0.0.1:38080 \
   bun run run-agent --message "Create a Python script that writes hello.txt"
 ```
 
-如果要跑真实 E2B 沙箱链路，需要配置 `E2B_API_KEY`，并确保 `PUBLIC_BASE_URL`、`CODE_SESSION_API_BASE_URL` 或 `CODE_SESSION_SANDBOX_API_BASE_URL` 能从沙箱内部访问到本服务。
+如果要跑真实 E2B 沙箱链路，需要配置 `e2b.api_key`，并确保 `code_session.sandbox_api_base_url` 能从沙箱内部访问到本服务。
 
 ## 主要 API 资源
 
@@ -269,7 +295,7 @@ just web-build
 真实 E2E 通常需要先启动本地服务，再指定 base URL：
 
 ```bash
-ADDR=127.0.0.1:18080 go run .
+CONFIG_FILE=/path/to/test-config.yaml go run .
 
 TEST_API_BASE_URL=http://127.0.0.1:18080 \
   go test ./tests -run TestGoSDKFilesE2E -count=1 -v

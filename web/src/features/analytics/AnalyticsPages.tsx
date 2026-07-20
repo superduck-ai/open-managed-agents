@@ -390,9 +390,9 @@ export function CostPage() {
   ];
   const modelOptions: FilterOption[] = [{ value: 'all', label: msg('common.all', 'All') }, ...analyticsModelOptions];
   const rangeOptions: FilterOption[] = [
-    { value: 'month-to-date', label: msg('analytics.filter.monthToDate', 'Month to date') },
-    { value: 'last-30-days', label: msg('analytics.filter.last30Days', 'Last 30 days') },
     { value: 'last-7-days', label: msg('analytics.filter.last7Days', 'Last 7 days') },
+    { value: 'last-30-days', label: msg('analytics.filter.last30Days', 'Last 30 days') },
+    { value: 'month-to-date', label: msg('analytics.filter.monthToDate', 'Month to date') },
   ];
   const [filters, setFilters] = useState({
     workspace: routeWorkspaceId ? 'current' : 'all-workspaces',

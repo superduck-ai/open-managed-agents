@@ -44,14 +44,14 @@ func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime
 }
 
 func StartRunnerWithStoreAndCredentials(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, credentials *codesessions.SessionCredentials) {
-	if !cfg.EnvironmentRunnerEnabled {
+	if !cfg.EnvironmentRunner.Enabled {
 		return
 	}
-	concurrency := cfg.EnvironmentRunnerConcurrency
+	concurrency := cfg.EnvironmentRunner.Concurrency
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	runner := NewRunnerWithConfigStoreAndCredentials(database, e2bruntime.NewProvider(cfg), cfg, store, credentials)
+	runner := NewRunnerWithConfigStoreAndCredentials(database, e2bruntime.NewProvider(cfg.E2B), cfg, store, credentials)
 	for i := 0; i < concurrency; i++ {
 		workerID := fmt.Sprintf("environment-runner-%d", i+1)
 		go runner.loop(ctx, workerID)
@@ -197,7 +197,7 @@ func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manife
 	if err := r.provider.WriteFile(ctx, sandboxID, packageProvisionerPath, packageProvisionerV1); err != nil {
 		return fmt.Errorf("write package provisioner: %w", err)
 	}
-	if err := r.provider.RunCommand(ctx, sandboxID, packageProvisionCommand, r.cfg.E2BSandboxTimeout); err != nil {
+	if err := r.provider.RunCommand(ctx, sandboxID, packageProvisionCommand, r.cfg.E2B.SandboxTimeout); err != nil {
 		return fmt.Errorf("provision environment packages: %w", err)
 	}
 	return nil

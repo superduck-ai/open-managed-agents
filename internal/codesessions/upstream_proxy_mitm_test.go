@@ -64,7 +64,9 @@ func TestUpstreamProxyCertificateAuthorityIgnoresDormantPrivateKey(t *testing.T)
 	t.Parallel()
 
 	missingKeyFile := filepath.Join(t.TempDir(), "missing-key.pem")
-	handler := NewHandler(config.Config{CodeSessionUpstreamProxyCAKeyFile: missingKeyFile}, newTestService(t, nil))
+	handler := NewHandler(config.Config{
+		CodeSession: config.CodeSessionConfig{UpstreamProxyCAKeyFile: missingKeyFile},
+	}, newTestService(t, nil))
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("loadUpstreamProxyCA() error = %v", err)
@@ -385,8 +387,10 @@ func writeTestUpstreamProxyCA(t *testing.T, name string) testUpstreamProxyCAFile
 
 func (files testUpstreamProxyCAFiles) config() config.Config {
 	return config.Config{
-		CodeSessionUpstreamProxyMITMEnabled: true,
-		CodeSessionUpstreamProxyCAKeyFile:   files.keyFile,
+		CodeSession: config.CodeSessionConfig{
+			UpstreamProxyMITMEnabled: true,
+			UpstreamProxyCAKeyFile:   files.keyFile,
+		},
 	}
 }
 

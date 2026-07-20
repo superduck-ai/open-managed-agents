@@ -2,7 +2,7 @@
 
 ## 目标
 
-服务对外提供 Anthropic 兼容的 `POST /v1/messages`，供普通 SDK/API 调用和 Claude Code 沙箱使用。上游 `ANTHROPIC_UPSTREAM_API_KEY` 只存在于服务端进程，不再写入沙箱环境或 `environment-manager` 启动 payload。
+服务对外提供 Anthropic 兼容的 `POST /v1/messages`，供普通 SDK/API 调用和 Claude Code 沙箱使用。上游 `anthropic_upstream.api_key` 只存在于服务端配置，不再写入沙箱环境或 `environment-manager` 启动 payload。
 
 Claude Code 仍要求 OAuth 形态的 Anthropic 凭证。environment-manager 通过 `auth[type=anthropic_oauth]` 和 `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` 向 Claude 传入 OMA 本地签发的 `sk-ant-oat01-...` lifecycle-bound token，并使用 `startup_context.api_base_url` 作为 `ANTHROPIC_BASE_URL` fallback。该 token 只在 OMA 本地代理生效，不是真实 Anthropic OAuth token；payload 不注入 `ANTHROPIC_API_KEY`、真实上游地址或明文 OAuth 环境变量。
 
@@ -17,8 +17,8 @@ POST /v1/messages
 handler 不解析 JSON，直接流式转发请求 body、query 和 Anthropic 合同 header，并执行以下边界处理：
 
 - 删除调用方的 `Authorization`、`X-Api-Key`、`Cookie`、组织/workspace 内部 header 和 hop-by-hop header；
-- 由服务端注入 `ANTHROPIC_UPSTREAM_API_KEY`；
-- 将请求发往 `ANTHROPIC_UPSTREAM_BASE_URL/v1/messages`；
+- 由服务端注入 `anthropic_upstream.api_key`；
+- 将请求发往 `anthropic_upstream.base_url/v1/messages`；
 - 透传上游状态码、响应 body、SSE 数据和限流等响应 header；
 - SSE 响应逐块 flush，并关闭代理缓冲；
 - 请求 body 上限为 32 MiB。

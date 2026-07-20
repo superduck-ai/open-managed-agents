@@ -71,8 +71,8 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	// 真实上游配置只存在于 API server；测试通过捕获请求验证 sandbox token 会被替换。
-	cfg.AnthropicUpstreamBaseURL = upstream.URL + "/coding"
-	cfg.AnthropicUpstreamAPIKey = "upstream-secret"
+	cfg.AnthropicUpstream.BaseURL = upstream.URL + "/coding"
+	cfg.AnthropicUpstream.APIKey = "upstream-secret"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("ccrv2-upstream-proxy-bucket"))
 	defer app.close()
 

@@ -78,12 +78,12 @@ func NewWorker(jobs JobStore, snapshots SnapshotJobStore, fanout FanoutStore, re
 }
 
 func StartWorker(ctx context.Context, database *db.DB, objectStore storage.ObjectStore, cfg config.Config) {
-	if database == nil || objectStore == nil || !cfg.EnvironmentRunnerEnabled {
+	if database == nil || objectStore == nil || !cfg.EnvironmentRunner.Enabled {
 		return
 	}
 	workerID := fmt.Sprintf("skill-prewarm-%d", os.Getpid())
 	resolver := skillsapi.NewRuntimeResolver(cfg, database, objectStore)
-	worker := NewWorker(database, database, database, resolver, e2bruntime.NewProvider(cfg))
+	worker := NewWorker(database, database, database, resolver, e2bruntime.NewProvider(cfg.E2B))
 	go worker.loop(ctx, workerID)
 }
 

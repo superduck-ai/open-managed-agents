@@ -22,7 +22,7 @@ func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command 
 		return err
 	}
 	if timeout <= 0 {
-		timeout = p.cfg.E2BRequestTimeout
+		timeout = p.cfg.RequestTimeout
 	}
 	timeoutMs := int(timeout / time.Millisecond)
 	if timeoutMs <= 0 {

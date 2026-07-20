@@ -148,9 +148,8 @@ describe('Analytics pages', () => {
 
     const extraWorkspace: Workspace = {
       id: 'wrkspc_extra',
+      type: 'workspace',
       name: 'Extra Workspace',
-      data_residency: { placement: 'us', regions: ['us-east-1'] },
-      settings: {},
     };
 
     renderWithWorkspace(<LogsPage />, [defaultWorkspace, extraWorkspace]);

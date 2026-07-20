@@ -1,6 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  RouterContextProvider,
+  createBrowserHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from '@tanstack/react-router';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider, type Locale } from '../../shared/i18n';
 import { setConsoleRequestContext } from '../../shared/api/client';
@@ -587,6 +594,29 @@ describe('Files page', () => {
     expect(screen.queryByText('import anthropic')).toBeNull();
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Next page' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test('refreshes the workspace name in the empty state when only the route changes', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/asdf/files');
+    mockFilesList(() => ({
+      data: [],
+      has_more: false,
+      first_id: null,
+      last_id: null,
+    }));
+
+    renderFilesPage();
+
+    // `asdf` is not a known workspace, so the name falls back to the route id.
+    expect(await screen.findByText('No files have been uploaded to the asdf workspace.')).toBeTruthy();
+
+    // Navigating to the default workspace must update the name even though the
+    // active workspace context is unchanged — this is the regression for the
+    // useLocation-driven scope.
+    window.history.pushState(null, '', 'https://oma.duck.ai/workspaces/default/files');
+
+    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    expect(screen.queryByText('No files have been uploaded to the asdf workspace.')).toBeNull();
   });
 
   test('renders the standardized files error row and retries successfully', async () => {
@@ -1556,6 +1586,32 @@ function mockWebhooksList() {
   return { requests };
 }
 
+const dashboardTestRootRoute = createRootRoute();
+const dashboardTestFallbackRoute = createRoute({
+  getParentRoute: () => dashboardTestRootRoute,
+  path: '$',
+});
+const dashboardTestRouteTree = dashboardTestRootRoute.addChildren([dashboardTestFallbackRoute]);
+
+function DashboardTestRouterProvider({
+  router,
+  children,
+}: {
+  router: ReturnType<typeof createRouter<typeof dashboardTestRouteTree>>;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    // Mirror the subscription that <RouterProvider>'s Transitioner sets up, so
+    // useLocation() reflects window.history.pushState calls in tests.
+    const unsubscribe = router.history.subscribe(router.load);
+    return () => {
+      unsubscribe();
+      router.history.destroy();
+    };
+  }, [router]);
+  return <RouterContextProvider router={router}>{children}</RouterContextProvider>;
+}
+
 function renderDashboardPage(
   children: ReactNode,
   workspace?: Partial<Workspace>,
@@ -1570,16 +1626,22 @@ function renderDashboardPage(
       },
     },
   });
+  const router = createRouter({
+    history: createBrowserHistory({ window }),
+    routeTree: dashboardTestRouteTree,
+  });
   const renderWithWorkspace = (nextWorkspace?: Partial<Workspace>) => {
     const value = makeWorkspaceContextValue(nextWorkspace);
     return (
-      <I18nProvider initialLocale={locale}>
-        <AuthContext.Provider value={authValue}>
-          <WorkspaceContext.Provider value={value}>
-            <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-          </WorkspaceContext.Provider>
-        </AuthContext.Provider>
-      </I18nProvider>
+      <DashboardTestRouterProvider router={router}>
+        <I18nProvider initialLocale={locale}>
+          <AuthContext.Provider value={authValue}>
+            <WorkspaceContext.Provider value={value}>
+              <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+            </WorkspaceContext.Provider>
+          </AuthContext.Provider>
+        </I18nProvider>
+      </DashboardTestRouterProvider>
     );
   };
 

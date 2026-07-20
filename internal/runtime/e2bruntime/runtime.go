@@ -450,7 +450,7 @@ func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork) (*e2b.Sandbox
 	if config.Type == networkpolicy.TypeUnrestricted {
 		return nil, true, nil
 	}
-	hosts := append([]string(nil), config.AllowedHosts...)
+	hosts := config.AllowedHostPatterns()
 	if config.AllowPackageManagers {
 		hosts = append(hosts, networkpolicy.PackageManagerHosts()...)
 	}

@@ -289,20 +289,20 @@ func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.
 	if err != nil {
 		return err
 	}
-	if policyConfig.Type != networkpolicy.TypeLimited || !policyConfig.AllowMCPServers {
-		return nil
-	}
-	sessionID, ok := sessionIDFromEnvironmentWork(*work)
-	if !ok {
-		return fmt.Errorf("limited managed-agent MCP policy requires session work identity")
-	}
-	session, err := r.db.GetSession(ctx, work.WorkspaceID, sessionID)
-	if err != nil {
-		return err
-	}
-	hosts, err := networkpolicy.MCPAllowedHosts(session.AgentSnapshot)
-	if err != nil {
-		return err
+	hosts := []string{}
+	if policyConfig.Type == networkpolicy.TypeLimited && policyConfig.AllowMCPServers {
+		sessionID, ok := sessionIDFromEnvironmentWork(*work)
+		if !ok {
+			return fmt.Errorf("limited managed-agent MCP policy requires session work identity")
+		}
+		session, err := r.db.GetSession(ctx, work.WorkspaceID, sessionID)
+		if err != nil {
+			return err
+		}
+		hosts, err = networkpolicy.MCPAllowedHosts(session.AgentSnapshot)
+		if err != nil {
+			return err
+		}
 	}
 	if hosts == nil {
 		hosts = []string{}

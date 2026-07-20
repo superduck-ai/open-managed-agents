@@ -27,9 +27,19 @@ const (
 // Config 是 Environment networking 的领域类型。
 type Config struct {
 	Type                 Type
-	AllowedHosts         []string
+	allowedHosts         []allowedHost
 	AllowMCPServers      bool
 	AllowPackageManagers bool
+}
+
+// AllowedHostPatterns 按 Environment 配置中的稳定顺序返回 provider 使用的
+// canonical host patterns。
+func (c Config) AllowedHostPatterns() []string {
+	patterns := make([]string, 0, len(c.allowedHosts))
+	for _, host := range c.allowedHosts {
+		patterns = append(patterns, host.pattern())
+	}
+	return patterns
 }
 
 type environmentConfigSchema struct {
@@ -72,12 +82,13 @@ func configFromSchema(schema environmentConfigSchema) (Config, error) {
 	case string(TypeUnrestricted):
 		return Config{Type: TypeUnrestricted}, nil
 	case string(TypeLimited):
-		if err := validateConfigAllowedHosts(networking.AllowedHosts); err != nil {
+		allowedHosts, err := parseConfigAllowedHosts(networking.AllowedHosts)
+		if err != nil {
 			return Config{}, err
 		}
 		return Config{
 			Type:                 TypeLimited,
-			AllowedHosts:         networking.AllowedHosts,
+			allowedHosts:         allowedHosts,
 			AllowMCPServers:      networking.AllowMCPServers,
 			AllowPackageManagers: networking.AllowPackageManagers,
 		}, nil
@@ -86,11 +97,14 @@ func configFromSchema(schema environmentConfigSchema) (Config, error) {
 	}
 }
 
-func validateConfigAllowedHosts(hosts []string) error {
+func parseConfigAllowedHosts(hosts []string) ([]allowedHost, error) {
+	parsed := make([]allowedHost, 0, len(hosts))
 	for _, host := range hosts {
-		if err := ValidateAllowedHost(host); err != nil {
-			return fmt.Errorf("%w: invalid allowed_hosts entry: %v", ErrMalformedConfig, err)
+		parsedHost, err := parseAllowedHost(host)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid allowed_hosts entry: %v", ErrMalformedConfig, err)
 		}
+		parsed = append(parsed, parsedHost)
 	}
-	return nil
+	return parsed, nil
 }

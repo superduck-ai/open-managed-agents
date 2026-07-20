@@ -6,7 +6,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 )
 
-// Reason is the machine-readable authorization result used in audit logs.
+// Reason 是审计日志使用的机器可读授权结果。
 type Reason string
 
 const (
@@ -19,15 +19,15 @@ const (
 	ReasonPolicyUnavailable  Reason = "policy_unavailable"
 )
 
-// Decision is the authorization result for one normalized HTTPS target.
+// Decision 是单个已归一化 HTTPS target 的授权结果。
 type Decision struct {
 	Allow  bool
 	Reason Reason
 	Host   string
 }
 
-// Policy is a parsed and compiled Environment network policy. Raw JSON is
-// confined to ParsePolicy; authorization only operates on typed state.
+// Policy 是解析并编译后的 Environment 网络策略。原始 JSON 只存在于
+// ParsePolicy 边界，授权逻辑仅处理类型化状态。
 type Policy struct {
 	policyType           Type
 	explicitHosts        hostMatcher
@@ -35,8 +35,8 @@ type Policy struct {
 	allowPackageManagers bool
 }
 
-// ParsePolicy parses database JSON at the policy-loading boundary and compiles
-// normalized host indexes. A malformed enabled source invalidates the policy.
+// ParsePolicy 在策略加载边界解析数据库 JSON，并编译归一化的 host 索引。
+// 任一已启用的策略来源格式错误，都会使整份策略失效。
 func ParsePolicy(configRaw, agentSnapshotRaw []byte) (Policy, error) {
 	config, err := ParseConfig(configRaw)
 	if err != nil {
@@ -46,12 +46,8 @@ func ParsePolicy(configRaw, agentSnapshotRaw []byte) (Policy, error) {
 	if config.Type == TypeUnrestricted {
 		return policy, nil
 	}
-	policy.explicitHosts, err = newHostMatcher(config.AllowedHosts)
-	if err != nil {
-		return Policy{}, err
-	}
+	policy.explicitHosts = newHostMatcher(config.allowedHosts)
 	policy.allowPackageManagers = config.AllowPackageManagers
-	policy.mcpHosts = map[string]struct{}{}
 	if config.AllowMCPServers {
 		hosts, err := MCPAllowedHosts(agentSnapshotRaw)
 		if err != nil {
@@ -62,8 +58,8 @@ func ParsePolicy(configRaw, agentSnapshotRaw []byte) (Policy, error) {
 	return policy, nil
 }
 
-// AuthorizeHTTPS authorizes a target in host:443 form. SSRF, public-address,
-// and DNS-rebinding checks remain the responsibility of the proxy dialer.
+// AuthorizeHTTPS 授权 host:443 形式的 target。SSRF、公网地址与 DNS rebinding
+// 检查仍由 proxy dialer 负责。
 func (p Policy) AuthorizeHTTPS(target string) Decision {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil || port != "443" {
@@ -72,6 +68,9 @@ func (p Policy) AuthorizeHTTPS(target string) Decision {
 	normalized, err := NormalizeHost(host)
 	if err != nil {
 		return Decision{Reason: ReasonInvalidTarget}
+	}
+	if p.policyType != TypeUnrestricted && p.policyType != TypeLimited {
+		return Decision{Reason: ReasonPolicyUnavailable, Host: normalized}
 	}
 	if p.policyType == TypeUnrestricted {
 		return Decision{Allow: true, Reason: ReasonUnrestricted, Host: normalized}

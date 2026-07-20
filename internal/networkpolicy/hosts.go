@@ -13,50 +13,65 @@ import (
 
 var errAllowedHost = errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
 
-// lookupProfile keeps browser-compatible IDNA lookup mapping. DNS syntax and
-// length checks are delegated to Kubernetes' RFC 1123 validators afterward.
+// lookupProfile 使用与浏览器兼容的 IDNA lookup 映射；后续再由 Kubernetes
+// RFC 1123 validator 检查 DNS 语法与长度。
 var lookupProfile = idna.New(idna.MapForLookup(), idna.BidiRule(), idna.CheckHyphens(false))
 
-type parsedAllowedHost struct {
+// allowedHost 是已经校验并归一化的 Environment allowlist 条目。
+type allowedHost struct {
 	host     string
 	port     string
 	wildcard bool
 }
 
-// ValidateAllowedHost validates the public allowed_hosts contract. IP parsing,
-// IDNA mapping, and host/port splitting happen before DNS syntax is delegated
-// to the Kubernetes validators used for Ingress hostnames.
+// pattern 返回 Sandbox provider 使用的 canonical host pattern。
+func (h allowedHost) pattern() string {
+	host := h.host
+	if h.wildcard {
+		host = "*." + host
+	}
+	if h.port == "" {
+		return host
+	}
+	if strings.Contains(host, ":") {
+		return net.JoinHostPort(host, h.port)
+	}
+	return host + ":" + h.port
+}
+
+// ValidateAllowedHost 校验公开的 allowed_hosts 合同。IP 解析、IDNA 映射与
+// host/port 拆分先执行，DNS 语法再交给 Ingress 同款 Kubernetes validator。
 func ValidateAllowedHost(entry string) error {
 	_, err := parseAllowedHost(entry)
 	return err
 }
 
-func parseAllowedHost(entry string) (parsedAllowedHost, error) {
+func parseAllowedHost(entry string) (allowedHost, error) {
 	if strings.Contains(entry, "://") || strings.Contains(entry, "/") {
-		return parsedAllowedHost{}, errAllowedHost
+		return allowedHost{}, errAllowedHost
 	}
 	host, port, err := splitAllowedHost(entry)
 	if err != nil || !validAllowedPort(port) {
-		return parsedAllowedHost{}, errAllowedHost
+		return allowedHost{}, errAllowedHost
 	}
 	wildcard := strings.HasPrefix(host, "*.")
 	if wildcard {
 		host = strings.TrimPrefix(host, "*.")
 	}
 	if strings.Contains(host, "*") {
-		return parsedAllowedHost{}, errAllowedHost
+		return allowedHost{}, errAllowedHost
 	}
 	normalized, err := NormalizeHost(host)
 	if err != nil {
-		return parsedAllowedHost{}, errAllowedHost
+		return allowedHost{}, errAllowedHost
 	}
 	if wildcard && net.ParseIP(normalized) != nil {
-		return parsedAllowedHost{}, errAllowedHost
+		return allowedHost{}, errAllowedHost
 	}
 	if wildcard && len(validation.IsWildcardDNS1123Subdomain("*."+normalized)) != 0 {
-		return parsedAllowedHost{}, errAllowedHost
+		return allowedHost{}, errAllowedHost
 	}
-	return parsedAllowedHost{host: normalized, port: port, wildcard: wildcard}, nil
+	return allowedHost{host: normalized, port: port, wildcard: wildcard}, nil
 }
 
 func splitAllowedHost(entry string) (string, string, error) {
@@ -101,8 +116,8 @@ func validAllowedPort(port string) bool {
 	return err == nil && value >= 1 && value <= 65535
 }
 
-// NormalizeHost applies the same canonicalization to allowlist entries,
-// metadata, MCP URLs, and CONNECT targets.
+// NormalizeHost 对 allowlist、metadata、MCP URL 与 CONNECT target 使用同一套
+// canonicalization 规则。
 func NormalizeHost(raw string) (string, error) {
 	host := strings.ToLower(strings.TrimSpace(raw))
 	host = strings.TrimSuffix(host, ".")
@@ -135,26 +150,22 @@ type hostMatcherNode struct {
 	wildcard bool
 }
 
-func newHostMatcher(entries []string) (hostMatcher, error) {
+func newHostMatcher(entries []allowedHost) hostMatcher {
 	matcher := hostMatcher{
 		exact:        make(map[string]struct{}, len(entries)),
 		wildcardRoot: &hostMatcherNode{children: map[string]*hostMatcherNode{}},
 	}
 	for _, entry := range entries {
-		parsed, err := parseAllowedHost(entry)
-		if err != nil {
-			return hostMatcher{}, err
-		}
-		if parsed.port != "" && parsed.port != "443" {
+		if entry.port != "" && entry.port != "443" {
 			continue
 		}
-		if parsed.wildcard {
-			matcher.addWildcard(parsed.host)
+		if entry.wildcard {
+			matcher.addWildcard(entry.host)
 			continue
 		}
-		matcher.exact[parsed.host] = struct{}{}
+		matcher.exact[entry.host] = struct{}{}
 	}
-	return matcher, nil
+	return matcher
 }
 
 func (m hostMatcher) match(host string) bool {
@@ -163,6 +174,9 @@ func (m hostMatcher) match(host string) bool {
 	}
 	labels := strings.Split(host, ".")
 	node := m.wildcardRoot
+	if node == nil {
+		return false
+	}
 	for index := len(labels) - 1; index >= 0; index-- {
 		next, ok := node.children[labels[index]]
 		if !ok {

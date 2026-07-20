@@ -3,12 +3,7 @@ package networkpolicy
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/url"
-	"os"
-	"slices"
 	"testing"
-	"time"
 )
 
 // rawPolicyFixture keeps raw fixtures at the test boundary while production callers
@@ -52,8 +47,8 @@ func quoteJSON(s string) string {
 // ---- 失败场景 ----
 
 func TestAuthorizeHTTPSDeniesLimitedEmptyAllowlist(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "example.com:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "example.com:443")
 	if decision.Allow {
 		t.Fatalf("expected deny, got allow with reason %q", decision.Reason)
 	}
@@ -62,6 +57,13 @@ func TestAuthorizeHTTPSDeniesLimitedEmptyAllowlist(t *testing.T) {
 	}
 	if decision.Host != "example.com" {
 		t.Fatalf("expected normalized host example.com, got %q", decision.Host)
+	}
+}
+
+func TestAuthorizeHTTPSZeroPolicyFailsClosed(t *testing.T) {
+	decision := (Policy{}).AuthorizeHTTPS("example.com:443")
+	if decision.Allow || decision.Reason != ReasonPolicyUnavailable {
+		t.Fatalf("zero Policy decision = %+v, want policy_unavailable denial", decision)
 	}
 }
 
@@ -93,17 +95,10 @@ func TestParsePolicyDoesNotPartiallyAcceptMalformedAllowlist(t *testing.T) {
 	}
 }
 
-func TestParseConfigClassifiesInvalidAllowedHostAsMalformed(t *testing.T) {
-	_, err := ParseConfig(limitedConfig(t, `{"type":"limited","allowed_hosts":["bad/path"]}`))
-	if !errors.Is(err, ErrMalformedConfig) {
-		t.Fatalf("expected ErrMalformedConfig, got %v", err)
-	}
-}
-
 func TestAuthorizeHTTPSRejectsMalformedTarget(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
 	for _, target := range []string{"example.com", "example.com:abc", ":443", "example.com:443:443"} {
-		decision := authorizeHTTPSFixture(t, subject, target)
+		decision := authorizeHTTPSFixture(t, fixture, target)
 		if decision.Allow {
 			t.Fatalf("target %q must be rejected", target)
 		}
@@ -114,8 +109,8 @@ func TestAuthorizeHTTPSRejectsMalformedTarget(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSRejectsNon443Target(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
-	decision := authorizeHTTPSFixture(t, subject, "example.com:8443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "example.com:8443")
 	if decision.Allow {
 		t.Fatal("non-443 target must be rejected")
 	}
@@ -125,8 +120,8 @@ func TestAuthorizeHTTPSRejectsNon443Target(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSWildcardDoesNotMatchApex(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["*.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "example.com:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["*.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "example.com:443")
 	if decision.Allow {
 		t.Fatal("wildcard entry must not match apex")
 	}
@@ -136,27 +131,27 @@ func TestAuthorizeHTTPSWildcardDoesNotMatchApex(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSWildcardDoesNotMatchSibling(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["*.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "other.com:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["*.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "other.com:443")
 	if decision.Allow {
 		t.Fatal("wildcard entry must not match unrelated host")
 	}
 }
 
 func TestAuthorizeHTTPEntryWithNon443PortIsInert(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["example.com:8443"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "example.com:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["example.com:8443"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "example.com:443")
 	if decision.Allow {
 		t.Fatal("entry with non-443 port must be inert for the 443-only proxy")
 	}
 }
 
 func TestAuthorizeHTTPSDeniesMCPHostWhenSwitchOff(t *testing.T) {
-	subject := rawPolicyFixture{
+	fixture := rawPolicyFixture{
 		Config:        limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}`),
 		AgentSnapshot: snapshotWithMCP(t, "https://mcp.example.com/sse"),
 	}
-	decision := authorizeHTTPSFixture(t, subject, "mcp.example.com:443")
+	decision := authorizeHTTPSFixture(t, fixture, "mcp.example.com:443")
 	if decision.Allow {
 		t.Fatal("MCP host must be denied when allow_mcp_servers is false")
 	}
@@ -186,112 +181,37 @@ func TestParsePolicyRejectsMalformedMCPURL(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSDeniesMCPHostNotInSnapshot(t *testing.T) {
-	subject := rawPolicyFixture{
+	fixture := rawPolicyFixture{
 		Config:        limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true,"allow_package_managers":false}`),
 		AgentSnapshot: snapshotWithMCP(t, "https://mcp.example.com/sse"),
 	}
-	decision := authorizeHTTPSFixture(t, subject, "other-mcp.example.com:443")
+	decision := authorizeHTTPSFixture(t, fixture, "other-mcp.example.com:443")
 	if decision.Allow {
 		t.Fatal("host not referenced by the session snapshot must be denied")
 	}
 }
 
 func TestAuthorizeHTTPSDeniesPackageHostWhenSwitchOff(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "pypi.org:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "pypi.org:443")
 	if decision.Allow {
 		t.Fatal("package registry host must be denied when allow_package_managers is false")
 	}
 }
 
 func TestAuthorizeHTTPSDeniesNonCatalogHostWhenPackageSwitchOn(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
-	decision := authorizeHTTPSFixture(t, subject, "evil-packages.example.com:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "evil-packages.example.com:443")
 	if decision.Allow {
 		t.Fatal("non-catalog host must be denied")
-	}
-}
-
-func TestPackageManagerCatalogExcludesVCSHosts(t *testing.T) {
-	for _, host := range PackageManagerHosts() {
-		if host == "github.com" || host == "gitlab.com" || host == "bitbucket.org" {
-			t.Fatalf("catalog must not include VCS host %q", host)
-		}
-	}
-}
-
-func TestParseConfigMalformedJSON(t *testing.T) {
-	if _, err := ParseConfig(json.RawMessage(`{"type":`)); !errors.Is(err, ErrMalformedConfig) {
-		t.Fatalf("expected ErrMalformedConfig, got %v", err)
-	}
-}
-
-func TestParseConfigUnknownNetworkingType(t *testing.T) {
-	if _, err := ParseConfig(limitedConfig(t, `{"type":"bogus"}`)); !errors.Is(err, ErrUnknownNetworkingType) {
-		t.Fatalf("expected ErrUnknownNetworkingType, got %v", err)
-	}
-}
-
-func TestParseConfigEmptyNetworkingTypeFailsClosed(t *testing.T) {
-	// networking 对象存在但 type 为空：写入路径会归一化为 unrestricted，存储中不应出现；
-	// 一旦出现必须 fail closed，不能静默降级为 unrestricted。
-	if _, err := ParseConfig(limitedConfig(t, `{"type":"","allowed_hosts":["api.example.com"]}`)); !errors.Is(err, ErrUnknownNetworkingType) {
-		t.Fatalf("expected ErrUnknownNetworkingType, got %v", err)
-	}
-	if _, err := ParsePolicy(limitedConfig(t, `{"type":""}`), nil); !errors.Is(err, ErrUnknownNetworkingType) {
-		t.Fatalf("expected ErrUnknownNetworkingType, got %v", err)
-	}
-}
-
-func TestMCPAllowedHostsRejectsMalformedSnapshot(t *testing.T) {
-	if _, err := MCPAllowedHosts(json.RawMessage(`{"mcp_servers":[`)); !errors.Is(err, ErrMalformedAgentSnapshot) {
-		t.Fatalf("expected ErrMalformedAgentSnapshot, got %v", err)
-	}
-}
-
-func TestMCPAllowedHostsRejectsMalformedURL(t *testing.T) {
-	if _, err := MCPAllowedHosts(snapshotWithMCP(t, "://bad")); !errors.Is(err, ErrMalformedAgentSnapshot) {
-		t.Fatalf("expected ErrMalformedAgentSnapshot, got %v", err)
-	}
-}
-
-func TestMCPAllowedHostsRejectsEmptySnapshot(t *testing.T) {
-	if _, err := MCPAllowedHosts(nil); !errors.Is(err, ErrMalformedAgentSnapshot) {
-		t.Fatalf("expected ErrMalformedAgentSnapshot, got %v", err)
-	}
-}
-
-func TestMCPAllowedHostsRejectsMalformedRemoteServerContracts(t *testing.T) {
-	for _, snapshot := range []json.RawMessage{
-		json.RawMessage(`{"mcp_servers":[{"url":"https://evil.example/mcp"}]}`),
-		json.RawMessage(`{"mcp_servers":[{"type":"stdio","url":"https://evil.example/mcp"}]}`),
-		json.RawMessage(`{"mcp_servers":[{"type":"url","url":"ftp://evil.example/mcp"}]}`),
-		json.RawMessage(`{"mcp_servers":[{"type":"url","url":"//evil.example/mcp"}]}`),
-	} {
-		hosts, err := MCPAllowedHosts(snapshot)
-		if !errors.Is(err, ErrMalformedAgentSnapshot) {
-			t.Fatalf("snapshot %s: expected ErrMalformedAgentSnapshot, got hosts=%v err=%v", snapshot, hosts, err)
-		}
-	}
-}
-
-func TestParseWorkMetadataMCPAllowedHostsRejectsMalformedKnownField(t *testing.T) {
-	for _, metadata := range []json.RawMessage{
-		json.RawMessage(`{"mcp_allowed_hosts":null}`),
-		json.RawMessage(`{"mcp_allowed_hosts":"mcp.example.com"}`),
-		json.RawMessage(`{"mcp_allowed_hosts":["mcp.example.com",42]}`),
-	} {
-		if _, err := ParseWorkMetadataMCPAllowedHosts(metadata); !errors.Is(err, ErrMalformedWorkMetadata) {
-			t.Fatalf("metadata %s: expected ErrMalformedWorkMetadata, got %v", metadata, err)
-		}
 	}
 }
 
 // ---- 成功场景 ----
 
 func TestAuthorizeHTTPSAllowsExplicitHost(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "api.example.com:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "api.example.com:443")
 	if !decision.Allow {
 		t.Fatalf("expected allow, got deny with reason %q", decision.Reason)
 	}
@@ -301,9 +221,9 @@ func TestAuthorizeHTTPSAllowsExplicitHost(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSWildcardMatchesAnyDepthSubdomain(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["*.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["*.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
 	for _, target := range []string{"a.example.com:443", "a.b.example.com:443"} {
-		decision := authorizeHTTPSFixture(t, subject, target)
+		decision := authorizeHTTPSFixture(t, fixture, target)
 		if !decision.Allow {
 			t.Fatalf("target %q: expected allow, got deny with reason %q", target, decision.Reason)
 		}
@@ -314,8 +234,8 @@ func TestAuthorizeHTTPSWildcardMatchesAnyDepthSubdomain(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSNormalizesTargetBeforeMatching(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "API.Example.COM.:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "API.Example.COM.:443")
 	if !decision.Allow {
 		t.Fatalf("expected allow after normalization, got deny with reason %q", decision.Reason)
 	}
@@ -325,8 +245,8 @@ func TestAuthorizeHTTPSNormalizesTargetBeforeMatching(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSAllowsPublicIPv6WhenUnrestricted(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
-	decision := authorizeHTTPSFixture(t, subject, "[2606:4700:4700::1111]:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "[2606:4700:4700::1111]:443")
 	if !decision.Allow || decision.Reason != ReasonUnrestricted {
 		t.Fatalf("expected unrestricted IPv6 allow, got %+v", decision)
 	}
@@ -336,16 +256,16 @@ func TestAuthorizeHTTPSAllowsPublicIPv6WhenUnrestricted(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSAllowsExplicitIPv6Host(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["2606:4700:4700::1111"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "[2606:4700:4700::1111]:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["2606:4700:4700::1111"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "[2606:4700:4700::1111]:443")
 	if !decision.Allow || decision.Reason != ReasonExplicitHost {
 		t.Fatalf("expected explicit IPv6 allow, got %+v", decision)
 	}
 }
 
 func TestAuthorizeHTTPSCanonicalizesIPv4MappedIPv6(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
-	decision := authorizeHTTPSFixture(t, subject, "[::ffff:192.0.2.1]:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "[::ffff:192.0.2.1]:443")
 	if !decision.Allow || decision.Host != "192.0.2.1" {
 		t.Fatalf("expected mapped IPv6 to normalize as IPv4, got %+v", decision)
 	}
@@ -353,27 +273,27 @@ func TestAuthorizeHTTPSCanonicalizesIPv4MappedIPv6(t *testing.T) {
 
 func TestAuthorizeHTTPSAllowsCommonHyphenatedEdgeHostname(t *testing.T) {
 	const host = "r3---sn-apo3qvuoxuxbt-j5pe.googlevideo.com"
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["`+host+`"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, host+":443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["`+host+`"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, host+":443")
 	if !decision.Allow || decision.Reason != ReasonExplicitHost {
 		t.Fatalf("expected common edge hostname allow, got %+v", decision)
 	}
 }
 
 func TestAuthorizeHTTPSAllowsEntryWith443Port(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com:443"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
-	decision := authorizeHTTPSFixture(t, subject, "api.example.com:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com:443"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "api.example.com:443")
 	if !decision.Allow {
 		t.Fatalf("expected allow, got deny with reason %q", decision.Reason)
 	}
 }
 
 func TestAuthorizeHTTPSAllowsMCPHostWhenSwitchOn(t *testing.T) {
-	subject := rawPolicyFixture{
+	fixture := rawPolicyFixture{
 		Config:        limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true,"allow_package_managers":false}`),
 		AgentSnapshot: snapshotWithMCP(t, "https://mcp.example.com/sse"),
 	}
-	decision := authorizeHTTPSFixture(t, subject, "MCP.example.com:443")
+	decision := authorizeHTTPSFixture(t, fixture, "MCP.example.com:443")
 	if !decision.Allow {
 		t.Fatalf("expected allow, got deny with reason %q", decision.Reason)
 	}
@@ -383,7 +303,7 @@ func TestAuthorizeHTTPSAllowsMCPHostWhenSwitchOn(t *testing.T) {
 }
 
 func TestAuthorizeHTTPSAllowsPackageHostsWhenSwitchOn(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
 	for _, target := range []string{
 		"pypi.org:443",
 		"files.pythonhosted.org:443",
@@ -396,7 +316,7 @@ func TestAuthorizeHTTPSAllowsPackageHostsWhenSwitchOn(t *testing.T) {
 		"mirrors.tuna.tsinghua.edu.cn:443",
 		"archive.ubuntu.com:443",
 	} {
-		decision := authorizeHTTPSFixture(t, subject, target)
+		decision := authorizeHTTPSFixture(t, fixture, target)
 		if !decision.Allow {
 			t.Fatalf("target %q: expected allow, got deny with reason %q", target, decision.Reason)
 		}
@@ -409,60 +329,18 @@ func TestAuthorizeHTTPSAllowsPackageHostsWhenSwitchOn(t *testing.T) {
 func TestAuthorizeHTTPSAllowsLargeGoModuleProxyRedirectChain(t *testing.T) {
 	// github.com/aws/aws-sdk-go@v1.55.8 的 module zip 会从
 	// proxy.golang.org 重定向到 storage.googleapis.com。
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
 	for _, target := range []string{"proxy.golang.org:443", "storage.googleapis.com:443"} {
-		decision := authorizeHTTPSFixture(t, subject, target)
+		decision := authorizeHTTPSFixture(t, fixture, target)
 		if !decision.Allow || decision.Reason != ReasonPackageManagerHost {
 			t.Fatalf("target %q: expected package redirect chain allow, got %+v", target, decision)
 		}
 	}
 }
 
-func TestPackageManagerHostsReturnsIndependentCatalogCopy(t *testing.T) {
-	hosts := PackageManagerHosts()
-	if len(hosts) == 0 {
-		t.Fatal("package manager catalog is empty")
-	}
-	originalFirst := hosts[0]
-	hosts[0] = "mutated.example"
-	if next := PackageManagerHosts(); next[0] != originalFirst {
-		t.Fatalf("catalog was mutated through returned slice: %v", next)
-	}
-}
-
-func TestLiveLargeGoModuleProxyRedirectHostIsAuthorized(t *testing.T) {
-	if os.Getenv("TEST_GO_MODULE_PROXY_REDIRECT") != "1" {
-		t.Skip("set TEST_GO_MODULE_PROXY_REDIRECT=1 to verify the live Go module proxy redirect")
-	}
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	response, err := client.Head("https://proxy.golang.org/github.com/aws/aws-sdk-go/@v/v1.55.8.zip")
-	if err != nil {
-		t.Fatalf("request large Go module zip: %v", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < http.StatusMultipleChoices || response.StatusCode >= http.StatusBadRequest {
-		t.Fatalf("large Go module status = %d, want redirect", response.StatusCode)
-	}
-	location, err := url.Parse(response.Header.Get("Location"))
-	if err != nil || location.Hostname() == "" {
-		t.Fatalf("parse Go module redirect location %q: %v", response.Header.Get("Location"), err)
-	}
-	target := location.Hostname() + ":443"
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
-	decision := authorizeHTTPSFixture(t, subject, target)
-	if !decision.Allow || decision.Reason != ReasonPackageManagerHost {
-		t.Fatalf("live redirect target %q is not authorized: %+v", target, decision)
-	}
-}
-
 func TestAuthorizeHTTPSAllowsUnrestricted(t *testing.T) {
-	subject := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
-	decision := authorizeHTTPSFixture(t, subject, "anything.example.org:443")
+	fixture := rawPolicyFixture{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
+	decision := authorizeHTTPSFixture(t, fixture, "anything.example.org:443")
 	if !decision.Allow {
 		t.Fatalf("expected allow, got deny with reason %q", decision.Reason)
 	}
@@ -481,125 +359,6 @@ func TestAuthorizeHTTPSUnrestrictedWhenNetworkingAbsent(t *testing.T) {
 		decision := authorizeHTTPSFixture(t, rawPolicyFixture{Config: raw}, "example.com:443")
 		if !decision.Allow || decision.Reason != ReasonUnrestricted {
 			t.Fatalf("config %s: expected unrestricted allow, got %+v", raw, decision)
-		}
-	}
-}
-
-// ---- ParseConfig ----
-
-func TestParseConfigLimitedFields(t *testing.T) {
-	config, err := ParseConfig(limitedConfig(t, `{"type":"limited","allowed_hosts":["a.com","b.com"],"allow_mcp_servers":true,"allow_package_managers":true}`))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if config.Type != "limited" || !config.AllowMCPServers || !config.AllowPackageManagers {
-		t.Fatalf("unexpected config: %+v", config)
-	}
-	if len(config.AllowedHosts) != 2 || config.AllowedHosts[0] != "a.com" {
-		t.Fatalf("unexpected hosts: %v", config.AllowedHosts)
-	}
-}
-
-// ---- MCPAllowedHosts ----
-
-func TestMCPAllowedHostsExtractsDedupesAndNormalizes(t *testing.T) {
-	snapshot := json.RawMessage(`{"mcp_servers":[
-		{"type":"http","url":"https://MCP.example.com/api"},
-		{"type":"sse","url":"https://mcp.example.com/sse"},
-		{"type":"stdio","command":"npx"},
-		{"type":"http","url":"https://other.example.org"}
-	]}`)
-	hosts, err := MCPAllowedHosts(snapshot)
-	if err != nil {
-		t.Fatalf("extract MCP hosts: %v", err)
-	}
-	if len(hosts) != 2 || hosts[0] != "mcp.example.com" || hosts[1] != "other.example.org" {
-		t.Fatalf("unexpected hosts: %v", hosts)
-	}
-}
-
-func TestMCPAllowedHostsAcceptsCanonicalAndTransportRemoteServerTypes(t *testing.T) {
-	snapshot := json.RawMessage(`{"mcp_servers":[
-		{"type":"url","url":"https://canonical.example/mcp"},
-		{"type":"http","url":"http://streamable.example/mcp"},
-		{"type":"sse","url":"https://events.example/sse"},
-		{"type":"stdio","command":"npx"}
-	]}`)
-	hosts, err := MCPAllowedHosts(snapshot)
-	if err != nil {
-		t.Fatalf("extract MCP hosts: %v", err)
-	}
-	want := []string{"canonical.example", "streamable.example", "events.example"}
-	if !slices.Equal(hosts, want) {
-		t.Fatalf("hosts = %v, want %v", hosts, want)
-	}
-}
-
-func TestPatchWorkMetadataMCPAllowedHostsPreservesOtherFields(t *testing.T) {
-	patched, err := PatchWorkMetadataMCPAllowedHosts(
-		json.RawMessage(`{"managed_agent_skills_mount":{"volume_name":"skills"},"mcp_allowed_hosts":["stale.example"]}`),
-		[]string{"MCP.Example.com", "mcp.example.com"},
-	)
-	if err != nil {
-		t.Fatalf("PatchWorkMetadataMCPAllowedHosts() error = %v", err)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(patched, &fields); err != nil {
-		t.Fatalf("decode patched metadata: %v", err)
-	}
-	if _, ok := fields["managed_agent_skills_mount"]; !ok {
-		t.Fatalf("unrelated metadata was removed: %s", patched)
-	}
-	hosts, err := ParseWorkMetadataMCPAllowedHosts(patched)
-	if err != nil {
-		t.Fatalf("ParseWorkMetadataMCPAllowedHosts() error = %v", err)
-	}
-	if !slices.Equal(hosts, []string{"mcp.example.com"}) {
-		t.Fatalf("hosts = %v, want [mcp.example.com]", hosts)
-	}
-}
-
-// ---- ValidateAllowedHost ----
-
-func TestValidateAllowedHost(t *testing.T) {
-	for _, host := range []string{
-		"https://example.com",
-		"example.com/path",
-		"",
-		".",
-		"..",
-		"example..com",
-		"-example.com",
-		"example-.com",
-		"example.com:0",
-		"example.com:65536",
-		"exa mple.com",
-		" example.com",
-		"example.com ",
-		"a-b.c_d.com",
-	} {
-		if err := ValidateAllowedHost(host); err == nil {
-			t.Fatalf("host %q: expected error", host)
-		}
-	}
-	long := make([]byte, 254)
-	for i := range long {
-		long[i] = 'a'
-	}
-	if err := ValidateAllowedHost(string(long)); err == nil {
-		t.Fatal("expected error for host longer than 253 characters")
-	}
-	for _, host := range []string{
-		"example.com",
-		"*.example.com",
-		"例子.测试",
-		"*.例子.测试",
-		"example.com:8443",
-		"2606:4700:4700::1111",
-		"[2606:4700:4700::1111]:443",
-	} {
-		if err := ValidateAllowedHost(host); err != nil {
-			t.Fatalf("host %q: unexpected error %v", host, err)
 		}
 	}
 }

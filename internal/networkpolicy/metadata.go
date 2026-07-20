@@ -11,16 +11,14 @@ import (
 
 const mcpAllowedHostsMetadataKey = "mcp_allowed_hosts"
 
-// ErrMalformedWorkMetadata marks malformed network-policy fields in
-// Environment Work metadata. Callers must fail closed when MCP egress is on.
+// ErrMalformedWorkMetadata 表示 Environment Work metadata 中的网络策略字段
+// 格式错误；MCP egress 开启时调用方必须 fail closed。
 var ErrMalformedWorkMetadata = errors.New("malformed environment work network metadata")
 
-type workNetworkMetadataSchema struct {
-	MCPAllowedHosts []string `json:"mcp_allowed_hosts"`
-}
+type mcpAllowedHostsSchema []string
 
-// PatchWorkMetadataMCPAllowedHosts updates the typed network-policy field while
-// preserving metadata owned by other features.
+// PatchWorkMetadataMCPAllowedHosts 更新类型化的网络策略字段，同时保留其他功能
+// 所拥有的 metadata。
 func PatchWorkMetadataMCPAllowedHosts(raw json.RawMessage, hosts []string) (json.RawMessage, error) {
 	fields, err := parseWorkMetadataEnvelope(raw)
 	if err != nil {
@@ -33,7 +31,7 @@ func PatchWorkMetadataMCPAllowedHosts(raw json.RawMessage, hosts []string) (json
 	if normalized == nil {
 		normalized = []string{}
 	}
-	encoded, err := json.Marshal(normalized)
+	encoded, err := json.Marshal(mcpAllowedHostsSchema(normalized))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMalformedWorkMetadata, err)
 	}
@@ -41,8 +39,8 @@ func PatchWorkMetadataMCPAllowedHosts(raw json.RawMessage, hosts []string) (json
 	return json.Marshal(fields)
 }
 
-// ParseWorkMetadataMCPAllowedHosts reads the typed network-policy field. A
-// missing field means no MCP hosts; an explicit null or wrong shape is invalid.
+// ParseWorkMetadataMCPAllowedHosts 读取类型化的网络策略字段。字段缺失表示没有
+// MCP hosts；显式 null 或错误的数据结构均视为非法。
 func ParseWorkMetadataMCPAllowedHosts(raw json.RawMessage) ([]string, error) {
 	fields, err := parseWorkMetadataEnvelope(raw)
 	if err != nil {
@@ -55,11 +53,11 @@ func ParseWorkMetadataMCPAllowedHosts(raw json.RawMessage) ([]string, error) {
 	if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 		return nil, ErrMalformedWorkMetadata
 	}
-	var schema workNetworkMetadataSchema
-	if err := json.Unmarshal(raw, &schema); err != nil {
+	var schema mcpAllowedHostsSchema
+	if err := json.Unmarshal(value, &schema); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMalformedWorkMetadata, err)
 	}
-	return normalizeMetadataHosts(schema.MCPAllowedHosts)
+	return normalizeMetadataHosts(schema)
 }
 
 func parseWorkMetadataEnvelope(raw json.RawMessage) (map[string]json.RawMessage, error) {

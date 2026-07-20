@@ -351,8 +351,11 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 		where cs.external_id = $1
 			and o.uuid::text = $2
 			and w.uuid::text = $3
-			and cs.deleted_at is null
-	`, strings.TrimSpace(codeSessionExternalID), strings.TrimSpace(organizationUUID), strings.TrimSpace(workspaceUUID))
+	`+activeCodeSessionCredentialConditions,
+		strings.TrimSpace(codeSessionExternalID),
+		strings.TrimSpace(organizationUUID),
+		strings.TrimSpace(workspaceUUID),
+	)
 	var value CodeSessionNetworkPolicyContext
 	var environmentConfig []byte
 	var agentSnapshot []byte

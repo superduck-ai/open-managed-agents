@@ -1,10 +1,12 @@
 package codesessions
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -134,6 +136,24 @@ func TestUpstreamProxyPolicyFailsClosedWhenSubjectUnavailable(t *testing.T) {
 	}
 	if dialed {
 		t.Fatal("policy-unavailable target must not be dialed")
+	}
+}
+
+func TestUpstreamProxyPolicyFailureLogOmitsUnavailableInternalIDs(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	handler := policyTestHandler(t, networkpolicy.Policy{}, errors.New("database unavailable"))
+	if handler.authorizeUpstreamProxyTarget(context.Background(), testUpstreamProxyIdentity(), "example.com:443") {
+		t.Fatal("unavailable policy must be denied")
+	}
+	logged := output.String()
+	for _, field := range []string{"organization_id", "workspace_id", "environment_id"} {
+		if strings.Contains(logged, field+"=") {
+			t.Fatalf("failure log contains unavailable internal field %q: %s", field, logged)
+		}
 	}
 }
 

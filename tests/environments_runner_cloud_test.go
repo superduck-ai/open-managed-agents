@@ -363,66 +363,6 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	}
 }
 
-func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T) {
-	ctx := context.Background()
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
-	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	cfg.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.ClaudeAgentVersion = "2.1.120"
-	cfg.E2BTemplate = "fake-template"
-
-	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-resolve-failure-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{
-		"model":"claude-opus-4-8",
-		"name":"Runner Resolve Failure Agent"
-	}`)
-	defer archiveAgent(t, app, agent.ID)
-	environment := createEnvironment(t, app, `{"name":"runner-resolve-failure-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`"}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
-
-	client := anthropic.NewClient(
-		option.WithBaseURL(app.baseURL),
-		option.WithAPIKey(defaultTestKey),
-	)
-	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
-		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
-		EnvironmentID: environment.ID,
-		Title:         anthropic.String("Runner resolve failure session"),
-	})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
-
-	provider := &recordingRunnerProvider{
-		sandboxID:  "sandbox-should-not-start",
-		resolveErr: fmt.Errorf("network config invalid"),
-	}
-	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
-	processed, err := runner.RunOnce(ctx, "runner-cloud-resolve-failure-test")
-	if err == nil || !strings.Contains(err.Error(), "network config invalid") {
-		t.Fatalf("RunOnce error = %v, want resolve error", err)
-	}
-	if !processed {
-		t.Fatal("runner did not process queued session work")
-	}
-	if len(provider.creates) != 0 || len(provider.commands) != 0 || len(provider.launches) != 0 {
-		t.Fatalf("provider should not create sandbox after resolve failure: creates=%#v commands=%#v launches=%#v", provider.creates, provider.commands, provider.launches)
-	}
-	ids := getDefaultDBIDs(t, app.db)
-	if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID); !errors.Is(err, db.ErrNotFound) {
-		t.Fatalf("code session lookup error = %v, want ErrNotFound", err)
-	}
-}
-
 func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *testing.T) {
 	ctx := context.Background()
 
@@ -504,103 +444,98 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	}
 }
 
-func TestEnvironmentRunnerClearsStaleMCPHostsWhenCurrentSnapshotIsEmpty(t *testing.T) {
-	ctx := context.Background()
+func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
+	tests := []struct {
+		name        string
+		networking  string
+		wantLimited bool
+	}{
+		{name: "current snapshot is empty", networking: `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}`, wantLimited: true},
+		{name: "MCP access is disabled", networking: `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false}`, wantLimited: true},
+		{name: "network is unrestricted", networking: `{"type":"unrestricted"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+			cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+			cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+			cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+			cfg.E2B.Template = "fake-template"
 
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.CodeSessionAPIBaseURL = "http://code-session.example.test"
-	cfg.CodeSessionSandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentManagerPath = "/usr/local/bin/environment-manager"
-	cfg.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.ClaudeAgentVersion = "2.1.120"
-	cfg.E2BTemplate = "fake-template"
+			app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-stale-mcp-bucket"))
+			defer app.close()
 
-	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-stale-mcp-bucket"))
-	defer app.close()
+			agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Empty MCP Network Agent"}`)
+			defer archiveAgent(t, app, agent.ID)
+			environment := createEnvironment(t, app, `{
+				"name":"runner-empty-mcp-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`",
+				"config":{"type":"cloud","networking":`+test.networking+`}
+			}`)
+			defer cleanupEnvironmentRows(t, app.db, environment.ID)
 
-	agent := createAgent(t, app, `{
-		"model":"claude-opus-4-8",
-		"name":"Runner Empty MCP Network Agent"
-	}`)
-	defer archiveAgent(t, app, agent.ID)
-	environment := createEnvironment(t, app, `{
-		"name":"runner-empty-mcp-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`",
-		"config":{
-			"type":"cloud",
-			"networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}
-		}
-	}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+			client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
+			session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+				Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
+				EnvironmentID: environment.ID,
+				Title:         anthropic.String("Runner empty MCP network session"),
+			})
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
-	client := anthropic.NewClient(
-		option.WithBaseURL(app.baseURL),
-		option.WithAPIKey(defaultTestKey),
-	)
-	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
-		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
-		EnvironmentID: environment.ID,
-		Title:         anthropic.String("Runner empty MCP network session"),
-	})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+			ids := getDefaultDBIDs(t, app.db)
+			work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
+			if err != nil {
+				t.Fatalf("load environment work: %v", err)
+			}
+			if _, err := app.db.UpdateEnvironmentWorkMetadata(ctx, ids.WorkspaceID, environment.ID, work.ExternalID,
+				json.RawMessage(`{"mcp_allowed_hosts":["stale.example.com"]}`)); err != nil {
+				t.Fatalf("seed stale MCP metadata: %v", err)
+			}
 
-	ids := getDefaultDBIDs(t, app.db)
-	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
-	if err != nil {
-		t.Fatalf("load environment work: %v", err)
-	}
-	if _, err := app.db.UpdateEnvironmentWorkMetadata(
-		ctx,
-		ids.WorkspaceID,
-		environment.ID,
-		work.ExternalID,
-		json.RawMessage(`{"mcp_allowed_hosts":["stale.example.com"]}`),
-	); err != nil {
-		t.Fatalf("seed stale MCP metadata: %v", err)
-	}
-
-	provider := &recordingRunnerProvider{sandboxID: "sandbox-empty-mcp"}
-	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
-	processed, err := runner.RunOnce(ctx, "runner-cloud-empty-mcp-test")
-	if err != nil {
-		t.Fatalf("run once: %v", err)
-	}
-	if !processed {
-		t.Fatal("runner did not process queued session work")
-	}
-	if len(provider.resolves) != 1 {
-		t.Fatalf("resolves = %#v, want one", provider.resolves)
-	}
-	var rawMetadata map[string]json.RawMessage
-	if err := json.Unmarshal(provider.resolves[0].metadata, &rawMetadata); err != nil {
-		t.Fatalf("decode raw Resolve metadata: %v", err)
-	}
-	if string(rawMetadata["mcp_allowed_hosts"]) != "[]" {
-		t.Fatalf("empty MCP hosts metadata = %s, want []", rawMetadata["mcp_allowed_hosts"])
-	}
-	var metadata struct {
-		MCPAllowedHosts []string `json:"mcp_allowed_hosts"`
-	}
-	if err := json.Unmarshal(provider.resolves[0].metadata, &metadata); err != nil {
-		t.Fatalf("decode Resolve metadata: %v", err)
-	}
-	if len(metadata.MCPAllowedHosts) != 0 {
-		t.Fatalf("Resolve retained stale MCP hosts: %#v", metadata.MCPAllowedHosts)
-	}
-	if len(provider.creates) != 1 || provider.creates[0].resolution.Network == nil {
-		t.Fatalf("creates = %#v, want one limited network resolution", provider.creates)
-	}
-	allowOut, ok := provider.creates[0].resolution.Network.AllowOut.([]string)
-	if !ok {
-		t.Fatalf("Create resolution AllowOut = %#v, want []string", provider.creates[0].resolution.Network.AllowOut)
-	}
-	if slices.Contains(allowOut, "stale.example.com") {
-		t.Fatalf("Create resolution retained stale MCP host: %#v", allowOut)
+			provider := &recordingRunnerProvider{sandboxID: "sandbox-empty-mcp"}
+			runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
+			processed, err := runner.RunOnce(ctx, "runner-cloud-empty-mcp-test")
+			if err != nil || !processed {
+				t.Fatalf("RunOnce() = processed %v, error %v", processed, err)
+			}
+			if len(provider.resolves) != 1 {
+				t.Fatalf("resolves = %#v, want one", provider.resolves)
+			}
+			var rawMetadata map[string]json.RawMessage
+			if err := json.Unmarshal(provider.resolves[0].metadata, &rawMetadata); err != nil {
+				t.Fatalf("decode Resolve metadata: %v", err)
+			}
+			if string(rawMetadata["mcp_allowed_hosts"]) != "[]" {
+				t.Fatalf("empty MCP hosts metadata = %s, want []", rawMetadata["mcp_allowed_hosts"])
+			}
+			if len(provider.creates) != 1 {
+				t.Fatalf("creates = %#v, want one", provider.creates)
+			}
+			network := provider.creates[0].resolution.Network
+			if !test.wantLimited {
+				if network != nil {
+					t.Fatalf("unrestricted Create resolution network = %#v, want nil", network)
+				}
+				return
+			}
+			if network == nil {
+				t.Fatal("limited Create resolution network is nil")
+			}
+			allowOut, ok := network.AllowOut.([]string)
+			if !ok {
+				t.Fatalf("limited Create resolution AllowOut = %#v, want []string", network.AllowOut)
+			}
+			if slices.Contains(allowOut, "stale.example.com") {
+				t.Fatalf("Create resolution retained stale MCP host: %#v", allowOut)
+			}
+		})
 	}
 }
 

@@ -312,6 +312,20 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		t.Helper()
 		return connectViaCCRV2Proxy(t, app, codeSessionID, ingressToken, target)
 	}
+	setBoundHostAllowed := func(t *testing.T, allowed bool) {
+		t.Helper()
+		config := `{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}`
+		if allowed {
+			config = `{"type":"cloud","networking":{"type":"limited","allowed_hosts":["10.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}`
+		}
+		if _, err := app.db.Pool.Exec(context.Background(), `
+			update environments
+			set config = $2::jsonb
+			where external_id = $1
+		`, boundEnvironment.ID, config); err != nil {
+			t.Fatalf("update bound environment allowlist: %v", err)
+		}
+	}
 
 	t.Run("failure code session cannot borrow another environment allowlist", func(t *testing.T) {
 		// 10.0.0.1 只在 otherEnvironment 的 allowlist 里；若被借用，SSRF 关闭时
@@ -427,6 +441,40 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		}
 		if _, err := app.db.Pool.Exec(context.Background(), `update sessions set deleted_at = null where external_id = $1`, session.ID); err != nil {
 			t.Fatalf("restore bound session: %v", err)
+		}
+	})
+
+	t.Run("failure inactive code session fails closed", func(t *testing.T) {
+		setBoundHostAllowed(t, true)
+		t.Cleanup(func() { setBoundHostAllowed(t, false) })
+		if _, err := app.db.Pool.Exec(context.Background(), `update code_sessions set status = 'stopped' where external_id = $1`, codeSessionID); err != nil {
+			t.Fatalf("deactivate code session: %v", err)
+		}
+		t.Cleanup(func() {
+			if _, err := app.db.Pool.Exec(context.Background(), `update code_sessions set status = 'active' where external_id = $1`, codeSessionID); err != nil {
+				t.Errorf("restore code session status: %v", err)
+			}
+		})
+		status := connect(t, "10.0.0.1:443")
+		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
+			t.Fatalf("inactive-code-session CONNECT status = %q, want 403", status)
+		}
+	})
+
+	t.Run("failure terminated session fails closed", func(t *testing.T) {
+		setBoundHostAllowed(t, true)
+		t.Cleanup(func() { setBoundHostAllowed(t, false) })
+		if _, err := app.db.Pool.Exec(context.Background(), `update sessions set status = 'terminated' where external_id = $1`, session.ID); err != nil {
+			t.Fatalf("terminate bound session: %v", err)
+		}
+		t.Cleanup(func() {
+			if _, err := app.db.Pool.Exec(context.Background(), `update sessions set status = 'idle' where external_id = $1`, session.ID); err != nil {
+				t.Errorf("restore session status: %v", err)
+			}
+		})
+		status := connect(t, "10.0.0.1:443")
+		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
+			t.Fatalf("terminated-session CONNECT status = %q, want 403", status)
 		}
 	})
 
@@ -550,7 +598,7 @@ func newSSRFDisabledTestApp(t *testing.T, bucket string) *testApp {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionUpstreamProxyDisableSSRFProtection = true
+	cfg.CodeSession.UpstreamProxyDisableSSRFProtection = true
 	return newTestAppWithStore(t, &cfg, newFakeStore(bucket))
 }
 

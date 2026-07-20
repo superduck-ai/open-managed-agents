@@ -61,9 +61,6 @@ func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity ups
 		"event", "upstream_proxy_policy",
 		"organization_uuid", identity.organizationUUID,
 		"workspace_uuid", identity.workspaceUUID,
-		"organization_id", policyContext.organizationID,
-		"workspace_id", policyContext.workspaceID,
-		"environment_id", policyContext.environmentExternalID,
 		"code_session_id", identity.codeSessionExternalID,
 	}
 	if err != nil {
@@ -75,6 +72,11 @@ func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity ups
 		slog.WarnContext(ctx, "upstream proxy policy denied", attrs...)
 		return false
 	}
+	attrs = append(attrs,
+		"organization_id", policyContext.organizationID,
+		"workspace_id", policyContext.workspaceID,
+		"environment_id", policyContext.environmentExternalID,
+	)
 	decision := policyContext.policy.AuthorizeHTTPS(target)
 	attrs = append(attrs,
 		"reason", string(decision.Reason),

@@ -1,11 +1,12 @@
 package networkpolicy
 
 import (
-	"encoding/json"
 	"net"
+
+	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 )
 
-// Reason 是机器可测的授权结论，用于服务端审计日志；不下发给 Sandbox。
+// Reason is the machine-readable authorization result used in audit logs.
 type Reason string
 
 const (
@@ -18,25 +19,52 @@ const (
 	ReasonPolicyUnavailable  Reason = "policy_unavailable"
 )
 
-// Decision 是一次授权结论：是否放行、归一化 host 与 reason。
+// Decision is the authorization result for one normalized HTTPS target.
 type Decision struct {
 	Allow  bool
 	Reason Reason
 	Host   string
 }
 
-// Subject 是已认证的运行上下文。Config 为 Environment 当前配置 JSON，
-// AgentSnapshot 为 Session 的 AgentSnapshot JSON；均由调用方按 workspace
-// 作用域从数据库新鲜读取，绝不信任 Sandbox 提交的配置。
-type Subject struct {
-	Config        json.RawMessage
-	AgentSnapshot json.RawMessage
+// Policy is a parsed and compiled Environment network policy. Raw JSON is
+// confined to ParsePolicy; authorization only operates on typed state.
+type Policy struct {
+	policyType           Type
+	explicitHosts        hostMatcher
+	mcpHosts             map[string]struct{}
+	allowPackageManagers bool
 }
 
-// AuthorizeHTTPS 判断 limited/unrestricted 策略下 target（`host:443`）是否
-// 允许经 proxy 出口。只接受 443 端口；SSRF、公网 IP 与 DNS rebinding 检查
-// 由 proxy 保留，本函数不替代。
-func AuthorizeHTTPS(subject Subject, target string) Decision {
+// ParsePolicy parses database JSON at the policy-loading boundary and compiles
+// normalized host indexes. A malformed enabled source invalidates the policy.
+func ParsePolicy(configRaw, agentSnapshotRaw []byte) (Policy, error) {
+	config, err := ParseConfig(configRaw)
+	if err != nil {
+		return Policy{}, err
+	}
+	policy := Policy{policyType: config.Type}
+	if config.Type == TypeUnrestricted {
+		return policy, nil
+	}
+	policy.explicitHosts, err = newHostMatcher(config.AllowedHosts)
+	if err != nil {
+		return Policy{}, err
+	}
+	policy.allowPackageManagers = config.AllowPackageManagers
+	policy.mcpHosts = map[string]struct{}{}
+	if config.AllowMCPServers {
+		hosts, err := MCPAllowedHosts(agentSnapshotRaw)
+		if err != nil {
+			return Policy{}, err
+		}
+		policy.mcpHosts = collections.StringSet(hosts)
+	}
+	return policy, nil
+}
+
+// AuthorizeHTTPS authorizes a target in host:443 form. SSRF, public-address,
+// and DNS-rebinding checks remain the responsibility of the proxy dialer.
+func (p Policy) AuthorizeHTTPS(target string) Decision {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil || port != "443" {
 		return Decision{Reason: ReasonInvalidTarget}
@@ -45,36 +73,17 @@ func AuthorizeHTTPS(subject Subject, target string) Decision {
 	if err != nil {
 		return Decision{Reason: ReasonInvalidTarget}
 	}
-	config, err := ParseConfig(subject.Config)
-	if err != nil {
-		return Decision{Reason: ReasonPolicyUnavailable, Host: normalized}
-	}
-	if config.Type == TypeUnrestricted {
+	if p.policyType == TypeUnrestricted {
 		return Decision{Allow: true, Reason: ReasonUnrestricted, Host: normalized}
 	}
-	var mcpHosts []string
-	if config.AllowMCPServers {
-		mcpHosts, err = MCPAllowedHosts(subject.AgentSnapshot)
-		if err != nil {
-			return Decision{Reason: ReasonPolicyUnavailable, Host: normalized}
-		}
+	if p.explicitHosts.match(normalized) {
+		return Decision{Allow: true, Reason: ReasonExplicitHost, Host: normalized}
 	}
-	for _, entry := range config.AllowedHosts {
-		if matchAllowedEntry(entry, normalized) {
-			return Decision{Allow: true, Reason: ReasonExplicitHost, Host: normalized}
-		}
+	if _, ok := p.mcpHosts[normalized]; ok {
+		return Decision{Allow: true, Reason: ReasonMCPHost, Host: normalized}
 	}
-	if config.AllowMCPServers {
-		for _, mcpHost := range mcpHosts {
-			if mcpHost == normalized {
-				return Decision{Allow: true, Reason: ReasonMCPHost, Host: normalized}
-			}
-		}
-	}
-	if config.AllowPackageManagers {
-		if isPackageManagerHost(normalized) {
-			return Decision{Allow: true, Reason: ReasonPackageManagerHost, Host: normalized}
-		}
+	if p.allowPackageManagers && isPackageManagerHost(normalized) {
+		return Decision{Allow: true, Reason: ReasonPackageManagerHost, Host: normalized}
 	}
 	return Decision{Reason: ReasonHostNotAllowed, Host: normalized}
 }

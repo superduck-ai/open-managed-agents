@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
@@ -103,7 +104,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 		resolved.Envs["ANTHROPIC_WORK_ID"] = work.ExternalID
 	}
 
-	network, allowInternet, err := resolveNetwork(env.Config, mcpAllowedHostsFromWork(work))
+	network, allowInternet, err := resolveNetwork(env.Config, work)
 	if err != nil {
 		return Resolution{}, err
 	}
@@ -434,7 +435,7 @@ func (p *E2BProvider) volumeWriteOpts() *e2b.VolumeWriteOptions {
 	}
 }
 
-func resolveNetwork(raw json.RawMessage, mcpAllowedHosts []string) (*e2b.SandboxNetworkOpts, bool, error) {
+func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork) (*e2b.SandboxNetworkOpts, bool, error) {
 	if len(raw) == 0 {
 		return nil, true, nil
 	}
@@ -454,32 +455,20 @@ func resolveNetwork(raw json.RawMessage, mcpAllowedHosts []string) (*e2b.Sandbox
 		hosts = append(hosts, networkpolicy.PackageManagerHosts()...)
 	}
 	if config.AllowMCPServers {
+		mcpAllowedHosts, err := mcpAllowedHostsFromWork(work)
+		if err != nil {
+			return nil, false, err
+		}
 		hosts = append(hosts, mcpAllowedHosts...)
 	}
-	return &e2b.SandboxNetworkOpts{AllowOut: networkpolicy.DedupeStrings(hosts)}, false, nil
+	return &e2b.SandboxNetworkOpts{AllowOut: collections.UniqueTrimmedStrings(hosts)}, false, nil
 }
 
-func mcpAllowedHostsFromWork(work *db.EnvironmentWork) []string {
-	if work == nil || len(work.Metadata) == 0 || strings.TrimSpace(string(work.Metadata)) == "null" {
-		return nil
+func mcpAllowedHostsFromWork(work *db.EnvironmentWork) ([]string, error) {
+	if work == nil {
+		return nil, nil
 	}
-	var metadata map[string]any
-	if err := json.Unmarshal(work.Metadata, &metadata); err != nil {
-		return nil
-	}
-	values, ok := metadata["mcp_allowed_hosts"].([]any)
-	if !ok {
-		return nil
-	}
-	hosts := make([]string, 0, len(values))
-	for _, value := range values {
-		host, ok := value.(string)
-		if !ok {
-			continue
-		}
-		hosts = append(hosts, host)
-	}
-	return networkpolicy.DedupeStrings(hosts)
+	return networkpolicy.ParseWorkMetadataMCPAllowedHosts(work.Metadata)
 }
 
 func shellQuote(value string) string {

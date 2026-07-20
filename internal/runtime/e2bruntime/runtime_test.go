@@ -97,6 +97,22 @@ func TestResolveLimitedNetworkFailsClosedOnInvalidAllowedHost(t *testing.T) {
 	}
 }
 
+func TestResolveLimitedNetworkFailsClosedOnMalformedMCPMetadata(t *testing.T) {
+	provider := NewProvider(config.Config{})
+	_, err := provider.Resolve(db.Environment{
+		ExternalID:       "env_invalid_mcp_metadata",
+		WorkspaceID:      42,
+		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}}`),
+		ResolvedTemplate: "template_test",
+	}, &db.EnvironmentWork{
+		ExternalID: "work_invalid_mcp_metadata",
+		Metadata:   json.RawMessage(`{"mcp_allowed_hosts":["mcp.example.com",42]}`),
+	})
+	if err == nil {
+		t.Fatal("malformed mcp_allowed_hosts metadata must fail closed")
+	}
+}
+
 func TestResolveLimitedNetworkIncludesMCPHostsWhenAllowed(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	env := db.Environment{

@@ -4,50 +4,69 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"golang.org/x/net/idna"
+	validation "k8s.io/apimachinery/pkg/util/validation"
 )
 
-// allowedHostPattern 与 environments 写入校验共享同一份规则：
-// 可选 `*.` 通配前缀、hostname 字符集、可选 `:port`。
-var allowedHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
+var errAllowedHost = errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
 
-// lookupProfile 保留 IDNA lookup 映射与双向文本检查，但兼容浏览器和常见
-// CDN 实际使用的第三、四位连续连字符标签。
+// lookupProfile keeps browser-compatible IDNA lookup mapping. DNS syntax and
+// length checks are delegated to Kubernetes' RFC 1123 validators afterward.
 var lookupProfile = idna.New(idna.MapForLookup(), idna.BidiRule(), idna.CheckHyphens(false))
 
-// ValidateAllowedHost 校验 allowed_hosts 条目。错误文案与 environments handler
-// 既有合同保持一致，调用方直接透传。
-func ValidateAllowedHost(host string) error {
-	if strings.Contains(host, "://") || strings.Contains(host, "/") {
-		return errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
+type parsedAllowedHost struct {
+	host     string
+	port     string
+	wildcard bool
+}
+
+// ValidateAllowedHost validates the public allowed_hosts contract. IP parsing,
+// IDNA mapping, and host/port splitting happen before DNS syntax is delegated
+// to the Kubernetes validators used for Ingress hostnames.
+func ValidateAllowedHost(entry string) error {
+	_, err := parseAllowedHost(entry)
+	return err
+}
+
+func parseAllowedHost(entry string) (parsedAllowedHost, error) {
+	if strings.Contains(entry, "://") || strings.Contains(entry, "/") {
+		return parsedAllowedHost{}, errAllowedHost
 	}
-	if len(host) > 253 {
-		return errors.New("config.networking.allowed_hosts entries must be at most 253 characters")
+	host, port, err := splitAllowedHost(entry)
+	if err != nil || !validAllowedPort(port) {
+		return parsedAllowedHost{}, errAllowedHost
 	}
-	hostname, port, err := splitAllowedHost(host)
+	wildcard := strings.HasPrefix(host, "*.")
+	if wildcard {
+		host = strings.TrimPrefix(host, "*.")
+	}
+	if strings.Contains(host, "*") {
+		return parsedAllowedHost{}, errAllowedHost
+	}
+	normalized, err := NormalizeHost(host)
 	if err != nil {
-		return errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
+		return parsedAllowedHost{}, errAllowedHost
 	}
-	if port != "" {
-		value, err := strconv.Atoi(port)
-		if err != nil || value < 1 || value > 65535 {
-			return errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
-		}
+	if wildcard && net.ParseIP(normalized) != nil {
+		return parsedAllowedHost{}, errAllowedHost
 	}
-	hostname = strings.TrimPrefix(hostname, "*.")
-	normalized, err := NormalizeHost(hostname)
-	if err != nil || !validNormalizedHostname(normalized) {
-		return errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
+	if wildcard && len(validation.IsWildcardDNS1123Subdomain("*."+normalized)) != 0 {
+		return parsedAllowedHost{}, errAllowedHost
 	}
-	return nil
+	return parsedAllowedHost{host: normalized, port: port, wildcard: wildcard}, nil
 }
 
 func splitAllowedHost(entry string) (string, string, error) {
-	if addr, err := netip.ParseAddr(entry); err == nil && addr.Zone() == "" {
+	if entry == "" || entry != strings.TrimSpace(entry) {
+		return "", "", errAllowedHost
+	}
+	if addr, err := netip.ParseAddr(entry); err == nil {
+		if addr.Zone() != "" {
+			return "", "", errAllowedHost
+		}
 		return addr.Unmap().String(), "", nil
 	}
 	if strings.HasPrefix(entry, "[") {
@@ -57,22 +76,33 @@ func splitAllowedHost(entry string) (string, string, error) {
 		}
 		addr, err := netip.ParseAddr(host)
 		if err != nil || addr.Zone() != "" {
-			return "", "", errors.New("invalid IP literal")
+			return "", "", errAllowedHost
 		}
 		return addr.Unmap().String(), port, nil
 	}
-	if !allowedHostPattern.MatchString(entry) {
-		return "", "", errors.New("invalid hostname")
+	if strings.Count(entry, ":") == 1 {
+		host, port, err := net.SplitHostPort(entry)
+		if err != nil {
+			return "", "", err
+		}
+		return host, port, nil
 	}
-	host, port := entry, ""
-	if separator := strings.LastIndexByte(entry, ':'); separator >= 0 {
-		host, port = entry[:separator], entry[separator+1:]
+	if strings.Contains(entry, ":") {
+		return "", "", errAllowedHost
 	}
-	return host, port, nil
+	return entry, "", nil
 }
 
-// NormalizeHost 对 allowlist 条目与 CONNECT target 做同一套归一化：
-// 小写、去尾点、IDNA→punycode。
+func validAllowedPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	value, err := strconv.Atoi(port)
+	return err == nil && value >= 1 && value <= 65535
+}
+
+// NormalizeHost applies the same canonicalization to allowlist entries,
+// metadata, MCP URLs, and CONNECT targets.
 func NormalizeHost(raw string) (string, error) {
 	host := strings.ToLower(strings.TrimSpace(raw))
 	host = strings.TrimSuffix(host, ".")
@@ -89,42 +119,74 @@ func NormalizeHost(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if problems := validation.IsDNS1123Subdomain(ascii); len(problems) != 0 {
+		return "", errors.New(strings.Join(problems, "; "))
+	}
 	return ascii, nil
 }
 
-func validNormalizedHostname(host string) bool {
-	if net.ParseIP(host) != nil {
-		return true
-	}
-	for _, label := range strings.Split(host, ".") {
-		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-			return false
-		}
-	}
-	return true
+type hostMatcher struct {
+	exact        map[string]struct{}
+	wildcardRoot *hostMatcherNode
 }
 
-// matchAllowedEntry 判断单条 allowlist 条目是否命中已归一化的 target host。
-// `*.example.com` 匹配任意深度子域但不含 apex；带非 443 端口的条目对
-// 443-only 的 proxy 惰性，永不命中。
-func matchAllowedEntry(entry string, normalizedTarget string) bool {
-	host, port, err := splitAllowedHost(entry)
-	if err != nil {
-		return false
+type hostMatcherNode struct {
+	children map[string]*hostMatcherNode
+	wildcard bool
+}
+
+func newHostMatcher(entries []string) (hostMatcher, error) {
+	matcher := hostMatcher{
+		exact:        make(map[string]struct{}, len(entries)),
+		wildcardRoot: &hostMatcherNode{children: map[string]*hostMatcherNode{}},
 	}
-	if port != "" && port != "443" {
-		return false
-	}
-	if suffix, ok := strings.CutPrefix(host, "*."); ok {
-		normalized, err := NormalizeHost(suffix)
+	for _, entry := range entries {
+		parsed, err := parseAllowedHost(entry)
 		if err != nil {
+			return hostMatcher{}, err
+		}
+		if parsed.port != "" && parsed.port != "443" {
+			continue
+		}
+		if parsed.wildcard {
+			matcher.addWildcard(parsed.host)
+			continue
+		}
+		matcher.exact[parsed.host] = struct{}{}
+	}
+	return matcher, nil
+}
+
+func (m hostMatcher) match(host string) bool {
+	if _, ok := m.exact[host]; ok {
+		return true
+	}
+	labels := strings.Split(host, ".")
+	node := m.wildcardRoot
+	for index := len(labels) - 1; index >= 0; index-- {
+		next, ok := node.children[labels[index]]
+		if !ok {
 			return false
 		}
-		return strings.HasSuffix(normalizedTarget, "."+normalized)
+		node = next
+		if node.wildcard && index > 0 {
+			return true
+		}
 	}
-	normalized, err := NormalizeHost(host)
-	if err != nil {
-		return false
+	return false
+}
+
+func (m hostMatcher) addWildcard(host string) {
+	node := m.wildcardRoot
+	labels := strings.Split(host, ".")
+	for index := len(labels) - 1; index >= 0; index-- {
+		label := labels[index]
+		next, ok := node.children[label]
+		if !ok {
+			next = &hostMatcherNode{children: map[string]*hostMatcherNode{}}
+			node.children[label] = next
+		}
+		node = next
 	}
-	return normalized == normalizedTarget
+	node.wildcard = true
 }

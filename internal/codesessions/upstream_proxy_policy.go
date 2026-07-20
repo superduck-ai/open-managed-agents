@@ -9,9 +9,9 @@ import (
 )
 
 // upstreamProxyPolicyContext 是一次 CONNECT 授权所需的策略上下文：
-// Subject 供纯策略模块决策，其余字段只用于服务端审计日志。
+// Policy 供纯策略模块决策，其余字段只用于服务端审计日志。
 type upstreamProxyPolicyContext struct {
-	subject               networkpolicy.Subject
+	policy                networkpolicy.Policy
 	organizationID        int64
 	workspaceID           int64
 	environmentExternalID string
@@ -39,14 +39,15 @@ func (h *Handler) loadUpstreamProxyPolicyContext(ctx context.Context, identity u
 	if err != nil {
 		return upstreamProxyPolicyContext{}, err
 	}
+	policy, err := networkpolicy.ParsePolicy(record.EnvironmentConfig, record.AgentSnapshot)
+	if err != nil {
+		return upstreamProxyPolicyContext{}, err
+	}
 	return upstreamProxyPolicyContext{
 		organizationID:        record.OrganizationID,
 		workspaceID:           record.WorkspaceID,
 		environmentExternalID: record.EnvironmentExternalID,
-		subject: networkpolicy.Subject{
-			Config:        record.EnvironmentConfig,
-			AgentSnapshot: record.AgentSnapshot,
-		},
+		policy:                policy,
 	}, nil
 }
 
@@ -74,7 +75,7 @@ func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity ups
 		slog.WarnContext(ctx, "upstream proxy policy denied", attrs...)
 		return false
 	}
-	decision := networkpolicy.AuthorizeHTTPS(policyContext.subject, target)
+	decision := policyContext.policy.AuthorizeHTTPS(target)
 	attrs = append(attrs,
 		"reason", string(decision.Reason),
 		"host", decision.Host,

@@ -74,22 +74,23 @@ func testUpstreamProxyIdentity() upstreamProxyIdentity {
 }
 
 // stubUnrestrictedPolicyContext 给 nil DB 的测试 Handler 提供 unrestricted 策略上下文。
-func stubUnrestrictedPolicyContext(handler *Handler) {
+func stubUnrestrictedPolicyContext(t *testing.T, handler *Handler) {
+	t.Helper()
+	policy, err := networkpolicy.ParsePolicy(json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`), nil)
+	if err != nil {
+		t.Fatalf("ParsePolicy() error = %v", err)
+	}
 	handler.loadPolicyContext = func(context.Context, upstreamProxyIdentity) (upstreamProxyPolicyContext, error) {
-		return upstreamProxyPolicyContext{
-			subject: networkpolicy.Subject{
-				Config: json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
-			},
-		}, nil
+		return upstreamProxyPolicyContext{policy: policy}, nil
 	}
 }
 
-func policyTestHandler(t *testing.T, subject networkpolicy.Subject, err error) *Handler {
+func policyTestHandler(t *testing.T, policy networkpolicy.Policy, err error) *Handler {
 	t.Helper()
 	handler := NewHandler(config.Config{}, newTestService(t, nil))
 	handler.loadPolicyContext = func(context.Context, upstreamProxyIdentity) (upstreamProxyPolicyContext, error) {
 		return upstreamProxyPolicyContext{
-			subject:               subject,
+			policy:                policy,
 			organizationID:        1,
 			workspaceID:           2,
 			environmentExternalID: "env_test",
@@ -98,14 +99,22 @@ func policyTestHandler(t *testing.T, subject networkpolicy.Subject, err error) *
 	return handler
 }
 
+func mustParsePolicy(t *testing.T, configRaw json.RawMessage) networkpolicy.Policy {
+	t.Helper()
+	policy, err := networkpolicy.ParsePolicy(configRaw, nil)
+	if err != nil {
+		t.Fatalf("ParsePolicy() error = %v", err)
+	}
+	return policy
+}
+
 // ---- 失败场景 ----
 
 func TestUpstreamProxyPolicyDeniesLimitedUnlistedHost(t *testing.T) {
 	t.Parallel()
 
-	handler := policyTestHandler(t, networkpolicy.Subject{
-		Config: json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}`),
-	}, nil)
+	handler := policyTestHandler(t, mustParsePolicy(t,
+		json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}`)), nil)
 	status, dialed := connectViaTunnel(t, handler, "1.1.1.1:443")
 	if !strings.HasPrefix(status, "HTTP/1.1 403") {
 		t.Fatalf("limited CONNECT status = %q, want 403", status)
@@ -118,7 +127,7 @@ func TestUpstreamProxyPolicyDeniesLimitedUnlistedHost(t *testing.T) {
 func TestUpstreamProxyPolicyFailsClosedWhenSubjectUnavailable(t *testing.T) {
 	t.Parallel()
 
-	handler := policyTestHandler(t, networkpolicy.Subject{}, errors.New("database unavailable"))
+	handler := policyTestHandler(t, networkpolicy.Policy{}, errors.New("database unavailable"))
 	status, dialed := connectViaTunnel(t, handler, "1.1.1.1:443")
 	if !strings.HasPrefix(status, "HTTP/1.1 403") {
 		t.Fatalf("unavailable-policy CONNECT status = %q, want 403", status)
@@ -133,9 +142,8 @@ func TestUpstreamProxyPolicyDeniesBeforeSSRFResolution(t *testing.T) {
 
 	// limited 拒绝私网目标时必须先命中策略 403，而不是进入 SSRF/DNS 路径；
 	// 这里用公网目标避免与 SSRF 拒绝混淆，dial 不发生即证明策略先行。
-	handler := policyTestHandler(t, networkpolicy.Subject{
-		Config: json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}}`),
-	}, nil)
+	handler := policyTestHandler(t, mustParsePolicy(t,
+		json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":false,"allow_package_managers":false}}`)), nil)
 	status, dialed := connectViaTunnel(t, handler, "8.8.8.8:443")
 	if !strings.HasPrefix(status, "HTTP/1.1 403") {
 		t.Fatalf("unlisted public target status = %q, want 403", status)
@@ -150,9 +158,8 @@ func TestUpstreamProxyPolicyDeniesBeforeSSRFResolution(t *testing.T) {
 func TestUpstreamProxyPolicyAllowsListedHost(t *testing.T) {
 	t.Parallel()
 
-	handler := policyTestHandler(t, networkpolicy.Subject{
-		Config: json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["1.1.1.1"],"allow_mcp_servers":false,"allow_package_managers":false}}`),
-	}, nil)
+	handler := policyTestHandler(t, mustParsePolicy(t,
+		json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["1.1.1.1"],"allow_mcp_servers":false,"allow_package_managers":false}}`)), nil)
 	status, dialed := connectViaTunnel(t, handler, "1.1.1.1:443")
 	if !strings.HasPrefix(status, "HTTP/1.1 200 Connection Established") {
 		t.Fatalf("listed CONNECT status = %q, want 200", status)
@@ -165,9 +172,8 @@ func TestUpstreamProxyPolicyAllowsListedHost(t *testing.T) {
 func TestUpstreamProxyPolicyAllowsUnrestricted(t *testing.T) {
 	t.Parallel()
 
-	handler := policyTestHandler(t, networkpolicy.Subject{
-		Config: json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
-	}, nil)
+	handler := policyTestHandler(t, mustParsePolicy(t,
+		json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`)), nil)
 	status, dialed := connectViaTunnel(t, handler, "1.1.1.1:443")
 	if !strings.HasPrefix(status, "HTTP/1.1 200 Connection Established") {
 		t.Fatalf("unrestricted CONNECT status = %q, want 200", status)

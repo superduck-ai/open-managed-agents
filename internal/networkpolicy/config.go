@@ -1,6 +1,7 @@
 // Package networkpolicy 是 Environment networking（unrestricted/limited）的纯策略模块。
-// 它不访问数据库：调用方组装 Subject，模块返回带机器可测 reason 的 Decision。
-// Code Session upstream proxy 是主要执行点；E2B Adapter 复用同一解析与 host catalog。
+// 它不访问数据库：ParseConfig 解析 wire schema，ParsePolicy 编译类型化
+// Policy，授权返回带机器可测 reason 的 Decision。Code Session upstream proxy
+// 是主要执行点；E2B Adapter 复用同一解析与 host catalog。
 package networkpolicy
 
 import (
@@ -31,6 +32,18 @@ type Config struct {
 	AllowPackageManagers bool
 }
 
+type environmentConfigSchema struct {
+	Type       string                    `json:"type"`
+	Networking *environmentNetworkSchema `json:"networking"`
+}
+
+type environmentNetworkSchema struct {
+	Type                 string   `json:"type"`
+	AllowedHosts         []string `json:"allowed_hosts"`
+	AllowMCPServers      bool     `json:"allow_mcp_servers"`
+	AllowPackageManagers bool     `json:"allow_package_managers"`
+}
+
 // ParseConfig 解析完整 Environment 配置 JSON 并提取 networking。
 // 顶层 type 不是 "cloud"（含缺失）时视为 unrestricted——非 cloud Environment
 // 没有受管 Sandbox 出口；networking 缺失或为 null 时同样视为 unrestricted。
@@ -40,28 +53,21 @@ func ParseConfig(raw json.RawMessage) (Config, error) {
 	if len(raw) == 0 {
 		return Config{Type: TypeUnrestricted}, nil
 	}
-	var config struct {
-		Type       string          `json:"type"`
-		Networking json.RawMessage `json:"networking"`
-	}
-	if err := json.Unmarshal(raw, &config); err != nil {
+	var schema environmentConfigSchema
+	if err := json.Unmarshal(raw, &schema); err != nil {
 		return Config{}, fmt.Errorf("%w: %v", ErrMalformedConfig, err)
 	}
-	if config.Type != "cloud" {
+	return configFromSchema(schema)
+}
+
+func configFromSchema(schema environmentConfigSchema) (Config, error) {
+	if schema.Type != "cloud" {
 		return Config{Type: TypeUnrestricted}, nil
 	}
-	if len(config.Networking) == 0 || string(config.Networking) == "null" {
+	if schema.Networking == nil {
 		return Config{Type: TypeUnrestricted}, nil
 	}
-	var networking struct {
-		Type                 string   `json:"type"`
-		AllowedHosts         []string `json:"allowed_hosts"`
-		AllowMCPServers      bool     `json:"allow_mcp_servers"`
-		AllowPackageManagers bool     `json:"allow_package_managers"`
-	}
-	if err := json.Unmarshal(config.Networking, &networking); err != nil {
-		return Config{}, fmt.Errorf("%w: %v", ErrMalformedConfig, err)
-	}
+	networking := schema.Networking
 	switch networking.Type {
 	case string(TypeUnrestricted):
 		return Config{Type: TypeUnrestricted}, nil

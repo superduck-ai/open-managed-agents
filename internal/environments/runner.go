@@ -307,7 +307,7 @@ func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.
 	if hosts == nil {
 		hosts = []string{}
 	}
-	nextMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{"mcp_allowed_hosts": hosts})
+	nextMetadata, err := networkpolicy.PatchWorkMetadataMCPAllowedHosts(work.Metadata, hosts)
 	if err != nil {
 		return err
 	}

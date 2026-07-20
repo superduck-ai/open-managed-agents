@@ -185,7 +185,7 @@ func TestUpstreamProxyTunnelForwardsBinaryChunks(t *testing.T) {
 	targetConnections := make(chan net.Conn, 1)
 	dialTargets := make(chan string, 1)
 	handler := NewHandler(config.Config{}, newTestService(t, nil))
-	stubUnrestrictedPolicyContext(handler)
+	stubUnrestrictedPolicyContext(t, handler)
 	handler.upstreamProxy = upstreamProxyRuntime{
 		dial: func(_ context.Context, target string) (net.Conn, error) {
 			dialTargets <- target

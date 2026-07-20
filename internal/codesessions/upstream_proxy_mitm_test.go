@@ -282,7 +282,7 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	upstreamRequests := make(chan *http.Request, 1)
 	dialTargets := make(chan string, 1)
 	handler := NewHandler(files.config(), newTestService(t, nil))
-	stubUnrestrictedPolicyContext(handler)
+	stubUnrestrictedPolicyContext(t, handler)
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("load generated tunnel CA: %v", err)

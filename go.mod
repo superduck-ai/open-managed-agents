@@ -13,6 +13,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/redis/go-redis/v9 v9.20.1
+	github.com/samber/lo v1.53.0
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1
 	github.com/superduck-ai/e2b-go-sdk v0.0.1
 	go.opentelemetry.io/proto/otlp v1.10.0
@@ -21,6 +22,7 @@ require (
 	golang.org/x/sync v0.20.0
 	golang.org/x/text v0.37.0
 	google.golang.org/protobuf v1.36.11
+	k8s.io/apimachinery v0.35.6
 )
 
 require (
@@ -28,6 +30,7 @@ require (
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
@@ -64,4 +67,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260420184626-e10c466a9529 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
+	k8s.io/klog/v2 v2.130.1 // indirect
+	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4 // indirect
 )

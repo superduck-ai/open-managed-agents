@@ -40,7 +40,7 @@ func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {
 		Packages json.RawMessage `json:"packages"`
 	}
 	if err := json.Unmarshal(config, &cloud); err != nil {
-		return nil, false, fmt.Errorf("decode environment packages: %w", err)
+		return nil, false, fmt.Errorf("decode environment config: %w", err)
 	}
 	if cloud.Type != "cloud" {
 		return nil, false, nil

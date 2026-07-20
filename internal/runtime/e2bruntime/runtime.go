@@ -467,6 +467,7 @@ func packageManagerHosts() []string {
 		"index.crates.io",
 		"static.crates.io",
 		"rubygems.org",
+		"index.rubygems.org",
 	}
 }
 

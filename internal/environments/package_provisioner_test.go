@@ -21,6 +21,23 @@ func TestNormalizePackages(t *testing.T) {
 }
 
 func TestBuildPackageManifest(t *testing.T) {
+	t.Run("invalid environment config has a root decode error", func(t *testing.T) {
+		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":`))
+		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want root config decode error", manifest, provision, err)
+		}
+		if strings.Contains(err.Error(), "decode environment packages") {
+			t.Fatalf("root config error used nested packages prefix: %v", err)
+		}
+	})
+
+	t.Run("invalid nested packages has a packages decode error", func(t *testing.T) {
+		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":"cloud","packages":true}`))
+		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment packages") {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want nested packages decode error", manifest, provision, err)
+		}
+	})
+
 	t.Run("invalid type uses the normalization error", func(t *testing.T) {
 		_, normalizeErr := normalizePackages(json.RawMessage(`{"type":"other"}`))
 		manifest, provision, manifestErr := buildPackageManifest(json.RawMessage(`{
@@ -106,12 +123,36 @@ func TestBuildPackageManifest(t *testing.T) {
 	})
 }
 
-func TestPackageProvisionerUsesManagerOrderAndStopsOnFailure(t *testing.T) {
-	python := "/usr/bin/python3"
-	if _, statErr := os.Stat(python); statErr != nil {
-		python = "python3"
+func TestPackageProvisionerRejectsNonObjectManifest(t *testing.T) {
+	python, err := packageProvisionerPython()
+	if err != nil {
+		t.Skip("python3 is required to exercise the embedded provisioner")
 	}
-	python, err := exec.LookPath(python)
+	for _, manifest := range []string{"[]", "null", `"not-an-object"`} {
+		t.Run(manifest, func(t *testing.T) {
+			manifestPath := filepath.Join(t.TempDir(), "packages.json")
+			if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+				t.Fatalf("write manifest: %v", err)
+			}
+			command := exec.Command(python, "-", manifestPath)
+			command.Stdin = bytes.NewReader(packageProvisionerV1)
+			output, err := command.CombinedOutput()
+			if err == nil {
+				t.Fatal("provisioner accepted a non-object manifest")
+			}
+			message := string(output)
+			if !strings.Contains(message, "packages manifest must be an object") {
+				t.Fatalf("provisioner output = %q, want object validation error", message)
+			}
+			if strings.Contains(message, "Traceback") || strings.Contains(message, "AttributeError") {
+				t.Fatalf("provisioner leaked an implementation exception: %q", message)
+			}
+		})
+	}
+}
+
+func TestPackageProvisionerUsesManagerOrderAndStopsOnFailure(t *testing.T) {
+	python, err := packageProvisionerPython()
 	if err != nil {
 		t.Skip("python3 is required to exercise the embedded provisioner")
 	}
@@ -190,6 +231,14 @@ func TestPackageProvisionerUsesManagerOrderAndStopsOnFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+func packageProvisionerPython() (string, error) {
+	python := "/usr/bin/python3"
+	if _, err := os.Stat(python); err != nil {
+		python = "python3"
+	}
+	return exec.LookPath(python)
 }
 
 func mustPackageJSON(t *testing.T, value any) json.RawMessage {

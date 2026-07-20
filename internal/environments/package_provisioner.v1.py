@@ -28,6 +28,8 @@ MANAGERS = (
 
 def load_manifest(manifest_path: str) -> dict[str, list[str]]:
     manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("packages manifest must be an object")
     if manifest.get("version") != 1:
         raise ValueError("unsupported packages manifest version")
     packages = manifest.get("packages")

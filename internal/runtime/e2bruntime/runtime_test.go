@@ -128,7 +128,7 @@ func TestResolveLimitedNetworkIncludesMCPHostsWhenAllowed(t *testing.T) {
 	}
 }
 
-func TestResolveLimitedNetworkIncludesCargoStaticCDNWhenPackageManagersAllowed(t *testing.T) {
+func TestResolveLimitedNetworkIncludesPackageManagerDownloadHosts(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	resolution, err := provider.Resolve(db.Environment{
 		ExternalID:       "env_packages",
@@ -148,6 +148,9 @@ func TestResolveLimitedNetworkIncludesCargoStaticCDNWhenPackageManagersAllowed(t
 	}
 	if !slices.Contains(allowedHosts, "static.crates.io") {
 		t.Fatalf("AllowOut = %#v, want Cargo static CDN", allowedHosts)
+	}
+	if !slices.Contains(allowedHosts, "index.rubygems.org") {
+		t.Fatalf("AllowOut = %#v, want RubyGems compact index", allowedHosts)
 	}
 }
 

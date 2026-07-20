@@ -72,10 +72,8 @@ func AuthorizeHTTPS(subject Subject, target string) Decision {
 		}
 	}
 	if config.AllowPackageManagers {
-		for _, catalogHost := range PackageManagerHosts() {
-			if catalogHost == normalized {
-				return Decision{Allow: true, Reason: ReasonPackageManagerHost, Host: normalized}
-			}
+		if isPackageManagerHost(normalized) {
+			return Decision{Allow: true, Reason: ReasonPackageManagerHost, Host: normalized}
 		}
 	}
 	return Decision{Reason: ReasonHostNotAllowed, Host: normalized}

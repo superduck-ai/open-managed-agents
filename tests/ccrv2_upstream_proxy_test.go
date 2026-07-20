@@ -291,45 +291,6 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 	})
 }
 
-// TestCCRV2UpstreamProxyNetworkPolicyAllow 在关闭 SSRF 地址过滤的 app 上验证策略放行路径：
-// 授权 host 通过策略后进入拨号（127.0.0.1:443 无监听 → 502），收紧配置后同一目标变成
-// 策略 403。SSRF 关闭时 403 只能来自策略授权，与地址过滤的 403 无歧义。
-func TestCCRV2UpstreamProxyNetworkPolicyAllow(t *testing.T) {
-	app := newSSRFDisabledTestApp(t, "ccrv2-network-policy-allow-bucket")
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"ccrv2-network-policy-allow-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
-	environment := createEnvironment(t, app, `{"name":"ccrv2-network-policy-allow-env","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["127.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(environment.ID)+`}`)
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	ingressToken := codeSessionIngressToken(t, app, codeSessionID)
-	connect := func(t *testing.T, target string) string {
-		t.Helper()
-		return connectViaCCRV2Proxy(t, app, codeSessionID, ingressToken, target)
-	}
-
-	t.Run("failure unlisted host denied even with SSRF protection disabled", func(t *testing.T) {
-		status := connect(t, "10.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("unlisted CONNECT status = %q, want 403", status)
-		}
-	})
-
-	t.Run("success listed host reaches dial before live policy tightening", func(t *testing.T) {
-		status := connect(t, "127.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 502 Bad Gateway") {
-			t.Fatalf("listed CONNECT status = %q, want 502 (policy allowed, dial refused)", status)
-		}
-		updateEnvironment(t, app, environment.ID, `{"config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}}`, http.StatusOK)
-		status = connect(t, "127.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("post-update CONNECT status = %q, want 403", status)
-		}
-	})
-}
-
 // TestCCRV2UpstreamProxyPolicyChainFailures 覆盖策略解析链的失败语义：
 // Code Session 只读取自己绑定的 Environment（不能借用同 workspace 其他
 // Environment 的 allowlist），且租户作用域不匹配或绑定资源缺失时 fail closed。
@@ -410,7 +371,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("failure malformed MCP URL fails closed before explicit host matching", func(t *testing.T) {
+	t.Run("failure malformed MCP contract fails closed before explicit host matching", func(t *testing.T) {
 		codeSession, err := app.db.GetCodeSession(context.Background(), codeSessionID)
 		if err != nil {
 			t.Fatalf("load code session scope: %v", err)
@@ -426,16 +387,21 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		`, boundEnvironment.ID); err != nil {
 			t.Fatalf("enable MCP policy: %v", err)
 		}
-		if _, err := app.db.Pool.Exec(context.Background(), `
-			update sessions
-			set agent_snapshot = '{"mcp_servers":[{"type":"http","url":"://bad"}]}'::jsonb
-			where external_id = $1
-		`, session.ID); err != nil {
-			t.Fatalf("persist malformed MCP URL: %v", err)
-		}
-		status := connect(t, "10.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
-			t.Fatalf("malformed-MCP CONNECT status = %q, want 403", status)
+		for _, snapshot := range []string{
+			`{"mcp_servers":[{"type":"http","url":"://bad"}]}`,
+			`{"mcp_servers":[{"url":"https://evil.example/mcp"}]}`,
+			`{"mcp_servers":[{"type":"stdio","url":"https://evil.example/mcp"}]}`,
+			`{"mcp_servers":[{"type":"url","url":"ftp://evil.example/mcp"}]}`,
+		} {
+			if _, err := app.db.Pool.Exec(context.Background(), `
+				update sessions set agent_snapshot = $2::jsonb where external_id = $1
+			`, session.ID, snapshot); err != nil {
+				t.Fatalf("persist malformed MCP contract %s: %v", snapshot, err)
+			}
+			status := connect(t, "10.0.0.1:443")
+			if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
+				t.Fatalf("malformed-MCP CONNECT status = %q, want 403 for %s", status, snapshot)
+			}
 		}
 		if _, err := app.db.Pool.Exec(context.Background(), `
 			update sessions set agent_snapshot = $2::jsonb where external_id = $1
@@ -471,6 +437,45 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		status := connect(t, "10.0.0.1:443")
 		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
 			t.Fatalf("missing-environment CONNECT status = %q, want 403", status)
+		}
+	})
+}
+
+// TestCCRV2UpstreamProxyNetworkPolicyAllow 在关闭 SSRF 地址过滤的 app 上验证策略放行路径：
+// 授权 host 通过策略后进入拨号（127.0.0.1:443 无监听 → 502），收紧配置后同一目标变成
+// 策略 403。SSRF 关闭时 403 只能来自策略授权，与地址过滤的 403 无歧义。
+func TestCCRV2UpstreamProxyNetworkPolicyAllow(t *testing.T) {
+	app := newSSRFDisabledTestApp(t, "ccrv2-network-policy-allow-bucket")
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"ccrv2-network-policy-allow-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	environment := createEnvironment(t, app, `{"name":"ccrv2-network-policy-allow-env","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["127.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
+	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(environment.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	ingressToken := codeSessionIngressToken(t, app, codeSessionID)
+	connect := func(t *testing.T, target string) string {
+		t.Helper()
+		return connectViaCCRV2Proxy(t, app, codeSessionID, ingressToken, target)
+	}
+
+	t.Run("failure unlisted host denied even with SSRF protection disabled", func(t *testing.T) {
+		status := connect(t, "10.0.0.1:443")
+		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
+			t.Fatalf("unlisted CONNECT status = %q, want 403", status)
+		}
+	})
+
+	t.Run("success listed host reaches dial before live policy tightening", func(t *testing.T) {
+		status := connect(t, "127.0.0.1:443")
+		if !strings.HasPrefix(status, "HTTP/1.1 502 Bad Gateway") {
+			t.Fatalf("listed CONNECT status = %q, want 502 (policy allowed, dial refused)", status)
+		}
+		updateEnvironment(t, app, environment.ID, `{"config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}}`, http.StatusOK)
+		status = connect(t, "127.0.0.1:443")
+		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
+			t.Fatalf("post-update CONNECT status = %q, want 403", status)
 		}
 	})
 }

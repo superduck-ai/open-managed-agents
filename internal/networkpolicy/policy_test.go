@@ -3,7 +3,12 @@ package networkpolicy
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/url"
+	"os"
+	"slices"
 	"testing"
+	"time"
 )
 
 func limitedConfig(t *testing.T, networking string) json.RawMessage {
@@ -265,6 +270,20 @@ func TestMCPAllowedHostsRejectsEmptySnapshot(t *testing.T) {
 	}
 }
 
+func TestMCPAllowedHostsRejectsMalformedRemoteServerContracts(t *testing.T) {
+	for _, snapshot := range []json.RawMessage{
+		json.RawMessage(`{"mcp_servers":[{"url":"https://evil.example/mcp"}]}`),
+		json.RawMessage(`{"mcp_servers":[{"type":"stdio","url":"https://evil.example/mcp"}]}`),
+		json.RawMessage(`{"mcp_servers":[{"type":"url","url":"ftp://evil.example/mcp"}]}`),
+		json.RawMessage(`{"mcp_servers":[{"type":"url","url":"//evil.example/mcp"}]}`),
+	} {
+		hosts, err := MCPAllowedHosts(snapshot)
+		if !errors.Is(err, ErrMalformedAgentSnapshot) {
+			t.Fatalf("snapshot %s: expected ErrMalformedAgentSnapshot, got hosts=%v err=%v", snapshot, hosts, err)
+		}
+	}
+}
+
 // ---- 成功场景 ----
 
 func TestAuthorizeHTTPSAllowsExplicitHost(t *testing.T) {
@@ -299,6 +318,42 @@ func TestAuthorizeHTTPSNormalizesTargetBeforeMatching(t *testing.T) {
 	}
 	if decision.Host != "api.example.com" {
 		t.Fatalf("expected normalized host api.example.com, got %q", decision.Host)
+	}
+}
+
+func TestAuthorizeHTTPSAllowsPublicIPv6WhenUnrestricted(t *testing.T) {
+	subject := Subject{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
+	decision := AuthorizeHTTPS(subject, "[2606:4700:4700::1111]:443")
+	if !decision.Allow || decision.Reason != ReasonUnrestricted {
+		t.Fatalf("expected unrestricted IPv6 allow, got %+v", decision)
+	}
+	if decision.Host != "2606:4700:4700::1111" {
+		t.Fatalf("normalized host = %q, want 2606:4700:4700::1111", decision.Host)
+	}
+}
+
+func TestAuthorizeHTTPSAllowsExplicitIPv6Host(t *testing.T) {
+	subject := Subject{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["2606:4700:4700::1111"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := AuthorizeHTTPS(subject, "[2606:4700:4700::1111]:443")
+	if !decision.Allow || decision.Reason != ReasonExplicitHost {
+		t.Fatalf("expected explicit IPv6 allow, got %+v", decision)
+	}
+}
+
+func TestAuthorizeHTTPSCanonicalizesIPv4MappedIPv6(t *testing.T) {
+	subject := Subject{Config: limitedConfig(t, `{"type":"unrestricted"}`)}
+	decision := AuthorizeHTTPS(subject, "[::ffff:192.0.2.1]:443")
+	if !decision.Allow || decision.Host != "192.0.2.1" {
+		t.Fatalf("expected mapped IPv6 to normalize as IPv4, got %+v", decision)
+	}
+}
+
+func TestAuthorizeHTTPSAllowsCommonHyphenatedEdgeHostname(t *testing.T) {
+	const host = "r3---sn-apo3qvuoxuxbt-j5pe.googlevideo.com"
+	subject := Subject{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":["`+host+`"],"allow_mcp_servers":false,"allow_package_managers":false}`)}
+	decision := AuthorizeHTTPS(subject, host+":443")
+	if !decision.Allow || decision.Reason != ReasonExplicitHost {
+		t.Fatalf("expected common edge hostname allow, got %+v", decision)
 	}
 }
 
@@ -345,6 +400,60 @@ func TestAuthorizeHTTPSAllowsPackageHostsWhenSwitchOn(t *testing.T) {
 		if decision.Reason != ReasonPackageManagerHost {
 			t.Fatalf("target %q: expected reason %q, got %q", target, ReasonPackageManagerHost, decision.Reason)
 		}
+	}
+}
+
+func TestAuthorizeHTTPSAllowsLargeGoModuleProxyRedirectChain(t *testing.T) {
+	// github.com/aws/aws-sdk-go@v1.55.8 的 module zip 会从
+	// proxy.golang.org 重定向到 storage.googleapis.com。
+	subject := Subject{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
+	for _, target := range []string{"proxy.golang.org:443", "storage.googleapis.com:443"} {
+		decision := AuthorizeHTTPS(subject, target)
+		if !decision.Allow || decision.Reason != ReasonPackageManagerHost {
+			t.Fatalf("target %q: expected package redirect chain allow, got %+v", target, decision)
+		}
+	}
+}
+
+func TestPackageManagerHostsReturnsIndependentCatalogCopy(t *testing.T) {
+	hosts := PackageManagerHosts()
+	if len(hosts) == 0 {
+		t.Fatal("package manager catalog is empty")
+	}
+	originalFirst := hosts[0]
+	hosts[0] = "mutated.example"
+	if next := PackageManagerHosts(); next[0] != originalFirst {
+		t.Fatalf("catalog was mutated through returned slice: %v", next)
+	}
+}
+
+func TestLiveLargeGoModuleProxyRedirectHostIsAuthorized(t *testing.T) {
+	if os.Getenv("TEST_GO_MODULE_PROXY_REDIRECT") != "1" {
+		t.Skip("set TEST_GO_MODULE_PROXY_REDIRECT=1 to verify the live Go module proxy redirect")
+	}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Head("https://proxy.golang.org/github.com/aws/aws-sdk-go/@v/v1.55.8.zip")
+	if err != nil {
+		t.Fatalf("request large Go module zip: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusMultipleChoices || response.StatusCode >= http.StatusBadRequest {
+		t.Fatalf("large Go module status = %d, want redirect", response.StatusCode)
+	}
+	location, err := url.Parse(response.Header.Get("Location"))
+	if err != nil || location.Hostname() == "" {
+		t.Fatalf("parse Go module redirect location %q: %v", response.Header.Get("Location"), err)
+	}
+	target := location.Hostname() + ":443"
+	subject := Subject{Config: limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":true}`)}
+	decision := AuthorizeHTTPS(subject, target)
+	if !decision.Allow || decision.Reason != ReasonPackageManagerHost {
+		t.Fatalf("live redirect target %q is not authorized: %+v", target, decision)
 	}
 }
 
@@ -406,6 +515,23 @@ func TestMCPAllowedHostsExtractsDedupesAndNormalizes(t *testing.T) {
 	}
 }
 
+func TestMCPAllowedHostsAcceptsCanonicalAndTransportRemoteServerTypes(t *testing.T) {
+	snapshot := json.RawMessage(`{"mcp_servers":[
+		{"type":"url","url":"https://canonical.example/mcp"},
+		{"type":"http","url":"http://streamable.example/mcp"},
+		{"type":"sse","url":"https://events.example/sse"},
+		{"type":"stdio","command":"npx"}
+	]}`)
+	hosts, err := MCPAllowedHosts(snapshot)
+	if err != nil {
+		t.Fatalf("extract MCP hosts: %v", err)
+	}
+	want := []string{"canonical.example", "streamable.example", "events.example"}
+	if !slices.Equal(hosts, want) {
+		t.Fatalf("hosts = %v, want %v", hosts, want)
+	}
+}
+
 // ---- ValidateAllowedHost ----
 
 func TestValidateAllowedHost(t *testing.T) {
@@ -434,7 +560,13 @@ func TestValidateAllowedHost(t *testing.T) {
 	if err := ValidateAllowedHost(string(long)); err == nil {
 		t.Fatal("expected error for host longer than 253 characters")
 	}
-	for _, host := range []string{"example.com", "*.example.com", "example.com:8443"} {
+	for _, host := range []string{
+		"example.com",
+		"*.example.com",
+		"example.com:8443",
+		"2606:4700:4700::1111",
+		"[2606:4700:4700::1111]:443",
+	} {
 		if err := ValidateAllowedHost(host); err != nil {
 			t.Fatalf("host %q: unexpected error %v", host, err)
 		}

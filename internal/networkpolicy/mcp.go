@@ -19,7 +19,8 @@ var ErrMalformedAgentSnapshot = errors.New("malformed session agent snapshot")
 func MCPAllowedHosts(agentSnapshot json.RawMessage) ([]string, error) {
 	var snapshot struct {
 		Servers []struct {
-			URL string `json:"url"`
+			Type string `json:"type"`
+			URL  string `json:"url"`
 		} `json:"mcp_servers"`
 	}
 	if len(agentSnapshot) == 0 {
@@ -30,12 +31,20 @@ func MCPAllowedHosts(agentSnapshot json.RawMessage) ([]string, error) {
 	}
 	var hosts []string
 	for _, server := range snapshot.Servers {
+		serverType := strings.ToLower(strings.TrimSpace(server.Type))
 		rawURL := strings.TrimSpace(server.URL)
-		if rawURL == "" {
+		if serverType == "stdio" && rawURL == "" {
 			continue
+		}
+		if rawURL == "" || (serverType != "url" && serverType != "http" && serverType != "sse") {
+			return nil, fmt.Errorf("%w: invalid MCP server contract", ErrMalformedAgentSnapshot)
 		}
 		parsed, err := urlpkg.Parse(rawURL)
 		if err != nil {
+			return nil, fmt.Errorf("%w: invalid MCP server URL", ErrMalformedAgentSnapshot)
+		}
+		scheme := strings.ToLower(parsed.Scheme)
+		if !parsed.IsAbs() || parsed.Host == "" || (scheme != "http" && scheme != "https") {
 			return nil, fmt.Errorf("%w: invalid MCP server URL", ErrMalformedAgentSnapshot)
 		}
 		host, err := NormalizeHost(parsed.Hostname())

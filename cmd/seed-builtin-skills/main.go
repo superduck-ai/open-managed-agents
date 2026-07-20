@@ -36,7 +36,7 @@ func main() {
 	if err := database.Migrate(ctx); err != nil {
 		log.Fatalf("migrate database: %v", err)
 	}
-	store, err := storage.NewMinIO(cfg)
+	store, err := storage.New(cfg.Storage)
 	if err != nil {
 		log.Fatalf("create object store: %v", err)
 	}

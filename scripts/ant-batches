@@ -50,8 +50,8 @@ Examples:
   scripts/ant-batches poll "$BATCH_ID"
   scripts/ant-batches results "$BATCH_ID"
 
-For real batch processing, start the local service with an upstream key:
-  ADDR=127.0.0.1:38080 ANTHROPIC_UPSTREAM_API_KEY=... go run .
+For real batch processing, set anthropic_upstream.api_key in config/config.yaml, then run:
+  go run .
 EOF
 }
 

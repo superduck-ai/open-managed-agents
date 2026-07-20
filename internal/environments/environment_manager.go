@@ -3,7 +3,6 @@ package environments
 import (
 	"encoding/base64"
 	"encoding/json"
-	"net"
 	urlpkg "net/url"
 	"path"
 	"strings"
@@ -438,28 +437,16 @@ func commaListContains(raw string, want string) bool {
 }
 
 func codeSessionSandboxAPIBaseURL(cfg config.Config) string {
-	if baseURL := strings.TrimRight(firstNonEmpty(cfg.CodeSessionSandboxAPIBaseURL, cfg.CodeSessionAPIBaseURL, cfg.PublicBaseURL), "/"); baseURL != "" {
-		return baseURL
-	}
-	port := "8080"
-	addr := strings.TrimSpace(cfg.Addr)
-	if addr != "" {
-		if _, parsedPort, err := net.SplitHostPort(addr); err == nil && parsedPort != "" {
-			port = parsedPort
-		} else if strings.HasPrefix(addr, ":") && strings.TrimPrefix(addr, ":") != "" {
-			port = strings.TrimPrefix(addr, ":")
-		}
-	}
-	return "http://host.docker.internal:" + port
+	return strings.TrimRight(strings.TrimSpace(cfg.CodeSession.SandboxAPIBaseURL), "/")
 }
 
 func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, payload []byte) environmentManagerCommand {
 	safeSessionID := strings.NewReplacer("/", "_", "\\", "_", " ", "_").Replace(codeSessionID)
 	baseDir := path.Join("/tmp/claude-code-sessions", safeSessionID)
 	logPath := path.Join(baseDir, "environment-manager.log")
-	managerPath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentManagerPath), defaultEnvironmentManagerPath)
-	agentVersion := firstNonEmpty(strings.TrimSpace(cfg.ClaudeAgentVersion), defaultClaudeAgentVersion)
-	claudePath := firstNonEmpty(strings.TrimSpace(cfg.ClaudePath), defaultClaudePath)
+	managerPath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ManagerPath), defaultEnvironmentManagerPath)
+	agentVersion := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ClaudeAgentVersion), defaultClaudeAgentVersion)
+	claudePath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ClaudePath), defaultClaudePath)
 	versionPattern := `s/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p`
 	command := strings.Join([]string{
 		"set -eu",

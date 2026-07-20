@@ -31,7 +31,7 @@ func NewHandler(cfg config.Config, service *Service) *Handler {
 	}
 	// 只有 MITM 开启时才在构造阶段读取稳定私钥并签发一年期根证书，使配置错误在启动期失败。
 	// MITM 关闭时私钥路径完全休眠，由 CA 下载接口按需生成进程级临时 CA。
-	if cfg.CodeSessionUpstreamProxyMITMEnabled {
+	if cfg.CodeSession.UpstreamProxyMITMEnabled {
 		if _, err := handler.loadUpstreamProxyCA(); err != nil {
 			panic("codesessions: load upstream proxy CA: " + err.Error())
 		}

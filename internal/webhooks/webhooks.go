@@ -64,11 +64,11 @@ func (e deliveryFailure) Error() string {
 	return e.reason
 }
 
-func Enqueue(ctx context.Context, database *db.DB, cfg config.Config, workspaceID int64, organizationExternalID, workspaceExternalID, eventType, resourceID string, sessionThreadID *string) {
+func Enqueue(ctx context.Context, database *db.DB, cfg config.WebhookConfig, workspaceID int64, organizationExternalID, workspaceExternalID, eventType, resourceID string, sessionThreadID *string) {
 	EnqueueWithOptions(ctx, database, cfg, workspaceID, organizationExternalID, workspaceExternalID, eventType, resourceID, EventOptions{SessionThreadID: sessionThreadID})
 }
 
-func EnqueueWithOptions(ctx context.Context, database *db.DB, cfg config.Config, workspaceID int64, organizationExternalID, workspaceExternalID, eventType, resourceID string, options EventOptions) {
+func EnqueueWithOptions(ctx context.Context, database *db.DB, cfg config.WebhookConfig, workspaceID int64, organizationExternalID, workspaceExternalID, eventType, resourceID string, options EventOptions) {
 	if database == nil {
 		return
 	}
@@ -123,8 +123,8 @@ func EnqueueWithOptions(ctx context.Context, database *db.DB, cfg config.Config,
 	}
 }
 
-func StartWorker(ctx context.Context, database *db.DB, cfg config.Config) {
-	if !cfg.WebhookWorkerEnabled {
+func StartWorker(ctx context.Context, database *db.DB, cfg config.WebhookConfig) {
+	if !cfg.WorkerEnabled {
 		return
 	}
 	workerID := fmt.Sprintf("webhook-delivery-%d", os.Getpid())
@@ -144,7 +144,7 @@ func StartWorker(ctx context.Context, database *db.DB, cfg config.Config) {
 	}()
 }
 
-func RunOnce(ctx context.Context, database *db.DB, cfg config.Config, workerID string) error {
+func RunOnce(ctx context.Context, database *db.DB, cfg config.WebhookConfig, workerID string) error {
 	jobs, err := database.LeaseWebhookDeliveryJobs(ctx, workerID, defaultBatchSize, defaultLeaseDuration)
 	if err != nil {
 		return err
@@ -192,7 +192,7 @@ func RunOnce(ctx context.Context, database *db.DB, cfg config.Config, workerID s
 	return errors.Join(errs...)
 }
 
-func targetForJob(cfg config.Config, job db.WebhookDeliveryJob) (deliveryTarget, bool, error) {
+func targetForJob(cfg config.WebhookConfig, job db.WebhookDeliveryJob) (deliveryTarget, bool, error) {
 	if job.WebhookEndpointID != nil {
 		if job.WebhookEndpointStatus != "enabled" || job.WebhookEndpointURL == "" || job.WebhookEndpointSecret == "" {
 			return deliveryTarget{}, true, nil
@@ -200,7 +200,7 @@ func targetForJob(cfg config.Config, job db.WebhookDeliveryJob) (deliveryTarget,
 		target := deliveryTarget{
 			URL:           job.WebhookEndpointURL,
 			SigningKey:    job.WebhookEndpointSecret,
-			AllowInsecure: cfg.WebhookAllowInsecure,
+			AllowInsecure: cfg.AllowInsecure,
 		}
 		return target, false, validateDeliveryTarget(target, "webhook endpoint")
 	}
@@ -208,11 +208,11 @@ func targetForJob(cfg config.Config, job db.WebhookDeliveryJob) (deliveryTarget,
 		return deliveryTarget{}, true, nil
 	}
 	target := deliveryTarget{
-		URL:           cfg.WebhookEndpointURL,
-		SigningKey:    cfg.WebhookSigningKey,
-		AllowInsecure: cfg.WebhookAllowInsecure,
+		URL:           cfg.EndpointURL,
+		SigningKey:    cfg.SigningKey,
+		AllowInsecure: cfg.AllowInsecure,
 	}
-	return target, false, validateDeliveryTarget(target, "WEBHOOK_ENDPOINT_URL")
+	return target, false, validateDeliveryTarget(target, "webhook.endpoint_url")
 }
 
 func recordEndpointFailure(ctx context.Context, database *db.DB, job db.WebhookDeliveryJob, err error) {
@@ -276,8 +276,8 @@ func deliver(ctx context.Context, client *http.Client, target deliveryTarget, pa
 	return nil
 }
 
-func enabled(cfg config.Config) bool {
-	return cfg.WebhookWorkerEnabled && cfg.WebhookEndpointURL != "" && cfg.WebhookSigningKey != ""
+func enabled(cfg config.WebhookConfig) bool {
+	return cfg.WorkerEnabled && cfg.EndpointURL != "" && cfg.SigningKey != ""
 }
 
 func validateDeliveryTarget(target deliveryTarget, name string) error {
@@ -292,22 +292,22 @@ func validateDeliveryTarget(target deliveryTarget, name string) error {
 		return fmt.Errorf("parse %s: %w", name, err)
 	}
 	if parsed.Scheme != "https" && !target.AllowInsecure {
-		return fmt.Errorf("%s must be https unless WEBHOOK_ALLOW_INSECURE=true", name)
+		return fmt.Errorf("%s must be https unless webhook.allow_insecure is true", name)
 	}
 	if parsed.Host == "" {
 		return fmt.Errorf("%s must include a host", name)
 	}
 	if isPrivateWebhookHost(parsed.Hostname()) && !target.AllowInsecure {
-		return deliveryFailure{reason: fmt.Sprintf("%s host must be publicly routable unless WEBHOOK_ALLOW_INSECURE=true", name), immediateDisable: true}
+		return deliveryFailure{reason: fmt.Sprintf("%s host must be publicly routable unless webhook.allow_insecure is true", name), immediateDisable: true}
 	}
 	return nil
 }
 
-func subscribed(cfg config.Config, eventType string) bool {
-	if len(cfg.WebhookEventTypes) == 0 {
+func subscribed(cfg config.WebhookConfig, eventType string) bool {
+	if len(cfg.EventTypes) == 0 {
 		return true
 	}
-	for _, subscribed := range cfg.WebhookEventTypes {
+	for _, subscribed := range cfg.EventTypes {
 		if subscribed == eventType {
 			return true
 		}
@@ -325,16 +325,16 @@ func retryDelay(attempts int) time.Duration {
 	return time.Duration(attempts*attempts) * time.Minute
 }
 
-func webhookTimeout(cfg config.Config) time.Duration {
-	if cfg.WebhookTimeout <= 0 {
+func webhookTimeout(cfg config.WebhookConfig) time.Duration {
+	if cfg.Timeout <= 0 {
 		return 10 * time.Second
 	}
-	return cfg.WebhookTimeout
+	return cfg.Timeout
 }
 
-func webhookMaxAttempts(cfg config.Config) int {
-	if cfg.WebhookMaxAttempts <= 0 {
+func webhookMaxAttempts(cfg config.WebhookConfig) int {
+	if cfg.MaxAttempts <= 0 {
 		return 10
 	}
-	return cfg.WebhookMaxAttempts
+	return cfg.MaxAttempts
 }

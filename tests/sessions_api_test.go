@@ -376,11 +376,11 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.WebhookEndpointURL = receiver.URL
-	cfg.WebhookSigningKey = "whsec_c2VjcmV0Cg=="
-	cfg.WebhookEventTypes = []string{"session.status_idled"}
-	cfg.WebhookWorkerEnabled = true
-	cfg.WebhookAllowInsecure = true
+	cfg.Webhook.EndpointURL = receiver.URL
+	cfg.Webhook.SigningKey = "whsec_c2VjcmV0Cg=="
+	cfg.Webhook.EventTypes = []string{"session.status_idled"}
+	cfg.Webhook.WorkerEnabled = true
+	cfg.Webhook.AllowInsecure = true
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("sessions-events-ingress-bucket"))
 	defer app.close()
@@ -405,7 +405,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
 		t.Fatalf("ingress events missing worker outputs: %+v", events)
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg, "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "session-ingress-webhook-worker"); err != nil {
 		t.Fatalf("deliver ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -427,7 +427,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if len(again.Data) != 1 {
 		t.Fatalf("ingress should be idempotent, agent.message count = %d", len(again.Data))
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg, "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "session-ingress-webhook-worker"); err != nil {
 		t.Fatalf("deliver duplicate ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -2324,9 +2324,9 @@ func TestCodeSessionWorkerOTLPFileLogWritesAcceptedTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionOTLPFileLogEnabled = true
-	cfg.CodeSessionOTLPLogRoot = t.TempDir()
-	cfg.CodeSessionOTLPLogBodyPreviewBytes = 128
+	cfg.CodeSession.OTLPFileLogEnabled = true
+	cfg.CodeSession.OTLPLogRoot = t.TempDir()
+	cfg.CodeSession.OTLPLogBodyPreviewBytes = 128
 	app := newTestAppWithStore(t, &cfg, newFakeStore("sessions-code-worker-otlp-file-log-bucket"))
 	defer app.close()
 
@@ -2352,7 +2352,7 @@ func TestCodeSessionWorkerOTLPFileLogWritesAcceptedTelemetry(t *testing.T) {
 		t.Fatalf("post current-epoch logs status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
-	otlpDir := filepath.Join(cfg.CodeSessionOTLPLogRoot, codeSessionID, "otlp")
+	otlpDir := filepath.Join(cfg.CodeSession.OTLPLogRoot, codeSessionID, "otlp")
 	requestLines := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "requests.jsonl"))
 	if len(requestLines) != 2 {
 		t.Fatalf("request jsonl lines = %d, want 2: %#v", len(requestLines), requestLines)
@@ -3019,13 +3019,13 @@ func TestSessionWebhooks(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	signingKey := "whsec_c2VjcmV0Cg=="
-	cfg.WebhookEndpointURL = receiver.URL
-	cfg.WebhookSigningKey = signingKey
-	cfg.WebhookEventTypes = []string{"session.created"}
-	cfg.WebhookWorkerEnabled = true
-	cfg.WebhookAllowInsecure = true
-	cfg.WebhookTimeout = time.Second
-	cfg.WebhookMaxAttempts = 3
+	cfg.Webhook.EndpointURL = receiver.URL
+	cfg.Webhook.SigningKey = signingKey
+	cfg.Webhook.EventTypes = []string{"session.created"}
+	cfg.Webhook.WorkerEnabled = true
+	cfg.Webhook.AllowInsecure = true
+	cfg.Webhook.Timeout = time.Second
+	cfg.Webhook.MaxAttempts = 3
 	app := newTestAppWithStore(t, &cfg, newFakeStore("sessions-webhooks-bucket"))
 	defer app.close()
 	clearWebhookState(t, app)
@@ -3044,7 +3044,7 @@ func TestSessionWebhooks(t *testing.T) {
 		t.Fatalf("session.pending webhook jobs = %d, want 0 due filter", count)
 	}
 
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg, "webhook-test-worker"); err != nil {
+	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "webhook-test-worker"); err != nil {
 		t.Fatalf("webhook run once failure path: %v", err)
 	}
 	status, attempts := latestWebhookJobStatus(t, app, "session.created", session.ID)
@@ -3054,7 +3054,7 @@ func TestSessionWebhooks(t *testing.T) {
 	if _, err := app.db.Pool.Exec(context.Background(), `update jobs set run_after = now() where type = 'webhook_delivery' and payload->>'event_type' = 'session.created' and payload->'event'->'data'->>'id' = $1`, session.ID); err != nil {
 		t.Fatalf("reset webhook run_after: %v", err)
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg, "webhook-test-worker"); err != nil {
+	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "webhook-test-worker"); err != nil {
 		t.Fatalf("webhook run once success path: %v", err)
 	}
 	status, attempts = latestWebhookJobStatus(t, app, "session.created", session.ID)

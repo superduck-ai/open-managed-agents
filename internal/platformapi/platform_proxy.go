@@ -44,7 +44,7 @@ func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 		upstreamReq.Header = r.Header.Clone()
 		upstreamReq.Header.Del("Authorization")
 		upstreamReq.Header.Del("Host")
-		upstreamReq.Header.Set("X-API-Key", strings.TrimSpace(cfg.AnthropicUpstreamAPIKey))
+		upstreamReq.Header.Set("X-API-Key", strings.TrimSpace(cfg.AnthropicUpstream.APIKey))
 
 		upstreamRes, err := http.DefaultClient.Do(upstreamReq)
 		if err != nil {
@@ -83,7 +83,7 @@ func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 }
 
 func anthropicMessagesEndpointFromConfig(cfg config.Config) (string, error) {
-	baseURL := strings.TrimSpace(cfg.AnthropicUpstreamBaseURL)
+	baseURL := strings.TrimSpace(cfg.AnthropicUpstream.BaseURL)
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
 	}

@@ -6,13 +6,23 @@ default:
 help:
   @just --list
 
-# Restart backend in foreground. Override with: PORT=18080 ADDR=127.0.0.1:18080 just server
-server:
-  PORT="${PORT:-38080}" ADDR="${ADDR:-127.0.0.1:${PORT:-38080}}" ./scripts/restart-server.sh
+# Create the gitignored Docker Compose runtime config without overwriting an existing secret-bearing file.
+init-compose-config:
+  @compose_template="deploy/docker-compose/oma-server.yaml"; compose_local="deploy/docker-compose/oma-server.local.yaml"; \
+    if [[ -e "$compose_local" || -L "$compose_local" ]]; then \
+      echo "$compose_local already exists; leaving it unchanged"; \
+    else \
+      install -m 600 "$compose_template" "$compose_local"; \
+      echo "created $compose_local with mode 0600"; \
+    fi
 
-# Restart backend in foreground. Override with: PORT=18080 ADDR=127.0.0.1:18080 just restart-server
+# Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
+server:
+  PORT="${PORT:-38080}" ./scripts/restart-server.sh
+
+# Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
 restart-server:
-  PORT="${PORT:-38080}" ADDR="${ADDR:-127.0.0.1:${PORT:-38080}}" ./scripts/restart-server.sh
+  PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web
 # Only stops listeners from this checkout; uses the next port when another checkout/process owns the requested port.
@@ -41,14 +51,14 @@ duplicates:
 
 complexity: go-complexity web-complexity
 
-# Generate the stable code session JWT signing key. Example: just generate-code-session-jwt-key /secure/path/code-session-jwt-key.pem
+# Generate the stable code session JWT signing key. Example: just generate-code-session-jwt-key config/secrets/code-session-jwt-ed25519.pem
 generate-code-session-jwt-key output:
   ./scripts/generate-code-session-jwt-key.sh "{{ output }}"
 
 test-generate-code-session-jwt-key:
   ./scripts/tests/generate-code-session-jwt-key_test.sh
 
-# Generate the stable CCRv2 MITM CA key. Example: just generate-upstream-proxy-ca-key /secure/path/ccrv2-mitm-ca-key.pem
+# Generate the stable CCRv2 MITM CA key. Example: just generate-upstream-proxy-ca-key config/secrets/upstream-proxy-ca-key.pem
 generate-upstream-proxy-ca-key output:
   ./scripts/generate-upstream-proxy-ca-key.sh "{{ output }}"
 

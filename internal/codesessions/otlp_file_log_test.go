@@ -35,8 +35,10 @@ func TestDecodeOTLPRequestRejectsMalformedPayloads(t *testing.T) {
 func TestRecordCodeSessionWorkerOTLPFileLogRecordsDecodeErrors(t *testing.T) {
 	root := t.TempDir()
 	handler := NewHandler(config.Config{
-		CodeSessionOTLPFileLogEnabled: true,
-		CodeSessionOTLPLogRoot:        root,
+		CodeSession: config.CodeSessionConfig{
+			OTLPFileLogEnabled: true,
+			OTLPLogRoot:        root,
+		},
 	}, newTestService(t, nil))
 	req := httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_bad/worker/otlp/logs", bytes.NewReader([]byte(`{"resourceLogs":[`)))
 	req.Header.Set("Content-Type", "application/json")
@@ -144,9 +146,11 @@ func TestOTLPBodyLooksTextUsesParsedMediaType(t *testing.T) {
 func TestRecordCodeSessionWorkerOTLPFileLogWritesRequestAndExpandedRecords(t *testing.T) {
 	root := t.TempDir()
 	handler := NewHandler(config.Config{
-		CodeSessionOTLPFileLogEnabled:      true,
-		CodeSessionOTLPLogRoot:             root,
-		CodeSessionOTLPLogBodyPreviewBytes: 8,
+		CodeSession: config.CodeSessionConfig{
+			OTLPFileLogEnabled:      true,
+			OTLPLogRoot:             root,
+			OTLPLogBodyPreviewBytes: 8,
+		},
 	}, newTestService(t, nil))
 
 	metricsBody, err := proto.Marshal(testOTLPMetricsRequest())

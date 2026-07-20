@@ -31,11 +31,11 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	requireFullE2BBridgeConfig(t, cfg)
-	if cfg.E2BRequestTimeout < 2*time.Minute {
-		cfg.E2BRequestTimeout = 2 * time.Minute
+	if cfg.E2B.RequestTimeout < 2*time.Minute {
+		cfg.E2B.RequestTimeout = 2 * time.Minute
 	}
-	if cfg.E2BSandboxTimeout < 2*time.Minute {
-		cfg.E2BSandboxTimeout = 2 * time.Minute
+	if cfg.E2B.SandboxTimeout < 2*time.Minute {
+		cfg.E2B.SandboxTimeout = 2 * time.Minute
 	}
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("full-e2b-bridge-bucket"))
@@ -92,7 +92,7 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 
 	workID := quickstartFindSessionEnvironmentWorkID(t, app, environment.ID, session.ID)
 
-	provider := e2bruntime.NewProvider(cfg)
+	provider := e2bruntime.NewProvider(cfg.E2B)
 	var providerSandboxID string
 	stopped := false
 	defer func() {
@@ -126,7 +126,7 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	}
 
 	sandbox, err := e2b.Connect(ctx, providerSandboxID, &e2b.SandboxConnectOpts{
-		ConnectionOpts: e2bConnectionOptsFromConfig(cfg),
+		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(cfg.E2B),
 	})
 	if err != nil {
 		t.Fatalf("connect to real sandbox %s: %v", providerSandboxID, err)
@@ -141,11 +141,11 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 
 func requireFullE2BBridgeConfig(t *testing.T, cfg config.Config) {
 	t.Helper()
-	if strings.TrimSpace(cfg.E2BAPIKey) == "" && !cfg.E2BDebug {
-		t.Skip("E2B_API_KEY is required in the current .env for this real integration test")
+	if strings.TrimSpace(cfg.E2B.APIKey) == "" && !cfg.E2B.Debug {
+		t.Skip("e2b.api_key is required in config/config.yaml for this real integration test")
 	}
-	if cfg.E2BDebug {
-		t.Skip("E2B_DEBUG must be false for this real integration test")
+	if cfg.E2B.Debug {
+		t.Skip("e2b.debug must be false for this real integration test")
 	}
 	if baseURL := quickstartConfiguredSandboxIngressBaseURL(cfg); quickstartLooksLikeLoopbackURL(baseURL) {
 		t.Fatalf("code session ingress URL used inside E2B must be reachable from inside E2B, got %q", baseURL)

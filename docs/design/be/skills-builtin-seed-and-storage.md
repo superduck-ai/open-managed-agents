@@ -64,7 +64,7 @@ go run ./cmd/seed-builtin-skills --dir /path/to/assets/skills/public --versions 
 - `--versions` 可选，支持 JSON object 或 `skill_id=version` 行格式。生产导入推荐显式指定平台版本号。
 - `--prune` 可选，软删除本次目录中缺失的 builtin skill/version；默认只 upsert，不删除旧项。
 
-CLI 会在导入前主动执行 goose migrations，不依赖服务端运行时的 `DB_AUTO_MIGRATE` 配置。这样管理员可以在新环境里先运行 seed 工具完成表结构和 catalog 初始化。
+CLI 会在导入前主动执行 goose migrations，不依赖服务端运行时的 `database.auto_migrate` 配置。这样管理员可以在新环境里先运行 seed 工具完成表结构和 catalog 初始化。
 
 Archive 校验规则：
 

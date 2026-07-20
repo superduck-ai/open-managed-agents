@@ -111,8 +111,8 @@ func TestPlatformOrganizationProxyMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.AnthropicUpstreamBaseURL = upstream.URL
-	cfg.AnthropicUpstreamAPIKey = "sk-ant-upstream-proxy-test"
+	cfg.AnthropicUpstream.BaseURL = upstream.URL
+	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-proxy-test"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-proxy-messages-bucket"))
 	defer app.close()
 
@@ -171,8 +171,8 @@ func TestPlatformOrganizationProxyMessagesStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.AnthropicUpstreamBaseURL = upstream.URL
-	cfg.AnthropicUpstreamAPIKey = "sk-ant-upstream-proxy-stream-test"
+	cfg.AnthropicUpstream.BaseURL = upstream.URL
+	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-proxy-stream-test"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-proxy-messages-stream-bucket"))
 	defer app.close()
 

@@ -1,0 +1,32 @@
+# Minimal Open Managed Agents configuration for normal local development.
+# Copy this file to config/config.yaml and protect it because it may contain secrets.
+# See docs/configuration-reference.yaml for every supported optional field.
+
+env: dev
+
+server:
+  addr: 127.0.0.1:38080
+
+database:
+  url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
+  # Defaults to true for env: dev and false for env: prod when omitted.
+
+redis:
+  url: redis://localhost:6379
+
+storage:
+  type: s3
+  s3:
+    endpoint: http://localhost:9000
+    bucket: claude-files
+    region: us-east-1
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    force_path_style: true
+
+anthropic_upstream:
+  api_key: ""
+
+e2b:
+  api_key: ""
+  api_url: ""

@@ -96,10 +96,10 @@ func (h *Handler) loadUpstreamProxyCA() (*upstreamProxyCertificateAuthority, err
 // MITM 关闭时不检查或读取休眠的私钥路径，始终生成进程生命周期内的临时 CA；
 // 开启时根证书在启动期签发并仅保存在内存。
 func loadOrGenerateUpstreamProxyCA(cfg config.Config) (*upstreamProxyCertificateAuthority, error) {
-	if !cfg.CodeSessionUpstreamProxyMITMEnabled {
+	if !cfg.CodeSession.UpstreamProxyMITMEnabled {
 		return generateUpstreamProxyCertificateAuthority()
 	}
-	keyFile := strings.TrimSpace(cfg.CodeSessionUpstreamProxyCAKeyFile)
+	keyFile := strings.TrimSpace(cfg.CodeSession.UpstreamProxyCAKeyFile)
 	if keyFile == "" {
 		return nil, errors.New("MITM CA private key is required")
 	}

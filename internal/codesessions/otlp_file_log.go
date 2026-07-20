@@ -82,7 +82,7 @@ type otlpFileLogBatch struct {
 }
 
 func (h *Handler) recordCodeSessionWorkerOTLP(r *http.Request, codeSessionID string, body []byte, epochFound bool, epochSource string, epochValue string) {
-	if h == nil || !h.cfg.CodeSessionOTLPFileLogEnabled {
+	if h == nil || !h.cfg.CodeSession.OTLPFileLogEnabled {
 		return
 	}
 	signal := otlpSignalFromPath("")
@@ -93,7 +93,7 @@ func (h *Handler) recordCodeSessionWorkerOTLP(r *http.Request, codeSessionID str
 		query = r.URL.RawQuery
 		signal = otlpSignalFromPath(path)
 	}
-	previewBytes := h.cfg.CodeSessionOTLPLogBodyPreviewBytes
+	previewBytes := h.cfg.CodeSession.OTLPLogBodyPreviewBytes
 	if previewBytes <= 0 {
 		previewBytes = maxLoggedWorkerRequestBytes
 	}
@@ -133,7 +133,7 @@ func (h *Handler) appendOTLPFileLogBatch(codeSessionID string, batch otlpFileLog
 	if len(batch.Requests) == 0 && len(batch.Metrics) == 0 && len(batch.Logs) == 0 {
 		return nil
 	}
-	root := strings.TrimSpace(h.cfg.CodeSessionOTLPLogRoot)
+	root := strings.TrimSpace(h.cfg.CodeSession.OTLPLogRoot)
 	if root == "" {
 		root = "logs"
 	}

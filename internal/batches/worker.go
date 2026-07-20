@@ -43,7 +43,7 @@ func StartBatchWorker(ctx context.Context, database *db.DB, store storage.Object
 }
 
 func StartBatchExpirySweep(ctx context.Context, database *db.DB, cfg config.Config) {
-	interval := cfg.BatchExpirySweepInterval
+	interval := cfg.Batch.ExpirySweepInterval
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
@@ -78,7 +78,7 @@ func RunBatchExpirySweepOnce(ctx context.Context, database *db.DB, now time.Time
 }
 
 func RunBatchOnce(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, upstream UpstreamClient, workerID string) error {
-	jobs, err := database.LeaseMessageBatchJobs(ctx, workerID, cfg.BatchWorkerConcurrency, cfg.BatchJobLeaseDuration)
+	jobs, err := database.LeaseMessageBatchJobs(ctx, workerID, cfg.Batch.WorkerConcurrency, cfg.Batch.JobLeaseDuration)
 	if err != nil {
 		return err
 	}
@@ -111,8 +111,8 @@ func processBatchJob(ctx context.Context, database *db.DB, store storage.ObjectS
 		return database.CompleteMessageBatchJob(ctx, job.ID)
 	}
 
-	staleBefore := time.Now().UTC().Add(-cfg.BatchUpstreamTimeout - time.Minute)
-	if cfg.BatchUpstreamTimeout <= 0 {
+	staleBefore := time.Now().UTC().Add(-cfg.Batch.UpstreamTimeout - time.Minute)
+	if cfg.Batch.UpstreamTimeout <= 0 {
 		staleBefore = time.Now().UTC().Add(-11 * time.Minute)
 	}
 	if _, err := database.MarkStaleInFlightRequestsErrored(ctx, batch.ID, staleBefore, unknownStatusResult()); err != nil {
@@ -191,11 +191,11 @@ func processBatchJob(ctx context.Context, database *db.DB, store storage.ObjectS
 
 func startHeartbeat(ctx context.Context, database *db.DB, jobID int64, workerID string, cfg config.Config) <-chan error {
 	errCh := make(chan error, 1)
-	interval := cfg.BatchJobLeaseHeartbeatInterval
+	interval := cfg.Batch.JobLeaseHeartbeatInterval
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
-	lease := cfg.BatchJobLeaseDuration
+	lease := cfg.Batch.JobLeaseDuration
 	if lease <= 0 {
 		lease = 2 * time.Minute
 	}

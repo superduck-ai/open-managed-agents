@@ -133,7 +133,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	pkg, err := readSkillPackage(w, r, MaxSkillPackageBytes)
 	if err != nil {
 		if h.isOfficialSDKFixturePrincipal(principal) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureSkillResponse(h.cfg.OfficialSDKFixtureSkillID, firstNonEmpty(r.FormValue("display_title"), "display_title")))
+			httpapi.WriteJSON(w, http.StatusOK, h.fixtureSkillResponse(h.cfg.SDKFixtures.SkillID, firstNonEmpty(r.FormValue("display_title"), "display_title")))
 			return
 		}
 		writePackageError(w, r, err)
@@ -432,7 +432,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 	pkg, err := readSkillPackage(w, r, MaxSkillPackageBytes)
 	if err != nil {
 		if h.isOfficialSDKFixtureSkill(principal, skillID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.OfficialSDKFixtureSkillVersion))
+			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion))
 			return
 		}
 		writePackageError(w, r, err)
@@ -442,7 +442,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 	skill, err := h.db.GetSkill(r.Context(), principal.WorkspaceID, skillID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.OfficialSDKFixtureSkillVersion))
+			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion))
 			return
 		}
 		if errors.Is(err, db.ErrNotFound) {
@@ -546,7 +546,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 	}
 	if h.isOfficialSDKFixtureSkill(principal, skillID) {
 		httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillVersionResponse]{
-			Data:     []skillVersionResponse{h.fixtureVersionResponse(skillID, h.cfg.OfficialSDKFixtureSkillVersion)},
+			Data:     []skillVersionResponse{h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion)},
 			HasMore:  false,
 			NextPage: nil,
 		})
@@ -910,7 +910,7 @@ func (h *Handler) fixtureSkillResponse(skillID, displayTitle string) skillRespon
 		ID:            skillID,
 		CreatedAt:     formatTime(now),
 		DisplayTitle:  firstNonEmpty(displayTitle, "display_title"),
-		LatestVersion: h.cfg.OfficialSDKFixtureSkillVersion,
+		LatestVersion: h.cfg.SDKFixtures.SkillVersion,
 		Source:        "custom",
 		Type:          "skill",
 		UpdatedAt:     formatTime(now),
@@ -1032,15 +1032,15 @@ func writeResolveVersionError(w http.ResponseWriter, r *http.Request, skillID, v
 }
 
 func (h *Handler) isOfficialSDKFixturePrincipal(principal auth.Principal) bool {
-	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID
+	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
 }
 
 func (h *Handler) isOfficialSDKFixtureSkill(principal auth.Principal, skillID string) bool {
-	return h.isOfficialSDKFixturePrincipal(principal) && skillID == h.cfg.OfficialSDKFixtureSkillID
+	return h.isOfficialSDKFixturePrincipal(principal) && skillID == h.cfg.SDKFixtures.SkillID
 }
 
 func (h *Handler) isOfficialSDKFixtureVersion(principal auth.Principal, skillID, version string) bool {
-	return h.isOfficialSDKFixtureSkill(principal, skillID) && (version == h.cfg.OfficialSDKFixtureSkillVersion || version == "latest")
+	return h.isOfficialSDKFixtureSkill(principal, skillID) && (version == h.cfg.SDKFixtures.SkillVersion || version == "latest")
 }
 
 func formatTime(t time.Time) string {

@@ -15,39 +15,39 @@ import (
 )
 
 func (h *Handler) isOfficialSDKFixturePrincipal(principal auth.Principal) bool {
-	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID
+	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
 }
 
 func (h *Handler) createUsesOfficialFixtures(fields map[string]json.RawMessage) bool {
 	agentRaw := fields["agent"]
 	env, _ := parseRequiredStringField(fields, "environment_id")
-	if env != h.cfg.OfficialSDKFixtureEnvironmentID {
+	if env != h.cfg.SDKFixtures.EnvironmentID {
 		return false
 	}
 	var agentID string
 	if json.Unmarshal(agentRaw, &agentID) == nil {
-		return agentID == h.cfg.OfficialSDKFixtureAgentID
+		return agentID == h.cfg.SDKFixtures.AgentID
 	}
 	var object struct {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(agentRaw, &object)
-	return object.ID == h.cfg.OfficialSDKFixtureAgentID
+	return object.ID == h.cfg.SDKFixtures.AgentID
 }
 
 func (h *Handler) isFixtureResource(r *http.Request, sessionID, resourceID string) bool {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.OfficialSDKFixtureSessionID && resourceID == h.cfg.OfficialSDKFixtureSessionResourceID
+	return h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID && resourceID == h.cfg.SDKFixtures.SessionResourceID
 }
 
 func (h *Handler) isFixtureThread(r *http.Request, sessionID, threadID string) bool {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.OfficialSDKFixtureSessionID && threadID == h.cfg.OfficialSDKFixtureSessionThreadID
+	return h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID && threadID == h.cfg.SDKFixtures.SessionThreadID
 }
 
 func (h *Handler) isOfficialSDKFixtureSession(r *http.Request, sessionID string) bool {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.OfficialSDKFixtureSessionID
+	return h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID
 }
 
 func normalizeFixtureEvent(raw json.RawMessage, now time.Time) (json.RawMessage, error) {
@@ -76,12 +76,12 @@ func (h *Handler) fixtureDBSession(principal auth.Principal) db.Session {
 	return db.Session{
 		ID:                    1,
 		UUID:                  uuid.NewString(),
-		ExternalID:            h.cfg.OfficialSDKFixtureSessionID,
+		ExternalID:            h.cfg.SDKFixtures.SessionID,
 		OrganizationID:        principal.OrganizationID,
 		WorkspaceID:           principal.WorkspaceID,
 		CreatedByAPIKeyID:     principal.APIKeyID,
-		EnvironmentExternalID: h.cfg.OfficialSDKFixtureEnvironmentID,
-		AgentExternalID:       h.cfg.OfficialSDKFixtureAgentID,
+		EnvironmentExternalID: h.cfg.SDKFixtures.EnvironmentID,
+		AgentExternalID:       h.cfg.SDKFixtures.AgentID,
 		AgentVersion:          1,
 		AgentSnapshot:         h.fixtureAgentSnapshot(),
 		Metadata:              json.RawMessage(`{"foo":"string"}`),
@@ -103,11 +103,11 @@ func (h *Handler) fixtureSession(now time.Time, archived bool) sessionResponse {
 	}
 	title := "Order #1234 inquiry"
 	return sessionResponse{
-		ID:                 h.cfg.OfficialSDKFixtureSessionID,
+		ID:                 h.cfg.SDKFixtures.SessionID,
 		Agent:              h.fixtureAgentSnapshot(),
 		ArchivedAt:         archivedAt,
 		CreatedAt:          httpapi.FormatTime(now),
-		EnvironmentID:      h.cfg.OfficialSDKFixtureEnvironmentID,
+		EnvironmentID:      h.cfg.SDKFixtures.EnvironmentID,
 		Metadata:           json.RawMessage(`{"foo":"string"}`),
 		OutcomeEvaluations: json.RawMessage(`[]`),
 		Resources:          []json.RawMessage{h.fixtureResource(now)},
@@ -123,7 +123,7 @@ func (h *Handler) fixtureSession(now time.Time, archived bool) sessionResponse {
 
 func (h *Handler) fixtureAgentSnapshot() json.RawMessage {
 	raw, _ := httpapi.MarshalRaw(map[string]any{
-		"id":          h.cfg.OfficialSDKFixtureAgentID,
+		"id":          h.cfg.SDKFixtures.AgentID,
 		"description": nil,
 		"mcp_servers": []any{},
 		"model":       map[string]any{"id": "claude-opus-4-6", "speed": "standard"},
@@ -140,7 +140,7 @@ func (h *Handler) fixtureAgentSnapshot() json.RawMessage {
 
 func (h *Handler) fixtureResource(now time.Time) json.RawMessage {
 	raw, _ := httpapi.MarshalRaw(map[string]any{
-		"id":         h.cfg.OfficialSDKFixtureSessionResourceID,
+		"id":         h.cfg.SDKFixtures.SessionResourceID,
 		"created_at": httpapi.FormatTime(now),
 		"file_id":    "file_011CNha8iCJcU1wXNR6q4V8w",
 		"mount_path": "/uploads/receipt.pdf",
@@ -157,12 +157,12 @@ func (h *Handler) fixtureThread(now time.Time, archived bool) threadResponse {
 		archivedAt = &value
 	}
 	return threadResponse{
-		ID:             h.cfg.OfficialSDKFixtureSessionThreadID,
+		ID:             h.cfg.SDKFixtures.SessionThreadID,
 		Agent:          h.fixtureAgentSnapshot(),
 		ArchivedAt:     archivedAt,
 		CreatedAt:      httpapi.FormatTime(now),
 		ParentThreadID: nil,
-		SessionID:      h.cfg.OfficialSDKFixtureSessionID,
+		SessionID:      h.cfg.SDKFixtures.SessionID,
 		Stats:          json.RawMessage(`{}`),
 		Status:         "idle",
 		Type:           "session_thread",

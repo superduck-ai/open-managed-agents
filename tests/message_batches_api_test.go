@@ -36,10 +36,10 @@ func TestMessageBatchesAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.AnthropicUpstreamAPIKey = "sk-ant-upstream-test"
-	cfg.BatchWorkerConcurrency = 1
-	cfg.BatchJobLeaseDuration = time.Minute
-	cfg.BatchJobLeaseHeartbeatInterval = time.Hour
+	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-test"
+	cfg.Batch.WorkerConcurrency = 1
+	cfg.Batch.JobLeaseDuration = time.Minute
+	cfg.Batch.JobLeaseHeartbeatInterval = time.Hour
 	app := newTestAppWithStore(t, &cfg, store)
 	defer app.close()
 
@@ -53,7 +53,7 @@ func TestMessageBatchesAPI(t *testing.T) {
 
 	t.Run("failure official sdk fixture create bypasses real validation", func(t *testing.T) {
 		fixtureCfg := app.cfg
-		fixtureCfg.AnthropicUpstreamAPIKey = ""
+		fixtureCfg.AnthropicUpstream.APIKey = ""
 		fixtureApp := newTestAppWithStore(t, &fixtureCfg, newFakeStore("fixture-bucket"))
 		defer fixtureApp.close()
 

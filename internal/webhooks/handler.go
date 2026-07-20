@@ -54,7 +54,7 @@ var supportedEndpointEventTypes = map[string]struct{}{
 }
 
 type Handler struct {
-	cfg    config.Config
+	cfg    config.WebhookConfig
 	db     *db.DB
 	router chi.Router
 }
@@ -87,7 +87,7 @@ type regenerateSigningSecretResponse struct {
 	SigningSecret string `json:"signing_secret"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
+func NewHandler(cfg config.WebhookConfig, database *db.DB) *Handler {
 	h := &Handler{cfg: cfg, db: database}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
@@ -130,7 +130,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	if err := validateWebhookURL(endpointURL, h.cfg.WebhookAllowInsecure); err != nil {
+	if err := validateWebhookURL(endpointURL, h.cfg.AllowInsecure); err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -251,7 +251,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := validateWebhookURL(next.URL, h.cfg.WebhookAllowInsecure); err != nil {
+	if err := validateWebhookURL(next.URL, h.cfg.AllowInsecure); err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -480,20 +480,20 @@ func validateWebhookURL(rawURL string, allowInsecure bool) error {
 		return errors.New("url must be a valid URL")
 	}
 	if parsed.Scheme != "https" && !allowInsecure {
-		return errors.New("url must use https unless WEBHOOK_ALLOW_INSECURE=true")
+		return errors.New("url must use https unless webhook.allow_insecure is true")
 	}
 	if parsed.User != nil {
 		return errors.New("url must not include credentials")
 	}
 	if parsed.Port() != "" && parsed.Port() != "443" && !allowInsecure {
-		return errors.New("url must use port 443 unless WEBHOOK_ALLOW_INSECURE=true")
+		return errors.New("url must use port 443 unless webhook.allow_insecure is true")
 	}
 	host := parsed.Hostname()
 	if host == "" {
 		return errors.New("url must include a host")
 	}
 	if isPrivateWebhookHost(host) && !allowInsecure {
-		return errors.New("url host must be publicly routable unless WEBHOOK_ALLOW_INSECURE=true")
+		return errors.New("url host must be publicly routable unless webhook.allow_insecure is true")
 	}
 	return nil
 }

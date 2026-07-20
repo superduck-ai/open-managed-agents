@@ -68,10 +68,10 @@ var processSessionCredentials struct {
 	err         error
 }
 
-// NewSessionCredentials 在生产环境强制读取持久化 PKCS#8 私钥；开发和测试环境
+// NewSessionCredentials 在 env=prod 时强制读取持久化 PKCS#8 私钥；开发和测试环境
 // 复用进程级临时密钥，保证同一进程内 API server 与 environment runner 可以互验 JWT。
 func NewSessionCredentials(cfg config.Config) (*SessionCredentials, error) {
-	keyFile := strings.TrimSpace(cfg.CodeSessionJWTSigningKeyFile)
+	keyFile := strings.TrimSpace(cfg.CodeSession.JWTSigningPrivateKeyFile)
 	if keyFile != "" {
 		privateKey, err := readSessionCredentialPrivateKey(keyFile)
 		if err != nil {
@@ -79,8 +79,8 @@ func NewSessionCredentials(cfg config.Config) (*SessionCredentials, error) {
 		}
 		return newSessionCredentials(privateKey, time.Now), nil
 	}
-	if productionEnvironment(cfg.AppEnv) {
-		return nil, errors.New("CODE_SESSION_JWT_SIGNING_KEY_FILE is required in production")
+	if cfg.Env == config.EnvironmentProd {
+		return nil, errors.New("code_session.jwt_signing_private_key_file is required when env is prod")
 	}
 	processSessionCredentials.once.Do(func() {
 		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -264,13 +264,4 @@ func randomCredentialValue(size int) (string, error) {
 		return "", fmt.Errorf("generate code-session credential: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(data), nil
-}
-
-func productionEnvironment(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "production", "prod":
-		return true
-	default:
-		return false
-	}
 }

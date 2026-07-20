@@ -135,7 +135,7 @@ func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, sessionID
 	resolvedTarget, err := resolveUpstreamProxyTarget(
 		connection.Request().Context(),
 		connectRequest.Target,
-		h.cfg.CodeSessionUpstreamProxyDisableSSRFProtection,
+		h.cfg.CodeSession.UpstreamProxyDisableSSRFProtection,
 	)
 	if err != nil {
 		status := http.StatusBadGateway
@@ -146,7 +146,7 @@ func (h *Handler) serveUpstreamProxyTunnel(connection *websocket.Conn, sessionID
 		_ = sendUpstreamProxyHTTPStatus(connection, status)
 		return
 	}
-	if h.cfg.CodeSessionUpstreamProxyMITMEnabled {
+	if h.cfg.CodeSession.UpstreamProxyMITMEnabled {
 		h.serveUpstreamProxyMITM(connection, connectRequest.Target, resolvedTarget)
 		return
 	}

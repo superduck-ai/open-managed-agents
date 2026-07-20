@@ -50,13 +50,12 @@ COPY --from=web-builder /web/dist /web-dist
 #   后续若添加 skills，需在 Dockerfile 中增加 COPY assets/skills/public 。
 # - environment-manager: 默认路径 /usr/local/bin/environment-manager，本镜像未包含。
 #   在 docker-compose 部署中由 e2b-local 提供；如不使用 e2b-local，
-#   请通过 ENVIRONMENT_MANAGER_PATH 环境变量指向外部二进制。
+#   请通过 YAML 的 environment_runner.manager_path 指向外部二进制。
 
 RUN useradd --no-create-home --shell /bin/false oma \
     && chown -R oma:oma /web-dist
 USER oma
 
-ENV ADDR=:8080
 EXPOSE 8080
 
 CMD ["/usr/local/bin/oma-server"]

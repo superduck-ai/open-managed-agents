@@ -89,7 +89,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.MaxFileBytes+1024*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.Storage.MaxFileBytes+1024*1024)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		status := http.StatusBadRequest
 		message := "Expected multipart form data with a file field"
@@ -118,7 +118,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	if header.Size > h.cfg.MaxFileBytes {
+	if header.Size > h.cfg.Storage.MaxFileBytes {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusRequestEntityTooLarge, "invalid_request_error", "File exceeds maximum size"))
 		return
 	}
@@ -153,7 +153,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		CreatedByAPIKeyID: principal.APIKeyID,
 		CreatedAt:         time.Now().UTC(),
 	}
-	if err := h.db.CreateFileIfWithinLimit(r.Context(), record, h.cfg.WorkspaceStorageLimitBytes); err != nil {
+	if err := h.db.CreateFileIfWithinLimit(r.Context(), record, h.cfg.Storage.WorkspaceLimitBytes); err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), record)
 		if errors.Is(err, db.ErrStorageLimitExceeded) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace storage limit exceeded"))
@@ -414,12 +414,12 @@ func metadataFromRecord(record db.FileRecord) fileMetadata {
 }
 
 func (h *Handler) isOfficialSDKFixture(principal auth.Principal, fileID string) bool {
-	return fileID == h.cfg.OfficialSDKFixtureFileID && principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID
+	return fileID == h.cfg.SDKFixtures.FileID && principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
 }
 
 func (h *Handler) officialSDKFixtureMetadata() fileMetadata {
 	return fileMetadata{
-		ID:           h.cfg.OfficialSDKFixtureFileID,
+		ID:           h.cfg.SDKFixtures.FileID,
 		Type:         "file",
 		Filename:     "README.md",
 		MimeType:     "text/markdown",

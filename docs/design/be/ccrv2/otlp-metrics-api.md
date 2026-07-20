@@ -272,18 +272,18 @@ OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer {session_ingress_token},x-w
 
 后端会在成功认证并通过 activity/epoch 检查后 best-effort 解码 OTLP HTTP body，并可写入本地 JSONL 文件。该功能不改变 OTLP HTTP 响应；解码或写文件失败只打印服务端日志。
 
-| 环境变量 | 默认值 | 描述 |
+| YAML 配置 | 默认值 | 描述 |
 |----------|--------|------|
-| `CODE_SESSION_OTLP_FILE_LOG_ENABLED` | development 默认 `true`，production/prod 默认 `false` | 是否写本地 OTLP JSONL |
-| `CODE_SESSION_OTLP_LOG_ROOT` | `./logs` | 本地 OTLP JSONL 根目录，默认相对于服务进程当前工作目录 |
-| `CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES` | `262144` | `requests.jsonl` body preview 截断字节数 |
+| `code_session.otlp_file_log_enabled` | development 默认 `true`，production/prod 默认 `false` | 是否写本地 OTLP JSONL |
+| `code_session.otlp_log_root` | `./logs` | 本地 OTLP JSONL 根目录，默认相对于配置文件目录 |
+| `code_session.otlp_log_body_preview_bytes` | `262144` | `requests.jsonl` body preview 截断字节数 |
 
 文件路径：
 
 ```text
-{CODE_SESSION_OTLP_LOG_ROOT}/{safe_code_session_id}/otlp/requests.jsonl
-{CODE_SESSION_OTLP_LOG_ROOT}/{safe_code_session_id}/otlp/metrics.jsonl
-{CODE_SESSION_OTLP_LOG_ROOT}/{safe_code_session_id}/otlp/logs.jsonl
+{code_session.otlp_log_root}/{safe_code_session_id}/otlp/requests.jsonl
+{code_session.otlp_log_root}/{safe_code_session_id}/otlp/metrics.jsonl
+{code_session.otlp_log_root}/{safe_code_session_id}/otlp/logs.jsonl
 ```
 
 `safe_code_session_id` 只保留 ASCII 字母、数字、`_` 与 `-`，其他字符统一替换为 `_`，避免路径分隔符或 `..` 影响日志根目录边界。日志目录以 `0700` 创建，JSONL 文件以 `0600` 创建。

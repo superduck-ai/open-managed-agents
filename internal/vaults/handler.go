@@ -610,11 +610,11 @@ func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) enqueueWebhook(r *http.Request, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
-	webhooks.Enqueue(r.Context(), h.db, h.cfg, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, sessionThreadID)
+	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, sessionThreadID)
 }
 
 func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Principal, eventType, resourceID string, options webhooks.EventOptions) {
-	webhooks.EnqueueWithOptions(r.Context(), h.db, h.cfg, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, options)
+	webhooks.EnqueueWithOptions(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, options)
 }
 
 func (h *Handler) loadVaultCredentialsForWebhook(r *http.Request, workspaceID int64, vaultID string, includeArchived bool) []db.VaultCredential {

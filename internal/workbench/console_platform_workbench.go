@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -50,6 +51,7 @@ type workbenchKVEntry struct {
 }
 
 type workbenchPersistenceContextKey struct{}
+type workbenchAnthropicUpstreamContextKey struct{}
 
 type workbenchPersistenceStore interface {
 	GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID string) (*WorkbenchPromptRecord, error)
@@ -70,10 +72,10 @@ type workbenchPersistenceStore interface {
 	TakeWorkbenchGeneratedTestCase(ctx context.Context, orgUUID string, requested map[string]any) (map[string]any, bool, error)
 }
 
-func registerOrgWorkbenchRoutes(r chi.Router, store OrganizationStore) {
+func registerOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, upstream config.AnthropicUpstreamConfig) {
 	workbenchStore := workbenchPersistenceFromStore(store)
 	h := func(handler http.HandlerFunc) http.HandlerFunc {
-		return withWorkbenchPersistence(workbenchStore, handler)
+		return withWorkbenchDependencies(workbenchStore, upstream, handler)
 	}
 	r.Get("/models", h(handleWorkbenchModels))
 	r.Get("/rate_limits_v2", h(handleWorkbenchRateLimitsV2))
@@ -116,11 +118,13 @@ func workbenchPersistenceFromStore(store OrganizationStore) workbenchPersistence
 	return persistence
 }
 
-func withWorkbenchPersistence(store workbenchPersistenceStore, handler http.HandlerFunc) http.HandlerFunc {
+func withWorkbenchDependencies(store workbenchPersistenceStore, upstream config.AnthropicUpstreamConfig, handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), workbenchAnthropicUpstreamContextKey{}, upstream)
 		if store != nil {
-			r = r.WithContext(context.WithValue(r.Context(), workbenchPersistenceContextKey{}, store))
+			ctx = context.WithValue(ctx, workbenchPersistenceContextKey{}, store)
 		}
+		r = r.WithContext(ctx)
 		handler(w, r)
 	}
 }
@@ -128,6 +132,11 @@ func withWorkbenchPersistence(store workbenchPersistenceStore, handler http.Hand
 func workbenchPersistenceFromRequest(r *http.Request) workbenchPersistenceStore {
 	store, _ := r.Context().Value(workbenchPersistenceContextKey{}).(workbenchPersistenceStore)
 	return store
+}
+
+func workbenchAnthropicUpstreamFromRequest(r *http.Request) config.AnthropicUpstreamConfig {
+	upstream, _ := r.Context().Value(workbenchAnthropicUpstreamContextKey{}).(config.AnthropicUpstreamConfig)
+	return upstream
 }
 
 func workbenchWritePersistenceError(w http.ResponseWriter, err error) bool {
@@ -745,11 +754,12 @@ func workbenchGenerateTestCasesFromAnthropic(r *http.Request, body map[string]an
 }
 
 func workbenchAnthropicTextFromBody(r *http.Request, upstreamBody map[string]any) (string, int, int, bool) {
-	token := proxyMessagesAnthropicToken()
+	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
+	token := proxyMessagesAnthropicToken(upstreamConfig)
 	if token == "" {
 		return "", 0, 0, false
 	}
-	endpoint, err := anthropicMessagesEndpoint()
+	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
 	if err != nil {
 		return "", 0, 0, false
 	}
@@ -1152,12 +1162,13 @@ func handleWorkbenchCompletions(w http.ResponseWriter, r *http.Request) {
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "at least one non-empty message is required")
 		return
 	}
-	token := proxyMessagesAnthropicToken()
+	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
+	token := proxyMessagesAnthropicToken(upstreamConfig)
 	if token == "" {
-		writeProxyMessagesAnthropicError(w, http.StatusInternalServerError, "authentication_error", "ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY is not set")
+		writeProxyMessagesAnthropicError(w, http.StatusInternalServerError, "authentication_error", "anthropic_upstream.api_key is not configured")
 		return
 	}
-	endpoint, err := anthropicMessagesEndpoint()
+	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
 	if err != nil {
 		writeProxyMessagesAnthropicError(w, http.StatusBadGateway, "api_error", err.Error())
 		return
@@ -1607,11 +1618,12 @@ func handleWorkbenchGenerateTitle(w http.ResponseWriter, r *http.Request) {
 }
 
 func workbenchGenerateTitleFromAnthropic(r *http.Request, messageContent string, model string) (string, int, int) {
-	token := proxyMessagesAnthropicToken()
+	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
+	token := proxyMessagesAnthropicToken(upstreamConfig)
 	if token == "" {
 		return "", 0, 0
 	}
-	endpoint, err := anthropicMessagesEndpoint()
+	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
 	if err != nil {
 		return "", 0, 0
 	}
@@ -1735,13 +1747,14 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "task is required")
 		return
 	}
-	token := proxyMessagesAnthropicToken()
+	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
+	token := proxyMessagesAnthropicToken(upstreamConfig)
 	if token == "" {
 		log.Printf("workbench generate_prompt fallback reason=no_anthropic_token org=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), len([]rune(task)), payload.TargetThinkingMode)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
-	endpoint, err := anthropicMessagesEndpoint()
+	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
 	if err != nil {
 		log.Printf("workbench generate_prompt fallback reason=invalid_anthropic_endpoint org=%s err=%v", chi.URLParam(r, "orgUUID"), err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)

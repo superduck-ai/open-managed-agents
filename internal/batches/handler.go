@@ -130,15 +130,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		return
 	}
 	if h.isOfficialSDKFixture(principal) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, h.cfg.OfficialSDKFixtureBatchID, "in_progress"))
+		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, h.cfg.SDKFixtures.BatchID, "in_progress"))
 		return
 	}
-	if h.cfg.AnthropicUpstreamAPIKey == "" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "ANTHROPIC_UPSTREAM_API_KEY is required for Message Batches"))
+	if h.cfg.AnthropicUpstream.APIKey == "" {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "anthropic_upstream.api_key is required for Message Batches"))
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.BatchMaxBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.Batch.MaxBodyBytes)
 	var body createRequest
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&body); err != nil {
@@ -211,8 +211,8 @@ func (h *Handler) validateCreate(body createRequest, betaHeaders []string) error
 	if len(body.Requests) == 0 {
 		return errors.New("requests must contain at least one request")
 	}
-	if h.cfg.BatchMaxRequests > 0 && len(body.Requests) > h.cfg.BatchMaxRequests {
-		return fmt.Errorf("requests must contain at most %d requests", h.cfg.BatchMaxRequests)
+	if h.cfg.Batch.MaxRequests > 0 && len(body.Requests) > h.cfg.Batch.MaxRequests {
+		return fmt.Errorf("requests must contain at most %d requests", h.cfg.Batch.MaxRequests)
 	}
 	for _, beta := range betaHeaders {
 		if beta == "output-300k-2026-03-24" {
@@ -277,7 +277,7 @@ func validateParams(raw json.RawMessage) error {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if h.isOfficialSDKFixture(principal) {
-		batch := h.fixtureBatchResponse(r, h.cfg.OfficialSDKFixtureBatchID, "in_progress")
+		batch := h.fixtureBatchResponse(r, h.cfg.SDKFixtures.BatchID, "in_progress")
 		first := batch.ID
 		httpapi.WriteJSON(w, http.StatusOK, listResponse{Data: []messageBatchResponse{batch}, FirstID: &first, LastID: &first})
 		return
@@ -431,7 +431,7 @@ func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Message batch has not ended"))
 		return
 	}
-	if resultsExpired(record, h.cfg.BatchResultRetentionDays) || record.ResultsS3Key == nil || record.ResultsSizeBytes == nil {
+	if resultsExpired(record, h.cfg.Batch.ResultRetentionDays) || record.ResultsS3Key == nil || record.ResultsSizeBytes == nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch results are not available"))
 		return
 	}
@@ -518,8 +518,8 @@ func (h *Handler) responseFromRecord(r *http.Request, record db.MessageBatch) me
 		}
 	}
 	var resultsURL *string
-	if record.ProcessingStatus == "ended" && record.ArchivedAt == nil && record.ResultsS3Key != nil && !resultsExpired(record, h.cfg.BatchResultRetentionDays) {
-		value := strings.TrimRight(h.baseURL(r), "/") + "/v1/messages/batches/" + record.ExternalID + "/results"
+	if record.ProcessingStatus == "ended" && record.ArchivedAt == nil && record.ResultsS3Key != nil && !resultsExpired(record, h.cfg.Batch.ResultRetentionDays) {
+		value := strings.TrimRight(httpapi.RequestBaseURL(r), "/") + "/v1/messages/batches/" + record.ExternalID + "/results"
 		resultsURL = &value
 	}
 	return messageBatchResponse{
@@ -534,17 +534,6 @@ func (h *Handler) responseFromRecord(r *http.Request, record db.MessageBatch) me
 		ArchivedAt:        formatOptionalTime(record.ArchivedAt),
 		ResultsURL:        resultsURL,
 	}
-}
-
-func (h *Handler) baseURL(r *http.Request) string {
-	if h.cfg.PublicBaseURL != "" {
-		return h.cfg.PublicBaseURL
-	}
-	proto := r.Header.Get("X-Forwarded-Proto")
-	if proto == "" {
-		proto = "http"
-	}
-	return proto + "://" + r.Host
 }
 
 func formatTime(t time.Time) string {
@@ -567,11 +556,11 @@ func resultsExpired(record db.MessageBatch, days int) bool {
 }
 
 func (h *Handler) isOfficialSDKFixture(principal auth.Principal) bool {
-	return principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID
+	return principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
 }
 
 func (h *Handler) isOfficialSDKFixtureID(principal auth.Principal, batchID string) bool {
-	return h.isOfficialSDKFixture(principal) && batchID == h.cfg.OfficialSDKFixtureBatchID
+	return h.isOfficialSDKFixture(principal) && batchID == h.cfg.SDKFixtures.BatchID
 }
 
 func (h *Handler) fixtureBatchResponse(r *http.Request, id string, status string) messageBatchResponse {
@@ -582,7 +571,7 @@ func (h *Handler) fixtureBatchResponse(r *http.Request, id string, status string
 	counts := requestCounts{Processing: 1}
 	if status == "ended" {
 		endedAt = formatOptionalTime(&created)
-		value := strings.TrimRight(h.baseURL(r), "/") + "/v1/messages/batches/" + id + "/results"
+		value := strings.TrimRight(httpapi.RequestBaseURL(r), "/") + "/v1/messages/batches/" + id + "/results"
 		resultsURL = &value
 		counts = requestCounts{Succeeded: 1}
 	}

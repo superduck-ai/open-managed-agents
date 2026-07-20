@@ -11,16 +11,40 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+func TestCodeSessionSandboxAPIBaseURLDoesNotInferServerAddress(t *testing.T) {
+	cfg := config.Config{Server: config.ServerConfig{Addr: "127.0.0.1:38080"}}
+
+	if baseURL := codeSessionSandboxAPIBaseURL(cfg); baseURL != "" {
+		t.Fatalf("codeSessionSandboxAPIBaseURL() = %q, want empty value", baseURL)
+	}
+}
+
+func TestCodeSessionSandboxAPIBaseURLUsesConfiguredValue(t *testing.T) {
+	cfg := config.Config{
+		Server:      config.ServerConfig{Addr: "127.0.0.1:38080"},
+		CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "  http://sandbox-api.example.test/  "},
+	}
+
+	if baseURL := codeSessionSandboxAPIBaseURL(cfg); baseURL != "http://sandbox-api.example.test" {
+		t.Fatalf("codeSessionSandboxAPIBaseURL() = %q, want configured value", baseURL)
+	}
+}
+
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	// 故意给配置放入可识别的上游密钥，后续断言它不会进入 payload 或 shell 命令。
 	cfg := config.Config{
-		CodeSessionAPIBaseURL:        "http://127.0.0.1:18081/",
-		CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/",
-		AnthropicUpstreamBaseURL:     "https://api.anthropic.test/",
-		AnthropicUpstreamAPIKey:      "sk-ant-test-secret",
-		EnvironmentManagerPath:       "/opt/env manager/bin/environment-manager",
-		ClaudeAgentVersion:           "2.1.120",
-		ClaudePath:                   "/opt/claude path/bin/claude",
+		CodeSession: config.CodeSessionConfig{
+			SandboxAPIBaseURL: "http://host.docker.internal:18081/",
+		},
+		AnthropicUpstream: config.AnthropicUpstreamConfig{
+			BaseURL: "https://api.anthropic.test/",
+			APIKey:  "sk-ant-test-secret",
+		},
+		EnvironmentRunner: config.EnvironmentRunnerConfig{
+			ManagerPath:        "/opt/env manager/bin/environment-manager",
+			ClaudeAgentVersion: "2.1.120",
+			ClaudePath:         "/opt/claude path/bin/claude",
+		},
 	}
 	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
@@ -79,7 +103,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if _, ok := environment["environment"]; ok {
 		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
-	if strings.Contains(string(payload), cfg.AnthropicUpstreamAPIKey) {
+	if strings.Contains(string(payload), cfg.AnthropicUpstream.APIKey) {
 		t.Fatalf("payload leaked upstream anthropic api key: %s", payload)
 	}
 
@@ -118,7 +142,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 }
 
 func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_METRICS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
@@ -159,7 +183,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *
 }
 
 func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_LOGS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
@@ -196,7 +220,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *tes
 }
 
 func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"
 	}}`)
@@ -227,7 +251,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *tes
 }
 
 func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://collector.example.com/v1/metrics"
 	}}`)
@@ -256,7 +280,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint
 }
 
 func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomLogsEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"https://collector.example.com/v1/logs"
 	}}`)

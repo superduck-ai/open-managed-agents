@@ -11,20 +11,45 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
+func TestConnectionOptsFromConfigMapsAllFields(t *testing.T) {
+	cfg := config.E2BConfig{
+		APIKey:         "api-key",
+		AccessToken:    "access-token",
+		Domain:         "e2b.example.test",
+		APIURL:         "https://api.e2b.example.test",
+		SandboxURL:     "https://sandbox.e2b.example.test",
+		Debug:          true,
+		RequestTimeout: 23 * time.Second,
+	}
+
+	got := ConnectionOptsFromConfig(cfg)
+	if got.ApiKey != cfg.APIKey || got.AccessToken != cfg.AccessToken || got.Domain != cfg.Domain || got.ApiUrl != cfg.APIURL || got.SandboxUrl != cfg.SandboxURL {
+		t.Fatalf("ConnectionOptsFromConfig() = %#v, want all connection fields from E2BConfig", got)
+	}
+	if got.Debug == nil || !*got.Debug {
+		t.Fatalf("ConnectionOptsFromConfig().Debug = %v, want true", got.Debug)
+	}
+	wantTimeoutMs := int(cfg.RequestTimeout / time.Millisecond)
+	if got.RequestTimeoutMs == nil || *got.RequestTimeoutMs != wantTimeoutMs {
+		t.Fatalf("ConnectionOptsFromConfig().RequestTimeoutMs = %v, want %d", got.RequestTimeoutMs, wantTimeoutMs)
+	}
+}
+
 func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
 	tests := []struct {
 		name string
-		cfg  config.Config
+		cfg  config.E2BConfig
 	}{
-		{name: "hosted", cfg: config.Config{E2BDomain: "e2b.example.test"}},
-		{name: "local endpoint", cfg: config.Config{E2BAPIURL: "http://127.0.0.1:3000"}},
-		{name: "debug", cfg: config.Config{E2BDebug: true}},
+		{name: "hosted", cfg: config.E2BConfig{Domain: "e2b.example.test"}},
+		{name: "local endpoint", cfg: config.E2BConfig{APIURL: "http://127.0.0.1:3000"}},
+		{name: "debug", cfg: config.E2BConfig{Debug: true}},
 	}
 
 	for _, tt := range tests {
@@ -42,7 +67,7 @@ func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
 }
 
 func TestSandboxVolumeMountsIncludesManagedAgentSkills(t *testing.T) {
-	provider := NewProvider(config.Config{})
+	provider := NewProvider(config.E2BConfig{})
 	work := &db.EnvironmentWork{
 		Metadata: json.RawMessage(`{"managed_agent_skills_mount":{"mount_path":"/mnt/skills","volume_name":"managed-agent-skills-test","manifest_sha256":"abc123"}}`),
 	}
@@ -60,7 +85,7 @@ func TestSandboxVolumeMountsIncludesManagedAgentSkills(t *testing.T) {
 }
 
 func TestResolveLimitedNetworkIncludesMCPHostsWhenAllowed(t *testing.T) {
-	provider := NewProvider(config.Config{})
+	provider := NewProvider(config.E2BConfig{})
 	env := db.Environment{
 		ExternalID:       "env_test",
 		WorkspaceID:      42,
@@ -121,9 +146,9 @@ func TestPrepareSkillMountReusesOnlyMatchingReadyMarker(t *testing.T) {
 		server := newFakeE2BVolumeServer(t, volumeName, manifestSHA256, &writes)
 		defer server.Close()
 
-		provider := NewProvider(config.Config{
-			E2BAPIKey: "e2b_0000000000000000000000000000000000000000",
-			E2BAPIURL: server.URL,
+		provider := NewProvider(config.E2BConfig{
+			APIKey: "e2b_0000000000000000000000000000000000000000",
+			APIURL: server.URL,
 		})
 		metadataOnly := append([]skillsapi.RuntimeSkill(nil), runtimeSkills...)
 		metadataOnly[0].Archive = nil
@@ -144,9 +169,9 @@ func TestPrepareSkillMountReusesOnlyMatchingReadyMarker(t *testing.T) {
 		server := newFakeE2BVolumeServer(t, volumeName, "stale-ready-marker", &writes)
 		defer server.Close()
 
-		provider := NewProvider(config.Config{
-			E2BAPIKey: "e2b_0000000000000000000000000000000000000000",
-			E2BAPIURL: server.URL,
+		provider := NewProvider(config.E2BConfig{
+			APIKey: "e2b_0000000000000000000000000000000000000000",
+			APIURL: server.URL,
 		})
 		mount, err := provider.PrepareSkillMount(context.Background(), runtimeSkills)
 		if err != nil {

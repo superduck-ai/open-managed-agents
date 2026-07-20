@@ -382,7 +382,7 @@ func TestFilesAPI(t *testing.T) {
 
 	t.Run("failure file too large", func(t *testing.T) {
 		smallLimit := app.cfg
-		smallLimit.MaxFileBytes = 4
+		smallLimit.Storage.MaxFileBytes = 4
 		limited := newTestApp(t, &smallLimit)
 		defer limited.close()
 
@@ -393,11 +393,11 @@ func TestFilesAPI(t *testing.T) {
 
 	t.Run("failure request body exceeds max bytes reader", func(t *testing.T) {
 		smallLimit := app.cfg
-		smallLimit.MaxFileBytes = 1
+		smallLimit.Storage.MaxFileBytes = 1
 		limited := newTestApp(t, &smallLimit)
 		defer limited.close()
 
-		content := bytes.Repeat([]byte("x"), int(smallLimit.MaxFileBytes+1024*1024+1))
+		content := bytes.Repeat([]byte("x"), int(smallLimit.Storage.MaxFileBytes+1024*1024+1))
 		body, contentType := multipartBody(t, "huge.txt", "text/plain", content, false)
 		resp := limited.do(t, http.MethodPost, "/v1/files?beta=true", body, defaultTestKey, true, contentType)
 		assertError(t, resp, http.StatusRequestEntityTooLarge, "invalid_request_error")
@@ -502,8 +502,8 @@ func TestFilesAPI(t *testing.T) {
 		store := newFakeStore("fake-bucket")
 		store.deleteErr = errors.New("minio unavailable")
 		limitedConfig := app.cfg
-		limitedConfig.MaxFileBytes = 1024
-		limitedConfig.WorkspaceStorageLimitBytes = 1
+		limitedConfig.Storage.MaxFileBytes = 1024
+		limitedConfig.Storage.WorkspaceLimitBytes = 1
 		fakeApp := newTestAppWithStore(t, &limitedConfig, store)
 		defer fakeApp.close()
 
@@ -912,11 +912,11 @@ func newMinIOStore(t *testing.T, override *config.Config) (storage.ObjectStore, 
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionOTLPFileLogEnabled = false
+	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
-	store, err := storage.NewMinIO(cfg)
+	store, err := storage.New(cfg.Storage)
 	if err != nil {
 		t.Fatalf("create minio store: %v", err)
 	}
@@ -930,7 +930,7 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionOTLPFileLogEnabled = false
+	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
@@ -942,7 +942,7 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 		database.Close()
 		t.Fatalf("migrate database: %v", err)
 	}
-	if err := database.Seed(ctx, cfg.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		database.Close()
 		t.Fatalf("seed database: %v", err)
 	}
@@ -969,8 +969,8 @@ func (a *testApp) seedPlatformSession(t *testing.T, sessionKey string) {
 	t.Helper()
 	session, err := a.db.ResolvePlatformSessionIdentity(context.Background(), platformsession.CreateInput{
 		SessionKey: sessionKey,
-		UserUUID:   a.cfg.DefaultUserExternalID,
-		OrgUUID:    a.cfg.DefaultOrganizationExternalID,
+		UserUUID:   a.cfg.Bootstrap.UserExternalID,
+		OrgUUID:    a.cfg.Bootstrap.OrganizationExternalID,
 	})
 	if err != nil {
 		t.Fatalf("resolve platform session identity: %v", err)

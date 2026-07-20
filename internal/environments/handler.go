@@ -141,7 +141,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.isOfficialSDKPrincipal(principal) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(h.cfg.OfficialSDKFixtureEnvironmentID, false))
+		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false))
 		return
 	}
 	name, err := parseRequiredStringField(fields, "name")
@@ -215,7 +215,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	cursor, err := decodeEnvironmentCursor(r.URL.Query().Get("page"))
 	if err != nil {
 		if h.isOfficialSDKPrincipal(principal) {
-			httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.OfficialSDKFixtureEnvironmentID, false)}})
+			httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false)}})
 			return
 		}
 		writeBadRequest(w, r, err)
@@ -238,7 +238,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.isOfficialSDKPrincipal(principal) && len(records) == 0 {
-		httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.OfficialSDKFixtureEnvironmentID, false)}})
+		httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false)}})
 		return
 	}
 	data := make([]environmentResponse, 0, len(records))
@@ -420,7 +420,7 @@ func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.isOfficialSDKRequest(r) {
-		httpapi.WriteJSON(w, http.StatusOK, workPageResponse{Data: []workResponse{h.fixtureWork(env.ExternalID, h.cfg.OfficialSDKFixtureWorkID, "queued")}})
+		httpapi.WriteJSON(w, http.StatusOK, workPageResponse{Data: []workResponse{h.fixtureWork(env.ExternalID, h.cfg.SDKFixtures.WorkID, "queued")}})
 		return
 	}
 	limit, err := parseLimit(r)
@@ -527,7 +527,7 @@ func (h *Handler) pollWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.isOfficialSDKRequest(r) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, h.cfg.OfficialSDKFixtureWorkID, "queued"))
+		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, h.cfg.SDKFixtures.WorkID, "queued"))
 		return
 	}
 	blockFor, err := parseBlockMS(r)
@@ -718,7 +718,7 @@ func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, wo
 	if err := h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
 		return err
 	}
-	if err := e2bruntime.NewProvider(h.cfg).Kill(ctx, providerSandboxID); err != nil {
+	if err := e2bruntime.NewProvider(h.cfg.E2B).Kill(ctx, providerSandboxID); err != nil {
 		message := err.Error()
 		_ = h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "failed", &providerSandboxID, &message, nil)
 		return err
@@ -781,10 +781,10 @@ func isWorkspaceCredential(principal auth.Principal) bool {
 }
 
 func (h *Handler) resolvedTemplate(json.RawMessage) string {
-	if strings.TrimSpace(h.cfg.E2BTemplate) == "" {
+	if strings.TrimSpace(h.cfg.E2B.Template) == "" {
 		return "claude-code-interpreter"
 	}
-	return h.cfg.E2BTemplate
+	return h.cfg.E2B.Template
 }
 
 func responseFromEnvironment(env db.Environment) environmentResponse {
@@ -1007,7 +1007,7 @@ func (h *Handler) fixtureWork(environmentID, workID, state string) workResponse 
 
 func (h *Handler) isOfficialSDKPrincipal(principal auth.Principal) bool {
 	return principal.CredentialType == "api_key" &&
-		principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID
+		principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
 }
 
 func (h *Handler) isOfficialSDKRequest(r *http.Request) bool {
@@ -1017,14 +1017,14 @@ func (h *Handler) isOfficialSDKRequest(r *http.Request) bool {
 
 func (h *Handler) isOfficialSDKEnvironmentFixture(principal auth.Principal, environmentID string) bool {
 	return h.isOfficialSDKPrincipal(principal) &&
-		environmentID == h.cfg.OfficialSDKFixtureEnvironmentID
+		environmentID == h.cfg.SDKFixtures.EnvironmentID
 }
 
 func (h *Handler) isOfficialSDKWorkFixture(r *http.Request, workID string) bool {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	return principal.CredentialType == "api_key" &&
-		principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID &&
-		workID == h.cfg.OfficialSDKFixtureWorkID
+		principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID &&
+		workID == h.cfg.SDKFixtures.WorkID
 }
 
 func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {

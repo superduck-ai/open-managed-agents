@@ -17,11 +17,11 @@ type RedisStore struct {
 
 func NewRedisStore(ctx context.Context, redisURL string) (*RedisStore, error) {
 	if strings.TrimSpace(redisURL) == "" {
-		return nil, errors.New("REDIS_URL is required")
+		return nil, errors.New("redis.url is required")
 	}
 	options, err := redis.ParseURL(redisURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse REDIS_URL: %w", err)
+		return nil, fmt.Errorf("parse redis.url: %w", err)
 	}
 	client := redis.NewClient(options)
 	if err := client.Ping(ctx).Err(); err != nil {

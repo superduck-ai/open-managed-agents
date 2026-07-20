@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -47,9 +48,7 @@ func TestWorkbenchCreatorFallsBackToPrincipalWithoutCookie(t *testing.T) {
 }
 
 func TestWorkbenchGeneratePromptFallsBackWithoutAnthropicToken(t *testing.T) {
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	t.Setenv("ANTHROPIC_UPSTREAM_API_KEY", "")
+	t.Setenv("ANTHROPIC_UPSTREAM_API_KEY", "ignored-environment-key")
 
 	req := workbenchPostTestRequest(
 		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
@@ -58,7 +57,7 @@ func TestWorkbenchGeneratePromptFallsBackWithoutAnthropicToken(t *testing.T) {
 	)
 	rec := httptest.NewRecorder()
 
-	handleWorkbenchGeneratePrompt(rec, req)
+	withWorkbenchDependencies(nil, config.AnthropicUpstreamConfig{}, handleWorkbenchGeneratePrompt)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -85,11 +84,11 @@ func TestWorkbenchGeneratePromptSystemPromptRequestsXMLSections(t *testing.T) {
 	}
 }
 
-func TestWorkbenchAnthropicEndpointPrefersUpstreamBaseURL(t *testing.T) {
-	t.Setenv("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic")
-	t.Setenv("ANTHROPIC_UPSTREAM_BASE_URL", "https://api.kimi.com/coding/")
+func TestWorkbenchAnthropicEndpointUsesConfig(t *testing.T) {
+	t.Setenv("ANTHROPIC_UPSTREAM_BASE_URL", "https://ignored.example.test")
+	upstream := config.AnthropicUpstreamConfig{BaseURL: "https://api.kimi.com/coding/"}
 
-	endpoint, err := anthropicMessagesEndpoint()
+	endpoint, err := anthropicMessagesEndpoint(upstream)
 	if err != nil {
 		t.Fatalf("anthropicMessagesEndpoint error: %v", err)
 	}
@@ -98,19 +97,31 @@ func TestWorkbenchAnthropicEndpointPrefersUpstreamBaseURL(t *testing.T) {
 	}
 }
 
-func TestWorkbenchAnthropicTokenPrefersUpstreamAPIKey(t *testing.T) {
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "auth-token")
-	t.Setenv("ANTHROPIC_API_KEY", "api-key")
-	t.Setenv("ANTHROPIC_UPSTREAM_API_KEY", "upstream-key")
+func TestWorkbenchAnthropicTokenUsesConfig(t *testing.T) {
+	t.Setenv("ANTHROPIC_UPSTREAM_API_KEY", "ignored-environment-key")
+	upstream := config.AnthropicUpstreamConfig{APIKey: "yaml-key"}
 
-	if token := proxyMessagesAnthropicToken(); token != "upstream-key" {
+	if token := proxyMessagesAnthropicToken(upstream); token != "yaml-key" {
 		t.Fatalf("token = %q", token)
 	}
 }
 
-func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
-	t.Setenv("ANTHROPIC_API_KEY", "")
+func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/anthropic/v1/messages" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("X-API-Key") != "yaml-key" {
+			http.Error(w, "unexpected API key", http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "Configured YAML title"}},
+			"usage":   map[string]any{"input_tokens": 7, "output_tokens": 3},
+		})
+	}))
+	defer upstreamServer.Close()
 
 	req := workbenchPostTestRequest(
 		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
@@ -118,8 +129,31 @@ func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
 		`{"message_content":"Summarize planning notes","model":"claude-opus-4-8"}`,
 	)
 	rec := httptest.NewRecorder()
+	upstream := config.AnthropicUpstreamConfig{BaseURL: upstreamServer.URL + "/anthropic", APIKey: "yaml-key"}
 
-	handleWorkbenchGenerateTitle(rec, req)
+	withWorkbenchDependencies(nil, upstream, handleWorkbenchGenerateTitle)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["completion"] != "Configured YAML title" || body["input_tokens"] != float64(7) || body["output_tokens"] != float64(3) {
+		t.Fatalf("unexpected configured upstream response: %#v", body)
+	}
+}
+
+func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
+	req := workbenchPostTestRequest(
+		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
+		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/generate_title",
+		`{"message_content":"Summarize planning notes","model":"claude-opus-4-8"}`,
+	)
+	rec := httptest.NewRecorder()
+
+	withWorkbenchDependencies(nil, config.AnthropicUpstreamConfig{}, handleWorkbenchGenerateTitle)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())

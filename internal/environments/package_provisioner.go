@@ -49,16 +49,19 @@ func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("decode environment packages: %w", err)
 	}
-	if packages.Type != "" && packages.Type != "packages" {
+	if packages.Type != "" && packages.Type != managerPackageType {
 		return nil, false, errors.New(invalidPackagesTypeMessage)
 	}
 	if packages.hasCredentialURL() {
 		return nil, false, errors.New("config.packages entries must not contain URL credentials")
 	}
+	if packages.hasManagerOption() {
+		return nil, false, errors.New(invalidPackageOptionMessage)
+	}
 	if packages.empty() {
 		return nil, false, nil
 	}
-	packages.Type = "packages"
+	packages.Type = managerPackageType
 	data, err := json.Marshal(packageManifest{Version: 1, Packages: packages})
 	if err != nil {
 		return nil, false, fmt.Errorf("encode packages manifest: %w", err)
@@ -82,7 +85,7 @@ func decodeEnvironmentPackages(raw json.RawMessage) (environmentPackages, error)
 }
 
 func (p environmentPackages) hasCredentialURL() bool {
-	for _, specs := range [][]string{p.APT, p.Cargo, p.Gem, p.Go, p.NPM, p.PIP} {
+	for _, specs := range p.specsByManager() {
 		for _, spec := range specs {
 			if packageCredentialURLPattern.MatchString(spec) {
 				return true
@@ -90,6 +93,19 @@ func (p environmentPackages) hasCredentialURL() bool {
 		}
 	}
 	return false
+}
+
+func (p environmentPackages) hasManagerOption() bool {
+	for _, specs := range p.specsByManager() {
+		if hasPackageManagerOption(specs) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p environmentPackages) specsByManager() [][]string {
+	return [][]string{p.APT, p.Cargo, p.Gem, p.Go, p.NPM, p.PIP}
 }
 
 func (p environmentPackages) empty() bool {

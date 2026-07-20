@@ -254,6 +254,19 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 	})
 
+	t.Run("work is stopped when sandbox kill fails", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironmentWithStopKillFailure(t)
+		if !processed || err == nil || !strings.Contains(err.Error(), "forced sandbox kill failure") {
+			t.Fatalf("RunOnce() = (%t, %v), want sandbox kill failure", processed, err)
+		}
+		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
+			t.Fatalf("killed sandboxes = %#v, want one attempted kill", provider.kills)
+		}
+		if !provider.workStopped {
+			t.Fatal("sandbox kill failure left environment work running")
+		}
+	})
+
 	t.Run("metadata failure rolls back code session creation", func(t *testing.T) {
 		provider, processed, err := runPackageEnvironmentWithSessionMetadataFailure(t)
 		if !processed || err == nil || !strings.Contains(err.Error(), "forced session metadata update failure") {
@@ -365,6 +378,12 @@ func runPackageEnvironmentWithStopStateFailure(t *testing.T) (*recordingRunnerPr
 	})
 }
 
+func runPackageEnvironmentWithStopKillFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
+	return runPackageEnvironmentWithHookAndKill(t, nil, errors.New("forced sandbox kill failure"), func(ctx context.Context, database *db.DB, environmentID string) {
+		requestPackageEnvironmentStop(t, ctx, database, environmentID)
+	})
+}
+
 func runPackageEnvironmentWithSessionMetadataFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
 	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _ string) {
 		if _, err := database.Pool.Exec(ctx, `
@@ -412,6 +431,15 @@ func runPackageEnvironmentWithHook(
 	commandErr error,
 	afterCommand func(context.Context, *db.DB, string),
 ) (*recordingRunnerProvider, bool, error) {
+	return runPackageEnvironmentWithHookAndKill(t, commandErr, nil, afterCommand)
+}
+
+func runPackageEnvironmentWithHookAndKill(
+	t *testing.T,
+	commandErr error,
+	killErr error,
+	afterCommand func(context.Context, *db.DB, string),
+) (*recordingRunnerProvider, bool, error) {
 	t.Helper()
 	ctx := context.Background()
 	cfg, err := config.Load()
@@ -451,7 +479,7 @@ func runPackageEnvironmentWithHook(
 	t.Cleanup(func() {
 		_, _ = client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 	})
-	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-packages", commandErr: commandErr}
+	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-packages", commandErr: commandErr, killErr: killErr}
 	if afterCommand != nil {
 		provider.afterCommand = func() { afterCommand(ctx, app.db, environment.ID) }
 	}
@@ -801,6 +829,7 @@ type recordingRunnerProvider struct {
 	sandboxID                    string
 	resolveErr                   error
 	commandErr                   error
+	killErr                      error
 	afterCommand                 func()
 	resolves                     []recordedSandboxResolve
 	writes                       []recordedSandboxWrite
@@ -887,7 +916,7 @@ func (p *recordingRunnerProvider) Create(_ context.Context, _ db.Environment, wo
 
 func (p *recordingRunnerProvider) Kill(_ context.Context, sandboxID string) error {
 	p.kills = append(p.kills, sandboxID)
-	return nil
+	return p.killErr
 }
 
 func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID string, path string, data []byte) error {

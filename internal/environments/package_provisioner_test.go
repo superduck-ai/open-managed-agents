@@ -12,6 +12,25 @@ import (
 )
 
 func TestNormalizePackages(t *testing.T) {
+	t.Run("manager options are rejected for every manager without echoing the spec", func(t *testing.T) {
+		for _, manager := range packageManagerNames {
+			manager := manager
+			t.Run(manager, func(t *testing.T) {
+				secretOption := "  --token=secret-value"
+				packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
+					"type":  managerPackageType,
+					manager: []string{secretOption},
+				}))
+				if err == nil || packages != nil || !strings.Contains(err.Error(), invalidPackageOptionMessage) {
+					t.Fatalf("normalizePackages() = (%#v, %v), want manager option error", packages, err)
+				}
+				if strings.Contains(err.Error(), secretOption) || strings.Contains(err.Error(), "secret-value") {
+					t.Fatalf("normalization error leaked package option: %v", err)
+				}
+			})
+		}
+	})
+
 	t.Run("invalid type is rejected", func(t *testing.T) {
 		packages, err := normalizePackages(json.RawMessage(`{"type":"other","pip":["numpy"]}`))
 		if err == nil || packages != nil || !strings.Contains(err.Error(), `type must be "packages"`) {
@@ -21,6 +40,23 @@ func TestNormalizePackages(t *testing.T) {
 }
 
 func TestBuildPackageManifest(t *testing.T) {
+	t.Run("manager option in stored config is rejected without echoing the spec", func(t *testing.T) {
+		secretOption := "-x=secret-value"
+		manifest, provision, err := buildPackageManifest(mustPackageJSON(t, map[string]any{
+			"type": "cloud",
+			"packages": map[string]any{
+				"type": managerPackageType,
+				"pip":  []string{secretOption},
+			},
+		}))
+		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), invalidPackageOptionMessage) {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want manager option error", manifest, provision, err)
+		}
+		if strings.Contains(err.Error(), secretOption) || strings.Contains(err.Error(), "secret-value") {
+			t.Fatalf("manifest error leaked package option: %v", err)
+		}
+	})
+
 	t.Run("invalid environment config has a root decode error", func(t *testing.T) {
 		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":`))
 		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
@@ -146,6 +182,40 @@ func TestPackageProvisionerRejectsNonObjectManifest(t *testing.T) {
 			}
 			if strings.Contains(message, "Traceback") || strings.Contains(message, "AttributeError") {
 				t.Fatalf("provisioner leaked an implementation exception: %q", message)
+			}
+		})
+	}
+}
+
+func TestPackageProvisionerRejectsManagerOptionsWithoutRunningCommands(t *testing.T) {
+	python, err := packageProvisionerPython()
+	if err != nil {
+		t.Skip("python3 is required to exercise the embedded provisioner")
+	}
+	for _, option := range []string{"--dry-run", "  --dry-run", "-x=secret-value"} {
+		option := option
+		t.Run(strings.TrimSpace(option), func(t *testing.T) {
+			dir := t.TempDir()
+			manifestPath := filepath.Join(dir, "packages.json")
+			manifest := packageManifest{Version: 1, Packages: environmentPackages{
+				Type: managerPackageType,
+				PIP:  []string{option, "requests"},
+			}}
+			if err := os.WriteFile(manifestPath, mustPackageJSON(t, manifest), 0o600); err != nil {
+				t.Fatalf("write manifest: %v", err)
+			}
+			command := exec.Command(python, "-", manifestPath)
+			command.Stdin = bytes.NewReader(packageProvisionerV1)
+			output, err := command.CombinedOutput()
+			if err == nil {
+				t.Fatal("provisioner accepted a package manager option")
+			}
+			message := string(output)
+			if !strings.Contains(message, "entries must not be manager options") {
+				t.Fatalf("provisioner output = %q, want manager option validation error", message)
+			}
+			if strings.Contains(message, option) || strings.Contains(message, "secret-value") || strings.Contains(message, "Traceback") {
+				t.Fatalf("provisioner leaked package option or traceback: %q", message)
 			}
 		})
 	}

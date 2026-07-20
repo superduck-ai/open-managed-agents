@@ -42,6 +42,8 @@ def load_manifest(manifest_path: str) -> dict[str, list[str]]:
             raise ValueError(f"unsupported package manager: {manager}")
         if not isinstance(specs, list) or not all(isinstance(spec, str) for spec in specs):
             raise ValueError(f"packages.{manager} must be an array of strings")
+        if any(spec.strip().startswith("-") for spec in specs):
+            raise ValueError(f"packages.{manager} entries must not be manager options")
     return packages
 
 

@@ -232,28 +232,49 @@ func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manife
 }
 
 func (r *Runner) stopCreatedSandbox(record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) error {
-	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	var stateErr error
-	if strings.TrimSpace(providerSandboxID) != "" {
-		if err := r.db.UpdateEnvironmentSandboxState(stopCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
-			stateErr = err
-		}
-		if err := r.provider.Kill(stopCtx, providerSandboxID); err != nil {
-			message := err.Error()
-			_ = r.db.UpdateEnvironmentSandboxState(stopCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, nil)
-			_, _ = r.db.StopEnvironmentWork(stopCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
-			return err
-		}
-	}
-	stoppedAt := time.Now().UTC()
-	if err := r.db.UpdateEnvironmentSandboxState(stopCtx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt); err != nil {
-		stateErr = errors.Join(stateErr, err)
-	}
-	if _, err := r.db.StopEnvironmentWork(stopCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true); err != nil {
-		stateErr = errors.Join(stateErr, err)
-	}
-	return stateErr
+	return runSandboxStopPhases(
+		2*time.Minute,
+		2*time.Minute,
+		func(killCtx context.Context) (error, error) {
+			var phaseErr error
+			if strings.TrimSpace(providerSandboxID) == "" {
+				return nil, nil
+			}
+			if err := r.db.UpdateEnvironmentSandboxState(killCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
+				phaseErr = errors.Join(phaseErr, err)
+			}
+			killErr := r.provider.Kill(killCtx, providerSandboxID)
+			return killErr, errors.Join(phaseErr, killErr)
+		},
+		func(cleanupCtx context.Context, killErr error) error {
+			var cleanupErr error
+			if killErr != nil {
+				message := killErr.Error()
+				cleanupErr = errors.Join(cleanupErr, r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, nil))
+			} else {
+				stoppedAt := time.Now().UTC()
+				cleanupErr = errors.Join(cleanupErr, r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt))
+			}
+			_, stopWorkErr := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+			return errors.Join(cleanupErr, stopWorkErr)
+		},
+	)
+}
+
+func runSandboxStopPhases(
+	killTimeout time.Duration,
+	cleanupTimeout time.Duration,
+	killPhase func(context.Context) (killErr error, phaseErr error),
+	cleanupPhase func(context.Context, error) error,
+) error {
+	killCtx, cancelKill := context.WithTimeout(context.Background(), killTimeout)
+	killErr, phaseErr := killPhase(killCtx)
+	cancelKill()
+
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), cleanupTimeout)
+	cleanupErr := cleanupPhase(cleanupCtx, killErr)
+	cancelCleanup()
+	return errors.Join(phaseErr, cleanupErr)
 }
 
 func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {

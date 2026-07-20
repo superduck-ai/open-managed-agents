@@ -4,15 +4,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var packageManagerNames = [...]string{"apt", "cargo", "gem", "go", "npm", "pip"}
 
-const invalidPackagesTypeMessage = `config.packages.type must be "packages"`
+const (
+	managerPackageType          = "packages"
+	invalidPackagesTypeMessage  = `config.packages.type must be "packages"`
+	invalidPackageOptionMessage = "config.packages entries must be package specs, not manager options"
+)
 
 func emptyPackages() map[string]any {
 	return map[string]any{
-		"type":  "packages",
+		"type":  managerPackageType,
 		"apt":   []string{},
 		"cargo": []string{},
 		"gem":   []string{},
@@ -32,7 +37,7 @@ func normalizePackages(raw json.RawMessage) (map[string]any, error) {
 	}
 	if rawType, ok := fields["type"]; ok && !isJSONNull(rawType) {
 		var packageType string
-		if err := json.Unmarshal(rawType, &packageType); err != nil || packageType != "packages" {
+		if err := json.Unmarshal(rawType, &packageType); err != nil || packageType != managerPackageType {
 			return nil, errors.New(invalidPackagesTypeMessage)
 		}
 	}
@@ -49,9 +54,21 @@ func normalizePackages(raw json.RawMessage) (map[string]any, error) {
 		if hasPackageCredentialURL(values) {
 			return nil, fmt.Errorf("config.packages.%s entries must not contain URL credentials", manager)
 		}
+		if hasPackageManagerOption(values) {
+			return nil, errors.New(invalidPackageOptionMessage)
+		}
 		out[manager] = values
 	}
 	return out, nil
+}
+
+func hasPackageManagerOption(specs []string) bool {
+	for _, spec := range specs {
+		if strings.HasPrefix(strings.TrimSpace(spec), "-") {
+			return true
+		}
+	}
+	return false
 }
 
 func hasPackageCredentialURL(specs []string) bool {

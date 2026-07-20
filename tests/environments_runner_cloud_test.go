@@ -211,6 +211,12 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if provider.codeSessionCreated {
 			t.Fatal("provisioning failure created an active code session")
 		}
+		if provider.workHasPreparationMetadata {
+			t.Fatal("provisioning failure persisted uncommitted launch preparation metadata")
+		}
+		if !provider.createSawPreparationMetadata {
+			t.Fatal("sandbox create did not receive in-memory launch preparation metadata")
+		}
 	})
 
 	t.Run("stop requested during provisioning terminates sandbox before manager startup", func(t *testing.T) {
@@ -227,6 +233,9 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if provider.codeSessionCreated {
 			t.Fatal("graceful stop during provisioning created an active code session")
 		}
+		if provider.workHasPreparationMetadata {
+			t.Fatal("graceful stop persisted uncommitted launch preparation metadata")
+		}
 	})
 
 	t.Run("sandbox is killed when persisting stopping state fails", func(t *testing.T) {
@@ -239,6 +248,28 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 		if provider.codeSessionCreated {
 			t.Fatal("failed graceful stop created an active code session")
+		}
+		if !provider.workStopped {
+			t.Fatal("failed stopping-state persistence left environment work running")
+		}
+	})
+
+	t.Run("metadata failure rolls back code session creation", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironmentWithSessionMetadataFailure(t)
+		if !processed || err == nil || !strings.Contains(err.Error(), "forced session metadata update failure") {
+			t.Fatalf("RunOnce() = (%t, %v), want session metadata persistence failure", processed, err)
+		}
+		if provider.codeSessionCreated {
+			t.Fatal("metadata failure left an active code session")
+		}
+		if provider.sessionHasRuntimeMetadata || provider.workHasRuntimeMetadata {
+			t.Fatalf("metadata failure committed session/work runtime metadata = %t/%t", provider.sessionHasRuntimeMetadata, provider.workHasRuntimeMetadata)
+		}
+		if provider.workHasPreparationMetadata {
+			t.Fatal("metadata transaction failure persisted launch preparation metadata")
+		}
+		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
+			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
 		}
 	})
 
@@ -262,14 +293,23 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		var manifest struct {
 			Version  int `json:"version"`
 			Packages struct {
-				NPM []string `json:"npm"`
-				PIP []string `json:"pip"`
+				APT   []string `json:"apt"`
+				Cargo []string `json:"cargo"`
+				Gem   []string `json:"gem"`
+				Go    []string `json:"go"`
+				NPM   []string `json:"npm"`
+				PIP   []string `json:"pip"`
 			} `json:"packages"`
 		}
 		if err := json.Unmarshal(provider.writes[0].data, &manifest); err != nil {
 			t.Fatalf("decode package manifest: %v", err)
 		}
-		if manifest.Version != 1 || !reflect.DeepEqual(manifest.Packages.NPM, []string{"@scope/package@5.9.3"}) ||
+		if manifest.Version != 1 ||
+			!reflect.DeepEqual(manifest.Packages.APT, []string{"ffmpeg"}) ||
+			!reflect.DeepEqual(manifest.Packages.Cargo, []string{"ripgrep@14.1.1"}) ||
+			!reflect.DeepEqual(manifest.Packages.Gem, []string{"rake:13.2.1"}) ||
+			!reflect.DeepEqual(manifest.Packages.Go, []string{"golang.org/x/tools/cmd/goimports@v0.35.0"}) ||
+			!reflect.DeepEqual(manifest.Packages.NPM, []string{"@scope/package@5.9.3"}) ||
 			!reflect.DeepEqual(manifest.Packages.PIP, []string{`requests[socks] @ https://example.test/a.whl ; python_version >= "3.11"`, "name; touch /tmp/oma-package-shell"}) {
 			t.Fatalf("package manifest changed specs: %#v", manifest)
 		}
@@ -278,6 +318,12 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 		if !provider.codeSessionCreated {
 			t.Fatal("successful provisioning did not create a code session")
+		}
+		if !provider.sessionHasRuntimeMetadata || !provider.workHasRuntimeMetadata {
+			t.Fatalf("successful provisioning session/work runtime metadata = %t/%t, want true/true", provider.sessionHasRuntimeMetadata, provider.workHasRuntimeMetadata)
+		}
+		if !provider.workHasPreparationMetadata {
+			t.Fatal("successful provisioning did not commit launch preparation metadata")
 		}
 	})
 }
@@ -319,6 +365,32 @@ func runPackageEnvironmentWithStopStateFailure(t *testing.T) (*recordingRunnerPr
 	})
 }
 
+func runPackageEnvironmentWithSessionMetadataFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
+	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _ string) {
+		if _, err := database.Pool.Exec(ctx, `
+			create or replace function oma_test_fail_session_metadata_update() returns trigger
+			language plpgsql as $$
+			begin
+				raise exception 'forced session metadata update failure';
+			end;
+			$$;
+			create trigger oma_test_fail_session_metadata_update
+			before update of metadata on sessions
+			for each row execute function oma_test_fail_session_metadata_update()
+		`); err != nil {
+			t.Fatalf("install session metadata failure trigger: %v", err)
+		}
+		t.Cleanup(func() {
+			if _, err := database.Pool.Exec(context.Background(), `
+				drop trigger if exists oma_test_fail_session_metadata_update on sessions;
+				drop function if exists oma_test_fail_session_metadata_update()
+			`); err != nil {
+				t.Fatalf("remove session metadata failure trigger: %v", err)
+			}
+		})
+	})
+}
+
 func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, environmentID string) {
 	t.Helper()
 	ids := getDefaultDBIDs(t, database)
@@ -353,7 +425,11 @@ func runPackageEnvironmentWithHook(
 	cfg.E2B.Template = "fake-template"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-package-bucket"))
 	t.Cleanup(app.close)
-	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Package Agent"}`)
+	agent := createAgent(t, app, `{
+		"model":"claude-opus-4-8",
+		"name":"Runner Package Agent",
+		"mcp_servers":[{"type":"url","name":"notion","url":"https://mcp.notion.com/mcp"}]
+	}`)
 	t.Cleanup(func() { archiveAgent(t, app, agent.ID) })
 	environment := createEnvironment(t, app, `{
 		"name":"runner-packages-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`",
@@ -381,6 +457,9 @@ func runPackageEnvironmentWithHook(
 	}
 	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, app.store, app.credentials)
 	processed, runErr := runner.RunOnce(ctx, "runner-package-test")
+	if len(provider.creates) == 1 {
+		provider.createSawPreparationMetadata = hasJSONKey(provider.creates[0].metadata, "mcp_allowed_hosts")
+	}
 	ids := getDefaultDBIDs(t, app.db)
 	_, codeSessionErr := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
 	switch {
@@ -390,6 +469,20 @@ func runPackageEnvironmentWithHook(
 	default:
 		t.Fatalf("look up package runner code session: %v", codeSessionErr)
 	}
+	works, _, workErr := app.db.ListEnvironmentWorkPage(ctx, db.ListEnvironmentWorkPageParams{
+		WorkspaceID: ids.WorkspaceID, EnvironmentExternalID: environment.ID, Limit: 10,
+	})
+	if workErr != nil || len(works) != 1 {
+		t.Fatalf("list package runner work count/error = %d/%v, want one work", len(works), workErr)
+	}
+	provider.workStopped = works[0].State == "stopped"
+	provider.workHasRuntimeMetadata = hasJSONKey(works[0].Metadata, "claude_code_session_id")
+	provider.workHasPreparationMetadata = hasJSONKey(works[0].Metadata, "mcp_allowed_hosts")
+	storedSession, sessionErr := app.db.GetSession(ctx, ids.WorkspaceID, session.ID)
+	if sessionErr != nil {
+		t.Fatalf("load package runner session: %v", sessionErr)
+	}
+	provider.sessionHasRuntimeMetadata = hasJSONKey(storedSession.Metadata, "claude_code_session_id")
 	return provider, processed, runErr
 }
 
@@ -564,7 +657,7 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	}
 }
 
-func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) {
+func TestEnvironmentRunnerResolvesManagedAgentMCPHosts(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := config.Load()
@@ -621,8 +714,8 @@ func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) 
 	if len(provider.resolves) != 1 {
 		t.Fatalf("resolves = %#v, want one", provider.resolves)
 	}
-	if hasJSONKey(provider.resolves[0].metadata, "mcp_allowed_hosts") {
-		t.Fatalf("Resolve saw managed-agent MCP metadata: %s", provider.resolves[0].metadata)
+	if !hasJSONKey(provider.resolves[0].metadata, "mcp_allowed_hosts") {
+		t.Fatalf("Resolve did not receive managed-agent MCP metadata: %s", provider.resolves[0].metadata)
 	}
 	if len(provider.creates) != 1 {
 		t.Fatalf("creates = %#v, want one", provider.creates)
@@ -640,8 +733,8 @@ func TestEnvironmentRunnerResolvesBeforeManagedAgentMetadataPatch(t *testing.T) 
 	if !ok {
 		t.Fatalf("Create resolution AllowOut = %#v, want []string", provider.creates[0].resolution.Network.AllowOut)
 	}
-	if slices.Contains(allowOut, "mcp.notion.com") {
-		t.Fatalf("Create resolution allowed agent MCP host: %#v", allowOut)
+	if !slices.Contains(allowOut, "mcp.notion.com") {
+		t.Fatalf("Create resolution did not allow agent MCP host: %#v", allowOut)
 	}
 }
 
@@ -705,19 +798,24 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 }
 
 type recordingRunnerProvider struct {
-	sandboxID          string
-	resolveErr         error
-	commandErr         error
-	afterCommand       func()
-	resolves           []recordedSandboxResolve
-	writes             []recordedSandboxWrite
-	commands           []string
-	launches           []recordedSandboxLaunch
-	operations         []string
-	creates            []recordedSandboxCreate
-	skillMounts        []recordedSkillMount
-	kills              []string
-	codeSessionCreated bool
+	sandboxID                    string
+	resolveErr                   error
+	commandErr                   error
+	afterCommand                 func()
+	resolves                     []recordedSandboxResolve
+	writes                       []recordedSandboxWrite
+	commands                     []string
+	launches                     []recordedSandboxLaunch
+	operations                   []string
+	creates                      []recordedSandboxCreate
+	skillMounts                  []recordedSkillMount
+	kills                        []string
+	codeSessionCreated           bool
+	workStopped                  bool
+	sessionHasRuntimeMetadata    bool
+	workHasRuntimeMetadata       bool
+	workHasPreparationMetadata   bool
+	createSawPreparationMetadata bool
 }
 
 type recordedSandboxResolve struct {

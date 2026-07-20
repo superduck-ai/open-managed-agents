@@ -40,28 +40,25 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials)
 	return &Service{db: database, credentials: credentials}
 }
 
-func (s *Service) queueInitialPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage, now time.Time) error {
-	if len(payloads) == 0 {
-		return nil
-	}
+func initialPublicSessionWorkerPayloads(codeSessionID string, payloads []json.RawMessage, now time.Time) []json.RawMessage {
 	workerPayloads := make([]json.RawMessage, 0, len(payloads))
 	for _, raw := range payloads {
 		object, err := decodeJSONObject(raw)
 		if err != nil {
-			log.Printf("skip initial code session event code_session_id=%s: %v", codeSession.ExternalID, err)
+			log.Printf("skip initial code session event code_session_id=%s: %v", codeSessionID, err)
 			continue
 		}
 		if !forwardPublicEventToWorker(stringField(object, "type")) {
 			continue
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, raw, now)
+		payload, err := workerPayloadForPublicEvent(codeSessionID, raw, now)
 		if err != nil {
-			log.Printf("convert initial code session event code_session_id=%s: %v", codeSession.ExternalID, err)
+			log.Printf("convert initial code session event code_session_id=%s: %v", codeSessionID, err)
 			continue
 		}
 		workerPayloads = append(workerPayloads, payload)
 	}
-	return s.QueueRawPublicSessionEvents(ctx, codeSession, workerPayloads)
+	return workerPayloads
 }
 
 func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
@@ -292,7 +289,7 @@ func (s *Service) appendWorkerEvent(ctx context.Context, codeSessionID string, r
 	return s.publishPublicPayloads(ctx, codeSessionID, publicPayloads)
 }
 
-func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSession, configRaw json.RawMessage, now time.Time) error {
+func managedAgentInitializePayload(codeSessionID string, configRaw json.RawMessage, now time.Time) (json.RawMessage, error) {
 	configObject := rawObject(configRaw)
 	requestID := "initialize_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	request := map[string]any{
@@ -304,32 +301,35 @@ func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSessio
 	if appendSystemPrompt := strings.TrimSpace(stringField(configObject, "append_system_prompt")); appendSystemPrompt != "" {
 		request["appendSystemPrompt"] = appendSystemPrompt
 	}
-	payload, err := marshalRaw(map[string]any{
+	return marshalRaw(map[string]any{
 		"type":       "control_request",
 		"uuid":       uuid.NewString(),
-		"session_id": codeSession.ExternalID,
+		"session_id": codeSessionID,
 		"created_at": formatTime(now),
 		"timestamp":  formatTime(now),
 		"request_id": requestID,
 		"request":    request,
 	})
-	if err != nil {
-		return err
-	}
-	_, _, err = s.appendInboundPayload(ctx, codeSession.ExternalID, payload, "internal")
-	return err
 }
 
 func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string, payload json.RawMessage, source string) (db.CodeSessionEvent, bool, error) {
-	meta, err := BuildEventMetadata(codeSessionID, "inbound", payload)
+	input, err := buildInboundEventInput(codeSessionID, payload, source, time.Now().UTC())
 	if err != nil {
 		return db.CodeSessionEvent{}, false, err
+	}
+	return s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, input)
+}
+
+func buildInboundEventInput(codeSessionID string, payload json.RawMessage, source string, createdAt time.Time) (db.AppendCodeSessionEventInput, error) {
+	meta, err := BuildEventMetadata(codeSessionID, "inbound", payload)
+	if err != nil {
+		return db.AppendCodeSessionEventInput{}, err
 	}
 	eventID, err := ids.New("csev_")
 	if err != nil {
-		return db.CodeSessionEvent{}, false, err
+		return db.AppendCodeSessionEventInput{}, err
 	}
-	return s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
+	return db.AppendCodeSessionEventInput{
 		ExternalID:     eventID,
 		EventType:      meta.EventType,
 		EventSubtype:   meta.EventSubtype,
@@ -340,8 +340,8 @@ func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string
 		IdempotencyKey: meta.IdempotencyKey,
 		DeliveryStatus: "queued",
 		Source:         strings.TrimSpace(source),
-		CreatedAt:      time.Now().UTC(),
-	})
+		CreatedAt:      createdAt,
+	}, nil
 }
 
 func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {

@@ -512,7 +512,11 @@ func (d *DB) AckEnvironmentWork(ctx context.Context, workspaceID int64, environm
 }
 
 func (d *DB) UpdateEnvironmentWorkMetadata(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID string, metadata json.RawMessage) (EnvironmentWork, error) {
-	return scanEnvironmentWork(d.Pool.QueryRow(ctx, `
+	return updateEnvironmentWorkMetadata(ctx, d.Pool, workspaceID, environmentExternalID, workExternalID, metadata)
+}
+
+func updateEnvironmentWorkMetadata(ctx context.Context, querier queryRower, workspaceID int64, environmentExternalID, workExternalID string, metadata json.RawMessage) (EnvironmentWork, error) {
+	return scanEnvironmentWork(querier.QueryRow(ctx, `
 		update environment_work
 		set metadata = $4::jsonb,
 			updated_at = now()

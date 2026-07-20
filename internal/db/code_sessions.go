@@ -233,6 +233,10 @@ func (e *CodeSessionWorkerHeartbeatError) Unwrap() error {
 
 // CreateCodeSession 在同一次 INSERT 中保存 code session 与 OAuth token hash。
 func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput) (CodeSession, error) {
+	return createCodeSession(ctx, d.Pool, input)
+}
+
+func createCodeSession(ctx context.Context, querier queryRower, input CreateCodeSessionInput) (CodeSession, error) {
 	now := input.CreatedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -242,7 +246,7 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 		status = "active"
 	}
 	oauthAccessTokenHash := nullableString(strings.TrimSpace(input.OAuthAccessTokenHash))
-	return scanCodeSession(d.Pool.QueryRow(ctx, `
+	return scanCodeSession(querier.QueryRow(ctx, `
 		insert into code_sessions (
 			external_id, organization_id, workspace_id, session_id, session_external_id,
 			environment_id, environment_external_id, work_dir, permission_mode, model,
@@ -298,7 +302,11 @@ func (d *DB) GetCodeSessionByOAuthAccessTokenHash(ctx context.Context, tokenHash
 
 // GetCodeSessionCredentialContextForIssue 用于初始 session-ingress JWT 签发，并将查询绑定到预期租户。
 func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
-	row := d.Pool.QueryRow(ctx, codeSessionCredentialContextSelect+`
+	return getCodeSessionCredentialContextForIssue(ctx, d.Pool, organizationID, workspaceID, codeSessionExternalID)
+}
+
+func getCodeSessionCredentialContextForIssue(ctx context.Context, querier queryRower, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
+	row := querier.QueryRow(ctx, codeSessionCredentialContextSelect+`
 		where cs.external_id = $1
 			and cs.organization_id = $2
 			and cs.workspace_id = $3

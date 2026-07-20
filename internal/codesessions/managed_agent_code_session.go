@@ -24,6 +24,7 @@ type ManagedAgentCreateInput struct {
 	DangerouslySkipPermissions bool
 	Config                     json.RawMessage
 	InitialEvents              []json.RawMessage
+	EnvironmentWorkMetadata    json.RawMessage
 }
 
 // ManagedAgentCreateResult 只在创建链路内短暂携带两份明文凭证，调用方应立即交给
@@ -34,6 +35,7 @@ type ManagedAgentCreateResult struct {
 	SDKURLPath          string
 	OAuthAccessToken    string
 	SessionIngressToken string
+	EnvironmentWork     db.EnvironmentWork
 }
 
 // CreateManagedAgentCodeSession 原子地建立 code-session 身份上下文，并为 sandbox
@@ -55,53 +57,99 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	record, err := s.db.CreateCodeSession(ctx, db.CreateCodeSessionInput{
-		ExternalID:            codeSessionID,
-		OrganizationID:        input.Session.OrganizationID,
-		WorkspaceID:           input.Session.WorkspaceID,
-		SessionID:             input.Session.ID,
-		SessionExternalID:     input.Session.ExternalID,
-		EnvironmentID:         input.Environment.ID,
-		EnvironmentExternalID: input.Environment.ExternalID,
-		WorkDir:               strings.TrimSpace(input.WorkDir),
-		PermissionMode:        strings.TrimSpace(input.PermissionMode),
-		Model:                 strings.TrimSpace(input.Model),
-		Status:                "active",
-		Metadata:              metadata,
-		// OAuth-compatible token 只落 SHA-256 hash；明文仅存在于当前返回值中。
-		OAuthAccessTokenHash: auth.HashAPIKey(oauthAccessToken),
-		CreatedAt:            now,
+	events, err := managedAgentInitialInboundEvents(codeSessionID, input.Config, input.InitialEvents, now)
+	if err != nil {
+		return ManagedAgentCreateResult{}, err
+	}
+	runtimeMetadata := map[string]any{
+		"claude_code_session_id":        codeSessionID,
+		"claude_code_public_session_id": input.Session.ExternalID,
+		"claude_code_sdk_url_path":      "/v1/code/sessions/" + codeSessionID,
+		"runtime":                       "claude_code_local",
+	}
+	sessionMetadataPatch, err := marshalRaw(runtimeMetadata)
+	if err != nil {
+		return ManagedAgentCreateResult{}, err
+	}
+	workMetadata, err := mergeManagedAgentRuntimeMetadata(input.EnvironmentWorkMetadata, runtimeMetadata)
+	if err != nil {
+		return ManagedAgentCreateResult{}, err
+	}
+	var sessionIngressToken string
+	created, err := s.db.CreateManagedAgentRuntime(ctx, db.CreateManagedAgentRuntimeInput{
+		CodeSession: db.CreateCodeSessionInput{
+			ExternalID:            codeSessionID,
+			OrganizationID:        input.Session.OrganizationID,
+			WorkspaceID:           input.Session.WorkspaceID,
+			SessionID:             input.Session.ID,
+			SessionExternalID:     input.Session.ExternalID,
+			EnvironmentID:         input.Environment.ID,
+			EnvironmentExternalID: input.Environment.ExternalID,
+			WorkDir:               strings.TrimSpace(input.WorkDir),
+			PermissionMode:        strings.TrimSpace(input.PermissionMode),
+			Model:                 strings.TrimSpace(input.Model),
+			Status:                "active",
+			Metadata:              metadata,
+			// OAuth-compatible token 只落 SHA-256 hash；明文仅存在于当前返回值中。
+			OAuthAccessTokenHash: auth.HashAPIKey(oauthAccessToken),
+			CreatedAt:            now,
+		},
+		InboundEvents:           events,
+		SessionMetadataPatch:    sessionMetadataPatch,
+		EnvironmentWorkMetadata: workMetadata,
+		EnvironmentExternalID:   input.Environment.ExternalID,
+		WorkExternalID:          input.EnvironmentWork.ExternalID,
+	}, func(credentialContext db.CodeSessionCredentialContext) error {
+		var issueErr error
+		sessionIngressToken, issueErr = s.issueSessionIngressToken(credentialContext)
+		return issueErr
 	})
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	if err := s.queueInitialize(ctx, record, input.Config, now); err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
-	if err := s.queueInitialPublicSessionEvents(ctx, record, input.InitialEvents, now); err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
-	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(
-		ctx,
-		input.Session.OrganizationID,
-		input.Session.WorkspaceID,
-		record.ExternalID,
-	)
-	if err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
-	// 重新从数据库读取签发上下文，保证 JWT claims 与实际持久化的租户和 agent 一致。
-	sessionIngressToken, err := s.issueSessionIngressToken(credentialContext)
-	if err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
 	return ManagedAgentCreateResult{
-		CodeSessionID:       record.ExternalID,
-		PublicSessionID:     record.SessionExternalID,
-		SDKURLPath:          "/v1/code/sessions/" + record.ExternalID,
+		CodeSessionID:       created.CodeSession.ExternalID,
+		PublicSessionID:     created.CodeSession.SessionExternalID,
+		SDKURLPath:          "/v1/code/sessions/" + created.CodeSession.ExternalID,
 		OAuthAccessToken:    oauthAccessToken,
 		SessionIngressToken: sessionIngressToken,
+		EnvironmentWork:     created.EnvironmentWork,
 	}, nil
+}
+
+func managedAgentInitialInboundEvents(codeSessionID string, configRaw json.RawMessage, publicEvents []json.RawMessage, now time.Time) ([]db.AppendCodeSessionEventInput, error) {
+	initialize, err := managedAgentInitializePayload(codeSessionID, configRaw, now)
+	if err != nil {
+		return nil, err
+	}
+	payloads := initialPublicSessionWorkerPayloads(codeSessionID, publicEvents, now)
+	inputs := make([]db.AppendCodeSessionEventInput, 0, len(payloads)+1)
+	initializeInput, err := buildInboundEventInput(codeSessionID, initialize, "internal", now)
+	if err != nil {
+		return nil, err
+	}
+	inputs = append(inputs, initializeInput)
+	for _, payload := range payloads {
+		input, err := buildInboundEventInput(codeSessionID, payload, "public-session", now)
+		if err != nil {
+			return nil, err
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs, nil
+}
+
+func mergeManagedAgentRuntimeMetadata(raw json.RawMessage, patch map[string]any) (json.RawMessage, error) {
+	metadata := map[string]any{}
+	if len(raw) > 0 && strings.TrimSpace(string(raw)) != "null" {
+		if err := json.Unmarshal(raw, &metadata); err != nil {
+			return nil, err
+		}
+	}
+	for key, value := range patch {
+		metadata[key] = value
+	}
+	return marshalRaw(metadata)
 }
 
 func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMessage, error) {

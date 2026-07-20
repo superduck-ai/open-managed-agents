@@ -51,7 +51,7 @@ func TestE2BEnvironmentUpdateAndSessionFilesystemIsolation(t *testing.T) {
 	environment := createPackageLifecycleEnvironment(t, ctx, client, "six==1.16.0")
 	defer client.Beta.Environments.Delete(context.Background(), environment.ID, anthropic.BetaEnvironmentDeleteParams{})
 
-	provider := e2bruntime.NewProvider(cfg)
+	provider := e2bruntime.NewProvider(cfg.E2B)
 	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, app.store, app.credentials)
 	first := launchRealSessionSandbox(t, ctx, app, client, runner, provider, environment.ID, agent.ID, "packages-before-update")
 	assertSandboxPythonPackageVersion(t, ctx, first.sandbox, "six", "1.16.0")
@@ -156,7 +156,7 @@ func launchRealSessionSandbox(
 	}
 	providerSandboxID, _ = quickstartWaitForProviderSandboxMetadata(t, ctx, app, environmentID, workID)
 	sandbox, err := e2b.Connect(ctx, providerSandboxID, &e2b.SandboxConnectOpts{
-		ConnectionOpts: e2bConnectionOptsFromConfig(app.cfg),
+		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(app.cfg.E2B),
 	})
 	if err != nil {
 		t.Fatalf("connect to Session Sandbox %s: %v", title, err)

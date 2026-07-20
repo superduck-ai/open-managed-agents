@@ -106,6 +106,34 @@ func TestWorkbenchAnthropicTokenUsesConfig(t *testing.T) {
 	}
 }
 
+func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
+	req := workbenchPostTestRequest(
+		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
+		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/generate_title",
+		`{"message_content":"Summarize planning notes","model":"claude-opus-4-8"}`,
+	)
+	rec := httptest.NewRecorder()
+
+	withWorkbenchDependencies(nil, config.AnthropicUpstreamConfig{}, handleWorkbenchGenerateTitle)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
+		t.Fatalf("content-type = %q, want application/json", contentType)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["completion"] != "Summarize planning notes" {
+		t.Fatalf("completion = %#v", body["completion"])
+	}
+	if strings.Contains(rec.Body.String(), "event:") {
+		t.Fatalf("generate_title returned SSE body: %s", rec.Body.String())
+	}
+}
+
 func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/anthropic/v1/messages" {
@@ -142,34 +170,6 @@ func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
 	}
 	if body["completion"] != "Configured YAML title" || body["input_tokens"] != float64(7) || body["output_tokens"] != float64(3) {
 		t.Fatalf("unexpected configured upstream response: %#v", body)
-	}
-}
-
-func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
-	req := workbenchPostTestRequest(
-		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
-		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/generate_title",
-		`{"message_content":"Summarize planning notes","model":"claude-opus-4-8"}`,
-	)
-	rec := httptest.NewRecorder()
-
-	withWorkbenchDependencies(nil, config.AnthropicUpstreamConfig{}, handleWorkbenchGenerateTitle)(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
-	}
-	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
-		t.Fatalf("content-type = %q, want application/json", contentType)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body["completion"] != "Summarize planning notes" {
-		t.Fatalf("completion = %#v", body["completion"])
-	}
-	if strings.Contains(rec.Body.String(), "event:") {
-		t.Fatalf("generate_title returned SSE body: %s", rec.Body.String())
 	}
 }
 

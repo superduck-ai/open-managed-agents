@@ -4,12 +4,12 @@ import "time"
 
 func defaultConfig() Config {
 	cfg := Config{
-		Database: DatabaseConfig{
-			AutoMigrate: true,
-		},
 		Storage: StorageConfig{
 			MaxFileBytes:        500 * 1024 * 1024,
 			WorkspaceLimitBytes: 500 * 1024 * 1024 * 1024,
+			S3: S3Config{
+				ForcePathStyle: true,
+			},
 		},
 		AnthropicUpstream: AnthropicUpstreamConfig{
 			BaseURL: "https://api.anthropic.com",
@@ -38,7 +38,6 @@ func defaultConfig() Config {
 			ClaudePath:         "/opt/claude-code/bin/claude",
 		},
 		CodeSession: CodeSessionConfig{
-			OTLPFileLogEnabled:      true,
 			OTLPLogRoot:             "logs",
 			OTLPLogBodyPreviewBytes: 256 * 1024,
 		},

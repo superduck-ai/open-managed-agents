@@ -454,6 +454,18 @@ func TestLoadExplicitMissingConfigFile(t *testing.T) {
 	}
 }
 
+func TestLoadStorageS3ForcePathStyleDefault(t *testing.T) {
+	prepareLoadTest(t)
+
+	cfg, err := loadConfigTestYAML(t, "")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.Storage.S3.ForcePathStyle {
+		t.Fatal("Storage.S3.ForcePathStyle = false, want true")
+	}
+}
+
 func TestLoadDatabaseAutoMigrateDefaultDevelopment(t *testing.T) {
 	prepareLoadTest(t)
 

@@ -32,9 +32,6 @@ func TestGoSDKManagedAgentsQuickstartDemo(t *testing.T) {
 	if !quickstartShouldRunRealSandbox(cfg) {
 		t.Skip("real quickstart requires e2b.api_key and e2b.debug=false")
 	}
-	//if externalBaseURL := strings.TrimSpace(os.Getenv("TEST_API_BASE_URL")); externalBaseURL != "" {
-	//	t.Logf("Ignoring TEST_API_BASE_URL=%s; this test starts its own in-process API server so it can run the environment runner and inspect E2B sandbox state", externalBaseURL)
-	//}
 	quickstartRequireRealSandboxConfig(t, cfg)
 	if cfg.E2B.RequestTimeout < 2*time.Minute {
 		cfg.E2B.RequestTimeout = 2 * time.Minute

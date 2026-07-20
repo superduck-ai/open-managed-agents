@@ -108,6 +108,8 @@ e2b:
 
 加载优先级为“代码默认值 < `config/config.yaml`”。业务环境变量不会覆盖 YAML；`CONFIG_FILE` 只负责选择配置文件，路径字段中的 `${HOME}` 等变量只用于路径展开。生产环境应把完整 YAML 作为只读 Secret 挂载，并限制文件权限。
 
+从仍使用 `.env` 或业务环境变量的旧版本升级属于 breaking change：升级前必须先生成并验证完整 YAML，当前版本不会回退读取旧变量。字段映射、已移除配置和回滚步骤见 [`docs/design/be/runtime-configuration.md`](docs/design/be/runtime-configuration.md#从-env-迁移)。
+
 ### 创建 code session 私钥
 
 先创建一个只有当前用户可访问的目录，再使用仓库脚本生成两份私钥：

@@ -1022,8 +1022,7 @@ func (h *Handler) isOfficialSDKEnvironmentFixture(principal auth.Principal, envi
 
 func (h *Handler) isOfficialSDKWorkFixture(r *http.Request, workID string) bool {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.CredentialType == "api_key" &&
-		principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID &&
+	return h.isOfficialSDKPrincipal(principal) &&
 		workID == h.cfg.SDKFixtures.WorkID
 }
 

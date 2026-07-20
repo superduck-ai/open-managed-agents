@@ -35,9 +35,9 @@ const (
 
 // isUndefinedRelationError reports whether err is a PostgreSQL error
 // indicating that a table or column referenced by a console query is missing
-// from the current schema. Console list handlers treat this as "no data yet"
-// and return an empty result, so a drifted dev database degrades gracefully
-// instead of 500-ing the whole console workspace context.
+// from the current schema. Console handlers treat this as "no data yet" (for
+// reads) or a no-op (for writes like RemoveOrgUser) so a drifted dev database
+// degrades gracefully instead of 500-ing the whole console workspace context.
 func isUndefinedRelationError(err error) bool {
 	pgErr, ok := postgresError(err)
 	if !ok {

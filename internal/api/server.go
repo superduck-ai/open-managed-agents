@@ -41,6 +41,7 @@ import (
 type Server struct {
 	cfg            config.Config
 	db             *db.DB
+	logger         *slog.Logger
 	router         chi.Router
 	platformStore  platformsession.Store
 	admin          *adminapi.Handler
@@ -70,6 +71,7 @@ func NewServerWithPlatformSessionsAndCredentials(cfg config.Config, database *db
 	s := &Server{
 		cfg:            cfg,
 		db:             database,
+		logger:         logger,
 		platformStore:  platformStore,
 		admin:          adminapi.NewHandler(cfg, database),
 		agents:         agents.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
@@ -154,7 +156,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 			platformapi.RegisterOrganizationOAuthEnvironmentRoutes(r)
 		})
 		r.Route("/api/console/organizations/{orgUuid}", func(r chi.Router) {
-			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db)
+			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db, s.logger)
 			platformapi.RegisterConsoleOrganizationAdminRequestRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)

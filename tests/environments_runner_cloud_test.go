@@ -211,11 +211,11 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if provider.codeSessionCreated {
 			t.Fatal("provisioning failure created an active code session")
 		}
-		if provider.workHasPreparationMetadata {
-			t.Fatal("provisioning failure persisted uncommitted launch preparation metadata")
+		if !provider.workHasMCPMetadata {
+			t.Fatal("provisioning failure did not retain the pre-resolve MCP policy metadata")
 		}
-		if !provider.createSawPreparationMetadata {
-			t.Fatal("sandbox create did not receive in-memory launch preparation metadata")
+		if !provider.createSawMCPMetadata {
+			t.Fatal("sandbox create did not receive the pre-resolve MCP policy metadata")
 		}
 	})
 
@@ -233,8 +233,8 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if provider.codeSessionCreated {
 			t.Fatal("graceful stop during provisioning created an active code session")
 		}
-		if provider.workHasPreparationMetadata {
-			t.Fatal("graceful stop persisted uncommitted launch preparation metadata")
+		if !provider.workHasMCPMetadata {
+			t.Fatal("graceful stop did not retain the pre-resolve MCP policy metadata")
 		}
 	})
 
@@ -278,8 +278,8 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if provider.sessionHasRuntimeMetadata || provider.workHasRuntimeMetadata {
 			t.Fatalf("metadata failure committed session/work runtime metadata = %t/%t", provider.sessionHasRuntimeMetadata, provider.workHasRuntimeMetadata)
 		}
-		if provider.workHasPreparationMetadata {
-			t.Fatal("metadata transaction failure persisted launch preparation metadata")
+		if !provider.workHasMCPMetadata {
+			t.Fatal("metadata transaction failure did not retain the pre-resolve MCP policy metadata")
 		}
 		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
 			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
@@ -335,8 +335,8 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if !provider.sessionHasRuntimeMetadata || !provider.workHasRuntimeMetadata {
 			t.Fatalf("successful provisioning session/work runtime metadata = %t/%t, want true/true", provider.sessionHasRuntimeMetadata, provider.workHasRuntimeMetadata)
 		}
-		if !provider.workHasPreparationMetadata {
-			t.Fatal("successful provisioning did not commit launch preparation metadata")
+		if !provider.workHasMCPMetadata {
+			t.Fatal("successful provisioning did not retain MCP policy metadata")
 		}
 	})
 }
@@ -486,7 +486,7 @@ func runPackageEnvironmentWithHookAndKill(
 	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, app.store, app.credentials)
 	processed, runErr := runner.RunOnce(ctx, "runner-package-test")
 	if len(provider.creates) == 1 {
-		provider.createSawPreparationMetadata = hasJSONKey(provider.creates[0].metadata, "mcp_allowed_hosts")
+		provider.createSawMCPMetadata = hasJSONKey(provider.creates[0].metadata, "mcp_allowed_hosts")
 	}
 	ids := getDefaultDBIDs(t, app.db)
 	_, codeSessionErr := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
@@ -505,7 +505,7 @@ func runPackageEnvironmentWithHookAndKill(
 	}
 	provider.workStopped = works[0].State == "stopped"
 	provider.workHasRuntimeMetadata = hasJSONKey(works[0].Metadata, "claude_code_session_id")
-	provider.workHasPreparationMetadata = hasJSONKey(works[0].Metadata, "mcp_allowed_hosts")
+	provider.workHasMCPMetadata = hasJSONKey(works[0].Metadata, "mcp_allowed_hosts")
 	storedSession, sessionErr := app.db.GetSession(ctx, ids.WorkspaceID, session.ID)
 	if sessionErr != nil {
 		t.Fatalf("load package runner session: %v", sessionErr)
@@ -685,7 +685,7 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	}
 }
 
-func TestEnvironmentRunnerResolvesManagedAgentMCPHosts(t *testing.T) {
+func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := config.Load()
@@ -766,6 +766,101 @@ func TestEnvironmentRunnerResolvesManagedAgentMCPHosts(t *testing.T) {
 	}
 }
 
+func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
+	tests := []struct {
+		name        string
+		networking  string
+		wantLimited bool
+	}{
+		{name: "current snapshot is empty", networking: `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}`, wantLimited: true},
+		{name: "MCP access is disabled", networking: `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false}`, wantLimited: true},
+		{name: "network is unrestricted", networking: `{"type":"unrestricted"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+			cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+			cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+			cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+			cfg.E2B.Template = "fake-template"
+
+			app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-stale-mcp-bucket"))
+			defer app.close()
+
+			agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Empty MCP Network Agent"}`)
+			defer archiveAgent(t, app, agent.ID)
+			environment := createEnvironment(t, app, `{
+				"name":"runner-empty-mcp-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`",
+				"config":{"type":"cloud","networking":`+test.networking+`}
+			}`)
+			defer cleanupEnvironmentRows(t, app.db, environment.ID)
+
+			client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
+			session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+				Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
+				EnvironmentID: environment.ID,
+				Title:         anthropic.String("Runner empty MCP network session"),
+			})
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+
+			ids := getDefaultDBIDs(t, app.db)
+			work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
+			if err != nil {
+				t.Fatalf("load environment work: %v", err)
+			}
+			if _, err := app.db.UpdateEnvironmentWorkMetadata(ctx, ids.WorkspaceID, environment.ID, work.ExternalID,
+				json.RawMessage(`{"mcp_allowed_hosts":["stale.example.com"]}`)); err != nil {
+				t.Fatalf("seed stale MCP metadata: %v", err)
+			}
+
+			provider := &recordingRunnerProvider{sandboxID: "sandbox-empty-mcp"}
+			runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
+			processed, err := runner.RunOnce(ctx, "runner-cloud-empty-mcp-test")
+			if err != nil || !processed {
+				t.Fatalf("RunOnce() = processed %v, error %v", processed, err)
+			}
+			if len(provider.resolves) != 1 {
+				t.Fatalf("resolves = %#v, want one", provider.resolves)
+			}
+			var rawMetadata map[string]json.RawMessage
+			if err := json.Unmarshal(provider.resolves[0].metadata, &rawMetadata); err != nil {
+				t.Fatalf("decode Resolve metadata: %v", err)
+			}
+			if string(rawMetadata["mcp_allowed_hosts"]) != "[]" {
+				t.Fatalf("empty MCP hosts metadata = %s, want []", rawMetadata["mcp_allowed_hosts"])
+			}
+			if len(provider.creates) != 1 {
+				t.Fatalf("creates = %#v, want one", provider.creates)
+			}
+			network := provider.creates[0].resolution.Network
+			if !test.wantLimited {
+				if network != nil {
+					t.Fatalf("unrestricted Create resolution network = %#v, want nil", network)
+				}
+				return
+			}
+			if network == nil {
+				t.Fatal("limited Create resolution network is nil")
+			}
+			allowOut, ok := network.AllowOut.([]string)
+			if !ok {
+				t.Fatalf("limited Create resolution AllowOut = %#v, want []string", network.AllowOut)
+			}
+			if slices.Contains(allowOut, "stale.example.com") {
+				t.Fatalf("Create resolution retained stale MCP host: %#v", allowOut)
+			}
+		})
+	}
+}
+
 func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T) {
 	ctx := context.Background()
 
@@ -826,25 +921,25 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 }
 
 type recordingRunnerProvider struct {
-	sandboxID                    string
-	resolveErr                   error
-	commandErr                   error
-	killErr                      error
-	afterCommand                 func()
-	resolves                     []recordedSandboxResolve
-	writes                       []recordedSandboxWrite
-	commands                     []string
-	launches                     []recordedSandboxLaunch
-	operations                   []string
-	creates                      []recordedSandboxCreate
-	skillMounts                  []recordedSkillMount
-	kills                        []string
-	codeSessionCreated           bool
-	workStopped                  bool
-	sessionHasRuntimeMetadata    bool
-	workHasRuntimeMetadata       bool
-	workHasPreparationMetadata   bool
-	createSawPreparationMetadata bool
+	sandboxID                 string
+	resolveErr                error
+	commandErr                error
+	killErr                   error
+	afterCommand              func()
+	resolves                  []recordedSandboxResolve
+	writes                    []recordedSandboxWrite
+	commands                  []string
+	launches                  []recordedSandboxLaunch
+	operations                []string
+	creates                   []recordedSandboxCreate
+	skillMounts               []recordedSkillMount
+	kills                     []string
+	codeSessionCreated        bool
+	workStopped               bool
+	sessionHasRuntimeMetadata bool
+	workHasRuntimeMetadata    bool
+	workHasMCPMetadata        bool
+	createSawMCPMetadata      bool
 }
 
 type recordedSandboxResolve struct {

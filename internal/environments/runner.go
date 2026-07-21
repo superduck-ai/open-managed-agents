@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -108,6 +109,10 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	}
 	sandboxID, err := ids.New("envsbx_")
 	if err != nil {
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
+	}
+	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
@@ -326,9 +331,6 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	}
 	persistedWorkMetadata := append(json.RawMessage(nil), work.Metadata...)
 	workMetadataPatch := map[string]any{}
-	if hosts := managedAgentMCPAllowedHosts(session.AgentSnapshot); len(hosts) > 0 {
-		workMetadataPatch["mcp_allowed_hosts"] = hosts
-	}
 	if skillMount != nil {
 		workMetadataPatch[e2bruntime.SkillMountMetadataKey] = skillMount
 	}
@@ -378,6 +380,52 @@ func (r *Runner) commitManagedAgentLaunch(ctx context.Context, env db.Environmen
 	}
 	command := buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload)
 	return &command, nil
+}
+
+// prepareManagedAgentNetworkMetadata 在 Provider Resolve 之前解析受开关约束的
+// Session MCP hosts，使 E2B 的创建时网络快照与 proxy 的策略语义一致。
+func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.Environment, work *db.EnvironmentWork) error {
+	if r == nil || work == nil || r.codeSessions == nil || !cloudEnvironment(env) {
+		return nil
+	}
+	policyConfig, err := networkpolicy.ParseConfig(env.Config)
+	if err != nil {
+		return err
+	}
+	hosts := []string{}
+	if policyConfig.Type == networkpolicy.TypeLimited && policyConfig.AllowMCPServers {
+		sessionID, ok := sessionIDFromEnvironmentWork(*work)
+		if !ok {
+			return fmt.Errorf("limited managed-agent MCP policy requires session work identity")
+		}
+		session, err := r.db.GetSession(ctx, work.WorkspaceID, sessionID)
+		if err != nil {
+			return err
+		}
+		hosts, err = networkpolicy.MCPAllowedHosts(session.AgentSnapshot)
+		if err != nil {
+			return err
+		}
+	}
+	if hosts == nil {
+		hosts = []string{}
+	}
+	nextMetadata, err := networkpolicy.PatchWorkMetadataMCPAllowedHosts(work.Metadata, hosts)
+	if err != nil {
+		return err
+	}
+	updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(
+		ctx,
+		work.WorkspaceID,
+		work.EnvironmentExternalID,
+		work.ExternalID,
+		nextMetadata,
+	)
+	if err != nil {
+		return err
+	}
+	*work = updatedWork
+	return nil
 }
 
 func (r *Runner) prepareRuntimeSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*e2bruntime.SkillMount, error) {

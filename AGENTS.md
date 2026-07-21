@@ -45,6 +45,13 @@
 - Anthropic/API、数据库和第三方 payload 的字段名属于外部合同，可在边界 DTO、对象属性和解构中保留 `snake_case`；进入内部变量或业务模型后应映射为上述语言惯例，不要把例外扩散到业务标识符。
 - Go 命名由 `.golangci.yml` 中 `revive/var-naming` 强制；前端命名由 `bun run lint:naming` 强制，并在 pre-commit 与 `.github/workflows/web-naming.yml` 中执行。
 
+## JSON 与 schema 边界
+
+- `json.RawMessage` 只用于数据库 JSON/JSONB、HTTP/第三方 payload、延迟解析和未知字段透传等序列化边界。业务逻辑一旦需要读取其中字段，应在边界附近解析为命名 schema/DTO，再映射为内部领域类型。
+- 不要让 `json.RawMessage`、`map[string]any` 或 `[]any` 作为内部业务模型跨 package 扩散，也不要用它们规避已知字段的 schema 定义。
+- 需要保留未知 JSON 字段时，可以在边界使用 `map[string]json.RawMessage` 作为 envelope，但已知字段仍必须通过命名 schema 解析和校验。
+- DB 层可以返回原始 JSONB 值，但不承担 HTTP/DTO 解析或领域策略；调用方应在 resource/service/policy 边界尽早完成结构化转换。
+
 ## 前端设计方向
 
 - 前端实现细节位于 `web/AGENTS.md`。

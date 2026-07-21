@@ -160,31 +160,6 @@ func mcpServerTransportType(serverType string, rawURL string) string {
 	return "http"
 }
 
-func managedAgentMCPAllowedHosts(raw json.RawMessage) []string {
-	snapshot := rawJSONObject(raw)
-	servers := arrayValue(snapshot["mcp_servers"])
-	hosts := make([]string, 0, len(servers))
-	for _, value := range servers {
-		server, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		host := hostnameFromURL(stringFromMap(server, "url"))
-		if host != "" {
-			hosts = append(hosts, host)
-		}
-	}
-	return uniqueStrings(hosts)
-}
-
-func hostnameFromURL(raw string) string {
-	parsed, err := urlpkg.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(strings.ToLower(parsed.Hostname()))
-}
-
 func rawJSONObject(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
 		return map[string]any{}
@@ -226,23 +201,6 @@ func mapStringAnyValue(value any) map[string]any {
 func arrayValue(value any) []any {
 	values, _ := value.([]any)
 	return values
-}
-
-func uniqueStrings(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
 }
 
 func managedAgentWorkDir(resources []db.SessionResource) string {

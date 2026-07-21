@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 
 	"github.com/go-chi/chi/v5"
@@ -25,8 +25,6 @@ import (
 )
 
 const maxEnvironmentBodySize = 4 << 20
-
-var allowedHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
 
 type Handler struct {
 	cfg    config.Config
@@ -1214,7 +1212,7 @@ func normalizeNetworking(raw json.RawMessage) (map[string]any, error) {
 				return nil, err
 			}
 			for _, host := range values {
-				if err := validateAllowedHost(host); err != nil {
+				if err := networkpolicy.ValidateAllowedHost(host); err != nil {
 					return nil, err
 				}
 			}
@@ -1237,16 +1235,6 @@ func normalizeNetworking(raw json.RawMessage) (map[string]any, error) {
 	default:
 		return nil, errors.New("config.networking.type must be unrestricted or limited")
 	}
-}
-
-func validateAllowedHost(host string) error {
-	if strings.Contains(host, "://") || strings.Contains(host, "/") || !allowedHostPattern.MatchString(host) {
-		return errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
-	}
-	if len(host) > 253 {
-		return errors.New("config.networking.allowed_hosts entries must be at most 253 characters")
-	}
-	return nil
 }
 
 func normalizeMetadata(raw json.RawMessage) (json.RawMessage, error) {

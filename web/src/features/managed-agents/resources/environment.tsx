@@ -4,9 +4,11 @@ import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import { Card, CardContent } from '../../../shared/ui/card';
-import { Field, FieldError, FieldLabel } from '../../../shared/ui/field';
+import { Field, FieldDescription, FieldError, FieldLabel } from '../../../shared/ui/field';
 import { Input } from '../../../shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
+import { Switch } from '../../../shared/ui/switch';
+import { Textarea } from '../../../shared/ui/textarea';
 import { DetailCard, ManagedTextArea } from '../components/common';
 import { type EnvironmentApiResponse, type EnvironmentEditValues, type ManagedEntityApiResponse } from '../types';
 import { environmentEditValues } from './model';
@@ -146,7 +148,7 @@ function EnvironmentNetworkingEditor({
       )}
     >
       <Card size="sm" className="py-0">
-        <CardContent className="p-3">
+        <CardContent className="space-y-6 p-6">
           <Field className="gap-2">
             <FieldLabel>{msg('managedAgents.environments.networking.type', 'Type')}</FieldLabel>
             <Select<string>
@@ -178,10 +180,85 @@ function EnvironmentNetworkingEditor({
                 </SelectItem>
               </SelectContent>
             </Select>
+            <FieldDescription>
+              {msg(
+                'managedAgents.environments.networking.typeDescription',
+                'Unrestricted allows all outbound HTTPS. Limited only allows the hosts configured below.',
+              )}
+            </FieldDescription>
           </Field>
+          {values.networkType === 'limited' ? (
+            <div className="space-y-6 border-t border-border pt-6">
+              <NetworkingSwitchRow
+                label={msg('managedAgents.environments.networking.allowMcpServers', 'Allow MCP server network access')}
+                description={msg(
+                  'managedAgents.environments.networking.allowMcpServersDescription',
+                  'Allow the hosts used by the MCP servers configured on this agent.',
+                )}
+                checked={values.allowMcpServers}
+                onCheckedChange={(checked) => onChange((current) => ({ ...current, allowMcpServers: checked }))}
+              />
+              <NetworkingSwitchRow
+                label={msg(
+                  'managedAgents.environments.networking.allowPackageManagers',
+                  'Allow package manager network access',
+                )}
+                description={msg(
+                  'managedAgents.environments.networking.allowPackageManagersDescription',
+                  'Allow official registries and trusted mirrors for apt, pip, npm, Go, Cargo, and RubyGems.',
+                )}
+                checked={values.allowPackageManagers}
+                onCheckedChange={(checked) => onChange((current) => ({ ...current, allowPackageManagers: checked }))}
+              />
+              <Field className="gap-2">
+                <FieldLabel>{msg('managedAgents.environments.networking.allowedHosts', 'Allowed hosts')}</FieldLabel>
+                <Textarea
+                  value={values.allowedHostsText}
+                  aria-label={msg('managedAgents.environments.networking.allowedHosts', 'Allowed hosts')}
+                  placeholder="api.example.com, *.example.com"
+                  rows={4}
+                  className="font-mono text-sm"
+                  onChange={(event) => onChange((current) => ({ ...current, allowedHostsText: event.target.value }))}
+                />
+                <FieldDescription>
+                  {msg(
+                    'managedAgents.environments.networking.allowedHostsDescription',
+                    'Separate hosts with commas or new lines. Use *.example.com to allow its subdomains.',
+                  )}
+                </FieldDescription>
+              </Field>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </DetailCard>
+  );
+}
+
+function NetworkingSwitchRow({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-6">
+      <div className="space-y-1">
+        <FieldLabel>{label}</FieldLabel>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      <Switch
+        checked={checked}
+        aria-label={label}
+        className="shrink-0"
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+      />
+    </div>
   );
 }
 

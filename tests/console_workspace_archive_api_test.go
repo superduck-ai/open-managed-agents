@@ -230,13 +230,17 @@ func seedLiveAPIKeyForWorkspace(t *testing.T, app *testApp, workspaceExternalID 
 	t.Helper()
 	externalID := "ak_archive_" + uniqueAdminSuffix()
 	keyHash := auth.HashAPIKey("secret-" + externalID)
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	tag, err := app.db.Pool.Exec(context.Background(), `
 		insert into api_keys (external_id, workspace_id, key_hash, status)
 		select $1, w.id, $2, 'active'
 		  from workspaces w
 		 where w.external_id = $3
-	`, externalID, keyHash, workspaceExternalID); err != nil {
+	`, externalID, keyHash, workspaceExternalID)
+	if err != nil {
 		t.Fatalf("seed live api key for workspace: %v", err)
+	}
+	if tag.RowsAffected() != 1 {
+		t.Fatalf("seed live api key for workspace %q: expected 1 row inserted, got %d", workspaceExternalID, tag.RowsAffected())
 	}
 	return keyHash
 }

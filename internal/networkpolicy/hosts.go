@@ -140,6 +140,8 @@ func NormalizeHost(raw string) (string, error) {
 	return ascii, nil
 }
 
+// hostMatcher 是编译后的 allowlist 只读索引：只在 newHostMatcher 构造阶段
+// 写入，构造完成后可供多个 goroutine 并发读取。
 type hostMatcher struct {
 	exact        map[string]struct{}
 	wildcardRoot *hostMatcherNode

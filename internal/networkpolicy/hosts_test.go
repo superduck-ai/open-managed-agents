@@ -1,6 +1,9 @@
 package networkpolicy
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 // ---- 失败场景 ----
 
@@ -34,6 +37,12 @@ func TestValidateAllowedHostRejectsInvalidEntries(t *testing.T) {
 	}
 }
 
+func TestHostMatcherZeroValueDoesNotMatch(t *testing.T) {
+	if (hostMatcher{}).match("api.example.com") {
+		t.Fatal("zero hostMatcher must not match")
+	}
+}
+
 // ---- 成功场景 ----
 
 func TestValidateAllowedHostAcceptsCanonicalizableEntries(t *testing.T) {
@@ -48,6 +57,35 @@ func TestValidateAllowedHostAcceptsCanonicalizableEntries(t *testing.T) {
 	} {
 		if err := ValidateAllowedHost(host); err != nil {
 			t.Fatalf("host %q: unexpected error %v", host, err)
+		}
+	}
+}
+
+func TestHostMatcherSupportsConcurrentReads(t *testing.T) {
+	entries, err := parseConfigAllowedHosts([]string{"api.example.com", "*.googleapis.com"})
+	if err != nil {
+		t.Fatalf("parseConfigAllowedHosts() error = %v", err)
+	}
+	matcher := newHostMatcher(entries)
+
+	const workers = 32
+	results := make(chan bool, workers)
+	var group sync.WaitGroup
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			results <- matcher.match("api.example.com") &&
+				matcher.match("storage.googleapis.com") &&
+				!matcher.match("example.org")
+		}()
+	}
+	group.Wait()
+	close(results)
+
+	for matched := range results {
+		if !matched {
+			t.Fatal("concurrent hostMatcher read returned an unexpected result")
 		}
 	}
 }

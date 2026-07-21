@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/samber/lo"
 )
 
 // ErrMalformedConfig 表示 Environment 配置不是合法 JSON。
@@ -35,11 +37,9 @@ type Config struct {
 // AllowedHostPatterns 按 Environment 配置中的稳定顺序返回 provider 使用的
 // canonical host patterns。
 func (c Config) AllowedHostPatterns() []string {
-	patterns := make([]string, 0, len(c.allowedHosts))
-	for _, host := range c.allowedHosts {
-		patterns = append(patterns, host.pattern())
-	}
-	return patterns
+	return lo.Map(c.allowedHosts, func(host allowedHost, _ int) string {
+		return host.pattern()
+	})
 }
 
 type environmentConfigSchema struct {
@@ -98,13 +98,11 @@ func configFromSchema(schema environmentConfigSchema) (Config, error) {
 }
 
 func parseConfigAllowedHosts(hosts []string) ([]allowedHost, error) {
-	parsed := make([]allowedHost, 0, len(hosts))
-	for _, host := range hosts {
+	return lo.MapErr(hosts, func(host string, _ int) (allowedHost, error) {
 		parsedHost, err := parseAllowedHost(host)
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid allowed_hosts entry: %v", ErrMalformedConfig, err)
+			return allowedHost{}, fmt.Errorf("%w: invalid allowed_hosts entry: %v", ErrMalformedConfig, err)
 		}
-		parsed = append(parsed, parsedHost)
-	}
-	return parsed, nil
+		return parsedHost, nil
+	})
 }

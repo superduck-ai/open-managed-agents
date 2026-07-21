@@ -176,6 +176,57 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 
 本地 fake-IP/TUN DNS 可能把公网域名解析到 `198.18.0.0/15`，从而触发上述保护。仅用于临时排障时，可以设置 `code_session.upstream_proxy_disable_ssrf_protection: true` 关闭目标 IP 过滤；默认值为 `false`。该开关仍然只允许端口 `443`，但会允许 loopback、私网、link-local 与 fake-IP，因此不得在生产环境启用。
 
+## Environment 网络策略执行
+
+upstream proxy 是 Environment networking（`unrestricted` / `limited`）的**主要执行点**；E2B Provider 的 `SandboxNetworkOpts` 映射只作为纵深防御的薄 Adapter，策略语义以 proxy 为准（见 `docs/adr/0006`）。
+
+### 策略来源与解析时机
+
+- 策略模块是 `internal/networkpolicy`：纯策略深模块，不访问数据库。Environment 配置与 Session AgentSnapshot 的原始 JSON 只在加载边界出现，随后按命名 wire schema 解析为领域 `Config`，其中 allowlist 字符串只解析一次并保存为已校验、已归一化的 host/port/wildcard 值，再编译为类型化 `Policy`。proxy matcher 与 E2B provider projection 都消费这份领域值，避免 IDNA、IP、大小写和尾点语义漂移。授权函数只接收编译后策略与 CONNECT target，返回带机器可测 reason 的 `Decision`；org/workspace/environment 标识保留在 `codesessions` 上下文中用于数据库作用域与审计日志。
+- proxy 在 CONNECT Basic 双重凭证校验**之后**、DNS 解析与拨号**之前**，保留经 JWT 验证的 code session ID、organization UUID 与 workspace UUID，并通过单条租户作用域查询同时校验 `CodeSession` → Environment / Session 的内部 ID、external ID、organization 和 workspace 关系，读取 Environment 当前配置与 Session AgentSnapshot。查询同时要求 Code Session 为 `active` 且 Session 未 `terminated`，使会话停止后的下一次 CONNECT 立即失效。该查询在**每次 CONNECT 新鲜执行**（不缓存）。Environment 编辑因此对存活 Sandbox 的代理出口即时生效；E2B 层仍是 Sandbox 创建时的固定快照，两层语义差异是有意取舍（收紧即时生效优先于两层严格一致）。跨 CONNECT 复用 DB 结果与编译策略需要明确 revision 与失效语义，在 [#137](https://github.com/superduck-ai/open-managed-agents/issues/137) 单独设计；本阶段不引入可能延迟权限撤销的临时缓存。
+- Code Session、Environment、Session 任一读取失败，Environment 配置畸形，或 `allow_mcp_servers=true` 时 Session AgentSnapshot（包括 JSON `null`）/ 非空 MCP URL 无法解析，都必须 **fail-closed**：拒绝 CONNECT 并记录 `policy_unavailable`，绝不降级为 unrestricted 或跳过坏条目后部分放行。`networking` 对象存在但 `type` 未知（含空串）同样 fail-closed；只有顶层 `type` 为 `cloud` 的 Environment 配置才评估 networking（非 cloud Environment 没有受管 Sandbox 出口，视为 unrestricted）。整条链从已认证的 Code Session 行出发，relay 提交的任何 environment ID 或 allowlist 都不被信任，跨 workspace 借用 allowlist 在结构上不可能。
+
+```mermaid
+flowchart TD
+  A["Authenticate WebSocket and CONNECT Basic credentials"] --> B["Fresh tenant-scoped Code Session query"]
+  B --> C{"Policy context available?"}
+  C -->|"No"| D["Deny 403: policy_unavailable"]
+  C -->|"Yes"| E["Parse Environment config and MCP snapshot"]
+  E --> F{"Parsing succeeded?"}
+  F -->|"No"| D
+  F -->|"Yes"| G{"Networking mode"}
+  G -->|"unrestricted"| H["Authorize target host"]
+  G -->|"limited"| I{"Explicit, MCP, or package host match?"}
+  I -->|"No"| J["Deny 403: host_not_allowed"]
+  I -->|"Yes"| H
+  H --> K["Run public-IP and SSRF resolution checks"]
+  K --> L["Dial the locked public IP"]
+```
+
+### limited 语义
+
+`limited` 默认拒绝，三类 host 合并放行：
+
+1. 显式 `allowed_hosts`；
+2. `allow_mcp_servers=true` 时，从 Session AgentSnapshot 的 `mcp_servers[].url` **现场提取**的 MCP hosts。远程条目必须使用项目规范 `url` 类型或兼容的 `http` / `sse` transport 类型，且 URL 必须是带 host 的绝对 HTTP(S) URL；stdio 类只有在不携带 URL 时自然排除。缺失/未知类型、stdio 携带 URL、非 HTTP(S) scheme 或畸形 URL 都使整份策略 fail-closed。runner 写入 work metadata 与 proxy 授权共用同一提取函数；
+3. `allow_package_managers=true` 时，共享 catalog 中的受信任 package registry 与镜像 host 并集（官方上游与国内基线镜像，版本控制在策略模块内）。catalog 不包含 `github.com` 等 VCS host：Go `goproxy.cn,direct` 的 `direct` miss 在 limited 下显式失败，这是已知限制，精细化授权留给未来的 MITM path 级策略。
+
+Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-go@v1.55.8`）会重定向到 `storage.googleapis.com/proxy-golang-org-prod/...`。为了使 `allow_package_managers=true` 对这类真实下载保持完整，本阶段把 `storage.googleapis.com` 作为 package-manager host 放行。当前 CONNECT 策略只能按 host 决策，不能把授权限制到 `proxy-golang-org-prod` path，因此这是有意接受的 host 级权限扩大：启用 package-manager 网络访问也会允许该公共 GCS host 上的其他 HTTPS 路径。若未来需要只允许 Go proxy 签名重定向路径，必须在独立的 MITM path-aware 策略中实现，不能在明文 CONNECT 层伪造路径隔离。
+
+匹配规则：`*.example.com` 匹配任意深度子域但**不含 apex**（`example.com` 需单独列出）；带非 443 端口的条目对 proxy 惰性（CONNECT 只放行 443）；allowlist 条目在策略解析时先校验端口范围和完整 hostname label 语义，任一非法条目使整份策略 fail-closed。合法 allowlist 条目与 CONNECT target 匹配前统一归一化（小写、去尾点、IDNA→punycode）；DNS 子域与 wildcard 的字符、label 和 253 长度边界使用与 Kubernetes 同款的 RFC 1123 validator（vendored 自 `k8s.io/apimachinery` 的 `pkg/util/validation` 最小子集，位于 `internal/networkpolicy/dns1123.go`，正则与错误信息与上游逐字一致，不引入 k8s 依赖链），不在本项目维护自制正则。IDNA lookup 保留浏览器兼容映射，Unicode host 先转 punycode 再校验。IPv4/IPv6 字面量在 IDNA 前通过 `netip` 规范化，IPv4-mapped IPv6 统一为 IPv4，带 zone 的 IPv6 不接受；IP allowlist 只做精确匹配且仍须通过 SSRF/公网 IP 检查。编译后 `Policy` 用 exact set 和按 DNS label 倒序的 wildcard 索引匹配 target，不在授权时逐条重复解析 allowlist。策略授权不替代既有 443 端口、SSRF、公网 IP、DNS rebinding 与 MITM Host/SNI 检查。
+
+`unrestricted` 保持既有行为：允许通过 SSRF 安全检查的任意公网 `host:443`。
+
+### 拒绝语义与观测
+
+- 策略拒绝时在 DNS 解析/拨号之前返回 framed `403` 并关闭 tunnel；relay 只见到通用代理拒绝，**reason 不进 framed 响应**（避免向 Sandbox 内进程泄露策略结构）。
+- 服务端为每次 deny 记录一条结构化审计日志：JWT 中已验签的 organization/workspace UUID、查询成功时的 organization/workspace internal ID、environment external ID、code session ID、归一化 host、reason（`explicit_host` / `mcp_host` / `package_manager_host` / `unrestricted` / `host_not_allowed` / `invalid_target` / `policy_unavailable`）。不记录 credential、URL query、header 或 body。
+- 观测只依赖结构化日志（公司日志平台聚合）；server 侧 metrics 管线不在本阶段范围。
+
+### 绕过边界（best-effort 声明）
+
+`HTTPS_PROXY` 继承是应用层约定：Sandbox 内进程可以 unset 代理或直接 socket 出网。**在部署级出口约束（只允许 Sandbox 访问 OMA proxy/control plane、拒绝直连公网）落地之前，本机制是 best-effort proxy policy，不构成完整安全隔离。** 该约束位于独立 egress gateway、云网络 ACL 或 Provider 外部网络层，不在本仓库的 e2b-local 内复刻；落地前所有对外表述不得宣称"安全隔离"。
+
 ## 失败语义
 
 | 场景 | 结果 |
@@ -185,6 +236,8 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 | CONNECT/protobuf 格式错误 | framed `400` |
 | Basic session/token 不匹配 | framed `407` |
 | 非 443 或非公网目标 | framed `403` |
+| Environment 策略拒绝（limited 未授权 host） | framed `403`（拨号前），reason 仅进服务端审计日志 |
+| 策略解析失败（Code Session/Environment/Session 读取错误、配置畸形） | framed `403`，fail-closed 记 `policy_unavailable` |
 | DNS、拨号失败 | framed `502` |
 | CA key 不合法、路径冲突或 certificate 无法写入 | 配置加载或 Handler 构造阶段拒绝启动 |
 | 真实上游 TLS 验证失败 | framed `502` |
@@ -198,4 +251,8 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - API 单元测试覆盖 protobuf、CONNECT、Basic 双字段鉴权、私网/端口拒绝、CA 解析和二进制隧道往返。
 - MITM 单元测试覆盖稳定 private key 驱动的启动期根证书签发、旧根验证新 leaf、动态 leaf 信任链、LRU 淘汰、同域并发签发合并、异域并行签发、客户端 TLS 解密、path/query 转发和代理凭证剥离。
 - API 集成测试覆盖无 token、私网 CONNECT、公开 CA，以及 `/v1/messages` 的多凭证鉴权、上游密钥替换和流式转发。
+- `internal/networkpolicy` 单元测试先覆盖纯策略失败场景（空 allowlist、未知类型、畸形 JSON、非法 allowed host、畸形 AgentSnapshot/MCP URL、通配符越界、未授权 host、非法 target），再覆盖成功场景（显式 host、MCP host、package catalog、unrestricted）。
+- Go module redirect 合同测试覆盖 `proxy.golang.org` 到 `storage.googleapis.com` 的 host 链；设置 `TEST_GO_MODULE_PROXY_REDIRECT=1` 可额外对真实大 module zip 运行 live redirect 验证。
+- `internal/codesessions` 与 DB-backed proxy 集成测试覆盖策略上下文边界：JWT org/workspace 作用域、Code Session 与 Environment/Session 绑定、不能借用另一 Environment allowlist、Environment/Session 缺失与持久化配置畸形时 fail-closed。
+- proxy 集成测试证明：limited 下授权目标能进入拨号路径、未授权目标在 DNS/拨号前收到 framed `403`、unrestricted 行为与现状兼容、Environment 更新对存活 Code Session 的下一次 CONNECT 即时生效。
 - linux/amd64 镜像验收通过真实 Claude CLI 和 Bash tool call 确认：relay 从 `/run/ccr/session_token` 读取 token 并启动，Claude 子进程同时具有指向同一 `127.0.0.1` relay 的 `HTTPS_PROXY`、`https_proxy`，以及 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`。

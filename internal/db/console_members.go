@@ -38,7 +38,7 @@ func (d *DB) ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]pla
 		limit $2
 	`, strings.TrimSpace(orgUUID), limit)
 	if err != nil {
-		if isUndefinedTableError(err) {
+		if isUndefinedRelationError(err) {
 			return []platform.OrgUser{}, nil
 		}
 		return nil, err
@@ -119,7 +119,7 @@ func (d *DB) RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (
 		  )
 	`, strings.TrimSpace(orgUUID), strings.TrimSpace(userID))
 	if err != nil {
-		if isUndefinedTableError(err) {
+		if isUndefinedRelationError(err) {
 			return false, nil
 		}
 		return false, err

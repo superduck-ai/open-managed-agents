@@ -55,7 +55,7 @@ func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status stri
 
 	rows, err := d.Pool.Query(ctx, query, args...)
 	if err != nil {
-		if isUndefinedTableError(err) {
+		if isUndefinedRelationError(err) {
 			return []platform.ConsoleInvite{}, nil
 		}
 		return nil, err

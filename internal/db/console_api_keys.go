@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type consoleAPIKeyScanner interface {
@@ -74,7 +73,7 @@ func (d *DB) ListConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceID
 
 	rows, err := d.Pool.Query(ctx, query, args...)
 	if err != nil {
-		if isUndefinedTableError(err) {
+		if isUndefinedRelationError(err) {
 			return []platform.ConsoleAPIKey{}, nil
 		}
 		return nil, err
@@ -331,7 +330,7 @@ func (d *DB) CountConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceI
 		  and workspace_id = $2
 		  and archived_at is null
 	`, strings.TrimSpace(orgUUID), strings.TrimSpace(workspaceID)).Scan(&count)
-	if isUndefinedTableError(err) {
+	if isUndefinedRelationError(err) {
 		return 0, nil
 	}
 	return count, err
@@ -417,7 +416,7 @@ func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeA
 		order by w.name asc, w.id asc
 	`, strings.TrimSpace(orgUUID))
 	if err != nil {
-		if isUndefinedTableError(err) {
+		if isUndefinedRelationError(err) {
 			return []platform.ConsoleWorkspace{}, nil
 		}
 		return nil, err
@@ -551,11 +550,6 @@ func parseConsoleWorkspaceTagsJSON(raw []byte) (map[string]string, error) {
 		return nil, err
 	}
 	return tags, nil
-}
-
-func isUndefinedTableError(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
 }
 
 func consolePrefixedID(prefix string, bytes int) string {

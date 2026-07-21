@@ -3,6 +3,7 @@ package platformapi
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func registerConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationSto
 	r.Get("/workspaces/{workspaceId}/api_key_count", handleCountConsoleWorkspaceAPIKeys(store))
 }
 
-func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
+func handleListConsoleWorkspaces(store OrganizationStore, logger *slog.Logger) http.HandlerFunc {
 	workspaceLister, _ := store.(consoleWorkspaceLister)
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
@@ -71,7 +72,7 @@ func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
 		includeArchived := r.URL.Query().Get("include_archived") == "true"
 		workspaces, err := workspaceLister.ListConsoleWorkspaces(r.Context(), orgUUID, includeArchived)
 		if err != nil {
-			internalError(w, "failed to list workspaces")
+			internalErrorWithCause(w, r, logger, "failed to list workspaces", err)
 			return
 		}
 		out := make([]map[string]any, 0, len(workspaces))

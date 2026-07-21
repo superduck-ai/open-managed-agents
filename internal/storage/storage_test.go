@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -59,6 +60,7 @@ func TestNormalizeEndpoint(t *testing.T) {
 		{name: "failure malformed", raw: "://bad", wantErr: "parse storage.s3.endpoint"},
 		{name: "failure missing host", raw: "http:///prefix", wantErr: "missing host"},
 		{name: "failure unsupported scheme", raw: "ftp://localhost:9000", wantErr: "scheme \"ftp\" is unsupported"},
+		{name: "failure user information", raw: "http://user:pass@localhost:9000", wantErr: "must not include user information"},
 		{name: "success defaults to http", raw: "localhost:9000", want: "http://localhost:9000"},
 		{name: "success strips path without scheme", raw: "localhost:9000/prefix", want: "http://localhost:9000"},
 		{name: "success preserves https host", raw: "https://objects.example.com:9443/prefix?ignored=true", want: "https://objects.example.com:9443"},
@@ -228,6 +230,25 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 		}
 	})
 
+	t.Run("success missing API code when HTTP status is unavailable", func(t *testing.T) {
+		createCalls := 0
+		client := &fakeS3API{
+			headBucket: func(context.Context, *s3.HeadBucketInput) (*s3.HeadBucketOutput, error) {
+				return nil, testS3Error{status: 0, code: "NoSuchBucket"}
+			},
+			createBucket: func(context.Context, *s3.CreateBucketInput) (*s3.CreateBucketOutput, error) {
+				createCalls++
+				return &s3.CreateBucketOutput{}, nil
+			},
+		}
+		if err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background()); err != nil {
+			t.Fatalf("EnsureBucket() error = %v", err)
+		}
+		if createCalls != 1 {
+			t.Fatalf("CreateBucket calls = %d, want 1", createCalls)
+		}
+	})
+
 	t.Run("success existing", func(t *testing.T) {
 		client := &fakeS3API{
 			headBucket: func(_ context.Context, input *s3.HeadBucketInput) (*s3.HeadBucketOutput, error) {
@@ -253,7 +274,7 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				return &s3.HeadBucketOutput{}, nil
 			},
 			createBucket: func(context.Context, *s3.CreateBucketInput) (*s3.CreateBucketOutput, error) {
-				return nil, &types.BucketAlreadyOwnedByYou{Message: aws.String("created concurrently")}
+				return nil, testS3Error{status: 0, code: "BucketAlreadyOwnedByYou"}
 			},
 		}
 		if err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background()); err != nil {
@@ -302,6 +323,26 @@ func TestS3StorePut(t *testing.T) {
 		}
 	})
 
+	t.Run("failure multipart aborts upload", func(t *testing.T) {
+		uploadErr := errors.New("part upload failed")
+		client := &failingMultipartS3API{uploadErr: uploadErr}
+		uploader := transfermanager.New(client, configureTransferOptions)
+		payload := bytes.Repeat([]byte("x"), int(multipartPartSizeBytes+1))
+		err := testStore(nil, uploader, "us-east-1").Put(
+			context.Background(),
+			"multipart-key",
+			bytes.NewReader(payload),
+			int64(len(payload)),
+			"application/octet-stream",
+		)
+		if !errors.Is(err, uploadErr) {
+			t.Fatalf("Put() error = %v, want wrapped part upload error", err)
+		}
+		if client.abortCalls != 1 {
+			t.Fatalf("AbortMultipartUpload calls = %d, want 1", client.abortCalls)
+		}
+	})
+
 	t.Run("success known size", func(t *testing.T) {
 		var got *transfermanager.UploadObjectInput
 		uploader := &fakeUploader{upload: func(_ context.Context, input *transfermanager.UploadObjectInput) (*transfermanager.UploadObjectOutput, error) {
@@ -314,6 +355,23 @@ func TestS3StorePut(t *testing.T) {
 		assertUploadInput(t, got, "known-key", "text/plain")
 		if got.ContentLength == nil || aws.ToInt64(got.ContentLength) != 4 {
 			t.Fatalf("ContentLength = %v, want 4", got.ContentLength)
+		}
+	})
+
+	t.Run("success omits empty content type", func(t *testing.T) {
+		var got *transfermanager.UploadObjectInput
+		uploader := &fakeUploader{upload: func(_ context.Context, input *transfermanager.UploadObjectInput) (*transfermanager.UploadObjectOutput, error) {
+			got = input
+			return &transfermanager.UploadObjectOutput{}, nil
+		}}
+		if err := testStore(nil, uploader, "us-east-1").Put(context.Background(), "empty-content-type", strings.NewReader("body"), 4, ""); err != nil {
+			t.Fatalf("Put() error = %v", err)
+		}
+		if got == nil {
+			t.Fatal("UploadObject input = nil")
+		}
+		if got.ContentType != nil {
+			t.Fatalf("ContentType = %q, want nil", aws.ToString(got.ContentType))
 		}
 	})
 
@@ -332,23 +390,44 @@ func TestS3StorePut(t *testing.T) {
 		}
 	})
 
-	t.Run("failure multipart aborts upload", func(t *testing.T) {
-		uploadErr := errors.New("part upload failed")
-		client := &failingMultipartS3API{uploadErr: uploadErr}
+	t.Run("success unknown size non-seekable multipart", func(t *testing.T) {
+		client := &recordingMultipartS3API{}
 		uploader := transfermanager.New(client, configureTransferOptions)
 		payload := bytes.Repeat([]byte("x"), int(multipartPartSizeBytes+1))
-		err := testStore(nil, uploader, "us-east-1").Put(
+		reader, writer := io.Pipe()
+		writeDone := make(chan error, 1)
+		go func() {
+			_, writeErr := io.Copy(writer, bytes.NewReader(payload))
+			if closeErr := writer.Close(); writeErr == nil {
+				writeErr = closeErr
+			}
+			writeDone <- writeErr
+		}()
+
+		putErr := testStore(nil, uploader, "us-east-1").Put(
 			context.Background(),
-			"multipart-key",
-			bytes.NewReader(payload),
-			int64(len(payload)),
+			"stream-multipart-key",
+			reader,
+			-1,
 			"application/octet-stream",
 		)
-		if !errors.Is(err, uploadErr) {
-			t.Fatalf("Put() error = %v, want wrapped part upload error", err)
+		if putErr != nil {
+			_ = reader.CloseWithError(putErr)
+			t.Fatalf("Put() error = %v", putErr)
 		}
-		if client.abortCalls != 1 {
-			t.Fatalf("AbortMultipartUpload calls = %d, want 1", client.abortCalls)
+		if writeErr := <-writeDone; writeErr != nil {
+			t.Fatalf("pipe writer error = %v", writeErr)
+		}
+
+		createCalls, uploadCalls, completeCalls, abortCalls, uploadedBytes, completedParts := client.snapshot()
+		if createCalls != 1 || completeCalls != 1 || abortCalls != 0 {
+			t.Fatalf("multipart calls = create %d complete %d abort %d, want 1/1/0", createCalls, completeCalls, abortCalls)
+		}
+		if uploadCalls < 2 || completedParts != uploadCalls {
+			t.Fatalf("multipart parts = uploaded %d completed %d, want at least two matching parts", uploadCalls, completedParts)
+		}
+		if uploadedBytes != int64(len(payload)) {
+			t.Fatalf("uploaded bytes = %d, want %d", uploadedBytes, len(payload))
 		}
 	})
 }
@@ -482,6 +561,16 @@ type failingMultipartS3API struct {
 	abortCalls int
 }
 
+type recordingMultipartS3API struct {
+	mu             sync.Mutex
+	createCalls    int
+	uploadCalls    int
+	completeCalls  int
+	abortCalls     int
+	uploadedBytes  int64
+	completedParts int
+}
+
 func (*failingMultipartS3API) PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	return nil, errors.New("unexpected PutObject call")
 }
@@ -515,6 +604,64 @@ func (*failingMultipartS3API) HeadObject(context.Context, *s3.HeadObjectInput, .
 
 func (*failingMultipartS3API) ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 	return nil, errors.New("unexpected ListObjectsV2 call")
+}
+
+func (*recordingMultipartS3API) PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	return nil, errors.New("unexpected PutObject call")
+}
+
+func (f *recordingMultipartS3API) UploadPart(_ context.Context, input *s3.UploadPartInput, _ ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+	body, err := io.ReadAll(input.Body)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	f.uploadCalls++
+	f.uploadedBytes += int64(len(body))
+	f.mu.Unlock()
+	return &s3.UploadPartOutput{ETag: aws.String(fmt.Sprintf("part-%d", aws.ToInt32(input.PartNumber)))}, nil
+}
+
+func (f *recordingMultipartS3API) CreateMultipartUpload(context.Context, *s3.CreateMultipartUploadInput, ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+	f.mu.Lock()
+	f.createCalls++
+	f.mu.Unlock()
+	return &s3.CreateMultipartUploadOutput{UploadId: aws.String("upload-id")}, nil
+}
+
+func (f *recordingMultipartS3API) CompleteMultipartUpload(_ context.Context, input *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+	f.mu.Lock()
+	f.completeCalls++
+	if input.MultipartUpload != nil {
+		f.completedParts = len(input.MultipartUpload.Parts)
+	}
+	f.mu.Unlock()
+	return &s3.CompleteMultipartUploadOutput{}, nil
+}
+
+func (f *recordingMultipartS3API) AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+	f.mu.Lock()
+	f.abortCalls++
+	f.mu.Unlock()
+	return &s3.AbortMultipartUploadOutput{}, nil
+}
+
+func (*recordingMultipartS3API) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	return nil, errors.New("unexpected GetObject call")
+}
+
+func (*recordingMultipartS3API) HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	return nil, errors.New("unexpected HeadObject call")
+}
+
+func (*recordingMultipartS3API) ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	return nil, errors.New("unexpected ListObjectsV2 call")
+}
+
+func (f *recordingMultipartS3API) snapshot() (int, int, int, int, int64, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.createCalls, f.uploadCalls, f.completeCalls, f.abortCalls, f.uploadedBytes, f.completedParts
 }
 
 func (f *fakeUploader) UploadObject(ctx context.Context, input *transfermanager.UploadObjectInput, _ ...func(*transfermanager.Options)) (*transfermanager.UploadObjectOutput, error) {

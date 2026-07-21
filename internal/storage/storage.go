@@ -146,13 +146,15 @@ func (s *S3Store) EnsureBucket(ctx context.Context) error {
 
 func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, size int64, contentType string) error {
 	input := &transfermanager.UploadObjectInput{
-		Bucket:      aws.String(s.bucket),
-		Key:         aws.String(key),
-		Body:        body,
-		ContentType: aws.String(contentType),
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Body:   body,
 	}
 	if size >= 0 {
 		input.ContentLength = aws.Int64(size)
+	}
+	if contentType != "" {
+		input.ContentType = aws.String(contentType)
 	}
 	if _, err := s.uploader.UploadObject(ctx, input); err != nil {
 		return fmt.Errorf("put object %q: %w", key, err)
@@ -229,7 +231,11 @@ func httpStatusCode(err error) (int, bool) {
 	if !errors.As(err, &statusError) {
 		return 0, false
 	}
-	return statusError.HTTPStatusCode(), true
+	status := statusError.HTTPStatusCode()
+	if status <= 0 {
+		return 0, false
+	}
+	return status, true
 }
 
 func normalizeEndpoint(raw string) (string, error) {
@@ -243,6 +249,9 @@ func normalizeEndpoint(raw string) (string, error) {
 	}
 	if parsed.Host == "" {
 		return "", fmt.Errorf("storage.s3.endpoint %q is missing host", raw)
+	}
+	if parsed.User != nil {
+		return "", errors.New("storage.s3.endpoint must not include user information")
 	}
 	switch parsed.Scheme {
 	case "http", "https":

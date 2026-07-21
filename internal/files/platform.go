@@ -267,11 +267,11 @@ func streamPlatformObject(w http.ResponseWriter, fileUUID string, objectKey stri
 	w.WriteHeader(http.StatusOK)
 	copied, copyErr := io.Copy(w, object.Body)
 	if copyErr != nil {
+		expectedSize := ""
 		if object.Size >= 0 {
-			log.Printf("stream platform file %s failed file_uuid=%s key=%s bytes_copied=%d expected_size=%d: %v", variant, fileUUID, objectKey, copied, object.Size, copyErr)
-		} else {
-			log.Printf("stream platform file %s failed file_uuid=%s key=%s bytes_copied=%d: %v", variant, fileUUID, objectKey, copied, copyErr)
+			expectedSize = fmt.Sprintf(" expected_size=%d", object.Size)
 		}
+		log.Printf("stream platform file %s failed file_uuid=%s key=%s bytes_copied=%d%s: %v", variant, fileUUID, objectKey, copied, expectedSize, copyErr)
 		return
 	}
 	if object.Size >= 0 && copied != object.Size {

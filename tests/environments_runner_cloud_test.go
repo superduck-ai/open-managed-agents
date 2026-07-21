@@ -20,6 +20,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/google/uuid"
 )
 
 func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
@@ -299,6 +300,19 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 	})
 
+	t.Run("session event added during provisioning reaches the initial inbound queue", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironmentWithLateSessionEvent(t)
+		if err != nil || !processed {
+			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
+		}
+		if len(provider.queuedInboundEvents) != 2 ||
+			provider.queuedInboundEvents[0].EventSubtype != "initialize" ||
+			provider.queuedInboundEvents[1].EventType != "user" ||
+			!strings.Contains(string(provider.queuedInboundEvents[1].Payload), "sent during package provisioning") {
+			t.Fatalf("queued inbound events = %#v, want initialize followed by provisioning-time user event", provider.queuedInboundEvents)
+		}
+	})
+
 	t.Run("success starts manager after fixed provisioner", func(t *testing.T) {
 		provider, processed, err := runPackageEnvironment(t, nil)
 		if err != nil || !processed {
@@ -359,13 +373,13 @@ func runPackageEnvironment(t *testing.T, commandErr error) (*recordingRunnerProv
 }
 
 func runPackageEnvironmentWithStop(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID string) {
+	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
 		requestPackageEnvironmentStop(t, ctx, database, environmentID)
 	})
 }
 
 func runPackageEnvironmentWithStopStateFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID string) {
+	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
 		requestPackageEnvironmentStop(t, ctx, database, environmentID)
 		if _, err := database.Pool.Exec(ctx, `
 			create or replace function oma_test_fail_sandbox_state_update() returns trigger
@@ -392,13 +406,13 @@ func runPackageEnvironmentWithStopStateFailure(t *testing.T) (*recordingRunnerPr
 }
 
 func runPackageEnvironmentWithStopKillFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHookAndKill(t, nil, errors.New("forced sandbox kill failure"), func(ctx context.Context, database *db.DB, environmentID string) {
+	return runPackageEnvironmentWithHookAndKill(t, nil, errors.New("forced sandbox kill failure"), func(ctx context.Context, database *db.DB, environmentID, _ string) {
 		requestPackageEnvironmentStop(t, ctx, database, environmentID)
 	})
 }
 
 func runPackageEnvironmentWithSessionMetadataFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _ string) {
+	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _, _ string) {
 		if _, err := database.Pool.Exec(ctx, `
 			create or replace function oma_test_fail_session_metadata_update() returns trigger
 			language plpgsql as $$
@@ -424,7 +438,7 @@ func runPackageEnvironmentWithSessionMetadataFailure(t *testing.T) (*recordingRu
 }
 
 func runPackageEnvironmentWithClearedMetadata(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID string) {
+	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
 		ids := getDefaultDBIDs(t, database)
 		works, _, err := database.ListEnvironmentWorkPage(ctx, db.ListEnvironmentWorkPageParams{
 			WorkspaceID: ids.WorkspaceID, EnvironmentExternalID: environmentID, Limit: 10,
@@ -434,6 +448,37 @@ func runPackageEnvironmentWithClearedMetadata(t *testing.T) (*recordingRunnerPro
 		}
 		if _, err := database.UpdateEnvironmentWorkMetadata(ctx, ids.WorkspaceID, environmentID, works[0].ExternalID, json.RawMessage(`{}`)); err != nil {
 			t.Fatalf("clear environment work metadata: %v", err)
+		}
+	})
+}
+
+func runPackageEnvironmentWithLateSessionEvent(t *testing.T) (*recordingRunnerProvider, bool, error) {
+	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _, sessionID string) {
+		ids := getDefaultDBIDs(t, database)
+		now := time.Now().UTC()
+		eventID := "sevt_provisioning_" + strings.ReplaceAll(now.Format("150405.000000000"), ".", "")
+		payload, err := json.Marshal(map[string]any{
+			"type":         "user.message",
+			"id":           eventID,
+			"processed_at": now.Format(time.RFC3339),
+			"created_at":   now.Format(time.RFC3339Nano),
+			"content": []map[string]any{{
+				"type": "text",
+				"text": "sent during package provisioning",
+			}},
+		})
+		if err != nil {
+			t.Fatalf("marshal provisioning-time event: %v", err)
+		}
+		if _, err := database.AppendSessionEvents(ctx, ids.WorkspaceID, sessionID, []db.SessionEvent{{
+			UUID:        uuid.NewString(),
+			ExternalID:  eventID,
+			EventType:   "user.message",
+			Payload:     payload,
+			ProcessedAt: now,
+			CreatedAt:   now,
+		}}); err != nil {
+			t.Fatalf("append provisioning-time session event: %v", err)
 		}
 	})
 }
@@ -457,7 +502,7 @@ func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *
 func runPackageEnvironmentWithHook(
 	t *testing.T,
 	commandErr error,
-	afterCommand func(context.Context, *db.DB, string),
+	afterCommand func(context.Context, *db.DB, string, string),
 ) (*recordingRunnerProvider, bool, error) {
 	return runPackageEnvironmentWithHookAndKill(t, commandErr, nil, afterCommand)
 }
@@ -466,7 +511,7 @@ func runPackageEnvironmentWithHookAndKill(
 	t *testing.T,
 	commandErr error,
 	killErr error,
-	afterCommand func(context.Context, *db.DB, string),
+	afterCommand func(context.Context, *db.DB, string, string),
 ) (*recordingRunnerProvider, bool, error) {
 	t.Helper()
 	ctx := context.Background()
@@ -509,7 +554,7 @@ func runPackageEnvironmentWithHookAndKill(
 	})
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-packages", commandErr: commandErr, killErr: killErr}
 	if afterCommand != nil {
-		provider.afterCommand = func() { afterCommand(ctx, app.db, environment.ID) }
+		provider.afterCommand = func() { afterCommand(ctx, app.db, environment.ID, session.ID) }
 	}
 	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, app.store, app.credentials)
 	processed, runErr := runner.RunOnce(ctx, "runner-package-test")
@@ -517,10 +562,14 @@ func runPackageEnvironmentWithHookAndKill(
 		provider.createSawMCPMetadata = hasJSONKey(provider.creates[0].metadata, "mcp_allowed_hosts")
 	}
 	ids := getDefaultDBIDs(t, app.db)
-	_, codeSessionErr := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
+	codeSession, codeSessionErr := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
 	switch {
 	case codeSessionErr == nil:
 		provider.codeSessionCreated = true
+		provider.queuedInboundEvents, err = app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+		if err != nil {
+			t.Fatalf("list package runner queued inbound events: %v", err)
+		}
 	case errors.Is(codeSessionErr, db.ErrNotFound):
 	default:
 		t.Fatalf("look up package runner code session: %v", codeSessionErr)
@@ -976,6 +1025,7 @@ type recordingRunnerProvider struct {
 	workHasRuntimeMetadata    bool
 	workHasMCPMetadata        bool
 	createSawMCPMetadata      bool
+	queuedInboundEvents       []db.CodeSessionEvent
 }
 
 type recordedSandboxResolve struct {

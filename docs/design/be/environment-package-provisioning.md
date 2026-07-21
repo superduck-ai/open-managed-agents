@@ -40,7 +40,7 @@ sequenceDiagram
     alt 创建/安装期间收到 stop 请求
         Runner->>E2B: best-effort Kill
     else Work 仍可运行
-        Runner->>CodeSession: 单事务创建 session/events 并提交 Session/Work metadata
+        Runner->>CodeSession: 锁定 Session，读取最终 events 并单事务创建 runtime
         CodeSession-->>Runner: 提交前签发 sandbox 凭证
         Runner->>Manager: 通过 stdin 写入 startup payload 并运行 task-run
         Manager->>Agent: 启动 Claude Agent
@@ -49,7 +49,7 @@ sequenceDiagram
 
 空 Packages 不写 manifest/provisioner，也不运行安装命令。Environment 更新不会进入已创建 Sandbox；runner 在创建新 Sandbox 时读取 Environment 当前配置，所以只影响之后创建的 Sandbox。每个 Session 仍通过一次独立的 E2B `Create` 获得隔离文件系统。Sandbox 创建及 Packages 安装结束后，runner 必须检查 heartbeat 的 `lease_extended`；只有 lease 仍有效时才创建 code session、签发凭证、提交 runtime metadata 并启动 Environment Manager。如果期间 work 已进入 `stopping` 或 `stopped`，则终止刚创建的 Sandbox，且不会遗留 active code session 或对应凭证。
 
-启动 metadata 分为两个阶段：`mcp_allowed_hosts` 与 `managed_agent_skills_mount` 是 Sandbox 创建输入，必须在 `Resolve`/`Create` 前存在，但 preparation 只修改 runner 内存中的 Work，不提前持久化；`provider_sandbox_id` 在 Sandbox 创建后独立持久化，便于失败清理。`environment_sandboxes.metadata` 是一次创建尝试的输入快照，因此可以保留 MCP/skill preparation 信息供审计和失败诊断，并不表示 runtime commit 成功。heartbeat 成功后，runner 才在同一数据库事务中锁定并重新确认 Work 仍为 `active`、创建 active code session、写入 initialize/initial inbound events，并把 preparation metadata 与 `claude_code_*`/`runtime` identity metadata 一起提交到 Session 和 Environment Work。任一数据库写入或提交前凭证签发失败都会回滚整个 runtime commit；“成功后持久化”只约束 Work/Session 的 preparation state 和 runtime identity，不要求丢弃 Sandbox 创建尝试快照。
+启动 metadata 分为两个阶段：`mcp_allowed_hosts` 与 `managed_agent_skills_mount` 是 Sandbox 创建输入，必须在 `Resolve`/`Create` 前存在，但 preparation 只修改 runner 内存中的 Work，不提前持久化；`provider_sandbox_id` 在 Sandbox 创建后独立持久化，便于失败清理。`environment_sandboxes.metadata` 是一次创建尝试的输入快照，因此可以保留 MCP/skill preparation 信息供审计和失败诊断，并不表示 runtime commit 成功。heartbeat 成功后，runner 才在同一数据库事务中锁定并重新确认 Work 仍为 `active`，再使用与 `AppendSessionEvents` 相同的 Session 行锁读取最终 event 快照、创建 active code session、写入 initialize/initial inbound events，并把 preparation metadata 与 `claude_code_*`/`runtime` identity metadata 一起提交到 Session 和 Environment Work。锁前已经提交的 Session event 会进入初始 inbound queue；锁后到达的 event 会等待 runtime commit，随后走实时转发路径，因此 Packages 安装期间发送的消息不会落在两条路径之间。任一数据库写入或提交前凭证签发失败都会回滚整个 runtime commit；“成功后持久化”只约束 Work/Session 的 preparation state 和 runtime identity，不要求丢弃 Sandbox 创建尝试快照。
 
 ## 3. Manifest 与执行安全
 
@@ -105,7 +105,7 @@ graceful stop 同样采用 best-effort provider 清理：`stopping` 写入和 Ki
 
 - `internal/environments/package_provisioner_test.go`：manifest object/schema 校验、root config 与 nested Packages 解码边界、空配置跳过、特殊字符保真、六类 manager 顺序与首错停止；
 - `tests/environments_api_test.go`：官方 Go SDK 强类型创建、更新、读取与列出 Packages 配置；
-- `tests/environments_runner_cloud_test.go`：六类 package manifest、provisioner/startup 写入顺序、MCP host network resolution、固定命令不含 spec、provisioning/metadata 失败或 stop 不创建 code session、状态写失败仍 Kill 并停止 Work，且失败日志不输出 launch stdin；
+- `tests/environments_runner_cloud_test.go`：六类 package manifest、provisioner/startup 写入顺序、MCP host network resolution、固定命令不含 spec、provisioning/metadata 失败或 stop 不创建 code session、Packages 安装期间写入的 Session event 进入初始 inbound queue、状态写失败仍 Kill 并停止 Work，且失败日志不输出 launch stdin；
 - `tests/environments_packages_lifecycle_e2e_test.go`（`e2b_integration` 与 `e2e` build tag）：在旧 Session Sandbox 安装 `six==1.16.0` 后把 Environment 更新为 `six==1.17.0`，确认旧 Sandbox 不变而新 Sandbox 使用更新后的配置，并用同一路径的不同文件内容验证两个 Session 文件系统相互隔离；
 - `tests/environments_full_e2b_bridge_integration_test.go`（`e2b_integration` 与 `e2e` build tag）：通过官方 Go SDK 创建含六类 Packages 的 Environment，使用 `managed-agent-sandbox:latest` 标签，真实安装并 probe `ffmpeg`、`rg`、`rake`、来自不同 module/version 的 `goimports` 与 `addlicense`、`tsc`、`numpy`，确认 Environment Manager 已运行，并让 Claude Agent 调用已安装的 `rg` 写出版本证明。
 

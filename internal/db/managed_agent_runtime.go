@@ -11,7 +11,6 @@ import (
 
 type CreateManagedAgentRuntimeInput struct {
 	CodeSession                     CreateCodeSessionInput
-	InboundEvents                   []AppendCodeSessionEventInput
 	SessionMetadataPatch            json.RawMessage
 	EnvironmentWorkPreparationPatch json.RawMessage
 	EnvironmentWorkRuntimePatch     json.RawMessage
@@ -27,13 +26,19 @@ type CreateManagedAgentRuntimeResult struct {
 
 // CreateManagedAgentRuntime atomically creates the code-session identity and initial
 // queue, then publishes the matching runtime metadata on the public Session and Work.
+// buildInitialInboundEvents runs while the public Session row is locked and must stay
+// side-effect free; it converts the locked event snapshot without doing more DB work.
 // beforeCommit performs non-persistent credential preparation while rollback is still
 // possible, so a signing error cannot expose a partially committed runtime.
 func (d *DB) CreateManagedAgentRuntime(
 	ctx context.Context,
 	input CreateManagedAgentRuntimeInput,
+	buildInitialInboundEvents func([]SessionEvent) ([]AppendCodeSessionEventInput, error),
 	beforeCommit func(CodeSessionCredentialContext) error,
 ) (CreateManagedAgentRuntimeResult, error) {
+	if buildInitialInboundEvents == nil {
+		return CreateManagedAgentRuntimeResult{}, errors.New("managed agent initial inbound event builder is required")
+	}
 	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
@@ -53,11 +58,19 @@ func (d *DB) CreateManagedAgentRuntime(
 	if work.State != "active" {
 		return CreateManagedAgentRuntimeResult{}, ErrInvalidState
 	}
+	publicEvents, err := lockSessionAndListEventsTx(ctx, tx, input.CodeSession.WorkspaceID, input.CodeSession.SessionExternalID)
+	if err != nil {
+		return CreateManagedAgentRuntimeResult{}, err
+	}
+	inboundEvents, err := buildInitialInboundEvents(publicEvents)
+	if err != nil {
+		return CreateManagedAgentRuntimeResult{}, err
+	}
 	codeSession, err := createCodeSessionTx(ctx, tx, input.CodeSession)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	lastInboundSequence, err := appendInitialCodeSessionEvents(ctx, tx, codeSession, input.InboundEvents)
+	lastInboundSequence, err := appendInitialCodeSessionEvents(ctx, tx, codeSession, inboundEvents)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
@@ -100,6 +113,31 @@ func (d *DB) CreateManagedAgentRuntime(
 		EnvironmentWork: work,
 		Credentials:     credentials,
 	}, nil
+}
+
+// lockSessionAndListEventsTx 与 AppendSessionEvents 使用同一条 Session 行锁。
+// 锁内读取的最终快照会随 Code Session 一起提交；锁后写入的事件则会在
+// Runtime 提交后通过实时转发路径进入 inbound queue。
+func lockSessionAndListEventsTx(ctx context.Context, tx pgx.Tx, workspaceID int64, sessionExternalID string) ([]SessionEvent, error) {
+	if _, err := scanSession(tx.QueryRow(ctx, `
+		select `+sessionColumns()+`
+		from sessions
+		where workspace_id = $1 and external_id = $2 and deleted_at is null
+		for update
+	`, workspaceID, sessionExternalID)); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `
+		select `+sessionEventColumns()+`
+		from session_events
+		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
+		order by created_at asc, id asc
+	`, workspaceID, sessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSessionEventRows(rows)
 }
 
 func appendInitialCodeSessionEvents(ctx context.Context, tx pgx.Tx, session CodeSession, inputs []AppendCodeSessionEventInput) (int64, error) {

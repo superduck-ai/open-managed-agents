@@ -24,7 +24,6 @@ type ManagedAgentCreateInput struct {
 	PermissionMode             string
 	DangerouslySkipPermissions bool
 	Config                     json.RawMessage
-	InitialEvents              []json.RawMessage
 	WorkPreparationMetadata    ManagedAgentWorkPreparationMetadata
 }
 
@@ -86,10 +85,6 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	events, err := managedAgentInitialInboundEvents(codeSessionID, input.Config, input.InitialEvents, now)
-	if err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
 	runtimeMetadata := managedAgentRuntimeMetadata{
 		ClaudeCodeSessionID:       codeSessionID,
 		ClaudeCodePublicSessionID: input.Session.ExternalID,
@@ -123,12 +118,17 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 			OAuthAccessTokenHash: auth.HashAPIKey(oauthAccessToken),
 			CreatedAt:            now,
 		},
-		InboundEvents:                   events,
 		SessionMetadataPatch:            runtimeMetadataPatch,
 		EnvironmentWorkPreparationPatch: workPreparationPatch,
 		EnvironmentWorkRuntimePatch:     runtimeMetadataPatch,
 		EnvironmentExternalID:           input.Environment.ExternalID,
 		WorkExternalID:                  input.EnvironmentWork.ExternalID,
+	}, func(sessionEvents []db.SessionEvent) ([]db.AppendCodeSessionEventInput, error) {
+		payloads := make([]json.RawMessage, 0, len(sessionEvents))
+		for _, event := range sessionEvents {
+			payloads = append(payloads, event.Payload)
+		}
+		return managedAgentInitialInboundEvents(codeSessionID, input.Config, payloads, now)
 	}, func(credentialContext db.CodeSessionCredentialContext) error {
 		var issueErr error
 		sessionIngressToken, issueErr = s.issueSessionIngressToken(credentialContext)

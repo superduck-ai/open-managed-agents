@@ -397,7 +397,7 @@ func TestSkillsAPI(t *testing.T) {
 
 	t.Run("success delete object queues cleanup job", func(t *testing.T) {
 		cleanupStore := newFakeStore("fake-bucket")
-		cleanupStore.deleteErr = errors.New("minio unavailable")
+		cleanupStore.deleteErr = errors.New("object storage unavailable")
 		cleanupApp := newTestAppWithStore(t, nil, cleanupStore)
 		defer cleanupApp.close()
 

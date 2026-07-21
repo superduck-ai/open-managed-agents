@@ -7,12 +7,12 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 - **API 兼容层**：`/v1/*` 提供面向 Anthropic SDK 的资源接口，使用 `Authorization: Bearer ...` 或 `X-Api-Key` 鉴权，默认开发 API key 为 `sk-ant-local-default`。
 - **控制台后端**：`/api/*`、`/auth/*`、`/web-api/*` 等路由服务于前端控制台，使用 cookie session。
 - **托管 Agent 资源**：支持 agent 定义、session 事件流、deployment 手动运行、environment work、credential vault、memory store、skills 等资源。
-- **本地基础设施**：PostgreSQL 存储元数据，Redis 存储平台会话，MinIO/S3 存储文件、skills 和 batch 结果。
+- **本地基础设施**：PostgreSQL 存储元数据，Redis 存储平台会话，S3 兼容对象存储保存文件、skills 和 batch 结果，默认本地使用 MinIO。
 - **前端控制台**：`web/` 是 Vite + React + TypeScript + Bun 应用，使用 TanStack Router/Query/Table 和 shadcn 风格组件。
 
 ## 技术栈
 
-- 后端：Go `1.26.2`、`chi`、`pgx`、`goose`、MinIO SDK、Redis、Anthropic Go SDK。
+- 后端：Go `1.26.2`、`chi`、`pgx`、`goose`、AWS SDK for Go v2、Redis、Anthropic Go SDK。
 - 前端：Bun、Vite、React、TypeScript、Tailwind CSS、TanStack Router/Query/Table、Base UI、shadcn/ui 风格组件。
 - 存储：PostgreSQL、Redis、S3 兼容对象存储，默认本地使用 MinIO。
 - 沙箱：E2B 相关能力通过 `config/config.yaml` 的 `e2b` 节点启用；没有配置时，多数 API/单元测试仍可在 fake store 或非真实沙箱路径下运行。
@@ -27,7 +27,7 @@ Open Managed Agents 是一个用 Go 实现的本地优先 Managed Agents API 服
 ├── internal/{agents,...}       # 垂直资源 handler/service
 ├── internal/db                 # PostgreSQL 数据访问、seed、goose migrations
 ├── internal/httpapi            # Console API、兼容错误响应、HTTP 辅助函数
-├── internal/storage            # S3/MinIO 对象存储边界
+├── internal/storage            # S3 兼容对象存储边界
 ├── config                      # 本地运行配置、示例和忽略提交的私钥
 ├── assets/skills               # 内置和示例 skill 包
 ├── tests                       # Go API/SDK/E2E 测试
@@ -276,6 +276,15 @@ go run ./cmd/migrate up
 go test ./... -count=1
 ```
 
+使用本地 MinIO 或目标 S3-compatible 服务运行对象存储兼容测试：
+
+```bash
+OMA_S3_INTEGRATION_ENDPOINT=http://127.0.0.1:9000 \
+  go test ./internal/storage -run '^TestS3CompatibleIntegration$' -count=1 -v
+```
+
+测试默认使用 bucket `claude-files`、region `us-east-1` 和本地 MinIO 凭证 `minioadmin/minioadmin`；可通过 `OMA_S3_INTEGRATION_BUCKET`、`OMA_S3_INTEGRATION_REGION`、`OMA_S3_INTEGRATION_ACCESS_KEY_ID`、`OMA_S3_INTEGRATION_SECRET_ACCESS_KEY` 覆盖。它覆盖重复建桶、小对象、已知与未知长度 multipart、下载及删除；测试对象会清理，创建的 bucket 默认保留。需要验证建桶并自动清理时，使用以 `oma-storage-test-` 开头的唯一 bucket，并设置 `OMA_S3_INTEGRATION_DELETE_BUCKET=1`。
+
 前端测试和构建：
 
 ```bash
@@ -309,7 +318,7 @@ TEST_API_BASE_URL=http://127.0.0.1:18080 \
 - `/v1/*` 错误响应应通过 `internal/httpapi.WriteError` 保持 Anthropic 兼容结构。
 - `internal/api` 只做组装、中间件、鉴权入口选择和资源挂载，不放业务规则、SQL 或资源级细节。
 - DB 层返回普通 Go error 或可识别的领域错误，不构造 HTTP 状态码或 API JSON。
-- 文件、skills、memory content、batch result 等对象内容通过 S3/MinIO 存储，元数据在 PostgreSQL。
+- 文件、skills、memory content、batch result 等对象内容通过 S3 兼容对象存储，元数据在 PostgreSQL。
 - 前端 API 边界要区分 `/api` Console API 和 `/v1` SDK 兼容 API，不要为了控制台便利改变 `/v1` 行为。
 - 修改 `web/` 后，浏览器验证前从仓库根目录运行 `./scripts/restart-web.sh`。
 

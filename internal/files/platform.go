@@ -261,14 +261,20 @@ func streamPlatformObject(w http.ResponseWriter, fileUUID string, objectKey stri
 	}
 	w.Header().Set("Cache-Control", platformPreviewCacheControl)
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	if object.Size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(object.Size, 10))
+	}
 	w.WriteHeader(http.StatusOK)
 	copied, copyErr := io.Copy(w, object.Body)
 	if copyErr != nil {
-		log.Printf("stream platform file %s failed file_uuid=%s key=%s bytes_copied=%d expected_size=%d: %v", variant, fileUUID, objectKey, copied, object.Size, copyErr)
+		if object.Size >= 0 {
+			log.Printf("stream platform file %s failed file_uuid=%s key=%s bytes_copied=%d expected_size=%d: %v", variant, fileUUID, objectKey, copied, object.Size, copyErr)
+		} else {
+			log.Printf("stream platform file %s failed file_uuid=%s key=%s bytes_copied=%d: %v", variant, fileUUID, objectKey, copied, copyErr)
+		}
 		return
 	}
-	if copied != object.Size {
+	if object.Size >= 0 && copied != object.Size {
 		log.Printf("stream platform file %s size mismatch file_uuid=%s key=%s bytes_copied=%d expected_size=%d", variant, fileUUID, objectKey, copied, object.Size)
 	}
 }

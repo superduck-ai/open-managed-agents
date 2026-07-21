@@ -471,7 +471,7 @@ func TestFilesAPI(t *testing.T) {
 
 	t.Run("failure delete object queues cleanup job", func(t *testing.T) {
 		store := newFakeStore("fake-bucket")
-		store.deleteErr = errors.New("minio unavailable")
+		store.deleteErr = errors.New("object storage unavailable")
 		fakeApp := newTestAppWithStore(t, nil, store)
 		defer fakeApp.close()
 
@@ -500,7 +500,7 @@ func TestFilesAPI(t *testing.T) {
 
 	t.Run("failure upload metadata rejection queues cleanup job when object delete fails", func(t *testing.T) {
 		store := newFakeStore("fake-bucket")
-		store.deleteErr = errors.New("minio unavailable")
+		store.deleteErr = errors.New("object storage unavailable")
 		limitedConfig := app.cfg
 		limitedConfig.Storage.MaxFileBytes = 1024
 		limitedConfig.Storage.WorkspaceLimitBytes = 1
@@ -902,11 +902,11 @@ func TestObjectCleanupWorkerContinuesAfterJobFailure(t *testing.T) {
 
 func newTestApp(t *testing.T, override *config.Config) *testApp {
 	t.Helper()
-	store, cfg := newMinIOStore(t, override)
+	store, cfg := newS3Store(t, override)
 	return newTestAppWithStore(t, &cfg, store)
 }
 
-func newMinIOStore(t *testing.T, override *config.Config) (storage.ObjectStore, config.Config) {
+func newS3Store(t *testing.T, override *config.Config) (storage.ObjectStore, config.Config) {
 	t.Helper()
 	cfg, err := config.Load()
 	if err != nil {
@@ -918,7 +918,7 @@ func newMinIOStore(t *testing.T, override *config.Config) (storage.ObjectStore, 
 	}
 	store, err := storage.New(cfg.Storage)
 	if err != nil {
-		t.Fatalf("create minio store: %v", err)
+		t.Fatalf("create S3 store: %v", err)
 	}
 	return store, cfg
 }

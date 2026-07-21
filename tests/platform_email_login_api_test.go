@@ -207,7 +207,7 @@ func TestPlatformWorkspaceHeaderScopesV1Agents(t *testing.T) {
 		t.Fatalf("platform login cookies = %#v, want lastActiveOrg", cookies)
 	}
 
-	workspaceResp := app.platformRequest(t, http.MethodPost, "/api/console/organizations/"+orgCookie.Value+"/workspaces", strings.NewReader(`{"name":"Scoped agents","display_color":"#9B87F5","data_residency":{"workspace_geo":"us"}}`), cookies)
+	workspaceResp := app.platformRequest(t, http.MethodPost, "/api/console/organizations/"+orgCookie.Value+"/workspaces", strings.NewReader(`{"name":"Scoped agents","display_color":"#9B87F5"}`), cookies)
 	defer workspaceResp.Body.Close()
 	if workspaceResp.StatusCode != http.StatusOK {
 		t.Fatalf("create workspace status = %d, want 200: %s", workspaceResp.StatusCode, readAll(t, workspaceResp.Body))

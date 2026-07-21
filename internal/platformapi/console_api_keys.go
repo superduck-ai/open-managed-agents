@@ -28,10 +28,9 @@ type consoleWorkspaceCreator interface {
 }
 
 type createConsoleWorkspaceRequest struct {
-	Name          string `json:"name"`
-	DisplayColor  string `json:"display_color"`
-	Color         string `json:"color"`
-	DataResidency any    `json:"data_residency"`
+	Name         string `json:"name"`
+	DisplayColor string `json:"display_color"`
+	Color        string `json:"color"`
 }
 
 type createConsoleAPIKeyRequest struct {
@@ -118,11 +117,10 @@ func handleCreateConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 			displayColor = "#9B87F5"
 		}
 		workspace, err := workspaceCreator.CreateConsoleWorkspace(r.Context(), CreateConsoleWorkspaceInput{
-			OrgUUID:       orgUUID,
-			Name:          name,
-			DisplayColor:  displayColor,
-			Color:         displayColor,
-			DataResidency: normalizeConsoleWorkspaceDataResidency(body.DataResidency),
+			OrgUUID:      orgUUID,
+			Name:         name,
+			DisplayColor: displayColor,
+			Color:        displayColor,
 		})
 		if err != nil {
 			internalError(w, "failed to create workspace")
@@ -389,23 +387,6 @@ func normalizeConsoleAPIKeyStatus(status string) string {
 	}
 }
 
-func normalizeConsoleWorkspaceDataResidency(value any) *string {
-	switch typed := value.(type) {
-	case string:
-		trimmed := strings.TrimSpace(typed)
-		if trimmed != "" {
-			return &trimmed
-		}
-	case map[string]any:
-		workspaceGeo, _ := typed["workspace_geo"].(string)
-		workspaceGeo = strings.TrimSpace(workspaceGeo)
-		if workspaceGeo != "" {
-			return &workspaceGeo
-		}
-	}
-	return nil
-}
-
 func formatConsoleAPIKeys(keys []ConsoleAPIKey) []map[string]any {
 	out := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
@@ -482,40 +463,9 @@ func formatConsoleWorkspace(workspace ConsoleWorkspace) map[string]any {
 		"updated_at":               isoTime(workspace.UpdatedAt),
 		"tags":                     tags,
 		"external_mapping":         externalMapping,
-		"data_residency":           formatConsoleWorkspaceDataResidency(workspace),
 		"external_key_id":          optionalStringValue(workspace.ExternalKeyID),
 		"compartment_id":           workspace.UUID,
 		"inference_data_retention": false,
 		"archived_at":              optionalTimeString(workspace.ArchivedAt),
-	}
-}
-
-func formatConsoleWorkspaceDataResidency(workspace ConsoleWorkspace) any {
-	settings := workspace.DataResidencySettings
-	if settings == nil && workspace.DataResidency != nil {
-		settings = &ConsoleWorkspaceDataResidency{WorkspaceGeo: *workspace.DataResidency}
-	}
-	if settings == nil {
-		return nil
-	}
-	workspaceGeo := strings.TrimSpace(settings.WorkspaceGeo)
-	if workspaceGeo == "" && workspace.DataResidency != nil {
-		workspaceGeo = strings.TrimSpace(*workspace.DataResidency)
-	}
-	if workspaceGeo == "" {
-		return nil
-	}
-	allowedInferenceGeos := strings.TrimSpace(settings.AllowedInferenceGeos)
-	if allowedInferenceGeos == "" {
-		allowedInferenceGeos = "unrestricted"
-	}
-	defaultInferenceGeo := strings.TrimSpace(settings.DefaultInferenceGeo)
-	if defaultInferenceGeo == "" {
-		defaultInferenceGeo = "global"
-	}
-	return map[string]any{
-		"workspace_geo":          workspaceGeo,
-		"allowed_inference_geos": allowedInferenceGeos,
-		"default_inference_geo":  defaultInferenceGeo,
 	}
 }

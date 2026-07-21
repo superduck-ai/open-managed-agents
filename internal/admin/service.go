@@ -162,14 +162,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 	if err := validateTags(req.Tags); err != nil {
 		return workspaceResponse{}, invalidRequest(err.Error())
 	}
-	residency, err := dataResidencyFromRequest(req.DataResidency, nil)
-	if err != nil {
-		return workspaceResponse{}, invalidRequest(err.Error())
-	}
-	residencyJSON, err := encodeDataResidency(residency)
-	if err != nil {
-		return workspaceResponse{}, err
-	}
 	tagsJSON, err := json.Marshal(defaultTags(req.Tags))
 	if err != nil {
 		return workspaceResponse{}, err
@@ -192,7 +184,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 		CreatedAt:      now,
 		CompartmentID:  uuid.NewString(),
 		DisplayColor:   "#6C5BB9",
-		DataResidency:  residencyJSON,
 		ExternalKeyID:  normalizedOptionalString(req.ExternalKeyID),
 		Tags:           tagsJSON,
 	})
@@ -233,25 +224,6 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
-	currentResidency, err := decodeDataResidency(current.DataResidency)
-	if err != nil {
-		return workspaceResponse{}, invalidRequest("stored data_residency is invalid")
-	}
-	if req.DataResidency != nil && req.DataResidency.WorkspaceGeo != nil {
-		requestedWorkspaceGeo := strings.TrimSpace(*req.DataResidency.WorkspaceGeo)
-		if requestedWorkspaceGeo != "" && requestedWorkspaceGeo != currentResidency.WorkspaceGeo {
-			return workspaceResponse{}, invalidRequest("workspace_geo is immutable")
-		}
-	}
-	nextResidency, err := dataResidencyFromRequest(req.DataResidency, &currentResidency)
-	if err != nil {
-		return workspaceResponse{}, invalidRequest(err.Error())
-	}
-	nextResidency.WorkspaceGeo = currentResidency.WorkspaceGeo
-	residencyJSON, err := encodeDataResidency(nextResidency)
-	if err != nil {
-		return workspaceResponse{}, err
-	}
 	name := current.Name
 	if req.Name != nil {
 		name = strings.TrimSpace(*req.Name)
@@ -285,7 +257,6 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 	}
 	updated, err := s.db.UpdateAdminWorkspace(ctx, principal.OrganizationID, workspaceID, db.AdminWorkspace{
 		Name:          name,
-		DataResidency: residencyJSON,
 		ExternalKeyID: externalKeyID,
 		Tags:          tags,
 		UpdatedAt:     time.Now().UTC(),
@@ -771,16 +742,11 @@ func userFromRecord(record db.AdminUser) userResponse {
 }
 
 func (s *Service) workspaceFromRecord(record db.AdminWorkspace) workspaceResponse {
-	residency, err := decodeDataResidency(record.DataResidency)
-	if err != nil {
-		residency = defaultDataResidency()
-	}
 	return workspaceResponse{
 		ID:            record.ExternalID,
 		ArchivedAt:    formatOptionalTime(record.ArchivedAt),
 		CompartmentID: record.CompartmentID,
 		CreatedAt:     formatTime(record.CreatedAt),
-		DataResidency: residency,
 		DisplayColor:  record.DisplayColor,
 		ExternalKeyID: record.ExternalKeyID,
 		Name:          record.Name,

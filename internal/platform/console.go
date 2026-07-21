@@ -19,33 +19,24 @@ type AdminRequest struct {
 }
 
 type ConsoleWorkspace struct {
-	UUID                  string
-	OrgUUID               string
-	Name                  string
-	DisplayColor          string
-	Color                 string
-	DataResidency         *string
-	DataResidencySettings *ConsoleWorkspaceDataResidency
-	ExternalKeyID         *string
-	ExternalMapping       map[string]any
-	Tags                  map[string]string
-	ArchivedAt            *time.Time
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-}
-
-type ConsoleWorkspaceDataResidency struct {
-	WorkspaceGeo         string
-	AllowedInferenceGeos string
-	DefaultInferenceGeo  string
+	UUID            string
+	OrgUUID         string
+	Name            string
+	DisplayColor    string
+	Color           string
+	ExternalKeyID   *string
+	ExternalMapping map[string]any
+	Tags            map[string]string
+	ArchivedAt      *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type CreateConsoleWorkspaceInput struct {
-	OrgUUID       string
-	Name          string
-	DisplayColor  string
-	Color         string
-	DataResidency *string
+	OrgUUID      string
+	Name         string
+	DisplayColor string
+	Color        string
 }
 
 type ConsoleAPIKey struct {

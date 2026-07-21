@@ -11,24 +11,16 @@ type updateUserRequest struct {
 	Role string `json:"role"`
 }
 
-type dataResidencyRequest struct {
-	AllowedInferenceGeos any     `json:"allowed_inference_geos"`
-	DefaultInferenceGeo  *string `json:"default_inference_geo"`
-	WorkspaceGeo         *string `json:"workspace_geo"`
-}
-
 type createWorkspaceRequest struct {
-	Name          string                `json:"name"`
-	DataResidency *dataResidencyRequest `json:"data_residency"`
-	ExternalKeyID *string               `json:"external_key_id"`
-	Tags          map[string]string     `json:"tags"`
+	Name          string            `json:"name"`
+	ExternalKeyID *string           `json:"external_key_id"`
+	Tags          map[string]string `json:"tags"`
 }
 
 type updateWorkspaceRequest struct {
-	Name          *string               `json:"name"`
-	DataResidency *dataResidencyRequest `json:"data_residency"`
-	ExternalKeyID *string               `json:"external_key_id"`
-	Tags          map[string]string     `json:"tags"`
+	Name          *string           `json:"name"`
+	ExternalKeyID *string           `json:"external_key_id"`
+	Tags          map[string]string `json:"tags"`
 }
 
 type createWorkspaceMemberRequest struct {
@@ -95,7 +87,6 @@ type workspaceResponse struct {
 	ArchivedAt    *string           `json:"archived_at"`
 	CompartmentID string            `json:"compartment_id"`
 	CreatedAt     string            `json:"created_at"`
-	DataResidency dataResidency     `json:"data_residency"`
 	DisplayColor  string            `json:"display_color"`
 	ExternalKeyID *string           `json:"external_key_id"`
 	Name          string            `json:"name"`

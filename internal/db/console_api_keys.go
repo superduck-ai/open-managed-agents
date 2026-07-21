@@ -342,10 +342,6 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 		return platform.ConsoleWorkspace{}, platform.ErrNotFound
 	}
 	externalID := consolePrefixedID("wrkspc", 18)
-	dataResidency, err := consoleWorkspaceDataResidencyJSON(input.DataResidency)
-	if err != nil {
-		return platform.ConsoleWorkspace{}, err
-	}
 	workspace, err := scanConsoleWorkspace(d.Pool.QueryRow(ctx, `
 		with org as (
 			select id, uuid::text as org_uuid
@@ -360,14 +356,12 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 			name,
 			compartment_id,
 			display_color,
-			data_residency,
 			tags
 		)
-		select $2, $3, org.id, $4, $3, $5, $6::jsonb, '{}'::jsonb
+		select $2, $3, org.id, $4, $3, $5, '{}'::jsonb
 		from org
 		on conflict (organization_id, name) do update set
 			display_color = excluded.display_color,
-			data_residency = excluded.data_residency,
 			archived_at = null,
 			updated_at = now()
 		returning
@@ -376,13 +370,12 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 			name,
 			display_color,
 			display_color,
-			data_residency,
 			external_key_id,
 			tags,
 			archived_at,
 			created_at,
 			updated_at
-	`, strings.TrimSpace(input.OrgUUID), uuid.NewString(), externalID, strings.TrimSpace(input.Name), firstNonEmpty(strings.TrimSpace(input.DisplayColor), strings.TrimSpace(input.Color), "#9B87F5"), dataResidency))
+	`, strings.TrimSpace(input.OrgUUID), uuid.NewString(), externalID, strings.TrimSpace(input.Name), firstNonEmpty(strings.TrimSpace(input.DisplayColor), strings.TrimSpace(input.Color), "#9B87F5")))
 	if isUniqueViolation(err) {
 		return platform.ConsoleWorkspace{}, err
 	}
@@ -404,7 +397,6 @@ func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeA
 			w.name,
 			w.display_color,
 			w.display_color,
-			w.data_residency,
 			w.external_key_id,
 			w.tags,
 			w.archived_at,
@@ -427,7 +419,6 @@ func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeA
 	var out []platform.ConsoleWorkspace
 	for rows.Next() {
 		var workspace platform.ConsoleWorkspace
-		var dataResidencyBytes []byte
 		var tagsBytes []byte
 		if err := rows.Scan(
 			&workspace.UUID,
@@ -435,7 +426,6 @@ func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeA
 			&workspace.Name,
 			&workspace.DisplayColor,
 			&workspace.Color,
-			&dataResidencyBytes,
 			&workspace.ExternalKeyID,
 			&tagsBytes,
 			&workspace.ArchivedAt,
@@ -444,12 +434,6 @@ func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeA
 		); err != nil {
 			return nil, mapNoRows(err)
 		}
-		dataResidency, settings, err := parseConsoleWorkspaceDataResidencyJSON(dataResidencyBytes)
-		if err != nil {
-			return nil, err
-		}
-		workspace.DataResidency = dataResidency
-		workspace.DataResidencySettings = settings
 		tags, err := parseConsoleWorkspaceTagsJSON(tagsBytes)
 		if err != nil {
 			return nil, err
@@ -462,7 +446,6 @@ func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeA
 
 func scanConsoleWorkspace(row consoleAPIKeyScanner) (platform.ConsoleWorkspace, error) {
 	var workspace platform.ConsoleWorkspace
-	var dataResidencyBytes []byte
 	var tagsBytes []byte
 	if err := row.Scan(
 		&workspace.UUID,
@@ -470,7 +453,6 @@ func scanConsoleWorkspace(row consoleAPIKeyScanner) (platform.ConsoleWorkspace, 
 		&workspace.Name,
 		&workspace.DisplayColor,
 		&workspace.Color,
-		&dataResidencyBytes,
 		&workspace.ExternalKeyID,
 		&tagsBytes,
 		&workspace.ArchivedAt,
@@ -479,67 +461,12 @@ func scanConsoleWorkspace(row consoleAPIKeyScanner) (platform.ConsoleWorkspace, 
 	); err != nil {
 		return platform.ConsoleWorkspace{}, mapNoRows(err)
 	}
-	dataResidency, settings, err := parseConsoleWorkspaceDataResidencyJSON(dataResidencyBytes)
-	if err != nil {
-		return platform.ConsoleWorkspace{}, err
-	}
-	workspace.DataResidency = dataResidency
-	workspace.DataResidencySettings = settings
 	tags, err := parseConsoleWorkspaceTagsJSON(tagsBytes)
 	if err != nil {
 		return platform.ConsoleWorkspace{}, err
 	}
 	workspace.Tags = tags
 	return workspace, nil
-}
-
-func consoleWorkspaceDataResidencyJSON(dataResidency *string) ([]byte, error) {
-	workspaceGeo := ""
-	if dataResidency != nil {
-		workspaceGeo = strings.TrimSpace(*dataResidency)
-	}
-	if workspaceGeo == "" {
-		return []byte("{}"), nil
-	}
-	return json.Marshal(map[string]string{
-		"workspace_geo":          workspaceGeo,
-		"allowed_inference_geos": "unrestricted",
-		"default_inference_geo":  "global",
-	})
-}
-
-func parseConsoleWorkspaceDataResidencyJSON(raw []byte) (*string, *platform.ConsoleWorkspaceDataResidency, error) {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil, nil, nil
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, nil, err
-	}
-	settings := &platform.ConsoleWorkspaceDataResidency{}
-	switch typed := value.(type) {
-	case string:
-		settings.WorkspaceGeo = strings.TrimSpace(typed)
-	case map[string]any:
-		settings.WorkspaceGeo = stringValueFromMap(typed, "workspace_geo")
-		settings.AllowedInferenceGeos = stringValueFromMap(typed, "allowed_inference_geos")
-		settings.DefaultInferenceGeo = stringValueFromMap(typed, "default_inference_geo")
-	}
-	if strings.TrimSpace(settings.WorkspaceGeo) == "" &&
-		strings.TrimSpace(settings.AllowedInferenceGeos) == "" &&
-		strings.TrimSpace(settings.DefaultInferenceGeo) == "" {
-		return nil, nil, nil
-	}
-	var dataResidency *string
-	if workspaceGeo := strings.TrimSpace(settings.WorkspaceGeo); workspaceGeo != "" {
-		dataResidency = &workspaceGeo
-	}
-	return dataResidency, settings, nil
-}
-
-func stringValueFromMap(values map[string]any, key string) string {
-	value, _ := values[key].(string)
-	return strings.TrimSpace(value)
 }
 
 func parseConsoleWorkspaceTagsJSON(raw []byte) (map[string]string, error) {

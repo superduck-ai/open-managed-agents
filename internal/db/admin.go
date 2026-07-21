@@ -50,7 +50,6 @@ type AdminWorkspace struct {
 	ArchivedAt     *time.Time
 	CompartmentID  string
 	DisplayColor   string
-	DataResidency  json.RawMessage
 	ExternalKeyID  *string
 	Tags           json.RawMessage
 }
@@ -331,13 +330,13 @@ func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace)
 	created, err := scanAdminWorkspace(d.Pool.QueryRow(ctx, `
 		insert into workspaces (
 			uuid, external_id, organization_id, name, created_at, updated_at,
-			compartment_id, display_color, data_residency, external_key_id, tags
+			compartment_id, display_color, external_key_id, tags
 		)
-		values ($1, $2, $3, $4, $5, $5, $6, $7, $8::jsonb, $9, $10::jsonb)
+		values ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9::jsonb)
 		returning id, uuid::text, external_id, organization_id, name, created_at, updated_at,
-			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
+			archived_at, compartment_id, display_color, external_key_id, tags
 	`, workspace.UUID, workspace.ExternalID, workspace.OrganizationID, workspace.Name, workspace.CreatedAt,
-		workspace.CompartmentID, workspace.DisplayColor, jsonArg(workspace.DataResidency), workspace.ExternalKeyID, jsonArg(workspace.Tags)))
+		workspace.CompartmentID, workspace.DisplayColor, workspace.ExternalKeyID, jsonArg(workspace.Tags)))
 	if isUniqueViolation(err) {
 		return AdminWorkspace{}, ErrDuplicate
 	}
@@ -379,14 +378,13 @@ func (d *DB) UpdateAdminWorkspace(ctx context.Context, organizationID int64, ext
 	updated, err := scanAdminWorkspace(d.Pool.QueryRow(ctx, `
 		update workspaces
 		set name = $3,
-			data_residency = $4::jsonb,
-			external_key_id = $5,
-			tags = $6::jsonb,
-			updated_at = $7
+			external_key_id = $4,
+			tags = $5::jsonb,
+			updated_at = $6
 		where organization_id = $1 and external_id = $2
 		returning id, uuid::text, external_id, organization_id, name, created_at, updated_at,
-			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
-	`, organizationID, externalID, next.Name, jsonArg(next.DataResidency), next.ExternalKeyID, jsonArg(next.Tags), next.UpdatedAt))
+			archived_at, compartment_id, display_color, external_key_id, tags
+	`, organizationID, externalID, next.Name, next.ExternalKeyID, jsonArg(next.Tags), next.UpdatedAt))
 	if isUniqueViolation(err) {
 		return AdminWorkspace{}, ErrDuplicate
 	}
@@ -400,7 +398,7 @@ func (d *DB) ArchiveAdminWorkspace(ctx context.Context, organizationID int64, ex
 			updated_at = now()
 		where organization_id = $1 and external_id = $2
 		returning id, uuid::text, external_id, organization_id, name, created_at, updated_at,
-			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
+			archived_at, compartment_id, display_color, external_key_id, tags
 	`, organizationID, externalID))
 }
 
@@ -792,7 +790,7 @@ func adminUserSelectSQL() string {
 func adminWorkspaceSelectSQL() string {
 	return `
 		select id, uuid::text, external_id, organization_id, name, created_at, updated_at,
-			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
+			archived_at, compartment_id, display_color, external_key_id, tags
 		from workspaces
 	`
 }
@@ -892,14 +890,13 @@ func scanAdminUserRows(rows adminRows) ([]AdminUser, error) {
 
 func scanAdminWorkspace(row adminScanner) (AdminWorkspace, error) {
 	var workspace AdminWorkspace
-	var dataResidency, tags []byte
+	var tags []byte
 	err := row.Scan(&workspace.ID, &workspace.UUID, &workspace.ExternalID, &workspace.OrganizationID, &workspace.Name,
 		&workspace.CreatedAt, &workspace.UpdatedAt, &workspace.ArchivedAt, &workspace.CompartmentID, &workspace.DisplayColor,
-		&dataResidency, &workspace.ExternalKeyID, &tags)
+		&workspace.ExternalKeyID, &tags)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AdminWorkspace{}, ErrNotFound
 	}
-	workspace.DataResidency = copyRaw(dataResidency)
 	workspace.Tags = copyRaw(tags)
 	return workspace, err
 }

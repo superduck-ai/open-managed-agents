@@ -218,11 +218,6 @@ func TestAdminAPI(t *testing.T) {
 		}
 
 		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/workspaces/"+workspace.ID, map[string]any{
-			"data_residency": map[string]any{"workspace_geo": "eu"},
-		}, defaultTestKey, "")
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
-
-		resp = adminDo(t, app, http.MethodPost, "/v1/organizations/workspaces/"+workspace.ID, map[string]any{
 			"external_key_id": secondKey.ID,
 		}, defaultTestKey, "")
 		assertError(t, resp, http.StatusConflict, "conflict_error")

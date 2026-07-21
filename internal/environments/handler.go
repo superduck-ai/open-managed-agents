@@ -905,16 +905,14 @@ func platformDefaultCloudConfigForResponse() json.RawMessage {
 	return out
 }
 
-func platformPackagesForResponse(raw json.RawMessage) map[string]any {
-	var fields map[string]json.RawMessage
+func platformPackagesForResponse(raw json.RawMessage) *environmentPackages {
+	packages := emptyPackages()
 	if len(raw) > 0 && !isJSONNull(raw) {
-		_ = json.Unmarshal(raw, &fields)
+		_ = json.Unmarshal(raw, packages)
 	}
-	out := emptyPackages()
-	for _, manager := range []string{"apt", "cargo", "gem", "go", "npm", "pip"} {
-		out[manager] = platformStringArrayForResponse(fields[manager])
-	}
-	return out
+	packages.Type = managerPackageType
+	packages.ensureLists()
+	return packages
 }
 
 func platformNetworkingForResponse(raw json.RawMessage) map[string]any {

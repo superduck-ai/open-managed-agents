@@ -244,30 +244,41 @@ func (e *CodeSessionWorkerHeartbeatError) Unwrap() error {
 
 // CreateCodeSession 在同一次 INSERT 中保存 code session 与 OAuth token hash。
 func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput) (CodeSession, error) {
-	return createCodeSession(ctx, d.Pool, input)
+	input = normalizedCreateCodeSessionInput(input)
+	return scanCodeSession(d.Pool.QueryRow(ctx, createCodeSessionSQL(), createCodeSessionArgs(input)...))
 }
 
-func createCodeSession(ctx context.Context, querier queryRower, input CreateCodeSessionInput) (CodeSession, error) {
-	now := input.CreatedAt
-	if now.IsZero() {
-		now = time.Now().UTC()
+func createCodeSessionTx(ctx context.Context, tx pgx.Tx, input CreateCodeSessionInput) (CodeSession, error) {
+	input = normalizedCreateCodeSessionInput(input)
+	return scanCodeSession(tx.QueryRow(ctx, createCodeSessionSQL(), createCodeSessionArgs(input)...))
+}
+
+func normalizedCreateCodeSessionInput(input CreateCodeSessionInput) CreateCodeSessionInput {
+	if input.CreatedAt.IsZero() {
+		input.CreatedAt = time.Now().UTC()
 	}
-	status := input.Status
-	if status == "" {
-		status = "active"
+	if input.Status == "" {
+		input.Status = "active"
 	}
-	oauthAccessTokenHash := nullableString(strings.TrimSpace(input.OAuthAccessTokenHash))
-	return scanCodeSession(querier.QueryRow(ctx, `
+	return input
+}
+
+func createCodeSessionSQL() string {
+	return `
 		insert into code_sessions (
 			external_id, organization_id, workspace_id, session_id, session_external_id,
 			environment_id, environment_external_id, work_dir, permission_mode, model,
 			status, metadata, oauth_access_token_hash, created_at, updated_at
 		)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $14)
-		returning `+codeSessionColumns()+`
-	`, input.ExternalID, input.OrganizationID, input.WorkspaceID, input.SessionID, input.SessionExternalID,
+		returning ` + codeSessionColumns() + `
+	`
+}
+
+func createCodeSessionArgs(input CreateCodeSessionInput) []any {
+	return []any{input.ExternalID, input.OrganizationID, input.WorkspaceID, input.SessionID, input.SessionExternalID,
 		input.EnvironmentID, input.EnvironmentExternalID, input.WorkDir, input.PermissionMode, input.Model,
-		status, jsonArg(input.Metadata), oauthAccessTokenHash, now))
+		input.Status, jsonArg(input.Metadata), nullableString(strings.TrimSpace(input.OAuthAccessTokenHash)), input.CreatedAt}
 }
 
 // codeSessionCredentialContextSelect 查询 code session 的鉴权身份信息。
@@ -313,16 +324,19 @@ func (d *DB) GetCodeSessionByOAuthAccessTokenHash(ctx context.Context, tokenHash
 
 // GetCodeSessionCredentialContextForIssue 用于初始 session-ingress JWT 签发，并将查询绑定到预期租户。
 func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
-	return getCodeSessionCredentialContextForIssue(ctx, d.Pool, organizationID, workspaceID, codeSessionExternalID)
+	return scanCodeSessionCredentialContext(d.Pool.QueryRow(ctx, codeSessionCredentialContextForIssueSQL(), strings.TrimSpace(codeSessionExternalID), organizationID, workspaceID))
 }
 
-func getCodeSessionCredentialContextForIssue(ctx context.Context, querier queryRower, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
-	row := querier.QueryRow(ctx, codeSessionCredentialContextSelect+`
+func getCodeSessionCredentialContextForIssueTx(ctx context.Context, tx pgx.Tx, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
+	return scanCodeSessionCredentialContext(tx.QueryRow(ctx, codeSessionCredentialContextForIssueSQL(), strings.TrimSpace(codeSessionExternalID), organizationID, workspaceID))
+}
+
+func codeSessionCredentialContextForIssueSQL() string {
+	return codeSessionCredentialContextSelect + `
 		where cs.external_id = $1
 			and cs.organization_id = $2
 			and cs.workspace_id = $3
-	`+activeCodeSessionCredentialConditions, strings.TrimSpace(codeSessionExternalID), organizationID, workspaceID)
-	return scanCodeSessionCredentialContext(row)
+	` + activeCodeSessionCredentialConditions
 }
 
 // GetCodeSessionNetworkPolicyContext 从已验签的租户身份出发，一次性加载并校验

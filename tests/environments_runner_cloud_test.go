@@ -286,6 +286,19 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 	})
 
+	t.Run("runtime patch does not restore concurrently cleared work metadata", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironmentWithClearedMetadata(t)
+		if err != nil || !processed {
+			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
+		}
+		if !provider.workHasRuntimeMetadata {
+			t.Fatal("successful provisioning did not add runtime metadata")
+		}
+		if provider.workHasMCPMetadata {
+			t.Fatal("runtime commit restored work metadata cleared during provisioning")
+		}
+	})
+
 	t.Run("success starts manager after fixed provisioner", func(t *testing.T) {
 		provider, processed, err := runPackageEnvironment(t, nil)
 		if err != nil || !processed {
@@ -407,6 +420,21 @@ func runPackageEnvironmentWithSessionMetadataFailure(t *testing.T) (*recordingRu
 				t.Fatalf("remove session metadata failure trigger: %v", err)
 			}
 		})
+	})
+}
+
+func runPackageEnvironmentWithClearedMetadata(t *testing.T) (*recordingRunnerProvider, bool, error) {
+	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID string) {
+		ids := getDefaultDBIDs(t, database)
+		works, _, err := database.ListEnvironmentWorkPage(ctx, db.ListEnvironmentWorkPageParams{
+			WorkspaceID: ids.WorkspaceID, EnvironmentExternalID: environmentID, Limit: 10,
+		})
+		if err != nil || len(works) != 1 {
+			t.Fatalf("list environment work count/error = %d/%v, want one work", len(works), err)
+		}
+		if _, err := database.UpdateEnvironmentWorkMetadata(ctx, ids.WorkspaceID, environmentID, works[0].ExternalID, json.RawMessage(`{}`)); err != nil {
+			t.Fatalf("clear environment work metadata: %v", err)
+		}
 	})
 }
 
@@ -609,6 +637,14 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	}
 	if rawMount["mount_path"] != e2bruntime.SandboxSkillsMountPath || rawMount["volume_name"] != mount.VolumeName {
 		t.Fatalf("unexpected work skill mount metadata: %#v", rawMount)
+	}
+	ids := getDefaultDBIDs(t, app.db)
+	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
+	if err != nil {
+		t.Fatalf("load stored environment work: %v", err)
+	}
+	if !hasJSONKey(work.Metadata, e2bruntime.SkillMountMetadataKey) {
+		t.Fatalf("stored work metadata missing committed skill mount: %s", work.Metadata)
 	}
 	if strings.Contains(provider.launches[0].command, "installed managed agent skills") ||
 		strings.Contains(provider.launches[0].command, "$HOME/.claude/skills") {

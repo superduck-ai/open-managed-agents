@@ -34,10 +34,6 @@ type DB struct {
 	Pool *pgxpool.Pool
 }
 
-type queryRower interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
 type APIKey struct {
 	ID                     int64
 	ExternalID             string

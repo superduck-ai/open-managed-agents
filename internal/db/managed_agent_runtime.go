@@ -10,12 +10,13 @@ import (
 )
 
 type CreateManagedAgentRuntimeInput struct {
-	CodeSession             CreateCodeSessionInput
-	InboundEvents           []AppendCodeSessionEventInput
-	SessionMetadataPatch    json.RawMessage
-	EnvironmentWorkMetadata json.RawMessage
-	EnvironmentExternalID   string
-	WorkExternalID          string
+	CodeSession                     CreateCodeSessionInput
+	InboundEvents                   []AppendCodeSessionEventInput
+	SessionMetadataPatch            json.RawMessage
+	EnvironmentWorkPreparationPatch json.RawMessage
+	EnvironmentWorkRuntimePatch     json.RawMessage
+	EnvironmentExternalID           string
+	WorkExternalID                  string
 }
 
 type CreateManagedAgentRuntimeResult struct {
@@ -52,7 +53,7 @@ func (d *DB) CreateManagedAgentRuntime(
 	if work.State != "active" {
 		return CreateManagedAgentRuntimeResult{}, ErrInvalidState
 	}
-	codeSession, err := createCodeSession(ctx, tx, input.CodeSession)
+	codeSession, err := createCodeSessionTx(ctx, tx, input.CodeSession)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
@@ -61,21 +62,22 @@ func (d *DB) CreateManagedAgentRuntime(
 		return CreateManagedAgentRuntimeResult{}, err
 	}
 	codeSession.LastInboundSequenceNum = lastInboundSequence
-	if _, err := patchSessionMetadata(ctx, tx, codeSession.WorkspaceID, codeSession.SessionExternalID, input.SessionMetadataPatch); err != nil {
+	if _, err := patchSessionMetadataTx(ctx, tx, codeSession.WorkspaceID, codeSession.SessionExternalID, input.SessionMetadataPatch); err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	work, err = updateEnvironmentWorkMetadata(
+	work, err = patchEnvironmentWorkMetadataTx(
 		ctx,
 		tx,
 		codeSession.WorkspaceID,
 		input.EnvironmentExternalID,
 		input.WorkExternalID,
-		input.EnvironmentWorkMetadata,
+		input.EnvironmentWorkPreparationPatch,
+		input.EnvironmentWorkRuntimePatch,
 	)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	credentials, err := getCodeSessionCredentialContextForIssue(
+	credentials, err := getCodeSessionCredentialContextForIssueTx(
 		ctx,
 		tx,
 		codeSession.OrganizationID,

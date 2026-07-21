@@ -10,6 +10,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 // ManagedAgentCreateInput 汇总为 managed agent 创建 code session 和签发 sandbox 凭证所需的上下文。
@@ -24,7 +25,7 @@ type ManagedAgentCreateInput struct {
 	DangerouslySkipPermissions bool
 	Config                     json.RawMessage
 	InitialEvents              []json.RawMessage
-	EnvironmentWorkMetadata    json.RawMessage
+	WorkPreparationMetadata    ManagedAgentWorkPreparationMetadata
 }
 
 // ManagedAgentCreateResult 只在创建链路内短暂携带两份明文凭证，调用方应立即交给
@@ -36,6 +37,34 @@ type ManagedAgentCreateResult struct {
 	OAuthAccessToken    string
 	SessionIngressToken string
 	EnvironmentWork     db.EnvironmentWork
+}
+
+type managedAgentRuntimeMetadata struct {
+	ClaudeCodeSessionID       string `json:"claude_code_session_id"`
+	ClaudeCodePublicSessionID string `json:"claude_code_public_session_id"`
+	ClaudeCodeSDKURLPath      string `json:"claude_code_sdk_url_path"`
+	Runtime                   string `json:"runtime"`
+}
+
+type ManagedAgentSkillMountMetadata struct {
+	MountPath      string                         `json:"mount_path"`
+	VolumeName     string                         `json:"volume_name"`
+	ManifestSHA256 string                         `json:"manifest_sha256"`
+	Skills         []skillsapi.MountManifestSkill `json:"skills,omitempty"`
+}
+
+type ManagedAgentWorkPreparationMetadata struct {
+	SkillMount *ManagedAgentSkillMountMetadata `json:"managed_agent_skills_mount,omitempty"`
+}
+
+type managedAgentCodeSessionMetadataSchema struct {
+	Source                     string          `json:"source"`
+	PublicSessionID            string          `json:"public_session_id"`
+	EnvironmentID              string          `json:"environment_id"`
+	Title                      string          `json:"title"`
+	Config                     json.RawMessage `json:"config"`
+	DangerouslySkipPermissions bool            `json:"dangerously_skip_permissions"`
+	WorkDir                    string          `json:"managed_agent_session_work_dir"`
 }
 
 // CreateManagedAgentCodeSession 原子地建立 code-session 身份上下文，并为 sandbox
@@ -61,17 +90,17 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	runtimeMetadata := map[string]any{
-		"claude_code_session_id":        codeSessionID,
-		"claude_code_public_session_id": input.Session.ExternalID,
-		"claude_code_sdk_url_path":      "/v1/code/sessions/" + codeSessionID,
-		"runtime":                       "claude_code_local",
+	runtimeMetadata := managedAgentRuntimeMetadata{
+		ClaudeCodeSessionID:       codeSessionID,
+		ClaudeCodePublicSessionID: input.Session.ExternalID,
+		ClaudeCodeSDKURLPath:      "/v1/code/sessions/" + codeSessionID,
+		Runtime:                   "claude_code_local",
 	}
-	sessionMetadataPatch, err := marshalRaw(runtimeMetadata)
+	runtimeMetadataPatch, err := marshalRaw(runtimeMetadata)
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	workMetadata, err := mergeManagedAgentRuntimeMetadata(input.EnvironmentWorkMetadata, runtimeMetadata)
+	workPreparationPatch, err := marshalRaw(input.WorkPreparationMetadata)
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
@@ -94,11 +123,12 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 			OAuthAccessTokenHash: auth.HashAPIKey(oauthAccessToken),
 			CreatedAt:            now,
 		},
-		InboundEvents:           events,
-		SessionMetadataPatch:    sessionMetadataPatch,
-		EnvironmentWorkMetadata: workMetadata,
-		EnvironmentExternalID:   input.Environment.ExternalID,
-		WorkExternalID:          input.EnvironmentWork.ExternalID,
+		InboundEvents:                   events,
+		SessionMetadataPatch:            runtimeMetadataPatch,
+		EnvironmentWorkPreparationPatch: workPreparationPatch,
+		EnvironmentWorkRuntimePatch:     runtimeMetadataPatch,
+		EnvironmentExternalID:           input.Environment.ExternalID,
+		WorkExternalID:                  input.EnvironmentWork.ExternalID,
 	}, func(credentialContext db.CodeSessionCredentialContext) error {
 		var issueErr error
 		sessionIngressToken, issueErr = s.issueSessionIngressToken(credentialContext)
@@ -139,28 +169,19 @@ func managedAgentInitialInboundEvents(codeSessionID string, configRaw json.RawMe
 	return inputs, nil
 }
 
-func mergeManagedAgentRuntimeMetadata(raw json.RawMessage, patch map[string]any) (json.RawMessage, error) {
-	metadata := map[string]any{}
-	if len(raw) > 0 && strings.TrimSpace(string(raw)) != "null" {
-		if err := json.Unmarshal(raw, &metadata); err != nil {
-			return nil, err
-		}
-	}
-	for key, value := range patch {
-		metadata[key] = value
-	}
-	return marshalRaw(metadata)
-}
-
 func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMessage, error) {
 	// metadata 只记录非秘密运行信息，两份明文凭证都不进入 JSON。
-	return marshalRaw(map[string]any{
-		"source":                         "managed_agents_local",
-		"public_session_id":              input.Session.ExternalID,
-		"environment_id":                 input.Environment.ExternalID,
-		"title":                          input.Title,
-		"config":                         rawObject(input.Config),
-		"dangerously_skip_permissions":   input.DangerouslySkipPermissions,
-		"managed_agent_session_work_dir": strings.TrimSpace(input.WorkDir),
+	config, err := marshalRaw(rawObject(input.Config))
+	if err != nil {
+		return nil, err
+	}
+	return marshalRaw(managedAgentCodeSessionMetadataSchema{
+		Source:                     "managed_agents_local",
+		PublicSessionID:            input.Session.ExternalID,
+		EnvironmentID:              input.Environment.ExternalID,
+		Title:                      input.Title,
+		Config:                     config,
+		DangerouslySkipPermissions: input.DangerouslySkipPermissions,
+		WorkDir:                    strings.TrimSpace(input.WorkDir),
 	})
 }

@@ -67,10 +67,10 @@ func TestBuildPackageManifest(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid nested packages has a packages decode error", func(t *testing.T) {
+	t.Run("invalid packages fail the environment config schema", func(t *testing.T) {
 		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":"cloud","packages":true}`))
-		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment packages") {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want nested packages decode error", manifest, provision, err)
+		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want environment config schema error", manifest, provision, err)
 		}
 	})
 
@@ -105,13 +105,13 @@ func TestBuildPackageManifest(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy empty package array skips provisioning", func(t *testing.T) {
+	t.Run("package array is rejected", func(t *testing.T) {
 		manifest, provision, err := buildPackageManifest(json.RawMessage(`{
 			"type":"cloud",
 			"packages":[]
 		}`))
-		if err != nil || provision || manifest != nil {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want (nil, false, nil)", manifest, provision, err)
+		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want environment config schema error", manifest, provision, err)
 		}
 	})
 
@@ -197,10 +197,9 @@ func TestPackageProvisionerRejectsManagerOptionsWithoutRunningCommands(t *testin
 		t.Run(strings.TrimSpace(option), func(t *testing.T) {
 			dir := t.TempDir()
 			manifestPath := filepath.Join(dir, "packages.json")
-			manifest := packageManifest{Version: 1, Packages: environmentPackages{
-				Type: managerPackageType,
-				PIP:  []string{option, "requests"},
-			}}
+			packages := emptyPackages()
+			packages.PIP = []string{option, "requests"}
+			manifest := packageManifest{Version: 1, Packages: *packages}
 			if err := os.WriteFile(manifestPath, mustPackageJSON(t, manifest), 0o600); err != nil {
 				t.Fatalf("write manifest: %v", err)
 			}

@@ -512,11 +512,7 @@ func (d *DB) AckEnvironmentWork(ctx context.Context, workspaceID int64, environm
 }
 
 func (d *DB) UpdateEnvironmentWorkMetadata(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID string, metadata json.RawMessage) (EnvironmentWork, error) {
-	return updateEnvironmentWorkMetadata(ctx, d.Pool, workspaceID, environmentExternalID, workExternalID, metadata)
-}
-
-func updateEnvironmentWorkMetadata(ctx context.Context, querier queryRower, workspaceID int64, environmentExternalID, workExternalID string, metadata json.RawMessage) (EnvironmentWork, error) {
-	return scanEnvironmentWork(querier.QueryRow(ctx, `
+	return scanEnvironmentWork(d.Pool.QueryRow(ctx, `
 		update environment_work
 		set metadata = $4::jsonb,
 			updated_at = now()
@@ -526,6 +522,19 @@ func updateEnvironmentWorkMetadata(ctx context.Context, querier queryRower, work
 			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
 			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
 	`, workspaceID, environmentExternalID, workExternalID, jsonArg(metadata)))
+}
+
+func patchEnvironmentWorkMetadataTx(ctx context.Context, tx pgx.Tx, workspaceID int64, environmentExternalID, workExternalID string, preparationPatch, runtimePatch json.RawMessage) (EnvironmentWork, error) {
+	return scanEnvironmentWork(tx.QueryRow(ctx, `
+		update environment_work
+		set metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb || $5::jsonb,
+			updated_at = now()
+		where workspace_id = $1 and environment_external_id = $2 and external_id = $3 and deleted_at is null
+		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
+			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
+			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
+			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
+	`, workspaceID, environmentExternalID, workExternalID, jsonArg(preparationPatch), jsonArg(runtimePatch)))
 }
 
 func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID, expectedLastHeartbeat string, ttlSeconds int, format func(time.Time) string) (WorkHeartbeatResult, error) {

@@ -35,6 +35,7 @@ type managedAgentLaunchPreparation struct {
 	sessionConfig         json.RawMessage
 	events                []json.RawMessage
 	persistedWorkMetadata json.RawMessage
+	skillMount            *e2bruntime.SkillMount
 	workDir               string
 	title                 string
 	model                 string
@@ -346,6 +347,7 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 		sessionConfig:         sessionConfig,
 		events:                events,
 		persistedWorkMetadata: persistedWorkMetadata,
+		skillMount:            skillMount,
 		workDir:               workDir,
 		title:                 title,
 		model:                 modelIDFromAgentSnapshot(session.AgentSnapshot),
@@ -355,6 +357,15 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 func (r *Runner) commitManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork, preparation *managedAgentLaunchPreparation) (*environmentManagerCommand, error) {
 	if preparation == nil {
 		return nil, nil
+	}
+	workPreparationMetadata := codesessions.ManagedAgentWorkPreparationMetadata{}
+	if preparation.skillMount != nil {
+		workPreparationMetadata.SkillMount = &codesessions.ManagedAgentSkillMountMetadata{
+			MountPath:      preparation.skillMount.MountPath,
+			VolumeName:     preparation.skillMount.VolumeName,
+			ManifestSHA256: preparation.skillMount.ManifestSHA256,
+			Skills:         preparation.skillMount.Skills,
+		}
 	}
 	local, err := r.codeSessions.CreateManagedAgentCodeSession(ctx, codesessions.ManagedAgentCreateInput{
 		Session:                    preparation.session,
@@ -367,7 +378,7 @@ func (r *Runner) commitManagedAgentLaunch(ctx context.Context, env db.Environmen
 		DangerouslySkipPermissions: true,
 		Config:                     preparation.sessionConfig,
 		InitialEvents:              preparation.events,
-		EnvironmentWorkMetadata:    work.Metadata,
+		WorkPreparationMetadata:    workPreparationMetadata,
 	})
 	if err != nil {
 		return nil, err

@@ -8,13 +8,12 @@ import (
 	"strings"
 
 	"golang.org/x/net/idna"
-	validation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 var errAllowedHost = errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
 
-// lookupProfile 使用与浏览器兼容的 IDNA lookup 映射；后续再由 Kubernetes
-// RFC 1123 validator 检查 DNS 语法与长度。
+// lookupProfile 使用与浏览器兼容的 IDNA lookup 映射；后续再由 vendored 的
+// Kubernetes RFC 1123 validator（dns1123.go）检查 DNS 语法与长度。
 var lookupProfile = idna.New(idna.MapForLookup(), idna.BidiRule(), idna.CheckHyphens(false))
 
 // allowedHost 是已经校验并归一化的 Environment allowlist 条目。
@@ -40,7 +39,8 @@ func (h allowedHost) pattern() string {
 }
 
 // ValidateAllowedHost 校验公开的 allowed_hosts 合同。IP 解析、IDNA 映射与
-// host/port 拆分先执行，DNS 语法再交给 Ingress 同款 Kubernetes validator。
+// host/port 拆分先执行，DNS 语法再交给 Ingress 同款 Kubernetes validator
+// （vendored 于 dns1123.go）。
 func ValidateAllowedHost(entry string) error {
 	_, err := parseAllowedHost(entry)
 	return err
@@ -68,7 +68,7 @@ func parseAllowedHost(entry string) (allowedHost, error) {
 	if wildcard && net.ParseIP(normalized) != nil {
 		return allowedHost{}, errAllowedHost
 	}
-	if wildcard && len(validation.IsWildcardDNS1123Subdomain("*."+normalized)) != 0 {
+	if wildcard && len(isWildcardDNS1123Subdomain("*."+normalized)) != 0 {
 		return allowedHost{}, errAllowedHost
 	}
 	return allowedHost{host: normalized, port: port, wildcard: wildcard}, nil
@@ -134,7 +134,7 @@ func NormalizeHost(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if problems := validation.IsDNS1123Subdomain(ascii); len(problems) != 0 {
+	if problems := isDNS1123Subdomain(ascii); len(problems) != 0 {
 		return "", errors.New(strings.Join(problems, "; "))
 	}
 	return ascii, nil

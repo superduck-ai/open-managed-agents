@@ -168,7 +168,7 @@ services:
         target: /etc/open-managed-agents/config.yaml
         read_only: true
         bind:
-           create_host_path: false
+          create_host_path: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

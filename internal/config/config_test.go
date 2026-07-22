@@ -93,6 +93,24 @@ webhook:
     - session.created
 bootstrap:
   workspace_name: yaml-workspace
+web_search:
+  provider: tavily
+  endpoint: http://localhost:9999/search
+  api_key: yaml-search-key
+  timeout: 7s
+  max_tool_loops: 5
+  brave:
+    country: US
+    search_language: en
+    ui_language: en-US
+    freshness: pw
+    safe_search: strict
+    spellcheck: true
+    result_filter: web
+    goggles:
+      - https://example.test/goggle
+    extra_snippets: true
+    units: metric
 `)
 	t.Setenv("CONFIG_TEST_HOME", filepath.Join(root, "home"))
 	t.Chdir(nested)
@@ -127,6 +145,12 @@ bootstrap:
 	}
 	if cfg.Bootstrap.WorkspaceName != "yaml-workspace" {
 		t.Fatalf("Bootstrap.WorkspaceName = %q, want yaml-workspace", cfg.Bootstrap.WorkspaceName)
+	}
+	if cfg.WebSearch.Provider != "tavily" || cfg.WebSearch.APIKey != "yaml-search-key" || cfg.WebSearch.MaxToolLoops != 5 {
+		t.Fatalf("unexpected web search config: %#v", cfg.WebSearch)
+	}
+	if cfg.WebSearch.Brave.Country != "US" || cfg.WebSearch.Brave.SearchLanguage != "en" || cfg.WebSearch.Brave.SafeSearch != "strict" || !cfg.WebSearch.Brave.ExtraSnippets || len(cfg.WebSearch.Brave.Goggles) != 1 {
+		t.Fatalf("unexpected Brave web search config: %#v", cfg.WebSearch.Brave)
 	}
 }
 

@@ -35,6 +35,24 @@ anthropic_upstream:
   base_url: https://api.anthropic.com
   api_key: ""
 
+web_search:
+  provider: tavily
+  endpoint: ""
+  api_key: ""
+  timeout: 30s
+  max_tool_loops: 3
+  brave:
+    country: US
+    search_language: en
+    ui_language: en-US
+    freshness: ""
+    safe_search: moderate
+    spellcheck: true
+    result_filter: web
+    goggles: []
+    extra_snippets: false
+    units: metric
+
 batch:
   worker_enabled: true
   worker_concurrency: 2

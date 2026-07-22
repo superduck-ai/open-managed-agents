@@ -15,6 +15,7 @@ type Config struct {
 	Redis             RedisConfig             `yaml:"redis"`
 	Storage           StorageConfig           `yaml:"storage"`
 	AnthropicUpstream AnthropicUpstreamConfig `yaml:"anthropic_upstream"`
+	WebSearch         WebSearchConfig         `yaml:"web_search"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
@@ -56,6 +57,28 @@ type S3Config struct {
 type AnthropicUpstreamConfig struct {
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
+}
+
+type WebSearchConfig struct {
+	Provider     string               `yaml:"provider"`
+	Endpoint     string               `yaml:"endpoint"`
+	APIKey       string               `yaml:"api_key"`
+	Timeout      time.Duration        `yaml:"timeout"`
+	MaxToolLoops int                  `yaml:"max_tool_loops"`
+	Brave        BraveWebSearchConfig `yaml:"brave"`
+}
+
+type BraveWebSearchConfig struct {
+	Country        string   `yaml:"country"`
+	SearchLanguage string   `yaml:"search_language"`
+	UILanguage     string   `yaml:"ui_language"`
+	Freshness      string   `yaml:"freshness"`
+	SafeSearch     string   `yaml:"safe_search"`
+	Spellcheck     *bool    `yaml:"spellcheck"`
+	ResultFilter   string   `yaml:"result_filter"`
+	Goggles        []string `yaml:"goggles"`
+	ExtraSnippets  bool     `yaml:"extra_snippets"`
+	Units          string   `yaml:"units"`
 }
 
 type BatchConfig struct {

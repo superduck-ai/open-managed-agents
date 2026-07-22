@@ -22,7 +22,7 @@ Environment runner 在启动云端 managed agent session 时执行以下步骤�
 6. 用完整 manifest SHA256 生成 E2B volume 名称；如果同 hash volume 已有 `.ready` 标记，且 marker 内容等于完整 manifest SHA256，则直接复用，不读取对象存储 archive。
 7. volume miss 时才按 manifest 顺序逐个读取对应 zip archive，并校验 archive 大小、checksum、解压总大小、单顶层目录和顶层 `SKILL.md`，然后写入该 volume；runner 不会把所有 archive 同时预载到内存。
 8. 把 mount 信息写入 runner 内存中的 environment work metadata；该步骤不提前持久化 skill preparation state。
-9. 对同一份内存 work 调用 runtime provider `Resolve`，得到 sandbox template、网络策略和基础 env/metadata；E2B Adapter 只在 Environment 开关开启时消费专用 MCP host key。
+9. 对同一份内存 work 调用 runtime provider `Resolve`，得到 sandbox template 和基础 env/metadata；当前每 Session Packages 过渡期不把 Environment `limited` 策略或专用 MCP host key 投影为 E2B `NetworkOpts`。
 10. 用 `Resolve` 结果和当前 work 创建 sandbox，使 skill volume 挂载到 `/mnt/skills`。Package provisioning 完成且 heartbeat 确认 Work 仍可运行后，runner 才以单个事务创建 local code session/events，并持久化 Work/Session 的 skill preparation metadata 与 runtime identity；事务提交后写入 `environment-manager` stdin 并启动 environment-manager。runner 不再把 skill zip 写进 sandbox 临时目录，也不在启动 shell 中解压 skill。
 
 `/mnt/skills` 的约定视图：
@@ -37,7 +37,7 @@ Environment runner 在启动云端 managed agent session 时执行以下步骤�
 
 `environment-manager` 会在 environment 初始化前把 Claude Code 的 skill discovery 目录软链到 `/workspace/skills`，再在 Claude Code 启动前把 `/mnt/skills/*.zip` 解压到 `/workspace/skills`。`manifest.json` 和 `.ready` 当前由 runner/E2B volume 侧用于确定性缓存和冷启动复用；`.ready` 内容必须是完整 manifest SHA256。environment-manager 暂不强依赖 manifest/checksum。
 
-同样的顺序也适用于 MCP 网络策略：runner 从 Session Agent Snapshot 提取 MCP HTTP server hosts，并在 Sandbox 创建前通过命名 network metadata schema 用当前 host 集合覆盖 Environment Work metadata；当前集合为空、MCP 开关关闭或网络变为 unrestricted 时都必须写入空数组，以清除任何历史或伪造值。schema helper 在保留其他 work metadata key 的同时，对类型错误、`null` 或非法 host fail-closed，不再通过 `map[string]any` / `[]any` 静默跳过坏值。该 metadata 只是受信任的解析输入，不能自行扩大 Environment 权限；仅当 Environment 配置为 `networking.type=limited` 且 `allow_mcp_servers=true` 时，E2B Adapter 才把这些 hosts 加入本次 Sandbox 的 `AllowOut`。Code Session upstream proxy 同样受该开关约束，但会在每次 CONNECT 时从 Session Agent Snapshot 现场提取 hosts；`allow_mcp_servers=false` 时，即使 metadata 或 snapshot 中存在 MCP hosts 也不得放行。E2B `AllowOut` 是 Sandbox 创建时的快照，proxy 则读取当前配置，因此 Environment 收紧对存活 Sandbox 的下一次代理 CONNECT 即时生效。
+同样的顺序也适用于 MCP 网络策略输入：runner 从 Session Agent Snapshot 提取 MCP HTTP server hosts，并在 Sandbox 创建前通过命名 network metadata schema 用当前 host 集合覆盖 Environment Work metadata；当前集合为空、MCP 开关关闭或网络变为 unrestricted 时都必须写入空数组，以清除任何历史或伪造值。schema helper 在保留其他 work metadata key 的同时，对类型错误、`null` 或非法 host fail-closed，不再通过 `map[string]any` / `[]any` 静默跳过坏值。该 metadata 只是受信任的 preparation 输入，不能自行扩大 Environment 权限。当前每 Session Packages 过渡期，E2B Adapter 不消费它生成 `AllowOut`；Code Session upstream proxy 会在每次 CONNECT 时从 Session Agent Snapshot 现场提取 hosts，并受 `allow_mcp_servers` 开关约束。Environment 收紧因此对存活 Sandbox 的下一次代理 CONNECT 即时生效，但在 Packages Template materialization 恢复 E2B 纵深防御前，这仍是可被直接 socket 绕过的 best-effort HTTPS 策略。
 
 `environment_sandboxes.metadata` 的语义是一次 Sandbox 创建尝试的输入快照。它可以保留 `mcp_allowed_hosts`、skill manifest/hash/volume/mount 等 preparation 信息，即使创建或后续 provisioning 失败，也用于审计与诊断；这不表示 runtime commit 已成功。`mcp_allowed_hosts` 为了在 `Resolve` 前清除陈旧授权会预先持久化到 Environment Work；skill preparation state 与 `claude_code_*`/`runtime` identity 则必须等 heartbeat 成功后在 runtime commit 事务中一起持久化，失败时不得遗留部分 runtime identity。
 

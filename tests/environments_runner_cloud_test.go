@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -200,11 +199,11 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if !processed || err == nil || !strings.Contains(err.Error(), "provision environment packages") {
 			t.Fatalf("RunOnce() = (%t, %v), want processed provisioning failure", processed, err)
 		}
-		if len(provider.writes) != 2 || len(provider.commands) != 1 || len(provider.launches) != 0 {
-			t.Fatalf("failure writes/commands/launches = %d/%d/%d, want manifest+provisioner, one command, no manager launch", len(provider.writes), len(provider.commands), len(provider.launches))
+		if len(provider.commands) != 1 || len(provider.launches) != 0 {
+			t.Fatalf("failure commands/launches = %d/%d, want one command and no manager launch", len(provider.commands), len(provider.launches))
 		}
-		if strings.Contains(provider.commands[0], "@scope/package") || strings.Contains(provider.commands[0], "touch /tmp") {
-			t.Fatalf("provision command contains package data: %q", provider.commands[0])
+		if strings.Contains(provider.commands[0].request.Command, "@scope/package") || strings.Contains(provider.commands[0].request.Command, "touch /tmp") {
+			t.Fatalf("provision command contains package data: %q", provider.commands[0].request.Command)
 		}
 		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
 			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
@@ -217,6 +216,27 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 		if !provider.createSawMCPMetadata {
 			t.Fatal("sandbox create did not receive the pre-resolve MCP policy metadata")
+		}
+	})
+
+	t.Run("manager failure uses authoritative JSON and discards the sandbox", func(t *testing.T) {
+		secret := "secret-package-spec@example.test"
+		provider, processed, err := runPackageEnvironmentWithResult(t, e2bruntime.CommandResult{
+			ExitCode: 10,
+			Stdout:   []byte(`{"version":1,"status":"failed","category":"package_manager","manager":"gem","stage":"install","package_count":7,"duration_ms":9,"exit_code":17}`),
+			Stderr:   []byte(secret),
+		})
+		if !processed || err == nil || !strings.Contains(err.Error(), "category=package_manager") {
+			t.Fatalf("RunOnce() = (%t, %v), want structured manager failure", processed, err)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("RunOnce error leaked Environment Manager stderr: %v", err)
+		}
+		if len(provider.launches) != 0 || provider.codeSessionCreated {
+			t.Fatal("manager failure started the runtime")
+		}
+		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
+			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
 		}
 	})
 
@@ -318,16 +338,13 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if err != nil || !processed {
 			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
 		}
-		if len(provider.writes) != 2 || len(provider.commands) != 1 || len(provider.launches) != 1 {
-			t.Fatalf("success writes/commands/launches = %d/%d/%d, want manifest+provisioner, one provision command, one manager launch", len(provider.writes), len(provider.commands), len(provider.launches))
+		if len(provider.commands) != 1 || len(provider.launches) != 1 {
+			t.Fatalf("success commands/launches = %d/%d, want one provision command and one manager launch", len(provider.commands), len(provider.launches))
 		}
-		if !strings.HasSuffix(provider.writes[0].path, "/packages.v1.json") || !strings.HasSuffix(provider.writes[1].path, "/package-provisioner.v1.py") {
-			t.Fatalf("sandbox write order = %#v", provider.writes)
+		if provider.commands[0].request.Command != "/usr/local/bin/environment-manager provision-packages --protocol v1 --stdin" || !strings.Contains(provider.launches[0].command, "task-run") {
+			t.Fatalf("sandbox provision command/manager command = %q/%q", provider.commands[0].request.Command, provider.launches[0].command)
 		}
-		if !strings.Contains(provider.commands[0], "package-provisioner.v1.py") || !strings.Contains(provider.launches[0].command, "task-run") {
-			t.Fatalf("sandbox provision command/manager command = %q/%q", provider.commands[0], provider.launches[0].command)
-		}
-		if !reflect.DeepEqual(provider.operations, []string{"write:packages", "write:provisioner", "command:provision", "launch:manager"}) {
+		if !reflect.DeepEqual(provider.operations, []string{"command:provision", "launch:manager"}) {
 			t.Fatalf("sandbox operation order = %#v", provider.operations)
 		}
 		var manifest struct {
@@ -341,7 +358,7 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 				PIP   []string `json:"pip"`
 			} `json:"packages"`
 		}
-		if err := json.Unmarshal(provider.writes[0].data, &manifest); err != nil {
+		if err := json.Unmarshal(provider.commands[0].request.Stdin, &manifest); err != nil {
 			t.Fatalf("decode package manifest: %v", err)
 		}
 		if manifest.Version != 1 ||
@@ -406,7 +423,7 @@ func runPackageEnvironmentWithStopStateFailure(t *testing.T) (*recordingRunnerPr
 }
 
 func runPackageEnvironmentWithStopKillFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHookAndKill(t, nil, errors.New("forced sandbox kill failure"), func(ctx context.Context, database *db.DB, environmentID, _ string) {
+	return runPackageEnvironmentWithHookAndKill(t, nil, errors.New("forced sandbox kill failure"), nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
 		requestPackageEnvironmentStop(t, ctx, database, environmentID)
 	})
 }
@@ -504,13 +521,18 @@ func runPackageEnvironmentWithHook(
 	commandErr error,
 	afterCommand func(context.Context, *db.DB, string, string),
 ) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHookAndKill(t, commandErr, nil, afterCommand)
+	return runPackageEnvironmentWithHookAndKill(t, commandErr, nil, nil, afterCommand)
+}
+
+func runPackageEnvironmentWithResult(t *testing.T, result e2bruntime.CommandResult) (*recordingRunnerProvider, bool, error) {
+	return runPackageEnvironmentWithHookAndKill(t, nil, nil, &result, nil)
 }
 
 func runPackageEnvironmentWithHookAndKill(
 	t *testing.T,
 	commandErr error,
 	killErr error,
+	commandResult *e2bruntime.CommandResult,
 	afterCommand func(context.Context, *db.DB, string, string),
 ) (*recordingRunnerProvider, bool, error) {
 	t.Helper()
@@ -552,7 +574,12 @@ func runPackageEnvironmentWithHookAndKill(
 	t.Cleanup(func() {
 		_, _ = client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 	})
-	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-packages", commandErr: commandErr, killErr: killErr}
+	provider := &recordingRunnerProvider{
+		sandboxID:     "sandbox-runner-packages",
+		commandErr:    commandErr,
+		commandResult: commandResult,
+		killErr:       killErr,
+	}
 	if afterCommand != nil {
 		provider.afterCommand = func() { afterCommand(ctx, app.db, environment.ID, session.ID) }
 	}
@@ -770,7 +797,7 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	}
 }
 
-func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *testing.T) {
+func TestEnvironmentRunnerDoesNotProjectLimitedNetworkIntoSessionSandbox(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := config.Load()
@@ -839,26 +866,21 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	if provider.creates[0].resolution.Metadata["resolved_before_launch"] != "true" {
 		t.Fatalf("Create did not use precomputed resolution: %#v", provider.creates[0].resolution)
 	}
-	if provider.creates[0].resolution.Network == nil {
-		t.Fatalf("Create resolution has nil network, want limited network options")
+	if !provider.creates[0].resolution.AllowInternetAccess {
+		t.Fatal("Create resolution restricted Session Sandbox internet during package provisioning")
 	}
-	allowOut, ok := provider.creates[0].resolution.Network.AllowOut.([]string)
-	if !ok {
-		t.Fatalf("Create resolution AllowOut = %#v, want []string", provider.creates[0].resolution.Network.AllowOut)
-	}
-	if !slices.Contains(allowOut, "mcp.notion.com") {
-		t.Fatalf("Create resolution did not allow agent MCP host: %#v", allowOut)
+	if provider.creates[0].resolution.Network != nil {
+		t.Fatalf("Create resolution Network = %#v, want nil", provider.creates[0].resolution.Network)
 	}
 }
 
 func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 	tests := []struct {
-		name        string
-		networking  string
-		wantLimited bool
+		name       string
+		networking string
 	}{
-		{name: "current snapshot is empty", networking: `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}`, wantLimited: true},
-		{name: "MCP access is disabled", networking: `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false}`, wantLimited: true},
+		{name: "current snapshot is empty", networking: `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}`},
+		{name: "MCP access is disabled", networking: `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false}`},
 		{name: "network is unrestricted", networking: `{"type":"unrestricted"}`},
 	}
 	for _, test := range tests {
@@ -925,22 +947,11 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			if len(provider.creates) != 1 {
 				t.Fatalf("creates = %#v, want one", provider.creates)
 			}
-			network := provider.creates[0].resolution.Network
-			if !test.wantLimited {
-				if network != nil {
-					t.Fatalf("unrestricted Create resolution network = %#v, want nil", network)
-				}
-				return
+			if !provider.creates[0].resolution.AllowInternetAccess {
+				t.Fatal("Create resolution restricted Session Sandbox internet")
 			}
-			if network == nil {
-				t.Fatal("limited Create resolution network is nil")
-			}
-			allowOut, ok := network.AllowOut.([]string)
-			if !ok {
-				t.Fatalf("limited Create resolution AllowOut = %#v, want []string", network.AllowOut)
-			}
-			if slices.Contains(allowOut, "stale.example.com") {
-				t.Fatalf("Create resolution retained stale MCP host: %#v", allowOut)
+			if network := provider.creates[0].resolution.Network; network != nil {
+				t.Fatalf("Create resolution Network = %#v, want nil", network)
 			}
 		})
 	}
@@ -1009,11 +1020,11 @@ type recordingRunnerProvider struct {
 	sandboxID                 string
 	resolveErr                error
 	commandErr                error
+	commandResult             *e2bruntime.CommandResult
 	killErr                   error
 	afterCommand              func()
 	resolves                  []recordedSandboxResolve
-	writes                    []recordedSandboxWrite
-	commands                  []string
+	commands                  []recordedSandboxCommand
 	launches                  []recordedSandboxLaunch
 	operations                []string
 	creates                   []recordedSandboxCreate
@@ -1046,10 +1057,9 @@ func firstLaunchSandboxID(launches []recordedSandboxLaunch) string {
 	return launches[0].sandboxID
 }
 
-type recordedSandboxWrite struct {
+type recordedSandboxCommand struct {
 	sandboxID string
-	path      string
-	data      []byte
+	request   e2bruntime.CommandRequest
 }
 
 type recordedSandboxCreate struct {
@@ -1100,37 +1110,34 @@ func (p *recordingRunnerProvider) Kill(_ context.Context, sandboxID string) erro
 	return p.killErr
 }
 
-func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID string, path string, data []byte) error {
-	p.writes = append(p.writes, recordedSandboxWrite{sandboxID: sandboxID, path: path, data: append([]byte(nil), data...)})
-	switch {
-	case strings.HasSuffix(path, "/packages.v1.json"):
-		p.operations = append(p.operations, "write:packages")
-	case strings.HasSuffix(path, "/package-provisioner.v1.py"):
-		p.operations = append(p.operations, "write:provisioner")
-	default:
-		p.operations = append(p.operations, "write:other")
-	}
-	return nil
-}
-
-func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, command string, _ time.Duration) error {
+func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, request e2bruntime.CommandRequest) (e2bruntime.CommandResult, error) {
 	if sandboxID != p.sandboxID {
-		p.commands = append(p.commands, "wrong sandbox: "+sandboxID)
-		return nil
+		p.commands = append(p.commands, recordedSandboxCommand{sandboxID: sandboxID, request: request})
+		return e2bruntime.CommandResult{}, nil
 	}
-	p.commands = append(p.commands, command)
-	if strings.Contains(command, "package-provisioner.v1.py") {
+	request.Stdin = append([]byte(nil), request.Stdin...)
+	p.commands = append(p.commands, recordedSandboxCommand{sandboxID: sandboxID, request: request})
+	if request.Command == "/usr/local/bin/environment-manager provision-packages --protocol v1 --stdin" {
 		p.operations = append(p.operations, "command:provision")
 	} else {
 		p.operations = append(p.operations, "command:other")
 	}
 	if p.commandErr != nil {
-		return p.commandErr
+		return e2bruntime.CommandResult{}, p.commandErr
 	}
 	if p.afterCommand != nil {
 		p.afterCommand()
 	}
-	return nil
+	if p.commandResult != nil {
+		result := *p.commandResult
+		result.Stdout = append([]byte(nil), result.Stdout...)
+		result.Stderr = append([]byte(nil), result.Stderr...)
+		return result, nil
+	}
+	return e2bruntime.CommandResult{
+		ExitCode: 0,
+		Stdout:   []byte(`{"version":1,"status":"succeeded","package_count":7,"duration_ms":1}`),
+	}, nil
 }
 
 func (p *recordingRunnerProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*e2bruntime.SkillMount, error) {

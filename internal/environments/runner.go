@@ -224,16 +224,15 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 }
 
 func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte) error {
-	if err := r.provider.WriteFile(ctx, sandboxID, packageManifestPath, manifest); err != nil {
-		return fmt.Errorf("write packages manifest: %w", err)
-	}
-	if err := r.provider.WriteFile(ctx, sandboxID, packageProvisionerPath, packageProvisionerV1); err != nil {
-		return fmt.Errorf("write package provisioner: %w", err)
-	}
-	if err := r.provider.RunCommand(ctx, sandboxID, packageProvisionCommand, r.cfg.E2B.SandboxTimeout); err != nil {
+	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
+		Command: packageProvisionCommand,
+		Stdin:   manifest,
+		Timeout: r.cfg.E2B.SandboxTimeout,
+	})
+	if err != nil {
 		return fmt.Errorf("provision environment packages: %w", err)
 	}
-	return nil
+	return validatePackageProvisioningResult(result)
 }
 
 func (r *Runner) stopCreatedSandbox(record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) error {

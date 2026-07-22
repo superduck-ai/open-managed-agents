@@ -1,59 +1,231 @@
-# Environment Packages 注入 Session Sandbox
+# Environment Packages Provisioning
+
+> 状态：PR 实施设计。本文定义 Environment Packages Provisioning 的最终实现合同，包括 Environment Manager stdin 协议、OMA 调用与生命周期、Session 网络策略、镜像发布和验收路径。
 
 ## 1. 目标与边界
 
-Cloud Environment 继续保存并回显 Claude-compatible `config.packages`，只支持 `apt`、`cargo`、`gem`、`go`、`npm`、`pip` 六个数组。OMA 不增加 Build、Artifact、Runtime Version、Secret、registry 或 init-script API；Packages 只在每个新 Session Sandbox 中安装一次。
+Cloud Environment 继续保存并回显 Claude-compatible `config.packages`，只支持 `apt`、`cargo`、`gem`、`go`、`npm`、`pip` 六个数组。用户请求的版本继续使用各 Package Manager 的原生 spec，例如：
 
-新 Environment 默认直接使用以下 E2B Template 名称，保持 Provider 的 Template 直传逻辑：
+```json
+{
+  "type": "packages",
+  "apt": ["ffmpeg"],
+  "cargo": ["ripgrep@14.1.1"],
+  "gem": ["rake:13.2.1"],
+  "go": ["golang.org/x/tools/cmd/goimports@v0.35.0"],
+  "npm": ["typescript@5.9.3"],
+  "pip": ["numpy==2.3.5"]
+}
+```
+
+OMA 不创造统一的 name/version DSL，也不增加 Build、Artifact、Runtime Version、Secret、registry 或 init-script public API。
+
+本设计把 Packages 的三个层次分开：
+
+- OMA 拥有 Environment Packages 意图、公开 schema、规范化、manifest 构造、调用编排、Sandbox 生命周期和长期 materialization 控制面。
+- Environment Manager 拥有把 v1 Packages Manifest 应用到当前 Sandbox 文件系统的 Go 实现。
+- `managed-agent-sandbox` 拥有固定 runtime、Package Manager、mirror、PATH、安装前缀、root 身份和 Environment Manager binary 的镜像合同。
+
+本 PR 在每个新 Session Sandbox 中调用 Environment Manager 安装一次 Packages。OMA 不再包含或向 Sandbox 写入 Python Provisioner、manifest 文件或其他安装 executable。长期按 ADR 0002/0003 将同一安装能力复用于 Packages Template materialization，避免再次迁移 Package Manager 实现。
+
+| 范围 | 安装发生位置 | 安装调用方 | Session Sandbox 网络边界 |
+|---|---|---|---|
+| 本 PR | 每个 Session Sandbox | OMA 调用 Environment Manager `provision-packages` | 不投影 `limited` 到 E2B；运行期 HTTPS proxy 提供 best-effort 策略 |
+| 后续 Template materialization | 独立 Template Build 环境 | Packages Template Worker 调用同一命令 | Session 不再安装 Packages，并恢复 E2B `NetworkOpts` 纵深防御 |
+
+本文中的 **Provisioner** 不指一个独立部署的组件。Environment Manager 的一次性 `provision-packages` 子命令承担 Sandbox-local 安装；OMA 或后续 Template Worker 是该命令的调用方和生命周期所有者。
+
+### 1.1 Base Template合同
+
+新 Environment 使用以下 E2B Template 名称，保持 Provider 的 Template 直传逻辑：
 
 ```text
 managed-agent-sandbox
 ```
 
-本地部署时先拉取 `ghcr.io/superduck-ai/managed-agent-sandbox@sha256:23c4bb56a02141d3a6997c2236c8e2f43c6174c79f6f86ef72b9c8fbd3142877`，再将其标记为 Docker 的 `managed-agent-sandbox:latest`；OMA 仍使用裸 Template 名称 `managed-agent-sandbox`。Hosted E2B 部署则必须在 OMA 上线前创建并验证同名 Template，并让它的 `default` tag 指向通过验收的 build。E2B 将裸名称解析为 `managed-agent-sandbox:default`，而不是 `:latest`；OMA 不增加别名解析层，YAML 配置值仍原样传给 provider。migration `00019` 将数据库默认值和现有的精确 `managed-agent-sandbox:latest` 引用统一为裸名称，其他自定义 Template 不受影响；Environment API 创建路径使用同一个应用默认值。
+本地部署拉取固定digest的`ghcr.io/superduck-ai/managed-agent-sandbox`，再标记为Docker的`managed-agent-sandbox:latest`；OMA使用裸Template名称。Hosted E2B必须在OMA上线前创建并验证同名Template，并让`default` tag指向通过验收的build。E2B将裸名称解析为`managed-agent-sandbox:default`，而不是`:latest`；OMA不增加别名解析层，YAML配置值原样传给provider，其他自定义Template不受影响。
 
-## 2. 启动顺序
+本 PR 只更新 Template 中固定的 Environment Manager binary，不改变 Template 名称解析、默认值或自定义 Template 直传语义。
+
+## 2. 最终架构与职责
+
+Environment Manager 新增独立、同步、一次性退出的命令：
+
+```text
+/usr/local/bin/environment-manager provision-packages --protocol v1 --stdin
+```
+
+该命令不并入 `task-run`。同一个 Environment Manager binary 在 Session Sandbox 中执行两个相互独立的进程：
+
+1. `provision-packages` 应用 Packages 后退出。
+2. 安装成功并完成 runtime commit 后，`task-run` 启动 Claude Agent。
+
+OMA 通过 stdin 发送 manifest，不写入中间 manifest 文件，不依赖 Python，也不掌握 Package Manager 命令细节。后续 Template Builder 复用同一个 `provision-packages` 命令。
+
+### 2.1 责任边界
+
+| 角色 | 负责 | 明确不负责 |
+|---|---|---|
+| OMA Environment API | Packages schema、规范化、spec安全校验、持久化和回显 | Sandbox命令、安装路径、Package Manager argv |
+| OMA Environment Runner | Environment生效配置、manifest、同步调用、timeout/cancel、结果校验、runtime commit和失败清理 | apt/npm/pip命令细节、内部安装重试 |
+| Environment Manager `provision-packages`（Provisioner） | manifest校验、固定安装计划、子进程取消和稳定结果 | Environment/Session/Work、网络授权、Build Key、Template发布和retry policy |
+| `managed-agent-sandbox` | runtime、Package Manager、mirror、PATH、prefix、root和固定Manager binary | Environment状态、Session生命周期和调用重试 |
+| Code Session HTTPS proxy | Agent运行期CONNECT的身份、最新Environment policy、SSRF和目标拨号 | Provisioning阶段网络和安装语义 |
+| 后续 OMA Packages Template Worker | durable build、lease、attempt、retry、readiness和atomic publication | Package Manager argv和Agent runtime |
+
+“Environment Manager 负责安装”特指无状态的 Sandbox-local Packages Application，不表示它拥有 Packages materialization 控制面。
+
+### 2.2 Environment、Session与runtime commit不变量
+
+- Environment更新不改变已经创建的Sandbox；Runner创建新Sandbox时读取Environment生效配置，因此只影响之后的Sandbox创建，包括为旧Session重新创建Sandbox。
+- 每个Session通过一次独立的E2B `Create`获得隔离文件系统。
+- `mcp_allowed_hosts`与`managed_agent_skills_mount`是Sandbox创建输入，在`Resolve`/`Create`前准备；preparation只修改Runner内存中的Work，不提前持久化runtime成功状态。
+- `provider_sandbox_id`在Sandbox创建后独立持久化，供失败清理使用。
+- `environment_sandboxes.metadata`是一次创建尝试的输入快照，可保留MCP/skill preparation信息，但不表示runtime commit成功。
+- Packages完成后，Runner必须heartbeat并检查`lease_extended`；lease失效时终止Sandbox，不创建active Code Session或凭证。
+- lease有效时，Runner在同一数据库事务中锁定并重新确认Work为`active`，使用Session行锁读取最终event快照，创建active Code Session，写入initialize/initial inbound events，并提交preparation与runtime identity metadata。
+- 锁前提交的Session event进入初始inbound queue；锁后event等待runtime commit后走实时转发路径。Packages安装期间的消息不能落在两条路径之间。
+- 任一数据库写入或提交前凭证签发失败都会回滚runtime commit；已经创建的Sandbox仍按统一失败路径清理。
+
+实现必须满足以下生命周期不变量：
+
+- Packages 在 Agent 启动前安装。
+- 空 Packages 跳过安装。
+- Package Manager 顺序固定。
+- Go spec 逐个安装，其他 manager 批量安装。
+- 首错停止。
+- spec 只作为 argv 元素，不经过 shell。
+- 失败后不做逐包回滚，而是丢弃整个 Sandbox。
+- 安装成功后重新检查 Environment Work lease，只有 lease 仍有效才提交 runtime。
+- Session startup payload 和凭证只在安装成功后发送。
+
+## 3. 整体流程
+
+### 3.1 全局视图
+
+先忽略数据库事务、协议字段和各Package Manager命令，整个流程只有三段：OMA创建Sandbox、Environment Manager安装Packages、安装成功后启动Agent。
+
+```mermaid
+flowchart TD
+    A["用户保存Environment Packages"] --> B["OMA创建unrestricted Session Sandbox"]
+    B --> C{"Packages是否为空"}
+    C -->|是| F["OMA执行Heartbeat并检查Work lease"]
+    C -->|否| D["Environment Manager通过stdin执行provision-packages"]
+    D --> E["Package Manager按需直接访问Registry、Mirror或CDN"]
+    E --> G{"最终JSON合法且进程退出码为0"}
+    G -->|否| X["OMA停止Work并丢弃Sandbox"]
+    G -->|是| F
+    F --> H{"Work lease是否有效"}
+    H -->|否| X
+    H -->|是| I["OMA提交Code Session runtime"]
+    I --> J["Environment Manager通过task-run启动Claude Agent"]
+    J --> K["Agent运行期HTTPS经过CCR Relay和OMA Proxy"]
+```
+
+这张图只表达五个全局结论：
+
+1. OMA拥有Sandbox和Session生命周期，Environment Manager只负责Sandbox内安装与Agent启动。
+2. Packages为空时跳过安装，直接进入heartbeat。
+3. Package安装阶段直接访问外部Registry，不经过OMA HTTPS proxy。
+4. 只有安装结果和Work lease都成功，OMA才提交Code Session runtime并启动Agent。
+5. 任一启动阶段失败都停止Work并丢弃Sandbox；只有Agent运行期HTTPS进入CCR Relay和OMA proxy。
+
+### 3.2 Sandbox创建与Packages安装
+
+这一阶段从Runner取得Work开始，到Packages为空或安装成功后准备执行heartbeat为止。
 
 ```mermaid
 sequenceDiagram
-    participant Runner as Environment Runner
-    participant E2B as 独立 Session Sandbox
-    participant Provisioner as package-provisioner.v1.py
-    participant CodeSession as Code Session / Credentials
-    participant Manager as Environment Manager
-    participant Agent as Claude Agent
+    autonumber
+    participant DB as "OMA Database"
+    participant Runner as "Environment Runner"
+    participant Sandbox as "Session Sandbox"
+    participant Manager as "Environment Manager provision-packages"
+    participant Registry as "Registry / Mirror / CDN"
 
-    Runner->>Runner: 准备 MCP hosts 与 skill mount（仅内存）
-    Runner->>Runner: Resolve template/network（包含 MCP hosts）
-    Runner->>E2B: Create(managed-agent-sandbox, skill mount)
-    alt Packages 非空
-        Runner->>E2B: 写入 packages.v1.json
-        Runner->>E2B: 写入固定 provisioner
-        Runner->>Provisioner: python3 provisioner manifest
-        Provisioner->>Provisioner: apt → cargo → gem → go → npm → pip
-        alt 任一命令失败
-            Provisioner-->>Runner: non-zero + manager/stage/exit code 诊断
-            Runner->>E2B: Kill
+    Runner->>DB: Claim Work并读取生效Environment
+    DB-->>Runner: Packages与Networking
+    Runner->>Runner: 准备MCP hosts与skill mount
+    Runner->>Runner: Resolve Template且不投影limited NetworkOpts
+    Runner->>DB: 创建state=creating的Sandbox记录
+    Runner->>Sandbox: 创建unrestricted Session Sandbox
+    Sandbox-->>Runner: provider_sandbox_id
+    Runner->>DB: 持久化provider_sandbox_id
+    Runner->>Runner: 构建并校验v1 Manifest
+
+    alt Packages为空
+        Runner->>Runner: 跳过provision-packages
+    else Packages非空
+        Runner->>Manager: 启动provision-packages
+        Runner->>Manager: stdin发送Manifest并关闭stdin
+        Manager->>Manager: 校验并按固定顺序安装
+        Manager->>Registry: 直接下载Packages
+        Registry-->>Manager: metadata与archive
+        Manager-->>Runner: 最终JSON与进程退出码
+        alt 结果合法且安装成功
+            Runner->>Runner: 进入heartbeat阶段
+        else 协议或安装失败
+            Runner->>DB: Sandbox标记failed并停止Work
+            Runner->>Sandbox: Kill
         end
-    end
-    Runner->>Runner: Heartbeat 并重新检查 Work stop 状态
-    alt 创建/安装期间收到 stop 请求
-        Runner->>E2B: best-effort Kill
-    else Work 仍可运行
-        Runner->>CodeSession: 锁定 Session，读取最终 events 并单事务创建 runtime
-        CodeSession-->>Runner: 提交前签发 sandbox 凭证
-        Runner->>Manager: 通过 stdin 写入 startup payload 并运行 task-run
-        Manager->>Agent: 启动 Claude Agent
     end
 ```
 
-空 Packages 不写 manifest/provisioner，也不运行安装命令。Environment 更新不会进入已创建 Sandbox；runner 在创建新 Sandbox 时读取 Environment 当前配置，所以只影响之后创建的 Sandbox。每个 Session 仍通过一次独立的 E2B `Create` 获得隔离文件系统。Sandbox 创建及 Packages 安装结束后，runner 必须检查 heartbeat 的 `lease_extended`；只有 lease 仍有效时才创建 code session、签发凭证、提交 runtime metadata 并启动 Environment Manager。如果期间 work 已进入 `stopping` 或 `stopped`，则终止刚创建的 Sandbox，且不会遗留 active code session 或对应凭证。
+Packages为空和安装成功是这一阶段仅有的两个成功出口。stdin发送失败、结果JSON缺失或损坏、JSON与退出码不一致、Package Manager失败、timeout和cancellation都进入同一失败清理路径。
 
-启动 metadata 分为两个阶段：`mcp_allowed_hosts` 与 `managed_agent_skills_mount` 是 Sandbox 创建输入，必须在 `Resolve`/`Create` 前存在，但 preparation 只修改 runner 内存中的 Work，不提前持久化；`provider_sandbox_id` 在 Sandbox 创建后独立持久化，便于失败清理。`environment_sandboxes.metadata` 是一次创建尝试的输入快照，因此可以保留 MCP/skill preparation 信息供审计和失败诊断，并不表示 runtime commit 成功。heartbeat 成功后，runner 才在同一数据库事务中锁定并重新确认 Work 仍为 `active`，再使用与 `AppendSessionEvents` 相同的 Session 行锁读取最终 event 快照、创建 active code session、写入 initialize/initial inbound events，并把 preparation metadata 与 `claude_code_*`/`runtime` identity metadata 一起提交到 Session 和 Environment Work。锁前已经提交的 Session event 会进入初始 inbound queue；锁后到达的 event 会等待 runtime commit，随后走实时转发路径，因此 Packages 安装期间发送的消息不会落在两条路径之间。任一数据库写入或提交前凭证签发失败都会回滚整个 runtime commit；“成功后持久化”只约束 Work/Session 的 preparation state 和 runtime identity，不要求丢弃 Sandbox 创建尝试快照。
+### 3.3 Runtime提交、Agent启动与HTTPS请求
 
-## 3. Manifest 与执行安全
+这一阶段只接收“Packages为空或已经成功安装”的Sandbox。
 
-OMA 写入 `/tmp/open-managed-agents/packages.v1.json`，结构为：
+```mermaid
+sequenceDiagram
+    autonumber
+    participant DB as "OMA Database"
+    participant Runner as "Environment Runner"
+    participant Sandbox as "Session Sandbox"
+    participant Manager as "Environment Manager task-run"
+    participant Claude as "Claude Agent"
+    participant Child as "Agent Child Process"
+    participant Relay as "Local CCR Relay"
+    participant Proxy as "OMA HTTPS Proxy"
+    participant Target as "External HTTPS Target"
+
+    Runner->>DB: Heartbeat Environment Work
+    DB-->>Runner: lease_extended
+    alt Heartbeat失败或lease失效
+        Runner->>DB: 停止Work并更新Sandbox状态
+        Runner->>Sandbox: Kill
+    else Work lease有效
+        Runner->>DB: 锁定Work与Session并读取最终event快照
+        Runner->>Runner: 签发凭证并构建startup payload
+        Runner->>DB: 同一事务提交Code Session、events与runtime metadata
+        Runner->>DB: Sandbox标记running
+        Runner->>Manager: 启动task-run并通过stdin发送startup payload
+        Manager->>Manager: 注册CCR Worker
+        Manager->>Claude: 启动Claude Agent
+        Claude->>Relay: 启动本地CONNECT relay
+        Claude->>Child: 注入HTTPS_PROXY并启动子进程
+        Child->>Relay: CONNECT external-host:443
+        Relay->>Proxy: WebSocket转发CONNECT
+        Proxy->>DB: 读取Code Session、Environment与AgentSnapshot
+        DB-->>Proxy: 最新网络策略上下文
+        alt 目标允许
+            Proxy->>Target: 建立HTTPS/TLS连接
+            Target-->>Proxy: Response
+            Proxy-->>Relay: Tunnel response
+            Relay-->>Child: Response
+        else 目标拒绝或策略不可用
+            Proxy-->>Relay: 403 fail-closed
+            Relay-->>Child: CONNECT失败
+        end
+    end
+```
+
+runtime commit或`task-run`启动失败同样进入统一失败清理，不得留下可继续运行的Sandbox。Packages安装期间尚不存在Code Session、CCR relay或Agent凭证；这些对象只在安装成功且lease有效后创建。
+
+## 4. stdin Manifest合同
+
+OMA 直接发送 v1 manifest，不增加 request envelope：
 
 ```json
 {
@@ -70,45 +242,383 @@ OMA 写入 `/tmp/open-managed-agents/packages.v1.json`，结构为：
 }
 ```
 
-固定 provisioner 是随 OMA 二进制 `go:embed` 的版本控制资产。runner 的 shell 命令只包含两个固定路径，不包含任何 package spec。provisioner 用 Python `subprocess.run(arguments, check=True, shell=False)` 调用包管理器，spec 只作为参数数组元素传递；scoped npm package、PEP 508 marker、extras、公开 URL、空格和 shell 元字符不会被解释成 shell 语法。为防止 package spec 被包管理器解释为 `--dry-run` 等控制选项，Go API normalization、Go manifest 构建和 Sandbox 内 Python manifest loader 都拒绝 trim 后以 `-` 开头的条目；错误不回显原始 spec。由于 private registry credential 不属于本期范围，API 和 manifest 构建也会在写入 Sandbox 前拒绝 authority 中包含 userinfo 的 URL，且错误信息不会回显原始 spec。
+不增加以下字段：
 
-安装命令固定为：
+```text
+operation
+attempt_id
+environment_id
+session_id
+work_id
+build_key
+template_id
+networking
+credentials
+environment variables
+```
 
-| 顺序 | Manager | 参数数组前缀 |
+`--protocol v1`选择命令协议与输出合同；manifest中的`version: 1`声明输入schema。二者不匹配时返回manifest/protocol错误。
+
+### 4.1 framing和严格校验
+
+Environment Manager把stdin视为不可信跨进程输入：
+
+- 最大1 MiB。
+- 恰好一个JSON object；允许尾随空白，拒绝第二个值或非空尾随内容。
+- 拒绝未知顶层字段和未知Packages字段。
+- `version`必须为`1`。
+- `packages`必须存在、为object且非`null`。
+- `packages.type`必须为`packages`。
+- 只允许`apt`、`cargo`、`gem`、`go`、`npm`、`pip`。
+- manager字段缺失时视为空数组；显式`null`拒绝。
+- manager字段必须是字符串数组。
+- 拒绝trim后以`-`开头的spec。
+- 拒绝authority含userinfo/credential的URL。
+- 错误不得回显原始spec。
+- 保持数组顺序和原字符串，不排序、不去重、不trim后改写。
+- v1 不新增空字符串、空格或 shell 元字符限制；spec 不经过 shell，因此这些字符不具有 shell 语义。
+
+OMA校验保护公开Environment输入，Manager校验保护进程执行seam。
+
+## 5. Packages执行合同
+
+### 5.1 身份、环境和凭证时序
+
+- `provision-packages`必须以root启动；非root属于`execution_environment/preflight`。
+- 六类 Package Manager 全部以 root 执行，符合 `managed-agent-sandbox` runtime 合同。
+- 子进程工作目录固定为`/home/user`；目录不存在或不可访问时失败。
+- `HOME`保持root合同`/root`。
+- 子进程继承`managed-agent-sandbox`提供的PATH、runtime、mirror、prefix和cache环境。
+- Manager不硬编码另一套runtime版本、mirror或安装前缀。
+- Provisioning前不得向Sandbox注入Session、MCP、Git、模型或用户Environment secret。
+- `task-run` startup payload只在Packages成功后发送。
+
+### 5.2 固定执行计划
+
+| 顺序 | Manager | argv |
 |---:|---|---|
-| 1 | apt | `apt-get update`，再 `apt-get install -y -- ...` |
-| 2 | cargo | `cargo install ...` |
-| 3 | gem | `gem install ...` |
-| 4 | go | 每个 spec 单独执行 `go install <spec>`，避免不同 module/version 的合法条目被合并后失败 |
-| 5 | npm | `npm install --global -- ...` |
-| 6 | pip | `pip install ...` |
+| 1 | apt prepare | `apt-get update` |
+| 2 | apt install | `apt-get install -y -- <all specs>` |
+| 3 | cargo | `cargo install <all specs>` |
+| 4 | gem | `gem install <all specs>` |
+| 5 | go | 每个spec单独执行`go install <spec>` |
+| 6 | npm | `npm install --global -- <all specs>` |
+| 7 | pip | `pip install <all specs>` |
 
-空 manager 数组跳过；首个非零退出立即停止后续 manager。安装命令最长使用 `E2B_SANDBOX_TIMEOUT`，普通 Environment Manager 启动命令继续使用 `E2B_REQUEST_TIMEOUT`。
+不变量：
 
-对于已有的 limited networking 配置，`allow_package_managers: true` 继续只放行受信任的 registry/CDN host。Cargo 除 `crates.io` 与 `index.crates.io` 外还需要 `static.crates.io` 下载 crate archive；RubyGems 除 `rubygems.org` 外还会使用 `index.rubygems.org` 获取 compact index，因此这些 host 都包含在 Package Manager 白名单中；其他 limited-network Packages 策略仍不在本次设计范围内。
+- 空manager跳过，apt为空时不执行`apt-get update`。
+- 除Go外，同一manager的specs批量传入。
+- 使用`exec.CommandContext`和argv，不使用`sh -c`、`bash -c`、script或命令拼接。
+- 首错停止；不重试、不并行、不回滚、不自动跳过已安装项。
+- 空Packages由OMA跳过命令；直接调用Manager时返回成功且不启动子进程。
+- Manager不维护已安装状态或本地lock；调用方保证同一Sandbox不并发Provisioning。
+- 失败重试必须从新的干净Sandbox或Build环境开始。
 
-## 4. 失败状态与诊断
+Package Manager exit code 0就是v1步骤成功。Manager不执行inventory、`pip freeze`、`npm list`、import、binary probe或版本反查。本 PR 的结果可见性由镜像集成/E2E验证；后续Artifact验证属于Template Builder。
 
-manifest 写入、provisioner 写入或安装的任一步失败都会调用统一的 `failCreatedSandbox`：
+## 6. 结果协议
 
-- `environment_sandboxes.state` 变为 `failed`；
-- `last_error` 保存带阶段上下文的错误；
-- Environment Work 被强制停止；
-- 已创建的 provider Sandbox 在独立的两分钟清理 context 中被终止；
-- Environment Manager startup payload 尚未写入，Claude Agent 不会启动。
+stdout只属于协议，并且最多输出一个带换行的最终JSON object。Package Manager、Cobra usage、slog和人类诊断不得写入stdout。
 
-provisioner 在失败时只报告 manager、阶段和非零退出码，不回显包含 package spec 的 argv，也不转发 package manager 的 stdout/stderr，避免 URL 等 spec 中的数据进入 `last_error`。部分安装不做容器内卸载回滚，因为整个 Sandbox 会被丢弃。
+成功：
 
-graceful stop 同样采用 best-effort provider 清理：`stopping` 写入和 Kill 位于第一个 bounded context；Kill 返回或该阶段超时后，runner 必须创建独立的 post-Kill bounded context，再尝试写入 `stopped`（Kill 失败时为 `failed`）并强制停止 Environment Work。即使 `stopping` 写入失败也仍尝试 Kill，即使 Kill 失败或耗尽第一阶段 deadline 也不能复用已过期 context 跳过最终状态和 Stop Work；最后通过 joined error 汇总 stopping、Kill、最终状态和 Stop Work 的全部错误。测试失败信息只记录 launch 数量、sandbox ID、命令或 payload 字节数，不输出 Environment Manager stdin、完整 launch 对象或凭证。
+```json
+{
+  "version": 1,
+  "status": "succeeded",
+  "package_count": 6,
+  "duration_ms": 12450
+}
+```
 
-## 5. 验收路径
+Package Manager失败：
 
-- `internal/environments/package_provisioner_test.go`：manifest object/schema 校验、root config 与 nested Packages 解码边界、空配置跳过、特殊字符保真、六类 manager 顺序与首错停止；
-- `tests/environments_api_test.go`：官方 Go SDK 强类型创建、更新、读取与列出 Packages 配置；
-- `tests/environments_runner_cloud_test.go`：六类 package manifest、provisioner/startup 写入顺序、MCP host network resolution、固定命令不含 spec、provisioning/metadata 失败或 stop 不创建 code session、Packages 安装期间写入的 Session event 进入初始 inbound queue、状态写失败仍 Kill 并停止 Work，且失败日志不输出 launch stdin；
-- `tests/environments_packages_lifecycle_e2e_test.go`（`e2b_integration` 与 `e2e` build tag）：在旧 Session Sandbox 安装 `six==1.16.0` 后把 Environment 更新为 `six==1.17.0`，确认旧 Sandbox 不变而新 Sandbox 使用更新后的配置，并用同一路径的不同文件内容验证两个 Session 文件系统相互隔离；
-- `tests/environments_full_e2b_bridge_integration_test.go`（`e2b_integration` 与 `e2e` build tag）：通过官方 Go SDK 创建含六类 Packages 的 Environment，使用 `managed-agent-sandbox` Template 的默认 build，真实安装并 probe `ffmpeg`、`rg`、`rake`、来自不同 module/version 的 `goimports` 与 `addlicense`、`tsc`、`numpy`，确认 Environment Manager 已运行，并让 Claude Agent 调用已安装的 `rg` 写出版本证明。
+```json
+{
+  "version": 1,
+  "status": "failed",
+  "category": "package_manager",
+  "manager": "npm",
+  "stage": "install",
+  "package_count": 6,
+  "duration_ms": 12450,
+  "exit_code": 1
+}
+```
 
-CI 即使不具备真实 E2B 凭证，也必须用 `go test ./tests -tags='e2b_integration e2e' -run '^$'` 编译 tagged acceptance tests，避免验收路径在普通 `go test ./...` 之外失效。
+结果字段合同：
 
-本变更不修改公开 API、Packages schema、权限模型或数据库业务数据模型；migration 仅同步新记录的默认模板值。
+- `version`、`status`和`duration_ms`始终存在；发生在协议handler之前、因而没有JSON的CLI错误除外。
+- `package_count`在manifest通过完整校验后存在，是六个数组的spec总数，不表示已成功安装的数量。`decode`或`validate`失败时不猜测、不输出该字段。
+- `duration_ms`是Environment Manager从开始读取stdin到生成最终结果的总耗时，使用单调时钟计算并取非负整数毫秒。
+- 失败结果必须包含`category`和`stage`；成功结果不得包含失败字段。
+- 当失败可归属到某个Package Manager时包含`manager`；`decode`、`validate`、通用`preflight`、`finalize`等非manager错误不包含该字段。
+- `exit_code`只表示已成功启动但非零退出的Package Manager原始进程退出码；它与Environment Manager自身的稳定process exit code不是同一个字段。子进程未启动、被取消或Manager内部失败时不伪造该字段。
+- v1不包含spec、argv、Package Manager输出、部分安装清单或逐步骤事件。OMA使用严格schema解析并拒绝未知字段、缺失的必填字段以及与category/stage不一致的字段组合。
+
+### 6.1 稳定类别和阶段
+
+| Category | 含义 |
+|---|---|
+| `invalid_manifest` | stdin、JSON、schema或spec envelope无效 |
+| `package_manager` | 子进程启动成功但返回非零 |
+| `execution_environment` | root、目录、binary或子进程启动合同损坏 |
+| `timeout` | Manager能确认context deadline |
+| `cancelled` | 收到取消信号且有机会返回 |
+| `internal` | Manager内部不变量或finalize失败 |
+
+| Stage | 含义 |
+|---|---|
+| `decode` | 大小、framing或JSON解码 |
+| `validate` | schema或spec安全校验 |
+| `preflight` | root、工作目录或执行前环境 |
+| `start` | binary缺失或子进程无法启动 |
+| `prepare` | apt prepare步骤 |
+| `install` | Package Manager安装步骤 |
+| `finalize` | 结果编码、写出或收尾 |
+
+稳定manager只有`apt`、`cargo`、`gem`、`go`、`npm`、`pip`。OMA拒绝未知category、manager或stage。
+
+### 6.2 Environment Manager退出码
+
+| Exit code | 含义 |
+|---:|---|
+| `0` | 成功 |
+| `2` | CLI、protocol或manifest无效 |
+| `10` | Package Manager非零退出 |
+| `11` | timeout或cancellation |
+| `12` | execution environment或internal error |
+
+JSON是精确且权威的结果；进程退出码是稳定分类和无JSON时的兜底；stderr不是协议。JSON与退出码不一致时，OMA将其视为executor/protocol failure。
+
+新命令不能在`RunE`中直接`os.Exit`；实现返回可测试的typed exit error，由根入口只为该类型映射2/10/11/12，其他命令错误保持退出1。`provision-packages`关闭自动usage输出，并确保Cobra、logger和错误渲染只写stderr。发生在协议handler之前的未知flag等CLI错误允许没有JSON，但必须非零退出。
+
+## 7. 日志、timeout和取消
+
+### 7.1 日志
+
+- Package Manager stdout/stderr被显式drain并丢弃，不能继承Manager stdout/stderr。
+- 原始输出不进入result、stderr、OMA `last_error`或持久化Build记录。
+- Manager stderr只允许有界、无spec诊断：manager、stage、package count、duration、exit code和状态。
+- 禁止记录stdin、spec、完整argv、URL、环境变量、credential或lifecycle hook输出。
+- 长期受权限保护的Build Log、脱敏和保留策略另行设计。
+
+### 7.2 timeout、取消和清理
+
+整体timeout和cancellation只属于调用方：本 PR 是Environment Runner，后续materialization是Template Worker/Builder。Manifest和Manager CLI不携带timeout。
+
+Environment Manager：
+
+- 使用signal-aware context监听SIGINT和SIGTERM。
+- Package Manager使用可取消context和独立process group。
+- 取消时best-effort终止当前子进程组，不启动后续manager。
+- stdout仍可写时返回`cancelled`与exit code 11。
+- 被强制kill时允许没有完整JSON。
+
+调用方：
+
+- 建立整体deadline。
+- 按`Start → SendStdin → CloseStdin → Wait`执行。
+- context取消、发送失败、关闭失败或超时时kill command handle。
+- 只有合法`succeeded` JSON与exit code 0同时出现才允许继续。
+- 其他结果都阻止runtime commit或Template publication，并丢弃Sandbox/build environment。
+
+### 7.3 Sandbox与Work状态清理
+
+任何Provisioning协议、stdin transport、Manager执行或结果校验失败都进入统一的`failCreatedSandbox`语义：
+
+- `environment_sandboxes.state`变为`failed`。
+- `last_error`只保存不含spec和credential的阶段上下文。
+- Environment Work被强制停止。
+- 已创建的provider Sandbox在独立的两分钟cleanup context中best-effort终止。
+- `task-run` startup payload尚未发送，Claude Agent不会启动。
+
+graceful stop继续采用分阶段清理：`stopping`写入与Kill使用第一个bounded context；Kill返回或该阶段超时后，Runner创建独立的post-Kill bounded context，写入`stopped`（Kill失败时为`failed`）并强制停止Environment Work。`stopping`写入失败仍必须尝试Kill，第一阶段deadline耗尽也不能复用已过期context跳过最终状态。各阶段错误继续合并返回，测试日志不得输出Manager stdin、完整launch或凭证。
+
+## 8. Session网络策略
+
+### 8.1 Provisioning阶段
+
+- OMA解析并保存Environment networking，但本 PR 不将`limited`投影为Session Sandbox的E2B `NetworkOpts`。
+- Session Sandbox创建时允许公网egress。
+- `provision-packages`、Package Manager和lifecycle hook直接访问外网。
+- 此时Code Session、local CCR relay和OMA HTTPS proxy尚未启动。
+- Manager manifest不接收networking或allowed hosts。
+
+这会避免Registry、mirror、CDN、redirect、VCS和lifecycle下载被Session网络策略提前阻断，但不能保证Packages一定成功；版本不存在、编译、Registry、限流、TLS、磁盘和timeout仍可能失败。
+
+### 8.2 Agent运行阶段
+
+- `task-run`启动Claude后，本地CCR relay向子进程注入`HTTPS_PROXY`。
+- 正常HTTPS CONNECT通过OMA Code Session HTTPS proxy。
+- Proxy每次CONNECT重新读取当前Environment与AgentSnapshot并执行limited/unrestricted、MCP、Package Manager host、SSRF和目标校验。
+- 直接socket、unset proxy、非HTTPS或不遵守代理环境变量的进程可能绕过该策略。
+
+因此过渡期只能描述为best-effort HTTPS proxy policy，不能宣称不可绕过的Sandbox网络隔离；ADR 0005/0006和CCR upstream proxy设计同步记录这一边界。
+
+## 9. 三个仓库的实现位置
+
+### 9.1 Environment Manager
+
+建议结构：
+
+```text
+cmd/
+  cmd_provision_packages.go
+
+internal/packages/
+  manifest.go
+  validate.go
+  plan.go
+  executor.go
+  result.go
+```
+
+`cmd`只负责Cobra、stdin入口、signal context、stdout和exit mapping。`internal/packages`隐藏校验、执行计划、argv、子进程、取消和结果映射，不导入Session、runtime Manager、OMA API、MCP、Claude或Template概念。
+
+生产执行与测试使用内部`CommandRunner` seam。现有`internal/process.Execute`只接受单一路径并面向output streaming，不适合Packages argv与纯JSON stdout合同，不强行复用。
+
+### 9.2 OMA
+
+新增同步stdin command adapter：
+
+```go
+type CommandRequest struct {
+    Command string
+    Stdin   []byte
+    Timeout time.Duration
+}
+
+type CommandResult struct {
+    ExitCode int
+    Stdout   []byte
+    Stderr   []byte
+}
+```
+
+E2B实现执行`Start → SendStdin → CloseStdin → Wait`。它不能复用发送stdin后立即返回的`StartBackgroundCommand`。Packages路径不再调用`WriteFile`写manifest或Python，不依赖Python，也不解析英文stderr。
+
+### 9.3 `managed-agent-sandbox`
+
+- 从正式Environment Manager仓库构建干净的linux/amd64 binary。
+- 固定revision、version和SHA-256。
+- 更新`/opt/env-runner/environment-manager`，保持`/usr/local/bin/environment-manager`符号链接。
+- 保持root、`/home/user`、Package Manager、runtime、mirror、PATH和prefix合同。
+- `verify-sandbox-contract`验证binary版本、v1命令、所需manager和安装结果可见性。
+
+## 10. 发布与兼容
+
+发布必须从executor向caller推进：
+
+1. Environment Manager实现、测试并发布新binary。
+2. `managed-agent-sandbox`固定新revision/version/SHA-256并通过contract验证。
+3. 发布并验收新的base image和E2B Template。
+4. 确认目标部署使用的默认与自定义Template都包含新命令。
+5. OMA切换到stdin协议并删除Python路径。
+6. 运行真实E2E后部署OMA。
+
+不保留Python fallback。缺少命令的旧Template返回`execution_environment`，OMA失败并清理Sandbox。fallback会长期维护两套实现并掩盖镜像发布错误。
+
+## 11. 测试与验收
+
+### 11.1 Environment Manager
+
+失败场景先于成功场景：
+
+- 空、malformed、超1 MiB、多个JSON和尾随垃圾。
+- 未知字段、版本、type、manager、`null`和非字符串数组。
+- manager option与URL credential不回显spec。
+- 非root、缺失`/home/user`和缺失所需binary。
+- 子进程无法启动、非零exit、signal取消和内部错误。
+- 首错停止，后续manager不执行。
+- stdout只有最终JSON，stderr和子进程输出不泄漏spec。
+- JSON category、必要字段和Manager exit code一致。
+- 空Packages成功且不启动子进程。
+- 固定顺序、argv、Go逐条、其他批量和输入顺序保真。
+
+### 11.2 OMA
+
+- 空Packages跳过命令。
+- stdin发送、关闭、等待和失败kill顺序。
+- timeout、用户stop和context取消。
+- JSON缺失、损坏、未知值或与exit code不一致。
+- 安装未成功时不commit Code Session、不发送startup payload。
+- 失败时Sandbox/Work状态与独立cleanup context。
+- Packages路径不写manifest/Python，固定命令不含spec。
+- Session Sandbox不施加limited E2B projection。
+- Agent启动后Proxy仍按最新Environment策略允许/拒绝CONNECT。
+- Packages安装期间提交的Session event仍进入正确的initial或realtime路径。
+- preparation metadata、provider sandbox ID和runtime metadata仍按原事务边界持久化。
+
+### 11.3 Managed Sandbox与真实E2E
+
+- binary revision、checksum和version。
+- `provision-packages` v1合同。
+- 六类Manager真实安装与首错停止。
+- 安装后`task-run`和Claude Agent可看到binary/library。
+- Provisioning可访问Registry/mirror。
+- Agent运行期Proxy允许和拒绝。
+- 安装失败后不遗留可运行Session。
+
+本 PR 使用并调整以下验收入口：
+
+- `internal/environments/package_provisioner_test.go`覆盖manifest、空配置、特殊字符、安全校验和结果解析；Package Manager执行顺序由Environment Manager仓库测试覆盖。
+- `tests/environments_api_test.go`继续覆盖官方Go SDK强类型创建、更新、读取和列出Packages。
+- `tests/environments_runner_cloud_test.go`调整为stdin command顺序、网络过渡、固定命令、失败/stop不创建Code Session、event handoff和清理日志。
+- `tests/environments_packages_lifecycle_e2e_test.go`继续验证Environment更新只影响后续Sandbox，并保持Session文件系统隔离。
+- `tests/environments_full_e2b_bridge_integration_test.go`继续通过六类真实Packages与Claude Agent probe证明安装结果可见。
+
+CI在没有E2B凭证时仍必须编译tagged acceptance tests：
+
+```text
+go test ./tests -tags='e2b_integration e2e' -run '^$'
+```
+
+验收不变量：
+
+1. OMA不包含或写入Sandbox-local Packages executor。
+2. Manager只接收Packages Manifest，不接收控制面状态或网络策略。
+3. spec永远作为argv元素，不经过shell。
+4. stdout只有最终JSON；OMA不解析stderr决定结果。
+5. 只有成功JSON与exit code 0同时成立，Sandbox才进入runtime commit。
+6. 失败、取消、timeout或协议损坏都丢弃当前Sandbox。
+7. Session credential只在Packages成功后发送。
+8. 网络策略只对经过OMA Proxy的运行期CONNECT提供best-effort约束。
+
+## 12. 后续 Packages Template materialization
+
+```mermaid
+flowchart LR
+    E[Environment Packages] --> O[OMA Build Key and Queue]
+    O --> W[Packages Template Worker]
+    W --> B[Template Build Environment]
+    B --> P[Environment Manager provision-packages]
+    P --> T[Immutable Packages Template]
+    T --> S[Restricted Session Sandbox]
+    S --> M[Environment Manager task-run]
+    M --> A[Claude Agent]
+```
+
+后续materialization生命周期仍不交给Environment Manager：
+
+- OMA计算Build Key，维护durable build、lease、attempt、retry和readiness。
+- Template Builder创建允许构建网络的Build环境并调用同一个Manager命令。
+- Provisioning、验证、E2B发布和数据库Artifact记录全部完成后才ready。
+- 失败只保留诊断记录，不发布部分Template。
+- Session从ready Template创建，不再现场安装Packages。
+- Session Sandbox恢复E2B `NetworkOpts`纵深防御；OMA HTTPS proxy继续执行每CONNECT最新策略。
+
+Build Key标识规范化输入，不是Artifact digest，也不承诺未固定版本可完全复现。Physical Template GC、E2B image content digest、limited-network Build授权和public Build UI继续留在后续范围。
+
+## 13. 后续文档同步
+
+本文获批后再同步以下决策记录和外部合同：
+
+- 更新ADR 0002，区分OMA materialization controller与Manager filesystem executor。
+- 更新ADR 0006，记录本 PR 不投影E2B limited策略及其best-effort后果。
+- 修正`CONTEXT.md`中Environment Manager、Sandbox root runtime与User-owned Packages layer的冲突定义。
+- 在Environment Manager仓库补充命令级实现说明。
+- 更新`managed-agent-sandbox` README与contract verifier说明。
+
+这些同步必须在代码实现合并前完成，避免设计文档、领域语言和实际安全边界互相矛盾。

@@ -153,7 +153,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
 
 1. 拉取 sandbox 模板镜像（由 e2b-local 使用）：
    ```bash
-   # 拉取经过验证的内容，并标记为 e2b.template 默认使用的本地镜像名。
+   # 拉取经过验证的内容，并标记为裸 Template 名称在本地解析的默认 Docker tag。
    docker pull ghcr.io/superduck-ai/managed-agent-sandbox@sha256:23c4bb56a02141d3a6997c2236c8e2f43c6174c79f6f86ef72b9c8fbd3142877
    docker tag ghcr.io/superduck-ai/managed-agent-sandbox@sha256:23c4bb56a02141d3a6997c2236c8e2f43c6174c79f6f86ef72b9c8fbd3142877 managed-agent-sandbox:latest
    ```

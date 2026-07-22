@@ -4,13 +4,13 @@
 
 Cloud Environment 继续保存并回显 Claude-compatible `config.packages`，只支持 `apt`、`cargo`、`gem`、`go`、`npm`、`pip` 六个数组。OMA 不增加 Build、Artifact、Runtime Version、Secret、registry 或 init-script API；Packages 只在每个新 Session Sandbox 中安装一次。
 
-新 Environment 默认直接使用以下本地 Docker 镜像标签，保持 e2b-local 原有的 Template 直传逻辑：
+新 Environment 默认直接使用以下 E2B Template 名称，保持 Provider 的 Template 直传逻辑：
 
 ```text
-managed-agent-sandbox:latest
+managed-agent-sandbox
 ```
 
-本地部署时先拉取 `ghcr.io/superduck-ai/managed-agent-sandbox@sha256:23c4bb56a02141d3a6997c2236c8e2f43c6174c79f6f86ef72b9c8fbd3142877`，再将其标记为 `managed-agent-sandbox:latest`。Hosted E2B 部署则必须在 OMA 上线前预置并验证同名的 `managed-agent-sandbox:latest` Template/tag；这是部署前置条件，不在应用运行时静默回退到旧 Template。OMA 不增加别名解析层，YAML 配置 `e2b.template` 的值仍原样传给 provider；该配置仍可供有意测试其他镜像或 Template 时覆盖。migration `00018` 将数据库列对新记录的默认值更新为该标签，不改写现有 Environment；Environment API 创建路径使用同一个应用默认值。
+本地部署时先拉取 `ghcr.io/superduck-ai/managed-agent-sandbox@sha256:23c4bb56a02141d3a6997c2236c8e2f43c6174c79f6f86ef72b9c8fbd3142877`，再将其标记为 Docker 的 `managed-agent-sandbox:latest`；OMA 仍使用裸 Template 名称 `managed-agent-sandbox`。Hosted E2B 部署则必须在 OMA 上线前创建并验证同名 Template，并让它的 `default` tag 指向通过验收的 build。E2B 将裸名称解析为 `managed-agent-sandbox:default`，而不是 `:latest`；OMA 不增加别名解析层，YAML 配置值仍原样传给 provider。migration `00019` 将数据库默认值和现有的精确 `managed-agent-sandbox:latest` 引用统一为裸名称，其他自定义 Template 不受影响；Environment API 创建路径使用同一个应用默认值。
 
 ## 2. 启动顺序
 
@@ -25,7 +25,7 @@ sequenceDiagram
 
     Runner->>Runner: 准备 MCP hosts 与 skill mount（仅内存）
     Runner->>Runner: Resolve template/network（包含 MCP hosts）
-    Runner->>E2B: Create(managed-agent-sandbox:latest, skill mount)
+    Runner->>E2B: Create(managed-agent-sandbox, skill mount)
     alt Packages 非空
         Runner->>E2B: 写入 packages.v1.json
         Runner->>E2B: 写入固定 provisioner
@@ -107,7 +107,7 @@ graceful stop 同样采用 best-effort provider 清理：`stopping` 写入和 Ki
 - `tests/environments_api_test.go`：官方 Go SDK 强类型创建、更新、读取与列出 Packages 配置；
 - `tests/environments_runner_cloud_test.go`：六类 package manifest、provisioner/startup 写入顺序、MCP host network resolution、固定命令不含 spec、provisioning/metadata 失败或 stop 不创建 code session、Packages 安装期间写入的 Session event 进入初始 inbound queue、状态写失败仍 Kill 并停止 Work，且失败日志不输出 launch stdin；
 - `tests/environments_packages_lifecycle_e2e_test.go`（`e2b_integration` 与 `e2e` build tag）：在旧 Session Sandbox 安装 `six==1.16.0` 后把 Environment 更新为 `six==1.17.0`，确认旧 Sandbox 不变而新 Sandbox 使用更新后的配置，并用同一路径的不同文件内容验证两个 Session 文件系统相互隔离；
-- `tests/environments_full_e2b_bridge_integration_test.go`（`e2b_integration` 与 `e2e` build tag）：通过官方 Go SDK 创建含六类 Packages 的 Environment，使用 `managed-agent-sandbox:latest` 标签，真实安装并 probe `ffmpeg`、`rg`、`rake`、来自不同 module/version 的 `goimports` 与 `addlicense`、`tsc`、`numpy`，确认 Environment Manager 已运行，并让 Claude Agent 调用已安装的 `rg` 写出版本证明。
+- `tests/environments_full_e2b_bridge_integration_test.go`（`e2b_integration` 与 `e2e` build tag）：通过官方 Go SDK 创建含六类 Packages 的 Environment，使用 `managed-agent-sandbox` Template 的默认 build，真实安装并 probe `ffmpeg`、`rg`、`rake`、来自不同 module/version 的 `goimports` 与 `addlicense`、`tsc`、`numpy`，确认 Environment Manager 已运行，并让 Claude Agent 调用已安装的 `rg` 写出版本证明。
 
 CI 即使不具备真实 E2B 凭证，也必须用 `go test ./tests -tags='e2b_integration e2e' -run '^$'` 编译 tagged acceptance tests，避免验收路径在普通 `go test ./...` 之外失效。
 

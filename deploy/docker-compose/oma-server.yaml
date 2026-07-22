@@ -33,7 +33,7 @@ anthropic_upstream:
 e2b:
   api_url: http://host.docker.internal:3099
   sandbox_url: http://host.docker.internal:3099
-  template: managed-agent-sandbox:latest
+  template: managed-agent-sandbox
 
 code_session:
   sandbox_api_base_url: http://host.docker.internal:38080

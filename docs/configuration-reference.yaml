@@ -53,7 +53,7 @@ e2b:
   api_url: ""
   sandbox_url: ""
   debug: false
-  template: managed-agent-sandbox:latest
+  template: managed-agent-sandbox
   request_timeout: 60s
   sandbox_timeout: 5m
 

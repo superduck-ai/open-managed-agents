@@ -2,7 +2,7 @@ package config
 
 import "time"
 
-const DefaultE2BTemplate = "managed-agent-sandbox:latest"
+const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{

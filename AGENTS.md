@@ -111,6 +111,15 @@
 - 不要为了凑文档而写重复内容；优先更新最贴近该功能的后端、前端或跨端设计文档，并保持实现细节、兼容说明和测试计划一致。
 - 编写或更新设计文档时，优先用 Mermaid 辅助说明复杂流程、状态机、组件/服务依赖、时序交互和数据流；图示应服务于理解，不要替代必要的文字说明。
 
+## Go 数据库访问与 sqlx 渐进迁移
+
+- 新增普通 SQL 查询，或本次任务已经实质修改到的既有普通查询，默认使用 `github.com/jmoiron/sqlx`；不要为了统一形式而批量改写本次任务未涉及的 `pgx` 代码。
+- `sqlx` 必须通过 `pgx/stdlib` 复用应用现有的唯一 `pgxpool`，不得为它另建连接池。关闭数据库时同时释放 `sqlx` 包装层与底层 pool，但不能让两者形成重复连接或彼此独立的容量配置。
+- 查询优先使用命名参数和带 `db` tag 的数据库行结构，并通过 `GetContext`、`SelectContext` 或 `StructScan` 显式映射；数据库行、领域模型和 API DTO 语义不一致时应分别定义并在边界转换，不要让数据库 tag 或 nullable/编码细节泄漏到业务模型。
+- 使用 sqlx 命名参数的 PostgreSQL SQL 不要写 `value::type`，因为冒号可能与命名参数解析冲突；统一写成 `CAST(value AS type)`。
+- 已有 `pgx.Tx` 事务链不得只迁移其中一段，避免同一业务事务跨 `pgx` 与 `sqlx` 两个句柄。事务编排、批量/COPY、PostgreSQL 特有类型或 API，以及尚未进入本次修改范围的既有路径，可以继续使用原生 `pgx`；只有能够保持完整事务边界时才整体迁移。
+- sqlx 迁移至少覆盖查询生成与参数绑定单测；涉及 nullable、JSON、数组、自定义类型或 PostgreSQL cast 时，还要增加真实 PostgreSQL 测试，验证命名参数绑定和结构体扫描，而不能只依赖 mock。
+
 ## PostgreSQL Schema 规则
 
 - 不要创建 PostgreSQL 外键约束。

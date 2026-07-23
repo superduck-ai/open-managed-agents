@@ -236,11 +236,11 @@ func uploadResults(ctx context.Context, store storage.ObjectStore, database *db.
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
-	// 使用子 context，使 Put 提前返回时可以中断数据库读取；如果 producer
+	// 使用子 context，使 Upload 提前返回时可以中断数据库读取；如果 producer
 	// 已经阻塞在 Write，后续关闭 pipe 会负责解除阻塞。
 	producerCtx, cancelProducer := context.WithCancel(ctx)
 	defer cancelProducer()
-	// 使用带缓冲的结果通道，避免 Put 返回期间 producer 因上报结果而再次阻塞。
+	// 使用带缓冲的结果通道，避免 Upload 返回期间 producer 因上报结果而再次阻塞。
 	producerDone := make(chan error, 1)
 	go func() {
 		producerErr := writeResultsJSONL(producerCtx, database, batch.ID, pw)
@@ -248,25 +248,25 @@ func uploadResults(ctx context.Context, store storage.ObjectStore, database *db.
 		producerDone <- producerErr
 	}()
 	reader := newCountingHashReader(pr)
-	putErr := store.Put(ctx, key, reader, -1, "application/x-jsonl")
-	// Put 可能在未消费完 body 时失败。等待 producer 前必须先关闭读取端，
+	_, uploadErr := store.Upload(ctx, key, reader, storage.UploadOptions{Size: -1, ContentType: "application/x-jsonl"})
+	// Upload 可能在未消费完 body 时失败。等待 producer 前必须先关闭读取端，
 	// 让阻塞在 PipeWriter.Write 的 producer 能够退出。
 	cancelProducer()
-	if putErr != nil {
-		_ = pr.CloseWithError(putErr)
+	if uploadErr != nil {
+		_ = pr.CloseWithError(uploadErr)
 	} else {
 		_ = pr.Close()
 	}
 	producerErr := <-producerDone
-	if putErr != nil {
+	if uploadErr != nil {
 		// 优先保留真实的存储错误；producer 错误通常只是上述取消操作或
 		// CloseWithError 派生出的后续错误。
-		return "", "", 0, "", putErr
+		return "", "", 0, "", uploadErr
 	}
 	if producerErr != nil {
 		return "", "", 0, "", producerErr
 	}
-	return store.Bucket(), key, reader.Size(), reader.SHA256Hex(), nil
+	return store.Name(), key, reader.Size(), reader.SHA256Hex(), nil
 }
 
 func writeResultsJSONL(ctx context.Context, database *db.DB, batchID int64, w io.Writer) error {

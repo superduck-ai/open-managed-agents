@@ -244,6 +244,19 @@ func TestDeploymentsAPI(t *testing.T) {
 		if !strings.HasPrefix(run.ID, "drun_") || run.DeploymentID != created.ID || run.SessionID == nil || *run.SessionID == "" {
 			t.Fatalf("unexpected deployment run: %+v", run)
 		}
+		var filesystemCount int
+		if err := app.db.Pool.QueryRow(context.Background(), `
+			select count(*)
+			from filestore_filesystems fs
+			join workspaces w on w.uuid = fs.workspace_uuid
+			join sessions s on s.uuid = fs.session_uuid and s.workspace_id = w.id
+			where s.external_id = $1 and fs.deleted_at is null
+		`, *run.SessionID).Scan(&filesystemCount); err != nil {
+			t.Fatalf("count deployment Session filesystem: %v", err)
+		}
+		if filesystemCount != 1 {
+			t.Fatalf("deployment Session filesystems = %d, want 1", filesystemCount)
+		}
 		if !strings.Contains(string(run.TriggerContext), `"manual"`) || string(run.Error) != "null" {
 			t.Fatalf("unexpected run trigger/error: %+v", run)
 		}

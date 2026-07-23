@@ -27,38 +27,68 @@ const (
 
 // Object is a streamed S3 object. Size is -1 when the response omits Content-Length.
 type Object struct {
-	Body        io.ReadCloser
-	Size        int64
-	ContentType string
+	Body         io.ReadCloser
+	Size         int64
+	ContentType  string
+	ContentRange string
+	ETag         string
+	VersionID    string
 }
 
+// Client 复用同一套对象存储连接与凭证，并按名称派生绑定单个 bucket 的存储边界。
+type Client interface {
+	ForBucket(name string) (ObjectStore, error)
+}
+
+// ObjectStore 表示绑定到单个 bucket 的对象操作边界。
 type ObjectStore interface {
-	EnsureBucket(ctx context.Context) error
-	Put(ctx context.Context, key string, body io.Reader, size int64, contentType string) error
-	Get(ctx context.Context, key string) (Object, error)
-	Delete(ctx context.Context, key string) error
-	Bucket() string
+	Ensure(ctx context.Context) error
+	Name() string
+	Upload(ctx context.Context, key string, body io.Reader, opts UploadOptions) (UploadResult, error)
+	Open(ctx context.Context, key string, byteRange *ByteRange) (Object, error)
+	Copy(ctx context.Context, sourceKey, destinationKey string) (CopyResult, error)
+	Delete(ctx context.Context, key string, opts DeleteOptions) error
 }
 
+// s3API 只保留适配器实际使用的 AWS S3 Client 能力，便于在单元测试中替换底层 SDK。
 type s3API interface {
 	HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error)
 	CreateBucket(context.Context, *s3.CreateBucketInput, ...func(*s3.Options)) (*s3.CreateBucketOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	CopyObject(context.Context, *s3.CopyObjectInput, ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	GetBucketVersioning(context.Context, *s3.GetBucketVersioningInput, ...func(*s3.Options)) (*s3.GetBucketVersioningOutput, error)
+	ListObjectVersions(context.Context, *s3.ListObjectVersionsInput, ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error)
 }
 
-type objectUploader interface {
+// transferManagerAPI 只描述流式传输所需能力，不把完整 Transfer Manager 暴露给 ObjectStore。
+type transferManagerAPI interface {
+	GetObject(ctx context.Context, input *transfermanager.GetObjectInput, opts ...func(*transfermanager.Options)) (*transfermanager.GetObjectOutput, error)
 	UploadObject(context.Context, *transfermanager.UploadObjectInput, ...func(*transfermanager.Options)) (*transfermanager.UploadObjectOutput, error)
 }
 
-type S3Store struct {
+// S3Client 复用一套 AWS SDK 客户端，为多个 ObjectStore 提供服务。
+type S3Client struct {
 	client   s3API
-	uploader objectUploader
-	bucket   string
+	uploader transferManagerAPI
 	region   string
 }
 
-func New(cfg config.StorageConfig) (ObjectStore, error) {
+// s3Store 保存不可变的 bucket 名称，并共享 S3Client 已初始化的 SDK 依赖。
+type s3Store struct {
+	client   s3API
+	uploader transferManagerAPI
+	name     string
+	region   string
+}
+
+var (
+	_ Client      = (*S3Client)(nil)
+	_ ObjectStore = (*s3Store)(nil)
+)
+
+// New 根据存储配置创建可复用于多个 bucket 的客户端。
+func New(cfg config.StorageConfig) (Client, error) {
 	switch cfg.Type {
 	case config.StorageTypeS3:
 		return newS3(cfg.S3)
@@ -67,7 +97,7 @@ func New(cfg config.StorageConfig) (ObjectStore, error) {
 	}
 }
 
-func newS3(cfg config.S3Config) (*S3Store, error) {
+func newS3(cfg config.S3Config) (*S3Client, error) {
 	endpoint, err := normalizeEndpoint(cfg.Endpoint)
 	if err != nil {
 		return nil, err
@@ -77,7 +107,20 @@ func newS3(cfg config.S3Config) (*S3Store, error) {
 		configureS3Options(options, endpoint, cfg.ForcePathStyle)
 	})
 	uploader := transfermanager.New(client, configureTransferOptions)
-	return &S3Store{client: client, uploader: uploader, bucket: cfg.Bucket, region: cfg.Region}, nil
+	return &S3Client{client: client, uploader: uploader, region: cfg.Region}, nil
+}
+
+// ForBucket 返回绑定到指定 bucket 的对象存储，不执行网络请求或创建远端 bucket。
+func (c *S3Client) ForBucket(name string) (ObjectStore, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, ErrBucketNameRequired
+	}
+	return &s3Store{
+		client:   c.client,
+		uploader: c.uploader,
+		name:     name,
+		region:   c.region,
+	}, nil
 }
 
 func newAWSConfig(cfg config.S3Config) aws.Config {
@@ -114,83 +157,32 @@ func configureTransferOptions(options *transfermanager.Options) {
 	options.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 }
 
-func (s *S3Store) Bucket() string {
-	return s.bucket
+func (b *s3Store) Name() string {
+	return b.name
 }
 
-func (s *S3Store) EnsureBucket(ctx context.Context) error {
-	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
+func (b *s3Store) Ensure(ctx context.Context) error {
+	_, err := b.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(b.name)})
 	if err == nil {
 		return nil
 	}
 	if !isBucketMissing(err) {
-		return fmt.Errorf("check bucket %q: %w", s.bucket, err)
+		return fmt.Errorf("check bucket %q: %w", b.name, err)
 	}
 
-	input := &s3.CreateBucketInput{Bucket: aws.String(s.bucket)}
-	if s.region != "us-east-1" {
+	input := &s3.CreateBucketInput{Bucket: aws.String(b.name)}
+	if b.region != "us-east-1" {
 		input.CreateBucketConfiguration = &types.CreateBucketConfiguration{
-			LocationConstraint: types.BucketLocationConstraint(s.region),
+			LocationConstraint: types.BucketLocationConstraint(b.region),
 		}
 	}
-	if _, err := s.client.CreateBucket(ctx, input); err != nil {
+	if _, err := b.client.CreateBucket(ctx, input); err != nil {
 		if !isBucketCreateConflict(err) {
-			return fmt.Errorf("create bucket %q: %w", s.bucket, err)
+			return fmt.Errorf("create bucket %q: %w", b.name, err)
 		}
-		if _, recheckErr := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)}); recheckErr != nil {
-			return fmt.Errorf("create bucket %q returned a conflict (%w); recheck failed: %w", s.bucket, err, recheckErr)
+		if _, recheckErr := b.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(b.name)}); recheckErr != nil {
+			return fmt.Errorf("create bucket %q returned a conflict (%w); recheck failed: %w", b.name, err, recheckErr)
 		}
-	}
-	return nil
-}
-
-func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, size int64, contentType string) error {
-	input := &transfermanager.UploadObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-		Body:   body,
-	}
-	if size >= 0 {
-		input.ContentLength = aws.Int64(size)
-	}
-	if contentType != "" {
-		input.ContentType = aws.String(contentType)
-	}
-	if _, err := s.uploader.UploadObject(ctx, input); err != nil {
-		return fmt.Errorf("put object %q: %w", key, err)
-	}
-	return nil
-}
-
-func (s *S3Store) Get(ctx context.Context, key string) (Object, error) {
-	output, err := s.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return Object{}, fmt.Errorf("get object %q: %w", key, err)
-	}
-	if output == nil || output.Body == nil {
-		return Object{}, fmt.Errorf("get object %q: S3 returned an empty response body", key)
-	}
-	size := int64(-1)
-	if output.ContentLength != nil {
-		size = *output.ContentLength
-	}
-	return Object{
-		Body:        output.Body,
-		Size:        size,
-		ContentType: aws.ToString(output.ContentType),
-	}, nil
-}
-
-func (s *S3Store) Delete(ctx context.Context, key string) error {
-	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return fmt.Errorf("delete object %q: %w", key, err)
 	}
 	return nil
 }

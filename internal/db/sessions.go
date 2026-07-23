@@ -194,6 +194,9 @@ func insertSessionTx(ctx context.Context, tx pgx.Tx, input CreateSessionInput) (
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
+	if _, err := insertSessionFilesystemTx(ctx, tx, session); err != nil {
+		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
+	}
 
 	input.Thread.SessionID = session.ID
 	input.Thread.SessionExternalID = session.ExternalID
@@ -381,6 +384,9 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 		returning `+sessionColumns()+`
 	`, workspaceID, externalID))
 	if err != nil {
+		return Session{}, err
+	}
+	if err := retireSessionFilesystemTx(ctx, tx, session); err != nil {
 		return Session{}, err
 	}
 	if _, err := tx.Exec(ctx, `

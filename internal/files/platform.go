@@ -140,7 +140,7 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 	}
 	objectKey := fmt.Sprintf("workspaces/%s/files/%s/%s", scope.workspaceUUID, fileUUID, sanitizeForKey(filename))
 
-	if err := h.store.Put(r.Context(), objectKey, bytes.NewReader(content), int64(len(content)), contentType); err != nil {
+	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(content), storage.UploadOptions{Size: int64(len(content)), ContentType: contentType}); err != nil {
 		log.Printf("put platform upload object: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store file"))
 		return
@@ -155,7 +155,7 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 		MimeType:          contentType,
 		SizeBytes:         int64(len(content)),
 		SHA256:            hex.EncodeToString(sum[:]),
-		S3Bucket:          h.store.Bucket(),
+		S3Bucket:          h.store.Name(),
 		S3Key:             objectKey,
 		Downloadable:      false,
 		CreatedByAPIKeyID: principal.APIKeyID,
@@ -176,7 +176,7 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 	if hasThumbnail {
 		thumbnailKey := platformThumbnailKey(record)
 		if thumbnailKey != "" {
-			if err := h.store.Put(r.Context(), thumbnailKey, bytes.NewReader(thumbnail.Content), int64(len(thumbnail.Content)), thumbnail.ContentType); err != nil {
+			if _, err := h.store.Upload(r.Context(), thumbnailKey, bytes.NewReader(thumbnail.Content), storage.UploadOptions{Size: int64(len(thumbnail.Content)), ContentType: thumbnail.ContentType}); err != nil {
 				log.Printf("put platform thumbnail object file_uuid=%s key=%s: %v", record.UUID, thumbnailKey, err)
 			} else {
 				thumbnailWidth = thumbnail.Width
@@ -232,7 +232,7 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 	objectContentType := record.MimeType
 	if variant == "thumbnail" {
 		if thumbnailKey := platformThumbnailKey(record); thumbnailKey != "" {
-			thumbnailObject, thumbnailErr := h.store.Get(r.Context(), thumbnailKey)
+			thumbnailObject, thumbnailErr := h.store.Open(r.Context(), thumbnailKey, nil)
 			if thumbnailErr == nil {
 				objectKey = thumbnailKey
 				objectContentType = record.MimeType
@@ -245,7 +245,7 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	object, err := h.store.Get(r.Context(), objectKey)
+	object, err := h.store.Open(r.Context(), objectKey, nil)
 	if err != nil {
 		log.Printf("get platform file %s object: %v", variant, err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file"))

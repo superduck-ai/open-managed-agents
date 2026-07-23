@@ -155,7 +155,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	versionValue := newVersionString()
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skillUUID, versionValue, sanitizeForKey(pkg.Directory))
 
-	if err := h.store.Put(r.Context(), objectKey, bytes.NewReader(pkg.Zip), pkg.Size, skillArchiveContentType); err != nil {
+	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
 		log.Printf("put skill object: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store skill"))
 		return
@@ -178,7 +178,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		Name:              pkg.Name,
 		Description:       pkg.Description,
 		Directory:         pkg.Directory,
-		S3Bucket:          h.store.Bucket(),
+		S3Bucket:          h.store.Name(),
 		S3Key:             objectKey,
 		SizeBytes:         pkg.Size,
 		SHA256:            pkg.SHA256,
@@ -186,7 +186,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:         now,
 	})
 	if err != nil {
-		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceID, h.store.Bucket(), objectKey, versionID)
+		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceID, h.store.Name(), objectKey, versionID)
 		var displayTitleConflict *db.SkillDisplayTitleConflictError
 		if errors.As(err, &displayTitleConflict) {
 			httpapi.WriteError(w, r, httpapi.NewError(
@@ -462,7 +462,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 	versionUUID := uuid.NewString()
 	versionValue := newVersionString()
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skill.UUID, versionValue, sanitizeForKey(pkg.Directory))
-	if err := h.store.Put(r.Context(), objectKey, bytes.NewReader(pkg.Zip), pkg.Size, skillArchiveContentType); err != nil {
+	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
 		log.Printf("put skill version object: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store skill version"))
 		return
@@ -476,7 +476,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		Name:              pkg.Name,
 		Description:       pkg.Description,
 		Directory:         pkg.Directory,
-		S3Bucket:          h.store.Bucket(),
+		S3Bucket:          h.store.Name(),
 		S3Key:             objectKey,
 		SizeBytes:         pkg.Size,
 		SHA256:            pkg.SHA256,
@@ -484,7 +484,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		CreatedAt:         now,
 	})
 	if err != nil {
-		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceID, h.store.Bucket(), objectKey, versionID)
+		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceID, h.store.Name(), objectKey, versionID)
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
 			return
@@ -723,7 +723,7 @@ func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillI
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download skill version"))
 		return
 	}
-	object, err := h.store.Get(r.Context(), record.S3Key)
+	object, err := h.store.Open(r.Context(), record.S3Key, nil)
 	if err != nil {
 		log.Printf("get skill object skill_id=%s version=%s key=%s: %v", skillID, record.Version, record.S3Key, err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download skill version"))
@@ -760,7 +760,7 @@ func (h *Handler) resolveVersion(ctx context.Context, workspaceID int64, skillID
 }
 
 func (h *Handler) downloadBuiltinSkill(w http.ResponseWriter, r *http.Request, version db.BuiltinSkillVersion) {
-	object, err := h.store.Get(r.Context(), version.S3Key)
+	object, err := h.store.Open(r.Context(), version.S3Key, nil)
 	if err != nil {
 		log.Printf("get builtin skill object skill_id=%s version=%s key=%s: %v", version.SkillExternalID, version.Version, version.S3Key, err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download skill version"))
@@ -805,7 +805,7 @@ func (h *Handler) enqueueSkillPrewarmFanout(ctx context.Context, workspaceID int
 func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, workspaceID int64, bucket, key, externalID string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if err := h.store.Delete(cleanupCtx, key); err != nil {
+	if err := h.store.Delete(cleanupCtx, key, storage.DeleteOptions{}); err != nil {
 		log.Printf("delete skill object after metadata failure key=%s: %v", key, err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, workspaceID, bucket, key, externalID); enqueueErr != nil {
 			log.Printf("enqueue object cleanup key=%s: %v", key, enqueueErr)
@@ -814,7 +814,7 @@ func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context,
 }
 
 func (h *Handler) deleteObjectOrEnqueueCleanup(ctx context.Context, version db.SkillVersion) {
-	if err := h.store.Delete(ctx, version.S3Key); err != nil {
+	if err := h.store.Delete(ctx, version.S3Key, storage.DeleteOptions{}); err != nil {
 		log.Printf("delete skill object skill_id=%s version=%s key=%s: %v", version.SkillExternalID, version.Version, version.S3Key, err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(ctx, version.WorkspaceID, version.S3Bucket, version.S3Key, version.ExternalID); enqueueErr != nil {
 			log.Printf("enqueue object cleanup skill_id=%s version=%s key=%s: %v", version.SkillExternalID, version.Version, version.S3Key, enqueueErr)

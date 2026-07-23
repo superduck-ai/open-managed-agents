@@ -67,3 +67,4 @@ logs/
 # Codex 全局个人偏好放 ~/.codex/AGENTS.override.md，不在此处。
 CLAUDE.local.md
 AGENTS.override.md
+.worktrees/

@@ -215,7 +215,7 @@ func (r *RuntimeResolver) loadBuiltinArchive(ctx context.Context, record db.Buil
 	if r.store == nil {
 		return nil, errors.New("built-in skill object store is unavailable")
 	}
-	object, err := r.store.Get(ctx, record.S3Key)
+	object, err := r.store.Open(ctx, record.S3Key, nil)
 	if err != nil {
 		return nil, fmt.Errorf("read built-in skill object %s@%s: %w", record.SkillExternalID, record.Version, err)
 	}
@@ -231,7 +231,7 @@ func (r *RuntimeResolver) loadBuiltinArchive(ctx context.Context, record db.Buil
 }
 
 func (r *RuntimeResolver) loadCustomArchive(ctx context.Context, record db.SkillVersion) ([]byte, error) {
-	object, err := r.store.Get(ctx, record.S3Key)
+	object, err := r.store.Open(ctx, record.S3Key, nil)
 	if err != nil {
 		return nil, fmt.Errorf("read custom skill object %s@%s: %w", record.SkillExternalID, record.Version, err)
 	}

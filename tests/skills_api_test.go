@@ -19,6 +19,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 type skillAPIResponse struct {
@@ -852,7 +853,7 @@ func seedBuiltinSkill(t *testing.T, app *testApp, store *fakeStore, skillID, ver
 	sum := sha256.Sum256(archive)
 	shaHex := hex.EncodeToString(sum[:])
 	key := "builtin-skills/" + skillID + "/versions/" + version + "/" + shaHex + ".skill"
-	if err := store.Put(context.Background(), key, bytes.NewReader(archive), int64(len(archive)), "application/zip"); err != nil {
+	if _, err := store.Upload(context.Background(), key, bytes.NewReader(archive), storage.UploadOptions{Size: int64(len(archive)), ContentType: "application/zip"}); err != nil {
 		t.Fatalf("seed builtin object: %v", err)
 	}
 	now := time.Now().UTC()
@@ -866,7 +867,7 @@ func seedBuiltinSkill(t *testing.T, app *testApp, store *fakeStore, skillID, ver
 		Name:        skillID,
 		Description: "builtin " + skillID,
 		Directory:   skillID,
-		S3Bucket:    store.Bucket(),
+		S3Bucket:    store.Name(),
 		S3Key:       key,
 		SizeBytes:   int64(len(archive)),
 		SHA256:      shaHex,

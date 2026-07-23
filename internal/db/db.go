@@ -15,6 +15,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 )
 
 var (
@@ -32,6 +34,7 @@ var (
 
 type DB struct {
 	Pool *pgxpool.Pool
+	sql  *sqlx.DB
 }
 
 type APIKey struct {
@@ -47,7 +50,7 @@ type APIKey struct {
 func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 	pool, err := openPool(ctx, cfg.Database.URL)
 	if err == nil {
-		return &DB{Pool: pool}, nil
+		return newDB(pool), nil
 	}
 
 	if bootstrapErr := EnsureDatabase(ctx, cfg.Database.URL); bootstrapErr != nil {
@@ -58,7 +61,16 @@ func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect database after bootstrap: %w", err)
 	}
-	return &DB{Pool: pool}, nil
+	return newDB(pool), nil
+}
+
+func newDB(pool *pgxpool.Pool) *DB {
+	// sqlx 只提供查询与映射能力；底层仍复用同一个 pgxpool，不另建连接池。
+	standardDB := stdlib.OpenDBFromPool(pool)
+	return &DB{
+		Pool: pool,
+		sql:  sqlx.NewDb(standardDB, "pgx"),
+	}
 }
 
 func openPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
@@ -79,7 +91,13 @@ func openPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 }
 
 func (d *DB) Close() {
-	if d != nil && d.Pool != nil {
+	if d == nil {
+		return
+	}
+	if d.sql != nil {
+		_ = d.sql.Close()
+	}
+	if d.Pool != nil {
 		d.Pool.Close()
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,10 +17,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
-func TestNewObjectStore(t *testing.T) {
+func TestNewClient(t *testing.T) {
 	t.Run("failure unsupported type", func(t *testing.T) {
 		_, err := New(config.StorageConfig{Type: "filesystem"})
 		if err == nil || !strings.Contains(err.Error(), "unsupported object storage type") {
@@ -26,8 +29,15 @@ func TestNewObjectStore(t *testing.T) {
 		}
 	})
 
+	t.Run("failure blank bucket name", func(t *testing.T) {
+		client := &S3Client{}
+		if _, err := client.ForBucket(" \t"); !errors.Is(err, ErrBucketNameRequired) {
+			t.Fatalf("ForBucket(blank) error = %v, want %v", err, ErrBucketNameRequired)
+		}
+	})
+
 	t.Run("success s3", func(t *testing.T) {
-		store, err := New(config.StorageConfig{
+		client, err := New(config.StorageConfig{
 			Type: config.StorageTypeS3,
 			S3: config.S3Config{
 				Endpoint:        "http://localhost:9000",
@@ -41,13 +51,54 @@ func TestNewObjectStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
-		if store.Bucket() != "test-bucket" {
-			t.Fatalf("Bucket() = %q, want test-bucket", store.Bucket())
+		if _, ok := client.(*S3Client); !ok {
+			t.Fatalf("New() type = %T, want *S3Client", client)
 		}
-		if _, ok := store.(*S3Store); !ok {
-			t.Fatalf("New() type = %T, want *S3Store", store)
+
+		first, err := client.ForBucket("first-bucket")
+		if err != nil {
+			t.Fatalf("ForBucket(first-bucket) error = %v", err)
+		}
+		second, err := client.ForBucket("second-bucket")
+		if err != nil {
+			t.Fatalf("ForBucket(second-bucket) error = %v", err)
+		}
+		if first.Name() != "first-bucket" || second.Name() != "second-bucket" {
+			t.Fatalf("bucket names = %q/%q, want first-bucket/second-bucket", first.Name(), second.Name())
+		}
+		firstS3 := first.(*s3Store)
+		secondS3 := second.(*s3Store)
+		if firstS3.client != secondS3.client || firstS3.uploader != secondS3.uploader {
+			t.Fatal("bucket handles do not share the client's AWS SDK dependencies")
 		}
 	})
+}
+
+func TestS3ClientObjectStoresRouteOperationsIndependently(t *testing.T) {
+	var deletedBuckets []string
+	client := &S3Client{client: &fakeS3API{
+		deleteObject: func(_ context.Context, input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+			deletedBuckets = append(deletedBuckets, aws.ToString(input.Bucket))
+			return &s3.DeleteObjectOutput{}, nil
+		},
+	}}
+	first, err := client.ForBucket("first-bucket")
+	if err != nil {
+		t.Fatalf("ForBucket(first-bucket) error = %v", err)
+	}
+	second, err := client.ForBucket("second-bucket")
+	if err != nil {
+		t.Fatalf("ForBucket(second-bucket) error = %v", err)
+	}
+	if err := first.Delete(context.Background(), "first-key", DeleteOptions{}); err != nil {
+		t.Fatalf("first Delete() error = %v", err)
+	}
+	if err := second.Delete(context.Background(), "second-key", DeleteOptions{}); err != nil {
+		t.Fatalf("second Delete() error = %v", err)
+	}
+	if !slices.Equal(deletedBuckets, []string{"first-bucket", "second-bucket"}) {
+		t.Fatalf("DeleteObject buckets = %v, want first-bucket/second-bucket", deletedBuckets)
+	}
 }
 
 func TestNormalizeEndpoint(t *testing.T) {
@@ -147,7 +198,7 @@ func TestTransferConfiguration(t *testing.T) {
 	}
 }
 
-func TestS3StoreEnsureBucket(t *testing.T) {
+func TestS3BucketEnsure(t *testing.T) {
 	t.Run("failure head forbidden does not create", func(t *testing.T) {
 		createCalls := 0
 		client := &fakeS3API{
@@ -159,10 +210,10 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				return &s3.CreateBucketOutput{}, nil
 			},
 		}
-		store := testStore(client, nil, "us-east-1")
-		err := store.EnsureBucket(context.Background())
+		store := testBucket(client, nil, "us-east-1")
+		err := store.Ensure(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "check bucket") {
-			t.Fatalf("EnsureBucket() error = %v, want check error", err)
+			t.Fatalf("Ensure() error = %v, want check error", err)
 		}
 		if createCalls != 0 {
 			t.Fatalf("CreateBucket calls = %d, want 0", createCalls)
@@ -180,9 +231,9 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				return &s3.CreateBucketOutput{}, nil
 			},
 		}
-		err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background())
+		err := testBucket(client, nil, "us-east-1").Ensure(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "check bucket") {
-			t.Fatalf("EnsureBucket() error = %v, want check error", err)
+			t.Fatalf("Ensure() error = %v, want check error", err)
 		}
 		if createCalls != 0 {
 			t.Fatalf("CreateBucket calls = %d, want 0", createCalls)
@@ -205,9 +256,9 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				return nil, createErr
 			},
 		}
-		err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background())
+		err := testBucket(client, nil, "us-east-1").Ensure(context.Background())
 		if !errors.Is(err, createErr) || !errors.Is(err, recheckErr) {
-			t.Fatalf("EnsureBucket() error = %v, want wrapped create and recheck errors", err)
+			t.Fatalf("Ensure() error = %v, want wrapped create and recheck errors", err)
 		}
 		if headCalls != 2 {
 			t.Fatalf("HeadBucket calls = %d, want 2", headCalls)
@@ -224,9 +275,9 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				return nil, createErr
 			},
 		}
-		err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background())
+		err := testBucket(client, nil, "us-east-1").Ensure(context.Background())
 		if !errors.Is(err, createErr) || !strings.Contains(err.Error(), "create bucket") {
-			t.Fatalf("EnsureBucket() error = %v, want wrapped create error", err)
+			t.Fatalf("Ensure() error = %v, want wrapped create error", err)
 		}
 	})
 
@@ -241,8 +292,8 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				return &s3.CreateBucketOutput{}, nil
 			},
 		}
-		if err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background()); err != nil {
-			t.Fatalf("EnsureBucket() error = %v", err)
+		if err := testBucket(client, nil, "us-east-1").Ensure(context.Background()); err != nil {
+			t.Fatalf("Ensure() error = %v", err)
 		}
 		if createCalls != 1 {
 			t.Fatalf("CreateBucket calls = %d, want 1", createCalls)
@@ -258,8 +309,8 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				return &s3.HeadBucketOutput{}, nil
 			},
 		}
-		if err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background()); err != nil {
-			t.Fatalf("EnsureBucket() error = %v", err)
+		if err := testBucket(client, nil, "us-east-1").Ensure(context.Background()); err != nil {
+			t.Fatalf("Ensure() error = %v", err)
 		}
 	})
 
@@ -277,8 +328,8 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				return nil, testS3Error{status: 0, code: "BucketAlreadyOwnedByYou"}
 			},
 		}
-		if err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background()); err != nil {
-			t.Fatalf("EnsureBucket() error = %v", err)
+		if err := testBucket(client, nil, "us-east-1").Ensure(context.Background()); err != nil {
+			t.Fatalf("Ensure() error = %v", err)
 		}
 		if headCalls != 2 {
 			t.Fatalf("HeadBucket calls = %d, want 2", headCalls)
@@ -291,8 +342,8 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				t.Fatalf("CreateBucketConfiguration = %#v, want nil", input.CreateBucketConfiguration)
 			}
 		})
-		if err := testStore(client, nil, "us-east-1").EnsureBucket(context.Background()); err != nil {
-			t.Fatalf("EnsureBucket() error = %v", err)
+		if err := testBucket(client, nil, "us-east-1").Ensure(context.Background()); err != nil {
+			t.Fatalf("Ensure() error = %v", err)
 		}
 	})
 
@@ -305,21 +356,21 @@ func TestS3StoreEnsureBucket(t *testing.T) {
 				t.Fatalf("LocationConstraint = %q, want %q", got, types.BucketLocationConstraintEuWest1)
 			}
 		})
-		if err := testStore(client, nil, "eu-west-1").EnsureBucket(context.Background()); err != nil {
-			t.Fatalf("EnsureBucket() error = %v", err)
+		if err := testBucket(client, nil, "eu-west-1").Ensure(context.Background()); err != nil {
+			t.Fatalf("Ensure() error = %v", err)
 		}
 	})
 }
 
-func TestS3StorePut(t *testing.T) {
+func TestS3BucketUploadOptionsAndStreaming(t *testing.T) {
 	t.Run("failure upload", func(t *testing.T) {
 		uploadErr := errors.New("upload failed")
 		uploader := &fakeUploader{upload: func(context.Context, *transfermanager.UploadObjectInput) (*transfermanager.UploadObjectOutput, error) {
 			return nil, uploadErr
 		}}
-		err := testStore(nil, uploader, "us-east-1").Put(context.Background(), "failed-key", strings.NewReader("body"), 4, "text/plain")
-		if !errors.Is(err, uploadErr) || !strings.Contains(err.Error(), "put object \"failed-key\"") {
-			t.Fatalf("Put() error = %v, want wrapped upload error", err)
+		_, err := testBucket(nil, uploader, "us-east-1").Upload(context.Background(), "failed-key", strings.NewReader("body"), UploadOptions{Size: 4, ContentType: "text/plain"})
+		if !errors.Is(err, uploadErr) || !strings.Contains(err.Error(), "upload") {
+			t.Fatalf("Upload() error = %v, want wrapped upload error", err)
 		}
 	})
 
@@ -328,15 +379,14 @@ func TestS3StorePut(t *testing.T) {
 		client := &failingMultipartS3API{uploadErr: uploadErr}
 		uploader := transfermanager.New(client, configureTransferOptions)
 		payload := bytes.Repeat([]byte("x"), int(multipartPartSizeBytes+1))
-		err := testStore(nil, uploader, "us-east-1").Put(
+		_, err := testBucket(nil, uploader, "us-east-1").Upload(
 			context.Background(),
 			"multipart-key",
 			bytes.NewReader(payload),
-			int64(len(payload)),
-			"application/octet-stream",
+			UploadOptions{Size: int64(len(payload)), ContentType: "application/octet-stream"},
 		)
 		if !errors.Is(err, uploadErr) {
-			t.Fatalf("Put() error = %v, want wrapped part upload error", err)
+			t.Fatalf("Upload() error = %v, want wrapped part upload error", err)
 		}
 		if client.abortCalls != 1 {
 			t.Fatalf("AbortMultipartUpload calls = %d, want 1", client.abortCalls)
@@ -349,8 +399,8 @@ func TestS3StorePut(t *testing.T) {
 			got = input
 			return &transfermanager.UploadObjectOutput{}, nil
 		}}
-		if err := testStore(nil, uploader, "us-east-1").Put(context.Background(), "known-key", strings.NewReader("body"), 4, "text/plain"); err != nil {
-			t.Fatalf("Put() error = %v", err)
+		if _, err := testBucket(nil, uploader, "us-east-1").Upload(context.Background(), "known-key", strings.NewReader("body"), UploadOptions{Size: 4, ContentType: "text/plain"}); err != nil {
+			t.Fatalf("Upload() error = %v", err)
 		}
 		assertUploadInput(t, got, "known-key", "text/plain")
 		if got.ContentLength == nil || aws.ToInt64(got.ContentLength) != 4 {
@@ -364,8 +414,8 @@ func TestS3StorePut(t *testing.T) {
 			got = input
 			return &transfermanager.UploadObjectOutput{}, nil
 		}}
-		if err := testStore(nil, uploader, "us-east-1").Put(context.Background(), "empty-content-type", strings.NewReader("body"), 4, ""); err != nil {
-			t.Fatalf("Put() error = %v", err)
+		if _, err := testBucket(nil, uploader, "us-east-1").Upload(context.Background(), "empty-content-type", strings.NewReader("body"), UploadOptions{Size: 4}); err != nil {
+			t.Fatalf("Upload() error = %v", err)
 		}
 		if got == nil {
 			t.Fatal("UploadObject input = nil")
@@ -381,8 +431,8 @@ func TestS3StorePut(t *testing.T) {
 			got = input
 			return &transfermanager.UploadObjectOutput{}, nil
 		}}
-		if err := testStore(nil, uploader, "us-east-1").Put(context.Background(), "stream-key", strings.NewReader("body"), -1, "application/jsonl"); err != nil {
-			t.Fatalf("Put() error = %v", err)
+		if _, err := testBucket(nil, uploader, "us-east-1").Upload(context.Background(), "stream-key", strings.NewReader("body"), UploadOptions{Size: -1, ContentType: "application/jsonl"}); err != nil {
+			t.Fatalf("Upload() error = %v", err)
 		}
 		assertUploadInput(t, got, "stream-key", "application/jsonl")
 		if got.ContentLength != nil {
@@ -404,16 +454,15 @@ func TestS3StorePut(t *testing.T) {
 			writeDone <- writeErr
 		}()
 
-		putErr := testStore(nil, uploader, "us-east-1").Put(
+		_, uploadErr := testBucket(nil, uploader, "us-east-1").Upload(
 			context.Background(),
 			"stream-multipart-key",
 			reader,
-			-1,
-			"application/octet-stream",
+			UploadOptions{Size: -1, ContentType: "application/octet-stream"},
 		)
-		if putErr != nil {
-			_ = reader.CloseWithError(putErr)
-			t.Fatalf("Put() error = %v", putErr)
+		if uploadErr != nil {
+			_ = reader.CloseWithError(uploadErr)
+			t.Fatalf("Upload() error = %v", uploadErr)
 		}
 		if writeErr := <-writeDone; writeErr != nil {
 			t.Fatalf("pipe writer error = %v", writeErr)
@@ -432,15 +481,15 @@ func TestS3StorePut(t *testing.T) {
 	})
 }
 
-func TestS3StoreGet(t *testing.T) {
+func TestS3BucketOpenWholeObject(t *testing.T) {
 	t.Run("failure get", func(t *testing.T) {
 		getErr := errors.New("get failed")
 		client := &fakeS3API{getObject: func(context.Context, *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
 			return nil, getErr
 		}}
-		_, err := testStore(client, nil, "us-east-1").Get(context.Background(), "failed-key")
-		if !errors.Is(err, getErr) || !strings.Contains(err.Error(), "get object \"failed-key\"") {
-			t.Fatalf("Get() error = %v, want wrapped get error", err)
+		_, err := testBucket(client, nil, "us-east-1").Open(context.Background(), "failed-key", nil)
+		if !errors.Is(err, getErr) || !strings.Contains(err.Error(), "open") {
+			t.Fatalf("Open() error = %v, want wrapped get error", err)
 		}
 	})
 
@@ -448,9 +497,9 @@ func TestS3StoreGet(t *testing.T) {
 		client := &fakeS3API{getObject: func(context.Context, *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
 			return nil, nil
 		}}
-		_, err := testStore(client, nil, "us-east-1").Get(context.Background(), "empty-key")
+		_, err := testBucket(client, nil, "us-east-1").Open(context.Background(), "empty-key", nil)
 		if err == nil || !strings.Contains(err.Error(), "empty response body") {
-			t.Fatalf("Get() error = %v, want empty response body error", err)
+			t.Fatalf("Open() error = %v, want empty response body error", err)
 		}
 	})
 
@@ -458,9 +507,9 @@ func TestS3StoreGet(t *testing.T) {
 		client := &fakeS3API{getObject: func(context.Context, *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
 			return &s3.GetObjectOutput{}, nil
 		}}
-		_, err := testStore(client, nil, "us-east-1").Get(context.Background(), "empty-key")
+		_, err := testBucket(client, nil, "us-east-1").Open(context.Background(), "empty-key", nil)
 		if err == nil || !strings.Contains(err.Error(), "empty response body") {
-			t.Fatalf("Get() error = %v, want empty response body error", err)
+			t.Fatalf("Open() error = %v, want empty response body error", err)
 		}
 	})
 
@@ -468,9 +517,9 @@ func TestS3StoreGet(t *testing.T) {
 		client := &fakeS3API{getObject: func(context.Context, *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
 			return &s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader("body"))}, nil
 		}}
-		object, err := testStore(client, nil, "us-east-1").Get(context.Background(), "unknown-size-key")
+		object, err := testBucket(client, nil, "us-east-1").Open(context.Background(), "unknown-size-key", nil)
 		if err != nil {
-			t.Fatalf("Get() error = %v", err)
+			t.Fatalf("Open() error = %v", err)
 		}
 		defer object.Body.Close()
 		if object.Size != -1 {
@@ -489,9 +538,9 @@ func TestS3StoreGet(t *testing.T) {
 				ContentType:   aws.String("text/plain"),
 			}, nil
 		}}
-		object, err := testStore(client, nil, "us-east-1").Get(context.Background(), "object-key")
+		object, err := testBucket(client, nil, "us-east-1").Open(context.Background(), "object-key", nil)
 		if err != nil {
-			t.Fatalf("Get() error = %v", err)
+			t.Fatalf("Open() error = %v", err)
 		}
 		defer object.Body.Close()
 		body, err := io.ReadAll(object.Body)
@@ -504,14 +553,14 @@ func TestS3StoreGet(t *testing.T) {
 	})
 }
 
-func TestS3StoreDelete(t *testing.T) {
+func TestS3BucketDelete(t *testing.T) {
 	t.Run("failure delete", func(t *testing.T) {
 		deleteErr := errors.New("delete failed")
 		client := &fakeS3API{deleteObject: func(context.Context, *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
 			return nil, deleteErr
 		}}
-		err := testStore(client, nil, "us-east-1").Delete(context.Background(), "failed-key")
-		if !errors.Is(err, deleteErr) || !strings.Contains(err.Error(), "delete object \"failed-key\"") {
+		err := testBucket(client, nil, "us-east-1").Delete(context.Background(), "failed-key", DeleteOptions{})
+		if !errors.Is(err, deleteErr) || !strings.Contains(err.Error(), "object storage delete") {
 			t.Fatalf("Delete() error = %v, want wrapped delete error", err)
 		}
 	})
@@ -523,37 +572,341 @@ func TestS3StoreDelete(t *testing.T) {
 			}
 			return &s3.DeleteObjectOutput{}, nil
 		}}
-		if err := testStore(client, nil, "us-east-1").Delete(context.Background(), "object-key"); err != nil {
+		if err := testBucket(client, nil, "us-east-1").Delete(context.Background(), "object-key", DeleteOptions{}); err != nil {
 			t.Fatalf("Delete() error = %v", err)
 		}
 	})
 }
 
+func TestS3BucketUploadReturnsObjectIdentityAndActualSize(t *testing.T) {
+	t.Parallel()
+
+	uploader := &fakeUploader{upload: func(_ context.Context, input *transfermanager.UploadObjectInput) (*transfermanager.UploadObjectOutput, error) {
+		contents, err := io.ReadAll(input.Body)
+		if err != nil {
+			return nil, err
+		}
+		if got := string(contents); got != "stream-without-known-size" {
+			t.Fatalf("UploadObject body = %q", got)
+		}
+		if aws.ToString(input.Key) != "objects/file" || aws.ToString(input.ContentType) != "text/plain" {
+			t.Fatalf("UploadObject input = key %q content type %q", aws.ToString(input.Key), aws.ToString(input.ContentType))
+		}
+		return &transfermanager.UploadObjectOutput{
+			ETag:      aws.String("\"upload-etag\""),
+			VersionID: aws.String("version-2"),
+		}, nil
+	}}
+	store := testBucket(&fakeS3API{}, uploader, "us-east-1")
+
+	result, err := store.Upload(
+		context.Background(),
+		"objects/file",
+		strings.NewReader("stream-without-known-size"),
+		UploadOptions{Size: -1, ContentType: "text/plain"},
+	)
+	if err != nil {
+		t.Fatalf("Upload() error = %v", err)
+	}
+	if result.Size != int64(len("stream-without-known-size")) || result.ETag != "upload-etag" || result.VersionID != "version-2" {
+		t.Fatalf("Upload() result = %+v", result)
+	}
+}
+
+func TestS3BucketOpenFormatsRangeAndReturnsMetadata(t *testing.T) {
+	t.Parallel()
+
+	var captured *s3.GetObjectInput
+	client := &fakeS3API{getObject: func(_ context.Context, input *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+		captured = input
+		return &s3.GetObjectOutput{
+			Body:          io.NopCloser(strings.NewReader("partial")),
+			ContentLength: aws.Int64(7),
+			ContentType:   aws.String("text/plain"),
+			ContentRange:  aws.String("bytes 2-8/10"),
+			ETag:          aws.String("\"etag\""),
+			VersionId:     aws.String("version"),
+		}, nil
+	}}
+	store := testBucket(client, nil, "us-east-1")
+
+	object, err := store.Open(context.Background(), "objects/file", &ByteRange{Offset: 2, Length: 7})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer object.Body.Close()
+	if captured == nil || aws.ToString(captured.Range) != "bytes=2-8" {
+		t.Fatalf("GetObject Range = %q", aws.ToString(captured.Range))
+	}
+	if object.Size != 7 || object.ContentType != "text/plain" || object.ContentRange != "bytes 2-8/10" {
+		t.Fatalf("Open() object = %+v", object)
+	}
+	if object.ETag != "etag" || object.VersionID != "version" {
+		t.Fatalf("Open() object identity = %+v", object)
+	}
+}
+
+func TestS3BucketOpenRejectsInvalidRangeBeforeS3(t *testing.T) {
+	t.Parallel()
+
+	store := testBucket(&fakeS3API{}, nil, "us-east-1")
+	tests := []ByteRange{
+		{Offset: -1, Length: 1},
+		{Offset: 0, Length: 0},
+		{Offset: 0, Length: -2},
+		{Offset: 1<<63 - 2, Length: 3},
+	}
+	for _, byteRange := range tests {
+		if _, err := store.Open(context.Background(), "objects/file", &byteRange); !errors.Is(err, ErrInvalidRange) {
+			t.Fatalf("Open(%+v) error = %v, want ErrInvalidRange", byteRange, err)
+		}
+	}
+}
+
+func TestS3BucketCopyUsesEscapedSourceAndReturnsVersion(t *testing.T) {
+	t.Parallel()
+
+	var captured *s3.CopyObjectInput
+	client := &fakeS3API{copyObject: func(_ context.Context, input *s3.CopyObjectInput) (*s3.CopyObjectOutput, error) {
+		captured = input
+		return &s3.CopyObjectOutput{
+			CopyObjectResult: &types.CopyObjectResult{ETag: aws.String("\"copy-etag\"")},
+			VersionId:        aws.String("copy-version"),
+		}, nil
+	}}
+	store := testBucket(client, nil, "us-east-1")
+
+	result, err := store.Copy(context.Background(), "source folder/a+b", "destination/file")
+	if err != nil {
+		t.Fatalf("Copy() error = %v", err)
+	}
+	wantSource := url.PathEscape("test-bucket/source folder/a+b")
+	if captured == nil || aws.ToString(captured.CopySource) != wantSource {
+		t.Fatalf("CopySource = %q, want %q", aws.ToString(captured.CopySource), wantSource)
+	}
+	if result.ETag != "copy-etag" || result.VersionID != "copy-version" {
+		t.Fatalf("Copy() result = %+v", result)
+	}
+}
+
+func TestS3BucketListsOnlyExactObjectVersions(t *testing.T) {
+	t.Parallel()
+
+	page := 0
+	client := &fakeS3API{listObjectVersions: func(_ context.Context, input *s3.ListObjectVersionsInput) (*s3.ListObjectVersionsOutput, error) {
+		if aws.ToString(input.Prefix) != "objects/file" {
+			t.Fatalf("ListObjectVersions Prefix = %q", aws.ToString(input.Prefix))
+		}
+		page++
+		if page == 1 {
+			return &s3.ListObjectVersionsOutput{
+				IsTruncated:         aws.Bool(true),
+				NextKeyMarker:       aws.String("objects/file"),
+				NextVersionIdMarker: aws.String("version-2"),
+				Versions: []types.ObjectVersion{
+					{Key: aws.String("objects/file"), VersionId: aws.String("version-2")},
+					{Key: aws.String("objects/file-neighbor"), VersionId: aws.String("neighbor")},
+				},
+			}, nil
+		}
+		return &s3.ListObjectVersionsOutput{DeleteMarkers: []types.DeleteMarkerEntry{
+			{Key: aws.String("objects/file"), VersionId: aws.String("delete-marker")},
+		}}, nil
+	}}
+	store := testBucket(client, nil, "us-east-1")
+
+	versions, err := store.listObjectVersions(context.Background(), "objects/file")
+	if err != nil {
+		t.Fatalf("ListObjectVersions() error = %v", err)
+	}
+	if got := strings.Join(versions, ","); got != "delete-marker,version-2" {
+		t.Fatalf("ListObjectVersions() = %q", got)
+	}
+}
+
+func TestS3BucketDeletePassesVersionID(t *testing.T) {
+	t.Parallel()
+
+	var captured *s3.DeleteObjectInput
+	client := &fakeS3API{deleteObject: func(_ context.Context, input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+		captured = input
+		return &s3.DeleteObjectOutput{}, nil
+	}}
+	store := testBucket(client, nil, "us-east-1")
+
+	if err := store.Delete(context.Background(), "objects/file", DeleteOptions{VersionID: "version-2"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if captured == nil || aws.ToString(captured.VersionId) != "version-2" {
+		t.Fatalf("DeleteObject VersionId = %q", aws.ToString(captured.VersionId))
+	}
+}
+
+func TestS3BucketDeleteAllVersions(t *testing.T) {
+	t.Parallel()
+
+	var deletedVersions []string
+	client := &fakeS3API{
+		getBucketVersioning: func(context.Context, *s3.GetBucketVersioningInput) (*s3.GetBucketVersioningOutput, error) {
+			return &s3.GetBucketVersioningOutput{Status: types.BucketVersioningStatusEnabled}, nil
+		},
+		listObjectVersions: func(context.Context, *s3.ListObjectVersionsInput) (*s3.ListObjectVersionsOutput, error) {
+			return &s3.ListObjectVersionsOutput{
+				Versions: []types.ObjectVersion{
+					{Key: aws.String("objects/file"), VersionId: aws.String("version-2")},
+					{Key: aws.String("objects/file"), VersionId: aws.String("version-1")},
+				},
+				DeleteMarkers: []types.DeleteMarkerEntry{
+					{Key: aws.String("objects/file"), VersionId: aws.String("delete-marker")},
+				},
+			}, nil
+		},
+		deleteObject: func(_ context.Context, input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+			versionID := aws.ToString(input.VersionId)
+			deletedVersions = append(deletedVersions, versionID)
+			if versionID == "version-1" {
+				return nil, &smithy.GenericAPIError{Code: "NoSuchVersion", Message: "already gone"}
+			}
+			return &s3.DeleteObjectOutput{}, nil
+		},
+	}
+
+	err := testBucket(client, nil, "us-east-1").Delete(context.Background(), "objects/file", DeleteOptions{AllVersions: true})
+	if err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if got, want := strings.Join(deletedVersions, ","), "delete-marker,version-1,version-2"; got != want {
+		t.Fatalf("deleted versions = %q, want %q", got, want)
+	}
+}
+
+func TestS3BucketDeleteAllVersionsFallsBackForUnversionedBucket(t *testing.T) {
+	t.Parallel()
+
+	listCalls := 0
+	var captured *s3.DeleteObjectInput
+	client := &fakeS3API{
+		listObjectVersions: func(context.Context, *s3.ListObjectVersionsInput) (*s3.ListObjectVersionsOutput, error) {
+			listCalls++
+			return &s3.ListObjectVersionsOutput{}, nil
+		},
+		deleteObject: func(_ context.Context, input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+			captured = input
+			return &s3.DeleteObjectOutput{}, nil
+		},
+	}
+
+	err := testBucket(client, nil, "us-east-1").Delete(context.Background(), "objects/file", DeleteOptions{AllVersions: true})
+	if err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if listCalls != 0 {
+		t.Fatalf("ListObjectVersions calls = %d, want 0", listCalls)
+	}
+	if captured == nil || captured.VersionId != nil {
+		t.Fatalf("DeleteObject VersionId = %q, want empty", aws.ToString(captured.VersionId))
+	}
+}
+
+func TestS3BucketRejectsConflictingDeleteOptions(t *testing.T) {
+	t.Parallel()
+
+	err := testBucket(&fakeS3API{}, nil, "us-east-1").Delete(context.Background(), "objects/file", DeleteOptions{
+		VersionID:   "version-2",
+		AllVersions: true,
+	})
+	if !errors.Is(err, ErrInvalidDeleteOptions) {
+		t.Fatalf("Delete() error = %v, want ErrInvalidDeleteOptions", err)
+	}
+}
+
+func TestS3BucketNormalizesProviderErrors(t *testing.T) {
+	t.Parallel()
+
+	providerErr := &smithy.GenericAPIError{Code: "AccessDenied", Message: "denied"}
+	uploader := &fakeUploader{upload: func(context.Context, *transfermanager.UploadObjectInput) (*transfermanager.UploadObjectOutput, error) {
+		return nil, providerErr
+	}}
+	store := testBucket(&fakeS3API{}, uploader, "us-east-1")
+
+	_, err := store.Upload(context.Background(), "objects/file", strings.NewReader("body"), UploadOptions{Size: -1})
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("Upload() error = %v, want ErrAccessDenied", err)
+	}
+	var storeError *StoreError
+	if !errors.As(err, &storeError) {
+		t.Fatalf("Upload() error type = %T, want *StoreError", err)
+	}
+	if storeError.Operation != "upload" || storeError.Bucket != "test-bucket" || storeError.Key != "objects/file" {
+		t.Fatalf("StoreError = %+v", storeError)
+	}
+}
+
 type fakeS3API struct {
-	headBucket   func(context.Context, *s3.HeadBucketInput) (*s3.HeadBucketOutput, error)
-	createBucket func(context.Context, *s3.CreateBucketInput) (*s3.CreateBucketOutput, error)
-	getObject    func(context.Context, *s3.GetObjectInput) (*s3.GetObjectOutput, error)
-	deleteObject func(context.Context, *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error)
+	headBucket          func(context.Context, *s3.HeadBucketInput) (*s3.HeadBucketOutput, error)
+	createBucket        func(context.Context, *s3.CreateBucketInput) (*s3.CreateBucketOutput, error)
+	getObject           func(context.Context, *s3.GetObjectInput) (*s3.GetObjectOutput, error)
+	deleteObject        func(context.Context, *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error)
+	copyObject          func(context.Context, *s3.CopyObjectInput) (*s3.CopyObjectOutput, error)
+	getBucketVersioning func(context.Context, *s3.GetBucketVersioningInput) (*s3.GetBucketVersioningOutput, error)
+	listObjectVersions  func(context.Context, *s3.ListObjectVersionsInput) (*s3.ListObjectVersionsOutput, error)
 }
 
 func (f *fakeS3API) HeadBucket(ctx context.Context, input *s3.HeadBucketInput, _ ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
+	if f.headBucket == nil {
+		return &s3.HeadBucketOutput{}, nil
+	}
 	return f.headBucket(ctx, input)
 }
 
 func (f *fakeS3API) CreateBucket(ctx context.Context, input *s3.CreateBucketInput, _ ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
+	if f.createBucket == nil {
+		return &s3.CreateBucketOutput{}, nil
+	}
 	return f.createBucket(ctx, input)
 }
 
 func (f *fakeS3API) GetObject(ctx context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	if f.getObject == nil {
+		return nil, errors.New("unexpected GetObject call")
+	}
 	return f.getObject(ctx, input)
 }
 
 func (f *fakeS3API) DeleteObject(ctx context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	if f.deleteObject == nil {
+		return nil, errors.New("unexpected DeleteObject call")
+	}
 	return f.deleteObject(ctx, input)
+}
+
+func (f *fakeS3API) CopyObject(ctx context.Context, input *s3.CopyObjectInput, _ ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	if f.copyObject == nil {
+		return nil, errors.New("unexpected CopyObject call")
+	}
+	return f.copyObject(ctx, input)
+}
+
+func (f *fakeS3API) GetBucketVersioning(ctx context.Context, input *s3.GetBucketVersioningInput, _ ...func(*s3.Options)) (*s3.GetBucketVersioningOutput, error) {
+	if f.getBucketVersioning == nil {
+		return &s3.GetBucketVersioningOutput{}, nil
+	}
+	return f.getBucketVersioning(ctx, input)
+}
+
+func (f *fakeS3API) ListObjectVersions(ctx context.Context, input *s3.ListObjectVersionsInput, _ ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error) {
+	if f.listObjectVersions == nil {
+		return &s3.ListObjectVersionsOutput{}, nil
+	}
+	return f.listObjectVersions(ctx, input)
 }
 
 type fakeUploader struct {
 	upload func(context.Context, *transfermanager.UploadObjectInput) (*transfermanager.UploadObjectOutput, error)
+}
+
+func (*fakeUploader) GetObject(context.Context, *transfermanager.GetObjectInput, ...func(*transfermanager.Options)) (*transfermanager.GetObjectOutput, error) {
+	return nil, errors.New("unexpected GetObject call")
 }
 
 type failingMultipartS3API struct {
@@ -695,8 +1048,8 @@ func (e testS3Error) ErrorCode() string {
 	return e.code
 }
 
-func testStore(client s3API, uploader objectUploader, region string) *S3Store {
-	return &S3Store{client: client, uploader: uploader, bucket: "test-bucket", region: region}
+func testBucket(client s3API, uploader transferManagerAPI, region string) *s3Store {
+	return &s3Store{client: client, uploader: uploader, name: "test-bucket", region: region}
 }
 
 func notFoundThenCreateClient(t *testing.T, assertInput func(*s3.CreateBucketInput)) *fakeS3API {

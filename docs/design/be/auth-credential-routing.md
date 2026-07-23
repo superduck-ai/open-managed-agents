@@ -64,19 +64,24 @@ func (s *Server) v1AuthMiddleware(next http.Handler) http.Handler {
 
 ### 2.2 凭证提取
 
-两个核心函数均在 `internal/auth/auth.go` 中：
+三个核心函数均在 `internal/auth/auth.go` 中：
 
 ```go
 // ExtractAPIKey — 从 X-Api-Key header 或 Authorization: Bearer <token> 提取
 func ExtractAPIKey(r *http.Request) string
 
+// ExtractBearerToken — 只从 Authorization: Bearer <token> 提取
+func ExtractBearerToken(r *http.Request) string
+
 // ExtractPlatformSessionKey — 从 sessionKey cookie 提取
 func ExtractPlatformSessionKey(r *http.Request) string
 ```
 
-`ExtractAPIKey` 只负责入口分流。service auth 首先按 workspace API key 校验；普通 API key 未命中时，仅对 `POST /v1/messages` 继续校验 `sk-ant-oat01-...` OAuth-compatible token。该 token 不能访问其他 `/v1/*` 资源，具体见 [messages-proxy.md](./messages-proxy.md)。
+`ExtractAPIKey` 只负责通用 service 入口分流。service auth 首先按 workspace API key 校验；普通 API key 未命中时，只有 `POST /v1/messages` 可以继续校验 `sk-ant-oat01-...` OAuth-compatible token。该 token 不能访问其他 `/v1/*` 资源，具体见 [messages-proxy.md](./messages-proxy.md)。Filestore 不进入这条 fallback。
 
-worker、session ingress、OTLP 与 upstream proxy 不走这条 OAuth-compatible fallback。它们统一校验 `sk-ant-si-<JWT>` 的固定 EdDSA 算法、`kid`、签名、issuer、audience，以及 JWT `session_id` 与请求路径的绑定。新 JWT 不设置独立 `exp`，也不携带 repository/resource sources；当前凭证校验本身不回查数据库中的 session 状态或 worker lease，JWT claims 仅作为签名身份快照。worker epoch、heartbeat grace 等状态约束由对应 handler 执行，其中 OTLP 还要求当前 worker epoch 与未过期 lease。
+worker、session ingress、OTLP 与 upstream proxy 不走通用 OAuth-compatible fallback。它们统一校验 `sk-ant-si-<JWT>` 的固定 EdDSA 算法、`kid`、签名、issuer、audience，以及 JWT `session_id` 与请求路径的绑定。新 JWT 不设置独立 `exp`，也不携带 repository/resource sources。大多数 ingress handler 把 claims 作为签名身份快照，并由对应 handler 执行 worker epoch、heartbeat grace 等状态约束；OTLP 还要求当前 worker epoch 与未过期 lease。这条 code-session ingress 合同未因 Filestore 而改动。
+
+Filestore 是显式例外：`/v1/filestore` 通过独立中间件验证 `Authorization: Bearer` 中的原始 compact JWT，只接受 Filestore 专用凭证；`X-Api-Key`、workspace API key、`sk-ant-oat01-` OAuth-compatible token 和 `sk-ant-si-` session-ingress JWT 都不会进入 Filestore。Filestore JWT 使用独立 claims 与验证器，并回查活跃的 organization、account、workspace 和单个 filesystem；`org_taints` 与 `workspace_cmek_enabled` 还必须与当前策略一致。鉴权结果被映射为资源专用的 `filestore.Principal`，通过独立 context key 传入 handler；全局 `auth.Principal` 不承载 Filestore 专属字段。Filestore 鉴权失败使用其 wire contract 要求的扁平 `{code,message}`，不使用 Anthropic error envelope；通过鉴权后的未知操作或错误方法也由 Filestore handler 输出同一错误外观。
 
 ### 2.3 路由决策表
 
@@ -161,7 +166,7 @@ http.SetCookie(w, &http.Cookie{
 ## 4. 不影响的范围
 
 1. **`/v1/*` 以外的路由** — 不受影响。
-2. **workspace API key 逻辑** — 原验证、权限和 scope 不变；`POST /v1/messages` 额外接受受路径、active session 与 CCR worker lease 约束的 OAuth-compatible token，不额外限制请求中的模型。
+2. **workspace API key 逻辑** — 原验证、权限和 scope 不变；`POST /v1/messages` 额外接受受路径、active session 与 CCR worker lease 约束的 OAuth-compatible token。`/v1/filestore` 不接受上述凭证，只接受绑定单个 filesystem 的 Filestore JWT；Code Session Ingress 与 `/v1/messages` 的既有鉴权不受影响。
 3. **platform session 解析逻辑** — 不变。session 验证、组织上下文注入均无变化。
 
 ---
@@ -203,6 +208,8 @@ http.SetCookie(w, &http.Cookie{
 | 文件 | 变更 |
 |------|------|
 | `internal/api/server.go` | `/v1` 资源统一注册到 `registerVersionedAPIRoutes`；持有 `codesessions.Handler`，并把同一个底层 `codesessions.Service` 注入 sessions handler；`v1AuthMiddleware` 按凭证选择鉴权链并保护 NotFound/MethodNotAllowed fallback；移除双 router 入口分流；移除中间件中4处 `isPlatformHost` 检查；删除 Host 判断相关死函数 |
+| `internal/api/service_auth.go` | 对 `/v1/filestore` 资源命名空间启用独立 Filestore JWT，并把 claims 绑定到 organization/account/workspace/filesystem 数据库范围 |
+| `internal/api/filestore_auth_test.go` | 覆盖 Filestore 路径边界、扁平鉴权错误、Bearer-only 入口、JWT/DB identity 绑定和跨凭证/跨资源拒绝 |
 | `internal/api/auth_test.go` | 测试用例从 host 驱动改为凭证驱动，覆盖 API key、session cookie、双凭证、无凭证场景及两个 `/v1` 鉴权 fallback |
 | `tests/files_api_test.go` | 更新2个集成测试用例：api key 在任意 host 返回 200，session cookie 在任意 host 返回 200 |
 | `internal/platformapi/platform_auth_routes.go` | `sessionKey` cookie 添加 `HttpOnly: true` 和 `SameSite: Lax` |

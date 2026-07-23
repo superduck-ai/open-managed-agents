@@ -18,6 +18,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
@@ -65,11 +66,15 @@ func main() {
 	}
 	defer platformSessions.Close()
 
-	objectStore, err := storage.New(cfg.Storage)
+	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
-		log.Fatalf("create object store: %v", err)
+		log.Fatalf("create object storage client: %v", err)
 	}
-	if err := objectStore.EnsureBucket(ctx); err != nil {
+	objectStore, err := storageClient.ForBucket(cfg.Storage.S3.Bucket)
+	if err != nil {
+		log.Fatalf("bind object storage bucket: %v", err)
+	}
+	if err := objectStore.Ensure(ctx); err != nil {
 		log.Fatalf("ensure object store bucket: %v", err)
 	}
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
@@ -77,7 +82,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("load code-session credentials: %v", err)
 	}
-	cleanup.StartObjectCleanupWorker(ctx, database, objectStore, 30*time.Second)
+	// Filestore 与 code-session ingress 使用独立的 claims 与验证器；
+	// 生产环境可共用同一 Ed25519 私钥文件，但两种 token 绝不互相代用。
+	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
+	if err != nil {
+		log.Fatalf("load filestore credentials: %v", err)
+	}
+	cleanup.StartObjectCleanupWorker(ctx, database, storageClient, 30*time.Second)
+	// 常规资源共享默认 bucket；通用清理任务可通过 client 按任务记录选择其他 bucket。
+	filestore.StartFilestoreCleanupWorker(ctx, database, objectStore, cfg)
 	if cfg.Batch.WorkerEnabled {
 		batches.StartBatchWorker(ctx, database, objectStore, cfg)
 		batches.StartBatchExpirySweep(ctx, database, cfg)
@@ -87,8 +100,16 @@ func main() {
 	webhooks.StartWorker(ctx, database, cfg.Webhook)
 
 	server := &http.Server{
-		Addr:              cfg.Server.Addr,
-		Handler:           api.NewServerWithPlatformSessionsAndCredentials(cfg, database, objectStore, logger, platformSessions, codeSessionCredentials),
+		Addr: cfg.Server.Addr,
+		Handler: api.NewServer(api.ServerDeps{
+			Config:                 cfg,
+			DB:                     database,
+			ObjectStore:            objectStore,
+			Logger:                 logger,
+			PlatformStore:          platformSessions,
+			CodeSessionCredentials: codeSessionCredentials,
+			FilestoreCredentials:   filestoreCredentials,
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,
 		WriteTimeout:      10 * time.Minute,

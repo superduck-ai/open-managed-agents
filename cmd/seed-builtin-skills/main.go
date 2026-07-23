@@ -36,11 +36,15 @@ func main() {
 	if err := database.Migrate(ctx); err != nil {
 		log.Fatalf("migrate database: %v", err)
 	}
-	store, err := storage.New(cfg.Storage)
+	client, err := storage.New(cfg.Storage)
 	if err != nil {
-		log.Fatalf("create object store: %v", err)
+		log.Fatalf("create object storage client: %v", err)
 	}
-	if err := store.EnsureBucket(ctx); err != nil {
+	store, err := client.ForBucket(cfg.Storage.S3.Bucket)
+	if err != nil {
+		log.Fatalf("bind object storage bucket: %v", err)
+	}
+	if err := store.Ensure(ctx); err != nil {
 		log.Fatalf("ensure object store bucket: %v", err)
 	}
 

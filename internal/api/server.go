@@ -17,6 +17,7 @@ import (
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/files"
+	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
@@ -39,58 +40,81 @@ import (
 )
 
 type Server struct {
-	cfg            config.Config
-	db             *db.DB
-	router         chi.Router
-	platformStore  platformsession.Store
-	admin          *adminapi.Handler
-	agents         *agents.Handler
-	batch          *batches.Handler
-	codeSessions   *codesessions.Handler
-	deployments    *deploymentsapi.Handler
-	deploymentRuns *deploymentsapi.RunsHandler
-	envs           *environments.Handler
-	files          *files.Handler
-	memory         *memoryapi.Handler
-	messages       *messagesapi.Handler
-	models         *modelsapi.Handler
-	sessions       *sessionsapi.Handler
-	skills         *skillsapi.Handler
-	vaults         *vaultsapi.Handler
-	webhooks       *webhooksapi.Handler
+	cfg                  config.Config
+	db                   *db.DB
+	router               chi.Router
+	platformStore        platformsession.Store
+	filestoreCredentials *filestoreapi.TokenCredentials
+	admin                *adminapi.Handler
+	agents               *agents.Handler
+	batch                *batches.Handler
+	codeSessions         *codesessions.Handler
+	deployments          *deploymentsapi.Handler
+	deploymentRuns       *deploymentsapi.RunsHandler
+	envs                 *environments.Handler
+	files                *files.Handler
+	filestore            *filestoreapi.Handler
+	memory               *memoryapi.Handler
+	messages             *messagesapi.Handler
+	models               *modelsapi.Handler
+	sessions             *sessionsapi.Handler
+	skills               *skillsapi.Handler
+	vaults               *vaultsapi.Handler
+	webhooks             *webhooksapi.Handler
 }
 
-func NewServerWithPlatformSessionsAndCredentials(cfg config.Config, database *db.DB, objectStore storage.ObjectStore, logger *slog.Logger, platformStore platformsession.Store, credentials *codesessions.SessionCredentials) *Server {
-	// 显式注入 SessionCredentials，保证 HTTP 验签与 sandbox 启动签发使用同一公钥身份。
+// ServerDeps 汇总组装 HTTP API Server 所需依赖。
+// PlatformStore 为 nil 时回落到内存 store。
+// ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
+type ServerDeps struct {
+	Config                 config.Config
+	DB                     *db.DB
+	ObjectStore            storage.ObjectStore
+	Logger                 *slog.Logger
+	PlatformStore          platformsession.Store
+	CodeSessionCredentials *codesessions.SessionCredentials
+	FilestoreCredentials   *filestoreapi.TokenCredentials
+}
+
+// NewServer 用显式依赖组装 HTTP API Server。
+// 注入 CodeSessionCredentials，保证 HTTP 验签与 sandbox 启动签发使用同一公钥身份。
+func NewServer(deps ServerDeps) *Server {
+	platformStore := deps.PlatformStore
 	if platformStore == nil {
 		platformStore = platformsession.NewMemoryStore()
 	}
-	codeSessionService := codesessions.NewServiceWithCredentials(database, credentials)
-	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(database)
+	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials)
+	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(deps.DB)
+	filestoreHandler := filestoreapi.NewHandler(
+		deps.Config,
+		filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore),
+	)
 	s := &Server{
-		cfg:            cfg,
-		db:             database,
-		platformStore:  platformStore,
-		admin:          adminapi.NewHandler(cfg, database),
-		agents:         agents.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
-		batch:          batches.NewHandler(cfg, database, objectStore),
-		codeSessions:   codesessions.NewHandler(cfg, codeSessionService),
-		deployments:    deploymentsapi.NewHandlerWithSkillPrewarm(cfg, database, skillPrewarmEnqueuer),
-		deploymentRuns: deploymentsapi.NewRunsHandler(cfg, database),
-		envs:           environments.NewHandler(cfg, database),
-		files:          files.NewHandler(cfg, database, objectStore),
-		memory:         memoryapi.NewHandler(cfg, database, objectStore),
-		messages:       messagesapi.NewHandler(cfg),
-		models:         modelsapi.NewHandler(),
-		sessions:       sessionsapi.NewHandler(cfg, database, codeSessionService),
-		skills:         skillsapi.NewHandlerWithSkillPrewarm(cfg, database, objectStore, skillPrewarmEnqueuer),
-		vaults:         vaultsapi.NewHandler(cfg, database),
-		webhooks:       webhooksapi.NewHandler(cfg.Webhook, database),
+		cfg:                  deps.Config,
+		db:                   deps.DB,
+		platformStore:        platformStore,
+		filestoreCredentials: deps.FilestoreCredentials,
+		admin:                adminapi.NewHandler(deps.Config, deps.DB),
+		agents:               agents.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer),
+		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
+		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService),
+		deployments:          deploymentsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer),
+		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.Config, deps.DB),
+		envs:                 environments.NewHandler(deps.Config, deps.DB),
+		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
+		filestore:            filestoreHandler,
+		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
+		messages:             messagesapi.NewHandler(deps.Config),
+		models:               modelsapi.NewHandler(),
+		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService),
+		skills:               skillsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, deps.ObjectStore, skillPrewarmEnqueuer),
+		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB),
+		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB),
 	}
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
-	if logger != nil {
-		router.Use(requestLoggingMiddleware(logger.With("component", "http")))
+	if deps.Logger != nil {
+		router.Use(requestLoggingMiddleware(deps.Logger.With("component", "http")))
 	}
 	router.Use(s.recoverMiddleware)
 	router.NotFound(notFound)
@@ -117,6 +141,13 @@ func (s *Server) registerVersionedAPIRoutes(router chi.Router) {
 		// code-session runtime、worker 与旧版 ingress 各自执行协议鉴权，因此注册在 workspace/service 通用鉴权组之外。
 		s.codeSessions.RegisterV1Routes(r)
 		platformapi.RegisterPlatformPrivacyConsentRoutes(r)
+		// 整个 Filestore 命名空间使用专用鉴权和错误外观；具体协议操作由资源 Handler 校验。
+		r.Route("/filestore", func(r chi.Router) {
+			r.Use(s.filestoreAuthMiddleware)
+			r.Mount("/fs", s.filestore)
+			r.NotFound(filestoreNotFound)
+			r.MethodNotAllowed(filestoreNotFound)
+		})
 		r.With(s.v1AuthMiddleware).Group(func(r chi.Router) {
 			s.registerAuthenticatedV1Routes(r)
 		})
@@ -125,6 +156,28 @@ func (s *Server) registerVersionedAPIRoutes(router chi.Router) {
 		r.With(s.v1AuthMiddleware).MethodNotAllowed(notFound)
 	})
 	router.Route("/v2", s.codeSessions.RegisterV2Routes)
+}
+
+func (s *Server) filestoreAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, apiErr := s.authenticateFilestore(r)
+		if apiErr != nil {
+			code := "unauthenticated"
+			message := "Invalid bearer token"
+			if apiErr.Status >= http.StatusInternalServerError {
+				code = "internal"
+				message = "Authentication failed"
+			}
+			// 鉴权发生在 Handler 之外，也必须维持 rclone-filestore 可识别的扁平错误信封。
+			filestoreapi.WriteProtocolError(w, apiErr.Status, code, message)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(filestoreapi.WithPrincipal(r.Context(), principal)))
+	})
+}
+
+func filestoreNotFound(w http.ResponseWriter, _ *http.Request) {
+	filestoreapi.WriteProtocolError(w, http.StatusNotFound, "not_found", "Not found")
 }
 
 func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {

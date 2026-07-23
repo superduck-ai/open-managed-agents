@@ -19,11 +19,12 @@ func TestS3CompatibleIntegration(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("set OMA_S3_INTEGRATION_ENDPOINT to run S3-compatible integration tests")
 	}
-	store, err := New(config.StorageConfig{
+	bucketName := envOrDefault("OMA_S3_INTEGRATION_BUCKET", "claude-files")
+	client, err := New(config.StorageConfig{
 		Type: config.StorageTypeS3,
 		S3: config.S3Config{
 			Endpoint:        endpoint,
-			Bucket:          envOrDefault("OMA_S3_INTEGRATION_BUCKET", "claude-files"),
+			Bucket:          bucketName,
 			Region:          envOrDefault("OMA_S3_INTEGRATION_REGION", "us-east-1"),
 			AccessKeyID:     envOrDefault("OMA_S3_INTEGRATION_ACCESS_KEY_ID", "minioadmin"),
 			SecretAccessKey: envOrDefault("OMA_S3_INTEGRATION_SECRET_ACCESS_KEY", "minioadmin"),
@@ -33,14 +34,18 @@ func TestS3CompatibleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
+	store, err := client.ForBucket(bucketName)
+	if err != nil {
+		t.Fatalf("ForBucket(%q) error = %v", bucketName, err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := store.EnsureBucket(ctx); err != nil {
-		t.Fatalf("EnsureBucket() first call error = %v", err)
+	if err := store.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure() first call error = %v", err)
 	}
 	registerIntegrationBucketCleanup(t, store)
-	if err := store.EnsureBucket(ctx); err != nil {
-		t.Fatalf("EnsureBucket() second call error = %v", err)
+	if err := store.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure() second call error = %v", err)
 	}
 
 	t.Run("known small object", func(t *testing.T) {
@@ -64,12 +69,12 @@ func registerIntegrationBucketCleanup(t *testing.T, store ObjectStore) {
 	if os.Getenv("OMA_S3_INTEGRATION_DELETE_BUCKET") != "1" {
 		return
 	}
-	if !strings.HasPrefix(store.Bucket(), "oma-storage-test-") {
-		t.Fatalf("refusing to delete non-temporary integration bucket %q", store.Bucket())
+	if !strings.HasPrefix(store.Name(), "oma-storage-test-") {
+		t.Fatalf("refusing to delete non-temporary integration bucket %q", store.Name())
 	}
-	s3Store, ok := store.(*S3Store)
+	s3Store, ok := store.(*s3Store)
 	if !ok {
-		t.Fatalf("integration store type = %T, want *S3Store", store)
+		t.Fatalf("integration store type = %T, want *s3Store", store)
 	}
 	client, ok := s3Store.client.(interface {
 		DeleteBucket(context.Context, *s3.DeleteBucketInput, ...func(*s3.Options)) (*s3.DeleteBucketOutput, error)
@@ -80,12 +85,12 @@ func registerIntegrationBucketCleanup(t *testing.T, store ObjectStore) {
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if _, err := client.DeleteBucket(cleanupCtx, &s3.DeleteBucketInput{Bucket: &s3Store.bucket}); err != nil {
-			t.Errorf("DeleteBucket(%q) cleanup error = %v", s3Store.bucket, err)
+		if _, err := client.DeleteBucket(cleanupCtx, &s3.DeleteBucketInput{Bucket: &s3Store.name}); err != nil {
+			t.Errorf("DeleteBucket(%q) cleanup error = %v", s3Store.name, err)
 			return
 		}
-		if _, err := s3Store.client.HeadBucket(cleanupCtx, &s3.HeadBucketInput{Bucket: &s3Store.bucket}); err == nil {
-			t.Errorf("HeadBucket(%q) after cleanup error = nil, want not found", s3Store.bucket)
+		if _, err := s3Store.client.HeadBucket(cleanupCtx, &s3.HeadBucketInput{Bucket: &s3Store.name}); err == nil {
+			t.Errorf("HeadBucket(%q) after cleanup error = nil, want not found", s3Store.name)
 		}
 	})
 }
@@ -104,12 +109,12 @@ func assertS3RoundTrip(
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := store.Delete(cleanupCtx, key); err != nil {
+		if err := store.Delete(cleanupCtx, key, DeleteOptions{}); err != nil {
 			t.Errorf("Delete(%q) cleanup error = %v", key, err)
 		}
 	})
 
-	var putErr error
+	var uploadErr error
 	var writerErr error
 	if usePipe {
 		reader, writer := io.Pipe()
@@ -121,20 +126,20 @@ func assertS3RoundTrip(
 			}
 			writerDone <- err
 		}()
-		putErr = store.Put(ctx, key, reader, size, contentType)
-		_ = reader.CloseWithError(putErr)
+		_, uploadErr = store.Upload(ctx, key, reader, UploadOptions{Size: size, ContentType: contentType})
+		_ = reader.CloseWithError(uploadErr)
 		writerErr = <-writerDone
 	} else {
-		putErr = store.Put(ctx, key, bytes.NewReader(payload), size, contentType)
+		_, uploadErr = store.Upload(ctx, key, bytes.NewReader(payload), UploadOptions{Size: size, ContentType: contentType})
 	}
-	if putErr != nil {
-		t.Fatalf("Put(%q) error = %v", key, putErr)
+	if uploadErr != nil {
+		t.Fatalf("Upload(%q) error = %v", key, uploadErr)
 	}
 	if writerErr != nil {
 		t.Fatalf("pipe writer error = %v", writerErr)
 	}
 
-	object, err := store.Get(ctx, key)
+	object, err := store.Open(ctx, key, nil)
 	if err != nil {
 		t.Fatalf("Get(%q) error = %v", key, err)
 	}
@@ -152,10 +157,10 @@ func assertS3RoundTrip(
 	if object.ContentType != contentType {
 		t.Fatalf("Get(%q) content type = %q, want %q", key, object.ContentType, contentType)
 	}
-	if err := store.Delete(ctx, key); err != nil {
+	if err := store.Delete(ctx, key, DeleteOptions{}); err != nil {
 		t.Fatalf("Delete(%q) error = %v", key, err)
 	}
-	deletedObject, err := store.Get(ctx, key)
+	deletedObject, err := store.Open(ctx, key, nil)
 	if err == nil {
 		_ = deletedObject.Body.Close()
 		t.Fatalf("Get(%q) after delete error = nil, want not found", key)

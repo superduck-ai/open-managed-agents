@@ -445,12 +445,12 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 	}
 	contentBytes := []byte(content)
 	contentSHA := sha256Hex(contentBytes)
-	if err := h.store.Put(r.Context(), objectKey, bytes.NewReader(contentBytes), int64(len(contentBytes)), "text/plain; charset=utf-8"); err != nil {
+	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(contentBytes), storage.UploadOptions{Size: int64(len(contentBytes)), ContentType: "text/plain; charset=utf-8"}); err != nil {
 		log.Printf("put memory content: %v", err)
 		writeAPIError(w, r, "Could not store memory content")
 		return
 	}
-	ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Bucket(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
+	ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Name(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
 	now := time.Now().UTC()
 	record, err := h.db.CreateMemory(r.Context(), db.Memory{
 		UUID:                  memoryUUID,
@@ -461,7 +461,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		Path:                  path,
 		ContentSizeBytes:      int64(len(contentBytes)),
 		ContentSHA256:         contentSHA,
-		S3Bucket:              h.store.Bucket(),
+		S3Bucket:              h.store.Name(),
 		S3Key:                 objectKey,
 		CreatedAt:             now,
 		UpdatedAt:             now,
@@ -472,7 +472,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		Path:             &path,
 		ContentSizeBytes: ptrInt64(int64(len(contentBytes))),
 		ContentSHA256:    &contentSHA,
-		S3Bucket:         ptrString(h.store.Bucket()),
+		S3Bucket:         ptrString(h.store.Name()),
 		S3Key:            &objectKey,
 		CreatedBy:        apiActor(principal),
 		CreatedAt:        now,
@@ -761,12 +761,12 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		objectKey := memoryObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
 		contentBytes := []byte(targetContent)
 		contentSHA := sha256Hex(contentBytes)
-		if err := h.store.Put(r.Context(), objectKey, bytes.NewReader(contentBytes), int64(len(contentBytes)), "text/plain; charset=utf-8"); err != nil {
+		if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(contentBytes), storage.UploadOptions{Size: int64(len(contentBytes)), ContentType: "text/plain; charset=utf-8"}); err != nil {
 			log.Printf("put memory update content: %v", err)
 			writeAPIError(w, r, "Could not store memory content")
 			return
 		}
-		ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Bucket(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
+		ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Name(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
 		result, err := h.db.UpdateMemory(r.Context(), db.UpdateMemoryInput{
 			WorkspaceID:           principal.WorkspaceID,
 			MemoryStoreExternalID: storeID,
@@ -777,7 +777,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			ContentProvided:       true,
 			ContentSizeBytes:      int64(len(contentBytes)),
 			ContentSHA256:         contentSHA,
-			S3Bucket:              h.store.Bucket(),
+			S3Bucket:              h.store.Name(),
 			S3Key:                 objectKey,
 			ExpectedContentSHA256: expectedHash,
 			BaseVersionExternalID: record.CurrentVersionExternalID,
@@ -1014,7 +1014,7 @@ func (h *Handler) responseFromVersion(ctx context.Context, record db.MemoryVersi
 }
 
 func (h *Handler) readObjectContent(ctx context.Context, key string, expectedSize int64) (string, error) {
-	object, err := h.store.Get(ctx, key)
+	object, err := h.store.Open(ctx, key, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1058,7 +1058,7 @@ func (h *Handler) deleteObjectOrEnqueue(ctx context.Context, ref db.ObjectRef) {
 	if ref.Key == "" {
 		return
 	}
-	if err := h.store.Delete(ctx, ref.Key); err != nil {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{}); err != nil {
 		log.Printf("delete memory object resource_type=%s resource_id=%s key=%s: %v", ref.ResourceType, ref.ResourceID, ref.Key, err)
 		if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(ctx, ref.WorkspaceID, ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID); enqueueErr != nil {
 			log.Printf("enqueue memory object cleanup resource_type=%s resource_id=%s key=%s: %v", ref.ResourceType, ref.ResourceID, ref.Key, enqueueErr)

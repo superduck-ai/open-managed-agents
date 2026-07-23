@@ -260,7 +260,7 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 
 // GetFilestoreFilesystem 在工作区边界内按外部 ID 或 UUID 查找文件系统。
 func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceID int64, externalID string) (FilestoreFilesystem, error) {
-	return getFilestoreFilesystemSQLX(ctx, d.sql, filestoreFilesystemSelectSQLX()+`
+	return getFilestoreFilesystemSQLX(ctx, d.sql, filestoreFilesystemSelectSQL()+`
 		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and (
 				external_id = :filesystem_id
@@ -278,7 +278,7 @@ func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceID int64, exte
 // GetFilestoreFilesystemBySession 返回 public session 唯一拥有的活动文件系统。
 // Code session 是可重建的执行实例，不参与文件系统归属判断。
 func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceID int64, sessionExternalID string) (FilestoreFilesystem, error) {
-	return getFilestoreFilesystemSQLX(ctx, d.sql, filestoreFilesystemSelectSQLX()+`
+	return getFilestoreFilesystemSQLX(ctx, d.sql, filestoreFilesystemSelectSQL()+`
 		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and session_uuid = (
 				select uuid from sessions

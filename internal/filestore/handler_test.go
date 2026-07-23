@@ -222,6 +222,35 @@ func TestHandlerEncodesProtoInt64ResponseAsString(t *testing.T) {
 	}
 }
 
+func TestHandlerStreamsReadFileBodyWhenSizeIsUnknown(t *testing.T) {
+	t.Parallel()
+
+	body := &trackingReadCloser{Reader: strings.NewReader("streamed")}
+	service := &fakeFilestoreService{readResult: readFileResult{
+		Body: body,
+		Size: -1,
+	}}
+	handler := NewHandler(config.Config{}, service)
+	request := newAuthenticatedHandlerRequest(http.MethodPost, "/readFile", strings.NewReader(`{"filesystemId":"fs_test","path":"/a.bin"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Length"); got != "" {
+		t.Fatalf("Content-Length = %q, want omitted", got)
+	}
+	if got := recorder.Body.String(); got != "streamed" {
+		t.Fatalf("body = %q", got)
+	}
+	if !body.closed {
+		t.Fatal("read body was not closed")
+	}
+}
+
 func TestHandlerStreamsReadFileBodyAndMetadata(t *testing.T) {
 	t.Parallel()
 

@@ -301,6 +301,64 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 		})
 	}
 
+	t.Run("failure real filesystem from another workspace", func(t *testing.T) {
+		suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+		otherWorkspaceUUID := uuid.NewString()
+		otherWorkspaceExternalID := "workspace_filestore_cross_" + suffix
+		otherSessionUUID := uuid.NewString()
+		otherSessionExternalID := "sesn_filestore_cross_" + suffix
+		otherFilesystemUUID := uuid.NewString()
+		otherFilesystemExternalID := "fs_filestore_cross_" + suffix
+
+		var organizationID, otherWorkspaceID int64
+		if err := database.Pool.QueryRow(context.Background(), `
+			select id from organizations where uuid = $1
+		`, fixture.tokenIdentity.OrgUUID).Scan(&organizationID); err != nil {
+			t.Fatalf("load fixture organization: %v", err)
+		}
+		if err := database.Pool.QueryRow(context.Background(), `
+			insert into workspaces (uuid, external_id, organization_id, name)
+			values ($1, $2, $3, $4)
+			returning id
+		`, otherWorkspaceUUID, otherWorkspaceExternalID, organizationID, "Filestore cross-workspace test").Scan(&otherWorkspaceID); err != nil {
+			t.Fatalf("insert other workspace: %v", err)
+		}
+		defer func() {
+			_, _ = database.Pool.Exec(context.Background(), `delete from filestore_filesystems where uuid = $1`, otherFilesystemUUID)
+			_, _ = database.Pool.Exec(context.Background(), `delete from sessions where uuid = $1`, otherSessionUUID)
+			_, _ = database.Pool.Exec(context.Background(), `delete from workspaces where id = $1`, otherWorkspaceID)
+		}()
+		if _, err := database.Pool.Exec(context.Background(), `
+			insert into sessions (
+				uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
+				environment_id, environment_external_id, agent_id, agent_external_id,
+				agent_version, agent_snapshot, status
+			)
+			values ($1, $2, $3, $4, 0, 0, $5, 0, $6, 1, '{}'::jsonb, 'running')
+		`, otherSessionUUID, otherSessionExternalID, organizationID, otherWorkspaceID,
+			"env_filestore_cross_"+suffix, "agent_filestore_cross_"+suffix); err != nil {
+			t.Fatalf("insert other workspace session: %v", err)
+		}
+		if _, err := database.Pool.Exec(context.Background(), `
+			insert into filestore_filesystems (
+				uuid, external_id, organization_uuid, workspace_uuid, session_uuid
+			)
+			values ($1, $2, $3, $4, $5)
+		`, otherFilesystemUUID, otherFilesystemExternalID, fixture.tokenIdentity.OrgUUID,
+			otherWorkspaceUUID, otherSessionUUID); err != nil {
+			t.Fatalf("insert other workspace filesystem: %v", err)
+		}
+
+		crossWorkspaceIdentity := fixture.tokenIdentity
+		crossWorkspaceIdentity.FilesystemID = otherFilesystemExternalID
+		crossWorkspaceToken, issueErr := credentials.filestore.Issue(crossWorkspaceIdentity)
+		if issueErr != nil {
+			t.Fatalf("issue cross-workspace token: %v", issueErr)
+		}
+		response := serveFilestoreAuthRequest(server, http.MethodPost, filestoreAuthPaths[0], crossWorkspaceToken)
+		assertFlatFilestoreAuthError(t, response, http.StatusUnauthorized, "unauthenticated", "Invalid bearer token")
+	})
+
 	for _, test := range []struct {
 		name   string
 		method string

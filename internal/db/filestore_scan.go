@@ -26,10 +26,12 @@ func filestoreFilesystemSelectSQL() string {
 }
 
 func filestoreFilesystemColumns() string {
-	return `id, cast(uuid as text), external_id,
-		cast(organization_uuid as text), cast(workspace_uuid as text),
-		cast(session_uuid as text), cast(code_session_uuid as text),
-		cast(created_by_api_key_uuid as text),
+	return `id, cast(uuid as text) as uuid, external_id,
+		cast(organization_uuid as text) as organization_uuid,
+		cast(workspace_uuid as text) as workspace_uuid,
+		cast(session_uuid as text) as session_uuid,
+		cast(code_session_uuid as text) as code_session_uuid,
+		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
 		created_at, updated_at, deleted_at`
 }
 
@@ -53,14 +55,16 @@ func filestoreEntrySelectSQL() string {
 }
 
 func filestoreEntryColumns() string {
-	return `id, cast(uuid as text), external_id,
-		cast(organization_uuid as text), cast(workspace_uuid as text),
-		cast(filesystem_uuid as text), kind, path, parent_path,
+	return `id, cast(uuid as text) as uuid, external_id,
+		cast(organization_uuid as text) as organization_uuid,
+		cast(workspace_uuid as text) as workspace_uuid,
+		cast(filesystem_uuid as text) as filesystem_uuid, kind, path, parent_path,
 		size_bytes, media_type, detected_mime_type, metadata, authorization_metadata,
-		cast(coalesce(to_jsonb(tags), cast('[]' as jsonb)) as text),
+		cast(coalesce(to_jsonb(tags), cast('[]' as jsonb)) as text) as tags_json,
 		downloadable, md5, sha256, s3_bucket, s3_key, s3_etag, s3_version_id,
-		expires_at, cast(created_by_api_key_uuid as text),
-		cast(created_by_session_uuid as text), cast(created_by_code_session_uuid as text),
+		expires_at, cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
+		cast(created_by_session_uuid as text) as created_by_session_uuid,
+		cast(created_by_code_session_uuid as text) as created_by_code_session_uuid,
 		created_at, updated_at, deleted_at`
 }
 
@@ -136,13 +140,6 @@ func filestoreTags(value []string) []string {
 
 func filestoreNullableString(value string) any {
 	if value == "" {
-		return nil
-	}
-	return value
-}
-
-func filestoreNullableInt64(value int64) any {
-	if value == 0 {
 		return nil
 	}
 	return value

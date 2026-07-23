@@ -32,13 +32,13 @@ func TestValidateFilestorePath(t *testing.T) {
 		allowRoot bool
 		wantError bool
 	}{
-		{name: "file", value: "/reports/a.txt"},
-		{name: "root", value: "/", allowRoot: true},
 		{name: "relative", value: "reports/a.txt", wantError: true},
 		{name: "empty segment", value: "/reports//a.txt", wantError: true},
 		{name: "trailing slash", value: "/reports/", wantError: true},
 		{name: "dot segment", value: "/reports/../a.txt", wantError: true},
 		{name: "root forbidden", value: "/", wantError: true},
+		{name: "file", value: "/reports/a.txt"},
+		{name: "root", value: "/", allowRoot: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -54,5 +54,35 @@ func TestDecodeStrictJSONRejectsUnknownFields(t *testing.T) {
 	var request pathRequest
 	if err := decodeStrictJSON([]byte(`{"filesystemId":"fs_test","path":"/a","unknown":true}`), &request); err == nil {
 		t.Fatal("decodeStrictJSON accepted unknown field")
+	}
+}
+
+func TestAuthorizationMetadataUsesProtoScalarPresence(t *testing.T) {
+	var params createFileParams
+	if err := json.Unmarshal(
+		[]byte(`{"filesystemId":"fs_test","path":"/a","mediaType":"text/plain","authorizationMetadata":{"intent":"assistant_output"}}`),
+		&params,
+	); err != nil {
+		t.Fatalf("unmarshal authorization metadata: %v", err)
+	}
+	if params.Authorization == nil {
+		t.Fatal("authorization metadata is nil")
+	}
+	if fileDownloadable(params.Authorization) {
+		t.Fatal("omitted downloadable in a present protobuf message must retain the bool zero value")
+	}
+
+	if !fileDownloadable(nil) {
+		t.Fatal("omitted authorization metadata must retain the Filestore default")
+	}
+}
+
+func TestFilePayloadKeepsEntryTaggedIDWireAlias(t *testing.T) {
+	value, err := json.Marshal(filePayload{EntryTaggedID: "fse_entry"})
+	if err != nil {
+		t.Fatalf("marshal file payload: %v", err)
+	}
+	if string(value) != `{"workspaceTaggedId":"fse_entry"}` {
+		t.Fatalf("file payload = %s", value)
 	}
 }

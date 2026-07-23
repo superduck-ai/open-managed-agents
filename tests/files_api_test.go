@@ -1377,7 +1377,7 @@ func (s *fakeStore) Open(_ context.Context, key string, byteRange *storage.ByteR
 	}
 	object, ok := s.objects[key]
 	if !ok {
-		return storage.Object{}, db.ErrNotFound
+		return storage.Object{}, storage.ErrNotFound
 	}
 	data := object.data
 	if byteRange != nil {

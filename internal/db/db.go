@@ -20,16 +20,17 @@ import (
 )
 
 var (
-	ErrNotFound             = platform.ErrNotFound
-	ErrInvalidState         = errors.New("invalid state")
-	ErrPreconditionFailed   = errors.New("precondition failed")
-	ErrDuplicate            = errors.New("duplicate")
-	ErrVersionConflict      = errors.New("version conflict")
-	ErrWorkerEpochMismatch  = errors.New("worker epoch mismatch")
-	ErrWorkerNotRegistered  = errors.New("worker not registered")
-	ErrWorkerLeaseExpired   = errors.New("worker lease expired")
-	ErrStorageLimitExceeded = errors.New("storage limit exceeded")
-	ErrLimitExceeded        = errors.New("limit exceeded")
+	ErrNotFound              = platform.ErrNotFound
+	ErrInvalidState          = errors.New("invalid state")
+	ErrPreconditionFailed    = errors.New("precondition failed")
+	ErrDuplicate             = errors.New("duplicate")
+	ErrVersionConflict       = errors.New("version conflict")
+	ErrWorkerEpochMismatch   = errors.New("worker epoch mismatch")
+	ErrWorkerNotRegistered   = errors.New("worker not registered")
+	ErrWorkerLeaseExpired    = errors.New("worker lease expired")
+	ErrStorageLimitExceeded  = errors.New("storage limit exceeded")
+	ErrStorageUsageUnderflow = errors.New("storage usage underflow")
+	ErrLimitExceeded         = errors.New("limit exceeded")
 )
 
 type DB struct {
@@ -65,7 +66,9 @@ func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 }
 
 func newDB(pool *pgxpool.Pool) *DB {
-	// sqlx 只提供查询与映射能力；底层仍复用同一个 pgxpool，不另建连接池。
+	// sqlx 只提供命名参数与结构体映射，物理连接仍统一由 pgxpool 管理。
+	// OpenDBFromPool 会把 database/sql 的 MaxIdleConns 固定为 0，避免包装层长期占住
+	// pgxpool 连接；最大连接数与连接寿命继续由上面的唯一 pgxpool 约束。
 	standardDB := stdlib.OpenDBFromPool(pool)
 	return &DB{
 		Pool: pool,

@@ -10,8 +10,8 @@ import (
 )
 
 type workspaceStorageUsage struct {
-	filesBytes     int64
-	filestoreBytes int64
+	FilesBytes     int64 `db:"files_bytes"`
+	FilestoreBytes int64 `db:"filestore_bytes"`
 }
 
 // workspaceStorageBytesQuery 从事务型账本读取工作区总用量，查询成本不随文件数量增长。
@@ -52,10 +52,10 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int
 				where workspace_uuid = (select uuid from workspaces where id = $1)
 					and kind = 'file' and deleted_at is null
 			), 0)
-	`, workspaceID).Scan(&usage.filesBytes, &usage.filestoreBytes); err != nil {
+	`, workspaceID).Scan(&usage.FilesBytes, &usage.FilestoreBytes); err != nil {
 		return 0, err
 	}
-	if usage.filesBytes > math.MaxInt64-usage.filestoreBytes {
+	if usage.FilesBytes > math.MaxInt64-usage.FilestoreBytes {
 		return 0, ErrStorageLimitExceeded
 	}
 	if _, err := tx.Exec(ctx, `
@@ -67,13 +67,13 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int
 			files_bytes = excluded.files_bytes,
 			filestore_bytes = excluded.filestore_bytes,
 			updated_at = excluded.updated_at
-	`, workspaceID, usage.filesBytes, usage.filestoreBytes); err != nil {
+	`, workspaceID, usage.FilesBytes, usage.FilestoreBytes); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	return usage.filesBytes + usage.filestoreBytes, nil
+	return usage.FilesBytes + usage.FilestoreBytes, nil
 }
 
 // applyWorkspaceStorageDeltaTx 在资源事务内维护账本，并在增加用量时执行共享配额检查。
@@ -97,26 +97,20 @@ func applyWorkspaceStorageDeltaTx(
 		from workspace_storage_usage
 		where workspace_id = $1
 		for update
-	`, workspaceID).Scan(&usage.filesBytes, &usage.filestoreBytes); err != nil {
+	`, workspaceID).Scan(&usage.FilesBytes, &usage.FilestoreBytes); err != nil {
 		return err
 	}
 
-	nextFilesBytes, err := addWorkspaceStorageDelta(usage.filesBytes, filesDelta)
+	nextFilesBytes, nextFilestoreBytes, err := nextWorkspaceStorageUsage(
+		workspaceID,
+		usage,
+		filesDelta,
+		filestoreDelta,
+		workspaceStorageLimitBytes,
+	)
 	if err != nil {
-		return fmt.Errorf("update workspace %d Files API storage usage: %w", workspaceID, err)
+		return err
 	}
-	nextFilestoreBytes, err := addWorkspaceStorageDelta(usage.filestoreBytes, filestoreDelta)
-	if err != nil {
-		return fmt.Errorf("update workspace %d Filestore storage usage: %w", workspaceID, err)
-	}
-	if nextFilesBytes > math.MaxInt64-nextFilestoreBytes {
-		return ErrStorageLimitExceeded
-	}
-	nextTotal := nextFilesBytes + nextFilestoreBytes
-	if workspaceStorageLimitBytes > 0 && nextTotal > workspaceStorageLimitBytes {
-		return ErrStorageLimitExceeded
-	}
-
 	_, err = tx.Exec(ctx, `
 		update workspace_storage_usage
 		set files_bytes = $2, filestore_bytes = $3, updated_at = now()
@@ -125,12 +119,80 @@ func applyWorkspaceStorageDeltaTx(
 	return err
 }
 
+func applyWorkspaceStorageDeltaSQLXTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	workspaceID, filesDelta, filestoreDelta, workspaceStorageLimitBytes int64,
+) error {
+	arguments := map[string]any{"workspace_id": workspaceID}
+	if _, err := namedExecContext(ctx, tx, `
+		insert into workspace_storage_usage (workspace_id)
+		values (:workspace_id)
+		on conflict (workspace_id) do nothing
+	`, arguments); err != nil {
+		return err
+	}
+
+	var usage workspaceStorageUsage
+	if err := namedGetContext(ctx, tx, &usage, `
+		select files_bytes, filestore_bytes
+		from workspace_storage_usage
+		where workspace_id = :workspace_id
+		for update
+	`, arguments); err != nil {
+		return err
+	}
+	nextFilesBytes, nextFilestoreBytes, err := nextWorkspaceStorageUsage(
+		workspaceID,
+		usage,
+		filesDelta,
+		filestoreDelta,
+		workspaceStorageLimitBytes,
+	)
+	if err != nil {
+		return err
+	}
+	arguments["files_bytes"] = nextFilesBytes
+	arguments["filestore_bytes"] = nextFilestoreBytes
+	_, err = namedExecContext(ctx, tx, `
+		update workspace_storage_usage
+		set files_bytes = :files_bytes,
+			filestore_bytes = :filestore_bytes,
+			updated_at = now()
+		where workspace_id = :workspace_id
+	`, arguments)
+	return err
+}
+
+func nextWorkspaceStorageUsage(
+	workspaceID int64,
+	usage workspaceStorageUsage,
+	filesDelta, filestoreDelta, workspaceStorageLimitBytes int64,
+) (int64, int64, error) {
+	nextFilesBytes, err := addWorkspaceStorageDelta(usage.FilesBytes, filesDelta)
+	if err != nil {
+		return 0, 0, fmt.Errorf("update workspace %d Files API storage usage: %w", workspaceID, err)
+	}
+	nextFilestoreBytes, err := addWorkspaceStorageDelta(usage.FilestoreBytes, filestoreDelta)
+	if err != nil {
+		return 0, 0, fmt.Errorf("update workspace %d Filestore storage usage: %w", workspaceID, err)
+	}
+	if nextFilesBytes > math.MaxInt64-nextFilestoreBytes {
+		return 0, 0, ErrStorageLimitExceeded
+	}
+	nextTotal := nextFilesBytes + nextFilestoreBytes
+	if workspaceStorageLimitBytes > 0 && nextTotal > workspaceStorageLimitBytes {
+		return 0, 0, ErrStorageLimitExceeded
+	}
+	return nextFilesBytes, nextFilestoreBytes, nil
+}
+
 func addWorkspaceStorageDelta(current, delta int64) (int64, error) {
 	if delta > 0 && current > math.MaxInt64-delta {
 		return 0, ErrStorageLimitExceeded
 	}
 	if delta == math.MinInt64 || delta < 0 && current < -delta {
-		return 0, fmt.Errorf("usage counter underflow: current=%d delta=%d", current, delta)
+		return 0, fmt.Errorf("%w: current=%d delta=%d", ErrStorageUsageUnderflow, current, delta)
 	}
 	return current + delta, nil
 }

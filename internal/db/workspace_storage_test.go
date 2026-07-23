@@ -14,8 +14,8 @@ func TestAddWorkspaceStorageDelta(t *testing.T) {
 			delta   int64
 			wantErr error
 		}{
-			{name: "underflow", current: 2, delta: -3},
-			{name: "minimum delta", current: math.MaxInt64, delta: math.MinInt64},
+			{name: "underflow", current: 2, delta: -3, wantErr: ErrStorageUsageUnderflow},
+			{name: "minimum delta", current: math.MaxInt64, delta: math.MinInt64, wantErr: ErrStorageUsageUnderflow},
 			{name: "overflow", current: math.MaxInt64, delta: 1, wantErr: ErrStorageLimitExceeded},
 		} {
 			t.Run(testCase.name, func(t *testing.T) {

@@ -19,6 +19,7 @@ const (
 
 var (
 	ErrFilestorePathExists              = errors.New("filestore path already exists")
+	ErrFilestoreParentMissing           = errors.New("filestore parent directory does not exist")
 	ErrFilestoreNotFile                 = errors.New("filestore entry is not a file")
 	ErrFilestoreNotDirectory            = errors.New("filestore entry is not a directory")
 	ErrFilestoreDirectoryNotEmpty       = errors.New("filestore directory is not empty")
@@ -74,14 +75,6 @@ type ProvisionFilestoreFilesystemInput struct {
 	CodeSessionUUID     *string
 	CreatedByAPIKeyUUID *string
 	Now                 time.Time
-}
-
-// FilestoreActor 接收当前数据库中的调用方主键；写入 entry 时会立即解析为稳定 UUID，
-// 不把这些仅在本库有效的 identity 持久化到 Filestore 资源表。
-type FilestoreActor struct {
-	APIKeyID      int64
-	SessionID     int64
-	CodeSessionID int64
 }
 
 // FilestoreEntry 是目录树中的一个持久化节点。
@@ -164,7 +157,6 @@ type MakeFilestoreDirectoryInput struct {
 	FilesystemID int64
 	Path         string
 	MakeParents  bool
-	Actor        FilestoreActor
 	Now          time.Time
 }
 
@@ -177,7 +169,6 @@ type PutFilestoreFileInput struct {
 	OverwriteExisting          bool
 	OrphanCleanupJobExternalID string
 	WorkspaceStorageLimitBytes int64
-	Actor                      FilestoreActor
 	Now                        time.Time
 }
 
@@ -197,7 +188,6 @@ type CopyFilestoreFileInput struct {
 	OverwriteExisting          bool
 	OrphanCleanupJobExternalID string
 	WorkspaceStorageLimitBytes int64
-	Actor                      FilestoreActor
 	Now                        time.Time
 }
 
@@ -244,9 +234,13 @@ type FilestoreMutationResult struct {
 }
 
 // FilestoreObjectCleanupJob 描述一个可租约、可重试的对象版本删除任务。
+// UUID 是任务持久化的权威归属；bigint ID 仅在当前数据库租约任务时重新解析，
+// 不能用于跨库恢复、租户迁移或合库后的身份判断。
 type FilestoreObjectCleanupJob struct {
 	ID                   int64     `db:"id"`
 	ExternalID           string    `db:"external_id"`
+	WorkspaceUUID        string    `db:"workspace_uuid"`
+	FilesystemUUID       string    `db:"filesystem_uuid"`
 	WorkspaceID          int64     `db:"workspace_id"`
 	FilesystemID         int64     `db:"filesystem_id"`
 	FilesystemExternalID string    `db:"filesystem_external_id"`
@@ -262,9 +256,12 @@ type FilestoreObjectCleanupJob struct {
 
 // FilestoreFilesystemCleanupJob 将已删除 Session 的整个文件系统拆成有界批次回收。
 // 它只负责退休元数据并投递对象任务，不在数据库事务中直接访问 S3。
+// UUID 是持久化引用，bigint ID 是 worker 在当前数据库中解析出的短期执行上下文。
 type FilestoreFilesystemCleanupJob struct {
 	ID                   int64     `db:"id"`
 	ExternalID           string    `db:"external_id"`
+	WorkspaceUUID        string    `db:"workspace_uuid"`
+	FilesystemUUID       string    `db:"filesystem_uuid"`
 	WorkspaceID          int64     `db:"workspace_id"`
 	FilesystemID         int64     `db:"filesystem_id"`
 	FilesystemExternalID string    `db:"filesystem_external_id"`
@@ -272,16 +269,16 @@ type FilestoreFilesystemCleanupJob struct {
 	RunAfter             time.Time `db:"run_after"`
 }
 
-// EnqueueFilestoreObjectCleanupJobInput 描述对象清理任务的持久化载荷。
+// EnqueueFilestoreObjectCleanupJobInput 描述对象清理任务的创建参数。
+// 当前库 ID 仅用于在插入时校验归属并解析 UUID，不会写入任务 payload。
 type EnqueueFilestoreObjectCleanupJobInput struct {
-	WorkspaceID          int64
-	FilesystemID         int64
-	FilesystemExternalID string
-	EntryExternalID      string
-	Bucket               string
-	Key                  string
-	ETag                 string
-	VersionID            string
-	Reason               string
-	RunAfter             time.Time
+	WorkspaceID     int64
+	FilesystemID    int64
+	EntryExternalID string
+	Bucket          string
+	Key             string
+	ETag            string
+	VersionID       string
+	Reason          string
+	RunAfter        time.Time
 }

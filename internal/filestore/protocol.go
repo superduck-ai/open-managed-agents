@@ -106,18 +106,20 @@ type pathRequest struct {
 }
 
 type filePayload struct {
-	UUID              string         `json:"uuid,omitempty"`
-	CreatedAt         string         `json:"createdAt,omitempty"`
-	Size              protoInt64     `json:"size,omitempty"`
-	MediaType         string         `json:"mediaType,omitempty"`
-	Metadata          map[string]any `json:"metadata,omitempty"`
-	MD5               string         `json:"md5,omitempty"`
-	WorkspaceTaggedID string         `json:"workspaceTaggedId,omitempty"`
-	DetectedMimeType  string         `json:"detectedMimeType,omitempty"`
-	Downloadable      bool           `json:"downloadable,omitempty"`
-	Tags              []string       `json:"tags,omitempty"`
-	FilesystemID      string         `json:"filesystemId,omitempty"`
-	ExpiresAt         string         `json:"expiresAt,omitempty"`
+	UUID      string         `json:"uuid,omitempty"`
+	CreatedAt string         `json:"createdAt,omitempty"`
+	Size      protoInt64     `json:"size,omitempty"`
+	MediaType string         `json:"mediaType,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	MD5       string         `json:"md5,omitempty"`
+	// EntryTaggedID 是文件条目的 API external_id；workspaceTaggedId 是上游协议沿用的线字段名，
+	// 并非鉴权 claims 中的 workspace_tagged_id。
+	EntryTaggedID    string   `json:"workspaceTaggedId,omitempty"`
+	DetectedMimeType string   `json:"detectedMimeType,omitempty"`
+	Downloadable     bool     `json:"downloadable,omitempty"`
+	Tags             []string `json:"tags,omitempty"`
+	FilesystemID     string   `json:"filesystemId,omitempty"`
+	ExpiresAt        string   `json:"expiresAt,omitempty"`
 }
 
 type filesystemFilePayload struct {

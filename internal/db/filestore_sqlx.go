@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/jmoiron/sqlx"
 )
 
 type filestoreFilesystemRow struct {
@@ -74,35 +72,8 @@ type filestoreEntryRow struct {
 	DeletedAt                *time.Time `db:"deleted_at"`
 }
 
-func filestoreFilesystemSelectSQLX() string {
-	return `select id, cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(session_uuid as text) as session_uuid,
-		cast(code_session_uuid as text) as code_session_uuid,
-		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
-		created_at, updated_at, deleted_at
-		from filestore_filesystems`
-}
-
-func filestoreEntrySelectSQLX() string {
-	return `select id, cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(filesystem_uuid as text) as filesystem_uuid,
-		kind, path, parent_path, size_bytes, media_type, detected_mime_type,
-		metadata, authorization_metadata,
-		cast(coalesce(to_jsonb(tags), cast('[]' as jsonb)) as text) as tags_json,
-		downloadable, md5, sha256, s3_bucket, s3_key, s3_etag, s3_version_id,
-		expires_at, cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
-		cast(created_by_session_uuid as text) as created_by_session_uuid,
-		cast(created_by_code_session_uuid as text) as created_by_code_session_uuid,
-		created_at, updated_at, deleted_at
-		from filestore_entries`
-}
-
-func getFilestoreFilesystemByIDSQLX(ctx context.Context, database *sqlx.DB, workspaceID, filesystemID int64) (FilestoreFilesystem, error) {
-	return getFilestoreFilesystemSQLX(ctx, database, filestoreFilesystemSelectSQLX()+`
+func getFilestoreFilesystemByIDSQLX(ctx context.Context, database sqlxNamedQueryer, workspaceID, filesystemID int64) (FilestoreFilesystem, error) {
+	return getFilestoreFilesystemSQLX(ctx, database, filestoreFilesystemSelectSQL()+`
 		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and id = :filesystem_id and deleted_at is null
 	`, map[string]any{
@@ -111,7 +82,7 @@ func getFilestoreFilesystemByIDSQLX(ctx context.Context, database *sqlx.DB, work
 	})
 }
 
-func getFilestoreFilesystemSQLX(ctx context.Context, database *sqlx.DB, query string, arguments map[string]any) (FilestoreFilesystem, error) {
+func getFilestoreFilesystemSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (FilestoreFilesystem, error) {
 	var row filestoreFilesystemRow
 	err := namedGetContext(ctx, database, &row, query, arguments)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -123,7 +94,7 @@ func getFilestoreFilesystemSQLX(ctx context.Context, database *sqlx.DB, query st
 	return row.filesystem(), nil
 }
 
-func getFilestoreTokenScopeSQLX(ctx context.Context, database *sqlx.DB, query string, arguments map[string]any) (FilestoreTokenScope, error) {
+func getFilestoreTokenScopeSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (FilestoreTokenScope, error) {
 	var row filestoreTokenScopeRow
 	err := namedGetContext(ctx, database, &row, query, arguments)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -135,9 +106,8 @@ func getFilestoreTokenScopeSQLX(ctx context.Context, database *sqlx.DB, query st
 	return row.scope()
 }
 
-func getActiveFilestoreEntrySQLX(ctx context.Context, database *sqlx.DB, filesystem FilestoreFilesystem, entryPath string) (FilestoreEntry, error) {
-	var row filestoreEntryRow
-	err := namedGetContext(ctx, database, &row, filestoreEntrySelectSQLX()+`
+func getActiveFilestoreEntrySQLX(ctx context.Context, database sqlxNamedQueryer, filesystem FilestoreFilesystem, entryPath string) (FilestoreEntry, error) {
+	return getFilestoreEntrySQLX(ctx, database, filestoreEntrySelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and path = :entry_path
@@ -148,6 +118,11 @@ func getActiveFilestoreEntrySQLX(ctx context.Context, database *sqlx.DB, filesys
 		"filesystem_uuid": filesystem.UUID,
 		"entry_path":      entryPath,
 	})
+}
+
+func getFilestoreEntrySQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (FilestoreEntry, error) {
+	var row filestoreEntryRow
+	err := namedGetContext(ctx, database, &row, query, arguments)
 	if errors.Is(err, sql.ErrNoRows) {
 		return FilestoreEntry{}, ErrNotFound
 	}
@@ -159,40 +134,55 @@ func getActiveFilestoreEntrySQLX(ctx context.Context, database *sqlx.DB, filesys
 
 func insertFilestoreObjectCleanupJobSQLX(
 	ctx context.Context,
-	database *sqlx.DB,
+	database sqlxNamedQueryer,
 	input EnqueueFilestoreObjectCleanupJobInput,
 ) (FilestoreObjectCleanupJob, error) {
 	var job FilestoreObjectCleanupJob
 	err := namedGetContext(ctx, database, &job, `
-		insert into jobs (external_id, workspace_id, type, status, payload, run_after)
-		values (
-			concat('job_', replace(cast(gen_random_uuid() as text), '-', '')),
-			:workspace_id, :job_type, 'pending',
-			jsonb_build_object(
-				'filesystem_id', cast(:filesystem_id as bigint),
-				'filesystem_external_id', cast(:filesystem_external_id as text),
-				'entry_external_id', cast(:entry_external_id as text),
-				'bucket', cast(:bucket as text),
-				'key', cast(:key as text),
-				'etag', cast(:etag as text),
-				'version_id', cast(:version_id as text),
-				'reason', cast(:reason as text)
-			),
-			:run_after
+		with inserted_job as (
+			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
+			select
+				concat('job_', replace(cast(gen_random_uuid() as text), '-', '')),
+				w.id, :job_type, 'pending',
+				jsonb_build_object(
+					'workspace_uuid', cast(w.uuid as text),
+					'filesystem_uuid', cast(fs.uuid as text),
+					'entry_external_id', cast(:entry_external_id as text),
+					'bucket', cast(:bucket as text),
+					'key', cast(:key as text),
+					'etag', cast(:etag as text),
+					'version_id', cast(:version_id as text),
+					'reason', cast(:reason as text)
+				),
+				:run_after
+			from workspaces w
+			join filestore_filesystems fs
+				on fs.id = :filesystem_id and fs.workspace_uuid = w.uuid
+			where w.id = :workspace_id
+			returning *
 		)
-		returning `+filestoreCleanupJobColumns("jobs"), map[string]any{
-		"workspace_id":           input.WorkspaceID,
-		"job_type":               filestoreCleanupJobType,
-		"filesystem_id":          input.FilesystemID,
-		"filesystem_external_id": input.FilesystemExternalID,
-		"entry_external_id":      input.EntryExternalID,
-		"bucket":                 input.Bucket,
-		"key":                    input.Key,
-		"etag":                   input.ETag,
-		"version_id":             input.VersionID,
-		"reason":                 input.Reason,
-		"run_after":              input.RunAfter,
+		select `+filestoreCleanupJobColumns("j", "w", "fs")+`
+		from inserted_job j
+		join workspaces w
+			on cast(w.uuid as text) = j.payload->>'workspace_uuid'
+		join filestore_filesystems fs
+			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
+			and fs.workspace_uuid = w.uuid
+	`, map[string]any{
+		"workspace_id":      input.WorkspaceID,
+		"job_type":          filestoreCleanupJobType,
+		"filesystem_id":     input.FilesystemID,
+		"entry_external_id": input.EntryExternalID,
+		"bucket":            input.Bucket,
+		"key":               input.Key,
+		"etag":              input.ETag,
+		"version_id":        input.VersionID,
+		"reason":            input.Reason,
+		"run_after":         input.RunAfter,
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
+	}
 	if err != nil {
 		return FilestoreObjectCleanupJob{}, err
 	}

@@ -156,7 +156,17 @@ func loadIssuer(configPath string) (tokenIssuer, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateSigningKeyConfig(cfg); err != nil {
+		return nil, err
+	}
 	return filestore.NewTokenCredentials(cfg)
+}
+
+func validateSigningKeyConfig(cfg config.Config) error {
+	if strings.TrimSpace(cfg.CodeSession.JWTSigningPrivateKeyFile) == "" {
+		return errors.New("code_session.jwt_signing_private_key_file must be configured so the server can verify tokens issued by this separate process")
+	}
+	return nil
 }
 
 func loadConfig(configPath string) (config.Config, error) {

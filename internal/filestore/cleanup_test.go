@@ -11,31 +11,33 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
-func TestRunFilestoreCleanupOnceFailsMismatchedBucketWithoutDeleting(t *testing.T) {
+func TestRunFilestoreCleanupOnceSchedulesBucketResolutionFailureRetry(t *testing.T) {
 	t.Parallel()
 
+	bucketErr := errors.New("bucket name is invalid")
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{{
 		ID:         1,
 		ExternalID: "cleanup-1",
-		Bucket:     "unexpected-bucket",
+		Bucket:     "invalid-bucket",
 		Key:        "objects/a",
 		VersionID:  "version-1",
 	}}}
-	store := &fakeCleanupBlobStore{}
+	client := &fakeCleanupStorageClient{
+		forBucketErrors: map[string]error{"invalid-bucket": bucketErr},
+	}
 
 	err := RunFilestoreCleanupOnce(
 		context.Background(),
 		database,
-		store,
-		filestoreTestConfig(0, 0, "configured-bucket"),
+		client,
 		"worker-1",
 	)
 
 	if err != nil {
 		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
 	}
-	if len(store.deleteCalls) != 0 {
-		t.Fatalf("Delete calls = %+v", store.deleteCalls)
+	if len(client.requestedBuckets) != 1 || client.requestedBuckets[0] != "invalid-bucket" {
+		t.Fatalf("requested buckets = %v", client.requestedBuckets)
 	}
 	if len(database.failures) != 1 {
 		t.Fatalf("failures = %+v", database.failures)
@@ -44,7 +46,7 @@ func TestRunFilestoreCleanupOnceFailsMismatchedBucketWithoutDeleting(t *testing.
 	if failure.jobID != 1 || failure.workerID != "worker-1" || failure.delay != time.Hour || failure.maxAttempts != filestoreCleanupMaxAttempts {
 		t.Fatalf("failure = %+v", failure)
 	}
-	if failure.reason != "cleanup bucket does not match configured Filestore bucket" {
+	if failure.reason != bucketErr.Error() {
 		t.Fatalf("failure reason = %q", failure.reason)
 	}
 }
@@ -66,8 +68,7 @@ func TestRunFilestoreCleanupOnceSchedulesDeleteFailureRetry(t *testing.T) {
 	err := RunFilestoreCleanupOnce(
 		context.Background(),
 		database,
-		store,
-		filestoreTestConfig(0, 0, "configured-bucket"),
+		newFakeCleanupStorageClient(store),
 		"worker-2",
 	)
 
@@ -107,8 +108,7 @@ func TestRunFilestoreCleanupOnceCompletesMissingObject(t *testing.T) {
 	err := RunFilestoreCleanupOnce(
 		context.Background(),
 		database,
-		store,
-		filestoreTestConfig(0, 0, "configured-bucket"),
+		newFakeCleanupStorageClient(store),
 		"worker-3",
 	)
 
@@ -124,8 +124,54 @@ func TestRunFilestoreCleanupOnceCompletesMissingObject(t *testing.T) {
 	if len(database.failures) != 0 {
 		t.Fatalf("failures = %+v", database.failures)
 	}
-	if database.leasedWorkerID != "worker-3" || database.leasedLimit != filestoreCleanupBatchSize {
-		t.Fatalf("lease worker = %q, limit = %d", database.leasedWorkerID, database.leasedLimit)
+	if database.leasedWorkerID != "worker-3" ||
+		database.leasedLimit != filestoreCleanupBatchSize ||
+		database.leasedMaxAttempts != filestoreCleanupMaxAttempts {
+		t.Fatalf(
+			"lease worker = %q, limit = %d, max attempts = %d",
+			database.leasedWorkerID,
+			database.leasedLimit,
+			database.leasedMaxAttempts,
+		)
+	}
+}
+
+func TestRunFilestoreCleanupOnceDeletesObjectsFromMultipleBuckets(t *testing.T) {
+	t.Parallel()
+
+	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{
+		{ID: 10, ExternalID: "cleanup-10", Bucket: "first-bucket", Key: "objects/first", VersionID: "version-10"},
+		{ID: 11, ExternalID: "cleanup-11", Bucket: "second-bucket", Key: "objects/second"},
+	}}
+	firstStore := &fakeCleanupBlobStore{bucket: "first-bucket"}
+	secondStore := &fakeCleanupBlobStore{bucket: "second-bucket"}
+	client := newFakeCleanupStorageClient(firstStore, secondStore)
+
+	err := RunFilestoreCleanupOnce(context.Background(), database, client, "worker-multi")
+
+	if err != nil {
+		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
+	}
+	if len(client.requestedBuckets) != 2 ||
+		client.requestedBuckets[0] != "first-bucket" ||
+		client.requestedBuckets[1] != "second-bucket" {
+		t.Fatalf("requested buckets = %v", client.requestedBuckets)
+	}
+	if len(firstStore.deleteCalls) != 1 ||
+		firstStore.deleteCalls[0].key != "objects/first" ||
+		firstStore.deleteCalls[0].versionID != "version-10" {
+		t.Fatalf("first bucket Delete calls = %+v", firstStore.deleteCalls)
+	}
+	if len(secondStore.deleteCalls) != 1 ||
+		secondStore.deleteCalls[0].key != "objects/second" ||
+		!secondStore.deleteCalls[0].allVersions {
+		t.Fatalf("second bucket Delete calls = %+v", secondStore.deleteCalls)
+	}
+	if len(database.completed) != 2 || database.completed[0] != 10 || database.completed[1] != 11 {
+		t.Fatalf("completed jobs = %v", database.completed)
+	}
+	if len(database.failures) != 0 {
+		t.Fatalf("failures = %+v", database.failures)
 	}
 }
 
@@ -134,21 +180,23 @@ func TestRunFilestoreCleanupOnceReturnsStateTransitionErrors(t *testing.T) {
 
 	completeErr := errors.New("complete failed")
 	failErr := errors.New("fail transition failed")
+	bucketErr := errors.New("bucket resolution failed")
 	database := &fakeFilestoreCleanupDatabase{
 		jobs: []db.FilestoreObjectCleanupJob{
 			{ID: 4, ExternalID: "cleanup-4", Bucket: "configured-bucket", Key: "objects/complete"},
-			{ID: 5, ExternalID: "cleanup-5", Bucket: "wrong-bucket", Key: "objects/fail"},
+			{ID: 5, ExternalID: "cleanup-5", Bucket: "invalid-bucket", Key: "objects/fail"},
 		},
 		completeError: completeErr,
 		failError:     failErr,
 	}
 	store := &fakeCleanupBlobStore{}
+	client := newFakeCleanupStorageClient(store)
+	client.forBucketErrors = map[string]error{"invalid-bucket": bucketErr}
 
 	err := RunFilestoreCleanupOnce(
 		context.Background(),
 		database,
-		store,
-		filestoreTestConfig(0, 0, "configured-bucket"),
+		client,
 		"worker-4",
 	)
 
@@ -172,8 +220,7 @@ func TestRunFilestoreCleanupOnceReturnsLeaseError(t *testing.T) {
 	err := RunFilestoreCleanupOnce(
 		context.Background(),
 		database,
-		&fakeCleanupBlobStore{},
-		filestoreTestConfig(0, 0, "configured-bucket"),
+		newFakeCleanupStorageClient(),
 		"worker-5",
 	)
 
@@ -194,8 +241,7 @@ func TestRunFilestoreCleanupOnceStopsOnCanceledDelete(t *testing.T) {
 	err := RunFilestoreCleanupOnce(
 		context.Background(),
 		database,
-		store,
-		filestoreTestConfig(0, 0, "configured-bucket"),
+		newFakeCleanupStorageClient(store),
 		"worker-6",
 	)
 
@@ -276,8 +322,15 @@ func TestRunFilestoreFilesystemCleanupOnceUsesBoundedBatch(t *testing.T) {
 	if err := RunFilestoreFilesystemCleanupOnce(context.Background(), database, "worker-9"); err != nil {
 		t.Fatalf("RunFilestoreFilesystemCleanupOnce() error = %v", err)
 	}
-	if database.filesystemLeasedWorkerID != "worker-9" || database.filesystemLeasedLimit != filestoreCleanupBatchSize {
-		t.Fatalf("filesystem lease worker = %q, limit = %d", database.filesystemLeasedWorkerID, database.filesystemLeasedLimit)
+	if database.filesystemLeasedWorkerID != "worker-9" ||
+		database.filesystemLeasedLimit != filestoreCleanupBatchSize ||
+		database.filesystemMaxAttempts != filestoreCleanupMaxAttempts {
+		t.Fatalf(
+			"filesystem lease worker = %q, limit = %d, max attempts = %d",
+			database.filesystemLeasedWorkerID,
+			database.filesystemLeasedLimit,
+			database.filesystemMaxAttempts,
+		)
 	}
 	if len(database.filesystemProcessed) != 1 || database.filesystemProcessed[0] != 9 {
 		t.Fatalf("processed filesystem jobs = %v", database.filesystemProcessed)
@@ -295,11 +348,17 @@ type cleanupDeleteCall struct {
 
 type fakeCleanupBlobStore struct {
 	storage.ObjectStore
+	bucket      string
 	deleteCalls []cleanupDeleteCall
 	deleteError error
 }
 
-func (*fakeCleanupBlobStore) Name() string { return "configured-bucket" }
+func (s *fakeCleanupBlobStore) Name() string {
+	if s.bucket == "" {
+		return "configured-bucket"
+	}
+	return s.bucket
+}
 
 func (s *fakeCleanupBlobStore) Delete(_ context.Context, key string, options storage.DeleteOptions) error {
 	s.deleteCalls = append(s.deleteCalls, cleanupDeleteCall{
@@ -308,6 +367,32 @@ func (s *fakeCleanupBlobStore) Delete(_ context.Context, key string, options sto
 		allVersions: options.AllVersions,
 	})
 	return s.deleteError
+}
+
+type fakeCleanupStorageClient struct {
+	stores           map[string]storage.ObjectStore
+	forBucketErrors  map[string]error
+	requestedBuckets []string
+}
+
+func newFakeCleanupStorageClient(stores ...*fakeCleanupBlobStore) *fakeCleanupStorageClient {
+	client := &fakeCleanupStorageClient{stores: make(map[string]storage.ObjectStore, len(stores))}
+	for _, store := range stores {
+		client.stores[store.Name()] = store
+	}
+	return client
+}
+
+func (c *fakeCleanupStorageClient) ForBucket(bucket string) (storage.ObjectStore, error) {
+	c.requestedBuckets = append(c.requestedBuckets, bucket)
+	if err := c.forBucketErrors[bucket]; err != nil {
+		return nil, err
+	}
+	store, ok := c.stores[bucket]
+	if !ok {
+		return nil, errors.New("fake cleanup store not found")
+	}
+	return store, nil
 }
 
 type cleanupFailure struct {
@@ -323,6 +408,7 @@ type fakeFilestoreCleanupDatabase struct {
 	leaseError               error
 	leasedWorkerID           string
 	leasedLimit              int
+	leasedMaxAttempts        int
 	completed                []int64
 	completedWorkerIDs       []string
 	completeError            error
@@ -335,6 +421,7 @@ type fakeFilestoreCleanupDatabase struct {
 	filesystemLeaseError     error
 	filesystemLeasedWorkerID string
 	filesystemLeasedLimit    int
+	filesystemMaxAttempts    int
 	filesystemProcessed      []int64
 	filesystemProcessLimit   int
 	filesystemProcessError   error
@@ -345,9 +432,11 @@ func (d *fakeFilestoreCleanupDatabase) LeaseFilestoreFilesystemCleanupJobs(
 	_ context.Context,
 	workerID string,
 	limit int,
+	maxAttempts int,
 ) ([]db.FilestoreFilesystemCleanupJob, error) {
 	d.filesystemLeasedWorkerID = workerID
 	d.filesystemLeasedLimit = limit
+	d.filesystemMaxAttempts = maxAttempts
 	return d.filesystemJobs, d.filesystemLeaseError
 }
 
@@ -384,9 +473,11 @@ func (d *fakeFilestoreCleanupDatabase) LeaseFilestoreObjectCleanupJobs(
 	_ context.Context,
 	workerID string,
 	limit int,
+	maxAttempts int,
 ) ([]db.FilestoreObjectCleanupJob, error) {
 	d.leasedWorkerID = workerID
 	d.leasedLimit = limit
+	d.leasedMaxAttempts = maxAttempts
 	return d.jobs, d.leaseError
 }
 

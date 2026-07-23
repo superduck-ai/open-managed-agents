@@ -214,12 +214,22 @@ func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
-	w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
+	if result.Size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(result.Size, 10))
+	}
 	w.WriteHeader(http.StatusOK)
 	if result.Body == nil {
 		return
 	}
-	if _, err := io.CopyN(w, result.Body, result.Size); err != nil {
+	var err error
+	if result.Size >= 0 {
+		_, err = io.CopyN(w, result.Body, result.Size)
+	} else {
+		// 对象存储可以合法地省略 Content-Length；此时持续读取至 EOF，
+		// 不能把未知长度 -1 交给 io.CopyN，避免成功打开的对象被截断为空响应。
+		_, err = io.Copy(w, result.Body)
+	}
+	if err != nil {
 		// 响应头发出后已无法改写为 JSON 错误，只记录流中断供服务端诊断。
 		log.Printf("stream filestore object: %v", err)
 	}

@@ -8,7 +8,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
@@ -25,10 +24,10 @@ const (
 )
 
 type filestoreCleanupDatabase interface {
-	LeaseFilestoreFilesystemCleanupJobs(context.Context, string, int) ([]db.FilestoreFilesystemCleanupJob, error)
+	LeaseFilestoreFilesystemCleanupJobs(context.Context, string, int, int) ([]db.FilestoreFilesystemCleanupJob, error)
 	ProcessLeasedFilestoreFilesystemCleanupJob(context.Context, int64, string, int) (bool, error)
 	FailLeasedFilestoreFilesystemCleanupJob(context.Context, int64, string, string, time.Duration, int) error
-	LeaseFilestoreObjectCleanupJobs(context.Context, string, int) ([]db.FilestoreObjectCleanupJob, error)
+	LeaseFilestoreObjectCleanupJobs(context.Context, string, int, int) ([]db.FilestoreObjectCleanupJob, error)
 	CompleteLeasedFilestoreObjectCleanupJob(context.Context, int64, string) error
 	FailLeasedFilestoreObjectCleanupJob(context.Context, int64, string, string, time.Duration, int) error
 	ExpireFilestoreEntries(context.Context, int) ([]db.FilestoreObjectCleanupJob, error)
@@ -39,21 +38,19 @@ type filestoreCleanupDatabase interface {
 func StartFilestoreCleanupWorker(
 	ctx context.Context,
 	database filestoreCleanupDatabase,
-	store storage.ObjectStore,
-	cfg config.Config,
+	client storage.Client,
 ) {
-	if database == nil || store == nil {
+	if database == nil || client == nil {
 		return
 	}
 	workerID := fmt.Sprintf("filestore-cleanup-%d-%s", os.Getpid(), uuid.NewString())
-	go runFilestoreCleanupLoop(ctx, database, store, cfg, workerID)
+	go runFilestoreCleanupLoop(ctx, database, client, workerID)
 }
 
 func runFilestoreCleanupLoop(
 	ctx context.Context,
 	database filestoreCleanupDatabase,
-	store storage.ObjectStore,
-	cfg config.Config,
+	client storage.Client,
 	workerID string,
 ) {
 	cleanupTicker := time.NewTicker(filestoreCleanupPollInterval)
@@ -72,7 +69,7 @@ func runFilestoreCleanupLoop(
 	if ctx.Err() != nil {
 		return
 	}
-	runFilestoreCleanupAndLog(ctx, database, store, cfg, workerID)
+	runFilestoreCleanupAndLog(ctx, database, client, workerID)
 
 	for {
 		select {
@@ -80,7 +77,7 @@ func runFilestoreCleanupLoop(
 			return
 		case <-cleanupTicker.C:
 			runFilestoreFilesystemCleanupAndLog(ctx, database, workerID)
-			runFilestoreCleanupAndLog(ctx, database, store, cfg, workerID)
+			runFilestoreCleanupAndLog(ctx, database, client, workerID)
 		case <-ttlTicker.C:
 			runFilestoreTTLSweepAndLog(ctx, database)
 		}
@@ -96,11 +93,10 @@ func runFilestoreFilesystemCleanupAndLog(ctx context.Context, database filestore
 func runFilestoreCleanupAndLog(
 	ctx context.Context,
 	database filestoreCleanupDatabase,
-	store storage.ObjectStore,
-	cfg config.Config,
+	client storage.Client,
 	workerID string,
 ) {
-	if err := RunFilestoreCleanupOnce(ctx, database, store, cfg, workerID); err != nil {
+	if err := RunFilestoreCleanupOnce(ctx, database, client, workerID); err != nil {
 		log.Printf("filestore cleanup worker: %v", err)
 	}
 }
@@ -114,7 +110,9 @@ func runFilestoreTTLSweepAndLog(ctx context.Context, database filestoreCleanupDa
 // RunFilestoreFilesystemCleanupOnce 把已删除 filesystem 的一批元数据转换成对象清理任务。
 // 此阶段只访问数据库；真正的 S3 删除仍由对象任务在事务外完成。
 func RunFilestoreFilesystemCleanupOnce(ctx context.Context, database filestoreCleanupDatabase, workerID string) error {
-	jobs, err := database.LeaseFilestoreFilesystemCleanupJobs(ctx, workerID, filestoreCleanupBatchSize)
+	jobs, err := database.LeaseFilestoreFilesystemCleanupJobs(
+		ctx, workerID, filestoreCleanupBatchSize, filestoreCleanupMaxAttempts,
+	)
 	if err != nil {
 		return err
 	}
@@ -152,15 +150,16 @@ func RunFilestoreFilesystemCleanupOnce(ctx context.Context, database filestoreCl
 }
 
 // RunFilestoreCleanupOnce 租约并处理一批有界的对象清理任务。
-// 对象已不存在等同于目标已达成，按幂等成功处理。
+// 每条任务按自身持久化的 bucket 选择对象存储；对象已不存在等同于目标已达成。
 func RunFilestoreCleanupOnce(
 	ctx context.Context,
 	database filestoreCleanupDatabase,
-	store storage.ObjectStore,
-	cfg config.Config,
+	client storage.Client,
 	workerID string,
 ) error {
-	jobs, err := database.LeaseFilestoreObjectCleanupJobs(ctx, workerID, filestoreCleanupBatchSize)
+	jobs, err := database.LeaseFilestoreObjectCleanupJobs(
+		ctx, workerID, filestoreCleanupBatchSize, filestoreCleanupMaxAttempts,
+	)
 	if err != nil {
 		return err
 	}
@@ -170,13 +169,13 @@ func RunFilestoreCleanupOnce(
 			errs = append(errs, err)
 			break
 		}
-		if job.Bucket != store.Name() {
-			// 清理器绝不越过当前配置的桶边界；配置漂移时保留任务，供人工核对后重试。
+		store, storeErr := client.ForBucket(job.Bucket)
+		if storeErr != nil {
 			if err := database.FailLeasedFilestoreObjectCleanupJob(
 				ctx,
 				job.ID,
 				workerID,
-				"cleanup bucket does not match configured Filestore bucket",
+				storeErr.Error(),
 				time.Hour,
 				filestoreCleanupMaxAttempts,
 			); err != nil {

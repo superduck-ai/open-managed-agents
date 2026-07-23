@@ -89,8 +89,8 @@ func main() {
 		log.Fatalf("load filestore credentials: %v", err)
 	}
 	cleanup.StartObjectCleanupWorker(ctx, database, storageClient, 30*time.Second)
-	// 常规资源共享默认 bucket；通用清理任务可通过 client 按任务记录选择其他 bucket。
-	filestore.StartFilestoreCleanupWorker(ctx, database, objectStore, cfg)
+	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
+	filestore.StartFilestoreCleanupWorker(ctx, database, storageClient)
 	if cfg.Batch.WorkerEnabled {
 		batches.StartBatchWorker(ctx, database, objectStore, cfg)
 		batches.StartBatchExpirySweep(ctx, database, cfg)

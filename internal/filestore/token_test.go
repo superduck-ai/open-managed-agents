@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -22,7 +23,15 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 	otherCredentials := newTokenCredentialsForTest(t)
 	tampered := tamperFilestoreToken(t, validToken)
 	unsupportedClaims := decodeFilestoreTokenPayload(t, validToken)
-	unsupportedClaims["iss"] = "session-ingress"
+	unsupportedClaims["session_id"] = "session_test"
+	wrongIssuerClaims := decodeFilestoreTokenPayload(t, validToken)
+	wrongIssuerClaims["iss"] = "session-ingress"
+	wrongAudienceClaims := decodeFilestoreTokenPayload(t, validToken)
+	wrongAudienceClaims["aud"] = []string{"session-ingress"}
+	expiredClaims := decodeFilestoreTokenPayload(t, validToken)
+	expiredClaims["exp"] = time.Now().Add(-time.Minute).Unix()
+	missingExpiryClaims := decodeFilestoreTokenPayload(t, validToken)
+	delete(missingExpiryClaims, "exp")
 	readonlyFalseClaims := decodeFilestoreTokenPayload(t, validToken)
 	readonlyFalseClaims["readonly"] = false
 	readonlyNullClaims := decodeFilestoreTokenPayload(t, validToken)
@@ -36,6 +45,10 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 		{name: "wrong signing key", token: mustIssueFilestoreToken(t, otherCredentials, filestoreTokenIdentityForTest())},
 		{name: "session ingress prefix", token: "sk-ant-si-" + validToken},
 		{name: "unsupported extra claim", token: signFilestoreTokenPayload(t, credentials, unsupportedClaims)},
+		{name: "wrong issuer", token: signFilestoreTokenPayload(t, credentials, wrongIssuerClaims)},
+		{name: "wrong audience", token: signFilestoreTokenPayload(t, credentials, wrongAudienceClaims)},
+		{name: "expired", token: signFilestoreTokenPayload(t, credentials, expiredClaims)},
+		{name: "missing expiry", token: signFilestoreTokenPayload(t, credentials, missingExpiryClaims)},
 		{name: "readonly false", token: signFilestoreTokenPayload(t, credentials, readonlyFalseClaims)},
 		{name: "readonly null", token: signFilestoreTokenPayload(t, credentials, readonlyNullClaims)},
 		{name: "not a jwt", token: "not-a-jwt"},
@@ -60,6 +73,8 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 	t.Parallel()
 
 	credentials := newTokenCredentialsForTest(t)
+	issuedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	credentials.now = func() time.Time { return issuedAt }
 	for _, test := range []struct {
 		name         string
 		readonly     bool
@@ -82,6 +97,7 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 			payload := decodeFilestoreTokenPayload(t, rawToken)
 
 			for key, want := range map[string]any{
+				"iss":                          filestoreTokenIssuer,
 				"sub":                          identity.Subject,
 				"org_uuid":                     identity.OrgUUID,
 				"account_uuid":                 identity.AccountUUID,
@@ -95,6 +111,16 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 					t.Fatalf("claim %s = %#v, want %#v", key, got, want)
 				}
 			}
+			audience, ok := payload["aud"].([]any)
+			if !ok || len(audience) != 1 || audience[0] != filestoreTokenAudience {
+				t.Fatalf("aud = %#v", payload["aud"])
+			}
+			if got := int64(payload["iat"].(float64)); got != issuedAt.Unix() {
+				t.Fatalf("iat = %d, want %d", got, issuedAt.Unix())
+			}
+			if got := int64(payload["exp"].(float64)); got != issuedAt.Add(filestoreTokenTTL).Unix() {
+				t.Fatalf("exp = %d, want %d", got, issuedAt.Add(filestoreTokenTTL).Unix())
+			}
 			if _, exists := payload["session_id"]; exists {
 				t.Fatalf("filestore token unexpectedly contains session ingress claims: %#v", payload)
 			}
@@ -106,7 +132,7 @@ func TestTokenCredentialsIssueDocumentedClaims(t *testing.T) {
 			if !ok || len(taints) != 2 || taints[0] != "compliance" || taints[1] != "restricted" {
 				t.Fatalf("org_taints = %#v", payload["org_taints"])
 			}
-			wantClaimCount := 9
+			wantClaimCount := 13
 			if test.wantPresent {
 				wantClaimCount++
 			}

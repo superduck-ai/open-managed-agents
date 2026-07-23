@@ -53,6 +53,12 @@ type Service struct {
 	now   func() time.Time
 }
 
+type readFileResult struct {
+	Body      io.ReadCloser
+	Size      int64
+	MediaType string
+}
+
 // NewService 创建 Filestore 业务服务。
 func NewService(cfg config.Config, database filestoreDatabase, store storage.ObjectStore) *Service {
 	return &Service{cfg: cfg, db: database, store: store, now: time.Now}
@@ -133,7 +139,6 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 		FilesystemID: filesystem.ID,
 		Path:         request.Path,
 		MakeParents:  request.MakeParents,
-		Actor:        db.FilestoreActor{},
 		Now:          s.now().UTC(),
 	})
 	if err != nil {
@@ -189,30 +194,26 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	blobUUID := uuid.NewString()
-	objectKey := filestoreObjectKey(principal.WorkspaceUUID, filesystem.UUID, blobUUID)
-	cleanupJob, apiErr := s.enqueueOrphanCleanup(ctx, principal, filesystem, blobUUID, objectKey, now)
-	if apiErr != nil {
-		return fileResponse{}, apiErr
-	}
-
 	md5Hash := md5.New()
 	sha256Hash := sha256.New()
 	// 限额、双摘要与上传共用一条流：不预读整文件，也不重复遍历内容。
 	uploadReader := limitedUploadReader(body, s.cfg.Storage.MaxFileBytes)
 	hashedReader := io.TeeReader(uploadReader, io.MultiWriter(md5Hash, sha256Hash))
 	mediaType := normalizeMediaType(params.MediaType)
-	upload, err := s.store.Upload(ctx, objectKey, hashedReader, storage.UploadOptions{Size: -1, ContentType: mediaType})
-	if err != nil {
-		s.discardOrphan(ctx, cleanupJob, objectKey, "")
-		return fileResponse{}, mapBlobstoreError("upload file", err)
-	}
-	if s.cfg.Storage.MaxFileBytes > 0 && upload.Size > s.cfg.Storage.MaxFileBytes {
-		s.discardOrphan(ctx, cleanupJob, objectKey, upload.VersionID)
-		return fileResponse{}, &apiError{Status: http.StatusRequestEntityTooLarge, Code: "resource_exhausted", Message: "File exceeds maximum size"}
-	}
-	if apiErr := s.attachOrphanVersion(ctx, principal.WorkspaceID, cleanupJob, upload.ETag, upload.VersionID); apiErr != nil {
-		s.discardOrphan(ctx, cleanupJob, objectKey, upload.VersionID)
+	var upload storage.UploadResult
+	staged, apiErr := s.stageFilestoreObject(ctx, principal, filesystem, now, func(objectKey string) (objectWriteResult, *apiError) {
+		var err error
+		upload, err = s.store.Upload(ctx, objectKey, hashedReader, storage.UploadOptions{Size: -1, ContentType: mediaType})
+		result := objectWriteResult{ETag: upload.ETag, VersionID: upload.VersionID}
+		if err != nil {
+			return result, mapBlobstoreError("upload file", err)
+		}
+		if s.cfg.Storage.MaxFileBytes > 0 && upload.Size > s.cfg.Storage.MaxFileBytes {
+			return result, &apiError{Status: http.StatusRequestEntityTooLarge, Code: "resource_exhausted", Message: "File exceeds maximum size"}
+		}
+		return result, nil
+	})
+	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.PutFilestoreFile(ctx, db.PutFilestoreFileInput{
@@ -230,15 +231,14 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 			MD5:                   hex.EncodeToString(md5Hash.Sum(nil)),
 			SHA256:                hex.EncodeToString(sha256Hash.Sum(nil)),
 			S3Bucket:              s.store.Name(),
-			S3Key:                 objectKey,
+			S3Key:                 staged.Key,
 			S3ETag:                upload.ETag,
 			S3VersionID:           upload.VersionID,
 			ExpiresAt:             expiresAt,
 		},
 		OverwriteExisting:          params.OverwriteExisting,
-		OrphanCleanupJobExternalID: cleanupJob.ExternalID,
+		OrphanCleanupJobExternalID: staged.CleanupJob.ExternalID,
 		WorkspaceStorageLimitBytes: s.cfg.Storage.WorkspaceLimitBytes,
-		Actor:                      db.FilestoreActor{},
 		Now:                        now,
 	})
 	if err != nil {
@@ -273,19 +273,17 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		return fileResponse{}, apiErr
 	}
 	now := s.now().UTC()
-	blobUUID := uuid.NewString()
-	destinationKey := filestoreObjectKey(principal.WorkspaceUUID, filesystem.UUID, blobUUID)
-	cleanupJob, apiErr := s.enqueueOrphanCleanup(ctx, principal, filesystem, blobUUID, destinationKey, now)
+	var copyResult storage.CopyResult
+	staged, apiErr := s.stageFilestoreObject(ctx, principal, filesystem, now, func(destinationKey string) (objectWriteResult, *apiError) {
+		var err error
+		copyResult, err = s.store.Copy(ctx, *source.S3Key, destinationKey)
+		result := objectWriteResult{ETag: copyResult.ETag, VersionID: copyResult.VersionID}
+		if err != nil {
+			return result, mapBlobstoreError("copy file", err)
+		}
+		return result, nil
+	})
 	if apiErr != nil {
-		return fileResponse{}, apiErr
-	}
-	copyResult, err := s.store.Copy(ctx, *source.S3Key, destinationKey)
-	if err != nil {
-		s.discardOrphan(ctx, cleanupJob, destinationKey, "")
-		return fileResponse{}, mapBlobstoreError("copy file", err)
-	}
-	if apiErr := s.attachOrphanVersion(ctx, principal.WorkspaceID, cleanupJob, copyResult.ETag, copyResult.VersionID); apiErr != nil {
-		s.discardOrphan(ctx, cleanupJob, destinationKey, copyResult.VersionID)
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.CopyFilestoreFile(ctx, db.CopyFilestoreFileInput{
@@ -296,13 +294,12 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		ExpectedSourceS3Key:        *source.S3Key,
 		ExpectedSourceS3VersionID:  stringValue(source.S3VersionID),
 		DestinationS3Bucket:        s.store.Name(),
-		DestinationS3Key:           destinationKey,
+		DestinationS3Key:           staged.Key,
 		DestinationS3ETag:          copyResult.ETag,
 		DestinationS3VersionID:     copyResult.VersionID,
 		OverwriteExisting:          request.OverwriteExisting,
-		OrphanCleanupJobExternalID: cleanupJob.ExternalID,
+		OrphanCleanupJobExternalID: staged.CleanupJob.ExternalID,
 		WorkspaceStorageLimitBytes: s.cfg.Storage.WorkspaceLimitBytes,
-		Actor:                      db.FilestoreActor{},
 		Now:                        now,
 	})
 	if err != nil {
@@ -387,12 +384,12 @@ func (s *Service) ReadFile(ctx context.Context, principal Principal, request rea
 	if entry.Kind != db.FilestoreEntryKindFile || entry.S3Key == nil || entry.SizeBytes == nil {
 		return readFileResult{}, failedPrecondition("path is not a file")
 	}
-	objectRange, empty, apiErr := resolveReadRange(request.Range, *entry.SizeBytes)
+	objectRange, responseSize, apiErr := resolveReadRange(request.Range, *entry.SizeBytes)
 	if apiErr != nil {
 		return readFileResult{}, apiErr
 	}
 	mediaType := stringValue(entry.MediaType)
-	if empty {
+	if responseSize == 0 {
 		// 空区间无需访问 S3；仍返回可关闭的空流，使 Handler 的生命周期保持统一。
 		return readFileResult{Body: io.NopCloser(bytes.NewReader(nil)), MediaType: mediaType}, nil
 	}
@@ -403,7 +400,9 @@ func (s *Service) ReadFile(ctx context.Context, principal Principal, request rea
 		}
 		return readFileResult{}, mapBlobstoreError("read file", err)
 	}
-	return readFileResult{Body: object.Body, Size: object.Size, MediaType: mediaType}, nil
+	// 数据库元数据与已解析区间共同决定协议层应返回的精确字节数。
+	// S3 响应可能没有 Content-Length（Object.Size 为 -1），不能让传输语义取决于该可选响应头。
+	return readFileResult{Body: object.Body, Size: responseSize, MediaType: mediaType}, nil
 }
 
 // RemoveFile 软删除元数据并登记对象清理任务；重复删除按幂等成功处理。
@@ -492,19 +491,55 @@ func (s *Service) enqueueOrphanCleanup(
 ) (db.FilestoreObjectCleanupJob, *apiError) {
 	// 先写哨兵、后写对象：任何后续失败都有一条持久化补偿路径。
 	job, err := s.db.EnqueueFilestoreObjectCleanupJob(ctx, db.EnqueueFilestoreObjectCleanupJobInput{
-		WorkspaceID:          principal.WorkspaceID,
-		FilesystemID:         filesystem.ID,
-		FilesystemExternalID: filesystem.ExternalID,
-		EntryExternalID:      entryExternalID,
-		Bucket:               s.store.Name(),
-		Key:                  key,
-		Reason:               "orphan_guard",
-		RunAfter:             now.Add(orphanCleanupDelay),
+		WorkspaceID:     principal.WorkspaceID,
+		FilesystemID:    filesystem.ID,
+		EntryExternalID: entryExternalID,
+		Bucket:          s.store.Name(),
+		Key:             key,
+		Reason:          "orphan_guard",
+		RunAfter:        now.Add(orphanCleanupDelay),
 	})
 	if err != nil {
 		return db.FilestoreObjectCleanupJob{}, internalError("prepare object cleanup", err)
 	}
 	return job, nil
+}
+
+type objectWriteResult struct {
+	ETag      string
+	VersionID string
+}
+
+type stagedFilestoreObject struct {
+	Key        string
+	CleanupJob db.FilestoreObjectCleanupJob
+}
+
+// stageFilestoreObject 统一保护“先写对象、后提交元数据”的非原子窗口。
+// 写入或版本登记失败时立即尝试回收；数据库提交结果未知时则由调用方保留哨兵等待后台裁决。
+func (s *Service) stageFilestoreObject(
+	ctx context.Context,
+	principal Principal,
+	filesystem db.FilestoreFilesystem,
+	now time.Time,
+	write func(string) (objectWriteResult, *apiError),
+) (stagedFilestoreObject, *apiError) {
+	blobUUID := uuid.NewString()
+	key := filestoreObjectKey(principal.WorkspaceUUID, filesystem.UUID, blobUUID)
+	cleanupJob, apiErr := s.enqueueOrphanCleanup(ctx, principal, filesystem, blobUUID, key, now)
+	if apiErr != nil {
+		return stagedFilestoreObject{}, apiErr
+	}
+	result, apiErr := write(key)
+	if apiErr != nil {
+		s.discardOrphan(ctx, cleanupJob, key, result.VersionID)
+		return stagedFilestoreObject{}, apiErr
+	}
+	if apiErr := s.attachOrphanVersion(ctx, principal.WorkspaceID, cleanupJob, result.ETag, result.VersionID); apiErr != nil {
+		s.discardOrphan(ctx, cleanupJob, key, result.VersionID)
+		return stagedFilestoreObject{}, apiErr
+	}
+	return stagedFilestoreObject{Key: key, CleanupJob: cleanupJob}, nil
 }
 
 func (s *Service) discardOrphan(ctx context.Context, job db.FilestoreObjectCleanupJob, key, versionID string) {
@@ -621,30 +656,30 @@ func filestoreObjectKey(workspaceUUID, filesystemUUID, blobUUID string) string {
 	return fmt.Sprintf("workspaces/%s/filestores/%s/blobs/%s", workspaceUUID, filesystemUUID, blobUUID)
 }
 
-func resolveReadRange(requestRange *readFileRange, fileSize int64) (*storage.ByteRange, bool, *apiError) {
+func resolveReadRange(requestRange *readFileRange, fileSize int64) (*storage.ByteRange, int64, *apiError) {
 	if requestRange == nil {
-		return nil, fileSize == 0, nil
+		return nil, fileSize, nil
 	}
 	offset := int64(requestRange.Offset)
 	length := int64(requestRange.Length)
 	if offset < 0 || length < -1 {
-		return nil, false, invalidRange("range offset and length are invalid")
+		return nil, 0, invalidRange("range offset and length are invalid")
 	}
 	if offset > fileSize {
-		return nil, false, invalidRange("range offset exceeds file size")
+		return nil, 0, invalidRange("range offset exceeds file size")
 	}
 	if length == 0 || offset == fileSize {
-		return nil, true, nil
+		return nil, 0, nil
 	}
 	if length == -1 {
-		return &storage.ByteRange{Offset: offset, Length: -1}, false, nil
+		return &storage.ByteRange{Offset: offset, Length: -1}, fileSize - offset, nil
 	}
 	remaining := fileSize - offset
 	if length > remaining {
 		// 协议允许请求越过文件尾，实际读取长度收敛到剩余字节数。
 		length = remaining
 	}
-	return &storage.ByteRange{Offset: offset, Length: length}, false, nil
+	return &storage.ByteRange{Offset: offset, Length: length}, length, nil
 }
 
 func payloadFromEntry(entry db.FilestoreEntry, filesystemExternalID string) (entryPayload, error) {
@@ -673,17 +708,17 @@ func filePayloadFromEntry(entry db.FilestoreEntry, filesystemExternalID string) 
 		}
 	}
 	payload := filePayload{
-		UUID:              entry.UUID,
-		CreatedAt:         formatTimestamp(entry.CreatedAt),
-		Size:              protoInt64(*entry.SizeBytes),
-		MediaType:         stringValue(entry.MediaType),
-		Metadata:          metadata,
-		MD5:               stringValue(entry.MD5),
-		WorkspaceTaggedID: entry.ExternalID,
-		DetectedMimeType:  stringValue(entry.DetectedMimeType),
-		Downloadable:      entry.Downloadable,
-		Tags:              append([]string(nil), entry.Tags...),
-		FilesystemID:      filesystemExternalID,
+		UUID:             entry.UUID,
+		CreatedAt:        formatTimestamp(entry.CreatedAt),
+		Size:             protoInt64(*entry.SizeBytes),
+		MediaType:        stringValue(entry.MediaType),
+		Metadata:         metadata,
+		MD5:              stringValue(entry.MD5),
+		EntryTaggedID:    entry.ExternalID,
+		DetectedMimeType: stringValue(entry.DetectedMimeType),
+		Downloadable:     entry.Downloadable,
+		Tags:             append([]string(nil), entry.Tags...),
+		FilesystemID:     filesystemExternalID,
 	}
 	if entry.ExpiresAt != nil {
 		payload.ExpiresAt = formatTimestamp(*entry.ExpiresAt)
@@ -719,6 +754,8 @@ func mapDatabaseErrorOrNil(operation string, err error) *apiError {
 
 func mapDatabaseError(operation string, err error) *apiError {
 	switch {
+	case errors.Is(err, db.ErrFilestoreParentMissing):
+		return failedPreconditionWithCause("parent directory does not exist", err)
 	case errors.Is(err, db.ErrNotFound):
 		return notFound("resource does not exist")
 	case errors.Is(err, db.ErrFilestorePathExists), errors.Is(err, db.ErrDuplicate):

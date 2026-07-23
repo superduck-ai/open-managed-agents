@@ -15,10 +15,17 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 
 	"github.com/golang-jwt/jwt/v5"
+)
+
+const (
+	filestoreTokenIssuer   = "open-managed-agents"
+	filestoreTokenAudience = "filestore"
+	filestoreTokenTTL      = time.Hour
 )
 
 // TokenClaims 是 Filestore 专用 JWT 合同。它与 code-session ingress claims
@@ -49,7 +56,11 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	required := []string{
+		"iss",
 		"sub",
+		"aud",
+		"exp",
+		"iat",
 		"org_uuid",
 		"account_uuid",
 		"workspace_uuid",
@@ -115,6 +126,7 @@ type TokenCredentials struct {
 	privateKey ed25519.PrivateKey
 	publicKey  ed25519.PublicKey
 	kid        string
+	now        func() time.Time
 }
 
 var processFilestoreTokenCredentials struct {
@@ -155,6 +167,7 @@ func newTokenCredentials(privateKey ed25519.PrivateKey) *TokenCredentials {
 		privateKey: privateKey,
 		publicKey:  publicKey,
 		kid:        "ed25519-" + base64.RawURLEncoding.EncodeToString(fingerprint[:]),
+		now:        time.Now,
 	}
 }
 
@@ -198,9 +211,14 @@ func (c *TokenCredentials) issue(identity TokenIdentity, readonly *bool) (string
 	if err != nil {
 		return "", err
 	}
+	now := c.now().UTC()
 	claims := TokenClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject: identity.Subject,
+			Issuer:    filestoreTokenIssuer,
+			Subject:   identity.Subject,
+			Audience:  jwt.ClaimStrings{filestoreTokenAudience},
+			ExpiresAt: jwt.NewNumericDate(now.Add(filestoreTokenTTL)),
+			IssuedAt:  jwt.NewNumericDate(now),
 		},
 		OrgUUID:                   identity.OrgUUID,
 		AccountUUID:               identity.AccountUUID,
@@ -230,6 +248,10 @@ func (c *TokenCredentials) Verify(rawToken string) (TokenClaims, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
 		jwt.WithStrictDecoding(),
+		jwt.WithExpirationRequired(),
+		jwt.WithIssuedAt(),
+		jwt.WithIssuer(filestoreTokenIssuer),
+		jwt.WithAudience(filestoreTokenAudience),
 	)
 	token, err := parser.ParseWithClaims(strings.TrimSpace(rawToken), &claims, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodEdDSA || token.Header["typ"] != "JWT" {

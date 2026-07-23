@@ -73,6 +73,22 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		assertWorkspaceStorageBytes(t, fixture, 3)
 	})
 
+	t.Run("failure missing parent keeps failed-precondition sentinel", func(t *testing.T) {
+		fixture := newWorkspaceStorageFixture(t)
+
+		_, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+			WorkspaceID:  fixture.workspaceID,
+			FilesystemID: fixture.filesystem.ID,
+			Path:         "/missing/file.txt",
+			Blob:         workspaceStorageBlob(3, nil),
+		})
+
+		if !errors.Is(err, db.ErrFilestoreParentMissing) {
+			t.Fatalf("PutFilestoreFile() error = %v, want ErrFilestoreParentMissing", err)
+		}
+		assertWorkspaceStorageBytes(t, fixture, 0)
+	})
+
 	t.Run("success files and filestore maintain one transactional total", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		file := workspaceStorageFile(fixture.workspaceID, 6)

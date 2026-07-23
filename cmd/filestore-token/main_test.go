@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 )
 
@@ -85,5 +86,17 @@ func TestRunIssuesReadonlyToken(t *testing.T) {
 	}
 	if !issuer.identity.WorkspaceCMEKEnabled {
 		t.Fatal("workspace CMEK flag was not propagated")
+	}
+}
+
+func TestValidateSigningKeyConfigRequiresPersistentKey(t *testing.T) {
+	if err := validateSigningKeyConfig(config.Config{}); err == nil {
+		t.Fatal("validateSigningKeyConfig() error = nil")
+	}
+
+	cfg := config.Config{}
+	cfg.CodeSession.JWTSigningPrivateKeyFile = "/run/secrets/filestore.pem"
+	if err := validateSigningKeyConfig(cfg); err != nil {
+		t.Fatalf("validateSigningKeyConfig() error = %v", err)
 	}
 }

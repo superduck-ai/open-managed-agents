@@ -1555,7 +1555,7 @@ export function registerManagedAgentsAgentsTests() {
 
     expect(await screen.findByText('Ancient agent 1')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Created All time' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 7 days' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Last 7 days' }));
     expect(await screen.findByText('No matching agents')).toBeTruthy();
 
     fireEvent.change(screen.getByPlaceholderText('Search by name or exact ID'), { target: { value: 'ancient' } });
@@ -1652,13 +1652,11 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url.includes('include_archived=true'))).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: 'Created All time' }));
-    const createdMenu = screen
-      .getByRole('menuitemradio', { name: 'All time' })
-      .closest('[data-slot="dropdown-menu-content"]');
+    const createdMenu = screen.getByRole('radio', { name: 'All time' }).closest('[data-slot="popover-content"]');
     expect(createdMenu?.className).toContain('bg-popover');
     expect(createdMenu?.className.includes('bg-secondary')).toBe(false);
-    expect(screen.getByRole('menuitemradio', { name: 'All time' }).getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 7 days' }));
+    expect(screen.getByRole('radio', { name: 'All time' }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('radio', { name: 'Last 7 days' }));
 
     await waitFor(() => {
       expect(screen.queryByText('Old active agent')).toBeNull();
@@ -1666,6 +1664,76 @@ export function registerManagedAgentsAgentsTests() {
     });
     expect(api.requests.some((request) => request.url.includes('created_at%5Bgte%5D='))).toBe(true);
   }, 10_000);
+
+  test('commits a custom created range with inclusive gte/lte bounds', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const api = mockAgentsApi([]);
+    renderManagedAgentsPage('agents');
+
+    expect(await screen.findByText('No agents yet')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Created All time' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Custom range' }));
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+
+    const baseline = api.requests.length;
+    // Each click re-queries the day button and flushes via `act`:
+    // react-day-picker runs in controlled mode (selected = props.selected), so
+    // picking `from` re-renders the calendar and replaces the day-button DOM
+    // nodes — a stale reference would silently no-op the second click.
+    const clickDay = (dataDay: string) => {
+      const button = document.querySelector<HTMLButtonElement>(`button[data-day="${dataDay}"]`);
+      expect(button).toBeTruthy();
+      act(() => {
+        fireEvent.click(button!);
+      });
+    };
+    clickDay(`${month}/1/${year}`);
+    clickDay(`${month}/15/${year}`);
+
+    // Editing the draft must not trigger a list request — only Apply commits.
+    expect(api.requests.length).toBe(baseline);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(api.requests.some((request) => request.url.includes('created_at%5Bgte%5D='))).toBe(true);
+      expect(api.requests.some((request) => request.url.includes('created_at%5Blte%5D='))).toBe(true);
+    });
+
+    const matched = api.requests.find(
+      (request) => request.url.includes('created_at%5Bgte%5D=') && request.url.includes('created_at%5Blte%5D='),
+    )!;
+    const monthPadded = String(month).padStart(2, '0');
+    expect(matched.url).toContain(
+      `created_at%5Bgte%5D=${encodeURIComponent(`${year}-${monthPadded}-01T00:00:00.000Z`)}`,
+    );
+    expect(matched.url).toContain(
+      `created_at%5Blte%5D=${encodeURIComponent(`${year}-${monthPadded}-15T23:59:59.999Z`)}`,
+    );
+
+    // Trigger label renders the committed range via the shared locale-aware helper.
+    const monthShort = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(new Date(year, month - 1, 1));
+    expect(screen.getByText(`${monthShort} 1, ${year} – ${monthShort} 15, ${year}`)).toBeTruthy();
+  });
+
+  test('localizes the created filter labels in Simplified Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    mockAgentsApi([]);
+    renderManagedAgentsPage('agents', 'zh-CN');
+
+    expect(await screen.findByText('暂无 Agent')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '创建时间 全部时间' }));
+
+    expect(screen.getByRole('radio', { name: '全部时间' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: '最近 7 天' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: '最近 30 天' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '自定义范围' })).toBeTruthy();
+  });
 
   test('does not render selection controls or a batch archive bar', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');

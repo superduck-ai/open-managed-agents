@@ -35,6 +35,13 @@ anthropic_upstream:
   base_url: https://api.anthropic.com
   api_key: ""
 
+web_search:
+  provider: tavily
+  endpoint: https://api.tavily.com/search
+  api_key: ""
+  timeout: 30s
+  max_tool_loops: 3
+
 batch:
   worker_enabled: true
   worker_concurrency: 2

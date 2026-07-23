@@ -1,6 +1,9 @@
+import { parseISO } from 'date-fns';
+import { type Locale } from '../../shared/i18n';
 import { type QuickstartStepName } from './quickstart/steps';
 import {
   type AgentCreatedFilter,
+  type CustomCreatedFilter,
   type AgentStatusFilter,
   type AgentTemplate,
   type I18nMsg,
@@ -109,20 +112,56 @@ export function entityKindTitle(section: ManagedEntitySection, msg: I18nMsg) {
   return managedMessage(msg, section, 'kindTitle', titleCase(entityKindLabel(section)));
 }
 
-export function createdFilterLabel(filter: AgentCreatedFilter, msg?: I18nMsg) {
-  const fallback = createdFilterOptions.find((option) => option.value === filter)?.label ?? 'All time';
-  if (!msg) {
+// Locale tag mapping for the Intl-based date formatting used by the custom
+// range label and the dropdown's draft range preview.
+const createdRangeLocaleTag: Record<Locale, string> = {
+  en: 'en-US',
+  'zh-CN': 'zh-CN',
+};
+
+// Single-day formatter shared by the committed custom-range trigger label and
+// the in-progress draft preview inside the dropdown. `yyyy-MM-dd` values and
+// `react-day-picker` Date objects both denote local calendar days, so we format
+// in the active locale rather than hard-coding `MMM d, yyyy` — the old format
+// always printed English month names and, combined with `Date.parse`, shifted
+// the day by one in UTC− zones.
+export function formatCreatedRangeDay(date: Date, locale: Locale = 'en'): string {
+  return new Intl.DateTimeFormat(createdRangeLocaleTag[locale], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+export function formatCreatedRange(from: Date, to: Date, locale: Locale = 'en'): string {
+  const fromLabel = formatCreatedRangeDay(from, locale);
+  const toLabel = formatCreatedRangeDay(to, locale);
+  return fromLabel === toLabel ? fromLabel : `${fromLabel} – ${toLabel}`;
+}
+
+function formatCustomCreatedRange(filter: CustomCreatedFilter, msg?: I18nMsg, locale: Locale = 'en'): string {
+  const fallback = msg ? msg('managedAgents.filters.customRange', 'Custom range') : 'Custom range';
+  // `parseISO` treats `yyyy-MM-dd` as a local calendar day, matching how the
+  // calendar selects and `applyCustomRange` serializes dates. `Date.parse`
+  // treated them as UTC, which drifted the formatted label in UTC− zones.
+  const from = parseISO(filter.from);
+  const to = parseISO(filter.to);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
     return fallback;
   }
-  switch (filter) {
+  return formatCreatedRange(from, to, locale);
+}
+
+export function createdFilterLabel(filter: AgentCreatedFilter, msg?: I18nMsg, locale: Locale = 'en') {
+  switch (filter.kind) {
     case 'all':
-      return msg('managedAgents.filters.allTime', fallback);
+      return msg ? msg('managedAgents.filters.allTime', 'All time') : 'All time';
     case 'last7':
-      return msg('managedAgents.filters.last7Days', fallback);
+      return msg ? msg('managedAgents.filters.last7Days', 'Last 7 days') : 'Last 7 days';
     case 'last30':
-      return msg('managedAgents.filters.last30Days', fallback);
+      return msg ? msg('managedAgents.filters.last30Days', 'Last 30 days') : 'Last 30 days';
     case 'custom':
-      return msg('managedAgents.filters.customRange', fallback);
+      return formatCustomCreatedRange(filter, msg, locale);
   }
 }
 
@@ -137,10 +176,6 @@ export function statusFilterLabel(filter: AgentStatusFilter, msg?: I18nMsg) {
     case 'all':
       return msg('common.all', fallback);
   }
-}
-
-export function createdFilterOptionsFor(msg: I18nMsg): Array<{ value: AgentCreatedFilter; label: string }> {
-  return createdFilterOptions.map((option) => ({ ...option, label: createdFilterLabel(option.value, msg) }));
 }
 
 export function statusFilterOptionsFor(msg: I18nMsg): Array<{ value: AgentStatusFilter; label: string }> {
@@ -242,13 +277,6 @@ export function managedColumnLabel(column: string, msg: I18nMsg) {
       return column;
   }
 }
-
-export const createdFilterOptions: Array<{ value: AgentCreatedFilter; label: string }> = [
-  { value: 'all', label: 'All time' },
-  { value: 'last7', label: 'Last 7 days' },
-  { value: 'last30', label: 'Last 30 days' },
-  { value: 'custom', label: 'Custom range' },
-];
 
 export const statusFilterOptions: Array<{ value: AgentStatusFilter; label: string }> = [
   { value: 'active', label: 'Active' },

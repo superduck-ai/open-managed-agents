@@ -25,6 +25,7 @@ import {
   agentsListLimit,
   archiveAgent,
   createAgent,
+  createdFilterRequestKey,
   defaultAgentFilters,
   exactAgentIdPattern,
   listAgents,
@@ -44,8 +45,6 @@ import {
   ManagedWarningAlert,
 } from '../components/common';
 import {
-  createdFilterLabel,
-  createdFilterOptionsFor,
   managedColumnLabel,
   resourceCreateLabel,
   resourceDescription,
@@ -67,6 +66,7 @@ import {
 } from '../types';
 import { agentDetailHref, errorMessage, handleInternalLinkClick } from '../utils';
 import { CreateAgentDialog } from './create-dialog';
+import { CreatedFilterDropdown } from './CreatedFilterDropdown';
 import {
   agentMatchesClientFilters,
   agentModelName,
@@ -147,7 +147,7 @@ export function AgentsResourcePage({
     () => ({ created: createdFilter, status: statusFilter }),
     [createdFilter, statusFilter],
   );
-  const agentRequestKey = `${workspaceId}:${agentLoadMode}:${normalizedSearch}:${createdFilter}:${statusFilter}`;
+  const agentRequestKey = `${workspaceId}:${agentLoadMode}:${normalizedSearch}:${createdFilterRequestKey(createdFilter)}:${statusFilter}`;
   const remoteAgents =
     remoteAgentsState.workspaceId === workspaceId && remoteAgentsState.requestKey === agentRequestKey
       ? remoteAgentsState.data
@@ -195,9 +195,8 @@ export function AgentsResourcePage({
   const description = resourceDescription(config, msg);
   const createLabel = resourceCreateLabel(config, msg);
   const searchPlaceholder = resourceSearchPlaceholder(config, msg);
-  const createdOptions = createdFilterOptionsFor(msg);
   const statusOptions = statusFilterOptionsFor(msg);
-  const hasActiveAgentFilters = Boolean(search.trim()) || createdFilter !== 'all' || statusFilter !== 'active';
+  const hasActiveAgentFilters = Boolean(search.trim()) || createdFilter.kind !== 'all' || statusFilter !== 'active';
   const searchResultsTruncated = agentLoadMode === 'search' && remoteAgentsTruncated;
   const hasPreviousAgentsPage = agentLoadMode === 'search' ? agentLocalPage > 0 : Boolean(agentPageHistory.length);
   const hasNextAgentsPage =
@@ -552,16 +551,11 @@ export function AgentsResourcePage({
           prefix={config.searchPrefix}
           onChange={handleSearchChange}
         />
-        <AgentFilterDropdown
-          label={msg('managedAgents.filters.created', 'Created')}
-          valueLabel={createdFilterLabel(createdFilter, msg)}
-          options={createdOptions}
+        <CreatedFilterDropdown
           value={createdFilter}
-          menu="created"
           open={openFilterMenu === 'created'}
-          menuWidthClass="w-[380px]"
           onOpenChange={setOpenFilterMenu}
-          onSelect={handleCreatedFilterChange}
+          onChange={handleCreatedFilterChange}
         />
         <AgentFilterDropdown
           label={msg('managedAgents.filters.status', 'Status')}

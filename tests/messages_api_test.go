@@ -266,6 +266,101 @@ func TestMessagesAPISuccess(t *testing.T) {
 	}
 }
 
+func TestMessagesWebSearchGateway(t *testing.T) {
+	tavily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("Tavily content type = %q, want application/json", r.Header.Get("Content-Type"))
+		}
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode Tavily request: %v", err)
+		}
+		if request["api_key"] != "tavily-test-key" || request["query"] != "latest Go release" {
+			t.Fatalf("Tavily request = %#v", request)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, "{\"results\":[{\"title\":\"Go release notes\",\"url\":\"https://go.dev/doc/devel/release\",\"content\":\"release details\"}]}")
+	}))
+	defer tavily.Close()
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		if r.Header.Get("Tavily-Api-Key") != "" {
+			t.Fatalf("Tavily key reached BYOK header")
+		}
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode BYOK request: %v", err)
+		}
+		encoded, err := json.Marshal(request)
+		if err != nil {
+			t.Fatalf("marshal BYOK request: %v", err)
+		}
+		if strings.Contains(string(encoded), "tavily-test-key") {
+			t.Fatalf("Tavily key reached BYOK request body")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch upstreamCalls {
+		case 1:
+			tools, ok := request["tools"].([]any)
+			if !ok || len(tools) != 1 || tools[0].(map[string]any)["name"] != "web_search" {
+				t.Fatalf("projected BYOK tools = %#v", request["tools"])
+			}
+			if _, ok := tools[0].(map[string]any)["type"]; ok {
+				t.Fatalf("projected BYOK tool must omit type: %#v", tools[0])
+			}
+			_, _ = io.WriteString(w, "{\"id\":\"msg_tool\",\"type\":\"message\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"web_search\",\"input\":{\"query\":\"latest Go release\"}}],\"stop_reason\":\"tool_use\"}")
+		case 2:
+			messages, ok := request["messages"].([]any)
+			if !ok || len(messages) != 3 {
+				t.Fatalf("continuation messages = %#v", request["messages"])
+			}
+			_, _ = io.WriteString(w, "{\"id\":\"msg_final\",\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"answer\"}],\"stop_reason\":\"end_turn\"}")
+		default:
+			_, _ = io.WriteString(w, "{\"id\":\"msg_direct\",\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"direct\"}],\"stop_reason\":\"end_turn\"}")
+		}
+	}))
+	defer upstream.Close()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.AnthropicUpstream.BaseURL = upstream.URL
+	cfg.AnthropicUpstream.APIKey = "messages-gateway-upstream"
+	cfg.WebSearch.Endpoint = tavily.URL
+	cfg.WebSearch.APIKey = "tavily-test-key"
+	app := newTestAppWithStore(t, &cfg, newFakeStore("messages-web-search-gateway-bucket"))
+	defer app.close()
+
+	credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
+	registerCodeSessionWorker(t, app, credential.CodeSessionID)
+	payload := "{\"model\":\"" + messagesTestModel + "\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"search\"}],\"tools\":[{\"type\":\"web_search_20250305\",\"name\":\"web_search\"}]}"
+	response := doMessagesRequest(t, app, credential.Token, payload)
+	defer response.Body.Close()
+	var body map[string]any
+	decodeJSON(t, response.Body, &body)
+	content := body["content"].([]any)
+	if content[0].(map[string]any)["type"] != "server_tool_use" || content[1].(map[string]any)["type"] != "web_search_tool_result" {
+		t.Fatalf("gateway response content = %#v", content)
+	}
+	if content[0].(map[string]any)["id"] != "toolu_1" || content[1].(map[string]any)["tool_use_id"] != "toolu_1" {
+		t.Fatalf("tool id mapping = %#v", content[:2])
+	}
+	if upstreamCalls != 2 {
+		t.Fatalf("gateway BYOK calls = %d, want 2", upstreamCalls)
+	}
+
+	direct := doMessagesRequest(t, app, defaultTestKey, payload)
+	defer direct.Body.Close()
+	var directBody map[string]any
+	decodeJSON(t, direct.Body, &directBody)
+	if directBody["id"] != "msg_direct" || upstreamCalls != 3 {
+		t.Fatalf("ordinary API request was not transparent: body=%#v calls=%d", directBody, upstreamCalls)
+	}
+}
+
 type messagesCodeSessionCredential struct {
 	Token           string
 	CodeSessionID   string

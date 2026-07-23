@@ -138,7 +138,19 @@ export type PageCursor = string | null;
 
 export type AgentLoadMode = 'list' | 'search' | 'retrieve';
 
-export type AgentCreatedFilter = 'all' | 'last7' | 'last30' | 'custom';
+export type AgentCreatedPreset = 'all' | 'last7' | 'last30';
+
+// `from`/`to` (only present for custom ranges) are calendar dates encoded as
+// `yyyy-MM-dd` strings. They are converted to inclusive UTC ISO-8601 bounds at
+// the API boundary in `createdFilterRange`.
+export type AgentCreatedFilter =
+  { kind: 'all' } | { kind: 'last7' } | { kind: 'last30' } | { kind: 'custom'; from: string; to: string };
+
+export type CustomCreatedFilter = Extract<AgentCreatedFilter, { kind: 'custom' }>;
+
+export function isCustomCreatedFilter(filter: AgentCreatedFilter): filter is CustomCreatedFilter {
+  return filter.kind === 'custom';
+}
 
 export type AgentStatusFilter = 'active' | 'all';
 

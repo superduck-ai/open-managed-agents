@@ -481,6 +481,42 @@ func TestLoadDatabaseAutoMigrateDefaultDevelopment(t *testing.T) {
 	}
 }
 
+func TestLoadWebSearchConfiguration(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `web_search:
+  provider: tavily
+  api_key: test-search-key
+  endpoint: http://localhost:9999/search
+  timeout: 7s
+  max_tool_loops: 5
+`)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.WebSearch.Provider != "tavily" || cfg.WebSearch.APIKey != "test-search-key" || cfg.WebSearch.Endpoint != "http://localhost:9999/search" {
+		t.Fatalf("web search provider config = %#v", cfg.WebSearch)
+	}
+	if cfg.WebSearch.Timeout != 7*time.Second || cfg.WebSearch.MaxToolLoops != 5 {
+		t.Fatalf("web search limits = timeout %s, loops %d", cfg.WebSearch.Timeout, cfg.WebSearch.MaxToolLoops)
+	}
+}
+
+func TestLoadWebSearchConfigurationUsesProviderNeutralNames(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `web_search:
+  provider: custom
+  api_key: generic-key
+  endpoint: http://localhost:8888/search
+  timeout: 9s
+`)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.WebSearch.Provider != "custom" || cfg.WebSearch.APIKey != "generic-key" || cfg.WebSearch.Endpoint != "http://localhost:8888/search" || cfg.WebSearch.Timeout != 9*time.Second {
+		t.Fatalf("web search config = %#v", cfg.WebSearch)
+	}
+}
+
 func TestLoadYAMLRejectsUnsupportedEnvironment(t *testing.T) {
 	prepareLoadTest(t)
 	_, err := loadConfigTestYAML(t, "env: production\n")

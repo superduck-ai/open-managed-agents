@@ -14,7 +14,7 @@ Claude Code 仍要求 OAuth 形态的 Anthropic 凭证。environment-manager 通
 POST /v1/messages
 ```
 
-handler 不解析 JSON，直接流式转发请求 body、query 和 Anthropic 合同 header，并执行以下边界处理：
+普通 Messages 请求仍不解析 JSON，直接流式转发请求 body、query 和 Anthropic 合同 header，并执行以下边界处理：
 
 - 删除调用方的 `Authorization`、`X-Api-Key`、`Cookie`、组织/workspace 内部 header 和 hop-by-hop header；
 - 由服务端注入 `anthropic_upstream.api_key`；
@@ -22,6 +22,31 @@ handler 不解析 JSON，直接流式转发请求 body、query 和 Anthropic 合
 - 透传上游状态码、响应 body、SSE 数据和限流等响应 header；
 - SSE 响应逐块 flush，并关闭代理缓冲；
 - 请求 body 上限为 32 MiB。
+
+对于 code-session OAuth-compatible token 的 Claude Code Messages 请求，OMA 会在满足以下条件时启用 request-local Web Search gateway：请求声明 Anthropic web_search_* server tool，且服务端配置了 OMA web-search provider。gateway 只依赖 provider-neutral 的 Search 接口；当前 provider registry 仅注册 Tavily。provider credential 只在 OMA 服务端使用，不会发送给 BYOK 或写入 sandbox。
+
+Web Search 配置位于 `config/config.yaml` 的 `web_search` 节点；`provider` 默认为 `tavily`，`endpoint` 为空时使用 Tavily 默认地址，`timeout` 和 `max_tool_loops` 分别控制 provider 请求超时和 BYOK continuation 上限。`api_key` 只从服务端配置读取，不通过环境变量、sandbox payload 或上游请求体传递。
+
+gateway 保留 Claude Code 的一次外部请求和下游消息语义，但内部使用非流式 BYOK continuation loop：
+
+```mermaid
+sequenceDiagram
+    participant CC as Claude Code sandbox
+    participant OMA as OMA Messages gateway
+    participant BYOK as BYOK upstream
+    participant Tavily as Tavily
+
+    CC->>OMA: POST /v1/messages (web_search server tool)
+    OMA->>BYOK: POST /v1/messages (web_search tool definition, stream=false)
+    BYOK-->>OMA: tool_use(web_search, query)
+    OMA->>Tavily: Search(query)
+    Tavily-->>OMA: results or provider error
+    OMA->>BYOK: assistant tool_use + user tool_result
+    BYOK-->>OMA: final message
+    OMA-->>CC: Anthropic-compatible server_tool_use + web_search_tool_result + final content
+```
+
+内部 transcript 与下游 transcript 分开维护。每个内部 tool id 会稳定映射回对应的 server_tool_use.id / web_search_tool_result.tool_use_id，provider 失败转为 web_search_tool_result_error，不会让请求 panic。内部调用次数有上限，最终按原请求的 stream 选项返回 JSON 或合成 SSE。该 gateway 不处理 web_fetch、BYOK 原生 web search、Batch Messages，也不修改 CCRv2 relay/MITM 协议。
 
 管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现保持不变，不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。
 

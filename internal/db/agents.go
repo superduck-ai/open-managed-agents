@@ -2,15 +2,14 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jmoiron/sqlx"
 )
 
 type Agent struct {
@@ -33,6 +32,28 @@ type Agent struct {
 	UpdatedAt         time.Time
 	ArchivedAt        *time.Time
 	DeletedAt         *time.Time
+}
+
+type agentRow struct {
+	ID                int64      `db:"id"`
+	UUID              string     `db:"uuid"`
+	ExternalID        string     `db:"external_id"`
+	WorkspaceID       int64      `db:"workspace_id"`
+	CreatedByAPIKeyID int64      `db:"created_by_api_key_id"`
+	CurrentVersion    int        `db:"current_version"`
+	Name              string     `db:"name"`
+	Description       *string    `db:"description"`
+	System            *string    `db:"system"`
+	Model             []byte     `db:"model"`
+	MCPServers        []byte     `db:"mcp_servers"`
+	Metadata          []byte     `db:"metadata"`
+	Multiagent        []byte     `db:"multiagent"`
+	Skills            []byte     `db:"skills"`
+	Tools             []byte     `db:"tools"`
+	CreatedAt         time.Time  `db:"created_at"`
+	UpdatedAt         time.Time  `db:"updated_at"`
+	ArchivedAt        *time.Time `db:"archived_at"`
+	DeletedAt         *time.Time `db:"deleted_at"`
 }
 
 type AgentPageCursor struct {
@@ -69,73 +90,136 @@ type ListAgentVersionsPageParams struct {
 	Cursor          *AgentVersionPageCursor
 }
 
+type agentPageFilter struct {
+	WorkspaceID     int64
+	Name            string
+	Limit           int
+	Cursor          *AgentPageCursor
+	IncludeArchived bool
+	CreatedAtGTE    *time.Time
+	CreatedAtLTE    *time.Time
+}
+
+const createAgentSQL = `
+	insert into agents (
+		uuid, external_id, workspace_id, created_by_api_key_id, current_version,
+		name, description, system, model, mcp_servers, metadata, multiagent,
+		skills, tools, created_at, updated_at
+	)
+	values (
+		CAST(:uuid AS uuid), :external_id, :workspace_id, :created_by_api_key_id, 1,
+		:name, :description, :system, CAST(:model AS jsonb), CAST(:mcp_servers AS jsonb),
+		CAST(:metadata AS jsonb), CAST(:multiagent AS jsonb), CAST(:skills AS jsonb),
+		CAST(:tools AS jsonb), :created_at, :created_at
+	)
+	returning id, CAST(uuid AS text) AS uuid, external_id, workspace_id,
+		created_by_api_key_id, current_version, name, description, system, model,
+		mcp_servers, metadata, multiagent, skills, tools, created_at, updated_at,
+		archived_at, deleted_at
+`
+
+const updateAgentSQL = `
+	update agents
+	set current_version = :current_version,
+		name = :name,
+		description = :description,
+		system = :system,
+		model = CAST(:model AS jsonb),
+		mcp_servers = CAST(:mcp_servers AS jsonb),
+		metadata = CAST(:metadata AS jsonb),
+		multiagent = CAST(:multiagent AS jsonb),
+		skills = CAST(:skills AS jsonb),
+		tools = CAST(:tools AS jsonb),
+		updated_at = :updated_at
+	where workspace_id = :workspace_id
+		and external_id = :external_id
+		and deleted_at is null
+	returning id, CAST(uuid AS text) AS uuid, external_id, workspace_id,
+		created_by_api_key_id, current_version, name, description, system, model,
+		mcp_servers, metadata, multiagent, skills, tools, created_at, updated_at,
+		archived_at, deleted_at
+`
+
+const insertAgentVersionSQL = `
+	insert into agent_versions (
+		external_id, workspace_id, agent_id, agent_external_id, version,
+		name, description, system, model, mcp_servers, metadata, multiagent,
+		skills, tools, agent_created_at, agent_updated_at, archived_at
+	)
+	values (
+		:version_external_id, :workspace_id, :agent_id, :agent_external_id, :version,
+		:name, :description, :system, CAST(:model AS jsonb), CAST(:mcp_servers AS jsonb),
+		CAST(:metadata AS jsonb), CAST(:multiagent AS jsonb), CAST(:skills AS jsonb),
+		CAST(:tools AS jsonb), :agent_created_at, :agent_updated_at, :archived_at
+	)
+`
+
 func (d *DB) CreateAgent(ctx context.Context, agent Agent, versionExternalID string) (Agent, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return Agent{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
-	created, err := scanAgent(tx.QueryRow(ctx, `
-		insert into agents (
-			uuid, external_id, workspace_id, created_by_api_key_id, current_version,
-			name, description, system, model, mcp_servers, metadata, multiagent,
-			skills, tools, created_at, updated_at
-		)
-		values (
-			$1, $2, $3, $4, 1,
-			$5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb,
-			$12::jsonb, $13::jsonb, $14, $14
-		)
-		returning id, uuid::text, external_id, workspace_id, created_by_api_key_id,
-			current_version, name, description, system, model, mcp_servers, metadata,
-			multiagent, skills, tools, created_at, updated_at, archived_at, deleted_at
-	`, agent.UUID, agent.ExternalID, agent.WorkspaceID, agent.CreatedByAPIKeyID,
-		agent.Name, agent.Description, agent.System, jsonArg(agent.Model), jsonArg(agent.MCPServers),
-		jsonArg(agent.Metadata), jsonArg(agent.Multiagent), jsonArg(agent.Skills), jsonArg(agent.Tools),
-		agent.CreatedAt))
+	created, err := getAgentSQLX(ctx, tx, createAgentSQL, agentArguments(agent))
 	if err != nil {
 		return Agent{}, err
 	}
 	if err := insertAgentVersion(ctx, tx, created, versionExternalID); err != nil {
 		return Agent{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return Agent{}, err
 	}
 	return created, nil
 }
 
 func (d *DB) GetAgent(ctx context.Context, workspaceID int64, externalID string) (Agent, error) {
-	return scanAgent(d.Pool.QueryRow(ctx, agentSelectSQL()+`
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID))
+	return getAgentSQLX(ctx, d.sql, agentSelectSQL()+`
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+	`, map[string]any{
+		"workspace_id": workspaceID,
+		"external_id":  externalID,
+	})
 }
 
 func (d *DB) GetAgentVersion(ctx context.Context, workspaceID int64, externalID string, version int) (Agent, error) {
 	if version < 1 {
 		return Agent{}, ErrNotFound
 	}
-	return scanAgent(d.Pool.QueryRow(ctx, `
-		select id, uuid::text, agent_external_id, workspace_id, 0::bigint,
-			version, name, description, system, model, mcp_servers, metadata,
-			multiagent, skills, tools, agent_created_at, agent_updated_at, archived_at, null::timestamptz
-		from agent_versions
-		where workspace_id = $1 and agent_external_id = $2 and version = $3
-	`, workspaceID, externalID, version))
+	return getAgentSQLX(ctx, d.sql, agentVersionSelectSQL()+`
+		where workspace_id = :workspace_id
+			and agent_external_id = :external_id
+			and version = :version
+	`, map[string]any{
+		"workspace_id": workspaceID,
+		"external_id":  externalID,
+		"version":      version,
+	})
 }
 
 func (d *DB) UpdateAgent(ctx context.Context, workspaceID int64, externalID string, expectedVersion int, next Agent, versionExternalID string) (Agent, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return Agent{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
-	current, err := scanAgent(tx.QueryRow(ctx, agentSelectSQL()+`
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
+	current, err := getAgentSQLX(ctx, tx, agentSelectSQL()+`
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
 		for update
-	`, workspaceID, externalID))
+	`, map[string]any{
+		"workspace_id": workspaceID,
+		"external_id":  externalID,
+	})
 	if err != nil {
 		return Agent{}, err
 	}
@@ -146,36 +230,21 @@ func (d *DB) UpdateAgent(ctx context.Context, workspaceID int64, externalID stri
 		return Agent{}, ErrVersionConflict
 	}
 	if sameAgentConfig(current, next) {
-		return current, tx.Commit(ctx)
+		return current, tx.Commit()
 	}
 
-	updated, err := scanAgent(tx.QueryRow(ctx, `
-		update agents
-		set current_version = $3,
-			name = $4,
-			description = $5,
-			system = $6,
-			model = $7::jsonb,
-			mcp_servers = $8::jsonb,
-			metadata = $9::jsonb,
-			multiagent = $10::jsonb,
-			skills = $11::jsonb,
-			tools = $12::jsonb,
-			updated_at = $13
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning id, uuid::text, external_id, workspace_id, created_by_api_key_id,
-			current_version, name, description, system, model, mcp_servers, metadata,
-			multiagent, skills, tools, created_at, updated_at, archived_at, deleted_at
-	`, workspaceID, externalID, current.CurrentVersion+1, next.Name, next.Description, next.System,
-		jsonArg(next.Model), jsonArg(next.MCPServers), jsonArg(next.Metadata), jsonArg(next.Multiagent),
-		jsonArg(next.Skills), jsonArg(next.Tools), next.UpdatedAt))
+	arguments := agentArguments(next)
+	arguments["workspace_id"] = workspaceID
+	arguments["external_id"] = externalID
+	arguments["current_version"] = current.CurrentVersion + 1
+	updated, err := getAgentSQLX(ctx, tx, updateAgentSQL, arguments)
 	if err != nil {
 		return Agent{}, err
 	}
 	if err := insertAgentVersion(ctx, tx, updated, versionExternalID); err != nil {
 		return Agent{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return Agent{}, err
 	}
 	return updated, nil
@@ -227,228 +296,250 @@ func isNullJSON(raw json.RawMessage) bool {
 }
 
 func (d *DB) ArchiveAgent(ctx context.Context, workspaceID int64, externalID string) (Agent, error) {
-	return scanAgent(d.Pool.QueryRow(ctx, `
+	return getAgentSQLX(ctx, d.sql, `
 		update agents
 		set archived_at = coalesce(archived_at, now()),
 			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning id, uuid::text, external_id, workspace_id, created_by_api_key_id,
-			current_version, name, description, system, model, mcp_servers, metadata,
-			multiagent, skills, tools, created_at, updated_at, archived_at, deleted_at
-	`, workspaceID, externalID))
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+		returning id, CAST(uuid AS text) AS uuid, external_id, workspace_id,
+			created_by_api_key_id, current_version, name, description, system, model,
+			mcp_servers, metadata, multiagent, skills, tools, created_at, updated_at,
+			archived_at, deleted_at
+	`, map[string]any{
+		"workspace_id": workspaceID,
+		"external_id":  externalID,
+	})
 }
 
 func (d *DB) ListAgentsPage(ctx context.Context, params ListAgentsPageParams) ([]Agent, bool, error) {
-	if params.Limit <= 0 {
-		params.Limit = 20
-	}
-	query := agentSelectSQL() + `
-		where workspace_id = $1 and deleted_at is null
-	`
-	args := []any{params.WorkspaceID}
-	nextArg := 2
-	if !params.IncludeArchived {
-		query += " and archived_at is null"
-	}
-	if params.CreatedAtGTE != nil {
-		query += fmt.Sprintf(" and created_at >= $%d", nextArg)
-		args = append(args, *params.CreatedAtGTE)
-		nextArg++
-	}
-	if params.CreatedAtLTE != nil {
-		query += fmt.Sprintf(" and created_at <= $%d", nextArg)
-		args = append(args, *params.CreatedAtLTE)
-		nextArg++
-	}
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-
-	rows, err := d.Pool.Query(ctx, query, args...)
+	limit := agentPageLimit(params.Limit)
+	query, arguments := agentPageQuery(agentPageFilter{
+		WorkspaceID:     params.WorkspaceID,
+		Limit:           limit,
+		Cursor:          params.Cursor,
+		IncludeArchived: params.IncludeArchived,
+		CreatedAtGTE:    params.CreatedAtGTE,
+		CreatedAtLTE:    params.CreatedAtLTE,
+	})
+	agents, err := selectAgentsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
-
-	agents, err := scanAgentRows(rows)
-	if err != nil {
-		return nil, false, err
-	}
-	hasMore := len(agents) > params.Limit
-	if hasMore {
-		agents = agents[:params.Limit]
-	}
-	return agents, hasMore, nil
+	return trimAgentPage(agents, limit)
 }
 
 func (d *DB) SearchAgentsPage(ctx context.Context, params SearchAgentsPageParams) ([]Agent, bool, error) {
-	if params.Limit <= 0 {
-		params.Limit = 20
-	}
-	query := agentSelectSQL() + `
-		where workspace_id = $1 and deleted_at is null
-	`
-	args := []any{params.WorkspaceID}
-	nextArg := 2
-	if !params.IncludeArchived {
-		query += " and archived_at is null"
-	}
-	if strings.TrimSpace(params.Name) != "" {
-		query += fmt.Sprintf(" and position(lower($%d) in lower(name)) > 0", nextArg)
-		args = append(args, strings.TrimSpace(params.Name))
-		nextArg++
-	}
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-
-	rows, err := d.Pool.Query(ctx, query, args...)
+	limit := agentPageLimit(params.Limit)
+	query, arguments := agentPageQuery(agentPageFilter{
+		WorkspaceID:     params.WorkspaceID,
+		Name:            strings.TrimSpace(params.Name),
+		Limit:           limit,
+		Cursor:          params.Cursor,
+		IncludeArchived: params.IncludeArchived,
+	})
+	agents, err := selectAgentsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
-
-	agents, err := scanAgentRows(rows)
-	if err != nil {
-		return nil, false, err
-	}
-	hasMore := len(agents) > params.Limit
-	if hasMore {
-		agents = agents[:params.Limit]
-	}
-	return agents, hasMore, nil
+	return trimAgentPage(agents, limit)
 }
 
 func (d *DB) ListAgentVersionsPage(ctx context.Context, params ListAgentVersionsPageParams) ([]Agent, bool, error) {
-	if params.Limit <= 0 {
-		params.Limit = 20
-	}
+	limit := agentPageLimit(params.Limit)
 	var agentID int64
-	if err := d.Pool.QueryRow(ctx, `
+	err := namedGetContext(ctx, d.sql, &agentID, `
 		select id
 		from agents
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, params.WorkspaceID, params.AgentExternalID).Scan(&agentID); errors.Is(err, pgx.ErrNoRows) {
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+	`, map[string]any{
+		"workspace_id": params.WorkspaceID,
+		"external_id":  params.AgentExternalID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, ErrNotFound
-	} else if err != nil {
-		return nil, false, err
 	}
-
-	query := `
-		select id, uuid::text, agent_external_id, workspace_id, 0::bigint,
-			version, name, description, system, model, mcp_servers, metadata,
-			multiagent, skills, tools, agent_created_at, agent_updated_at, archived_at, null::timestamptz
-		from agent_versions
-		where agent_id = $1
-	`
-	args := []any{agentID}
-	nextArg := 2
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (version < $%d or (version = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.Version, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by version desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-
-	rows, err := d.Pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
 
-	versions, err := scanAgentRows(rows)
+	query, arguments := agentVersionsPageQuery(agentID, params.Cursor, limit)
+	versions, err := selectAgentsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
-	hasMore := len(versions) > params.Limit
-	if hasMore {
-		versions = versions[:params.Limit]
-	}
-	return versions, hasMore, nil
+	return trimAgentPage(versions, limit)
 }
 
-type agentTx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}
-
-func insertAgentVersion(ctx context.Context, tx agentTx, agent Agent, versionExternalID string) error {
-	_, err := tx.Exec(ctx, `
-		insert into agent_versions (
-			external_id, workspace_id, agent_id, agent_external_id, version,
-			name, description, system, model, mcp_servers, metadata, multiagent,
-			skills, tools, agent_created_at, agent_updated_at, archived_at
-		)
-		values (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb,
-			$13::jsonb, $14::jsonb, $15, $16, $17
-		)
-	`, versionExternalID, agent.WorkspaceID, agent.ID, agent.ExternalID, agent.CurrentVersion,
-		agent.Name, agent.Description, agent.System, jsonArg(agent.Model), jsonArg(agent.MCPServers),
-		jsonArg(agent.Metadata), jsonArg(agent.Multiagent), jsonArg(agent.Skills), jsonArg(agent.Tools),
-		agent.CreatedAt, agent.UpdatedAt, agent.ArchivedAt)
+func insertAgentVersion(ctx context.Context, tx *sqlx.Tx, agent Agent, versionExternalID string) error {
+	arguments := agentArguments(agent)
+	arguments["version_external_id"] = versionExternalID
+	arguments["agent_id"] = agent.ID
+	arguments["agent_external_id"] = agent.ExternalID
+	arguments["version"] = agent.CurrentVersion
+	arguments["agent_created_at"] = agent.CreatedAt
+	arguments["agent_updated_at"] = agent.UpdatedAt
+	arguments["archived_at"] = agent.ArchivedAt
+	_, err := namedExecContext(ctx, tx, insertAgentVersionSQL, arguments)
 	return err
+}
+
+func agentPageQuery(filter agentPageFilter) (string, map[string]any) {
+	query := agentSelectSQL() + `
+		where workspace_id = :workspace_id
+			and deleted_at is null
+	`
+	arguments := map[string]any{
+		"workspace_id": filter.WorkspaceID,
+		"limit":        filter.Limit + 1,
+	}
+	if !filter.IncludeArchived {
+		query += " and archived_at is null"
+	}
+	if filter.CreatedAtGTE != nil {
+		query += " and created_at >= :created_at_gte"
+		arguments["created_at_gte"] = *filter.CreatedAtGTE
+	}
+	if filter.CreatedAtLTE != nil {
+		query += " and created_at <= :created_at_lte"
+		arguments["created_at_lte"] = *filter.CreatedAtLTE
+	}
+	if filter.Name != "" {
+		query += " and position(lower(:name) in lower(name)) > 0"
+		arguments["name"] = filter.Name
+	}
+	if filter.Cursor != nil {
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		arguments["cursor_created_at"] = filter.Cursor.CreatedAt
+		arguments["cursor_id"] = filter.Cursor.ID
+	}
+	query += " order by created_at desc, id desc limit :limit"
+	return query, arguments
+}
+
+func agentVersionsPageQuery(agentID int64, cursor *AgentVersionPageCursor, limit int) (string, map[string]any) {
+	query := agentVersionSelectSQL() + `
+		where agent_id = :agent_id
+	`
+	arguments := map[string]any{
+		"agent_id": agentID,
+		"limit":    limit + 1,
+	}
+	if cursor != nil {
+		query += " and (version < :cursor_version or (version = :cursor_version and id < :cursor_id))"
+		arguments["cursor_version"] = cursor.Version
+		arguments["cursor_id"] = cursor.ID
+	}
+	query += " order by version desc, id desc limit :limit"
+	return query, arguments
 }
 
 func agentSelectSQL() string {
 	return `
-		select id, uuid::text, external_id, workspace_id, created_by_api_key_id,
-			current_version, name, description, system, model, mcp_servers, metadata,
-			multiagent, skills, tools, created_at, updated_at, archived_at, deleted_at
+		select id, CAST(uuid AS text) AS uuid, external_id, workspace_id,
+			created_by_api_key_id, current_version, name, description, system, model,
+			mcp_servers, metadata, multiagent, skills, tools, created_at, updated_at,
+			archived_at, deleted_at
 		from agents
 	`
 }
 
-type agentScanner interface {
-	Scan(dest ...any) error
+func agentVersionSelectSQL() string {
+	return `
+		select id, CAST(uuid AS text) AS uuid, agent_external_id AS external_id,
+			workspace_id, CAST(0 AS bigint) AS created_by_api_key_id,
+			version AS current_version, name, description, system, model, mcp_servers,
+			metadata, multiagent, skills, tools, agent_created_at AS created_at,
+			agent_updated_at AS updated_at, archived_at,
+			CAST(null AS timestamptz) AS deleted_at
+		from agent_versions
+	`
 }
 
-type agentRows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}
-
-func scanAgent(row agentScanner) (Agent, error) {
-	var agent Agent
-	var model, mcpServers, metadata, multiagent, skills, tools []byte
-	err := row.Scan(&agent.ID, &agent.UUID, &agent.ExternalID, &agent.WorkspaceID, &agent.CreatedByAPIKeyID,
-		&agent.CurrentVersion, &agent.Name, &agent.Description, &agent.System, &model, &mcpServers, &metadata,
-		&multiagent, &skills, &tools, &agent.CreatedAt, &agent.UpdatedAt, &agent.ArchivedAt, &agent.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+func getAgentSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (Agent, error) {
+	var row agentRow
+	err := namedGetContext(ctx, database, &row, query, arguments)
+	if errors.Is(err, sql.ErrNoRows) {
 		return Agent{}, ErrNotFound
 	}
 	if err != nil {
 		return Agent{}, err
 	}
-	agent.Model = copyRaw(model)
-	agent.MCPServers = copyRaw(mcpServers)
-	agent.Metadata = copyRaw(metadata)
-	agent.Multiagent = copyRaw(multiagent)
-	agent.Skills = copyRaw(skills)
-	agent.Tools = copyRaw(tools)
-	return agent, nil
+	return row.agent(), nil
 }
 
-func scanAgentRows(rows agentRows) ([]Agent, error) {
-	var agents []Agent
-	for rows.Next() {
-		agent, err := scanAgent(rows)
-		if err != nil {
-			return nil, err
-		}
-		agents = append(agents, agent)
+func selectAgentsSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) ([]Agent, error) {
+	var rows []agentRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
 	}
-	return agents, rows.Err()
+	agents := make([]Agent, len(rows))
+	for index := range rows {
+		agents[index] = rows[index].agent()
+	}
+	return agents, nil
+}
+
+func (row agentRow) agent() Agent {
+	return Agent{
+		ID:                row.ID,
+		UUID:              row.UUID,
+		ExternalID:        row.ExternalID,
+		WorkspaceID:       row.WorkspaceID,
+		CreatedByAPIKeyID: row.CreatedByAPIKeyID,
+		CurrentVersion:    row.CurrentVersion,
+		Name:              row.Name,
+		Description:       row.Description,
+		System:            row.System,
+		Model:             copyRaw(row.Model),
+		MCPServers:        copyRaw(row.MCPServers),
+		Metadata:          copyRaw(row.Metadata),
+		Multiagent:        copyRaw(row.Multiagent),
+		Skills:            copyRaw(row.Skills),
+		Tools:             copyRaw(row.Tools),
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+		ArchivedAt:        row.ArchivedAt,
+		DeletedAt:         row.DeletedAt,
+	}
+}
+
+func agentArguments(agent Agent) map[string]any {
+	return map[string]any{
+		"uuid":                  agent.UUID,
+		"external_id":           agent.ExternalID,
+		"workspace_id":          agent.WorkspaceID,
+		"created_by_api_key_id": agent.CreatedByAPIKeyID,
+		"name":                  agent.Name,
+		"description":           agent.Description,
+		"system":                agent.System,
+		"model":                 jsonArg(agent.Model),
+		"mcp_servers":           jsonArg(agent.MCPServers),
+		"metadata":              jsonArg(agent.Metadata),
+		"multiagent":            jsonArg(agent.Multiagent),
+		"skills":                jsonArg(agent.Skills),
+		"tools":                 jsonArg(agent.Tools),
+		"created_at":            agent.CreatedAt,
+		"updated_at":            agent.UpdatedAt,
+	}
+}
+
+func agentPageLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	return limit
+}
+
+func trimAgentPage(agents []Agent, limit int) ([]Agent, bool, error) {
+	hasMore := len(agents) > limit
+	if hasMore {
+		agents = agents[:limit]
+	}
+	return agents, hasMore, nil
 }
 
 func copyRaw(value []byte) json.RawMessage {

@@ -95,6 +95,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeResourceBuildError(w, r, err)
 		return
 	}
+	fileMounts, err := sessionFileMounts(resources)
+	if err != nil {
+		writeResourceBuildError(w, r, err)
+		return
+	}
 	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
 	created, thread, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
 		Session: db.Session{
@@ -131,7 +136,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		},
-		Resources: resources,
+		Resources:  resources,
+		FileMounts: fileMounts,
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewString(),
 			ExternalID:            workID,
@@ -147,6 +153,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
+		if writeFileResourcePersistenceError(w, r, err) {
+			return
+		}
 		log.Printf("create session: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
 		return
@@ -645,7 +654,29 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) {
 		writeResourceBuildError(w, r, err)
 		return
 	}
-	created, err := h.db.CreateSessionResource(r.Context(), resource)
+	fileMounts, err := sessionFileMounts([]db.SessionResource{resource})
+	if err != nil {
+		writeResourceBuildError(w, r, err)
+		return
+	}
+	var fileMount *db.SessionFileMount
+	if len(fileMounts) == 1 {
+		fileMount = &fileMounts[0]
+	}
+	var validationErr error
+	created, err := h.db.CreateSessionResource(
+		r.Context(),
+		resource,
+		fileMount,
+		func(resources []db.SessionResource) error {
+			validationErr = validateSessionResourceMounts(resources)
+			return validationErr
+		},
+	)
+	if validationErr != nil {
+		writeResourceBuildError(w, r, validationErr)
+		return
+	}
 	if err != nil {
 		writeSessionLoadError(w, r, err, sessionID)
 		return

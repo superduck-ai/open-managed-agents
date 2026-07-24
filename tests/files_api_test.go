@@ -40,14 +40,15 @@ const defaultTestKey = config.DefaultAPIKey
 const onePixelGIFBase64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 
 type testApp struct {
-	cfg         config.Config
-	db          *db.DB
-	store       storage.ObjectStore
-	sessions    *platformsession.MemoryStore
-	credentials *codesessions.SessionCredentials
-	server      *httptest.Server
-	baseURL     string
-	client      *http.Client
+	cfg                  config.Config
+	db                   *db.DB
+	store                storage.ObjectStore
+	sessions             *platformsession.MemoryStore
+	credentials          *codesessions.SessionCredentials
+	filestoreCredentials *filestore.TokenCredentials
+	server               *httptest.Server
+	baseURL              string
+	client               *http.Client
 }
 
 type errorResponse struct {
@@ -986,7 +987,17 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 		CodeSessionCredentials: credentials,
 		FilestoreCredentials:   filestoreCredentials,
 	}))
-	return &testApp{cfg: cfg, db: database, store: store, sessions: platformSessions, credentials: credentials, server: server, baseURL: server.URL, client: server.Client()}
+	return &testApp{
+		cfg:                  cfg,
+		db:                   database,
+		store:                store,
+		sessions:             platformSessions,
+		credentials:          credentials,
+		filestoreCredentials: filestoreCredentials,
+		server:               server,
+		baseURL:              server.URL,
+		client:               server.Client(),
+	}
 }
 
 func (a *testApp) close() {

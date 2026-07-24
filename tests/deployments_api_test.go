@@ -77,6 +77,33 @@ func TestDeploymentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
+	t.Run("failure file resource source and mount conflicts", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-file-contract-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-file-contract-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		file := uploadFile(t, app, "deployment-file-contract.txt", "text/plain", []byte("contract"))
+		defer deleteFile(t, app, file.ID)
+
+		invalidSource := deploymentBodyWithExtra(
+			agent.ID,
+			env.ID,
+			`"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"source":"/outputs"}]`,
+		)
+		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(invalidSource), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
+		duplicateMounts := deploymentBodyWithExtra(
+			agent.ID,
+			env.ID,
+			`"resources":[`+
+				`{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/shared.txt"},`+
+				`{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/shared.txt"}]`,
+		)
+		resp = doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(duplicateMounts), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
 	t.Run("failure invalid schedule", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-bad-schedule-agent"}`)
 		defer cleanupAgentRows(t, app.db, agent.ID)
@@ -172,6 +199,47 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("success manual run binds file resource into session filesystem", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-file-run-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-file-run-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		file := uploadFile(t, app, "deployment-file-run.txt", "text/plain", []byte("deployment file run"))
+
+		created := createDeployment(
+			t,
+			app,
+			deploymentBodyWithExtra(
+				agent.ID,
+				env.ID,
+				`"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/deployment.txt"}]`,
+			),
+		)
+		run := runDeployment(t, app, created.ID)
+		if run.SessionID == nil || *run.SessionID == "" {
+			t.Fatalf("deployment run Session ID = nil: %+v", run)
+		}
+		defer cleanupDeploymentRows(t, app, created.ID)
+		defer deleteFile(t, app, file.ID)
+		defer deleteSession(t, app, *run.SessionID)
+
+		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceID, *run.SessionID)
+		if err != nil {
+			t.Fatalf("list deployment run Session resources: %v", err)
+		}
+		if len(resources) != 1 {
+			t.Fatalf("deployment run Session resources = %d, want 1", len(resources))
+		}
+		assertSessionFileReference(
+			t,
+			app,
+			*run.SessionID,
+			resources[0].Payload,
+			file.ID,
+			"/uploads/workspace/deployment.txt",
+		)
+	})
+
 	t.Run("success lifecycle manual run session events and run filters", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-api-agent"}`)
 		defer cleanupAgentRows(t, app.db, agent.ID)
@@ -202,6 +270,8 @@ func TestDeploymentsAPI(t *testing.T) {
 		assertRawContains(t, created.Metadata, `"case":"1234"`)
 		assertRawContains(t, created.Schedule, `"upcoming_runs_at"`)
 		assertRawContains(t, created.Resources, `"github_repository"`)
+		assertRawContains(t, created.Resources, `"source":"/uploads"`)
+		assertRawContains(t, created.Resources, `"mount_path":"/`+file.ID+`"`)
 		assertRawNotContains(t, created.Resources, "secret-token")
 
 		listed := listDeployments(t, app, "agent_id="+url.QueryEscape(agent.ID))

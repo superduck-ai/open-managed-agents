@@ -110,6 +110,38 @@ func getActiveFilestoreEntryForMutation(ctx context.Context, tx *sqlx.Tx, filesy
 	`, filestoreEntryMutationArguments(filesystem, entryPath))
 }
 
+func filestoreSubtreeContainsManagedEntryTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	filesystem FilestoreFilesystem,
+	rootPath string,
+) (bool, error) {
+	var containsManagedEntry bool
+	err := namedGetContext(ctx, tx, &containsManagedEntry, `
+		select exists (
+			select 1
+			from filestore_entries
+			where workspace_uuid = :workspace_uuid
+				and filesystem_uuid = :filesystem_uuid
+				and deleted_at is null
+				and (
+					path = :root_path
+					or left(path, char_length(:root_path) + 1) = :root_path || '/'
+				)
+				and (
+					managed_by is not null
+					or managed_resource_external_id is not null
+					or source_file_uuid is not null
+				)
+		)
+	`, map[string]any{
+		"workspace_uuid":  filesystem.WorkspaceUUID,
+		"filesystem_uuid": filesystem.UUID,
+		"root_path":       rootPath,
+	})
+	return containsManagedEntry, err
+}
+
 func filestoreEntryMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
 	return map[string]any{
 		"workspace_uuid":  filesystem.WorkspaceUUID,
@@ -200,6 +232,8 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 				tags = CAST(array[] AS text[]), downloadable = false,
 				md5 = null, sha256 = null, s3_bucket = null, s3_key = null,
 				s3_etag = null, s3_version_id = null, expires_at = null,
+				managed_by = null, managed_resource_external_id = null,
+				source_file_uuid = null,
 				created_by_api_key_uuid = :created_by_api_key_uuid,
 				created_by_session_uuid = :created_by_session_uuid,
 				created_by_code_session_uuid = :created_by_code_session_uuid,
@@ -289,6 +323,9 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 		if existing.Kind != FilestoreEntryKindFile {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
 		}
+		if existing.SourceFileUUID != nil {
+			return FilestoreMutationResult{}, ErrPreconditionFailed
+		}
 		if !input.OverwriteExisting {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
 		}
@@ -337,6 +374,8 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				tags = :tags, downloadable = :downloadable, md5 = :md5, sha256 = :sha256,
 				s3_bucket = :s3_bucket, s3_key = :s3_key, s3_etag = :s3_etag,
 				s3_version_id = :s3_version_id, expires_at = :expires_at,
+				managed_by = null, managed_resource_external_id = null,
+				source_file_uuid = null,
 				created_by_api_key_uuid = :created_by_api_key_uuid,
 				created_by_session_uuid = :created_by_session_uuid,
 				created_by_code_session_uuid = :created_by_code_session_uuid,

@@ -88,6 +88,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load filestore credentials: %v", err)
 	}
+	filestoreService := filestore.NewService(cfg, database, objectStore)
 	cleanup.StartObjectCleanupWorker(ctx, database, storageClient, 30*time.Second)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.StartFilestoreCleanupWorker(ctx, database, storageClient)
@@ -95,7 +96,14 @@ func main() {
 		batches.StartBatchWorker(ctx, database, objectStore, cfg)
 		batches.StartBatchExpirySweep(ctx, database, cfg)
 	}
-	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials)
+	environments.StartRunnerWithStoreAndCredentials(
+		ctx,
+		database,
+		objectStore,
+		cfg,
+		codeSessionCredentials,
+		filestoreCredentials,
+	)
 	skillprewarm.StartWorker(ctx, database, objectStore, cfg)
 	webhooks.StartWorker(ctx, database, cfg.Webhook)
 
@@ -109,6 +117,7 @@ func main() {
 			PlatformStore:          platformSessions,
 			CodeSessionCredentials: codeSessionCredentials,
 			FilestoreCredentials:   filestoreCredentials,
+			FilestoreService:       filestoreService,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

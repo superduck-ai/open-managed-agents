@@ -203,38 +203,81 @@ func arrayValue(value any) []any {
 	return values
 }
 
+type githubRepositoryRuntimePayload struct {
+	URL       string          `json:"url"`
+	MountPath string          `json:"mount_path"`
+	Checkout  json.RawMessage `json:"checkout"`
+}
+
+func parseGitHubRepositoryRuntimePayload(raw json.RawMessage) (githubRepositoryRuntimePayload, bool) {
+	var payload githubRepositoryRuntimePayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return githubRepositoryRuntimePayload{}, false
+	}
+	payload.URL = strings.TrimSpace(payload.URL)
+	payload.MountPath = strings.TrimSpace(payload.MountPath)
+	return payload, true
+}
+
 func managedAgentWorkDir(resources []db.SessionResource) string {
-	for _, resource := range resources {
-		var payload map[string]any
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
+	var selected *db.SessionResource
+	workDir := defaultEnvironmentWorkDir
+	for index := range resources {
+		resource := &resources[index]
+		if resource.ResourceType != "github_repository" {
 			continue
 		}
-		if mountPath, ok := payload["mount_path"].(string); ok && strings.TrimSpace(mountPath) != "" {
-			return strings.TrimSpace(mountPath)
+		payload, ok := parseGitHubRepositoryRuntimePayload(resource.Payload)
+		if !ok {
+			continue
+		}
+		if payload.MountPath == "" {
+			continue
+		}
+		if selected == nil || repositoryAttachedBefore(*resource, *selected) {
+			selected = resource
+			workDir = payload.MountPath
 		}
 	}
-	return defaultEnvironmentWorkDir
+	return workDir
+}
+
+func repositoryAttachedBefore(candidate, current db.SessionResource) bool {
+	if !candidate.CreatedAt.Equal(current.CreatedAt) {
+		return candidate.CreatedAt.Before(current.CreatedAt)
+	}
+	if candidate.ID != current.ID {
+		return candidate.ID < current.ID
+	}
+	return candidate.ExternalID < current.ExternalID
 }
 
 func managedAgentSources(resources []db.SessionResource) []any {
 	sources := make([]any, 0, len(resources))
 	for _, resource := range resources {
-		var payload map[string]any
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
-			continue
-		}
 		switch resource.ResourceType {
 		case "github_repository":
+			payload, ok := parseGitHubRepositoryRuntimePayload(resource.Payload)
+			if !ok {
+				continue
+			}
 			source := map[string]any{
 				"type":       "git_repository",
-				"url":        stringFromMap(payload, "url"),
-				"mount_path": stringFromMap(payload, "mount_path"),
+				"url":        payload.URL,
+				"mount_path": payload.MountPath,
 			}
-			if checkout, ok := payload["checkout"]; ok {
-				source["checkout"] = checkout
+			if len(payload.Checkout) > 0 {
+				var checkout any
+				if json.Unmarshal(payload.Checkout, &checkout) == nil {
+					source["checkout"] = checkout
+				}
 			}
 			sources = append(sources, source)
-		case "file", "memory_store":
+		case "memory_store":
+			var payload map[string]any
+			if err := json.Unmarshal(resource.Payload, &payload); err != nil {
+				continue
+			}
 			sources = append(sources, payload)
 		}
 	}

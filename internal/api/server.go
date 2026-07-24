@@ -74,6 +74,7 @@ type ServerDeps struct {
 	PlatformStore          platformsession.Store
 	CodeSessionCredentials *codesessions.SessionCredentials
 	FilestoreCredentials   *filestoreapi.TokenCredentials
+	FilestoreService       *filestoreapi.Service
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -85,10 +86,11 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials)
 	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(deps.DB)
-	filestoreHandler := filestoreapi.NewHandler(
-		deps.Config,
-		filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore),
-	)
+	filestoreService := deps.FilestoreService
+	if filestoreService == nil {
+		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore)
+	}
+	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService)
 	s := &Server{
 		cfg:                  deps.Config,
 		db:                   deps.DB,

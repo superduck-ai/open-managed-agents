@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -545,7 +546,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeRunReferenceFailure(w, r, principal, deployment, runError("unknown_error", err.Error()))
 		return
 	}
-	resources, err := sessionResourcesFromDeployment(deployment, now)
+	resources, fileMounts, err := sessionResourcesFromDeployment(deployment, now)
 	if err != nil {
 		h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 		return
@@ -590,7 +591,8 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 				CreatedAt:      now,
 				UpdatedAt:      now,
 			},
-			Resources: resources,
+			Resources:  resources,
+			FileMounts: fileMounts,
 			Work: db.EnvironmentWork{
 				UUID:                  uuid.NewString(),
 				ExternalID:            workID,
@@ -619,6 +621,24 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		Now: now,
 	})
 	if err != nil {
+		if errors.Is(err, db.ErrFileReferenceNotFound) {
+			h.writeRunReferenceFailure(
+				w,
+				r,
+				principal,
+				deployment,
+				runErrorForReference("file", db.ErrNotFound, false),
+			)
+			return
+		}
+		if errors.Is(err, db.ErrFilestorePathExists) {
+			httpapi.WriteError(w, r, httpapi.NewError(
+				http.StatusConflict,
+				"conflict_error",
+				"File resource mount_path conflicts with the session filesystem",
+			))
+			return
+		}
 		writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
@@ -911,15 +931,22 @@ func (h *Handler) normalizeResources(r *http.Request, principal auth.Principal, 
 	}
 	resources := make([]map[string]any, 0, len(items))
 	secrets := map[string]any{}
+	fileMountPaths := make([]string, 0, len(items))
 	for i, fields := range items {
 		resource, secret, err := h.normalizeResource(r, principal, fields)
 		if err != nil {
 			return nil, nil, err
 		}
 		resources = append(resources, resource)
+		if resource["type"] == "file" {
+			fileMountPaths = append(fileMountPaths, resource["mount_path"].(string))
+		}
 		if secret != nil {
 			secrets[strconv.Itoa(i)] = secret
 		}
+	}
+	if err := sandboxmount.ValidateFileMountPaths(fileMountPaths); err != nil {
+		return nil, nil, err
 	}
 	resourcesRaw, err := httpapi.MarshalRaw(resources)
 	if err != nil {
@@ -951,11 +978,23 @@ func (h *Handler) normalizeResource(r *http.Request, principal auth.Principal, f
 			}
 			return nil, nil, err
 		}
-		mountPath, err := optionalStringWithDefault(fields["mount_path"], "/mnt/session/uploads/"+fileID, "mount_path")
+		source, err := sandboxmount.NormalizeFileSource(fields["source"])
 		if err != nil {
 			return nil, nil, err
 		}
+		mountPath, err := optionalStringWithDefault(
+			fields["mount_path"],
+			sandboxmount.DefaultFileMountPath(fileID),
+			"mount_path",
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := sandboxmount.ValidateFileMountPath(mountPath); err != nil {
+			return nil, nil, err
+		}
 		payload["file_id"] = fileID
+		payload["source"] = source
 		payload["mount_path"] = mountPath
 	case "github_repository":
 		repoURL, err := parseRequiredStringField(fields, "url")
@@ -1135,11 +1174,14 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 	return events, outcomesRaw, nil
 }
 
-func sessionResourcesFromDeployment(deployment db.Deployment, now time.Time) ([]db.SessionResource, error) {
+func sessionResourcesFromDeployment(
+	deployment db.Deployment,
+	now time.Time,
+) ([]db.SessionResource, []db.SessionFileMount, error) {
 	var configs []map[string]any
 	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
 		if err := json.Unmarshal(deployment.Resources, &configs); err != nil {
-			return nil, errors.New("stored resources are invalid")
+			return nil, nil, errors.New("stored resources are invalid")
 		}
 	}
 	var secrets map[string]json.RawMessage
@@ -1147,18 +1189,39 @@ func sessionResourcesFromDeployment(deployment db.Deployment, now time.Time) ([]
 		_ = json.Unmarshal(deployment.ResourceSecrets, &secrets)
 	}
 	resources := make([]db.SessionResource, 0, len(configs))
+	fileMounts := make([]db.SessionFileMount, 0, len(configs))
+	fileMountPaths := make([]string, 0, len(configs))
 	for i, config := range configs {
 		resourceType, _ := config["type"].(string)
+		var fileID string
+		var backingPath string
+		if resourceType == "file" {
+			source, _ := config["source"].(string)
+			mountPath, _ := config["mount_path"].(string)
+			fileID, _ = config["file_id"].(string)
+			if source != sandboxmount.FileSource {
+				return nil, nil, fmt.Errorf("stored file resource source must be %q", sandboxmount.FileSource)
+			}
+			if fileID == "" {
+				return nil, nil, errors.New("stored file resource file_id is required")
+			}
+			var err error
+			backingPath, err = sandboxmount.FileBackingPath(mountPath)
+			if err != nil {
+				return nil, nil, err
+			}
+			fileMountPaths = append(fileMountPaths, mountPath)
+		}
 		resourceID, err := ids.New("sesrsc_")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		payload := cloneMap(config)
 		payload["id"] = resourceID
 		payload["type"] = resourceType
 		payloadRaw, err := httpapi.MarshalRaw(payload)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var secretRaw json.RawMessage
 		if secrets != nil {
@@ -1175,8 +1238,18 @@ func sessionResourcesFromDeployment(deployment db.Deployment, now time.Time) ([]
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		})
+		if resourceType == "file" {
+			fileMounts = append(fileMounts, db.SessionFileMount{
+				ResourceExternalID: resourceID,
+				FileExternalID:     fileID,
+				Path:               backingPath,
+			})
+		}
 	}
-	return resources, nil
+	if err := sandboxmount.ValidateFileMountPaths(fileMountPaths); err != nil {
+		return nil, nil, err
+	}
+	return resources, fileMounts, nil
 }
 
 func normalizeOptionalSchedule(raw json.RawMessage) (json.RawMessage, error) {

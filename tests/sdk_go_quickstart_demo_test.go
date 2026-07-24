@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -250,7 +249,7 @@ func quickstartRunRealSandbox(t *testing.T, ctx context.Context, app *testApp, e
 		}
 	}()
 
-	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, app.cfg, nil, app.credentials)
+	runner := newManagedAgentRunner(app, provider, app.cfg, nil)
 	processed, err := runner.RunOnce(ctx, "quickstart-real-e2b")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)

@@ -3,6 +3,7 @@ package environments
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
@@ -21,19 +23,36 @@ import (
 	"github.com/google/uuid"
 )
 
+var (
+	errRcloneConfigWrite       = errors.New("rclone-filestore config write failed")
+	errRcloneConfigPermissions = errors.New("rclone-filestore config permission update failed")
+	errRcloneProcessStart      = errors.New("rclone-filestore process start failed")
+	errRcloneReadiness         = errors.New("rclone-filestore readiness check failed")
+	errRcloneConfigCleanup     = errors.New("rclone-filestore config cleanup failed")
+)
+
 type Runner struct {
 	db           *db.DB
 	provider     e2bruntime.Provider
 	cfg          config.Config
 	codeSessions *codesessions.Service
 	skills       *skillsapi.RuntimeResolver
+
+	filestoreCredentials *filestore.TokenCredentials
 }
 
 func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
 	return &Runner{db: database, provider: provider}
 }
 
-func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore, credentials *codesessions.SessionCredentials) *Runner {
+func NewRunnerWithConfigStoreAndCredentials(
+	database *db.DB,
+	provider e2bruntime.Provider,
+	cfg config.Config,
+	store storage.ObjectStore,
+	credentials *codesessions.SessionCredentials,
+	filestoreCredentials *filestore.TokenCredentials,
+) *Runner {
 	// 显式注入用于 main 和测试，确保不会在同一进程中意外创建第二套签名身份。
 	return &Runner{
 		db:           database,
@@ -41,10 +60,19 @@ func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime
 		cfg:          cfg,
 		codeSessions: codesessions.NewServiceWithCredentials(database, credentials),
 		skills:       skillsapi.NewRuntimeResolver(cfg, database, store),
+
+		filestoreCredentials: filestoreCredentials,
 	}
 }
 
-func StartRunnerWithStoreAndCredentials(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, credentials *codesessions.SessionCredentials) {
+func StartRunnerWithStoreAndCredentials(
+	ctx context.Context,
+	database *db.DB,
+	store storage.ObjectStore,
+	cfg config.Config,
+	credentials *codesessions.SessionCredentials,
+	filestoreCredentials *filestore.TokenCredentials,
+) {
 	if !cfg.EnvironmentRunner.Enabled {
 		return
 	}
@@ -52,7 +80,14 @@ func StartRunnerWithStoreAndCredentials(ctx context.Context, database *db.DB, st
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	runner := NewRunnerWithConfigStoreAndCredentials(database, e2bruntime.NewProvider(cfg.E2B), cfg, store, credentials)
+	runner := NewRunnerWithConfigStoreAndCredentials(
+		database,
+		e2bruntime.NewProvider(cfg.E2B),
+		cfg,
+		store,
+		credentials,
+		filestoreCredentials,
+	)
 	for i := 0; i < concurrency; i++ {
 		workerID := fmt.Sprintf("environment-runner-%d", i+1)
 		go runner.loop(ctx, workerID)
@@ -158,6 +193,12 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		}
 		*work = updatedWork
 	}
+	if launch != nil {
+		if err := r.startRcloneFilestore(ctx, providerSandboxID, launch.Filestore); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+	}
 	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
@@ -167,9 +208,9 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 	if launch != nil {
-		// 先建立 environment runtime 状态，再把双凭证直接写入后台进程 stdin。
-		// environment-manager 会在启动 Claude 前 register worker，建立首个 CCR lease。
-		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.ShellCommand, launch.Payload); err != nil {
+		// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
+		// 并在启动 Claude 前 register worker，建立首个 CCR lease。
+		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
@@ -190,7 +231,7 @@ func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSa
 	_ = r.provider.Kill(killCtx, providerSandboxID)
 }
 
-func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*environmentManagerCommand, error) {
+func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*managedAgentLaunch, error) {
 	if r == nil || work == nil || r.codeSessions == nil {
 		return nil, nil
 	}
@@ -203,6 +244,10 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 		return nil, err
 	}
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceID, session.ExternalID)
+	if err != nil {
+		return nil, err
+	}
+	rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +321,61 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 		return nil, err
 	}
 	command := buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload)
-	return &command, nil
+	return &managedAgentLaunch{Manager: command, Filestore: rcloneLaunch}, nil
+}
+
+func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
+	if err := r.provider.WriteFile(ctx, sandboxID, rcloneConfigPath, launch.ConfigPayload); err != nil {
+		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return errRcloneConfigWrite
+	}
+	if err := r.provider.RunCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
+		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return errRcloneConfigPermissions
+	}
+	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
+		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return errRcloneProcessStart
+	}
+	if err := r.waitForRcloneReady(ctx, sandboxID, rcloneReadyPollInterval, rcloneReadyTimeout); err != nil {
+		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return errRcloneReadiness
+	}
+	if err := r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout); err != nil {
+		return errRcloneConfigCleanup
+	}
+	return nil
+}
+
+func (r *Runner) waitForRcloneReady(
+	ctx context.Context,
+	sandboxID string,
+	pollInterval time.Duration,
+	timeout time.Duration,
+) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
+		ready, err := r.provider.FileExists(waitCtx, sandboxID, rcloneReadyPath)
+		if err != nil {
+			return fmt.Errorf("probe ready marker: %w", err)
+		}
+		if ready {
+			return nil
+		}
+
+		select {
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("timed out after %s", timeout)
+		case <-ticker.C:
+		}
+	}
 }
 
 // prepareManagedAgentNetworkMetadata 在 Provider Resolve 之前解析受开关约束的

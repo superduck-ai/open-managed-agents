@@ -58,6 +58,22 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		assertWorkspaceStorageBytes(t, fixture, fileSize)
 	})
 
+	t.Run("failure limited file creation checks quota before duplicate insert", func(t *testing.T) {
+		fixture := newWorkspaceStorageFixture(t)
+		file := workspaceStorageFile(fixture.workspaceID, 3)
+		if err := fixture.app.db.CreateFile(context.Background(), file); err != nil {
+			t.Fatalf("create initial file: %v", err)
+		}
+
+		duplicate := workspaceStorageFile(fixture.workspaceID, 7)
+		duplicate.ExternalID = file.ExternalID
+		err := fixture.app.db.CreateFileIfWithinLimit(context.Background(), duplicate, 5)
+		if !errors.Is(err, db.ErrStorageLimitExceeded) {
+			t.Fatalf("duplicate over-limit file create error = %v, want ErrStorageLimitExceeded", err)
+		}
+		assertWorkspaceStorageBytes(t, fixture, 3)
+	})
+
 	t.Run("failure resource write rollback also rolls back reserved bytes", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		file := workspaceStorageFile(fixture.workspaceID, 3)

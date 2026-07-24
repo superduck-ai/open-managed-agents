@@ -29,6 +29,7 @@ func TestFilestoreEntryReferenceColumnsUseUUID(t *testing.T) {
 		"created_by_api_key_uuid":      24,
 		"created_by_session_uuid":      25,
 		"created_by_code_session_uuid": 26,
+		"source_file_uuid":             32,
 	}
 	rows, err := app.db.Pool.Query(context.Background(), `
 		select column_name, data_type, ordinal_position
@@ -39,6 +40,7 @@ func TestFilestoreEntryReferenceColumnsUseUUID(t *testing.T) {
 	`, []string{
 		"organization_uuid", "workspace_uuid", "filesystem_uuid",
 		"created_by_api_key_uuid", "created_by_session_uuid", "created_by_code_session_uuid",
+		"source_file_uuid",
 	})
 	if err != nil {
 		t.Fatalf("query Filestore entry UUID columns: %v", err)
@@ -221,6 +223,36 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	}
 	if activeCount != 1 {
 		t.Fatalf("active session filesystems = %d, want 1", activeCount)
+	}
+	rows, err := app.db.Pool.Query(context.Background(), `
+		select path, kind, parent_path
+		from filestore_entries
+		where workspace_uuid = $1
+			and filesystem_uuid = $2
+			and deleted_at is null
+		order by path
+	`, workspaceUUID, filesystem.UUID)
+	if err != nil {
+		t.Fatalf("list Session Filestore roots: %v", err)
+	}
+	defer rows.Close()
+	var rootPaths []string
+	for rows.Next() {
+		var path, kind, parentPath string
+		if err := rows.Scan(&path, &kind, &parentPath); err != nil {
+			t.Fatalf("scan Session Filestore root: %v", err)
+		}
+		if kind != db.FilestoreEntryKindDirectory || parentPath != "/" {
+			t.Fatalf("Session Filestore root = %q %q parent %q", path, kind, parentPath)
+		}
+		rootPaths = append(rootPaths, path)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate Session Filestore roots: %v", err)
+	}
+	wantRootPaths := []string{"/outputs", "/tool_results", "/transcripts", "/uploads"}
+	if !reflect.DeepEqual(rootPaths, wantRootPaths) {
+		t.Fatalf("Session Filestore roots = %v, want %v", rootPaths, wantRootPaths)
 	}
 	for attempt := 1; attempt <= 2; attempt++ {
 		if _, err := app.db.CreateCodeSession(context.Background(), db.CreateCodeSessionInput{

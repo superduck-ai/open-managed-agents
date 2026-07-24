@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"time"
-
-	"github.com/jmoiron/sqlx"
 )
 
 const (
@@ -136,17 +134,27 @@ func insertDeploymentRunSQLX(
 
 func updateDeploymentLastRunSQLX(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	database sqlxNamedExecer,
 	workspaceID int64,
 	deploymentExternalID string,
 	lastRunAt time.Time,
 ) error {
-	_, err := namedExecContext(ctx, tx, updateDeploymentLastRunQuery, map[string]any{
+	result, err := namedExecContext(ctx, database, updateDeploymentLastRunQuery, map[string]any{
 		"workspace_id":           workspaceID,
 		"deployment_external_id": deploymentExternalID,
 		"last_run_at":            lastRunAt,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func deploymentRunArguments(run DeploymentRun) map[string]any {

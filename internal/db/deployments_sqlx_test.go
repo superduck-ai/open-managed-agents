@@ -1,10 +1,45 @@
 package db
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
+
+type stubNamedExecer struct {
+	err    error
+	query  string
+	result sql.Result
+	args   []any
+}
+
+func (s *stubNamedExecer) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
+	s.query = query
+	s.args = append([]any(nil), args...)
+	return s.result, s.err
+}
+
+func (s *stubNamedExecer) Rebind(query string) string {
+	return sqlx.Rebind(sqlx.DOLLAR, query)
+}
+
+type stubSQLResult struct {
+	err          error
+	rowsAffected int64
+}
+
+func (s stubSQLResult) LastInsertId() (int64, error) {
+	return 0, nil
+}
+
+func (s stubSQLResult) RowsAffected() (int64, error) {
+	return s.rowsAffected, s.err
+}
 
 func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 	now := time.Date(2026, time.July, 23, 16, 0, 0, 0, time.UTC)
@@ -127,4 +162,41 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpdateDeploymentLastRunSQLX(t *testing.T) {
+	now := time.Date(2026, time.July, 24, 8, 30, 0, 0, time.UTC)
+
+	t.Run("propagates database exec error", func(t *testing.T) {
+		wantErr := errors.New("boom")
+		database := &stubNamedExecer{err: wantErr}
+
+		err := updateDeploymentLastRunSQLX(context.Background(), database, 42, "dep_test", now)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("updateDeploymentLastRunSQLX() error = %v, want %v", err, wantErr)
+		}
+	})
+
+	t.Run("returns not found when zero rows were updated", func(t *testing.T) {
+		database := &stubNamedExecer{result: stubSQLResult{rowsAffected: 0}}
+
+		err := updateDeploymentLastRunSQLX(context.Background(), database, 42, "dep_missing", now)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("updateDeploymentLastRunSQLX() error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("succeeds when at least one row was updated", func(t *testing.T) {
+		database := &stubNamedExecer{result: stubSQLResult{rowsAffected: 1}}
+
+		if err := updateDeploymentLastRunSQLX(context.Background(), database, 42, "dep_test", now); err != nil {
+			t.Fatalf("updateDeploymentLastRunSQLX() error = %v, want nil", err)
+		}
+		if strings.Contains(database.query, ":") {
+			t.Fatalf("bound query still contains named placeholders: %q", database.query)
+		}
+		if len(database.args) != 4 {
+			t.Fatalf("bound argument count = %d, want 4", len(database.args))
+		}
+	})
 }

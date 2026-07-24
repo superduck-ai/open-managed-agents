@@ -9,10 +9,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aiupstream"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -40,13 +40,13 @@ func NewHTTPUpstreamClient(cfg config.Config) *HTTPUpstreamClient {
 	}
 	return &HTTPUpstreamClient{
 		cfg:    cfg,
-		client: &http.Client{Timeout: timeout},
+		client: aiupstream.NewHTTPClient(nil, timeout),
 	}
 }
 
 func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, req db.MessageBatchRequest) (UpstreamResult, error) {
 	body := normalizeParams(req.Params)
-	endpoint, err := url.JoinPath(c.cfg.AnthropicUpstream.BaseURL, "/v1/messages")
+	endpoint, err := aiupstream.Endpoint(c.cfg.AnthropicUpstream.BaseURL, "v1/messages", "")
 	if err != nil {
 		return erroredResult("api_error", "invalid upstream base URL"), nil
 	}

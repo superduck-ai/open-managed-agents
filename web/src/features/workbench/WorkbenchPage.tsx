@@ -90,7 +90,6 @@ import {
   EvaluateTestCase,
   extractGeneratedPromptInstructions,
   extractVariables,
-  fallbackModels,
   generatePromptExamples,
   GeneratePromptStep,
   hasMultipleHumanMessages,
@@ -145,7 +144,6 @@ import {
   buildGenerateExamplePayload,
   buildGenerateTestCasesPayload,
   buildGenerateVariablePayload,
-  createEvaluateRow,
   emptyComparisonOutput,
   evaluateRowFromGeneratedEvent,
   evaluateRowRequestBody,
@@ -174,8 +172,9 @@ export function WorkbenchPage() {
   const workbenchAccess = useMemo(() => workbenchAccessState(account, orgUuid), [account, orgUuid]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [models, setModels] = useState<WorkbenchModel[]>(fallbackModels);
-  const [defaultModelName, setDefaultModelName] = useState(fallbackModels[0].model_name);
+  const [models, setModels] = useState<WorkbenchModel[]>([]);
+  const [defaultModelName, setDefaultModelName] = useState('');
+  const [modelCatalogStale, setModelCatalogStale] = useState(false);
   const [promptList, setPromptList] = useState<WorkbenchPromptSummary[]>([]);
   const [prompt, setPrompt] = useState<WorkbenchPromptDetail | null>(null);
   const [promptName, setPromptName] = useState('Untitled');
@@ -255,19 +254,26 @@ export function WorkbenchPage() {
   const workbenchLoadSeqRef = useRef(0);
 
   const variables = useMemo(() => extractVariables(draft), [draft]);
-  const selectedModel = models.find((model) => model.model_name === draft.model_name) ?? models[0] ?? fallbackModels[0];
+  const selectedModel = models.find((model) => model.model_name === draft.model_name);
+  const hasSelectedCatalogModel = Boolean(selectedModel);
   const promptTitle = useMemo(() => displayPromptTitle(promptName, draft), [draft, promptName]);
   const hasPromptText = hasRunnableMessage(draft);
+  const improvePromptLabel = improvePromptActionLabel(hasPromptText, hasSelectedCatalogModel);
   const hasVariables = variables.length > 0;
   const canEvaluate = hasVariables && draft.tools.length === 0;
   const evaluateUnavailableReason = 'Run a prompt with at least one variable and no tools to use ‘Evaluate’.';
-  const canRun = Boolean(orgUuid) && hasPromptText && !isLoading;
+  const canRun = Boolean(orgUuid) && hasPromptText && hasSelectedCatalogModel && !isLoading;
   const hasMissingVariableValues = variables.some((name) => !variableValues[name]?.trim());
   const canRunWithVariables = canRun && !hasMissingVariableValues;
   const currentDraftKey = prompt ? workbenchDraftAutosaveKey(prompt.id, draft) : null;
   const hasUnsavedChanges = Boolean(prompt && latestRevisionDraftKeyRef.current !== currentDraftKey);
   const canRunAllEvaluations =
-    Boolean(orgUuid) && hasPromptText && evaluateRows.length > 0 && !isLoading && !hasUnsavedChanges;
+    Boolean(orgUuid) &&
+    hasPromptText &&
+    hasSelectedCatalogModel &&
+    evaluateRows.length > 0 &&
+    !isLoading &&
+    !hasUnsavedChanges;
   const canAddPrefillResponse =
     hasPromptText && variables.length === 0 && draft.messages[draft.messages.length - 1]?.role !== 'assistant';
   const canSaveCurrentRevision = Boolean(orgUuid && prompt && hasUnsavedChanges && saveStatus !== 'Saving');
@@ -454,15 +460,25 @@ export function WorkbenchPage() {
     if (isPromptReadOnly) {
       return;
     }
+    if (!hasSelectedCatalogModel) {
+      setRunError('Select an available model before improving this prompt.');
+      setActiveDrawer('model');
+      return;
+    }
     setPromptPickerOpen(false);
     setActiveDrawer(null);
     setImproveFeedback('');
     setImproveThinkingEnabled(thinkingMode(draft.thinking) !== 'disabled');
     setImproveOpen(true);
-  }, [draft.thinking, isPromptReadOnly]);
+  }, [draft.thinking, hasSelectedCatalogModel, isPromptReadOnly]);
 
   const openPromptGenerator = useCallback(() => {
     if (isPromptReadOnly || promptGeneratorWarning) {
+      return;
+    }
+    if (!hasSelectedCatalogModel) {
+      setRunError('Select an available model before generating a prompt.');
+      setActiveDrawer('model');
       return;
     }
     setPromptPickerOpen(false);
@@ -474,7 +490,7 @@ export function WorkbenchPage() {
     setPromptGeneratorError(null);
     setPromptGeneratorThinkingEnabled(thinkingMode(draft.thinking) !== 'disabled');
     setPromptGeneratorOpen(true);
-  }, [draft.thinking, isPromptReadOnly, promptGeneratorWarning]);
+  }, [draft.thinking, hasSelectedCatalogModel, isPromptReadOnly, promptGeneratorWarning]);
 
   const loadWorkbench = useCallback(async () => {
     const loadSeq = ++workbenchLoadSeqRef.current;
@@ -500,11 +516,16 @@ export function WorkbenchPage() {
       if (!isCurrentLoad()) {
         return;
       }
-      const nextModels = modelsResponse.models?.length ? modelsResponse.models : fallbackModels;
+      const nextModels = modelsResponse.models ?? [];
+      const requestedDefaultModelName = modelsResponse.default_prompt_settings?.model_name ?? '';
       const nextDefaultModelName =
-        modelsResponse.default_prompt_settings?.model_name ?? nextModels[0]?.model_name ?? fallbackModels[0].model_name;
+        modelsResponse.model_catalog?.default_available &&
+        nextModels.some((model) => model.model_name === requestedDefaultModelName)
+          ? requestedDefaultModelName
+          : '';
       setModels(nextModels);
       setDefaultModelName(nextDefaultModelName);
+      setModelCatalogStale(Boolean(modelsResponse.model_catalog?.stale));
 
       const routePromptId = currentRoutePromptId();
       let routeRequestsNewPrompt = currentRouteRequestsNewPrompt();
@@ -940,6 +961,11 @@ export function WorkbenchPage() {
       setRunError('No organization or prompt is available.');
       return;
     }
+    if (!hasSelectedCatalogModel) {
+      setRunError('Select an available model before running this prompt.');
+      setActiveDrawer('model');
+      return;
+    }
     if (hasMissingVariableValues) {
       setActiveDrawer('variables');
       setToolForm(null);
@@ -996,6 +1022,7 @@ export function WorkbenchPage() {
     draft,
     examples,
     hasMissingVariableValues,
+    hasSelectedCatalogModel,
     isPromptReadOnly,
     isRunning,
     orgUuid,
@@ -1008,7 +1035,7 @@ export function WorkbenchPage() {
       runControllerRef.current?.abort();
       return;
     }
-    if (!orgUuid || !prompt || !evaluateRows.length || hasUnsavedChanges) {
+    if (!orgUuid || !prompt || !evaluateRows.length || hasUnsavedChanges || !hasSelectedCatalogModel) {
       return;
     }
 
@@ -1230,6 +1257,7 @@ export function WorkbenchPage() {
     evaluateRows,
     examples,
     hasUnsavedChanges,
+    hasSelectedCatalogModel,
     isRunning,
     orgUuid,
     prompt,
@@ -1578,23 +1606,30 @@ export function WorkbenchPage() {
     }
     const controller = new AbortController();
     let streamedText = '';
-    await streamGenerateTestCase({
-      orgUuid,
-      workspaceId: activeWorkspaceId,
-      body: buildGenerateVariablePayload(draft, examples, variableGenerationLogic),
-      signal: controller.signal,
-      onEvent: (event) => {
-        const delta = textDeltaFromEvent(event);
-        if (delta) {
-          streamedText += delta;
-        }
-      },
-    }).catch(() => undefined);
+    try {
+      await streamGenerateTestCase({
+        orgUuid,
+        workspaceId: activeWorkspaceId,
+        body: buildGenerateVariablePayload(draft, examples, variableGenerationLogic),
+        signal: controller.signal,
+        onEvent: (event) => {
+          const delta = textDeltaFromEvent(event);
+          if (delta) {
+            streamedText += delta;
+          }
+        },
+      });
+    } catch {
+      return;
+    }
     const tagged = parseTaggedVariables(streamedText, variables);
+    if (!variables.every((name) => tagged[name]?.trim())) {
+      return;
+    }
     setVariableValues((current) => {
       const next = { ...current };
       variables.forEach((name) => {
-        next[name] = tagged[name] || next[name] || `${name} sample`;
+        next[name] = tagged[name];
       });
       return next;
     });
@@ -1627,14 +1662,11 @@ export function WorkbenchPage() {
       });
       const planning = parseTaggedValue(streamedText, 'planning');
       const fallbackLogic = stripTaggedVariables(streamedText, ['planning', ...variables]).trim();
-      setVariableGenerationLogic(
-        planning ||
-          fallbackLogic ||
-          variableGenerationLogic ||
-          'Describe how to create realistic values for this test case.',
-      );
+      if (planning || fallbackLogic) {
+        setVariableGenerationLogic(planning || fallbackLogic);
+      }
     } catch {
-      setVariableGenerationLogic((current) => current || 'Describe how to create realistic values for this test case.');
+      // Keep the current instructions when the gateway request fails.
     } finally {
       setIsGeneratingVariableLogic(false);
     }
@@ -1647,23 +1679,32 @@ export function WorkbenchPage() {
     setIsGeneratingExample(true);
     const controller = new AbortController();
     let streamedText = '';
-    await streamGenerateTestCase({
-      orgUuid,
-      workspaceId: activeWorkspaceId,
-      body: buildGenerateExamplePayload(draft, examples, stringValue(prompt?.kv_store?.test_case_generation_logic)),
-      signal: controller.signal,
-      onEvent: (event) => {
-        const delta = textDeltaFromEvent(event);
-        if (delta) {
-          streamedText += delta;
-        }
-      },
-    }).catch(() => undefined);
+    try {
+      await streamGenerateTestCase({
+        orgUuid,
+        workspaceId: activeWorkspaceId,
+        body: buildGenerateExamplePayload(draft, examples, stringValue(prompt?.kv_store?.test_case_generation_logic)),
+        signal: controller.signal,
+        onEvent: (event) => {
+          const delta = textDeltaFromEvent(event);
+          if (delta) {
+            streamedText += delta;
+          }
+        },
+      });
+    } catch {
+      setIsGeneratingExample(false);
+      return;
+    }
     const tagged = parseTaggedVariables(streamedText, variables);
+    if (!variables.every((name) => tagged[name]?.trim())) {
+      setIsGeneratingExample(false);
+      return;
+    }
     setExampleValues((current) => {
       const next = { ...current };
       variables.forEach((name) => {
-        next[name] = tagged[name] || next[name] || `${name} sample`;
+        next[name] = tagged[name];
       });
       return next;
     });
@@ -1748,22 +1789,23 @@ export function WorkbenchPage() {
       }
       const controller = new AbortController();
       const generatedRows: EvaluateTestCase[] = [];
-      await streamGenerateTestCases({
-        orgUuid,
-        workspaceId: activeWorkspaceId,
-        body: buildGenerateTestCasesPayload(draft, count, examples),
-        signal: controller.signal,
-        onEvent: (event) => {
-          const row = evaluateRowFromGeneratedEvent(event, variables);
-          if (row) {
-            generatedRows.push(row);
-          }
-        },
-      }).catch(() => undefined);
-      const fallbackRows = Array.from({ length: Math.max(0, count - generatedRows.length) }, (_, index) =>
-        createEvaluateRow(variables, generatedRows.length + index + 1),
-      );
-      const rowsToCreate = [...generatedRows, ...fallbackRows];
+      try {
+        await streamGenerateTestCases({
+          orgUuid,
+          workspaceId: activeWorkspaceId,
+          body: buildGenerateTestCasesPayload(draft, count, examples),
+          signal: controller.signal,
+          onEvent: (event) => {
+            const row = evaluateRowFromGeneratedEvent(event, variables);
+            if (row) {
+              generatedRows.push(row);
+            }
+          },
+        });
+      } catch {
+        return;
+      }
+      const rowsToCreate = generatedRows.slice(0, count);
       setEvaluateRows((current) => [...current, ...rowsToCreate]);
       await Promise.all(rowsToCreate.map((row) => createEvaluateRowRecord(row)));
     },
@@ -1836,6 +1878,13 @@ export function WorkbenchPage() {
     setIsImproving(true);
     const controller = new AbortController();
     const originalPromptText = messageText(draft.messages[0]);
+    const improvementTask = [
+      'Improve the following prompt while preserving its intent.',
+      improveFeedback.trim() ? `Feedback: ${improveFeedback.trim()}` : '',
+      `Prompt:\n${originalPromptText}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     let generated = '';
     try {
       generated = await streamSmoothedWorkbenchText({
@@ -1850,9 +1899,9 @@ export function WorkbenchPage() {
             orgUuid,
             workspaceId: activeWorkspaceId,
             body: {
-              ...buildRevisionPayload(draft, { includeEmptyMessages: false }),
-              feedback: improveFeedback,
-              thinking_enabled: improveThinkingEnabled,
+              model: draft.model_name,
+              task: improvementTask,
+              target_thinking_mode: improveThinkingEnabled,
             },
             signal: controller.signal,
             onEvent,
@@ -1881,6 +1930,10 @@ export function WorkbenchPage() {
   const generatePromptFromTask = useCallback(async () => {
     const task = promptGeneratorTask.trim();
     if (!orgUuid || !task || isPromptReadOnly || promptGeneratorWarning) {
+      return;
+    }
+    if (!hasSelectedCatalogModel) {
+      setPromptGeneratorError('Select an available model before generating a prompt.');
       return;
     }
     clearPromptGeneratorOutputFallback();
@@ -1915,6 +1968,7 @@ export function WorkbenchPage() {
             orgUuid,
             workspaceId: activeWorkspaceId,
             body: {
+              model: draft.model_name,
               task,
               target_thinking_mode: promptGeneratorThinkingEnabled,
               isPromptConversion: false,
@@ -1934,7 +1988,7 @@ export function WorkbenchPage() {
         setPromptGeneratorError('Generated prompt is malformed, displaying raw output');
       } else {
         setPromptGeneratorStep('generate');
-        setPromptGeneratorError('Claude did not return a prompt. Try adding more detail.');
+        setPromptGeneratorError('The model did not return a prompt. Try adding more detail.');
       }
     } catch (error) {
       clearPromptGeneratorOutputFallback();
@@ -1957,6 +2011,8 @@ export function WorkbenchPage() {
   }, [
     activeWorkspaceId,
     clearPromptGeneratorOutputFallback,
+    draft.model_name,
+    hasSelectedCatalogModel,
     isPromptReadOnly,
     orgUuid,
     promptGeneratorTask,
@@ -2174,6 +2230,16 @@ export function WorkbenchPage() {
               </Button>
             </div>
 
+            {modelCatalogStale ? (
+              <span
+                className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400"
+                data-testid="workbench-model-catalog-stale"
+              >
+                <AlertCircle className="size-3.5" aria-hidden />
+                Model catalog is stale
+              </span>
+            ) : null}
+
             <div className="relative min-w-0">
               <DropdownMenu
                 open={promptMenuOpen}
@@ -2342,9 +2408,15 @@ export function WorkbenchPage() {
                     className={clsx('workbench-toolbar-button', activeDrawer === 'examples' && 'is-active')}
                     disabled={!hasVariables}
                     aria-label={
-                      hasVariables ? 'Help Claude understand the task better' : 'Requires at least one variable'
+                      hasVariables
+                        ? 'Help the selected model understand the task better'
+                        : 'Requires at least one variable'
                     }
-                    title={hasVariables ? 'Help Claude understand the task better' : 'Requires at least one variable'}
+                    title={
+                      hasVariables
+                        ? 'Help the selected model understand the task better'
+                        : 'Requires at least one variable'
+                    }
                     onClick={() => {
                       setActiveDrawer('examples');
                       setExampleFormOpen(false);
@@ -2358,17 +2430,9 @@ export function WorkbenchPage() {
                     type="button"
                     variant="ghost"
                     className="workbench-toolbar-button"
-                    disabled={!hasPromptText || isPromptReadOnly}
-                    aria-label={
-                      hasPromptText
-                        ? 'Use Claude to optimize your prompt'
-                        : 'Add some text to the prompt to use this feature'
-                    }
-                    title={
-                      hasPromptText
-                        ? 'Use Claude to optimize your prompt'
-                        : 'Add some text to the prompt to use this feature'
-                    }
+                    disabled={!hasPromptText || !hasSelectedCatalogModel || isPromptReadOnly}
+                    aria-label={improvePromptLabel}
+                    title={improvePromptLabel}
                     onClick={openImprovePrompt}
                   >
                     <WandSparkles className="size-4" aria-hidden />
@@ -2599,7 +2663,14 @@ export function WorkbenchPage() {
             onClose={() => setActiveDrawer(null)}
           >
             {activeDrawer === 'model' ? (
-              <ModelDrawer draft={draft} models={models} setDraft={setDraft} onRun={runPrompt} isRunning={isRunning} />
+              <ModelDrawer
+                draft={draft}
+                models={models}
+                setDraft={setDraft}
+                onRun={runPrompt}
+                isRunning={isRunning}
+                canRun={canRun}
+              />
             ) : null}
             {activeDrawer === 'variables' ? (
               <VariablesDrawer
@@ -2792,4 +2863,14 @@ export function WorkbenchPage() {
       ) : null}
     </WorkbenchShell>
   );
+}
+
+function improvePromptActionLabel(hasPromptText: boolean, hasSelectedCatalogModel: boolean) {
+  if (!hasPromptText) {
+    return 'Add some text to the prompt to use this feature';
+  }
+  if (!hasSelectedCatalogModel) {
+    return 'Select an available model before improving this prompt';
+  }
+  return 'Optimize your prompt with the selected model';
 }

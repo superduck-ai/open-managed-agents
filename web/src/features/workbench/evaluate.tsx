@@ -61,11 +61,7 @@ export function ResponsePreview({
         </span>
       ) : (
         <span className="workbench-empty-response-content">
-          <span>
-            Run prompt to see assistant response from the
-            <br />
-            Claude API
-          </span>
+          <span>Run prompt to see the selected model's response from the configured AI gateway</span>
           {showCreatePrompt ? (
             <>
               <span className="workbench-empty-response-or">or</span>

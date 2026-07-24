@@ -27,8 +27,14 @@ storage:
     force_path_style: true
 
 anthropic_upstream:
-  base_url: https://api.anthropic.com
+  # Replace this with the private company AI gateway in oma-server.local.yaml.
+  # Public anthropic.com hosts are rejected.
+  base_url: https://ai-gateway.example.internal
   api_key: ""
+
+model_catalog:
+  # Leave empty to require users to select a discovered model explicitly.
+  default_model_id: ""
 
 e2b:
   api_url: http://host.docker.internal:3099

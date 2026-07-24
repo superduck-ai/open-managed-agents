@@ -3,7 +3,6 @@ import {
   Check,
   ChevronDown,
   Code2,
-  ExternalLink,
   Info,
   Loader2,
   PencilLine,
@@ -84,18 +83,20 @@ export function ModelDrawer({
   setDraft,
   onRun,
   isRunning,
+  canRun,
 }: {
   draft: WorkbenchRevision;
   models: WorkbenchModel[];
   setDraft: Dispatch<SetStateAction<WorkbenchRevision>>;
   onRun: () => void;
   isRunning: boolean;
+  canRun: boolean;
 }) {
   const thinkingType = thinkingMode(draft.thinking);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState('');
   const modelOptions = useMemo(() => {
-    if (models.some((model) => model.model_name === draft.model_name)) {
+    if (!draft.model_name || models.some((model) => model.model_name === draft.model_name)) {
       return models;
     }
     return [{ model_name: draft.model_name }, ...models];
@@ -136,14 +137,14 @@ export function ModelDrawer({
                 type="button"
                 role="combobox"
                 variant="ghost"
-                aria-label={draft.model_name}
+                aria-label={draft.model_name || 'Select model'}
                 aria-expanded={modelMenuOpen}
                 aria-controls="workbench-model-listbox"
                 className={clsx('workbench-model-select workbench-model-combobox', modelMenuOpen && 'is-open')}
               />
             }
           >
-            <span>{draft.model_name}</span>
+            <span>{draft.model_name || 'Select model'}</span>
             <ChevronDown className="size-4" aria-hidden />
           </PopoverTrigger>
           <PopoverContent
@@ -238,7 +239,7 @@ export function ModelDrawer({
               variant="ghost"
               size="icon-xs"
               className="workbench-model-help"
-              aria-label="Maximum length of Claude’s responses"
+              aria-label="Maximum length of the selected model's response"
             >
               <Info className="size-3.5" aria-hidden />
             </Button>
@@ -395,17 +396,13 @@ export function ModelDrawer({
         </div>
       </section>
 
-      <a
-        className="workbench-model-api-link"
-        href="https://docs.claude.com/en/api/messages"
-        target="_blank"
-        rel="noreferrer"
+      <Button
+        type="button"
+        size="lg"
+        className="mx-5 mb-[18px] mt-auto w-[calc(100%-40px)]"
+        disabled={!canRun}
+        onClick={onRun}
       >
-        View all API options
-        <ExternalLink className="size-3" aria-hidden />
-      </a>
-
-      <Button type="button" size="lg" className="mx-5 mb-[18px] mt-auto w-[calc(100%-40px)]" onClick={onRun}>
         {isRunning ? (
           <Loader2 className="size-4 animate-spin" aria-hidden />
         ) : (
@@ -419,18 +416,7 @@ export function ModelDrawer({
 }
 
 export function modelDescription(model: WorkbenchModel) {
-  switch (model.model_name) {
-    case 'claude-fable-5':
-      return 'Next generation of intelligence for the hardest knowledge work and coding problems';
-    case 'claude-opus-4-8':
-      return 'Powerful, large model for complex challenges';
-    case 'claude-sonnet-4-6':
-      return 'Smart, efficient model for everyday use';
-    case 'claude-haiku-4-5-20251001':
-      return 'Fastest model for daily tasks';
-    default:
-      return model.display_name ?? model.name ?? 'Available model';
-  }
+  return model.description ?? model.display_name ?? model.name ?? 'Available model';
 }
 
 export function thinkingEffortLabel(value: string) {
@@ -694,7 +680,7 @@ export function ToolsDrawer({
         <div className="workbench-tools-empty">
           <h3>No tools defined</h3>
           <p>
-            Tools let you equip Claude with a variety of tasks.{' '}
+            Tools let you equip the selected model with a variety of tasks.{' '}
             <a
               href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview"
               target="_blank"
@@ -802,7 +788,7 @@ export function ToolsDrawer({
           <div>
             <h3>Web search</h3>
             <p className="workbench-tool-description">
-              Allow Claude to search the web and cite those results in its responses.
+              Allow the selected model to search the web and cite those results in its responses.
             </p>
           </div>
           <div className="workbench-tool-field">
@@ -1031,7 +1017,7 @@ export function ExamplesDrawer({
         <div className="workbench-examples-empty">
           <h3>No examples defined</h3>
           <p>
-            Examples help Claude understand the task better.{' '}
+            Examples help the selected model understand the task better.{' '}
             <a
               href="https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/multishot-prompting"
               target="_blank"
@@ -1102,7 +1088,7 @@ export function ExamplesDrawer({
                 <span>Additional context</span>
                 <Textarea
                   aria-label="Additional context"
-                  placeholder="Add any extra details Claude should consider..."
+                  placeholder="Add any extra details the selected model should consider..."
                   value={additionalContext}
                   onChange={(event) => setAdditionalContext(event.currentTarget.value)}
                   className="min-h-[86px] resize-y bg-secondary"

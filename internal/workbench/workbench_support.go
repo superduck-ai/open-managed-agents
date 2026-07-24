@@ -3,16 +3,18 @@ package workbench
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aiupstream"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -20,35 +22,9 @@ import (
 const (
 	defaultAnthropicMaxTokens = 16384
 	anthropicAPIVersion       = "2023-06-01"
-	chatFallbackModel         = "claude-haiku-4-5-20251001"
-	miscDefaultChatModel      = "claude-sonnet-4-6"
 )
 
-var chatModelFallbacks = map[string]string{
-	"claude-fable-5":                     chatFallbackModel,
-	"claude-opus-4-8":                    chatFallbackModel,
-	"claude-opus-4-1-20250805":           chatFallbackModel,
-	"claude-opus-4-20250514":             chatFallbackModel,
-	"claude-opus-4-5-20251101":           chatFallbackModel,
-	"claude-opus-4-6":                    chatFallbackModel,
-	"claude-opus-4-7":                    chatFallbackModel,
-	"claude-sonnet-4-5-20250929":         chatFallbackModel,
-	"claude-sonnet-4-6":                  chatFallbackModel,
-	"claude-haiku-4-5-20251001":          chatFallbackModel,
-	"claude-3-opus-20240229":             chatFallbackModel,
-	"claude-3-5-sonnet-20241022":         chatFallbackModel,
-	"claude-3-7-sonnet-20250219":         chatFallbackModel,
-	"claude-sonnet-4-20250514":           chatFallbackModel,
-	"claude-opus-4-1-20250805-claude-ai": chatFallbackModel,
-}
-
-var chatActiveModels = map[string]struct{}{
-	miscDefaultChatModel: {},
-	"claude-fable-5":     {},
-	"claude-opus-4-8":    {},
-	"claude-opus-4-7":    {},
-	chatFallbackModel:    {},
-}
+var errWorkbenchModelRequired = errors.New("workbench model selection is required")
 
 type OrganizationStore interface{}
 
@@ -64,8 +40,13 @@ type workbenchAccount struct {
 	DisplayName  *string
 }
 
-func RegisterOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, upstream config.AnthropicUpstreamConfig) {
-	registerOrgWorkbenchRoutes(r, store, upstream)
+func RegisterOrgWorkbenchRoutes(
+	r chi.Router,
+	store OrganizationStore,
+	upstream config.AnthropicUpstreamConfig,
+	catalog modelcatalog.Reader,
+) {
+	registerOrgWorkbenchRoutes(r, store, upstream, catalog)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -174,14 +155,49 @@ func proxyMessagesAnthropicToken(upstream config.AnthropicUpstreamConfig) string
 	return strings.TrimSpace(upstream.APIKey)
 }
 
+func resolveWorkbenchModel(r *http.Request, candidates ...string) (string, error) {
+	catalog := workbenchModelCatalogFromRequest(r)
+	if catalog == nil {
+		return "", modelcatalog.ErrUnavailable
+	}
+
+	modelID := firstNonEmpty(candidates...)
+	if modelID == "" {
+		snapshot, err := catalog.Snapshot(r.Context())
+		if err != nil {
+			return "", modelcatalog.ErrUnavailable
+		}
+		modelID = snapshot.DefaultModelID
+	}
+	if modelID == "" {
+		return "", errWorkbenchModelRequired
+	}
+	if err := catalog.ValidateModel(r.Context(), modelID); err != nil {
+		if modelcatalog.IsUnknownModel(err) {
+			return "", modelcatalog.ErrUnknownModel
+		}
+		return "", modelcatalog.ErrUnavailable
+	}
+	return modelID, nil
+}
+
+func writeWorkbenchModelSelectionError(w http.ResponseWriter, err error) {
+	if modelcatalog.IsUnavailable(err) {
+		writeProxyMessagesAnthropicError(w, http.StatusServiceUnavailable, "api_error", "Model catalog is unavailable")
+		return
+	}
+	message := "Selected model is not available from the configured model catalog"
+	if errors.Is(err, errWorkbenchModelRequired) {
+		message = "A model selection is required"
+	}
+	writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", message)
+}
+
 func anthropicMessagesEndpoint(upstream config.AnthropicUpstreamConfig) (string, error) {
-	baseURL := firstNonEmpty(strings.TrimSpace(upstream.BaseURL), "https://api.anthropic.com")
-	parsed, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
+	if err := aiupstream.ValidateDeployment(upstream.BaseURL, upstream.APIKey); err != nil {
 		return "", err
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/v1/messages"
-	return parsed.String(), nil
+	return aiupstream.Endpoint(upstream.BaseURL, "v1/messages", "")
 }
 
 func proxyMessagesStream(w http.ResponseWriter, body io.Reader) {
@@ -318,41 +334,6 @@ func buildChatCompletionToolInputSchema(value any) map[string]any {
 		schema[key] = chatClone(item)
 	}
 	return schema
-}
-
-func chatCompletionModel(model string) string {
-	normalized := chatNormalizeString(model)
-	if normalized == "" {
-		return miscDefaultChatModel
-	}
-	if _, ok := chatActiveModels[normalized]; ok {
-		return normalized
-	}
-	if canonical := chatModelWithoutReleaseDate(normalized); canonical != normalized {
-		if _, ok := chatActiveModels[canonical]; ok {
-			return canonical
-		}
-	}
-	if _, ok := chatModelFallbacks[normalized]; ok {
-		return miscDefaultChatModel
-	}
-	return normalized
-}
-
-func chatModelWithoutReleaseDate(model string) string {
-	if len(model) < 9 || model[len(model)-9] != '-' {
-		return model
-	}
-	suffix := model[len(model)-8:]
-	if len(suffix) != 8 || !strings.HasPrefix(suffix, "20") {
-		return model
-	}
-	for _, r := range suffix {
-		if r < '0' || r > '9' {
-			return model
-		}
-	}
-	return model[:len(model)-9]
 }
 
 func chatArrayFromValue(value any) []any {

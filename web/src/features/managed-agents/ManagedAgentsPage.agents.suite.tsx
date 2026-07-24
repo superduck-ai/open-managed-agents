@@ -118,7 +118,7 @@ export function registerManagedAgentsAgentsTests() {
         button: /Incident commander/i,
         yaml: [
           'name: Incident commander',
-          'model: claude-opus-4-8',
+          'model: claude-sonnet-4-6',
           'https://api.githubcopilot.com/mcp/',
           'mcp_server_name: github',
         ],
@@ -484,7 +484,7 @@ export function registerManagedAgentsAgentsTests() {
     const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
     await waitFor(() => expect(within(section).getByRole('button', { name: /Tool permissions\s+2/ })).toBeTruthy());
     const directoryStatus = within(section).getByRole('status');
-    expect(directoryStatus.textContent).toBe('MCP tool metadata loaded.');
+    expect(directoryStatus.textContent).toContain('MCP tool metadata loaded.');
     expect(directoryStatus.parentElement?.getAttribute('aria-busy')).toBe('false');
     const cards = Array.from(section.querySelectorAll<HTMLElement>('[data-slot="card"]'));
     expect(cards).toHaveLength(3);
@@ -543,7 +543,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(await screen.findByRole('heading', { name: 'Private MCP agent', hidden: true })).toBeTruthy();
     const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
     await waitFor(() =>
-      expect(within(section).getByRole('status').textContent).toBe('MCP tool metadata is unavailable.'),
+      expect(within(section).getByRole('status').textContent).toContain('MCP tool metadata is unavailable.'),
     );
     const permissionsButton = within(section).getByRole('button', {
       name: /Private Docs Tool permissions — Always ask/,

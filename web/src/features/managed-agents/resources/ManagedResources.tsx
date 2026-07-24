@@ -57,33 +57,6 @@ export const deploymentRows: Array<Record<string, ReactNode>> = [
   },
 ];
 
-export const agentRows: Array<Record<string, ReactNode>> = [
-  {
-    ID: 'agent_pyFfN...yKtN6c',
-    Name: 'Structured extractor',
-    Model: 'claude-sonnet-4-6',
-    Status: <StatusPill>Active</StatusPill>,
-    Created: '7 minutes ago',
-    'Last updated': '7 minutes ago',
-  },
-  {
-    ID: 'agent_p5M3v...1Mcu0R',
-    Name: 'agent_d7f1f3b8e6a6_1',
-    Model: 'claude-sonnet-4-6',
-    Status: <StatusPill>Active</StatusPill>,
-    Created: '15 minutes ago',
-    'Last updated': '15 minutes ago',
-  },
-  {
-    ID: 'agent_jR13P...BHjtj8',
-    Name: 'agent_5e2f4a9c0b12_2',
-    Model: 'claude-sonnet-4-6',
-    Status: <StatusPill>Active</StatusPill>,
-    Created: '34 minutes ago',
-    'Last updated': '33 minutes ago',
-  },
-];
-
 export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' | 'dreams'>, ResourceConfig> = {
   agents: {
     section: 'agents',
@@ -96,12 +69,11 @@ export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' |
     emptyTitle: 'No agents yet',
     emptyAction: 'Get started with agents',
     emptyIcon: Bot,
-    rows: agentRows,
   },
   sessions: {
     section: 'sessions',
     title: 'Sessions',
-    description: 'Trace and debug Claude Managed Agents sessions.',
+    description: 'Trace and debug managed agent sessions.',
     createLabel: 'Create session',
     searchPrefix: 'ID',
     searchPlaceholder: 'Search by session ID',

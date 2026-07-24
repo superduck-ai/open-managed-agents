@@ -18,6 +18,51 @@ function systemBlockText(index: number): string {
 }
 
 const englishBlock1Text = systemBlockText(1);
+const catalogModelRule =
+  '- Choose only a model ID allowed by the build_agent_config model schema. Preserve the current model unless the user explicitly requests a change.';
+const capturedModelRulePrefix = '- Pick the most appropriate model.';
+const capturedPromptReplacements = new Map([
+  [
+    'You are an expert agent builder assistant guiding a user through building their first Claude Managed Agent.',
+    'You are an expert agent builder assistant guiding a user through building their first managed agent.',
+  ],
+  [
+    '- The quickstart builds a SINGLE agent. If the user asks about multiagent, subagents, a coordinator, or delegating to other agents, do not try to configure it here — point them to the multiagent docs at https://platform.claude.com/docs/en/managed-agents/multi-agent and keep building the single agent they described.',
+    '- The quickstart builds a SINGLE agent. If the user asks about multiagent, subagents, a coordinator, or delegating to other agents, do not try to configure it here; refer them to the Open Managed Agents multiagent documentation and keep building the single agent they described.',
+  ],
+  [
+    '  - The Anthropic Console is at https://platform.claude.com. Use that URL (not console.anthropic.com) when linking the user to the Console.',
+    '  - Do not invent or output third-party Console URLs. Refer to the current Open Managed Agents Console when directing the user back to the UI.',
+  ],
+]);
+const agentBuilderBlock1En = adaptCapturedAgentBuilderPrompt(englishBlock1Text);
+
+function adaptCapturedAgentBuilderPrompt(text: string): string {
+  let adapted = replaceCapturedPromptLine(text, capturedModelRulePrefix, catalogModelRule);
+  for (const [captured, replacement] of capturedPromptReplacements) {
+    const parts = adapted.split(captured);
+    if (parts.length !== 2) {
+      throw new Error(`Expected one captured Agent Builder prompt fragment, found ${parts.length - 1}.`);
+    }
+    adapted = parts.join(replacement);
+  }
+  return adapted;
+}
+
+function replaceCapturedPromptLine(text: string, prefix: string, replacement: string): string {
+  let matchCount = 0;
+  const lines = text.split('\n').map((line) => {
+    if (!line.startsWith(prefix)) {
+      return line;
+    }
+    matchCount += 1;
+    return replacement;
+  });
+  if (matchCount !== 1) {
+    throw new Error(`Expected one captured Agent Builder prompt line, found ${matchCount}.`);
+  }
+  return lines.join('\n');
+}
 
 // The MCP catalog (~330 lines of "- \"name\" (url: \"...\") — Label") is a pure list of
 // technical identifiers that must NOT be translated and must stay identical across
@@ -42,7 +87,7 @@ const mcpCatalog = extractMcpCatalog();
 // names, step keys (agent/environment/session/deploy/integrate), model IDs, JSON field
 // names, the MCP catalog, and enum values. Includes an integrated language directive
 // rather than a crude "please answer in Chinese" appended to the English prompt.
-const agentBuilderBlock1Zh = `你是一位专业的 agent 构建助手，正在引导用户构建他们的第一个 Claude Managed Agent。
+const agentBuilderBlock1Zh = `你是一位专业的 agent 构建助手，正在引导用户构建他们的第一个托管 Agent。
 
 用户已经创建了 agent —— 一份初始配置已保存并显示在上下文中。请按顺序、用尽可能少的提问，带领用户完成剩余步骤。界面上有一个步骤条；用户通过点击“下一步”推进步骤 —— 每次推进都会通过 tool_result 通知你。
 
@@ -111,14 +156,14 @@ SELECTING A VAULT FOR MCP CREDENTIALS：
 
 build_agent_config 规则：
 - 始终包含一份详细、写得好、贴合 agent 用途的 system prompt。
-- 选择最合适的 model。使用完整的带版本 model ID："claude-sonnet-4-6" 适用于大多数任务，"claude-opus-4-8" 适用于复杂推理。
+- 只能选择 build_agent_config model schema 允许的 model ID。除非用户明确要求更改，否则保留当前 model。
 - 只添加用户明确指名或确认过的 MCP servers。绝不猜测用户使用哪个服务。已知服务器（URL 已在册）：
 ${mcpCatalog}
   如果用户指名的服务不在此列表中，询问其 MCP server URL —— 任何 MCP server 都可用，目录并不详尽。绝不要用 curl 或原始 API 调用来代替 MCP。
 - 对于 tools，始终包含 {"type": "agent_toolset_20260401"}。为每个 MCP server 添加 {"type": "mcp_toolset", "mcp_server_name": "<name>", "default_config": {"permission_policy": {"type": "always_allow"}}}。
 - name 应简短、有描述性、使用自然语言。
 - 除非对话明确更改，否则保留现有配置值。
-- quickstart 构建的是单个 agent。如果用户询问 multiagent、subagent、协调者或委派给其他 agent，不要在这里配置 —— 把用户指引到 multiagent 文档 https://platform.claude.com/docs/en/managed-agents/multi-agent，并继续构建用户描述的这个单个 agent。
+- quickstart 构建的是单个 agent。如果用户询问 multiagent、subagent、协调者或委派给其他 agent，不要在这里配置；把用户指引到 Open Managed Agents 的 multiagent 文档，并继续构建用户描述的这个单个 agent。
 
 
   TURN CONTEXT：
@@ -132,7 +177,7 @@ ${mcpCatalog}
   - 绝不向用户输出 agent 配置或 JSON。
 
   LINKS：
-  - Anthropic Console 位于 https://platform.claude.com。给用户链接到 Console 时使用该 URL（而不是 console.anthropic.com）。`;
+  - 不要编造或输出第三方 Console URL；需要引导用户返回界面时，指向当前 Open Managed Agents Console。`;
 
 export function resolveQuickstartSystem(locale: Locale): Array<Record<string, unknown>> {
   if (locale === 'zh-CN') {
@@ -140,7 +185,9 @@ export function resolveQuickstartSystem(locale: Locale): Array<Record<string, un
     const block1 = englishSystem[1];
     return [block0, { ...block1, text: agentBuilderBlock1Zh }];
   }
-  return englishSystem;
+  const block0 = englishSystem[0];
+  const block1 = englishSystem[1];
+  return [block0, { ...block1, text: agentBuilderBlock1En }];
 }
 
 export type QuickstartInteractionResultText = {

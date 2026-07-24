@@ -450,8 +450,8 @@ export function MessageEditor({
             <MessageEditorPlaceholder
               placeholder={
                 isFirstUserMessage
-                  ? 'or enter instructions or prompt for Claude…'
-                  : 'Enter instructions or prompt for Claude…'
+                  ? 'or enter instructions for the selected model…'
+                  : 'Enter instructions for the selected model…'
               }
               showGeneratePrompt={isFirstUserMessage}
               warning={promptGeneratorWarning}

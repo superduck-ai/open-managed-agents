@@ -164,7 +164,9 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
    just init-compose-config
    ```
 
-   如需调用真实上游，只编辑 `deploy/docker-compose/oma-server.local.yaml` 的 `anthropic_upstream.api_key`。不要把真实密钥写入 `deploy/docker-compose/oma-server.yaml` 模板。
+   启动 `oma-server` 前，必须在 `deploy/docker-compose/oma-server.local.yaml` 中同时填写公司的私有 AI 网关地址 `anthropic_upstream.base_url` 和凭证 `anthropic_upstream.api_key`。公共 `anthropic.com` 地址会被拒绝，服务不会回退到公共 Anthropic。不要把真实地址或密钥写入 `deploy/docker-compose/oma-server.yaml` 模板。
+
+   `model_catalog.default_model_id` 可选；留空时，控制台要求用户从网关发现的目录中显式选择模型。若配置该值，它必须与目录中的 opaque model ID 完全一致。
 
 > **平台要求**：`e2b-local` 使用 `network_mode: host`，支持 Linux Docker Engine 20.10+ 和 OrbStack（macOS）。Docker Desktop for Mac/Windows 不支持 host 网络模式。
 

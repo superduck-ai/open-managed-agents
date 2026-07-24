@@ -1,70 +1,23 @@
-import {
-  BookOpen,
-  Bot,
-  Boxes,
-  BrainCircuit,
-  DatabaseZap,
-  Info,
-  KeyRound,
-  MousePointer2,
-  Network,
-  Sparkles,
-} from 'lucide-react';
+import { BookOpen, Bot, Boxes, BrainCircuit, DatabaseZap, Info, KeyRound, Network, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Badge } from '@/shared/ui/badge';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/shared/ui/tooltip';
+import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
+import { useWorkspace } from '../../shared/workspaces/context';
+import { useModelCatalog, useRefreshModelCatalog } from '../model-catalog/hooks';
+import { type ModelCatalogModel, modelCatalogDisplayName } from '../model-catalog/model';
 import { PanelCard } from './frame';
 import { useDashboardWorkspaceScope, type IconComponent } from './model';
 
 const docsHref = 'https://docs.anthropic.com/';
-const modelDocsHref = 'https://docs.anthropic.com/en/docs/about-claude/models/overview';
-
-const modelCards = [
-  {
-    name: 'Fable 5',
-    badge: 'New',
-    badgeId: 'nav.new',
-    tone: 'bg-secondary text-secondary-foreground',
-    icon: BrainCircuit,
-    tags: [
-      { id: 'dashboard.models.tags.mostCapable', label: 'Most capable' },
-      { id: 'dashboard.models.tags.research', label: 'Research' },
-      { id: 'dashboard.models.tags.multiDayTasks', label: 'Multi-day tasks' },
-    ],
-  },
-  {
-    name: 'Opus 4.8',
-    tone: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-    icon: MousePointer2,
-    tags: [
-      { id: 'dashboard.models.tags.complexProjects', label: 'Complex projects' },
-      { id: 'dashboard.models.tags.agents', label: 'Agents' },
-      { id: 'dashboard.models.tags.coding', label: 'Coding' },
-    ],
-  },
-  {
-    name: 'Sonnet 4.6',
-    tone: 'bg-secondary text-foreground',
-    icon: Network,
-    tags: [
-      { id: 'dashboard.models.tags.everydayTasks', label: 'Everyday tasks' },
-      { id: 'dashboard.models.tags.writing', label: 'Writing' },
-      { id: 'dashboard.models.tags.costEfficient', label: 'Cost-efficient' },
-    ],
-  },
-  {
-    name: 'Haiku 4.5',
-    tone: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-    icon: Sparkles,
-    tags: [
-      { id: 'dashboard.models.tags.fastest', label: 'Fastest' },
-      { id: 'dashboard.models.tags.lowestCost', label: 'Lowest cost' },
-      { id: 'dashboard.models.tags.highVolume', label: 'High volume' },
-    ],
-  },
+const modelCardTones = [
+  'bg-secondary text-secondary-foreground',
+  'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  'bg-sky-500/10 text-sky-700 dark:text-sky-400',
 ];
 
 const resourceCards = [
@@ -91,7 +44,17 @@ const resourceCards = [
 ];
 export function DashboardHome() {
   const { msg } = useI18n();
+  const { account, csrfToken } = useAuth();
+  const { orgUuid } = useWorkspace();
   const { workspaceId } = useDashboardWorkspaceScope();
+  const modelCatalog = useModelCatalog(orgUuid);
+  const refreshModelCatalog = useRefreshModelCatalog(orgUuid, csrfToken);
+  const canRefreshModelCatalog =
+    account?.memberships?.some(
+      (membership) =>
+        membership.role?.trim().toLowerCase() === 'admin' &&
+        (!membership.organization?.uuid || membership.organization.uuid === orgUuid),
+    ) ?? false;
   const apiKeysHref = `/settings/workspaces/${encodeURIComponent(workspaceId || 'default')}/keys`;
 
   return (
@@ -217,21 +180,71 @@ export function DashboardHome() {
         <section className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <h2 className="text-lg font-semibold text-foreground">{msg('dashboard.models.title', 'Models')}</h2>
-            <ButtonLink
-              href={modelDocsHref}
-              target="_blank"
-              rel="noreferrer"
-              variant="link"
-              className="h-auto p-0 text-sm text-muted-foreground"
-            >
-              {msg('dashboard.models.compare', 'Compare models')}
-            </ButtonLink>
+            <div className="flex items-center gap-2">
+              {modelCatalog.data ? (
+                <Badge variant="outline">
+                  {modelCatalog.catalogState?.stale
+                    ? msg('dashboard.models.stale', 'Stale')
+                    : msg('dashboard.models.fresh', 'Fresh')}
+                </Badge>
+              ) : null}
+              {canRefreshModelCatalog ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={msg('dashboard.models.refresh', 'Refresh models')}
+                        disabled={refreshModelCatalog.isPending}
+                        onClick={() => refreshModelCatalog.mutate()}
+                      >
+                        <RefreshCw
+                          className={`size-4 ${refreshModelCatalog.isPending ? 'animate-spin' : ''}`}
+                          aria-hidden
+                        />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>{msg('dashboard.models.refresh', 'Refresh models')}</TooltipContent>
+                </Tooltip>
+              ) : null}
+              <ButtonLink href="/workbench" variant="link" className="h-auto p-0 text-sm text-muted-foreground">
+                {msg('dashboard.models.openWorkbench', 'Open Workbench')}
+              </ButtonLink>
+            </div>
           </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {modelCards.map((model) => (
-              <ModelCard key={model.name} {...model} />
-            ))}
-          </div>
+          {modelCatalog.isPending ? (
+            <div className="flex min-h-28 items-center justify-center text-sm text-muted-foreground">
+              <RefreshCw className="mr-2 size-4 animate-spin" aria-hidden />
+              {msg('dashboard.models.loading', 'Loading models')}
+            </div>
+          ) : modelCatalog.isError ? (
+            <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {msg('dashboard.models.unavailable', 'Model catalog is unavailable.')}
+            </p>
+          ) : modelCatalog.models.length ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {modelCatalog.models.map((model, index) => (
+                <ModelCard
+                  key={model.model_name}
+                  model={model}
+                  tone={modelCardTones[index % modelCardTones.length]}
+                  isDefault={model.model_name === modelCatalog.defaultModelID}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-lg border border-border px-4 py-3 text-sm text-muted-foreground">
+              {msg('dashboard.models.empty', 'No models are available from the configured gateway.')}
+            </p>
+          )}
+          {refreshModelCatalog.isError ? (
+            <p className="px-1 text-sm text-destructive">
+              {msg('dashboard.models.refreshFailed', 'Model refresh failed; the last successful catalog is unchanged.')}
+            </p>
+          ) : null}
         </section>
 
         <section className="space-y-3">
@@ -292,38 +305,32 @@ function DashboardMetricCard({
   );
 }
 
-function ModelCard({
-  name,
-  badge,
-  badgeId,
-  tone,
-  icon: Icon,
-  tags,
-}: {
-  name: string;
-  badge?: string;
-  badgeId?: string;
-  tone: string;
-  icon: IconComponent;
-  tags: Array<{ id: string; label: string }>;
-}) {
+function ModelCard({ model, tone, isDefault }: { model: ModelCatalogModel; tone: string; isDefault: boolean }) {
   const { msg } = useI18n();
+  const tags = [
+    model.supports_tool_use ? msg('dashboard.models.tags.tools', 'Tools') : '',
+    model.supports_thinking ? msg('dashboard.models.tags.thinking', 'Thinking') : '',
+    model.max_tokens ? `${model.max_tokens.toLocaleString()} context` : '',
+  ].filter(Boolean);
 
   return (
     <a href="/workbench" className="block rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
       <Card className="gap-0 overflow-hidden rounded-lg p-0 transition-[box-shadow] hover:shadow-sm">
         <div className={`${tone} grid h-[90px] place-items-center`}>
-          <Icon className="size-12 stroke-[1.6]" aria-hidden />
+          <BrainCircuit className="size-12 stroke-[1.6]" aria-hidden />
         </div>
         <CardContent className="p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
-            {name}
-            {badge ? <Badge>{badgeId ? msg(badgeId, badge) : badge}</Badge> : null}
+            <span className="min-w-0 truncate">{modelCatalogDisplayName(model)}</span>
+            {isDefault ? <Badge>{msg('dashboard.models.default', 'Default')}</Badge> : null}
           </div>
+          <p className="mb-3 truncate text-xs text-muted-foreground" title={model.model_name}>
+            {model.model_name}
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {tags.map((tag) => (
-              <Badge key={tag.id} variant="secondary" className="text-muted-foreground">
-                {msg(tag.id, tag.label)}
+              <Badge key={tag} variant="secondary" className="text-muted-foreground">
+                {tag}
               </Badge>
             ))}
           </div>

@@ -8,31 +8,48 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aiupstream"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
 const (
-	workbenchDefaultPromptID   = "52aa673d-8d88-408d-849d-e4c2a8e33144"
-	workbenchDefaultRevisionID = "04977f32-f204-443c-8d3e-ed5aac2673aa"
-	workbenchDefaultCreatedAt  = "2026-06-12T02:10:24.382428Z"
-	workbenchDefaultModel      = "claude-opus-4-8"
+	workbenchDefaultPromptID          = "52aa673d-8d88-408d-849d-e4c2a8e33144"
+	workbenchDefaultRevisionID        = "04977f32-f204-443c-8d3e-ed5aac2673aa"
+	workbenchDefaultCreatedAt         = "2026-06-12T02:10:24.382428Z"
+	workbenchMaxGatewayErrorBodyBytes = 1 << 20
 )
 
 const (
 	platformClaudeFastInputTokensPerMinute  = 10000
 	platformClaudeFastOutputTokensPerMinute = 4000
 )
+
+var (
+	errWorkbenchGatewayNotConfigured = errors.New("AI gateway is not configured")
+	errWorkbenchGatewayInvalidResult = errors.New("AI gateway returned an invalid response")
+	errWorkbenchVariablesRequired    = errors.New("at least one Workbench variable is required")
+)
+
+type workbenchGatewayResponseError struct {
+	status int
+	header http.Header
+	body   []byte
+}
+
+func (e *workbenchGatewayResponseError) Error() string {
+	return http.StatusText(e.status)
+}
 
 var workbenchLocalRevisions sync.Map
 var workbenchLocalLatestRevisionIDs sync.Map
@@ -52,6 +69,12 @@ type workbenchKVEntry struct {
 
 type workbenchPersistenceContextKey struct{}
 type workbenchAnthropicUpstreamContextKey struct{}
+type workbenchModelCatalogContextKey struct{}
+type workbenchModelCatalogRoleStoreContextKey struct{}
+
+type workbenchModelCatalogRoleStore interface {
+	GetOrganizationUserRole(context.Context, int64, string) (string, error)
+}
 
 type workbenchPersistenceStore interface {
 	GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID string) (*WorkbenchPromptRecord, error)
@@ -72,12 +95,18 @@ type workbenchPersistenceStore interface {
 	TakeWorkbenchGeneratedTestCase(ctx context.Context, orgUUID string, requested map[string]any) (map[string]any, bool, error)
 }
 
-func registerOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, upstream config.AnthropicUpstreamConfig) {
+func registerOrgWorkbenchRoutes(
+	r chi.Router,
+	store OrganizationStore,
+	upstream config.AnthropicUpstreamConfig,
+	catalog modelcatalog.Reader,
+) {
 	workbenchStore := workbenchPersistenceFromStore(store)
 	h := func(handler http.HandlerFunc) http.HandlerFunc {
-		return withWorkbenchDependencies(workbenchStore, upstream, handler)
+		return withWorkbenchDependenciesAndCatalog(workbenchStore, upstream, catalog, handler)
 	}
 	r.Get("/models", h(handleWorkbenchModels))
+	r.Post("/models/refresh", h(handleWorkbenchModelCatalogRefresh))
 	r.Get("/rate_limits_v2", h(handleWorkbenchRateLimitsV2))
 	r.Get("/workspaces/{workspaceId}/rate_limits", h(handleWorkbenchWorkspaceRateLimits))
 	r.Get("/workspaces/{workspaceId}/prompts", h(handleListWorkbenchWorkspacePrompts))
@@ -118,11 +147,22 @@ func workbenchPersistenceFromStore(store OrganizationStore) workbenchPersistence
 	return persistence
 }
 
-func withWorkbenchDependencies(store workbenchPersistenceStore, upstream config.AnthropicUpstreamConfig, handler http.HandlerFunc) http.HandlerFunc {
+func withWorkbenchDependenciesAndCatalog(
+	store workbenchPersistenceStore,
+	upstream config.AnthropicUpstreamConfig,
+	catalog modelcatalog.Reader,
+	handler http.HandlerFunc,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), workbenchAnthropicUpstreamContextKey{}, upstream)
 		if store != nil {
 			ctx = context.WithValue(ctx, workbenchPersistenceContextKey{}, store)
+		}
+		if catalog != nil {
+			ctx = context.WithValue(ctx, workbenchModelCatalogContextKey{}, catalog)
+		}
+		if roleStore, ok := store.(workbenchModelCatalogRoleStore); ok {
+			ctx = context.WithValue(ctx, workbenchModelCatalogRoleStoreContextKey{}, roleStore)
 		}
 		r = r.WithContext(ctx)
 		handler(w, r)
@@ -137,6 +177,16 @@ func workbenchPersistenceFromRequest(r *http.Request) workbenchPersistenceStore 
 func workbenchAnthropicUpstreamFromRequest(r *http.Request) config.AnthropicUpstreamConfig {
 	upstream, _ := r.Context().Value(workbenchAnthropicUpstreamContextKey{}).(config.AnthropicUpstreamConfig)
 	return upstream
+}
+
+func workbenchModelCatalogFromRequest(r *http.Request) modelcatalog.Reader {
+	catalog, _ := r.Context().Value(workbenchModelCatalogContextKey{}).(modelcatalog.Reader)
+	return catalog
+}
+
+func workbenchModelCatalogRoleStoreFromRequest(r *http.Request) workbenchModelCatalogRoleStore {
+	store, _ := r.Context().Value(workbenchModelCatalogRoleStoreContextKey{}).(workbenchModelCatalogRoleStore)
+	return store
 }
 
 func workbenchWritePersistenceError(w http.ResponseWriter, err error) bool {
@@ -574,19 +624,98 @@ func handleWorkbenchModels(w http.ResponseWriter, r *http.Request) {
 	if !visibleOrgUUIDOrPlatformClaudeMirror(w, r) {
 		return
 	}
+	catalog := workbenchModelCatalogFromRequest(r)
+	if catalog == nil {
+		writeWorkbenchCatalogUnavailable(w)
+		return
+	}
+	snapshot, err := catalog.Snapshot(r.Context())
+	if err != nil {
+		writeWorkbenchCatalogUnavailable(w)
+		return
+	}
+	writeWorkbenchModelsSnapshot(w, snapshot)
+}
+
+func handleWorkbenchModelCatalogRefresh(w http.ResponseWriter, r *http.Request) {
+	if _, ok := visibleOrgUUID(w, r); !ok {
+		return
+	}
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok || principal.CredentialType != auth.CredentialTypePlatformSession {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "model_catalog_refresh_forbidden"})
+		return
+	}
+	roleStore := workbenchModelCatalogRoleStoreFromRequest(r)
+	if roleStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "model_catalog_refresh_unavailable"})
+		return
+	}
+	role, err := roleStore.GetOrganizationUserRole(r.Context(), principal.OrganizationID, principal.UserExternalID)
+	if err != nil {
+		log.Printf("authorize model catalog refresh organization_id=%d user_id=%s: %v", principal.OrganizationID, principal.UserExternalID, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "model_catalog_refresh_authorization_failed"})
+		return
+	}
+	if role != "admin" {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "model_catalog_refresh_forbidden"})
+		return
+	}
+
+	catalog := workbenchModelCatalogFromRequest(r)
+	refresher, ok := catalog.(modelcatalog.Refresher)
+	if !ok {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "model_catalog_refresh_unavailable"})
+		return
+	}
+	if err := refresher.TryRefresh(r.Context()); err != nil {
+		if errors.Is(err, modelcatalog.ErrRefreshInProgress) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "model_catalog_refresh_in_progress"})
+			return
+		}
+		log.Printf("refresh model catalog: %v", err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "model_catalog_refresh_failed"})
+		return
+	}
+	snapshot, err := catalog.Snapshot(r.Context())
+	if err != nil {
+		writeWorkbenchCatalogUnavailable(w)
+		return
+	}
+	writeWorkbenchModelsSnapshot(w, snapshot)
+}
+
+func writeWorkbenchModelsSnapshot(w http.ResponseWriter, snapshot modelcatalog.Snapshot) {
+	models := make([]any, 0, len(snapshot.Models))
+	for _, model := range snapshot.Models {
+		models = append(models, workbenchModelFromCatalog(model))
+	}
+	catalogState := map[string]any{
+		"stale":             snapshot.Stale,
+		"default_available": snapshot.DefaultAvailable,
+	}
+	if snapshot.LastAttemptAt != nil {
+		catalogState["last_attempt_at"] = formatJSISOString(*snapshot.LastAttemptAt)
+	}
+	if snapshot.LastSuccessAt != nil {
+		catalogState["last_success_at"] = formatJSISOString(*snapshot.LastSuccessAt)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"default_prompt_settings": map[string]any{
-			"model_name":           workbenchDefaultModel,
+			"model_name":           snapshot.DefaultModelID,
 			"system_prompt":        "",
 			"temperature":          1,
 			"max_tokens_to_sample": 20000,
 		},
-		"models": []any{
-			workbenchModel("claude-fable-5", "Claude Fable 5", "claude_fable_5", 1000000, 128000, true, true, true),
-			workbenchModel("claude-opus-4-8", "Claude Opus Active", "claude_opus_4_5", 1000000, 128000, true, true, true),
-			workbenchModel("claude-sonnet-4-6", "Claude Sonnet Active", "claude_sonnet_4", 1000000, 64000, true, true, true),
-			workbenchModel("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "claude_haiku_4", 200000, 64000, true, false, false),
-		},
+		"models":        models,
+		"model_catalog": catalogState,
+	})
+}
+
+func writeWorkbenchCatalogUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"error":   "model_catalog_unavailable",
+		"message": "Model catalog is unavailable",
 	})
 }
 
@@ -658,12 +787,29 @@ func platformClaudeRateLimitsV2() map[string]any {
 	}
 }
 
+func workbenchStandardRateLimits() []any {
+	return []any{
+		platformClaudeRateLimit("input_tokens_per_minute_cache_aware", 10000),
+		platformClaudeRateLimit("output_tokens_per_minute", 4000),
+		platformClaudeRateLimit("requests_per_minute", 5),
+	}
+}
+
+func platformClaudeRateLimit(limitType string, value int) map[string]any {
+	return map[string]any{"type": limitType, "value": value, "multiplier_config": nil}
+}
+
 func handleWorkbenchStream(text string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := visibleOrgUUID(w, r); !ok {
 			return
 		}
-		workbenchWriteCompletionStream(w, text)
+		model, err := resolveWorkbenchModel(r)
+		if err != nil {
+			writeWorkbenchModelSelectionError(w, err)
+			return
+		}
+		workbenchWriteCompletionStream(w, model, text)
 	}
 }
 
@@ -672,18 +818,24 @@ func handleWorkbenchGenerateTestCase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := readJSONObject(r)
-	if text, generatedValues, ok := workbenchGenerateTestCaseFromAnthropic(r, body); ok {
-		if err := workbenchStoreGeneratedTestCase(r, generatedValues); workbenchWritePersistenceError(w, err) {
-			return
-		}
-		workbenchWriteCompletionStream(w, text)
+	model, err := resolveWorkbenchModel(
+		r,
+		chatNormalizeString(body["model_name"]),
+		chatNormalizeString(body["model"]),
+	)
+	if err != nil {
+		writeWorkbenchModelSelectionError(w, err)
 		return
 	}
-	generatedValues := workbenchGeneratedVariableValues(body, 1)
+	text, generatedValues, err := workbenchGenerateTestCaseFromAnthropic(r, body, model)
+	if err != nil {
+		workbenchWriteGenerationError(w, err)
+		return
+	}
 	if err := workbenchStoreGeneratedTestCase(r, generatedValues); workbenchWritePersistenceError(w, err) {
 		return
 	}
-	workbenchWriteCompletionStream(w, workbenchGeneratedTestCaseTextFromValues(generatedValues))
+	workbenchWriteCompletionStream(w, model, text)
 }
 
 func handleWorkbenchGenerateTestCases(w http.ResponseWriter, r *http.Request) {
@@ -691,14 +843,20 @@ func handleWorkbenchGenerateTestCases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := readJSONObject(r)
-	count := workbenchTestCaseCount(body)
-	if generatedCases, ok := workbenchGenerateTestCasesFromAnthropic(r, body, count); ok {
-		workbenchWriteGeneratedTestCasesStream(w, generatedCases)
+	model, err := resolveWorkbenchModel(
+		r,
+		chatNormalizeString(body["model_name"]),
+		chatNormalizeString(body["model"]),
+	)
+	if err != nil {
+		writeWorkbenchModelSelectionError(w, err)
 		return
 	}
-	generatedCases := make([]map[string]any, 0, count)
-	for idx := 1; idx <= count; idx++ {
-		generatedCases = append(generatedCases, workbenchGeneratedVariableValues(body, idx))
+	count := workbenchTestCaseCount(body)
+	generatedCases, err := workbenchGenerateTestCasesFromAnthropic(r, body, model, count)
+	if err != nil {
+		workbenchWriteGenerationError(w, err)
+		return
 	}
 	workbenchWriteGeneratedTestCasesStream(w, generatedCases)
 }
@@ -714,81 +872,56 @@ func workbenchWriteGeneratedTestCasesStream(w http.ResponseWriter, generatedCase
 	}
 }
 
-func workbenchGenerateTestCaseFromAnthropic(r *http.Request, body map[string]any) (string, map[string]any, bool) {
+func workbenchGenerateTestCaseFromAnthropic(r *http.Request, body map[string]any, model string) (string, map[string]any, error) {
 	variableNames := workbenchVariableNamesFromPayload(body)
 	if len(variableNames) == 0 {
-		return "", nil, false
+		return "", nil, errWorkbenchVariablesRequired
 	}
-	text, _, _, ok := workbenchAnthropicTextFromBody(r, workbenchGenerateTestCaseAnthropicBody(body, variableNames))
-	if !ok {
-		return "", nil, false
+	text, _, _, err := workbenchAnthropicTextFromBody(r, workbenchGenerateTestCaseAnthropicBody(body, variableNames, model))
+	if err != nil {
+		return "", nil, err
 	}
 	values := workbenchTaggedVariableValues(text, variableNames)
 	if !workbenchGeneratedValuesComplete(values, variableNames) {
-		return "", nil, false
+		return "", nil, errWorkbenchGatewayInvalidResult
 	}
 	planning, _ := workbenchTaggedValue(text, "planning")
-	return workbenchGeneratedTestCaseTextFromValuesWithPlanning(values, planning), values, true
+	return workbenchGeneratedTestCaseTextFromValuesWithPlanning(values, planning), values, nil
 }
 
-func workbenchGenerateTestCasesFromAnthropic(r *http.Request, body map[string]any, count int) ([]map[string]any, bool) {
+func workbenchGenerateTestCasesFromAnthropic(r *http.Request, body map[string]any, model string, count int) ([]map[string]any, error) {
 	variableNames := workbenchVariableNamesFromPayload(body)
 	if len(variableNames) == 0 {
-		return nil, false
+		return nil, errWorkbenchVariablesRequired
 	}
-	text, _, _, ok := workbenchAnthropicTextFromBody(r, workbenchGenerateTestCasesAnthropicBody(body, variableNames, count))
-	if !ok {
-		return nil, false
+	text, _, _, err := workbenchAnthropicTextFromBody(r, workbenchGenerateTestCasesAnthropicBody(body, variableNames, model, count))
+	if err != nil {
+		return nil, err
 	}
 	generatedCases := workbenchGeneratedTestCasesFromText(text, variableNames, count)
-	if len(generatedCases) == 0 {
-		return nil, false
+	if len(generatedCases) != count {
+		return nil, errWorkbenchGatewayInvalidResult
 	}
-	for len(generatedCases) < count {
-		generatedCases = append(generatedCases, workbenchGeneratedVariableValues(body, len(generatedCases)+1))
-	}
-	if len(generatedCases) > count {
-		generatedCases = generatedCases[:count]
-	}
-	return generatedCases, true
+	return generatedCases, nil
 }
 
-func workbenchAnthropicTextFromBody(r *http.Request, upstreamBody map[string]any) (string, int, int, bool) {
-	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
-	token := proxyMessagesAnthropicToken(upstreamConfig)
-	if token == "" {
-		return "", 0, 0, false
-	}
-	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
+func workbenchAnthropicTextFromBody(r *http.Request, upstreamBody map[string]any) (string, int, int, error) {
+	upstreamReq, err := workbenchAnthropicRequest(r, upstreamBody, "application/json")
 	if err != nil {
-		return "", 0, 0, false
+		return "", 0, 0, err
 	}
-	body, err := json.Marshal(upstreamBody)
+	upstreamRes, err := aiupstream.NewHTTPClient(nil, 0).Do(upstreamReq)
 	if err != nil {
-		return "", 0, 0, false
-	}
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", 0, 0, false
-	}
-	upstreamReq.Header.Set("Accept", "application/json")
-	upstreamReq.Header.Set("Content-Type", "application/json")
-	upstreamReq.Header.Set("X-API-Key", token)
-	upstreamReq.Header.Set("Anthropic-Version", anthropicAPIVersion)
-
-	upstreamRes, err := http.DefaultClient.Do(upstreamReq)
-	if err != nil {
-		return "", 0, 0, false
+		return "", 0, 0, err
 	}
 	defer upstreamRes.Body.Close()
 	if upstreamRes.StatusCode < 200 || upstreamRes.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, upstreamRes.Body)
-		return "", 0, 0, false
+		return "", 0, 0, workbenchReadGatewayResponseError(upstreamRes)
 	}
 
 	var upstream workbenchGenerateTitleResponse
 	if err := json.NewDecoder(upstreamRes.Body).Decode(&upstream); err != nil {
-		return "", 0, 0, false
+		return "", 0, 0, errWorkbenchGatewayInvalidResult
 	}
 	var text strings.Builder
 	for _, block := range upstream.Content {
@@ -800,12 +933,81 @@ func workbenchAnthropicTextFromBody(r *http.Request, upstreamBody map[string]any
 		}
 		text.WriteString(block.Text)
 	}
-	return strings.TrimSpace(text.String()), upstream.Usage.InputTokens, upstream.Usage.OutputTokens, text.Len() > 0
+	if text.Len() == 0 {
+		return "", upstream.Usage.InputTokens, upstream.Usage.OutputTokens, errWorkbenchGatewayInvalidResult
+	}
+	return strings.TrimSpace(text.String()), upstream.Usage.InputTokens, upstream.Usage.OutputTokens, nil
 }
 
-func workbenchGenerateTestCaseAnthropicBody(body map[string]any, variableNames []string) map[string]any {
+func workbenchAnthropicRequest(r *http.Request, upstreamBody map[string]any, accept string) (*http.Request, error) {
+	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
+	if err := aiupstream.ValidateDeployment(upstreamConfig.BaseURL, upstreamConfig.APIKey); err != nil {
+		return nil, errWorkbenchGatewayNotConfigured
+	}
+	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
+	if err != nil {
+		return nil, errWorkbenchGatewayNotConfigured
+	}
+	body, err := json.Marshal(upstreamBody)
+	if err != nil {
+		return nil, err
+	}
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	upstreamReq.Header.Set("Accept", accept)
+	upstreamReq.Header.Set("Content-Type", "application/json")
+	upstreamReq.Header.Set("X-API-Key", strings.TrimSpace(upstreamConfig.APIKey))
+	upstreamReq.Header.Set("Anthropic-Version", anthropicAPIVersion)
+	return upstreamReq, nil
+}
+
+func workbenchReadGatewayResponseError(response *http.Response) error {
+	body, err := io.ReadAll(io.LimitReader(response.Body, workbenchMaxGatewayErrorBodyBytes+1))
+	if err != nil || len(body) > workbenchMaxGatewayErrorBodyBytes {
+		body = nil
+	}
+	return &workbenchGatewayResponseError{
+		status: response.StatusCode,
+		header: response.Header.Clone(),
+		body:   body,
+	}
+}
+
+func workbenchWriteGenerationError(w http.ResponseWriter, err error) {
+	var responseErr *workbenchGatewayResponseError
+	if errors.As(err, &responseErr) {
+		copyProxyMessagesResponseHeaders(w.Header(), responseErr.header)
+		if len(responseErr.body) > 0 {
+			if w.Header().Get("Content-Type") == "" {
+				w.Header().Set("Content-Type", "application/json")
+			}
+			w.WriteHeader(responseErr.status)
+			_, _ = w.Write(responseErr.body)
+			return
+		}
+		writeProxyMessagesAnthropicError(w, responseErr.status, "api_error", "AI gateway request failed")
+		return
+	}
+	if errors.Is(err, errWorkbenchVariablesRequired) {
+		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if errors.Is(err, errWorkbenchGatewayNotConfigured) {
+		writeProxyMessagesAnthropicError(w, http.StatusServiceUnavailable, "api_error", err.Error())
+		return
+	}
+	if errors.Is(err, errWorkbenchGatewayInvalidResult) {
+		writeProxyMessagesAnthropicError(w, http.StatusBadGateway, "api_error", err.Error())
+		return
+	}
+	writeProxyMessagesAnthropicError(w, http.StatusBadGateway, "api_error", "AI gateway request failed")
+}
+
+func workbenchGenerateTestCaseAnthropicBody(body map[string]any, variableNames []string, model string) map[string]any {
 	return map[string]any{
-		"model":       workbenchGenerateTestCaseModel(body),
+		"model":       model,
 		"max_tokens":  1600,
 		"temperature": 0.7,
 		"stream":      false,
@@ -824,13 +1026,13 @@ func workbenchGenerateTestCaseAnthropicBody(body map[string]any, variableNames [
 	}
 }
 
-func workbenchGenerateTestCasesAnthropicBody(body map[string]any, variableNames []string, count int) map[string]any {
+func workbenchGenerateTestCasesAnthropicBody(body map[string]any, variableNames []string, model string, count int) map[string]any {
 	maxTokens := 700 + count*350
 	if maxTokens > 4096 {
 		maxTokens = 4096
 	}
 	return map[string]any{
-		"model":       workbenchGenerateTestCaseModel(body),
+		"model":       model,
 		"max_tokens":  maxTokens,
 		"temperature": 0.8,
 		"stream":      false,
@@ -847,16 +1049,6 @@ func workbenchGenerateTestCasesAnthropicBody(body map[string]any, variableNames 
 			},
 		},
 	}
-}
-
-func workbenchGenerateTestCaseModel(body map[string]any) string {
-	return chatCompletionModel(firstNonEmpty(
-		strings.TrimSpace(os.Getenv("WORKBENCH_GENERATE_TEST_CASE_MODEL")),
-		chatNormalizeString(body["model_name"]),
-		chatNormalizeString(body["model"]),
-		strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")),
-		miscDefaultChatModel,
-	))
 }
 
 func workbenchGenerateTestCaseSystemPrompt() string {
@@ -1108,7 +1300,7 @@ func workbenchStripCodeFence(text string) string {
 	return strings.TrimSpace(strings.Join(lines[start:end], "\n"))
 }
 
-func workbenchWriteCompletionStream(w http.ResponseWriter, text string) {
+func workbenchWriteCompletionStream(w http.ResponseWriter, model string, text string) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -1118,7 +1310,7 @@ func workbenchWriteCompletionStream(w http.ResponseWriter, text string) {
 			"id":    "msg_workbench_local",
 			"type":  "message",
 			"role":  "assistant",
-			"model": workbenchDefaultModel,
+			"model": model,
 			"usage": map[string]any{
 				"input_tokens":                0,
 				"output_tokens":               0,
@@ -1157,7 +1349,16 @@ func handleWorkbenchCompletions(w http.ResponseWriter, r *http.Request) {
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "request body must match WorkbenchCompletionRequest")
 		return
 	}
-	upstreamBody := workbenchCompletionAnthropicBody(payload)
+	model, err := resolveWorkbenchModel(
+		r,
+		chatNormalizeString(payload["model_name"]),
+		chatNormalizeString(payload["model"]),
+	)
+	if err != nil {
+		writeWorkbenchModelSelectionError(w, err)
+		return
+	}
+	upstreamBody := workbenchCompletionAnthropicBody(payload, model)
 	if len(chatArrayFromValue(upstreamBody["messages"])) == 0 {
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "at least one non-empty message is required")
 		return
@@ -1191,7 +1392,7 @@ func handleWorkbenchCompletions(w http.ResponseWriter, r *http.Request) {
 		upstreamReq.Header.Set("Anthropic-Beta", beta)
 	}
 
-	client := &http.Client{Timeout: 0}
+	client := aiupstream.NewHTTPClient(nil, 0)
 	upstreamRes, err := client.Do(upstreamReq)
 	if err != nil {
 		writeProxyMessagesAnthropicError(w, http.StatusBadGateway, "api_error", err.Error())
@@ -1218,7 +1419,7 @@ func handleWorkbenchCompletions(w http.ResponseWriter, r *http.Request) {
 	proxyMessagesStream(w, upstreamRes.Body)
 }
 
-func workbenchCompletionAnthropicBody(payload map[string]any) map[string]any {
+func workbenchCompletionAnthropicBody(payload map[string]any, model string) map[string]any {
 	maxTokens := chatPositiveInt(firstNonNil(payload["max_tokens"], payload["max_tokens_to_sample"]))
 	if maxTokens <= 0 {
 		maxTokens = defaultAnthropicMaxTokens
@@ -1226,7 +1427,7 @@ func workbenchCompletionAnthropicBody(payload map[string]any) map[string]any {
 	variables := workbenchCompletionVariableValues(payload)
 	thinking := workbenchCompletionThinking(payload["thinking"], maxTokens)
 	body := map[string]any{
-		"model":      workbenchCompletionModel(payload),
+		"model":      model,
 		"max_tokens": maxTokens,
 		"messages":   workbenchCompletionMessages(payload["messages"], variables),
 		"stream":     true,
@@ -1248,17 +1449,6 @@ func workbenchCompletionAnthropicBody(payload map[string]any) map[string]any {
 		}
 	}
 	return body
-}
-
-func workbenchCompletionModel(payload map[string]any) string {
-	if override := strings.TrimSpace(os.Getenv("WORKBENCH_COMPLETION_MODEL")); override != "" {
-		return chatCompletionModel(override)
-	}
-	return chatCompletionModel(firstNonEmpty(
-		chatNormalizeString(payload["model_name"]),
-		chatNormalizeString(payload["model"]),
-		workbenchDefaultModel,
-	))
 }
 
 func workbenchCompletionMessages(value any, variables map[string]string) []any {
@@ -1516,54 +1706,10 @@ func workbenchAnthropicBetaHeader(value any) string {
 	return strings.Join(cleaned, ",")
 }
 
-func writeWorkbenchTextStream(w http.ResponseWriter, model string, text string, inputTokens int, outputTokens int) {
-	if model == "" {
-		model = workbenchDefaultModel
-	}
-	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	workbenchWriteSSE(w, "message_start", map[string]any{
-		"type": "message_start",
-		"message": map[string]any{
-			"id":    "msg_workbench_local",
-			"type":  "message",
-			"role":  "assistant",
-			"model": model,
-			"usage": map[string]any{
-				"input_tokens":                inputTokens,
-				"output_tokens":               0,
-				"cache_creation_input_tokens": 0,
-				"cache_read_input_tokens":     0,
-			},
-		},
-	})
-	workbenchWriteSSE(w, "content_block_start", map[string]any{
-		"type":          "content_block_start",
-		"index":         0,
-		"content_block": map[string]any{"type": "text", "text": ""},
-	})
-	if text != "" {
-		workbenchWriteSSE(w, "content_block_delta", map[string]any{
-			"type":  "content_block_delta",
-			"index": 0,
-			"delta": map[string]any{"type": "text_delta", "text": text},
-		})
-	}
-	workbenchWriteSSE(w, "content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
-	workbenchWriteSSE(w, "message_delta", map[string]any{
-		"type":  "message_delta",
-		"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
-		"usage": map[string]any{"output_tokens": outputTokens},
-	})
-	workbenchWriteSSE(w, "message_stop", map[string]any{"type": "message_stop"})
-}
-
 type workbenchGeneratePromptRequest struct {
 	Task               string `json:"task"`
 	TargetThinkingMode bool   `json:"target_thinking_mode"`
+	Model              string `json:"model"`
 }
 
 type workbenchGenerateTitleRequest struct {
@@ -1598,68 +1744,34 @@ func handleWorkbenchGenerateTitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	messageContent := workbenchTitleMessageContent(payload.MessageContent)
-	model := workbenchGenerateTitleModel(payload.Model)
-	fallbackTitle := workbenchFallbackTitle(messageContent)
+	model, err := resolveWorkbenchModel(
+		r,
+		payload.Model,
+	)
+	if err != nil {
+		writeWorkbenchModelSelectionError(w, err)
+		return
+	}
 	if messageContent == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"completion": fallbackTitle})
+		writeJSON(w, http.StatusOK, map[string]any{"completion": "Untitled"})
 		return
 	}
 
-	title, inputTokens, outputTokens := workbenchGenerateTitleFromAnthropic(r, messageContent, model)
+	title, inputTokens, outputTokens, err := workbenchAnthropicTextFromBody(r, workbenchGenerateTitleAnthropicBody(messageContent, model))
+	if err != nil {
+		workbenchWriteGenerationError(w, err)
+		return
+	}
 	title = workbenchCleanGeneratedTitle(title)
 	if title == "" {
-		title = fallbackTitle
+		workbenchWriteGenerationError(w, errWorkbenchGatewayInvalidResult)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"completion":    title,
 		"input_tokens":  inputTokens,
 		"output_tokens": outputTokens,
 	})
-}
-
-func workbenchGenerateTitleFromAnthropic(r *http.Request, messageContent string, model string) (string, int, int) {
-	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
-	token := proxyMessagesAnthropicToken(upstreamConfig)
-	if token == "" {
-		return "", 0, 0
-	}
-	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
-	if err != nil {
-		return "", 0, 0
-	}
-	body, err := json.Marshal(workbenchGenerateTitleAnthropicBody(messageContent, model))
-	if err != nil {
-		return "", 0, 0
-	}
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", 0, 0
-	}
-	upstreamReq.Header.Set("Accept", "application/json")
-	upstreamReq.Header.Set("Content-Type", "application/json")
-	upstreamReq.Header.Set("X-API-Key", token)
-	upstreamReq.Header.Set("Anthropic-Version", anthropicAPIVersion)
-
-	upstreamRes, err := http.DefaultClient.Do(upstreamReq)
-	if err != nil {
-		return "", 0, 0
-	}
-	defer upstreamRes.Body.Close()
-	if upstreamRes.StatusCode < 200 || upstreamRes.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, upstreamRes.Body)
-		return "", 0, 0
-	}
-
-	var upstream workbenchGenerateTitleResponse
-	if err := json.NewDecoder(upstreamRes.Body).Decode(&upstream); err != nil {
-		return "", 0, 0
-	}
-	for _, block := range upstream.Content {
-		if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
-			return block.Text, upstream.Usage.InputTokens, upstream.Usage.OutputTokens
-		}
-	}
-	return "", upstream.Usage.InputTokens, upstream.Usage.OutputTokens
 }
 
 func workbenchGenerateTitleAnthropicBody(messageContent string, model string) map[string]any {
@@ -1682,29 +1794,12 @@ func workbenchGenerateTitleAnthropicBody(messageContent string, model string) ma
 	}
 }
 
-func workbenchGenerateTitleModel(requestModel string) string {
-	return firstNonEmpty(
-		strings.TrimSpace(os.Getenv("WORKBENCH_GENERATE_TITLE_MODEL")),
-		chatNormalizeString(requestModel),
-		strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")),
-		miscDefaultChatModel,
-	)
-}
-
 func workbenchGenerateTitlePrompt(messageContent string) string {
 	return "Generate a short, concise title (max 6 words) for a Claude Workbench prompt that starts with this message. Reply with ONLY the title, no quotes, punctuation, markdown, or explanation.\n\nMessage:\n" + messageContent
 }
 
 func workbenchTitleMessageContent(messageContent string) string {
 	return workbenchTruncateRunes(strings.TrimSpace(messageContent), 2000)
-}
-
-func workbenchFallbackTitle(messageContent string) string {
-	title := strings.Join(strings.Fields(messageContent), " ")
-	if title == "" {
-		return "Untitled"
-	}
-	return workbenchCleanGeneratedTitle(workbenchTruncateRunes(title, 50))
 }
 
 func workbenchCleanGeneratedTitle(title string) string {
@@ -1747,49 +1842,43 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "task is required")
 		return
 	}
-	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
-	token := proxyMessagesAnthropicToken(upstreamConfig)
-	if token == "" {
-		log.Printf("workbench generate_prompt fallback reason=no_anthropic_token org=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), len([]rune(task)), payload.TargetThinkingMode)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
-		return
-	}
-	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
+	model, err := resolveWorkbenchModel(
+		r,
+		payload.Model,
+	)
 	if err != nil {
-		log.Printf("workbench generate_prompt fallback reason=invalid_anthropic_endpoint org=%s err=%v", chi.URLParam(r, "orgUUID"), err)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		writeWorkbenchModelSelectionError(w, err)
 		return
 	}
-	body, err := json.Marshal(workbenchGeneratePromptAnthropicBody(task, payload.TargetThinkingMode))
+	upstreamReq, err := workbenchAnthropicRequest(
+		r,
+		workbenchGeneratePromptAnthropicBody(model, task, payload.TargetThinkingMode),
+		"text/event-stream",
+	)
 	if err != nil {
-		log.Printf("workbench generate_prompt fallback reason=marshal_request_failed org=%s err=%v", chi.URLParam(r, "orgUUID"), err)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		log.Printf("workbench generate_prompt unavailable org=%s err=%v", chi.URLParam(r, "orgUUID"), err)
+		workbenchWriteGenerationError(w, err)
 		return
 	}
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		log.Printf("workbench generate_prompt fallback reason=build_upstream_request_failed org=%s endpoint=%s err=%v", chi.URLParam(r, "orgUUID"), endpoint, err)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
-		return
-	}
-	upstreamReq.Header.Set("Accept", "text/event-stream")
-	upstreamReq.Header.Set("Content-Type", "application/json")
-	upstreamReq.Header.Set("X-API-Key", token)
-	upstreamReq.Header.Set("Anthropic-Version", anthropicAPIVersion)
+	endpoint := upstreamReq.URL.String()
 
-	log.Printf("workbench generate_prompt upstream_start org=%s endpoint=%s model=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), endpoint, workbenchGeneratePromptModel(), len([]rune(task)), payload.TargetThinkingMode)
-	upstreamRes, err := http.DefaultClient.Do(upstreamReq)
+	log.Printf("workbench generate_prompt upstream_start org=%s endpoint=%s model=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), endpoint, model, len([]rune(task)), payload.TargetThinkingMode)
+	upstreamRes, err := aiupstream.NewHTTPClient(nil, 0).Do(upstreamReq)
 	if err != nil {
-		log.Printf("workbench generate_prompt fallback reason=upstream_request_failed org=%s endpoint=%s err=%v", chi.URLParam(r, "orgUUID"), endpoint, err)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		log.Printf("workbench generate_prompt failed org=%s endpoint=%s err=%v", chi.URLParam(r, "orgUUID"), endpoint, err)
+		workbenchWriteGenerationError(w, err)
 		return
 	}
 	defer upstreamRes.Body.Close()
 
 	if upstreamRes.StatusCode < 200 || upstreamRes.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, upstreamRes.Body)
-		log.Printf("workbench generate_prompt fallback reason=upstream_status org=%s endpoint=%s status=%d", chi.URLParam(r, "orgUUID"), endpoint, upstreamRes.StatusCode)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		log.Printf("workbench generate_prompt rejected org=%s endpoint=%s status=%d", chi.URLParam(r, "orgUUID"), endpoint, upstreamRes.StatusCode)
+		copyProxyMessagesResponseHeaders(w.Header(), upstreamRes.Header)
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "application/json")
+		}
+		w.WriteHeader(upstreamRes.StatusCode)
+		_, _ = io.Copy(w, upstreamRes.Body)
 		return
 	}
 
@@ -1805,45 +1894,9 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 	workbenchProxyGeneratePromptStream(w, upstreamRes.Body)
 }
 
-func workbenchWriteGeneratePromptFallbackStream(w http.ResponseWriter, task string, targetThinkingMode bool) {
-	writeWorkbenchTextStream(w, workbenchGeneratePromptModel(), workbenchGeneratePromptFallbackText(task, targetThinkingMode), 0, 0)
-}
-
-func workbenchGeneratePromptFallbackText(task string, targetThinkingMode bool) string {
-	task = strings.TrimSpace(strings.Join(strings.Fields(task), " "))
-	if task == "" {
-		task = "Complete the user's task clearly and accurately."
-	}
-	task = workbenchTruncateRunes(task, 1000)
-	var b strings.Builder
-	b.WriteString("<planning>\n")
-	b.WriteString("Create a reusable Workbench prompt from the user's task.\n")
-	b.WriteString("</planning>\n")
-	b.WriteString("<Instructions>\n")
-	b.WriteString("You are Claude, an expert assistant.\n\n")
-	b.WriteString("Goal\n")
-	b.WriteString(task)
-	b.WriteString("\n\nInstructions\n")
-	b.WriteString("- Understand the user's request and identify the concrete outcome they need.\n")
-	b.WriteString("- Use any provided context or input faithfully; do not invent facts that are not supported.\n")
-	b.WriteString("- Ask a clarifying question only when the missing detail would materially change the answer.\n")
-	b.WriteString("- Produce a polished, directly usable result with clear structure and concise language.\n")
-	if targetThinkingMode {
-		b.WriteString("- Think through the task privately before answering, but do not reveal hidden chain-of-thought.\n")
-	} else {
-		b.WriteString("- Include brief reasoning only when it helps the user trust or use the answer.\n")
-	}
-	b.WriteString("\nOutput\n")
-	b.WriteString("- Start with the answer or deliverable, not a preamble.\n")
-	b.WriteString("- Use headings or bullets when they improve readability.\n")
-	b.WriteString("- Call out assumptions, caveats, and next steps only when relevant.\n")
-	b.WriteString("\n</Instructions>")
-	return b.String()
-}
-
-func workbenchGeneratePromptAnthropicBody(task string, targetThinkingMode bool) map[string]any {
+func workbenchGeneratePromptAnthropicBody(model string, task string, targetThinkingMode bool) map[string]any {
 	return map[string]any{
-		"model":       workbenchGeneratePromptModel(),
+		"model":       model,
 		"max_tokens":  2048,
 		"temperature": 0.2,
 		"stream":      true,
@@ -1860,14 +1913,6 @@ func workbenchGeneratePromptAnthropicBody(task string, targetThinkingMode bool) 
 			},
 		},
 	}
-}
-
-func workbenchGeneratePromptModel() string {
-	return chatCompletionModel(firstNonEmpty(
-		strings.TrimSpace(os.Getenv("WORKBENCH_GENERATE_PROMPT_MODEL")),
-		strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")),
-		miscDefaultChatModel,
-	))
 }
 
 func workbenchGeneratePromptSystemPrompt(targetThinkingMode bool) string {
@@ -1978,7 +2023,7 @@ func workbenchStoredLatestRevision(r *http.Request, promptID string, includeMess
 func workbenchRevision(r *http.Request, revisionID string, includeMessages bool, includeCreator bool) map[string]any {
 	revision := map[string]any{
 		"system_prompt":            "",
-		"model_name":               workbenchDefaultModel,
+		"model_name":               "",
 		"variables":                []any{},
 		"max_tokens_to_sample":     20000,
 		"temperature":              1,
@@ -2797,51 +2842,6 @@ func workbenchTestCaseCount(body map[string]any) int {
 	return count
 }
 
-func workbenchGeneratedTestCaseTextFromValues(values map[string]any) string {
-	var text strings.Builder
-	text.WriteString("<planning>Generated local Workbench test case.</planning>\n")
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		text.WriteString("<")
-		text.WriteString(name)
-		text.WriteString(">")
-		text.WriteString(workbenchString(values[name]))
-		text.WriteString("</")
-		text.WriteString(name)
-		text.WriteString(">\n")
-	}
-	return text.String()
-}
-
-func workbenchGeneratedVariableValues(body map[string]any, index int) map[string]any {
-	values := map[string]any{}
-	for _, name := range workbenchVariableNamesFromPayload(body) {
-		values[name] = workbenchGeneratedVariableValue(name, index)
-	}
-	return values
-}
-
-func workbenchGeneratedVariableValue(name string, index int) string {
-	label := strings.ReplaceAll(strings.TrimSpace(name), "_", " ")
-	if label == "" {
-		label = "input"
-	}
-	switch strings.ToLower(name) {
-	case "complaint_email":
-		return "Customer reports that order #" + strconv.Itoa(1000+index) + " arrived damaged and asks for a quick replacement."
-	case "email":
-		return "customer" + strconv.Itoa(index) + "@example.com"
-	case "name", "customer_name":
-		return "Alex " + strconv.Itoa(index)
-	default:
-		return "Generated " + label + " example " + strconv.Itoa(index)
-	}
-}
-
 func workbenchVariableNamesFromPayload(body map[string]any) []string {
 	seen := map[string]bool{}
 	var names []string
@@ -3134,45 +3134,31 @@ func workbenchCreator(r *http.Request) map[string]any {
 	}
 }
 
-func workbenchModel(modelName string, displayName string, rateLimitGroup string, maxTokens int, maxOutputTokens int, latest bool, thinking bool, effort bool) map[string]any {
-	model := map[string]any{
-		"model_name":                modelName,
-		"bedrock_name":              "",
-		"vertex_name":               modelName,
-		"supports_system_prompt":    true,
-		"max_tokens":                maxTokens,
-		"max_output_tokens":         maxOutputTokens,
-		"warning_tokens":            90000,
-		"rate_limit_model_group":    rateLimitGroup,
-		"rate_limit_display_name":   displayName,
-		"is_deprecated":             false,
-		"is_latest":                 latest,
-		"supports_images":           true,
-		"supports_thinking":         thinking,
-		"supports_auto_thinking":    thinking,
-		"supports_documents":        true,
-		"supports_tool_use":         true,
-		"supported_server_tools":    []any{"web_search_20250305"},
-		"supports_prompt_caching":   true,
-		"supports_thinking_display": thinking,
-		"default_thinking_display":  "omitted",
+func workbenchModelFromCatalog(model modelcatalog.Model) map[string]any {
+	response := map[string]any{
+		"model_name":   model.ID,
+		"display_name": model.DisplayName,
 	}
-	if effort {
-		model["supported_effort_levels"] = []any{"low", "medium", "high", "xhigh", "max"}
+	if model.Description != "" {
+		response["description"] = model.Description
 	}
-	return model
-}
-
-func workbenchStandardRateLimits() []any {
-	return []any{
-		platformClaudeRateLimit("input_tokens_per_minute_cache_aware", 10000),
-		platformClaudeRateLimit("output_tokens_per_minute", 4000),
-		platformClaudeRateLimit("requests_per_minute", 5),
+	if model.MaxInputTokens != nil {
+		response["max_tokens"] = *model.MaxInputTokens
 	}
-}
-
-func platformClaudeRateLimit(limitType string, value int) map[string]any {
-	return map[string]any{"type": limitType, "value": value, "multiplier_config": nil}
+	if model.MaxTokens != nil {
+		response["max_output_tokens"] = *model.MaxTokens
+	}
+	if model.Capabilities.Thinking != nil {
+		response["supports_thinking"] = *model.Capabilities.Thinking
+		response["supports_thinking_display"] = *model.Capabilities.Thinking
+	}
+	if model.Capabilities.AdaptiveThinking != nil {
+		response["supports_auto_thinking"] = *model.Capabilities.AdaptiveThinking
+	}
+	if model.Capabilities.ToolUse != nil {
+		response["supports_tool_use"] = *model.Capabilities.ToolUse
+	}
+	return response
 }
 
 func workbenchPromptIDFromRequest(r *http.Request) string {

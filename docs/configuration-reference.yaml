@@ -32,8 +32,15 @@ storage:
   workspace_limit_bytes: 536870912000
 
 anthropic_upstream:
-  base_url: https://api.anthropic.com
-  api_key: ""
+  # Required. Public anthropic.com hosts are rejected.
+  base_url: https://ai-gateway.example.internal
+  api_key: replace-with-your-gateway-key
+
+model_catalog:
+  refresh_interval: 5m
+  refresh_timeout: 15s
+  # Optional. It is used only when the fetched catalog contains this exact ID.
+  default_model_id: ""
 
 batch:
   worker_enabled: true

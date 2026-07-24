@@ -18,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { toast } from '../../../shared/ui/sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { useWorkspace } from '../../../shared/workspaces/context';
+import { ModelCatalogSelect } from '../../model-catalog/ModelCatalogSelect';
+import { useModelCatalog } from '../../model-catalog/hooks';
 import clsx from 'clsx';
 import {
   AlertCircle,
@@ -1708,6 +1710,8 @@ export function AgentEditDialog({
   onSaved: (agent: AgentApiResponse) => void;
 }) {
   const { msg } = useI18n();
+  const { orgUuid } = useWorkspace();
+  const modelCatalog = useModelCatalog(orgUuid);
   const initialConfig = useMemo(() => agentEditConfig(agent), [agent]);
   const [baselineVersion] = useState(() => agent.version);
   const [format, setFormat] = useState<CodeFormat>('YAML');
@@ -1715,6 +1719,9 @@ export function AgentEditDialog({
   const [configError, setConfigError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const parsedConfig = useMemo(() => parseAgentEditConfigText(configText, format), [configText, format]);
+  const selectedModelID = parsedConfig.ok ? agentModelName(parsedConfig.config.model) : '';
+  const selectedModelAvailable = modelCatalog.modelIDs.includes(selectedModelID);
   const validateEditorText = useCallback((text: string, nextFormat: CodeFormat) => {
     const parsed = parseAgentEditConfigText(text, nextFormat);
     return parsed.ok ? null : parsed.error;
@@ -1752,6 +1759,10 @@ export function AgentEditDialog({
     if (!parsed) {
       return;
     }
+    if (!modelCatalog.modelIDs.includes(agentModelName(parsed.model))) {
+      setSaveError(msg('managedAgents.agents.editDialog.selectModel', 'Select an available model first.'));
+      return;
+    }
     setFormat(nextFormat);
     setConfigText(agentEditConfigText(parsed, nextFormat));
     setSaveError(null);
@@ -1775,7 +1786,7 @@ export function AgentEditDialog({
       setSaveError(agentEditSaveErrorMessage(submitError));
       setSubmitting(false);
     }
-  }, [agent.id, baselineVersion, onSaved, parseCurrentConfig, submitting, workspaceId]);
+  }, [agent.id, baselineVersion, modelCatalog.modelIDs, msg, onSaved, parseCurrentConfig, submitting, workspaceId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1789,7 +1800,7 @@ export function AgentEditDialog({
   }, [submit]);
 
   const displayedError = configError ?? saveError;
-  const saveDisabled = submitting || Boolean(configError);
+  const saveDisabled = submitting || Boolean(configError) || !selectedModelAvailable;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -1820,7 +1831,26 @@ export function AgentEditDialog({
             </DialogTitle>
           </DialogHeader>
 
-          <Card className="mt-7 flex min-h-0 flex-1 gap-0 overflow-hidden py-0">
+          <ModelCatalogSelect
+            models={modelCatalog.models}
+            value={selectedModelID}
+            onValueChange={(modelID) => {
+              if (!parsedConfig.ok) {
+                return;
+              }
+              setConfigText(agentEditConfigText({ ...parsedConfig.config, model: modelID }, format));
+              setConfigError(null);
+              setSaveError(null);
+            }}
+            loading={modelCatalog.isPending}
+            error={modelCatalog.isError}
+            stale={Boolean(modelCatalog.catalogState?.stale)}
+            disabled={submitting}
+            label={msg('analytics.table.model', 'Model')}
+            className="mt-5 max-w-md"
+          />
+
+          <Card className="mt-5 flex min-h-0 flex-1 gap-0 overflow-hidden py-0">
             <CardHeader className="flex h-12 shrink-0 flex-row items-center justify-between gap-3 border-b border-border px-5 py-0">
               <FormatSelect
                 value={format}

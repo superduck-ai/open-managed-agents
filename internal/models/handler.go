@@ -4,12 +4,14 @@ import (
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
-	router chi.Router
+	router  chi.Router
+	catalog modelcatalog.Reader
 }
 
 type listResponse struct {
@@ -19,8 +21,8 @@ type listResponse struct {
 	LastID  string           `json:"last_id"`
 }
 
-func NewHandler() *Handler {
-	h := &Handler{}
+func NewHandler(catalog modelcatalog.Reader) *Handler {
+	h := &Handler{catalog: catalog}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -37,153 +39,59 @@ func notFound(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
 }
 
-func (h *Handler) list(w http.ResponseWriter, _ *http.Request) {
-	models := buildPlatformModels()
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	if h.catalog == nil {
+		writeCatalogUnavailable(w, r)
+		return
+	}
+	snapshot, err := h.catalog.Snapshot(r.Context())
+	if err != nil {
+		writeCatalogUnavailable(w, r)
+		return
+	}
+
+	data := make([]map[string]any, 0, len(snapshot.Models))
+	for _, model := range snapshot.Models {
+		data = append(data, modelResponse(model))
+	}
 	firstID := ""
 	lastID := ""
-	if len(models) > 0 {
-		firstID, _ = models[0]["id"].(string)
-		lastID, _ = models[len(models)-1]["id"].(string)
+	if len(snapshot.Models) > 0 {
+		firstID = snapshot.Models[0].ID
+		lastID = snapshot.Models[len(snapshot.Models)-1].ID
 	}
 	httpapi.WriteJSON(w, http.StatusOK, listResponse{
-		Data:    models,
+		Data:    data,
 		HasMore: false,
 		FirstID: firstID,
 		LastID:  lastID,
 	})
 }
 
-func buildPlatformModels() []map[string]any {
-	return []map[string]any{
-		platformModel("claude-fable-5", "Claude Fable 5", "2026-06-07T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  false,
-			Effort:           true,
-			XHighEffort:      true,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-opus-4-8", "Claude Opus 4.8", "2026-05-28T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  false,
-			Effort:           true,
-			XHighEffort:      true,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-opus-4-7", "Claude Opus 4.7", "2026-04-14T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  false,
-			Effort:           true,
-			XHighEffort:      true,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-sonnet-4-6", "Claude Sonnet 4.6", "2026-02-17T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  true,
-			Effort:           true,
-			XHighEffort:      false,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-opus-4-6", "Claude Opus 4.6", "2026-02-04T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  true,
-			Effort:           true,
-			XHighEffort:      false,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-opus-4-5-20251101", "Claude Opus 4.5", "2025-11-24T00:00:00Z", 200000, 64000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   false,
-			AdaptiveThinking: false,
-			ThinkingEnabled:  true,
-			Effort:           true,
-			XHighEffort:      false,
-			MaxEffort:        false,
-		}),
-		platformModel("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "2025-10-15T00:00:00Z", 200000, 64000, platformModelCapabilities{
-			CodeExecution:    false,
-			CompactContext:   false,
-			AdaptiveThinking: false,
-			ThinkingEnabled:  true,
-			Effort:           false,
-			XHighEffort:      false,
-			MaxEffort:        false,
-		}),
-		platformModel("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "2025-09-29T00:00:00Z", 1000000, 64000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   false,
-			AdaptiveThinking: false,
-			ThinkingEnabled:  true,
-			Effort:           false,
-			XHighEffort:      false,
-			MaxEffort:        false,
-		}),
-	}
+func writeCatalogUnavailable(w http.ResponseWriter, r *http.Request) {
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "Model catalog is unavailable"))
 }
 
-type platformModelCapabilities struct {
-	CodeExecution    bool
-	CompactContext   bool
-	AdaptiveThinking bool
-	ThinkingEnabled  bool
-	Effort           bool
-	XHighEffort      bool
-	MaxEffort        bool
-}
-
-func platformModel(id string, displayName string, createdAt string, maxInputTokens int, maxTokens int, capabilities platformModelCapabilities) map[string]any {
-	return map[string]any{
-		"type":             "model",
-		"id":               id,
-		"display_name":     displayName,
-		"created_at":       createdAt,
-		"max_input_tokens": maxInputTokens,
-		"max_tokens":       maxTokens,
-		"capabilities": map[string]any{
-			"batch":              map[string]any{"supported": true},
-			"citations":          map[string]any{"supported": true},
-			"code_execution":     map[string]any{"supported": capabilities.CodeExecution},
-			"context_management": platformContextManagementCapabilities(capabilities.CompactContext),
-			"effort":             platformEffortCapabilities(capabilities),
-			"image_input":        map[string]any{"supported": true},
-			"pdf_input":          map[string]any{"supported": true},
-			"structured_outputs": map[string]any{"supported": true},
-			"thinking": map[string]any{
-				"supported": true,
-				"types": map[string]any{
-					"enabled":  map[string]any{"supported": capabilities.ThinkingEnabled},
-					"adaptive": map[string]any{"supported": capabilities.AdaptiveThinking},
-				},
-			},
-		},
+func modelResponse(model modelcatalog.Model) map[string]any {
+	response := map[string]any{
+		"type":         "model",
+		"id":           model.ID,
+		"display_name": model.DisplayName,
 	}
-}
-
-func platformContextManagementCapabilities(compactSupported bool) map[string]any {
-	return map[string]any{
-		"supported":                true,
-		"clear_tool_uses_20250919": map[string]any{"supported": true},
-		"clear_thinking_20251015":  map[string]any{"supported": true},
-		"compact_20260112":         map[string]any{"supported": compactSupported},
+	if model.Description != "" {
+		response["description"] = model.Description
 	}
-}
-
-func platformEffortCapabilities(capabilities platformModelCapabilities) map[string]any {
-	return map[string]any{
-		"supported": capabilities.Effort,
-		"low":       map[string]any{"supported": capabilities.Effort},
-		"medium":    map[string]any{"supported": capabilities.Effort},
-		"high":      map[string]any{"supported": capabilities.Effort},
-		"xhigh":     map[string]any{"supported": capabilities.XHighEffort},
-		"max":       map[string]any{"supported": capabilities.MaxEffort},
+	if model.CreatedAt != "" {
+		response["created_at"] = model.CreatedAt
 	}
+	if model.MaxInputTokens != nil {
+		response["max_input_tokens"] = *model.MaxInputTokens
+	}
+	if model.MaxTokens != nil {
+		response["max_tokens"] = *model.MaxTokens
+	}
+	if capabilities := model.Capabilities.RawJSON(); len(capabilities) > 0 {
+		response["capabilities"] = capabilities
+	}
+	return response
 }

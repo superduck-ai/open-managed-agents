@@ -1,4 +1,5 @@
 import { type Locale, useI18n } from '../../../shared/i18n';
+import { useIsMobile } from '../../../shared/hooks/use-mobile';
 import {
   ResizableHandle,
   ResizablePanel,
@@ -7,6 +8,8 @@ import {
 } from '../../../shared/ui/resizable';
 import { toast } from '../../../shared/ui/sonner';
 import { useWorkspace } from '../../../shared/workspaces/context';
+import { ModelCatalogSelect } from '../../model-catalog/ModelCatalogSelect';
+import { useModelCatalog } from '../../model-catalog/hooks';
 import {
   buildInitialQuickstartMessage,
   buildPlatformQuickstartRequest,
@@ -48,6 +51,7 @@ import {
   type SessionApiResponse,
 } from '../types';
 import { agentDetailHref, errorMessage, parseToolInput, titleCase, toRecord } from '../utils';
+import { agentModelName } from '../agents/model';
 import {
   appendQuickstartStatus,
   awaitingQuickstartToolCalls,
@@ -75,6 +79,10 @@ export const quickstartInspectorPaneMinWidth = 440;
 
 export const quickstartInspectorPaneDefaultWidth = 720;
 
+const quickstartMobilePrimaryPaneMinHeight = 240;
+
+const quickstartMobileInspectorPaneMinHeight = 280;
+
 export function clampQuickstartInspectorPaneWidth(width: number, containerWidth: number) {
   if (containerWidth <= 0) {
     return Math.round(width);
@@ -85,7 +93,10 @@ export function clampQuickstartInspectorPaneWidth(width: number, containerWidth:
 
 export function AgentQuickstartPage() {
   const { msg, locale } = useI18n();
+  const isMobile = useIsMobile();
   const { activeWorkspaceId, orgUuid } = useWorkspace();
+  const modelCatalog = useModelCatalog(orgUuid);
+  const [selectedModelID, setSelectedModelID] = useState('');
   const [query, setQuery] = useState('');
   const [prompt, setPrompt] = useState('');
   const [reply, setReply] = useState('');
@@ -119,6 +130,8 @@ export function AgentQuickstartPage() {
   const selectedVaultIdsRef = useRef<string[]>([]);
   const sessionRef = useRef<SessionApiResponse | null>(null);
   const deploymentSchedulePlannedRef = useRef(false);
+  const selectedModelIDRef = useRef('');
+  const availableModelIDsRef = useRef<string[]>([]);
   const initialAgentDescriptionRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Keep only the model-facing Builder conversation in one language. UI labels,
@@ -126,6 +139,7 @@ export function AgentQuickstartPage() {
   // live console locale while a run is in progress.
   const promptLocaleRef = useRef<Locale>('en');
   const quickstartResultText = () => quickstartToolResultText(promptLocaleRef.current);
+  const selectedModelAvailable = modelCatalog.modelIDs.includes(selectedModelID);
 
   const visibleTemplates = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -165,6 +179,15 @@ export function AgentQuickstartPage() {
     deploymentSchedulePlannedRef.current = deploymentSchedulePlanned;
   }, [deploymentSchedulePlanned]);
 
+  useEffect(() => {
+    const nextModelID = modelCatalog.modelIDs.includes(selectedModelID) ? selectedModelID : modelCatalog.defaultModelID;
+    if (nextModelID !== selectedModelID) {
+      setSelectedModelID(nextModelID);
+    }
+    selectedModelIDRef.current = nextModelID;
+    availableModelIDsRef.current = modelCatalog.modelIDs;
+  }, [modelCatalog.defaultModelID, modelCatalog.modelIDs, selectedModelID]);
+
   useEffect(
     () => () => {
       abortRef.current?.abort();
@@ -193,7 +216,7 @@ export function AgentQuickstartPage() {
   }, []);
 
   useEffect(() => {
-    if (!quickstartGridWidth) {
+    if (isMobile || !quickstartGridWidth) {
       return;
     }
     let targetWidth = quickstartInspectorPaneWidth;
@@ -210,7 +233,7 @@ export function AgentQuickstartPage() {
     }
     setQuickstartInspectorPaneWidth(nextWidth);
     quickstartInspectorPanelRef.current?.resize(nextWidth);
-  }, [quickstartGridWidth, quickstartInspectorPaneWidth]);
+  }, [isMobile, quickstartGridWidth, quickstartInspectorPaneWidth]);
 
   const buildCurrentQuickstartTurnContextBlock = () => ({
     type: 'text',
@@ -243,6 +266,12 @@ export function AgentQuickstartPage() {
       setChatError(noOrgMessage);
       return;
     }
+    const availableModelIDs = availableModelIDsRef.current;
+    const builderModelID = agentModelName(agentConfig.model);
+    if (!availableModelIDs.includes(builderModelID)) {
+      setChatError('Select an available model before continuing.');
+      return;
+    }
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -270,6 +299,8 @@ export function AgentQuickstartPage() {
       agentDescription: initialAgentDescriptionRef.current,
       messages: baseMessages,
       locale: promptLocaleRef.current,
+      modelID: builderModelID,
+      availableModelIDs,
     });
 
     const assistantItemId = quickstartItemId('assistant');
@@ -408,7 +439,9 @@ export function AgentQuickstartPage() {
         case 'build_agent_config': {
           const nextConfig = quickstartBuildAgentConfigInput(
             call.input,
-            createdAgentConfigRef.current ?? createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current),
+            createdAgentConfigRef.current ??
+              createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current, null, selectedModelIDRef.current),
+            availableModelIDsRef.current,
           );
           setCreatedAgentConfig(nextConfig);
           createdAgentConfigRef.current = nextConfig;
@@ -564,8 +597,12 @@ export function AgentQuickstartPage() {
   };
 
   const handleUseTemplate = async (template: AgentTemplate, descriptionOverride?: string | null) => {
+    if (!selectedModelAvailable) {
+      toast.error(msg('managedAgents.quickstart.selectModel', 'Select an available model first.'));
+      return;
+    }
     promptLocaleRef.current = locale;
-    const config = createDialogAgentConfig(template, locale, descriptionOverride);
+    const config = createDialogAgentConfig(template, locale, descriptionOverride, selectedModelID);
     setCreatingTemplateId(template.id);
     setChatError(null);
     try {
@@ -690,8 +727,12 @@ export function AgentQuickstartPage() {
     if (!trimmedPrompt || creatingTemplateId) {
       return;
     }
+    if (!selectedModelAvailable) {
+      toast.error(msg('managedAgents.quickstart.selectModel', 'Select an available model first.'));
+      return;
+    }
     promptLocaleRef.current = locale;
-    const config = createDialogAgentConfig(blankAgentTemplate, locale);
+    const config = createDialogAgentConfig(blankAgentTemplate, locale, null, selectedModelID);
     setCreatingTemplateId(blankAgentTemplate.id);
     setChatError(null);
     setPrompt('');
@@ -728,7 +769,9 @@ export function AgentQuickstartPage() {
   const createAgentFromBuildConfig = async (call: QuickstartToolCall) => {
     const config = quickstartBuildAgentConfigInput(
       call.input,
-      createdAgentConfigRef.current ?? createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current),
+      createdAgentConfigRef.current ??
+        createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current, null, selectedModelIDRef.current),
+      availableModelIDsRef.current,
     );
     setCreatedAgentConfig(config);
     createdAgentConfigRef.current = config;
@@ -1042,6 +1085,22 @@ export function AgentQuickstartPage() {
         }}
       />
 
+      {!createdTemplate ? (
+        <div className="flex shrink-0 justify-end border-b border-border/70 px-5 py-2.5">
+          <ModelCatalogSelect
+            models={modelCatalog.models}
+            value={selectedModelID}
+            onValueChange={setSelectedModelID}
+            loading={modelCatalog.isPending}
+            error={modelCatalog.isError}
+            stale={Boolean(modelCatalog.catalogState?.stale)}
+            disabled={Boolean(creatingTemplateId)}
+            label={msg('analytics.table.model', 'Model')}
+            className="w-full max-w-sm"
+          />
+        </div>
+      ) : null}
+
       <div
         ref={quickstartGridRef}
         data-testid="quickstart-layout"
@@ -1050,16 +1109,23 @@ export function AgentQuickstartPage() {
       >
         <ResizablePanelGroup
           id="quickstart-resizable-panels"
-          orientation="horizontal"
+          orientation={isMobile ? 'vertical' : 'horizontal'}
           className="min-h-0"
           onLayoutChange={(layout) => {
+            if (isMobile) {
+              return;
+            }
             const inspectorSize = layout['quickstart-inspector'];
             if (typeof inspectorSize === 'number' && quickstartGridWidth > 0) {
               setQuickstartInspectorPaneWidth(Math.round((quickstartGridWidth * inspectorSize) / 100));
             }
           }}
         >
-          <ResizablePanel id="quickstart-primary" minSize={quickstartPrimaryPaneMinWidth} className="min-w-0">
+          <ResizablePanel
+            id="quickstart-primary"
+            minSize={isMobile ? quickstartMobilePrimaryPaneMinHeight : quickstartPrimaryPaneMinWidth}
+            className="min-h-0 min-w-0"
+          >
             {createdTemplate ? (
               <QuickstartChatPane
                 agent={createdAgent}
@@ -1097,7 +1163,7 @@ export function AgentQuickstartPage() {
             ) : (
               <InitialPromptPane
                 prompt={prompt}
-                isCreating={Boolean(creatingTemplateId)}
+                isCreating={Boolean(creatingTemplateId) || !selectedModelAvailable}
                 onPromptChange={setPrompt}
                 onSubmit={sendInitialPrompt}
               />
@@ -1107,19 +1173,22 @@ export function AgentQuickstartPage() {
           <ResizableHandle
             aria-label={msg('managedAgents.quickstart.resizePanels', 'Resize quickstart panels')}
             withHandle
-            className="cursor-col-resize bg-transparent focus-visible:[&>div]:ring-2 focus-visible:[&>div]:ring-ring/50"
+            className={`${isMobile ? 'cursor-row-resize' : 'cursor-col-resize'} bg-transparent focus-visible:[&>div]:ring-2 focus-visible:[&>div]:ring-ring/50`}
             handleClassName="h-6 w-4 rounded-md border-border/70 bg-background/95 text-muted-foreground/70 shadow-none transition-[background-color,border-color,color] hover:border-border hover:bg-accent hover:text-accent-foreground [&_svg]:size-2.5"
           />
 
           <ResizablePanel
             id="quickstart-inspector"
             panelRef={quickstartInspectorPanelRef}
-            minSize={quickstartInspectorPaneMinWidth}
-            maxSize={quickstartInspectorPaneMaxWidth}
-            defaultSize={quickstartInspectorPaneDefaultWidth}
+            minSize={isMobile ? quickstartMobileInspectorPaneMinHeight : quickstartInspectorPaneMinWidth}
+            maxSize={isMobile ? undefined : quickstartInspectorPaneMaxWidth}
+            defaultSize={isMobile ? 50 : quickstartInspectorPaneDefaultWidth}
             groupResizeBehavior="preserve-pixel-size"
-            className="min-w-0"
+            className="min-h-0 min-w-0"
             onResize={(size) => {
+              if (isMobile) {
+                return;
+              }
               const nextWidth =
                 size.inPixels > 0
                   ? size.inPixels
@@ -1163,6 +1232,8 @@ export function AgentQuickstartPage() {
                 onFormatChange={setFormat}
                 onUseTemplate={() => handleUseTemplate(detailTemplate)}
                 isUsing={creatingTemplateId === detailTemplate.id}
+                disabled={!selectedModelAvailable}
+                modelID={selectedModelID}
               />
             ) : (
               <BrowseTemplatesPanel

@@ -9,13 +9,18 @@ export type QuickstartMessage = {
   content: string | Array<Record<string, unknown>>;
 };
 
-export type QuickstartRequestInput = {
+export type QuickstartTurnContextInput = {
   step: QuickstartStep;
   deploymentSchedulePlanned: boolean;
   agentConfig: Record<string, unknown>;
   agentDescription?: string | null;
   messages?: QuickstartMessage[];
   locale?: Locale;
+};
+
+export type QuickstartRequestInput = QuickstartTurnContextInput & {
+  modelID: string;
+  availableModelIDs: string[];
 };
 
 export type PlatformQuickstartRequest = {
@@ -28,36 +33,82 @@ export type PlatformQuickstartRequest = {
   stream: boolean;
 };
 
-export const platformQuickstartModel = platformQuickstartOfficialRequest.model;
 export const platformQuickstartMaxTokens = platformQuickstartOfficialRequest.max_tokens;
 export const platformQuickstartSystem = platformQuickstartOfficialRequest.system;
-export const platformQuickstartTools = platformQuickstartOfficialRequest.tools;
 export const platformQuickstartToolChoice = platformQuickstartOfficialRequest.tool_choice;
 
-export const platformQuickstartToolNames = platformQuickstartTools.map((tool) =>
+const platformQuickstartToolsTemplate = platformQuickstartOfficialRequest.tools;
+
+export const platformQuickstartToolNames = platformQuickstartToolsTemplate.map((tool) =>
   typeof tool.name === 'string' ? tool.name : String(tool.type),
 );
 
 export function buildPlatformQuickstartRequest(input: QuickstartRequestInput): PlatformQuickstartRequest {
+  const availableModelIDs = uniqueModelIDs(input.availableModelIDs);
+  const modelID = input.modelID.trim();
+  if (!modelID || !availableModelIDs.includes(modelID)) {
+    throw new Error('Quickstart requires a model from the current model catalog.');
+  }
   return {
     messages: input.messages?.length ? input.messages : [buildInitialQuickstartMessage(input)],
     system: resolveQuickstartSystem(input.locale ?? 'en'),
-    model: platformQuickstartModel,
+    model: modelID,
     max_tokens: platformQuickstartMaxTokens,
-    tools: platformQuickstartTools,
+    tools: quickstartToolsForModels(availableModelIDs),
     tool_choice: platformQuickstartToolChoice,
     stream: true,
   };
 }
 
-export function buildInitialQuickstartMessage(input: QuickstartRequestInput): QuickstartMessage {
+export function quickstartToolsForModels(availableModelIDs: string[]) {
+  const modelIDs = uniqueModelIDs(availableModelIDs);
+  if (!modelIDs.length) {
+    throw new Error('Quickstart model schema requires at least one catalog model.');
+  }
+  const tools = JSON.parse(JSON.stringify(platformQuickstartToolsTemplate)) as Array<Record<string, unknown>>;
+  const buildAgentConfig = tools.find((tool) => tool.name === 'build_agent_config');
+  const inputSchema = objectRecord(buildAgentConfig?.input_schema);
+  const properties = objectRecord(inputSchema.properties);
+  const modelSchema = objectRecord(properties.model);
+  const alternatives = Array.isArray(modelSchema.anyOf) ? modelSchema.anyOf : [];
+  const stringModel = objectRecord(alternatives[0]);
+  const objectModel = objectRecord(alternatives[1]);
+  const objectModelProperties = objectRecord(objectModel.properties);
+  const objectModelID = objectRecord(objectModelProperties.id);
+  if (!buildAgentConfig || alternatives.length < 2 || !Object.keys(objectModelID).length) {
+    throw new Error('Captured quickstart build_agent_config model schema is invalid.');
+  }
+  alternatives[0] = { ...stringModel, enum: modelIDs };
+  alternatives[1] = {
+    ...objectModel,
+    properties: {
+      ...objectModelProperties,
+      id: { ...objectModelID, enum: modelIDs },
+    },
+  };
+  modelSchema.anyOf = alternatives;
+  properties.model = modelSchema;
+  inputSchema.properties = properties;
+  buildAgentConfig.input_schema = inputSchema;
+  return tools;
+}
+
+function uniqueModelIDs(modelIDs: string[]) {
+  return Array.from(new Set(modelIDs.map((modelID) => modelID.trim()).filter(Boolean)));
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+export function buildInitialQuickstartMessage(input: QuickstartTurnContextInput): QuickstartMessage {
   return {
     role: 'user',
     content: buildQuickstartTurnContextText(input),
   };
 }
 
-export function buildQuickstartTurnContextText(input: QuickstartRequestInput): string {
+export function buildQuickstartTurnContextText(input: QuickstartTurnContextInput): string {
   const trimmedDescription = input.agentDescription?.trim();
 
   // Bracketed state lines are machine state the model reads to align with the system

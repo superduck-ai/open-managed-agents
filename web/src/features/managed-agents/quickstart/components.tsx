@@ -1822,6 +1822,8 @@ export function TemplateDetailPanel({
   onFormatChange,
   onUseTemplate,
   isUsing,
+  disabled = false,
+  modelID,
 }: {
   template: AgentTemplate;
   format: CodeFormat;
@@ -1829,9 +1831,11 @@ export function TemplateDetailPanel({
   onFormatChange: (format: CodeFormat) => void;
   onUseTemplate: () => void;
   isUsing: boolean;
+  disabled?: boolean;
+  modelID: string;
 }) {
   const { msg, locale } = useI18n();
-  const code = codeForTemplate(template, format, locale);
+  const code = codeForTemplate(template, format, locale, modelID);
   const title = templateTitle(template, msg);
   return (
     <Card className="relative h-full min-h-0 overflow-hidden border border-border bg-card py-0 shadow-sm ring-0">
@@ -1857,7 +1861,7 @@ export function TemplateDetailPanel({
           <CopyButton value={code} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
           <Button
             type="button"
-            disabled={isUsing}
+            disabled={isUsing || disabled}
             size="sm"
             className="disabled:cursor-not-allowed disabled:opacity-70"
             onClick={onUseTemplate}

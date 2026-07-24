@@ -260,6 +260,17 @@ func (d *DB) GetAdminUser(ctx context.Context, organizationID int64, externalID 
 	`, map[string]any{"organization_id": organizationID, "external_id": externalID})
 }
 
+func (d *DB) GetOrganizationUserRole(ctx context.Context, organizationID int64, externalID string) (string, error) {
+	user, err := d.GetAdminUser(ctx, organizationID, externalID)
+	if errors.Is(err, ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(user.Role), nil
+}
+
 func (d *DB) ListAdminUsersPage(ctx context.Context, params ListAdminUsersParams) ([]AdminUser, bool, error) {
 	cursorID := firstNonEmpty(params.AfterID, params.BeforeID)
 	cursor, cursorOK, err := d.adminCursor(

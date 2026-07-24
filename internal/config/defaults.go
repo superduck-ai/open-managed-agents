@@ -11,8 +11,9 @@ func defaultConfig() Config {
 				ForcePathStyle: true,
 			},
 		},
-		AnthropicUpstream: AnthropicUpstreamConfig{
-			BaseURL: "https://api.anthropic.com",
+		ModelCatalog: ModelCatalogConfig{
+			RefreshInterval: 5 * time.Minute,
+			RefreshTimeout:  15 * time.Second,
 		},
 		Batch: BatchConfig{
 			WorkerEnabled:             true,

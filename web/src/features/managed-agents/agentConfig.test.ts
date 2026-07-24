@@ -36,8 +36,14 @@ describe('localized create-agent template configs', () => {
   });
 
   test('uses locale as the second argument and defaults to English', () => {
-    expect(createDialogAgentConfig(blankAgentTemplate)).toEqual(createDialogTemplateConfigs.blank);
-    expect(createDialogAgentConfig(blankAgentTemplate, 'zh-CN')).toEqual(createDialogTemplateConfigsZh.blank);
+    expect(createDialogAgentConfig(blankAgentTemplate)).toEqual({ ...createDialogTemplateConfigs.blank, model: '' });
+    expect(createDialogAgentConfig(blankAgentTemplate, 'zh-CN')).toEqual({
+      ...createDialogTemplateConfigsZh.blank,
+      model: '',
+    });
+    expect(createDialogAgentConfig(blankAgentTemplate, 'en', null, 'gateway/agent-model').model).toBe(
+      'gateway/agent-model',
+    );
   });
 
   test('uses the localized config table as the system prompt source for every built-in template', () => {

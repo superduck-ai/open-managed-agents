@@ -28,6 +28,8 @@ describe('platform quickstart request builder', () => {
       step: 'environment',
       deploymentSchedulePlanned: false,
       agentConfig: blankAgentConfig,
+      modelID: platformQuickstartOfficialRequest.model,
+      availableModelIDs: [platformQuickstartOfficialRequest.model],
     });
 
     expect(Object.keys(request)).toEqual([
@@ -46,8 +48,21 @@ describe('platform quickstart request builder', () => {
       type: 'auto',
       disable_parallel_tool_use: true,
     });
-    expect(request.system).toEqual(platformQuickstartOfficialRequest.system);
-    expect(request.tools).toEqual(platformQuickstartOfficialRequest.tools);
+    expect(request.system[0]).toEqual(platformQuickstartOfficialRequest.system[0]);
+    expect(request.system[1].text).toContain('Choose only a model ID allowed by the build_agent_config model schema.');
+    expect(request.system[1].text).not.toContain('claude-sonnet-4-6');
+    expect(request.system[1].text).not.toContain('claude-opus-4-8');
+    expect(request.system[1].text).not.toContain('Claude Managed Agent');
+    expect(request.system[1].text).not.toContain('platform.claude.com');
+    expect(request.tools.map((tool) => tool.name ?? tool.type)).toEqual(
+      platformQuickstartOfficialRequest.tools.map((tool) => tool.name ?? tool.type),
+    );
+    const buildAgentConfig = request.tools.find((tool) => tool.name === 'build_agent_config');
+    const modelSchema = (
+      (buildAgentConfig?.input_schema as Record<string, unknown>).properties as Record<string, Record<string, unknown>>
+    ).model;
+    const alternatives = modelSchema.anyOf as Array<Record<string, unknown>>;
+    expect(alternatives[0].enum).toEqual([platformQuickstartOfficialRequest.model]);
     expect(request.messages[0]).toEqual(platformQuickstartOfficialRequest.messages[0]);
     expect(request.system.map((block) => block.cache_control)).toEqual([{ type: 'ephemeral' }, { type: 'ephemeral' }]);
     expect(platformQuickstartToolNames).toEqual([
@@ -106,10 +121,27 @@ describe('platform quickstart request builder', () => {
       deploymentSchedulePlanned: false,
       agentConfig: blankAgentConfig,
       locale: 'zh-CN',
+      modelID: 'gateway/builder-model',
+      availableModelIDs: ['gateway/builder-model', 'gateway/agent-model'],
     });
 
     // Block 0 (API reference) stays byte-identical to the English source.
     expect(request.system[0]).toEqual(platformQuickstartOfficialRequest.system[0]);
+    expect(request.model).toBe('gateway/builder-model');
+    const localizedBuildAgentConfig = request.tools.find((tool) => tool.name === 'build_agent_config');
+    const localizedModelSchema = (
+      (localizedBuildAgentConfig?.input_schema as Record<string, unknown>).properties as Record<
+        string,
+        Record<string, unknown>
+      >
+    ).model;
+    const localizedAlternatives = localizedModelSchema.anyOf as Array<Record<string, unknown>>;
+    expect(localizedAlternatives[0].enum).toEqual(['gateway/builder-model', 'gateway/agent-model']);
+    expect(
+      ((localizedAlternatives[1].properties as Record<string, Record<string, unknown>>).id as Record<string, unknown>)
+        .enum,
+    ).toEqual(['gateway/builder-model', 'gateway/agent-model']);
+    expect(platformQuickstartOfficialRequest.model).not.toBe('gateway/builder-model');
     expect(request.system.map((block) => block.cache_control)).toEqual([{ type: 'ephemeral' }, { type: 'ephemeral' }]);
 
     const builderText = request.system[1].text as string;
@@ -120,10 +152,10 @@ describe('platform quickstart request builder', () => {
     expect(builderText).toContain('build_agent_config 规则');
     // Technical tokens must survive translation.
     expect(builderText).toContain('agent_toolset_20260401');
-    expect(builderText).toContain('claude-sonnet-4-6');
-    expect(builderText).toContain('claude-opus-4-8');
+    expect(builderText).toContain('build_agent_config model schema');
+    expect(builderText).not.toContain('"claude-sonnet-4-6" 适用于大多数任务');
     expect(builderText).toContain('build_agent_config');
-    expect(builderText).toContain('https://platform.claude.com');
+    expect(builderText).not.toContain('platform.claude.com');
     // User-visible choices must follow the Builder language instead of leaking
     // the English examples from the source prompt into structured questions.
     expect(builderText).toContain('“创建新环境”');

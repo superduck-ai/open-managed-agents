@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func buildBootstrapCompatibilityResponse(account *Account, orgScoped bool, growthbookHashingAlgorithm string) BootstrapCompatibilityResponse {
+func buildBootstrapCompatibilityResponse(account *Account, orgScoped bool, growthbookHashingAlgorithm string, models platformModelCatalog) BootstrapCompatibilityResponse {
 	statsigUser := map[string]any{}
 	growthbookUser := map[string]any{"anonymousId": "None", "stableId": "None"}
 	if account != nil {
@@ -21,7 +21,7 @@ func buildBootstrapCompatibilityResponse(account *Account, orgScoped bool, growt
 
 	statsig := BootstrapStatsig{User: statsigUser, Values: map[string]any{}, ValuesHash: ""}
 	growthbook := BootstrapGrowthbook{
-		Features:         buildGrowthbookFeatures(),
+		Features:         buildGrowthbookFeatures(models),
 		HashingAlgorithm: growthbookHashingAlgorithm,
 		User:             growthbookUser,
 	}
@@ -55,7 +55,7 @@ func buildBootstrapCompatibilityResponse(account *Account, orgScoped bool, growt
 	return response
 }
 
-func buildGrowthbookFeatures() map[string]any {
+func buildGrowthbookFeatures(models platformModelCatalog) map[string]any {
 	features := map[string]any{}
 	enabledFlags := []string{
 		"yukon_silver",
@@ -143,13 +143,13 @@ func buildGrowthbookFeatures() map[string]any {
 		setGrowthbookFeature(features, name, map[string]any{"defaultValue": true})
 	}
 
-	setGrowthbookFeature(features, "console_dashboard_discovery_config", bootstrapDashboardDiscoveryFeature())
+	setGrowthbookFeature(features, "console_dashboard_discovery_config", bootstrapDashboardDiscoveryFeature(models))
 	setGrowthbookFeature(features, "apps_redacted_strings_starfish", bootstrapStarfishRedactedStringsFeature())
 	setGrowthbookFeature(features, "apps_redacted_strings_shiso", bootstrapShisoRedactedStringsFeature())
 
 	consoleDefaultModelConfig := map[string]any{
 		"defaultValue": map[string]any{
-			"model":          miscDefaultChatModel,
+			"model":          models.defaultModelValue(),
 			"overrideSticky": true,
 			"nuxId":          nil,
 		},
@@ -158,14 +158,8 @@ func buildGrowthbookFeatures() map[string]any {
 
 	modelConfig := map[string]any{
 		"defaultValue": map[string]any{
-			"allowed_models": []string{
-				miscDefaultChatModel,
-				"claude-fable-5",
-				"claude-opus-4-8",
-				"claude-opus-4-7",
-				"claude-haiku-4-5-20251001",
-			},
-			"model":                    miscDefaultChatModel,
+			"allowed_models":           models.modelIDs(),
+			"model":                    models.defaultModelValue(),
 			"legacy_models":            []string{},
 			"supports_1m_context":      []string{},
 			"synthetic_allowed_models": map[string]any{},
@@ -174,7 +168,7 @@ func buildGrowthbookFeatures() map[string]any {
 	setGrowthbookFeature(features, "cowork_model", modelConfig)
 	setGrowthbookFeature(features, "ccr_model", modelConfig)
 	setGrowthbookFeature(features, "holdup", map[string]any{
-		"defaultValue": map[string]any{"modelFallbacks": buildHoldupModelFallbacks()},
+		"defaultValue": map[string]any{"modelFallbacks": map[string]any{}},
 	})
 	setGrowthbookFeature(features, "mobile_cowork_worker_types", map[string]any{
 		"defaultValue": map[string]any{"worker_types": []string{"cowork", "claude_code_assistant"}},
@@ -199,47 +193,43 @@ func buildGrowthbookFeatures() map[string]any {
 	return features
 }
 
-func bootstrapDashboardDiscoveryFeature() map[string]any {
+func bootstrapDashboardDiscoveryFeature(catalog platformModelCatalog) map[string]any {
+	models := make([]map[string]any, 0, len(catalog.models))
+	compare := make([]map[string]any, 0, len(catalog.models))
+	for _, model := range catalog.models {
+		models = append(models, map[string]any{
+			"id":    model.ID,
+			"match": model.ID,
+			"chips": []string{},
+		})
+		specs := map[string]any{}
+		if model.Capabilities.AdaptiveThinking != nil {
+			specs["adaptive_thinking"] = *model.Capabilities.AdaptiveThinking
+		}
+		if model.MaxInputTokens != nil {
+			specs["context_window_tokens"] = *model.MaxInputTokens
+		}
+		if model.MaxTokens != nil {
+			specs["max_output_tokens"] = *model.MaxTokens
+		}
+		compare = append(compare, dashboardCompareModel(model.ID, model.ID, map[string]any{}, specs))
+	}
 	return map[string]any{
 		"defaultValue": map[string]any{
 			"enabled": true,
-			"models": []map[string]any{
-				{"id": "fable", "match": "fable", "badge": "new", "chips": []string{"most_capable", "research", "multi_day_tasks"}, "accent": "sky", "icon": "head"},
-				{"id": "opus", "match": "opus", "chips": []string{"complex_projects", "agents", "coding"}, "accent": "clay", "icon": "cursor"},
-				{"id": "sonnet", "match": "sonnet", "chips": []string{"everyday_tasks", "writing", "cost_efficient"}, "accent": "peach", "icon": "bubble"},
-				{"id": "haiku", "match": "haiku", "chips": []string{"fastest", "lowest_cost", "high_volume"}, "accent": "cactus", "icon": "bird"},
-			},
+			"models":  models,
 			"resources": []map[string]any{
 				{"id": "advisor", "badge": "beta"},
 				{"id": "batch"},
 				{"id": "caching"},
 			},
-			"compare": []map[string]any{
-				dashboardCompareModel("flagship", "fable", map[string]any{"cache_read": 1, "cache_write": 12.5, "input": 10, "output": 50}, dashboardModelSpecs(true, 1000000, false, "2026-01", "moderate", 128000)),
-				dashboardCompareModel("powerful", "opus-4-8", map[string]any{"cache_read": 0.5, "cache_write": 6.25, "fast_input": 10, "fast_output": 50, "input": 5, "output": 25}, dashboardModelSpecs(true, 1000000, true, "2026-01", "moderate", 128000)),
-				dashboardCompareModel("balanced", "sonnet-4-6", map[string]any{"cache_read": 0.3, "cache_write": 3.75, "input": 3, "output": 15}, dashboardModelSpecs(true, 1000000, false, "2025-08", "fast", 64000)),
-				dashboardCompareModel("small_fast", "haiku-4-5", map[string]any{"cache_read": 0.1, "cache_write": 1.25, "input": 1, "output": 5}, dashboardModelSpecs(false, 200000, false, "2025-02", "fastest", 64000)),
-				dashboardCompareModel("powerful", "opus", map[string]any{"cache_read": 0.5, "cache_write": 6.25, "fast_input": 10, "fast_output": 50, "input": 5, "output": 25}, dashboardModelSpecs(true, 1000000, true, "2026-01", "moderate", 128000)),
-				dashboardCompareModel("balanced", "sonnet", map[string]any{"cache_read": 0.3, "cache_write": 3.75, "input": 3, "output": 15}, dashboardModelSpecs(true, 1000000, false, "2025-08", "fast", 64000)),
-				dashboardCompareModel("small_fast", "haiku", map[string]any{"cache_read": 0.1, "cache_write": 1.25, "input": 1, "output": 5}, dashboardModelSpecs(false, 200000, false, "2025-02", "fastest", 64000)),
-			},
+			"compare": compare,
 		},
 	}
 }
 
 func dashboardCompareModel(descriptionKey string, match string, price map[string]any, specs map[string]any) map[string]any {
 	return map[string]any{"description_key": descriptionKey, "match": match, "price": price, "specs": specs}
-}
-
-func dashboardModelSpecs(adaptiveThinking bool, contextWindowTokens int, fastMode bool, knowledgeCutoff string, latency string, maxOutputTokens int) map[string]any {
-	return map[string]any{
-		"adaptive_thinking":     adaptiveThinking,
-		"context_window_tokens": contextWindowTokens,
-		"fast_mode":             fastMode,
-		"knowledge_cutoff":      knowledgeCutoff,
-		"latency":               latency,
-		"max_output_tokens":     maxOutputTokens,
-	}
 }
 
 func bootstrapStarfishRedactedStringsFeature() map[string]any {
@@ -273,14 +263,6 @@ func bootstrapShisoRedactedStringsFeature() map[string]any {
 func bootstrapDefaultWebToolsFeature() map[string]any {
 	tools := []map[string]string{{"name": "repl", "type": "repl_v0"}, {"name": "web_search", "type": "web_search_v0"}}
 	return map[string]any{"defaultValue": map[string]any{"completion": tools, "conversation": tools}}
-}
-
-func buildHoldupModelFallbacks() map[string]map[string]string {
-	fallbacks := make(map[string]map[string]string, len(chatModelFallbacks))
-	for model, fallbackModel := range chatModelFallbacks {
-		fallbacks[model] = map[string]string{"displayName": "Haiku 4.5", "fallbackModelName": fallbackModel}
-	}
-	return fallbacks
 }
 
 func bootstrapGrowthbookHashingAlgorithm(r *http.Request) string {

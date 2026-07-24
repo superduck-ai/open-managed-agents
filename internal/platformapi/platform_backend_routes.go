@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -37,9 +39,9 @@ type platformOrganizationUpdater interface {
 	UpdatePlatformOrganization(ctx context.Context, orgUUID string, patch OrganizationUpdatePatch) (*OrganizationRecord, error)
 }
 
-func RegisterPlatformAccountRoutes(r chi.Router, store OrganizationStore) {
-	r.Get("/api/bootstrap", handleBootstrap(store))
-	r.Get("/api/bootstrap/{orgUuid}/app_start", handleBootstrap(store))
+func RegisterPlatformAccountRoutes(r chi.Router, store OrganizationStore, catalog modelcatalog.Reader) {
+	r.Get("/api/bootstrap", handleBootstrap(store, catalog))
+	r.Get("/api/bootstrap/{orgUuid}/app_start", handleBootstrap(store, catalog))
 	r.Get("/api/banners", handleBanners)
 }
 
@@ -56,9 +58,9 @@ func RegisterOrganizationExperienceRoutes(r chi.Router) {
 	r.Get("/experiences/{experienceType}", handleOrganizationExperienceType)
 }
 
-func RegisterOrganizationRootRoutes(r chi.Router, store OrganizationStore) {
-	r.Get("/", handleGetPlatformOrganization(store))
-	r.Put("/", handleUpdatePlatformOrganization(store))
+func RegisterOrganizationRootRoutes(r chi.Router, store OrganizationStore, catalog modelcatalog.Reader) {
+	r.Get("/", handleGetPlatformOrganization(store, catalog))
+	r.Put("/", handleUpdatePlatformOrganization(store, catalog))
 }
 
 func RegisterOrganizationBillingRoutes(r chi.Router) {
@@ -214,7 +216,7 @@ func handleBanners(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-func handleGetPlatformOrganization(store OrganizationStore) http.HandlerFunc {
+func handleGetPlatformOrganization(store OrganizationStore, catalog modelcatalog.Reader) http.HandlerFunc {
 	organizationStore, _ := store.(platformOrganizationGetter)
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
@@ -234,11 +236,11 @@ func handleGetPlatformOrganization(store OrganizationStore) http.HandlerFunc {
 			internalError(w, "failed to load organization")
 			return
 		}
-		writeJSON(w, http.StatusOK, buildOrganization(*org))
+		writeJSON(w, http.StatusOK, buildOrganization(*org, loadPlatformModelCatalog(r.Context(), catalog)))
 	}
 }
 
-func handleUpdatePlatformOrganization(store OrganizationStore) http.HandlerFunc {
+func handleUpdatePlatformOrganization(store OrganizationStore, catalog modelcatalog.Reader) http.HandlerFunc {
 	organizationStore, _ := store.(platformOrganizationUpdater)
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
@@ -267,7 +269,7 @@ func handleUpdatePlatformOrganization(store OrganizationStore) http.HandlerFunc 
 			internalError(w, "failed to update organization")
 			return
 		}
-		writeJSON(w, http.StatusOK, buildOrganization(*org))
+		writeJSON(w, http.StatusOK, buildOrganization(*org, loadPlatformModelCatalog(r.Context(), catalog)))
 	}
 }
 

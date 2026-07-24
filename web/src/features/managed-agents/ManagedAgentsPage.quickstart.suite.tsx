@@ -868,7 +868,7 @@ export function registerManagedAgentsQuickstartTests() {
       {
         button: /Contract tracker/i,
         yaml: [
-          'model: claude-opus-4-8',
+          'model: claude-sonnet-4-6',
           'https://mcp.box.com',
           'https://mcp.asana.com/sse',
           'urgent ≤30 days / medium 31–90 days',

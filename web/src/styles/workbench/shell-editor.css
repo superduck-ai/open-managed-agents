@@ -719,3 +719,33 @@
   gap: 22px;
   padding: 8px 0 0;
 }
+
+@media (max-width: 767px) {
+  .workbench-topbar {
+    gap: 8px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .workbench-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 1fr) minmax(280px, 1fr);
+    gap: 12px;
+    padding-right: 12px;
+    padding-left: 12px;
+    overflow-y: auto;
+  }
+
+  .workbench-toolbar {
+    max-width: none;
+    flex-wrap: wrap;
+  }
+
+  .workbench-toolbar-spacer {
+    display: none;
+  }
+
+  .workbench-editor-stack {
+    max-width: none;
+  }
+}

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aiupstream"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
@@ -19,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
@@ -43,6 +45,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	if err := aiupstream.ValidateDeployment(cfg.AnthropicUpstream.BaseURL, cfg.AnthropicUpstream.APIKey); err != nil {
+		log.Fatalf("validate AI gateway: %v", err)
+	}
 
 	database, err := db.Open(ctx, cfg)
 	if err != nil {
@@ -60,6 +65,25 @@ func main() {
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		log.Fatalf("seed database: %v", err)
 	}
+	catalog, err := modelcatalog.NewService(
+		ctx,
+		modelcatalog.NewPostgresStore(database),
+		modelcatalog.NewHTTPUpstream(cfg.AnthropicUpstream),
+		modelcatalog.Options{
+			DefaultModelID:  cfg.ModelCatalog.DefaultModelID,
+			RefreshInterval: cfg.ModelCatalog.RefreshInterval,
+			RefreshTimeout:  cfg.ModelCatalog.RefreshTimeout,
+		},
+	)
+	if err != nil {
+		log.Fatalf("initialize model catalog: %v", err)
+	}
+	if err := catalog.Refresh(ctx); err != nil {
+		logger.Warn("initial model catalog refresh failed", "error", err)
+	}
+	catalog.StartRefreshLoop(ctx, func(refreshErr error) {
+		logger.Warn("model catalog refresh failed", "error", refreshErr)
+	})
 	platformSessions, err := platformsession.NewRedisStore(ctx, cfg.Redis.URL)
 	if err != nil {
 		log.Fatalf("open platform session store: %v", err)
@@ -106,6 +130,7 @@ func main() {
 			DB:                     database,
 			ObjectStore:            objectStore,
 			Logger:                 logger,
+			ModelCatalog:           catalog,
 			PlatformStore:          platformSessions,
 			CodeSessionCredentials: codeSessionCredentials,
 			FilestoreCredentials:   filestoreCredentials,
@@ -118,7 +143,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("claude api server listening", "addr", cfg.Server.Addr)
+		logger.Info("Open Managed Agents API server listening", "addr", cfg.Server.Addr)
 		errCh <- server.ListenAndServe()
 	}()
 

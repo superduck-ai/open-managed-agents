@@ -79,6 +79,7 @@ export type WorkbenchModel = {
   model_name: string;
   display_name?: string;
   name?: string;
+  description?: string;
   model_group?: string;
   max_tokens?: number;
   max_context_window?: number;
@@ -107,6 +108,12 @@ export type WorkbenchModelsResponse = {
     max_tokens_to_sample?: number;
   };
   models?: WorkbenchModel[];
+  model_catalog?: {
+    stale?: boolean;
+    default_available?: boolean;
+    last_attempt_at?: string;
+    last_success_at?: string;
+  };
 };
 
 export type WorkbenchKVResponse = {

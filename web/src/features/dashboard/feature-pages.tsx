@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { placeholderIcons } from '../../app/layout/navigation';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
+import { useWorkspace } from '../../shared/workspaces/context';
 import { Button, ButtonLink } from '@/shared/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/shared/ui/card';
 import {
@@ -29,6 +30,8 @@ import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { InputGroup, InputGroupButton, InputGroupInput } from '@/shared/ui/input-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Textarea } from '@/shared/ui/textarea';
+import { useModelCatalog } from '../model-catalog/hooks';
+import { isCatalogModelID, modelCatalogDisplayName } from '../model-catalog/model';
 import {
   ConsolePageFrame,
   ControlRow,
@@ -43,12 +46,6 @@ import {
 } from './frame';
 import { formatRole, titleize, type IconComponent } from './model';
 
-const workbenchModelOptions = [
-  { value: 'sonnet-4-6', label: 'Claude Sonnet 4.6' },
-  { value: 'opus-4-8', label: 'Claude Opus 4.8' },
-  { value: 'haiku-4-5', label: 'Claude Haiku 4.5' },
-];
-
 export function ConsolePlaceholderPage({ section }: { section: string }) {
   return <ConsoleFeaturePage section={section} />;
 }
@@ -58,24 +55,13 @@ export function WorkbenchPage() {
     <ConsolePageFrame
       title="Workbench"
       icon={Code2}
-      description="Test prompts against Claude models before moving them into production."
+      description="Test prompts against available models before moving them into production."
       actions={<PrimaryAction href="/settings/workspaces/default/keys" icon={KeyRound} label="Get API key" />}
     >
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="min-h-[500px] gap-0 rounded-lg p-4">
           <CardHeader className="flex flex-row items-center gap-2 border-b border-border p-0 pb-3">
-            <Select<string> defaultValue="sonnet-4-6" items={workbenchModelOptions}>
-              <SelectTrigger aria-label="Model" className="min-w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                {workbenchModelOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value} label={option.label}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <CatalogModelSelect label="Model" triggerClassName="min-w-48" />
             <Button type="button" size="lg">
               Run
             </Button>
@@ -113,7 +99,12 @@ export function PlaygroundPage() {
       <div className="grid min-h-[560px] gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <PanelCard title={msg('playground.configuration', 'Configuration')}>
           <div className="space-y-3">
-            <ControlRow label={msg('analytics.table.model', 'Model')} value="Sonnet 4.6" />
+            <Field className="gap-1">
+              <FieldLabel className="text-xs font-medium text-muted-foreground">
+                {msg('analytics.table.model', 'Model')}
+              </FieldLabel>
+              <CatalogModelSelect label={msg('analytics.table.model', 'Model')} triggerClassName="w-full" />
+            </Field>
             <ControlRow
               label={msg('playground.systemPrompt', 'System prompt')}
               value={msg('playground.none', 'None')}
@@ -128,14 +119,14 @@ export function PlaygroundPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            {msg('playground.empty', "Start a conversation to preview Claude's response.")}
+            {msg('playground.empty', "Start a conversation to preview the selected model's response.")}
           </CardContent>
           <CardFooter className="border-t border-border bg-transparent p-3">
             <InputGroup className="h-auto rounded-lg px-3 py-2 shadow-none">
               <InputGroupInput
                 aria-label={msg('playground.message.label', 'Message')}
                 className="h-8 text-sm placeholder:text-muted-foreground/70"
-                placeholder={msg('playground.message.placeholder', 'Message Claude...')}
+                placeholder={msg('playground.message.placeholder', 'Message the selected model...')}
               />
               <InputGroupButton type="button" size="sm" variant="default" className="shrink-0">
                 {msg('playground.send', 'Send')}
@@ -145,6 +136,44 @@ export function PlaygroundPage() {
         </Card>
       </div>
     </ConsolePageFrame>
+  );
+}
+
+function CatalogModelSelect({ label, triggerClassName }: { label: string; triggerClassName?: string }) {
+  const { orgUuid } = useWorkspace();
+  const modelCatalog = useModelCatalog(orgUuid);
+  const [selectedModelID, setSelectedModelID] = useState('');
+  const currentModelID = isCatalogModelID(selectedModelID, modelCatalog.models)
+    ? selectedModelID
+    : modelCatalog.defaultModelID;
+  const options = modelCatalog.models.map((model) => ({
+    value: model.model_name,
+    label: modelCatalogDisplayName(model),
+  }));
+  const placeholder = modelCatalog.isPending
+    ? 'Loading models'
+    : modelCatalog.isError
+      ? 'Models unavailable'
+      : 'Select a model';
+
+  return (
+    <Select<string>
+      value={currentModelID || null}
+      items={options}
+      disabled={!options.length}
+      onValueChange={(nextModelID) => setSelectedModelID(nextModelID ?? '')}
+    >
+      <SelectTrigger aria-label={label} className={triggerClassName}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent alignItemWithTrigger={false}>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value} label={option.label}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

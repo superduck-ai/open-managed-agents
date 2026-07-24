@@ -2,7 +2,9 @@
 
 ## 目标
 
-服务对外提供 Anthropic 兼容的 `POST /v1/messages`，供普通 SDK/API 调用和 Claude Code 沙箱使用。上游 `anthropic_upstream.api_key` 只存在于服务端配置，不再写入沙箱环境或 `environment-manager` 启动 payload。
+服务对外提供 Anthropic 兼容的 `POST /v1/messages`，供普通 SDK/API 调用和 Claude Code 沙箱使用。所有模型请求统一经过配置的公司私有 AI Gateway；`anthropic_upstream.api_key` 只存在于服务端配置，不再写入沙箱环境或 `environment-manager` 启动 payload。`anthropic_upstream` 作为既有 YAML 字段名保留，不表示模型目录绑定 Anthropic 或 Claude 型号。
+
+启动组合根要求网关地址和凭证非空，并拒绝公共 `anthropic.com` 地址。Messages、Batch、Workbench 和 Model Catalog 共用这一网关边界；客户端不跟随重定向，避免配置错误或网关响应把服务端凭证带到其他主机。
 
 Claude Code 仍要求 OAuth 形态的 Anthropic 凭证。environment-manager 通过 `auth[type=anthropic_oauth]` 和 `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` 向 Claude 传入 OMA 本地签发的 `sk-ant-oat01-...` lifecycle-bound token，并使用 `startup_context.api_base_url` 作为 `ANTHROPIC_BASE_URL` fallback。该 token 只在 OMA 本地代理生效，不是真实 Anthropic OAuth token；payload 不注入 `ANTHROPIC_API_KEY`、真实上游地址或明文 OAuth 环境变量。
 
@@ -18,7 +20,7 @@ handler 不解析 JSON，直接流式转发请求 body、query 和 Anthropic 合
 
 - 删除调用方的 `Authorization`、`X-Api-Key`、`Cookie`、组织/workspace 内部 header 和 hop-by-hop header；
 - 由服务端注入 `anthropic_upstream.api_key`；
-- 将请求发往 `anthropic_upstream.base_url/v1/messages`；
+- 将请求发往公司私有 `anthropic_upstream.base_url/v1/messages`；
 - 透传上游状态码、响应 body、SSE 数据和限流等响应 header；
 - SSE 响应逐块 flush，并关闭代理缓冲；
 - 请求 body 上限为 32 MiB。
@@ -64,7 +66,7 @@ sequenceDiagram
     participant API as OMA API
     participant DB as PostgreSQL
     participant Sandbox as Claude Code sandbox
-    participant Upstream as Anthropic upstream
+    participant Upstream as Company AI Gateway
 
     API->>API: 生成 code session、OAuth-compatible token 与 ingress JWT
     API->>DB: 保存 token hash
@@ -82,8 +84,9 @@ sequenceDiagram
 
 ## 错误语义
 
-- 未配置上游 key：`503 api_error`；
+- 网关地址、凭证为空或指向公共 Anthropic：进程拒绝启动；
 - 上游地址或网络不可用：`502 api_error`；
+- 上游返回重定向：不跟随，按上游响应透传；
 - 请求超过 32 MiB：`413 request_too_large`；
 - token 无效、session 终止、worker lease 过期或用在其他资源：`401 authentication_error`；
 - 上游返回的非 2xx 状态和 body：原样透传。

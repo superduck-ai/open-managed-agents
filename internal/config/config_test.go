@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aiupstream"
+
 	"go.yaml.in/yaml/v3"
 )
 
@@ -339,6 +341,17 @@ func TestDockerComposeConfigIsValid(t *testing.T) {
 		t.Fatalf("resolve Docker Compose config path: %v", err)
 	}
 	validateConfigTestFile(t, configPath)
+}
+
+func TestDockerComposeTemplateUsesPrivateGatewayPlaceholder(t *testing.T) {
+	configPath, err := filepath.Abs(filepath.Join("..", "..", dockerComposeTemplatePath))
+	if err != nil {
+		t.Fatalf("resolve Docker Compose config path: %v", err)
+	}
+	cfg := loadValidatedConfigTestFile(t, configPath)
+	if _, err := aiupstream.Endpoint(cfg.AnthropicUpstream.BaseURL, "v1/models", ""); err != nil {
+		t.Fatalf("Compose anthropic_upstream.base_url must be a valid private gateway placeholder: %v", err)
+	}
 }
 
 func TestDockerComposeKeepsSecretsOutOfTrackedTemplate(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
@@ -42,6 +43,7 @@ import (
 type Server struct {
 	cfg                  config.Config
 	db                   *db.DB
+	catalog              modelcatalog.Reader
 	router               chi.Router
 	platformStore        platformsession.Store
 	filestoreCredentials *filestoreapi.TokenCredentials
@@ -71,6 +73,7 @@ type ServerDeps struct {
 	DB                     *db.DB
 	ObjectStore            storage.ObjectStore
 	Logger                 *slog.Logger
+	ModelCatalog           modelcatalog.Reader
 	PlatformStore          platformsession.Store
 	CodeSessionCredentials *codesessions.SessionCredentials
 	FilestoreCredentials   *filestoreapi.TokenCredentials
@@ -83,6 +86,10 @@ func NewServer(deps ServerDeps) *Server {
 	if platformStore == nil {
 		platformStore = platformsession.NewMemoryStore()
 	}
+	catalog := deps.ModelCatalog
+	if catalog == nil {
+		catalog = modelcatalog.UnavailableReader{}
+	}
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials)
 	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(deps.DB)
 	filestoreHandler := filestoreapi.NewHandler(
@@ -92,10 +99,11 @@ func NewServer(deps ServerDeps) *Server {
 	s := &Server{
 		cfg:                  deps.Config,
 		db:                   deps.DB,
+		catalog:              catalog,
 		platformStore:        platformStore,
 		filestoreCredentials: deps.FilestoreCredentials,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB),
-		agents:               agents.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer),
+		agents:               agents.NewHandlerWithModelCatalogAndSkillPrewarm(deps.Config, deps.DB, catalog, skillPrewarmEnqueuer),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService),
 		deployments:          deploymentsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer),
@@ -105,7 +113,7 @@ func NewServer(deps ServerDeps) *Server {
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
 		messages:             messagesapi.NewHandler(deps.Config),
-		models:               modelsapi.NewHandler(),
+		models:               modelsapi.NewHandler(catalog),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService),
 		skills:               skillsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, deps.ObjectStore, skillPrewarmEnqueuer),
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB),
@@ -184,15 +192,15 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
-		platformapi.RegisterPlatformAccountRoutes(r, s.db)
-		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, platformauth.New(s.db), s.platformStore)
+		platformapi.RegisterPlatformAccountRoutes(r, s.db, s.catalog)
+		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, platformauth.New(s.db), s.platformStore, s.catalog)
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)
 		r.Route("/api/organizations/{orgUuid}", func(r chi.Router) {
-			platformapi.RegisterOrganizationRootRoutes(r, s.db)
+			platformapi.RegisterOrganizationRootRoutes(r, s.db, s.catalog)
 			platformapi.RegisterOrganizationProfileRoutes(r, s.db)
 			platformapi.RegisterOrganizationSSORoutes(r)
 			platformapi.RegisterOrganizationOnboardingRoutes(r)
@@ -200,7 +208,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 			platformapi.RegisterOrganizationBillingRoutes(r)
 			platformapi.RegisterOrganizationAnalyticsRoutes(r)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.cfg)
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream)
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream, s.catalog)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 		})
 		r.Route("/api/oauth/organizations/{orgUuid}", func(r chi.Router) {

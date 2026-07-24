@@ -74,8 +74,24 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 			t.Fatalf("bootstrap app_start organization = %#v, want uuid %s", membership["organization"], orgUUID)
 		}
 		modelsConfig, ok := organization["claude_ai_bootstrap_models_config"].([]any)
-		if !ok || len(modelsConfig) == 0 {
-			t.Fatalf("bootstrap app_start models config = %#v, want non-empty config", organization["claude_ai_bootstrap_models_config"])
+		if !ok || len(modelsConfig) != 1 {
+			t.Fatalf("bootstrap app_start models config = %#v, want one catalog model", organization["claude_ai_bootstrap_models_config"])
+		}
+		model, ok := modelsConfig[0].(map[string]any)
+		if !ok || model["model"] != "test/model" || model["name"] != "Test model" {
+			t.Fatalf("bootstrap app_start model = %#v, want test catalog model", modelsConfig[0])
+		}
+		features, ok := orgGrowthbook["features"].(map[string]any)
+		if !ok {
+			t.Fatalf("bootstrap app_start features = %#v, want object", orgGrowthbook["features"])
+		}
+		defaultModelFeature, ok := features["console_default_model"].(map[string]any)
+		if !ok {
+			t.Fatalf("console_default_model = %#v, want object", features["console_default_model"])
+		}
+		defaultModelValue, ok := defaultModelFeature["defaultValue"].(map[string]any)
+		if !ok || defaultModelValue["model"] != "test/model" {
+			t.Fatalf("console_default_model defaultValue = %#v, want catalog default", defaultModelFeature["defaultValue"])
 		}
 
 		missingOrgAppStartResp := app.platformRequest(t, http.MethodGet, "/api/bootstrap/7482d00f-2e42-478b-b2db-07c3d056a3b6/app_start", nil, cookies)
@@ -123,6 +139,14 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 		decodeJSON(t, orgResp.Body, &organization)
 		if organization["uuid"] != orgUUID || organization["organization_type"] != "claude_enterprise" || organization["claude_ai_bootstrap_models_config"] == nil {
 			t.Fatalf("organization = %#v, want source-compatible organization body", organization)
+		}
+		modelsConfig, ok := organization["claude_ai_bootstrap_models_config"].([]any)
+		if !ok || len(modelsConfig) != 1 {
+			t.Fatalf("organization models config = %#v, want test catalog model", organization["claude_ai_bootstrap_models_config"])
+		}
+		model, ok := modelsConfig[0].(map[string]any)
+		if !ok || model["model"] != "test/model" {
+			t.Fatalf("organization model = %#v, want test/model", modelsConfig[0])
 		}
 		settings, ok := organization["settings"].(map[string]any)
 		if !ok {

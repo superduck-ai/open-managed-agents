@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aiupstream"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 
 	"github.com/go-chi/chi/v5"
@@ -46,7 +46,7 @@ func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 		upstreamReq.Header.Del("Host")
 		upstreamReq.Header.Set("X-API-Key", strings.TrimSpace(cfg.AnthropicUpstream.APIKey))
 
-		upstreamRes, err := http.DefaultClient.Do(upstreamReq)
+		upstreamRes, err := aiupstream.NewHTTPClient(nil, 0).Do(upstreamReq)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": err.Error()})
 			return
@@ -83,16 +83,10 @@ func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 }
 
 func anthropicMessagesEndpointFromConfig(cfg config.Config) (string, error) {
-	baseURL := strings.TrimSpace(cfg.AnthropicUpstream.BaseURL)
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com"
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
+	if err := aiupstream.ValidateDeployment(cfg.AnthropicUpstream.BaseURL, cfg.AnthropicUpstream.APIKey); err != nil {
 		return "", err
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/v1/messages"
-	return parsed.String(), nil
+	return aiupstream.Endpoint(cfg.AnthropicUpstream.BaseURL, "v1/messages", "")
 }
 
 func proxyMessagesWantsStream(body []byte) bool {

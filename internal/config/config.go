@@ -82,6 +82,8 @@ func validatePositiveValues(cfg Config) error {
 	}{
 		{name: "storage.max_file_bytes", valid: cfg.Storage.MaxFileBytes > 0},
 		{name: "storage.workspace_limit_bytes", valid: cfg.Storage.WorkspaceLimitBytes > 0},
+		{name: "model_catalog.refresh_interval", valid: cfg.ModelCatalog.RefreshInterval > 0},
+		{name: "model_catalog.refresh_timeout", valid: cfg.ModelCatalog.RefreshTimeout > 0},
 		{name: "batch.worker_concurrency", valid: cfg.Batch.WorkerConcurrency > 0},
 		{name: "batch.max_requests", valid: cfg.Batch.MaxRequests > 0},
 		{name: "batch.max_body_bytes", valid: cfg.Batch.MaxBodyBytes > 0},

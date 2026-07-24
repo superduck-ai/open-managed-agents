@@ -240,7 +240,7 @@ describe('WorkbenchPage', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('option', { name: /claude-opus-4-8/i }));
     });
-    expect(within(panel).getByRole('button', { name: 'Maximum length of Claude’s responses' })).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: "Maximum length of the selected model's response" })).toBeTruthy();
     const maxTokensInput = within(panel)
       .getAllByRole('spinbutton')
       .find((input) => (input as HTMLInputElement).max === '128000') as HTMLInputElement;
@@ -281,13 +281,60 @@ describe('WorkbenchPage', () => {
     expect(screen.getByRole('option', { name: 'Max' })).toBeTruthy();
     selectOption('Extra high');
     await waitFor(() => expect(effortCombobox.textContent).toContain('Extra high'));
-    expect(within(panel).getByRole('link', { name: 'View all API options' }).getAttribute('href')).toBe(
-      'https://docs.claude.com/en/api/messages',
-    );
+    expect(within(panel).queryByRole('link', { name: 'View all API options' })).toBeNull();
     expect(within(panel).getByRole('button', { name: 'Run ⌘ + ⏎' })).toBeTruthy();
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByLabelText('Model')).toBeNull();
+  });
+
+  test('requires an explicit catalog selection when no default model is configured', async () => {
+    resetTestDom('https://oma.duck.ai/workbench/prompt_1');
+    const api = mockWorkbenchApi({
+      modelCatalog: {
+        default_prompt_settings: {},
+        models: [
+          {
+            model_name: 'gateway/available',
+            display_name: 'Gateway Available',
+            supports_tool_use: true,
+          },
+        ],
+        model_catalog: { stale: false, default_available: false },
+      },
+    });
+    renderWorkbench();
+
+    await screen.findByRole('button', { name: 'Get Code' });
+    const runButton = screen.getByRole('button', { name: 'Run ⌘ + ⏎' }) as HTMLButtonElement;
+    const improveButton = screen.getByRole('button', {
+      name: 'Select an available model before improving this prompt',
+    }) as HTMLButtonElement;
+    expect(runButton.disabled).toBe(true);
+    expect(improveButton.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Model settings' }));
+    const panel = screen.getByLabelText('Model');
+    const modelCombobox = within(panel).getByRole('combobox', { name: 'claude-opus-4-8' });
+    await act(async () => {
+      fireEvent.click(modelCombobox);
+    });
+    const option = screen.getByRole('option', { name: /gateway\/available/i });
+    await act(async () => {
+      fireEvent.click(option);
+    });
+
+    await waitFor(() => expect(runButton.disabled).toBe(false));
+    const enabledImproveButton = screen.getByRole('button', {
+      name: 'Optimize your prompt with the selected model',
+    }) as HTMLButtonElement;
+    expect(enabledImproveButton.disabled).toBe(false);
+    fireEvent.click(runButton);
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.endsWith('/workbench/completions'))).toBe(true),
+    );
+    const completion = api.requests.find((request) => request.url.endsWith('/workbench/completions'));
+    expect(completion?.body?.model_name).toBe('gateway/available');
   });
 
   test('opens the official-style tools panel and custom tool form', async () => {
@@ -345,7 +392,7 @@ describe('WorkbenchPage', () => {
     await waitFor(() => expect(drawerBody.scrollTop).toBe(0));
     expect(within(panel).getByRole('heading', { name: 'Web search' })).toBeTruthy();
     expect(
-      within(panel).getByText('Allow Claude to search the web and cite those results in its responses.'),
+      within(panel).getByText('Allow the selected model to search the web and cite those results in its responses.'),
     ).toBeTruthy();
     const restrictionSelect = within(panel).getByRole('combobox', { name: 'Search restrictions' });
     expect(restrictionSelect.getAttribute('aria-expanded')).toBe('false');
@@ -608,7 +655,7 @@ describe('WorkbenchPage', () => {
     const userPrompt = (await screen.findByLabelText('User prompt 1')) as HTMLTextAreaElement;
     fireEvent.change(userPrompt, { target: { value: 'Write a haiku about {{animal}}.' } });
     expect((screen.getByRole('button', { name: 'Pre-fill response' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Help Claude understand the task better' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Help the selected model understand the task better' }));
 
     const panel = screen.getByLabelText('Examples');
     expect(within(panel).getByRole('heading', { name: 'Examples' })).toBeTruthy();
@@ -675,7 +722,9 @@ describe('WorkbenchPage', () => {
     });
     renderWorkbench();
 
-    const examplesButton = await screen.findByRole('button', { name: 'Help Claude understand the task better' });
+    const examplesButton = await screen.findByRole('button', {
+      name: 'Help the selected model understand the task better',
+    });
     expect(examplesButton.textContent?.replace(/\s/g, '')).toBe('Examples2');
     fireEvent.click(examplesButton);
 
@@ -701,7 +750,7 @@ describe('WorkbenchPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Variables/i }));
     const variablesPanel = await screen.findByLabelText('Test Case');
     fireEvent.change(within(variablesPanel).getByLabelText('{{ANIMAL}}'), { target: { value: 'owl' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Help Claude understand the task better' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Help the selected model understand the task better' }));
     fireEvent.click(within(screen.getByLabelText('Examples')).getByRole('button', { name: 'Run ⌘ + ⏎' }));
 
     await waitFor(() =>
@@ -724,13 +773,13 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     await screen.findByRole('button', { name: 'Get Code' });
-    fireEvent.click(screen.getByRole('button', { name: 'Use Claude to optimize your prompt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Optimize your prompt with the selected model' }));
 
     const dialog = screen.getByRole('dialog', { name: 'What would you like to improve?' });
     expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
-    expect(within(dialog).getByText('This takes 1-2 minutes and uses Claude Sonnet 4.5 credits')).toBeTruthy();
+    expect(within(dialog).getByText('This takes 1-2 minutes and uses the selected model')).toBeTruthy();
     const feedback = within(dialog).getByRole('textbox', {
-      name: 'The more detailed the feedback, the more Claude will be able to help.',
+      name: 'The more detailed the feedback, the better the result.',
     });
     expect(feedback.getAttribute('data-slot')).toBe('textarea');
     expect(feedback.className.includes('bg-secondary')).toBe(false);
@@ -749,8 +798,10 @@ describe('WorkbenchPage', () => {
     );
     const request = api.requests.find((item) => item.url.endsWith('/workbench/generate_prompt'));
     expect(request?.method).toBe('POST');
-    expect(request?.body?.feedback).toBe('Make it warmer and shorter.');
-    expect(request?.body?.thinking_enabled).toBe(true);
+    expect(request?.body?.model).toBe('claude-opus-4-8');
+    expect(request?.body?.task).toContain('Make it warmer and shorter.');
+    expect(request?.body?.task).toContain('Prompt:');
+    expect(request?.body?.target_thinking_mode).toBe(true);
   });
 
   test('shows Generate Prompt inside the first empty user message and sends a zero-generation request', async () => {
@@ -1064,7 +1115,7 @@ describe('WorkbenchPage', () => {
     });
     await waitFor(() => expect(api.requests.some((request) => request.url === '/v1/files?beta=true')).toBe(true));
     fireEvent.click(screen.getByRole('button', { name: 'Add message pair' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Use Claude to optimize your prompt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Optimize your prompt with the selected model' }));
 
     const dialog = screen.getByRole('dialog', { name: 'What would you like to improve?' });
     expect(
@@ -1167,7 +1218,9 @@ describe('WorkbenchPage', () => {
     expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Model settings' }));
     expect(screen.getByRole('combobox', { name: 'claude-opus-4-8' }).textContent).toContain('claude-opus-4-8');
-    expect(document.body.textContent).toContain('Run prompt to see assistant response from the');
+    expect(document.body.textContent).toContain(
+      "Run prompt to see the selected model's response from the configured AI gateway",
+    );
     expect(screen.getByText('Untitled')).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Evaluate' }).getAttribute('aria-disabled')).toBe('true');
     expect((screen.getByRole('button', { name: 'Requires at least one variable' }) as HTMLButtonElement).disabled).toBe(
@@ -1272,7 +1325,9 @@ describe('WorkbenchPage', () => {
     expect((screen.getByLabelText('User prompt 1') as HTMLTextAreaElement).value).toBe('');
     expect(screen.getByRole('tab', { name: 'Evaluate' }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
-    expect(document.body.textContent).toContain('Run prompt to see assistant response from the');
+    expect(document.body.textContent).toContain(
+      "Run prompt to see the selected model's response from the configured AI gateway",
+    );
   });
 
   test('creates a clean Workbench from the official response empty-state action', async () => {
@@ -2409,7 +2464,7 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     await screen.findByRole('button', { name: 'Run ⌘ + ⏎' });
-    fireEvent.click(screen.getByRole('button', { name: 'Help Claude understand the task better' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Help the selected model understand the task better' }));
     const examplesPanel = screen.getByLabelText('Examples');
     fireEvent.click(within(examplesPanel).getByRole('button', { name: 'Add example' }));
     fireEvent.change(within(examplesPanel).getByRole('textbox', { name: '{{animal}}' }), {
@@ -2511,7 +2566,7 @@ describe('WorkbenchPage', () => {
     );
   });
 
-  test('opens the generated Claude API code modal with Highlight.js markup', async () => {
+  test('opens the generated Open Managed Agents API code modal with Highlight.js markup', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     const unorderedRevision = promptRevision();
     unorderedRevision.messages[0].content = [{ text: existingPromptText, type: 'text' }];
@@ -2520,14 +2575,15 @@ describe('WorkbenchPage', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Get Code' }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Code for Claude API' });
+    const dialog = screen.getByRole('dialog', { name: 'Code for Open Managed Agents API' });
     const codeText = dialog.querySelector('code')?.textContent ?? '';
     expect(codeText.indexOf('"type": "text"')).toBeGreaterThan(-1);
     expect(codeText.indexOf('"type": "text"')).toBeLessThan(codeText.indexOf('"text":'));
     expect(within(dialog).getByRole('button', { name: 'Copy code' })).toBeTruthy();
     expect(dialog.textContent).toContain('client.messages.create');
     expect(dialog.textContent).toContain('import anthropic');
-    expect(dialog.textContent).toContain('api_key="my_api_key"');
+    expect(codeText).toContain('api_key=os.environ["OMA_API_KEY"]');
+    expect(codeText).toContain('base_url=os.environ["OMA_BASE_URL"]');
     expect(dialog.textContent).toContain('"type": "text"');
     expect(dialog.textContent).toContain('claude-opus-4-8');
     const languageCombobox = within(dialog).getByRole('combobox', { name: 'Code language' });
@@ -2579,7 +2635,7 @@ describe('WorkbenchPage', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Get Code' }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Code for Claude API' });
+    const dialog = await screen.findByRole('dialog', { name: 'Code for Open Managed Agents API' });
     expect(dialog.textContent).toContain('Draft-only prompt before code.');
     expect(screen.queryByLabelText('Version history')).toBeNull();
   });
@@ -2590,12 +2646,12 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Model settings' }));
-    expect(await screen.findByRole('button', { name: 'Maximum length of Claude’s responses' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: "Maximum length of the selected model's response" })).toBeTruthy();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Get Code' }));
 
-    expect(await screen.findByRole('dialog', { name: 'Code for Claude API' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Maximum length of Claude’s responses' })).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Code for Open Managed Agents API' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: "Maximum length of the selected model's response" })).toBeNull();
   });
 });
 
@@ -2692,6 +2748,7 @@ function mockWorkbenchApi(
     generatedPromptDelayMs?: number;
     completionErrorMessage?: string;
     prepaidCreditsAmount?: number;
+    modelCatalog?: Record<string, unknown>;
   } = {},
 ) {
   const requests: MockRequest[] = [];
@@ -2732,28 +2789,35 @@ function mockWorkbenchApi(
     }
 
     if (url.endsWith('/models')) {
-      return jsonResponse({
-        default_prompt_settings: {
-          model_name: 'claude-opus-4-8',
-          system_prompt: '',
-          temperature: 1,
-          max_tokens_to_sample: 20000,
-        },
-        models: [
-          {
+      return jsonResponse(
+        options.modelCatalog ?? {
+          default_prompt_settings: {
             model_name: 'claude-opus-4-8',
-            display_name: 'Claude Opus Active',
-            supports_thinking: true,
-            supports_tool_use: true,
+            system_prompt: '',
+            temperature: 1,
+            max_tokens_to_sample: 20000,
           },
-          {
-            model_name: 'claude-sonnet-4-6',
-            display_name: 'Claude Sonnet Active',
-            supports_thinking: true,
-            supports_tool_use: true,
+          models: [
+            {
+              model_name: 'claude-opus-4-8',
+              display_name: 'Claude Opus Active',
+              description: 'Powerful, large model for complex challenges',
+              supports_thinking: true,
+              supports_tool_use: true,
+            },
+            {
+              model_name: 'claude-sonnet-4-6',
+              display_name: 'Claude Sonnet Active',
+              supports_thinking: true,
+              supports_tool_use: true,
+            },
+          ],
+          model_catalog: {
+            stale: false,
+            default_available: true,
           },
-        ],
-      });
+        },
+      );
     }
 
     if (url.endsWith('/workspaces/default/prompts') && method === 'GET') {

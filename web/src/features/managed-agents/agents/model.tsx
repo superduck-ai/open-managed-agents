@@ -39,7 +39,7 @@ export function agentModelName(model: AgentApiResponse['model']) {
   if (typeof model === 'string') {
     return model;
   }
-  return model?.id || 'claude-sonnet-4-6';
+  return model?.id || '';
 }
 
 export function relativeTime(value: string) {

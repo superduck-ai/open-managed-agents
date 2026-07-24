@@ -71,7 +71,7 @@ export function CodeModal({
   const highlightedLines = useMemo(() => highlighted.split('\n'), [highlighted]);
 
   return (
-    <Dialog title="Code for Claude API" onClose={onClose} size="code">
+    <Dialog title="Code for Open Managed Agents API" onClose={onClose} size="code">
       <div className="workbench-code-modal">
         <div className="workbench-code-controls">
           <div className="min-w-0 flex-1">
@@ -432,7 +432,7 @@ export function ImprovePromptDialog({
     <Dialog title="What would you like to improve?" onClose={onClose} size="improve">
       <div className="workbench-improve-content">
         <h2>What would you like to improve?</h2>
-        <p>This takes 1-2 minutes and uses Claude Sonnet 4.5 credits</p>
+        <p>This takes 1-2 minutes and uses the selected model</p>
         {showImageWarning || showMultiTurnWarning ? (
           <div className="workbench-improve-warnings">
             {showImageWarning ? (
@@ -450,8 +450,8 @@ export function ImprovePromptDialog({
           </div>
         ) : null}
         <Textarea
-          aria-label="The more detailed the feedback, the more Claude will be able to help."
-          placeholder="The more detailed the feedback, the more Claude will be able to help."
+          aria-label="The more detailed the feedback, the better the result."
+          placeholder="The more detailed the feedback, the better the result."
           value={feedback}
           onChange={(event) => setFeedback(event.currentTarget.value)}
           className="min-h-[146px] resize-y"

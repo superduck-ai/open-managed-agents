@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 type Handler struct {
 	cfg     config.Config
 	db      *db.DB
+	catalog modelcatalog.Reader
 	prewarm skillPrewarmSnapshotEnqueuer
 	router  chi.Router
 }
@@ -91,11 +93,20 @@ type agentReference struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	return NewHandlerWithSkillPrewarm(cfg, database, nil)
+	return NewHandlerWithModelCatalogAndSkillPrewarm(cfg, database, nil, nil)
 }
 
 func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer) *Handler {
-	h := &Handler{cfg: cfg, db: database, prewarm: prewarm}
+	return NewHandlerWithModelCatalogAndSkillPrewarm(cfg, database, nil, prewarm)
+}
+
+func NewHandlerWithModelCatalogAndSkillPrewarm(
+	cfg config.Config,
+	database *db.DB,
+	catalog modelcatalog.Reader,
+	prewarm skillPrewarmSnapshotEnqueuer,
+) *Handler {
+	h := &Handler{cfg: cfg, db: database, catalog: catalog, prewarm: prewarm}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -121,6 +132,34 @@ func notFound(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
 }
 
+func (h *Handler) writeStateError(w http.ResponseWriter, r *http.Request, err error) {
+	if modelcatalog.IsUnavailable(err) {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "Model catalog is unavailable"))
+		return
+	}
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+}
+
+func (h *Handler) validateModelSelection(ctx context.Context, raw json.RawMessage) error {
+	if h.catalog == nil {
+		return modelcatalog.ErrUnavailable
+	}
+	var model struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &model); err != nil || model.ID == "" {
+		return errors.New("model.id is required")
+	}
+	err := h.catalog.ValidateModel(ctx, model.ID)
+	if modelcatalog.IsUnknownModel(err) {
+		return errors.New("model.id is not available from the configured model catalog")
+	}
+	if err != nil {
+		return fmt.Errorf("%w: validate model selection", modelcatalog.ErrUnavailable)
+	}
+	return nil
+}
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
@@ -140,7 +179,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := h.stateFromCreate(r, principal, agentID, fields)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		h.writeStateError(w, r, err)
 		return
 	}
 	versionID, err := ids.New("agentver_")
@@ -341,7 +380,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 	}
 	nextState, err := h.stateFromUpdate(r, principal, current, fields)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		h.writeStateError(w, r, err)
 		return
 	}
 	versionID, err := ids.New("agentver_")
@@ -466,6 +505,9 @@ func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, age
 	if err != nil {
 		return agentState{}, err
 	}
+	if err := h.validateModelSelection(r.Context(), model); err != nil {
+		return agentState{}, err
+	}
 	state.Model = model
 	if state.Description, err = parseNullableStringField(fields, "description"); err != nil {
 		return agentState{}, err
@@ -514,6 +556,9 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 	if raw, ok := fields["model"]; ok {
 		state.Model, err = normalizeModel(raw)
 		if err != nil {
+			return agentState{}, err
+		}
+		if err := h.validateModelSelection(r.Context(), state.Model); err != nil {
 			return agentState{}, err
 		}
 	}

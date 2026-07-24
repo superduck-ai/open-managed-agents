@@ -142,7 +142,7 @@
   gap: 4px;
   margin-top: 4.5px;
   margin-bottom: 8px;
-  color: rgb(195, 194, 183);
+  color: var(--muted-foreground);
 }
 
 .workbench-toolbar-button {
@@ -153,7 +153,7 @@
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 0 8px;
-  color: rgb(195, 194, 183);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 400;
   line-height: 16px;
@@ -171,7 +171,7 @@
 }
 
 .workbench-toolbar-button svg {
-  color: rgb(137, 135, 129);
+  color: currentColor;
 }
 
 .workbench-toolbar-button:hover {
@@ -180,7 +180,7 @@
 
 .workbench-toolbar-button.is-active {
   border-color: var(--border);
-  background: #151515;
+  background: var(--accent);
   color: var(--foreground);
 }
 
@@ -203,7 +203,7 @@
   height: 16px;
   align-items: center;
   background: transparent;
-  color: rgb(195, 194, 183);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 400;
   line-height: 16px;

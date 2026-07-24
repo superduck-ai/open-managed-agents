@@ -73,6 +73,11 @@ export function registerManagedAgentsAgentsTests() {
     expect(yamlEditor.closest('.agent-config-codemirror')?.getAttribute('style')).toContain(
       '--agent-config-editor-min-height: 0px',
     );
+    // drawSelection is disabled so CodeMirror must not paint its own
+    // .cm-selectionLayer, nor inject hideNativeSelection (which forces the OS
+    // Highlight color on ::selection while focused and inverts the syntax
+    // foreground). Regression guard for the jarring selected-text color.
+    expect(yamlEditor.closest('.cm-editor')?.querySelector('.cm-selectionLayer')).toBeNull();
 
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Template' }));
 

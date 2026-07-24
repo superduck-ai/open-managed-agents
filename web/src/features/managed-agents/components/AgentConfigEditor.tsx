@@ -58,7 +58,13 @@ export const agentConfigEditorTheme = EditorView.theme(
     '.cm-cursor, .cm-dropCursor': {
       borderLeftColor: 'var(--foreground)',
     },
-    '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': {
+    // drawSelection is disabled in basicSetup, so CodeMirror neither paints a
+    // .cm-selectionBackground layer nor injects hideNativeSelection (which
+    // would force ::selection to the OS Highlight color while the editor is
+    // focused). Style the native ::selection directly so focused/unfocused
+    // states match and the syntax-highlight foreground stays readable instead
+    // of being inverted by the system selection color.
+    '.cm-content ::selection': {
       backgroundColor: 'color-mix(in srgb, var(--primary) 28%, transparent)',
     },
     '&.cm-focused': {
@@ -117,7 +123,13 @@ export const agentConfigEditorBasicSetup = {
   highlightActiveLine: true,
   highlightSpecialChars: true,
   history: true,
-  drawSelection: true,
+  // Disabling drawSelection avoids CodeMirror's hideNativeSelection extension
+  // (Prec.highest), which forces .cm-content :focus::selection to the OS
+  // Highlight color. That overlaid our translucent primary background and the
+  // browser inverted the selected text foreground, producing a jarring color
+  // when selecting with the cursor focused. The native ::selection is styled
+  // in agentConfigEditorTheme above so both states render consistently.
+  drawSelection: false,
   dropCursor: true,
   allowMultipleSelections: true,
   indentOnInput: true,

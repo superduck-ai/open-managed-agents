@@ -34,6 +34,9 @@ storage:
 anthropic_upstream:
   base_url: https://api.anthropic.com
   api_key: ""
+  # Optional exact model ID overrides. Mapped IDs are displayed and saved; unmapped IDs keep the original behavior.
+  # Chained mappings are rejected; multiple logical IDs may share one upstream ID.
+  model_mappings: {}
 
 batch:
   worker_enabled: true

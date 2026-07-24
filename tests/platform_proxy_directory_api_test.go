@@ -160,6 +160,71 @@ func TestPlatformOrganizationProxyMessages(t *testing.T) {
 	}
 }
 
+func TestPlatformOrganizationProxyMessagesMapsConfiguredModel(t *testing.T) {
+	var seenBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		seenBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read upstream body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_proxy_mapped_model","type":"message"}`))
+	}))
+	defer upstream.Close()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.AnthropicUpstream.BaseURL = upstream.URL
+	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-model-mapping-test"
+	cfg.AnthropicUpstream.ModelMappings = map[string]string{
+		"claude-sonnet-4-6": "glm-5-turbo",
+	}
+	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-proxy-model-mapping-bucket"))
+	defer app.close()
+
+	orgUUID := loadDefaultOrganizationUUID(t, app)
+	cookies := app.platformLoginCookies(t, "proxy-model-mapping@example.com")
+	payload := `{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`
+	req, err := http.NewRequest(http.MethodPost, app.baseURL+"/api/organizations/"+orgUUID+"/proxy/v1/messages", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("new proxy request: %v", err)
+	}
+	req.Host = "platform.claude.com"
+	req.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	resp, err := app.client.Do(req)
+	if err != nil {
+		t.Fatalf("do proxy request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("proxy status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
+	}
+
+	var upstreamBody struct {
+		Model     string `json:"model"`
+		MaxTokens int    `json:"max_tokens"`
+		Messages  []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(seenBody, &upstreamBody); err != nil {
+		t.Fatalf("decode upstream body: %v", err)
+	}
+	if upstreamBody.Model != "glm-5-turbo" {
+		t.Fatalf("upstream model = %v, want glm-5-turbo", upstreamBody.Model)
+	}
+	if upstreamBody.MaxTokens != 16 || len(upstreamBody.Messages) != 1 {
+		t.Fatalf("upstream body lost request fields: %#v", upstreamBody)
+	}
+}
+
 func TestPlatformOrganizationProxyMessagesStream(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

@@ -116,7 +116,7 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 	}
 	claims, err := s.filestoreCredentials.Verify(rawToken)
 	if err != nil {
-		return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid bearer token")
 	}
 	scope, err := s.db.ResolveFilestoreTokenScope(
 		r.Context(),
@@ -129,7 +129,7 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 	)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
+			return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid bearer token")
 		}
 		log.Printf("resolve filestore token scope: %v", err)
 		return filestoreapi.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
@@ -139,7 +139,7 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 	// 这里校验的是 CMEK 配置状态；具体密钥选择和 S3 加密参数仍属于对象存储边界。
 	if !filestoreapi.OrgTaintsEqual(scope.OrgTaints, claims.OrgTaints) ||
 		scope.WorkspaceCMEKEnabled != claims.WorkspaceCMEKEnabled {
-		return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid bearer token")
 	}
 	readonly := claims.Readonly != nil && *claims.Readonly
 	return filestoreapi.Principal{

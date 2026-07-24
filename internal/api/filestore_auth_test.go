@@ -301,6 +301,25 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 		})
 	}
 
+	t.Run("middleware rejects invalid filestore token with bearer wording", func(t *testing.T) {
+		otherCredentials := newFilestoreAuthCredentials(t)
+		wrongToken, issueErr := otherCredentials.filestore.Issue(fixture.tokenIdentity)
+		if issueErr != nil {
+			t.Fatalf("issue wrong-key token: %v", issueErr)
+		}
+		response := httptest.NewRecorder()
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		server.filestoreAuthMiddleware(next).ServeHTTP(
+			response,
+			newFilestoreBearerRequest(http.MethodPost, filestoreAuthPaths[0], wrongToken),
+		)
+
+		assertFlatFilestoreAuthError(t, response, http.StatusUnauthorized, "unauthenticated", "Invalid bearer token")
+	})
+
 	t.Run("failure real filesystem from another workspace", func(t *testing.T) {
 		suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 		otherWorkspaceUUID := uuid.NewString()

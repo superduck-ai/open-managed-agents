@@ -130,7 +130,7 @@ func filestoreSubtreeContainsManagedEntryTx(
 				)
 				and (
 					managed_by is not null
-					or managed_resource_external_id is not null
+					or managed_resource_uuid is not null
 					or source_file_uuid is not null
 				)
 		)
@@ -232,7 +232,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 				tags = CAST(array[] AS text[]), downloadable = false,
 				md5 = null, sha256 = null, s3_bucket = null, s3_key = null,
 				s3_etag = null, s3_version_id = null, expires_at = null,
-				managed_by = null, managed_resource_external_id = null,
+				managed_by = null, managed_resource_uuid = null,
 				source_file_uuid = null,
 				created_by_api_key_uuid = :created_by_api_key_uuid,
 				created_by_session_uuid = :created_by_session_uuid,
@@ -374,7 +374,7 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				tags = :tags, downloadable = :downloadable, md5 = :md5, sha256 = :sha256,
 				s3_bucket = :s3_bucket, s3_key = :s3_key, s3_etag = :s3_etag,
 				s3_version_id = :s3_version_id, expires_at = :expires_at,
-				managed_by = null, managed_resource_external_id = null,
+				managed_by = null, managed_resource_uuid = null,
 				source_file_uuid = null,
 				created_by_api_key_uuid = :created_by_api_key_uuid,
 				created_by_session_uuid = :created_by_session_uuid,

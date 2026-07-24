@@ -9,7 +9,70 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-const sessionFileResourceManagedBy = "session_file_resource"
+const (
+	sessionFileResourceManagedBy = "session_file_resource"
+	countSessionFileResourcesSQL = `
+		select count(*)
+		from session_resources
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and resource_type = :resource_type
+			and deleted_at is null
+	`
+	findSessionFileMountConflictSQL = `
+		select entry.path
+		from filestore_entries entry
+		cross join (values (CAST(:entry_path AS text))) as candidate(path)
+		where entry.workspace_uuid = :workspace_uuid
+			and entry.filesystem_uuid = :filesystem_uuid
+			and entry.managed_by = :managed_by
+			and entry.source_file_uuid is not null
+			and entry.deleted_at is null
+			and (
+				entry.path = candidate.path
+				or left(entry.path, length(candidate.path) + 1) = concat(candidate.path, '/')
+				or left(candidate.path, length(entry.path) + 1) = concat(entry.path, '/')
+			)
+		order by entry.path
+		limit 1
+	`
+)
+
+func enforceSessionFileResourceCapacityTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	workspaceID int64,
+	sessionExternalID string,
+	additionalFiles int,
+) error {
+	// Resource mutations hold the owning Session row lock. Session creation
+	// creates that row in the same transaction before checking capacity.
+	if additionalFiles == 0 {
+		return nil
+	}
+	var activeFiles int
+	if err := namedGetContext(ctx, tx, &activeFiles, countSessionFileResourcesSQL, map[string]any{
+		"workspace_id":        workspaceID,
+		"session_external_id": sessionExternalID,
+		"resource_type":       SessionResourceTypeFile,
+	}); err != nil {
+		return err
+	}
+	if activeFiles+additionalFiles > MaxSessionFileResources {
+		return &SessionFileResourceLimitError{Limit: MaxSessionFileResources}
+	}
+	return nil
+}
+
+func sessionFileResourceCount(resources []SessionResource) int {
+	count := 0
+	for _, resource := range resources {
+		if resource.ResourceType == SessionResourceTypeFile {
+			count++
+		}
+	}
+	return count
+}
 
 func sessionFileMountsByResource(mounts []SessionFileMount) (map[string]SessionFileMount, error) {
 	byResource := make(map[string]SessionFileMount, len(mounts))
@@ -25,26 +88,6 @@ func sessionFileMountsByResource(mounts []SessionFileMount) (map[string]SessionF
 		byResource[mount.ResourceExternalID] = mount
 	}
 	return byResource, nil
-}
-
-func bindSessionResourceFileTx(
-	ctx context.Context,
-	tx *sqlx.Tx,
-	session Session,
-	resource SessionResource,
-	mount *SessionFileMount,
-) error {
-	if resource.ResourceType != FilestoreEntryKindFile {
-		if mount != nil {
-			return ErrPreconditionFailed
-		}
-		return nil
-	}
-	filesystem, err := lockSessionFilestoreMutationTx(ctx, tx, session)
-	if err != nil {
-		return err
-	}
-	return bindSessionFileResourceTx(ctx, tx, session, filesystem, resource, mount)
 }
 
 func lockSessionFilestoreMutationTx(
@@ -79,7 +122,7 @@ func lockSessionFilestoreMutationTx(
 	return filesystem, nil
 }
 
-func bindSessionFileResourceTx(
+func bindSessionFileResourceWithLockedFilesystemTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
 	session Session,
@@ -87,7 +130,7 @@ func bindSessionFileResourceTx(
 	resource SessionResource,
 	mount *SessionFileMount,
 ) error {
-	if resource.ResourceType != FilestoreEntryKindFile {
+	if resource.ResourceType != SessionResourceTypeFile {
 		if mount != nil {
 			return ErrPreconditionFailed
 		}
@@ -100,6 +143,9 @@ func bindSessionFileResourceTx(
 		return ErrPreconditionFailed
 	}
 	if err := validateFilestorePath(mount.Path); err != nil {
+		return err
+	}
+	if err := rejectSessionFileMountConflictTx(ctx, tx, filesystem, mount.Path); err != nil {
 		return err
 	}
 
@@ -135,7 +181,7 @@ func bindSessionFileResourceTx(
 			kind, path, parent_path, size_bytes, media_type, metadata,
 			authorization_metadata, tags, downloadable, md5, sha256,
 			s3_bucket, s3_key, expires_at, managed_by,
-			managed_resource_external_id, source_file_uuid,
+			managed_resource_uuid, source_file_uuid,
 			created_by_api_key_uuid, created_by_session_uuid,
 			created_by_code_session_uuid, created_at, updated_at
 		)
@@ -146,7 +192,7 @@ func bindSessionFileResourceTx(
 			'file', :entry_path, :parent_path, :size_bytes, :media_type,
 			CAST('{}' AS jsonb), CAST('{}' AS jsonb), CAST(array[] AS text[]),
 			:downloadable, null, :sha256, :s3_bucket, :s3_key, null,
-			:managed_by, :managed_resource_external_id, :source_file_uuid,
+			:managed_by, :managed_resource_uuid, :source_file_uuid,
 			:created_by_api_key_uuid, :created_by_session_uuid,
 			:created_by_code_session_uuid, :created_at, :created_at
 		)
@@ -164,7 +210,7 @@ func bindSessionFileResourceTx(
 		"s3_bucket":                    file.S3Bucket,
 		"s3_key":                       file.S3Key,
 		"managed_by":                   sessionFileResourceManagedBy,
-		"managed_resource_external_id": resource.ExternalID,
+		"managed_resource_uuid":        resource.UUID,
 		"source_file_uuid":             file.UUID,
 		"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
 		"created_by_session_uuid":      filesystem.SessionUUID,
@@ -175,6 +221,34 @@ func bindSessionFileResourceTx(
 		return ErrFilestorePathExists
 	}
 	return err
+}
+
+func rejectSessionFileMountConflictTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	filesystem FilestoreFilesystem,
+	path string,
+) error {
+	// The filesystem mutation lock is already held. This lookup only classifies
+	// namespace conflicts owned by another Session File resource so the API can
+	// return 400; ordinary occupied entries remain ErrFilestorePathExists/409.
+	var conflictingPath string
+	err := namedGetContext(ctx, tx, &conflictingPath, findSessionFileMountConflictSQL, map[string]any{
+		"workspace_uuid":  filesystem.WorkspaceUUID,
+		"filesystem_uuid": filesystem.UUID,
+		"managed_by":      sessionFileResourceManagedBy,
+		"entry_path":      path,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return &SessionFileMountConflictError{
+		Path:            path,
+		ConflictingPath: conflictingPath,
+	}
 }
 
 func getSessionResourceForMutationSQLX(
@@ -213,7 +287,7 @@ func unbindSessionFileResourceTx(
 	session Session,
 	resource SessionResource,
 ) error {
-	if resource.ResourceType != FilestoreEntryKindFile {
+	if resource.ResourceType != SessionResourceTypeFile {
 		return nil
 	}
 	filesystem, err := lockSessionFilestoreMutationTx(ctx, tx, session)
@@ -226,15 +300,15 @@ func unbindSessionFileResourceTx(
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and managed_by = :managed_by
-			and managed_resource_external_id = :resource_external_id
+			and managed_resource_uuid = :resource_uuid
 			and source_file_uuid is not null
 			and deleted_at is null
 		for update
 	`, map[string]any{
-		"workspace_uuid":       filesystem.WorkspaceUUID,
-		"filesystem_uuid":      filesystem.UUID,
-		"managed_by":           sessionFileResourceManagedBy,
-		"resource_external_id": resource.ExternalID,
+		"workspace_uuid":  filesystem.WorkspaceUUID,
+		"filesystem_uuid": filesystem.UUID,
+		"managed_by":      sessionFileResourceManagedBy,
+		"resource_uuid":   resource.UUID,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil

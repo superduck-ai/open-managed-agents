@@ -14,8 +14,6 @@ import (
 const (
 	// FileSource 是 managed-agent File resource 唯一允许的 Filestore source。
 	FileSource = "/uploads"
-	// MaxFileResources 限制单个 Session 的 File resource 数量。
-	MaxFileResources = 100
 )
 
 // NormalizeFileSource 为省略的 source 补默认值，并拒绝 null 或其他 namespace。
@@ -62,11 +60,8 @@ func FileBackingPath(mountPath string) (string, error) {
 	return backingPath, nil
 }
 
-// ValidateFileMountPaths 校验数量、重复路径与祖先/后代冲突。
+// ValidateFileMountPaths 校验重复路径与祖先/后代冲突。
 func ValidateFileMountPaths(mountPaths []string) error {
-	if len(mountPaths) > MaxFileResources {
-		return fmt.Errorf("at most %d managed-agent file resources are allowed", MaxFileResources)
-	}
 	for index, current := range mountPaths {
 		if err := ValidateFileMountPath(current); err != nil {
 			return err

@@ -102,7 +102,6 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 			anthropic.BetaSessionDeleteParams{},
 		); deleteErr != nil {
 			t.Errorf("delete E2B session during cleanup: %v", deleteErr)
-			return
 		}
 		if uploadedFileID != "" {
 			deleteFile(t, app, uploadedFileID)

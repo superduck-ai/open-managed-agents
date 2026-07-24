@@ -2,7 +2,6 @@ package sandboxmount
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -80,15 +79,6 @@ func TestFileBackingPath(t *testing.T) {
 }
 
 func TestValidateFileMountPaths(t *testing.T) {
-	t.Run("rejects too many files", func(t *testing.T) {
-		mountPaths := make([]string, 0, MaxFileResources+1)
-		for index := 0; index <= MaxFileResources; index++ {
-			mountPaths = append(mountPaths, "/workspace/"+strings.Repeat("x", index+1))
-		}
-		if err := ValidateFileMountPaths(mountPaths); err == nil {
-			t.Fatal("ValidateFileMountPaths() accepted too many files")
-		}
-	})
 	t.Run("rejects duplicate paths", func(t *testing.T) {
 		if err := ValidateFileMountPaths([]string{"/workspace/data.csv", "/workspace/data.csv"}); err == nil {
 			t.Fatal("ValidateFileMountPaths() accepted duplicate paths")

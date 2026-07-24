@@ -164,7 +164,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		}
 		return FilestoreMutationResult{Entry: source}, nil
 	}
-	if source.ManagedBy != nil || source.ManagedResourceExternalID != nil {
+	if source.ManagedBy != nil || source.ManagedResourceUUID != nil {
 		return FilestoreMutationResult{}, ErrFilestoreInvalidMove
 	}
 	if err := requireFilestoreDirectoryTx(ctx, tx, filesystem, filestoreParentPath(input.DestinationPath)); err != nil {

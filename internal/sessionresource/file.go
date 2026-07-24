@@ -13,7 +13,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 )
 
-const FileType = "file"
+const (
+	FileType         = db.SessionResourceTypeFile
+	MaxFileResources = db.MaxSessionFileResources
+)
 
 // FileSpec is the canonical File resource configuration after API defaults and
 // path validation have been applied. It intentionally excludes a Session
@@ -144,6 +147,9 @@ func (s FileSpec) SessionFileMount(resourceID string) (db.SessionFileMount, erro
 // ValidateFileSpecs applies the Session/Deployment aggregate file-count and
 // mount-path conflict contract to normalized specs.
 func ValidateFileSpecs(specs []FileSpec) error {
+	if len(specs) > MaxFileResources {
+		return fmt.Errorf("at most %d managed-agent file resources are allowed", MaxFileResources)
+	}
 	mountPaths := make([]string, 0, len(specs))
 	for _, spec := range specs {
 		mountPaths = append(mountPaths, spec.mountPath)

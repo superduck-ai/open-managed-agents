@@ -16,12 +16,11 @@ alter table filestore_entries
 	add constraint filestore_entries_management_shape_check check (
 		(
 			managed_by is null
-			and managed_resource_external_id is null
+			and managed_resource_uuid is null
 		)
 		or (
 			managed_by is not null
 			and managed_by <> ''
-			and managed_resource_external_id is not null
-			and managed_resource_external_id <> ''
+			and managed_resource_uuid is not null
 		)
 	) not valid;

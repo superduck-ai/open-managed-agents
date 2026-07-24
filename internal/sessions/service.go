@@ -663,20 +663,13 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) {
 	if len(fileMounts) == 1 {
 		fileMount = &fileMounts[0]
 	}
-	var validationErr error
 	created, err := h.db.CreateSessionResource(
 		r.Context(),
-		resource,
-		fileMount,
-		func(resources []db.SessionResource) error {
-			validationErr = validateSessionResourceMounts(resources)
-			return validationErr
+		db.CreateSessionResourceInput{
+			Resource:  resource,
+			FileMount: fileMount,
 		},
 	)
-	if validationErr != nil {
-		writeResourceBuildError(w, r, validationErr)
-		return
-	}
 	if err != nil {
 		writeSessionLoadError(w, r, err, sessionID)
 		return
@@ -774,6 +767,10 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceID, session.ExternalID, resourceID); err != nil {
+		if errors.Is(err, db.ErrInvalidState) {
+			writeSessionLoadError(w, r, err, sessionID)
+			return
+		}
 		writeResourceLoadError(w, r, err, resourceID)
 		return
 	}

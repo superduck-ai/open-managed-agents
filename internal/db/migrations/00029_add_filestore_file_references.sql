@@ -56,8 +56,7 @@ alter table filestore_entries
 			source_file_uuid is not null
 			and kind = 'file'
 			and managed_by = 'session_file_resource'
-			and managed_resource_external_id is not null
-			and managed_resource_external_id <> ''
+			and managed_resource_uuid is not null
 			and expires_at is null
 		)
 	) not valid;
@@ -70,7 +69,7 @@ create unique index filestore_entries_session_resource_active_v1_key
 	on filestore_entries (
 		workspace_uuid,
 		filesystem_uuid,
-		managed_resource_external_id
+		managed_resource_uuid
 	)
 	where deleted_at is null
 		and source_file_uuid is not null
@@ -100,7 +99,7 @@ begin
 				entry.kind <> 'directory'
 				or entry.parent_path <> '/'
 				or entry.managed_by is not null
-				or entry.managed_resource_external_id is not null
+				or entry.managed_resource_uuid is not null
 				or entry.source_file_uuid is not null
 			)
 	) then

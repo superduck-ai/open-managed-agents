@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 )
 
 func TestNormalizeFileSpecRejectsInvalidInput(t *testing.T) {
@@ -134,8 +132,8 @@ func TestValidateFileSpecsRejectsAggregateConflicts(t *testing.T) {
 		t.Fatal("ValidateFileSpecs() accepted ancestor conflict")
 	}
 
-	specs := make([]FileSpec, 0, sandboxmount.MaxFileResources+1)
-	for index := 0; index <= sandboxmount.MaxFileResources; index++ {
+	specs := make([]FileSpec, 0, MaxFileResources+1)
+	for index := 0; index <= MaxFileResources; index++ {
 		specs = append(specs, FileSpec{
 			fileID:    "file_" + strings.Repeat("x", index+1),
 			mountPath: "/workspace/" + strings.Repeat("x", index+1),

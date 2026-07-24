@@ -38,7 +38,6 @@ const (
 		where workspace_id = :workspace_id
 			and external_id = :session_external_id
 			and deleted_at is null
-			and archived_at is null
 		for update
 	`
 	createSessionResourceQuery = `
@@ -300,6 +299,15 @@ func insertSessionSQLXTx(
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
+	if err := enforceSessionFileResourceCapacityTx(
+		ctx,
+		tx,
+		session.WorkspaceID,
+		session.ExternalID,
+		sessionFileResourceCount(input.Resources),
+	); err != nil {
+		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
+	}
 	if len(fileMounts) > 0 {
 		lockedFilesystem, err := lockSessionFilestoreMutationTx(ctx, tx, session)
 		if err != nil {
@@ -321,7 +329,14 @@ func insertSessionSQLXTx(
 		if hasFileMount {
 			fileMountPointer = &fileMount
 		}
-		if err := bindSessionFileResourceTx(ctx, tx, session, filesystem, created, fileMountPointer); err != nil {
+		if err := bindSessionFileResourceWithLockedFilesystemTx(
+			ctx,
+			tx,
+			session,
+			filesystem,
+			created,
+			fileMountPointer,
+		); err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 		}
 		delete(fileMounts, created.ExternalID)

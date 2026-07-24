@@ -60,8 +60,7 @@ alter table filestore_entries
 			source_file_uuid is not null
 			and kind = 'file'
 			and managed_by = 'session_file_resource'
-			and managed_resource_external_id is not null
-			and managed_resource_external_id <> ''
+			and managed_resource_uuid is not null
 			and expires_at is null
 		)
 	) not valid;

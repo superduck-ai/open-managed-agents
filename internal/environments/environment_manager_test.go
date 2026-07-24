@@ -31,6 +31,22 @@ func TestCodeSessionSandboxAPIBaseURLUsesConfiguredValue(t *testing.T) {
 	}
 }
 
+func managedAgentRuntimeSourceValues(
+	t *testing.T,
+	sources []json.RawMessage,
+) []any {
+	t.Helper()
+	raw, err := json.Marshal(sources)
+	if err != nil {
+		t.Fatalf("marshal runtime sources: %v", err)
+	}
+	var values []any
+	if err := json.Unmarshal(raw, &values); err != nil {
+		t.Fatalf("decode runtime sources: %v", err)
+	}
+	return values
+}
+
 func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 	resources := []db.SessionResource{
 		{
@@ -46,7 +62,7 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 			Payload:      json.RawMessage(`{"type":"future_resource","mount_path":"/workspace/future"}`),
 		},
 	}
-	if workDir := managedAgentWorkDir(resources); workDir != defaultEnvironmentWorkDir {
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != defaultEnvironmentWorkDir {
 		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, defaultEnvironmentWorkDir)
 	}
 }
@@ -64,7 +80,7 @@ func TestManagedAgentWorkDirSkipsInvalidRepositoryCandidates(t *testing.T) {
 			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"  "}`),
 		},
 	}
-	if workDir := managedAgentWorkDir(resources); workDir != defaultEnvironmentWorkDir {
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != defaultEnvironmentWorkDir {
 		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, defaultEnvironmentWorkDir)
 	}
 
@@ -73,7 +89,7 @@ func TestManagedAgentWorkDirSkipsInvalidRepositoryCandidates(t *testing.T) {
 		ResourceType: "github_repository",
 		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/valid"}`),
 	})
-	if workDir := managedAgentWorkDir(resources); workDir != "/workspace/valid" {
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/valid" {
 		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/valid")
 	}
 }
@@ -99,7 +115,7 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 		"repository last":  {memoryStore, file, repository},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if workDir := managedAgentWorkDir(resources); workDir != "/workspace/repository" {
+			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/repository" {
 				t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/repository")
 			}
 		})
@@ -132,7 +148,7 @@ func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
 		"same timestamp reversed": {first, sameTimeLater},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if workDir := managedAgentWorkDir(resources); workDir != "/workspace/first" {
+			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/first" {
 				t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/first")
 			}
 		})
@@ -151,7 +167,7 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory"}`),
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory","runtime_extension":{"enabled":true}}`),
 		},
 	}
 
@@ -166,10 +182,46 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 			"type":            "memory_store",
 			"memory_store_id": "mem_test",
 			"mount_path":      "/workspace/memory",
+			"runtime_extension": map[string]any{
+				"enabled": true,
+			},
 		},
 	}
-	if sources := managedAgentSources(resources); !reflect.DeepEqual(sources, want) {
+	sources := managedAgentRuntimeSourceValues(
+		t,
+		resolveManagedAgentRuntimeResources(resources).sources,
+	)
+	if !reflect.DeepEqual(sources, want) {
 		t.Fatalf("managedAgentSources() = %#v, want %#v", sources, want)
+	}
+}
+
+func TestManagedAgentRuntimeResourcesSkipInvalidSources(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":`),
+		},
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":"  ","mount_path":"/workspace/empty-url"}`),
+		},
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/empty-path","mount_path":"  "}`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`null`),
+		},
+	}
+
+	if sources := resolveManagedAgentRuntimeResources(resources).sources; len(sources) != 0 {
+		t.Fatalf("managedAgentSources() = %#v, want no sources", sources)
 	}
 }
 
@@ -469,7 +521,7 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 		VaultIDs: json.RawMessage(`["vault_cred_123"]`),
 	}
 
-	raw := managedAgentSessionConfig(session, nil)
+	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode session config: %v", err)

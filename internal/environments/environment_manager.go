@@ -19,14 +19,17 @@ const (
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
 )
 
-func managedAgentSessionConfig(session db.Session, resources []db.SessionResource) json.RawMessage {
+func managedAgentSessionConfig(
+	session db.Session,
+	runtimeResources managedAgentRuntimeResources,
+) json.RawMessage {
 	agentSnapshot := rawJSONObject(session.AgentSnapshot)
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
 	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
 		"origin":   "managed_agents_api",
 		"model":    modelIDFromAgentSnapshot(session.AgentSnapshot),
-		"sources":  managedAgentSources(resources),
+		"sources":  runtimeResources.sources,
 		"outcomes": []any{},
 	}
 	if len(mcpServers) > 0 {
@@ -201,87 +204,6 @@ func mapStringAnyValue(value any) map[string]any {
 func arrayValue(value any) []any {
 	values, _ := value.([]any)
 	return values
-}
-
-type githubRepositoryRuntimePayload struct {
-	URL       string          `json:"url"`
-	MountPath string          `json:"mount_path"`
-	Checkout  json.RawMessage `json:"checkout"`
-}
-
-func parseGitHubRepositoryRuntimePayload(raw json.RawMessage) (githubRepositoryRuntimePayload, bool) {
-	var payload githubRepositoryRuntimePayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return githubRepositoryRuntimePayload{}, false
-	}
-	payload.URL = strings.TrimSpace(payload.URL)
-	payload.MountPath = strings.TrimSpace(payload.MountPath)
-	return payload, true
-}
-
-func managedAgentWorkDir(resources []db.SessionResource) string {
-	var selected *db.SessionResource
-	workDir := defaultEnvironmentWorkDir
-	for index := range resources {
-		resource := &resources[index]
-		if resource.ResourceType != "github_repository" {
-			continue
-		}
-		payload, ok := parseGitHubRepositoryRuntimePayload(resource.Payload)
-		if !ok {
-			continue
-		}
-		if payload.MountPath == "" {
-			continue
-		}
-		if selected == nil || repositoryAttachedBefore(*resource, *selected) {
-			selected = resource
-			workDir = payload.MountPath
-		}
-	}
-	return workDir
-}
-
-func repositoryAttachedBefore(candidate, current db.SessionResource) bool {
-	if !candidate.CreatedAt.Equal(current.CreatedAt) {
-		return candidate.CreatedAt.Before(current.CreatedAt)
-	}
-	if candidate.ID != current.ID {
-		return candidate.ID < current.ID
-	}
-	return candidate.ExternalID < current.ExternalID
-}
-
-func managedAgentSources(resources []db.SessionResource) []any {
-	sources := make([]any, 0, len(resources))
-	for _, resource := range resources {
-		switch resource.ResourceType {
-		case "github_repository":
-			payload, ok := parseGitHubRepositoryRuntimePayload(resource.Payload)
-			if !ok {
-				continue
-			}
-			source := map[string]any{
-				"type":       "git_repository",
-				"url":        payload.URL,
-				"mount_path": payload.MountPath,
-			}
-			if len(payload.Checkout) > 0 {
-				var checkout any
-				if json.Unmarshal(payload.Checkout, &checkout) == nil {
-					source["checkout"] = checkout
-				}
-			}
-			sources = append(sources, source)
-		case "memory_store":
-			var payload map[string]any
-			if err := json.Unmarshal(resource.Payload, &payload); err != nil {
-				continue
-			}
-			sources = append(sources, payload)
-		}
-	}
-	return sources
 }
 
 func modelIDFromAgentSnapshot(raw json.RawMessage) string {

@@ -38,6 +38,12 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 	cursorQuery, cursorArguments := filePageCursorSQLXQuery(afterParams, afterParams.AfterID)
 	afterQuery, afterArguments := listFilesPageSQLXQuery(afterParams, cursor)
 	beforeQuery, beforeArguments := listFilesPageSQLXQuery(beforeParams, cursor)
+	if !strings.Contains(beforeQuery, "order by created_at asc, id asc") {
+		t.Fatalf("before page query does not fetch the nearest records first: %q", beforeQuery)
+	}
+	if !strings.Contains(afterQuery, "order by created_at desc, id desc") {
+		t.Fatalf("after page query does not retain descending API order: %q", afterQuery)
+	}
 
 	tests := []struct {
 		name         string

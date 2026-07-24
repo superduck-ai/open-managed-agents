@@ -263,8 +263,9 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	if err != nil {
 		return nil, err
 	}
-	sessionConfig := managedAgentSessionConfig(session, resources)
-	workDir := managedAgentWorkDir(resources)
+	runtimeResources := resolveManagedAgentRuntimeResources(resources)
+	sessionConfig := managedAgentSessionConfig(session, runtimeResources)
+	workDir := runtimeResources.workDir
 	title := ""
 	if session.Title != nil {
 		title = *session.Title

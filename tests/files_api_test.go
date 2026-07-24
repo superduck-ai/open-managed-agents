@@ -687,6 +687,45 @@ func TestFilesAPI(t *testing.T) {
 		_ = third
 	})
 
+	t.Run("success before_id returns nearest previous pages", func(t *testing.T) {
+		scopeID := "pagination_" + uuid.NewString()
+		fileIDs := make([]string, 6)
+		for index := range fileIDs {
+			fileIDs[index] = createMetadataOnlyFile(t, app, scopeID)
+			defer softDeleteFile(t, app.db, fileIDs[index])
+		}
+
+		assertPageIDs := func(page pageResponse, want ...string) {
+			t.Helper()
+			if len(page.Data) != len(want) {
+				t.Fatalf("page length = %d, want %d: %+v", len(page.Data), len(want), page)
+			}
+			for index, fileID := range want {
+				if page.Data[index].ID != fileID {
+					t.Fatalf("page[%d].id = %s, want %s: %+v", index, page.Data[index].ID, fileID, page)
+				}
+			}
+		}
+
+		oldestPage := listFiles(t, app, "limit=2&scope_id="+scopeID+"&after_id="+fileIDs[2])
+		assertPageIDs(oldestPage, fileIDs[1], fileIDs[0])
+		if oldestPage.FirstID == nil {
+			t.Fatalf("oldest page is missing first_id: %+v", oldestPage)
+		}
+
+		middlePage := listFiles(t, app, "limit=2&scope_id="+scopeID+"&before_id="+*oldestPage.FirstID)
+		assertPageIDs(middlePage, fileIDs[3], fileIDs[2])
+		if !middlePage.HasMore || middlePage.FirstID == nil {
+			t.Fatalf("middle page should have an earlier page: %+v", middlePage)
+		}
+
+		newestPage := listFiles(t, app, "limit=2&scope_id="+scopeID+"&before_id="+*middlePage.FirstID)
+		assertPageIDs(newestPage, fileIDs[5], fileIDs[4])
+		if newestPage.HasMore {
+			t.Fatalf("newest page unexpectedly has more records: %+v", newestPage)
+		}
+	})
+
 	t.Run("success downloadable file returns bytes", func(t *testing.T) {
 		content := []byte("generated content")
 		fileID, objectKey := createDownloadableFile(t, app, "generated.txt", "text/plain", content)

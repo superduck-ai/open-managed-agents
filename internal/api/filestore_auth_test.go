@@ -139,6 +139,57 @@ func TestFilestoreAuthMiddlewareWritesFlatErrors(t *testing.T) {
 	}
 }
 
+func TestAuthenticateFilestoreOwnsProtocolError(t *testing.T) {
+	t.Parallel()
+
+	server := &Server{}
+	for _, test := range []struct {
+		name        string
+		request     *http.Request
+		wantStatus  int
+		wantCode    string
+		wantMessage string
+	}{
+		{
+			name:        "missing bearer token",
+			request:     httptest.NewRequest(http.MethodPost, filestoreAuthPaths[0], nil),
+			wantStatus:  http.StatusUnauthorized,
+			wantCode:    "unauthenticated",
+			wantMessage: "Invalid bearer token",
+		},
+		{
+			name: "authentication dependency unavailable",
+			request: newFilestoreBearerRequest(
+				http.MethodPost,
+				filestoreAuthPaths[0],
+				"not-a-jwt",
+			),
+			wantStatus:  http.StatusInternalServerError,
+			wantCode:    "internal",
+			wantMessage: "Authentication failed",
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			_, authErr := server.authenticateFilestore(test.request)
+			if authErr == nil {
+				t.Fatal("authenticateFilestore() error = nil")
+			}
+			if authErr.status != test.wantStatus ||
+				authErr.code != test.wantCode ||
+				authErr.message != test.wantMessage {
+				t.Fatalf(
+					"authenticateFilestore() error = %#v, want status=%d code=%q message=%q",
+					authErr,
+					test.wantStatus,
+					test.wantCode,
+					test.wantMessage,
+				)
+			}
+		})
+	}
+}
+
 func TestFilestoreJWTAuthentication(t *testing.T) {
 	database, cfg, fixture := newFilestoreAuthDatabaseFixture(t)
 	credentials := newFilestoreAuthCredentials(t)

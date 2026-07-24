@@ -436,6 +436,16 @@ func writeSessionLoadError(w http.ResponseWriter, r *http.Request, err error, se
 }
 
 func writeFileResourcePersistenceError(w http.ResponseWriter, r *http.Request, err error) bool {
+	var limitErr *db.SessionFileResourceLimitError
+	if errors.As(err, &limitErr) {
+		writeBadRequest(w, r, limitErr)
+		return true
+	}
+	var mountConflictErr *db.SessionFileMountConflictError
+	if errors.As(err, &mountConflictErr) {
+		writeBadRequest(w, r, errors.New("file resource mount_path conflicts with another Session file resource"))
+		return true
+	}
 	if errors.Is(err, db.ErrFileReferenceNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(
 			http.StatusNotFound,

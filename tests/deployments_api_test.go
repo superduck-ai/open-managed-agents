@@ -205,6 +205,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		env := createEnvironment(t, app, `{"name":"deployments-file-run-env"}`)
 		defer cleanupEnvironmentRows(t, app.db, env.ID)
 		file := uploadFile(t, app, "deployment-file-run.txt", "text/plain", []byte("deployment file run"))
+		defer deleteFile(t, app, file.ID)
 
 		created := createDeployment(
 			t,
@@ -215,12 +216,11 @@ func TestDeploymentsAPI(t *testing.T) {
 				`"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/deployment.txt"}]`,
 			),
 		)
+		defer cleanupDeploymentRows(t, app, created.ID)
 		run := runDeployment(t, app, created.ID)
 		if run.SessionID == nil || *run.SessionID == "" {
 			t.Fatalf("deployment run Session ID = nil: %+v", run)
 		}
-		defer cleanupDeploymentRows(t, app, created.ID)
-		defer deleteFile(t, app, file.ID)
 		defer deleteSession(t, app, *run.SessionID)
 
 		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceID, *run.SessionID)

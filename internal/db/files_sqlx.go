@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -370,6 +371,9 @@ func listFilesPageSQLX(
 	if hasMore {
 		files = files[:params.Limit]
 	}
+	if params.BeforeID != "" {
+		slices.Reverse(files)
+	}
 	return files, hasMore, nil
 }
 
@@ -465,7 +469,11 @@ func listFilesPageSQLXQuery(
 		arguments["cursor_created_at"] = cursor.CreatedAt
 		arguments["cursor_id"] = cursor.ID
 	}
-	query += " order by created_at desc, id desc limit :limit"
+	if params.BeforeID != "" {
+		query += " order by created_at asc, id asc limit :limit"
+	} else {
+		query += " order by created_at desc, id desc limit :limit"
+	}
 	return query, arguments
 }
 

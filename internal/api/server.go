@@ -162,16 +162,10 @@ func (s *Server) registerVersionedAPIRoutes(router chi.Router) {
 
 func (s *Server) filestoreAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		principal, apiErr := s.authenticateFilestore(r)
-		if apiErr != nil {
-			code := "unauthenticated"
-			message := "Invalid bearer token"
-			if apiErr.Status >= http.StatusInternalServerError {
-				code = "internal"
-				message = "Authentication failed"
-			}
+		principal, authErr := s.authenticateFilestore(r)
+		if authErr != nil {
 			// 鉴权发生在 Handler 之外，也必须维持 rclone-filestore 可识别的扁平错误信封。
-			filestoreapi.WriteProtocolError(w, apiErr.Status, code, message)
+			filestoreapi.WriteProtocolError(w, authErr.status, authErr.code, authErr.message)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(filestoreapi.WithPrincipal(r.Context(), principal)))

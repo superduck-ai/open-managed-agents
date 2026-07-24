@@ -58,6 +58,16 @@ type SessionThread struct {
 	DeletedAt              *time.Time
 }
 
+const (
+	// SessionResourceTypeFile identifies a Files API object attached to a
+	// Session. It is distinct from FilestoreEntryKindFile, which classifies
+	// filesystem nodes.
+	SessionResourceTypeFile = "file"
+	// MaxSessionFileResources is the write-time limit for active File resources
+	// attached to one Session.
+	MaxSessionFileResources = 100
+)
+
 type SessionResource struct {
 	ID                int64
 	UUID              string
@@ -153,12 +163,46 @@ type CreateSessionInput struct {
 	Work       EnvironmentWork
 }
 
+// CreateSessionResourceInput contains the normalized resource row and its
+// optional Filestore binding. CreateSessionResource applies all write-time
+// invariants while holding the owning Session row lock.
+type CreateSessionResourceInput struct {
+	Resource  SessionResource
+	FileMount *SessionFileMount
+}
+
 // SessionFileMount is the already-normalized database binding for one file
 // resource. Path is the full path inside the Session Filestore namespace.
 type SessionFileMount struct {
 	ResourceExternalID string
 	FileExternalID     string
 	Path               string
+}
+
+// SessionFileResourceLimitError reports that an atomic resource mutation would
+// exceed the maximum number of active File resources for one Session.
+type SessionFileResourceLimitError struct {
+	Limit int
+}
+
+func (e *SessionFileResourceLimitError) Error() string {
+	return fmt.Sprintf("at most %d managed-agent file resources are allowed", e.Limit)
+}
+
+// SessionFileMountConflictError reports a conflict between two active
+// Session-managed File resource paths. Conflicts with ordinary Filestore
+// entries continue to use ErrFilestorePathExists.
+type SessionFileMountConflictError struct {
+	Path            string
+	ConflictingPath string
+}
+
+func (e *SessionFileMountConflictError) Error() string {
+	return fmt.Sprintf(
+		"file resource mount path %q conflicts with active resource path %q",
+		e.Path,
+		e.ConflictingPath,
+	)
 }
 
 func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Session, SessionThread, []SessionResource, EnvironmentWork, error) {
@@ -526,10 +570,9 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceID int64, sessio
 
 func (d *DB) CreateSessionResource(
 	ctx context.Context,
-	resource SessionResource,
-	fileMount *SessionFileMount,
-	validate func([]SessionResource) error,
+	input CreateSessionResourceInput,
 ) (SessionResource, error) {
+	resource := input.Resource
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return SessionResource{}, err
@@ -545,20 +588,20 @@ func (d *DB) CreateSessionResource(
 	if err != nil {
 		return SessionResource{}, err
 	}
+	if session.ArchivedAt != nil {
+		return SessionResource{}, ErrInvalidState
+	}
 	if session.OrganizationID != resource.OrganizationID {
 		return SessionResource{}, ErrPreconditionFailed
 	}
-	existing, err := listSessionResourcesSQLX(
-		ctx,
-		tx,
-		listSessionResourcesQuery,
-		sessionLookupArguments(resource.WorkspaceID, resource.SessionExternalID),
-	)
-	if err != nil {
-		return SessionResource{}, err
-	}
-	if validate != nil {
-		if err := validate(append(existing, resource)); err != nil {
+	if resource.ResourceType == SessionResourceTypeFile {
+		if err := enforceSessionFileResourceCapacityTx(
+			ctx,
+			tx,
+			resource.WorkspaceID,
+			resource.SessionExternalID,
+			1,
+		); err != nil {
 			return SessionResource{}, err
 		}
 	}
@@ -566,8 +609,25 @@ func (d *DB) CreateSessionResource(
 	if err != nil {
 		return SessionResource{}, err
 	}
-	if err := bindSessionResourceFileTx(ctx, tx, session, created, fileMount); err != nil {
-		return SessionResource{}, err
+	if created.ResourceType != SessionResourceTypeFile {
+		if input.FileMount != nil {
+			return SessionResource{}, ErrPreconditionFailed
+		}
+	} else {
+		filesystem, err := lockSessionFilestoreMutationTx(ctx, tx, session)
+		if err != nil {
+			return SessionResource{}, err
+		}
+		if err := bindSessionFileResourceWithLockedFilesystemTx(
+			ctx,
+			tx,
+			session,
+			filesystem,
+			created,
+			input.FileMount,
+		); err != nil {
+			return SessionResource{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return SessionResource{}, err
@@ -618,6 +678,9 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceID int64, sessi
 	)
 	if err != nil {
 		return err
+	}
+	if session.ArchivedAt != nil {
+		return ErrInvalidState
 	}
 	resource, err := getSessionResourceForMutationSQLX(
 		ctx,

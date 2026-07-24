@@ -91,6 +91,10 @@
   padding-top: 58px;
 }
 
+.workbench-header-actions-prompt {
+  padding-left: 20px;
+}
+
 .workbench-mini-button {
   display: grid;
   width: 32px;

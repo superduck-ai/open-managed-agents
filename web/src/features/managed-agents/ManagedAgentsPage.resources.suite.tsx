@@ -2090,6 +2090,7 @@ export function registerManagedAgentsResourceTests() {
     expect(request?.body).toMatchObject({
       name: '中文环境',
       description: '用于测试',
+      scope: 'organization',
       metadata: {},
       config: {
         type: 'cloud',

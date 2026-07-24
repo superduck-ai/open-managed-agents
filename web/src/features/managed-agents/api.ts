@@ -1604,7 +1604,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
       return {
         name,
         description,
-        scope: 'workspace',
+        scope: 'organization',
         metadata: {},
         config: {
           type: 'cloud',

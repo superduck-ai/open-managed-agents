@@ -1130,9 +1130,15 @@ export function AgentStatusBadge({ archived }: { archived: boolean }) {
   );
 }
 
-export function StatusPill({ children }: { children: ReactNode }) {
+export function StatusPill({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'success' }) {
   return (
-    <Badge variant="secondary" className="h-6 rounded-md px-2 text-xs font-medium text-secondary-foreground">
+    <Badge
+      variant="secondary"
+      className={clsx(
+        'h-6 rounded-md px-2 text-xs font-medium',
+        tone === 'success' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'text-secondary-foreground',
+      )}
+    >
       {children}
     </Badge>
   );

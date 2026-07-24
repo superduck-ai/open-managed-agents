@@ -260,7 +260,9 @@ export function cellsForEntity(
   section: ManagedEntitySection,
   entity: ManagedEntityApiResponse,
 ): Record<string, ReactNode> {
-  const status = <StatusPill>{entityStatusLabel(entity)}</StatusPill>;
+  const status = (
+    <StatusPill tone={entityIsActive(entity) ? 'success' : 'neutral'}>{entityStatusLabel(entity)}</StatusPill>
+  );
 
   switch (section) {
     case 'sessions':
@@ -346,6 +348,18 @@ export function entityStatusLabel(entity: ManagedEntityApiResponse) {
     return titleCase(entity.state);
   }
   return 'Active';
+}
+
+export function entityIsActive(entity: ManagedEntityApiResponse) {
+  return entityStatusLabel(entity) === 'Active';
+}
+
+// statusPillTone maps an entity's active state to the StatusPill tone shared
+// across managed-entity detail views. Keeping this ternary in a helper keeps
+// inline conditional tone props out of JSX so they don't inflate the host
+// component's cyclomatic complexity.
+export function statusPillTone(entity: ManagedEntityApiResponse): 'neutral' | 'success' {
+  return entityIsActive(entity) ? 'success' : 'neutral';
 }
 
 export function entityAgentLabel(entity: ManagedEntityApiResponse) {

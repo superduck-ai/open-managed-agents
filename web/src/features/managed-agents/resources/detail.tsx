@@ -117,6 +117,7 @@ import {
   normalizeMemoryFolderPath,
   removeMemoryFromBranches,
   sortMemoryRows,
+  statusPillTone,
   triggerLabel,
   updateMemoryQueryParam,
   upsertMemoryInBranch,
@@ -312,7 +313,7 @@ export function ManagedEntityDetailPage({
             {config.section === 'environments' ? (
               <span className="text-foreground">{msg('managedAgents.environments.cloud', 'Cloud')}</span>
             ) : (
-              <StatusPill>{entityStatusLabel(entity)}</StatusPill>
+              <StatusPill tone={statusPillTone(entity)}>{entityStatusLabel(entity)}</StatusPill>
             )}
             <Button
               type="button"
@@ -1248,7 +1249,7 @@ export function MemoryStorePanel({
                 {store.name || store.id}
               </h1>
               <div className="mt-3">
-                <StatusPill>{entityStatusLabel(store)}</StatusPill>
+                <StatusPill tone={statusPillTone(store)}>{entityStatusLabel(store)}</StatusPill>
               </div>
             </div>
             {addMemoryButton}

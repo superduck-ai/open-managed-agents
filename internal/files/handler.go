@@ -258,6 +258,14 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
 		}
+		if errors.Is(err, db.ErrFileInUse) {
+			httpapi.WriteError(w, r, httpapi.NewError(
+				http.StatusConflict,
+				"conflict_error",
+				"File is referenced by an active session resource",
+			))
+			return
+		}
 		log.Printf("soft delete file: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete file"))
 		return

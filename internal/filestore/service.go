@@ -130,6 +130,9 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 	if apiErr := validateFilesystemAndPath(request.FilesystemID, request.Path, true); apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
+	if apiErr := requireWritePaths(principal, request.Path); apiErr != nil {
+		return directoryResponse{}, apiErr
+	}
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
@@ -150,6 +153,9 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 // RemoveDirectory 删除目录。重复删除视为成功，以满足文件系统客户端的幂等预期。
 func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, request removeDirectoryRequest) *apiError {
 	if apiErr := validateFilesystemAndPath(request.FilesystemID, request.Path, false); apiErr != nil {
+		return apiErr
+	}
+	if apiErr := requireWritePaths(principal, request.Path); apiErr != nil {
 		return apiErr
 	}
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
@@ -173,6 +179,9 @@ func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, requ
 // 使进程在“对象已写入、数据库尚未提交”之间崩溃时仍能回收孤儿对象。
 func (s *Service) CreateFile(ctx context.Context, principal Principal, params createFileParams, body io.Reader) (fileResponse, *apiError) {
 	if apiErr := validateCreateFileParams(params); apiErr != nil {
+		return fileResponse{}, apiErr
+	}
+	if apiErr := requireWritePaths(principal, params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	if body == nil {
@@ -258,6 +267,9 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr := validateFileTransferRequest(request); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
+	if apiErr := requireWritePaths(principal, request.Destination); apiErr != nil {
+		return fileResponse{}, apiErr
+	}
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
 		return fileResponse{}, apiErr
@@ -268,6 +280,9 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	}
 	if source.Kind != db.FilestoreEntryKindFile || source.S3Key == nil {
 		return fileResponse{}, failedPrecondition("source is not a file")
+	}
+	if source.SourceFileUUID != nil || source.ManagedBy != nil || source.ManagedResourceUUID != nil {
+		return fileResponse{}, failedPrecondition("managed files cannot be copied")
 	}
 	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
@@ -318,6 +333,9 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 	if apiErr := validateFileTransferRequest(request); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
+	if apiErr := requireWritePaths(principal, request.Source, request.Destination); apiErr != nil {
+		return fileResponse{}, apiErr
+	}
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
 		return fileResponse{}, apiErr
@@ -350,6 +368,9 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 	}
 	if isDescendant(request.Destination, request.Source) {
 		return directoryResponse{}, invalidArgument("destination must not be inside source")
+	}
+	if apiErr := requireWritePaths(principal, request.Source, request.Destination); apiErr != nil {
+		return directoryResponse{}, apiErr
 	}
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
@@ -408,6 +429,9 @@ func (s *Service) ReadFile(ctx context.Context, principal Principal, request rea
 // RemoveFile 软删除元数据并登记对象清理任务；重复删除按幂等成功处理。
 func (s *Service) RemoveFile(ctx context.Context, principal Principal, request pathRequest) *apiError {
 	if apiErr := validateFilesystemAndPath(request.FilesystemID, request.Path, false); apiErr != nil {
+		return apiErr
+	}
+	if apiErr := requireWritePaths(principal, request.Path); apiErr != nil {
 		return apiErr
 	}
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
@@ -600,6 +624,25 @@ func validateFileTransferRequest(request copyMoveFileRequest) *apiError {
 	}
 	if err := validateFilestorePath(request.Destination, false); err != nil {
 		return invalidArgument("destination: " + err.Error())
+	}
+	return nil
+}
+
+func requireWritePaths(principal Principal, paths ...string) *apiError {
+	if len(principal.WritePrefixes) == 0 {
+		return nil
+	}
+	for _, entryPath := range paths {
+		allowed := false
+		for _, prefix := range principal.WritePrefixes {
+			if entryPath == prefix || isDescendant(entryPath, prefix) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return permissionDenied("Filestore token does not grant write access to this path")
+		}
 	}
 	return nil
 }

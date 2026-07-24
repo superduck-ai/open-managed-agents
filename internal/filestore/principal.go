@@ -24,6 +24,7 @@ type Principal struct {
 	FilesystemUUID       string
 	FilesystemExternalID string
 	Readonly             bool
+	WritePrefixes        []string
 	// OrganizationTaints 是已经与数据库现值核对过的组织级安全与合规标签，
 	// 供资源层后续策略判断使用；当前不直接改变文件操作权限。
 	OrganizationTaints []string

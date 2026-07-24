@@ -24,12 +24,35 @@ func (s *Server) authenticateService(r *http.Request) (auth.Principal, *httpapi.
 	return s.authenticateScopedServiceCredential(r, apiKey)
 }
 
+type filestoreProtocolError struct {
+	status  int
+	code    string
+	message string
+}
+
+func invalidFilestoreBearerToken() *filestoreProtocolError {
+	return &filestoreProtocolError{
+		status:  http.StatusUnauthorized,
+		code:    "unauthenticated",
+		message: "Invalid bearer token",
+	}
+}
+
+func filestoreAuthenticationFailed() *filestoreProtocolError {
+	return &filestoreProtocolError{
+		status:  http.StatusInternalServerError,
+		code:    "internal",
+		message: "Authentication failed",
+	}
+}
+
 // authenticateFilestore 是 Filestore 命名空间的唯一鉴权入口。
 // 该资源只接受专用 Bearer JWT，既不复用 workspace API key，也不回退到 code-session 凭证。
-func (s *Server) authenticateFilestore(r *http.Request) (filestoreapi.Principal, *httpapi.Error) {
+// 所有失败都在这里确定 Filestore 线协议的 status、code 和 message；middleware 只负责写出。
+func (s *Server) authenticateFilestore(r *http.Request) (filestoreapi.Principal, *filestoreProtocolError) {
 	rawToken := auth.ExtractBearerToken(r)
 	if rawToken == "" {
-		return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing bearer token")
+		return filestoreapi.Principal{}, invalidFilestoreBearerToken()
 	}
 	return s.authenticateFilestoreToken(r, rawToken)
 }
@@ -110,13 +133,13 @@ func (s *Server) authenticateCodeSessionMessagesCredential(r *http.Request, apiK
 	return principalFromCodeSessionCredential(codeSession, auth.CredentialTypeCodeSessionOAuth), nil
 }
 
-func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (filestoreapi.Principal, *httpapi.Error) {
+func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (filestoreapi.Principal, *filestoreProtocolError) {
 	if s.filestoreCredentials == nil || s.db == nil {
-		return filestoreapi.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+		return filestoreapi.Principal{}, filestoreAuthenticationFailed()
 	}
 	claims, err := s.filestoreCredentials.Verify(rawToken)
 	if err != nil {
-		return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		return filestoreapi.Principal{}, invalidFilestoreBearerToken()
 	}
 	scope, err := s.db.ResolveFilestoreTokenScope(
 		r.Context(),
@@ -129,17 +152,17 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 	)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
+			return filestoreapi.Principal{}, invalidFilestoreBearerToken()
 		}
 		log.Printf("resolve filestore token scope: %v", err)
-		return filestoreapi.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+		return filestoreapi.Principal{}, filestoreAuthenticationFailed()
 	}
 	// 签名只证明签发时的快照未被篡改；组织 taints 与 CMEK 配置状态还须匹配数据库现值。
 	// 因此策略变更后，旧 token 会在下一次请求时失效，不能继续携带过期的租户安全属性。
 	// 这里校验的是 CMEK 配置状态；具体密钥选择和 S3 加密参数仍属于对象存储边界。
 	if !filestoreapi.OrgTaintsEqual(scope.OrgTaints, claims.OrgTaints) ||
 		scope.WorkspaceCMEKEnabled != claims.WorkspaceCMEKEnabled {
-		return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		return filestoreapi.Principal{}, invalidFilestoreBearerToken()
 	}
 	readonly := claims.Readonly != nil && *claims.Readonly
 	return filestoreapi.Principal{
@@ -157,6 +180,7 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 		FilesystemUUID:         scope.FilesystemUUID,
 		FilesystemExternalID:   scope.FilesystemExternalID,
 		Readonly:               readonly,
+		WritePrefixes:          append([]string(nil), claims.WritePrefixes...),
 		OrganizationTaints:     append([]string(nil), claims.OrgTaints...),
 		WorkspaceCMEKEnabled:   claims.WorkspaceCMEKEnabled,
 	}, nil

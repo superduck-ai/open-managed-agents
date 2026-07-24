@@ -24,7 +24,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -108,7 +107,7 @@ func TestSessionsAPI(t *testing.T) {
 			"title":"Order #1234 inquiry",
 			"metadata":{"case":"1234"},
 			"resources":[
-				{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/mnt/data/session-resource.txt"},
+				{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/session-resource.txt"},
 				{"type":"memory_store","memory_store_id":`+quoteJSON(memoryStore.ID)+`,"name":"memory"}
 			]
 		}`)
@@ -192,6 +191,79 @@ func TestSessionsAPI(t *testing.T) {
 		resp = doSessionRequest(t, app, http.MethodGet, "/v1/sessions/"+created.ID+"?beta=true", nil, defaultTestKey, true)
 		assertError(t, resp, http.StatusNotFound, "not_found_error")
 	})
+}
+
+func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("archived-session-resources-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"archived-session-resource-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"archived-session-resource-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	created := createSession(t, app, `{
+		"agent":`+quoteJSON(agent.ID)+`,
+		"environment_id":`+quoteJSON(env.ID)+`,
+		"resources":[{
+			"type":"github_repository",
+			"url":"https://github.com/example/repository",
+			"mount_path":"/workspace/repository"
+		}]
+	}`)
+	defer deleteSession(t, app, created.ID)
+
+	session := mustSessionRecord(t, app, created.ID)
+	resources, err := app.db.ListSessionResources(context.Background(), session.WorkspaceID, session.ExternalID)
+	if err != nil {
+		t.Fatalf("list Session resources: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("Session resources = %+v, want one", resources)
+	}
+	archiveSession(t, app, created.ID)
+
+	t.Run("failure add resource", func(t *testing.T) {
+		resp := doSessionRequest(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/sessions/"+created.ID+"/resources?beta=true",
+			strings.NewReader(`{
+				"type":"github_repository",
+				"url":"https://github.com/example/second",
+				"mount_path":"/workspace/second"
+			}`),
+			defaultTestKey,
+			true,
+		)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("failure delete resource", func(t *testing.T) {
+		resp := doSessionRequest(
+			t,
+			app,
+			http.MethodDelete,
+			"/v1/sessions/"+created.ID+"/resources/"+resources[0].ExternalID+"?beta=true",
+			nil,
+			defaultTestKey,
+			true,
+		)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+}
+
+func mustSessionRecord(t *testing.T, app *testApp, sessionExternalID string) db.Session {
+	t.Helper()
+	session, err := app.db.GetSession(
+		context.Background(),
+		getDefaultDBIDs(t, app.db).WorkspaceID,
+		sessionExternalID,
+	)
+	if err != nil {
+		t.Fatalf("load Session %q: %v", sessionExternalID, err)
+	}
+	return session
 }
 
 func TestSessionsEnvironmentKeyAccess(t *testing.T) {
@@ -3421,8 +3493,11 @@ func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string
 	t.Helper()
 	ctx := context.Background()
 	cfg := app.cfg
+	if strings.TrimSpace(cfg.CodeSession.SandboxAPIBaseURL) == "" {
+		cfg.CodeSession.SandboxAPIBaseURL = "http://sandbox-api.example.test"
+	}
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-" + strings.TrimPrefix(sessionID, "sesn_")}
-	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
+	runner := newManagedAgentRunner(app, provider, cfg, nil)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		processed, err := runner.RunOnce(ctx, "sessions-code-session-test")

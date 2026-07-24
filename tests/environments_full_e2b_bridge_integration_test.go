@@ -1,22 +1,24 @@
-//go:build e2b_integration
+//go:build e2e
 
 package tests
 
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
+
+const fullE2BManagedAgentSandboxImage = "registry.gz.cvte.cn/oma/managed-agent-sandbox:latest"
 
 func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	if testing.Short() {
@@ -30,7 +32,9 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	cfg.E2B.Template = fullE2BManagedAgentSandboxImage
 	requireFullE2BBridgeConfig(t, cfg)
+	t.Logf("Testing managed-agent sandbox image %s", cfg.E2B.Template)
 	if cfg.E2B.RequestTimeout < 2*time.Minute {
 		cfg.E2B.RequestTimeout = 2 * time.Minute
 	}
@@ -38,7 +42,9 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 		cfg.E2B.SandboxTimeout = 2 * time.Minute
 	}
 
-	app := newTestAppWithStore(t, &cfg, newFakeStore("full-e2b-bridge-bucket"))
+	// The sandbox reaches Filestore through the configured external ingress,
+	// so the test app and that ingress must share the configured object store.
+	app := newTestApp(t, &cfg)
 	defer app.close()
 	quickstartEnsureSandboxIngress(t, app)
 	cfg = app.cfg
@@ -88,7 +94,35 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+	var uploadedFileID string
+	defer func() {
+		if _, deleteErr := client.Beta.Sessions.Delete(
+			context.Background(),
+			session.ID,
+			anthropic.BetaSessionDeleteParams{},
+		); deleteErr != nil {
+			t.Errorf("delete E2B session during cleanup: %v", deleteErr)
+		}
+		if uploadedFileID != "" {
+			deleteFile(t, app, uploadedFileID)
+		}
+	}()
+
+	file := uploadFile(t, app, "e2b-data.csv", "text/csv", []byte("name,value\nalpha,1\n"))
+	uploadedFileID = file.ID
+	resourceResponse := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/resources?beta=true",
+		strings.NewReader(fmt.Sprintf(`{"type":"file","file_id":%q,"mount_path":"/workspace/data.csv"}`, file.ID)),
+		defaultTestKey,
+		true,
+	)
+	defer resourceResponse.Body.Close()
+	if resourceResponse.StatusCode != http.StatusOK {
+		t.Fatalf("add E2B file resource status = %d: %s", resourceResponse.StatusCode, readAll(t, resourceResponse.Body))
+	}
 
 	workID := quickstartFindSessionEnvironmentWorkID(t, app, environment.ID, session.ID)
 
@@ -103,7 +137,7 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 		}
 	}()
 
-	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
+	runner := newManagedAgentRunner(app, provider, cfg, nil)
 	processed, err := runner.RunOnce(ctx, "full-e2b-bridge-test")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)
@@ -124,6 +158,22 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	if strings.TrimSpace(providerSandboxID) == "" {
 		t.Fatal("provider sandbox id was not recorded")
 	}
+	sandboxRecord, err := app.db.GetActiveEnvironmentSandboxForWork(
+		ctx,
+		getDefaultDBIDs(t, app.db).WorkspaceID,
+		environment.ID,
+		workID,
+	)
+	if err != nil {
+		t.Fatalf("load active E2B sandbox record: %v", err)
+	}
+	if sandboxRecord.Template != fullE2BManagedAgentSandboxImage {
+		t.Fatalf(
+			"E2B sandbox template = %q, want %q",
+			sandboxRecord.Template,
+			fullE2BManagedAgentSandboxImage,
+		)
+	}
 
 	sandbox, err := e2b.Connect(ctx, providerSandboxID, &e2b.SandboxConnectOpts{
 		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(cfg.E2B),
@@ -132,6 +182,7 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 		t.Fatalf("connect to real sandbox %s: %v", providerSandboxID, err)
 	}
 
+	assertE2BFilestoreMounts(t, ctx, sandbox)
 	probe := waitForEnvironmentManagerProcess(t, ctx, sandbox, codeSessionID)
 	t.Logf("environment-manager started for code session %s in sandbox %s:\n%s", codeSessionID, providerSandboxID, probe)
 
@@ -139,17 +190,44 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	stopped = true
 }
 
+func assertE2BFilestoreMounts(t *testing.T, ctx context.Context, sandbox *e2b.Sandbox) {
+	t.Helper()
+	command := `
+set -eu
+test -x /opt/rclone/rclone-filestore
+test ! -e /tmp/rclone-mount-config.json
+test "$(cat /mnt/session/uploads/workspace/data.csv)" = "name,value
+alpha,1"
+printf 'output-ok\n' > /mnt/user-data/outputs/e2b-output.txt
+test "$(cat /mnt/user-data/outputs/e2b-output.txt)" = "output-ok"
+for target in \
+	/mnt/session/uploads/e2b-readonly-test \
+	/mnt/transcripts/e2b-readonly-test \
+	/mnt/user-data/tool_results/e2b-readonly-test \
+	/mnt/session/uploads/workspace/data.csv
+do
+	if printf 'must-fail\n' > "$target"; then
+		echo "readonly write unexpectedly succeeded: $target" >&2
+		exit 1
+	fi
+done
+printf 'e2b-filestore-ok\n'
+`
+	stdout, stderr, err := runE2BCommand(ctx, sandbox, command, 30*time.Second)
+	if err != nil {
+		t.Fatalf("verify real E2B filestore mounts: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "e2b-filestore-ok") {
+		t.Fatalf("real E2B filestore probe did not finish:\nstdout=%s\nstderr=%s", stdout, stderr)
+	}
+}
+
 func requireFullE2BBridgeConfig(t *testing.T, cfg config.Config) {
 	t.Helper()
-	if strings.TrimSpace(cfg.E2B.APIKey) == "" && !cfg.E2B.Debug {
-		t.Skip("e2b.api_key is required in config/config.yaml for this real integration test")
+	if !quickstartShouldRunRealSandbox(cfg) {
+		t.Skip("hosted E2B credentials or a complete local E2B gateway configuration is required for this real integration test")
 	}
-	if cfg.E2B.Debug {
-		t.Skip("e2b.debug must be false for this real integration test")
-	}
-	if baseURL := quickstartConfiguredSandboxIngressBaseURL(cfg); quickstartLooksLikeLoopbackURL(baseURL) {
-		t.Fatalf("code session ingress URL used inside E2B must be reachable from inside E2B, got %q", baseURL)
-	}
+	quickstartRequireRealSandboxConfig(t, cfg)
 }
 
 func waitForEnvironmentManagerProcess(t *testing.T, ctx context.Context, sandbox *e2b.Sandbox, codeSessionID string) string {

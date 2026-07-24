@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -27,6 +28,200 @@ func TestCodeSessionSandboxAPIBaseURLUsesConfiguredValue(t *testing.T) {
 
 	if baseURL := codeSessionSandboxAPIBaseURL(cfg); baseURL != "http://sandbox-api.example.test" {
 		t.Fatalf("codeSessionSandboxAPIBaseURL() = %q, want configured value", baseURL)
+	}
+}
+
+func managedAgentRuntimeSourceValues(
+	t *testing.T,
+	sources []json.RawMessage,
+) []any {
+	t.Helper()
+	raw, err := json.Marshal(sources)
+	if err != nil {
+		t.Fatalf("marshal runtime sources: %v", err)
+	}
+	var values []any
+	if err := json.Unmarshal(raw, &values); err != nil {
+		t.Fatalf("decode runtime sources: %v", err)
+	}
+	return values
+}
+
+func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ResourceType: "file",
+			Payload:      json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory"}`),
+		},
+		{
+			ResourceType: "future_resource",
+			Payload:      json.RawMessage(`{"type":"future_resource","mount_path":"/workspace/future"}`),
+		},
+	}
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != defaultEnvironmentWorkDir {
+		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, defaultEnvironmentWorkDir)
+	}
+}
+
+func TestManagedAgentWorkDirSkipsInvalidRepositoryCandidates(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ID:           1,
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":`),
+		},
+		{
+			ID:           2,
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"  "}`),
+		},
+	}
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != defaultEnvironmentWorkDir {
+		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, defaultEnvironmentWorkDir)
+	}
+
+	resources = append(resources, db.SessionResource{
+		ID:           3,
+		ResourceType: "github_repository",
+		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/valid"}`),
+	})
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/valid" {
+		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/valid")
+	}
+}
+
+func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T) {
+	repository := db.SessionResource{
+		ID:           2,
+		ResourceType: "github_repository",
+		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":" /workspace/repository "}`),
+	}
+	file := db.SessionResource{
+		ID:           1,
+		ResourceType: "file",
+		Payload:      json.RawMessage(`{"type":"file","mount_path":"/workspace/data.csv"}`),
+	}
+	memoryStore := db.SessionResource{
+		ID:           3,
+		ResourceType: "memory_store",
+		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/workspace/memory"}`),
+	}
+	for name, resources := range map[string][]db.SessionResource{
+		"repository first": {repository, file, memoryStore},
+		"repository last":  {memoryStore, file, repository},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/repository" {
+				t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/repository")
+			}
+		})
+	}
+}
+
+func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
+	createdAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+	first := db.SessionResource{
+		ID:           10,
+		ExternalID:   "sesrsc_first",
+		ResourceType: "github_repository",
+		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/first"}`),
+		CreatedAt:    createdAt,
+	}
+	later := db.SessionResource{
+		ID:           11,
+		ExternalID:   "sesrsc_later",
+		ResourceType: "github_repository",
+		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/later"}`),
+		CreatedAt:    createdAt.Add(time.Minute),
+	}
+	sameTimeLater := later
+	sameTimeLater.CreatedAt = createdAt
+
+	for name, resources := range map[string][]db.SessionResource{
+		"reverse list order":      {later, first},
+		"forward list order":      {first, later},
+		"same timestamp uses id":  {sameTimeLater, first},
+		"same timestamp reversed": {first, sameTimeLater},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/first" {
+				t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/first")
+			}
+		})
+	}
+}
+
+func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ResourceType: "file",
+			Payload:      json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}`),
+		},
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":" https://github.com/acme/widgets ","mount_path":" /workspace/widgets ","checkout":"main"}`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory","runtime_extension":{"enabled":true}}`),
+		},
+	}
+
+	want := []any{
+		map[string]any{
+			"type":       "git_repository",
+			"url":        "https://github.com/acme/widgets",
+			"mount_path": "/workspace/widgets",
+			"checkout":   "main",
+		},
+		map[string]any{
+			"type":            "memory_store",
+			"memory_store_id": "mem_test",
+			"mount_path":      "/workspace/memory",
+			"runtime_extension": map[string]any{
+				"enabled": true,
+			},
+		},
+	}
+	sources := managedAgentRuntimeSourceValues(
+		t,
+		resolveManagedAgentRuntimeResources(resources).sources,
+	)
+	if !reflect.DeepEqual(sources, want) {
+		t.Fatalf("managedAgentSources() = %#v, want %#v", sources, want)
+	}
+}
+
+func TestManagedAgentRuntimeResourcesSkipInvalidSources(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":`),
+		},
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":"  ","mount_path":"/workspace/empty-url"}`),
+		},
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/empty-path","mount_path":"  "}`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`null`),
+		},
+	}
+
+	if sources := resolveManagedAgentRuntimeResources(resources).sources; len(sources) != 0 {
+		t.Fatalf("managedAgentSources() = %#v, want no sources", sources)
 	}
 }
 
@@ -326,7 +521,7 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 		VaultIDs: json.RawMessage(`["vault_cred_123"]`),
 	}
 
-	raw := managedAgentSessionConfig(session, nil)
+	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode session config: %v", err)

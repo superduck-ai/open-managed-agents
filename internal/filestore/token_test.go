@@ -36,6 +36,8 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 	readonlyFalseClaims["readonly"] = false
 	readonlyNullClaims := decodeFilestoreTokenPayload(t, validToken)
 	readonlyNullClaims["readonly"] = nil
+	invalidWritePrefixesClaims := decodeFilestoreTokenPayload(t, validToken)
+	invalidWritePrefixesClaims["write_prefixes"] = []string{"relative"}
 
 	for _, test := range []struct {
 		name  string
@@ -51,6 +53,7 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 		{name: "missing expiry", token: signFilestoreTokenPayload(t, credentials, missingExpiryClaims)},
 		{name: "readonly false", token: signFilestoreTokenPayload(t, credentials, readonlyFalseClaims)},
 		{name: "readonly null", token: signFilestoreTokenPayload(t, credentials, readonlyNullClaims)},
+		{name: "invalid write prefix", token: signFilestoreTokenPayload(t, credentials, invalidWritePrefixesClaims)},
 		{name: "not a jwt", token: "not-a-jwt"},
 	} {
 		test := test
@@ -66,6 +69,28 @@ func TestTokenCredentialsRejectInvalidTokens(t *testing.T) {
 	incomplete.FilesystemID = ""
 	if _, err := credentials.Issue(incomplete); err == nil {
 		t.Fatal("Issue() succeeded with missing filesystem_id")
+	}
+}
+
+func TestTokenCredentialsPreserveCanonicalWritePrefixes(t *testing.T) {
+	t.Parallel()
+
+	credentials := newTokenCredentialsForTest(t)
+	identity := filestoreTokenIdentityForTest()
+	identity.WritePrefixes = []string{"/outputs/archive", "/outputs", "/outputs"}
+
+	rawToken := mustIssueFilestoreToken(t, credentials, identity)
+	payload := decodeFilestoreTokenPayload(t, rawToken)
+	prefixes, ok := payload["write_prefixes"].([]any)
+	if !ok || len(prefixes) != 2 || prefixes[0] != "/outputs" || prefixes[1] != "/outputs/archive" {
+		t.Fatalf("write_prefixes = %#v", payload["write_prefixes"])
+	}
+	claims, err := credentials.Verify(rawToken)
+	if err != nil {
+		t.Fatalf("verify scoped token: %v", err)
+	}
+	if len(claims.WritePrefixes) != 2 || claims.WritePrefixes[0] != "/outputs" || claims.WritePrefixes[1] != "/outputs/archive" {
+		t.Fatalf("verified write prefixes = %#v", claims.WritePrefixes)
 	}
 }
 

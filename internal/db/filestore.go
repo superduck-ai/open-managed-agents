@@ -79,6 +79,7 @@ type ProvisionFilestoreFilesystemInput struct {
 
 // FilestoreEntry 是目录树中的一个持久化节点。
 // 目录字段保持为空；文件字段指向对象存储中的一个不可变对象版本。
+// Managed 字段标识由 Session File resource 管理且借用 Files API 对象的条目。
 type FilestoreEntry struct {
 	ID                       int64
 	UUID                     string
@@ -103,6 +104,9 @@ type FilestoreEntry struct {
 	S3ETag                   *string
 	S3VersionID              *string
 	ExpiresAt                *time.Time
+	ManagedBy                *string
+	ManagedResourceUUID      *string
+	SourceFileUUID           *string
 	CreatedByAPIKeyUUID      *string
 	CreatedBySessionUUID     *string
 	CreatedByCodeSessionUUID *string

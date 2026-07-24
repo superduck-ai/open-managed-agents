@@ -81,7 +81,7 @@ func ExtractPlatformSessionKey(r *http.Request) string
 
 worker、session ingress、OTLP 与 upstream proxy 不走通用 OAuth-compatible fallback。它们统一校验 `sk-ant-si-<JWT>` 的固定 EdDSA 算法、`kid`、签名、issuer、audience，以及 JWT `session_id` 与请求路径的绑定。新 JWT 不设置独立 `exp`，也不携带 repository/resource sources。大多数 ingress handler 把 claims 作为签名身份快照，并由对应 handler 执行 worker epoch、heartbeat grace 等状态约束；OTLP 还要求当前 worker epoch 与未过期 lease。这条 code-session ingress 合同未因 Filestore 而改动。
 
-Filestore 是显式例外：`/v1/filestore` 通过独立中间件验证 `Authorization: Bearer` 中的原始 compact JWT，只接受 Filestore 专用凭证；`X-Api-Key`、workspace API key、`sk-ant-oat01-` OAuth-compatible token 和 `sk-ant-si-` session-ingress JWT 都不会进入 Filestore。Filestore JWT 使用独立 claims 与验证器，并回查活跃的 organization、account、workspace 和单个 filesystem；`org_taints` 与 `workspace_cmek_enabled` 还必须与当前策略一致。鉴权结果被映射为资源专用的 `filestore.Principal`，通过独立 context key 传入 handler；全局 `auth.Principal` 不承载 Filestore 专属字段。Filestore 鉴权失败使用其 wire contract 要求的扁平 `{code,message}`，不使用 Anthropic error envelope；通过鉴权后的未知操作或错误方法也由 Filestore handler 输出同一错误外观。
+Filestore 是显式例外：`/v1/filestore` 通过独立中间件验证 `Authorization: Bearer` 中的原始 compact JWT，只接受 Filestore 专用凭证；`X-Api-Key`、workspace API key、`sk-ant-oat01-` OAuth-compatible token 和 `sk-ant-si-` session-ingress JWT 都不会进入 Filestore。Filestore JWT 使用独立 claims 与验证器，并回查活跃的 organization、account、workspace 和单个 filesystem；`org_taints` 与 `workspace_cmek_enabled` 还必须与当前策略一致。鉴权结果被映射为资源专用的 `filestore.Principal`，通过独立 context key 传入 handler；全局 `auth.Principal` 不承载 Filestore 专属字段。Filestore 鉴权失败使用其 wire contract 要求的扁平 `{code,message}`，不使用 Anthropic error envelope；鉴权函数是 status、code 和 message 的唯一所有者，中间件只把该专用错误原样写入协议响应，不再按 HTTP status 二次生成错误语义。通过鉴权后的未知操作或错误方法也由 Filestore handler 输出同一错误外观。
 
 ### 2.3 路由决策表
 

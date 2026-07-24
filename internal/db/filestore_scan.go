@@ -62,7 +62,9 @@ func filestoreEntryColumns() string {
 		size_bytes, media_type, detected_mime_type, metadata, authorization_metadata,
 		cast(coalesce(to_jsonb(tags), cast('[]' as jsonb)) as text) as tags_json,
 		downloadable, md5, sha256, s3_bucket, s3_key, s3_etag, s3_version_id,
-		expires_at, cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
+		expires_at, managed_by, cast(managed_resource_uuid as text) as managed_resource_uuid,
+		cast(source_file_uuid as text) as source_file_uuid,
+		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
 		cast(created_by_session_uuid as text) as created_by_session_uuid,
 		cast(created_by_code_session_uuid as text) as created_by_code_session_uuid,
 		created_at, updated_at, deleted_at`
@@ -81,6 +83,8 @@ func scanFilestoreEntryPGX(row filestorePGXScanner) (FilestoreEntry, error) {
 		&databaseRow.AuthorizationMetadata, &databaseRow.TagsJSON, &databaseRow.Downloadable,
 		&databaseRow.MD5, &databaseRow.SHA256, &databaseRow.S3Bucket, &databaseRow.S3Key,
 		&databaseRow.S3ETag, &databaseRow.S3VersionID, &databaseRow.ExpiresAt,
+		&databaseRow.ManagedBy, &databaseRow.ManagedResourceUUID,
+		&databaseRow.SourceFileUUID,
 		&databaseRow.CreatedByAPIKeyUUID, &databaseRow.CreatedBySessionUUID,
 		&databaseRow.CreatedByCodeSessionUUID, &databaseRow.CreatedAt, &databaseRow.UpdatedAt,
 		&databaseRow.DeletedAt)

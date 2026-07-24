@@ -64,6 +64,9 @@ type filestoreEntryRow struct {
 	S3ETag                   *string    `db:"s3_etag"`
 	S3VersionID              *string    `db:"s3_version_id"`
 	ExpiresAt                *time.Time `db:"expires_at"`
+	ManagedBy                *string    `db:"managed_by"`
+	ManagedResourceUUID      *string    `db:"managed_resource_uuid"`
+	SourceFileUUID           *string    `db:"source_file_uuid"`
 	CreatedByAPIKeyUUID      *string    `db:"created_by_api_key_uuid"`
 	CreatedBySessionUUID     *string    `db:"created_by_session_uuid"`
 	CreatedByCodeSessionUUID *string    `db:"created_by_code_session_uuid"`
@@ -263,6 +266,9 @@ func (row filestoreEntryRow) entry() (FilestoreEntry, error) {
 		S3ETag:                   row.S3ETag,
 		S3VersionID:              row.S3VersionID,
 		ExpiresAt:                row.ExpiresAt,
+		ManagedBy:                row.ManagedBy,
+		ManagedResourceUUID:      row.ManagedResourceUUID,
+		SourceFileUUID:           row.SourceFileUUID,
 		CreatedByAPIKeyUUID:      row.CreatedByAPIKeyUUID,
 		CreatedBySessionUUID:     row.CreatedBySessionUUID,
 		CreatedByCodeSessionUUID: row.CreatedByCodeSessionUUID,

@@ -106,6 +106,9 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 	if source.Kind != FilestoreEntryKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
+	if filestoreEntryIsManaged(source) {
+		return FilestoreMutationResult{}, ErrPreconditionFailed
+	}
 	if input.ExpectedSourceS3Key != "" && filestoreString(source.S3Key) != input.ExpectedSourceS3Key {
 		// 对象复制发生在数据库事务之外；以对象键和版本号作乐观锁，拒绝陈旧副本落库。
 		return FilestoreMutationResult{}, ErrVersionConflict
@@ -164,6 +167,9 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		}
 		return FilestoreMutationResult{Entry: source}, nil
 	}
+	if filestoreEntryIsManaged(source) {
+		return FilestoreMutationResult{}, ErrFilestoreInvalidMove
+	}
 	if err := requireFilestoreDirectoryTx(ctx, tx, filesystem, filestoreParentPath(input.DestinationPath)); err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -178,6 +184,9 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		return FilestoreMutationResult{}, err
 	}
 	if found {
+		if filestoreEntryIsManaged(destination) {
+			return FilestoreMutationResult{}, ErrPreconditionFailed
+		}
 		if !filestoreEntryExpired(destination, databaseNow) {
 			if destination.Kind != FilestoreEntryKindFile {
 				return FilestoreMutationResult{}, ErrFilestorePathExists
@@ -255,6 +264,9 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 		filestorePathIsDescendant(input.SourcePath, input.DestinationPath) {
 		return FilestoreMutationResult{}, ErrFilestoreInvalidMove
 	}
+	if err := validateFilestoreDirectoryMoveRoots(input.SourcePath, input.DestinationPath); err != nil {
+		return FilestoreMutationResult{}, err
+	}
 	input.Now = filestoreNow(input.Now)
 	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
 	if err != nil {
@@ -274,6 +286,18 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 			return FilestoreMutationResult{}, err
 		}
 		return FilestoreMutationResult{Entry: source}, nil
+	}
+	containsManagedEntry, err := filestoreSubtreeContainsManagedEntryTx(
+		ctx,
+		tx,
+		filesystem,
+		input.SourcePath,
+	)
+	if err != nil {
+		return FilestoreMutationResult{}, err
+	}
+	if containsManagedEntry {
+		return FilestoreMutationResult{}, ErrFilestoreInvalidMove
 	}
 	if err := requireFilestoreDirectoryTx(ctx, tx, filesystem, filestoreParentPath(input.DestinationPath)); err != nil {
 		return FilestoreMutationResult{}, err
@@ -397,6 +421,9 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveFilestoreEntry
 	if entry.Kind != FilestoreEntryKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
+	if filestoreEntryIsManaged(entry) {
+		return FilestoreMutationResult{}, ErrPreconditionFailed
+	}
 	job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
 		WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 	}, entry, "remove_file", input.Now)
@@ -434,8 +461,8 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	if err := validateFilestorePath(input.Path); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if input.Path == "/" {
-		return FilestoreMutationResult{}, ErrFilestoreInvalidMove
+	if err := validateFilestoreDirectoryRemovalRoot(input.Path); err != nil {
+		return FilestoreMutationResult{}, err
 	}
 	input.Now = filestoreNow(input.Now)
 	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
@@ -449,6 +476,13 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	}
 	if entry.Kind != FilestoreEntryKindDirectory {
 		return FilestoreMutationResult{}, ErrFilestoreNotDirectory
+	}
+	containsManagedEntry, err := filestoreSubtreeContainsManagedEntryTx(ctx, tx, filesystem, input.Path)
+	if err != nil {
+		return FilestoreMutationResult{}, err
+	}
+	if containsManagedEntry {
+		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
 
 	var childCount int

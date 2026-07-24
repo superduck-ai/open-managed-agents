@@ -19,14 +19,17 @@ const (
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
 )
 
-func managedAgentSessionConfig(session db.Session, resources []db.SessionResource) json.RawMessage {
+func managedAgentSessionConfig(
+	session db.Session,
+	runtimeResources managedAgentRuntimeResources,
+) json.RawMessage {
 	agentSnapshot := rawJSONObject(session.AgentSnapshot)
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
 	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
 		"origin":   "managed_agents_api",
 		"model":    modelIDFromAgentSnapshot(session.AgentSnapshot),
-		"sources":  managedAgentSources(resources),
+		"sources":  runtimeResources.sources,
 		"outcomes": []any{},
 	}
 	if len(mcpServers) > 0 {
@@ -201,44 +204,6 @@ func mapStringAnyValue(value any) map[string]any {
 func arrayValue(value any) []any {
 	values, _ := value.([]any)
 	return values
-}
-
-func managedAgentWorkDir(resources []db.SessionResource) string {
-	for _, resource := range resources {
-		var payload map[string]any
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
-			continue
-		}
-		if mountPath, ok := payload["mount_path"].(string); ok && strings.TrimSpace(mountPath) != "" {
-			return strings.TrimSpace(mountPath)
-		}
-	}
-	return defaultEnvironmentWorkDir
-}
-
-func managedAgentSources(resources []db.SessionResource) []any {
-	sources := make([]any, 0, len(resources))
-	for _, resource := range resources {
-		var payload map[string]any
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
-			continue
-		}
-		switch resource.ResourceType {
-		case "github_repository":
-			source := map[string]any{
-				"type":       "git_repository",
-				"url":        stringFromMap(payload, "url"),
-				"mount_path": stringFromMap(payload, "mount_path"),
-			}
-			if checkout, ok := payload["checkout"]; ok {
-				source["checkout"] = checkout
-			}
-			sources = append(sources, source)
-		case "file", "memory_store":
-			sources = append(sources, payload)
-		}
-	}
-	return sources
 }
 
 func modelIDFromAgentSnapshot(raw json.RawMessage) string {

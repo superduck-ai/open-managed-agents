@@ -619,6 +619,24 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		Now: now,
 	})
 	if err != nil {
+		if errors.Is(err, db.ErrFileReferenceNotFound) {
+			h.writeRunReferenceFailure(
+				w,
+				r,
+				principal,
+				deployment,
+				runErrorForReference("file", db.ErrNotFound, false),
+			)
+			return
+		}
+		if errors.Is(err, db.ErrFilestorePathExists) {
+			httpapi.WriteError(w, r, httpapi.NewError(
+				http.StatusConflict,
+				"conflict_error",
+				"File resource mount_path conflicts with the session filesystem",
+			))
+			return
+		}
 		writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
@@ -898,131 +916,6 @@ func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, r
 	return httpapi.MarshalRaw(ids)
 }
 
-func (h *Handler) normalizeResources(r *http.Request, principal auth.Principal, raw json.RawMessage) (json.RawMessage, json.RawMessage, error) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return json.RawMessage(`[]`), json.RawMessage(`{}`), nil
-	}
-	var items []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, nil, errors.New("resources must be an array")
-	}
-	if len(items) > 500 {
-		return nil, nil, errors.New("resources may contain at most 500 entries")
-	}
-	resources := make([]map[string]any, 0, len(items))
-	secrets := map[string]any{}
-	for i, fields := range items {
-		resource, secret, err := h.normalizeResource(r, principal, fields)
-		if err != nil {
-			return nil, nil, err
-		}
-		resources = append(resources, resource)
-		if secret != nil {
-			secrets[strconv.Itoa(i)] = secret
-		}
-	}
-	resourcesRaw, err := httpapi.MarshalRaw(resources)
-	if err != nil {
-		return nil, nil, err
-	}
-	secretsRaw, err := httpapi.MarshalRaw(secrets)
-	if err != nil {
-		return nil, nil, err
-	}
-	return resourcesRaw, secretsRaw, nil
-}
-
-func (h *Handler) normalizeResource(r *http.Request, principal auth.Principal, fields map[string]json.RawMessage) (map[string]any, map[string]any, error) {
-	resourceType, err := parseRequiredStringField(fields, "type")
-	if err != nil {
-		return nil, nil, err
-	}
-	payload := map[string]any{"type": resourceType}
-	var secret map[string]any
-	switch resourceType {
-	case "file":
-		fileID, err := parseRequiredStringField(fields, "file_id")
-		if err != nil {
-			return nil, nil, err
-		}
-		if _, err := h.db.GetFile(r.Context(), principal.WorkspaceID, fileID); err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				return nil, nil, fmt.Errorf("file not found: %s", fileID)
-			}
-			return nil, nil, err
-		}
-		mountPath, err := optionalStringWithDefault(fields["mount_path"], "/mnt/session/uploads/"+fileID, "mount_path")
-		if err != nil {
-			return nil, nil, err
-		}
-		payload["file_id"] = fileID
-		payload["mount_path"] = mountPath
-	case "github_repository":
-		repoURL, err := parseRequiredStringField(fields, "url")
-		if err != nil {
-			return nil, nil, err
-		}
-		mountPath, err := optionalStringWithDefault(fields["mount_path"], defaultRepoMountPath(repoURL), "mount_path")
-		if err != nil {
-			return nil, nil, err
-		}
-		payload["url"] = repoURL
-		payload["mount_path"] = mountPath
-		if raw, ok := fields["checkout"]; ok && !httpapi.IsJSONNull(raw) {
-			if err := validateCheckout(raw); err != nil {
-				return nil, nil, err
-			}
-			payload["checkout"] = agentsnapshot.RawJSONValue(raw, nil)
-		}
-		if raw, ok := fields["authorization_token"]; ok && !httpapi.IsJSONNull(raw) {
-			token, err := parseRequiredRawString(raw, "authorization_token")
-			if err != nil {
-				return nil, nil, err
-			}
-			secret = map[string]any{"authorization_token": token}
-		}
-	case "memory_store":
-		memoryStoreID, err := parseRequiredStringField(fields, "memory_store_id")
-		if err != nil {
-			return nil, nil, err
-		}
-		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, memoryStoreID)
-		if err != nil {
-			return nil, nil, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: err}
-		}
-		if store.ArchivedAt != nil {
-			return nil, nil, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
-		}
-		payload["memory_store_id"] = memoryStoreID
-		access, err := optionalStringWithDefault(fields["access"], "read_write", "access")
-		if err != nil {
-			return nil, nil, err
-		}
-		if access != "read_write" && access != "read_only" {
-			return nil, nil, errors.New("access must be read_write or read_only")
-		}
-		payload["access"] = access
-		copyOptionalPayloadString(payload, fields, "instructions")
-	default:
-		return nil, nil, errors.New("resource type must be file, github_repository, or memory_store")
-	}
-	return payload, secret, nil
-}
-
-type resourceReferenceError struct {
-	ResourceType string
-	ResourceID   string
-	Err          error
-}
-
-func (e resourceReferenceError) Error() string {
-	return e.ResourceType + " reference failed: " + e.ResourceID
-}
-
-func (e resourceReferenceError) Unwrap() error {
-	return e.Err
-}
-
 func normalizeInitialEvents(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return nil, errors.New("initial_events is required")
@@ -1133,50 +1026,6 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 		return nil, nil, err
 	}
 	return events, outcomesRaw, nil
-}
-
-func sessionResourcesFromDeployment(deployment db.Deployment, now time.Time) ([]db.SessionResource, error) {
-	var configs []map[string]any
-	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
-		if err := json.Unmarshal(deployment.Resources, &configs); err != nil {
-			return nil, errors.New("stored resources are invalid")
-		}
-	}
-	var secrets map[string]json.RawMessage
-	if len(deployment.ResourceSecrets) > 0 && !httpapi.IsJSONNull(deployment.ResourceSecrets) {
-		_ = json.Unmarshal(deployment.ResourceSecrets, &secrets)
-	}
-	resources := make([]db.SessionResource, 0, len(configs))
-	for i, config := range configs {
-		resourceType, _ := config["type"].(string)
-		resourceID, err := ids.New("sesrsc_")
-		if err != nil {
-			return nil, err
-		}
-		payload := cloneMap(config)
-		payload["id"] = resourceID
-		payload["type"] = resourceType
-		payloadRaw, err := httpapi.MarshalRaw(payload)
-		if err != nil {
-			return nil, err
-		}
-		var secretRaw json.RawMessage
-		if secrets != nil {
-			secretRaw = secrets[strconv.Itoa(i)]
-		}
-		resources = append(resources, db.SessionResource{
-			UUID:           uuid.NewString(),
-			ExternalID:     resourceID,
-			OrganizationID: deployment.OrganizationID,
-			WorkspaceID:    deployment.WorkspaceID,
-			ResourceType:   resourceType,
-			Payload:        payloadRaw,
-			SecretPayload:  secretRaw,
-			CreatedAt:      now,
-			UpdatedAt:      now,
-		})
-	}
-	return resources, nil
 }
 
 func normalizeOptionalSchedule(raw json.RawMessage) (json.RawMessage, error) {

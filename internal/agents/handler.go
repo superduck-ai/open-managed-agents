@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -462,11 +463,13 @@ func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, age
 	if !ok {
 		return agentState{}, errors.New("model is required")
 	}
-	model, err := normalizeModel(modelRaw)
+	model, err := normalizeModel(modelRaw, h.cfg.AnthropicUpstream.ModelMappings)
 	if err != nil {
 		return agentState{}, err
 	}
-	state.Model = model
+	if state.Model, err = httpapi.MarshalRaw(model); err != nil {
+		return agentState{}, err
+	}
 	if state.Description, err = parseNullableStringField(fields, "description"); err != nil {
 		return agentState{}, err
 	}
@@ -492,11 +495,19 @@ func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, age
 }
 
 func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, current db.Agent, fields map[string]json.RawMessage) (agentState, error) {
+	model, err := normalizeModel(current.Model, h.cfg.AnthropicUpstream.ModelMappings)
+	if err != nil {
+		return agentState{}, err
+	}
+	modelRaw, err := httpapi.MarshalRaw(model)
+	if err != nil {
+		return agentState{}, err
+	}
 	state := agentState{
 		Name:        current.Name,
 		Description: current.Description,
 		System:      current.System,
-		Model:       current.Model,
+		Model:       modelRaw,
 		MCPServers:  current.MCPServers,
 		Metadata:    current.Metadata,
 		Multiagent:  current.Multiagent,
@@ -510,58 +521,67 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 		}
 		state.Name = name
 	}
-	var err error
 	if raw, ok := fields["model"]; ok {
-		state.Model, err = normalizeModel(raw)
+		mapped, err := normalizeModel(raw, h.cfg.AnthropicUpstream.ModelMappings)
 		if err != nil {
+			return agentState{}, err
+		}
+		if state.Model, err = httpapi.MarshalRaw(mapped); err != nil {
 			return agentState{}, err
 		}
 	}
 	if raw, ok := fields["description"]; ok {
-		state.Description, err = nullableStringFromRaw(raw, "description")
+		description, err := nullableStringFromRaw(raw, "description")
 		if err != nil {
 			return agentState{}, err
 		}
+		state.Description = description
 	}
 	if raw, ok := fields["system"]; ok {
-		state.System, err = nullableStringFromRaw(raw, "system")
+		system, err := nullableStringFromRaw(raw, "system")
 		if err != nil {
 			return agentState{}, err
 		}
+		state.System = system
 	}
 	if raw, ok := fields["mcp_servers"]; ok {
-		state.MCPServers, err = normalizeMCPServers(clearableArray(raw))
+		mcpServers, err := normalizeMCPServers(clearableArray(raw))
 		if err != nil {
 			return agentState{}, err
 		}
+		state.MCPServers = mcpServers
 	}
 	if raw, ok := fields["skills"]; ok {
-		state.Skills, err = normalizeSkills(clearableArray(raw))
+		skills, err := normalizeSkills(clearableArray(raw))
 		if err != nil {
 			return agentState{}, err
 		}
+		state.Skills = skills
 	}
 	if raw, ok := fields["tools"]; ok {
-		state.Tools, err = normalizeTools(clearableArray(raw), state.MCPServers)
+		tools, err := normalizeTools(clearableArray(raw), state.MCPServers)
 		if err != nil {
 			return agentState{}, err
 		}
+		state.Tools = tools
 	} else if _, ok := fields["mcp_servers"]; ok {
 		if err := validateMCPToolReferences(state.Tools, state.MCPServers); err != nil {
 			return agentState{}, err
 		}
 	}
 	if raw, ok := fields["metadata"]; ok {
-		state.Metadata, err = httpapi.PatchMetadata(state.Metadata, raw, validateMetadata)
+		metadata, err := httpapi.PatchMetadata(state.Metadata, raw, validateMetadata)
 		if err != nil {
 			return agentState{}, err
 		}
+		state.Metadata = metadata
 	}
 	if raw, ok := fields["multiagent"]; ok {
-		state.Multiagent, err = h.normalizeMultiagent(r, principal, current.ExternalID, current.CurrentVersion+1, raw)
+		multiagent, err := h.normalizeMultiagent(r, principal, current.ExternalID, current.CurrentVersion+1, raw)
 		if err != nil {
 			return agentState{}, err
 		}
+		state.Multiagent = multiagent
 	}
 	return state, nil
 }
@@ -748,37 +768,53 @@ func parseRequiredVersion(raw json.RawMessage) (int, error) {
 	return version, nil
 }
 
-func normalizeModel(raw json.RawMessage) (json.RawMessage, error) {
+type agentModelInput struct {
+	ID    *string `json:"id"`
+	Speed *string `json:"speed"`
+}
+
+type normalizedAgentModel struct {
+	ID    string `json:"id"`
+	Speed string `json:"speed"`
+}
+
+func normalizeModel(raw json.RawMessage, mappings map[string]string) (normalizedAgentModel, error) {
 	if httpapi.IsJSONNull(raw) {
-		return nil, errors.New("model cannot be null")
+		return normalizedAgentModel{}, errors.New("model cannot be null")
 	}
 	var modelID string
 	if json.Unmarshal(raw, &modelID) == nil {
-		if strings.TrimSpace(modelID) == "" {
-			return nil, errors.New("model id must be non-empty")
+		modelID = modelmapping.Resolve(modelID, mappings)
+		if modelID == "" {
+			return normalizedAgentModel{}, errors.New("model id must be non-empty")
 		}
-		return httpapi.MarshalRaw(map[string]any{"id": modelID, "speed": "standard"})
+		return normalizedAgentModel{
+			ID:    modelID,
+			Speed: "standard",
+		}, nil
 	}
-	var model map[string]json.RawMessage
+	var model agentModelInput
 	if err := json.Unmarshal(raw, &model); err != nil {
-		return nil, errors.New("model must be a string or object")
+		return normalizedAgentModel{}, errors.New("model must be a string or object")
 	}
-	rawID, ok := model["id"]
-	if !ok {
-		return nil, errors.New("model.id is required")
+	if model.ID == nil {
+		return normalizedAgentModel{}, errors.New("model.id is required")
 	}
-	if err := json.Unmarshal(rawID, &modelID); err != nil || strings.TrimSpace(modelID) == "" {
-		return nil, errors.New("model.id must be a non-empty string")
+	modelID = modelmapping.Resolve(*model.ID, mappings)
+	if modelID == "" {
+		return normalizedAgentModel{}, errors.New("model.id must be a non-empty string")
 	}
-	normalized := map[string]any{"id": modelID, "speed": "standard"}
-	if rawSpeed, ok := model["speed"]; ok && !httpapi.IsJSONNull(rawSpeed) {
-		var speed string
-		if err := json.Unmarshal(rawSpeed, &speed); err != nil || (speed != "standard" && speed != "fast") {
-			return nil, errors.New("model.speed must be standard or fast")
+	normalized := normalizedAgentModel{
+		ID:    modelID,
+		Speed: "standard",
+	}
+	if model.Speed != nil {
+		if *model.Speed != "standard" && *model.Speed != "fast" {
+			return normalizedAgentModel{}, errors.New("model.speed must be standard or fast")
 		}
-		normalized["speed"] = speed
+		normalized.Speed = *model.Speed
 	}
-	return httpapi.MarshalRaw(normalized)
+	return normalized, nil
 }
 
 func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {

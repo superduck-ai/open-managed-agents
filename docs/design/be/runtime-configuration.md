@@ -114,7 +114,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `RedisConfig` | `redis` | 平台会话 Redis 连接 |
 | `StorageConfig` | `storage` | 对象存储类型选择和文件容量限制 |
 | `S3Config` | `storage.s3` | S3 兼容对象存储连接、bucket 和寻址方式 |
-| `AnthropicUpstreamConfig` | `anthropic_upstream` | Anthropic 上游地址和服务端凭证 |
+| `AnthropicUpstreamConfig` | `anthropic_upstream` | Anthropic 上游地址、服务端凭证和可选的 Console 模型映射 |
 | `BatchConfig` | `batch` | Message Batch 限制、worker、lease 和清理策略 |
 | `E2BConfig` | `e2b` | E2B provider 连接、模板和超时 |
 | `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令 |
@@ -141,6 +141,10 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 - `CONFIG_FILE` 只选择 YAML 文件；业务环境变量不参与配置合并。
 - Workbench 访问 Anthropic 时使用同一份 `anthropic_upstream.base_url` 和 `anthropic_upstream.api_key`，不从 `ANTHROPIC_*` 环境变量回退读取。
+- `anthropic_upstream.model_mappings` 对模型 ID 执行可选的精确覆盖；解析时对 source/target 两侧做 trim，未配置、空映射或未命中的模型均保留 trim 后的原 ID。命中项在模型目录和 Workbench 中以映射后的 ID 展示，Workbench 的 completions、prompt/title 和 test case 生成统一在 Anthropic 请求构造边界使用映射后的 ID。组织级 `GET /api/organizations/{orgUuid}/models` 同时返回有效目录及 `model_mappings`，由 Managed Agents 功能自行读取，不把模型状态耦合进账户 Bootstrap。Quickstart Builder 的请求模型使用映射后的 ID；Builder 返回的 Agent config 在前端配置归一化边界映射，Agent 创建或更新时也把映射后的 ID 写入新的不可变 Agent Version。
+- 映射不能形成 `A -> B -> C` 链或循环，以保证前端展示、Console 代理和 Agent 写入等多个边界重复解析时结果一致；多个逻辑模型可以映射到同一个上游模型 ID，模型目录按最终 ID 去重，并保留目录中第一个逻辑槽位的能力元数据。
+- 映射项是部署方声明的模型别名覆盖，不是 OMA 维护的独立能力目录；兼容模型项沿用原逻辑槽位的能力元数据，部署方应只把逻辑模型映射到满足相同运行合同的上游模型。需要准确的供应商能力目录时，应由公司 AI gateway 提供完整 catalog，而不是继续扩展该映射配置。
+- Environment Runner 和独立 Environment Manager 不读取映射配置；运行链路直接使用 Agent Snapshot 已保存的最终模型 ID。OMA 在 `environment-manager` v0 启动 payload 中把该 ID 同时投射为 `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`，确保 Claude Code 的主 Agent 与内置子 Agent 使用同一个不可变 Session 模型。Snapshot 没有模型时不注入这些变量，继续沿用原运行时默认逻辑。修改映射不会改变既有 Agent Version，只影响后续创建或更新的版本。
 - 数据库配置不接受独立的管理员 URL 或管理员凭证；启动回退只能使用 `database.url` 派生的 maintenance DB 连接和当前系统用户候选。
 - 上游 API key、Webhook signing key 等秘密只保存在服务端配置边界，不得进入 sandbox payload 或日志。
 - JWT 和 CCR MITM 私钥继续通过只读文件路径配置；路径校验仍在相应的 code-session 启动边界执行。

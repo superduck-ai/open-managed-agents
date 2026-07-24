@@ -69,7 +69,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 
 	template := strings.TrimSpace(cfg.E2B.Template)
 	if template == "" {
-		template = "claude-code-interpreter"
+		template = config.DefaultE2BTemplate
 	}
 	envID, err := ids.New("env_")
 	if err != nil {
@@ -83,7 +83,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		"type":       "cloud",
 		"runtime":    "self_hosted",
 		"image":      template,
-		"packages":   []any{},
+		"packages":   map[string]any{"type": "packages"},
 		"networking": map[string]any{"type": "unrestricted"},
 	})
 	now := time.Now().UTC()

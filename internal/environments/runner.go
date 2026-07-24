@@ -3,6 +3,7 @@ package environments
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -27,6 +28,16 @@ type Runner struct {
 	cfg          config.Config
 	codeSessions *codesessions.Service
 	skills       *skillsapi.RuntimeResolver
+}
+
+type managedAgentLaunchPreparation struct {
+	session               db.Session
+	sessionConfig         json.RawMessage
+	persistedWorkMetadata json.RawMessage
+	skillMount            *e2bruntime.SkillMount
+	workDir               string
+	title                 string
+	model                 string
 }
 
 func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
@@ -105,12 +116,12 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	resolution, err := r.provider.Resolve(env, work)
+	launchPreparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	launch, err := r.prepareManagedAgentLaunch(ctx, env, work)
+	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
@@ -144,25 +155,60 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	}
 	providerSandboxID := sandbox.ID
 	if strings.TrimSpace(providerSandboxID) != "" {
-		nextWorkMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
+		persistedMetadata := work.Metadata
+		if launchPreparation != nil {
+			persistedMetadata = launchPreparation.persistedWorkMetadata
+		}
+		nextPersistedMetadata, err := patchJSONMetadata(persistedMetadata, map[string]any{
 			"provider_sandbox_id": providerSandboxID,
 		})
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
-		updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, nextWorkMetadata)
+		updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, nextPersistedMetadata)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
+		nextRuntimeMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
+			"provider_sandbox_id": providerSandboxID,
+		})
+		if err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+		updatedWork.Metadata = nextRuntimeMetadata
 		*work = updatedWork
 	}
-	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
+	manifest, provision, err := buildPackageManifest(env.Config)
+	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
-	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
+	if provision {
+		if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
+	}
+	heartbeat, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	if !heartbeat.LeaseExtended {
+		if err := r.stopCreatedSandbox(record, work, providerSandboxID); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	launch, err := r.commitManagedAgentLaunch(ctx, env, work, launchPreparation)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
@@ -175,6 +221,65 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte) error {
+	if err := r.provider.WriteFile(ctx, sandboxID, packageManifestPath, manifest); err != nil {
+		return fmt.Errorf("write packages manifest: %w", err)
+	}
+	if err := r.provider.WriteFile(ctx, sandboxID, packageProvisionerPath, packageProvisionerV1); err != nil {
+		return fmt.Errorf("write package provisioner: %w", err)
+	}
+	if err := r.provider.RunCommand(ctx, sandboxID, packageProvisionCommand, r.cfg.E2B.SandboxTimeout); err != nil {
+		return fmt.Errorf("provision environment packages: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) stopCreatedSandbox(record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) error {
+	return runSandboxStopPhases(
+		2*time.Minute,
+		2*time.Minute,
+		func(killCtx context.Context) (error, error) {
+			var phaseErr error
+			if strings.TrimSpace(providerSandboxID) == "" {
+				return nil, nil
+			}
+			if err := r.db.UpdateEnvironmentSandboxState(killCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
+				phaseErr = errors.Join(phaseErr, err)
+			}
+			killErr := r.provider.Kill(killCtx, providerSandboxID)
+			return killErr, errors.Join(phaseErr, killErr)
+		},
+		func(cleanupCtx context.Context, killErr error) error {
+			var cleanupErr error
+			if killErr != nil {
+				message := killErr.Error()
+				cleanupErr = errors.Join(cleanupErr, r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, nil))
+			} else {
+				stoppedAt := time.Now().UTC()
+				cleanupErr = errors.Join(cleanupErr, r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt))
+			}
+			_, stopWorkErr := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+			return errors.Join(cleanupErr, stopWorkErr)
+		},
+	)
+}
+
+func runSandboxStopPhases(
+	killTimeout time.Duration,
+	cleanupTimeout time.Duration,
+	killPhase func(context.Context) (killErr error, phaseErr error),
+	cleanupPhase func(context.Context, error) error,
+) error {
+	killCtx, cancelKill := context.WithTimeout(context.Background(), killTimeout)
+	killErr, phaseErr := killPhase(killCtx)
+	cancelKill()
+
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), cleanupTimeout)
+	cleanupErr := cleanupPhase(cleanupCtx, killErr)
+	cancelCleanup()
+	return errors.Join(phaseErr, cleanupErr)
 }
 
 func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
@@ -190,7 +295,7 @@ func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSa
 	_ = r.provider.Kill(killCtx, providerSandboxID)
 }
 
-func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*environmentManagerCommand, error) {
+func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*managedAgentLaunchPreparation, error) {
 	if r == nil || work == nil || r.codeSessions == nil {
 		return nil, nil
 	}
@@ -203,10 +308,6 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 		return nil, err
 	}
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceID, session.ExternalID)
-	if err != nil {
-		return nil, err
-	}
-	events, err := r.sessionEventPayloads(ctx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -224,54 +325,60 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	if session.Title != nil {
 		title = *session.Title
 	}
+	persistedWorkMetadata := append(json.RawMessage(nil), work.Metadata...)
+	workMetadataPatch := map[string]any{}
+	if skillMount != nil {
+		workMetadataPatch[e2bruntime.SkillMountMetadataKey] = skillMount
+	}
+	if len(workMetadataPatch) > 0 {
+		nextWorkMetadata, err := patchJSONMetadata(work.Metadata, workMetadataPatch)
+		if err != nil {
+			return nil, err
+		}
+		work.Metadata = nextWorkMetadata
+	}
+	return &managedAgentLaunchPreparation{
+		session:               session,
+		sessionConfig:         sessionConfig,
+		persistedWorkMetadata: persistedWorkMetadata,
+		skillMount:            skillMount,
+		workDir:               workDir,
+		title:                 title,
+		model:                 modelIDFromAgentSnapshot(session.AgentSnapshot),
+	}, nil
+}
+
+func (r *Runner) commitManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork, preparation *managedAgentLaunchPreparation) (*environmentManagerCommand, error) {
+	if preparation == nil {
+		return nil, nil
+	}
+	workPreparationMetadata := codesessions.ManagedAgentWorkPreparationMetadata{}
+	if preparation.skillMount != nil {
+		workPreparationMetadata.SkillMount = &codesessions.ManagedAgentSkillMountMetadata{
+			MountPath:      preparation.skillMount.MountPath,
+			VolumeName:     preparation.skillMount.VolumeName,
+			ManifestSHA256: preparation.skillMount.ManifestSHA256,
+			Skills:         preparation.skillMount.Skills,
+		}
+	}
 	local, err := r.codeSessions.CreateManagedAgentCodeSession(ctx, codesessions.ManagedAgentCreateInput{
-		Session:                    session,
+		Session:                    preparation.session,
 		Environment:                env,
 		EnvironmentWork:            *work,
-		Model:                      modelIDFromAgentSnapshot(session.AgentSnapshot),
-		Title:                      title,
-		WorkDir:                    workDir,
+		Model:                      preparation.model,
+		Title:                      preparation.title,
+		WorkDir:                    preparation.workDir,
 		PermissionMode:             "bypassPermissions",
 		DangerouslySkipPermissions: true,
-		Config:                     sessionConfig,
-		InitialEvents:              events,
+		Config:                     preparation.sessionConfig,
+		WorkPreparationMetadata:    workPreparationMetadata,
 	})
 	if err != nil {
 		return nil, err
 	}
-	sessionMetadataPatch := map[string]any{
-		"claude_code_session_id":        local.CodeSessionID,
-		"claude_code_public_session_id": local.PublicSessionID,
-		"claude_code_sdk_url_path":      local.SDKURLPath,
-		"runtime":                       "claude_code_local",
-	}
-	workMetadataPatch := map[string]any{
-		"claude_code_session_id":        local.CodeSessionID,
-		"claude_code_public_session_id": local.PublicSessionID,
-		"claude_code_sdk_url_path":      local.SDKURLPath,
-		"runtime":                       "claude_code_local",
-	}
-	if skillMount != nil {
-		workMetadataPatch[e2bruntime.SkillMountMetadataKey] = skillMount
-	}
-	metadataPatch, err := json.Marshal(sessionMetadataPatch)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := r.db.PatchSessionMetadata(ctx, session.WorkspaceID, session.ExternalID, metadataPatch); err != nil {
-		return nil, err
-	}
-	nextWorkMetadata, err := patchJSONMetadata(work.Metadata, workMetadataPatch)
-	if err != nil {
-		return nil, err
-	}
-	updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, nextWorkMetadata)
-	if err != nil {
-		return nil, err
-	}
-	*work = updatedWork
+	*work = local.EnvironmentWork
 
-	payload, err := buildEnvironmentManagerV0Payload(local.CodeSessionID, local.SessionIngressToken, local.OAuthAccessToken, workDir, sessionConfig, r.cfg)
+	payload, err := buildEnvironmentManagerV0Payload(local.CodeSessionID, local.SessionIngressToken, local.OAuthAccessToken, preparation.workDir, preparation.sessionConfig, r.cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -344,31 +451,6 @@ func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) (
 		return nil, nil
 	}
 	return r.skills.ResolveAgentSnapshot(ctx, session.WorkspaceID, session.AgentSnapshot)
-}
-
-func (r *Runner) sessionEventPayloads(ctx context.Context, session db.Session) ([]json.RawMessage, error) {
-	var out []json.RawMessage
-	var cursor *db.SessionEventPageCursor
-	for {
-		events, hasMore, err := r.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-			WorkspaceID:       session.WorkspaceID,
-			SessionExternalID: session.ExternalID,
-			Limit:             100,
-			Cursor:            cursor,
-			Order:             "asc",
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, event := range events {
-			out = append(out, append(json.RawMessage(nil), event.Payload...))
-		}
-		if !hasMore || len(events) == 0 {
-			return out, nil
-		}
-		last := events[len(events)-1]
-		cursor = &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, ID: last.ID}
-	}
 }
 
 func sessionIDFromEnvironmentWork(work db.EnvironmentWork) (string, bool) {

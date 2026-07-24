@@ -54,7 +54,7 @@ type Provider interface {
 	Kill(ctx context.Context, sandboxID string) error
 	Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error)
 	WriteFile(ctx context.Context, sandboxID string, path string, data []byte) error
-	RunCommand(ctx context.Context, sandboxID string, command string) error
+	RunCommand(ctx context.Context, sandboxID string, command string, timeout time.Duration) error
 	StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error
 }
 
@@ -90,7 +90,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 		template = strings.TrimSpace(p.cfg.Template)
 	}
 	if template == "" {
-		template = "claude-code-interpreter"
+		template = config.DefaultE2BTemplate
 	}
 	resolved := Resolution{
 		Template:            template,
@@ -158,27 +158,7 @@ func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
 	return sandbox.Kill(ctx, nil)
 }
 
-func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
-	if strings.TrimSpace(sandboxID) == "" {
-		return errors.New("sandbox id is required")
-	}
-	if strings.TrimSpace(filePath) == "" {
-		return errors.New("sandbox file path is required")
-	}
-	sandbox, err := p.connect(ctx, sandboxID)
-	if err != nil {
-		return err
-	}
-	if dir := pathpkg.Dir(filePath); dir != "." && dir != "/" {
-		if _, err := sandbox.Commands.Run(ctx, "mkdir -p "+shellQuote(dir), nil); err != nil {
-			return err
-		}
-	}
-	_, err = sandbox.Files.Write(ctx, filePath, bytes.NewReader(data), nil)
-	return err
-}
-
-func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command string) error {
+func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command string, timeout time.Duration) error {
 	if strings.TrimSpace(sandboxID) == "" {
 		return errors.New("sandbox id is required")
 	}
@@ -189,7 +169,10 @@ func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command 
 	if err != nil {
 		return err
 	}
-	timeoutMs := int(p.cfg.RequestTimeout / time.Millisecond)
+	if timeout <= 0 {
+		timeout = p.cfg.RequestTimeout
+	}
+	timeoutMs := int(timeout / time.Millisecond)
 	if timeoutMs <= 0 {
 		timeoutMs = int((60 * time.Second) / time.Millisecond)
 	}
@@ -209,6 +192,26 @@ func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command 
 		return fmt.Errorf("sandbox command exited with code %d: %s stdout=%q stderr=%q", result.ExitCode, strings.TrimSpace(result.Error), truncateCommandOutput(result.Stdout), truncateCommandOutput(result.Stderr))
 	}
 	return nil
+}
+
+func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
+	if strings.TrimSpace(sandboxID) == "" {
+		return errors.New("sandbox id is required")
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return errors.New("sandbox file path is required")
+	}
+	sandbox, err := p.connect(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+	if dir := pathpkg.Dir(filePath); dir != "." && dir != "/" {
+		if _, err := sandbox.Commands.Run(ctx, "mkdir -p "+shellQuote(dir), nil); err != nil {
+			return err
+		}
+	}
+	_, err = sandbox.Files.Write(ctx, filePath, bytes.NewReader(data), nil)
+	return err
 }
 
 // StartBackgroundCommand 通过 E2B 进程 API 启动后台命令，并把敏感启动数据直接写入其 stdin。
@@ -249,7 +252,6 @@ func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID stri
 	}
 	return nil
 }
-
 func (p *E2BProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*SkillMount, error) {
 	if len(runtimeSkills) == 0 {
 		return nil, nil

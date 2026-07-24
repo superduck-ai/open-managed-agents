@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,20 @@ func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
 				t.Fatalf("mounts = %#v, want only user-data", mounts)
 			}
 		})
+	}
+}
+
+func TestResolveUsesManagedAgentSandboxTagByDefault(t *testing.T) {
+	resolution, err := NewProvider(config.E2BConfig{}).Resolve(db.Environment{
+		ExternalID:  "env_default_template",
+		WorkspaceID: 42,
+		Config:      json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolution.Template != config.DefaultE2BTemplate {
+		t.Fatalf("template = %q, want %q", resolution.Template, config.DefaultE2BTemplate)
 	}
 }
 
@@ -168,6 +183,32 @@ func TestResolveLimitedNetworkIncludesMCPHostsWhenAllowed(t *testing.T) {
 	want := []string{"api.example.com", "mcp.notion.com", "api.githubcopilot.com"}
 	if !reflect.DeepEqual(resolution.Network.AllowOut, want) {
 		t.Fatalf("AllowOut = %#v, want %#v", resolution.Network.AllowOut, want)
+	}
+}
+
+func TestResolveLimitedNetworkIncludesPackageManagerDownloadHosts(t *testing.T) {
+	provider := NewProvider(config.E2BConfig{})
+	resolution, err := provider.Resolve(db.Environment{
+		ExternalID:       "env_packages",
+		WorkspaceID:      42,
+		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allow_package_managers":true}}`),
+		ResolvedTemplate: "template_test",
+	}, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolution.Network == nil {
+		t.Fatal("expected limited network options")
+	}
+	allowedHosts, ok := resolution.Network.AllowOut.([]string)
+	if !ok {
+		t.Fatalf("AllowOut = %#v, want []string", resolution.Network.AllowOut)
+	}
+	if !slices.Contains(allowedHosts, "static.crates.io") {
+		t.Fatalf("AllowOut = %#v, want Cargo static CDN", allowedHosts)
+	}
+	if !slices.Contains(allowedHosts, "index.rubygems.org") {
+		t.Fatalf("AllowOut = %#v, want RubyGems compact index", allowedHosts)
 	}
 }
 

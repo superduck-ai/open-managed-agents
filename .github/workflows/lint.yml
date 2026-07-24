@@ -28,6 +28,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Compile tagged E2E acceptance tests
+        run: go test ./tests -tags='e2b_integration e2e' -run '^$' -count=1
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

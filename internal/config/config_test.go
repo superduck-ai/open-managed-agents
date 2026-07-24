@@ -130,6 +130,17 @@ bootstrap:
 	}
 }
 
+func TestLoadDefaultsToManagedAgentSandboxTemplateName(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.E2B.Template != "managed-agent-sandbox" {
+		t.Fatalf("E2B.Template = %q, want managed-agent-sandbox", cfg.E2B.Template)
+	}
+}
+
 func TestLoadIgnoresBusinessEnvironmentVariables(t *testing.T) {
 	prepareLoadTest(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")

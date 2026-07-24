@@ -20,6 +20,7 @@ var packageManagerHosts = collections.UniqueTrimmedStrings([]string{
 	"index.crates.io",
 	"static.crates.io",
 	"rubygems.org",
+	"index.rubygems.org",
 	"gems.ruby-china.com",
 	"proxy.golang.org",
 	"sum.golang.org",

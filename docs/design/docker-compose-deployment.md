@@ -20,7 +20,7 @@ docker compose
 caddy ──→ oma-server ──→ postgres / redis / minio
                     └──→ e2b-local (host.docker.internal:3099)
                               └──→ Docker daemon (宿主机)
-                                       └──→ sandbox 容器 (claude-code-interpreter 镜像)
+                                       └──→ sandbox 容器 (managed-agent-sandbox 标签)
 ```
 
 ## 2. 镜像策略
@@ -153,9 +153,9 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
 
 1. 拉取 sandbox 模板镜像（由 e2b-local 使用）：
    ```bash
-   # sandbox 模板镜像需从 e2b-local 对应的镜像仓库拉取。
-   # 具体镜像名和 tag 取决于 oma-server 的 e2b.template 配置。
-   docker pull ghcr.io/superduck-ai/claude-code-interpreter:latest
+   # 拉取经过验证的内容，并标记为裸 Template 名称在本地解析的默认 Docker tag。
+   docker pull ghcr.io/superduck-ai/managed-agent-sandbox@sha256:23c4bb56a02141d3a6997c2236c8e2f43c6174c79f6f86ef72b9c8fbd3142877
+   docker tag ghcr.io/superduck-ai/managed-agent-sandbox@sha256:23c4bb56a02141d3a6997c2236c8e2f43c6174c79f6f86ef72b9c8fbd3142877 managed-agent-sandbox:latest
    ```
 
 2. 初始化 Compose 本地运行配置；该命令不会覆盖已有文件：

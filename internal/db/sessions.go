@@ -280,13 +280,21 @@ func (d *DB) UpdateSession(ctx context.Context, workspaceID int64, externalID st
 }
 
 func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceID int64, externalID string, patch json.RawMessage) (Session, error) {
-	return scanSession(d.Pool.QueryRow(ctx, `
+	return scanSession(d.Pool.QueryRow(ctx, patchSessionMetadataSQL(), workspaceID, externalID, jsonArg(patch)))
+}
+
+func patchSessionMetadataTx(ctx context.Context, tx pgx.Tx, workspaceID int64, externalID string, patch json.RawMessage) (Session, error) {
+	return scanSession(tx.QueryRow(ctx, patchSessionMetadataSQL(), workspaceID, externalID, jsonArg(patch)))
+}
+
+func patchSessionMetadataSQL() string {
+	return `
 		update sessions
 		set metadata = coalesce(metadata, '{}'::jsonb) || $3::jsonb,
 			updated_at = now()
 		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning `+sessionColumns()+`
-	`, workspaceID, externalID, jsonArg(patch)))
+		returning ` + sessionColumns() + `
+	`
 }
 
 func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceID int64, externalID string, evaluations json.RawMessage) (Session, error) {

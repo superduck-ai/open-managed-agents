@@ -65,11 +65,19 @@ export function listConsoleWorkspaces(orgUuid: string) {
   return consoleApi<Workspace[]>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces`);
 }
 
-export function createConsoleWorkspace(orgUuid: string, input: CreateWorkspaceInput) {
+export function createConsoleWorkspace(orgUuid: string, input: CreateWorkspaceInput, csrfToken?: string) {
   return consoleApi<Workspace>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces`, {
     method: 'POST',
+    csrfToken,
     body: JSON.stringify(input),
   });
+}
+
+export function archiveConsoleWorkspace(orgUuid: string, workspaceId: string, csrfToken?: string) {
+  return consoleApi<Workspace>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/archive`,
+    { method: 'POST', csrfToken },
+  );
 }
 
 export function listWorkspaceApiKeys(orgUuid: string, workspaceId: string) {
@@ -78,11 +86,17 @@ export function listWorkspaceApiKeys(orgUuid: string, workspaceId: string) {
   );
 }
 
-export function createWorkspaceApiKey(orgUuid: string, workspaceId: string, input: CreateWorkspaceApiKeyInput) {
+export function createWorkspaceApiKey(
+  orgUuid: string,
+  workspaceId: string,
+  input: CreateWorkspaceApiKeyInput,
+  csrfToken?: string,
+) {
   return consoleApi<WorkspaceApiKey>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/api_keys`,
     {
       method: 'POST',
+      csrfToken,
       body: JSON.stringify(input),
     },
   );
@@ -93,11 +107,13 @@ export function updateWorkspaceApiKeyStatus(
   workspaceId: string,
   apiKeyId: string,
   input: UpdateWorkspaceApiKeyStatusInput,
+  csrfToken?: string,
 ) {
   return consoleApi<WorkspaceApiKey>(
     `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/api_keys/${encodeURIComponent(apiKeyId)}`,
     {
       method: 'POST',
+      csrfToken,
       body: JSON.stringify(input),
     },
   );

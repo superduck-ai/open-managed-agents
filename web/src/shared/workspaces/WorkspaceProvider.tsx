@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { setConsoleRequestContext } from '../api/client';
 import { useAuth } from '../auth/context';
 import {
+  archiveConsoleWorkspace,
   createConsoleWorkspace,
   defaultWorkspace,
   listConsoleWorkspaces,
@@ -14,7 +15,7 @@ import { getPrimaryOrganizationUuid, WorkspaceContext, type WorkspaceContextValu
 const activeWorkspaceStorageKey = 'oma.activeWorkspaceId';
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const { account, status } = useAuth();
+  const { account, status, csrfToken } = useAuth();
   const queryClient = useQueryClient();
   const orgUuid = getPrimaryOrganizationUuid(account);
   const [preferredWorkspaceId, setPreferredWorkspaceId] = useState(readStoredWorkspaceId);
@@ -62,7 +63,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!orgUuid) {
         throw new Error('No organization is available for workspace creation.');
       }
-      const created = await createConsoleWorkspace(orgUuid, input);
+      const created = await createConsoleWorkspace(orgUuid, input, csrfToken);
       queryClient.setQueryData<Workspace[]>(['console', 'workspaces', orgUuid], (current) => {
         const existing = current ?? [];
         if (existing.some((workspace) => workspace.id === created.id)) {
@@ -73,7 +74,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setPreferredWorkspaceId(created.id);
       return created;
     },
-    [orgUuid, queryClient],
+    [csrfToken, orgUuid, queryClient],
+  );
+
+  const archiveWorkspace = useCallback(
+    async (workspaceId: string) => {
+      if (!orgUuid) {
+        throw new Error('No organization is available for workspace archival.');
+      }
+      await archiveConsoleWorkspace(orgUuid, workspaceId, csrfToken);
+      queryClient.setQueryData<Workspace[]>(['console', 'workspaces', orgUuid], (current) =>
+        (current ?? []).filter((workspace) => workspace.id !== workspaceId),
+      );
+    },
+    [csrfToken, orgUuid, queryClient],
   );
 
   const refreshWorkspaces = useCallback(async () => {
@@ -90,11 +104,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       error: workspacesQuery.error,
       selectWorkspace,
       createWorkspace,
+      archiveWorkspace,
       refreshWorkspaces,
     }),
     [
       activeWorkspace,
       activeWorkspaceId,
+      archiveWorkspace,
       createWorkspace,
       orgUuid,
       refreshWorkspaces,

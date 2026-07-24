@@ -83,7 +83,7 @@ export function WorkspaceApiKeysPage() {
 }
 
 export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysContentProps) {
-  const { account } = useAuth();
+  const { account, csrfToken } = useAuth();
   const { msg } = useI18n();
   const queryClient = useQueryClient();
   const { orgUuid, workspaces, activeWorkspace, activeWorkspaceId, selectWorkspace } = useWorkspace();
@@ -117,7 +117,7 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
       if (!orgUuid) {
         throw new Error(msg('apiKeys.noOrganizationCreate', 'No organization is available for API key creation.'));
       }
-      return createWorkspaceApiKey(orgUuid, workspace.id, { name });
+      return createWorkspaceApiKey(orgUuid, workspace.id, { name }, csrfToken);
     },
     onSuccess: async (apiKey) => {
       setCreateOpen(false);
@@ -131,7 +131,7 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
       if (!orgUuid) {
         throw new Error(msg('apiKeys.noOrganizationUpdate', 'No organization is available for API key updates.'));
       }
-      return updateWorkspaceApiKeyStatus(orgUuid, workspace.id, apiKey.id, { status });
+      return updateWorkspaceApiKeyStatus(orgUuid, workspace.id, apiKey.id, { status }, csrfToken);
     },
     onSuccess: (updatedApiKey, variables) => {
       queryClient.setQueryData<WorkspaceApiKey[]>(queryKey, (current) => {

@@ -83,6 +83,7 @@ func RegisterOrganizationAnalyticsRoutes(r chi.Router) {
 
 func RegisterConsoleOrganizationWorkspaceRoutes(r chi.Router, store OrganizationStore) {
 	r.Get("/workspaces", handleListConsoleWorkspaces(store))
+	r.Post("/workspaces/{workspaceId}/archive", handleArchiveConsoleWorkspace(store))
 }
 
 func RegisterConsoleOrganizationAdminRequestRoutes(r chi.Router, store OrganizationStore) {

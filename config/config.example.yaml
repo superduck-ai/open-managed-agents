@@ -27,6 +27,24 @@ storage:
 anthropic_upstream:
   api_key: ""
 
+web_search:
+  provider: tavily
+  endpoint: ""
+  api_key: ""
+  timeout: 30s
+  max_tool_loops: 3
+  brave:
+    country: US
+    search_language: en
+    ui_language: en-US
+    freshness: ""
+    safe_search: moderate
+    spellcheck: true
+    result_filter: web
+    goggles: []
+    extra_snippets: false
+    units: metric
+
 e2b:
   api_key: ""
   api_url: ""

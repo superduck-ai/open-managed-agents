@@ -266,6 +266,80 @@ func TestMessagesAPISuccess(t *testing.T) {
 	}
 }
 
+func TestMessagesWebSearchGateway(t *testing.T) {
+	tavily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+		if request["query"] != "latest Go release" || r.Header.Get("Authorization") != "Bearer tavily-test-key" {
+			t.Fatalf("search request = %#v", request)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"title":"Go release notes","url":"https://go.dev/doc/devel/release","content":"release details"}]}`)
+	}))
+	defer tavily.Close()
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode BYOK request: %v", err)
+		}
+		encoded, _ := json.Marshal(request)
+		if strings.Contains(string(encoded), "tavily-test-key") {
+			t.Fatal("search key reached BYOK")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if upstreamCalls == 1 {
+			tools := request["tools"].([]any)
+			tool := tools[0].(map[string]any)
+			if tool["name"] != "web_search" {
+				t.Fatalf("projected tool = %#v", tool)
+			}
+			if _, ok := tool["type"]; ok {
+				t.Fatalf("projected tool has type: %#v", tool)
+			}
+			_, _ = io.WriteString(w, `{"id":"msg_tool","type":"message","content":[{"type":"tool_use","id":"toolu_1","name":"web_search","input":{"query":"latest Go release"}}],"stop_reason":"tool_use"}`)
+			return
+		}
+		requestMessages := request["messages"].([]any)
+		if len(requestMessages) != 3 {
+			t.Fatalf("continuation messages = %#v", requestMessages)
+		}
+		_, _ = io.WriteString(w, `{"id":"msg_final","type":"message","content":[{"type":"text","text":"answer"}],"stop_reason":"end_turn"}`)
+	}))
+	defer upstream.Close()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.AnthropicUpstream.BaseURL = upstream.URL
+	cfg.AnthropicUpstream.APIKey = "messages-gateway-upstream"
+	cfg.WebSearch.Provider = "tavily"
+	cfg.WebSearch.Endpoint = tavily.URL
+	cfg.WebSearch.APIKey = "tavily-test-key"
+	app := newTestAppWithStore(t, &cfg, newFakeStore("messages-web-search-gateway-bucket"))
+	defer app.close()
+
+	credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
+	registerCodeSessionWorker(t, app, credential.CodeSessionID)
+	payload := `{"model":"` + messagesTestModel + `","max_tokens":16,"messages":[{"role":"user","content":"search"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+	response := doMessagesRequest(t, app, credential.Token, payload)
+	defer response.Body.Close()
+	var body map[string]any
+	decodeJSON(t, response.Body, &body)
+	content := body["content"].([]any)
+	if content[0].(map[string]any)["type"] != "server_tool_use" || content[1].(map[string]any)["type"] != "web_search_tool_result" {
+		t.Fatalf("gateway response content = %#v", content)
+	}
+	if upstreamCalls != 2 {
+		t.Fatalf("BYOK calls = %d, want 2", upstreamCalls)
+	}
+}
+
 type messagesCodeSessionCredential struct {
 	Token           string
 	CodeSessionID   string

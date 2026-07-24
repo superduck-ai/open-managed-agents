@@ -14,6 +14,10 @@ func defaultConfig() Config {
 		AnthropicUpstream: AnthropicUpstreamConfig{
 			BaseURL: "https://api.anthropic.com",
 		},
+		WebSearch: WebSearchConfig{
+			Provider:     "tavily",
+			MaxToolLoops: 3,
+		},
 		Batch: BatchConfig{
 			WorkerEnabled:             true,
 			WorkerConcurrency:         2,

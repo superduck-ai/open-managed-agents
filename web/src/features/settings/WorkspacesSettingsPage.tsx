@@ -61,7 +61,7 @@ export function WorkspacesSettingsPage() {
           <CardDescription>
             {msg(
               'settings.workspaces.description',
-              'Review workspace-specific API keys, webhooks, residency, and create new workspaces from one settings view.',
+              'Review workspace-specific API keys, webhooks, and create new workspaces from one settings view.',
             )}
           </CardDescription>
         </CardHeader>
@@ -124,7 +124,6 @@ export function WorkspacesSettingsPage() {
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>{msg('settings.workspaces.workspace', 'Workspace')}</TableHead>
-                    <TableHead>{msg('settings.workspaces.residency', 'Residency')}</TableHead>
                     <TableHead className="text-right">{msg('common.actions', 'Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -145,16 +144,6 @@ export function WorkspacesSettingsPage() {
                             </div>
                             <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{workspace.id}</div>
                           </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm text-foreground">
-                          {geoLabel(workspace.data_residency?.workspace_geo)}
-                        </div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {msg('settings.workspaces.defaultInference', 'Default inference: {value}', {
-                            value: geoLabel(workspace.data_residency?.default_inference_geo),
-                          })}
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
@@ -184,16 +173,6 @@ export function WorkspacesSettingsPage() {
       </Card>
     </section>
   );
-}
-
-function geoLabel(value?: string | null) {
-  if (!value) {
-    return 'US';
-  }
-  if (value.toLowerCase() === 'global') {
-    return 'Global';
-  }
-  return value.toUpperCase();
 }
 
 function readableError(error: unknown) {

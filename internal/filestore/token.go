@@ -44,6 +44,9 @@ type TokenClaims struct {
 	// WorkspaceCMEKEnabled 保存签发时工作区是否配置了客户管理密钥（CMEK）。
 	// 它只描述配置状态，不代表某次 S3 请求已经设置或执行了服务端加密。
 	WorkspaceCMEKEnabled bool `json:"workspace_cmek_enabled"`
+	// WritePrefixes 将读写 token 的变更操作限制在指定 Filestore 子树。
+	// 省略表示兼容现有、未限制写路径的可信调用方。
+	WritePrefixes []string `json:"write_prefixes,omitempty"`
 	// Readonly 为 nil 表示第一类读写 token；值为 true 时表示第二类只读 token。
 	Readonly *bool `json:"readonly,omitempty"`
 }
@@ -70,7 +73,7 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 		"org_taints",
 		"workspace_cmek_enabled",
 	}
-	allowed := make(map[string]struct{}, len(required)+1)
+	allowed := make(map[string]struct{}, len(required)+2)
 	for _, name := range required {
 		allowed[name] = struct{}{}
 		if _, exists := fields[name]; !exists {
@@ -78,6 +81,7 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 		}
 	}
 	allowed["readonly"] = struct{}{}
+	allowed["write_prefixes"] = struct{}{}
 	for name := range fields {
 		if _, exists := allowed[name]; !exists {
 			return fmt.Errorf("filestore token contains unsupported claim %q", name)
@@ -95,6 +99,12 @@ func (c *TokenClaims) UnmarshalJSON(data []byte) error {
 		var readonly bool
 		if err := json.Unmarshal(readonlyJSON, &readonly); err != nil || !readonly {
 			return errors.New("filestore readonly claim must be true when present")
+		}
+	}
+	if prefixesJSON, exists := fields["write_prefixes"]; exists {
+		var prefixes []string
+		if err := json.Unmarshal(prefixesJSON, &prefixes); err != nil || prefixes == nil {
+			return errors.New("filestore write_prefixes claim must be an array")
 		}
 	}
 	type plainTokenClaims TokenClaims
@@ -119,6 +129,7 @@ type TokenIdentity struct {
 	// OrgTaints 与 WorkspaceCMEKEnabled 来自可信数据库上下文，签入 JWT 后构成安全策略快照。
 	OrgTaints            []string
 	WorkspaceCMEKEnabled bool
+	WritePrefixes        []string
 }
 
 // TokenCredentials 持有 Filestore JWT 的 Ed25519 签发与验签密钥。
@@ -228,6 +239,7 @@ func (c *TokenCredentials) issue(identity TokenIdentity, readonly *bool) (string
 		FilesystemID:              identity.FilesystemID,
 		OrgTaints:                 identity.OrgTaints,
 		WorkspaceCMEKEnabled:      identity.WorkspaceCMEKEnabled,
+		WritePrefixes:             append([]string(nil), identity.WritePrefixes...),
 		Readonly:                  copyBool(readonly),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
@@ -273,6 +285,7 @@ func (c *TokenCredentials) Verify(rawToken string) (TokenClaims, error) {
 		return TokenClaims{}, err
 	}
 	claims.OrgTaints = canonicalOrgTaints(claims.OrgTaints)
+	claims.WritePrefixes, _ = canonicalWritePrefixes(claims.WritePrefixes)
 	claims.Readonly = copyBool(claims.Readonly)
 	return claims, nil
 }
@@ -286,6 +299,11 @@ func normalizeTokenIdentity(identity TokenIdentity) (TokenIdentity, error) {
 	identity.ResolvedWorkspaceTaggedID = strings.TrimSpace(identity.ResolvedWorkspaceTaggedID)
 	identity.FilesystemID = strings.TrimSpace(identity.FilesystemID)
 	identity.OrgTaints = canonicalOrgTaints(identity.OrgTaints)
+	writePrefixes, err := canonicalWritePrefixes(identity.WritePrefixes)
+	if err != nil {
+		return TokenIdentity{}, err
+	}
+	identity.WritePrefixes = writePrefixes
 	if err := validateTokenIdentity(identity); err != nil {
 		return TokenIdentity{}, err
 	}
@@ -293,6 +311,9 @@ func normalizeTokenIdentity(identity TokenIdentity) (TokenIdentity, error) {
 }
 
 func validateTokenClaims(claims TokenClaims) error {
+	if _, err := canonicalWritePrefixes(claims.WritePrefixes); err != nil {
+		return err
+	}
 	if err := validateTokenIdentity(TokenIdentity{
 		Subject:                   claims.Subject,
 		OrgUUID:                   claims.OrgUUID,
@@ -303,6 +324,7 @@ func validateTokenClaims(claims TokenClaims) error {
 		FilesystemID:              claims.FilesystemID,
 		OrgTaints:                 claims.OrgTaints,
 		WorkspaceCMEKEnabled:      claims.WorkspaceCMEKEnabled,
+		WritePrefixes:             claims.WritePrefixes,
 	}); err != nil {
 		return err
 	}
@@ -351,6 +373,24 @@ func canonicalOrgTaints(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func canonicalWritePrefixes(values []string) ([]string, error) {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if err := validateFilestorePath(value, false); err != nil {
+			return nil, fmt.Errorf("filestore credential write prefix is invalid: %w", err)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 // OrgTaintsEqual 以签发时的规范化规则比较两份组织 taints，

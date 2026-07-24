@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 func TestWriteFileResourcePersistenceErrorMapsTypedConflicts(t *testing.T) {
@@ -66,64 +66,61 @@ func TestWriteFileResourcePersistenceErrorMapsTypedConflicts(t *testing.T) {
 	}
 }
 
-func TestValidateSessionResourceMounts(t *testing.T) {
+func TestValidateNormalizedSessionResources(t *testing.T) {
 	t.Run("rejects too many files", func(t *testing.T) {
-		resources := make([]db.SessionResource, 0, db.MaxSessionFileResources+1)
+		resources := make([]normalizedSessionResource, 0, db.MaxSessionFileResources+1)
 		for index := 0; index <= db.MaxSessionFileResources; index++ {
-			resources = append(resources, testFileResource("/workspace/files/"+strings.Repeat("x", index+1)))
+			resources = append(resources, testNormalizedFileResource(t, "/workspace/files/"+strings.Repeat("x", index+1)))
 		}
-		if err := validateSessionResourceMounts(resources); err == nil {
-			t.Fatal("validateSessionResourceMounts() accepted more than 100 files")
+		if err := validateNormalizedSessionResources(resources); err == nil {
+			t.Fatal("validateNormalizedSessionResources() accepted more than 100 files")
 		}
 	})
 	t.Run("rejects duplicate paths", func(t *testing.T) {
-		resources := []db.SessionResource{
-			testFileResource("/workspace/data.csv"),
-			testFileResource("/workspace/data.csv"),
+		resources := []normalizedSessionResource{
+			testNormalizedFileResource(t, "/workspace/data.csv"),
+			testNormalizedFileResource(t, "/workspace/data.csv"),
 		}
-		if err := validateSessionResourceMounts(resources); err == nil {
-			t.Fatal("validateSessionResourceMounts() accepted duplicate paths")
+		if err := validateNormalizedSessionResources(resources); err == nil {
+			t.Fatal("validateNormalizedSessionResources() accepted duplicate paths")
 		}
 	})
 	t.Run("allows paths that only overlap repositories outside uploads", func(t *testing.T) {
-		resources := []db.SessionResource{
-			testMountResource("github_repository", "/workspace/repository"),
-			testFileResource("/workspace/repository/data.csv"),
+		resources := []normalizedSessionResource{
+			{resource: db.SessionResource{ResourceType: "github_repository"}},
+			testNormalizedFileResource(t, "/workspace/repository/data.csv"),
 		}
-		if err := validateSessionResourceMounts(resources); err != nil {
-			t.Fatalf("validateSessionResourceMounts(): %v", err)
+		if err := validateNormalizedSessionResources(resources); err != nil {
+			t.Fatalf("validateNormalizedSessionResources(): %v", err)
 		}
 	})
 	t.Run("accepts distinct paths", func(t *testing.T) {
-		resources := []db.SessionResource{
-			testMountResource("github_repository", "/workspace/repository"),
-			testFileResource("/workspace/data.csv"),
-			testFileResource("/workspace/input/config.json"),
+		resources := []normalizedSessionResource{
+			{resource: db.SessionResource{ResourceType: "github_repository"}},
+			testNormalizedFileResource(t, "/workspace/data.csv"),
+			testNormalizedFileResource(t, "/workspace/input/config.json"),
 		}
-		if err := validateSessionResourceMounts(resources); err != nil {
-			t.Fatalf("validateSessionResourceMounts(): %v", err)
+		if err := validateNormalizedSessionResources(resources); err != nil {
+			t.Fatalf("validateNormalizedSessionResources(): %v", err)
 		}
 	})
 }
 
-func testFileResource(mountPath string) db.SessionResource {
-	return testMountResource("file", mountPath)
-}
-
-func testMountResource(resourceType, mountPath string) db.SessionResource {
-	payload := map[string]any{
-		"id":         "sesrsc_test",
-		"type":       resourceType,
-		"mount_path": mountPath,
+func testNormalizedFileResource(t *testing.T, mountPath string) normalizedSessionResource {
+	t.Helper()
+	raw, err := json.Marshal(mountPath)
+	if err != nil {
+		t.Fatalf("marshal mount path: %v", err)
 	}
-	if resourceType == "file" {
-		payload["file_id"] = "file_test"
-		payload["source"] = sandboxmount.FileSource
+	spec, err := sessionresource.NormalizeFileSpec("file_test", nil, raw)
+	if err != nil {
+		t.Fatalf("normalize FileSpec: %v", err)
 	}
-	raw, _ := json.Marshal(payload)
-	return db.SessionResource{
-		ExternalID:   "sesrsc_test",
-		ResourceType: resourceType,
-		Payload:      raw,
+	return normalizedSessionResource{
+		resource: db.SessionResource{
+			ExternalID:   "sesrsc_test",
+			ResourceType: sessionresource.FileType,
+		},
+		fileSpec: &spec,
 	}
 }

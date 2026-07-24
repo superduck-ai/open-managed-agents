@@ -106,6 +106,9 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 	if source.Kind != FilestoreEntryKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
+	if filestoreEntryIsManaged(source) {
+		return FilestoreMutationResult{}, ErrPreconditionFailed
+	}
 	if input.ExpectedSourceS3Key != "" && filestoreString(source.S3Key) != input.ExpectedSourceS3Key {
 		// 对象复制发生在数据库事务之外；以对象键和版本号作乐观锁，拒绝陈旧副本落库。
 		return FilestoreMutationResult{}, ErrVersionConflict
@@ -164,7 +167,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		}
 		return FilestoreMutationResult{Entry: source}, nil
 	}
-	if source.ManagedBy != nil || source.ManagedResourceUUID != nil {
+	if filestoreEntryIsManaged(source) {
 		return FilestoreMutationResult{}, ErrFilestoreInvalidMove
 	}
 	if err := requireFilestoreDirectoryTx(ctx, tx, filesystem, filestoreParentPath(input.DestinationPath)); err != nil {
@@ -181,7 +184,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		return FilestoreMutationResult{}, err
 	}
 	if found {
-		if destination.SourceFileUUID != nil {
+		if filestoreEntryIsManaged(destination) {
 			return FilestoreMutationResult{}, ErrPreconditionFailed
 		}
 		if !filestoreEntryExpired(destination, databaseNow) {
@@ -418,7 +421,7 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveFilestoreEntry
 	if entry.Kind != FilestoreEntryKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
-	if entry.SourceFileUUID != nil {
+	if filestoreEntryIsManaged(entry) {
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
 	job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{

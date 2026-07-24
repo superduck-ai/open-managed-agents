@@ -28,7 +28,7 @@ var (
 	errRcloneConfigPermissions = errors.New("rclone-filestore config permission update failed")
 	errRcloneProcessStart      = errors.New("rclone-filestore process start failed")
 	errRcloneReadiness         = errors.New("rclone-filestore readiness check failed")
-	errRcloneConfigCleanup     = errors.New("rclone-filestore config cleanup failed")
+	errEnvironmentManagerStart = errors.New("environment manager process start failed")
 )
 
 type Runner struct {
@@ -39,6 +39,21 @@ type Runner struct {
 	skills       *skillsapi.RuntimeResolver
 
 	filestoreCredentials *filestore.TokenCredentials
+}
+
+type managedAgentLaunchPreparation struct {
+	Session       db.Session
+	InitialEvents []json.RawMessage
+	SessionConfig json.RawMessage
+	WorkDir       string
+	Title         string
+}
+
+type managedAgentRuntimeLaunch struct {
+	CodeSessionID   string
+	PublicSessionID string
+	SDKURLPath      string
+	Manager         environmentManagerCommand
 }
 
 func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
@@ -145,7 +160,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	launch, err := r.prepareManagedAgentLaunch(ctx, env, work)
+	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
@@ -178,13 +193,16 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 	providerSandboxID := sandbox.ID
-	if strings.TrimSpace(providerSandboxID) != "" {
-		nextWorkMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
-			"provider_sandbox_id": providerSandboxID,
-		})
-		if err != nil {
-			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, err
+	if strings.TrimSpace(providerSandboxID) != "" || preparation != nil {
+		nextWorkMetadata := work.Metadata
+		if strings.TrimSpace(providerSandboxID) != "" {
+			nextWorkMetadata, err = patchJSONMetadata(work.Metadata, map[string]any{
+				"provider_sandbox_id": providerSandboxID,
+			})
+			if err != nil {
+				r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+				return true, err
+			}
 		}
 		updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, nextWorkMetadata)
 		if err != nil {
@@ -193,8 +211,13 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		}
 		*work = updatedWork
 	}
-	if launch != nil {
-		if err := r.startRcloneFilestore(ctx, providerSandboxID, launch.Filestore); err != nil {
+	if preparation != nil {
+		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.Session)
+		if err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, fmt.Errorf("prepare rclone-filestore launch: %w", err)
+		}
+		if err := r.startRcloneFilestore(ctx, providerSandboxID, rcloneLaunch); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
@@ -207,15 +230,51 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
-	if launch != nil {
+	if preparation != nil {
+		launch, err := r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
+		if err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, fmt.Errorf("create managed-agent runtime launch: %w", err)
+		}
 		// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
 		// 并在启动 Claude 前 register worker，建立首个 CCR lease。
 		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
-			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, err
+			publicError := logManagedAgentRuntimeStageFailure(
+				"environment_manager_start",
+				errEnvironmentManagerStart,
+				err,
+			)
+			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch.CodeSessionID, publicError)
+			return true, publicError
+		}
+		if err := r.publishManagedAgentRuntime(ctx, preparation.Session, *work, launch); err != nil {
+			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch.CodeSessionID, err)
+			return true, fmt.Errorf("publish managed-agent runtime metadata: %w", err)
 		}
 	}
 	return true, nil
+}
+
+func (r *Runner) failManagedAgentRuntime(
+	ctx context.Context,
+	record db.EnvironmentSandbox,
+	work *db.EnvironmentWork,
+	providerSandboxID string,
+	session db.Session,
+	codeSessionID string,
+	cause error,
+) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, codeSessionID); err != nil {
+		log.Printf(
+			"terminate failed managed-agent runtime code_session_id=%s stage_error_type=%T cleanup_error_type=%T",
+			codeSessionID,
+			cause,
+			err,
+		)
+	}
+	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
 }
 
 func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
@@ -231,7 +290,11 @@ func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSa
 	_ = r.provider.Kill(killCtx, providerSandboxID)
 }
 
-func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*managedAgentLaunch, error) {
+func (r *Runner) prepareManagedAgentLaunch(
+	ctx context.Context,
+	env db.Environment,
+	work *db.EnvironmentWork,
+) (*managedAgentLaunchPreparation, error) {
 	if r == nil || work == nil || r.codeSessions == nil {
 		return nil, nil
 	}
@@ -244,10 +307,6 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 		return nil, err
 	}
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceID, session.ExternalID)
-	if err != nil {
-		return nil, err
-	}
-	rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -270,82 +329,158 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	if session.Title != nil {
 		title = *session.Title
 	}
+	if skillMount != nil {
+		nextWorkMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
+			e2bruntime.SkillMountMetadataKey: skillMount,
+		})
+		if err != nil {
+			return nil, err
+		}
+		work.Metadata = nextWorkMetadata
+	}
+	return &managedAgentLaunchPreparation{
+		Session:       session,
+		InitialEvents: events,
+		SessionConfig: sessionConfig,
+		WorkDir:       workDir,
+		Title:         title,
+	}, nil
+}
+
+func (r *Runner) createManagedAgentRuntimeLaunch(
+	ctx context.Context,
+	env db.Environment,
+	work db.EnvironmentWork,
+	preparation managedAgentLaunchPreparation,
+) (managedAgentRuntimeLaunch, error) {
 	local, err := r.codeSessions.CreateManagedAgentCodeSession(ctx, codesessions.ManagedAgentCreateInput{
-		Session:                    session,
+		Session:                    preparation.Session,
 		Environment:                env,
-		EnvironmentWork:            *work,
-		Model:                      modelIDFromAgentSnapshot(session.AgentSnapshot),
-		Title:                      title,
-		WorkDir:                    workDir,
+		EnvironmentWork:            work,
+		Model:                      modelIDFromAgentSnapshot(preparation.Session.AgentSnapshot),
+		Title:                      preparation.Title,
+		WorkDir:                    preparation.WorkDir,
 		PermissionMode:             "bypassPermissions",
 		DangerouslySkipPermissions: true,
-		Config:                     sessionConfig,
-		InitialEvents:              events,
+		Config:                     preparation.SessionConfig,
+		InitialEvents:              preparation.InitialEvents,
 	})
 	if err != nil {
-		return nil, err
+		return managedAgentRuntimeLaunch{}, err
 	}
-	sessionMetadataPatch := map[string]any{
-		"claude_code_session_id":        local.CodeSessionID,
-		"claude_code_public_session_id": local.PublicSessionID,
-		"claude_code_sdk_url_path":      local.SDKURLPath,
-		"runtime":                       "claude_code_local",
-	}
-	workMetadataPatch := map[string]any{
-		"claude_code_session_id":        local.CodeSessionID,
-		"claude_code_public_session_id": local.PublicSessionID,
-		"claude_code_sdk_url_path":      local.SDKURLPath,
-		"runtime":                       "claude_code_local",
-	}
-	if skillMount != nil {
-		workMetadataPatch[e2bruntime.SkillMountMetadataKey] = skillMount
-	}
-	metadataPatch, err := json.Marshal(sessionMetadataPatch)
+	payload, err := buildEnvironmentManagerV0Payload(
+		local.CodeSessionID,
+		local.SessionIngressToken,
+		local.OAuthAccessToken,
+		preparation.WorkDir,
+		preparation.SessionConfig,
+		r.cfg,
+	)
 	if err != nil {
-		return nil, err
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = r.codeSessions.TerminateManagedAgentCodeSession(
+			cleanupCtx,
+			preparation.Session,
+			local.CodeSessionID,
+		)
+		return managedAgentRuntimeLaunch{}, err
 	}
-	if _, err := r.db.PatchSessionMetadata(ctx, session.WorkspaceID, session.ExternalID, metadataPatch); err != nil {
-		return nil, err
-	}
-	nextWorkMetadata, err := patchJSONMetadata(work.Metadata, workMetadataPatch)
-	if err != nil {
-		return nil, err
-	}
-	updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, nextWorkMetadata)
-	if err != nil {
-		return nil, err
-	}
-	*work = updatedWork
+	return managedAgentRuntimeLaunch{
+		CodeSessionID:   local.CodeSessionID,
+		PublicSessionID: local.PublicSessionID,
+		SDKURLPath:      local.SDKURLPath,
+		Manager:         buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload),
+	}, nil
+}
 
-	payload, err := buildEnvironmentManagerV0Payload(local.CodeSessionID, local.SessionIngressToken, local.OAuthAccessToken, workDir, sessionConfig, r.cfg)
+func (r *Runner) publishManagedAgentRuntime(
+	ctx context.Context,
+	session db.Session,
+	work db.EnvironmentWork,
+	launch managedAgentRuntimeLaunch,
+) error {
+	metadataPatch, err := json.Marshal(map[string]any{
+		"claude_code_session_id":        launch.CodeSessionID,
+		"claude_code_public_session_id": launch.PublicSessionID,
+		"claude_code_sdk_url_path":      launch.SDKURLPath,
+		"runtime":                       "claude_code_local",
+	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	command := buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload)
-	return &managedAgentLaunch{Manager: command, Filestore: rcloneLaunch}, nil
+	return r.db.BindManagedAgentRuntimeMetadata(
+		ctx,
+		session,
+		work,
+		metadataPatch,
+		metadataPatch,
+	)
 }
 
 func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
 	if err := r.provider.WriteFile(ctx, sandboxID, rcloneConfigPath, launch.ConfigPayload); err != nil {
 		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return errRcloneConfigWrite
+		return logRcloneStageFailure("config_write", errRcloneConfigWrite, err)
 	}
 	if err := r.provider.RunCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
 		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return errRcloneConfigPermissions
+		return logRcloneStageFailure("config_permissions", errRcloneConfigPermissions, err)
 	}
 	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
 		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return errRcloneProcessStart
+		return logRcloneStageFailure("process_start", errRcloneProcessStart, err)
 	}
 	if err := r.waitForRcloneReady(ctx, sandboxID, rcloneReadyPollInterval, rcloneReadyTimeout); err != nil {
 		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return errRcloneReadiness
+		return logRcloneStageFailure("readiness", errRcloneReadiness, err)
 	}
-	if err := r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout); err != nil {
-		return errRcloneConfigCleanup
-	}
+	r.removeRcloneConfig(ctx, sandboxID)
 	return nil
+}
+
+func (r *Runner) removeRcloneConfig(ctx context.Context, sandboxID string) {
+	for attempt := 1; attempt <= rcloneConfigCleanupTries; attempt++ {
+		cleanupErr := r.provider.RunCommand(
+			ctx,
+			sandboxID,
+			rcloneConfigCleanupCommand(),
+			rcloneCommandGraceTimeout,
+		)
+		if cleanupErr == nil {
+			return
+		}
+		log.Printf(
+			"rclone-filestore stage=config_cleanup attempt=%d error_type=%T",
+			attempt,
+			cleanupErr,
+		)
+		exists, probeErr := r.provider.FileExists(ctx, sandboxID, rcloneConfigPath)
+		if probeErr == nil && !exists {
+			return
+		}
+		if probeErr != nil {
+			log.Printf(
+				"rclone-filestore stage=config_cleanup_probe attempt=%d error_type=%T",
+				attempt,
+				probeErr,
+			)
+		}
+	}
+	log.Printf(
+		"rclone-filestore stage=config_cleanup exhausted_attempts=%d config_may_remain=true",
+		rcloneConfigCleanupTries,
+	)
+}
+
+func logRcloneStageFailure(stage string, publicError, cause error) error {
+	log.Printf("rclone-filestore stage=%s error_type=%T", stage, cause)
+	return publicError
+}
+
+func logManagedAgentRuntimeStageFailure(stage string, publicError, cause error) error {
+	log.Printf("managed-agent runtime stage=%s error_type=%T", stage, cause)
+	return publicError
 }
 
 func (r *Runner) waitForRcloneReady(

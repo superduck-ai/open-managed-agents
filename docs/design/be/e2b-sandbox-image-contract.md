@@ -21,7 +21,7 @@
 
 | 路径 | 所有者 | 生命周期 |
 | --- | --- | --- |
-| `/tmp/rclone-mount-config.json` | Runner/rclone | E2B Files API 写入后设为 `0600`，ready 后删除 |
+| `/tmp/rclone-mount-config.json` | Runner/rclone | E2B Files API 写入后设为 `0600`，ready 后最多重试三次删除 |
 | `/tmp/rclone-mounts/ready` | rclone-filestore | 四个 mount 全部 ready 后创建 |
 
 Runner 每次创建新的 Sandbox，通过 E2B 后台进程 API 启动 rclone，不在 Sandbox 中写 PID 或 exit marker。Runner 只通过 E2B Files API 每 `200ms` 探测 ready marker，最长 `20s`，不探测 rclone PID。`/tmp/rclone-mounts/ready` 必须只表示四个固定 mount 均已可用；部分就绪不能创建 marker。
@@ -50,12 +50,14 @@ flowchart TD
     W --> B["Start fixed rclone-filestore binary"]
     B --> C{"All four mounts ready?"}
     C -->|"probe error / 20s timeout"| F["Fail work and kill Sandbox"]
-    C -->|"yes"| D["Delete token config"]
+    C -->|"yes"| D["Delete token config, retry up to 3 times"]
     D --> G["Mark Sandbox running and heartbeat Work"]
-    G --> H["Start Environment Manager"]
+    G --> I["Create local Code Session"]
+    I --> H["Start Environment Manager"]
+    H --> J["Publish runtime metadata atomically"]
 ```
 
-File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Runner 不在启动时修复 namespace。Environment Manager 不能先于 rclone ready 启动；任何身份解析、启动、ready 或配置删除错误都进入统一失败清理。
+File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Runner 不在启动时修复 namespace。Environment Manager 不能先于 rclone ready 启动；身份解析、启动或 ready 错误进入统一失败清理。ready 后配置删除失败会有限重试并记录脱敏告警，不会杀掉已经就绪的 Sandbox；outputs token 在协议层只允许写 `/outputs`。
 
 ## 镜像验收
 
@@ -70,7 +72,7 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 2. 用临时测试 filesystem 启动固定 multimount，ready marker 在超时内出现。
 3. `/mnt/user-data/outputs` 可写，另外三个 destination 拒绝写入。
 4. 只通过 Files API 上传对象并给 Session 添加 File resource，不在测试侧直接写 Filestore；确认 resource 写入已创建 `/uploads/workspace/data.csv` 的数据库引用，启动后可通过 `/mnt/session/uploads/workspace/data.csv` 读取且写入失败。
-5. ready 后 `/tmp/rclone-mount-config.json` 不存在，日志和进程命令行不包含 Filestore Token。
+5. 正常路径 ready 后 `/tmp/rclone-mount-config.json` 不存在；模拟删除失败时确认最多重试三次、记录脱敏告警且 Sandbox 继续运行。日志和进程命令行不包含 Filestore Token，outputs token 不能写入其他 source。
 6. ready 探测失败或 `20s` 内未出现 marker 均不会启动 Environment Manager，并会终止 Sandbox。
 
 Token 当前固定一小时有效且不刷新；长生命周期 Sandbox 的续签不属于此镜像合同。

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -64,30 +63,23 @@ func enforceSessionFileResourceCapacityTx(
 	return nil
 }
 
-func sessionFileResourceCount(resources []SessionResource) int {
+func sessionFileResourceCount(resources []CreateSessionResourceInput) int {
 	count := 0
-	for _, resource := range resources {
-		if resource.ResourceType == SessionResourceTypeFile {
+	for _, input := range resources {
+		if input.Resource.ResourceType == SessionResourceTypeFile {
 			count++
 		}
 	}
 	return count
 }
 
-func sessionFileMountsByResource(mounts []SessionFileMount) (map[string]SessionFileMount, error) {
-	byResource := make(map[string]SessionFileMount, len(mounts))
-	for _, mount := range mounts {
-		if strings.TrimSpace(mount.ResourceExternalID) == "" ||
-			strings.TrimSpace(mount.FileExternalID) == "" ||
-			strings.TrimSpace(mount.Path) == "" {
-			return nil, ErrPreconditionFailed
+func sessionHasFileMount(resources []CreateSessionResourceInput) bool {
+	for _, input := range resources {
+		if input.FileMount != nil {
+			return true
 		}
-		if _, exists := byResource[mount.ResourceExternalID]; exists {
-			return nil, ErrPreconditionFailed
-		}
-		byResource[mount.ResourceExternalID] = mount
 	}
-	return byResource, nil
+	return false
 }
 
 func lockSessionFilestoreMutationTx(

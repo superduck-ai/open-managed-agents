@@ -180,6 +180,7 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 		FilesystemUUID:         scope.FilesystemUUID,
 		FilesystemExternalID:   scope.FilesystemExternalID,
 		Readonly:               readonly,
+		WritePrefixes:          append([]string(nil), claims.WritePrefixes...),
 		OrganizationTaints:     append([]string(nil), claims.OrgTaints...),
 		WorkspaceCMEKEnabled:   claims.WorkspaceCMEKEnabled,
 	}, nil

@@ -28,6 +28,12 @@ func workspaceStorageBytesQuery(ctx context.Context, database *sqlx.DB, workspac
 	return total, err
 }
 
+// GetWorkspaceStorageBytes returns the transactionally maintained Files API
+// plus Filestore usage for one workspace.
+func (d *DB) GetWorkspaceStorageBytes(ctx context.Context, workspaceID int64) (int64, error) {
+	return workspaceStorageBytesQuery(ctx, d.sql, workspaceID)
+}
+
 // ReconcileWorkspaceStorageUsage 在工作区锁内从文件事实表重建账本。
 // 它用于迁移校验和低频运维修复，不应放回正常请求链路。
 func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int64) (int64, error) {

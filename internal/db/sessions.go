@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type Session struct {
@@ -62,10 +63,10 @@ const (
 	// SessionResourceTypeFile identifies a Files API object attached to a
 	// Session. It is distinct from FilestoreEntryKindFile, which classifies
 	// filesystem nodes.
-	SessionResourceTypeFile = "file"
+	SessionResourceTypeFile = sessioncontract.FileResourceType
 	// MaxSessionFileResources is the write-time limit for active File resources
 	// attached to one Session.
-	MaxSessionFileResources = 100
+	MaxSessionFileResources = sessioncontract.MaxFileResources
 )
 
 type SessionResource struct {
@@ -156,11 +157,10 @@ type ListSessionThreadsPageParams struct {
 }
 
 type CreateSessionInput struct {
-	Session    Session
-	Thread     SessionThread
-	Resources  []SessionResource
-	FileMounts []SessionFileMount
-	Work       EnvironmentWork
+	Session   Session
+	Thread    SessionThread
+	Resources []CreateSessionResourceInput
+	Work      EnvironmentWork
 }
 
 // CreateSessionResourceInput contains the normalized resource row and its

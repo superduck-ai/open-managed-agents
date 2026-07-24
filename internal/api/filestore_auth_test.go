@@ -11,14 +11,17 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/platform"
 
 	"github.com/google/uuid"
 )
@@ -44,6 +47,7 @@ type filestoreAuthCredentials struct {
 type filestoreAuthFixture struct {
 	tokenIdentity         filestore.TokenIdentity
 	filesystemUUID        string
+	organizationID        int64
 	workspaceID           int64
 	sessionExternalID     string
 	ingressIdentity       codesessions.SessionCredentialIdentity
@@ -284,6 +288,30 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 		}
 	})
 
+	t.Run("write prefixes reach principal", func(t *testing.T) {
+		scopedIdentity := fixture.tokenIdentity
+		scopedIdentity.WritePrefixes = []string{"/outputs"}
+		scopedToken, issueErr := credentials.filestore.Issue(scopedIdentity)
+		if issueErr != nil {
+			t.Fatalf("issue path-scoped token: %v", issueErr)
+		}
+		var principal filestore.Principal
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			principal, _ = filestore.PrincipalFromContext(r.Context())
+			w.WriteHeader(http.StatusNoContent)
+		})
+		response := httptest.NewRecorder()
+
+		server.filestoreAuthMiddleware(next).ServeHTTP(
+			response,
+			newFilestoreBearerRequest(http.MethodPost, filestoreAuthPaths[0], scopedToken),
+		)
+
+		if response.Code != http.StatusNoContent || !slices.Equal(principal.WritePrefixes, []string{"/outputs"}) {
+			t.Fatalf("response/principal = %d/%#v, want scoped principal", response.Code, principal)
+		}
+	})
+
 	t.Run("failure token signed by another key", func(t *testing.T) {
 		otherCredentials := newFilestoreAuthCredentials(t)
 		wrongToken, issueErr := otherCredentials.filestore.Issue(fixture.tokenIdentity)
@@ -351,6 +379,69 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 			assertFlatFilestoreAuthError(t, response, http.StatusUnauthorized, "unauthenticated", "Invalid bearer token")
 		})
 	}
+
+	t.Run("failure database organization policy change revokes existing token", func(t *testing.T) {
+		organization, getErr := database.GetPlatformOrganization(context.Background(), fixture.tokenIdentity.OrgUUID)
+		if getErr != nil {
+			t.Fatalf("load organization policy: %v", getErr)
+		}
+		if _, updateErr := database.UpdatePlatformOrganization(
+			context.Background(),
+			fixture.tokenIdentity.OrgUUID,
+			platform.OrganizationUpdatePatch{Settings: map[string]any{"org_taints": []string{"changed"}}},
+		); updateErr != nil {
+			t.Fatalf("change organization policy: %v", updateErr)
+		}
+		defer func() {
+			_, restoreErr := database.UpdatePlatformOrganization(
+				context.Background(),
+				fixture.tokenIdentity.OrgUUID,
+				platform.OrganizationUpdatePatch{Settings: map[string]any{"org_taints": organization.Settings["org_taints"]}},
+			)
+			if restoreErr != nil {
+				t.Errorf("restore organization policy: %v", restoreErr)
+			}
+		}()
+
+		response := serveFilestoreAuthRequest(server, http.MethodPost, filestoreAuthPaths[0], token)
+		assertFlatFilestoreAuthError(t, response, http.StatusUnauthorized, "unauthenticated", "Invalid bearer token")
+	})
+
+	t.Run("failure database workspace cmek change revokes existing token", func(t *testing.T) {
+		workspace, getErr := database.GetAdminWorkspace(
+			context.Background(),
+			fixture.organizationID,
+			fixture.tokenIdentity.WorkspaceTaggedID,
+		)
+		if getErr != nil {
+			t.Fatalf("load workspace policy: %v", getErr)
+		}
+		next := workspace
+		next.ExternalKeyID = nil
+		next.UpdatedAt = time.Now().UTC()
+		if _, updateErr := database.UpdateAdminWorkspace(
+			context.Background(),
+			fixture.organizationID,
+			workspace.ExternalID,
+			next,
+		); updateErr != nil {
+			t.Fatalf("change workspace CMEK policy: %v", updateErr)
+		}
+		defer func() {
+			workspace.UpdatedAt = time.Now().UTC()
+			if _, restoreErr := database.UpdateAdminWorkspace(
+				context.Background(),
+				fixture.organizationID,
+				workspace.ExternalID,
+				workspace,
+			); restoreErr != nil {
+				t.Errorf("restore workspace CMEK policy: %v", restoreErr)
+			}
+		}()
+
+		response := serveFilestoreAuthRequest(server, http.MethodPost, filestoreAuthPaths[0], token)
+		assertFlatFilestoreAuthError(t, response, http.StatusUnauthorized, "unauthenticated", "Invalid bearer token")
+	})
 
 	t.Run("middleware rejects invalid filestore token with bearer wording", func(t *testing.T) {
 		otherCredentials := newFilestoreAuthCredentials(t)
@@ -607,6 +698,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 
 	return database, cfg, filestoreAuthFixture{
 		filesystemUUID:    filesystemUUID,
+		organizationID:    organizationID,
 		workspaceID:       workspaceID,
 		sessionExternalID: publicSessionID,
 		tokenIdentity: filestore.TokenIdentity{

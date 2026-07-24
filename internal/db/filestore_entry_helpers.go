@@ -110,6 +110,22 @@ func getActiveFilestoreEntryForMutation(ctx context.Context, tx *sqlx.Tx, filesy
 	`, filestoreEntryMutationArguments(filesystem, entryPath))
 }
 
+// filestoreEntryIsManaged reports whether an entry is controlled by a
+// higher-level resource contract and therefore must not be changed through the
+// ordinary Filestore mutation API.
+func filestoreEntryIsManaged(entry FilestoreEntry) bool {
+	return entry.ManagedBy != nil ||
+		entry.ManagedResourceUUID != nil ||
+		entry.SourceFileUUID != nil
+}
+
+// filestoreEntryBorrowsSourceObject reports whether the entry references an
+// object owned and accounted for by the Files API. Managed entries that own
+// their own object must still be eligible for ordinary object cleanup.
+func filestoreEntryBorrowsSourceObject(entry FilestoreEntry) bool {
+	return entry.SourceFileUUID != nil
+}
+
 func filestoreSubtreeContainsManagedEntryTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
@@ -323,7 +339,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 		if existing.Kind != FilestoreEntryKindFile {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
 		}
-		if existing.SourceFileUUID != nil {
+		if filestoreEntryIsManaged(existing) {
 			return FilestoreMutationResult{}, ErrPreconditionFailed
 		}
 		if !input.OverwriteExisting {

@@ -125,10 +125,9 @@ func TestStartRcloneFilestoreFailures(t *testing.T) {
 			wantLaunchCalls: 1,
 		},
 		{
-			name:            "cleanup",
-			provider:        &rcloneTestProvider{ready: true, runErrors: []error{nil, providerFailure}},
-			wantError:       errRcloneConfigCleanup,
-			wantRunCalls:    2,
+			name:            "cleanup retries without failing ready sandbox",
+			provider:        &rcloneTestProvider{ready: true, runErrors: []error{nil, providerFailure, providerFailure, providerFailure}},
+			wantRunCalls:    4,
 			wantLaunchCalls: 1,
 		},
 	}
@@ -143,7 +142,7 @@ func TestStartRcloneFilestoreFailures(t *testing.T) {
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("startRcloneFilestore() error = %v, want %v", err, test.wantError)
 			}
-			if strings.Contains(err.Error(), secretMarker) || errors.Is(err, providerFailure) {
+			if err != nil && (strings.Contains(err.Error(), secretMarker) || errors.Is(err, providerFailure)) {
 				t.Fatalf("startRcloneFilestore() leaked provider error: %v", err)
 			}
 			if len(test.provider.runCommands) != test.wantRunCalls {
@@ -192,6 +191,7 @@ type rcloneTestProvider struct {
 	runCommands     []string
 	writePath       string
 	writeData       []byte
+	configExists    bool
 }
 
 func (*rcloneTestProvider) Create(context.Context, db.Environment, *db.EnvironmentWork, e2bruntime.Resolution) (e2bruntime.Sandbox, error) {
@@ -209,13 +209,19 @@ func (*rcloneTestProvider) Resolve(db.Environment, *db.EnvironmentWork) (e2brunt
 func (p *rcloneTestProvider) WriteFile(_ context.Context, _ string, path string, data []byte) error {
 	p.writePath = path
 	p.writeData = append([]byte(nil), data...)
+	if p.writeErr == nil && path == rcloneConfigPath {
+		p.configExists = true
+	}
 	return p.writeErr
 }
 
-func (p *rcloneTestProvider) FileExists(context.Context, string, string) (bool, error) {
+func (p *rcloneTestProvider) FileExists(_ context.Context, _ string, path string) (bool, error) {
 	p.fileExistsCalls++
 	if p.fileExistsErr != nil {
 		return false, p.fileExistsErr
+	}
+	if path == rcloneConfigPath {
+		return p.configExists, nil
 	}
 	index := p.fileExistsCalls - 1
 	if index < len(p.readySequence) {
@@ -228,7 +234,12 @@ func (p *rcloneTestProvider) RunCommand(_ context.Context, _ string, command str
 	p.runCommands = append(p.runCommands, command)
 	index := len(p.runCommands) - 1
 	if index < len(p.runErrors) {
-		return p.runErrors[index]
+		if p.runErrors[index] != nil {
+			return p.runErrors[index]
+		}
+	}
+	if command == rcloneConfigCleanupCommand() {
+		p.configExists = false
 	}
 	return nil
 }

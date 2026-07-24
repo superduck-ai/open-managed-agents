@@ -180,11 +180,11 @@ func (e resourceReferenceError) Unwrap() error {
 func sessionResourcesFromDeployment(
 	deployment db.Deployment,
 	now time.Time,
-) ([]db.SessionResource, []db.SessionFileMount, error) {
+) ([]db.CreateSessionResourceInput, error) {
 	var configs []json.RawMessage
 	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
 		if err := json.Unmarshal(deployment.Resources, &configs); err != nil {
-			return nil, nil, errors.New("stored resources are invalid")
+			return nil, errors.New("stored resources are invalid")
 		}
 	}
 	var secrets map[string]json.RawMessage
@@ -192,60 +192,67 @@ func sessionResourcesFromDeployment(
 		_ = json.Unmarshal(deployment.ResourceSecrets, &secrets)
 	}
 
-	resources := make([]db.SessionResource, 0, len(configs))
-	fileMounts := make([]db.SessionFileMount, 0, len(configs))
+	resources := make([]db.CreateSessionResourceInput, 0, len(configs))
 	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
 	for index, configRaw := range configs {
 		var config map[string]any
 		if err := json.Unmarshal(configRaw, &config); err != nil {
-			return nil, nil, errors.New("stored resources are invalid")
+			return nil, errors.New("stored resources are invalid")
 		}
 		resourceType, _ := config["type"].(string)
 		resourceID, err := ids.New("sesrsc_")
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		payload := cloneMap(config)
+		var fileMount *db.SessionFileMount
 		if resourceType == sessionresource.FileType {
 			fileSpec, err := sessionresource.ParseStoredFileSpec(configRaw)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			payload = fileSpec.PayloadFields(resourceID)
-			mount, err := fileSpec.SessionFileMount(resourceID)
+			binding, err := fileSpec.SessionFileBinding(resourceID)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			fileSpecs = append(fileSpecs, fileSpec)
-			fileMounts = append(fileMounts, mount)
+			fileMount = &db.SessionFileMount{
+				ResourceExternalID: binding.ResourceID,
+				FileExternalID:     binding.FileID,
+				Path:               binding.Path,
+			}
 		} else {
 			payload["id"] = resourceID
 			payload["type"] = resourceType
 		}
 		payloadRaw, err := httpapi.MarshalRaw(payload)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		var secretRaw json.RawMessage
 		if secrets != nil {
 			secretRaw = secrets[strconv.Itoa(index)]
 		}
-		resources = append(resources, db.SessionResource{
-			UUID:           uuid.NewString(),
-			ExternalID:     resourceID,
-			OrganizationID: deployment.OrganizationID,
-			WorkspaceID:    deployment.WorkspaceID,
-			ResourceType:   resourceType,
-			Payload:        payloadRaw,
-			SecretPayload:  secretRaw,
-			CreatedAt:      now,
-			UpdatedAt:      now,
+		resources = append(resources, db.CreateSessionResourceInput{
+			Resource: db.SessionResource{
+				UUID:           uuid.NewString(),
+				ExternalID:     resourceID,
+				OrganizationID: deployment.OrganizationID,
+				WorkspaceID:    deployment.WorkspaceID,
+				ResourceType:   resourceType,
+				Payload:        payloadRaw,
+				SecretPayload:  secretRaw,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			},
+			FileMount: fileMount,
 		})
 	}
 	if err := sessionresource.ValidateFileSpecs(fileSpecs); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return resources, fileMounts, nil
+	return resources, nil
 }

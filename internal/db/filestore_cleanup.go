@@ -180,6 +180,13 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
 	releasedBytesByWorkspace := make(map[int64]int64)
 	for _, entry := range entries {
+		// Managed entries are controlled by their owning resource contract.
+		// The current schema forbids expiry on Session File references; retain
+		// the broader guard so future managed entry types cannot be retired by
+		// the ordinary Filestore TTL path.
+		if filestoreEntryIsManaged(entry) {
+			continue
+		}
 		scope, found := cleanupScopeByFilesystemUUID[entry.FilesystemUUID]
 		if !found {
 			return nil, ErrNotFound
@@ -307,7 +314,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	arguments["retired_at"] = now
 	var releasedBytes int64
 	for _, entry := range entries {
-		if entry.SourceFileUUID == nil {
+		if !filestoreEntryBorrowsSourceObject(entry) {
 			if _, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, cleanupScope, entry, "session_deleted", now); err != nil {
 				return false, err
 			}
@@ -696,7 +703,8 @@ type filestoreEntryCleanupScope struct {
 }
 
 func enqueueFilestoreEntryCleanupJobPGX(ctx context.Context, tx pgx.Tx, scope filestoreEntryCleanupScope, entry FilestoreEntry, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
-	if entry.Kind != FilestoreEntryKindFile || entry.S3Bucket == nil || entry.S3Key == nil {
+	if entry.Kind != FilestoreEntryKindFile || entry.S3Bucket == nil ||
+		entry.S3Key == nil || filestoreEntryIsManaged(entry) {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
 	}
 	return enqueueFilestoreObjectCleanupJobPGX(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
@@ -713,8 +721,11 @@ func enqueueFilestoreEntryCleanupJobPGX(ctx context.Context, tx pgx.Tx, scope fi
 }
 
 func enqueueFilestoreEntryCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope filestoreEntryCleanupScope, entry FilestoreEntry, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
+	// This helper is also used while retiring an entire filesystem. Managed
+	// entries that own their objects must be cleaned up there; only borrowed
+	// Files API objects are ineligible for object deletion.
 	if entry.Kind != FilestoreEntryKindFile || entry.S3Bucket == nil ||
-		entry.S3Key == nil || entry.SourceFileUUID != nil {
+		entry.S3Key == nil || filestoreEntryBorrowsSourceObject(entry) {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
 	}
 	return insertFilestoreObjectCleanupJobSQLX(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{

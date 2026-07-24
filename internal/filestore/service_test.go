@@ -83,6 +83,108 @@ func TestServiceRejectsInvalidPathsBeforeDependencies(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsWritesOutsideTokenPrefixesBeforeDependencies(t *testing.T) {
+	t.Parallel()
+
+	principal := serviceTestPrincipal()
+	principal.WritePrefixes = []string{"/outputs"}
+	service := newServiceUnderTest(config.Config{}, &fakeServiceDatabase{}, &fakeServiceBlobStore{})
+	tests := []struct {
+		name string
+		run  func() *apiError
+	}{
+		{
+			name: "make directory",
+			run: func() *apiError {
+				_, apiErr := service.MakeDirectory(context.Background(), principal, makeDirectoryRequest{
+					FilesystemID: "fs_test",
+					Path:         "/uploads",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "remove directory",
+			run: func() *apiError {
+				return service.RemoveDirectory(context.Background(), principal, removeDirectoryRequest{
+					FilesystemID: "fs_test",
+					Path:         "/uploads",
+				})
+			},
+		},
+		{
+			name: "create file",
+			run: func() *apiError {
+				_, apiErr := service.CreateFile(context.Background(), principal, createFileParams{
+					FilesystemID: "fs_test",
+					Path:         "/uploads/file.txt",
+					MediaType:    "text/plain",
+				}, strings.NewReader("body"))
+				return apiErr
+			},
+		},
+		{
+			name: "copy destination",
+			run: func() *apiError {
+				_, apiErr := service.CopyFile(context.Background(), principal, copyMoveFileRequest{
+					FilesystemID: "fs_test",
+					Source:       "/outputs/source.txt",
+					Destination:  "/uploads/copy.txt",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "move source",
+			run: func() *apiError {
+				_, apiErr := service.MoveFile(context.Background(), principal, copyMoveFileRequest{
+					FilesystemID: "fs_test",
+					Source:       "/uploads/source.txt",
+					Destination:  "/outputs/moved.txt",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "move directory destination",
+			run: func() *apiError {
+				_, apiErr := service.MoveDirectory(context.Background(), principal, moveDirectoryRequest{
+					FilesystemID: "fs_test",
+					Source:       "/outputs/source",
+					Destination:  "/uploads/moved",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "remove file",
+			run: func() *apiError {
+				return service.RemoveFile(context.Background(), principal, pathRequest{
+					FilesystemID: "fs_test",
+					Path:         "/uploads/file.txt",
+				})
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			assertServiceAPIError(t, test.run(), http.StatusForbidden, "permission_denied")
+		})
+	}
+}
+
+func TestRequireWritePathsAllowsPrefixAndDescendants(t *testing.T) {
+	t.Parallel()
+
+	principal := serviceTestPrincipal()
+	principal.WritePrefixes = []string{"/outputs"}
+	if apiErr := requireWritePaths(principal, "/outputs", "/outputs/reports/final.txt"); apiErr != nil {
+		t.Fatalf("requireWritePaths() error = %v", apiErr)
+	}
+}
+
 func TestServiceFilestoreTokenBindsSingleFilesystem(t *testing.T) {
 	t.Parallel()
 
@@ -736,6 +838,32 @@ func TestServiceCopyFilePreservesMetadataAndUsesCopiedObjectIdentity(t *testing.
 		len(response.File.File.Tags) != 1 || response.File.File.Tags[0] != "source-tag" {
 		t.Fatalf("copy response = %+v", response)
 	}
+}
+
+func TestServiceCopyFileRejectsManagedSourceBeforeObjectCopy(t *testing.T) {
+	t.Parallel()
+
+	filesystem := serviceTestFilesystem()
+	source := serviceTestFileEntry(filesystem, "/uploads/source.txt", []byte("source"))
+	source.SourceFileUUID = serviceTestPointer("11111111-1111-4111-8111-111111111111")
+	source.ManagedBy = serviceTestPointer("session_resource")
+	source.ManagedResourceUUID = serviceTestPointer("22222222-2222-4222-8222-222222222222")
+	database := &fakeServiceDatabase{
+		getFilesystemFn: serviceFilesystemLookup(filesystem),
+		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.FilestoreEntry, error) {
+			if entryPath == source.Path {
+				return source, nil
+			}
+			return db.FilestoreEntry{}, db.ErrNotFound
+		},
+	}
+	service := newServiceUnderTest(config.Config{}, database, &fakeServiceBlobStore{})
+	_, apiErr := service.CopyFile(context.Background(), serviceTestPrincipal(), copyMoveFileRequest{
+		FilesystemID: filesystem.ExternalID,
+		Source:       source.Path,
+		Destination:  "/copy.txt",
+	})
+	assertServiceAPIError(t, apiErr, http.StatusConflict, "failed_precondition")
 }
 
 func TestServiceMoveOperationsReturnDatabaseEntries(t *testing.T) {

@@ -93,21 +93,23 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 
 	for index := range db.MaxSessionFileResources + 1 {
 		resourceID := fmt.Sprintf("sesrsc_file_limit_%03d", index)
-		input.Resources = append(input.Resources, db.SessionResource{
-			UUID:           uuid.NewString(),
-			ExternalID:     resourceID,
-			OrganizationID: organizationID,
-			WorkspaceID:    workspaceID,
-			ResourceType:   db.SessionResourceTypeFile,
-			Payload:        json.RawMessage(`{}`),
-			SecretPayload:  json.RawMessage(`{}`),
-			CreatedAt:      input.Session.CreatedAt,
-			UpdatedAt:      input.Session.CreatedAt,
-		})
-		input.FileMounts = append(input.FileMounts, db.SessionFileMount{
-			ResourceExternalID: resourceID,
-			FileExternalID:     fmt.Sprintf("file_limit_%03d", index),
-			Path:               fmt.Sprintf("/uploads/db-limit/file-%03d.txt", index),
+		input.Resources = append(input.Resources, db.CreateSessionResourceInput{
+			Resource: db.SessionResource{
+				UUID:           uuid.NewString(),
+				ExternalID:     resourceID,
+				OrganizationID: organizationID,
+				WorkspaceID:    workspaceID,
+				ResourceType:   db.SessionResourceTypeFile,
+				Payload:        json.RawMessage(`{}`),
+				SecretPayload:  json.RawMessage(`{}`),
+				CreatedAt:      input.Session.CreatedAt,
+				UpdatedAt:      input.Session.CreatedAt,
+			},
+			FileMount: &db.SessionFileMount{
+				ResourceExternalID: resourceID,
+				FileExternalID:     fmt.Sprintf("file_limit_%03d", index),
+				Path:               fmt.Sprintf("/uploads/db-limit/file-%03d.txt", index),
+			},
 		})
 	}
 
@@ -220,6 +222,7 @@ func TestCreateSessionRetriesFilesystemIDCollision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
+	cleanupFilestoreSession(t, app, workspaceID, created.ExternalID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceID, created.ExternalID)
 	if err != nil {
 		t.Fatalf("GetFilestoreFilesystemBySession() error = %v", err)
@@ -239,6 +242,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
+	cleanupFilestoreSession(t, app, workspaceID, created.ExternalID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceID, created.ExternalID)
 	if err != nil {
 		t.Fatalf("GetFilestoreFilesystemBySession() error = %v", err)
@@ -344,6 +348,7 @@ func TestListFilestoreEntriesPageWithSQLX(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
+	cleanupFilestoreSession(t, app, workspaceID, created.ExternalID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, workspaceID, created.ExternalID)
 	if err != nil {
 		t.Fatalf("GetFilestoreFilesystemBySession() error = %v", err)
@@ -1053,6 +1058,16 @@ func filestoreExternalIDForRandomByte(value byte) string {
 
 func stringPointer(value string) *string {
 	return &value
+}
+
+func cleanupFilestoreSession(t *testing.T, app *testApp, workspaceID int64, sessionExternalID string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if _, err := app.db.DeleteSession(context.Background(), workspaceID, sessionExternalID); err != nil &&
+			!errors.Is(err, db.ErrNotFound) {
+			t.Errorf("cleanup Filestore Session %s: %v", sessionExternalID, err)
+		}
+	})
 }
 
 func filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID int64) db.CreateSessionInput {

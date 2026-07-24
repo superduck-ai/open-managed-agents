@@ -145,6 +145,10 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatalf("send initial event: %v", err)
 	}
 
+	apiKey, err := app.db.GetAPIKey(ctx, auth.HashAPIKey(defaultTestKey))
+	if err != nil {
+		t.Fatalf("load api key: %v", err)
+	}
 	objectCountBeforeRunner := len(store.objects)
 	provider := &recordingRunnerProvider{
 		sandboxID: "sandbox-runner-bridge",
@@ -155,6 +159,9 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 					objectCountBeforeRunner,
 					len(store.objects),
 				)
+			}
+			if _, lookupErr := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceID, session.ID); !errors.Is(lookupErr, db.ErrNotFound) {
+				t.Fatalf("code session existed before sandbox creation: %v", lookupErr)
 			}
 		},
 	}
@@ -167,10 +174,6 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatal("runner did not process queued session work")
 	}
 
-	apiKey, err := app.db.GetAPIKey(ctx, auth.HashAPIKey(defaultTestKey))
-	if err != nil {
-		t.Fatalf("load api key: %v", err)
-	}
 	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceID, session.ID)
 	if err != nil {
 		t.Fatalf("load local code session: %v", err)
@@ -254,6 +257,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 			AuthToken   string `json:"auth_token"`
 			Source      string `json:"source"`
 			Destination string `json:"destination"`
+			Readonly    bool   `json:"readonly"`
 		} `json:"mounts"`
 	}
 	if err := json.Unmarshal(provider.writes[0].data, &rcloneConfig); err != nil {
@@ -263,11 +267,23 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		if mount.AuthToken == "" || strings.Contains(provider.rcloneLaunches[0].command, mount.AuthToken) {
 			t.Fatal("rclone token is empty or leaked into command text")
 		}
+		claims, verifyErr := app.filestoreCredentials.Verify(mount.AuthToken)
+		if verifyErr != nil {
+			t.Fatalf("verify rclone token for %s: %v", mount.Source, verifyErr)
+		}
+		if mount.Source == "/outputs" {
+			if mount.Readonly || len(claims.WritePrefixes) != 1 || claims.WritePrefixes[0] != "/outputs" {
+				t.Fatalf("outputs token scope = readonly:%t prefixes:%#v", mount.Readonly, claims.WritePrefixes)
+			}
+		} else if !mount.Readonly || claims.Readonly == nil || !*claims.Readonly || len(claims.WritePrefixes) != 0 {
+			t.Fatalf("readonly mount %s authority = mount readonly:%t claims:%#v", mount.Source, mount.Readonly, claims)
+		}
 	}
 	if !slices.ContainsFunc(rcloneConfig.Mounts, func(mount struct {
 		AuthToken   string `json:"auth_token"`
 		Source      string `json:"source"`
 		Destination string `json:"destination"`
+		Readonly    bool   `json:"readonly"`
 	}) bool {
 		return mount.Source == "/uploads" && mount.Destination == "/mnt/session/uploads"
 	}) {
@@ -371,6 +387,72 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	}
 	if strings.Contains(*sandboxError, providerSecretMarker) {
 		t.Fatalf("sandbox last_error leaked provider secret marker: %q", *sandboxError)
+	}
+	if _, lookupErr := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID); !errors.Is(lookupErr, db.ErrNotFound) {
+		t.Fatalf("code session lookup after rclone failure = %v, want ErrNotFound", lookupErr)
+	}
+}
+
+func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.E2B.Template = "fake-template"
+
+	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-manager-failure-bucket"))
+	defer app.close()
+	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Manager Failure Agent"}`)
+	defer archiveAgent(t, app, agent.ID)
+	environment := createEnvironment(t, app, `{"name":"runner-manager-failure"}`)
+	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+
+	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
+	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
+		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
+		EnvironmentID: environment.ID,
+		Title:         anthropic.String("Runner manager failure session"),
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+
+	ids := getDefaultDBIDs(t, app.db)
+	provider := &recordingRunnerProvider{
+		sandboxID:         "sandbox-manager-start-failure",
+		failOperation:     "environment-manager",
+		runCommandFailure: errors.New("simulated environment-manager launch failure"),
+	}
+	runner := newManagedAgentRunner(app, provider, cfg, nil)
+	processed, err := runner.RunOnce(ctx, "runner-manager-failure-test")
+	if err == nil || err.Error() != "environment manager process start failed" {
+		t.Fatalf("RunOnce error = %v, want manager launch failure", err)
+	}
+	if !processed {
+		t.Fatal("runner did not process queued session work")
+	}
+	if got, want := provider.kills, []string{provider.sandboxID}; !slices.Equal(got, want) {
+		t.Fatalf("killed sandboxes = %#v, want %#v", got, want)
+	}
+
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("load compensated code session: %v", err)
+	}
+	if codeSession.Status != "terminated" || codeSession.ConnectionStatus != "disconnected" || codeSession.WorkerLeaseExpiresAt != nil {
+		t.Fatalf("compensated code session = %#v", codeSession)
+	}
+	storedSession, err := app.db.GetSession(ctx, ids.WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("load Session after manager failure: %v", err)
+	}
+	if hasJSONKey(storedSession.Metadata, "claude_code_session_id") {
+		t.Fatalf("failed runtime was published in Session metadata: %s", storedSession.Metadata)
 	}
 }
 
@@ -967,6 +1049,9 @@ func (p *recordingRunnerProvider) StartBackgroundCommand(_ context.Context, sand
 	}
 	p.launches = append(p.launches, launch)
 	p.operations = append(p.operations, "environment-manager")
+	if p.failOperation == "environment-manager" {
+		return p.runCommandFailure
+	}
 	return nil
 }
 

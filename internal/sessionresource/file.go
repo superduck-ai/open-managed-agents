@@ -9,13 +9,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 const (
-	FileType         = db.SessionResourceTypeFile
-	MaxFileResources = db.MaxSessionFileResources
+	FileType         = sessioncontract.FileResourceType
+	MaxFileResources = sessioncontract.MaxFileResources
 )
 
 // FileSpec is the canonical File resource configuration after API defaults and
@@ -24,6 +24,14 @@ const (
 type FileSpec struct {
 	fileID    string
 	mountPath string
+}
+
+// SessionFileBinding is the persistence-neutral mapping from one Session
+// resource to the Files API object and backing path it borrows.
+type SessionFileBinding struct {
+	ResourceID string
+	FileID     string
+	Path       string
 }
 
 type filePayload struct {
@@ -130,17 +138,17 @@ func (s FileSpec) PayloadFields(resourceID string) map[string]any {
 	return fields
 }
 
-// SessionFileMount maps the public mount_path into the authoritative uploads
+// SessionFileBinding maps the public mount_path into the authoritative uploads
 // namespace used by the Session resource write transaction.
-func (s FileSpec) SessionFileMount(resourceID string) (db.SessionFileMount, error) {
+func (s FileSpec) SessionFileBinding(resourceID string) (SessionFileBinding, error) {
 	backingPath, err := sandboxmount.FileBackingPath(s.mountPath)
 	if err != nil {
-		return db.SessionFileMount{}, err
+		return SessionFileBinding{}, err
 	}
-	return db.SessionFileMount{
-		ResourceExternalID: resourceID,
-		FileExternalID:     s.fileID,
-		Path:               backingPath,
+	return SessionFileBinding{
+		ResourceID: resourceID,
+		FileID:     s.fileID,
+		Path:       backingPath,
 	}, nil
 }
 

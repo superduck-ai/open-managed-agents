@@ -545,7 +545,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeRunReferenceFailure(w, r, principal, deployment, runError("unknown_error", err.Error()))
 		return
 	}
-	resources, fileMounts, err := sessionResourcesFromDeployment(deployment, now)
+	resources, err := sessionResourcesFromDeployment(deployment, now)
 	if err != nil {
 		h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 		return
@@ -590,8 +590,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 				CreatedAt:      now,
 				UpdatedAt:      now,
 			},
-			Resources:  resources,
-			FileMounts: fileMounts,
+			Resources: resources,
 			Work: db.EnvironmentWork{
 				UUID:                  uuid.NewString(),
 				ExternalID:            workID,

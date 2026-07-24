@@ -21,6 +21,7 @@ const (
 	rcloneReadyPollInterval   = 200 * time.Millisecond
 	rcloneReadyTimeout        = 20 * time.Second
 	rcloneCommandGraceTimeout = 5 * time.Second
+	rcloneConfigCleanupTries  = 3
 )
 
 type rcloneMountConfig struct {
@@ -49,11 +50,6 @@ type rcloneFilestoreLaunch struct {
 	ConfigPayload []byte
 }
 
-type managedAgentLaunch struct {
-	Manager   environmentManagerCommand
-	Filestore rcloneFilestoreLaunch
-}
-
 // prepareRcloneFilestoreLaunch resolves the Session filesystem authority and
 // builds the fixed rclone multimount configuration. Session resource writes
 // maintain the filesystem namespace; sandbox startup does not reconcile it.
@@ -73,7 +69,9 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 		return rcloneFilestoreLaunch{}, fmt.Errorf("resolve managed-agent filestore identity: %w", err)
 	}
 	identity := filestoreTokenIdentityFromScope(scope)
-	readWriteToken, err := r.filestoreCredentials.Issue(identity)
+	readWriteIdentity := identity
+	readWriteIdentity.WritePrefixes = []string{"/outputs"}
+	readWriteToken, err := r.filestoreCredentials.Issue(readWriteIdentity)
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("issue managed-agent filestore read-write token: %w", err)
 	}

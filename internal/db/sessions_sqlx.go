@@ -295,10 +295,6 @@ func insertSessionSQLXTx(
 	}
 
 	resources := make([]SessionResource, 0, len(input.Resources))
-	fileMounts, err := sessionFileMountsByResource(input.FileMounts)
-	if err != nil {
-		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
-	}
 	if err := enforceSessionFileResourceCapacityTx(
 		ctx,
 		tx,
@@ -308,7 +304,7 @@ func insertSessionSQLXTx(
 	); err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
-	if len(fileMounts) > 0 {
+	if sessionHasFileMount(input.Resources) {
 		lockedFilesystem, err := lockSessionFilestoreMutationTx(ctx, tx, session)
 		if err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
@@ -318,16 +314,12 @@ func insertSessionSQLXTx(
 		}
 		filesystem = lockedFilesystem
 	}
-	for _, resource := range input.Resources {
+	for _, resourceInput := range input.Resources {
+		resource := resourceInput.Resource
 		resource.SessionExternalID = session.ExternalID
 		created, err := createSessionResourceSQLX(ctx, tx, resource)
 		if err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
-		}
-		fileMount, hasFileMount := fileMounts[created.ExternalID]
-		var fileMountPointer *SessionFileMount
-		if hasFileMount {
-			fileMountPointer = &fileMount
 		}
 		if err := bindSessionFileResourceWithLockedFilesystemTx(
 			ctx,
@@ -335,15 +327,11 @@ func insertSessionSQLXTx(
 			session,
 			filesystem,
 			created,
-			fileMountPointer,
+			resourceInput.FileMount,
 		); err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 		}
-		delete(fileMounts, created.ExternalID)
 		resources = append(resources, created)
-	}
-	if len(fileMounts) != 0 {
-		return Session{}, SessionThread{}, nil, EnvironmentWork{}, ErrPreconditionFailed
 	}
 
 	work, err := insertEnvironmentWorkSQLX(ctx, tx, input.Work)

@@ -438,6 +438,59 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 		t.Fatalf("load protected File: %v", err)
 	}
 
+	t.Run("failure borrowed entry cannot be copied as Filestore-owned data", func(t *testing.T) {
+		filesystem, err := app.db.GetFilestoreFilesystemBySession(
+			context.Background(),
+			sessionRecord.WorkspaceID,
+			sessionRecord.ExternalID,
+		)
+		if err != nil {
+			t.Fatalf("load Session filesystem: %v", err)
+		}
+		beforeStorageBytes, err := app.db.GetWorkspaceStorageBytes(
+			context.Background(),
+			sessionRecord.WorkspaceID,
+		)
+		if err != nil {
+			t.Fatalf("load storage ledger before rejected copy: %v", err)
+		}
+
+		_, err = app.db.CopyFilestoreFile(context.Background(), db.CopyFilestoreFileInput{
+			WorkspaceID:         sessionRecord.WorkspaceID,
+			FilesystemID:        filesystem.ID,
+			SourcePath:          "/uploads/workspace/protected.txt",
+			DestinationPath:     "/outputs/copied.txt",
+			DestinationS3Bucket: "borrowed-copy-must-not-commit",
+			DestinationS3Key:    "borrowed-copy-must-not-commit",
+		})
+		if !errors.Is(err, db.ErrPreconditionFailed) {
+			t.Fatalf("CopyFilestoreFile() error = %v, want ErrPreconditionFailed", err)
+		}
+
+		afterStorageBytes, err := app.db.GetWorkspaceStorageBytes(
+			context.Background(),
+			sessionRecord.WorkspaceID,
+		)
+		if err != nil {
+			t.Fatalf("load storage ledger after rejected copy: %v", err)
+		}
+		if afterStorageBytes != beforeStorageBytes {
+			t.Fatalf(
+				"storage ledger changed after rejected copy: before %d after %d",
+				beforeStorageBytes,
+				afterStorageBytes,
+			)
+		}
+		if _, err := app.db.GetFilestoreEntry(
+			context.Background(),
+			sessionRecord.WorkspaceID,
+			filesystem.ID,
+			"/outputs/copied.txt",
+		); !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("rejected copy destination error = %v, want ErrNotFound", err)
+		}
+	})
+
 	rejected := app.do(
 		t,
 		http.MethodDelete,
@@ -497,6 +550,108 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 
 	deleteSession(t, app, session.ID)
 	sessionDeleted = true
+}
+
+func TestSessionFileResourceBindSerializesWithSourceDelete(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-file-concurrent-delete-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-concurrent-delete-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"session-file-concurrent-delete-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	file := uploadFile(t, app, "concurrent.txt", "text/plain", []byte("serialized"))
+	defer deleteFile(t, app, file.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	type requestResult struct {
+		operation string
+		status    int
+		body      []byte
+		err       error
+	}
+	send := func(operation, method, requestPath, body string, start <-chan struct{}, results chan<- requestResult) {
+		request, err := http.NewRequest(method, app.baseURL+requestPath, strings.NewReader(body))
+		if err != nil {
+			results <- requestResult{operation: operation, err: err}
+			return
+		}
+		request.Header.Set("X-Api-Key", defaultTestKey)
+		request.Header.Set("anthropic-version", "2023-06-01")
+		request.Header.Set("anthropic-beta", "managed-agents-2026-04-01,files-api-2025-04-14")
+		request.Header.Set("Content-Type", "application/json")
+		<-start
+		response, err := app.client.Do(request)
+		if err != nil {
+			results <- requestResult{operation: operation, err: err}
+			return
+		}
+		defer response.Body.Close()
+		responseBody, readErr := io.ReadAll(response.Body)
+		results <- requestResult{operation: operation, status: response.StatusCode, body: responseBody, err: readErr}
+	}
+
+	start := make(chan struct{})
+	results := make(chan requestResult, 2)
+	go send(
+		"bind",
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/resources?beta=true",
+		`{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/concurrent.txt"}`,
+		start,
+		results,
+	)
+	go send(
+		"delete",
+		http.MethodDelete,
+		"/v1/files/"+file.ID+"?beta=true",
+		"",
+		start,
+		results,
+	)
+	close(start)
+
+	outcomes := make(map[string]requestResult, 2)
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("%s request: %v", result.operation, result.err)
+		}
+		outcomes[result.operation] = result
+	}
+	bind := outcomes["bind"]
+	deleted := outcomes["delete"]
+	sessionRecord := mustSessionRecord(t, app, session.ID)
+	resources, err := app.db.ListSessionResources(context.Background(), sessionRecord.WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("list resources after concurrent mutation: %v", err)
+	}
+
+	switch {
+	case bind.status == http.StatusOK && deleted.status == http.StatusConflict:
+		if len(resources) != 1 {
+			t.Fatalf("successful bind persisted resources = %d, want 1", len(resources))
+		}
+		if _, err := app.db.GetFile(context.Background(), sessionRecord.WorkspaceID, file.ID); err != nil {
+			t.Fatalf("source file missing after bind won race: %v", err)
+		}
+	case bind.status == http.StatusNotFound && deleted.status == http.StatusOK:
+		if len(resources) != 0 {
+			t.Fatalf("rejected bind persisted resources = %d, want 0", len(resources))
+		}
+		if _, err := app.db.GetFile(context.Background(), sessionRecord.WorkspaceID, file.ID); !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("source file lookup after delete won race = %v, want ErrNotFound", err)
+		}
+	default:
+		t.Fatalf(
+			"concurrent bind/delete statuses = bind %d (%s), delete %d (%s)",
+			bind.status,
+			bind.body,
+			deleted.status,
+			deleted.body,
+		)
+	}
 }
 
 func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {

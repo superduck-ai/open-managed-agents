@@ -111,12 +111,12 @@ func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
 		t.Fatalf("stored = %#v, want %#v", stored, spec)
 	}
 
-	mount, err := spec.SessionFileMount("sesrsc_test")
+	mount, err := spec.SessionFileBinding("sesrsc_test")
 	if err != nil {
-		t.Fatalf("SessionFileMount(): %v", err)
+		t.Fatalf("SessionFileBinding(): %v", err)
 	}
-	if mount.ResourceExternalID != "sesrsc_test" ||
-		mount.FileExternalID != "file_test" ||
+	if mount.ResourceID != "sesrsc_test" ||
+		mount.FileID != "file_test" ||
 		mount.Path != "/uploads/file_test" {
 		t.Fatalf("mount = %#v", mount)
 	}

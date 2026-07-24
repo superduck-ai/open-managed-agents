@@ -95,7 +95,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeResourceBuildError(w, r, err)
 		return
 	}
-	fileMounts, err := sessionFileMounts(resources)
+	resourceInputs, err := sessionResourceWriteInputs(resources)
 	if err != nil {
 		writeResourceBuildError(w, r, err)
 		return
@@ -136,8 +136,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		},
-		Resources:  resources,
-		FileMounts: fileMounts,
+		Resources: resourceInputs,
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewString(),
 			ExternalID:            workID,
@@ -654,21 +653,14 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) {
 		writeResourceBuildError(w, r, err)
 		return
 	}
-	fileMounts, err := sessionFileMounts([]db.SessionResource{resource})
+	resourceInput, err := sessionResourceWriteInput(resource)
 	if err != nil {
 		writeResourceBuildError(w, r, err)
 		return
 	}
-	var fileMount *db.SessionFileMount
-	if len(fileMounts) == 1 {
-		fileMount = &fileMounts[0]
-	}
 	created, err := h.db.CreateSessionResource(
 		r.Context(),
-		db.CreateSessionResourceInput{
-			Resource:  resource,
-			FileMount: fileMount,
-		},
+		resourceInput,
 	)
 	if err != nil {
 		writeSessionLoadError(w, r, err, sessionID)

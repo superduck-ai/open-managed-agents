@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -75,6 +76,26 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
+	needsCleanup := true
+	defer func() {
+		if !needsCleanup {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if cleanupErr := s.db.TerminateManagedAgentCodeSession(
+			cleanupCtx,
+			input.Session.OrganizationID,
+			input.Session.WorkspaceID,
+			record.ExternalID,
+		); cleanupErr != nil {
+			log.Printf(
+				"terminate incomplete managed-agent code session code_session_id=%s cleanup_error_type=%T",
+				record.ExternalID,
+				cleanupErr,
+			)
+		}
+	}()
 	if err := s.queueInitialize(ctx, record, input.Config, now); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
@@ -95,6 +116,7 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
+	needsCleanup = false
 	return ManagedAgentCreateResult{
 		CodeSessionID:       record.ExternalID,
 		PublicSessionID:     record.SessionExternalID,
@@ -102,6 +124,24 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 		OAuthAccessToken:    oauthAccessToken,
 		SessionIngressToken: sessionIngressToken,
 	}, nil
+}
+
+// TerminateManagedAgentCodeSession revokes a Code Session created for a
+// sandbox launch that failed before the runtime became usable.
+func (s *Service) TerminateManagedAgentCodeSession(
+	ctx context.Context,
+	session db.Session,
+	codeSessionID string,
+) error {
+	if s == nil {
+		return nil
+	}
+	return s.db.TerminateManagedAgentCodeSession(
+		ctx,
+		session.OrganizationID,
+		session.WorkspaceID,
+		strings.TrimSpace(codeSessionID),
+	)
 }
 
 func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMessage, error) {

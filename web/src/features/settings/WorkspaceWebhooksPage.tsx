@@ -1001,96 +1001,98 @@ function CreateWebhookDialog({
       }}
     >
       <DialogContent
-        className="max-h-[min(720px,calc(100vh-48px))] overflow-y-auto sm:max-w-[540px]"
+        className="max-h-[min(720px,calc(100vh-48px))] gap-0 overflow-hidden p-0 sm:max-w-[540px]"
         initialFocus={urlRef}
       >
-        <DialogHeader>
+        <DialogHeader className="px-4 py-4">
           <DialogTitle>{msg('webhooks.createTitle', 'Create webhook endpoint')}</DialogTitle>
         </DialogHeader>
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          <Label className="block" htmlFor="webhook-url">
-            {msg('webhooks.endpointUrl', 'Endpoint URL')}
-          </Label>
-          <Input
-            ref={urlRef}
-            id="webhook-url"
-            value={url}
-            placeholder="https://example.com/webhooks"
-            onChange={(event) => setUrl(event.target.value)}
-          />
+        <form onSubmit={handleSubmit}>
+          <div className="subtle-scrollbar-auto max-h-[min(588px,calc(100vh-192px))] overflow-y-auto pl-4 pr-2 py-4 space-y-4">
+            <Label className="block" htmlFor="webhook-url">
+              {msg('webhooks.endpointUrl', 'Endpoint URL')}
+            </Label>
+            <Input
+              ref={urlRef}
+              id="webhook-url"
+              value={url}
+              placeholder="https://example.com/webhooks"
+              onChange={(event) => setUrl(event.target.value)}
+            />
 
-          <Label className="block" htmlFor="webhook-name">
-            {msg('webhooks.nameOptional', 'Name (optional)')}
-          </Label>
-          <Input
-            id="webhook-name"
-            value={name}
-            placeholder={msg('webhooks.namePlaceholder', 'My webhook endpoint')}
-            onChange={(event) => setName(event.target.value)}
-          />
+            <Label className="block" htmlFor="webhook-name">
+              {msg('webhooks.nameOptional', 'Name (optional)')}
+            </Label>
+            <Input
+              id="webhook-name"
+              value={name}
+              placeholder={msg('webhooks.namePlaceholder', 'My webhook endpoint')}
+              onChange={(event) => setName(event.target.value)}
+            />
 
-          <Label className="block" htmlFor="webhook-description">
-            {msg('webhooks.descriptionOptional', 'Description (optional)')}
-          </Label>
-          <Textarea
-            id="webhook-description"
-            value={description}
-            placeholder={msg('webhooks.descriptionPlaceholder', 'Receives session lifecycle events')}
-            className="min-h-[78px] resize-y"
-            onChange={(event) => setDescription(event.target.value)}
-          />
+            <Label className="block" htmlFor="webhook-description">
+              {msg('webhooks.descriptionOptional', 'Description (optional)')}
+            </Label>
+            <Textarea
+              id="webhook-description"
+              value={description}
+              placeholder={msg('webhooks.descriptionPlaceholder', 'Receives session lifecycle events')}
+              className="min-h-[78px] resize-y"
+              onChange={(event) => setDescription(event.target.value)}
+            />
 
-          <fieldset>
-            <legend className="mb-3 text-sm font-medium text-foreground">
-              {msg('webhooks.eventsToSubscribe', 'Events to subscribe')}
-            </legend>
-            <div className="space-y-3 border-t border-border pt-3">
-              {webhookEventGroups.map((group) => {
-                const selectedCount = group.events.filter((event) => selectedEvents.includes(event.type)).length;
-                return (
-                  <div key={group.label}>
-                    <div className="flex min-h-7 items-center justify-between gap-3 text-sm">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <GroupCheckbox
-                          checked={selectedCount === group.events.length}
-                          indeterminate={selectedCount > 0 && selectedCount < group.events.length}
-                          ariaLabel={`${group.label} events`}
-                          onChange={() => toggleGroup(group)}
-                        />
-                        <span className="truncate font-medium text-foreground">{group.label}</span>
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {selectedCount} of {group.events.length}
-                      </span>
-                    </div>
-                    <div className="ml-6 mt-1 space-y-1">
-                      {group.events.map((event) => (
-                        <Label key={event.type} className="flex min-h-7 items-center gap-2 text-sm text-foreground">
-                          <Checkbox
-                            checked={selectedEvents.includes(event.type)}
-                            onCheckedChange={() => toggleEvent(event.type)}
+            <fieldset>
+              <legend className="mb-3 text-sm font-medium text-foreground">
+                {msg('webhooks.eventsToSubscribe', 'Events to subscribe')}
+              </legend>
+              <div className="space-y-3 border-t border-border pt-3">
+                {webhookEventGroups.map((group) => {
+                  const selectedCount = group.events.filter((event) => selectedEvents.includes(event.type)).length;
+                  return (
+                    <div key={group.label}>
+                      <div className="flex min-h-7 items-center justify-between gap-3 text-sm">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <GroupCheckbox
+                            checked={selectedCount === group.events.length}
+                            indeterminate={selectedCount > 0 && selectedCount < group.events.length}
+                            ariaLabel={`${group.label} events`}
+                            onChange={() => toggleGroup(group)}
                           />
-                          <span className="min-w-0 flex-1 truncate">{event.label}</span>
-                          <span className="hidden shrink-0 font-mono text-xs text-muted-foreground sm:inline">
-                            {event.type}
-                          </span>
-                        </Label>
-                      ))}
+                          <span className="truncate font-medium text-foreground">{group.label}</span>
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {selectedCount} of {group.events.length}
+                        </span>
+                      </div>
+                      <div className="ml-6 mt-1 space-y-1">
+                        {group.events.map((event) => (
+                          <Label key={event.type} className="flex min-h-7 items-center gap-2 text-sm text-foreground">
+                            <Checkbox
+                              checked={selectedEvents.includes(event.type)}
+                              onCheckedChange={() => toggleEvent(event.type)}
+                            />
+                            <span className="min-w-0 flex-1 truncate">{event.label}</span>
+                            <span className="hidden shrink-0 font-mono text-xs text-muted-foreground sm:inline">
+                              {event.type}
+                            </span>
+                          </Label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </fieldset>
+                  );
+                })}
+              </div>
+            </fieldset>
 
-          {error ? <InlineError>{error}</InlineError> : null}
+            {error ? <InlineError>{error}</InlineError> : null}
+          </div>
 
-          <div className="flex justify-end">
+          <DialogFooter className="px-4 py-4">
             <Button type="submit" disabled={!canSubmit} size="lg" className="min-w-[82px]">
               {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
               {msg('common.create', 'Create')}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

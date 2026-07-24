@@ -77,6 +77,25 @@ web-test:
 web-lint:
   cd web && bun run lint
 
+# Design-doc surface audit (map + fail-loud + snapshot). Soft coverage findings exit 1.
+docs-audit:
+  python3 scripts/docs-audit/audit_design_docs.py
+
+docs-audit-diff:
+  python3 scripts/docs-audit/audit_design_docs.py --diff
+
+docs-audit-test:
+  python3 scripts/docs-audit/test_audit_design_docs.py
+  python3 scripts/docs-audit/test_classify_changes.py
+
+docs-audit-snapshot:
+  python3 scripts/docs-audit/audit_design_docs.py --update-snapshot
+
+# Classify whether a PR's changed files need design-doc updates.
+# Usage: just docs-classify path1 path2 ...
+docs-classify paths:
+  python3 scripts/docs-audit/classify_changes.py --files {{paths}}
+
 web-complexity:
   cd web && bun run lint:complexity
 

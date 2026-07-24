@@ -1,0 +1,148 @@
+name: Design Doc Surface Audit
+
+# Deterministic guardrail for docs/design/ coverage.
+# - exit 2 (extraction / integrity failure): hard fail.
+# - exit 1 (coverage / map hygiene / staleness findings): soft warn AND post a
+#   PR comment nudging the author to trigger @duckpr docs (the LLM sync agent).
+#   This is the audit → agent bridge: audit detects drift deterministically,
+#   then a human (or the author) decides whether to dispatch the agent.
+
+on:
+  pull_request:
+    paths:
+      - "internal/**"
+      - "web/src/app/router.tsx"
+      - "docs/design/**"
+      - "scripts/docs-audit/**"
+  push:
+    branches: [main, master]
+    paths:
+      - "internal/**"
+      - "web/src/app/router.tsx"
+      - "docs/design/**"
+      - "scripts/docs-audit/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unit tests
+        run: |
+          python3 scripts/docs-audit/test_audit_design_docs.py
+          python3 scripts/docs-audit/test_classify_changes.py
+
+      - name: Surface coverage audit
+        id: audit
+        run: |
+          set +e
+          python3 scripts/docs-audit/audit_design_docs.py --diff
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Classify changed files
+        id: classify
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e
+          # Gather changed file paths for this PR.
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json files \
+            --jq '.files[].path' > /tmp/paths.txt 2>/dev/null || true
+          if [ -s /tmp/paths.txt ]; then
+            # Pipe newline-separated paths via stdin to avoid shell word-splitting
+            # and command substitution on attacker-controlled file names.
+            python3 scripts/docs-audit/classify_changes.py \
+              --output /tmp/classify.json < /tmp/paths.txt > /tmp/classify.txt 2>&1
+            cl_code=$?
+            verdict=$(python3 -c "import json;print(json.load(open('/tmp/classify.json'))['verdict']['action'])" 2>/dev/null || echo "unknown")
+          else
+            verdict="unknown"
+            cl_code=0
+          fi
+          {
+            echo "exit_code=$cl_code"
+            echo "verdict=$verdict"
+          } >> "$GITHUB_OUTPUT"
+          echo "Classify verdict: $verdict"
+          cat /tmp/classify.txt 2>/dev/null || true
+
+      - name: Fail loud on extraction / integrity errors
+        if: steps.audit.outputs.exit_code == '2'
+        run: |
+          echo "audit exited 2 (extraction floor or completeness accounting failed)"
+          exit 2
+
+      - name: Nudge to trigger @duckpr docs on coverage findings
+        if: >
+          github.event_name == 'pull_request' &&
+          (steps.audit.outputs.exit_code == '1' ||
+           steps.classify.outputs.verdict == 'must_document' ||
+           steps.classify.outputs.verdict == 'needs_review')
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const auditCode = "${{ steps.audit.outputs.exit_code }}";
+            const verdict = "${{ steps.classify.outputs.verdict }}";
+            const prNumber = context.payload.pull_request.number;
+            const marker = "<!-- design-doc-audit-nudge -->";
+            const reasons = [];
+            if (auditCode === "1") reasons.push("audit reports coverage / map-hygiene / staleness findings");
+            if (verdict === "must_document") reasons.push("classifier flagged must_document file(s)");
+            if (verdict === "needs_review") reasons.push("classifier has needs_review file(s) a human should check");
+            const body = [
+              "### 设计文档同步提示",
+              "",
+              `本次 PR 触发了设计文档审计信号（${reasons.join("；")}）。`,
+              "",
+              "如果这些变更属于行为 / 公共 API / 事件契约 / 状态机 / 数据模型 / 权限边界 / 架构边界 / 测试路径的改动，",
+              "建议触发 docs-sync agent 同步 `docs/design/`：",
+              "",
+              "```",
+              "@duckpr docs",
+              "```",
+              "",
+              "如果是纯 CI / 测试 / 配置 / 文档 / 基础设施变更，或在 `surface_map.md` 里标记 `-> internal` / `-> gated:<reason>`，可忽略此提示。",
+              "",
+              marker,
+            ].join("\n");
+            // Upsert: replace the previous nudge comment so we don't spam.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (c) => c.user?.type === "Bot" && String(c.body || "").includes(marker)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
+      - name: Soft reminder on coverage findings (log only)
+        if: steps.audit.outputs.exit_code == '1'
+        run: |
+          echo "::warning::Design doc surface coverage findings (soft). Update scripts/docs-audit/surface_map.md or docs/design/. Tighten this step to hard-fail once noise is gone."

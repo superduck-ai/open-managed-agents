@@ -64,5 +64,9 @@ func testMountResource(resourceType, mountPath string) db.SessionResource {
 		payload["source"] = sandboxmount.FileSource
 	}
 	raw, _ := json.Marshal(payload)
-	return db.SessionResource{ResourceType: resourceType, Payload: raw}
+	return db.SessionResource{
+		ExternalID:   "sesrsc_test",
+		ResourceType: resourceType,
+		Payload:      raw,
+	}
 }

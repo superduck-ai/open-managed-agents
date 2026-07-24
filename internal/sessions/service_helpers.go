@@ -15,7 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
 	"github.com/google/uuid"
 )
@@ -137,36 +137,23 @@ func (h *Handler) resourceFromFields(r *http.Request, session db.Session, fields
 	payload := map[string]any{"id": resourceID, "type": resourceType}
 	var secret json.RawMessage
 	switch resourceType {
-	case "file":
-		fileID, err := parseRequiredStringField(fields, "file_id")
+	case sessionresource.FileType:
+		fileID, err := sessionresource.ParseFileID(fields)
 		if err != nil {
 			return db.SessionResource{}, err
 		}
-		file, err := h.db.GetFile(r.Context(), session.WorkspaceID, fileID)
+		_, err = h.db.GetFile(r.Context(), session.WorkspaceID, fileID)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return db.SessionResource{}, db.ErrFileReferenceNotFound
 			}
 			return db.SessionResource{}, err
 		}
-		source, err := sandboxmount.NormalizeFileSource(fields["source"])
+		fileSpec, err := sessionresource.NormalizeFileSpec(fileID, fields["source"], fields["mount_path"])
 		if err != nil {
 			return db.SessionResource{}, err
 		}
-		mountPath, err := optionalStringWithDefault(
-			fields["mount_path"],
-			sandboxmount.DefaultFileMountPath(file.ExternalID),
-			"mount_path",
-		)
-		if err != nil {
-			return db.SessionResource{}, err
-		}
-		if err := sandboxmount.ValidateFileMountPath(mountPath); err != nil {
-			return db.SessionResource{}, err
-		}
-		payload["file_id"] = fileID
-		payload["source"] = source
-		payload["mount_path"] = mountPath
+		payload = fileSpec.PayloadFields(resourceID)
 	case "github_repository":
 		url, err := parseRequiredStringField(fields, "url")
 		if err != nil {

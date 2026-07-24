@@ -58,6 +58,7 @@ export function registerManagedAgentsAgentsTests() {
     const startingPointButton = within(dialog).getByRole('button', { name: /^Starting point$/i });
     expect(startingPointButton.getAttribute('data-slot')).toBe('collapsible-trigger');
     expect(startingPointButton.parentElement?.parentElement?.className).toContain('rounded-xl');
+    expect(startingPointButton.parentElement?.parentElement?.className).toContain('shrink-0');
     expect(startingPointButton.className).toContain('items-center');
     expect(startingPointButton.getAttribute('aria-expanded')).toBe('true');
     expect(dialog.textContent).toContain('name: Untitled agent');
@@ -154,6 +155,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(collapsedSummary?.closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     expect(within(dialog).queryByRole('button', { name: /Structured extractor/i })).toBeNull();
     expect(dialog.className).toContain('h-[min(720px,calc(100dvh-2rem))]');
+    expect(dialog.className).toContain('grid-rows-1');
     expect(dialog.firstElementChild?.className).toContain('flex-col');
     expect(dialog.querySelector('[role="tabpanel"]')?.className).toContain('flex-1');
 

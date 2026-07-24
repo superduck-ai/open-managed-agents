@@ -207,9 +207,14 @@ export function CreateAgentDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
+      {/* grid-rows-1 forces the single grid row to fill the fixed height, so the
+          inner flex h-full container resolves to a real height. Without it the
+          auto grid track makes h-full collapse to content height, and the config
+          editor + Create button get clipped by overflow-hidden when the Starting
+          Point panel is expanded. */}
       <DialogContent
         aria-label={msg('managedAgents.agents.createLabel', 'Create agent')}
-        className="h-[min(720px,calc(100dvh-2rem))] max-w-[720px] overflow-hidden rounded-[17px] p-0 sm:max-w-[720px]"
+        className="grid-rows-1 h-[min(720px,calc(100dvh-2rem))] max-w-[720px] overflow-hidden rounded-[17px] p-0 sm:max-w-[720px]"
         showCloseButton={false}
       >
         <div className="flex h-full min-h-0 flex-col px-[23px] pb-[23px] pt-[19px] text-foreground">
@@ -236,10 +241,14 @@ export function CreateAgentDialog({
             </DialogDescription>
           </DialogHeader>
 
+          {/* shrink-0 keeps the panel at its content height. Its overflow-hidden
+              makes the flex min-height resolve to 0, so without shrink-0 the panel
+              gets compressed below its own content and the describe form / template
+              grid get clipped by the panel's own overflow-hidden. */}
           <Collapsible
             open={startingPointOpen}
             onOpenChange={setStartingPointOpen}
-            className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card/60 shadow-sm"
+            className="mt-4 shrink-0 overflow-hidden rounded-xl border border-border/70 bg-card/60 shadow-sm"
           >
             <div className="flex items-center gap-3 px-2 py-1.5">
               <CollapsibleTrigger

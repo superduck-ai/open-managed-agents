@@ -34,6 +34,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useI18n } from '../../shared/i18n';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { useWorkspace } from '../../shared/workspaces/context';
+import { AnalyticsRangeFilterControl, type AnalyticsRangeFilter } from './AnalyticsRangeFilterControl';
 
 type IconComponent = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 type FilterOption = { value: string; label: string };
@@ -172,10 +173,15 @@ export function CachingPage() {
     { value: 'model', label: msg('analytics.table.model', 'Model') },
     { value: 'workspace', label: msg('analytics.filter.workspace', 'Workspace') },
   ];
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<{
+    workspace: string;
+    model: string;
+    range: AnalyticsRangeFilter;
+    groupBy: string;
+  }>({
     workspace: 'default',
     model: 'all',
-    range: 'last-7-days',
+    range: { kind: 'preset', value: 'last-7-days' },
     groupBy: 'model',
   });
   const cachingBody = msg(
@@ -200,11 +206,11 @@ export function CachingPage() {
           options={modelOptions}
           onValueChange={(model) => setFilters((current) => ({ ...current, model }))}
         />
-        <FilterControl
+        <AnalyticsRangeFilterControl
           label={msg('analytics.filter.range', 'Range')}
+          presets={rangeOptions}
           value={filters.range}
-          options={rangeOptions}
-          onValueChange={(range) => setFilters((current) => ({ ...current, range }))}
+          onChange={(range) => setFilters((current) => ({ ...current, range }))}
         />
         <FilterControl
           label={msg('analytics.filter.groupBy', 'Group by')}
@@ -394,11 +400,16 @@ export function CostPage() {
     { value: 'last-30-days', label: msg('analytics.filter.last30Days', 'Last 30 days') },
     { value: 'month-to-date', label: msg('analytics.filter.monthToDate', 'Month to date') },
   ];
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<{
+    workspace: string;
+    groupBy: string;
+    model: string;
+    range: AnalyticsRangeFilter;
+  }>({
     workspace: routeWorkspaceId ? 'current' : 'all-workspaces',
     groupBy: 'model',
     model: 'all',
-    range: 'month-to-date',
+    range: { kind: 'preset', value: 'month-to-date' },
   });
 
   return (
@@ -423,11 +434,11 @@ export function CostPage() {
           options={modelOptions}
           onValueChange={(model) => setFilters((current) => ({ ...current, model }))}
         />
-        <FilterControl
+        <AnalyticsRangeFilterControl
           label={msg('analytics.filter.range', 'Range')}
+          presets={rangeOptions}
           value={filters.range}
-          options={rangeOptions}
-          onValueChange={(range) => setFilters((current) => ({ ...current, range }))}
+          onChange={(range) => setFilters((current) => ({ ...current, range }))}
         />
       </FilterBar>
 
@@ -480,13 +491,21 @@ export function LogsPage() {
     { value: 'last-7-days', label: msg('analytics.filter.last7Days', 'Last 7 days') },
     { value: 'last-30-days', label: msg('analytics.filter.last30Days', 'Last 30 days') },
   ];
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<{
+    workspace: string;
+    model: string;
+    serviceAccount: string;
+    range: AnalyticsRangeFilter;
+    requestTypes: string[];
+    serviceTiers: string[];
+    linesPerPage: string;
+  }>({
     workspace: routeWorkspaceId ? 'current' : 'all-workspaces',
     model: 'all',
     serviceAccount: 'all',
-    range: 'last-24-hours',
-    requestTypes: [] as string[],
-    serviceTiers: [] as string[],
+    range: { kind: 'preset', value: 'last-24-hours' },
+    requestTypes: [],
+    serviceTiers: [],
     linesPerPage: '10',
   });
   const hasAdvancedFilters = filters.requestTypes.length > 0 || filters.serviceTiers.length > 0;
@@ -517,11 +536,11 @@ export function LogsPage() {
             options={serviceAccountOptions}
             onValueChange={(serviceAccount) => setFilters((current) => ({ ...current, serviceAccount }))}
           />
-          <FilterControl
+          <AnalyticsRangeFilterControl
             label={msg('analytics.filter.range', 'Range')}
+            presets={rangeOptions}
             value={filters.range}
-            options={rangeOptions}
-            onValueChange={(range) => setFilters((current) => ({ ...current, range }))}
+            onChange={(range) => setFilters((current) => ({ ...current, range }))}
           />
         </FilterBar>
         <div className="flex items-center gap-2 text-xs text-muted-foreground/70">

@@ -25,6 +25,24 @@ import {
 } from './ManagedAgentsPage.test-utils';
 
 export function registerManagedAgentsAgentsTests() {
+  test('does not mark the create dialog busy after model configuration loading fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    mockAgentsApi([], { modelMappingsErrorOnce: true });
+    render(
+      <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+        <ManagedAgentsPage section="agents" />
+      </WorkspaceContext.Provider>,
+      undefined,
+      { seedModelMappings: false },
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create agent' });
+    expect(await within(dialog).findByText('Could not load model configuration.')).toBeTruthy();
+    expect(dialog.getAttribute('aria-busy')).not.toBe('true');
+  });
+
   test('renders agent rows and creates an agent through the real v1 API', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi([serverAgent]);

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"sort"
@@ -17,9 +18,11 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/samber/lo"
 )
 
 const (
@@ -574,19 +577,40 @@ func handleWorkbenchModels(w http.ResponseWriter, r *http.Request) {
 	if !visibleOrgUUIDOrPlatformClaudeMirror(w, r) {
 		return
 	}
+	mappings := workbenchAnthropicUpstreamFromRequest(r).ModelMappings
 	writeJSON(w, http.StatusOK, map[string]any{
 		"default_prompt_settings": map[string]any{
-			"model_name":           workbenchDefaultModel,
+			"model_name":           modelmapping.Resolve(workbenchDefaultModel, mappings),
 			"system_prompt":        "",
 			"temperature":          1,
 			"max_tokens_to_sample": 20000,
 		},
-		"models": []any{
+		"model_mappings": mappings,
+		"models": resolveWorkbenchModels([]map[string]any{
 			workbenchModel("claude-fable-5", "Claude Fable 5", "claude_fable_5", 1000000, 128000, true, true, true),
 			workbenchModel("claude-opus-4-8", "Claude Opus Active", "claude_opus_4_5", 1000000, 128000, true, true, true),
 			workbenchModel("claude-sonnet-4-6", "Claude Sonnet Active", "claude_sonnet_4", 1000000, 64000, true, true, true),
 			workbenchModel("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "claude_haiku_4", 200000, 64000, true, false, false),
-		},
+		}, mappings),
+	})
+}
+
+func resolveWorkbenchModels(models []map[string]any, mappings map[string]string) []map[string]any {
+	resolved := lo.Map(models, func(model map[string]any, _ int) map[string]any {
+		out := maps.Clone(model)
+		modelID := workbenchString(out["model_name"])
+		sourceID := strings.TrimSpace(modelID)
+		effectiveID := modelmapping.Resolve(modelID, mappings)
+		out["model_name"] = effectiveID
+		if effectiveID != sourceID {
+			out["display_name"] = effectiveID
+			out["name"] = effectiveID
+			out["rate_limit_display_name"] = effectiveID
+		}
+		return out
+	})
+	return lo.UniqBy(resolved, func(model map[string]any) string {
+		return strings.TrimSpace(workbenchString(model["model_name"]))
 	})
 }
 
@@ -719,7 +743,8 @@ func workbenchGenerateTestCaseFromAnthropic(r *http.Request, body map[string]any
 	if len(variableNames) == 0 {
 		return "", nil, false
 	}
-	text, _, _, ok := workbenchAnthropicTextFromBody(r, workbenchGenerateTestCaseAnthropicBody(body, variableNames))
+	mappings := workbenchAnthropicUpstreamFromRequest(r).ModelMappings
+	text, _, _, ok := workbenchAnthropicTextFromBody(r, workbenchGenerateTestCaseAnthropicBody(body, variableNames, mappings))
 	if !ok {
 		return "", nil, false
 	}
@@ -736,7 +761,8 @@ func workbenchGenerateTestCasesFromAnthropic(r *http.Request, body map[string]an
 	if len(variableNames) == 0 {
 		return nil, false
 	}
-	text, _, _, ok := workbenchAnthropicTextFromBody(r, workbenchGenerateTestCasesAnthropicBody(body, variableNames, count))
+	mappings := workbenchAnthropicUpstreamFromRequest(r).ModelMappings
+	text, _, _, ok := workbenchAnthropicTextFromBody(r, workbenchGenerateTestCasesAnthropicBody(body, variableNames, count, mappings))
 	if !ok {
 		return nil, false
 	}
@@ -803,9 +829,9 @@ func workbenchAnthropicTextFromBody(r *http.Request, upstreamBody map[string]any
 	return strings.TrimSpace(text.String()), upstream.Usage.InputTokens, upstream.Usage.OutputTokens, text.Len() > 0
 }
 
-func workbenchGenerateTestCaseAnthropicBody(body map[string]any, variableNames []string) map[string]any {
+func workbenchGenerateTestCaseAnthropicBody(body map[string]any, variableNames []string, mappings map[string]string) map[string]any {
 	return map[string]any{
-		"model":       workbenchGenerateTestCaseModel(body),
+		"model":       modelmapping.Resolve(workbenchGenerateTestCaseModel(body), mappings),
 		"max_tokens":  1600,
 		"temperature": 0.7,
 		"stream":      false,
@@ -824,13 +850,13 @@ func workbenchGenerateTestCaseAnthropicBody(body map[string]any, variableNames [
 	}
 }
 
-func workbenchGenerateTestCasesAnthropicBody(body map[string]any, variableNames []string, count int) map[string]any {
+func workbenchGenerateTestCasesAnthropicBody(body map[string]any, variableNames []string, count int, mappings map[string]string) map[string]any {
 	maxTokens := 700 + count*350
 	if maxTokens > 4096 {
 		maxTokens = 4096
 	}
 	return map[string]any{
-		"model":       workbenchGenerateTestCaseModel(body),
+		"model":       modelmapping.Resolve(workbenchGenerateTestCaseModel(body), mappings),
 		"max_tokens":  maxTokens,
 		"temperature": 0.8,
 		"stream":      false,
@@ -1157,12 +1183,12 @@ func handleWorkbenchCompletions(w http.ResponseWriter, r *http.Request) {
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "request body must match WorkbenchCompletionRequest")
 		return
 	}
-	upstreamBody := workbenchCompletionAnthropicBody(payload)
+	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
+	upstreamBody := workbenchCompletionAnthropicBody(payload, upstreamConfig.ModelMappings)
 	if len(chatArrayFromValue(upstreamBody["messages"])) == 0 {
 		writeProxyMessagesAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "at least one non-empty message is required")
 		return
 	}
-	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
 	token := proxyMessagesAnthropicToken(upstreamConfig)
 	if token == "" {
 		writeProxyMessagesAnthropicError(w, http.StatusInternalServerError, "authentication_error", "anthropic_upstream.api_key is not configured")
@@ -1218,7 +1244,7 @@ func handleWorkbenchCompletions(w http.ResponseWriter, r *http.Request) {
 	proxyMessagesStream(w, upstreamRes.Body)
 }
 
-func workbenchCompletionAnthropicBody(payload map[string]any) map[string]any {
+func workbenchCompletionAnthropicBody(payload map[string]any, mappings map[string]string) map[string]any {
 	maxTokens := chatPositiveInt(firstNonNil(payload["max_tokens"], payload["max_tokens_to_sample"]))
 	if maxTokens <= 0 {
 		maxTokens = defaultAnthropicMaxTokens
@@ -1226,7 +1252,7 @@ func workbenchCompletionAnthropicBody(payload map[string]any) map[string]any {
 	variables := workbenchCompletionVariableValues(payload)
 	thinking := workbenchCompletionThinking(payload["thinking"], maxTokens)
 	body := map[string]any{
-		"model":      workbenchCompletionModel(payload),
+		"model":      modelmapping.Resolve(workbenchCompletionModel(payload), mappings),
 		"max_tokens": maxTokens,
 		"messages":   workbenchCompletionMessages(payload["messages"], variables),
 		"stream":     true,
@@ -1627,7 +1653,9 @@ func workbenchGenerateTitleFromAnthropic(r *http.Request, messageContent string,
 	if err != nil {
 		return "", 0, 0
 	}
-	body, err := json.Marshal(workbenchGenerateTitleAnthropicBody(messageContent, model))
+	effectiveModel := modelmapping.Resolve(model, upstreamConfig.ModelMappings)
+	upstreamBody := workbenchGenerateTitleAnthropicBody(messageContent, effectiveModel)
+	body, err := json.Marshal(upstreamBody)
 	if err != nil {
 		return "", 0, 0
 	}
@@ -1748,28 +1776,30 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
+	effectiveModel := modelmapping.Resolve(workbenchGeneratePromptModel(), upstreamConfig.ModelMappings)
 	token := proxyMessagesAnthropicToken(upstreamConfig)
 	if token == "" {
 		log.Printf("workbench generate_prompt fallback reason=no_anthropic_token org=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), len([]rune(task)), payload.TargetThinkingMode)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		workbenchWriteGeneratePromptFallbackStream(w, effectiveModel, task, payload.TargetThinkingMode)
 		return
 	}
 	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
 	if err != nil {
 		log.Printf("workbench generate_prompt fallback reason=invalid_anthropic_endpoint org=%s err=%v", chi.URLParam(r, "orgUUID"), err)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		workbenchWriteGeneratePromptFallbackStream(w, effectiveModel, task, payload.TargetThinkingMode)
 		return
 	}
-	body, err := json.Marshal(workbenchGeneratePromptAnthropicBody(task, payload.TargetThinkingMode))
+	upstreamBody := workbenchGeneratePromptAnthropicBody(task, payload.TargetThinkingMode, effectiveModel)
+	body, err := json.Marshal(upstreamBody)
 	if err != nil {
 		log.Printf("workbench generate_prompt fallback reason=marshal_request_failed org=%s err=%v", chi.URLParam(r, "orgUUID"), err)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		workbenchWriteGeneratePromptFallbackStream(w, effectiveModel, task, payload.TargetThinkingMode)
 		return
 	}
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		log.Printf("workbench generate_prompt fallback reason=build_upstream_request_failed org=%s endpoint=%s err=%v", chi.URLParam(r, "orgUUID"), endpoint, err)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		workbenchWriteGeneratePromptFallbackStream(w, effectiveModel, task, payload.TargetThinkingMode)
 		return
 	}
 	upstreamReq.Header.Set("Accept", "text/event-stream")
@@ -1777,11 +1807,11 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Set("X-API-Key", token)
 	upstreamReq.Header.Set("Anthropic-Version", anthropicAPIVersion)
 
-	log.Printf("workbench generate_prompt upstream_start org=%s endpoint=%s model=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), endpoint, workbenchGeneratePromptModel(), len([]rune(task)), payload.TargetThinkingMode)
+	log.Printf("workbench generate_prompt upstream_start org=%s endpoint=%s model=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), endpoint, upstreamBody["model"], len([]rune(task)), payload.TargetThinkingMode)
 	upstreamRes, err := http.DefaultClient.Do(upstreamReq)
 	if err != nil {
 		log.Printf("workbench generate_prompt fallback reason=upstream_request_failed org=%s endpoint=%s err=%v", chi.URLParam(r, "orgUUID"), endpoint, err)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		workbenchWriteGeneratePromptFallbackStream(w, effectiveModel, task, payload.TargetThinkingMode)
 		return
 	}
 	defer upstreamRes.Body.Close()
@@ -1789,7 +1819,7 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 	if upstreamRes.StatusCode < 200 || upstreamRes.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, upstreamRes.Body)
 		log.Printf("workbench generate_prompt fallback reason=upstream_status org=%s endpoint=%s status=%d", chi.URLParam(r, "orgUUID"), endpoint, upstreamRes.StatusCode)
-		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
+		workbenchWriteGeneratePromptFallbackStream(w, effectiveModel, task, payload.TargetThinkingMode)
 		return
 	}
 
@@ -1805,8 +1835,8 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 	workbenchProxyGeneratePromptStream(w, upstreamRes.Body)
 }
 
-func workbenchWriteGeneratePromptFallbackStream(w http.ResponseWriter, task string, targetThinkingMode bool) {
-	writeWorkbenchTextStream(w, workbenchGeneratePromptModel(), workbenchGeneratePromptFallbackText(task, targetThinkingMode), 0, 0)
+func workbenchWriteGeneratePromptFallbackStream(w http.ResponseWriter, model string, task string, targetThinkingMode bool) {
+	writeWorkbenchTextStream(w, model, workbenchGeneratePromptFallbackText(task, targetThinkingMode), 0, 0)
 }
 
 func workbenchGeneratePromptFallbackText(task string, targetThinkingMode bool) string {
@@ -1841,9 +1871,9 @@ func workbenchGeneratePromptFallbackText(task string, targetThinkingMode bool) s
 	return b.String()
 }
 
-func workbenchGeneratePromptAnthropicBody(task string, targetThinkingMode bool) map[string]any {
+func workbenchGeneratePromptAnthropicBody(task string, targetThinkingMode bool, model string) map[string]any {
 	return map[string]any{
-		"model":       workbenchGeneratePromptModel(),
+		"model":       model,
 		"max_tokens":  2048,
 		"temperature": 0.2,
 		"stream":      true,
@@ -1978,7 +2008,7 @@ func workbenchStoredLatestRevision(r *http.Request, promptID string, includeMess
 func workbenchRevision(r *http.Request, revisionID string, includeMessages bool, includeCreator bool) map[string]any {
 	revision := map[string]any{
 		"system_prompt":            "",
-		"model_name":               workbenchDefaultModel,
+		"model_name":               modelmapping.Resolve(workbenchDefaultModel, workbenchAnthropicUpstreamFromRequest(r).ModelMappings),
 		"variables":                []any{},
 		"max_tokens_to_sample":     20000,
 		"temperature":              1,
@@ -2029,6 +2059,7 @@ func workbenchRevisionFromBody(r *http.Request, body map[string]any, fallbackID 
 	revision["created_at"] = formatJSISOString(time.Now())
 	workbenchSetStringField(revision, body, "system_prompt")
 	workbenchSetStringField(revision, body, "model_name")
+	resolveWorkbenchRevisionModel(r, revision)
 	workbenchSetNumberField(revision, body, "max_tokens_to_sample")
 	workbenchSetNumberField(revision, body, "temperature")
 	workbenchSetBoolField(revision, body, "show_raw_thinking")
@@ -2084,6 +2115,7 @@ func workbenchStoredRevision(r *http.Request, promptID string, revisionID string
 			} else {
 				delete(revision, "creator")
 			}
+			resolveWorkbenchRevisionModel(r, revision)
 			return revision, true
 		}
 		if err != nil && !errors.Is(err, ErrNotFound) {
@@ -2107,7 +2139,16 @@ func workbenchStoredRevision(r *http.Request, promptID string, revisionID string
 	} else {
 		delete(revision, "creator")
 	}
+	resolveWorkbenchRevisionModel(r, revision)
 	return revision, true
+}
+
+func resolveWorkbenchRevisionModel(r *http.Request, revision map[string]any) {
+	modelID := strings.TrimSpace(workbenchString(revision["model_name"]))
+	if modelID == "" {
+		return
+	}
+	revision["model_name"] = modelmapping.Resolve(modelID, workbenchAnthropicUpstreamFromRequest(r).ModelMappings)
 }
 
 func workbenchPromptStoreKey(r *http.Request, promptID string) string {

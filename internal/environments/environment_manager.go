@@ -268,6 +268,9 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
 	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
 	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1" // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
+	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
+		environmentVariables[key] = value
+	}
 	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, sessionIngressToken, "1")
 	startupContext["environment_variables"] = environmentVariables
 	if _, ok := startupContext["sources"]; !ok {
@@ -297,6 +300,19 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 		"environment":     environment,
 		"auth":            auth,
 	})
+}
+
+func claudeRuntimeModelEnvironment(modelID string) map[string]string {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil
+	}
+	return map[string]string{
+		"ANTHROPIC_MODEL":                modelID,
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   modelID,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": modelID,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  modelID,
+	}
 }
 
 func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBaseURL string, codeSessionID string, sessionIngressToken string, workerEpoch string) {

@@ -105,7 +105,7 @@ func NewServer(deps ServerDeps) *Server {
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
 		messages:             messagesapi.NewHandler(deps.Config),
-		models:               modelsapi.NewHandler(),
+		models:               modelsapi.NewHandler(deps.Config.AnthropicUpstream),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService),
 		skills:               skillsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, deps.ObjectStore, skillPrewarmEnqueuer),
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB),

@@ -37,6 +37,30 @@ type agentPageResponse struct {
 	NextPage *string            `json:"next_page"`
 }
 
+func TestAgentsPersistMappedModelIDs(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AnthropicUpstream.ModelMappings = map[string]string{
+		"claude-sonnet-4-6": "glm-5-turbo",
+		"claude-opus-4-8":   "glm-5.2",
+	}
+	app := newTestAppWithStore(t, &cfg, newFakeStore("agents-model-mappings-bucket"))
+	defer app.close()
+
+	created := createAgent(t, app, `{"model":"claude-sonnet-4-6","name":"mapped-agent"}`)
+	defer cleanupAgentRows(t, app.db, created.ID)
+	assertRawContains(t, created.Model, `"id":"glm-5-turbo"`)
+
+	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"claude-opus-4-8","speed":"fast"}}`, http.StatusOK)
+	assertRawContains(t, updated.Model, `"id":"glm-5.2"`)
+	assertRawContains(t, updated.Model, `"speed":"fast"`)
+
+	versionOne := retrieveAgent(t, app, created.ID, "version=1")
+	assertRawContains(t, versionOne.Model, `"id":"glm-5-turbo"`)
+}
+
 func TestAgentsAPI(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("agents-bucket"))
 	defer app.close()

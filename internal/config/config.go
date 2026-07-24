@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 )
 
 const (
@@ -68,6 +70,9 @@ func validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Storage.S3.AccessKeyID) == "" || strings.TrimSpace(cfg.Storage.S3.SecretAccessKey) == "" {
 		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
+	}
+	if err := modelmapping.Validate(cfg.AnthropicUpstream.ModelMappings); err != nil {
+		return fmt.Errorf("anthropic_upstream.model_mappings: %w", err)
 	}
 	if err := validatePositiveValues(cfg); err != nil {
 		return err

@@ -1,4 +1,5 @@
 import { type Locale, useI18n } from '../../../shared/i18n';
+import { Button } from '../../../shared/ui/button';
 import {
   ResizableHandle,
   ResizablePanel,
@@ -22,6 +23,7 @@ import {
   createDialogAgentConfig,
   quickstartBuildAgentConfigInput,
 } from '../agentConfig';
+import { ManagedErrorAlert } from '../components/common';
 import {
   createAgent,
   createQuickstartDeployment,
@@ -35,6 +37,7 @@ import {
   postQuickstartSessionMessage,
 } from '../api';
 import { templateBody, templateSearchText } from '../labels';
+import { useEffectiveModelMappings } from '../modelMappings';
 import {
   type AgentApiResponse,
   type AgentPanelTab,
@@ -84,6 +87,33 @@ export function clampQuickstartInspectorPaneWidth(width: number, containerWidth:
 }
 
 export function AgentQuickstartPage() {
+  const { msg } = useI18n();
+  const { orgUuid } = useWorkspace();
+  const modelMappingsQuery = useEffectiveModelMappings(orgUuid);
+  if (orgUuid && modelMappingsQuery.isPending) {
+    return <section aria-busy="true" className="h-[calc(100vh-48px)] min-h-[650px]" />;
+  }
+  if (orgUuid && modelMappingsQuery.isError) {
+    return (
+      <section className="flex h-[calc(100vh-48px)] min-h-[650px] items-center justify-center px-6">
+        <div className="flex w-full max-w-xl flex-col gap-3">
+          <ManagedErrorAlert>
+            {msg(
+              'managedAgents.models.loadFailedBody',
+              'Retry before creating an agent so its displayed and saved model IDs stay consistent.',
+            )}
+          </ManagedErrorAlert>
+          <Button type="button" className="self-start" onClick={() => void modelMappingsQuery.refetch()}>
+            {msg('common.retry', 'Retry')}
+          </Button>
+        </div>
+      </section>
+    );
+  }
+  return <AgentQuickstartContent modelMappings={modelMappingsQuery.data ?? {}} />;
+}
+
+function AgentQuickstartContent({ modelMappings }: { modelMappings: Record<string, string> }) {
   const { msg, locale } = useI18n();
   const { activeWorkspaceId, orgUuid } = useWorkspace();
   const [query, setQuery] = useState('');
@@ -408,7 +438,9 @@ export function AgentQuickstartPage() {
         case 'build_agent_config': {
           const nextConfig = quickstartBuildAgentConfigInput(
             call.input,
-            createdAgentConfigRef.current ?? createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current),
+            createdAgentConfigRef.current ??
+              createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current, undefined, modelMappings),
+            modelMappings,
           );
           setCreatedAgentConfig(nextConfig);
           createdAgentConfigRef.current = nextConfig;
@@ -565,7 +597,7 @@ export function AgentQuickstartPage() {
 
   const handleUseTemplate = async (template: AgentTemplate, descriptionOverride?: string | null) => {
     promptLocaleRef.current = locale;
-    const config = createDialogAgentConfig(template, locale, descriptionOverride);
+    const config = createDialogAgentConfig(template, locale, descriptionOverride, modelMappings);
     setCreatingTemplateId(template.id);
     setChatError(null);
     try {
@@ -691,7 +723,7 @@ export function AgentQuickstartPage() {
       return;
     }
     promptLocaleRef.current = locale;
-    const config = createDialogAgentConfig(blankAgentTemplate, locale);
+    const config = createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings);
     setCreatingTemplateId(blankAgentTemplate.id);
     setChatError(null);
     setPrompt('');
@@ -728,7 +760,9 @@ export function AgentQuickstartPage() {
   const createAgentFromBuildConfig = async (call: QuickstartToolCall) => {
     const config = quickstartBuildAgentConfigInput(
       call.input,
-      createdAgentConfigRef.current ?? createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current),
+      createdAgentConfigRef.current ??
+        createDialogAgentConfig(blankAgentTemplate, promptLocaleRef.current, undefined, modelMappings),
+      modelMappings,
     );
     setCreatedAgentConfig(config);
     createdAgentConfigRef.current = config;
@@ -1154,6 +1188,7 @@ export function AgentQuickstartPage() {
                 onConfigureEnvironment={openPreviewEnvironmentStep}
                 onFormatChange={setFormat}
                 onTabChange={setAgentTab}
+                modelMappings={modelMappings}
               />
             ) : detailTemplate ? (
               <TemplateDetailPanel
@@ -1163,6 +1198,7 @@ export function AgentQuickstartPage() {
                 onFormatChange={setFormat}
                 onUseTemplate={() => handleUseTemplate(detailTemplate)}
                 isUsing={creatingTemplateId === detailTemplate.id}
+                modelMappings={modelMappings}
               />
             ) : (
               <BrowseTemplatesPanel

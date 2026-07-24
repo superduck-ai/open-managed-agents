@@ -632,6 +632,8 @@
   "managedAgents.memoryStores.manage": "管理 memory stores",
   "managedAgents.memoryStores.searchPlaceholder": "按名称或精确 ID 搜索",
   "managedAgents.memoryStores.title": "Memory stores",
+  "managedAgents.models.loadFailed": "无法加载模型配置。",
+  "managedAgents.models.loadFailedBody": "请先重试再创建 Agent，以确保展示和保存的模型 ID 一致。",
   "managedAgents.quickstart.accessToken": "访问 token",
   "managedAgents.quickstart.addCredentialFor": "添加凭据给",
   "managedAgents.quickstart.agentCreated": "Agent 已创建",

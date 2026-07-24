@@ -51,16 +51,35 @@ export const agentEditConfigSchema = z
   })
   .strict();
 
-export function yamlForTemplate(template: AgentTemplate, locale: Locale = 'en') {
-  return yamlStringify(displayAgentConfig(createDialogAgentConfig(template, locale)));
+export function yamlForTemplate(
+  template: AgentTemplate,
+  locale: Locale = 'en',
+  modelMappings: Record<string, string> = {},
+) {
+  return yamlStringify(displayAgentConfig(createDialogAgentConfig(template, locale, undefined, modelMappings)));
 }
 
-export function jsonForTemplate(template: AgentTemplate, locale: Locale = 'en') {
-  return JSON.stringify(displayAgentConfig(createDialogAgentConfig(template, locale)), null, 2);
+export function jsonForTemplate(
+  template: AgentTemplate,
+  locale: Locale = 'en',
+  modelMappings: Record<string, string> = {},
+) {
+  return JSON.stringify(
+    displayAgentConfig(createDialogAgentConfig(template, locale, undefined, modelMappings)),
+    null,
+    2,
+  );
 }
 
-export function codeForTemplate(template: AgentTemplate, format: CodeFormat, locale: Locale = 'en') {
-  return format === 'YAML' ? yamlForTemplate(template, locale) : jsonForTemplate(template, locale);
+export function codeForTemplate(
+  template: AgentTemplate,
+  format: CodeFormat,
+  locale: Locale = 'en',
+  modelMappings: Record<string, string> = {},
+) {
+  return format === 'YAML'
+    ? yamlForTemplate(template, locale, modelMappings)
+    : jsonForTemplate(template, locale, modelMappings);
 }
 
 export function createAgentToolset() {
@@ -324,6 +343,7 @@ export function createDialogAgentConfig(
   template: AgentTemplate,
   locale: Locale = 'en',
   descriptionOverride?: string | null,
+  modelMappings: Record<string, string> = {},
 ): CreateAgentInput {
   const zh = locale === 'zh-CN';
   const configuredTemplate = templateConfigsForLocale(locale)[template.id];
@@ -340,6 +360,7 @@ export function createDialogAgentConfig(
     },
   );
   const trimmedDescription = descriptionOverride?.trim();
+  config.model = resolveAgentModelInput(config.model, modelMappings);
 
   if (trimmedDescription) {
     config.description = trimmedDescription;
@@ -352,6 +373,7 @@ export function createDialogAgentConfig(
 export function quickstartBuildAgentConfigInput(
   input: Record<string, unknown>,
   fallback: CreateAgentInput,
+  modelMappings: Record<string, string> = {},
 ): CreateAgentInput {
   const rawConfig = toRecord(input.config) ?? input;
   const name = typeof rawConfig.name === 'string' && rawConfig.name.trim() ? rawConfig.name.trim() : fallback.name;
@@ -361,7 +383,7 @@ export function quickstartBuildAgentConfigInput(
       : rawConfig.description === null
         ? null
         : (fallback.description ?? null);
-  const model = quickstartModelInput(rawConfig.model, fallback.model);
+  const model = resolveAgentModelInput(quickstartModelInput(rawConfig.model, fallback.model), modelMappings);
   const system =
     typeof rawConfig.system === 'string'
       ? rawConfig.system
@@ -387,6 +409,15 @@ export function quickstartBuildAgentConfigInput(
     skills,
     ...(metadata ? { metadata } : {}),
   };
+}
+
+export function resolveAgentModelInput(model: AgentModelInput, modelMappings: Record<string, string>): AgentModelInput {
+  const modelID = typeof model === 'string' ? model : model.id;
+  const effectiveID = modelMappings[modelID]?.trim();
+  if (!effectiveID) {
+    return model;
+  }
+  return typeof model === 'string' ? effectiveID : { ...model, id: effectiveID };
 }
 
 export function quickstartModelInput(value: unknown, fallback: AgentModelInput): AgentModelInput {
@@ -462,6 +493,7 @@ export async function generateCreateAgentConfig({
   workspaceId,
   description,
   currentConfig,
+  modelMappings = {},
   signal,
   locale = 'en',
 }: {
@@ -469,6 +501,7 @@ export async function generateCreateAgentConfig({
   workspaceId: string;
   description: string;
   currentConfig: CreateAgentInput;
+  modelMappings?: Record<string, string>;
   signal: AbortSignal;
   locale?: Locale;
 }) {
@@ -513,7 +546,7 @@ export async function generateCreateAgentConfig({
       if (type === 'content_block_stop' && currentTool) {
         const input = parseToolInput(currentTool.inputJson, currentTool.input);
         if (currentTool.name === 'build_agent_config') {
-          generatedConfig = quickstartBuildAgentConfigInput(input, currentConfig);
+          generatedConfig = quickstartBuildAgentConfigInput(input, currentConfig, modelMappings);
         }
         currentTool = null;
       }

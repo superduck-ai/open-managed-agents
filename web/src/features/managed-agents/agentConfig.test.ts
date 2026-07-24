@@ -5,7 +5,10 @@ import {
   createDialogAgentConfig,
   createDialogTemplateConfigs,
   createDialogTemplateConfigsZh,
+  jsonForTemplate,
+  quickstartBuildAgentConfigInput,
   templateSystem,
+  yamlForTemplate,
 } from './agentConfig';
 
 describe('localized create-agent template configs', () => {
@@ -38,6 +41,35 @@ describe('localized create-agent template configs', () => {
   test('uses locale as the second argument and defaults to English', () => {
     expect(createDialogAgentConfig(blankAgentTemplate)).toEqual(createDialogTemplateConfigs.blank);
     expect(createDialogAgentConfig(blankAgentTemplate, 'zh-CN')).toEqual(createDialogTemplateConfigsZh.blank);
+  });
+
+  test('uses the configured effective model id in template configs', () => {
+    const config = createDialogAgentConfig(blankAgentTemplate, 'en', undefined, {
+      'claude-sonnet-4-6': 'glm-5-turbo',
+    });
+
+    expect(config.model).toBe('glm-5-turbo');
+  });
+
+  test('uses the configured effective model id in template previews', () => {
+    const mappings = {
+      'claude-sonnet-4-6': 'glm-5-turbo',
+    };
+
+    expect(yamlForTemplate(blankAgentTemplate, 'en', mappings)).toContain('model: glm-5-turbo');
+    expect(jsonForTemplate(blankAgentTemplate, 'en', mappings)).toContain('"model": "glm-5-turbo"');
+  });
+
+  test('uses the configured effective model id in generated agent configs', () => {
+    const fallback = createDialogAgentConfig(blankAgentTemplate);
+    const mappings = { 'claude-sonnet-4-6': 'glm-5-turbo' };
+
+    expect(quickstartBuildAgentConfigInput({ model: 'claude-sonnet-4-6' }, fallback, mappings).model).toBe(
+      'glm-5-turbo',
+    );
+    expect(
+      quickstartBuildAgentConfigInput({ model: { id: 'claude-sonnet-4-6', speed: 'fast' } }, fallback, mappings).model,
+    ).toEqual({ id: 'glm-5-turbo', speed: 'fast' });
   });
 
   test('uses the localized config table as the system prompt source for every built-in template', () => {

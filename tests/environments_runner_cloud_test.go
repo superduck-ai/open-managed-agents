@@ -34,6 +34,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-must-not-enter-sandbox"
+	cfg.AnthropicUpstream.ModelMappings = map[string]string{"claude-opus-4-8": "glm-5-turbo"}
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-bucket"))
 	defer app.close()
@@ -125,6 +126,9 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if codeSession.PermissionMode != "bypassPermissions" {
 		t.Fatalf("local code session permission mode = %q", codeSession.PermissionMode)
 	}
+	if codeSession.Model != "glm-5-turbo" {
+		t.Fatalf("local code session model = %q, want mapped snapshot model", codeSession.Model)
+	}
 	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
 	if err != nil {
 		t.Fatalf("list queued inbound events: %v", err)
@@ -164,6 +168,16 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatalf("unexpected model auth: %#v", modelAuth)
 	}
 	startupEnvironment := startup["environment_variables"].(map[string]any)
+	for _, key := range []string{
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	} {
+		if startupEnvironment[key] != "glm-5-turbo" {
+			t.Fatalf("%s = %q, want mapped snapshot model", key, startupEnvironment[key])
+		}
+	}
 	if _, ok := startupEnvironment["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
 		t.Fatalf("startup environment masks WebSocket auth FD: %#v", startupEnvironment)
 	}

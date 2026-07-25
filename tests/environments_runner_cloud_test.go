@@ -272,10 +272,10 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 			t.Fatalf("verify rclone token for %s: %v", mount.Source, verifyErr)
 		}
 		if mount.Source == "/outputs" {
-			if mount.Readonly || len(claims.WritePrefixes) != 1 || claims.WritePrefixes[0] != "/outputs" {
-				t.Fatalf("outputs token scope = readonly:%t prefixes:%#v", mount.Readonly, claims.WritePrefixes)
+			if mount.Readonly || claims.Readonly != nil {
+				t.Fatalf("outputs token authority = mount readonly:%t claims:%#v", mount.Readonly, claims)
 			}
-		} else if !mount.Readonly || claims.Readonly == nil || !*claims.Readonly || len(claims.WritePrefixes) != 0 {
+		} else if !mount.Readonly || claims.Readonly == nil || !*claims.Readonly {
 			t.Fatalf("readonly mount %s authority = mount readonly:%t claims:%#v", mount.Source, mount.Readonly, claims)
 		}
 	}

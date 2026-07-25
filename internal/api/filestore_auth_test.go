@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -285,30 +284,6 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 
 		if response.Code != http.StatusNoContent || !principal.Readonly {
 			t.Fatalf("response/principal = %d/%#v, want authenticated readonly principal", response.Code, principal)
-		}
-	})
-
-	t.Run("write prefixes reach principal", func(t *testing.T) {
-		scopedIdentity := fixture.tokenIdentity
-		scopedIdentity.WritePrefixes = []string{"/outputs"}
-		scopedToken, issueErr := credentials.filestore.Issue(scopedIdentity)
-		if issueErr != nil {
-			t.Fatalf("issue path-scoped token: %v", issueErr)
-		}
-		var principal filestore.Principal
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			principal, _ = filestore.PrincipalFromContext(r.Context())
-			w.WriteHeader(http.StatusNoContent)
-		})
-		response := httptest.NewRecorder()
-
-		server.filestoreAuthMiddleware(next).ServeHTTP(
-			response,
-			newFilestoreBearerRequest(http.MethodPost, filestoreAuthPaths[0], scopedToken),
-		)
-
-		if response.Code != http.StatusNoContent || !slices.Equal(principal.WritePrefixes, []string{"/outputs"}) {
-			t.Fatalf("response/principal = %d/%#v, want scoped principal", response.Code, principal)
 		}
 	})
 

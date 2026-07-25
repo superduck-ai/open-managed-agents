@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PR Diff 讲解示例 - managed_agent_code_session.go</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1020;
+        --panel: rgba(15, 23, 42, 0.88);
+        --panel-soft: rgba(30, 41, 59, 0.72);
+        --border: rgba(148, 163, 184, 0.22);
+        --text: #e5eefb;
+        --muted: #94a3b8;
+        --accent: #60a5fa;
+        --accent-soft: rgba(96, 165, 250, 0.12);
+        --green: #34d399;
+        --green-soft: rgba(52, 211, 153, 0.12);
+        --amber: #fbbf24;
+        --amber-soft: rgba(251, 191, 36, 0.12);
+        --red: #f87171;
+        --code: #dbeafe;
+        --shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+        --radius: 18px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(59, 130, 246, 0.16), transparent 28%),
+          radial-gradient(circle at top right, rgba(16, 185, 129, 0.14), transparent 24%),
+          linear-gradient(180deg, #08101f 0%, #0b1020 100%);
+        color: var(--text);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .page {
+        width: min(1320px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 28px 0 48px;
+      }
+
+      .hero {
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.78));
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        padding: 28px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(12px);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: #bfdbfe;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 16px 0 12px;
+        font-size: clamp(30px, 5vw, 48px);
+        line-height: 1.05;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 860px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: 1.3fr 0.9fr;
+        gap: 18px;
+        margin-top: 24px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .card.pad {
+        padding: 20px;
+      }
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .meta-item {
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.76);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+      }
+
+      .meta-label {
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+
+      .meta-value {
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .summary-list,
+      .toc,
+      .explain-list,
+      .function-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .summary-item,
+      .toc a,
+      .explain-item,
+      .function-item {
+        display: block;
+        text-decoration: none;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+      }
+
+      .toc a:hover {
+        border-color: rgba(96, 165, 250, 0.55);
+        background: rgba(30, 41, 59, 0.88);
+      }
+
+      .section {
+        margin-top: 20px;
+      }
+
+      .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 16px;
+        margin: 28px 0 14px;
+      }
+
+      .section h2 {
+        margin: 0;
+        font-size: 24px;
+      }
+
+      .section-subtitle {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        border: 1px solid transparent;
+      }
+
+      .pill.added {
+        color: #bbf7d0;
+        background: var(--green-soft);
+        border-color: rgba(52, 211, 153, 0.2);
+      }
+
+      .pill.reason {
+        color: #fde68a;
+        background: var(--amber-soft);
+        border-color: rgba(251, 191, 36, 0.18);
+      }
+
+      .pill.file {
+        color: #bfdbfe;
+        background: var(--accent-soft);
+        border-color: rgba(96, 165, 250, 0.18);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr);
+        gap: 20px;
+        margin-top: 22px;
+      }
+
+      .sidebar {
+        position: sticky;
+        top: 18px;
+        align-self: start;
+      }
+
+      .diff-list {
+        display: grid;
+        gap: 16px;
+      }
+
+      .diff-card {
+        overflow: hidden;
+      }
+
+      .diff-card .top {
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.75));
+      }
+
+      .diff-card h3 {
+        margin: 10px 0 6px;
+        font-size: 20px;
+      }
+
+      .diff-card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .diff-body {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+      }
+
+      .code-panel,
+      .analysis-panel {
+        padding: 18px 20px;
+      }
+
+      .code-panel {
+        border-right: 1px solid var(--border);
+        background: rgba(2, 6, 23, 0.42);
+      }
+
+      .analysis-panel {
+        background: rgba(15, 23, 42, 0.68);
+      }
+
+      .diff-label {
+        margin-bottom: 10px;
+        color: #bfdbfe;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--code);
+        font-size: 13px;
+        line-height: 1.7;
+        font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+
+      code.inline {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        padding: 2px 6px;
+        border-radius: 8px;
+        background: rgba(148, 163, 184, 0.12);
+        font-size: 0.92em;
+      }
+
+      .line.add {
+        display: block;
+        color: #bbf7d0;
+        background: rgba(34, 197, 94, 0.08);
+        margin-inline: -8px;
+        padding-inline: 8px;
+        border-radius: 6px;
+      }
+
+      .line.note {
+        display: block;
+        color: #cbd5e1;
+      }
+
+      .analysis-panel ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--text);
+        line-height: 1.8;
+      }
+
+      .analysis-panel li + li {
+        margin-top: 10px;
+      }
+
+      .why-box {
+        margin-top: 16px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: rgba(251, 191, 36, 0.08);
+        border: 1px solid rgba(251, 191, 36, 0.14);
+      }
+
+      .why-title {
+        margin: 0 0 8px;
+        color: #fde68a;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .why-box p {
+        margin: 0;
+        line-height: 1.7;
+        color: #f8fafc;
+      }
+
+      .function-item {
+        display: grid;
+        gap: 10px;
+      }
+
+      .function-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .function-name {
+        font-weight: 800;
+        font-size: 16px;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        background: rgba(96, 165, 250, 0.12);
+        color: #bfdbfe;
+        border: 1px solid rgba(96, 165, 250, 0.18);
+      }
+
+      .mini-code {
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: rgba(2, 6, 23, 0.4);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+      }
+
+      .footer-note {
+        margin-top: 24px;
+        padding: 18px 20px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 1080px) {
+        .hero-grid,
+        .layout,
+        .diff-body {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          position: static;
+        }
+
+        .code-panel {
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+        }
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          width: min(100% - 20px, 1320px);
+          padding-top: 18px;
+        }
+
+        .hero,
+        .card.pad,
+        .diff-card .top,
+        .code-panel,
+        .analysis-panel {
+          padding: 16px;
+        }
+
+        .meta-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <section class="hero">
+        <div class="eyebrow">PR 理解助手 · 独立 HTML 示例</div>
+        <h1>用一个文件，把 PR 改动讲清楚</h1>
+        <p>
+          这个页面是一个原型，目标不是替代 Git diff，而是把 <code class="inline">diff 是什么</code>、<code class="inline">为什么这样改</code>、以及
+          <code class="inline">每个函数负责什么</code> 放在同一页里，帮助 reviewer 更快判断“这是不是一个可以合并的改动”。
+          这里先用 <code class="inline">internal/codesessions/managed_agent_code_session.go</code> 做示例。
+        </p>
+
+        <div class="hero-grid">
+          <div class="card pad">
+            <div class="section-header" style="margin-top: 0">
+              <div>
+                <h2 style="font-size: 18px">这个文件在做什么</h2>
+                <div class="section-subtitle">先给 reviewer 一个高层理解，减少直接扎进代码的认知成本。</div>
+              </div>
+            </div>
+            <div class="summary-list">
+              <div class="summary-item">
+                这个文件负责为 <strong>managed agent</strong> 创建并终止 code session，并在创建过程中签发运行 sandbox
+                所需的两类凭证：一个 OAuth-compatible token，一个 session-ingress JWT。
+              </div>
+              <div class="summary-item">
+                它把数据库持久化、初始化事件入队、以及凭证签发串成一个原子创建链路；任何中途失败都会触发回滚式清理，避免留下半初始化 session。
+              </div>
+              <div class="summary-item">
+                文件中的 metadata 只保留非秘密信息，避免把明文凭证写入数据库或 JSON metadata，这是它最重要的安全边界之一。
+              </div>
+            </div>
+          </div>
+
+          <div class="card pad">
+            <div class="section-header" style="margin-top: 0">
+              <div>
+                <h2 style="font-size: 18px">文件信息</h2>
+                <div class="section-subtitle">适合放在 PR 页头，帮助快速建立上下文。</div>
+              </div>
+            </div>
+            <div class="meta-grid">
+              <div class="meta-item">
+                <div class="meta-label">文件路径</div>
+                <div class="meta-value"><code class="inline">internal/codesessions/managed_agent_code_session.go</code></div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-label">文件类型</div>
+                <div class="meta-value">Go 服务端领域逻辑</div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-label">示例视角</div>
+                <div class="meta-value">假设这是一次新增文件或较大新增逻辑的 PR 讲解页</div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-label">review 关注点</div>
+                <div class="meta-value">原子性、安全边界、失败清理、凭证发放上下文是否一致</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="layout">
+        <aside class="sidebar">
+          <div class="card pad">
+            <div class="section-header" style="margin-top: 0; margin-bottom: 10px">
+              <div>
+                <h2 style="font-size: 18px">导航</h2>
+                <div class="section-subtitle">模拟 reviewer 的阅读顺序。</div>
+              </div>
+            </div>
+            <nav class="toc">
+              <a href="#diff-overview">1. 改动摘要</a>
+              <a href="#diff-points">2. 每个改动点</a>
+              <a href="#functions">3. 每个函数的作用</a>
+              <a href="#merge-checklist">4. 是否适合合并</a>
+            </nav>
+          </div>
+        </aside>
+
+        <main>
+          <section class="section" id="diff-overview">
+            <div class="section-header">
+              <div>
+                <h2>改动摘要</h2>
+                <div class="section-subtitle">这一段应该让 reviewer 在 30 秒内知道：PR 到底引入了哪几类能力。</div>
+              </div>
+            </div>
+            <div class="card pad">
+              <div class="pill-row">
+                <span class="pill file">示例文件</span>
+                <span class="pill added">新增创建链路</span>
+                <span class="pill added">新增失败清理</span>
+                <span class="pill added">新增 metadata 归档</span>
+                <span class="pill reason">重点是安全与一致性</span>
+              </div>
+              <div class="explain-list" style="margin-top: 16px">
+                <div class="explain-item">
+                  <strong>改动点 1：</strong>引入 <code class="inline">ManagedAgentCreateInput</code> 和
+                  <code class="inline">ManagedAgentCreateResult</code> 两个结构体，把创建 code session 所需上下文，以及创建成功后要返回给 sandbox 的关键结果显式建模。
+                </div>
+                <div class="explain-item">
+                  <strong>改动点 2：</strong>新增
+                  <code class="inline">CreateManagedAgentCodeSession</code>，把“生成 ID → 生成 OAuth token → 组装 metadata → 落库 → 初始化入队 → 读取签发上下文 → 签发 ingress token”串成一个完整流程。
+                </div>
+                <div class="explain-item">
+                  <strong>改动点 3：</strong>新增延迟清理逻辑。只要中途失败，就调用
+                  <code class="inline">TerminateManagedAgentCodeSession</code>
+                  回收未完成 session，避免数据库里留下一条看起来 active、但实际上不能用的记录。
+                </div>
+                <div class="explain-item">
+                  <strong>改动点 4：</strong>新增
+                  <code class="inline">managedAgentCodeSessionMetadata</code>，统一约束 metadata 中能存什么，明确“不把明文凭证写进 JSON”。
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section" id="diff-points">
+            <div class="section-header">
+              <div>
+                <h2>每个 diff 改动点</h2>
+                <div class="section-subtitle">这里不是机械展示整份 diff，而是把 reviewer 真正在意的改动切成可解释的块。</div>
+              </div>
+            </div>
+
+            <div class="diff-list">
+              <article class="card diff-card">
+                <div class="top">
+                  <div class="pill-row">
+                    <span class="pill added">新增数据结构</span>
+                    <span class="pill reason">让输入输出边界更清晰</span>
+                  </div>
+                  <h3>1. 把创建链路的输入和返回结果显式建模</h3>
+                  <p>
+                    reviewer 不需要在多个函数参数里猜上下文。输入是什么、返回什么、哪些字段是敏感的，都被集中定义。
+                  </p>
+                </div>
+                <div class="diff-body">
+                  <div class="code-panel">
+                    <div class="diff-label">关键代码片段</div>
+                    <pre><span class="line add">type ManagedAgentCreateInput struct {</span>
+<span class="line add">    Session                    db.Session</span>
+<span class="line add">    Environment                db.Environment</span>
+<span class="line add">    EnvironmentWork            db.EnvironmentWork</span>
+<span class="line add">    Model                      string</span>
+<span class="line add">    Title                      string</span>
+<span class="line add">    WorkDir                    string</span>
+<span class="line add">    PermissionMode             string</span>
+<span class="line add">    DangerouslySkipPermissions bool</span>
+<span class="line add">    Config                     json.RawMessage</span>
+<span class="line add">    InitialEvents              []json.RawMessage</span>
+<span class="line add">}</span>
+
+<span class="line add">type ManagedAgentCreateResult struct {</span>
+<span class="line add">    CodeSessionID       string</span>
+<span class="line add">    PublicSessionID     string</span>
+<span class="line add">    SDKURLPath          string</span>
+<span class="line add">    OAuthAccessToken    string</span>
+<span class="line add">    SessionIngressToken string</span>
+<span class="line add">}</span></pre>
+                  </div>
+                  <div class="analysis-panel">
+                    <div class="diff-label">改动解释</div>
+                    <ul>
+                      <li>
+                        <strong>输入结构体</strong>把创建 session 需要的租户、环境、工作目录、权限模式、配置和初始化事件收拢在一起，降低函数签名膨胀带来的理解成本。
+                      </li>
+                      <li>
+                        <strong>返回结构体</strong>明确区分“数据库里持久化的东西”和“只在创建链路里短暂存在的明文凭证”。
+                      </li>
+                      <li>
+                        reviewer 可以立刻看出：<code class="inline">OAuthAccessToken</code> 与
+                        <code class="inline">SessionIngressToken</code> 是敏感信息，不应被后续逻辑随意落库。
+                      </li>
+                    </ul>
+                    <div class="why-box">
+                      <div class="why-title">为什么要这样改</div>
+                      <p>
+                        因为 managed agent 的启动流程天然跨越了“数据库状态”“运行时初始化”“凭证发放”三个关注点。如果不先把输入输出边界定清楚，后面流程越长，review 和维护都会越困难。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="card diff-card">
+                <div class="top">
+                  <div class="pill-row">
+                    <span class="pill added">新增核心流程</span>
+                    <span class="pill reason">把创建过程做成原子链路</span>
+                  </div>
+                  <h3>2. 新增 CreateManagedAgentCodeSession 核心创建流程</h3>
+                  <p>
+                    这是本文件的主逻辑。页面应把它拆成几个阶段，而不是让 reviewer 自己在长函数里找重点。
+                  </p>
+                </div>
+                <div class="diff-body">
+                  <div class="code-panel">
+                    <div class="diff-label">关键代码片段</div>
+                    <pre><span class="line add">func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input ManagedAgentCreateInput) (ManagedAgentCreateResult, error) {</span>
+<span class="line add">    if input.EnvironmentWork.ID &lt;= 0 {</span>
+<span class="line add">        return ManagedAgentCreateResult{}, errors.New("managed agent environment work is required")</span>
+<span class="line add">    }</span>
+<span class="line add">    codeSessionID, err := ids.New("cse_")</span>
+<span class="line add">    oauthAccessToken, err := newOAuthCompatibleToken()</span>
+<span class="line add">    metadata, err := managedAgentCodeSessionMetadata(input)</span>
+<span class="line add">    record, err := s.db.CreateCodeSession(...)</span>
+<span class="line add">    if err := s.queueInitialize(ctx, record, input.Config, now); err != nil { ... }</span>
+<span class="line add">    if err := s.queueInitialPublicSessionEvents(ctx, record, input.InitialEvents, now); err != nil { ... }</span>
+<span class="line add">    credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(...)</span>
+<span class="line add">    sessionIngressToken, err := s.issueSessionIngressToken(credentialContext)</span>
+<span class="line add">    return ManagedAgentCreateResult{...}, nil</span>
+<span class="line add">}</span></pre>
+                  </div>
+                  <div class="analysis-panel">
+                    <div class="diff-label">改动解释</div>
+                    <ul>
+                      <li><strong>第一阶段：</strong>先校验 <code class="inline">EnvironmentWork</code> 是否存在，防止没有有效环境工作上下文就误建 session。</li>
+                      <li><strong>第二阶段：</strong>生成外部可见的 code session ID，以及 OAuth-compatible token。</li>
+                      <li><strong>第三阶段：</strong>把非秘密 metadata 写入数据库，并把 OAuth token 只存 hash，不存明文。</li>
+                      <li><strong>第四阶段：</strong>把初始化事件和 public session 初始事件入队，让后续 runtime 可以按预期启动。</li>
+                      <li><strong>第五阶段：</strong>重新从数据库读取签发上下文，再签发 ingress JWT，确保 claims 基于真实已持久化的数据，而不是基于内存里可能未完全可信的输入。</li>
+                    </ul>
+                    <div class="why-box">
+                      <div class="why-title">为什么要这样改</div>
+                      <p>
+                        因为 managed agent 的 sandbox 一旦启动，就依赖这些上下文和凭证。创建流程如果不是一个一致的、可回收的链路，就容易出现“数据库里有 session，但 runtime 无法接入”或“token claims 和持久化租户不一致”的问题。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="card diff-card">
+                <div class="top">
+                  <div class="pill-row">
+                    <span class="pill added">新增失败清理</span>
+                    <span class="pill reason">避免留下半成品记录</span>
+                  </div>
+                  <h3>3. 为中途失败增加自动回收逻辑</h3>
+                  <p>
+                    这是 reviewer 很容易漏看的关键点：它决定系统在失败路径上是否仍然干净、一致、可恢复。
+                  </p>
+                </div>
+                <div class="diff-body">
+                  <div class="code-panel">
+                    <div class="diff-label">关键代码片段</div>
+                    <pre><span class="line add">needsCleanup := true</span>
+<span class="line add">defer func() {</span>
+<span class="line add">    if !needsCleanup {</span>
+<span class="line add">        return</span>
+<span class="line add">    }</span>
+<span class="line add">    cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)</span>
+<span class="line add">    defer cancel()</span>
+<span class="line add">    if cleanupErr := s.db.TerminateManagedAgentCodeSession(...); cleanupErr != nil {</span>
+<span class="line add">        log.Printf("terminate incomplete managed-agent code session ...")</span>
+<span class="line add">    }</span>
+<span class="line add">}()</span>
+
+<span class="line add">...</span>
+<span class="line add">needsCleanup = false</span></pre>
+                  </div>
+                  <div class="analysis-panel">
+                    <div class="diff-label">改动解释</div>
+                    <ul>
+                      <li>一旦记录已创建，函数就假设后续步骤可能失败，因此默认开启 <code class="inline">needsCleanup</code>。</li>
+                      <li>只有在所有步骤都成功、准备正常返回时，才把 <code class="inline">needsCleanup</code> 置为 <code class="inline">false</code>。</li>
+                      <li>清理逻辑用了独立超时上下文，避免因为主请求上下文已取消而导致回收也无法执行。</li>
+                      <li>即使清理失败，也只记录日志，不覆盖主错误，这样调用方仍能收到真正导致失败的原因。</li>
+                    </ul>
+                    <div class="why-box">
+                      <div class="why-title">为什么要这样改</div>
+                      <p>
+                        因为这类创建流程通常不是“要么全成功、要么数据库自动回滚”这么简单；它跨越了数据库写入、事件入队和 token 签发。显式清理是保证系统一致性的必要保险丝。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="card diff-card">
+                <div class="top">
+                  <div class="pill-row">
+                    <span class="pill added">新增安全约束</span>
+                    <span class="pill reason">防止 secrets 泄漏到 metadata</span>
+                  </div>
+                  <h3>4. 把 metadata 组装集中到单独函数里</h3>
+                  <p>
+                    这不是简单的代码整理，而是把“什么能存、什么不能存”变成一个集中、可 review 的安全边界。
+                  </p>
+                </div>
+                <div class="diff-body">
+                  <div class="code-panel">
+                    <div class="diff-label">关键代码片段</div>
+                    <pre><span class="line add">func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMessage, error) {</span>
+<span class="line add">    // metadata 只记录非秘密运行信息，两份明文凭证都不进入 JSON。</span>
+<span class="line add">    return marshalRaw(map[string]any{</span>
+<span class="line add">        "source":                         "managed_agents_local",</span>
+<span class="line add">        "public_session_id":              input.Session.ExternalID,</span>
+<span class="line add">        "environment_id":                 input.Environment.ExternalID,</span>
+<span class="line add">        "title":                          input.Title,</span>
+<span class="line add">        "config":                         rawObject(input.Config),</span>
+<span class="line add">        "dangerously_skip_permissions":   input.DangerouslySkipPermissions,</span>
+<span class="line add">        "managed_agent_session_work_dir": strings.TrimSpace(input.WorkDir),</span>
+<span class="line add">    })</span>
+<span class="line add">}</span></pre>
+                  </div>
+                  <div class="analysis-panel">
+                    <div class="diff-label">改动解释</div>
+                    <ul>
+                      <li>这个函数明确告诉 reviewer：metadata 的职责是记录运行信息，不是保存 secrets。</li>
+                      <li>把 metadata 组装收口后，后续要增加字段时，reviewer 只需要看这一处，就能判断是否会引入敏感信息泄漏。</li>
+                      <li>
+                        这里保留了 <code class="inline">config</code>、工作目录和权限跳过标记，是为了排查运行态问题；但 token 明文并没有进入 JSON。
+                      </li>
+                    </ul>
+                    <div class="why-box">
+                      <div class="why-title">为什么要这样改</div>
+                      <p>
+                        安全边界最怕分散。把 metadata 拼装逻辑散落在创建流程中，review 时很难确认 secrets 是否被不小心带进去了。收口成单独函数后，这件事就更容易审查和长期维护。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="card diff-card">
+                <div class="top">
+                  <div class="pill-row">
+                    <span class="pill added">新增终止入口</span>
+                    <span class="pill reason">给失败启动场景一个明确回收动作</span>
+                  </div>
+                  <h3>5. 暴露一个明确的 TerminateManagedAgentCodeSession 方法</h3>
+                  <p>
+                    这让“终止未成功启动的 sandbox session”从隐含行为变成可复用的显式 API。
+                  </p>
+                </div>
+                <div class="diff-body">
+                  <div class="code-panel">
+                    <div class="diff-label">关键代码片段</div>
+                    <pre><span class="line add">func (s *Service) TerminateManagedAgentCodeSession(</span>
+<span class="line add">    ctx context.Context,</span>
+<span class="line add">    session db.Session,</span>
+<span class="line add">    codeSessionID string,</span>
+<span class="line add">) error {</span>
+<span class="line add">    if s == nil {</span>
+<span class="line add">        return nil</span>
+<span class="line add">    }</span>
+<span class="line add">    return s.db.TerminateManagedAgentCodeSession(</span>
+<span class="line add">        ctx,</span>
+<span class="line add">        session.OrganizationID,</span>
+<span class="line add">        session.WorkspaceID,</span>
+<span class="line add">        strings.TrimSpace(codeSessionID),</span>
+<span class="line add">    )</span>
+<span class="line add">}</span></pre>
+                  </div>
+                  <div class="analysis-panel">
+                    <div class="diff-label">改动解释</div>
+                    <ul>
+                      <li>这个方法把终止动作限制在当前 session 所属的 organization/workspace 范围内，符合多租户边界。</li>
+                      <li><code class="inline">strings.TrimSpace(codeSessionID)</code> 是一个小但实用的防御性处理，避免输入里混入空白字符。</li>
+                      <li><code class="inline">if s == nil { return nil }</code> 让调用更稳健，避免某些清理路径因空 service 直接 panic。</li>
+                    </ul>
+                    <div class="why-box">
+                      <div class="why-title">为什么要这样改</div>
+                      <p>
+                        如果失败清理只作为匿名 defer 里的私有细节存在，后续其他失败场景就不容易复用。显式暴露终止入口后，系统在遇到启动失败、超时或外部回调失败时，都可以复用同一套回收语义。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="section" id="functions">
+            <div class="section-header">
+              <div>
+                <h2>如果这是新文件：每个函数的作用</h2>
+                <div class="section-subtitle">这是你提到的重点之一。对于新文件，reviewer 往往最缺的是“函数地图”。</div>
+              </div>
+            </div>
+            <div class="card pad">
+              <div class="function-list">
+                <div class="function-item">
+                  <div class="function-top">
+                    <div class="function-name">CreateManagedAgentCodeSession</div>
+                    <div class="tag">核心流程函数</div>
+                  </div>
+                  <div>
+                    作用：创建 managed agent 对应的 code session，并为 sandbox 准备好启动所需的身份与凭证上下文。
+                    它是整个文件最重要的业务入口。
+                  </div>
+                  <div class="mini-code"><pre>输入：环境、session、配置、初始化事件
+输出：codeSessionID、SDK path、OAuth token、ingress JWT</pre></div>
+                  <div>
+                    reviewer 应重点看：是否做到原子创建、是否只落 token hash、失败是否必清理、签发 claims 是否从真实持久化上下文读取。
+                  </div>
+                </div>
+
+                <div class="function-item">
+                  <div class="function-top">
+                    <div class="function-name">TerminateManagedAgentCodeSession</div>
+                    <div class="tag">回收函数</div>
+                  </div>
+                  <div>
+                    作用：终止一个为 managed agent 启动而创建、但尚未真正可用或需要提前结束的 code session。
+                  </div>
+                  <div class="mini-code"><pre>输入：session 租户上下文 + codeSessionID
+输出：终止动作是否成功</pre></div>
+                  <div>
+                    reviewer 应重点看：是否保持多租户边界、是否能安全复用、是否会误伤不属于当前 workspace 的 session。
+                  </div>
+                </div>
+
+                <div class="function-item">
+                  <div class="function-top">
+                    <div class="function-name">managedAgentCodeSessionMetadata</div>
+                    <div class="tag">边界函数</div>
+                  </div>
+                  <div>
+                    作用：统一构造 code session metadata，只保留非秘密运行信息，避免 secrets 进入可持久化 JSON。
+                  </div>
+                  <div class="mini-code"><pre>输入：创建参数
+输出：可持久化的 metadata JSON</pre></div>
+                  <div>
+                    reviewer 应重点看：字段是否足够支撑诊断；同时是否严格避免把 OAuth token 或 ingress token 明文带入 metadata。
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section" id="merge-checklist">
+            <div class="section-header">
+              <div>
+                <h2>这个 PR 是否适合合并</h2>
+                <div class="section-subtitle">你的网页最终最好不只“解释”，还要帮助 reviewer 做合并判断。</div>
+              </div>
+            </div>
+            <div class="card pad">
+              <div class="explain-list">
+                <div class="explain-item">
+                  <strong>值得合并的信号：</strong>创建链路完整；失败路径有清理；敏感信息不落库；签发上下文从数据库回读，避免 claims 漂移。
+                </div>
+                <div class="explain-item">
+                  <strong>需要额外确认的点：</strong>对应数据库方法和事件入队方法是否也符合相同的租户边界；是否有测试覆盖创建失败、回收失败、重复调用终止等场景。
+                </div>
+                <div class="explain-item">
+                  <strong>建议在正式版本加入：</strong>左侧文件树、按 hunk 展示真实 diff、自动提取函数列表、支持 reviewer 手写备注、支持“风险等级”和“建议先看哪里”。
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="card footer-note">
+            这是一个单文件原型，重点在于验证展示结构，而不是接入真实 Git 数据。
+            下一步如果你愿意，我可以继续把它升级成：<strong>读取一个 PR diff / git diff 自动生成页面</strong>，或者先扩展成<strong>支持多个文件切换</strong>的独立 HTML 版本。
+          </div>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

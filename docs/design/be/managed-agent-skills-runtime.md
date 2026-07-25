@@ -23,7 +23,7 @@ Environment runner 在启动云端 managed agent session 时执行以下步骤�
 7. 用完整 manifest SHA256 生成 E2B volume 名称；如果同 hash volume 已有 `.ready` 标记，且 marker 内容等于完整 manifest SHA256，则直接复用，不读取对象存储 archive。
 8. volume miss 时才按 manifest 顺序逐个读取对应 zip archive，并校验 archive 大小、checksum、解压总大小、单顶层目录和顶层 `SKILL.md`，然后写入该 volume；runner 不会把所有 archive 同时预载到内存。
 9. 把 mount 信息写入 environment work metadata，sandbox create 时用第 2 步得到的 resolution 和当前 work metadata 挂载到 `/mnt/skills`。
-10. Session File resources 已由 resource 写事务维护为对应 `filesystem_id` 下的 `/uploads` 数据库 entry；runner 不扫描、调和或复制这些文件。runner 先创建 E2B Sandbox，再签发写路径仅限 `/outputs` 的读写 Token 与只读 Token，启动固定 rclone-filestore 四挂载并等待 ready，随后最多重试三次删除临时 Token 配置。`/uploads` 整体只读挂载到 `/mnt/session/uploads`，无需逐文件投影。
+10. Session File resources 已由 resource 写事务维护为对应 `filesystem_id` 下的 `/uploads` 数据库 entry；runner 不扫描、调和或复制这些文件。runner 先创建 E2B Sandbox，再签发绑定完整 filesystem 写权限的读写 Token 与只读 Token，启动固定 rclone-filestore 四挂载并等待 ready，随后最多重试三次删除临时 Token 配置。`/uploads` 整体只读挂载到 `/mnt/session/uploads`，无需逐文件投影。
 11. runner 标记 Sandbox running、发送 Environment Work heartbeat，再创建 local Code Session、写入 `environment-manager` stdin 并启动 environment-manager；启动失败会撤销刚创建的 Code Session。Environment Manager 启动成功后，Session 与 Environment Work 的 runtime metadata 在一个数据库事务中发布。不再把 skill zip 写进 sandbox 临时目录，也不在启动 shell 中解压 skill。
 
 `/mnt/skills` 的约定视图：

@@ -63,10 +63,9 @@ Filestore JWT 包含以下注册 claims 与业务 claims：
 | `filesystem_id` | 绑定唯一 filesystem，请求中改用同工作区的其他 ID 也会被拒绝 |
 | `org_taints` | 规范化后必须与当前组织策略一致 |
 | `workspace_cmek_enabled` | 必须与当前 workspace CMEK 状态一致 |
-| `write_prefixes` | 可选的规范绝对路径数组；携带时，目录/文件变更只能发生在这些路径或其后代 |
 | `readonly` | 仅第二类 token 携带，且只允许为 `true`；禁止目录、文件的所有变更操作 |
 
-第一类读写 token 不序列化 `readonly`；第二类 token 只能通过专用的 `IssueReadonly` 入口签发，避免出现语义含混的 `readonly:false`。未携带 `write_prefixes` 的受信调用方保持 filesystem 级写权限；Environment Runner 签发给 Sandbox 的读写 token 固定只携带 `["/outputs"]`。Filestore service 在数据库或对象存储操作前统一检查所有变更路径；复制检查 destination，移动同时检查 source 与 destination。因此 outputs token 即使被 Sandbox 进程读取，也不能绕过 FUSE 只读挂载改写 `/uploads`、`/transcripts` 或 `/tool_results`。验证器除固定算法与 `kid` 外，还强制校验 issuer、audience、签发时间和到期时间；token 有效期内的每次请求仍会回查数据库范围和当前安全策略，因此 Session 生命周期、组织 taints 或 workspace CMEK 状态变化可立即撤销权限。
+第一类读写 token 不序列化 `readonly`，并拥有其绑定 filesystem 的完整写权限；第二类 token 只能通过专用的 `IssueReadonly` 入口签发，避免出现语义含混的 `readonly:false`。Filestore 不再定义或执行路径前缀级写权限，Sandbox 中 `/uploads`、`/transcripts` 和 `/tool_results` 的只读约束由各自的 rclone 只读挂载与只读 token 保证。验证器除固定算法与 `kid` 外，还强制校验 issuer、audience、签发时间和到期时间；token 有效期内的每次请求仍会回查数据库范围和当前安全策略，因此 Session 生命周期、组织 taints 或 workspace CMEK 状态变化可立即撤销权限。
 
 ### 手动签发测试 token
 
@@ -105,7 +104,7 @@ curl -H "Authorization: Bearer ${FILESTORE_TOKEN}" http://127.0.0.1:38080/v1/fil
 
 ## E2B Sandbox 固定挂载
 
-Cloud Session 的 Environment Runner 在创建 E2B Sandbox 前只读取 Session 与启动所需的可信上下文。Sandbox 创建成功后，Runner 再从数据库读取唯一 filesystem、workspace、organization 和创建该 Session 的可信账号链。Runner 不接受客户端提供的 token claims，也不新增 Filestore HTTP 签发路由；它复用进程内唯一的 Filestore signer，分别签发当前固定一小时有效期、写路径仅限 `/outputs` 的读写 Token 和只读 Token。
+Cloud Session 的 Environment Runner 在创建 E2B Sandbox 前只读取 Session 与启动所需的可信上下文。Sandbox 创建成功后，Runner 再从数据库读取唯一 filesystem、workspace、organization 和创建该 Session 的可信账号链。Runner 不接受客户端提供的 token claims，也不新增 Filestore HTTP 签发路由；它复用进程内唯一的 Filestore signer，分别签发当前固定一小时有效期、绑定完整 filesystem 写权限的读写 Token 和只读 Token。
 
 filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经就绪。Runner 不扫描、不清空、不调和 `/uploads` 子树，也不复制 Files 对象；它只读取当前 Session 的可信 filesystem scope、签发挂载 Token 并创建 Sandbox。Sandbox 创建后使用下面的固定 multimount 合同：
 
@@ -116,7 +115,7 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 | `/transcripts` | `/mnt/transcripts` | 只读 | 10s |
 | `/tool_results` | `/mnt/user-data/tool_results` | 只读 | 3s |
 
-四个挂载统一使用 `uid=999`、`gid=1000`、目录权限 `0755`、文件权限 `0644`、`vfs_cache_mode=full` 和 `vfs_cache_max_size=1G`。`/outputs` 使用带 `write_prefixes=["/outputs"]` 的读写 Token，其余三个 source 共享只读 Token；`filesystem_id` 是当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
+四个挂载统一使用 `uid=999`、`gid=1000`、目录权限 `0755`、文件权限 `0644`、`vfs_cache_mode=full` 和 `vfs_cache_max_size=1G`。`/outputs` 使用读写 Token，其余三个 source 共享只读 Token；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
 
 Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-mount-config.json` 权限设置为 `0600`。文件写入完成后才直接执行固定镜像命令，不使用 stdin bootstrap、临时文件或 shell trap：
 
@@ -124,7 +123,7 @@ Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-
 /opt/rclone/rclone-filestore multimount --config /tmp/rclone-mount-config.json
 ```
 
-Runner 启动 rclone 后只使用 E2B Files API 探测 `/tmp/rclone-mounts/ready`，每 `200ms` 一次，最长 `20s`，不执行 Sandbox shell wait 命令，也不探测进程 PID。ready 后立即删除包含 Token 的配置文件；删除命令失败时最多重试三次，并用 E2B Files API 验证文件是否已经不存在。三次都无法确认删除时记录只含阶段、尝试次数与错误类型的告警，但不杀掉已经 ready 的 Sandbox；残留 outputs token 仍受 `/outputs` 写路径约束。Token 不进入 shell command、环境变量、Session metadata 或 Environment Work metadata。当前不刷新 mount Token，超过一小时的 Sandbox 行为不在本期处理。
+Runner 启动 rclone 后只使用 E2B Files API 探测 `/tmp/rclone-mounts/ready`，每 `200ms` 一次，最长 `20s`，不执行 Sandbox shell wait 命令，也不探测进程 PID。ready 后立即删除包含 Token 的配置文件；删除命令失败时最多重试三次，并用 E2B Files API 验证文件是否已经不存在。三次都无法确认删除时记录只含阶段、尝试次数与错误类型的告警，但不杀掉已经 ready 的 Sandbox；残留读写 Token 在到期前拥有所绑定 filesystem 的完整写权限，因此该告警属于安全审计信号。Token 不进入 shell command、环境变量、Session metadata 或 Environment Work metadata。当前不刷新 mount Token，超过一小时的 Sandbox 行为不在本期处理。
 
 ```mermaid
 sequenceDiagram
@@ -137,7 +136,7 @@ sequenceDiagram
     A->>D: Write resource and borrowed /uploads entry
     R->>E: Create Sandbox
     R->>D: Resolve trusted filesystem scope
-    R->>R: Issue /outputs-scoped RW and readonly tokens
+    R->>R: Issue filesystem RW and readonly tokens
     R->>E: Write 0600 rclone config
     R->>E: Start fixed rclone binary
     loop Every 200ms, up to 20s

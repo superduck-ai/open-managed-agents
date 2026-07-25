@@ -69,9 +69,7 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 		return rcloneFilestoreLaunch{}, fmt.Errorf("resolve managed-agent filestore identity: %w", err)
 	}
 	identity := filestoreTokenIdentityFromScope(scope)
-	readWriteIdentity := identity
-	readWriteIdentity.WritePrefixes = []string{"/outputs"}
-	readWriteToken, err := r.filestoreCredentials.Issue(readWriteIdentity)
+	readWriteToken, err := r.filestoreCredentials.Issue(identity)
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("issue managed-agent filestore read-write token: %w", err)
 	}

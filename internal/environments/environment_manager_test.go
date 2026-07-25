@@ -69,6 +69,16 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
 	}
+	for _, key := range []string{
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	} {
+		if startupEnv[key] != "claude-opus-4-8" {
+			t.Fatalf("%s = %q, want session model", key, startupEnv[key])
+		}
+	}
 	if _, ok := startupEnv["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
 		t.Fatalf("session access token environment variable must not mask the WebSocket auth FD: %#v", startupEnv)
 	}
@@ -138,6 +148,21 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if strings.Contains(allCommands, "installed managed agent skills") ||
 		strings.Contains(allCommands, "$HOME/.claude/skills") {
 		t.Fatalf("command should not install managed agent skills directly:\n%s", allCommands)
+	}
+}
+
+func TestClaudeRuntimeModelEnvironment(t *testing.T) {
+	if environment := claudeRuntimeModelEnvironment(" \t "); environment != nil {
+		t.Fatalf("empty model environment = %#v, want nil", environment)
+	}
+	want := map[string]string{
+		"ANTHROPIC_MODEL":                "glm-5-turbo",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "glm-5-turbo",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5-turbo",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "glm-5-turbo",
+	}
+	if environment := claudeRuntimeModelEnvironment(" glm-5-turbo "); !reflect.DeepEqual(environment, want) {
+		t.Fatalf("model environment = %#v, want %#v", environment, want)
 	}
 }
 

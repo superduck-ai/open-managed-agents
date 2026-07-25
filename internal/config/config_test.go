@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -138,6 +139,39 @@ func TestLoadDefaultsToManagedAgentSandboxTemplateName(t *testing.T) {
 	}
 	if cfg.E2B.Template != "managed-agent-sandbox" {
 		t.Fatalf("E2B.Template = %q, want managed-agent-sandbox", cfg.E2B.Template)
+	}
+}
+
+func TestLoadRejectsChainedAnthropicUpstreamModelMappings(t *testing.T) {
+	prepareLoadTest(t)
+	_, err := loadConfigTestYAML(t, `
+anthropic_upstream:
+  model_mappings:
+    claude-sonnet-4-6: glm-5-turbo
+    glm-5-turbo: glm-5.2
+`)
+	if err == nil || !strings.Contains(err.Error(), "model_mappings") {
+		t.Fatalf("Load() error = %v, want chained model_mappings error", err)
+	}
+}
+
+func TestLoadYAMLAnthropicUpstreamModelMappings(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `
+anthropic_upstream:
+  model_mappings:
+    claude-sonnet-4-6: glm-5-turbo
+    claude-opus-4-8: glm-5.2
+`)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := map[string]string{
+		"claude-sonnet-4-6": "glm-5-turbo",
+		"claude-opus-4-8":   "glm-5.2",
+	}
+	if !maps.Equal(cfg.AnthropicUpstream.ModelMappings, want) {
+		t.Fatalf("AnthropicUpstream.ModelMappings = %#v, want %#v", cfg.AnthropicUpstream.ModelMappings, want)
 	}
 }
 

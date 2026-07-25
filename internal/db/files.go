@@ -46,25 +46,26 @@ type ObjectCleanupJob struct {
 }
 
 func (d *DB) WorkspaceStorageBytes(ctx context.Context, workspaceID int64) (int64, error) {
-	var total int64
-	err := d.Pool.QueryRow(ctx, `
-		select coalesce(sum(size_bytes), 0)
-		from files
-		where workspace_id = $1 and deleted_at is null
-	`, workspaceID).Scan(&total)
-	return total, err
+	return workspaceStorageBytesQuery(ctx, d.sql, workspaceID)
 }
 
 func (d *DB) CreateFile(ctx context.Context, f FileRecord) error {
-	_, err := d.Pool.Exec(ctx, `
-		insert into files (
-			uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
-			s3_bucket, s3_key, downloadable, scope_type, scope_id, created_by_api_key_id, created_at
-		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-	`, f.UUID, f.ExternalID, f.WorkspaceID, f.Filename, f.MimeType, f.SizeBytes, f.SHA256,
-		f.S3Bucket, f.S3Key, f.Downloadable, f.ScopeType, f.ScopeID, f.CreatedByAPIKeyID, f.CreatedAt)
-	return err
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock($1)`, f.WorkspaceID); err != nil {
+		return err
+	}
+	if err := insertFileTx(ctx, tx, f); err != nil {
+		return err
+	}
+	if err := applyWorkspaceStorageDeltaTx(ctx, tx, f.WorkspaceID, f.SizeBytes, 0, 0); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (d *DB) CreateFileIfWithinLimit(ctx context.Context, f FileRecord, workspaceStorageLimitBytes int64) error {
@@ -78,29 +79,25 @@ func (d *DB) CreateFileIfWithinLimit(ctx context.Context, f FileRecord, workspac
 		return err
 	}
 
-	var total int64
-	if err := tx.QueryRow(ctx, `
-		select coalesce(sum(size_bytes), 0)
-		from files
-		where workspace_id = $1 and deleted_at is null
-	`, f.WorkspaceID).Scan(&total); err != nil {
+	if err := applyWorkspaceStorageDeltaTx(ctx, tx, f.WorkspaceID, f.SizeBytes, 0, workspaceStorageLimitBytes); err != nil {
 		return err
 	}
-	if workspaceStorageLimitBytes > 0 && total+f.SizeBytes > workspaceStorageLimitBytes {
-		return ErrStorageLimitExceeded
+	if err := insertFileTx(ctx, tx, f); err != nil {
+		return err
 	}
+	return tx.Commit(ctx)
+}
 
-	if _, err := tx.Exec(ctx, `
+func insertFileTx(ctx context.Context, tx pgx.Tx, f FileRecord) error {
+	_, err := tx.Exec(ctx, `
 		insert into files (
 			uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
 			s3_bucket, s3_key, downloadable, scope_type, scope_id, created_by_api_key_id, created_at
 		)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`, f.UUID, f.ExternalID, f.WorkspaceID, f.Filename, f.MimeType, f.SizeBytes, f.SHA256,
-		f.S3Bucket, f.S3Key, f.Downloadable, f.ScopeType, f.ScopeID, f.CreatedByAPIKeyID, f.CreatedAt); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+		f.S3Bucket, f.S3Key, f.Downloadable, f.ScopeType, f.ScopeID, f.CreatedByAPIKeyID, f.CreatedAt)
+	return err
 }
 
 func (d *DB) GetFile(ctx context.Context, workspaceID int64, fileExternalID string) (FileRecord, error) {
@@ -258,18 +255,39 @@ func (d *DB) ListFilesPage(ctx context.Context, params ListFilesPageParams) ([]F
 }
 
 func (d *DB) SoftDeleteFile(ctx context.Context, workspaceID int64, fileExternalID string) error {
-	tag, err := d.Pool.Exec(ctx, `
-		update files
-		set deleted_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, fileExternalID)
+	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock($1)`, workspaceID); err != nil {
+		return err
+	}
+	var sizeBytes int64
+	err = tx.QueryRow(ctx, `
+		select size_bytes
+		from files
+		where workspace_id = $1 and external_id = $2 and deleted_at is null
+		for update
+	`, workspaceID, fileExternalID).Scan(&sizeBytes)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		update files
+		set deleted_at = now()
+		where workspace_id = $1 and external_id = $2 and deleted_at is null
+	`, workspaceID, fileExternalID); err != nil {
+		return err
+	}
+	if err := applyWorkspaceStorageDeltaTx(ctx, tx, workspaceID, -sizeBytes, 0, 0); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (d *DB) EnqueueObjectCleanupJob(ctx context.Context, workspaceID int64, bucket, key, fileExternalID string) error {

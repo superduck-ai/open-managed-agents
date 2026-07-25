@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 type batchResponse struct {
@@ -74,7 +75,7 @@ func TestMessageBatchesAPI(t *testing.T) {
 		uploadErr := errors.New("result upload failed")
 		failingStore := &earlyFailBatchStore{
 			fakeStore: newFakeStore("early-fail-bucket"),
-			putErr:    uploadErr,
+			uploadErr: uploadErr,
 		}
 		failingApp := newTestAppWithStore(t, &cfg, failingStore)
 		defer failingApp.close()
@@ -179,21 +180,21 @@ type fakeBatchUpstream struct {
 
 type earlyFailBatchStore struct {
 	*fakeStore
-	putErr    error
+	uploadErr error
 	body      io.Reader
 	bytesRead int
 	readErr   error
 }
 
-func (s *earlyFailBatchStore) Put(_ context.Context, _ string, body io.Reader, _ int64, _ string) error {
+func (s *earlyFailBatchStore) Upload(_ context.Context, _ string, body io.Reader, _ storage.UploadOptions) (storage.UploadResult, error) {
 	s.body = body
 	// 失败前只消费一个字节，确保 producer 稳定阻塞在同一次无缓冲 pipe 写入中，
 	// 且该次写入仍有剩余数据尚未被读取。
 	s.bytesRead, s.readErr = body.Read(make([]byte, 1))
 	if s.readErr != nil {
-		return s.readErr
+		return storage.UploadResult{}, s.readErr
 	}
-	return s.putErr
+	return storage.UploadResult{}, s.uploadErr
 }
 
 func (u *fakeBatchUpstream) Send(_ context.Context, batch db.MessageBatch, req db.MessageBatchRequest) (batches.UpstreamResult, error) {

@@ -133,7 +133,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 
 	hash := sha256.New()
 	reader := io.TeeReader(file, hash)
-	if err := h.store.Put(r.Context(), objectKey, reader, header.Size, contentType); err != nil {
+	if _, err := h.store.Upload(r.Context(), objectKey, reader, storage.UploadOptions{Size: header.Size, ContentType: contentType}); err != nil {
 		log.Printf("put object: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store file"))
 		return
@@ -147,7 +147,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 		MimeType:          contentType,
 		SizeBytes:         header.Size,
 		SHA256:            hex.EncodeToString(hash.Sum(nil)),
-		S3Bucket:          h.store.Bucket(),
+		S3Bucket:          h.store.Name(),
 		S3Key:             objectKey,
 		Downloadable:      false,
 		CreatedByAPIKeyID: principal.APIKeyID,
@@ -262,14 +262,14 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete file"))
 		return
 	}
-	if err := h.store.Delete(r.Context(), record.S3Key); err != nil {
+	if err := h.store.Delete(r.Context(), record.S3Key, storage.DeleteOptions{}); err != nil {
 		log.Printf("delete object after soft delete file_id=%s: %v", fileID, err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
 			log.Printf("enqueue object cleanup file_id=%s key=%s: %v", fileID, record.S3Key, enqueueErr)
 		}
 	}
 	if thumbnailKey := platformThumbnailKey(record); thumbnailKey != "" {
-		if err := h.store.Delete(r.Context(), thumbnailKey); err != nil {
+		if err := h.store.Delete(r.Context(), thumbnailKey, storage.DeleteOptions{}); err != nil {
 			log.Printf("delete thumbnail object after soft delete file_id=%s key=%s: %v", fileID, thumbnailKey, err)
 			if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(r.Context(), record.WorkspaceID, record.S3Bucket, thumbnailKey, "file_variant", record.ExternalID); enqueueErr != nil {
 				log.Printf("enqueue thumbnail cleanup file_id=%s key=%s: %v", fileID, thumbnailKey, enqueueErr)
@@ -295,7 +295,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "File is not downloadable"))
 		return
 	}
-	object, err := h.store.Get(r.Context(), record.S3Key)
+	object, err := h.store.Open(r.Context(), record.S3Key, nil)
 	if err != nil {
 		log.Printf("get object: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download file"))
@@ -319,7 +319,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, record db.FileRecord) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	if err := h.store.Delete(cleanupCtx, record.S3Key); err != nil {
+	if err := h.store.Delete(cleanupCtx, record.S3Key, storage.DeleteOptions{}); err != nil {
 		log.Printf("delete object after metadata failure file_id=%s key=%s: %v", record.ExternalID, record.S3Key, err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, record.WorkspaceID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
 			log.Printf("enqueue object cleanup after metadata failure file_id=%s key=%s: %v", record.ExternalID, record.S3Key, enqueueErr)

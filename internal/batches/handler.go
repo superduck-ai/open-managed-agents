@@ -399,7 +399,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string)
 		return
 	}
 	if record.ResultsS3Key != nil {
-		if err := h.store.Delete(r.Context(), *record.ResultsS3Key); err != nil {
+		if err := h.store.Delete(r.Context(), *record.ResultsS3Key, storage.DeleteOptions{}); err != nil {
 			log.Printf("delete message batch results after soft delete batch_id=%s key=%s: %v", batchID, *record.ResultsS3Key, err)
 			if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceID, valueOrEmpty(record.ResultsS3Bucket), *record.ResultsS3Key, record.ExternalID); enqueueErr != nil {
 				log.Printf("enqueue batch results cleanup batch_id=%s key=%s: %v", batchID, *record.ResultsS3Key, enqueueErr)
@@ -435,7 +435,7 @@ func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch results are not available"))
 		return
 	}
-	object, err := h.store.Get(r.Context(), *record.ResultsS3Key)
+	object, err := h.store.Open(r.Context(), *record.ResultsS3Key, nil)
 	if err != nil {
 		log.Printf("get message batch results object batch_id=%s key=%s: %v", batchID, *record.ResultsS3Key, err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve message batch results"))

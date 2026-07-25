@@ -80,7 +80,7 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 			version = defaultBuiltinSeedVersion(info.ModTime(), pkg.SHA256)
 		}
 		objectKey := fmt.Sprintf("builtin-skills/%s/versions/%s/%s.skill", sanitizeForKey(skillID), sanitizeForKey(version), pkg.SHA256)
-		if err := store.Put(ctx, objectKey, bytes.NewReader(pkg.Zip), pkg.Size, skillArchiveContentType); err != nil {
+		if _, err := store.Upload(ctx, objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
 			return BuiltinSeedResult{}, fmt.Errorf("upload %s: %w", archivePath, err)
 		}
 
@@ -94,14 +94,14 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 			Name:        firstNonEmpty(pkg.Name, skillID),
 			Description: pkg.Description,
 			Directory:   pkg.Directory,
-			S3Bucket:    store.Bucket(),
+			S3Bucket:    store.Name(),
 			S3Key:       objectKey,
 			SizeBytes:   pkg.Size,
 			SHA256:      pkg.SHA256,
 			CreatedAt:   now,
 		})
 		if err != nil {
-			if deleteErr := store.Delete(ctx, objectKey); deleteErr != nil {
+			if deleteErr := store.Delete(ctx, objectKey, storage.DeleteOptions{}); deleteErr != nil {
 				log.Printf("seed builtin skills: cleanup failed for %s: %v", objectKey, deleteErr)
 			}
 			if errors.Is(err, db.ErrVersionConflict) {
@@ -119,7 +119,7 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 			return BuiltinSeedResult{}, err
 		}
 		for _, version := range prunedVersions {
-			if err := store.Delete(ctx, version.S3Key); err != nil {
+			if err := store.Delete(ctx, version.S3Key, storage.DeleteOptions{}); err != nil {
 				log.Printf("seed builtin skills: delete pruned object failed for %s version %s (%s): %v", version.SkillExternalID, version.Version, version.S3Key, err)
 			}
 		}

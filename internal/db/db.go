@@ -15,23 +15,27 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 )
 
 var (
-	ErrNotFound             = platform.ErrNotFound
-	ErrInvalidState         = errors.New("invalid state")
-	ErrPreconditionFailed   = errors.New("precondition failed")
-	ErrDuplicate            = errors.New("duplicate")
-	ErrVersionConflict      = errors.New("version conflict")
-	ErrWorkerEpochMismatch  = errors.New("worker epoch mismatch")
-	ErrWorkerNotRegistered  = errors.New("worker not registered")
-	ErrWorkerLeaseExpired   = errors.New("worker lease expired")
-	ErrStorageLimitExceeded = errors.New("storage limit exceeded")
-	ErrLimitExceeded        = errors.New("limit exceeded")
+	ErrNotFound              = platform.ErrNotFound
+	ErrInvalidState          = errors.New("invalid state")
+	ErrPreconditionFailed    = errors.New("precondition failed")
+	ErrDuplicate             = errors.New("duplicate")
+	ErrVersionConflict       = errors.New("version conflict")
+	ErrWorkerEpochMismatch   = errors.New("worker epoch mismatch")
+	ErrWorkerNotRegistered   = errors.New("worker not registered")
+	ErrWorkerLeaseExpired    = errors.New("worker lease expired")
+	ErrStorageLimitExceeded  = errors.New("storage limit exceeded")
+	ErrStorageUsageUnderflow = errors.New("storage usage underflow")
+	ErrLimitExceeded         = errors.New("limit exceeded")
 )
 
 type DB struct {
 	Pool *pgxpool.Pool
+	sql  *sqlx.DB
 }
 
 type APIKey struct {
@@ -47,7 +51,7 @@ type APIKey struct {
 func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 	pool, err := openPool(ctx, cfg.Database.URL)
 	if err == nil {
-		return &DB{Pool: pool}, nil
+		return newDB(pool), nil
 	}
 
 	if bootstrapErr := EnsureDatabase(ctx, cfg.Database.URL); bootstrapErr != nil {
@@ -58,7 +62,18 @@ func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect database after bootstrap: %w", err)
 	}
-	return &DB{Pool: pool}, nil
+	return newDB(pool), nil
+}
+
+func newDB(pool *pgxpool.Pool) *DB {
+	// sqlx 只提供命名参数与结构体映射，物理连接仍统一由 pgxpool 管理。
+	// OpenDBFromPool 会把 database/sql 的 MaxIdleConns 固定为 0，避免包装层长期占住
+	// pgxpool 连接；最大连接数与连接寿命继续由上面的唯一 pgxpool 约束。
+	standardDB := stdlib.OpenDBFromPool(pool)
+	return &DB{
+		Pool: pool,
+		sql:  sqlx.NewDb(standardDB, "pgx"),
+	}
 }
 
 func openPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
@@ -79,7 +94,13 @@ func openPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 }
 
 func (d *DB) Close() {
-	if d != nil && d.Pool != nil {
+	if d == nil {
+		return
+	}
+	if d.sql != nil {
+		_ = d.sql.Close()
+	}
+	if d.Pool != nil {
 		d.Pool.Close()
 	}
 }

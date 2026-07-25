@@ -17,7 +17,7 @@ const (
 	defaultMaxAttempts = 10
 )
 
-func StartObjectCleanupWorker(ctx context.Context, database *db.DB, store storage.ObjectStore, interval time.Duration) {
+func StartObjectCleanupWorker(ctx context.Context, database *db.DB, client storage.Client, interval time.Duration) {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -27,7 +27,7 @@ func StartObjectCleanupWorker(ctx context.Context, database *db.DB, store storag
 		defer ticker.Stop()
 
 		for {
-			if err := RunObjectCleanupOnce(ctx, database, store, workerID); err != nil {
+			if err := RunObjectCleanupOnce(ctx, database, client, workerID); err != nil {
 				log.Printf("object cleanup worker: %v", err)
 			}
 
@@ -40,21 +40,22 @@ func StartObjectCleanupWorker(ctx context.Context, database *db.DB, store storag
 	}()
 }
 
-func RunObjectCleanupOnce(ctx context.Context, database *db.DB, store storage.ObjectStore, workerID string) error {
+func RunObjectCleanupOnce(ctx context.Context, database *db.DB, client storage.Client, workerID string) error {
 	jobs, err := database.LeaseObjectCleanupJobs(ctx, workerID, defaultBatchSize)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, job := range jobs {
-		if job.Bucket != "" && job.Bucket != store.Bucket() {
-			if err := database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, "cleanup bucket does not match configured object store", time.Hour, defaultMaxAttempts); err != nil {
+		store, storeErr := client.ForBucket(job.Bucket)
+		if storeErr != nil {
+			if err := database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, storeErr.Error(), time.Hour, defaultMaxAttempts); err != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s failed: %w", job.ExternalID, err))
 			}
 			continue
 		}
 
-		if err := store.Delete(ctx, job.Key); err != nil {
+		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{}); err != nil {
 			delay := retryDelay(job.Attempts + 1)
 			if markErr := database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, err.Error(), delay, defaultMaxAttempts); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s retry: %w", job.ExternalID, markErr))

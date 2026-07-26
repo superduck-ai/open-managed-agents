@@ -18,6 +18,7 @@ const (
 	rcloneStateDirectory      = "/tmp/rclone-mounts"
 	rcloneReadyPath           = rcloneStateDirectory + "/ready"
 	rcloneUploadsDestination  = "/mnt/session/uploads"
+	rcloneSkillsDestination   = "/root/.claude/skills"
 	rcloneReadyPollInterval   = 200 * time.Millisecond
 	rcloneReadyTimeout        = 20 * time.Second
 	rcloneCommandGraceTimeout = 5 * time.Second
@@ -95,7 +96,7 @@ func filestoreTokenIdentityFromScope(scope db.FilestoreTokenScope) filestore.Tok
 	}
 }
 
-// buildRcloneMultimountConfig 把 sandbox 内几个固定挂载点映射到同一个
+// buildRcloneMultimountConfig 把 sandbox 内五个固定挂载点映射到同一个
 // filestore filesystem：outputs 读写，其余目录按最小权限原则只读挂载。
 func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, readonlyToken string) rcloneMultimountConfig {
 	mount := func(source, destination string, cacheSeconds float64, readonly bool, token string) rcloneMountConfig {
@@ -120,6 +121,20 @@ func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, reado
 			mount("/uploads", rcloneUploadsDestination, 1, true, readonlyToken),
 			mount("/transcripts", "/mnt/transcripts", 10, true, readonlyToken),
 			mount("/tool_results", "/mnt/user-data/tool_results", 3, true, readonlyToken),
+			{
+				CacheDurationSeconds: 60,
+				AuthToken:            readonlyToken,
+				Destination:          rcloneSkillsDestination,
+				DirectoryPermissions: "0555",
+				FilePermissions:      "0444",
+				FilesystemID:         filesystemID,
+				GID:                  0,
+				Readonly:             true,
+				Source:               "/skills",
+				UID:                  0,
+				VFSCacheMaxSize:      "1G",
+				VFSCacheMode:         "full",
+			},
 		},
 		ReadyFile:  rcloneReadyPath,
 		ServiceURL: strings.TrimRight(strings.TrimSpace(serviceURL), "/"),
@@ -133,6 +148,13 @@ func rcloneStartCommand() string {
 
 func rcloneConfigPermissionsCommand() string {
 	return "chmod 0600 " + shellQuote(rcloneConfigPath)
+}
+
+func rcloneMountPreparationCommand() string {
+	claudeDirectory := "/root/.claude"
+	return "mkdir -p " + shellQuote(claudeDirectory) +
+		" && if [ -L " + shellQuote(rcloneSkillsDestination) + " ]; then rm -f " + shellQuote(rcloneSkillsDestination) + "; fi" +
+		" && mkdir -p " + shellQuote(rcloneSkillsDestination)
 }
 
 func rcloneConfigCleanupCommand() string {

@@ -1,7 +1,6 @@
 package deployments
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -26,19 +25,13 @@ import (
 )
 
 const (
-	maxDeploymentBodySize      = 4 << 20
-	skillPrewarmEnqueueTimeout = 3 * time.Second
+	maxDeploymentBodySize = 4 << 20
 )
 
 type Handler struct {
-	cfg     config.Config
-	db      *db.DB
-	prewarm skillPrewarmSnapshotEnqueuer
-	router  chi.Router
-}
-
-type skillPrewarmSnapshotEnqueuer interface {
-	EnqueueSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) error
+	cfg    config.Config
+	db     *db.DB
+	router chi.Router
 }
 
 type RunsHandler struct {
@@ -89,11 +82,7 @@ type resolvedAgent struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	return NewHandlerWithSkillPrewarm(cfg, database, nil)
-}
-
-func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer) *Handler {
-	h := &Handler{cfg: cfg, db: database, prewarm: prewarm}
+	h := &Handler{cfg: cfg, db: database}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -245,7 +234,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment"))
 		return
 	}
-	h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, created.AgentSnapshot, "deployment", created.ExternalID, "deployment_create")
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(created, now))
 }
 
@@ -445,9 +433,6 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeDeploymentLoadError(w, r, err, deploymentID)
 		return
-	}
-	if !agentsnapshot.SnapshotSkillsEqual(current.AgentSnapshot, updated.AgentSnapshot) {
-		h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, updated.AgentSnapshot, "deployment", updated.ExternalID, "deployment_update")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(updated, time.Now().UTC()))
 }
@@ -1619,17 +1604,6 @@ func defaultRepoMountPath(rawURL string) string {
 		name = "repository"
 	}
 	return "/workspace/" + name
-}
-
-func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) {
-	if h == nil || h.prewarm == nil || !agentsnapshot.SnapshotHasSkills(snapshot) {
-		return
-	}
-	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
-	defer cancel()
-	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, source, sourceID, trigger); err != nil {
-		log.Printf("enqueue deployment skill prewarm source=%s source_id=%s trigger=%s: %v", source, sourceID, trigger, err)
-	}
 }
 
 func cloneMap(input map[string]any) map[string]any {

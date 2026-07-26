@@ -23,13 +23,13 @@ func TestBuildRcloneMultimountConfig(t *testing.T) {
 	if got.ReadyFile != rcloneReadyPath || got.StateDir != rcloneStateDirectory || got.ServiceURL != "http://host.docker.internal:38080" {
 		t.Fatalf("unexpected multimount envelope: %+v", got)
 	}
-	if len(got.Mounts) != 4 {
-		t.Fatalf("mount count = %d, want 4", len(got.Mounts))
+	if len(got.Mounts) != 5 {
+		t.Fatalf("mount count = %d, want 5", len(got.Mounts))
 	}
-	wantSources := []string{"/outputs", "/uploads", "/transcripts", "/tool_results"}
-	wantDestinations := []string{"/mnt/user-data/outputs", "/mnt/session/uploads", "/mnt/transcripts", "/mnt/user-data/tool_results"}
-	wantCaches := []float64{3600, 1, 10, 3}
-	for index, mount := range got.Mounts {
+	wantSources := []string{"/outputs", "/uploads", "/transcripts", "/tool_results", "/skills"}
+	wantDestinations := []string{"/mnt/user-data/outputs", "/mnt/session/uploads", "/mnt/transcripts", "/mnt/user-data/tool_results", "/root/.claude/skills"}
+	wantCaches := []float64{3600, 1, 10, 3, 60}
+	for index, mount := range got.Mounts[:4] {
 		if mount.Source != wantSources[index] || mount.Destination != wantDestinations[index] || mount.CacheDurationSeconds != wantCaches[index] {
 			t.Fatalf("mount %d = %+v", index, mount)
 		}
@@ -46,6 +46,13 @@ func TestBuildRcloneMultimountConfig(t *testing.T) {
 		if mount.Readonly != wantReadonly || mount.AuthToken != wantToken {
 			t.Fatalf("mount %d authority = readonly:%t token:%q", index, mount.Readonly, mount.AuthToken)
 		}
+	}
+	skills := got.Mounts[4]
+	if skills.Source != wantSources[4] || skills.Destination != wantDestinations[4] ||
+		skills.CacheDurationSeconds != wantCaches[4] || !skills.Readonly || skills.AuthToken != readonly ||
+		skills.UID != 0 || skills.GID != 0 || skills.DirectoryPermissions != "0555" ||
+		skills.FilePermissions != "0444" {
+		t.Fatalf("skills mount = %+v", skills)
 	}
 }
 
@@ -66,8 +73,9 @@ func TestRcloneCommandsKeepTokensOutOfCommandText(t *testing.T) {
 	}
 	start := rcloneStartCommand()
 	permissions := rcloneConfigPermissionsCommand()
+	preparation := rcloneMountPreparationCommand()
 	cleanup := rcloneConfigCleanupCommand()
-	if strings.Contains(start+permissions+cleanup, secret) {
+	if strings.Contains(start+permissions+preparation+cleanup, secret) {
 		t.Fatal("rclone command text contains token")
 	}
 	if !strings.Contains(string(configPayload), secret) {
@@ -85,6 +93,10 @@ func TestRcloneCommandsKeepTokensOutOfCommandText(t *testing.T) {
 	}
 	if permissions != "chmod 0600 '/tmp/rclone-mount-config.json'" {
 		t.Fatalf("rclone permissions command = %q", permissions)
+	}
+	if !strings.Contains(preparation, "rm -f '/root/.claude/skills'") ||
+		!strings.Contains(preparation, "mkdir -p '/root/.claude/skills'") {
+		t.Fatalf("rclone mount preparation does not replace the legacy symlink: %q", preparation)
 	}
 }
 
@@ -111,23 +123,29 @@ func TestStartRcloneFilestoreFailures(t *testing.T) {
 			wantRunCalls: 2,
 		},
 		{
+			name:         "mount preparation",
+			provider:     &rcloneTestProvider{runErrors: []error{nil, providerFailure, nil}},
+			wantError:    errRcloneMountPreparation,
+			wantRunCalls: 3,
+		},
+		{
 			name:            "start",
 			provider:        &rcloneTestProvider{backgroundErr: providerFailure},
 			wantError:       errRcloneProcessStart,
-			wantRunCalls:    2,
+			wantRunCalls:    3,
 			wantLaunchCalls: 1,
 		},
 		{
 			name:            "ready",
 			provider:        &rcloneTestProvider{fileExistsErr: providerFailure},
 			wantError:       errRcloneReadiness,
-			wantRunCalls:    2,
+			wantRunCalls:    3,
 			wantLaunchCalls: 1,
 		},
 		{
 			name:            "cleanup retries without failing ready sandbox",
-			provider:        &rcloneTestProvider{ready: true, runErrors: []error{nil, providerFailure, providerFailure, providerFailure}},
-			wantRunCalls:    4,
+			provider:        &rcloneTestProvider{ready: true, runErrors: []error{nil, nil, providerFailure, providerFailure, providerFailure}},
+			wantRunCalls:    5,
 			wantLaunchCalls: 1,
 		},
 	}

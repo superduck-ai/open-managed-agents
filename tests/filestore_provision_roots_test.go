@@ -276,6 +276,7 @@ func assertFixedFilestoreRoots(t *testing.T, app *testApp, filesystem db.Filesto
 	got := filestoreRootKinds(t, app, filesystem)
 	want := map[string]string{
 		"/outputs":      db.FilestoreEntryKindDirectory,
+		"/skills":       db.FilestoreEntryKindDirectory,
 		"/uploads":      db.FilestoreEntryKindDirectory,
 		"/transcripts":  db.FilestoreEntryKindDirectory,
 		"/tool_results": db.FilestoreEntryKindDirectory,

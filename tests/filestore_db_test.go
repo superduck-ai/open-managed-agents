@@ -297,7 +297,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate Session Filestore roots: %v", err)
 	}
-	wantRootPaths := []string{"/outputs", "/tool_results", "/transcripts", "/uploads"}
+	wantRootPaths := []string{"/outputs", "/skills", "/tool_results", "/transcripts", "/uploads"}
 	if !reflect.DeepEqual(rootPaths, wantRootPaths) {
 		t.Fatalf("Session Filestore roots = %v, want %v", rootPaths, wantRootPaths)
 	}
@@ -743,6 +743,17 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put cleanup file: %v", err)
 	}
+	if err := app.db.ReplaceFilestoreSkillArchives(context.Background(), workspaceID, created.ExternalID, []db.FilestoreSkillArchiveInput{{
+		Source:           "custom",
+		SkillVersionUUID: uuid.NewString(),
+		Directory:        "cleanup-skill",
+		S3Bucket:         "filestore-session-delete",
+		S3Key:            "catalog/cleanup-skill.zip",
+		SizeBytes:        128,
+		SHA256:           strings.Repeat("a", 64),
+	}}); err != nil {
+		t.Fatalf("project cleanup skill: %v", err)
+	}
 	var entryOrganizationUUID, entryWorkspaceUUID, entryFilesystemUUID string
 	var entryAPIKeyUUID, entrySessionUUID string
 	var entryCodeSessionUUID *string
@@ -814,20 +825,26 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	if err != nil || !done {
 		t.Fatalf("process filesystem cleanup = done %v, error %v", done, err)
 	}
-	var activeEntries, cleanupObjects int
+	var activeEntries, activeSkillArchives, cleanupObjects int
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select
 			(select count(*) from filestore_entries where filesystem_uuid = $1 and deleted_at is null),
+			(select count(*) from filestore_skill_archives where filesystem_uuid = $1),
 			(select count(*) from jobs where type = 'filestore_object_cleanup'
 				and payload->>'filesystem_uuid' = $1::text
 				and payload->>'workspace_uuid' = $2
 				and not (payload ? 'filesystem_id')
 				and payload->>'reason' = 'session_deleted')
-	`, filesystem.UUID, workspaceUUID).Scan(&activeEntries, &cleanupObjects); err != nil {
+	`, filesystem.UUID, workspaceUUID).Scan(&activeEntries, &activeSkillArchives, &cleanupObjects); err != nil {
 		t.Fatalf("load processed cleanup state: %v", err)
 	}
-	if activeEntries != 0 || cleanupObjects != 1 {
-		t.Fatalf("processed cleanup = active entries %d, object jobs %d; want 0, 1", activeEntries, cleanupObjects)
+	if activeEntries != 0 || activeSkillArchives != 0 || cleanupObjects != 1 {
+		t.Fatalf(
+			"processed cleanup = active entries %d, skill archives %d, object jobs %d; want 0, 0, 1",
+			activeEntries,
+			activeSkillArchives,
+			cleanupObjects,
+		)
 	}
 	if _, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
 		context.Background(),

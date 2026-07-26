@@ -106,7 +106,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base_url` 作为 rclone `service_url`，因此启用 Environment Runner 时该地址必须同时能从 E2B Sandbox 访问 Filestore HTTP 路由。Runner 通过 E2B Files API 每 `200ms` 探测 `/tmp/rclone-mounts/ready`，最长 `20s`；这两个值是运行时合同，不提供 YAML 配置。
 
-`rclone-filestore` 的路径不是配置项。E2B 镜像合同固定要求可执行文件位于 `/opt/rclone/rclone-filestore`；缺失或不可执行会使该次 Sandbox 启动失败。四个 source、destination、cache、权限、ready/config/state 路径同样属于版本化运行时合同，不能通过租户数据、Session resource 或 YAML 改写。
+`rclone-filestore` 的路径不是配置项。E2B 镜像合同固定要求可执行文件位于 `/opt/rclone/rclone-filestore`；缺失或不可执行会使该次 Sandbox 启动失败。五个 source、destination、cache、权限、ready/config/state 路径同样属于版本化运行时合同，不能通过租户数据、Session resource 或 YAML 改写。第五个 source 固定为 Filestore `/skills`，以只读方式直接挂载到 `/root/.claude/skills`；Runner 会在启动 mount 前删除该路径上的遗留软链。
 
 默认 Docker Compose 是显式的本地开发配置：`env: dev`、`database.auto_migrate: true`，并省略 `code_session.jwt_signing_private_key_file`。Code Session 与 Filestore 各自使用 oma-server 进程级临时 Ed25519 密钥，服务重启会轮换信任并使此前签发的两类 JWT 失效。独立运行的 `cmd/filestore-token` 不会生成另一把临时密钥；手动签发必须为 CLI 与服务配置同一个持久化私钥文件，否则服务无法验证另一个进程签出的 token。生产环境中，两个签发器可读取同一份稳定的只读 Ed25519 私钥，但使用不同的 claims 与验证入口，不会互相代用。生产部署必须使用 `env: prod`、稳定的只读私钥路径并关闭自动迁移；缺少 JWT 私钥时启动边界会拒绝生产配置。
 

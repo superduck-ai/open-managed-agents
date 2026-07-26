@@ -9,9 +9,10 @@
 镜像必须满足：
 
 - `/opt/rclone/rclone-filestore` 存在、是 Linux 可执行文件，并支持 `multimount --config <path>`。
-- Sandbox 具有 rclone-filestore 创建四个 FUSE mount 所需的设备、capability 和 mount namespace 权限。
+- Sandbox 具有 rclone-filestore 创建五个 FUSE mount 所需的设备、capability 和 mount namespace 权限。
 - `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 默认可执行；这两个路径仍可通过既有 Environment Runner 配置覆盖。
-- 运行用户可以创建 `/mnt/user-data/outputs`、`/mnt/session/uploads`、`/mnt/transcripts`、`/mnt/user-data/tool_results` 的挂载点，并能写入 `/tmp`。
+- Runner 可以创建 `/mnt/user-data/outputs`、`/mnt/session/uploads`、`/mnt/transcripts`、`/mnt/user-data/tool_results` 和 `/root/.claude/skills` 的挂载点，并能写入 `/tmp`。
+- 镜像和 Environment Manager 不能重新创建 `/root/.claude/skills` 软链，也不能依赖 `/mnt/skills` 或 `/workspace/skills` 解压目录。
 
 `rclone-filestore` 路径固定为 `/opt/rclone/rclone-filestore`，不提供 `rclone_filestore_path` 配置。镜像若缺失该文件或没有执行权限，后台命令启动失败或 ready marker 在 `20s` 内不会出现；Runner 会把 Sandbox 标记为失败并 Kill，不会启动 Environment Manager。
 
@@ -22,9 +23,9 @@
 | 路径 | 所有者 | 生命周期 |
 | --- | --- | --- |
 | `/tmp/rclone-mount-config.json` | Runner/rclone | E2B Files API 写入后设为 `0600`，ready 后最多重试三次删除 |
-| `/tmp/rclone-mounts/ready` | rclone-filestore | 四个 mount 全部 ready 后创建 |
+| `/tmp/rclone-mounts/ready` | rclone-filestore | 五个 mount 全部 ready 后创建 |
 
-Runner 每次创建新的 Sandbox，通过 E2B 后台进程 API 启动 rclone，不在 Sandbox 中写 PID 或 exit marker。Runner 只通过 E2B Files API 每 `200ms` 探测 ready marker，最长 `20s`，不探测 rclone PID。`/tmp/rclone-mounts/ready` 必须只表示四个固定 mount 均已可用；部分就绪不能创建 marker。
+Runner 每次创建新的 Sandbox，通过 E2B 后台进程 API 启动 rclone，不在 Sandbox 中写 PID 或 exit marker。Runner 只通过 E2B Files API 每 `200ms` 探测 ready marker，最长 `20s`，不探测 rclone PID。`/tmp/rclone-mounts/ready` 必须只表示五个固定 mount 均已可用；部分就绪不能创建 marker。
 
 ## 固定文件系统视图
 
@@ -35,11 +36,14 @@ ready 后镜像内必须呈现：
 /mnt/session/uploads         # readonly
 /mnt/transcripts             # readonly
 /mnt/user-data/tool_results  # readonly
+/root/.claude/skills         # readonly virtual archive tree
 ```
 
 File resource 不新增独立 FUSE mount，也不创建逐文件软链接。`mount_path` 始终解释为 `/uploads` namespace 下的路径；resource 写事务已经在当前 Session 的 `filesystem_id` 下插入借用 Files 对象的数据库 entry，rclone 只负责把这个权威 namespace 整体只读挂载到 `/mnt/session/uploads`。例如 `/uploads/workspace/data.csv` 在 Sandbox 中通过 `/mnt/session/uploads/workspace/data.csv` 访问。镜像、Runner 和 Environment Manager 都不负责下载、复制、调和或投影单个 File resource，Runner 也不再把 `type=file` resource 转发给 Environment Manager。
 
 同一 `filesystem_id` 的 namespace 在 mount 存活期间继续由数据库维护。运行中增删 File resource 不重建 FUSE mount；现有 Sandbox 在 `/uploads` 的 `1s` metadata cache 刷新后读取到新的 namespace 状态。
+
+`/root/.claude/skills` 是 Filestore `/skills` 的直接 mount。Runner 启动 rclone 前会删除该路径上的遗留软链并创建目录；archive 解包视图由 Filestore 服务虚拟生成，镜像和 Environment Manager 不下载、不复制、不解压 skill zip。该 mount 使用只读 Token、`readonly=true`、`uid=0`、`gid=0`、目录权限 `0555` 和文件权限 `0444`。
 
 ## 启动顺序合同
 
@@ -47,8 +51,9 @@ File resource 不新增独立 FUSE mount，也不创建逐文件软链接。`mou
 flowchart TD
     R["Resolve trusted Session filesystem scope"] --> A["Create E2B Sandbox"]
     A --> W["Write config and chmod 0600"]
-    W --> B["Start fixed rclone-filestore binary"]
-    B --> C{"All four mounts ready?"}
+    W --> S["Remove legacy skill symlink and create mountpoint"]
+    S --> B["Start fixed rclone-filestore binary"]
+    B --> C{"All five mounts ready?"}
     C -->|"probe error / 20s timeout"| F["Fail work and kill Sandbox"]
     C -->|"yes"| D["Delete token config, retry up to 3 times"]
     D --> G["Mark Sandbox running and heartbeat Work"]
@@ -70,9 +75,10 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 
 1. `test -x /opt/rclone/rclone-filestore` 成功。
 2. 用临时测试 filesystem 启动固定 multimount，ready marker 在超时内出现。
-3. `/mnt/user-data/outputs` 可写，另外三个 destination 拒绝写入。
+3. `/mnt/user-data/outputs` 可写，另外四个 destination 拒绝写入；`/root/.claude/skills/<skill>/SKILL.md` 可由 Claude Code 直接发现。
 4. 只通过 Files API 上传对象并给 Session 添加 File resource，不在测试侧直接写 Filestore；确认 resource 写入已创建 `/uploads/workspace/data.csv` 的数据库引用，启动后可通过 `/mnt/session/uploads/workspace/data.csv` 读取且写入失败。
 5. 正常路径 ready 后 `/tmp/rclone-mount-config.json` 不存在；模拟删除失败时确认最多重试三次、记录脱敏告警且 Sandbox 继续运行。日志和进程命令行不包含 Filestore Token，outputs token 不能写入其他 source。
-6. ready 探测失败或 `20s` 内未出现 marker 均不会启动 Environment Manager，并会终止 Sandbox。
+6. 镜像中预置遗留 `/root/.claude/skills` 软链时，Runner 会在 mount 前删除它；Environment Manager 启动后不得重建软链或产生 `/workspace/skills` 解压副本。
+7. ready 探测失败或 `20s` 内未出现 marker 均不会启动 Environment Manager，并会终止 Sandbox。
 
 Token 当前固定一小时有效且不刷新；长生命周期 Sandbox 的续签不属于此镜像合同。

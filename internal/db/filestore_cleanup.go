@@ -65,6 +65,11 @@ const (
 			and filesystem_uuid = :filesystem_uuid
 			and kind = 'directory' and deleted_at is null
 	`
+	removeFilesystemSkillArchivesQuery = `
+		delete from filestore_skill_archives
+		where workspace_uuid = :workspace_uuid
+			and filesystem_uuid = :filesystem_uuid
+	`
 	completeFilesystemCleanupBatchQuery = `
 		update jobs
 		set status = :status, locked_by = null, locked_until = null,
@@ -342,6 +347,9 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	}
 	if !filesRemain {
 		if _, err := namedExecContext(ctx, tx, retireFilesystemCleanupDirectoriesQuery, arguments); err != nil {
+			return false, err
+		}
+		if _, err := namedExecContext(ctx, tx, removeFilesystemSkillArchivesQuery, arguments); err != nil {
 			return false, err
 		}
 	}

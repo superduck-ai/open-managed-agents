@@ -24,6 +24,7 @@ import (
 var (
 	errRcloneConfigWrite       = errors.New("rclone-filestore config write failed")
 	errRcloneConfigPermissions = errors.New("rclone-filestore config permission update failed")
+	errRcloneMountPreparation  = errors.New("rclone-filestore mount preparation failed")
 	errRcloneProcessStart      = errors.New("rclone-filestore process start failed")
 	errRcloneReadiness         = errors.New("rclone-filestore readiness check failed")
 	errEnvironmentManagerStart = errors.New("environment manager process start failed")
@@ -400,8 +401,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if err != nil {
 		return nil, err
 	}
-	skillMount, err := r.prepareRuntimeSkillMount(ctx, runtimeSkills)
-	if err != nil {
+	if err := r.replaceRuntimeSkillArchives(ctx, session, runtimeSkills); err != nil {
 		return nil, err
 	}
 	runtimeResources := resolveManagedAgentRuntimeResources(resources)
@@ -410,15 +410,6 @@ func (r *Runner) prepareManagedAgentLaunch(
 	title := ""
 	if session.Title != nil {
 		title = *session.Title
-	}
-	if skillMount != nil {
-		nextWorkMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
-			e2bruntime.SkillMountMetadataKey: skillMount,
-		})
-		if err != nil {
-			return nil, err
-		}
-		work.Metadata = nextWorkMetadata
 	}
 	return &managedAgentLaunchPreparation{
 		Session:       session,
@@ -508,6 +499,10 @@ func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, lau
 	if err := r.provider.RunCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
 		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return logRcloneStageFailure("config_permissions", errRcloneConfigPermissions, err)
+	}
+	if err := r.provider.RunCommand(ctx, sandboxID, rcloneMountPreparationCommand(), rcloneCommandGraceTimeout); err != nil {
+		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return logRcloneStageFailure("mount_preparation", errRcloneMountPreparation, err)
 	}
 	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
 		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
@@ -642,19 +637,31 @@ func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.
 	return nil
 }
 
-func (r *Runner) prepareRuntimeSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*e2bruntime.SkillMount, error) {
-	if len(runtimeSkills) == 0 {
-		return nil, nil
-	}
-	preparer, ok := r.provider.(e2bruntime.SkillMountPreparer)
-	if !ok {
-		return nil, fmt.Errorf("runtime provider cannot prepare managed agent skill mount")
-	}
-	return preparer.PrepareSkillMount(ctx, runtimeSkills)
-}
-
 func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) ([]skillsapi.RuntimeSkill, error) {
 	return r.skills.ResolveAgentSnapshot(ctx, session.WorkspaceID, session.AgentSnapshot)
+}
+
+func (r *Runner) replaceRuntimeSkillArchives(
+	ctx context.Context,
+	session db.Session,
+	runtimeSkills []skillsapi.RuntimeSkill,
+) error {
+	archives := make([]db.FilestoreSkillArchiveInput, 0, len(runtimeSkills))
+	for _, skill := range runtimeSkills {
+		archives = append(archives, db.FilestoreSkillArchiveInput{
+			Source:           skill.Source,
+			SkillVersionUUID: skill.VersionUUID,
+			Directory:        skill.Directory,
+			S3Bucket:         skill.S3Bucket,
+			S3Key:            skill.S3Key,
+			SizeBytes:        skill.SizeBytes,
+			SHA256:           skill.SHA256,
+		})
+	}
+	if err := r.db.ReplaceFilestoreSkillArchives(ctx, session.WorkspaceID, session.ExternalID, archives); err != nil {
+		return fmt.Errorf("replace managed agent skill archive projections: %w", err)
+	}
+	return nil
 }
 
 func (r *Runner) sessionEventPayloads(ctx context.Context, session db.Session) ([]json.RawMessage, error) {

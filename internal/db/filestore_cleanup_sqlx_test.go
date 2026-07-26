@@ -44,6 +44,7 @@ func TestFilesystemCleanupProcessingQueriesUseSQLXNamedParameters(t *testing.T) 
 		{"retire entry", retireFilesystemCleanupEntryQuery, 3},
 		{"files remain", filesystemCleanupFilesRemainQuery, 2},
 		{"retire directories", retireFilesystemCleanupDirectoriesQuery, 4},
+		{"remove skill archives", removeFilesystemSkillArchivesQuery, 2},
 		{"complete batch", completeFilesystemCleanupBatchQuery, 6},
 	}
 

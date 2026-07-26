@@ -1,7 +1,6 @@
 package agents
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -26,21 +24,15 @@ import (
 )
 
 const (
-	maxAgentBodySize           = 4 << 20
-	skillPrewarmEnqueueTimeout = 3 * time.Second
+	maxAgentBodySize = 4 << 20
 )
 
 var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Handler struct {
-	cfg     config.Config
-	db      *db.DB
-	prewarm skillPrewarmSnapshotEnqueuer
-	router  chi.Router
-}
-
-type skillPrewarmSnapshotEnqueuer interface {
-	EnqueueSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) error
+	cfg    config.Config
+	db     *db.DB
+	router chi.Router
 }
 
 type agentResponse struct {
@@ -92,11 +84,7 @@ type agentReference struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	return NewHandlerWithSkillPrewarm(cfg, database, nil)
-}
-
-func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer) *Handler {
-	h := &Handler{cfg: cfg, db: database, prewarm: prewarm}
+	h := &Handler{cfg: cfg, db: database}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -173,7 +161,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create agent"))
 		return
 	}
-	h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, created, "agent_create")
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(created))
 }
 
@@ -378,9 +365,6 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		log.Printf("update agent: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
-	}
-	if !agentsnapshot.SameRawJSON(current.Skills, updated.Skills) {
-		h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, updated, "agent_update")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
 }
@@ -1258,22 +1242,6 @@ func responseFromAgent(agent db.Agent) agentResponse {
 		Type:        "agent",
 		UpdatedAt:   httpapi.FormatTime(agent.UpdatedAt),
 		Version:     agent.CurrentVersion,
-	}
-}
-
-func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, agent db.Agent, trigger string) {
-	if h == nil || h.prewarm == nil || !agentsnapshot.SkillsRawHasEntries(agent.Skills) {
-		return
-	}
-	snapshot, err := agentsnapshot.FromAgent(agent)
-	if err != nil {
-		log.Printf("build agent skill prewarm snapshot agent_id=%s trigger=%s: %v", agent.ExternalID, trigger, err)
-		return
-	}
-	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
-	defer cancel()
-	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, "agent", agent.ExternalID, trigger); err != nil {
-		log.Printf("enqueue agent skill prewarm agent_id=%s trigger=%s: %v", agent.ExternalID, trigger, err)
 	}
 }
 

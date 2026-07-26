@@ -32,6 +32,7 @@ type filestoreDatabase interface {
 	GetFilestoreFilesystem(context.Context, int64, string) (db.FilestoreFilesystem, error)
 	GetFilestoreEntry(context.Context, int64, int64, string) (db.FilestoreEntry, error)
 	ListFilestoreEntriesPage(context.Context, db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error)
+	ListFilestoreSkillArchives(context.Context, int64, int64) ([]db.FilestoreSkillArchive, error)
 	MakeFilestoreDirectory(context.Context, db.MakeFilestoreDirectoryInput) (db.FilestoreEntry, error)
 	PutFilestoreFile(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
 	CopyFilestoreFile(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)
@@ -47,10 +48,11 @@ type filestoreDatabase interface {
 // Service 编排 Filestore 的鉴权上下文、元数据事务与对象存储操作。
 // 数据库负责命名空间一致性，对象存储负责字节内容，两者通过持久化清理任务实现最终一致。
 type Service struct {
-	cfg   config.Config
-	db    filestoreDatabase
-	store storage.ObjectStore
-	now   func() time.Time
+	cfg           config.Config
+	db            filestoreDatabase
+	store         storage.ObjectStore
+	now           func() time.Time
+	skillArchives *skillArchiveCache
 }
 
 type readFileResult struct {
@@ -61,7 +63,13 @@ type readFileResult struct {
 
 // NewService 创建 Filestore 业务服务。
 func NewService(cfg config.Config, database filestoreDatabase, store storage.ObjectStore) *Service {
-	return &Service{cfg: cfg, db: database, store: store, now: time.Now}
+	return &Service{
+		cfg:           cfg,
+		db:            database,
+		store:         store,
+		now:           time.Now,
+		skillArchives: newSkillArchiveCache(defaultSkillArchiveCacheBytes),
+	}
 }
 
 // ListDirectory 按路径与内部 ID 的稳定顺序列出目录，使用键集游标避免 offset 分页漂移。
@@ -83,6 +91,9 @@ func (s *Service) ListDirectory(ctx context.Context, principal Principal, reques
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
 		return listDirectoryResponse{}, apiErr
+	}
+	if isSkillNamespacePath(request.Path) {
+		return s.listSkillDirectory(ctx, principal, filesystem, request, cursor, int(limit))
 	}
 	params := db.ListFilestoreEntriesPageParams{
 		WorkspaceID:   principal.WorkspaceID,
@@ -134,6 +145,9 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
+	if apiErr := rejectSkillMutation(request.Path); apiErr != nil {
+		return directoryResponse{}, apiErr
+	}
 	entry, err := s.db.MakeFilestoreDirectory(ctx, db.MakeFilestoreDirectoryInput{
 		WorkspaceID:  principal.WorkspaceID,
 		FilesystemID: filesystem.ID,
@@ -154,6 +168,9 @@ func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, requ
 	}
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
+		return apiErr
+	}
+	if apiErr := rejectSkillMutation(request.Path); apiErr != nil {
 		return apiErr
 	}
 	_, err := s.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
@@ -180,6 +197,9 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	}
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, params.FilesystemID)
 	if apiErr != nil {
+		return fileResponse{}, apiErr
+	}
+	if apiErr := rejectSkillMutation(params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, params.Path); apiErr != nil {
@@ -265,6 +285,9 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
+	if apiErr := rejectSkillMutation(request.Source, request.Destination); apiErr != nil {
+		return fileResponse{}, apiErr
+	}
 	source, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, request.Source)
 	if err != nil {
 		return fileResponse{}, mapDatabaseError("read copy source", err)
@@ -335,6 +358,9 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
+	if apiErr := rejectSkillMutation(request.Source, request.Destination); apiErr != nil {
+		return fileResponse{}, apiErr
+	}
 	result, err := s.db.MoveFilestoreFile(ctx, db.MoveFilestoreFileInput{
 		WorkspaceID:       principal.WorkspaceID,
 		FilesystemID:      filesystem.ID,
@@ -368,6 +394,9 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
+	if apiErr := rejectSkillMutation(request.Source, request.Destination); apiErr != nil {
+		return directoryResponse{}, apiErr
+	}
 	result, err := s.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
 		WorkspaceID:     principal.WorkspaceID,
 		FilesystemID:    filesystem.ID,
@@ -389,6 +418,9 @@ func (s *Service) ReadFile(ctx context.Context, principal Principal, request rea
 	filesystem, apiErr := s.resolveFilesystem(ctx, principal, request.FilesystemID)
 	if apiErr != nil {
 		return readFileResult{}, apiErr
+	}
+	if strings.HasPrefix(request.Path, skillNamespacePath+"/") {
+		return s.readSkillFile(ctx, principal, filesystem, request)
 	}
 	entry, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, request.Path)
 	if err != nil {
@@ -427,6 +459,9 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 	if apiErr != nil {
 		return apiErr
 	}
+	if apiErr := rejectSkillMutation(request.Path); apiErr != nil {
+		return apiErr
+	}
 	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveFilestoreEntryInput{
 		WorkspaceID:  principal.WorkspaceID,
 		FilesystemID: filesystem.ID,
@@ -448,6 +483,9 @@ func (s *Service) ReadMetadata(ctx context.Context, principal Principal, request
 	if apiErr != nil {
 		return entryPayload{}, apiErr
 	}
+	if strings.HasPrefix(request.Path, skillNamespacePath+"/") {
+		return s.readSkillMetadata(ctx, principal, filesystem, request.Path)
+	}
 	entry, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, request.Path)
 	if err != nil {
 		return entryPayload{}, mapDatabaseError("read metadata", err)
@@ -457,6 +495,15 @@ func (s *Service) ReadMetadata(ctx context.Context, principal Principal, request
 		return entryPayload{}, internalError("encode metadata", err)
 	}
 	return payload, nil
+}
+
+func rejectSkillMutation(paths ...string) *apiError {
+	for _, value := range paths {
+		if isSkillNamespacePath(value) {
+			return permissionDenied("the /skills namespace is read-only")
+		}
+	}
+	return nil
 }
 
 func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, filesystemID string) (db.FilestoreFilesystem, *apiError) {

@@ -29,7 +29,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
-	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -85,7 +84,6 @@ func NewServer(deps ServerDeps) *Server {
 		platformStore = platformsession.NewMemoryStore()
 	}
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials)
-	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(deps.DB)
 	filestoreService := deps.FilestoreService
 	if filestoreService == nil {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore)
@@ -97,10 +95,10 @@ func NewServer(deps ServerDeps) *Server {
 		platformStore:        platformStore,
 		filestoreCredentials: deps.FilestoreCredentials,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB),
-		agents:               agents.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer),
+		agents:               agents.NewHandler(deps.Config, deps.DB),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService),
-		deployments:          deploymentsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer),
+		deployments:          deploymentsapi.NewHandler(deps.Config, deps.DB),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.Config, deps.DB),
 		envs:                 environments.NewHandler(deps.Config, deps.DB),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
@@ -109,7 +107,7 @@ func NewServer(deps ServerDeps) *Server {
 		messages:             messagesapi.NewHandler(deps.Config),
 		models:               modelsapi.NewHandler(deps.Config.AnthropicUpstream),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService),
-		skills:               skillsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, deps.ObjectStore, skillPrewarmEnqueuer),
+		skills:               skillsapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB),
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB),
 	}

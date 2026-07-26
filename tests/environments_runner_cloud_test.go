@@ -258,7 +258,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if len(provider.rcloneLaunches) != 1 {
 		t.Fatalf("rclone launches = %d, want 1", len(provider.rcloneLaunches))
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-mount-preparation", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.writes) != 1 || provider.writes[0].path != "/tmp/rclone-mount-config.json" {
@@ -369,7 +369,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-mount-preparation", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.launches) != 0 {
@@ -539,20 +539,17 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if len(provider.launches) != 1 {
 		t.Fatalf("sandbox launches = %#v, want one environment-manager background process", provider.launches)
 	}
-	if len(provider.skillMounts) != 1 {
-		t.Fatalf("skill mounts = %#v, want one prepared mount", provider.skillMounts)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("get session filestore: %v", err)
 	}
-	mount := provider.skillMounts[0].mount
-	if mount.MountPath != e2bruntime.SandboxSkillsMountPath || mount.VolumeName == "" || mount.ManifestSHA256 == "" {
-		t.Fatalf("unexpected skill mount: %#v", mount)
+	projections, err := app.db.ListFilestoreSkillArchives(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, filesystem.ID)
+	if err != nil {
+		t.Fatalf("list skill archive projections: %v", err)
 	}
-	if len(mount.Skills) != 1 || mount.Skills[0].Directory != "runtime-skill" {
-		t.Fatalf("unexpected skill mount manifest: %#v", mount.Skills)
+	if len(projections) != 1 || projections[0].VirtualPath != "/skills/runtime-skill" || projections[0].Source != "custom" {
+		t.Fatalf("skill archive projections = %#v", projections)
 	}
-	if len(provider.skillMounts[0].runtimeSkills) != 1 {
-		t.Fatalf("runtime skills = %#v, want one", provider.skillMounts[0].runtimeSkills)
-	}
-	assertZipContains(t, provider.skillMounts[0].runtimeSkills[0].Archive, "runtime-skill/SKILL.md")
 	if len(provider.creates) != 1 {
 		t.Fatalf("sandbox creates = %#v, want one", provider.creates)
 	}
@@ -560,12 +557,8 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if err := json.Unmarshal(provider.creates[0].metadata, &workMetadata); err != nil {
 		t.Fatalf("decode work metadata: %v", err)
 	}
-	rawMount, ok := workMetadata[e2bruntime.SkillMountMetadataKey].(map[string]any)
-	if !ok {
-		t.Fatalf("work metadata missing skill mount: %#v", workMetadata)
-	}
-	if rawMount["mount_path"] != e2bruntime.SandboxSkillsMountPath || rawMount["volume_name"] != mount.VolumeName {
-		t.Fatalf("unexpected work skill mount metadata: %#v", rawMount)
+	if _, exists := workMetadata["managed_agent_skills_mount"]; exists {
+		t.Fatalf("work metadata still contains legacy skill mount: %#v", workMetadata)
 	}
 	if strings.Contains(provider.launches[0].command, "installed managed agent skills") ||
 		strings.Contains(provider.launches[0].command, "$HOME/.claude/skills") {
@@ -573,7 +566,7 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	}
 }
 
-func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
+func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := config.Load()
@@ -628,17 +621,28 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	}
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
-	provider := &recordingRunnerProvider{sandboxID: "sandbox-should-not-start"}
+	provider := &recordingRunnerProvider{sandboxID: "sandbox-skill-projection-only"}
 	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-no-resolver-test")
-	if err == nil || !strings.Contains(err.Error(), "custom skill resolver is unavailable") {
-		t.Fatalf("RunOnce error = %v, want custom resolver error", err)
+	if err != nil {
+		t.Fatalf("RunOnce error = %v", err)
 	}
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if len(provider.creates) != 0 || len(provider.commands) != 0 || len(provider.launches) != 0 {
-		t.Fatalf("provider should not be called after missing resolver: creates=%#v commands=%#v launches=%#v", provider.creates, provider.commands, provider.launches)
+	if len(provider.creates) != 1 || len(provider.launches) != 1 {
+		t.Fatalf("provider launch counts = creates:%d launches:%d, want one each", len(provider.creates), len(provider.launches))
+	}
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("get session filestore: %v", err)
+	}
+	projections, err := app.db.ListFilestoreSkillArchives(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, filesystem.ID)
+	if err != nil {
+		t.Fatalf("list projections: %v", err)
+	}
+	if len(projections) != 1 || projections[0].VirtualPath != "/skills/missing-resolver-skill" {
+		t.Fatalf("projections = %#v", projections)
 	}
 }
 
@@ -891,7 +895,6 @@ type recordingRunnerProvider struct {
 	operations        []string
 	kills             []string
 	creates           []recordedSandboxCreate
-	skillMounts       []recordedSkillMount
 }
 
 type recordedSandboxResolve struct {
@@ -914,11 +917,6 @@ type recordedSandboxWrite struct {
 type recordedSandboxCreate struct {
 	metadata   json.RawMessage
 	resolution e2bruntime.Resolution
-}
-
-type recordedSkillMount struct {
-	mount         e2bruntime.SkillMount
-	runtimeSkills []skillsapi.RuntimeSkill
 }
 
 func newManagedAgentRunner(
@@ -1021,6 +1019,8 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 	switch {
 	case strings.HasPrefix(command, "chmod 0600 "):
 		operation = "rclone-config-chmod"
+	case strings.HasPrefix(command, "mkdir -p '/root/.claude'"):
+		operation = "rclone-mount-preparation"
 	case strings.HasPrefix(command, "rm -f ") && strings.Contains(command, "rclone-mount-config.json"):
 		operation = "rclone-config-cleanup"
 	}
@@ -1029,33 +1029,6 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 		return p.runCommandFailure
 	}
 	return nil
-}
-
-func (p *recordingRunnerProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*e2bruntime.SkillMount, error) {
-	manifest, _, manifestSHA256, err := skillsapi.BuildMountManifest(runtimeSkills)
-	if err != nil {
-		return nil, err
-	}
-	mount := e2bruntime.SkillMount{
-		MountPath:      e2bruntime.SandboxSkillsMountPath,
-		VolumeName:     "test-managed-agent-skills-" + manifestSHA256[:12],
-		ManifestSHA256: manifestSHA256,
-		Skills:         manifest.Skills,
-	}
-	copied := make([]skillsapi.RuntimeSkill, 0, len(runtimeSkills))
-	for _, skill := range runtimeSkills {
-		archive, err := skill.LoadArchive(ctx)
-		if err != nil {
-			return nil, err
-		}
-		skill.Archive = archive
-		copied = append(copied, skill)
-	}
-	p.skillMounts = append(p.skillMounts, recordedSkillMount{
-		mount:         mount,
-		runtimeSkills: copied,
-	})
-	return &mount, nil
 }
 
 func (p *recordingRunnerProvider) StartBackgroundCommand(_ context.Context, sandboxID string, command string, stdin []byte) error {

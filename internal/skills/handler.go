@@ -28,25 +28,19 @@ import (
 )
 
 const (
-	skillsBeta                 = "skills-2025-10-02"
-	defaultSkillsLimit         = 20
-	maxSkillsLimit             = 100
-	defaultSkillVersionsLimit  = 20
-	maxSkillVersionsLimit      = 1000
-	skillArchiveContentType    = "application/zip"
-	skillPrewarmEnqueueTimeout = 3 * time.Second
+	skillsBeta                = "skills-2025-10-02"
+	defaultSkillsLimit        = 20
+	maxSkillsLimit            = 100
+	defaultSkillVersionsLimit = 20
+	maxSkillVersionsLimit     = 1000
+	skillArchiveContentType   = "application/zip"
 )
 
 type Handler struct {
-	cfg     config.Config
-	db      *db.DB
-	store   storage.ObjectStore
-	prewarm skillPrewarmFanoutEnqueuer
-	router  chi.Router
-}
-
-type skillPrewarmFanoutEnqueuer interface {
-	EnqueueFanout(ctx context.Context, workspaceID int64, skillID string, version string) error
+	cfg    config.Config
+	db     *db.DB
+	store  storage.ObjectStore
+	router chi.Router
 }
 
 type skillResponse struct {
@@ -81,15 +75,10 @@ type pageCursor struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore) *Handler {
-	return NewHandlerWithSkillPrewarm(cfg, database, store, nil)
-}
-
-func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, store storage.ObjectStore, prewarm skillPrewarmFanoutEnqueuer) *Handler {
 	h := &Handler{
-		cfg:     cfg,
-		db:      database,
-		store:   store,
-		prewarm: prewarm,
+		cfg:   cfg,
+		db:    database,
+		store: store,
 	}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
@@ -390,7 +379,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string)
 		return
 	}
 
-	_, versions, err := h.db.SoftDeleteSkill(r.Context(), principal.WorkspaceID, skillID)
+	_, _, err := h.db.SoftDeleteSkill(r.Context(), principal.WorkspaceID, skillID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
 			httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": skillID, "type": "skill_deleted"})
@@ -403,9 +392,6 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string)
 		log.Printf("delete skill: %v", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete skill"))
 		return
-	}
-	for _, version := range versions {
-		h.deleteObjectOrEnqueueCleanup(r.Context(), version)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": skillID, "type": "skill_deleted"})
 }
@@ -493,7 +479,6 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create skill version"))
 		return
 	}
-	h.enqueueSkillPrewarmFanout(r.Context(), principal.WorkspaceID, skillID, version.Version)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromSkillVersion(version))
 }
 
@@ -665,7 +650,7 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID,
 		writeResolveVersionError(w, r, skillID, version, err)
 		return
 	}
-	deletedVersion, _, err := h.db.SoftDeleteSkillVersion(r.Context(), principal.WorkspaceID, skillID, resolved)
+	_, _, err = h.db.SoftDeleteSkillVersion(r.Context(), principal.WorkspaceID, skillID, resolved)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
@@ -675,7 +660,6 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID,
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete skill version"))
 		return
 	}
-	h.deleteObjectOrEnqueueCleanup(r.Context(), deletedVersion)
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": resolved, "type": "skill_version_deleted"})
 }
 
@@ -791,17 +775,6 @@ func (h *Handler) downloadFixtureSkill(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(data)
 }
 
-func (h *Handler) enqueueSkillPrewarmFanout(ctx context.Context, workspaceID int64, skillID string, version string) {
-	if h == nil || h.prewarm == nil {
-		return
-	}
-	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
-	defer cancel()
-	if err := h.prewarm.EnqueueFanout(enqueueCtx, workspaceID, skillID, version); err != nil {
-		log.Printf("enqueue skill prewarm fanout skill_id=%s version=%s: %v", skillID, version, err)
-	}
-}
-
 func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, workspaceID int64, bucket, key, externalID string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
@@ -809,15 +782,6 @@ func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context,
 		log.Printf("delete skill object after metadata failure key=%s: %v", key, err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, workspaceID, bucket, key, externalID); enqueueErr != nil {
 			log.Printf("enqueue object cleanup key=%s: %v", key, enqueueErr)
-		}
-	}
-}
-
-func (h *Handler) deleteObjectOrEnqueueCleanup(ctx context.Context, version db.SkillVersion) {
-	if err := h.store.Delete(ctx, version.S3Key, storage.DeleteOptions{}); err != nil {
-		log.Printf("delete skill object skill_id=%s version=%s key=%s: %v", version.SkillExternalID, version.Version, version.S3Key, err)
-		if enqueueErr := h.db.EnqueueObjectCleanupJob(ctx, version.WorkspaceID, version.S3Bucket, version.S3Key, version.ExternalID); enqueueErr != nil {
-			log.Printf("enqueue object cleanup skill_id=%s version=%s key=%s: %v", version.SkillExternalID, version.Version, version.S3Key, enqueueErr)
 		}
 	}
 }

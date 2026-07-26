@@ -258,7 +258,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if len(provider.rcloneLaunches) != 1 {
 		t.Fatalf("rclone launches = %d, want 1", len(provider.rcloneLaunches))
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-mount-preparation", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.writes) != 1 || provider.writes[0].path != "/tmp/rclone-mount-config.json" {
@@ -369,7 +369,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-mount-preparation", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.launches) != 0 {
@@ -1019,8 +1019,6 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 	switch {
 	case strings.HasPrefix(command, "chmod 0600 "):
 		operation = "rclone-config-chmod"
-	case strings.HasPrefix(command, "mkdir -p '/root/.claude'"):
-		operation = "rclone-mount-preparation"
 	case strings.HasPrefix(command, "rm -f ") && strings.Contains(command, "rclone-mount-config.json"):
 		operation = "rclone-config-cleanup"
 	}

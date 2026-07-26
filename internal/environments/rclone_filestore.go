@@ -150,13 +150,6 @@ func rcloneConfigPermissionsCommand() string {
 	return "chmod 0600 " + shellQuote(rcloneConfigPath)
 }
 
-func rcloneMountPreparationCommand() string {
-	claudeDirectory := "/root/.claude"
-	return "mkdir -p " + shellQuote(claudeDirectory) +
-		" && if [ -L " + shellQuote(rcloneSkillsDestination) + " ]; then rm -f " + shellQuote(rcloneSkillsDestination) + "; fi" +
-		" && mkdir -p " + shellQuote(rcloneSkillsDestination)
-}
-
 func rcloneConfigCleanupCommand() string {
 	return "rm -f " + shellQuote(rcloneConfigPath)
 }

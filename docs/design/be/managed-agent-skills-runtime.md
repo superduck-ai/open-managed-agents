@@ -21,8 +21,8 @@ Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
    已启动 Session 的视图。
 4. 在一只 `sqlx.Tx` 中锁定 Session filesystem 和 namespace，确保 `/skills` 固定根存在，
    并原子替换该 filesystem 的 `filestore_skill_archives` 投影集合。
-5. 创建 Sandbox 后，Runner 删除遗留的 `/root/.claude/skills` 软链（如果它确实是软链），
-   创建同名目录，再启动 rclone-filestore 的五个固定 mount。
+5. 创建 Sandbox 后，Runner 直接启动 rclone-filestore 的五个固定 mount；multimount
+   在内部对 destination 执行 `MkdirAll`，Runner 不执行独立 mount preparation。
 6. `/skills` 使用只读 Filestore Token，直接挂载到 `/root/.claude/skills`。rclone ready
    后才启动 Environment Manager；Environment Manager 不再处理 skill。
 
@@ -130,7 +130,7 @@ Session filesystem 删除后沿用现有有界 cleanup job。最后一批文件�
 - `/skills` list、recursive list、metadata 和 ranged read 返回 archive 成员；
 - checksum、路径穿越、缺少 `SKILL.md` 等损坏 archive fail closed；
 - 所有 `/skills` mutation 被拒绝；
-- rclone 第五个 mount 直达 `/root/.claude/skills`，启动前只移除遗留软链；
+- rclone 第五个 mount 直达 `/root/.claude/skills`，destination 由 multimount 内部创建；
 - Runner 不写 legacy mount metadata，E2B runtime 不创建 skill volume；
 - catalog soft delete/prune 不破坏活动 Session 投影；
 - Session filesystem cleanup 会删除投影 row，但不删除借用的 catalog object。

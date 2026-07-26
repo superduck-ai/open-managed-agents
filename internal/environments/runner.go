@@ -24,7 +24,6 @@ import (
 var (
 	errRcloneConfigWrite       = errors.New("rclone-filestore config write failed")
 	errRcloneConfigPermissions = errors.New("rclone-filestore config permission update failed")
-	errRcloneMountPreparation  = errors.New("rclone-filestore mount preparation failed")
 	errRcloneProcessStart      = errors.New("rclone-filestore process start failed")
 	errRcloneReadiness         = errors.New("rclone-filestore readiness check failed")
 	errEnvironmentManagerStart = errors.New("environment manager process start failed")
@@ -499,10 +498,6 @@ func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, lau
 	if err := r.provider.RunCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
 		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return logRcloneStageFailure("config_permissions", errRcloneConfigPermissions, err)
-	}
-	if err := r.provider.RunCommand(ctx, sandboxID, rcloneMountPreparationCommand(), rcloneCommandGraceTimeout); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("mount_preparation", errRcloneMountPreparation, err)
 	}
 	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
 		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)

@@ -73,9 +73,8 @@ func TestRcloneCommandsKeepTokensOutOfCommandText(t *testing.T) {
 	}
 	start := rcloneStartCommand()
 	permissions := rcloneConfigPermissionsCommand()
-	preparation := rcloneMountPreparationCommand()
 	cleanup := rcloneConfigCleanupCommand()
-	if strings.Contains(start+permissions+preparation+cleanup, secret) {
+	if strings.Contains(start+permissions+cleanup, secret) {
 		t.Fatal("rclone command text contains token")
 	}
 	if !strings.Contains(string(configPayload), secret) {
@@ -93,10 +92,6 @@ func TestRcloneCommandsKeepTokensOutOfCommandText(t *testing.T) {
 	}
 	if permissions != "chmod 0600 '/tmp/rclone-mount-config.json'" {
 		t.Fatalf("rclone permissions command = %q", permissions)
-	}
-	if !strings.Contains(preparation, "rm -f '/root/.claude/skills'") ||
-		!strings.Contains(preparation, "mkdir -p '/root/.claude/skills'") {
-		t.Fatalf("rclone mount preparation does not replace the legacy symlink: %q", preparation)
 	}
 }
 
@@ -123,29 +118,23 @@ func TestStartRcloneFilestoreFailures(t *testing.T) {
 			wantRunCalls: 2,
 		},
 		{
-			name:         "mount preparation",
-			provider:     &rcloneTestProvider{runErrors: []error{nil, providerFailure, nil}},
-			wantError:    errRcloneMountPreparation,
-			wantRunCalls: 3,
-		},
-		{
 			name:            "start",
 			provider:        &rcloneTestProvider{backgroundErr: providerFailure},
 			wantError:       errRcloneProcessStart,
-			wantRunCalls:    3,
+			wantRunCalls:    2,
 			wantLaunchCalls: 1,
 		},
 		{
 			name:            "ready",
 			provider:        &rcloneTestProvider{fileExistsErr: providerFailure},
 			wantError:       errRcloneReadiness,
-			wantRunCalls:    3,
+			wantRunCalls:    2,
 			wantLaunchCalls: 1,
 		},
 		{
 			name:            "cleanup retries without failing ready sandbox",
-			provider:        &rcloneTestProvider{ready: true, runErrors: []error{nil, nil, providerFailure, providerFailure, providerFailure}},
-			wantRunCalls:    5,
+			provider:        &rcloneTestProvider{ready: true, runErrors: []error{nil, providerFailure, providerFailure, providerFailure}},
+			wantRunCalls:    4,
 			wantLaunchCalls: 1,
 		},
 	}

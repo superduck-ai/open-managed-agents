@@ -118,7 +118,7 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 
 五个挂载统一使用 `vfs_cache_mode=full` 和 `vfs_cache_max_size=1G`。前四个保留 `uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`；`/skills` 使用 `uid=0`、`gid=0`、目录权限 `0555` 和文件权限 `0444`，以匹配 Claude Code 的 root discovery 路径。`/outputs` 使用读写 Token，其余四个 source 共享只读 Token；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
 
-Runner 在启动 rclone 前执行固定 mount preparation：确保 `/root/.claude` 存在；如果 `/root/.claude/skills` 是旧版遗留软链则删除该软链；随后确保目标是目录。它不会创建新的 skill 软链，也不会复制或解压 archive。若该路径被普通文件占用，准备阶段失败并进入统一 Sandbox 清理。
+Runner 不执行独立的 mount preparation；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 
 Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-mount-config.json` 权限设置为 `0600`。文件写入完成后才直接执行固定镜像命令，不使用 stdin bootstrap、临时文件或 shell trap：
 

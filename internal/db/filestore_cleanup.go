@@ -180,11 +180,10 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
 	releasedBytesByWorkspace := make(map[int64]int64)
 	for _, entry := range entries {
-		// Managed entries are controlled by their owning resource contract.
-		// The current schema forbids expiry on Session File references; retain
-		// the broader guard so future managed entry types cannot be retired by
-		// the ordinary Filestore TTL path.
-		if filestoreEntryIsManaged(entry) {
+		// Borrowed Files API objects are not owned or accounted for by
+		// Filestore. The current schema forbids expiry on those references; the
+		// guard keeps cleanup safe if malformed historical data is encountered.
+		if filestoreEntryBorrowsSourceObject(entry) {
 			continue
 		}
 		scope, found := cleanupScopeByFilesystemUUID[entry.FilesystemUUID]
@@ -704,7 +703,7 @@ type filestoreEntryCleanupScope struct {
 
 func enqueueFilestoreEntryCleanupJobPGX(ctx context.Context, tx pgx.Tx, scope filestoreEntryCleanupScope, entry FilestoreEntry, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
 	if entry.Kind != FilestoreEntryKindFile || entry.S3Bucket == nil ||
-		entry.S3Key == nil || filestoreEntryIsManaged(entry) {
+		entry.S3Key == nil || filestoreEntryBorrowsSourceObject(entry) {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
 	}
 	return enqueueFilestoreObjectCleanupJobPGX(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
@@ -741,6 +740,21 @@ func enqueueFilestoreEntryCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope f
 	})
 }
 
+func enqueueOwnedFilestoreEntryCleanupJobTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	scope filestoreEntryCleanupScope,
+	entry FilestoreEntry,
+	reason string,
+	runAfter time.Time,
+) (FilestoreObjectCleanupJob, bool, error) {
+	if filestoreEntryBorrowsSourceObject(entry) {
+		return FilestoreObjectCleanupJob{}, false, nil
+	}
+	job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, reason, runAfter)
+	return job, err == nil, err
+}
+
 func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scope filestoreEntryCleanupScope, filesystem FilestoreFilesystem, rootPath string, runAfter time.Time) ([]FilestoreObjectCleanupJob, int64, error) {
 	// rootPath 本身是目录，文件只可能出现在严格后代中；分隔符比较避免同前缀误选。
 	var rows []filestoreEntryRow
@@ -763,12 +777,14 @@ func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scop
 	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
 	var removedBytes int64
 	for _, entry := range entries {
-		job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, "remove_directory", runAfter)
+		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, "remove_directory", runAfter)
 		if err != nil {
 			return nil, 0, err
 		}
-		jobs = append(jobs, job)
-		removedBytes, err = addWorkspaceStorageDelta(removedBytes, filestoreInt64(entry.SizeBytes))
+		if enqueued {
+			jobs = append(jobs, job)
+		}
+		removedBytes, err = addWorkspaceStorageDelta(removedBytes, filestoreEntryOwnedBytes(entry))
 		if err != nil {
 			return nil, 0, err
 		}
@@ -807,12 +823,14 @@ func retireExpiredFilestoreSubtreeTx(
 	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
 	var retiredBytes int64
 	for _, entry := range entries {
-		job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, "expired_destination_replaced", retiredAt)
+		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, "expired_destination_replaced", retiredAt)
 		if err != nil {
 			return nil, 0, err
 		}
-		jobs = append(jobs, job)
-		retiredBytes, err = addWorkspaceStorageDelta(retiredBytes, filestoreInt64(entry.SizeBytes))
+		if enqueued {
+			jobs = append(jobs, job)
+		}
+		retiredBytes, err = addWorkspaceStorageDelta(retiredBytes, filestoreEntryOwnedBytes(entry))
 		if err != nil {
 			return nil, 0, err
 		}

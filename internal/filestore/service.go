@@ -269,8 +269,8 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if source.Kind != db.FilestoreEntryKindFile || source.S3Key == nil {
 		return fileResponse{}, failedPrecondition("source is not a file")
 	}
-	if source.SourceFileUUID != nil || source.ManagedBy != nil || source.ManagedResourceUUID != nil {
-		return fileResponse{}, failedPrecondition("managed files cannot be copied")
+	if source.SourceFileUUID != nil {
+		return fileResponse{}, failedPrecondition("borrowed file references cannot be copied")
 	}
 	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr

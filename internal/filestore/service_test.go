@@ -738,7 +738,7 @@ func TestServiceCopyFilePreservesMetadataAndUsesCopiedObjectIdentity(t *testing.
 	}
 }
 
-func TestServiceCopyFileRejectsManagedSourceBeforeObjectCopy(t *testing.T) {
+func TestServiceCopyFileRejectsBorrowedSourceBeforeObjectCopy(t *testing.T) {
 	t.Parallel()
 
 	filesystem := serviceTestFilesystem()

@@ -168,11 +168,13 @@ Session 创建、后续添加 resource 和 Deployment 创建/更新共用同一�
 
 ### File resource 数据库引用
 
-File resource 写入时，服务在当前 workspace 中解析并锁定活动 Files API 记录，然后在 Session filesystem 中插入一条借用对象的 file entry。entry 路径固定为 `source + mount_path`；例如 `source=/uploads`、`mount_path=/workspace/data.csv` 生成 `/uploads/workspace/data.csv`。entry 保存源 File 的稳定 UUID、大小、media type、SHA-256、bucket 和 object key，并以内部 `managed_by` 与 `managed_resource_uuid` 绑定创建它的 Session resource。Filestore HTTP metadata 不能伪造这些内部字段。
+File resource 写入时，服务在当前 workspace 中解析并锁定活动 Files API 记录，然后在 Session filesystem 中插入一条借用对象的 file entry。entry 的初始路径是 `source + mount_path`；例如 `source=/uploads`、`mount_path=/workspace/data.csv` 生成 `/uploads/workspace/data.csv`。entry 保存源 File 的稳定 UUID、大小、media type、SHA-256、bucket 和 object key，并以内部 `managed_by` 与 `managed_resource_uuid` 绑定创建它的 Session resource。Filestore HTTP metadata 不能伪造这些内部字段。
 
 这个 entry 只增加数据库中的 namespace 引用，不复制 S3 对象，也不创建新的 blob key。源对象仍由 Files API 拥有并只计入 `files_bytes`；借用 entry 不计入 `filestore_bytes`，workspace 总存储因此只计算一次。工作区用量重算也必须排除带源 File 引用的 entry。
 
-删除 File resource 时，同一事务只软删除 resource 与它拥有的精确 entry，不递归清空 `/uploads`，也不修剪数据库维护的父目录；普通 Filestore 覆盖、移动、删除和递归删除不能接管或清理这种受管理引用。删除 Session/filesystem 时可以退休引用 row，但不能为共享的 Files 对象创建 object cleanup job，也不能扣减未曾计入的 Filestore 用量。只要活动 Session filesystem 仍有引用，Files API 就拒绝删除源 File；源 File 删除与 resource 新增分别持有冲突的行锁，避免并发删除后留下悬空对象。
+`filestore_entries` 是当前 filesystem 逻辑视图的事实来源，File resource payload 中的 `mount_path` 只记录创建引用时的初始位置。普通 Filestore 移动可以修改借用 entry 或其祖先目录的路径，ownership UUID 会随 entry 保留；删除 File resource 时按 `managed_resource_uuid` 查找当前活动 entry，因此能够删除已经改名的引用。普通 Filestore 删除或递归删除只软删除借用 entry，覆盖则把该路径转换为新写入的 Filestore 自有 entry；如果引用已经被删除或覆盖，后续删除 resource 对 namespace 是幂等空操作。服务端 Copy 暂不把借用引用隐式转换成 Filestore 自有对象，因为借用 entry 可以缺少自有对象合同要求的 MD5。
+
+删除、覆盖或递归删除借用 entry 都不会为共享 Files 对象创建 object cleanup job，也不会扣减未曾计入的 Filestore 用量；混合子树会逐个区分对象所有权，只为 Filestore 自有对象生成清理任务和释放 `filestore_bytes`。只要任意活动 Session filesystem 仍有借用 entry，Files API 就拒绝删除源 File；从逻辑视图删除最后一个引用后，即使原 Session resource 声明仍存在，源 File 也不再被该声明单独锁定。源 File 删除与 resource 新增分别持有冲突的行锁，避免并发绑定后留下悬空对象。
 
 Environment Manager 不再接收 `type=file` resource。它只在 rclone ready 后看到已经完成的 `/uploads` 文件系统视图；File 的下载、路径投影或内容刷新均不属于 Environment Manager 职责。
 
@@ -325,7 +327,7 @@ sequenceDiagram
 
 进入 entry 写事务后，service 不根据返回的 `COMMIT` error 立即删除对象：网络型错误可能使提交结果未知。事务若实际成功，guard 已与 entry 在同一事务内取消；若没有提交，pending guard 会在延迟窗口后清理对象。只有在尚未进入该事务且能确定没有 entry 引用时（例如 upload/copy 返回错误、超出单文件上限或 guard version 绑定失败），才执行 best-effort 立即删除。对象存储返回错误时提交结果仍可能不确定，因此在 VersionID 未知时通过 `DeleteOptions.AllVersions` 清理该次写入独占的唯一 key；立即删除失败则保留 guard 供 worker 重试。
 
-普通自有对象的覆盖、删除、递归删除和 TTL 过期在同一个数据库事务中软删除/替换 entry、更新用量账本，并写入 `filestore_object_cleanup` job。借用 Files 对象的 entry 不进入这条对象清理路径，只能由对应 resource 或 filesystem 生命周期退休数据库引用。独立 worker 复用应用级 `storage.Client`，按每条 job 持久化的 bucket 派生对象存储，再使用 AWS v2 按 key 和 VersionID 幂等删除；因此同一 endpoint、region 与凭证范围内的多个 bucket 可由同一 worker 清理。provider not-found 视为成功，bucket 解析或对象删除失败使用有界重试。完成/失败状态转换同时校验唯一 worker lease token 与未过期租约，过期 worker 不能改写被重新领取的 job。worker 在领取后崩溃或失联时，过期租约会累计独立的连续未确认次数；达到上限后任务进入 `failed`，而正常完成一批 filesystem 清理或显式记录一次业务失败都会清零该计数，因此合法的多批处理不受租约崩溃上限影响。
+普通自有对象的覆盖、删除、递归删除和 TTL 过期在同一个数据库事务中软删除/替换 entry、更新用量账本，并写入 `filestore_object_cleanup` job。借用 Files 对象的 entry 可以通过相同的逻辑视图操作移动、覆盖或退休，但不进入对象清理和 Filestore 用量释放路径。独立 worker 复用应用级 `storage.Client`，按每条 job 持久化的 bucket 派生对象存储，再使用 AWS v2 按 key 和 VersionID 幂等删除；因此同一 endpoint、region 与凭证范围内的多个 bucket 可由同一 worker 清理。provider not-found 视为成功，bucket 解析或对象删除失败使用有界重试。完成/失败状态转换同时校验唯一 worker lease token 与未过期租约，过期 worker 不能改写被重新领取的 job。worker 在领取后崩溃或失联时，过期租约会累计独立的连续未确认次数；达到上限后任务进入 `failed`，而正常完成一批 filesystem 清理或显式记录一次业务失败都会清零该计数，因此合法的多批处理不受租约崩溃上限影响。
 
 删除 Session 时，同一短事务只软删除 filesystem 并投递一个 `filestore_filesystem_cleanup` 父任务，不遍历全部 entry，也不调用 S3。worker 每次最多退休 100 个文件 entry：Filestore 自有对象生成精确版本的 `filestore_object_cleanup` 子任务并扣减容量，借用 Files 对象的 entry 只退休数据库 row；仍有文件时父任务重新入队，文件全部退休后再批量软删除目录并完成父任务。对象删除由既有对象清理 worker 独立重试，因此 Session 删除延迟不随文件数量或对象存储响应时间增长。
 
@@ -350,4 +352,4 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 
 ## 验收
 
-自动化覆盖协议编解码、10 条路由、JWT 路由隔离、Session 自动建档与四根目录回滚、File resource 与借用 entry 的原子增删、99 个 File resource 后并发添加两个只成功一个、资源路径冲突与普通 namespace 占用的 `400`/`409` 分流、源 File 删除并发守卫、Session 生命周期撤权、service 编排、AWS v2 请求、DB 不变量、清理重试和 TTL；用量账本另行覆盖共享限额并发、借用对象不重复计费、事务回滚、覆盖差值、覆盖式移动、递归删除与 TTL 释放。真实验收使用本地 PostgreSQL/MinIO 启动服务，再从 OrbStack 虚拟机运行 `/home/arthur/rclone-filestore`，验证目录创建、上传、列表、范围/完整读取、复制、移动、删除和 multimount 生命周期；E2B 验收另确认 Files API resource 形成的 `/uploads` 引用可以读取且不会生成第二份对象。
+自动化覆盖协议编解码、10 条路由、JWT 路由隔离、Session 自动建档与四根目录回滚、File resource 与借用 entry 的原子增删、借用引用随目录移动、混合所有权子树删除、借用路径覆盖后的容量核算、99 个 File resource 后并发添加两个只成功一个、资源路径冲突与普通 namespace 占用的 `400`/`409` 分流、源 File 删除并发守卫、Session 生命周期撤权、service 编排、AWS v2 请求、DB 不变量、清理重试和 TTL；用量账本另行覆盖共享限额并发、借用对象不重复计费、事务回滚、覆盖差值、覆盖式移动、递归删除与 TTL 释放。真实验收使用本地 PostgreSQL/MinIO 启动服务，再从 OrbStack 虚拟机运行 `/home/arthur/rclone-filestore`，验证目录创建、上传、列表、范围/完整读取、复制、移动、删除和 multimount 生命周期；E2B 验收另确认 Files API resource 形成的 `/uploads` 引用可以读取且不会生成第二份对象。

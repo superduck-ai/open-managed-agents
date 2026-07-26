@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -405,10 +406,19 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 	env := createEnvironment(t, app, `{"name":"session-file-reference-lifecycle-env"}`)
 	defer cleanupEnvironmentRows(t, app.db, env.ID)
 	file := uploadFile(t, app, "protected.txt", "text/plain", []byte("shared object"))
+	beforeSessionStorageBytes := defaultWorkspaceStorageBytes(t, app)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+
 		`,"environment_id":`+quoteJSON(env.ID)+
 		`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+
 		`,"mount_path":"/workspace/protected.txt"}]}`)
+	afterSessionStorageBytes := defaultWorkspaceStorageBytes(t, app)
+	if afterSessionStorageBytes != beforeSessionStorageBytes {
+		t.Fatalf(
+			"storage after borrowed reference bind = %d, want unchanged %d",
+			afterSessionStorageBytes,
+			beforeSessionStorageBytes,
+		)
+	}
 	sessionDeleted := false
 	fileDeleted := false
 	defer func() {
@@ -550,6 +560,229 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 
 	deleteSession(t, app, session.ID)
 	sessionDeleted = true
+}
+
+func TestSessionFileReferenceUsesMutableFilestoreView(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-file-logical-view-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-logical-view-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"session-file-logical-view-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	file := uploadFile(t, app, "logical-view.txt", "text/plain", []byte("shared object"))
+	defer deleteFile(t, app, file.ID)
+
+	createReference := func(t *testing.T, mountPath string) (sessionAPIResponse, db.Session, db.FilestoreFilesystem) {
+		t.Helper()
+		beforeStorageBytes := defaultWorkspaceStorageBytes(t, app)
+		session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+
+			`,"environment_id":`+quoteJSON(env.ID)+
+			`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+
+			`,"mount_path":`+quoteJSON(mountPath)+`}]}`)
+		afterStorageBytes := defaultWorkspaceStorageBytes(t, app)
+		if afterStorageBytes != beforeStorageBytes {
+			t.Fatalf(
+				"storage after borrowed reference bind = %d, want unchanged %d",
+				afterStorageBytes,
+				beforeStorageBytes,
+			)
+		}
+		record := mustSessionRecord(t, app, session.ID)
+		filesystem, err := app.db.GetFilestoreFilesystemBySession(
+			context.Background(),
+			record.WorkspaceID,
+			record.ExternalID,
+		)
+		if err != nil {
+			t.Fatalf("load Session filesystem: %v", err)
+		}
+		return session, record, filesystem
+	}
+
+	t.Run("move directory preserves borrowed reference identity", func(t *testing.T) {
+		session, record, filesystem := createReference(t, "/move/input.txt")
+		defer deleteSession(t, app, session.ID)
+		resourceID := assertSessionFileReference(
+			t,
+			app,
+			session.ID,
+			session.Resources[0],
+			file.ID,
+			"/uploads/move/input.txt",
+		)
+
+		moved, err := app.db.MoveFilestoreDirectory(context.Background(), db.MoveFilestoreDirectoryInput{
+			WorkspaceID:     record.WorkspaceID,
+			FilesystemID:    filesystem.ID,
+			SourcePath:      "/uploads/move",
+			DestinationPath: "/uploads/moved",
+		})
+		if err != nil {
+			t.Fatalf("move directory containing borrowed reference: %v", err)
+		}
+		if len(moved.CleanupJobs) != 0 {
+			t.Fatalf("move directory cleanup jobs = %d, want 0", len(moved.CleanupJobs))
+		}
+		entry, err := app.db.GetFilestoreEntry(
+			context.Background(),
+			record.WorkspaceID,
+			filesystem.ID,
+			"/uploads/moved/input.txt",
+		)
+		if err != nil {
+			t.Fatalf("load moved borrowed reference: %v", err)
+		}
+		if entry.SourceFileUUID == nil || entry.ManagedResourceUUID == nil {
+			t.Fatalf("moved entry lost reference identity: %+v", entry)
+		}
+
+		deleted := doSessionRequest(
+			t,
+			app,
+			http.MethodDelete,
+			"/v1/sessions/"+session.ID+"/resources/"+resourceID+"?beta=true",
+			nil,
+			defaultTestKey,
+			true,
+		)
+		defer deleted.Body.Close()
+		if deleted.StatusCode != http.StatusOK {
+			t.Fatalf("delete moved file resource status = %d: %s", deleted.StatusCode, readAll(t, deleted.Body))
+		}
+		if _, err := app.db.GetFilestoreEntry(
+			context.Background(),
+			record.WorkspaceID,
+			filesystem.ID,
+			"/uploads/moved/input.txt",
+		); !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("moved reference after resource delete error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("move and remove borrowed file only change logical view", func(t *testing.T) {
+		session, record, filesystem := createReference(t, "/file-move/input.txt")
+		defer deleteSession(t, app, session.ID)
+		beforeBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+		if err != nil {
+			t.Fatalf("load storage before borrowed file move: %v", err)
+		}
+
+		moved, err := app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
+			WorkspaceID:     record.WorkspaceID,
+			FilesystemID:    filesystem.ID,
+			SourcePath:      "/uploads/file-move/input.txt",
+			DestinationPath: "/uploads/file-move/renamed.txt",
+		})
+		if err != nil {
+			t.Fatalf("move borrowed file: %v", err)
+		}
+		if len(moved.CleanupJobs) != 0 {
+			t.Fatalf("borrowed file move cleanup jobs = %d, want 0", len(moved.CleanupJobs))
+		}
+		if moved.Entry.SourceFileUUID == nil || moved.Entry.ManagedResourceUUID == nil {
+			t.Fatalf("moved file lost reference identity: %+v", moved.Entry)
+		}
+
+		removed, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveFilestoreEntryInput{
+			WorkspaceID:  record.WorkspaceID,
+			FilesystemID: filesystem.ID,
+			Path:         "/uploads/file-move/renamed.txt",
+		})
+		if err != nil {
+			t.Fatalf("remove borrowed file: %v", err)
+		}
+		if len(removed.CleanupJobs) != 0 {
+			t.Fatalf("borrowed file remove cleanup jobs = %d, want 0", len(removed.CleanupJobs))
+		}
+		afterBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+		if err != nil {
+			t.Fatalf("load storage after borrowed file remove: %v", err)
+		}
+		if afterBytes != beforeBytes {
+			t.Fatalf("storage after borrowed file move/remove = %d, want %d", afterBytes, beforeBytes)
+		}
+		if _, err := app.db.GetFile(context.Background(), record.WorkspaceID, file.ID); err != nil {
+			t.Fatalf("borrowed view move/remove changed source File: %v", err)
+		}
+	})
+
+	t.Run("recursive delete cleans owned objects but only unlinks borrowed objects", func(t *testing.T) {
+		session, record, filesystem := createReference(t, "/bundle/input.txt")
+		defer deleteSession(t, app, session.ID)
+		ownedBlob := workspaceStorageBlob(7, nil)
+		if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+			WorkspaceID:  record.WorkspaceID,
+			FilesystemID: filesystem.ID,
+			Path:         "/uploads/bundle/generated.txt",
+			Blob:         ownedBlob,
+		}); err != nil {
+			t.Fatalf("create owned file beside borrowed reference: %v", err)
+		}
+		beforeBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+		if err != nil {
+			t.Fatalf("load storage before recursive delete: %v", err)
+		}
+
+		removed, err := app.db.RemoveFilestoreDirectory(context.Background(), db.RemoveFilestoreDirectoryInput{
+			WorkspaceID:  record.WorkspaceID,
+			FilesystemID: filesystem.ID,
+			Path:         "/uploads/bundle",
+			Recursive:    true,
+		})
+		if err != nil {
+			t.Fatalf("remove directory containing mixed ownership: %v", err)
+		}
+		if len(removed.CleanupJobs) != 1 || removed.CleanupJobs[0].Key != ownedBlob.S3Key {
+			t.Fatalf("recursive delete cleanup jobs = %+v, want only owned object %q", removed.CleanupJobs, ownedBlob.S3Key)
+		}
+		afterBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+		if err != nil {
+			t.Fatalf("load storage after recursive delete: %v", err)
+		}
+		if afterBytes != beforeBytes-ownedBlob.SizeBytes {
+			t.Fatalf("storage after recursive delete = %d, want %d", afterBytes, beforeBytes-ownedBlob.SizeBytes)
+		}
+		if _, err := app.db.GetFile(context.Background(), record.WorkspaceID, file.ID); err != nil {
+			t.Fatalf("recursive view delete changed source File: %v", err)
+		}
+	})
+
+	t.Run("overwrite borrowed reference accounts only for replacement object", func(t *testing.T) {
+		session, record, filesystem := createReference(t, "/replace/input.txt")
+		defer deleteSession(t, app, session.ID)
+		beforeBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+		if err != nil {
+			t.Fatalf("load storage before overwrite: %v", err)
+		}
+		replacement := workspaceStorageBlob(9, nil)
+		replaced, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+			WorkspaceID:       record.WorkspaceID,
+			FilesystemID:      filesystem.ID,
+			Path:              "/uploads/replace/input.txt",
+			Blob:              replacement,
+			OverwriteExisting: true,
+		})
+		if err != nil {
+			t.Fatalf("overwrite borrowed reference: %v", err)
+		}
+		if len(replaced.CleanupJobs) != 0 {
+			t.Fatalf("borrowed overwrite cleanup jobs = %+v, want none", replaced.CleanupJobs)
+		}
+		if replaced.Entry.SourceFileUUID != nil || replaced.Entry.ManagedResourceUUID != nil {
+			t.Fatalf("replacement retained borrowed ownership: %+v", replaced.Entry)
+		}
+		afterBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+		if err != nil {
+			t.Fatalf("load storage after overwrite: %v", err)
+		}
+		if afterBytes != beforeBytes+replacement.SizeBytes {
+			t.Fatalf("storage after overwrite = %d, want %d", afterBytes, beforeBytes+replacement.SizeBytes)
+		}
+		if _, err := app.db.GetFile(context.Background(), record.WorkspaceID, file.ID); err != nil {
+			t.Fatalf("overwrite changed source File: %v", err)
+		}
+	})
 }
 
 func TestSessionFileResourceBindSerializesWithSourceDelete(t *testing.T) {
@@ -993,16 +1226,18 @@ func assertSessionFileReference(
 		*entry.S3Key != file.S3Key {
 		t.Fatalf("Session file reference = %#v, source File = %#v", entry, file)
 	}
-	var filestoreBytes int64
-	if err := app.db.Pool.QueryRow(context.Background(), `
-		select coalesce(filestore_bytes, 0)
-		from workspace_storage_usage
-		where workspace_id = $1
-	`, session.WorkspaceID).Scan(&filestoreBytes); err != nil {
-		t.Fatalf("load Filestore storage usage: %v", err)
-	}
-	if filestoreBytes != 0 {
-		t.Fatalf("Filestore storage bytes = %d, borrowed references must count as zero", filestoreBytes)
-	}
 	return payload.ID
+}
+
+func defaultWorkspaceStorageBytes(t *testing.T, app *testApp) int64 {
+	t.Helper()
+	apiKey, err := app.db.GetAPIKey(context.Background(), auth.HashAPIKey(defaultTestKey))
+	if err != nil {
+		t.Fatalf("load default API key: %v", err)
+	}
+	storageBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), apiKey.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load default workspace storage usage: %v", err)
+	}
+	return storageBytes
 }

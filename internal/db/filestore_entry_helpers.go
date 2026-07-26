@@ -110,52 +110,19 @@ func getActiveFilestoreEntryForMutation(ctx context.Context, tx *sqlx.Tx, filesy
 	`, filestoreEntryMutationArguments(filesystem, entryPath))
 }
 
-// filestoreEntryIsManaged reports whether an entry is controlled by a
-// higher-level resource contract and therefore must not be changed through the
-// ordinary Filestore mutation API.
-func filestoreEntryIsManaged(entry FilestoreEntry) bool {
-	return entry.ManagedBy != nil ||
-		entry.ManagedResourceUUID != nil ||
-		entry.SourceFileUUID != nil
-}
-
 // filestoreEntryBorrowsSourceObject reports whether the entry references an
-// object owned and accounted for by the Files API. Managed entries that own
-// their own object must still be eligible for ordinary object cleanup.
+// object owned and accounted for by the Files API. The entry remains a mutable
+// node in the Filestore logical view, but deleting or replacing it must not
+// delete or decrement usage for the borrowed object.
 func filestoreEntryBorrowsSourceObject(entry FilestoreEntry) bool {
 	return entry.SourceFileUUID != nil
 }
 
-func filestoreSubtreeContainsManagedEntryTx(
-	ctx context.Context,
-	tx *sqlx.Tx,
-	filesystem FilestoreFilesystem,
-	rootPath string,
-) (bool, error) {
-	var containsManagedEntry bool
-	err := namedGetContext(ctx, tx, &containsManagedEntry, `
-		select exists (
-			select 1
-			from filestore_entries
-			where workspace_uuid = :workspace_uuid
-				and filesystem_uuid = :filesystem_uuid
-				and deleted_at is null
-				and (
-					path = :root_path
-					or left(path, char_length(:root_path) + 1) = :root_path || '/'
-				)
-				and (
-					managed_by is not null
-					or managed_resource_uuid is not null
-					or source_file_uuid is not null
-				)
-		)
-	`, map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
-		"root_path":       rootPath,
-	})
-	return containsManagedEntry, err
+func filestoreEntryOwnedBytes(entry FilestoreEntry) int64 {
+	if filestoreEntryBorrowsSourceObject(entry) {
+		return 0
+	}
+	return filestoreInt64(entry.SizeBytes)
 }
 
 func filestoreEntryMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
@@ -235,7 +202,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		if !filestoreEntryExpired(existing, now) {
 			return FilestoreEntry{}, ErrFilestorePathExists
 		}
-		if _, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
+		if _, _, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
 			WorkspaceID: workspaceID, FilesystemID: filesystem.ID,
 		}, existing, "expired_path_replaced", now); err != nil {
 			return FilestoreEntry{}, err
@@ -272,10 +239,12 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		if err != nil {
 			return FilestoreEntry{}, err
 		}
-		if err := applyWorkspaceStorageDeltaSQLXTx(
-			ctx, tx, workspaceID, 0, -filestoreInt64(existing.SizeBytes), 0,
-		); err != nil {
-			return FilestoreEntry{}, err
+		if releasedBytes := filestoreEntryOwnedBytes(existing); releasedBytes > 0 {
+			if err := applyWorkspaceStorageDeltaSQLXTx(
+				ctx, tx, workspaceID, 0, -releasedBytes, 0,
+			); err != nil {
+				return FilestoreEntry{}, err
+			}
 		}
 		return directory, nil
 	}
@@ -333,14 +302,11 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	var oldSize int64
 	if found && existing.Kind == FilestoreEntryKindFile {
 		// 账本在 TTL 清理提交前仍统计到期文件；复用路径时必须以完整旧大小计算增量。
-		oldSize = filestoreInt64(existing.SizeBytes)
+		oldSize = filestoreEntryOwnedBytes(existing)
 	}
 	if found && !filestoreEntryExpired(existing, quotaNow) {
 		if existing.Kind != FilestoreEntryKindFile {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
-		}
-		if filestoreEntryIsManaged(existing) {
-			return FilestoreMutationResult{}, ErrPreconditionFailed
 		}
 		if !input.OverwriteExisting {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
@@ -355,13 +321,15 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 
 	var cleanupJobs []FilestoreObjectCleanupJob
 	if found && existing.Kind == FilestoreEntryKindFile && !sameFilestoreObject(existing, input.Blob) {
-		job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
+		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
 			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 		}, existing, "file_replaced", input.Now)
 		if err != nil {
 			return FilestoreMutationResult{}, err
 		}
-		cleanupJobs = append(cleanupJobs, job)
+		if enqueued {
+			cleanupJobs = append(cleanupJobs, job)
+		}
 	}
 	entry, err := writeFilestoreFileTx(ctx, tx, filesystem, existing, found, input)
 	if err != nil {

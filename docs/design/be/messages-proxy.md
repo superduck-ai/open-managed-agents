@@ -55,7 +55,7 @@ code-session 请求来自受信任的沙箱调用方，handler 不解析或校�
 
 OAuth-compatible token 没有 11 分钟或 8 小时墙钟上限，但每次 `/v1/messages` 鉴权仍复核 active code session、未 terminated 的 public session 和 worker lease。managed-agent 启动时签发的 session-ingress JWT 也不写入独立 `exp`，当前仅验证密码学身份与请求路径，不因 session 终止或 lease 到期而自动撤销；后续如需撤销语义，应单独引入明确的 token version、denylist 或状态复核策略。
 
-进程启动时只创建一份 `SessionCredentials`，并显式注入 API server、environment runner 和 code-session service。这些组件的构造器不自行读取密钥或生成临时签名器；密钥配置错误由启动组合根处理，避免构造组件时发生隐式 panic，也保证签发端与验签端始终使用同一套密钥。
+进程启动时只创建一份 `SessionCredentials`。启动组合根把它注入 API server，并用它构造 environment runner 所需的 code-session service；Runner 通过 `RunnerDependencies` 接收这个最终 service，不自行读取密钥或生成临时签名器。密钥配置错误和 Runner 缺少依赖都会在 worker 启动前返回错误，保证签发端与验签端使用同一套密钥。
 
 ## 启动与调用流程
 

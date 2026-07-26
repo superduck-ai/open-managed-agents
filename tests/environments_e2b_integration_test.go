@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 
 	"github.com/google/uuid"
 	e2b "github.com/superduck-ai/e2b-go-sdk"
@@ -61,6 +62,15 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		t.Fatalf("seed database: %v", err)
 	}
+	credentials, err := codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		t.Fatalf("create code session credentials: %v", err)
+	}
+	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
+	if err != nil {
+		t.Fatalf("create filestore credentials: %v", err)
+	}
+	objectStore := newFakeStore("e2b-integration-fake")
 
 	apiKey, err := database.GetAPIKey(ctx, auth.HashAPIKey(config.DefaultAPIKey))
 	if err != nil {
@@ -123,7 +133,17 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	}
 
 	provider := e2bruntime.NewProvider(cfg.E2B)
-	runner := environments.NewRunner(database, provider)
+	runner, err := environments.NewRunner(environments.RunnerDependencies{
+		DB:              database,
+		Provider:        provider,
+		Config:          cfg,
+		CodeSessions:    codesessions.NewServiceWithCredentials(database, credentials),
+		Skills:          skillsapi.NewRuntimeResolver(cfg, database, objectStore),
+		FilestoreTokens: filestoreCredentials,
+	})
+	if err != nil {
+		t.Fatalf("create environment runner: %v", err)
+	}
 	processed, err := runner.RunOnce(ctx, "e2b-integration-test")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)
@@ -176,18 +196,10 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		t.Fatalf("sandbox command stdout = %q, want sandbox-ok; stderr=%q", got, result.Stderr)
 	}
 
-	credentials, err := codesessions.NewSessionCredentials(cfg)
-	if err != nil {
-		t.Fatalf("create code session credentials: %v", err)
-	}
-	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
-	if err != nil {
-		t.Fatalf("create filestore credentials: %v", err)
-	}
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{
 		Config:                 cfg,
 		DB:                     database,
-		ObjectStore:            newFakeStore("e2b-integration-fake"),
+		ObjectStore:            objectStore,
 		CodeSessionCredentials: credentials,
 		FilestoreCredentials:   filestoreCredentials,
 	}))

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
@@ -165,7 +166,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 			}
 		},
 	}
-	runner := newManagedAgentRunner(app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -343,7 +344,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 		failOperation:     "rclone-ready",
 		runCommandFailure: errors.New("simulated rclone ready failure: " + providerSecretMarker),
 	}
-	runner := newManagedAgentRunner(app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
 	processed, err := runner.RunOnce(ctx, "runner-rclone-failure-test")
 	if err == nil || err.Error() != "rclone-filestore readiness check failed" {
 		t.Fatalf("RunOnce error = %v, want rclone ready failure", err)
@@ -428,7 +429,7 @@ func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) 
 		failOperation:     "environment-manager",
 		runCommandFailure: errors.New("simulated environment-manager launch failure"),
 	}
-	runner := newManagedAgentRunner(app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
 	processed, err := runner.RunOnce(ctx, "runner-manager-failure-test")
 	if err == nil || err.Error() != "environment manager process start failed" {
 		t.Fatalf("RunOnce error = %v, want manager launch failure", err)
@@ -512,7 +513,7 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-skills"}
-	runner := newManagedAgentRunner(app, provider, cfg, store)
+	runner := newManagedAgentRunner(t, app, provider, cfg, store)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-skills-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -614,7 +615,7 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-should-not-start"}
-	runner := newManagedAgentRunner(app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-no-resolver-test")
 	if err == nil || !strings.Contains(err.Error(), "custom skill resolver is unavailable") {
 		t.Fatalf("RunOnce error = %v, want custom resolver error", err)
@@ -673,7 +674,7 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-network-order"}
-	runner := newManagedAgentRunner(app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-network-order-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -764,7 +765,7 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			}
 
 			provider := &recordingRunnerProvider{sandboxID: "sandbox-empty-mcp"}
-			runner := newManagedAgentRunner(app, provider, cfg, nil)
+			runner := newManagedAgentRunner(t, app, provider, cfg, nil)
 			processed, err := runner.RunOnce(ctx, "runner-cloud-empty-mcp-test")
 			if err != nil || !processed {
 				t.Fatalf("RunOnce() = processed %v, error %v", processed, err)
@@ -845,7 +846,7 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 		sandboxID:  "sandbox-should-not-start",
 		resolveErr: fmt.Errorf("network config invalid"),
 	}
-	runner := newManagedAgentRunner(app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-resolve-failure-test")
 	if err == nil || !strings.Contains(err.Error(), "network config invalid") {
 		t.Fatalf("RunOnce error = %v, want resolve error", err)
@@ -906,15 +907,26 @@ type recordedSkillMount struct {
 	runtimeSkills []skillsapi.RuntimeSkill
 }
 
-func newManagedAgentRunner(app *testApp, provider e2bruntime.Provider, cfg config.Config, skillStore storage.ObjectStore) *environments.Runner {
-	return environments.NewRunnerWithConfigStoreAndCredentials(
-		app.db,
-		provider,
-		cfg,
-		skillStore,
-		app.credentials,
-		app.filestoreCredentials,
-	)
+func newManagedAgentRunner(
+	t *testing.T,
+	app *testApp,
+	provider e2bruntime.Provider,
+	cfg config.Config,
+	skillStore storage.ObjectStore,
+) *environments.Runner {
+	t.Helper()
+	runner, err := environments.NewRunner(environments.RunnerDependencies{
+		DB:              app.db,
+		Provider:        provider,
+		Config:          cfg,
+		CodeSessions:    codesessions.NewServiceWithCredentials(app.db, app.credentials),
+		Skills:          skillsapi.NewRuntimeResolver(cfg, app.db, skillStore),
+		FilestoreTokens: app.filestoreCredentials,
+	})
+	if err != nil {
+		t.Fatalf("create environment runner: %v", err)
+	}
+	return runner
 }
 
 func (p *recordingRunnerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {

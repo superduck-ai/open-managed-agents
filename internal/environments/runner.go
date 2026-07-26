@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -18,7 +17,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
-	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/google/uuid"
 )
@@ -31,14 +29,46 @@ var (
 	errEnvironmentManagerStart = errors.New("environment manager process start failed")
 )
 
+// CodeSessionRuntime exposes the managed-agent Code Session operations needed
+// by Runner without coupling it to the concrete service implementation.
+type CodeSessionRuntime interface {
+	CreateManagedAgentCodeSession(context.Context, codesessions.ManagedAgentCreateInput) (codesessions.ManagedAgentCreateResult, error)
+	TerminateManagedAgentCodeSession(context.Context, db.Session, string) error
+}
+
+// RuntimeSkillResolver resolves the immutable agent snapshot into skills that
+// the sandbox provider can mount for this launch.
+type RuntimeSkillResolver interface {
+	ResolveAgentSnapshot(context.Context, int64, json.RawMessage) ([]skillsapi.RuntimeSkill, error)
+}
+
+// FilestoreTokenIssuer signs the read-write and read-only credentials used by
+// the sandbox's fixed rclone mounts.
+type FilestoreTokenIssuer interface {
+	Issue(filestore.TokenIdentity) (string, error)
+	IssueReadonly(filestore.TokenIdentity) (string, error)
+}
+
+// RunnerDependencies contains the complete set of collaborators required by a
+// Runner. NewRunner validates these once so runtime branches do not silently
+// disable Code Session, skill, or filestore behavior when a dependency is nil.
+type RunnerDependencies struct {
+	DB              *db.DB
+	Provider        e2bruntime.Provider
+	Config          config.Config
+	CodeSessions    CodeSessionRuntime
+	Skills          RuntimeSkillResolver
+	FilestoreTokens FilestoreTokenIssuer
+}
+
 type Runner struct {
 	db           *db.DB
 	provider     e2bruntime.Provider
 	cfg          config.Config
-	codeSessions *codesessions.Service
-	skills       *skillsapi.RuntimeResolver
+	codeSessions CodeSessionRuntime
+	skills       RuntimeSkillResolver
 
-	filestoreCredentials *filestore.TokenCredentials
+	filestoreTokens FilestoreTokenIssuer
 }
 
 type managedAgentLaunchPreparation struct {
@@ -56,62 +86,51 @@ type managedAgentRuntimeLaunch struct {
 	Manager         environmentManagerCommand
 }
 
-func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
-	return &Runner{db: database, provider: provider}
-}
-
-func NewRunnerWithConfigStoreAndCredentials(
-	database *db.DB,
-	provider e2bruntime.Provider,
-	cfg config.Config,
-	store storage.ObjectStore,
-	credentials *codesessions.SessionCredentials,
-	filestoreCredentials *filestore.TokenCredentials,
-) *Runner {
-	// 显式注入用于 main 和测试，确保不会在同一进程中意外创建第二套签名身份。
-	return &Runner{
-		db:           database,
-		provider:     provider,
-		cfg:          cfg,
-		codeSessions: codesessions.NewServiceWithCredentials(database, credentials),
-		skills:       skillsapi.NewRuntimeResolver(cfg, database, store),
-
-		filestoreCredentials: filestoreCredentials,
+// NewRunner constructs a fully usable environment Runner from final runtime
+// collaborators. It rejects incomplete dependency sets before workers start.
+func NewRunner(deps RunnerDependencies) (*Runner, error) {
+	switch {
+	case deps.DB == nil:
+		return nil, errors.New("environment runner database is required")
+	case deps.Provider == nil:
+		return nil, errors.New("environment runner sandbox provider is required")
+	case deps.CodeSessions == nil:
+		return nil, errors.New("environment runner code session runtime is required")
+	case deps.Skills == nil:
+		return nil, errors.New("environment runner skill resolver is required")
+	case deps.FilestoreTokens == nil:
+		return nil, errors.New("environment runner filestore token issuer is required")
 	}
+
+	return &Runner{
+		db:              deps.DB,
+		provider:        deps.Provider,
+		cfg:             deps.Config,
+		codeSessions:    deps.CodeSessions,
+		skills:          deps.Skills,
+		filestoreTokens: deps.FilestoreTokens,
+	}, nil
 }
 
-func StartRunnerWithStoreAndCredentials(
-	ctx context.Context,
-	database *db.DB,
-	store storage.ObjectStore,
-	cfg config.Config,
-	credentials *codesessions.SessionCredentials,
-	filestoreCredentials *filestore.TokenCredentials,
-) {
-	if !cfg.EnvironmentRunner.Enabled {
+// Start launches the configured number of background workers. It is a no-op
+// when the environment runner is disabled.
+func (r *Runner) Start(ctx context.Context) {
+	if !r.cfg.EnvironmentRunner.Enabled {
 		return
 	}
-	concurrency := cfg.EnvironmentRunner.Concurrency
+	concurrency := r.cfg.EnvironmentRunner.Concurrency
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	runner := NewRunnerWithConfigStoreAndCredentials(
-		database,
-		e2bruntime.NewProvider(cfg.E2B),
-		cfg,
-		store,
-		credentials,
-		filestoreCredentials,
-	)
 	for i := 0; i < concurrency; i++ {
 		workerID := fmt.Sprintf("environment-runner-%d", i+1)
-		go runner.loop(ctx, workerID)
+		go r.loop(ctx, workerID)
 	}
 }
 
 // loop 持续领取并处理排队中的 Environment Work，直到服务通过 ctx 通知它退出。
 //
-// StartRunnerWithStoreAndCredentials 会按配置的并发数为每个 worker 启动一个 loop。
+// Runner.Start 会按配置的并发数为每个 worker 启动一个 loop。
 // 每轮调用 RunOnce，最多处理一个 Work。RunOnce 返回 processed=true 只表示领到过
 // Work，不代表 Sandbox 一定启动成功；此时 loop 会立即检查下一项。没有可领取的 Work
 // 时，它等待最多 500ms 再检查，避免空闲时持续查询数据库。单次错误只写日志，不会让
@@ -358,7 +377,7 @@ func (r *Runner) prepareManagedAgentLaunch(
 	env db.Environment,
 	work *db.EnvironmentWork,
 ) (*managedAgentLaunchPreparation, error) {
-	if r == nil || work == nil || r.codeSessions == nil {
+	if r == nil || work == nil {
 		return nil, nil
 	}
 	sessionID, ok := sessionIDFromEnvironmentWork(*work)
@@ -580,7 +599,7 @@ func (r *Runner) waitForRcloneReady(
 // prepareManagedAgentNetworkMetadata 在 Provider Resolve 之前解析受开关约束的
 // Session MCP hosts，使 E2B 的创建时网络快照与 proxy 的策略语义一致。
 func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.Environment, work *db.EnvironmentWork) error {
-	if r == nil || work == nil || r.codeSessions == nil || !cloudEnvironment(env) {
+	if r == nil || work == nil || !cloudEnvironment(env) {
 		return nil
 	}
 	policyConfig, err := networkpolicy.ParseConfig(env.Config)
@@ -635,12 +654,6 @@ func (r *Runner) prepareRuntimeSkillMount(ctx context.Context, runtimeSkills []s
 }
 
 func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) ([]skillsapi.RuntimeSkill, error) {
-	if r == nil || r.skills == nil {
-		if agentsnapshot.SnapshotHasSkills(session.AgentSnapshot) {
-			return nil, fmt.Errorf("managed agent session %s has skills but runtime skill resolver is unavailable", session.ExternalID)
-		}
-		return nil, nil
-	}
 	return r.skills.ResolveAgentSnapshot(ctx, session.WorkspaceID, session.AgentSnapshot)
 }
 

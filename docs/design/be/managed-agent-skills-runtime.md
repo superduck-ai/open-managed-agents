@@ -114,7 +114,7 @@ worker complete/fail 状态推进必须校验当前 worker 仍持有 job lease�
 
 runtime resolver 返回的是 skill 元数据和懒加载 archive loader。`BuildMountManifest` 只能读取元数据，不允许触发 archive 下载；`PrepareSkillMount` 命中已有 `.ready` volume 时也必须直接返回，保持零对象存储 archive IO。只有 volume miss 写入阶段才调用 `RuntimeSkill.LoadArchive`，并再次校验 archive 大小、checksum、解压总大小和目录结构。写入阶段按 manifest 顺序逐个 load/write archive，避免多个大 zip 同时驻留在内存中。
 
-`NewRunnerWithConfig` 会创建 runtime resolver。built-in 与 custom skill 的元数据都来自 DB；两者的 archive 都需要对象存储。如果 managed agent session snapshot 包含任意 skill，而 runner 未配置 object store，runner 必须在 volume miss 的 archive load 阶段显式失败并停止该 work，不能继续创建缺失 `/mnt/skills` 的 sandbox。没有 skills 的 session 仍可通过旧 runner 构造入口正常启动。
+启动组合根创建 runtime resolver，并通过 `RunnerDependencies` 把它作为 Runner 的必需依赖注入；Runner 不再自行用配置和 object store 组装 resolver，也不存在缺少 resolver 的半初始化构造入口。built-in 与 custom skill 的元数据都来自 DB；两者的 archive 都需要对象存储。如果 managed agent session snapshot 包含任意 skill，而 resolver 未配置 object store，runner 必须在 volume miss 的 archive load 阶段显式失败并停止该 work，不能继续创建缺失 `/mnt/skills` 的 sandbox。没有 skills 的 session 不会读取 archive，因此仍可使用未绑定 object store 的 resolver。
 
 `RuntimeSkill.LoadArchive` 返回的字节归调用方只读使用；当前 runner/E2B 写入路径不会修改返回值，因此不再额外做 defensive copy。若以后新增会修改 archive bytes 的调用方，必须在该调用方本地复制，或把 loader contract 升级为显式独占所有权。
 

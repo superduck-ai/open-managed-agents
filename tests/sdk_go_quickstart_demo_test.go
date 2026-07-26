@@ -249,7 +249,7 @@ func quickstartRunRealSandbox(t *testing.T, ctx context.Context, app *testApp, e
 		}
 	}()
 
-	runner := newManagedAgentRunner(app, provider, app.cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, app.cfg, nil)
 	processed, err := runner.RunOnce(ctx, "quickstart-real-e2b")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)

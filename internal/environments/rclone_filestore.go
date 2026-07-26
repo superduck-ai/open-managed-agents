@@ -57,9 +57,6 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 	ctx context.Context,
 	session db.Session,
 ) (rcloneFilestoreLaunch, error) {
-	if r.filestoreCredentials == nil {
-		return rcloneFilestoreLaunch{}, errors.New("filestore signer is not configured for managed-agent sandbox")
-	}
 	serviceURL := codeSessionSandboxAPIBaseURL(r.cfg)
 	if serviceURL == "" {
 		return rcloneFilestoreLaunch{}, errors.New("code_session.sandbox_api_base_url is required for managed-agent filestore")
@@ -69,11 +66,11 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 		return rcloneFilestoreLaunch{}, fmt.Errorf("resolve managed-agent filestore identity: %w", err)
 	}
 	identity := filestoreTokenIdentityFromScope(scope)
-	readWriteToken, err := r.filestoreCredentials.Issue(identity)
+	readWriteToken, err := r.filestoreTokens.Issue(identity)
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("issue managed-agent filestore read-write token: %w", err)
 	}
-	readonlyToken, err := r.filestoreCredentials.IssueReadonly(identity)
+	readonlyToken, err := r.filestoreTokens.IssueReadonly(identity)
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("issue managed-agent filestore readonly token: %w", err)
 	}

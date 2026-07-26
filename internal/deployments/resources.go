@@ -24,6 +24,28 @@ type normalizedDeploymentResource struct {
 	fileSpec *sessionresource.FileSpec
 }
 
+// normalizeResources 将 Deployment 请求中的整组 resources 规范化，并把普通配置与秘密分开。
+//
+// 未传 resources 或值为 null 时，函数返回规范的空数组和空 secrets 对象。其他输入必须是
+// JSON 数组，且总资源数不能超过 500。它按原始顺序调用 normalizeResource 处理每一项，
+// 收集可公开保存的 payload、可选 secret 和 FileSpec；任意一项失败都会终止整组处理。
+//
+// secret 使用资源在原数组中的下标作为 key。这样普通 resources 中不会包含 GitHub
+// authorization_token，Deployment 运行时 sessionResourcesFromDeployment 仍可用相同下标
+// 将秘密匹配回对应的 Session resource。FileSpec 则在全部项目处理完成后统一校验，确保
+// File resource 不超过 100 个，且 mount_path 没有重复或祖先/后代冲突。
+//
+// 例如：
+//   - 输入一个 File 和一个带 Token 的 GitHub resource，resourcesRaw 保存规范化后的两条
+//     普通配置，secretsRaw 形如 {"1":{"authorization_token":"github-secret"}}。
+//   - 输入 null，返回 resourcesRaw=[]、secretsRaw={}，不会产生错误。
+//   - 两个 File 分别挂到 /workspace/data 和 /workspace/data/config.json，聚合路径校验失败，
+//     函数返回错误，不生成可保存的结果。
+//
+// 成功时返回两段 JSON：resourcesRaw 用于普通资源配置，secretsRaw 用于敏感配置。主要错误
+// 包括输入不是数组、超过数量限制、单项字段或引用无效、File 路径冲突以及 JSON 编码失败。
+// 函数本身不写数据库、不创建 Session、不修改 Filestore，也不执行挂载；normalizeResource
+// 只会按 principal 的 Workspace 读取并校验 File 或 Memory Store 引用，因此这里没有事务或锁。
 func (h *Handler) normalizeResources(
 	r *http.Request,
 	principal auth.Principal,
@@ -71,6 +93,29 @@ func (h *Handler) normalizeResources(
 	return resourcesRaw, secretsRaw, nil
 }
 
+// normalizeResource 将 Deployment 请求中的一条原始资源配置校验并转换为统一的存储格式。
+//
+// 函数先读取必填的 type，只接受 file、github_repository 和 memory_store。它只把已知
+// 字段写入 payload，并补充各类型的默认值。GitHub authorization_token 会单独放入
+// secret，避免进入普通资源配置。File 和 Memory Store 引用都按 principal.WorkspaceID
+// 查询，防止 Deployment 引用其他 Workspace 的对象；已归档的 Memory Store 也会被拒绝。
+//
+// File resource 会固定为 source=/uploads，并生成经过校验的 FileSpec。当前函数只处理
+// 单条资源；File 数量、重复 mount_path 和祖先/后代路径冲突由外层 normalizeResources
+// 收集全部 FileSpec 后统一校验。Deployment 真正运行时，sessionResourcesFromDeployment
+// 才会为这些模板生成 sesrsc_ ID，并创建 Session resource 和对应的 File binding。
+//
+// 例如：
+//   - 输入 {"type":"file","file_id":"file_123","mount_path":"/workspace/context.md"}，
+//     返回的 payload 会包含固定的 source=/uploads 和相同的 mount_path。
+//   - 输入带 authorization_token 的 github_repository，普通 payload 只保存仓库配置，
+//     Token 单独返回在 secret 中。
+//   - file_id 属于其他 Workspace，或 memory_store 已归档，函数返回引用或状态错误，
+//     不生成可保存的资源。
+//
+// 成功时返回规范化的 payload、可选 secret 和可选 FileSpec。字段格式错误、未知类型、
+// 引用不存在、跨 Workspace 引用或无效状态都会返回错误。函数只执行必要的数据库读取，
+// 不开启事务、不加显式锁，也不会写数据库、创建 Session、修改 Filestore 或执行挂载。
 func (h *Handler) normalizeResource(
 	r *http.Request,
 	principal auth.Principal,

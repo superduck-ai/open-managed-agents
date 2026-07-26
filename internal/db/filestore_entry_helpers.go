@@ -110,16 +110,19 @@ func getActiveFilestoreEntryForMutation(ctx context.Context, tx *sqlx.Tx, filesy
 	`, filestoreEntryMutationArguments(filesystem, entryPath))
 }
 
-// filestoreEntryBorrowsSourceObject reports whether the entry references an
-// object owned and accounted for by the Files API. The entry remains a mutable
-// node in the Filestore logical view, but deleting or replacing it must not
-// delete or decrement usage for the borrowed object.
-func filestoreEntryBorrowsSourceObject(entry FilestoreEntry) bool {
-	return entry.SourceFileUUID != nil
+// BorrowsSourceObject reports whether the entry references an object owned and
+// accounted for by the Files API. The entry remains a mutable node in the
+// Filestore logical view, but deleting or replacing it must not delete or
+// decrement usage for the borrowed object.
+func (entry *FilestoreEntry) BorrowsSourceObject() bool {
+	return entry != nil && entry.SourceFileUUID != nil
 }
 
-func filestoreEntryOwnedBytes(entry FilestoreEntry) int64 {
-	if filestoreEntryBorrowsSourceObject(entry) {
+// OwnedBytes returns the bytes that this entry contributes to Filestore-owned
+// storage accounting. Borrowed Files API objects remain visible in the
+// namespace, but they do not consume Filestore-owned bytes.
+func (entry *FilestoreEntry) OwnedBytes() int64 {
+	if entry == nil || entry.BorrowsSourceObject() {
 		return 0
 	}
 	return filestoreInt64(entry.SizeBytes)
@@ -239,7 +242,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		if err != nil {
 			return FilestoreEntry{}, err
 		}
-		if releasedBytes := filestoreEntryOwnedBytes(existing); releasedBytes > 0 {
+		if releasedBytes := existing.OwnedBytes(); releasedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
 				ctx, tx, workspaceID, 0, -releasedBytes, 0,
 			); err != nil {
@@ -302,7 +305,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	var oldSize int64
 	if found && existing.Kind == FilestoreEntryKindFile {
 		// 账本在 TTL 清理提交前仍统计到期文件；复用路径时必须以完整旧大小计算增量。
-		oldSize = filestoreEntryOwnedBytes(existing)
+		oldSize = existing.OwnedBytes()
 	}
 	if found && !filestoreEntryExpired(existing, quotaNow) {
 		if existing.Kind != FilestoreEntryKindFile {

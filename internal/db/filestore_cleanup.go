@@ -183,7 +183,7 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 		// Borrowed Files API objects are not owned or accounted for by
 		// Filestore. The current schema forbids expiry on those references; the
 		// guard keeps cleanup safe if malformed historical data is encountered.
-		if filestoreEntryBorrowsSourceObject(entry) {
+		if entry.BorrowsSourceObject() {
 			continue
 		}
 		scope, found := cleanupScopeByFilesystemUUID[entry.FilesystemUUID]
@@ -313,7 +313,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	arguments["retired_at"] = now
 	var releasedBytes int64
 	for _, entry := range entries {
-		if !filestoreEntryBorrowsSourceObject(entry) {
+		if !entry.BorrowsSourceObject() {
 			if _, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, cleanupScope, entry, "session_deleted", now); err != nil {
 				return false, err
 			}
@@ -703,7 +703,7 @@ type filestoreEntryCleanupScope struct {
 
 func enqueueFilestoreEntryCleanupJobPGX(ctx context.Context, tx pgx.Tx, scope filestoreEntryCleanupScope, entry FilestoreEntry, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
 	if entry.Kind != FilestoreEntryKindFile || entry.S3Bucket == nil ||
-		entry.S3Key == nil || filestoreEntryBorrowsSourceObject(entry) {
+		entry.S3Key == nil || entry.BorrowsSourceObject() {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
 	}
 	return enqueueFilestoreObjectCleanupJobPGX(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
@@ -724,7 +724,7 @@ func enqueueFilestoreEntryCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope f
 	// entries that own their objects must be cleaned up there; only borrowed
 	// Files API objects are ineligible for object deletion.
 	if entry.Kind != FilestoreEntryKindFile || entry.S3Bucket == nil ||
-		entry.S3Key == nil || filestoreEntryBorrowsSourceObject(entry) {
+		entry.S3Key == nil || entry.BorrowsSourceObject() {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
 	}
 	return insertFilestoreObjectCleanupJobSQLX(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
@@ -748,7 +748,7 @@ func enqueueOwnedFilestoreEntryCleanupJobTx(
 	reason string,
 	runAfter time.Time,
 ) (FilestoreObjectCleanupJob, bool, error) {
-	if filestoreEntryBorrowsSourceObject(entry) {
+	if entry.BorrowsSourceObject() {
 		return FilestoreObjectCleanupJob{}, false, nil
 	}
 	job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, reason, runAfter)
@@ -784,7 +784,7 @@ func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scop
 		if enqueued {
 			jobs = append(jobs, job)
 		}
-		removedBytes, err = addWorkspaceStorageDelta(removedBytes, filestoreEntryOwnedBytes(entry))
+		removedBytes, err = addWorkspaceStorageDelta(removedBytes, entry.OwnedBytes())
 		if err != nil {
 			return nil, 0, err
 		}
@@ -830,7 +830,7 @@ func retireExpiredFilestoreSubtreeTx(
 		if enqueued {
 			jobs = append(jobs, job)
 		}
-		retiredBytes, err = addWorkspaceStorageDelta(retiredBytes, filestoreEntryOwnedBytes(entry))
+		retiredBytes, err = addWorkspaceStorageDelta(retiredBytes, entry.OwnedBytes())
 		if err != nil {
 			return nil, 0, err
 		}

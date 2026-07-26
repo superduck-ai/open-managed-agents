@@ -106,7 +106,7 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 	if source.Kind != FilestoreEntryKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
-	if filestoreEntryBorrowsSourceObject(source) {
+	if source.BorrowsSourceObject() {
 		// A borrowed reference can be moved or removed as a logical entry, but
 		// CopyFilestoreFile materializes a new Filestore-owned object. Borrowed
 		// entries intentionally omit ownership-only metadata such as MD5, so
@@ -219,7 +219,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		}); err != nil {
 			return FilestoreMutationResult{}, err
 		}
-		removedBytes := filestoreEntryOwnedBytes(destination)
+		removedBytes := destination.OwnedBytes()
 		if destination.Kind == FilestoreEntryKindFile && removedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
 				ctx, tx, input.WorkspaceID, 0, -removedBytes, 0,
@@ -431,7 +431,7 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveFilestoreEntry
 	}); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if removedBytes := filestoreEntryOwnedBytes(entry); removedBytes > 0 {
+	if removedBytes := entry.OwnedBytes(); removedBytes > 0 {
 		if err := applyWorkspaceStorageDeltaSQLXTx(
 			ctx, tx, input.WorkspaceID, 0, -removedBytes, 0,
 		); err != nil {

@@ -253,7 +253,10 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	return fileResponse{File: payload}, nil
 }
 
-// CopyFile 在对象存储端复制字节内容，再以乐观校验将新对象绑定到目标路径。
+// CopyFile 为 rclone-filestore 的 server-side copy 预留后端能力：它在对象
+// 存储端复制字节内容，再以乐观校验将新对象绑定到目标路径。当前
+// multimount/FUSE 的主路径几乎不会走到这里；普通文件复制通常由客户端先读源
+// 文件，再通过 create/write 生成目标文件。
 func (s *Service) CopyFile(ctx context.Context, principal Principal, request copyMoveFileRequest) (fileResponse, *apiError) {
 	if apiErr := validateFileTransferRequest(request); apiErr != nil {
 		return fileResponse{}, apiErr
@@ -270,6 +273,13 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		return fileResponse{}, failedPrecondition("source is not a file")
 	}
 	if source.SourceFileUUID != nil {
+		// 这里拒绝的是 Filestore 协议里的 copyFile：它表示“在对象存储端做
+		// 服务端复制（server-side copy），把一个由 Filestore 自己拥有的对象
+		// 复制成新对象，再把该副本绑定到目标路径”，而不是客户端先把源文件
+		// 读出来，再调用 createFile 生成一个新文件。
+		// Session /uploads 中的 borrowed file 只是对 Files API 对象的引用；
+		// Sandbox 内的普通 cp 仍然可以通过 read + create/write 完成复制，但
+		// 不能在这个控制面接口里被隐式转换成新的 Filestore-owned file。
 		return fileResponse{}, failedPrecondition("borrowed file references cannot be copied")
 	}
 	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, request.Destination); apiErr != nil {

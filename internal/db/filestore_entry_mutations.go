@@ -107,10 +107,11 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
 	if source.BorrowsSourceObject() {
-		// A borrowed reference can be moved or removed as a logical entry, but
-		// CopyFilestoreFile materializes a new Filestore-owned object. Borrowed
-		// entries intentionally omit ownership-only metadata such as MD5, so
-		// that conversion must not happen implicitly in this database path.
+		// 借用引用可以作为命名空间节点被移动或删除，但 CopyFilestoreFile 的
+		// 语义是“把对象存储端已经完成服务端复制（server-side copy）的新对象
+		// 落库成 Filestore 自有文件”，不是客户端先读源文件、再创建目标文件。
+		// borrowed entry 故意缺少这条 owned-file 落库路径所需的专属元数据
+		// （例如 MD5），因此这里不允许把 borrowed source 隐式物化为 owned copy。
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
 	if input.ExpectedSourceS3Key != "" && filestoreString(source.S3Key) != input.ExpectedSourceS3Key {

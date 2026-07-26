@@ -11,26 +11,27 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/observability"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 func main() {
-	slog.SetDefault(slog.New(observability.NewConsoleHandler(os.Stderr, slog.LevelInfo)))
+	logger := slog.New(logging.NewConsoleHandler(os.Stderr, slog.LevelInfo))
+	slog.SetDefault(logger)
 
 	dir := flag.String("dir", "", "Directory containing .skill archives to import")
 	versionsPath := flag.String("versions", "", "Optional JSON object or skill_id=version file mapping skill ids to platform versions")
 	prune := flag.Bool("prune", false, "Soft-delete builtin skills not present in --dir")
 	flag.Parse()
 
-	if err := run(*dir, *versionsPath, *prune); err != nil {
-		slog.Error("seed builtin skills failed", "error", err)
+	if err := run(*dir, *versionsPath, *prune, logger.With("component", "builtin_skill_seed")); err != nil {
+		logger.Error("seed builtin skills failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(dir string, versionsPath string, prune bool) error {
+func run(dir string, versionsPath string, prune bool, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -62,7 +63,7 @@ func run(dir string, versionsPath string, prune bool) error {
 		Dir:          dir,
 		VersionsPath: versionsPath,
 		Prune:        prune,
-	}, slog.Default().With("component", "builtin_skill_seed"))
+	}, logger)
 	if err != nil {
 		return fmt.Errorf("seed builtin skills: %w", err)
 	}

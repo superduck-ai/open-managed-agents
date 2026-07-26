@@ -13,6 +13,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 
 	"github.com/google/uuid"
@@ -38,9 +39,7 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 	if credentials == nil {
 		panic("codesessions: session credentials are required")
 	}
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	return &Service{db: database, credentials: credentials, logger: logger}
 }
 

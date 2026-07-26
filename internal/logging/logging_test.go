@@ -1,7 +1,8 @@
-package observability
+package logging
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -33,6 +34,21 @@ func TestConsoleHandlerFormatsHTTPLine(t *testing.T) {
 			t.Fatalf("http log line missing %q: %q", want, line)
 		}
 	}
+}
+
+func TestLoggerOrDefault(t *testing.T) {
+	t.Run("returns injected logger", func(t *testing.T) {
+		injected := slog.New(slog.NewTextHandler(io.Discard, nil))
+		if got := LoggerOrDefault(injected); got != injected {
+			t.Fatal("LoggerOrDefault() did not preserve the injected logger")
+		}
+	})
+
+	t.Run("returns process default", func(t *testing.T) {
+		if got := LoggerOrDefault(nil); got != slog.Default() {
+			t.Fatal("LoggerOrDefault(nil) did not return slog.Default()")
+		}
+	})
 }
 
 func stripANSI(s string) string {

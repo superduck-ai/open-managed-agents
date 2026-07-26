@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -96,9 +97,7 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 }
 
 func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{cfg: cfg, db: database, prewarm: prewarm, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)

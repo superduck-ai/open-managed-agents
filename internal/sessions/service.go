@@ -150,11 +150,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
 		return
 	}
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.created", created.ExternalID, nil, h.logger)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.pending", created.ExternalID, nil, h.logger)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.status_idled", created.ExternalID, nil, h.logger)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_created", created.ExternalID, &thread.ExternalID, h.logger)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_idled", created.ExternalID, &thread.ExternalID, h.logger)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.created", created.ExternalID, nil)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.pending", created.ExternalID, nil)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_created", created.ExternalID, &thread.ExternalID)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_idled", created.ExternalID, &thread.ExternalID)
 	response, err := h.responseFromSession(r, created)
 	if err != nil {
 		h.logger.Error("load session response", "error", err)
@@ -370,7 +370,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
 	}
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.archived", archived.ExternalID, nil, h.logger)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
 		h.logger.Error("archive session response", "error", err)
@@ -413,7 +413,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
 	}
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.deleted", deleted.ExternalID, nil, h.logger)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.deleted", deleted.ExternalID, nil)
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 }
 
@@ -615,7 +615,13 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if outcomesChanged {
-		webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, session.WorkspaceID, organizationExternalIDFromRequest(r), workspaceExternalIDFromRequest(r), "session.outcome_evaluation_ended", session.ExternalID, nil, h.logger)
+		h.enqueueWebhook(r.Context(), webhooks.EnqueueInput{
+			WorkspaceID:            session.WorkspaceID,
+			OrganizationExternalID: organizationExternalIDFromRequest(r),
+			WorkspaceExternalID:    workspaceExternalIDFromRequest(r),
+			EventType:              "session.outcome_evaluation_ended",
+			ResourceID:             session.ExternalID,
+		})
 	}
 	data := make([]json.RawMessage, 0, len(created))
 	for _, event := range created {
@@ -839,6 +845,6 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeThreadLoadError(w, r, err, threadID)
 		return
 	}
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_terminated", session.ExternalID, &thread.ExternalID, h.logger)
+	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_terminated", session.ExternalID, &thread.ExternalID)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromThread(thread))
 }

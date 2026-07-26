@@ -2,6 +2,7 @@ package files
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -13,7 +14,6 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"log/slog"
 	"mime"
 	"net/http"
 	"path"
@@ -238,7 +238,7 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 				objectContentType = record.MimeType
 				object := thumbnailObject
 				defer object.Body.Close()
-				streamPlatformObject(w, record.UUID, objectKey, variant, object, objectContentType, h.logger)
+				h.streamPlatformObject(r.Context(), w, record.UUID, objectKey, variant, object, objectContentType)
 				return
 			}
 			h.logger.Error("get platform thumbnail object failed, falling back to original", "file_uuid", fileUUID, "key", thumbnailKey, "error", thumbnailErr)
@@ -252,13 +252,10 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer object.Body.Close()
-	streamPlatformObject(w, record.UUID, objectKey, variant, object, objectContentType, h.logger)
+	h.streamPlatformObject(r.Context(), w, record.UUID, objectKey, variant, object, objectContentType)
 }
 
-func streamPlatformObject(w http.ResponseWriter, fileUUID string, objectKey string, variant string, object storage.Object, contentType string, logger *slog.Logger) {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func (h *Handler) streamPlatformObject(ctx context.Context, w http.ResponseWriter, fileUUID string, objectKey string, variant string, object storage.Object, contentType string) {
 	if object.ContentType != "" {
 		contentType = object.ContentType
 	}
@@ -280,11 +277,11 @@ func streamPlatformObject(w http.ResponseWriter, fileUUID string, objectKey stri
 		if object.Size >= 0 {
 			attrs = append(attrs, "expected_size", object.Size)
 		}
-		logger.Error("stream platform file failed", attrs...)
+		h.logger.ErrorContext(ctx, "stream platform file failed", attrs...)
 		return
 	}
 	if object.Size >= 0 && copied != object.Size {
-		logger.Warn("stream platform file size mismatch", "variant", variant, "file_uuid", fileUUID, "key", objectKey, "bytes_copied", copied, "expected_size", object.Size)
+		h.logger.WarnContext(ctx, "stream platform file size mismatch", "variant", variant, "file_uuid", fileUUID, "key", objectKey, "bytes_copied", copied, "expected_size", object.Size)
 	}
 }
 

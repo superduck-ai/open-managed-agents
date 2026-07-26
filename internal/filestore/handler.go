@@ -15,6 +15,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -48,9 +49,7 @@ type serviceAPI interface {
 // NewHandler 构造 Filestore HTTP 边界，并只注册协议明确支持的操作。
 // 未知路径与错误方法统一返回 Filestore 错误结构，不泄漏 chi 的默认响应。
 func NewHandler(cfg config.Config, service serviceAPI, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{cfg: cfg, service: service, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(h.notFound)

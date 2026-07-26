@@ -18,6 +18,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -81,9 +82,7 @@ type listResponse struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{cfg: cfg, db: database, store: store, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)

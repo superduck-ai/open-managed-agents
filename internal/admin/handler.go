@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -23,9 +24,7 @@ type Handler struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{service: NewService(cfg, database), logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(routeNotFound)

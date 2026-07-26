@@ -19,7 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
-	"github.com/superduck-ai/open-managed-agents/internal/observability"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -27,7 +27,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(observability.NewConsoleHandler(os.Stdout, slog.LevelInfo))
+	logger := slog.New(logging.NewConsoleHandler(os.Stdout, slog.LevelInfo))
 	slog.SetDefault(logger)
 
 	if err := run(logger); err != nil {
@@ -89,17 +89,13 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load filestore credentials: %w", err)
 	}
-	cleanup.StartObjectCleanupWorker(ctx, database, storageClient, 30*time.Second, logger.With("component", "cleanup"))
+	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
-	filestore.StartFilestoreCleanupWorker(ctx, database, storageClient, logger.With("component", "filestore_cleanup"))
-	if cfg.Batch.WorkerEnabled {
-		batchLogger := logger.With("component", "batches")
-		batches.StartBatchWorker(ctx, database, objectStore, cfg, batchLogger)
-		batches.StartBatchExpirySweep(ctx, database, cfg, batchLogger)
-	}
+	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)
+	batches.NewWorker(database, objectStore, cfg, logger.With("component", "batches")).Start(ctx)
 	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials, logger.With("component", "environment_runner"))
 	skillprewarm.StartWorker(ctx, database, objectStore, cfg, logger.With("component", "skill_prewarm"))
-	webhooks.StartWorker(ctx, database, cfg.Webhook, logger.With("component", "webhook_worker"))
+	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 
 	server := &http.Server{
 		Addr: cfg.Server.Addr,

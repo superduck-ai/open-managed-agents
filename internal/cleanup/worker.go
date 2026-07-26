@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
@@ -17,21 +18,40 @@ const (
 	defaultMaxAttempts = 10
 )
 
-func StartObjectCleanupWorker(ctx context.Context, database *db.DB, client storage.Client, interval time.Duration, logger *slog.Logger) {
+// Worker owns the object cleanup loop and its stable dependencies.
+type Worker struct {
+	database *db.DB
+	client   storage.Client
+	interval time.Duration
+	logger   *slog.Logger
+}
+
+// NewWorker constructs an object cleanup worker.
+func NewWorker(database *db.DB, client storage.Client, interval time.Duration, logger *slog.Logger) *Worker {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
-	if logger == nil {
-		logger = slog.Default()
+	return &Worker{
+		database: database,
+		client:   client,
+		interval: interval,
+		logger:   logging.LoggerOrDefault(logger),
+	}
+}
+
+// Start launches the object cleanup loop.
+func (w *Worker) Start(ctx context.Context) {
+	if w == nil || w.database == nil || w.client == nil {
+		return
 	}
 	workerID := fmt.Sprintf("object-cleanup-%d", os.Getpid())
 	go func() {
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(w.interval)
 		defer ticker.Stop()
 
 		for {
-			if err := RunObjectCleanupOnce(ctx, database, client, workerID); err != nil {
-				logger.Error("object cleanup worker", "error", err)
+			if err := RunObjectCleanupOnce(ctx, w.database, w.client, workerID); err != nil {
+				w.logger.ErrorContext(ctx, "object cleanup worker", "error", err)
 			}
 
 			select {

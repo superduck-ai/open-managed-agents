@@ -16,7 +16,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	standardwebhooks "github.com/standard-webhooks/standard-webhooks/libraries/go"
 )
@@ -64,82 +64,34 @@ func (e deliveryFailure) Error() string {
 	return e.reason
 }
 
-func Enqueue(ctx context.Context, database *db.DB, cfg config.WebhookConfig, workspaceID int64, organizationExternalID, workspaceExternalID, eventType, resourceID string, sessionThreadID *string, logger *slog.Logger) {
-	EnqueueWithOptions(ctx, database, cfg, workspaceID, organizationExternalID, workspaceExternalID, eventType, resourceID, EventOptions{SessionThreadID: sessionThreadID}, logger)
+// Worker owns the webhook delivery loop and its stable dependencies.
+type Worker struct {
+	database *db.DB
+	cfg      config.WebhookConfig
+	logger   *slog.Logger
 }
 
-func EnqueueWithOptions(ctx context.Context, database *db.DB, cfg config.WebhookConfig, workspaceID int64, organizationExternalID, workspaceExternalID, eventType, resourceID string, options EventOptions, logger *slog.Logger) {
-	if database == nil {
-		return
-	}
-	if logger == nil {
-		logger = slog.Default()
-	}
-	eventID, err := ids.New("wevt_")
-	if err != nil {
-		logger.Error("webhook event id", "error", err)
-		return
-	}
-	event := Event{
-		ID:        eventID,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		Data: EventData{
-			ID:              resourceID,
-			OrganizationID:  organizationExternalID,
-			Type:            eventType,
-			WorkspaceID:     workspaceExternalID,
-			SessionThreadID: options.SessionThreadID,
-			VaultID:         options.VaultID,
-		},
-		Type: "event",
-	}
-	payload, err := json.Marshal(event)
-	if err != nil {
-		logger.Error("marshal webhook event", "event_type", eventType, "resource_id", resourceID, "error", err)
-		return
-	}
-
-	hasEndpoints, err := database.HasWebhookEndpoints(ctx, workspaceID)
-	if err != nil {
-		logger.Error("load webhook endpoint configuration", "workspace_id", workspaceID, "error", err)
-		return
-	}
-	if hasEndpoints {
-		endpoints, err := database.ListActiveWebhookEndpointsForEvent(ctx, workspaceID, eventType)
-		if err != nil {
-			logger.Error("list webhook endpoints event", "event_type", eventType, "workspace_id", workspaceID, "error", err)
-			return
-		}
-		for _, endpoint := range endpoints {
-			if err := database.EnqueueWebhookDeliveryJobForEndpoint(ctx, workspaceID, eventType, payload, endpoint.ID); err != nil {
-				logger.Error("enqueue webhook event", "endpoint_id", endpoint.ExternalID, "event_type", eventType, "resource_id", resourceID, "error", err)
-			}
-		}
-		return
-	}
-
-	if !enabled(cfg) || !subscribed(cfg, eventType) {
-		return
-	}
-	if err := database.EnqueueWebhookDeliveryJob(ctx, workspaceID, eventType, payload); err != nil {
-		logger.Error("enqueue webhook event", "event_type", eventType, "resource_id", resourceID, "error", err)
+// NewWorker constructs a webhook delivery worker.
+func NewWorker(database *db.DB, cfg config.WebhookConfig, logger *slog.Logger) *Worker {
+	return &Worker{
+		database: database,
+		cfg:      cfg,
+		logger:   logging.LoggerOrDefault(logger),
 	}
 }
 
-func StartWorker(ctx context.Context, database *db.DB, cfg config.WebhookConfig, logger *slog.Logger) {
-	if !cfg.WorkerEnabled {
+// Start launches the webhook delivery loop when it is enabled.
+func (w *Worker) Start(ctx context.Context) {
+	if w == nil || w.database == nil || !w.cfg.WorkerEnabled {
 		return
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	workerID := fmt.Sprintf("webhook-delivery-%d", os.Getpid())
 	go func() {
 		ticker := time.NewTicker(defaultWorkerInterval)
 		defer ticker.Stop()
 		for {
-			if err := RunOnce(ctx, database, cfg, workerID, logger); err != nil {
-				logger.Error("webhook delivery worker", "error", err)
+			if err := w.RunOnce(ctx, workerID); err != nil {
+				w.logger.ErrorContext(ctx, "webhook delivery worker", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -150,50 +102,48 @@ func StartWorker(ctx context.Context, database *db.DB, cfg config.WebhookConfig,
 	}()
 }
 
-func RunOnce(ctx context.Context, database *db.DB, cfg config.WebhookConfig, workerID string, logger *slog.Logger) error {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	jobs, err := database.LeaseWebhookDeliveryJobs(ctx, workerID, defaultBatchSize, defaultLeaseDuration)
+// RunOnce leases and processes one batch of webhook delivery jobs.
+func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
+	jobs, err := w.database.LeaseWebhookDeliveryJobs(ctx, workerID, defaultBatchSize, defaultLeaseDuration)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	client := &http.Client{
-		Timeout: webhookTimeout(cfg),
+		Timeout: webhookTimeout(w.cfg),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
 	for _, job := range jobs {
-		target, skip, err := targetForJob(cfg, job)
+		target, skip, err := targetForJob(w.cfg, job)
 		if skip {
-			if err := database.CompleteWebhookDeliveryJob(ctx, job.ID); err != nil {
+			if err := w.database.CompleteWebhookDeliveryJob(ctx, job.ID); err != nil {
 				errs = append(errs, fmt.Errorf("complete skipped webhook job %s: %w", job.ExternalID, err))
 			}
 			continue
 		}
 		if err != nil {
 			delay := retryDelay(job.Attempts + 1)
-			if markErr := database.FailWebhookDeliveryJob(ctx, job.ID, job.Attempts, err.Error(), delay, webhookMaxAttempts(cfg)); markErr != nil {
+			if markErr := w.database.FailWebhookDeliveryJob(ctx, job.ID, job.Attempts, err.Error(), delay, webhookMaxAttempts(w.cfg)); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark invalid webhook job %s retry: %w", job.ExternalID, markErr))
 			}
-			recordEndpointFailure(ctx, database, job, err, logger)
+			w.recordEndpointFailure(ctx, job, err)
 			continue
 		}
 		if err := deliver(ctx, client, target, job.Event); err != nil {
 			delay := retryDelay(job.Attempts + 1)
-			if markErr := database.FailWebhookDeliveryJob(ctx, job.ID, job.Attempts, err.Error(), delay, webhookMaxAttempts(cfg)); markErr != nil {
+			if markErr := w.database.FailWebhookDeliveryJob(ctx, job.ID, job.Attempts, err.Error(), delay, webhookMaxAttempts(w.cfg)); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark webhook job %s retry: %w", job.ExternalID, markErr))
 			}
-			recordEndpointFailure(ctx, database, job, err, logger)
+			w.recordEndpointFailure(ctx, job, err)
 			continue
 		}
-		if err := database.CompleteWebhookDeliveryJob(ctx, job.ID); err != nil {
+		if err := w.database.CompleteWebhookDeliveryJob(ctx, job.ID); err != nil {
 			errs = append(errs, fmt.Errorf("complete webhook job %s: %w", job.ExternalID, err))
 		}
 		if job.WebhookEndpointID != nil {
-			if err := database.RecordWebhookEndpointDeliverySuccess(ctx, *job.WebhookEndpointID); err != nil {
+			if err := w.database.RecordWebhookEndpointDeliverySuccess(ctx, *job.WebhookEndpointID); err != nil {
 				errs = append(errs, fmt.Errorf("record webhook endpoint %s success: %w", job.WebhookEndpointExternalID, err))
 			}
 		}
@@ -224,7 +174,7 @@ func targetForJob(cfg config.WebhookConfig, job db.WebhookDeliveryJob) (delivery
 	return target, false, validateDeliveryTarget(target, "webhook.endpoint_url")
 }
 
-func recordEndpointFailure(ctx context.Context, database *db.DB, job db.WebhookDeliveryJob, err error, logger *slog.Logger) {
+func (w *Worker) recordEndpointFailure(ctx context.Context, job db.WebhookDeliveryJob, err error) {
 	if job.WebhookEndpointID == nil {
 		return
 	}
@@ -233,8 +183,8 @@ func recordEndpointFailure(ctx context.Context, database *db.DB, job db.WebhookD
 	if errors.As(err, &failure) && failure.immediateDisable {
 		disableAfter = 1
 	}
-	if recordErr := database.RecordWebhookEndpointDeliveryFailure(ctx, *job.WebhookEndpointID, err.Error(), disableAfter); recordErr != nil {
-		logger.Error("record webhook endpoint failure", "endpoint_id", job.WebhookEndpointExternalID, "error", recordErr)
+	if recordErr := w.database.RecordWebhookEndpointDeliveryFailure(ctx, *job.WebhookEndpointID, err.Error(), disableAfter); recordErr != nil {
+		w.logger.ErrorContext(ctx, "record webhook endpoint failure", "endpoint_id", job.WebhookEndpointExternalID, "error", recordErr)
 	}
 }
 

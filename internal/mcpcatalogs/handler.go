@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -50,9 +51,7 @@ type refreshResponse struct {
 }
 
 func NewHandler(database *db.DB, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	return &Handler{database: database, logger: logger, prober: Prober{}}
 }
 

@@ -2,6 +2,7 @@ package files
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -22,8 +23,8 @@ func TestStreamPlatformObject(t *testing.T) {
 			Size: 4,
 		}
 
-		logOutput := capturePlatformLog(t, func() {
-			streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream", nil)
+		logOutput := capturePlatformLog(t, func(handler *Handler) {
+			handler.streamPlatformObject(context.Background(), response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
 		})
 
 		if response.Code != http.StatusOK {
@@ -43,8 +44,8 @@ func TestStreamPlatformObject(t *testing.T) {
 			Size: 5,
 		}
 
-		logOutput := capturePlatformLog(t, func() {
-			streamPlatformObject(response, "file-uuid", "object-key", "thumbnail", object, "application/octet-stream", nil)
+		logOutput := capturePlatformLog(t, func(handler *Handler) {
+			handler.streamPlatformObject(context.Background(), response, "file-uuid", "object-key", "thumbnail", object, "application/octet-stream")
 		})
 
 		if response.Code != http.StatusOK || response.Body.String() != "body" {
@@ -65,7 +66,7 @@ func TestStreamPlatformObject(t *testing.T) {
 			ContentType: "text/plain",
 		}
 
-		streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream", nil)
+		(&Handler{logger: slog.Default()}).streamPlatformObject(context.Background(), response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
 
 		if got := response.Header().Get("Content-Length"); got != "" {
 			t.Fatalf("Content-Length = %q, want omitted", got)
@@ -82,7 +83,7 @@ func TestStreamPlatformObject(t *testing.T) {
 			Size: 4,
 		}
 
-		streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream", nil)
+		(&Handler{logger: slog.Default()}).streamPlatformObject(context.Background(), response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
 
 		if got := response.Header().Get("Content-Length"); got != "4" {
 			t.Fatalf("Content-Length = %q, want 4", got)
@@ -102,12 +103,10 @@ func (*failingObjectBody) Close() error {
 	return nil
 }
 
-func capturePlatformLog(t *testing.T, fn func()) string {
+func capturePlatformLog(t *testing.T, fn func(*Handler)) string {
 	t.Helper()
 	var output bytes.Buffer
-	previousLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
-	defer slog.SetDefault(previousLogger)
-	fn()
+	handler := &Handler{logger: slog.New(slog.NewTextHandler(&output, nil))}
+	fn(handler)
 	return output.String()
 }

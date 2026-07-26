@@ -17,6 +17,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 
@@ -95,9 +96,7 @@ type workStatsResponse struct {
 }
 
 func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)

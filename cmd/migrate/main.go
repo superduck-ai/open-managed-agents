@@ -10,11 +10,11 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/observability"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
 func main() {
-	slog.SetDefault(slog.New(observability.NewConsoleHandler(os.Stderr, slog.LevelInfo)))
+	slog.SetDefault(slog.New(logging.NewConsoleHandler(os.Stderr, slog.LevelInfo)))
 
 	if len(os.Args) != 2 || os.Args[1] != "up" {
 		fmt.Fprintf(os.Stderr, "usage: %s up\n", os.Args[0])

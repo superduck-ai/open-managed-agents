@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
@@ -30,9 +31,7 @@ type BuiltinSeedResult struct {
 }
 
 func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.ObjectStore, opts BuiltinSeedOptions, logger *slog.Logger) (BuiltinSeedResult, error) {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	dir := strings.TrimSpace(opts.Dir)
 	if dir == "" {
 		return BuiltinSeedResult{}, errors.New("--dir is required")

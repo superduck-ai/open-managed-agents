@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -75,9 +76,7 @@ type jobPayload struct {
 }
 
 func NewWorker(jobs JobStore, snapshots SnapshotJobStore, fanout FanoutStore, resolver RuntimeResolver, preparer SkillMountPreparer, logger *slog.Logger) *Worker {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	return &Worker{jobs: jobs, snapshots: snapshots, fanout: fanout, resolver: resolver, preparer: preparer, logger: logger}
 }
 

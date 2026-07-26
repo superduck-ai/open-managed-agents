@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
@@ -31,17 +32,13 @@ type Runner struct {
 }
 
 func NewRunner(database *db.DB, provider e2bruntime.Provider, logger *slog.Logger) *Runner {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	return &Runner{db: database, provider: provider, logger: logger}
 }
 
 func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore, credentials *codesessions.SessionCredentials, logger *slog.Logger) *Runner {
 	// 显式注入用于 main 和测试，确保不会在同一进程中意外创建第二套签名身份。
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	return &Runner{
 		db:           database,
 		provider:     provider,

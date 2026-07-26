@@ -56,7 +56,6 @@ func (h *Handler) loadUpstreamProxyPolicyContext(ctx context.Context, identity u
 func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity upstreamProxyIdentity, target string) bool {
 	policyContext, err := h.loadPolicyContext(ctx, identity)
 	attrs := []any{
-		"component", "codesessions",
 		"event", "upstream_proxy_policy",
 		"organization_uuid", identity.organizationUUID,
 		"workspace_uuid", identity.workspaceUUID,

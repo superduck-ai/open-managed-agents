@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -31,15 +32,20 @@ const (
 )
 
 type Handler struct {
-	cfg     config.Config
-	db      *db.DB
-	prewarm skillPrewarmSnapshotEnqueuer
-	logger  *slog.Logger
-	router  chi.Router
+	cfg      config.Config
+	db       *db.DB
+	prewarm  skillPrewarmSnapshotEnqueuer
+	webhooks webhookEnqueuer
+	logger   *slog.Logger
+	router   chi.Router
 }
 
 type skillPrewarmSnapshotEnqueuer interface {
 	EnqueueSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) error
+}
+
+type webhookEnqueuer interface {
+	Enqueue(context.Context, webhooks.EnqueueInput)
 }
 
 type RunsHandler struct {
@@ -90,15 +96,13 @@ type resolvedAgent struct {
 	ref      json.RawMessage
 }
 
-func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
-	return NewHandlerWithSkillPrewarm(cfg, database, nil, logger)
+func NewHandler(cfg config.Config, database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+	return NewHandlerWithSkillPrewarm(cfg, database, nil, webhookEvents, logger)
 }
 
-func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	h := &Handler{cfg: cfg, db: database, prewarm: prewarm, logger: logger}
+func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, prewarm: prewarm, webhooks: webhookEvents, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -117,9 +121,7 @@ func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skil
 }
 
 func NewRunsHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *RunsHandler {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	h := &RunsHandler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
@@ -630,15 +632,29 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.created", session.ExternalID, nil, h.logger)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.pending", session.ExternalID, nil, h.logger)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.status_idled", session.ExternalID, nil, h.logger)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_created", session.ExternalID, &thread.ExternalID, h.logger)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_idled", session.ExternalID, &thread.ExternalID, h.logger)
+	h.enqueueWebhook(r.Context(), principal, "session.created", session.ExternalID, nil)
+	h.enqueueWebhook(r.Context(), principal, "session.pending", session.ExternalID, nil)
+	h.enqueueWebhook(r.Context(), principal, "session.status_idled", session.ExternalID, nil)
+	h.enqueueWebhook(r.Context(), principal, "session.thread_created", session.ExternalID, &thread.ExternalID)
+	h.enqueueWebhook(r.Context(), principal, "session.thread_idled", session.ExternalID, &thread.ExternalID)
 	if outcomesChanged(createdEvents) {
-		webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.outcome_evaluation_ended", session.ExternalID, nil, h.logger)
+		h.enqueueWebhook(r.Context(), principal, "session.outcome_evaluation_ended", session.ExternalID, nil)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromRun(run))
+}
+
+func (h *Handler) enqueueWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
+	if h.webhooks == nil {
+		return
+	}
+	h.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
+		WorkspaceID:            principal.WorkspaceID,
+		OrganizationExternalID: principal.OrganizationExternalID,
+		WorkspaceExternalID:    principal.WorkspaceExternalID,
+		EventType:              eventType,
+		ResourceID:             resourceID,
+		Options:                webhooks.EventOptions{SessionThreadID: sessionThreadID},
+	})
 }
 
 func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Request, principal auth.Principal, deployment db.Deployment, runError json.RawMessage) {

@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -199,7 +198,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 	}
 
 	flowID := uuid.NewString()
-	discovery, err := discoverPlatformMCPOAuth(r.Context(), platformMCPVaultAuthHTTPClient, mcpServerURL, s.logger)
+	discovery, err := s.discoverPlatformMCPOAuth(r.Context(), platformMCPVaultAuthHTTPClient, mcpServerURL)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "discover mcp oauth", "mcp_server_host", platformMCPLogHost(mcpServerURL), "error", err)
 		writePlatformMCPVaultAuthError(w, http.StatusBadRequest, platformMCPVaultAuthOAuthDiscoveryFailed, flowID)
@@ -480,16 +479,13 @@ func platformMCPVaultCredentialExists(credentials []db.VaultCredential, mcpServe
 	return false
 }
 
-func discoverPlatformMCPOAuth(ctx context.Context, client *http.Client, mcpServerURL string, logger *slog.Logger) (platformMCPOAuthDiscovery, error) {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func (s *Server) discoverPlatformMCPOAuth(ctx context.Context, client *http.Client, mcpServerURL string) (platformMCPOAuthDiscovery, error) {
 	challengeParams, _ := fetchPlatformMCPWWWAuthenticateParams(ctx, client, mcpServerURL)
 	if metadataURL := strings.TrimSpace(challengeParams["resource_metadata"]); metadataURL != "" {
 		if discovery, err := discoverPlatformMCPOAuthFromProtectedResource(ctx, client, metadataURL, mcpServerURL, challengeParams["scope"]); err == nil {
 			return discovery, nil
 		} else {
-			logger.ErrorContext(ctx, "fetch mcp oauth protected resource metadata", "metadata_host", platformMCPLogHost(metadataURL), "error", err)
+			s.logger.ErrorContext(ctx, "fetch mcp oauth protected resource metadata", "metadata_host", platformMCPLogHost(metadataURL), "error", err)
 		}
 	}
 

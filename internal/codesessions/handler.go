@@ -7,6 +7,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
 // Handler 是 code-session 的 HTTP transport 边界。
@@ -28,9 +29,7 @@ func NewHandler(cfg config.Config, service *Service, logger *slog.Logger) *Handl
 	if service == nil {
 		panic("codesessions: service is required")
 	}
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	handler := &Handler{
 		cfg:           cfg,
 		db:            service.db,

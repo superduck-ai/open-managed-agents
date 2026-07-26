@@ -11,6 +11,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
 // maxRequestBodyBytes 是流式读取上限；MaxBytesReader 不会据此预分配 32 MiB 内存。
@@ -63,9 +64,7 @@ type flushingResponseWriter struct {
 
 // NewHandler 创建复用连接池的 Messages 代理 handler。
 func NewHandler(cfg config.Config, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger = logging.LoggerOrDefault(logger)
 	return &Handler{cfg: cfg, client: &http.Client{Transport: newProxyTransport()}, logger: logger}
 }
 

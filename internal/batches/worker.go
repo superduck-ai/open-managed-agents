@@ -15,6 +15,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
@@ -23,18 +24,43 @@ const (
 	batchJobMaxAttempts       = 10
 )
 
-func StartBatchWorker(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, logger *slog.Logger) {
-	if logger == nil {
-		logger = slog.Default()
+// Worker owns the message batch processing and expiry loops.
+type Worker struct {
+	database *db.DB
+	store    storage.ObjectStore
+	cfg      config.Config
+	upstream UpstreamClient
+	logger   *slog.Logger
+}
+
+// NewWorker constructs a message batch worker.
+func NewWorker(database *db.DB, store storage.ObjectStore, cfg config.Config, logger *slog.Logger) *Worker {
+	return &Worker{
+		database: database,
+		store:    store,
+		cfg:      cfg,
+		upstream: NewHTTPUpstreamClient(cfg),
+		logger:   logging.LoggerOrDefault(logger),
 	}
+}
+
+// Start launches batch processing and expiry loops when batch workers are enabled.
+func (w *Worker) Start(ctx context.Context) {
+	if w == nil || w.database == nil || w.store == nil || !w.cfg.Batch.WorkerEnabled {
+		return
+	}
+	w.startProcessing(ctx)
+	w.startExpirySweep(ctx)
+}
+
+func (w *Worker) startProcessing(ctx context.Context) {
 	workerID := fmt.Sprintf("message-batch-%d", os.Getpid())
-	upstream := NewHTTPUpstreamClient(cfg)
 	go func() {
 		ticker := time.NewTicker(defaultWorkerPollInterval)
 		defer ticker.Stop()
 		for {
-			if err := RunBatchOnce(ctx, database, store, cfg, upstream, workerID); err != nil {
-				logger.Error("message batch worker", "error", err)
+			if err := RunBatchOnce(ctx, w.database, w.store, w.cfg, w.upstream, workerID); err != nil {
+				w.logger.ErrorContext(ctx, "message batch worker", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -45,20 +71,17 @@ func StartBatchWorker(ctx context.Context, database *db.DB, store storage.Object
 	}()
 }
 
-func StartBatchExpirySweep(ctx context.Context, database *db.DB, cfg config.Config, logger *slog.Logger) {
-	interval := cfg.Batch.ExpirySweepInterval
+func (w *Worker) startExpirySweep(ctx context.Context) {
+	interval := w.cfg.Batch.ExpirySweepInterval
 	if interval <= 0 {
 		interval = 5 * time.Minute
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
-			if err := RunBatchExpirySweepOnce(ctx, database, time.Now().UTC()); err != nil {
-				logger.Error("message batch expiry sweep", "error", err)
+			if err := RunBatchExpirySweepOnce(ctx, w.database, time.Now().UTC()); err != nil {
+				w.logger.ErrorContext(ctx, "message batch expiry sweep", "error", err)
 			}
 			select {
 			case <-ctx.Done():

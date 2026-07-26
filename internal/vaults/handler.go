@@ -1,6 +1,7 @@
 package vaults
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -29,10 +31,15 @@ const maxVaultBodySize = 4 << 20
 var credentialHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+$`)
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	logger *slog.Logger
-	router chi.Router
+	cfg      config.Config
+	db       *db.DB
+	webhooks webhookEnqueuer
+	logger   *slog.Logger
+	router   chi.Router
+}
+
+type webhookEnqueuer interface {
+	Enqueue(context.Context, webhooks.EnqueueInput)
 }
 
 type vaultResponse struct {
@@ -107,11 +114,9 @@ type credentialAuthState struct {
 	SecretPayload json.RawMessage
 }
 
-func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	h := &Handler{cfg: cfg, db: database, logger: logger}
+func NewHandler(cfg config.Config, database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -614,11 +619,21 @@ func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) enqueueWebhook(r *http.Request, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, sessionThreadID, h.logger)
+	h.enqueueWebhookWithOptions(r, principal, eventType, resourceID, webhooks.EventOptions{SessionThreadID: sessionThreadID})
 }
 
 func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Principal, eventType, resourceID string, options webhooks.EventOptions) {
-	webhooks.EnqueueWithOptions(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, options, h.logger)
+	if h.webhooks == nil {
+		return
+	}
+	h.webhooks.Enqueue(r.Context(), webhooks.EnqueueInput{
+		WorkspaceID:            principal.WorkspaceID,
+		OrganizationExternalID: principal.OrganizationExternalID,
+		WorkspaceExternalID:    principal.WorkspaceExternalID,
+		EventType:              eventType,
+		ResourceID:             resourceID,
+		Options:                options,
+	})
 }
 
 func (h *Handler) loadVaultCredentialsForWebhook(r *http.Request, workspaceID int64, vaultID string, includeArchived bool) []db.VaultCredential {

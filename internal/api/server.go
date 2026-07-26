@@ -20,6 +20,7 @@ import (
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
@@ -43,8 +44,6 @@ type Server struct {
 	cfg                  config.Config
 	db                   *db.DB
 	logger               *slog.Logger
-	workbenchLogger      *slog.Logger
-	mcpCatalogLogger     *slog.Logger
 	router               chi.Router
 	platformStore        platformsession.Store
 	filestoreCredentials *filestoreapi.TokenCredentials
@@ -83,10 +82,7 @@ type ServerDeps struct {
 // NewServer 用显式依赖组装 HTTP API Server。
 // 注入 CodeSessionCredentials，保证 HTTP 验签与 sandbox 启动签发使用同一公钥身份。
 func NewServer(deps ServerDeps) *Server {
-	rootLogger := deps.Logger
-	if rootLogger == nil {
-		rootLogger = slog.Default()
-	}
+	rootLogger := logging.LoggerOrDefault(deps.Logger)
 	componentLogger := func(component string) *slog.Logger {
 		return rootLogger.With("component", component)
 	}
@@ -97,6 +93,10 @@ func NewServer(deps ServerDeps) *Server {
 	codeSessionLogger := componentLogger("codesessions")
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger)
 	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(deps.DB)
+	webhookLogger := componentLogger("webhooks")
+	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
+	workbenchLogger := componentLogger("workbench")
+	mcpCatalogHandler := mcpcatalogs.NewHandler(deps.DB, componentLogger("mcp_catalogs"))
 	filestoreHandler := filestoreapi.NewHandler(
 		deps.Config,
 		filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore),
@@ -106,15 +106,13 @@ func NewServer(deps ServerDeps) *Server {
 		cfg:                  deps.Config,
 		db:                   deps.DB,
 		logger:               componentLogger("api"),
-		workbenchLogger:      componentLogger("workbench"),
-		mcpCatalogLogger:     componentLogger("mcp_catalogs"),
 		platformStore:        platformStore,
 		filestoreCredentials: deps.FilestoreCredentials,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
 		agents:               agents.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, codeSessionLogger),
-		deployments:          deploymentsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer, componentLogger("deployments")),
+		deployments:          deploymentsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer, webhookEnqueuer, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.Config, deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
@@ -122,10 +120,10 @@ func NewServer(deps ServerDeps) *Server {
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")),
 		messages:             messagesapi.NewHandler(deps.Config, componentLogger("messages")),
 		models:               modelsapi.NewHandler(),
-		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, componentLogger("sessions")),
+		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, componentLogger("sessions")),
 		skills:               skillsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, deps.ObjectStore, skillPrewarmEnqueuer, componentLogger("skills")),
-		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, componentLogger("vaults")),
-		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, componentLogger("webhooks")),
+		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("vaults")),
+		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 	}
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
@@ -139,7 +137,7 @@ func NewServer(deps ServerDeps) *Server {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	s.registerVersionedAPIRoutes(router)
-	s.registerPlatformConsoleRoutes(router)
+	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler)
 	s.router = router
 	return s
 }
@@ -196,7 +194,7 @@ func filestoreNotFound(w http.ResponseWriter, _ *http.Request) {
 	filestoreapi.WriteProtocolError(w, http.StatusNotFound, "not_found", "Not found")
 }
 
-func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
+func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogger *slog.Logger, mcpCatalogHandler *mcpcatalogs.Handler) {
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
@@ -216,7 +214,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 			platformapi.RegisterOrganizationBillingRoutes(r)
 			platformapi.RegisterOrganizationAnalyticsRoutes(r)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.cfg)
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream, s.workbenchLogger)
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream, workbenchLogger)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 		})
 		r.Route("/api/oauth/organizations/{orgUuid}", func(r chi.Router) {
@@ -228,7 +226,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
-			mcpcatalogs.NewHandler(s.db, s.mcpCatalogLogger).RegisterRoutes(r)
+			mcpCatalogHandler.RegisterRoutes(r)
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {
 			s.files.RegisterPlatformRoutes(r)

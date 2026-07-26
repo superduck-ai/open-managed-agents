@@ -66,7 +66,7 @@ type workbenchAccount struct {
 }
 
 func RegisterOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, upstream config.AnthropicUpstreamConfig, logger *slog.Logger) {
-	registerOrgWorkbenchRoutes(r, store, upstream, logger)
+	newWorkbenchHandler(store, upstream, logger).registerRoutes(r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

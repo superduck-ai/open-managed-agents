@@ -138,7 +138,7 @@ sequenceDiagram
     A->>D: Create filesystem and five fixed roots
     A->>D: Write resource and borrowed /uploads entry
     R->>D: Resolve concrete skill versions
-    R->>D: Atomically replace /skills archive projections
+    R->>D: Atomically replace /skills archive entries
     R->>E: Create Sandbox
     R->>D: Resolve trusted filesystem scope
     R->>R: Issue filesystem RW and readonly tokens
@@ -191,15 +191,15 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 迁移 `00018_add_filestore.sql` 新增：
 
 - `filestore_filesystems`：保存自身的内部 bigint ID、稳定 UUID、workspace 内的外部 ID；组织、工作区、public session、可选 code session 与创建 API key 均以稳定 UUID 绑定，避免租户搬迁或跨库合并时依赖源库 identity 值。
-- `filestore_entries`：统一保存 file/directory、规范化绝对路径、parent path、响应元数据、hash、TTL 和不可变 S3 object reference；Session File resource 的借用 entry 另保存源 File UUID 以及不可由 HTTP metadata 设置的 ownership 列。组织、工作区、filesystem 及可选创建者引用均保存对应 UUID，不冗余保存其他表的 identity 或 filesystem external ID。
+- `filestore_entries`：统一保存 file/directory/archive、规范化绝对路径、parent path、响应元数据、hash、TTL 和不可变 S3 object reference；Session File resource 的借用 entry 另保存源 File UUID，skill archive entry 保存具体 version UUID，两者都使用不可由 HTTP metadata 设置的 ownership 列。组织、工作区、filesystem 及可选创建者引用均保存对应 UUID，不冗余保存其他表的 identity 或 filesystem external ID。
 
-迁移 `00032_add_filestore_skill_archives.sql` 新增 `filestore_skill_archives`。每行把一个 Session filesystem 的 `/skills/<directory>` 固定映射到一个已解析的 catalog version zip；它只保存稳定引用和对象元数据，不拥有对象、不写成员 entry，也不计入 Filestore 容量。迁移同时为历史活动 filesystem 补齐 `/skills` 根。`00033_validate_filestore_skill_archive_checksum.sql` 把 archive SHA-256 持久化约束收紧为 64 位小写十六进制。
+迁移 `00032_add_filestore_skill_archives.sql` 曾新增独立 archive 投影表，并为历史活动 filesystem 补齐 `/skills` 根。`00034_unify_filestore_skill_archives.sql` 删除该表，把每个 `/skills/<directory>` 改为 `filestore_entries.kind=archive` 的受管 entry，并增加对象形状与具体 version UUID 唯一约束；旧投影 rows 按产品决策直接丢弃，不做数据迁移。`00035_validate_filestore_archive_entries.sql` 单独验证新增约束。archive entry 不拥有 catalog 对象、不写成员 entry，也不计入 Filestore 容量。
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 
 迁移 `00023_provision_session_filesystems.sql` 建立“同一 Session 只能拥有一个有效 filesystem”的唯一部分索引，并为历史未软删除的 Session 回填缺失记录。创建索引前会检查历史重复；发现同一 Session 存在多个有效 filesystem 时迁移直接中止，不猜测应保留哪一条。迁移 `00024_use_uuid_filestore_entry_references.sql` 进一步把 entry 的组织、工作区、filesystem 和创建者引用改为稳定 UUID；旧引用存在孤立或租户错配时同样中止迁移。迁移 `00026_validate_filestore_filesystem_reference_scopes.sql` 在最终 UUID schema 上补验 filesystem 的组织、工作区、Session、Code Session 与 API Key 归属链，弥补早期回填只核对主键和 external ID 的不足。迁移 `00027_add_filestore_entry_management.sql` 在短事务中新增内部 ownership 列及 `NOT VALID` 形状约束，`00028_validate_filestore_entry_management.sql` 再以较弱锁单独验证历史行；两列必须成对为空或成对非空。迁移 `00029_add_filestore_file_references.sql` 新增 `source_file_uuid`、活动引用索引、每个 Session resource 唯一活动 entry 约束，并为历史活动 filesystem 补齐四个固定根目录；已有同名 entry 只有在它确实是 `parent_path=/` 的普通目录时才会复用，否则迁移中止。借用 entry 允许没有 Files API 未提供的 MD5，但必须与非过期的 `session_file_resource` 管理关系双向对应。`00030_validate_filestore_file_references.sql` 再单独验证放宽后的 blob 形状和 File reference 形状两个 `NOT VALID` 约束。回滚 `00029` 时只要仍有借用引用就明确失败；四个普通目录 row 会保留，因为 schema 没有把迁移回填目录与原有用户目录做额外标记，盲目删除会破坏数据。所有这些引用都由应用维护，不增加 PostgreSQL 外键。
 
-根目录 `/` 是由 filesystem 合成的虚拟目录，不写 marker row 或 S3 marker object；五个固定一级目录是真实 directory entry，由 filesystem 创建事务写入，历史活动 filesystem 通过迁移补齐。`/skills` 的后代节点例外：它们由 `filestore_skill_archives` 和 zip central directory 合成，不写 `filestore_entries`。文件系统和目录节点的归属都使用 `organization_uuid`、`workspace_uuid`、`filesystem_uuid` 等稳定引用；entry 的创建者审计 UUID 直接继承已经过租户链校验的 filesystem 归属，不再从 Filestore 请求构造空的内部主键 actor。请求进入数据库后仍可使用当前库内部 ID 取得工作区用量锁与 filesystem 锁，但 entry 的持久化与热查询只使用 UUID 边界。schema 不创建 PostgreSQL 外键；源 File UUID 的完整性由同事务行锁、删除守卫和 E2E 测试维护。
+根目录 `/` 是由 filesystem 合成的虚拟目录，不写 marker row 或 S3 marker object；五个固定一级目录是真实 directory entry，由 filesystem 创建事务写入，历史活动 filesystem 通过迁移补齐。每个 `/skills/<directory>` 是 archive entry；只有 zip 内部成员由 central directory 合成，不逐个写 entry。普通 entry 枚举排除 archive kind，`/skills` 专用只读视图负责把 archive 表现为目录并按需展开。文件系统和目录节点的归属都使用 `organization_uuid`、`workspace_uuid`、`filesystem_uuid` 等稳定引用；entry 的创建者审计 UUID 直接继承已经过租户链校验的 filesystem 归属，不再从 Filestore 请求构造空的内部主键 actor。请求进入数据库后仍可使用当前库内部 ID 取得工作区用量锁与 filesystem 锁，但 entry 的持久化与热查询只使用 UUID 边界。schema 不创建 PostgreSQL 外键；源 File UUID 的完整性由同事务行锁、删除守卫和 E2E 测试维护。
 
 文件对象 key 固定为：
 

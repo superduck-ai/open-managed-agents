@@ -32,7 +32,7 @@ type filestoreDatabase interface {
 	GetFilestoreFilesystem(context.Context, int64, string) (db.FilestoreFilesystem, error)
 	GetFilestoreEntry(context.Context, int64, int64, string) (db.FilestoreEntry, error)
 	ListFilestoreEntriesPage(context.Context, db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error)
-	ListFilestoreSkillArchives(context.Context, int64, int64) ([]db.FilestoreSkillArchive, error)
+	ListFilestoreSkillArchiveEntries(context.Context, int64, int64) ([]db.FilestoreEntry, error)
 	MakeFilestoreDirectory(context.Context, db.MakeFilestoreDirectoryInput) (db.FilestoreEntry, error)
 	PutFilestoreFile(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
 	CopyFilestoreFile(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)

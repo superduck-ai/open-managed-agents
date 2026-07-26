@@ -543,12 +543,19 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session filestore: %v", err)
 	}
-	projections, err := app.db.ListFilestoreSkillArchives(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, filesystem.ID)
+	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
+		ctx,
+		getDefaultDBIDs(t, app.db).WorkspaceID,
+		filesystem.ID,
+	)
 	if err != nil {
-		t.Fatalf("list skill archive projections: %v", err)
+		t.Fatalf("list skill archive entries: %v", err)
 	}
-	if len(projections) != 1 || projections[0].VirtualPath != "/skills/runtime-skill" || projections[0].Source != "custom" {
-		t.Fatalf("skill archive projections = %#v", projections)
+	if len(archiveEntries) != 1 ||
+		archiveEntries[0].Kind != db.FilestoreEntryKindArchive ||
+		archiveEntries[0].Path != "/skills/runtime-skill" ||
+		string(archiveEntries[0].Metadata) != `{"skill_source": "custom"}` {
+		t.Fatalf("skill archive entries = %#v", archiveEntries)
 	}
 	if len(provider.creates) != 1 {
 		t.Fatalf("sandbox creates = %#v, want one", provider.creates)
@@ -637,12 +644,18 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 	if err != nil {
 		t.Fatalf("get session filestore: %v", err)
 	}
-	projections, err := app.db.ListFilestoreSkillArchives(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, filesystem.ID)
+	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
+		ctx,
+		getDefaultDBIDs(t, app.db).WorkspaceID,
+		filesystem.ID,
+	)
 	if err != nil {
-		t.Fatalf("list projections: %v", err)
+		t.Fatalf("list archive entries: %v", err)
 	}
-	if len(projections) != 1 || projections[0].VirtualPath != "/skills/missing-resolver-skill" {
-		t.Fatalf("projections = %#v", projections)
+	if len(archiveEntries) != 1 ||
+		archiveEntries[0].Kind != db.FilestoreEntryKindArchive ||
+		archiveEntries[0].Path != "/skills/missing-resolver-skill" {
+		t.Fatalf("archive entries = %#v", archiveEntries)
 	}
 }
 

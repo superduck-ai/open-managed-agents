@@ -39,9 +39,8 @@ type skillArchiveNode struct {
 }
 
 type loadedSkillArchive struct {
-	projection db.FilestoreSkillArchive
-	data       []byte
-	nodes      map[string]skillArchiveNode
+	data  []byte
+	nodes map[string]skillArchiveNode
 }
 
 type skillArchiveCacheEntry struct {
@@ -116,19 +115,27 @@ func (s *Service) listSkillDirectory(
 	cursor directoryCursor,
 	limit int,
 ) (listDirectoryResponse, *apiError) {
-	archives, err := s.db.ListFilestoreSkillArchives(ctx, principal.WorkspaceID, filesystem.ID)
+	archiveEntries, err := s.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceID, filesystem.ID)
 	if err != nil {
-		return listDirectoryResponse{}, mapDatabaseError("list skill archives", err)
+		return listDirectoryResponse{}, mapDatabaseError("list skill archive entries", err)
 	}
 	nodes := make([]skillArchiveNode, 0)
 	directoryExists := request.Path == skillNamespacePath
-	for _, projection := range archives {
-		if request.Path != skillNamespacePath &&
-			request.Path != projection.VirtualPath &&
-			!strings.HasPrefix(request.Path, projection.VirtualPath+"/") {
+	for _, archiveEntry := range archiveEntries {
+		// 顶层目录名已经由 archive entry 确定，无需为非递归列举下载和校验 zip。
+		if request.Path == skillNamespacePath && !request.Recursive {
+			nodes = append(nodes, skillArchiveNode{
+				path:      archiveEntry.Path,
+				directory: true,
+			})
 			continue
 		}
-		archive, apiErr := s.loadSkillArchive(ctx, projection)
+		if request.Path != skillNamespacePath &&
+			request.Path != archiveEntry.Path &&
+			!strings.HasPrefix(request.Path, archiveEntry.Path+"/") {
+			continue
+		}
+		archive, apiErr := s.loadSkillArchive(ctx, archiveEntry)
 		if apiErr != nil {
 			return listDirectoryResponse{}, apiErr
 		}
@@ -166,7 +173,10 @@ func (s *Service) listSkillDirectory(
 	}
 	response := listDirectoryResponse{Entries: make([]entryPayload, 0, len(nodes))}
 	for _, node := range nodes {
-		response.Entries = append(response.Entries, skillNodePayload(node, filesystem.ExternalID, archives))
+		response.Entries = append(
+			response.Entries,
+			skillNodePayload(node, filesystem.ExternalID, archiveEntries),
+		)
 	}
 	if hasMore {
 		response.Cursor, err = encodeDirectoryCursor(directoryCursor{
@@ -188,11 +198,11 @@ func (s *Service) readSkillMetadata(
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
 ) (entryPayload, *apiError) {
-	archive, node, apiErr := s.resolveSkillNode(ctx, principal, filesystem, entryPath)
+	archiveEntry, _, node, apiErr := s.resolveSkillNode(ctx, principal, filesystem, entryPath)
 	if apiErr != nil {
 		return entryPayload{}, apiErr
 	}
-	return skillNodePayload(node, filesystem.ExternalID, []db.FilestoreSkillArchive{archive.projection}), nil
+	return skillNodePayload(node, filesystem.ExternalID, []db.FilestoreEntry{archiveEntry}), nil
 }
 
 func (s *Service) readSkillFile(
@@ -201,7 +211,7 @@ func (s *Service) readSkillFile(
 	filesystem db.FilestoreFilesystem,
 	request readFileRequest,
 ) (readFileResult, *apiError) {
-	_, node, apiErr := s.resolveSkillNode(ctx, principal, filesystem, request.Path)
+	_, _, node, apiErr := s.resolveSkillNode(ctx, principal, filesystem, request.Path)
 	if apiErr != nil {
 		return readFileResult{}, apiErr
 	}
@@ -244,49 +254,53 @@ func (s *Service) resolveSkillNode(
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
-) (*loadedSkillArchive, skillArchiveNode, *apiError) {
-	archives, err := s.db.ListFilestoreSkillArchives(ctx, principal.WorkspaceID, filesystem.ID)
+) (db.FilestoreEntry, *loadedSkillArchive, skillArchiveNode, *apiError) {
+	archiveEntries, err := s.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceID, filesystem.ID)
 	if err != nil {
-		return nil, skillArchiveNode{}, mapDatabaseError("list skill archives", err)
+		return db.FilestoreEntry{}, nil, skillArchiveNode{}, mapDatabaseError("list skill archive entries", err)
 	}
-	for _, projection := range archives {
-		if entryPath != projection.VirtualPath && !strings.HasPrefix(entryPath, projection.VirtualPath+"/") {
+	for _, archiveEntry := range archiveEntries {
+		if entryPath != archiveEntry.Path && !strings.HasPrefix(entryPath, archiveEntry.Path+"/") {
 			continue
 		}
-		archive, apiErr := s.loadSkillArchive(ctx, projection)
+		archive, apiErr := s.loadSkillArchive(ctx, archiveEntry)
 		if apiErr != nil {
-			return nil, skillArchiveNode{}, apiErr
+			return db.FilestoreEntry{}, nil, skillArchiveNode{}, apiErr
 		}
 		node, ok := archive.nodes[entryPath]
 		if !ok {
-			return nil, skillArchiveNode{}, notFound("resource does not exist")
+			return db.FilestoreEntry{}, nil, skillArchiveNode{}, notFound("resource does not exist")
 		}
-		return archive, node, nil
+		return archiveEntry, archive, node, nil
 	}
-	return nil, skillArchiveNode{}, notFound("resource does not exist")
+	return db.FilestoreEntry{}, nil, skillArchiveNode{}, notFound("resource does not exist")
 }
 
 func (s *Service) loadSkillArchive(
 	ctx context.Context,
-	projection db.FilestoreSkillArchive,
+	archiveEntry db.FilestoreEntry,
 ) (*loadedSkillArchive, *apiError) {
 	if s.skillArchives == nil {
 		return nil, internalError("load skill archive", errors.New("skill archive cache is unavailable"))
 	}
-	cacheKey := strings.Join([]string{projection.S3Bucket, projection.S3Key, projection.SHA256}, "\x00")
+	bucket, objectKey, checksum, sizeBytes, err := skillArchiveObject(archiveEntry)
+	if err != nil {
+		return nil, internalError("load skill archive", err)
+	}
+	cacheKey := strings.Join([]string{bucket, objectKey, checksum, archiveEntry.Path}, "\x00")
 	if archive, ok := s.skillArchives.get(cacheKey); ok {
 		return archive, nil
 	}
 	if s.store == nil {
 		return nil, internalError("load skill archive", errors.New("object store is unavailable"))
 	}
-	if projection.S3Bucket != s.store.Name() {
+	if bucket != s.store.Name() {
 		return nil, internalError("load skill archive", errors.New("skill archive bucket is unavailable"))
 	}
-	if projection.SizeBytes <= 0 || projection.SizeBytes > maxSkillArchiveBytes {
+	if sizeBytes > maxSkillArchiveBytes {
 		return nil, internalError("load skill archive", errors.New("skill archive size is invalid"))
 	}
-	object, err := s.store.Open(ctx, projection.S3Key, nil)
+	object, err := s.store.Open(ctx, objectKey, nil)
 	if err != nil {
 		return nil, mapBlobstoreError("load skill archive", err)
 	}
@@ -295,14 +309,14 @@ func (s *Service) loadSkillArchive(
 	if err != nil {
 		return nil, mapBlobstoreError("read skill archive", err)
 	}
-	if int64(len(data)) != projection.SizeBytes {
+	if int64(len(data)) != sizeBytes {
 		return nil, internalError("validate skill archive", errors.New("skill archive size mismatch"))
 	}
 	sum := sha256.Sum256(data)
-	if !strings.EqualFold(hex.EncodeToString(sum[:]), projection.SHA256) {
+	if !strings.EqualFold(hex.EncodeToString(sum[:]), checksum) {
 		return nil, internalError("validate skill archive", errors.New("skill archive checksum mismatch"))
 	}
-	archive, err := indexSkillArchive(projection, data)
+	archive, err := indexSkillArchive(archiveEntry, data)
 	if err != nil {
 		return nil, internalError("validate skill archive", err)
 	}
@@ -310,17 +324,32 @@ func (s *Service) loadSkillArchive(
 	return archive, nil
 }
 
-func indexSkillArchive(projection db.FilestoreSkillArchive, data []byte) (*loadedSkillArchive, error) {
+func skillArchiveObject(entry db.FilestoreEntry) (string, string, string, int64, error) {
+	if entry.Kind != db.FilestoreEntryKindArchive ||
+		entry.ManagedBy == nil ||
+		*entry.ManagedBy != "skill_archive" ||
+		entry.ManagedResourceUUID == nil ||
+		entry.S3Bucket == nil ||
+		entry.S3Key == nil ||
+		entry.SHA256 == nil ||
+		entry.SizeBytes == nil ||
+		*entry.SizeBytes <= 0 {
+		return "", "", "", 0, errors.New("skill archive entry is invalid")
+	}
+	return *entry.S3Bucket, *entry.S3Key, *entry.SHA256, *entry.SizeBytes, nil
+}
+
+func indexSkillArchive(archiveEntry db.FilestoreEntry, data []byte) (*loadedSkillArchive, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, errors.New("skill archive is not a valid zip")
 	}
-	directory := strings.TrimPrefix(projection.VirtualPath, skillNamespacePath+"/")
+	directory := strings.TrimPrefix(archiveEntry.Path, skillNamespacePath+"/")
 	if directory == "" || strings.Contains(directory, "/") {
 		return nil, errors.New("skill archive virtual path is invalid")
 	}
 	nodes := map[string]skillArchiveNode{
-		projection.VirtualPath: {path: projection.VirtualPath, directory: true},
+		archiveEntry.Path: {path: archiveEntry.Path, directory: true},
 	}
 	var totalUncompressed uint64
 	hasSkillMD := false
@@ -350,7 +379,7 @@ func indexSkillArchive(projection db.FilestoreSkillArchive, data []byte) (*loade
 			return nil, errors.New("skill archive uncompressed size exceeds limit")
 		}
 		totalUncompressed = next
-		if err := addSkillParentNodes(nodes, path.Dir(virtualPath), projection.VirtualPath); err != nil {
+		if err := addSkillParentNodes(nodes, path.Dir(virtualPath), archiveEntry.Path); err != nil {
 			return nil, err
 		}
 		if previous, exists := nodes[virtualPath]; exists {
@@ -369,14 +398,14 @@ func indexSkillArchive(projection db.FilestoreSkillArchive, data []byte) (*loade
 			mediaType: mediaType,
 			file:      file,
 		}
-		if virtualPath == projection.VirtualPath+"/SKILL.md" {
+		if virtualPath == archiveEntry.Path+"/SKILL.md" {
 			hasSkillMD = true
 		}
 	}
 	if !hasSkillMD {
 		return nil, fmt.Errorf("%s/SKILL.md not found", directory)
 	}
-	return &loadedSkillArchive{projection: projection, data: data, nodes: nodes}, nil
+	return &loadedSkillArchive{data: data, nodes: nodes}, nil
 }
 
 func validateSkillZipPath(name string) (string, []string, error) {
@@ -420,17 +449,20 @@ func addSkillDirectoryNode(nodes map[string]skillArchiveNode, directoryPath stri
 func skillNodePayload(
 	node skillArchiveNode,
 	filesystemExternalID string,
-	archives []db.FilestoreSkillArchive,
+	archiveEntries []db.FilestoreEntry,
 ) entryPayload {
 	createdAt := time.Unix(0, 0).UTC()
 	nodeIdentity := ""
-	for _, projection := range archives {
-		if node.path == projection.VirtualPath || strings.HasPrefix(node.path, projection.VirtualPath+"/") {
-			createdAt = projection.CreatedAt
+	for _, archiveEntry := range archiveEntries {
+		if node.path == archiveEntry.Path || strings.HasPrefix(node.path, archiveEntry.Path+"/") {
+			createdAt = archiveEntry.CreatedAt
+			versionUUID := ""
+			if archiveEntry.ManagedResourceUUID != nil {
+				versionUUID = *archiveEntry.ManagedResourceUUID
+			}
 			nodeIdentity = strings.Join([]string{
-				projection.FilesystemUUID,
-				projection.Source,
-				projection.SkillVersionUUID,
+				archiveEntry.FilesystemUUID,
+				versionUUID,
 			}, "\x00")
 			break
 		}

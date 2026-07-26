@@ -20,26 +20,26 @@ Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
 3. `latest` 在启动时解析为具体 active version row。后续 catalog 的 latest 变化不会改变
    已启动 Session 的视图。
 4. 在一只 `sqlx.Tx` 中锁定 Session filesystem 和 namespace，确保 `/skills` 固定根存在，
-   并原子替换该 filesystem 的 `filestore_skill_archives` 投影集合。
+   并原子替换该 filesystem 中 `kind=archive`、`managed_by=skill_archive` 的 entry 集合。
 5. 创建 Sandbox 后，Runner 直接启动 rclone-filestore 的五个固定 mount；multimount
    在内部对 destination 执行 `MkdirAll`，Runner 不执行独立 mount preparation。
 6. `/skills` 使用只读 Filestore Token，直接挂载到 `/root/.claude/skills`。rclone ready
    后才启动 Environment Manager；Environment Manager 不再处理 skill。
 
-每条 `filestore_skill_archives` row 对应一个具体 skill version zip，保存：
+每条 archive entry 对应一个具体 skill version zip，保存：
 
 - organization、workspace、filesystem 的稳定 UUID；
-- source 和具体 skill version UUID；
-- 唯一虚拟目录 `/skills/<directory>`；
+- `metadata.skill_source` 和 `managed_resource_uuid` 中的具体 skill version UUID；
+- 唯一路径 `/skills/<directory>`；
 - archive 的 bucket、key、size 和 SHA-256。
 
-同一 filesystem 内，虚拟目录和 `source + skill_version_uuid` 都唯一。Snapshot 中两个 skill
+同一 filesystem 内，路径和具体 skill version UUID 都唯一。Snapshot 中两个 skill
 若声明相同目录但不是同一具体版本，启动失败，不能让后一个静默覆盖前一个。
 
 ```mermaid
 flowchart LR
     A["Session agent snapshot"] --> B["Resolve concrete catalog versions"]
-    B --> C["Replace filestore_skill_archives in one transaction"]
+    B --> C["Replace kind=archive entries in one transaction"]
     C --> D["Filestore /skills virtual view"]
     E["Immutable zip objects"] --> D
     D --> F["rclone readonly mount"]
@@ -69,15 +69,19 @@ Sandbox 中同一棵树直接位于：
   xlsx/SKILL.md
 ```
 
-`/skills` 是真实的固定一级 directory entry；每个 skill 目录及其成员是根据投影和 zip
-内容合成的虚拟节点，不写入 `filestore_entries`，不复制对象，也不计入 `filestore_bytes`。
-虚拟文件 UUID 由 filesystem、source、具体 version UUID 和成员路径确定，Runner 重试不会
-改变同一节点的身份。
+`/skills` 是真实的固定一级 directory entry；每个 `/skills/<directory>` 是
+`filestore_entries` 中的 archive entry，成员则根据 zip central directory 合成，不逐个
+写 entry。archive entry 只借用 catalog 对象，不复制对象，也不计入 `filestore_bytes`。
+虚拟文件 UUID 由 filesystem、具体 version UUID 和成员路径确定，Runner 重试不会改变
+同一节点的身份。
 
 List、metadata 和 ranged read 都由 Filestore 服务实现。对 `/skills` 本身、其后代，以及
 以 `/skills` 为 source 或 destination 的任意 mutation 均返回 `403 permission_denied`。
 HTTP 只读 Token 和 rclone `readonly=true` 构成 Sandbox 的只读边界；`/skills` 与其他
 只读 mount 统一使用目录权限 `0755` 和文件权限 `0644`。
+
+非递归列举 `/skills` 时，Filestore 直接使用 archive entry 的 `path` 返回一级 skill
+目录，不下载 archive。递归列举或访问具体 skill 子树时，才按需加载并校验对应 archive。
 
 ## archive 校验与缓存
 
@@ -90,15 +94,16 @@ Filestore 在第一次访问某个具体 archive 时按需下载并建立内存�
 - 解压大小按 archive header 累加并限制为 500 MiB；
 - 读取单个成员时流式解压；range offset 通过丢弃前缀实现，不把解压结果整体缓存。
 
-进程内以 `bucket + key + sha256` 为 key 使用 64 MiB 有界 LRU 缓存压缩 archive 和目录索引。
-投影仍是每次请求的授权事实来源；Session 投影删除后，缓存中残留的字节无法再通过
+进程内以 `bucket + key + sha256 + archive path` 为 key 使用 64 MiB 有界 LRU 缓存压缩
+archive 和目录索引。
+archive entry 仍是每次请求的授权事实来源；Session entry 删除后，缓存中残留的字节无法再通过
 Filestore 路径访问。
 
 ## 生命周期与对象保留
 
-Session filesystem 删除后沿用现有有界 cleanup job。最后一批文件和目录退休时，同一事务
-删除该 filesystem 的 `filestore_skill_archives` rows；这些 row 只是借用 catalog archive，
-不会产生 Filestore 对象清理任务或容量扣减。
+Session filesystem 删除后沿用现有有界 cleanup job。最后一批普通文件退休后，同一事务
+软删除该 filesystem 的 directory 和 archive entries。archive entry 只是借用 catalog
+archive，不会产生 Filestore 对象清理任务或容量扣减。
 
 删除 custom skill/version 或用 `seed-builtin-skills --prune` 软删除 built-in catalog row 时，
 不立即删除 archive 对象，也不创建通用 `object_cleanup` job。原因是已经启动的 Session
@@ -117,20 +122,21 @@ Session filesystem 删除后沿用现有有界 cleanup job。最后一批文件�
 - `/mnt/skills`、`/workspace/skills` 解压目录，以及 Claude skill discovery 软链；
 - Environment Manager 的 managed-agent skill 解压职责。
 
-迁移 `00032_add_filestore_skill_archives.sql` 创建投影表、为历史活动 filesystem 补齐
-`/skills` 根并清除遗留的 `skill_prewarm` jobs。迁移
-`00033_validate_filestore_skill_archive_checksum.sql` 把持久化 checksum 收紧为 64 位
-小写十六进制。两张 catalog version 表仍是 archive 所有权来源，投影表不创建 PostgreSQL
-外键。
+迁移 `00032_add_filestore_skill_archives.sql` 曾创建独立投影表、为历史活动 filesystem
+补齐 `/skills` 根并清除遗留的 `skill_prewarm` jobs。迁移
+`00034_unify_filestore_skill_archives.sql` 把 `archive` 加入 entry kind，增加 archive
+对象与 ownership 形状约束，并直接删除旧表；按产品决策，旧表历史 rows 不迁移。
+`00035_validate_filestore_archive_entries.sql` 单独验证新约束。两张 catalog version 表仍是
+archive 所有权来源，schema 不创建 PostgreSQL 外键。
 
 ## 验收重点
 
 - resolver 只读取 DB metadata，不在 Session 启动路径下载 archive；
-- `latest` 被钉住为具体 version，投影替换是全量且原子的；
+- `latest` 被钉住为具体 version，archive entry 替换是全量且原子的；
 - `/skills` list、recursive list、metadata 和 ranged read 返回 archive 成员；
 - checksum、路径穿越、缺少 `SKILL.md` 等损坏 archive fail closed；
 - 所有 `/skills` mutation 被拒绝；
 - rclone 第五个 mount 直达 `/root/.claude/skills`，destination 由 multimount 内部创建；
 - Runner 不写 legacy mount metadata，E2B runtime 不创建 skill volume；
-- catalog soft delete/prune 不破坏活动 Session 投影；
-- Session filesystem cleanup 会删除投影 row，但不删除借用的 catalog object。
+- catalog soft delete/prune 不破坏活动 Session archive entry；
+- Session filesystem cleanup 会软删除 archive entry，但不删除借用的 catalog object。

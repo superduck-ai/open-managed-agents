@@ -1,10 +1,12 @@
 package e2bruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	pathpkg "path"
 	"strings"
 	"time"
 
@@ -61,6 +63,8 @@ type Provider interface {
 	Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolution Resolution) (Sandbox, error)
 	Kill(ctx context.Context, sandboxID string) error
 	Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error)
+	WriteFile(ctx context.Context, sandboxID string, path string, data []byte) error
+	FileExists(ctx context.Context, sandboxID string, path string) (bool, error)
 	RunCommand(ctx context.Context, sandboxID string, request CommandRequest) (CommandResult, error)
 	StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error
 }
@@ -159,15 +163,32 @@ func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
 	return sandbox.Kill(ctx, nil)
 }
 
+func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
+	if strings.TrimSpace(sandboxID) == "" {
+		return errors.New("sandbox id is required")
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return errors.New("sandbox file path is required")
+	}
+	sandbox, err := p.connect(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+	if dir := pathpkg.Dir(filePath); dir != "." && dir != "/" {
+		if _, err := sandbox.Commands.Run(ctx, "mkdir -p "+shellQuote(dir), nil); err != nil {
+			return err
+		}
+	}
+	_, err = sandbox.Files.Write(ctx, filePath, bytes.NewReader(data), nil)
+	return err
+}
+
 func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, request CommandRequest) (CommandResult, error) {
 	if strings.TrimSpace(sandboxID) == "" {
 		return CommandResult{}, errors.New("sandbox id is required")
 	}
 	if strings.TrimSpace(request.Command) == "" {
 		return CommandResult{}, errors.New("sandbox command is required")
-	}
-	if len(request.Stdin) == 0 {
-		return CommandResult{}, errors.New("sandbox command stdin is required")
 	}
 	sandbox, err := p.connect(ctx, sandboxID)
 	if err != nil {
@@ -194,10 +215,12 @@ type commandStartOutcome struct {
 	err     error
 }
 
-type commandKillOutcome struct {
-	attempted bool
-	err       error
+type commandWaitOutcome struct {
+	result CommandResult
+	err    error
 }
+
+const commandWaitDisconnectGrace = 100 * time.Millisecond
 
 func executeCommand(ctx context.Context, request CommandRequest, start commandStarter) (CommandResult, error) {
 	timeout := request.Timeout
@@ -232,34 +255,48 @@ func executeCommand(ctx context.Context, request CommandRequest, start commandSt
 		return CommandResult{}, fmt.Errorf("start sandbox command: %w", commandCtx.Err())
 	}
 	defer cancelProcess()
-	defer process.Disconnect()
-	if err := sendCommandStdin(commandCtx, process, request.Stdin); err != nil {
-		return CommandResult{}, err
-	}
-
-	watchDone := make(chan struct{})
-	killed := make(chan commandKillOutcome, 1)
-	go func() {
-		select {
-		case <-commandCtx.Done():
-			killed <- commandKillOutcome{attempted: true, err: killCommandProcess(process)}
-		case <-watchDone:
-			killed <- commandKillOutcome{}
+	disconnected := false
+	defer func() {
+		if !disconnected {
+			process.Disconnect()
 		}
 	}()
-	result, waitErr := process.Wait()
-	close(watchDone)
-	killOutcome := <-killed
-	if commandCtx.Err() != nil {
-		if !killOutcome.attempted {
-			killOutcome.err = killCommandProcess(process)
+	if len(request.Stdin) != 0 {
+		if err := sendCommandStdin(commandCtx, process, request.Stdin); err != nil {
+			return CommandResult{}, err
 		}
-		return CommandResult{}, errors.Join(fmt.Errorf("sandbox command: %w", commandCtx.Err()), killOutcome.err)
 	}
-	if waitErr != nil {
-		return CommandResult{}, errors.Join(fmt.Errorf("wait for sandbox command: %w", waitErr), killCommandProcess(process))
+
+	waited := make(chan commandWaitOutcome, 1)
+	go func() {
+		result, err := process.Wait()
+		waited <- commandWaitOutcome{result: result, err: err}
+	}()
+
+	select {
+	case outcome := <-waited:
+		if outcome.err != nil {
+			return CommandResult{}, errors.Join(
+				fmt.Errorf("wait for sandbox command: %w", outcome.err),
+				killCommandProcess(process),
+			)
+		}
+		return outcome.result, nil
+	case <-commandCtx.Done():
+		killErr := killCommandProcess(process)
+		grace := time.NewTimer(commandWaitDisconnectGrace)
+		defer grace.Stop()
+		select {
+		case <-waited:
+		case <-grace.C:
+			process.Disconnect()
+			disconnected = true
+		}
+		return CommandResult{}, errors.Join(
+			fmt.Errorf("sandbox command: %w", commandCtx.Err()),
+			killErr,
+		)
 	}
-	return result, nil
 }
 
 func cleanupLateCommandStart(started <-chan commandStartOutcome) {
@@ -297,10 +334,10 @@ type e2bCommandProcess struct {
 
 func startE2BCommand(commands *e2b.Commands) commandStarter {
 	return func(ctx context.Context, request CommandRequest) (commandProcess, error) {
-		stdinEnabled := true
-		opts := &e2b.CommandStartOpts{
-			Background: true,
-			Stdin:      &stdinEnabled,
+		opts := &e2b.CommandStartOpts{Background: true}
+		if len(request.Stdin) != 0 {
+			stdinEnabled := true
+			opts.Stdin = &stdinEnabled
 		}
 		if request.Timeout > 0 {
 			timeoutMs := int(request.Timeout / time.Millisecond)
@@ -313,6 +350,10 @@ func startE2BCommand(commands *e2b.Commands) commandStarter {
 		handle, ok := execution.(*e2b.CommandHandle)
 		if !ok {
 			return nil, fmt.Errorf("sandbox command execution type = %T, want *e2b.CommandHandle", execution)
+		}
+		if handle.Pid == 0 {
+			handle.Disconnect()
+			return nil, errors.New("sandbox background command returned an invalid PID")
 		}
 		return &e2bCommandProcess{commands: commands, handle: handle}, nil
 	}
@@ -351,16 +392,35 @@ func (p *e2bCommandProcess) Disconnect() {
 	p.handle.Disconnect()
 }
 
-// StartBackgroundCommand 通过 E2B 进程 API 启动后台命令，并把敏感启动数据直接写入其 stdin。
+func (p *E2BProvider) FileExists(ctx context.Context, sandboxID string, filePath string) (bool, error) {
+	if strings.TrimSpace(sandboxID) == "" {
+		return false, errors.New("sandbox id is required")
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return false, errors.New("sandbox file path is required")
+	}
+	sandbox, err := p.connect(ctx, sandboxID)
+	if err != nil {
+		return false, err
+	}
+	return sandbox.Files.Exists(ctx, filePath, nil)
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+// StartBackgroundCommand 通过 E2B 进程 API 启动后台命令。
+// stdin 非空时直接写入进程并关闭 EOF；为空时不启用 stdin 通道。
 func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error {
 	if strings.TrimSpace(sandboxID) == "" {
 		return errors.New("sandbox id is required")
 	}
 	if strings.TrimSpace(command) == "" {
 		return errors.New("sandbox command is required")
-	}
-	if len(stdin) == 0 {
-		return errors.New("sandbox command stdin is required")
 	}
 	sandbox, err := p.connect(ctx, sandboxID)
 	if err != nil {
@@ -371,6 +431,9 @@ func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID stri
 		return fmt.Errorf("start sandbox background command: %w", err)
 	}
 	defer process.Disconnect()
+	if len(stdin) == 0 {
+		return nil
+	}
 	return sendCommandStdin(ctx, process, stdin)
 }
 func (p *E2BProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*SkillMount, error) {

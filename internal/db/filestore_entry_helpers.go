@@ -175,6 +175,10 @@ func filestoreNow(value time.Time) time.Time {
 	return value.UTC()
 }
 
+// 如果这个 directoryPath 已经存在，而且本来就是目录，就直接返回现有目录。
+// 如果这个路径被一个未过期的非目录 entry 占着，就返回 ErrFilestorePathExists。
+// 如果这个路径被一个“已过期的文件 entry”占着，它会先挂清理任务、扣回 owned bytes，然后把这条旧 row 原地改写成目录。
+// 如果这个路径根本不存在，就插入一条新的 directory entry。
 func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (FilestoreEntry, error) {
 	existing, found, err := getFilestoreEntryForMutation(ctx, tx, filesystem, directoryPath)
 	if err != nil {
@@ -187,7 +191,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		if !filestoreEntryExpired(existing, now) {
 			return FilestoreEntry{}, ErrFilestorePathExists
 		}
-		if _, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
+		if _, _, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
 			WorkspaceID: workspaceID, FilesystemID: filesystem.ID,
 		}, existing, "expired_path_replaced", now); err != nil {
 			return FilestoreEntry{}, err
@@ -200,6 +204,8 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 				tags = CAST(array[] AS text[]), downloadable = false,
 				md5 = null, sha256 = null, s3_bucket = null, s3_key = null,
 				s3_etag = null, s3_version_id = null, expires_at = null,
+				managed_by = null, managed_resource_uuid = null,
+				source_file_uuid = null,
 				created_by_api_key_uuid = :created_by_api_key_uuid,
 				created_by_session_uuid = :created_by_session_uuid,
 				created_by_code_session_uuid = :created_by_code_session_uuid,
@@ -222,10 +228,12 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		if err != nil {
 			return FilestoreEntry{}, err
 		}
-		if err := applyWorkspaceStorageDeltaSQLXTx(
-			ctx, tx, workspaceID, 0, -filestoreInt64(existing.SizeBytes), 0,
-		); err != nil {
-			return FilestoreEntry{}, err
+		if releasedBytes := existing.OwnedBytes(); releasedBytes > 0 {
+			if err := applyWorkspaceStorageDeltaSQLXTx(
+				ctx, tx, workspaceID, 0, -releasedBytes, 0,
+			); err != nil {
+				return FilestoreEntry{}, err
+			}
 		}
 		return directory, nil
 	}
@@ -283,7 +291,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	var oldSize int64
 	if found && existing.Kind == FilestoreEntryKindFile {
 		// 账本在 TTL 清理提交前仍统计到期文件；复用路径时必须以完整旧大小计算增量。
-		oldSize = filestoreInt64(existing.SizeBytes)
+		oldSize = existing.OwnedBytes()
 	}
 	if found && !filestoreEntryExpired(existing, quotaNow) {
 		if existing.Kind != FilestoreEntryKindFile {
@@ -302,13 +310,15 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 
 	var cleanupJobs []FilestoreObjectCleanupJob
 	if found && existing.Kind == FilestoreEntryKindFile && !sameFilestoreObject(existing, input.Blob) {
-		job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
+		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
 			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 		}, existing, "file_replaced", input.Now)
 		if err != nil {
 			return FilestoreMutationResult{}, err
 		}
-		cleanupJobs = append(cleanupJobs, job)
+		if enqueued {
+			cleanupJobs = append(cleanupJobs, job)
+		}
 	}
 	entry, err := writeFilestoreFileTx(ctx, tx, filesystem, existing, found, input)
 	if err != nil {
@@ -337,6 +347,8 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				tags = :tags, downloadable = :downloadable, md5 = :md5, sha256 = :sha256,
 				s3_bucket = :s3_bucket, s3_key = :s3_key, s3_etag = :s3_etag,
 				s3_version_id = :s3_version_id, expires_at = :expires_at,
+				managed_by = null, managed_resource_uuid = null,
+				source_file_uuid = null,
 				created_by_api_key_uuid = :created_by_api_key_uuid,
 				created_by_session_uuid = :created_by_session_uuid,
 				created_by_code_session_uuid = :created_by_code_session_uuid,

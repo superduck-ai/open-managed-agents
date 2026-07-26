@@ -176,7 +176,7 @@ func (d *DB) UpdatePlatformOrganization(ctx context.Context, orgUUID string, pat
 			created_at,
 			updated_at,
 			'' as role,
-			CAST('-infinity' AS timestamptz) as added_at
+			created_at as added_at
 	`, map[string]any{
 		"org_uuid": strings.TrimSpace(orgUUID),
 		"name":     name,
@@ -305,7 +305,7 @@ func getBootstrapOrganizationRow(ctx context.Context, database sqlxNamedQueryer,
 			o.created_at,
 			o.updated_at,
 			'' as role,
-			CAST('-infinity' AS timestamptz) as added_at
+			o.created_at as added_at
 		from organizations o
 		where cast(o.uuid as text) = :org_uuid or o.external_id = :org_uuid
 		limit 1

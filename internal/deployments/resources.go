@@ -1,0 +1,303 @@
+package deployments
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+
+	"github.com/google/uuid"
+)
+
+type normalizedDeploymentResource struct {
+	payload  map[string]any
+	secret   map[string]any
+	fileSpec *sessionresource.FileSpec
+}
+
+// normalizeResources 将 Deployment 请求中的整组 resources 规范化，并把普通配置与秘密分开。
+//
+// 未传 resources 或值为 null 时，函数返回规范的空数组和空 secrets 对象。其他输入必须是
+// JSON 数组，且总资源数不能超过 500。它按原始顺序调用 normalizeResource 处理每一项，
+// 收集可公开保存的 payload、可选 secret 和 FileSpec；任意一项失败都会终止整组处理。
+//
+// secret 使用资源在原数组中的下标作为 key。这样普通 resources 中不会包含 GitHub
+// authorization_token，Deployment 运行时 sessionResourcesFromDeployment 仍可用相同下标
+// 将秘密匹配回对应的 Session resource。FileSpec 则在全部项目处理完成后统一校验，确保
+// File resource 不超过 100 个，且 mount_path 没有重复或祖先/后代冲突。
+//
+// 例如：
+//   - 输入一个 File 和一个带 Token 的 GitHub resource，resourcesRaw 保存规范化后的两条
+//     普通配置，secretsRaw 形如 {"1":{"authorization_token":"github-secret"}}。
+//   - 输入 null，返回 resourcesRaw=[]、secretsRaw={}，不会产生错误。
+//   - 两个 File 分别挂到 /workspace/data 和 /workspace/data/config.json，聚合路径校验失败，
+//     函数返回错误，不生成可保存的结果。
+//
+// 成功时返回两段 JSON：resourcesRaw 用于普通资源配置，secretsRaw 用于敏感配置。主要错误
+// 包括输入不是数组、超过数量限制、单项字段或引用无效、File 路径冲突以及 JSON 编码失败。
+// 函数本身不写数据库、不创建 Session、不修改 Filestore，也不执行挂载；normalizeResource
+// 只会按 principal 的 Workspace 读取并校验 File 或 Memory Store 引用，因此这里没有事务或锁。
+func (h *Handler) normalizeResources(
+	r *http.Request,
+	principal auth.Principal,
+	raw json.RawMessage,
+) (json.RawMessage, json.RawMessage, error) {
+	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
+		return json.RawMessage(`[]`), json.RawMessage(`{}`), nil
+	}
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, nil, errors.New("resources must be an array")
+	}
+	if len(items) > 500 {
+		return nil, nil, errors.New("resources may contain at most 500 entries")
+	}
+
+	resources := make([]map[string]any, 0, len(items))
+	secrets := map[string]any{}
+	fileSpecs := make([]sessionresource.FileSpec, 0, len(items))
+	for index, fields := range items {
+		resource, err := h.normalizeResource(r, principal, fields)
+		if err != nil {
+			return nil, nil, err
+		}
+		resources = append(resources, resource.payload)
+		if resource.fileSpec != nil {
+			fileSpecs = append(fileSpecs, *resource.fileSpec)
+		}
+		if resource.secret != nil {
+			secrets[strconv.Itoa(index)] = resource.secret
+		}
+	}
+	if err := sessionresource.ValidateFileSpecs(fileSpecs); err != nil {
+		return nil, nil, err
+	}
+
+	resourcesRaw, err := httpapi.MarshalRaw(resources)
+	if err != nil {
+		return nil, nil, err
+	}
+	secretsRaw, err := httpapi.MarshalRaw(secrets)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resourcesRaw, secretsRaw, nil
+}
+
+// normalizeResource 将 Deployment 请求中的一条原始资源配置校验并转换为统一的存储格式。
+//
+// 函数先读取必填的 type，只接受 file、github_repository 和 memory_store。它只把已知
+// 字段写入 payload，并补充各类型的默认值。GitHub authorization_token 会单独放入
+// secret，避免进入普通资源配置。File 和 Memory Store 引用都按 principal.WorkspaceID
+// 查询，防止 Deployment 引用其他 Workspace 的对象；已归档的 Memory Store 也会被拒绝。
+//
+// File resource 会固定为 source=/uploads，并生成经过校验的 FileSpec。当前函数只处理
+// 单条资源；File 数量、重复 mount_path 和祖先/后代路径冲突由外层 normalizeResources
+// 收集全部 FileSpec 后统一校验。Deployment 真正运行时，sessionResourcesFromDeployment
+// 才会为这些模板生成 sesrsc_ ID，并创建 Session resource 和对应的 File binding。
+//
+// 例如：
+//   - 输入 {"type":"file","file_id":"file_123","mount_path":"/workspace/context.md"}，
+//     返回的 payload 会包含固定的 source=/uploads 和相同的 mount_path。
+//   - 输入带 authorization_token 的 github_repository，普通 payload 只保存仓库配置，
+//     Token 单独返回在 secret 中。
+//   - file_id 属于其他 Workspace，或 memory_store 已归档，函数返回引用或状态错误，
+//     不生成可保存的资源。
+//
+// 成功时返回规范化的 payload、可选 secret 和可选 FileSpec。字段格式错误、未知类型、
+// 引用不存在、跨 Workspace 引用或无效状态都会返回错误。函数只执行必要的数据库读取，
+// 不开启事务、不加显式锁，也不会写数据库、创建 Session、修改 Filestore 或执行挂载。
+func (h *Handler) normalizeResource(
+	r *http.Request,
+	principal auth.Principal,
+	fields map[string]json.RawMessage,
+) (normalizedDeploymentResource, error) {
+	resourceType, err := parseRequiredStringField(fields, "type")
+	if err != nil {
+		return normalizedDeploymentResource{}, err
+	}
+	resource := normalizedDeploymentResource{
+		payload: map[string]any{"type": resourceType},
+	}
+	switch resourceType {
+	case sessionresource.FileType:
+		fileID, err := sessionresource.ParseFileID(fields)
+		if err != nil {
+			return normalizedDeploymentResource{}, err
+		}
+		if _, err := h.db.GetFile(r.Context(), principal.WorkspaceID, fileID); err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				return normalizedDeploymentResource{}, fmt.Errorf("file not found: %s", fileID)
+			}
+			return normalizedDeploymentResource{}, err
+		}
+		fileSpec, err := sessionresource.NormalizeFileSpec(fileID, fields["source"], fields["mount_path"])
+		if err != nil {
+			return normalizedDeploymentResource{}, err
+		}
+		resource.payload = fileSpec.PayloadFields("")
+		resource.fileSpec = &fileSpec
+	case "github_repository":
+		repoURL, err := parseRequiredStringField(fields, "url")
+		if err != nil {
+			return normalizedDeploymentResource{}, err
+		}
+		mountPath, err := optionalStringWithDefault(fields["mount_path"], defaultRepoMountPath(repoURL), "mount_path")
+		if err != nil {
+			return normalizedDeploymentResource{}, err
+		}
+		resource.payload["url"] = repoURL
+		resource.payload["mount_path"] = mountPath
+		if raw, ok := fields["checkout"]; ok && !httpapi.IsJSONNull(raw) {
+			if err := validateCheckout(raw); err != nil {
+				return normalizedDeploymentResource{}, err
+			}
+			resource.payload["checkout"] = agentsnapshot.RawJSONValue(raw, nil)
+		}
+		if raw, ok := fields["authorization_token"]; ok && !httpapi.IsJSONNull(raw) {
+			token, err := parseRequiredRawString(raw, "authorization_token")
+			if err != nil {
+				return normalizedDeploymentResource{}, err
+			}
+			resource.secret = map[string]any{"authorization_token": token}
+		}
+	case "memory_store":
+		memoryStoreID, err := parseRequiredStringField(fields, "memory_store_id")
+		if err != nil {
+			return normalizedDeploymentResource{}, err
+		}
+		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, memoryStoreID)
+		if err != nil {
+			return normalizedDeploymentResource{}, resourceReferenceError{
+				ResourceType: "memory_store",
+				ResourceID:   memoryStoreID,
+				Err:          err,
+			}
+		}
+		if store.ArchivedAt != nil {
+			return normalizedDeploymentResource{}, resourceReferenceError{
+				ResourceType: "memory_store",
+				ResourceID:   memoryStoreID,
+				Err:          db.ErrInvalidState,
+			}
+		}
+		resource.payload["memory_store_id"] = memoryStoreID
+		access, err := optionalStringWithDefault(fields["access"], "read_write", "access")
+		if err != nil {
+			return normalizedDeploymentResource{}, err
+		}
+		if access != "read_write" && access != "read_only" {
+			return normalizedDeploymentResource{}, errors.New("access must be read_write or read_only")
+		}
+		resource.payload["access"] = access
+		copyOptionalPayloadString(resource.payload, fields, "instructions")
+	default:
+		return normalizedDeploymentResource{}, errors.New(
+			"resource type must be file, github_repository, or memory_store",
+		)
+	}
+	return resource, nil
+}
+
+type resourceReferenceError struct {
+	ResourceType string
+	ResourceID   string
+	Err          error
+}
+
+func (e resourceReferenceError) Error() string {
+	return e.ResourceType + " reference failed: " + e.ResourceID
+}
+
+func (e resourceReferenceError) Unwrap() error {
+	return e.Err
+}
+
+func sessionResourcesFromDeployment(
+	deployment db.Deployment,
+	now time.Time,
+) ([]db.CreateSessionResourceInput, error) {
+	var configs []json.RawMessage
+	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
+		if err := json.Unmarshal(deployment.Resources, &configs); err != nil {
+			return nil, errors.New("stored resources are invalid")
+		}
+	}
+	var secrets map[string]json.RawMessage
+	if len(deployment.ResourceSecrets) > 0 && !httpapi.IsJSONNull(deployment.ResourceSecrets) {
+		_ = json.Unmarshal(deployment.ResourceSecrets, &secrets)
+	}
+
+	resources := make([]db.CreateSessionResourceInput, 0, len(configs))
+	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
+	for index, configRaw := range configs {
+		var config map[string]any
+		if err := json.Unmarshal(configRaw, &config); err != nil {
+			return nil, errors.New("stored resources are invalid")
+		}
+		resourceType, _ := config["type"].(string)
+		resourceID, err := ids.New("sesrsc_")
+		if err != nil {
+			return nil, err
+		}
+
+		payload := cloneMap(config)
+		var fileMount *db.SessionFileMount
+		if resourceType == sessionresource.FileType {
+			fileSpec, err := sessionresource.ParseStoredFileSpec(configRaw)
+			if err != nil {
+				return nil, err
+			}
+			payload = fileSpec.PayloadFields(resourceID)
+			binding, err := fileSpec.SessionFileBinding(resourceID)
+			if err != nil {
+				return nil, err
+			}
+			fileSpecs = append(fileSpecs, fileSpec)
+			fileMount = &db.SessionFileMount{
+				ResourceExternalID: binding.ResourceID,
+				FileExternalID:     binding.FileID,
+				Path:               binding.Path,
+			}
+		} else {
+			payload["id"] = resourceID
+			payload["type"] = resourceType
+		}
+		payloadRaw, err := httpapi.MarshalRaw(payload)
+		if err != nil {
+			return nil, err
+		}
+
+		var secretRaw json.RawMessage
+		if secrets != nil {
+			secretRaw = secrets[strconv.Itoa(index)]
+		}
+		resources = append(resources, db.CreateSessionResourceInput{
+			Resource: db.SessionResource{
+				UUID:           uuid.NewString(),
+				ExternalID:     resourceID,
+				OrganizationID: deployment.OrganizationID,
+				WorkspaceID:    deployment.WorkspaceID,
+				ResourceType:   resourceType,
+				Payload:        payloadRaw,
+				SecretPayload:  secretRaw,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			},
+			FileMount: fileMount,
+		})
+	}
+	if err := sessionresource.ValidateFileSpecs(fileSpecs); err != nil {
+		return nil, err
+	}
+	return resources, nil
+}

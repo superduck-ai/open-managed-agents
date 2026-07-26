@@ -82,8 +82,10 @@ OMA 通过 stdin 发送 manifest，不写入中间 manifest 文件，不依赖 P
 - `mcp_allowed_hosts`与`managed_agent_skills_mount`是Sandbox创建输入，在`Resolve`/`Create`前准备；preparation只修改Runner内存中的Work，不提前持久化runtime成功状态。
 - `provider_sandbox_id`在Sandbox创建后独立持久化，供失败清理使用。
 - `environment_sandboxes.metadata`是一次创建尝试的输入快照，可保留MCP/skill preparation信息，但不表示runtime commit成功。
-- Packages完成后，Runner必须heartbeat并检查`lease_extended`；lease失效时终止Sandbox，不创建active Code Session或凭证。
-- lease有效时，Runner在同一数据库事务中锁定并重新确认Work为`active`，使用Session行锁读取最终event快照，创建active Code Session，写入initialize/initial inbound events，并提交preparation与runtime identity metadata。
+- Packages完成后，Runner必须heartbeat并检查`lease_extended`，再确认Session仍为`idle`且未归档；任一条件不满足时终止Sandbox，不创建active Code Session或凭证。
+- Work与Session预检通过后，Runner启动固定rclone filestore并等待四个mount ready，再把Sandbox标记为`running`。
+- rclone ready后，Runner在同一数据库事务中锁定并重新确认Work为`active`、Session为`idle`且未归档，使用Session行锁读取最终event快照，创建active Code Session，写入initialize/initial inbound events，并提交preparation与runtime identity metadata。
+- initial inbound event按idempotency key去重；冲突项不占用sequence，也不回滚整个runtime事务。
 - 锁前提交的Session event进入初始inbound queue；锁后event等待runtime commit后走实时转发路径。Packages安装期间的消息不能落在两条路径之间。
 - 任一数据库写入或提交前凭证签发失败都会回滚runtime commit；已经创建的Sandbox仍按统一失败路径清理。
 
@@ -117,7 +119,8 @@ flowchart TD
     G -->|是| F
     F --> H{"Work lease是否有效"}
     H -->|否| X
-    H -->|是| I["OMA提交Code Session runtime"]
+    H -->|是| R["OMA启动rclone并等待四个mount ready"]
+    R --> I["OMA原子提交Code Session runtime"]
     I --> J["Environment Manager通过task-run启动Claude Agent"]
     J --> K["Agent运行期HTTPS经过CCR Relay和OMA Proxy"]
 ```
@@ -196,10 +199,12 @@ sequenceDiagram
         Runner->>DB: 停止Work并更新Sandbox状态
         Runner->>Sandbox: Kill
     else Work lease有效
+        Runner->>DB: 确认Session idle且未归档
+        Runner->>Sandbox: 启动rclone并等待四个mount ready
+        Runner->>DB: Sandbox标记running
         Runner->>DB: 锁定Work与Session并读取最终event快照
         Runner->>Runner: 签发凭证并构建startup payload
         Runner->>DB: 同一事务提交Code Session、events与runtime metadata
-        Runner->>DB: Sandbox标记running
         Runner->>Manager: 启动task-run并通过stdin发送startup payload
         Manager->>Manager: 注册CCR Worker
         Manager->>Claude: 启动Claude Agent
@@ -421,6 +426,8 @@ Environment Manager：
 - 建立整体deadline。
 - 按`Start → SendStdin → CloseStdin → Wait`执行。
 - context取消、发送失败、关闭失败或超时时kill command handle。
+- `Wait`必须在独立goroutine中把结果写入容量为1的channel；调用方select整体deadline，不能假设`Kill`一定会让SDK的`Wait`返回。
+- timeout后以有界context执行`Kill`，再只等待固定grace；grace到期主动`Disconnect`并返回timeout。即使底层handle没有关闭完成通知，Runner也不能永久阻塞。
 - 只有合法`succeeded` JSON与exit code 0同时出现才允许继续。
 - 其他结果都阻止runtime commit或Template publication，并丢弃Sandbox/build environment。
 

@@ -119,13 +119,17 @@ func (d *DB) CreateManagedAgentRuntime(
 // 锁内读取的最终快照会随 Code Session 一起提交；锁后写入的事件则会在
 // Runtime 提交后通过实时转发路径进入 inbound queue。
 func lockSessionAndListEventsTx(ctx context.Context, tx pgx.Tx, workspaceID int64, sessionExternalID string) ([]SessionEvent, error) {
-	if _, err := scanSession(tx.QueryRow(ctx, `
+	session, err := scanSession(tx.QueryRow(ctx, `
 		select `+sessionColumns()+`
 		from sessions
 		where workspace_id = $1 and external_id = $2 and deleted_at is null
 		for update
-	`, workspaceID, sessionExternalID)); err != nil {
+	`, workspaceID, sessionExternalID))
+	if err != nil {
 		return nil, err
+	}
+	if session.ArchivedAt != nil || session.Status != "idle" {
+		return nil, ErrInvalidState
 	}
 	rows, err := tx.Query(ctx, `
 		select `+sessionEventColumns()+`
@@ -146,24 +150,31 @@ func appendInitialCodeSessionEvents(ctx context.Context, tx pgx.Tx, session Code
 		if input.RequiredWorkerEpoch != nil {
 			return sequence, ErrWorkerEpochMismatch
 		}
-		sequence++
+		nextSequence := sequence + 1
 		createdAt := input.CreatedAt
 		if createdAt.IsZero() {
 			createdAt = time.Now().UTC()
 		}
-		_, err := tx.Exec(ctx, `
+		commandTag, err := tx.Exec(ctx, `
 			insert into code_session_inbound_events (
 				external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
 				sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
 				payload_hash, idempotency_key, delivery_status, source, created_at, updated_at
 			)
 			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16, $16)
+			on conflict (workspace_id, idempotency_key)
+				where deleted_at is null and idempotency_key <> ''
+				do nothing
 		`, input.ExternalID, session.OrganizationID, session.WorkspaceID, session.ID, session.ExternalID,
-			sequence, input.EventType, input.EventSubtype, input.PayloadUUID, input.RequestID, jsonArg(input.Payload),
+			nextSequence, input.EventType, input.EventSubtype, input.PayloadUUID, input.RequestID, jsonArg(input.Payload),
 			input.PayloadHash, input.IdempotencyKey, input.DeliveryStatus, input.Source, createdAt)
 		if err != nil {
 			return sequence, err
 		}
+		if commandTag.RowsAffected() == 0 {
+			continue
+		}
+		sequence = nextSequence
 	}
 	if sequence == session.LastInboundSequenceNum {
 		return sequence, nil

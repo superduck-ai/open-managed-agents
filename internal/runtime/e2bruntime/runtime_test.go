@@ -87,6 +87,25 @@ func TestExecuteCommandTransport(t *testing.T) {
 		assertCommandOperations(t, process.recordedOperations(), "start", "send", "close", "wait", "kill", "disconnect")
 	})
 
+	t.Run("timeout returns when kill does not release wait", func(t *testing.T) {
+		process := newRecordingCommandProcess()
+		process.blockWait = true
+		process.killDoesNotUnblockWait = true
+		startedAt := time.Now()
+		_, err := executeCommand(context.Background(), CommandRequest{
+			Command: "environment-manager provision-packages --protocol v1 --stdin",
+			Stdin:   []byte(`{"version":1}`),
+			Timeout: 10 * time.Millisecond,
+		}, process.start)
+		if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
+			t.Fatalf("executeCommand() error = %v, want deadline", err)
+		}
+		if elapsed := time.Since(startedAt); elapsed > 500*time.Millisecond {
+			t.Fatalf("executeCommand() blocked for %s after timeout", elapsed)
+		}
+		assertCommandOperations(t, process.recordedOperations(), "start", "send", "close", "wait", "kill", "disconnect")
+	})
+
 	t.Run("nonzero exit is a protocol result rather than a transport error", func(t *testing.T) {
 		process := newRecordingCommandProcess()
 		process.result = CommandResult{ExitCode: 10, Stdout: []byte(`{"status":"failed"}`), Stderr: []byte("bounded diagnostic")}
@@ -99,6 +118,18 @@ func TestExecuteCommandTransport(t *testing.T) {
 			t.Fatalf("executeCommand() = (%#v, %v), want (%#v, nil)", got, err, process.result)
 		}
 		assertCommandOperations(t, process.recordedOperations(), "start", "send", "close", "wait", "disconnect")
+	})
+
+	t.Run("command without stdin starts and waits without opening stdin", func(t *testing.T) {
+		process := newRecordingCommandProcess()
+		got, err := executeCommand(context.Background(), CommandRequest{
+			Command: "chmod 0600 /tmp/rclone-mount-config.json",
+			Timeout: time.Second,
+		}, process.start)
+		if err != nil || !reflect.DeepEqual(got, process.result) {
+			t.Fatalf("executeCommand() = (%#v, %v), want (%#v, nil)", got, err, process.result)
+		}
+		assertCommandOperations(t, process.recordedOperations(), "start", "wait", "disconnect")
 	})
 
 	t.Run("success sends stdin then closes and waits", func(t *testing.T) {
@@ -121,15 +152,16 @@ func TestExecuteCommandTransport(t *testing.T) {
 }
 
 type recordingCommandProcess struct {
-	mu         sync.Mutex
-	operations []string
-	stdin      []byte
-	result     CommandResult
-	sendErr    error
-	closeErr   error
-	waitErr    error
-	blockWait  bool
-	waitDone   chan struct{}
+	mu                     sync.Mutex
+	operations             []string
+	stdin                  []byte
+	result                 CommandResult
+	sendErr                error
+	closeErr               error
+	waitErr                error
+	blockWait              bool
+	killDoesNotUnblockWait bool
+	waitDone               chan struct{}
 }
 
 func newRecordingCommandProcess() *recordingCommandProcess {
@@ -162,16 +194,24 @@ func (p *recordingCommandProcess) Wait() (CommandResult, error) {
 
 func (p *recordingCommandProcess) Kill(context.Context) error {
 	p.record("kill")
-	select {
-	case <-p.waitDone:
-	default:
-		close(p.waitDone)
+	if p.killDoesNotUnblockWait {
+		return nil
 	}
+	p.releaseWait()
 	return nil
 }
 
 func (p *recordingCommandProcess) Disconnect() {
 	p.record("disconnect")
+	p.releaseWait()
+}
+
+func (p *recordingCommandProcess) releaseWait() {
+	select {
+	case <-p.waitDone:
+	default:
+		close(p.waitDone)
+	}
 }
 
 func (p *recordingCommandProcess) record(operation string) {

@@ -21,7 +21,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
@@ -88,6 +90,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load filestore credentials: %v", err)
 	}
+	filestoreService := filestore.NewService(cfg, database, objectStore)
 	cleanup.StartObjectCleanupWorker(ctx, database, storageClient, 30*time.Second)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.StartFilestoreCleanupWorker(ctx, database, storageClient)
@@ -95,7 +98,18 @@ func main() {
 		batches.StartBatchWorker(ctx, database, objectStore, cfg)
 		batches.StartBatchExpirySweep(ctx, database, cfg)
 	}
-	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials)
+	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
+		DB:              database,
+		Provider:        e2bruntime.NewProvider(cfg.E2B),
+		Config:          cfg,
+		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials),
+		Skills:          skillsapi.NewRuntimeResolver(cfg, database, objectStore),
+		FilestoreTokens: filestoreCredentials,
+	})
+	if err != nil {
+		log.Fatalf("create environment runner: %v", err)
+	}
+	environmentRunner.Start(ctx)
 	skillprewarm.StartWorker(ctx, database, objectStore, cfg)
 	webhooks.StartWorker(ctx, database, cfg.Webhook)
 
@@ -109,6 +123,7 @@ func main() {
 			PlatformStore:          platformSessions,
 			CodeSessionCredentials: codeSessionCredentials,
 			FilestoreCredentials:   filestoreCredentials,
+			FilestoreService:       filestoreService,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

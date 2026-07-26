@@ -86,6 +86,8 @@ Claude worker 与 upstream proxy 端点由长生命周期的 `codesessions.Handl
 
 `codesessions.Handler` 持有 WebSocket、MITM CA/leaf cache 与 OTLP 文件锁等协议状态；不参与 HTTP 的 `codesessions.Service` 只持有数据库与公开事件 sink。API server 创建一个 Service，并同时注入 code-session Handler 与 sessions Handler，保证 worker 输出仍能发布到公开 session stream。environment runner 也只依赖 Service，因此不会耦合 HTTP 或 MITM 生命周期。
 
+`main.go` 是 environment runner 的组合根：它创建 sandbox provider、code-session service、runtime skill resolver 和 Filestore token issuer，再通过一个 `RunnerDependencies` 结构体注入。`NewRunner` 在启动 worker 前校验所有必需协作者，不保留只注入 database/provider 的半初始化构造路径，也不把 nil 依赖当作关闭某项运行时行为的隐式开关。
+
 ### `POST /v1/messages`
 
 这是普通 SDK、platform session 与 Claude runtime 共用的模型代理，经过统一的凭据感知中间件。

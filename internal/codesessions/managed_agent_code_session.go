@@ -169,6 +169,24 @@ func managedAgentInitialInboundEvents(codeSessionID string, configRaw json.RawMe
 	return inputs, nil
 }
 
+// TerminateManagedAgentCodeSession revokes a Code Session created for a
+// sandbox launch that failed before the runtime became usable.
+func (s *Service) TerminateManagedAgentCodeSession(
+	ctx context.Context,
+	session db.Session,
+	codeSessionID string,
+) error {
+	if s == nil {
+		return nil
+	}
+	return s.db.TerminateManagedAgentCodeSession(
+		ctx,
+		session.OrganizationID,
+		session.WorkspaceID,
+		strings.TrimSpace(codeSessionID),
+	)
+}
+
 func managedAgentCodeSessionMetadata(input ManagedAgentCreateInput) (json.RawMessage, error) {
 	// metadata 只记录非秘密运行信息，两份明文凭证都不进入 JSON。
 	config, err := marshalRaw(rawObject(input.Config))

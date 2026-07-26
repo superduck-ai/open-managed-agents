@@ -163,6 +163,10 @@ func (h *Handler) createFile(w http.ResponseWriter, r *http.Request) {
 	writeFilestoreResult(w, response, apiErr)
 }
 
+// copyFile 对应 rclone-filestore 协议里的 server-side copy 能力。
+// 它是后端为同一 filesystem 内远端复制对象预留的接口；当前 multimount/FUSE
+// 主路径下几乎处于休眠状态，普通文件复制通常表现为 read + create/write，
+// 不会命中这个协议入口。
 func (h *Handler) copyFile(w http.ResponseWriter, r *http.Request) {
 	principal, request, apiErr := decodeAuthenticatedJSON[copyMoveFileRequest](w, r)
 	if apiErr != nil {

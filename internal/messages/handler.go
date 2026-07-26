@@ -3,7 +3,7 @@ package messages
 import (
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -94,7 +94,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	target, err := messagesEndpoint(h.cfg.AnthropicUpstream.BaseURL, r.URL.RawQuery)
 	if err != nil {
-		log.Printf("build messages upstream endpoint: %v", err)
+		slog.Error("build messages upstream endpoint", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
@@ -102,7 +102,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, r.Body)
 	if err != nil {
-		log.Printf("build messages upstream request: %v", err)
+		slog.Error("build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
@@ -117,13 +117,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			writeRequestTooLarge(w, r)
 			return
 		}
-		log.Printf("proxy messages upstream request: %v", err)
+		slog.Error("proxy messages upstream request", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
 	defer upstreamResponse.Body.Close()
 	if err := writeProxyResponse(w, upstreamResponse); err != nil && r.Context().Err() == nil {
-		log.Printf("stream Messages upstream response: %v", err)
+		slog.Error("stream Messages upstream response", "error", err)
 	}
 }
 

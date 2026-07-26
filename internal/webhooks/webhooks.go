@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -74,7 +74,7 @@ func EnqueueWithOptions(ctx context.Context, database *db.DB, cfg config.Webhook
 	}
 	eventID, err := ids.New("wevt_")
 	if err != nil {
-		log.Printf("webhook event id: %v", err)
+		slog.Error("webhook event id", "error", err)
 		return
 	}
 	event := Event{
@@ -92,24 +92,24 @@ func EnqueueWithOptions(ctx context.Context, database *db.DB, cfg config.Webhook
 	}
 	payload, err := json.Marshal(event)
 	if err != nil {
-		log.Printf("marshal webhook event type=%s id=%s: %v", eventType, resourceID, err)
+		slog.Error("marshal webhook event", "event_type", eventType, "resource_id", resourceID, "error", err)
 		return
 	}
 
 	hasEndpoints, err := database.HasWebhookEndpoints(ctx, workspaceID)
 	if err != nil {
-		log.Printf("load webhook endpoint configuration workspace_id=%d: %v", workspaceID, err)
+		slog.Error("load webhook endpoint configuration", "workspace_id", workspaceID, "error", err)
 		return
 	}
 	if hasEndpoints {
 		endpoints, err := database.ListActiveWebhookEndpointsForEvent(ctx, workspaceID, eventType)
 		if err != nil {
-			log.Printf("list webhook endpoints event type=%s workspace_id=%d: %v", eventType, workspaceID, err)
+			slog.Error("list webhook endpoints event", "event_type", eventType, "workspace_id", workspaceID, "error", err)
 			return
 		}
 		for _, endpoint := range endpoints {
 			if err := database.EnqueueWebhookDeliveryJobForEndpoint(ctx, workspaceID, eventType, payload, endpoint.ID); err != nil {
-				log.Printf("enqueue webhook endpoint=%s event type=%s id=%s: %v", endpoint.ExternalID, eventType, resourceID, err)
+				slog.Error("enqueue webhook event", "endpoint_id", endpoint.ExternalID, "event_type", eventType, "resource_id", resourceID, "error", err)
 			}
 		}
 		return
@@ -119,7 +119,7 @@ func EnqueueWithOptions(ctx context.Context, database *db.DB, cfg config.Webhook
 		return
 	}
 	if err := database.EnqueueWebhookDeliveryJob(ctx, workspaceID, eventType, payload); err != nil {
-		log.Printf("enqueue webhook event type=%s id=%s: %v", eventType, resourceID, err)
+		slog.Error("enqueue webhook event", "event_type", eventType, "resource_id", resourceID, "error", err)
 	}
 }
 
@@ -133,7 +133,7 @@ func StartWorker(ctx context.Context, database *db.DB, cfg config.WebhookConfig)
 		defer ticker.Stop()
 		for {
 			if err := RunOnce(ctx, database, cfg, workerID); err != nil {
-				log.Printf("webhook delivery worker: %v", err)
+				slog.Error("webhook delivery worker", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -225,7 +225,7 @@ func recordEndpointFailure(ctx context.Context, database *db.DB, job db.WebhookD
 		disableAfter = 1
 	}
 	if recordErr := database.RecordWebhookEndpointDeliveryFailure(ctx, *job.WebhookEndpointID, err.Error(), disableAfter); recordErr != nil {
-		log.Printf("record webhook endpoint %s failure: %v", job.WebhookEndpointExternalID, recordErr)
+		slog.Error("record webhook endpoint failure", "endpoint_id", job.WebhookEndpointExternalID, "error", recordErr)
 	}
 }
 

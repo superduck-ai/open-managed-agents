@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -86,7 +88,13 @@ func (h *Handler) requireWritableToken(next http.Handler) http.Handler {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			log.Printf("filestore panic: %v", recovered)
+			slog.ErrorContext(
+				r.Context(),
+				"filestore panic recovered",
+				"request_id", httpapi.RequestID(r.Context()),
+				"panic", recovered,
+				"stack", string(debug.Stack()),
+			)
 			writeFilestoreError(w, &apiError{Status: http.StatusInternalServerError, Code: "internal", Message: "Internal server error"})
 		}
 	}()
@@ -230,8 +238,9 @@ func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
 		_, err = io.Copy(w, result.Body)
 	}
 	if err != nil {
-		// 响应头发出后已无法改写为 JSON 错误，只记录流中断供服务端诊断。
-		log.Printf("stream filestore object: %v", err)
+		slog.
+			// 响应头发出后已无法改写为 JSON 错误，只记录流中断供服务端诊断。
+			Error("stream filestore object", "error", err)
 	}
 }
 
@@ -293,13 +302,13 @@ func writeFilestoreResult(w http.ResponseWriter, value any, apiErr *apiError) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		log.Printf("encode filestore response: %v", err)
+		slog.Error("encode filestore response", "error", err)
 	}
 }
 
 func logFilestoreRequestError(apiErr *apiError) {
 	if apiErr != nil && apiErr.Status >= http.StatusInternalServerError {
-		log.Printf("filestore request failed: %v", apiErr)
+		slog.Error("filestore request failed", "error", apiErr)
 	}
 }
 
@@ -308,10 +317,10 @@ func extendFilestoreDeadlines(w http.ResponseWriter) {
 	// 全局 HTTP 超时仍是最后防线；这里只为大对象上传下载提供协议允许的传输窗口。
 	deadline := time.Now().Add(filestoreTransferTTL)
 	if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		log.Printf("set filestore read deadline: %v", err)
+		slog.Error("set filestore read deadline", "error", err)
 	}
 	if err := controller.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		log.Printf("set filestore write deadline: %v", err)
+		slog.Error("set filestore write deadline", "error", err)
 	}
 }
 

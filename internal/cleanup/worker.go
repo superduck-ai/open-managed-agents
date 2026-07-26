@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -28,7 +28,7 @@ func StartObjectCleanupWorker(ctx context.Context, database *db.DB, client stora
 
 		for {
 			if err := RunObjectCleanupOnce(ctx, database, client, workerID); err != nil {
-				log.Printf("object cleanup worker: %v", err)
+				slog.Error("object cleanup worker", "error", err)
 			}
 
 			select {

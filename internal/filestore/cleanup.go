@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -86,7 +86,7 @@ func runFilestoreCleanupLoop(
 
 func runFilestoreFilesystemCleanupAndLog(ctx context.Context, database filestoreCleanupDatabase, workerID string) {
 	if err := RunFilestoreFilesystemCleanupOnce(ctx, database, workerID); err != nil {
-		log.Printf("filestore filesystem cleanup worker: %v", err)
+		slog.Error("filestore filesystem cleanup worker", "error", err)
 	}
 }
 
@@ -97,13 +97,13 @@ func runFilestoreCleanupAndLog(
 	workerID string,
 ) {
 	if err := RunFilestoreCleanupOnce(ctx, database, client, workerID); err != nil {
-		log.Printf("filestore cleanup worker: %v", err)
+		slog.Error("filestore cleanup worker", "error", err)
 	}
 }
 
 func runFilestoreTTLSweepAndLog(ctx context.Context, database filestoreCleanupDatabase) {
 	if err := RunFilestoreTTLSweepOnce(ctx, database); err != nil {
-		log.Printf("filestore TTL sweep: %v", err)
+		slog.Error("filestore TTL sweep", "error", err)
 	}
 }
 

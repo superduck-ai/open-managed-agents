@@ -12,7 +12,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -449,9 +449,9 @@ func TestFilesAPI(t *testing.T) {
 			ContentType: "text/plain",
 		}
 		var logs bytes.Buffer
-		originalLogWriter := log.Writer()
-		log.SetOutput(&logs)
-		defer log.SetOutput(originalLogWriter)
+		originalLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		defer slog.SetDefault(originalLogger)
 
 		resp := fakeApp.do(t, http.MethodGet, "/v1/files/"+fileID+"/content?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()

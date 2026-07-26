@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,7 +29,7 @@ func TestStreamPlatformObject(t *testing.T) {
 		if response.Code != http.StatusOK {
 			t.Fatalf("response status = %d, want %d", response.Code, http.StatusOK)
 		}
-		for _, want := range []string{"stream platform file preview failed", "file_uuid=file-uuid", "key=object-key", "bytes_copied=0", "expected_size=4", readErr.Error()} {
+		for _, want := range []string{"stream platform file failed", "variant=preview", "file_uuid=file-uuid", "key=object-key", "bytes_copied=0", "expected_size=4", readErr.Error()} {
 			if !strings.Contains(logOutput, want) {
 				t.Fatalf("log output = %q, want containing %q", logOutput, want)
 			}
@@ -50,7 +50,7 @@ func TestStreamPlatformObject(t *testing.T) {
 		if response.Code != http.StatusOK || response.Body.String() != "body" {
 			t.Fatalf("response = status %d body %q", response.Code, response.Body.String())
 		}
-		for _, want := range []string{"stream platform file thumbnail size mismatch", "bytes_copied=4", "expected_size=5"} {
+		for _, want := range []string{"stream platform file size mismatch", "variant=thumbnail", "bytes_copied=4", "expected_size=5"} {
 			if !strings.Contains(logOutput, want) {
 				t.Fatalf("log output = %q, want containing %q", logOutput, want)
 			}
@@ -105,17 +105,9 @@ func (*failingObjectBody) Close() error {
 func capturePlatformLog(t *testing.T, fn func()) string {
 	t.Helper()
 	var output bytes.Buffer
-	previousWriter := log.Writer()
-	previousFlags := log.Flags()
-	previousPrefix := log.Prefix()
-	log.SetOutput(&output)
-	log.SetFlags(0)
-	log.SetPrefix("")
-	defer func() {
-		log.SetOutput(previousWriter)
-		log.SetFlags(previousFlags)
-		log.SetPrefix(previousPrefix)
-	}()
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	defer slog.SetDefault(previousLogger)
 	fn()
 	return output.String()
 }

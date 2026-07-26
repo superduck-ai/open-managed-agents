@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -92,7 +92,7 @@ func (w *Worker) loop(ctx context.Context, workerID string) {
 	defer ticker.Stop()
 	for {
 		if err := w.RunOnce(ctx, workerID); err != nil {
-			log.Printf("skill prewarm worker=%s: %v", workerID, err)
+			slog.Error("skill prewarm", "worker_id", workerID, "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -188,7 +188,7 @@ func (w *Worker) processFanout(ctx context.Context, workspaceID int64, payload j
 		nextAfterAgentID = agent.ID
 		snapshot, err := agentSnapshotFromAgent(agent)
 		if err != nil {
-			log.Printf("skill prewarm fanout skip agent workspace_id=%d agent_id=%s skill_id=%s version=%s: %v", workspaceID, agent.ExternalID, payload.SkillID, payload.Version, err)
+			slog.Error("skill prewarm fanout skip agent", "workspace_id", workspaceID, "agent_id", agent.ExternalID, "skill_id", payload.SkillID, "version", payload.Version, "error", err)
 			continue
 		}
 		if err := w.snapshots.EnqueueSkillPrewarmSnapshotJob(ctx, db.SkillPrewarmSnapshotJobInput{

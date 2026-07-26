@@ -3,7 +3,7 @@ package sessions
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -17,7 +17,7 @@ func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspace
 	}
 	workspaceIDs, err := h.db.GetWorkspaceIdentifiers(ctx, workspaceID)
 	if err != nil {
-		log.Printf("load workspace identifiers for session webhook session_id=%s: %v", sessionID, err)
+		slog.Error("load workspace identifiers for session webhook", "session_id", sessionID, "error", err)
 		return
 	}
 	seen := map[string]struct{}{}

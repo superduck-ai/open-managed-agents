@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -409,7 +409,7 @@ func writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) 
 			writeBadRequest(w, r, errors.New("memory store must not be archived"))
 			return
 		}
-		log.Printf("session resource reference %s %s: %v", refErr.ResourceType, refErr.ResourceID, refErr.Err)
+		slog.Error("session resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not validate session resource"))
 		return
 	}
@@ -425,7 +425,7 @@ func writeSessionLoadError(w http.ResponseWriter, r *http.Request, err error, se
 		writeBadRequest(w, r, errors.New("session state does not allow this operation"))
 		return
 	}
-	log.Printf("session operation: %v", err)
+	slog.Error("session operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Session operation failed"))
 }
 
@@ -434,7 +434,7 @@ func writeThreadLoadError(w http.ResponseWriter, r *http.Request, err error, thr
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Thread not found: "+threadID))
 		return
 	}
-	log.Printf("thread operation: %v", err)
+	slog.Error("thread operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Thread operation failed"))
 }
 
@@ -443,6 +443,6 @@ func writeResourceLoadError(w http.ResponseWriter, r *http.Request, err error, r
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Resource not found: "+resourceID))
 		return
 	}
-	log.Printf("resource operation: %v", err)
+	slog.Error("resource operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Resource operation failed"))
 }

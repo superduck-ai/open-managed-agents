@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -1749,26 +1749,27 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
 	token := proxyMessagesAnthropicToken(upstreamConfig)
+	organizationUUID := chi.URLParam(r, "orgUUID")
 	if token == "" {
-		log.Printf("workbench generate_prompt fallback reason=no_anthropic_token org=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), len([]rune(task)), payload.TargetThinkingMode)
+		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "no_anthropic_token", "task_chars", len([]rune(task)), "thinking", payload.TargetThinkingMode)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
 	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
 	if err != nil {
-		log.Printf("workbench generate_prompt fallback reason=invalid_anthropic_endpoint org=%s err=%v", chi.URLParam(r, "orgUUID"), err)
+		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "invalid_anthropic_endpoint", "error", err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
 	body, err := json.Marshal(workbenchGeneratePromptAnthropicBody(task, payload.TargetThinkingMode))
 	if err != nil {
-		log.Printf("workbench generate_prompt fallback reason=marshal_request_failed org=%s err=%v", chi.URLParam(r, "orgUUID"), err)
+		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "marshal_request_failed", "error", err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("workbench generate_prompt fallback reason=build_upstream_request_failed org=%s endpoint=%s err=%v", chi.URLParam(r, "orgUUID"), endpoint, err)
+		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "build_upstream_request_failed", "error", err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
@@ -1776,11 +1777,10 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("X-API-Key", token)
 	upstreamReq.Header.Set("Anthropic-Version", anthropicAPIVersion)
-
-	log.Printf("workbench generate_prompt upstream_start org=%s endpoint=%s model=%s task_chars=%d thinking=%t", chi.URLParam(r, "orgUUID"), endpoint, workbenchGeneratePromptModel(), len([]rune(task)), payload.TargetThinkingMode)
+	slog.InfoContext(r.Context(), "workbench generate prompt upstream start", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "model", workbenchGeneratePromptModel(), "task_chars", len([]rune(task)), "thinking", payload.TargetThinkingMode)
 	upstreamRes, err := http.DefaultClient.Do(upstreamReq)
 	if err != nil {
-		log.Printf("workbench generate_prompt fallback reason=upstream_request_failed org=%s endpoint=%s err=%v", chi.URLParam(r, "orgUUID"), endpoint, err)
+		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "reason", "upstream_request_failed", "error", err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
@@ -1788,12 +1788,11 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 
 	if upstreamRes.StatusCode < 200 || upstreamRes.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, upstreamRes.Body)
-		log.Printf("workbench generate_prompt fallback reason=upstream_status org=%s endpoint=%s status=%d", chi.URLParam(r, "orgUUID"), endpoint, upstreamRes.StatusCode)
+		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "reason", "upstream_status", "status", upstreamRes.StatusCode)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
-
-	log.Printf("workbench generate_prompt upstream_stream org=%s endpoint=%s status=%d content_type=%q", chi.URLParam(r, "orgUUID"), endpoint, upstreamRes.StatusCode, upstreamRes.Header.Get("Content-Type"))
+	slog.InfoContext(r.Context(), "workbench generate prompt upstream stream", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "status", upstreamRes.StatusCode, "content_type", upstreamRes.Header.Get("Content-Type"))
 	copyProxyMessagesResponseHeaders(w.Header(), upstreamRes.Header)
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")

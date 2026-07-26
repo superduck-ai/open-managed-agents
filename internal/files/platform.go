@@ -13,7 +13,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"path"
@@ -136,12 +136,12 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 	imageWidth, imageHeight, primaryColor := imageAssetInfoFromBytes(content)
 	thumbnail, hasThumbnail, thumbnailErr := buildPlatformThumbnail(contentType, content)
 	if thumbnailErr != nil {
-		log.Printf("generate platform thumbnail filename=%s content_type=%s: %v", filename, contentType, thumbnailErr)
+		slog.Error("generate platform thumbnail", "filename", filename, "content_type", contentType, "error", thumbnailErr)
 	}
 	objectKey := fmt.Sprintf("workspaces/%s/files/%s/%s", scope.workspaceUUID, fileUUID, sanitizeForKey(filename))
 
 	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(content), storage.UploadOptions{Size: int64(len(content)), ContentType: contentType}); err != nil {
-		log.Printf("put platform upload object: %v", err)
+		slog.Error("put platform upload object", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store file"))
 		return
 	}
@@ -167,7 +167,7 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace storage limit exceeded"))
 			return
 		}
-		log.Printf("create platform file metadata: %v", err)
+		slog.Error("create platform file metadata", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create file metadata"))
 		return
 	}
@@ -177,7 +177,7 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 		thumbnailKey := platformThumbnailKey(record)
 		if thumbnailKey != "" {
 			if _, err := h.store.Upload(r.Context(), thumbnailKey, bytes.NewReader(thumbnail.Content), storage.UploadOptions{Size: int64(len(thumbnail.Content)), ContentType: thumbnail.ContentType}); err != nil {
-				log.Printf("put platform thumbnail object file_uuid=%s key=%s: %v", record.UUID, thumbnailKey, err)
+				slog.Error("put platform thumbnail object", "file_uuid", record.UUID, "key", thumbnailKey, "error", err)
 			} else {
 				thumbnailWidth = thumbnail.Width
 				thumbnailHeight = thumbnail.Height
@@ -224,7 +224,7 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileUUID))
 			return
 		}
-		log.Printf("get platform file %s metadata: %v", variant, err)
+		slog.Error("get platform file metadata", "variant", variant, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file"))
 		return
 	}
@@ -241,13 +241,13 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 				streamPlatformObject(w, record.UUID, objectKey, variant, object, objectContentType)
 				return
 			}
-			log.Printf("get platform thumbnail object file_uuid=%s key=%s failed, falling back to original: %v", fileUUID, thumbnailKey, thumbnailErr)
+			slog.Error("get platform thumbnail object failed, falling back to original", "file_uuid", fileUUID, "key", thumbnailKey, "error", thumbnailErr)
 		}
 	}
 
 	object, err := h.store.Open(r.Context(), objectKey, nil)
 	if err != nil {
-		log.Printf("get platform file %s object: %v", variant, err)
+		slog.Error("get platform file object", "variant", variant, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file"))
 		return
 	}
@@ -267,15 +267,21 @@ func streamPlatformObject(w http.ResponseWriter, fileUUID string, objectKey stri
 	w.WriteHeader(http.StatusOK)
 	copied, copyErr := io.Copy(w, object.Body)
 	if copyErr != nil {
-		expectedSize := ""
-		if object.Size >= 0 {
-			expectedSize = fmt.Sprintf(" expected_size=%d", object.Size)
+		attrs := []any{
+			"variant", variant,
+			"file_uuid", fileUUID,
+			"key", objectKey,
+			"bytes_copied", copied,
+			"error", copyErr,
 		}
-		log.Printf("stream platform file %s failed file_uuid=%s key=%s bytes_copied=%d%s: %v", variant, fileUUID, objectKey, copied, expectedSize, copyErr)
+		if object.Size >= 0 {
+			attrs = append(attrs, "expected_size", object.Size)
+		}
+		slog.Error("stream platform file failed", attrs...)
 		return
 	}
 	if object.Size >= 0 && copied != object.Size {
-		log.Printf("stream platform file %s size mismatch file_uuid=%s key=%s bytes_copied=%d expected_size=%d", variant, fileUUID, objectKey, copied, object.Size)
+		slog.Warn("stream platform file size mismatch", "variant", variant, "file_uuid", fileUUID, "key", objectKey, "bytes_copied", copied, "expected_size", object.Size)
 	}
 }
 

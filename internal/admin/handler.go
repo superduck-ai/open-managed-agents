@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -589,7 +589,7 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpapi.WriteError(w, r, httpapi.NewError(serviceErr.status, serviceErr.typ, serviceErr.message))
 		return
 	}
-	log.Printf("admin api: %v", err)
+	slog.Error("admin api", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Internal server error"))
 }
 

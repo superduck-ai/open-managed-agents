@@ -11,11 +11,11 @@ func TestConsoleHandlerFormatsHTTPLine(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(NewConsoleHandler(&buf, slog.LevelInfo)).With("component", "http")
 
-	logger.Info("<<< GET /v1/files?beta=true 200",
+	logger.Info("http response",
 		"event", "response",
 		"requestId", "req_test",
 		"method", "GET",
-		"url", "/v1/files?beta=true",
+		"url", "/v1/files",
 		"status", 200,
 		"durationMs", 12.3,
 		"path", "/v1/files",
@@ -25,7 +25,7 @@ func TestConsoleHandlerFormatsHTTPLine(t *testing.T) {
 	)
 
 	line := stripANSI(strings.TrimSpace(buf.String()))
-	if !strings.Contains(line, " [api] GET 200 12.3ms /v1/files?beta=true ") {
+	if !strings.Contains(line, " [api] GET 200 12.3ms /v1/files ") {
 		t.Fatalf("unexpected http log line: %q", line)
 	}
 	for _, want := range []string{"requestId=req_test", "path=/v1/files", "host=127.0.0.1:18080"} {

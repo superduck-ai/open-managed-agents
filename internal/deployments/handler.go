@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -241,7 +241,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:             now,
 	})
 	if err != nil {
-		log.Printf("create deployment: %v", err)
+		slog.Error("create deployment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment"))
 		return
 	}
@@ -299,7 +299,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		log.Printf("list deployments: %v", err)
+		slog.Error("list deployments", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list deployments"))
 		return
 	}
@@ -652,7 +652,7 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 		CreatedAt:         now,
 	})
 	if err != nil {
-		log.Printf("create deployment run failure: %v", err)
+		slog.Error("create deployment run failure", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment run"))
 		return
 	}
@@ -793,7 +793,7 @@ func (h *RunsHandler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:         createdAtLTE,
 	})
 	if err != nil {
-		log.Printf("list deployment runs: %v", err)
+		slog.Error("list deployment runs", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list deployment runs"))
 		return
 	}
@@ -1779,7 +1779,7 @@ func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, sn
 	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
 	defer cancel()
 	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, source, sourceID, trigger); err != nil {
-		log.Printf("enqueue deployment skill prewarm source=%s source_id=%s trigger=%s: %v", source, sourceID, trigger, err)
+		slog.Error("enqueue deployment skill prewarm", "source", source, "source_id", sourceID, "trigger", trigger, "error", err)
 	}
 }
 
@@ -1876,7 +1876,7 @@ func writeEnvironmentLoadError(w http.ResponseWriter, r *http.Request, err error
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 		return
 	}
-	log.Printf("environment operation: %v", err)
+	slog.Error("environment operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Environment operation failed"))
 }
 
@@ -1891,7 +1891,7 @@ func writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) 
 			writeBadRequest(w, r, errors.New("memory store must not be archived"))
 			return
 		}
-		log.Printf("deployment resource reference %s %s: %v", refErr.ResourceType, refErr.ResourceID, refErr.Err)
+		slog.Error("deployment resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not validate deployment resource"))
 		return
 	}
@@ -1907,7 +1907,7 @@ func writeDeploymentLoadError(w http.ResponseWriter, r *http.Request, err error,
 		writeBadRequest(w, r, errors.New("deployment state does not allow this operation"))
 		return
 	}
-	log.Printf("deployment operation: %v", err)
+	slog.Error("deployment operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Deployment operation failed"))
 }
 
@@ -1916,6 +1916,6 @@ func writeRunLoadError(w http.ResponseWriter, r *http.Request, err error, runID 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Deployment run not found: "+runID))
 		return
 	}
-	log.Printf("deployment run operation: %v", err)
+	slog.Error("deployment run operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Deployment run operation failed"))
 }

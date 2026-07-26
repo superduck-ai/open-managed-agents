@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -31,7 +31,7 @@ func StartBatchWorker(ctx context.Context, database *db.DB, store storage.Object
 		defer ticker.Stop()
 		for {
 			if err := RunBatchOnce(ctx, database, store, cfg, upstream, workerID); err != nil {
-				log.Printf("message batch worker: %v", err)
+				slog.Error("message batch worker", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -52,7 +52,7 @@ func StartBatchExpirySweep(ctx context.Context, database *db.DB, cfg config.Conf
 		defer ticker.Stop()
 		for {
 			if err := RunBatchExpirySweepOnce(ctx, database, time.Now().UTC()); err != nil {
-				log.Printf("message batch expiry sweep: %v", err)
+				slog.Error("message batch expiry sweep", "error", err)
 			}
 			select {
 			case <-ctx.Done():

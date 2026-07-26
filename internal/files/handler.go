@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -134,7 +134,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	hash := sha256.New()
 	reader := io.TeeReader(file, hash)
 	if _, err := h.store.Upload(r.Context(), objectKey, reader, storage.UploadOptions{Size: header.Size, ContentType: contentType}); err != nil {
-		log.Printf("put object: %v", err)
+		slog.Error("put object", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store file"))
 		return
 	}
@@ -159,7 +159,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace storage limit exceeded"))
 			return
 		}
-		log.Printf("create file metadata: %v", err)
+		slog.Error("create file metadata", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create file metadata"))
 		return
 	}
@@ -189,7 +189,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		Limit:       limit,
 	})
 	if err != nil {
-		log.Printf("list files: %v", err)
+		slog.Error("list files", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list files"))
 		return
 	}
@@ -230,7 +230,7 @@ func (h *Handler) retrieveMetadata(w http.ResponseWriter, r *http.Request, fileI
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
 		}
-		log.Printf("get file metadata: %v", err)
+		slog.Error("get file metadata", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file metadata"))
 		return
 	}
@@ -249,7 +249,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
 		}
-		log.Printf("get file before delete: %v", err)
+		slog.Error("get file before delete", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete file"))
 		return
 	}
@@ -258,21 +258,21 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
 		}
-		log.Printf("soft delete file: %v", err)
+		slog.Error("soft delete file", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete file"))
 		return
 	}
 	if err := h.store.Delete(r.Context(), record.S3Key, storage.DeleteOptions{}); err != nil {
-		log.Printf("delete object after soft delete file_id=%s: %v", fileID, err)
+		slog.Error("delete object after soft delete", "file_id", fileID, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
-			log.Printf("enqueue object cleanup file_id=%s key=%s: %v", fileID, record.S3Key, enqueueErr)
+			slog.Error("enqueue object cleanup", "file_id", fileID, "key", record.S3Key, "error", enqueueErr)
 		}
 	}
 	if thumbnailKey := platformThumbnailKey(record); thumbnailKey != "" {
 		if err := h.store.Delete(r.Context(), thumbnailKey, storage.DeleteOptions{}); err != nil {
-			log.Printf("delete thumbnail object after soft delete file_id=%s key=%s: %v", fileID, thumbnailKey, err)
+			slog.Error("delete thumbnail object after soft delete", "file_id", fileID, "key", thumbnailKey, "error", err)
 			if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(r.Context(), record.WorkspaceID, record.S3Bucket, thumbnailKey, "file_variant", record.ExternalID); enqueueErr != nil {
-				log.Printf("enqueue thumbnail cleanup file_id=%s key=%s: %v", fileID, thumbnailKey, enqueueErr)
+				slog.Error("enqueue thumbnail cleanup", "file_id", fileID, "key", thumbnailKey, "error", enqueueErr)
 			}
 		}
 	}
@@ -287,7 +287,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
 		}
-		log.Printf("get file before download: %v", err)
+		slog.Error("get file before download", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download file"))
 		return
 	}
@@ -297,7 +297,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 	}
 	object, err := h.store.Open(r.Context(), record.S3Key, nil)
 	if err != nil {
-		log.Printf("get object: %v", err)
+		slog.Error("get object", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download file"))
 		return
 	}
@@ -308,11 +308,11 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 	w.WriteHeader(http.StatusOK)
 	copied, copyErr := io.Copy(w, object.Body)
 	if copyErr != nil {
-		log.Printf("download object stream failed file_id=%s key=%s bytes_copied=%d expected_size=%d: %v", fileID, record.S3Key, copied, record.SizeBytes, copyErr)
+		slog.Error("download object stream failed", "file_id", fileID, "key", record.S3Key, "bytes_copied", copied, "expected_size", record.SizeBytes, "error", copyErr)
 		return
 	}
 	if copied != record.SizeBytes {
-		log.Printf("download object stream size mismatch file_id=%s key=%s bytes_copied=%d expected_size=%d", fileID, record.S3Key, copied, record.SizeBytes)
+		slog.Warn("download object stream size mismatch", "file_id", fileID, "key", record.S3Key, "bytes_copied", copied, "expected_size", record.SizeBytes)
 	}
 }
 
@@ -320,9 +320,9 @@ func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context,
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	if err := h.store.Delete(cleanupCtx, record.S3Key, storage.DeleteOptions{}); err != nil {
-		log.Printf("delete object after metadata failure file_id=%s key=%s: %v", record.ExternalID, record.S3Key, err)
+		slog.Error("delete object after metadata failure", "file_id", record.ExternalID, "key", record.S3Key, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, record.WorkspaceID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
-			log.Printf("enqueue object cleanup after metadata failure file_id=%s key=%s: %v", record.ExternalID, record.S3Key, enqueueErr)
+			slog.Error("enqueue object cleanup after metadata failure", "file_id", record.ExternalID, "key", record.S3Key, "error", enqueueErr)
 		}
 	}
 }

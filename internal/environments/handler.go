@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -193,7 +193,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Environment name already exists"))
 			return
 		}
-		log.Printf("create environment: %v", err)
+		slog.Error("create environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create environment"))
 		return
 	}
@@ -231,7 +231,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: includeArchived,
 	})
 	if err != nil {
-		log.Printf("list environments: %v", err)
+		slog.Error("list environments", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list environments"))
 		return
 	}
@@ -270,7 +270,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, environmentID
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("get environment: %v", err)
+		slog.Error("get environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment"))
 		return
 	}
@@ -296,7 +296,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("get environment before update: %v", err)
+		slog.Error("get environment before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment"))
 		return
 	}
@@ -353,7 +353,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("update environment: %v", err)
+		slog.Error("update environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment"))
 		return
 	}
@@ -379,7 +379,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("archive environment: %v", err)
+		slog.Error("archive environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive environment"))
 		return
 	}
@@ -405,7 +405,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("delete environment: %v", err)
+		slog.Error("delete environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete environment"))
 		return
 	}
@@ -438,7 +438,7 @@ func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) {
 		Cursor:                cursor,
 	})
 	if err != nil {
-		log.Printf("list environment work: %v", err)
+		slog.Error("list environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list environment work"))
 		return
 	}
@@ -470,7 +470,7 @@ func (h *Handler) retrieveWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("get environment work: %v", err)
+		slog.Error("get environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment work"))
 		return
 	}
@@ -498,7 +498,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("get environment work before update: %v", err)
+		slog.Error("get environment work before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment work"))
 		return
 	}
@@ -512,7 +512,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := h.db.UpdateEnvironmentWorkMetadata(r.Context(), env.WorkspaceID, env.ExternalID, workID, metadata)
 	if err != nil {
-		log.Printf("update environment work: %v", err)
+		slog.Error("update environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment work"))
 		return
 	}
@@ -543,7 +543,7 @@ func (h *Handler) pollWorkRoute(w http.ResponseWriter, r *http.Request) {
 	for {
 		work, err := h.db.PollEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workerID, claimFor)
 		if err != nil {
-			log.Printf("poll environment work: %v", err)
+			slog.Error("poll environment work", "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not poll environment work"))
 			return
 		}
@@ -574,7 +574,7 @@ func (h *Handler) workStatsRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, err := h.db.EnvironmentWorkStats(r.Context(), env.WorkspaceID, env.ExternalID)
 	if err != nil {
-		log.Printf("environment work stats: %v", err)
+		slog.Error("environment work stats", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment work stats"))
 		return
 	}
@@ -597,7 +597,7 @@ func (h *Handler) ackWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("ack environment work: %v", err)
+		slog.Error("ack environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not ack environment work"))
 		return
 	}
@@ -636,7 +636,7 @@ func (h *Handler) heartbeatWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("heartbeat environment work: %v", err)
+		slog.Error("heartbeat environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not heartbeat environment work"))
 		return
 	}
@@ -677,13 +677,13 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("retrieve environment work before stop: %v", err)
+		slog.Error("retrieve environment work before stop", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment work"))
 		return
 	}
 	if force {
 		if err := h.killSandboxForWork(r.Context(), env, current); err != nil {
-			log.Printf("kill environment sandbox for work %s: %v", workID, err)
+			slog.Error("kill environment sandbox for work", "work_id", workID, "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment sandbox"))
 			return
 		}
@@ -694,7 +694,7 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("stop environment work: %v", err)
+		slog.Error("stop environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment work"))
 		return
 	}
@@ -757,7 +757,7 @@ func (h *Handler) authorizeWork(w http.ResponseWriter, r *http.Request) (db.Envi
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return db.Environment{}, false
 		}
-		log.Printf("authorize environment work: %v", err)
+		slog.Error("authorize environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment"))
 		return db.Environment{}, false
 	}

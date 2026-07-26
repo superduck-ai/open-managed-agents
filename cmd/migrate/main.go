@@ -3,37 +3,48 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/observability"
 )
 
 func main() {
+	slog.SetDefault(slog.New(observability.NewConsoleHandler(os.Stderr, slog.LevelInfo)))
+
 	if len(os.Args) != 2 || os.Args[1] != "up" {
 		fmt.Fprintf(os.Stderr, "usage: %s up\n", os.Args[0])
 		os.Exit(2)
 	}
 
+	if err := run(); err != nil {
+		slog.Error("database migration failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	database, err := db.Open(ctx, cfg)
 	if err != nil {
-		log.Fatalf("open database: %v", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer database.Close()
 
 	if err := database.Migrate(ctx); err != nil {
-		log.Fatalf("migrate database: %v", err)
+		return fmt.Errorf("migrate database: %w", err)
 	}
-	log.Printf("database migrations applied")
+	slog.Info("database migrations applied")
+	return nil
 }

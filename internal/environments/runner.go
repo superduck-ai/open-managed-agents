@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -70,7 +70,7 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 		}
 		processed, err := r.RunOnce(ctx, workerID)
 		if err != nil {
-			log.Printf("environment runner worker=%s: %v", workerID, err)
+			slog.Error("environment runner", "worker_id", workerID, "error", err)
 		}
 		if processed {
 			continue

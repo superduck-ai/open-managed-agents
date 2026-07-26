@@ -23,7 +23,7 @@ func TestStreamPlatformObject(t *testing.T) {
 		}
 
 		logOutput := capturePlatformLog(t, func() {
-			streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
+			streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream", nil)
 		})
 
 		if response.Code != http.StatusOK {
@@ -44,7 +44,7 @@ func TestStreamPlatformObject(t *testing.T) {
 		}
 
 		logOutput := capturePlatformLog(t, func() {
-			streamPlatformObject(response, "file-uuid", "object-key", "thumbnail", object, "application/octet-stream")
+			streamPlatformObject(response, "file-uuid", "object-key", "thumbnail", object, "application/octet-stream", nil)
 		})
 
 		if response.Code != http.StatusOK || response.Body.String() != "body" {
@@ -65,7 +65,7 @@ func TestStreamPlatformObject(t *testing.T) {
 			ContentType: "text/plain",
 		}
 
-		streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
+		streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream", nil)
 
 		if got := response.Header().Get("Content-Length"); got != "" {
 			t.Fatalf("Content-Length = %q, want omitted", got)
@@ -82,7 +82,7 @@ func TestStreamPlatformObject(t *testing.T) {
 			Size: 4,
 		}
 
-		streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
+		streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream", nil)
 
 		if got := response.Header().Get("Content-Length"); got != "4" {
 			t.Fatalf("Content-Length = %q, want 4", got)

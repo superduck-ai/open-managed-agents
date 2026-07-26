@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -64,8 +65,8 @@ type workbenchAccount struct {
 	DisplayName  *string
 }
 
-func RegisterOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, upstream config.AnthropicUpstreamConfig) {
-	registerOrgWorkbenchRoutes(r, store, upstream)
+func RegisterOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, upstream config.AnthropicUpstreamConfig, logger *slog.Logger) {
+	registerOrgWorkbenchRoutes(r, store, upstream, logger)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -125,7 +124,7 @@ func (h *Handler) recordCodeSessionWorkerOTLP(r *http.Request, codeSessionID str
 	}
 	batch := buildOTLPFileLogBatch(meta, decoded)
 	if err := h.appendOTLPFileLogBatch(codeSessionID, batch); err != nil {
-		slog.Error("write code session worker otlp file log", "request_id", meta.RequestID, "code_session_id", codeSessionID, "signal", signal, "error", err)
+		h.logger.Error("write code session worker otlp file log", "request_id", meta.RequestID, "code_session_id", codeSessionID, "signal", signal, "error", err)
 	}
 }
 

@@ -17,9 +17,12 @@ const (
 	defaultMaxAttempts = 10
 )
 
-func StartObjectCleanupWorker(ctx context.Context, database *db.DB, client storage.Client, interval time.Duration) {
+func StartObjectCleanupWorker(ctx context.Context, database *db.DB, client storage.Client, interval time.Duration, logger *slog.Logger) {
 	if interval <= 0 {
 		interval = 30 * time.Second
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	workerID := fmt.Sprintf("object-cleanup-%d", os.Getpid())
 	go func() {
@@ -28,7 +31,7 @@ func StartObjectCleanupWorker(ctx context.Context, database *db.DB, client stora
 
 		for {
 			if err := RunObjectCleanupOnce(ctx, database, client, workerID); err != nil {
-				slog.Error("object cleanup worker", "error", err)
+				logger.Error("object cleanup worker", "error", err)
 			}
 
 			select {

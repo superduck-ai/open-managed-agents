@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -45,7 +44,7 @@ func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (au
 		return auth.Principal{}, false, nil
 	}
 	if err != nil {
-		slog.Error("authenticate api key", "error", err)
+		s.logger.Error("authenticate api key", "error", err)
 		return auth.Principal{}, false, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	return auth.Principal{
@@ -92,7 +91,7 @@ func (s *Server) authenticateEnvironmentCredential(r *http.Request, apiKey strin
 	if errors.Is(err, db.ErrNotFound) {
 		return auth.Principal{}, false, nil
 	}
-	slog.Error("authenticate environment key", "error", err)
+	s.logger.Error("authenticate environment key", "error", err)
 	return auth.Principal{}, false, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 }
 
@@ -104,7 +103,7 @@ func (s *Server) authenticateCodeSessionMessagesCredential(r *http.Request, apiK
 		if errors.Is(err, db.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		}
-		slog.Error("authenticate code session OAuth-compatible credential", "error", err)
+		s.logger.Error("authenticate code session OAuth-compatible credential", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	return principalFromCodeSessionCredential(codeSession, auth.CredentialTypeCodeSessionOAuth), nil
@@ -131,7 +130,7 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 		if errors.Is(err, db.ErrNotFound) {
 			return filestoreapi.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		}
-		slog.Error("resolve filestore token scope", "error", err)
+		s.logger.Error("resolve filestore token scope", "error", err)
 		return filestoreapi.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	// 签名只证明签发时的快照未被篡改；组织 taints 与 CMEK 配置状态还须匹配数据库现值。

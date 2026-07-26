@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -56,6 +57,7 @@ var supportedEndpointEventTypes = map[string]struct{}{
 type Handler struct {
 	cfg    config.WebhookConfig
 	db     *db.DB
+	logger *slog.Logger
 	router chi.Router
 }
 
@@ -87,8 +89,11 @@ type regenerateSigningSecretResponse struct {
 	SigningSecret string `json:"signing_secret"`
 }
 
-func NewHandler(cfg config.WebhookConfig, database *db.DB) *Handler {
-	h := &Handler{cfg: cfg, db: database}
+func NewHandler(cfg config.WebhookConfig, database *db.DB, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h := &Handler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)

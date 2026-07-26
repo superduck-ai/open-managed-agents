@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -35,10 +34,10 @@ func (s *Service) handleToolPermissionRequest(ctx context.Context, codeSessionID
 	toolName := stringField(request, "tool_name")
 	permission, identity, err := s.resolveToolPermission(ctx, codeSessionID, toolName)
 	if err != nil {
-		slog.Error("resolve tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "error", err)
+		s.logger.Error("resolve tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "error", err)
 		return nil
 	}
-	slog.Info("resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
+	s.logger.Info("resolved tool permission", "code_session_id", codeSessionID, "tool_name", toolName, "tool_kind", identity.Kind, "server_name", identity.ServerName, "normalized_tool_name", identity.ToolName, "permission", permission)
 	switch permission {
 	case resolvedToolPermissionAllow:
 		return s.respondToToolPermissionRequest(ctx, codeSessionID, object, meta, permission, "auto-approve", "", "")

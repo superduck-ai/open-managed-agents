@@ -52,6 +52,7 @@ type workbenchKVEntry struct {
 
 type workbenchPersistenceContextKey struct{}
 type workbenchAnthropicUpstreamContextKey struct{}
+type workbenchLoggerContextKey struct{}
 
 type workbenchPersistenceStore interface {
 	GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID string) (*WorkbenchPromptRecord, error)
@@ -72,10 +73,10 @@ type workbenchPersistenceStore interface {
 	TakeWorkbenchGeneratedTestCase(ctx context.Context, orgUUID string, requested map[string]any) (map[string]any, bool, error)
 }
 
-func registerOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, upstream config.AnthropicUpstreamConfig) {
+func registerOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, upstream config.AnthropicUpstreamConfig, logger *slog.Logger) {
 	workbenchStore := workbenchPersistenceFromStore(store)
 	h := func(handler http.HandlerFunc) http.HandlerFunc {
-		return withWorkbenchDependencies(workbenchStore, upstream, handler)
+		return withWorkbenchDependencies(workbenchStore, upstream, logger, handler)
 	}
 	r.Get("/models", h(handleWorkbenchModels))
 	r.Get("/rate_limits_v2", h(handleWorkbenchRateLimitsV2))
@@ -118,9 +119,13 @@ func workbenchPersistenceFromStore(store OrganizationStore) workbenchPersistence
 	return persistence
 }
 
-func withWorkbenchDependencies(store workbenchPersistenceStore, upstream config.AnthropicUpstreamConfig, handler http.HandlerFunc) http.HandlerFunc {
+func withWorkbenchDependencies(store workbenchPersistenceStore, upstream config.AnthropicUpstreamConfig, logger *slog.Logger, handler http.HandlerFunc) http.HandlerFunc {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), workbenchAnthropicUpstreamContextKey{}, upstream)
+		ctx = context.WithValue(ctx, workbenchLoggerContextKey{}, logger)
 		if store != nil {
 			ctx = context.WithValue(ctx, workbenchPersistenceContextKey{}, store)
 		}
@@ -137,6 +142,14 @@ func workbenchPersistenceFromRequest(r *http.Request) workbenchPersistenceStore 
 func workbenchAnthropicUpstreamFromRequest(r *http.Request) config.AnthropicUpstreamConfig {
 	upstream, _ := r.Context().Value(workbenchAnthropicUpstreamContextKey{}).(config.AnthropicUpstreamConfig)
 	return upstream
+}
+
+func workbenchLoggerFromRequest(r *http.Request) *slog.Logger {
+	logger, _ := r.Context().Value(workbenchLoggerContextKey{}).(*slog.Logger)
+	if logger == nil {
+		return slog.Default()
+	}
+	return logger
 }
 
 func workbenchWritePersistenceError(w http.ResponseWriter, err error) bool {
@@ -1748,28 +1761,29 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamConfig := workbenchAnthropicUpstreamFromRequest(r)
+	logger := workbenchLoggerFromRequest(r)
 	token := proxyMessagesAnthropicToken(upstreamConfig)
 	organizationUUID := chi.URLParam(r, "orgUUID")
 	if token == "" {
-		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "no_anthropic_token", "task_chars", len([]rune(task)), "thinking", payload.TargetThinkingMode)
+		logger.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "no_anthropic_token", "task_chars", len([]rune(task)), "thinking", payload.TargetThinkingMode)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
 	endpoint, err := anthropicMessagesEndpoint(upstreamConfig)
 	if err != nil {
-		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "invalid_anthropic_endpoint", "error", err)
+		logger.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "invalid_anthropic_endpoint", "error", err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
 	body, err := json.Marshal(workbenchGeneratePromptAnthropicBody(task, payload.TargetThinkingMode))
 	if err != nil {
-		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "marshal_request_failed", "error", err)
+		logger.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "marshal_request_failed", "error", err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "build_upstream_request_failed", "error", err)
+		logger.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "reason", "build_upstream_request_failed", "error", err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
@@ -1777,10 +1791,10 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("X-API-Key", token)
 	upstreamReq.Header.Set("Anthropic-Version", anthropicAPIVersion)
-	slog.InfoContext(r.Context(), "workbench generate prompt upstream start", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "model", workbenchGeneratePromptModel(), "task_chars", len([]rune(task)), "thinking", payload.TargetThinkingMode)
+	logger.InfoContext(r.Context(), "workbench generate prompt upstream start", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "model", workbenchGeneratePromptModel(), "task_chars", len([]rune(task)), "thinking", payload.TargetThinkingMode)
 	upstreamRes, err := http.DefaultClient.Do(upstreamReq)
 	if err != nil {
-		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "reason", "upstream_request_failed", "error", err)
+		logger.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "reason", "upstream_request_failed", "error", err)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
@@ -1788,11 +1802,11 @@ func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
 
 	if upstreamRes.StatusCode < 200 || upstreamRes.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, upstreamRes.Body)
-		slog.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "reason", "upstream_status", "status", upstreamRes.StatusCode)
+		logger.WarnContext(r.Context(), "workbench generate prompt fallback", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "reason", "upstream_status", "status", upstreamRes.StatusCode)
 		workbenchWriteGeneratePromptFallbackStream(w, task, payload.TargetThinkingMode)
 		return
 	}
-	slog.InfoContext(r.Context(), "workbench generate prompt upstream stream", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "status", upstreamRes.StatusCode, "content_type", upstreamRes.Header.Get("Content-Type"))
+	logger.InfoContext(r.Context(), "workbench generate prompt upstream stream", "organization_uuid", organizationUUID, "upstream_host", upstreamReq.URL.Host, "status", upstreamRes.StatusCode, "content_type", upstreamRes.Header.Get("Content-Type"))
 	copyProxyMessagesResponseHeaders(w.Header(), upstreamRes.Header)
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")

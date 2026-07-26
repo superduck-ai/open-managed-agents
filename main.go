@@ -31,7 +31,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	if err := run(logger); err != nil {
-		slog.Error("application stopped", "error", err)
+		logger.Error("application stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -89,16 +89,17 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load filestore credentials: %w", err)
 	}
-	cleanup.StartObjectCleanupWorker(ctx, database, storageClient, 30*time.Second)
+	cleanup.StartObjectCleanupWorker(ctx, database, storageClient, 30*time.Second, logger.With("component", "cleanup"))
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
-	filestore.StartFilestoreCleanupWorker(ctx, database, storageClient)
+	filestore.StartFilestoreCleanupWorker(ctx, database, storageClient, logger.With("component", "filestore_cleanup"))
 	if cfg.Batch.WorkerEnabled {
-		batches.StartBatchWorker(ctx, database, objectStore, cfg)
-		batches.StartBatchExpirySweep(ctx, database, cfg)
+		batchLogger := logger.With("component", "batches")
+		batches.StartBatchWorker(ctx, database, objectStore, cfg, batchLogger)
+		batches.StartBatchExpirySweep(ctx, database, cfg, batchLogger)
 	}
-	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials)
-	skillprewarm.StartWorker(ctx, database, objectStore, cfg)
-	webhooks.StartWorker(ctx, database, cfg.Webhook)
+	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials, logger.With("component", "environment_runner"))
+	skillprewarm.StartWorker(ctx, database, objectStore, cfg, logger.With("component", "skill_prewarm"))
+	webhooks.StartWorker(ctx, database, cfg.Webhook, logger.With("component", "webhook_worker"))
 
 	server := &http.Server{
 		Addr: cfg.Server.Addr,

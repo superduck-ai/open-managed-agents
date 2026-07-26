@@ -57,7 +57,7 @@ func TestWorkbenchGeneratePromptFallsBackWithoutAnthropicToken(t *testing.T) {
 	)
 	rec := httptest.NewRecorder()
 
-	withWorkbenchDependencies(nil, config.AnthropicUpstreamConfig{}, handleWorkbenchGeneratePrompt)(rec, req)
+	withWorkbenchDependencies(nil, config.AnthropicUpstreamConfig{}, nil, handleWorkbenchGeneratePrompt)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -114,7 +114,7 @@ func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
 	)
 	rec := httptest.NewRecorder()
 
-	withWorkbenchDependencies(nil, config.AnthropicUpstreamConfig{}, handleWorkbenchGenerateTitle)(rec, req)
+	withWorkbenchDependencies(nil, config.AnthropicUpstreamConfig{}, nil, handleWorkbenchGenerateTitle)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -159,7 +159,7 @@ func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
 	rec := httptest.NewRecorder()
 	upstream := config.AnthropicUpstreamConfig{BaseURL: upstreamServer.URL + "/anthropic", APIKey: "yaml-key"}
 
-	withWorkbenchDependencies(nil, upstream, handleWorkbenchGenerateTitle)(rec, req)
+	withWorkbenchDependencies(nil, upstream, nil, handleWorkbenchGenerateTitle)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())

@@ -19,10 +19,14 @@ import (
 type Handler struct {
 	service *Service
 	router  chi.Router
+	logger  *slog.Logger
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	h := &Handler{service: NewService(cfg, database)}
+func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h := &Handler{service: NewService(cfg, database), logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(routeNotFound)
 	router.MethodNotAllowed(routeNotFound)
@@ -589,7 +593,7 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpapi.WriteError(w, r, httpapi.NewError(serviceErr.status, serviceErr.typ, serviceErr.message))
 		return
 	}
-	slog.Error("admin api", "error", err)
+	h.logger.Error("admin api", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Internal server error"))
 }
 

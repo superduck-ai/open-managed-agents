@@ -23,6 +23,7 @@ const mcpProbeTimeout = 10 * time.Second
 
 type Handler struct {
 	database *db.DB
+	logger   *slog.Logger
 	prober   Prober
 }
 
@@ -48,8 +49,11 @@ type refreshResponse struct {
 	Version int             `json:"version"`
 }
 
-func NewHandler(database *db.DB) *Handler {
-	return &Handler{database: database, prober: Prober{}}
+func NewHandler(database *db.DB, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Handler{database: database, logger: logger, prober: Prober{}}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -72,7 +76,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	for _, server := range servers {
 		response, getErr := h.readCatalog(r.Context(), server)
 		if getErr != nil {
-			slog.Error("list mcp catalog", "agent_id", agent.ExternalID, "server_name", server.Name, "error", getErr)
+			h.logger.Error("list mcp catalog", "agent_id", agent.ExternalID, "server_name", server.Name, "error", getErr)
 			writeCatalogError(w, r, http.StatusInternalServerError, "Could not load MCP tool catalogs")
 			return
 		}
@@ -130,14 +134,14 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 	result, err := h.prober.Probe(probeCtx, normalized)
 	if err != nil {
 		status, message := probeHTTPError(err)
-		slog.Error("refresh mcp catalog", "workspace_external_id", principal.WorkspaceExternalID, "agent_id", agent.ExternalID, "server_name", server.Name, "error", err)
+		h.logger.Error("refresh mcp catalog", "workspace_external_id", principal.WorkspaceExternalID, "agent_id", agent.ExternalID, "server_name", server.Name, "error", err)
 		writeCatalogError(w, r, status, message)
 		return
 	}
 	// Prober 对成功的零工具结果返回非 nil 空切片；DB 层也会拒绝 nil，避免把 unknown 写成成功快照。
 	catalog, err := h.database.UpsertMCPToolCatalog(r.Context(), "url", normalized, result.Tools)
 	if err != nil {
-		slog.Error("save mcp catalog", "workspace_external_id", principal.WorkspaceExternalID, "agent_id", agent.ExternalID, "server_name", server.Name, "error", err)
+		h.logger.Error("save mcp catalog", "workspace_external_id", principal.WorkspaceExternalID, "agent_id", agent.ExternalID, "server_name", server.Name, "error", err)
 		writeCatalogError(w, r, http.StatusInternalServerError, "Could not save MCP tool catalog")
 		return
 	}
@@ -175,7 +179,7 @@ func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.
 		if errors.Is(err, db.ErrNotFound) {
 			writeCatalogError(w, r, http.StatusNotFound, "Agent not found")
 		} else {
-			slog.Error("get agent for mcp catalog", "error", err)
+			h.logger.Error("get agent for mcp catalog", "error", err)
 			writeCatalogError(w, r, http.StatusInternalServerError, "Could not load Agent")
 		}
 		return auth.Principal{}, db.Agent{}, 0, false

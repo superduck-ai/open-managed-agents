@@ -52,6 +52,7 @@ var responseHeadersToRemove = map[string]struct{}{
 type Handler struct {
 	cfg    config.Config
 	client *http.Client
+	logger *slog.Logger
 }
 
 // flushingResponseWriter 在每次复制一块响应后主动 flush，避免 SSE 被 net/http 缓冲。
@@ -61,8 +62,11 @@ type flushingResponseWriter struct {
 }
 
 // NewHandler 创建复用连接池的 Messages 代理 handler。
-func NewHandler(cfg config.Config) *Handler {
-	return &Handler{cfg: cfg, client: &http.Client{Transport: newProxyTransport()}}
+func NewHandler(cfg config.Config, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Handler{cfg: cfg, client: &http.Client{Transport: newProxyTransport()}, logger: logger}
 }
 
 func newProxyTransport() http.RoundTripper {
@@ -94,7 +98,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	target, err := messagesEndpoint(h.cfg.AnthropicUpstream.BaseURL, r.URL.RawQuery)
 	if err != nil {
-		slog.Error("build messages upstream endpoint", "error", err)
+		h.logger.Error("build messages upstream endpoint", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
@@ -102,7 +106,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, r.Body)
 	if err != nil {
-		slog.Error("build messages upstream request", "error", err)
+		h.logger.Error("build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
@@ -117,13 +121,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			writeRequestTooLarge(w, r)
 			return
 		}
-		slog.Error("proxy messages upstream request", "error", err)
+		h.logger.Error("proxy messages upstream request", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
 	defer upstreamResponse.Body.Close()
 	if err := writeProxyResponse(w, upstreamResponse); err != nil && r.Context().Err() == nil {
-		slog.Error("stream Messages upstream response", "error", err)
+		h.logger.Error("stream Messages upstream response", "error", err)
 	}
 }
 

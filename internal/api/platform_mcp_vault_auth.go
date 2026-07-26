@@ -158,7 +158,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 			writePlatformMCPVaultAuthError(w, http.StatusNotFound, platformMCPVaultAuthVerificationRequestFailed, "")
 			return
 		}
-		slog.Error("load mcp vault auth workspace", "error", err)
+		s.logger.Error("load mcp vault auth workspace", "error", err)
 		writePlatformMCPVaultAuthError(w, http.StatusInternalServerError, platformMCPVaultAuthVerificationRequestFailed, "")
 		return
 	}
@@ -173,7 +173,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 			writePlatformMCPVaultAuthError(w, http.StatusNotFound, platformMCPVaultAuthVerificationRequestFailed, "")
 			return
 		}
-		slog.Error("load mcp vault auth vault", "error", err)
+		s.logger.Error("load mcp vault auth vault", "error", err)
 		writePlatformMCPVaultAuthError(w, http.StatusInternalServerError, platformMCPVaultAuthVerificationRequestFailed, "")
 		return
 	}
@@ -189,7 +189,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		IncludeArchived: false,
 	})
 	if err != nil {
-		slog.Error("list mcp vault auth credentials", "error", err)
+		s.logger.Error("list mcp vault auth credentials", "error", err)
 		writePlatformMCPVaultAuthError(w, http.StatusInternalServerError, platformMCPVaultAuthVerificationRequestFailed, "")
 		return
 	}
@@ -199,9 +199,9 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 	}
 
 	flowID := uuid.NewString()
-	discovery, err := discoverPlatformMCPOAuth(r.Context(), platformMCPVaultAuthHTTPClient, mcpServerURL)
+	discovery, err := discoverPlatformMCPOAuth(r.Context(), platformMCPVaultAuthHTTPClient, mcpServerURL, s.logger)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "discover mcp oauth", "mcp_server_host", platformMCPLogHost(mcpServerURL), "error", err)
+		s.logger.ErrorContext(r.Context(), "discover mcp oauth", "mcp_server_host", platformMCPLogHost(mcpServerURL), "error", err)
 		writePlatformMCPVaultAuthError(w, http.StatusBadRequest, platformMCPVaultAuthOAuthDiscoveryFailed, flowID)
 		return
 	}
@@ -216,14 +216,14 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		req.ClientSecret,
 	)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "resolve mcp oauth client", "mcp_server_host", platformMCPLogHost(mcpServerURL), "error", err)
+		s.logger.ErrorContext(r.Context(), "resolve mcp oauth client", "mcp_server_host", platformMCPLogHost(mcpServerURL), "error", err)
 		writePlatformMCPVaultAuthError(w, http.StatusBadRequest, platformMCPVaultAuthOAuthDiscoveryFailed, flowID)
 		return
 	}
 
 	codeVerifier, codeChallenge, codeChallengeMethod, err := newPlatformMCPOAuthPKCE(discovery.CodeChallengeMethods)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "create mcp oauth pkce", "mcp_server_host", platformMCPLogHost(mcpServerURL), "error", err)
+		s.logger.ErrorContext(r.Context(), "create mcp oauth pkce", "mcp_server_host", platformMCPLogHost(mcpServerURL), "error", err)
 		writePlatformMCPVaultAuthError(w, http.StatusBadRequest, platformMCPVaultAuthOAuthDiscoveryFailed, flowID)
 		return
 	}
@@ -268,7 +268,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		UpdatedAt:                 now,
 		ExpiresAt:                 now.Add(platformMCPVaultAuthFlowTTL),
 	}); err != nil {
-		slog.Error("create mcp oauth flow", "error", err)
+		s.logger.Error("create mcp oauth flow", "error", err)
 		writePlatformMCPVaultAuthError(w, http.StatusInternalServerError, platformMCPVaultAuthVerificationRequestFailed, flowID)
 		return
 	}
@@ -292,7 +292,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 	flow, err := s.db.GetMCPOAuthFlow(r.Context(), state)
 	if err != nil {
 		if !errors.Is(err, db.ErrNotFound) {
-			slog.Error("load mcp oauth callback flow", "error", err)
+			s.logger.Error("load mcp oauth callback flow", "error", err)
 		}
 		writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
 			Type:      "vault_oauth_complete",
@@ -336,7 +336,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 	}
 
 	if providerError := strings.TrimSpace(r.URL.Query().Get("error")); providerError != "" {
-		slog.Error("mcp oauth callback provider error for flow", "flow_external_id", flow.ExternalID, "error", providerError)
+		s.logger.Error("mcp oauth callback provider error for flow", "flow_external_id", flow.ExternalID, "error", providerError)
 		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, platformMCPVaultAuthTokenExchangeFailed, now)
 		writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
 			Type:      "vault_oauth_complete",
@@ -360,7 +360,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 
 	token, err := exchangePlatformMCPOAuthCode(r.Context(), platformMCPVaultAuthHTTPClient, flow, code)
 	if err != nil {
-		slog.Error("exchange mcp oauth code for flow", "flow_external_id", flow.ExternalID, "error", err)
+		s.logger.Error("exchange mcp oauth code for flow", "flow_external_id", flow.ExternalID, "error", err)
 		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, platformMCPVaultAuthTokenExchangeFailed, now)
 		writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
 			Type:      "vault_oauth_complete",
@@ -373,7 +373,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 
 	publicAuth, secretPayload, err := buildPlatformMCPVaultOAuthCredentialPayloads(flow, token, now)
 	if err != nil {
-		slog.Error("build mcp oauth credential payload for flow", "flow_external_id", flow.ExternalID, "error", err)
+		s.logger.Error("build mcp oauth credential payload for flow", "flow_external_id", flow.ExternalID, "error", err)
 		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, platformMCPVaultAuthVerificationRequestFailed, now)
 		writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
 			Type:      "vault_oauth_complete",
@@ -386,7 +386,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 
 	credentialID, err := ids.New("vcrd_")
 	if err != nil {
-		slog.Error("generate mcp oauth credential id", "error", err)
+		s.logger.Error("generate mcp oauth credential id", "error", err)
 		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, platformMCPVaultAuthVerificationRequestFailed, now)
 		writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
 			Type:      "vault_oauth_complete",
@@ -398,7 +398,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 	}
 	metadata, err := platformMCPVaultOAuthCredentialMetadata(flow)
 	if err != nil {
-		slog.Error("build mcp oauth credential metadata for flow", "flow_external_id", flow.ExternalID, "error", err)
+		s.logger.Error("build mcp oauth credential metadata for flow", "flow_external_id", flow.ExternalID, "error", err)
 		metadata = json.RawMessage(`{}`)
 	}
 	created, err := s.db.CreateVaultCredential(r.Context(), db.VaultCredential{
@@ -423,7 +423,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		if errors.Is(err, db.ErrDuplicate) {
 			errorCode = platformMCPVaultAuthAlreadyExists
 		} else if !errors.Is(err, db.ErrNotFound) && !errors.Is(err, db.ErrLimitExceeded) {
-			slog.Error("create mcp oauth vault credential for flow", "flow_external_id", flow.ExternalID, "error", err)
+			s.logger.Error("create mcp oauth vault credential for flow", "flow_external_id", flow.ExternalID, "error", err)
 		}
 		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, errorCode, now)
 		writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
@@ -435,7 +435,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		return
 	}
 	if err := s.db.CompleteMCPOAuthFlow(r.Context(), flow.ExternalID, created.ExternalID, now); err != nil {
-		slog.Error("complete mcp oauth flow after credential", "flow_external_id", flow.ExternalID, "credential_id", created.ExternalID, "error", err)
+		s.logger.Error("complete mcp oauth flow after credential", "flow_external_id", flow.ExternalID, "credential_id", created.ExternalID, "error", err)
 	}
 	writePlatformMCPVaultAuthCallback(w, platformMCPVaultAuthCallbackPayload{
 		Type:         "vault_oauth_complete",
@@ -480,13 +480,16 @@ func platformMCPVaultCredentialExists(credentials []db.VaultCredential, mcpServe
 	return false
 }
 
-func discoverPlatformMCPOAuth(ctx context.Context, client *http.Client, mcpServerURL string) (platformMCPOAuthDiscovery, error) {
+func discoverPlatformMCPOAuth(ctx context.Context, client *http.Client, mcpServerURL string, logger *slog.Logger) (platformMCPOAuthDiscovery, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	challengeParams, _ := fetchPlatformMCPWWWAuthenticateParams(ctx, client, mcpServerURL)
 	if metadataURL := strings.TrimSpace(challengeParams["resource_metadata"]); metadataURL != "" {
 		if discovery, err := discoverPlatformMCPOAuthFromProtectedResource(ctx, client, metadataURL, mcpServerURL, challengeParams["scope"]); err == nil {
 			return discovery, nil
 		} else {
-			slog.ErrorContext(ctx, "fetch mcp oauth protected resource metadata", "metadata_host", platformMCPLogHost(metadataURL), "error", err)
+			logger.ErrorContext(ctx, "fetch mcp oauth protected resource metadata", "metadata_host", platformMCPLogHost(metadataURL), "error", err)
 		}
 	}
 
@@ -997,7 +1000,7 @@ func defaultPlatformMCPVaultCredentialName(mcpServerURL string) string {
 
 func (s *Server) failPlatformMCPVaultAuthFlow(ctx context.Context, flowID, errorCode string, failedAt time.Time) {
 	if err := s.db.FailMCPOAuthFlow(ctx, flowID, errorCode, failedAt); err != nil && !errors.Is(err, db.ErrNotFound) {
-		slog.Error("fail mcp oauth flow", "flow_id", flowID, "error", err)
+		s.logger.Error("fail mcp oauth flow", "flow_id", flowID, "error", err)
 	}
 }
 

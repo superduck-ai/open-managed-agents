@@ -22,7 +22,7 @@ func TestWorkerSnapshotFailureRetries(t *testing.T) {
 			Payload:     json.RawMessage(`{"kind":"snapshot","agent_snapshot":{"skills":[{"type":"custom","skill_id":"skill_1","version":"latest"}]}}`),
 		}},
 	}
-	worker := NewWorker(store, store, store, &fakeResolver{err: errors.New("resolve failed")}, &fakePreparer{})
+	worker := NewWorker(store, store, store, &fakeResolver{err: errors.New("resolve failed")}, &fakePreparer{}, nil)
 
 	if err := worker.RunOnce(context.Background(), "worker_1"); err == nil {
 		t.Fatal("RunOnce error = nil, want failure")
@@ -49,7 +49,7 @@ func TestWorkerSnapshotPreparesMountAndCompletes(t *testing.T) {
 	}
 	resolver := &fakeResolver{runtimeSkills: []skillsapi.RuntimeSkill{{Source: "custom", SkillID: "skill_1", Version: "1"}}}
 	preparer := &fakePreparer{}
-	worker := NewWorker(store, store, store, resolver, preparer)
+	worker := NewWorker(store, store, store, resolver, preparer, nil)
 
 	if err := worker.RunOnce(context.Background(), "worker_1"); err != nil {
 		t.Fatalf("RunOnce error = %v", err)
@@ -101,7 +101,7 @@ func TestWorkerFanoutSkipsAgentSnapshotFailure(t *testing.T) {
 			AgentSnapshot: json.RawMessage(`{"skills":[{"type":"custom","skill_id":"skill_1","version":"latest"}]}`),
 		}},
 	}
-	worker := NewWorker(store, store, store, &fakeResolver{}, &fakePreparer{})
+	worker := NewWorker(store, store, store, &fakeResolver{}, &fakePreparer{}, nil)
 
 	if err := worker.RunOnce(context.Background(), "worker_1"); err != nil {
 		t.Fatalf("RunOnce error = %v", err)
@@ -143,7 +143,7 @@ func TestWorkerFanoutEnqueuesSnapshotsAndContinuation(t *testing.T) {
 		}},
 		hasMoreAgents: true,
 	}
-	worker := NewWorker(store, store, store, &fakeResolver{}, &fakePreparer{})
+	worker := NewWorker(store, store, store, &fakeResolver{}, &fakePreparer{}, nil)
 
 	if err := worker.RunOnce(context.Background(), "worker_1"); err != nil {
 		t.Fatalf("RunOnce error = %v", err)
@@ -183,7 +183,7 @@ func TestWorkerFanoutCompletesWhenNoMatches(t *testing.T) {
 			Payload:     json.RawMessage(`{"kind":"fanout","skill_id":"skill_1","version":"20260708"}`),
 		}},
 	}
-	worker := NewWorker(store, store, store, &fakeResolver{}, &fakePreparer{})
+	worker := NewWorker(store, store, store, &fakeResolver{}, &fakePreparer{}, nil)
 
 	if err := worker.RunOnce(context.Background(), "worker_1"); err != nil {
 		t.Fatalf("RunOnce error = %v", err)

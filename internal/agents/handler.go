@@ -35,6 +35,7 @@ type Handler struct {
 	cfg     config.Config
 	db      *db.DB
 	prewarm skillPrewarmSnapshotEnqueuer
+	logger  *slog.Logger
 	router  chi.Router
 }
 
@@ -90,12 +91,15 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	return NewHandlerWithSkillPrewarm(cfg, database, nil)
+func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+	return NewHandlerWithSkillPrewarm(cfg, database, nil, logger)
 }
 
-func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer) *Handler {
-	h := &Handler{cfg: cfg, db: database, prewarm: prewarm}
+func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h := &Handler{cfg: cfg, db: database, prewarm: prewarm, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -168,7 +172,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 	}, versionID)
 	if err != nil {
-		slog.Error("create agent", "error", err)
+		h.logger.Error("create agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create agent"))
 		return
 	}
@@ -213,7 +217,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		slog.Error("list agents", "error", err)
+		h.logger.Error("list agents", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agents"))
 		return
 	}
@@ -255,7 +259,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: derefBool(body.IncludeArchived),
 	})
 	if err != nil {
-		slog.Error("search agents", "error", err)
+		h.logger.Error("search agents", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not search agents"))
 		return
 	}
@@ -296,7 +300,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		slog.Error("get agent", "error", err)
+		h.logger.Error("get agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve agent"))
 		return
 	}
@@ -335,7 +339,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		slog.Error("get agent before update", "error", err)
+		h.logger.Error("get agent before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
 	}
@@ -374,7 +378,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		slog.Error("update agent", "error", err)
+		h.logger.Error("update agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
 	}
@@ -400,7 +404,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		slog.Error("archive agent", "error", err)
+		h.logger.Error("archive agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive agent"))
 		return
 	}
@@ -438,7 +442,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		slog.Error("list agent versions", "error", err)
+		h.logger.Error("list agent versions", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agent versions"))
 		return
 	}
@@ -1231,13 +1235,13 @@ func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, ag
 	}
 	snapshot, err := agentsnapshot.FromAgent(agent)
 	if err != nil {
-		slog.Error("build agent skill prewarm snapshot", "agent_id", agent.ExternalID, "trigger", trigger, "error", err)
+		h.logger.Error("build agent skill prewarm snapshot", "agent_id", agent.ExternalID, "trigger", trigger, "error", err)
 		return
 	}
 	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
 	defer cancel()
 	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, "agent", agent.ExternalID, trigger); err != nil {
-		slog.Error("enqueue agent skill prewarm", "agent_id", agent.ExternalID, "trigger", trigger, "error", err)
+		h.logger.Error("enqueue agent skill prewarm", "agent_id", agent.ExternalID, "trigger", trigger, "error", err)
 	}
 }
 

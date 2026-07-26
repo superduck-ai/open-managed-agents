@@ -27,24 +27,32 @@ type Runner struct {
 	cfg          config.Config
 	codeSessions *codesessions.Service
 	skills       *skillsapi.RuntimeResolver
+	logger       *slog.Logger
 }
 
-func NewRunner(database *db.DB, provider e2bruntime.Provider) *Runner {
-	return &Runner{db: database, provider: provider}
+func NewRunner(database *db.DB, provider e2bruntime.Provider, logger *slog.Logger) *Runner {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Runner{db: database, provider: provider, logger: logger}
 }
 
-func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore, credentials *codesessions.SessionCredentials) *Runner {
+func NewRunnerWithConfigStoreAndCredentials(database *db.DB, provider e2bruntime.Provider, cfg config.Config, store storage.ObjectStore, credentials *codesessions.SessionCredentials, logger *slog.Logger) *Runner {
 	// 显式注入用于 main 和测试，确保不会在同一进程中意外创建第二套签名身份。
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Runner{
 		db:           database,
 		provider:     provider,
 		cfg:          cfg,
-		codeSessions: codesessions.NewServiceWithCredentials(database, credentials),
+		codeSessions: codesessions.NewServiceWithCredentials(database, credentials, logger),
 		skills:       skillsapi.NewRuntimeResolver(cfg, database, store),
+		logger:       logger,
 	}
 }
 
-func StartRunnerWithStoreAndCredentials(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, credentials *codesessions.SessionCredentials) {
+func StartRunnerWithStoreAndCredentials(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, credentials *codesessions.SessionCredentials, logger *slog.Logger) {
 	if !cfg.EnvironmentRunner.Enabled {
 		return
 	}
@@ -52,7 +60,7 @@ func StartRunnerWithStoreAndCredentials(ctx context.Context, database *db.DB, st
 	if concurrency <= 0 {
 		concurrency = 1
 	}
-	runner := NewRunnerWithConfigStoreAndCredentials(database, e2bruntime.NewProvider(cfg.E2B), cfg, store, credentials)
+	runner := NewRunnerWithConfigStoreAndCredentials(database, e2bruntime.NewProvider(cfg.E2B), cfg, store, credentials, logger)
 	for i := 0; i < concurrency; i++ {
 		workerID := fmt.Sprintf("environment-runner-%d", i+1)
 		go runner.loop(ctx, workerID)
@@ -70,7 +78,7 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 		}
 		processed, err := r.RunOnce(ctx, workerID)
 		if err != nil {
-			slog.Error("environment runner", "worker_id", workerID, "error", err)
+			r.logger.Error("environment runner", "worker_id", workerID, "error", err)
 		}
 		if processed {
 			continue

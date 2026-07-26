@@ -31,6 +31,7 @@ var credentialHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+$`)
 type Handler struct {
 	cfg    config.Config
 	db     *db.DB
+	logger *slog.Logger
 	router chi.Router
 }
 
@@ -106,8 +107,11 @@ type credentialAuthState struct {
 	SecretPayload json.RawMessage
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	h := &Handler{cfg: cfg, db: database}
+func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h := &Handler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -182,7 +186,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 	})
 	if err != nil {
-		slog.Error("create vault", "error", err)
+		h.logger.Error("create vault", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create vault"))
 		return
 	}
@@ -217,7 +221,7 @@ func (h *Handler) listVaults(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: includeArchived,
 	})
 	if err != nil {
-		slog.Error("list vaults", "error", err)
+		h.logger.Error("list vaults", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list vaults"))
 		return
 	}
@@ -245,7 +249,7 @@ func (h *Handler) retrieveVaultRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
 		}
-		slog.Error("get vault", "error", err)
+		h.logger.Error("get vault", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve vault"))
 		return
 	}
@@ -264,7 +268,7 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
 		}
-		slog.Error("get vault before update", "error", err)
+		h.logger.Error("get vault before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update vault"))
 		return
 	}
@@ -299,7 +303,7 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
 		}
-		slog.Error("update vault", "error", err)
+		h.logger.Error("update vault", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update vault"))
 		return
 	}
@@ -319,7 +323,7 @@ func (h *Handler) archiveVaultRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
 		}
-		slog.Error("archive vault", "error", err)
+		h.logger.Error("archive vault", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive vault"))
 		return
 	}
@@ -343,7 +347,7 @@ func (h *Handler) deleteVaultRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
 		}
-		slog.Error("delete vault", "error", err)
+		h.logger.Error("delete vault", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete vault"))
 		return
 	}
@@ -367,7 +371,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
 		}
-		slog.Error("get vault before credential create", "error", err)
+		h.logger.Error("get vault before credential create", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create credential"))
 		return
 	}
@@ -431,7 +435,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
 		}
-		slog.Error("create vault credential", "error", err)
+		h.logger.Error("create vault credential", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create credential"))
 		return
 	}
@@ -451,7 +455,7 @@ func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
 		}
-		slog.Error("get vault before credential list", "error", err)
+		h.logger.Error("get vault before credential list", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list credentials"))
 		return
 	}
@@ -478,7 +482,7 @@ func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: includeArchived,
 	})
 	if err != nil {
-		slog.Error("list vault credentials", "error", err)
+		h.logger.Error("list vault credentials", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list credentials"))
 		return
 	}
@@ -515,7 +519,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
 			return
 		}
-		slog.Error("get credential before update", "error", err)
+		h.logger.Error("get credential before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update credential"))
 		return
 	}
@@ -559,7 +563,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
 			return
 		}
-		slog.Error("update vault credential", "error", err)
+		h.logger.Error("update vault credential", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update credential"))
 		return
 	}
@@ -579,7 +583,7 @@ func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
 			return
 		}
-		slog.Error("archive vault credential", "error", err)
+		h.logger.Error("archive vault credential", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive credential"))
 		return
 	}
@@ -600,7 +604,7 @@ func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
 			return
 		}
-		slog.Error("delete vault credential", "error", err)
+		h.logger.Error("delete vault credential", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete credential"))
 		return
 	}
@@ -610,11 +614,11 @@ func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) enqueueWebhook(r *http.Request, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, sessionThreadID)
+	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, sessionThreadID, h.logger)
 }
 
 func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Principal, eventType, resourceID string, options webhooks.EventOptions) {
-	webhooks.EnqueueWithOptions(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, options)
+	webhooks.EnqueueWithOptions(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, eventType, resourceID, options, h.logger)
 }
 
 func (h *Handler) loadVaultCredentialsForWebhook(r *http.Request, workspaceID int64, vaultID string, includeArchived bool) []db.VaultCredential {
@@ -625,7 +629,7 @@ func (h *Handler) loadVaultCredentialsForWebhook(r *http.Request, workspaceID in
 		IncludeArchived: includeArchived,
 	})
 	if err != nil {
-		slog.Error("list vault credentials for webhook", "vault_id", vaultID, "error", err)
+		h.logger.Error("list vault credentials for webhook", "vault_id", vaultID, "error", err)
 		return nil
 	}
 	return records
@@ -673,7 +677,7 @@ func (h *Handler) authorizeCredential(w http.ResponseWriter, r *http.Request, op
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
 			return db.VaultCredential{}, false
 		}
-		slog.Error("vault credential", "operation", operation, "error", err)
+		h.logger.Error("vault credential", "operation", operation, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve credential"))
 		return db.VaultCredential{}, false
 	}

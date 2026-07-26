@@ -23,7 +23,10 @@ const (
 	batchJobMaxAttempts       = 10
 )
 
-func StartBatchWorker(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config) {
+func StartBatchWorker(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	workerID := fmt.Sprintf("message-batch-%d", os.Getpid())
 	upstream := NewHTTPUpstreamClient(cfg)
 	go func() {
@@ -31,7 +34,7 @@ func StartBatchWorker(ctx context.Context, database *db.DB, store storage.Object
 		defer ticker.Stop()
 		for {
 			if err := RunBatchOnce(ctx, database, store, cfg, upstream, workerID); err != nil {
-				slog.Error("message batch worker", "error", err)
+				logger.Error("message batch worker", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -42,17 +45,20 @@ func StartBatchWorker(ctx context.Context, database *db.DB, store storage.Object
 	}()
 }
 
-func StartBatchExpirySweep(ctx context.Context, database *db.DB, cfg config.Config) {
+func StartBatchExpirySweep(ctx context.Context, database *db.DB, cfg config.Config, logger *slog.Logger) {
 	interval := cfg.Batch.ExpirySweepInterval
 	if interval <= 0 {
 		interval = 5 * time.Minute
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			if err := RunBatchExpirySweepOnce(ctx, database, time.Now().UTC()); err != nil {
-				slog.Error("message batch expiry sweep", "error", err)
+				logger.Error("message batch expiry sweep", "error", err)
 			}
 			select {
 			case <-ctx.Done():

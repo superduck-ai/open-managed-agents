@@ -62,7 +62,7 @@ func run(dir string, versionsPath string, prune bool) error {
 		Dir:          dir,
 		VersionsPath: versionsPath,
 		Prune:        prune,
-	})
+	}, slog.Default().With("component", "builtin_skill_seed"))
 	if err != nil {
 		return fmt.Errorf("seed builtin skills: %w", err)
 	}

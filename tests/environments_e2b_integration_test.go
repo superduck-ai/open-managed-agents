@@ -123,7 +123,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	}
 
 	provider := e2bruntime.NewProvider(cfg.E2B)
-	runner := environments.NewRunner(database, provider)
+	runner := environments.NewRunner(database, provider, nil)
 	processed, err := runner.RunOnce(ctx, "e2b-integration-test")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)

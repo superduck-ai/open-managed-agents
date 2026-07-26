@@ -39,12 +39,16 @@ func StartFilestoreCleanupWorker(
 	ctx context.Context,
 	database filestoreCleanupDatabase,
 	client storage.Client,
+	logger *slog.Logger,
 ) {
 	if database == nil || client == nil {
 		return
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	workerID := fmt.Sprintf("filestore-cleanup-%d-%s", os.Getpid(), uuid.NewString())
-	go runFilestoreCleanupLoop(ctx, database, client, workerID)
+	go runFilestoreCleanupLoop(ctx, database, client, workerID, logger)
 }
 
 func runFilestoreCleanupLoop(
@@ -52,6 +56,7 @@ func runFilestoreCleanupLoop(
 	database filestoreCleanupDatabase,
 	client storage.Client,
 	workerID string,
+	logger *slog.Logger,
 ) {
 	cleanupTicker := time.NewTicker(filestoreCleanupPollInterval)
 	defer cleanupTicker.Stop()
@@ -61,32 +66,32 @@ func runFilestoreCleanupLoop(
 	if ctx.Err() != nil {
 		return
 	}
-	runFilestoreFilesystemCleanupAndLog(ctx, database, workerID)
+	runFilestoreFilesystemCleanupAndLog(ctx, database, workerID, logger)
 	if ctx.Err() != nil {
 		return
 	}
-	runFilestoreTTLSweepAndLog(ctx, database)
+	runFilestoreTTLSweepAndLog(ctx, database, logger)
 	if ctx.Err() != nil {
 		return
 	}
-	runFilestoreCleanupAndLog(ctx, database, client, workerID)
+	runFilestoreCleanupAndLog(ctx, database, client, workerID, logger)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-cleanupTicker.C:
-			runFilestoreFilesystemCleanupAndLog(ctx, database, workerID)
-			runFilestoreCleanupAndLog(ctx, database, client, workerID)
+			runFilestoreFilesystemCleanupAndLog(ctx, database, workerID, logger)
+			runFilestoreCleanupAndLog(ctx, database, client, workerID, logger)
 		case <-ttlTicker.C:
-			runFilestoreTTLSweepAndLog(ctx, database)
+			runFilestoreTTLSweepAndLog(ctx, database, logger)
 		}
 	}
 }
 
-func runFilestoreFilesystemCleanupAndLog(ctx context.Context, database filestoreCleanupDatabase, workerID string) {
+func runFilestoreFilesystemCleanupAndLog(ctx context.Context, database filestoreCleanupDatabase, workerID string, logger *slog.Logger) {
 	if err := RunFilestoreFilesystemCleanupOnce(ctx, database, workerID); err != nil {
-		slog.Error("filestore filesystem cleanup worker", "error", err)
+		logger.Error("filestore filesystem cleanup worker", "error", err)
 	}
 }
 
@@ -95,15 +100,16 @@ func runFilestoreCleanupAndLog(
 	database filestoreCleanupDatabase,
 	client storage.Client,
 	workerID string,
+	logger *slog.Logger,
 ) {
 	if err := RunFilestoreCleanupOnce(ctx, database, client, workerID); err != nil {
-		slog.Error("filestore cleanup worker", "error", err)
+		logger.Error("filestore cleanup worker", "error", err)
 	}
 }
 
-func runFilestoreTTLSweepAndLog(ctx context.Context, database filestoreCleanupDatabase) {
+func runFilestoreTTLSweepAndLog(ctx context.Context, database filestoreCleanupDatabase, logger *slog.Logger) {
 	if err := RunFilestoreTTLSweepOnce(ctx, database); err != nil {
-		slog.Error("filestore TTL sweep", "error", err)
+		logger.Error("filestore TTL sweep", "error", err)
 	}
 }
 

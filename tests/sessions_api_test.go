@@ -405,7 +405,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
 		t.Fatalf("ingress events missing worker outputs: %+v", events)
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "session-ingress-webhook-worker", nil); err != nil {
 		t.Fatalf("deliver ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -427,7 +427,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if len(again.Data) != 1 {
 		t.Fatalf("ingress should be idempotent, agent.message count = %d", len(again.Data))
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "session-ingress-webhook-worker", nil); err != nil {
 		t.Fatalf("deliver duplicate ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -3044,7 +3044,7 @@ func TestSessionWebhooks(t *testing.T) {
 		t.Fatalf("session.pending webhook jobs = %d, want 0 due filter", count)
 	}
 
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "webhook-test-worker"); err != nil {
+	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "webhook-test-worker", nil); err != nil {
 		t.Fatalf("webhook run once failure path: %v", err)
 	}
 	status, attempts := latestWebhookJobStatus(t, app, "session.created", session.ID)
@@ -3054,7 +3054,7 @@ func TestSessionWebhooks(t *testing.T) {
 	if _, err := app.db.Pool.Exec(context.Background(), `update jobs set run_after = now() where type = 'webhook_delivery' and payload->>'event_type' = 'session.created' and payload->'event'->'data'->>'id' = $1`, session.ID); err != nil {
 		t.Fatalf("reset webhook run_after: %v", err)
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "webhook-test-worker"); err != nil {
+	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "webhook-test-worker", nil); err != nil {
 		t.Fatalf("webhook run once success path: %v", err)
 	}
 	status, attempts = latestWebhookJobStatus(t, app, "session.created", session.ID)
@@ -3422,7 +3422,7 @@ func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string
 	ctx := context.Background()
 	cfg := app.cfg
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-" + strings.TrimPrefix(sessionID, "sesn_")}
-	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
+	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials, nil)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		processed, err := runner.RunOnce(ctx, "sessions-code-session-test")

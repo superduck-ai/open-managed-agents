@@ -96,7 +96,7 @@ func TestFilestoreRoutingUsesResourceBoundary(t *testing.T) {
 func TestFilestoreProtocolOperationsAreRegistered(t *testing.T) {
 	t.Parallel()
 
-	handler := filestore.NewHandler(config.Config{}, filestore.NewService(config.Config{}, nil, nil))
+	handler := filestore.NewHandler(config.Config{}, filestore.NewService(config.Config{}, nil, nil), nil)
 	for _, requestPath := range filestoreAuthPaths {
 		requestPath := requestPath
 		t.Run(strings.TrimPrefix(requestPath, "/v1/filestore/fs/"), func(t *testing.T) {

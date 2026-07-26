@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"encoding/json"
+	"log/slog"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -16,6 +17,7 @@ type Handler struct {
 	cfg          config.Config
 	db           *db.DB
 	codeSessions *codesessions.Service
+	logger       *slog.Logger
 	router       chi.Router
 	streams      *streamHub
 }

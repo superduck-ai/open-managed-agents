@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
@@ -13,11 +14,14 @@ import (
 
 // NewHandler 要求显式注入与 environment runner 和 code-session HTTP Handler 共用的 Service，
 // 并把自身注册为公开事件 sink；这样 worker 输出会进入同一 session stream，而不会落到另一份 Service 状态。
-func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesessions.Service) *Handler {
+func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesessions.Service, logger *slog.Logger) *Handler {
 	if codeSessionService == nil {
 		panic("sessions: code-session service is required")
 	}
-	h := &Handler{cfg: cfg, db: database, codeSessions: codeSessionService, streams: newStreamHub()}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	h := &Handler{cfg: cfg, db: database, codeSessions: codeSessionService, logger: logger, streams: newStreamHub()}
 	codeSessionService.SetPublicEventSink(h)
 	router := chi.NewRouter()
 	router.NotFound(notFound)

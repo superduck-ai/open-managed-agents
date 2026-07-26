@@ -55,6 +55,7 @@ type Worker struct {
 	fanout    FanoutStore
 	resolver  RuntimeResolver
 	preparer  SkillMountPreparer
+	logger    *slog.Logger
 }
 
 var agentSnapshotFromAgent = agentsnapshot.FromAgent
@@ -73,17 +74,20 @@ type jobPayload struct {
 	AfterDeploymentID   int64           `json:"after_deployment_id"`
 }
 
-func NewWorker(jobs JobStore, snapshots SnapshotJobStore, fanout FanoutStore, resolver RuntimeResolver, preparer SkillMountPreparer) *Worker {
-	return &Worker{jobs: jobs, snapshots: snapshots, fanout: fanout, resolver: resolver, preparer: preparer}
+func NewWorker(jobs JobStore, snapshots SnapshotJobStore, fanout FanoutStore, resolver RuntimeResolver, preparer SkillMountPreparer, logger *slog.Logger) *Worker {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Worker{jobs: jobs, snapshots: snapshots, fanout: fanout, resolver: resolver, preparer: preparer, logger: logger}
 }
 
-func StartWorker(ctx context.Context, database *db.DB, objectStore storage.ObjectStore, cfg config.Config) {
+func StartWorker(ctx context.Context, database *db.DB, objectStore storage.ObjectStore, cfg config.Config, logger *slog.Logger) {
 	if database == nil || objectStore == nil || !cfg.EnvironmentRunner.Enabled {
 		return
 	}
 	workerID := fmt.Sprintf("skill-prewarm-%d", os.Getpid())
 	resolver := skillsapi.NewRuntimeResolver(cfg, database, objectStore)
-	worker := NewWorker(database, database, database, resolver, e2bruntime.NewProvider(cfg.E2B))
+	worker := NewWorker(database, database, database, resolver, e2bruntime.NewProvider(cfg.E2B), logger)
 	go worker.loop(ctx, workerID)
 }
 
@@ -92,7 +96,7 @@ func (w *Worker) loop(ctx context.Context, workerID string) {
 	defer ticker.Stop()
 	for {
 		if err := w.RunOnce(ctx, workerID); err != nil {
-			slog.Error("skill prewarm", "worker_id", workerID, "error", err)
+			w.logger.Error("skill prewarm", "worker_id", workerID, "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -188,7 +192,7 @@ func (w *Worker) processFanout(ctx context.Context, workspaceID int64, payload j
 		nextAfterAgentID = agent.ID
 		snapshot, err := agentSnapshotFromAgent(agent)
 		if err != nil {
-			slog.Error("skill prewarm fanout skip agent", "workspace_id", workspaceID, "agent_id", agent.ExternalID, "skill_id", payload.SkillID, "version", payload.Version, "error", err)
+			w.logger.Error("skill prewarm fanout skip agent", "workspace_id", workspaceID, "agent_id", agent.ExternalID, "skill_id", payload.SkillID, "version", payload.Version, "error", err)
 			continue
 		}
 		if err := w.snapshots.EnqueueSkillPrewarmSnapshotJob(ctx, db.SkillPrewarmSnapshotJobInput{

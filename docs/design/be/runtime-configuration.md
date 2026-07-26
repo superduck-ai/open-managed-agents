@@ -33,6 +33,24 @@ YAML 使用严格字段解析，未知字段、显式 `null`、类型错误和�
 
 需要区分“未配置”和“显式配置为 `false` 或空列表”的字段，在私有 YAML 输入类型中使用 `optional[T]`。输入模型解析完成后再转换为不含指针和 Optional 的运行时 `Config`。这样 presence 是字段类型的一部分，不依赖字符串路径集合；新增派生默认值时必须显式建模，并由 YAML 输入与运行时配置字段合同测试防止两种类型发生字段漂移。
 
+## 配置与运行时依赖分离
+
+`config.Config` 只表示可以由 YAML 加载、校验和复现的数据，不持有 logger、数据库连接、对象存储 client 或其他进程内对象。`*slog.Logger` 属于运行时依赖：可执行程序创建根 logger 后，通过 `api.ServerDeps`、资源构造函数和 worker 启动函数显式注入。HTTP Server 组装层从根 logger 派生带稳定 `component` 字段的子 logger，各 handler、service 和 worker 保存并使用自己的 logger；构造函数的 nil 回退只服务于测试和兼容调用，不是生产依赖来源。
+
+```mermaid
+flowchart LR
+    yaml["YAML"] --> config["config.Load → Config"]
+    main["main 组装层"] --> rootLogger["根 slog.Logger"]
+    config --> serverDeps["api.ServerDeps"]
+    rootLogger --> componentLoggers["component 子 logger"]
+    componentLoggers --> serverDeps
+    serverDeps --> handlers["Handlers / Services"]
+    config --> workers["Worker 参数"]
+    componentLoggers --> workers
+```
+
+该边界让配置比较、序列化和测试保持确定性，也让日志级别、输出 handler 与公共字段由进程入口统一控制。领域代码不能通过把 logger 塞进 `Config` 来绕过依赖声明，也不能自行创建另一套全局 handler。
+
 Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业务字段，也不做 YAML merge。本地 Compose 从受跟踪的无密钥模板 `deploy/docker-compose/oma-server.yaml` 初始化 gitignored 的 `deploy/docker-compose/oma-server.local.yaml`，并只读挂载后者；密码、API key 和私钥路径只能写入本地文件。生产环境应由容器平台或 Secret Manager 将受权限保护的完整 YAML 只读挂载到同一目标路径。
 
 ## 从 `.env` 迁移

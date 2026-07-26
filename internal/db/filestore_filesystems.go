@@ -257,8 +257,31 @@ func createFilestoreFilesystemWithGeneratedID(
 	)
 }
 
-// ProvisionFilestoreFilesystem 在已验证的会话范围内幂等创建文件系统。
-// 同一外部 ID 若已绑定其他会话则返回冲突，绝不静默改写归属。
+// ProvisionFilestoreFilesystem 为一个活动 Session 幂等建立 Filestore filesystem。
+//
+// 它先检查 external ID 和各个引用 UUID，再从数据库确认 Organization、Workspace、
+// Session、可选 Code Session 和可选 API key 的归属关系。Session 和 Workspace
+// 必须仍然有效。校验通过后，函数会复用已有 filesystem 或创建新记录，并确保
+// /outputs、/uploads、/transcripts 和 /tool_results 四个固定根目录存在。
+//
+// 例如：
+//   - Session 尚无 filesystem：创建 filesystem 和四个根目录，返回 filesystem、
+//     true、nil。
+//   - 使用相同 external ID 和 Session 重试：复用原记录并补齐可能缺失的根目录，
+//     返回 filesystem、false、nil。false 只表示本次没有新建 filesystem 记录。
+//   - 同一 Workspace 内的 external ID 已属于其他 Session，或当前 Session 已有
+//     另一个活动 filesystem：返回 ErrDuplicate，不会改写已有归属。
+//
+// 整个过程在同一个 sqlx 事务中完成。函数组合使用 external ID advisory lock、
+// Session 行锁、Workspace advisory lock 和 filesystem namespace advisory lock，
+// 并由数据库唯一索引兜底，避免并发请求创建重复记录，也避免与 Session 删除或目录
+// 更新发生竞态。任何一步失败都会回滚，不会留下只有 filesystem、没有完整固定
+// 根目录的状态。
+//
+// 输入缺失或引用 UUID 非法时返回 ErrPreconditionFailed；归属链不存在或已失效时
+// 返回 ErrNotFound；名称或 Session 归属冲突时返回 ErrDuplicate。固定根路径被活动
+// 文件占用时会返回 ErrFilestorePathExists，其他查询、写入或提交错误原样返回。
+// 这里校验的是数据库归属和生命周期，不负责调用方的 API 权限授权。
 func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFilestoreFilesystemInput) (FilestoreFilesystem, bool, error) {
 	if strings.TrimSpace(input.ExternalID) == "" {
 		return FilestoreFilesystem{}, false, ErrPreconditionFailed
@@ -386,6 +409,24 @@ func ensureProvisionedFilestoreRootsTx(
 	return ensureFilestoreFixedRootsTx(ctx, tx, workspaceID, filesystem, now)
 }
 
+// ensureFilestoreFixedRootsTx 在指定 filesystem 的数据库命名空间中确保四个固定根目录存在。
+//
+// 固定根目录是 /outputs、/uploads、/transcripts 和 /tool_results。rclone 会把这些
+// 路径挂载到 Sandbox，因此目录必须先存在于 Filestore 数据库中。每个路径都通过
+// ensureFilestoreDirectoryTx 幂等处理：已有目录保持不变，缺失目录会被创建；如果
+// 路径上是已过期文件，则会释放旧文件的存储归属并把该 entry 改成目录；其中由
+// Filestore 拥有的对象还会进入清理队列。
+//
+// 例如：
+//   - 新 filesystem 中还没有任何 entry：创建四个目录并返回 nil。
+//   - 四个目录已经存在：不重复插入，直接返回 nil。
+//   - /uploads 被一个未过期文件占用：返回 ErrFilestorePathExists，避免 rclone 把
+//     文件路径当成目录挂载。
+//
+// 所有改动都使用调用方传入的同一个事务。任一路径处理失败时立即返回错误，调用方
+// 应回滚事务，避免提交只创建了一部分根目录的状态。该函数本身不加锁，也不提交或
+// 回滚事务：新建 Session 时 filesystem 尚未对其他事务可见；对已有 filesystem
+// 补建根目录时，调用方必须先持有 namespace advisory lock。
 func ensureFilestoreFixedRootsTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
@@ -445,8 +486,27 @@ func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceID in
 	})
 }
 
-// GetFilestoreTokenScopeForSessionIssue 返回 Runner 为活动 Session 签发
-// Filestore token 所需的可信租户、账号与 filesystem 身份。客户端字段不参与查询。
+// GetFilestoreTokenScopeForSessionIssue 为 Runner 查询签发 Filestore token 所需的
+// 可信身份和授权范围。
+//
+// 它从指定 Workspace 中查找 Active Session，并确认 Session、Organization、Workspace、
+// 创建 Session 的 API key 和用户，以及 Filestore filesystem 属于同一条有效的归属链。
+// Session 必须未终止、未归档、未删除，Workspace 必须未归档，用户和 filesystem
+// 也必须仍然有效。查询结果还包含当前的组织 taints 和 Workspace CMEK 状态，供
+// Runner 写入 token；这些安全字段来自数据库，不接受客户端提供的值。
+//
+// 例如：
+//   - session_A 及其创建用户、Workspace 和 filesystem 都有效：返回完整的
+//     FilestoreTokenScope，Runner 可以据此签发读写 token 和只读 token。
+//   - session_A 实际属于 workspace_A，但调用方传入 workspace_B，或者 Session
+//     已终止：返回 ErrNotFound，Runner 不会签发 token。
+//   - organizations.settings 中的 org_taints 无法解析为字符串数组：返回解析错误，
+//     防止使用不完整或错误的安全策略签发 token。
+//
+// 这是只读查询，不开启事务、不加锁，也不会修改数据库。查询不到完整有效的归属链
+// 时返回 ErrNotFound；数据库查询失败或策略字段解析失败时返回对应错误。签发后的
+// token 仍会在每次 Filestore 请求中重新回查数据库，因此这里返回的是签发时快照，
+// 不是绕过后续鉴权的永久授权。
 func (d *DB) GetFilestoreTokenScopeForSessionIssue(ctx context.Context, workspaceID int64, sessionExternalID string) (FilestoreTokenScope, error) {
 	return getFilestoreTokenScopeSQLX(ctx, d.sql, filestoreSessionTokenScopeQuery, filestoreSessionTokenScopeArguments(workspaceID, sessionExternalID))
 }
@@ -491,6 +551,25 @@ func retireSessionFilesystemTx(ctx context.Context, tx pgx.Tx, session Session) 
 	return err
 }
 
+// validateFilestoreSessionBinding 确认创建 Filestore filesystem 时传入的各个 UUID
+// 确实属于同一个可用的 Session。
+//
+// 它会检查：
+//   - organization、workspace 和 session 的归属关系一致；
+//   - Session 未终止、未归档、未删除，Workspace 未归档；
+//   - 可选的 code session 属于该 Session，且仍处于 active 状态；
+//   - 可选的创建者 API key 属于该 Workspace。
+//
+// 例如：
+//   - session_A 属于 workspace_A 和 organization_A，附带的 code_session_A 也属于
+//     session_A：校验通过并返回 workspace_A 的内部 ID。
+//   - session_A 实际属于 workspace_A，但调用方传入 workspace_B：返回 ErrNotFound。
+//   - code_session_B 属于另一个 Session，或已经失效：返回 ErrNotFound。
+//
+// 该函数只检查数据库归属关系和资源状态，不负责 API 权限授权。任何一项检查失败
+// 都统一返回 ErrNotFound。校验成功后，查询会通过 SELECT ... FOR UPDATE 锁定
+// Session 行，避免 filesystem 建档期间该 Session 被并发修改；返回的 Workspace
+// 内部 ID 用于获取后续的 Workspace 级事务锁。
 func validateFilestoreSessionBinding(
 	ctx context.Context,
 	tx *sqlx.Tx,

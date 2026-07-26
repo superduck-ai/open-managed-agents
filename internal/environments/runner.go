@@ -109,6 +109,27 @@ func StartRunnerWithStoreAndCredentials(
 	}
 }
 
+// loop 持续领取并处理排队中的 Environment Work，直到服务通过 ctx 通知它退出。
+//
+// StartRunnerWithStoreAndCredentials 会按配置的并发数为每个 worker 启动一个 loop。
+// 每轮调用 RunOnce，最多处理一个 Work。RunOnce 返回 processed=true 只表示领到过
+// Work，不代表 Sandbox 一定启动成功；此时 loop 会立即检查下一项。没有可领取的 Work
+// 时，它等待最多 500ms 再检查，避免空闲时持续查询数据库。单次错误只写日志，不会让
+// 后台 worker 退出。
+//
+// loop 本身没有事务或内存锁。RunOnce 使用数据库的 FOR UPDATE SKIP LOCKED 原子领取
+// 最早的可用 Work，并写入 workerID 和 5 秒领取期限，因此并发 worker 不会同时处理
+// 同一条记录；worker 在确认领取前退出时，过期记录可以再次被领取。这里也不执行 API
+// 鉴权，而是信任已经进入内部队列的 Work，workerID 仅用于领取记录和日志定位。
+//
+// 例如：
+//   - 队列中连续有两个 Work；处理第一项后无需等待，loop 会立即领取第二项。
+//   - 队列为空；RunOnce 返回 processed=false，loop 等待下一次 500ms tick。
+//   - 已领取 Work，但创建 Sandbox 失败；RunOnce 负责标记失败和清理，loop 记录错误后
+//     继续服务其他 Work。
+//
+// 函数没有返回值。正常情况下只在 ctx 被取消时返回，并停止内部 ticker。数据库状态、
+// E2B Sandbox、rclone 和 Environment Manager 等副作用都由 RunOnce 及其下游调用产生。
 func (r *Runner) loop(ctx context.Context, workerID string) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -134,13 +155,22 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 }
 
 func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
+	// 每次最多领取一条 queued Work。数据库使用 FOR UPDATE SKIP LOCKED
+	// 避免并发 worker 领取同一条记录，并以 5 秒 claim 为 Ack 前的短暂保护。
 	work, err := r.db.PollNextEnvironmentWorkForRunner(ctx, workerID, 5*time.Second, true)
 	if err != nil || work == nil {
+		// false 表示本轮没有取得 Work：可能是队列为空，也可能是领取 SQL 失败。
 		return false, err
 	}
+
+	// 领取成功后先把 Work 从 queued 推进到 starting，并清除短期 claim。
+	// 从这里开始，即使后续步骤失败，processed 也返回 true，表示本轮消费过一条 Work。
 	if _, err := r.db.AckEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID); err != nil {
 		return true, err
 	}
+
+	// 加载 Work 所属的 Environment，并生成本服务对外使用的 envsbx_ ID。
+	// 此时实际的 E2B Sandbox 尚未创建；失败只需停止 Work，不存在远端资源需要清理。
 	env, err := r.db.GetEnvironmentByInternalID(ctx, work.WorkspaceID, work.EnvironmentID)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
@@ -151,6 +181,9 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
+
+	// 在 Provider 解析之前固化 Managed Agent 的网络 metadata。这样 Resolve 和
+	// 后续 Create 使用的是同一份 MCP allowlist，避免创建时网络策略发生漂移。
 	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
@@ -160,11 +193,18 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
+
+	// Cloud Session Work 还要读取 Session、resources、events 和 skills，准备
+	// rclone 与 Environment Manager 的启动数据。普通 Work 返回 nil preparation，
+	// 后续只创建 Sandbox，不进入 Managed Agent 专属分支。
 	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
+
+	// 先落一条 creating 状态的本地 Sandbox 记录，再请求 E2B 创建远端 Sandbox。
+	// 这样即使远端创建失败，数据库中仍有可查询的启动尝试和失败状态。
 	record, err := r.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
 		UUID:                  uuid.NewString(),
 		ExternalID:            sandboxID,
@@ -184,6 +224,9 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
+
+	// provider.Create 返回的 ID 是 E2B 的真实 Sandbox ID，与上面的 envsbx_ ID
+	// 分属远端 Provider 和本服务两个命名空间。
 	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
 		now := time.Now().UTC()
@@ -193,6 +236,9 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 	providerSandboxID := sandbox.ID
+
+	// 将 E2B ID 写入 Work metadata；Managed Agent preparation 可能还加入了 skill
+	// mount，所以即使 Provider ID 为空，也要为该分支持久化更新后的 metadata。
 	if strings.TrimSpace(providerSandboxID) != "" || preparation != nil {
 		nextWorkMetadata := work.Metadata
 		if strings.TrimSpace(providerSandboxID) != "" {
@@ -211,6 +257,10 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		}
 		*work = updatedWork
 	}
+
+	// 只有 Cloud Session Managed Agent 使用固定的四组 Filestore 挂载。
+	// 必须等 rclone ready 后才能继续，确保 Claude 启动时 uploads、outputs、
+	// transcripts 和 tool_results 已经可用。
 	if preparation != nil {
 		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.Session)
 		if err != nil {
@@ -222,14 +272,22 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 			return true, err
 		}
 	}
+
+	// rclone 就绪后才公开 Sandbox 为 running。此后的失败统一由
+	// failCreatedSandbox 标记 Sandbox/Work 失败，并 Kill 已创建的 E2B Sandbox。
 	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
+
+	// 首次 heartbeat 把 Work 推进为 active，并建立 60 秒运行租约。
 	if _, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
+
+	// 普通 Work 到这里已经完成。Cloud Session 还需创建 Code Session，并在
+	// Sandbox 内启动 Environment Manager。
 	if preparation != nil {
 		launch, err := r.createManagedAgentRuntimeLaunch(ctx, env, *work, *preparation)
 		if err != nil {
@@ -247,11 +305,16 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch.CodeSessionID, publicError)
 			return true, publicError
 		}
+
+		// 只有 Manager 后台命令成功提交后才发布 runtime metadata，避免把启动失败的
+		// Code Session 暴露为可用。发布失败时同样终止 Code Session 并清理 Sandbox。
 		if err := r.publishManagedAgentRuntime(ctx, preparation.Session, *work, launch); err != nil {
 			r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.Session, launch.CodeSessionID, err)
 			return true, fmt.Errorf("publish managed-agent runtime metadata: %w", err)
 		}
 	}
+
+	// true 表示本轮确实消费了一条 Work；nil 表示所需启动阶段全部完成。
 	return true, nil
 }
 

@@ -175,6 +175,10 @@ func filestoreNow(value time.Time) time.Time {
 	return value.UTC()
 }
 
+// 如果这个 directoryPath 已经存在，而且本来就是目录，就直接返回现有目录。
+// 如果这个路径被一个未过期的非目录 entry 占着，就返回 ErrFilestorePathExists。
+// 如果这个路径被一个“已过期的文件 entry”占着，它会先挂清理任务、扣回 owned bytes，然后把这条旧 row 原地改写成目录。
+// 如果这个路径根本不存在，就插入一条新的 directory entry。
 func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (FilestoreEntry, error) {
 	existing, found, err := getFilestoreEntryForMutation(ctx, tx, filesystem, directoryPath)
 	if err != nil {

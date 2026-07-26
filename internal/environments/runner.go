@@ -636,6 +636,27 @@ func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) (
 	return r.skills.ResolveAgentSnapshot(ctx, session.WorkspaceID, session.AgentSnapshot)
 }
 
+// replaceRuntimeSkillArchives 使用已解析的不可变 skill archive，完整替换 Managed Agent
+// Session 的 /skills 投影视图。
+//
+// runtimeSkills 必须已经包含具体的版本 UUID 和可信对象元数据；"latest" 会在调用本函数
+// 前解析为确定版本。本函数只保留将 zip 映射为 /skills/<directory> 所需的字段，不下载、
+// 复制或解压 archive。
+//
+// DB 操作会校验来源、目录、版本 UUID、对象大小和 SHA-256。它在同一个事务中锁定 Session
+// filesystem 记录及其命名空间，确保固定根目录存在，然后删除旧投影并插入新集合。采用
+// 全量替换，是为了让已从 Agent snapshot 移除的 skill 同步消失，并避免读取方或并发的
+// 命名空间写入方看到只更新了一部分的视图。
+//
+// 成功时返回 nil，确保固定根目录存在并替换投影记录；catalog 对象仍归 skill catalog
+// 所有。runtimeSkills 为空时会清空投影的子目录，但保留 /skills 根目录。元数据无效、
+// Session filesystem 不存在、目录重复，或事务、加锁、写入失败时，函数返回包装后的
+// 错误，并回滚整个替换操作。
+//
+// 示例：
+//   - [pdf@v2, sheets@v1] 成功映射为 /skills/pdf 和 /skills/sheets。
+//   - [] 会删除所有 skill 投影目录，但保留 /skills。
+//   - 两个 skill 同时使用目录 "pdf" 时返回错误，旧视图保持不变。
 func (r *Runner) replaceRuntimeSkillArchives(
 	ctx context.Context,
 	session db.Session,

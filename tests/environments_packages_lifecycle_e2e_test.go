@@ -52,7 +52,7 @@ func TestE2BEnvironmentUpdateAndSessionFilesystemIsolation(t *testing.T) {
 	defer client.Beta.Environments.Delete(context.Background(), environment.ID, anthropic.BetaEnvironmentDeleteParams{})
 
 	provider := e2bruntime.NewProvider(cfg.E2B)
-	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, app.store, app.credentials)
+	runner := newManagedAgentRunner(t, app, provider, cfg, app.store)
 	first := launchRealSessionSandbox(t, ctx, app, client, runner, provider, environment.ID, agent.ID, "packages-before-update")
 	assertSandboxPythonPackageVersion(t, ctx, first.sandbox, "six", "1.16.0")
 

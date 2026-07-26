@@ -76,8 +76,8 @@ Sandbox 中同一棵树直接位于：
 
 List、metadata 和 ranged read 都由 Filestore 服务实现。对 `/skills` 本身、其后代，以及
 以 `/skills` 为 source 或 destination 的任意 mutation 均返回 `403 permission_denied`。
-HTTP 只读 Token、rclone `readonly=true`、目录权限 `0555` 和文件权限 `0444` 共同构成
-Sandbox 的只读边界。
+HTTP 只读 Token 和 rclone `readonly=true` 构成 Sandbox 的只读边界；`/skills` 与其他
+只读 mount 统一使用目录权限 `0755` 和文件权限 `0644`。
 
 ## archive 校验与缓存
 

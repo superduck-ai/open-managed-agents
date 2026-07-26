@@ -43,7 +43,7 @@ File resource 不新增独立 FUSE mount，也不创建逐文件软链接。`mou
 
 同一 `filesystem_id` 的 namespace 在 mount 存活期间继续由数据库维护。运行中增删 File resource 不重建 FUSE mount；现有 Sandbox 在 `/uploads` 的 `1s` metadata cache 刷新后读取到新的 namespace 状态。
 
-`/root/.claude/skills` 是 Filestore `/skills` 的直接 mount。`rclone-filestore multimount` 在内部对 destination 执行 `MkdirAll`，Runner 不再单独准备挂载目录；archive 解包视图由 Filestore 服务虚拟生成，镜像和 Environment Manager 不下载、不复制、不解压 skill zip。该 mount 使用只读 Token、`readonly=true`、`uid=0`、`gid=0`、目录权限 `0555` 和文件权限 `0444`。
+`/root/.claude/skills` 是 Filestore `/skills` 的直接 mount。`rclone-filestore multimount` 在内部对 destination 执行 `MkdirAll`，Runner 不再单独准备挂载目录；archive 解包视图由 Filestore 服务虚拟生成，镜像和 Environment Manager 不下载、不复制、不解压 skill zip。该 mount 与其他只读 mount 一样使用只读 Token、`readonly=true`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。
 
 ## 启动顺序合同
 

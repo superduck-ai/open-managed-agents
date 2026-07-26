@@ -50,8 +50,8 @@ func TestBuildRcloneMultimountConfig(t *testing.T) {
 	skills := got.Mounts[4]
 	if skills.Source != wantSources[4] || skills.Destination != wantDestinations[4] ||
 		skills.CacheDurationSeconds != wantCaches[4] || !skills.Readonly || skills.AuthToken != readonly ||
-		skills.UID != 0 || skills.GID != 0 || skills.DirectoryPermissions != "0555" ||
-		skills.FilePermissions != "0444" {
+		skills.UID != 999 || skills.GID != 1000 || skills.DirectoryPermissions != "0755" ||
+		skills.FilePermissions != "0644" {
 		t.Fatalf("skills mount = %+v", skills)
 	}
 }

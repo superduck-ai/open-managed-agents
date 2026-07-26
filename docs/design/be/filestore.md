@@ -116,7 +116,7 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 | `/tool_results` | `/mnt/user-data/tool_results` | 只读 | 3s |
 | `/skills` | `/root/.claude/skills` | 只读 | 60s |
 
-五个挂载统一使用 `vfs_cache_mode=full` 和 `vfs_cache_max_size=1G`。前四个保留 `uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`；`/skills` 使用 `uid=0`、`gid=0`、目录权限 `0555` 和文件权限 `0444`，以匹配 Claude Code 的 root discovery 路径。`/outputs` 使用读写 Token，其余四个 source 共享只读 Token；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
+五个挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个 source 共享只读 Token 并设置 `readonly=true`；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
 
 Runner 不执行独立的 mount preparation；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 

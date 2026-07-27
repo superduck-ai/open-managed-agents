@@ -388,12 +388,6 @@ type vaultCredentialRow struct {
 	DeletedAt         *time.Time `db:"deleted_at"`
 }
 
-// vaultScanner remains the scan contract for the legacy MCP OAuth flow reader.
-// Vault queries themselves use sqlx row structs below.
-type vaultScanner interface {
-	Scan(dest ...any) error
-}
-
 func vaultSelectSQL() string {
 	return `select ` + vaultSQLXColumns + ` from vaults`
 }

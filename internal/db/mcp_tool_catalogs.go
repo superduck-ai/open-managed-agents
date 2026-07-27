@@ -30,15 +30,60 @@ type MCPToolCatalog struct {
 	UpdatedAt     time.Time
 }
 
+const (
+	getMCPToolCatalogQuery = `
+		select ` + mcpToolCatalogColumns + `
+		from mcp_tool_catalogs
+		where transport_type = :transport_type
+			and endpoint_url = :endpoint_url
+	`
+	upsertMCPToolCatalogQuery = `
+		insert into mcp_tool_catalogs (
+			external_id, transport_type, endpoint_url, tools, created_at, updated_at
+		)
+		values (
+			:external_id,
+			:transport_type,
+			:endpoint_url,
+			CAST(:tools AS jsonb),
+			now(),
+			now()
+		)
+		on conflict (transport_type, endpoint_url)
+		do update set tools = excluded.tools,
+			updated_at = now()
+		returning ` + mcpToolCatalogColumns + `
+	`
+	mcpToolCatalogColumns = `
+		id,
+		CAST(uuid AS text) AS uuid,
+		external_id,
+		transport_type,
+		endpoint_url,
+		tools,
+		created_at,
+		updated_at
+	`
+)
+
+type mcpToolCatalogRow struct {
+	ID            int64     `db:"id"`
+	UUID          string    `db:"uuid"`
+	ExternalID    string    `db:"external_id"`
+	TransportType string    `db:"transport_type"`
+	EndpointURL   string    `db:"endpoint_url"`
+	Tools         []byte    `db:"tools"`
+	CreatedAt     time.Time `db:"created_at"`
+	UpdatedAt     time.Time `db:"updated_at"`
+}
+
 // GetMCPToolCatalog 读取指定 MCP endpoint 最近一次成功发现的工具快照。
 // 没有记录表示该 endpoint 从未成功刷新，调用方会收到 ErrNotFound。
 func (d *DB) GetMCPToolCatalog(ctx context.Context, transportType, endpointURL string) (MCPToolCatalog, error) {
-	return scanMCPToolCatalog(d.Pool.QueryRow(ctx, `
-		select `+mcpToolCatalogColumns()+`
-		from mcp_tool_catalogs
-		where transport_type = $1
-			and endpoint_url = $2
-	`, strings.TrimSpace(transportType), strings.TrimSpace(endpointURL)))
+	return getMCPToolCatalogSQLX(ctx, d.sql, getMCPToolCatalogQuery, map[string]any{
+		"transport_type": strings.TrimSpace(transportType),
+		"endpoint_url":   strings.TrimSpace(endpointURL),
+	})
 }
 
 // UpsertMCPToolCatalog 原子保存一次成功的 MCP tools/list 结果。
@@ -71,47 +116,42 @@ func (d *DB) UpsertMCPToolCatalog(
 
 	// 唯一键保证同一个规范化 endpoint 只有一份全局快照。刷新已有记录时保留稳定 ID，
 	// 仅替换成功结果并推进 updated_at，保留最近一次成功刷新的数据库时间。
-	return scanMCPToolCatalog(d.Pool.QueryRow(ctx, `
-		insert into mcp_tool_catalogs (
-			external_id, transport_type, endpoint_url, tools, created_at, updated_at
-		)
-		values ($1, $2, $3, $4::jsonb, now(), now())
-		on conflict (transport_type, endpoint_url)
-		do update set tools = excluded.tools,
-			updated_at = now()
-		returning `+mcpToolCatalogColumns()+`
-	`, externalID, transportType, endpointURL, string(toolsJSON)))
+	return getMCPToolCatalogSQLX(ctx, d.sql, upsertMCPToolCatalogQuery, map[string]any{
+		"external_id":    externalID,
+		"transport_type": transportType,
+		"endpoint_url":   endpointURL,
+		"tools":          toolsJSON,
+	})
 }
 
-func mcpToolCatalogColumns() string {
-	return `id, uuid::text, external_id, transport_type, endpoint_url, tools, created_at, updated_at`
-}
-
-type mcpCatalogRowScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanMCPToolCatalog(row mcpCatalogRowScanner) (MCPToolCatalog, error) {
-	var catalog MCPToolCatalog
-	var tools []byte
-	err := row.Scan(
-		&catalog.ID,
-		&catalog.UUID,
-		&catalog.ExternalID,
-		&catalog.TransportType,
-		&catalog.EndpointURL,
-		&tools,
-		&catalog.CreatedAt,
-		&catalog.UpdatedAt,
-	)
-	if err != nil {
+func getMCPToolCatalogSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (MCPToolCatalog, error) {
+	var row mcpToolCatalogRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
 		return MCPToolCatalog{}, mapNoRows(err)
 	}
-	catalog.Tools, err = decodeMCPToolCatalogTools(tools)
+	return row.catalog()
+}
+
+func (r mcpToolCatalogRow) catalog() (MCPToolCatalog, error) {
+	tools, err := decodeMCPToolCatalogTools(r.Tools)
 	if err != nil {
 		return MCPToolCatalog{}, err
 	}
-	return catalog, nil
+	return MCPToolCatalog{
+		ID:            r.ID,
+		UUID:          r.UUID,
+		ExternalID:    r.ExternalID,
+		TransportType: r.TransportType,
+		EndpointURL:   r.EndpointURL,
+		Tools:         tools,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+	}, nil
 }
 
 func encodeMCPToolCatalogTools(tools []MCPToolCatalogItem) ([]byte, error) {

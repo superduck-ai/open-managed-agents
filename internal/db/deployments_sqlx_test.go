@@ -59,6 +59,29 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 		TriggerContext:       []byte(`{"type":"manual"}`),
 		CreatedAt:            now,
 	}
+	deployment := Deployment{
+		UUID:                  "33333333-3333-4333-8333-333333333333",
+		ExternalID:            run.DeploymentExternalID,
+		OrganizationID:        run.OrganizationID,
+		WorkspaceID:           run.WorkspaceID,
+		CreatedByAPIKeyID:     run.CreatedByAPIKeyID,
+		EnvironmentID:         8,
+		EnvironmentExternalID: "env_test",
+		AgentID:               run.AgentID,
+		AgentExternalID:       run.AgentExternalID,
+		AgentVersion:          run.AgentVersion,
+		AgentSnapshot:         run.AgentSnapshot,
+		Name:                  "Test deployment",
+		Metadata:              []byte(`{}`),
+		InitialEvents:         []byte(`[]`),
+		Resources:             []byte(`[]`),
+		ResourceSecrets:       []byte(`[]`),
+		VaultIDs:              []byte(`[]`),
+		Schedule:              []byte(`{"type":"manual"}`),
+		Status:                "active",
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
 	event := SessionEvent{
 		UUID:              "22222222-2222-4222-8222-222222222222",
 		ExternalID:        "sesevt_test",
@@ -75,6 +98,28 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 	threadExternalID := "sesthr_test"
 	event.ThreadID = &threadID
 	event.ThreadExternalID = &threadExternalID
+	hasError := true
+	deploymentListQuery, deploymentListArguments := listDeploymentsQuery(ListDeploymentsPageParams{
+		WorkspaceID:     deployment.WorkspaceID,
+		Limit:           20,
+		AgentExternalID: deployment.AgentExternalID,
+		Status:          deployment.Status,
+		CreatedAtGTE:    &now,
+		CreatedAtLTE:    &now,
+		Cursor:          &DeploymentPageCursor{CreatedAt: now, ID: 9},
+	})
+	deploymentRunListQuery, deploymentRunListArguments := listDeploymentRunsQuery(ListDeploymentRunsPageParams{
+		WorkspaceID:          run.WorkspaceID,
+		Limit:                20,
+		DeploymentExternalID: run.DeploymentExternalID,
+		TriggerType:          run.TriggerType,
+		HasError:             &hasError,
+		CreatedAtGT:          &now,
+		CreatedAtGTE:         &now,
+		CreatedAtLT:          &now,
+		CreatedAtLTE:         &now,
+		Cursor:               &DeploymentRunPageCursor{CreatedAt: now, ID: 10},
+	})
 
 	tests := []struct {
 		name         string
@@ -82,6 +127,70 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 		arguments    map[string]any
 		wantArgCount int
 	}{
+		{
+			name:         "create deployment",
+			query:        createDeploymentQuery,
+			arguments:    deploymentArguments(deployment),
+			wantArgCount: 24,
+		},
+		{
+			name:         "get deployment",
+			query:        getDeploymentQuery,
+			arguments:    deploymentLookupArguments(deployment.WorkspaceID, deployment.ExternalID),
+			wantArgCount: 2,
+		},
+		{
+			name:         "lock deployment for update",
+			query:        lockDeploymentForUpdateQuery,
+			arguments:    deploymentLookupArguments(deployment.WorkspaceID, deployment.ExternalID),
+			wantArgCount: 2,
+		},
+		{
+			name:         "update deployment",
+			query:        updateDeploymentQuery,
+			arguments:    deploymentArguments(deployment),
+			wantArgCount: 17,
+		},
+		{
+			name:         "archive deployment",
+			query:        archiveDeploymentQuery,
+			arguments:    deploymentLookupArguments(deployment.WorkspaceID, deployment.ExternalID),
+			wantArgCount: 2,
+		},
+		{
+			name:  "pause deployment",
+			query: pauseDeploymentQuery,
+			arguments: map[string]any{
+				"workspace_id":  deployment.WorkspaceID,
+				"external_id":   deployment.ExternalID,
+				"paused_reason": []byte(`{"reason":"test"}`),
+			},
+			wantArgCount: 3,
+		},
+		{
+			name:         "unpause deployment",
+			query:        unpauseDeploymentQuery,
+			arguments:    deploymentLookupArguments(deployment.WorkspaceID, deployment.ExternalID),
+			wantArgCount: 2,
+		},
+		{
+			name:         "list deployments",
+			query:        deploymentListQuery,
+			arguments:    deploymentListArguments,
+			wantArgCount: 9,
+		},
+		{
+			name:         "get deployment run",
+			query:        getDeploymentRunQuery,
+			arguments:    deploymentLookupArguments(run.WorkspaceID, run.ExternalID),
+			wantArgCount: 2,
+		},
+		{
+			name:         "list deployment runs",
+			query:        deploymentRunListQuery,
+			arguments:    deploymentRunListArguments,
+			wantArgCount: 11,
+		},
 		{
 			name:  "lock deployment",
 			query: lockDeploymentForManualRunQuery,
@@ -156,6 +265,9 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 			}
 			if strings.Contains(query, ":") {
 				t.Fatalf("query retains named parameter syntax: %q", query)
+			}
+			if strings.Contains(test.query, "::") {
+				t.Fatalf("query uses PostgreSQL cast shorthand: %q", test.query)
 			}
 			if len(arguments) != test.wantArgCount {
 				t.Fatalf("argument count = %d, want %d", len(arguments), test.wantArgCount)

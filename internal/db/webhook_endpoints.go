@@ -2,11 +2,133 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"errors"
 	"time"
+)
 
-	"github.com/jackc/pgx/v5"
+const (
+	webhookEndpointColumns = `
+		id,
+		CAST(uuid AS text) AS uuid,
+		external_id,
+		organization_id,
+		workspace_id,
+		created_by_api_key_id,
+		url,
+		name,
+		description,
+		enabled_events,
+		signing_secret,
+		status,
+		disabled_reason,
+		consecutive_failures,
+		created_at,
+		updated_at,
+		deleted_at
+	`
+	getWorkspaceIdentifiersQuery = `
+		select
+			o.external_id AS organization_external_id,
+			w.external_id AS workspace_external_id
+		from workspaces w
+		join organizations o on o.id = w.organization_id
+		where w.id = :workspace_id
+	`
+	createWebhookEndpointQuery = `
+		insert into webhook_endpoints (
+			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
+			url, name, description, enabled_events, signing_secret, status,
+			disabled_reason, consecutive_failures, created_at, updated_at
+		)
+		values (
+			:uuid, :external_id, :organization_id, :workspace_id, :created_by_api_key_id,
+			:url, :name, :description, CAST(:enabled_events AS jsonb), :signing_secret, :status,
+			:disabled_reason, :consecutive_failures, :created_at, :created_at
+		)
+		returning ` + webhookEndpointColumns + `
+	`
+	listWebhookEndpointsQuery = `
+		select ` + webhookEndpointColumns + `
+		from webhook_endpoints
+		where workspace_id = :workspace_id and deleted_at is null
+		order by created_at desc, id desc
+	`
+	getWebhookEndpointQuery = `
+		select ` + webhookEndpointColumns + `
+		from webhook_endpoints
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+	`
+	updateWebhookEndpointQuery = `
+		update webhook_endpoints
+		set url = :url,
+			name = :name,
+			description = :description,
+			enabled_events = CAST(:enabled_events AS jsonb),
+			status = :status,
+			disabled_reason = :disabled_reason,
+			consecutive_failures = :consecutive_failures,
+			updated_at = :updated_at
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+		returning ` + webhookEndpointColumns + `
+	`
+	regenerateWebhookEndpointSigningSecretQuery = `
+		update webhook_endpoints
+		set signing_secret = :signing_secret,
+			updated_at = :updated_at
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+	`
+	deleteWebhookEndpointQuery = `
+		update webhook_endpoints
+		set deleted_at = now(),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+	`
+	hasWebhookEndpointsQuery = `
+		select exists(
+			select 1
+			from webhook_endpoints
+			where workspace_id = :workspace_id and deleted_at is null
+		)
+	`
+	listActiveWebhookEndpointsForEventQuery = `
+		select ` + webhookEndpointColumns + `
+		from webhook_endpoints
+		where workspace_id = :workspace_id
+			and deleted_at is null
+			and status = 'enabled'
+			and jsonb_exists(enabled_events, :event_type)
+		order by created_at asc, id asc
+	`
+	recordWebhookEndpointDeliverySuccessQuery = `
+		update webhook_endpoints
+		set consecutive_failures = 0,
+			disabled_reason = null,
+			updated_at = now()
+		where id = :endpoint_id and deleted_at is null and status = 'enabled'
+	`
+	recordWebhookEndpointDeliveryFailureQuery = `
+		update webhook_endpoints
+		set consecutive_failures = consecutive_failures + 1,
+			status = case
+				when consecutive_failures + 1 >= :disable_after then 'disabled'
+				else status
+			end,
+			disabled_reason = case
+				when consecutive_failures + 1 >= :disable_after then :reason
+				else disabled_reason
+			end,
+			updated_at = now()
+		where id = :endpoint_id and deleted_at is null and status = 'enabled'
+	`
 )
 
 type WorkspaceIdentifiers struct {
@@ -34,18 +156,42 @@ type WebhookEndpoint struct {
 	DeletedAt           *time.Time
 }
 
+type workspaceIdentifiersRow struct {
+	OrganizationExternalID string `db:"organization_external_id"`
+	WorkspaceExternalID    string `db:"workspace_external_id"`
+}
+
+type webhookEndpointRow struct {
+	ID                  int64          `db:"id"`
+	UUID                string         `db:"uuid"`
+	ExternalID          string         `db:"external_id"`
+	OrganizationID      int64          `db:"organization_id"`
+	WorkspaceID         int64          `db:"workspace_id"`
+	CreatedByAPIKeyID   int64          `db:"created_by_api_key_id"`
+	URL                 string         `db:"url"`
+	Name                string         `db:"name"`
+	Description         string         `db:"description"`
+	EnabledEvents       []byte         `db:"enabled_events"`
+	SigningSecret       string         `db:"signing_secret"`
+	Status              string         `db:"status"`
+	DisabledReason      sql.NullString `db:"disabled_reason"`
+	ConsecutiveFailures int            `db:"consecutive_failures"`
+	CreatedAt           time.Time      `db:"created_at"`
+	UpdatedAt           time.Time      `db:"updated_at"`
+	DeletedAt           *time.Time     `db:"deleted_at"`
+}
+
 func (d *DB) GetWorkspaceIdentifiers(ctx context.Context, workspaceID int64) (WorkspaceIdentifiers, error) {
-	var ids WorkspaceIdentifiers
-	err := d.Pool.QueryRow(ctx, `
-		select o.external_id, w.external_id
-		from workspaces w
-		join organizations o on o.id = w.organization_id
-		where w.id = $1
-	`, workspaceID).Scan(&ids.OrganizationExternalID, &ids.WorkspaceExternalID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return WorkspaceIdentifiers{}, ErrNotFound
+	var row workspaceIdentifiersRow
+	if err := namedGetContext(ctx, d.sql, &row, getWorkspaceIdentifiersQuery, map[string]any{
+		"workspace_id": workspaceID,
+	}); err != nil {
+		return WorkspaceIdentifiers{}, mapNoRows(err)
 	}
-	return ids, err
+	return WorkspaceIdentifiers{
+		OrganizationExternalID: row.OrganizationExternalID,
+		WorkspaceExternalID:    row.WorkspaceExternalID,
+	}, nil
 }
 
 func (d *DB) CreateWebhookEndpoint(ctx context.Context, endpoint WebhookEndpoint) (WebhookEndpoint, error) {
@@ -53,43 +199,35 @@ func (d *DB) CreateWebhookEndpoint(ctx context.Context, endpoint WebhookEndpoint
 	if err != nil {
 		return WebhookEndpoint{}, err
 	}
-	return scanWebhookEndpoint(d.Pool.QueryRow(ctx, `
-		insert into webhook_endpoints (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			url, name, description, enabled_events, signing_secret, status,
-			disabled_reason, consecutive_failures, created_at, updated_at
-		)
-		values (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9::jsonb, $10, $11,
-			$12, $13, $14, $14
-		)
-		returning id, uuid::text, external_id, organization_id, workspace_id,
-			created_by_api_key_id, url, name, description, enabled_events,
-			signing_secret, status, disabled_reason, consecutive_failures,
-			created_at, updated_at, deleted_at
-	`, endpoint.UUID, endpoint.ExternalID, endpoint.OrganizationID, endpoint.WorkspaceID,
-		endpoint.CreatedByAPIKeyID, endpoint.URL, endpoint.Name, endpoint.Description,
-		jsonArg(json.RawMessage(events)), endpoint.SigningSecret, endpoint.Status, endpoint.DisabledReason,
-		endpoint.ConsecutiveFailures, endpoint.CreatedAt))
+	return getWebhookEndpointSQLX(ctx, d.sql, createWebhookEndpointQuery, map[string]any{
+		"uuid":                  endpoint.UUID,
+		"external_id":           endpoint.ExternalID,
+		"organization_id":       endpoint.OrganizationID,
+		"workspace_id":          endpoint.WorkspaceID,
+		"created_by_api_key_id": endpoint.CreatedByAPIKeyID,
+		"url":                   endpoint.URL,
+		"name":                  endpoint.Name,
+		"description":           endpoint.Description,
+		"enabled_events":        jsonArg(json.RawMessage(events)),
+		"signing_secret":        endpoint.SigningSecret,
+		"status":                endpoint.Status,
+		"disabled_reason":       endpoint.DisabledReason,
+		"consecutive_failures":  endpoint.ConsecutiveFailures,
+		"created_at":            endpoint.CreatedAt,
+	})
 }
 
 func (d *DB) ListWebhookEndpoints(ctx context.Context, workspaceID int64) ([]WebhookEndpoint, error) {
-	rows, err := d.Pool.Query(ctx, webhookEndpointSelectSQL()+`
-		where workspace_id = $1 and deleted_at is null
-		order by created_at desc, id desc
-	`, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanWebhookEndpointRows(rows)
+	return selectWebhookEndpointsSQLX(ctx, d.sql, listWebhookEndpointsQuery, map[string]any{
+		"workspace_id": workspaceID,
+	})
 }
 
 func (d *DB) GetWebhookEndpoint(ctx context.Context, workspaceID int64, externalID string) (WebhookEndpoint, error) {
-	return scanWebhookEndpoint(d.Pool.QueryRow(ctx, webhookEndpointSelectSQL()+`
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID))
+	return getWebhookEndpointSQLX(ctx, d.sql, getWebhookEndpointQuery, map[string]any{
+		"workspace_id": workspaceID,
+		"external_id":  externalID,
+	})
 }
 
 func (d *DB) UpdateWebhookEndpoint(ctx context.Context, workspaceID int64, externalID string, next WebhookEndpoint) (WebhookEndpoint, error) {
@@ -97,52 +235,45 @@ func (d *DB) UpdateWebhookEndpoint(ctx context.Context, workspaceID int64, exter
 	if err != nil {
 		return WebhookEndpoint{}, err
 	}
-	return scanWebhookEndpoint(d.Pool.QueryRow(ctx, `
-		update webhook_endpoints
-		set url = $3,
-			name = $4,
-			description = $5,
-			enabled_events = $6::jsonb,
-			status = $7,
-			disabled_reason = $8,
-			consecutive_failures = $9,
-			updated_at = $10
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id,
-			created_by_api_key_id, url, name, description, enabled_events,
-			signing_secret, status, disabled_reason, consecutive_failures,
-			created_at, updated_at, deleted_at
-	`, workspaceID, externalID, next.URL, next.Name, next.Description, jsonArg(json.RawMessage(events)),
-		next.Status, next.DisabledReason, next.ConsecutiveFailures, next.UpdatedAt))
+	return getWebhookEndpointSQLX(ctx, d.sql, updateWebhookEndpointQuery, map[string]any{
+		"workspace_id":         workspaceID,
+		"external_id":          externalID,
+		"url":                  next.URL,
+		"name":                 next.Name,
+		"description":          next.Description,
+		"enabled_events":       jsonArg(json.RawMessage(events)),
+		"status":               next.Status,
+		"disabled_reason":      next.DisabledReason,
+		"consecutive_failures": next.ConsecutiveFailures,
+		"updated_at":           next.UpdatedAt,
+	})
 }
 
 func (d *DB) RegenerateWebhookEndpointSigningSecret(ctx context.Context, workspaceID int64, externalID string, signingSecret string, updatedAt time.Time) error {
-	tag, err := d.Pool.Exec(ctx, `
-		update webhook_endpoints
-		set signing_secret = $3,
-			updated_at = $4
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID, signingSecret, updatedAt)
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, regenerateWebhookEndpointSigningSecretQuery, map[string]any{
+		"workspace_id":   workspaceID,
+		"external_id":    externalID,
+		"signing_secret": signingSecret,
+		"updated_at":     updatedAt,
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (d *DB) DeleteWebhookEndpoint(ctx context.Context, workspaceID int64, externalID string) error {
-	tag, err := d.Pool.Exec(ctx, `
-		update webhook_endpoints
-		set deleted_at = now(),
-			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID)
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, deleteWebhookEndpointQuery, map[string]any{
+		"workspace_id": workspaceID,
+		"external_id":  externalID,
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -150,39 +281,23 @@ func (d *DB) DeleteWebhookEndpoint(ctx context.Context, workspaceID int64, exter
 
 func (d *DB) HasWebhookEndpoints(ctx context.Context, workspaceID int64) (bool, error) {
 	var exists bool
-	err := d.Pool.QueryRow(ctx, `
-		select exists(
-			select 1
-			from webhook_endpoints
-			where workspace_id = $1 and deleted_at is null
-		)
-	`, workspaceID).Scan(&exists)
+	err := namedGetContext(ctx, d.sql, &exists, hasWebhookEndpointsQuery, map[string]any{
+		"workspace_id": workspaceID,
+	})
 	return exists, err
 }
 
 func (d *DB) ListActiveWebhookEndpointsForEvent(ctx context.Context, workspaceID int64, eventType string) ([]WebhookEndpoint, error) {
-	rows, err := d.Pool.Query(ctx, webhookEndpointSelectSQL()+`
-		where workspace_id = $1
-			and deleted_at is null
-			and status = 'enabled'
-			and enabled_events ? $2
-		order by created_at asc, id asc
-	`, workspaceID, eventType)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanWebhookEndpointRows(rows)
+	return selectWebhookEndpointsSQLX(ctx, d.sql, listActiveWebhookEndpointsForEventQuery, map[string]any{
+		"workspace_id": workspaceID,
+		"event_type":   eventType,
+	})
 }
 
 func (d *DB) RecordWebhookEndpointDeliverySuccess(ctx context.Context, endpointID int64) error {
-	_, err := d.Pool.Exec(ctx, `
-		update webhook_endpoints
-		set consecutive_failures = 0,
-			disabled_reason = null,
-			updated_at = now()
-		where id = $1 and deleted_at is null and status = 'enabled'
-	`, endpointID)
+	_, err := namedExecContext(ctx, d.sql, recordWebhookEndpointDeliverySuccessQuery, map[string]any{
+		"endpoint_id": endpointID,
+	})
 	return err
 }
 
@@ -190,70 +305,78 @@ func (d *DB) RecordWebhookEndpointDeliveryFailure(ctx context.Context, endpointI
 	if disableAfter <= 0 {
 		disableAfter = 20
 	}
-	_, err := d.Pool.Exec(ctx, `
-		update webhook_endpoints
-		set consecutive_failures = consecutive_failures + 1,
-			status = case when consecutive_failures + 1 >= $2 then 'disabled' else status end,
-			disabled_reason = case when consecutive_failures + 1 >= $2 then $3 else disabled_reason end,
-			updated_at = now()
-		where id = $1 and deleted_at is null and status = 'enabled'
-	`, endpointID, disableAfter, truncateWebhookFailureReason(reason))
+	_, err := namedExecContext(ctx, d.sql, recordWebhookEndpointDeliveryFailureQuery, map[string]any{
+		"endpoint_id":   endpointID,
+		"disable_after": disableAfter,
+		"reason":        truncateWebhookFailureReason(reason),
+	})
 	return err
 }
 
-func webhookEndpointSelectSQL() string {
-	return `
-		select id, uuid::text, external_id, organization_id, workspace_id,
-			created_by_api_key_id, url, name, description, enabled_events,
-			signing_secret, status, disabled_reason, consecutive_failures,
-			created_at, updated_at, deleted_at
-		from webhook_endpoints
-	`
-}
-
-type webhookEndpointScanner interface {
-	Scan(dest ...any) error
-}
-
-type webhookEndpointRows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}
-
-func scanWebhookEndpoint(row webhookEndpointScanner) (WebhookEndpoint, error) {
-	var endpoint WebhookEndpoint
-	var events []byte
-	err := row.Scan(&endpoint.ID, &endpoint.UUID, &endpoint.ExternalID,
-		&endpoint.OrganizationID, &endpoint.WorkspaceID, &endpoint.CreatedByAPIKeyID,
-		&endpoint.URL, &endpoint.Name, &endpoint.Description, &events,
-		&endpoint.SigningSecret, &endpoint.Status, &endpoint.DisabledReason,
-		&endpoint.ConsecutiveFailures, &endpoint.CreatedAt, &endpoint.UpdatedAt,
-		&endpoint.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return WebhookEndpoint{}, ErrNotFound
+func getWebhookEndpointSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (WebhookEndpoint, error) {
+	var row webhookEndpointRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		return WebhookEndpoint{}, mapNoRows(err)
 	}
-	if err != nil {
-		return WebhookEndpoint{}, err
-	}
-	if len(events) > 0 {
-		if err := json.Unmarshal(events, &endpoint.EnabledEvents); err != nil {
-			return WebhookEndpoint{}, err
-		}
-	}
-	return endpoint, nil
+	return row.endpoint()
 }
 
-func scanWebhookEndpointRows(rows webhookEndpointRows) ([]WebhookEndpoint, error) {
-	var endpoints []WebhookEndpoint
-	for rows.Next() {
-		endpoint, err := scanWebhookEndpoint(rows)
+func selectWebhookEndpointsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]WebhookEndpoint, error) {
+	var rows []webhookEndpointRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	endpoints := make([]WebhookEndpoint, 0, len(rows))
+	for _, row := range rows {
+		endpoint, err := row.endpoint()
 		if err != nil {
 			return nil, err
 		}
 		endpoints = append(endpoints, endpoint)
 	}
-	return endpoints, rows.Err()
+	return endpoints, nil
+}
+
+func (r webhookEndpointRow) endpoint() (WebhookEndpoint, error) {
+	var events []string
+	if len(r.EnabledEvents) > 0 {
+		if err := json.Unmarshal(r.EnabledEvents, &events); err != nil {
+			return WebhookEndpoint{}, err
+		}
+	}
+	endpoint := WebhookEndpoint{
+		ID:                  r.ID,
+		UUID:                r.UUID,
+		ExternalID:          r.ExternalID,
+		OrganizationID:      r.OrganizationID,
+		WorkspaceID:         r.WorkspaceID,
+		CreatedByAPIKeyID:   r.CreatedByAPIKeyID,
+		URL:                 r.URL,
+		Name:                r.Name,
+		Description:         r.Description,
+		EnabledEvents:       events,
+		SigningSecret:       r.SigningSecret,
+		Status:              r.Status,
+		ConsecutiveFailures: r.ConsecutiveFailures,
+		CreatedAt:           r.CreatedAt,
+		UpdatedAt:           r.UpdatedAt,
+		DeletedAt:           r.DeletedAt,
+	}
+	if r.DisabledReason.Valid {
+		disabledReason := r.DisabledReason.String
+		endpoint.DisabledReason = &disabledReason
+	}
+	return endpoint, nil
 }
 
 func truncateWebhookFailureReason(reason string) string {

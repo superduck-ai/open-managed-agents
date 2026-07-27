@@ -67,7 +67,7 @@ OMA 通过 stdin 发送 manifest，不写入中间 manifest 文件，不依赖 P
 | 角色 | 负责 | 明确不负责 |
 |---|---|---|
 | OMA Environment API | Packages schema、规范化、spec安全校验、持久化和回显 | Sandbox命令、安装路径、Package Manager argv |
-| OMA Environment Runner | Environment生效配置、manifest、同步调用、timeout/cancel、结果校验、runtime commit和失败清理 | apt/npm/pip命令细节、内部安装重试 |
+| OMA Environment Runner | Environment生效配置、manifest、同步调用、timeout/cancel、成败门禁（status与exit一致）、runtime commit和失败清理 | Package Manager argv、category/stage字段矩阵、内部安装重试 |
 | Environment Manager `provision-packages`（Provisioner） | manifest校验、固定安装计划、子进程取消和稳定结果 | Environment/Session/Work、网络授权、Build Key、Template发布和retry policy |
 | `managed-agent-sandbox` | runtime、Package Manager、mirror、PATH、prefix、root和固定Manager binary | Environment状态、Session生命周期和调用重试 |
 | Code Session HTTPS proxy | Agent运行期CONNECT的身份、最新Environment policy、SSRF和目标拨号 | Provisioning阶段网络和安装语义 |
@@ -360,7 +360,7 @@ Package Manager失败：
 - 失败结果必须包含`category`和`stage`；成功结果不得包含失败字段。
 - 当失败可归属到某个Package Manager时包含`manager`；`decode`、`validate`、通用`preflight`、`finalize`等非manager错误不包含该字段。
 - `exit_code`只表示已成功启动但非零退出的Package Manager原始进程退出码；它与Environment Manager自身的稳定process exit code不是同一个字段。子进程未启动、被取消或Manager内部失败时不伪造该字段。
-- v1不包含spec、argv、Package Manager输出、部分安装清单或逐步骤事件。OMA使用严格schema解析并拒绝未知字段、缺失的必填字段以及与category/stage不一致的字段组合。
+- v1不包含spec、argv、Package Manager输出、部分安装清单或逐步骤事件。OMA对stdout做严格JSON解析（拒绝未知字段与多值），校验`version`/`status`/`duration_ms`等门禁字段，并要求`status`与进程退出码一致；`category`/`stage`/`manager`字段组合的完整合同由Environment Manager拥有与测试，OMA只把它们当作有界诊断透传，不再复刻字段矩阵。
 
 ### 6.1 稳定类别和阶段
 
@@ -383,7 +383,7 @@ Package Manager失败：
 | `install` | Package Manager安装步骤 |
 | `finalize` | 结果编码、写出或收尾 |
 
-稳定manager只有`apt`、`cargo`、`gem`、`go`、`npm`、`pip`。OMA拒绝未知category、manager或stage。
+稳定manager只有`apt`、`cargo`、`gem`、`go`、`npm`、`pip`。Environment Manager拒绝并规范化未知category、manager或stage；OMA不在Runner侧二次执行该矩阵校验。
 
 ### 6.2 Environment Manager退出码
 
@@ -407,6 +407,7 @@ JSON是精确且权威的结果；进程退出码是稳定分类和无JSON时的
 - 原始输出不进入result、stderr、OMA `last_error`或持久化Build记录。
 - Manager stderr只允许有界、无spec诊断：manager、stage、package count、duration、exit code和状态。
 - 禁止记录stdin、spec、完整argv、URL、环境变量、credential或lifecycle hook输出。
+- OMA Runner在provisioning开始和结束各记录一条日志，只包含Environment Work external ID、耗时和成功标志。起始行用于识别当前占用worker slot的Work，结束行用于统计安装时长；两条都不含spec、manifest、argv或Sandbox内部输出。
 - 长期受权限保护的Build Log、脱敏和保留策略另行设计。
 
 ### 7.2 timeout、取消和清理
@@ -442,6 +443,16 @@ Environment Manager：
 - `task-run` startup payload尚未发送，Claude Agent不会启动。
 
 graceful stop继续采用分阶段清理：`stopping`写入与Kill使用第一个bounded context；Kill返回或该阶段超时后，Runner创建独立的post-Kill bounded context，写入`stopped`（Kill失败时为`failed`）并强制停止Environment Work。`stopping`写入失败仍必须尝试Kill，第一阶段deadline耗尽也不能复用已过期context跳过最终状态。各阶段错误继续合并返回，测试日志不得输出Manager stdin、完整launch或凭证。
+
+### 7.4 Runner容量与Sandbox寿命预算
+
+Provisioning在`RunOnce`内同步执行，因此它改变了两项容量特性。配置这两个值时必须按本节的语义，而不是按"同时存在多少个Sandbox"来估算。
+
+**`environment_runner.concurrency`决定同时处理的Work数，不是同时存在的Sandbox数。** Runner为每个worker启动一个串行`loop`，`RunOnce`从领取Work一直阻塞到Environment Manager启动完成。装包期间该worker不取新Work，因此超出concurrency的Session会停在`queued`状态，连Sandbox都尚未创建，即使这些Session自身没有配置任何Packages。引入Provisioning前，单个Work占用worker slot的上限是rclone就绪的20秒量级；引入后上限变为`e2b.sandbox_timeout`。concurrency应按最慢的包安装时长估算，排队现象通过7.1的provisioning起止日志定位。
+
+**`e2b.sandbox_timeout`同时承担两个语义，并被串行消耗。** 它既是`Create`传给E2B的Sandbox绝对寿命，也是`provision-packages`命令的deadline。装包用掉的时间直接从Agent可用的Sandbox寿命里扣除，因此该值必须覆盖"安装 + 整个会话"，而不只是覆盖其中一项。
+
+已知限制：OMA目前不调用E2B的`POST /sandboxes/{id}/timeout`重置Sandbox寿命，所以上面两个语义无法分别配置。解除耦合有两条路径，都属于后续工作：在Provisioning成功后重置Sandbox寿命，或按第12节把安装移出Session Sandbox。后者同时消除本节的两项限制。
 
 ## 8. Session网络策略
 
@@ -506,6 +517,19 @@ type CommandResult struct {
 
 E2B实现执行`Start → SendStdin → CloseStdin → Wait`。它不能复用发送stdin后立即返回的`StartBackgroundCommand`。Packages路径不再调用`WriteFile`写manifest或Python，不依赖Python，也不解析英文stderr。
 
+#### Packages schema边界
+
+`environmentPackages`是六类manager的命名schema，`specsByManager()`是manager名称与顺序的唯一真相源，校验、空判断与manifest字段顺序都由它派生。两条信任边界共用同一份语义校验`validate()`，但入口不同：
+
+- HTTP边界`normalizePackages`接收请求体的`json.RawMessage`，负责判断"是不是object"，把非数组manager值映射成`config.packages.<manager> must be an array of strings`，再补齐空数组。
+- Provisioning边界`buildPackageManifest`直接把已持久化的Environment config解码成`cloudEnvironmentPackagesConfig{Packages *environmentPackages}`。存量config已经过HTTP规范化，因此这里不再二次经过`json.RawMessage`；结构非法说明数据库记录被直接改写，返回`decode environment config`，与用户输入错误区分开。
+
+`validate()`按manager顺序拒绝空白spec、超过255字符的spec、trim后以`-`开头的manager option和authority含credential的URL。错误只包含manager名和规则，不回显spec，因此私有仓库地址与token不会进入API响应或日志。
+
+#### 默认Template迁移
+
+`00031_managed_agent_sandbox_default.sql`是本次唯一改动`environments.resolved_template`默认值的migration，把默认值设为裸名称`managed-agent-sandbox`；down恢复`claude-code-interpreter`。已有Environment保留各自的`resolved_template`，不做数据回写。
+
 ### 9.3 `managed-agent-sandbox`
 
 - 从正式Environment Manager仓库构建干净的linux/amd64 binary。
@@ -557,6 +581,9 @@ E2B实现执行`Start → SendStdin → CloseStdin → Wait`。它不能复用�
 - Agent启动后Proxy仍按最新Environment策略允许/拒绝CONNECT。
 - Packages安装期间提交的Session event仍进入正确的initial或realtime路径。
 - preparation metadata、provider sandbox ID和runtime metadata仍按原事务边界持久化。
+- 每类manager的空白spec、超长spec、manager option和URL credential都被拒绝且不回显spec。
+- 已持久化config结构非法时返回`decode environment config`，语义非法时与HTTP边界共用同一条错误。
+- Managed Agent启动事务的每条命名查询都能绑定参数，且不含与命名参数冲突的`::`cast。
 
 ### 11.3 Managed Sandbox与真实E2E
 

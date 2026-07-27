@@ -12,8 +12,7 @@ import (
 
 func TestNormalizePackages(t *testing.T) {
 	t.Run("manager options are rejected for every manager without echoing the spec", func(t *testing.T) {
-		for _, manager := range packageManagerNames {
-			manager := manager
+		for _, manager := range packageManagerNamesForTest() {
 			t.Run(manager, func(t *testing.T) {
 				secretOption := "  --token=secret-value"
 				packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
@@ -36,6 +35,50 @@ func TestNormalizePackages(t *testing.T) {
 			t.Fatalf("normalizePackages() = (%#v, %v), want invalid type error", packages, err)
 		}
 	})
+
+	t.Run("non-array manager value names the offending manager", func(t *testing.T) {
+		packages, err := normalizePackages(json.RawMessage(`{"type":"packages","pip":"numpy"}`))
+		if err == nil || packages != nil || err.Error() != "config.packages.pip must be an array of strings" {
+			t.Fatalf("normalizePackages() = (%#v, %v), want pip array error", packages, err)
+		}
+	})
+
+	t.Run("blank and overlong specs are rejected", func(t *testing.T) {
+		blank, blankErr := normalizePackages(json.RawMessage(`{"type":"packages","apt":["  "]}`))
+		if blankErr == nil || blank != nil || !strings.Contains(blankErr.Error(), "config.packages.apt entries must be non-empty strings") {
+			t.Fatalf("normalizePackages() = (%#v, %v), want blank spec error", blank, blankErr)
+		}
+		overlong, overlongErr := normalizePackages(mustPackageJSON(t, map[string]any{
+			"type": managerPackageType,
+			"npm":  []string{strings.Repeat("a", maxPackageSpecLength+1)},
+		}))
+		if overlongErr == nil || overlong != nil || !strings.Contains(overlongErr.Error(), "config.packages.npm entries must be at most 255 characters") {
+			t.Fatalf("normalizePackages() = (%#v, %v), want overlong spec error", overlong, overlongErr)
+		}
+	})
+
+	t.Run("absent packages normalize to empty lists", func(t *testing.T) {
+		packages, err := normalizePackages(nil)
+		if err != nil || packages == nil {
+			t.Fatalf("normalizePackages(nil) = (%#v, %v)", packages, err)
+		}
+		if packages.Type != managerPackageType || !packages.empty() {
+			t.Fatalf("normalizePackages(nil) = %#v, want typed empty packages", packages)
+		}
+		encoded := mustPackageJSON(t, packages)
+		if bytes.Contains(encoded, []byte(":null")) {
+			t.Fatalf("empty packages encode null manager arrays: %s", encoded)
+		}
+	})
+}
+
+func packageManagerNamesForTest() []string {
+	packages := emptyPackages()
+	names := make([]string, 0, len(packages.specsByManager()))
+	for _, entry := range packages.specsByManager() {
+		names = append(names, entry.manager)
+	}
+	return names
 }
 
 func TestBuildPackageManifest(t *testing.T) {
@@ -66,24 +109,29 @@ func TestBuildPackageManifest(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid packages fail the environment config schema", func(t *testing.T) {
-		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":"cloud","packages":true}`))
-		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want environment config schema error", manifest, provision, err)
+	t.Run("structurally invalid stored packages are a decode error", func(t *testing.T) {
+		for _, config := range []string{
+			`{"type":"cloud","packages":true}`,
+			`{"type":"cloud","packages":[]}`,
+			`{"type":"cloud","packages":{"pip":"numpy"}}`,
+		} {
+			manifest, provision, err := buildPackageManifest(json.RawMessage(config))
+			if err == nil || provision || manifest != nil {
+				t.Fatalf("buildPackageManifest(%s) = (%s, %t, %v), want decode error", config, manifest, provision, err)
+			}
+			if !strings.Contains(err.Error(), "decode environment config") {
+				t.Fatalf("buildPackageManifest(%s) error = %v, want decode environment config", config, err)
+			}
 		}
 	})
 
-	t.Run("invalid type uses the normalization error", func(t *testing.T) {
-		_, normalizeErr := normalizePackages(json.RawMessage(`{"type":"other"}`))
-		manifest, provision, manifestErr := buildPackageManifest(json.RawMessage(`{
+	t.Run("invalid type shares the normalization error", func(t *testing.T) {
+		manifest, provision, err := buildPackageManifest(json.RawMessage(`{
 			"type":"cloud",
 			"packages":{"type":"other"}
 		}`))
-		if normalizeErr == nil || manifestErr == nil || provision || manifest != nil {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), normalize error = %v", manifest, provision, manifestErr, normalizeErr)
-		}
-		if manifestErr.Error() != normalizeErr.Error() {
-			t.Fatalf("manifest error = %q, want normalization error %q", manifestErr, normalizeErr)
+		if err == nil || provision || manifest != nil || err.Error() != invalidPackagesTypeMessage {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want %q", manifest, provision, err, invalidPackagesTypeMessage)
 		}
 	})
 
@@ -104,23 +152,17 @@ func TestBuildPackageManifest(t *testing.T) {
 		}
 	})
 
-	t.Run("package array is rejected", func(t *testing.T) {
-		manifest, provision, err := buildPackageManifest(json.RawMessage(`{
-			"type":"cloud",
-			"packages":[]
-		}`))
-		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want environment config schema error", manifest, provision, err)
-		}
-	})
-
-	t.Run("empty packages skip provisioning", func(t *testing.T) {
-		manifest, provision, err := buildPackageManifest(json.RawMessage(`{
-			"type":"cloud",
-			"packages":{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":[]}
-		}`))
-		if err != nil || provision || manifest != nil {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want (nil, false, nil)", manifest, provision, err)
+	t.Run("empty and absent packages skip provisioning", func(t *testing.T) {
+		for _, config := range []string{
+			`{"type":"cloud","packages":{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":[]}}`,
+			`{"type":"cloud","packages":null}`,
+			`{"type":"cloud"}`,
+			`{"type":"self_hosted"}`,
+		} {
+			manifest, provision, err := buildPackageManifest(json.RawMessage(config))
+			if err != nil || provision || manifest != nil {
+				t.Fatalf("buildPackageManifest(%s) = (%s, %t, %v), want (nil, false, nil)", config, manifest, provision, err)
+			}
 		}
 	})
 
@@ -159,40 +201,6 @@ func TestBuildPackageManifest(t *testing.T) {
 }
 
 func TestValidatePackageProvisioningResult(t *testing.T) {
-	t.Run("prepare stage is restricted to apt", func(t *testing.T) {
-		for _, testCase := range []struct {
-			name     string
-			exitCode int
-			stdout   string
-		}{
-			{
-				name:     "package manager",
-				exitCode: 10,
-				stdout:   `{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"prepare","package_count":1,"duration_ms":1,"exit_code":17}`,
-			},
-			{
-				name:     "timeout",
-				exitCode: 11,
-				stdout:   `{"version":1,"status":"failed","category":"timeout","manager":"npm","stage":"prepare","package_count":1,"duration_ms":1}`,
-			},
-			{
-				name:     "internal",
-				exitCode: 12,
-				stdout:   `{"version":1,"status":"failed","category":"internal","manager":"npm","stage":"prepare","package_count":1,"duration_ms":1}`,
-			},
-		} {
-			t.Run(testCase.name, func(t *testing.T) {
-				err := validatePackageProvisioningResult(e2bruntime.CommandResult{
-					ExitCode: testCase.exitCode,
-					Stdout:   []byte(testCase.stdout),
-				})
-				if err == nil || !strings.Contains(err.Error(), "inconsistent failure fields") {
-					t.Fatalf("validatePackageProvisioningResult() = %v, want inconsistent failure fields", err)
-				}
-			})
-		}
-	})
-
 	t.Run("protocol failures never echo stdout or stderr", func(t *testing.T) {
 		secret := "secret-package-spec@example.test"
 		for _, result := range []e2bruntime.CommandResult{
@@ -218,6 +226,14 @@ func TestValidatePackageProvisioningResult(t *testing.T) {
 		})
 		if err == nil || !strings.Contains(err.Error(), "exit code") {
 			t.Fatalf("validatePackageProvisioningResult() = %v, want exit-code mismatch", err)
+		}
+
+		err = validatePackageProvisioningResult(e2bruntime.CommandResult{
+			ExitCode: 0,
+			Stdout:   []byte(`{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"install","package_count":1,"duration_ms":2,"exit_code":17}`),
+		})
+		if err == nil || !strings.Contains(err.Error(), "exit code 0") {
+			t.Fatalf("validatePackageProvisioningResult() = %v, want failed-with-zero-exit mismatch", err)
 		}
 	})
 

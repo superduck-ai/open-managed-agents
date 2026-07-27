@@ -4,9 +4,44 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/samber/lo"
 )
 
 const (
+	// lockManagedAgentEnvironmentWorkQuery 与 patchManagedAgentWorkMetadataQuery
+	// 共用同一条 Work 行锁；启动事务先锁定 Work，再在提交前写入 runtime metadata。
+	lockManagedAgentEnvironmentWorkQuery = `
+		select ` + environmentWorkSQLXColumns + `
+		from environment_work
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and external_id = :work_external_id
+			and deleted_at is null
+		for update
+	`
+	patchManagedAgentWorkMetadataQuery = `
+		update environment_work
+		set metadata = coalesce(metadata, CAST('{}' AS jsonb))
+				|| CAST(:preparation_patch AS jsonb)
+				|| CAST(:runtime_patch AS jsonb),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and external_id = :work_external_id
+			and deleted_at is null
+		returning ` + environmentWorkSQLXColumns + `
+	`
+	// listManagedAgentSessionEventsQuery 在 lockSessionForEventsQuery 取得行锁后
+	// 读取事件快照，保证快照与 Code Session 在同一次提交中固化。
+	listManagedAgentSessionEventsQuery = `
+		select ` + sessionEventSQLXColumns + `
+		from session_events
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
+		order by created_at asc, id asc
+	`
 	terminateManagedAgentCodeSessionQuery = `
 		update code_sessions
 		set status = 'terminated',
@@ -70,8 +105,7 @@ func (d *DB) TerminateManagedAgentCodeSession(
 		"code_session_external_id": codeSessionExternalID,
 	}
 	var sessionExternalID string
-	err = namedGetContext(ctx, tx, &sessionExternalID, terminateManagedAgentCodeSessionQuery, arguments)
-	if err != nil {
+	if err := namedGetContext(ctx, tx, &sessionExternalID, terminateManagedAgentCodeSessionQuery, arguments); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -85,4 +119,35 @@ func (d *DB) TerminateManagedAgentCodeSession(
 		return err
 	}
 	return tx.Commit()
+}
+
+func getEnvironmentWorkSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (EnvironmentWork, error) {
+	var row environmentWorkRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return EnvironmentWork{}, ErrNotFound
+		}
+		return EnvironmentWork{}, err
+	}
+	return row.work(), nil
+}
+
+func listSessionEventsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]SessionEvent, error) {
+	var rows []sessionEventRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	return lo.Map(rows, func(row sessionEventRow, _ int) SessionEvent {
+		return row.event()
+	}), nil
 }

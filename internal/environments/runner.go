@@ -285,7 +285,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 	if provision {
-		if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
+		if err := r.provisionPackages(ctx, work.ExternalID, providerSandboxID, manifest); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
@@ -351,14 +351,26 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	return true, nil
 }
 
-func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte) error {
-	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
+func (r *Runner) provisionPackages(ctx context.Context, workExternalID, sandboxID string, manifest []byte) (err error) {
+	// Provisioning 独占一个 runner worker slot 直到返回，因此起始行是排队诊断的唯一
+	// 依据：安装挂住时只有它会出现。两条日志都不含 spec、manifest 或 Sandbox 输出。
+	startedAt := time.Now()
+	log.Printf("environment packages provisioning start work_id=%s", workExternalID)
+	defer func() {
+		log.Printf(
+			"environment packages provisioning done work_id=%s duration_ms=%d ok=%t",
+			workExternalID,
+			time.Since(startedAt).Milliseconds(),
+			err == nil,
+		)
+	}()
+	result, runErr := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
 		Command: packageProvisionCommand,
 		Stdin:   manifest,
 		Timeout: r.cfg.E2B.SandboxTimeout,
 	})
-	if err != nil {
-		return fmt.Errorf("provision environment packages: %w", err)
+	if runErr != nil {
+		return fmt.Errorf("provision environment packages: %w", runErr)
 	}
 	return validatePackageProvisioningResult(result)
 }

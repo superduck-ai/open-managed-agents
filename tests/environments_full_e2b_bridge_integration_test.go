@@ -18,7 +18,10 @@ import (
 	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
 
-const fullE2BManagedAgentSandboxImage = "registry.gz.cvte.cn/oma/managed-agent-sandbox:latest"
+// Local e2b-local discovers Docker RepoTags as short name:tag templates.
+// Prefer managed-agent-sandbox:latest over the registry path: after pull+retag,
+// both RepoTags collapse to the same short template ID and the registry alias 404s.
+const fullE2BManagedAgentSandboxImage = "managed-agent-sandbox:latest"
 
 func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	if testing.Short() {
@@ -41,6 +44,10 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	if cfg.E2B.SandboxTimeout < 15*time.Minute {
 		cfg.E2B.SandboxTimeout = 15 * time.Minute
 	}
+
+	// Clear config ingress so the helper derives host.docker.internal from the
+	// in-process test server port instead of a stale local :38080 default.
+	cfg.CodeSession.SandboxAPIBaseURL = ""
 
 	// The sandbox reaches Filestore through the configured external ingress,
 	// so the test app and that ingress must share the configured object store.

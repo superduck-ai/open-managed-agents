@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -39,6 +40,15 @@ const (
 			and external_id = :session_external_id
 			and deleted_at is null
 		for update
+	`
+	patchSessionMetadataQuery = `
+		update sessions
+		set metadata = coalesce(metadata, CAST('{}' AS jsonb)) || CAST(:metadata_patch AS jsonb),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :session_external_id
+			and deleted_at is null
+		returning ` + sessionSQLXColumns + `
 	`
 	createSessionResourceQuery = `
 		insert into session_resources (
@@ -219,6 +229,18 @@ func getSessionSQLX(
 		return Session{}, err
 	}
 	return row.session(), nil
+}
+
+func patchSessionMetadataSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	workspaceID int64,
+	externalID string,
+	patch json.RawMessage,
+) (Session, error) {
+	arguments := sessionLookupArguments(workspaceID, externalID)
+	arguments["metadata_patch"] = jsonArg(patch)
+	return getSessionSQLX(ctx, database, patchSessionMetadataQuery, arguments)
 }
 
 func listSessionResourcesSQLX(

@@ -244,53 +244,21 @@ func (e *CodeSessionWorkerHeartbeatError) Unwrap() error {
 
 // CreateCodeSession 在同一次 INSERT 中保存 code session 与 OAuth token hash。
 func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput) (CodeSession, error) {
-	input = normalizedCreateCodeSessionInput(input)
-	return scanCodeSession(d.Pool.QueryRow(ctx, createCodeSessionSQL(), createCodeSessionArgs(input)...))
-}
-
-func createCodeSessionTx(ctx context.Context, tx pgx.Tx, input CreateCodeSessionInput) (CodeSession, error) {
-	input = normalizedCreateCodeSessionInput(input)
-	return scanCodeSession(tx.QueryRow(ctx, createCodeSessionSQL(), createCodeSessionArgs(input)...))
-}
-
-func normalizedCreateCodeSessionInput(input CreateCodeSessionInput) CreateCodeSessionInput {
-	if input.CreatedAt.IsZero() {
-		input.CreatedAt = time.Now().UTC()
-	}
-	if input.Status == "" {
-		input.Status = "active"
-	}
-	return input
-}
-
-func createCodeSessionSQL() string {
-	return `
-		insert into code_sessions (
-			external_id, organization_id, workspace_id, session_id, session_external_id,
-			environment_id, environment_external_id, work_dir, permission_mode, model,
-			status, metadata, oauth_access_token_hash, created_at, updated_at
-		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $14)
-		returning ` + codeSessionColumns() + `
-	`
-}
-
-func createCodeSessionArgs(input CreateCodeSessionInput) []any {
-	return []any{input.ExternalID, input.OrganizationID, input.WorkspaceID, input.SessionID, input.SessionExternalID,
-		input.EnvironmentID, input.EnvironmentExternalID, input.WorkDir, input.PermissionMode, input.Model,
-		input.Status, jsonArg(input.Metadata), nullableString(strings.TrimSpace(input.OAuthAccessTokenHash)), input.CreatedAt}
+	return insertCodeSessionSQLX(ctx, d.sql, input)
 }
 
 // codeSessionCredentialContextSelect 查询 code session 的鉴权身份信息。
 // OAuth token 鉴权和 session-ingress JWT 签发都会使用这些信息。
 // JOIN 中同时校验 organization、workspace 和 session 的归属，防止跨租户查询。
 // worker lease 不在这里校验：OAuth 鉴权要求有效 lease，首次签发 JWT 时还没有 lease。
+// 列别名同时服务于 pgx 的位置扫描和 sqlx 的 codeSessionCredentialContextRow 映射。
 const codeSessionCredentialContextSelect = `
-	select cs.id, cs.external_id,
-		cs.organization_id, o.uuid::text, o.external_id,
-		cs.workspace_id, w.uuid::text, w.external_id,
-		s.id, s.external_id, s.agent_id, s.agent_external_id, s.agent_version,
-		coalesce(u.email, '')
+	select cs.id as code_session_id, cs.external_id as code_session_external_id,
+		cs.organization_id, CAST(o.uuid AS text) as organization_uuid, o.external_id as organization_external_id,
+		cs.workspace_id, CAST(w.uuid AS text) as workspace_uuid, w.external_id as workspace_external_id,
+		s.id as public_session_id, s.external_id as public_session_external_id,
+		s.agent_id, s.agent_external_id, s.agent_version,
+		coalesce(u.email, '') as account_email
 	from code_sessions cs
 	join organizations o on o.id = cs.organization_id
 	join workspaces w on w.id = cs.workspace_id and w.organization_id = cs.organization_id
@@ -324,19 +292,7 @@ func (d *DB) GetCodeSessionByOAuthAccessTokenHash(ctx context.Context, tokenHash
 
 // GetCodeSessionCredentialContextForIssue 用于初始 session-ingress JWT 签发，并将查询绑定到预期租户。
 func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
-	return scanCodeSessionCredentialContext(d.Pool.QueryRow(ctx, codeSessionCredentialContextForIssueSQL(), strings.TrimSpace(codeSessionExternalID), organizationID, workspaceID))
-}
-
-func getCodeSessionCredentialContextForIssueTx(ctx context.Context, tx pgx.Tx, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
-	return scanCodeSessionCredentialContext(tx.QueryRow(ctx, codeSessionCredentialContextForIssueSQL(), strings.TrimSpace(codeSessionExternalID), organizationID, workspaceID))
-}
-
-func codeSessionCredentialContextForIssueSQL() string {
-	return codeSessionCredentialContextSelect + `
-		where cs.external_id = $1
-			and cs.organization_id = $2
-			and cs.workspace_id = $3
-	` + activeCodeSessionCredentialConditions
+	return getCodeSessionCredentialContextForIssueSQLX(ctx, d.sql, organizationID, workspaceID, codeSessionExternalID)
 }
 
 // GetCodeSessionNetworkPolicyContext 从已验签的租户身份出发，一次性加载并校验
@@ -1412,13 +1368,7 @@ func (d *DB) codeSessionWorkerEpochUpdateError(ctx context.Context, codeSessionE
 }
 
 func codeSessionColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, session_id, session_external_id,
-		environment_id, environment_external_id, work_dir, permission_mode, model, status, metadata,
-		connection_status, last_inbound_sequence_num, last_outbound_sequence_num, last_internal_sequence_num,
-		last_worker_connected_at, last_worker_activity_at, current_worker_epoch, worker_lease_expires_at,
-		worker_registered_at, worker_last_heartbeat_at, worker_token_session_id, worker_binding,
-		worker_status, worker_external_metadata, worker_requires_action_details,
-		created_at, updated_at, deleted_at`
+	return codeSessionSQLXColumns
 }
 
 func codeSessionInboundEventColumns() string {

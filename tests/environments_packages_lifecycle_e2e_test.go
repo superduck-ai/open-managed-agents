@@ -33,7 +33,9 @@ func TestE2BEnvironmentUpdateAndSessionFilesystemIsolation(t *testing.T) {
 	}
 	requireFullE2BBridgeConfig(t, cfg)
 	cfg.CodeSession.SandboxAPIBaseURL = ""
-	cfg.E2B.Template = config.DefaultE2BTemplate
+	// Pin an explicit tag. e2b-local bare-name alias is lexicographic first-match,
+	// not Docker :latest, so DefaultE2BTemplate is unsafe for real local sandboxes.
+	cfg.E2B.Template = fullE2BManagedAgentSandboxImage
 	if cfg.E2B.RequestTimeout < 2*time.Minute {
 		cfg.E2B.RequestTimeout = 2 * time.Minute
 	}

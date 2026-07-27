@@ -89,6 +89,14 @@ web-format:
 web-format-check:
   cd web && bun run format:check
 
+# Pull Harbor managed-agent-sandbox:latest (linux/amd64) and tag for local e2b-local.
+pull-sandbox-image:
+  ./scripts/pull-managed-agent-sandbox.sh
+
+# Real Environment → Session → e2b-local sandbox E2E (requires e2b-local on :3099 and pulled sandbox image).
+test-e2b-sandbox-e2e:
+  go test -tags='e2b_integration e2e' ./tests -run '^(TestE2BManagedAgentBridgeEnvironmentManagerIntegration|TestE2BEnvironmentUpdateAndSessionFilesystemIsolation)$' -count=1 -v -timeout 45m
+
 # Check every tracked file with the repository-pinned pre-commit hook.
 large-files:
   ./scripts/pre-commit.sh run check-added-large-files --all-files

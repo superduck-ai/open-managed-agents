@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samber/lo"
+
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -124,10 +126,9 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 		EnvironmentExternalID:           input.Environment.ExternalID,
 		WorkExternalID:                  input.EnvironmentWork.ExternalID,
 	}, func(sessionEvents []db.SessionEvent) ([]db.AppendCodeSessionEventInput, error) {
-		payloads := make([]json.RawMessage, 0, len(sessionEvents))
-		for _, event := range sessionEvents {
-			payloads = append(payloads, event.Payload)
-		}
+		payloads := lo.Map(sessionEvents, func(event db.SessionEvent, _ int) json.RawMessage {
+			return event.Payload
+		})
 		return managedAgentInitialInboundEvents(codeSessionID, input.Config, payloads, now)
 	}, func(credentialContext db.CodeSessionCredentialContext) error {
 		var issueErr error

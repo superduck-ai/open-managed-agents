@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jmoiron/sqlx"
 )
 
 type CreateManagedAgentRuntimeInput struct {
@@ -39,19 +38,39 @@ func (d *DB) CreateManagedAgentRuntime(
 	if buildInitialInboundEvents == nil {
 		return CreateManagedAgentRuntimeResult{}, errors.New("managed agent initial inbound event builder is required")
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	work, err := scanEnvironmentWork(tx.QueryRow(ctx, environmentWorkSelectSQL()+`
-		where workspace_id = $1
-			and environment_external_id = $2
-			and external_id = $3
-			and deleted_at is null
-		for update
-	`, input.CodeSession.WorkspaceID, input.EnvironmentExternalID, input.WorkExternalID))
+	result, err := createManagedAgentRuntimeTx(ctx, tx, input, buildInitialInboundEvents)
+	if err != nil {
+		return CreateManagedAgentRuntimeResult{}, err
+	}
+	if beforeCommit != nil {
+		if err := beforeCommit(result.Credentials); err != nil {
+			return CreateManagedAgentRuntimeResult{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return CreateManagedAgentRuntimeResult{}, err
+	}
+	return result, nil
+}
+
+func createManagedAgentRuntimeTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	input CreateManagedAgentRuntimeInput,
+	buildInitialInboundEvents func([]SessionEvent) ([]AppendCodeSessionEventInput, error),
+) (CreateManagedAgentRuntimeResult, error) {
+	workArguments := map[string]any{
+		"workspace_id":            input.CodeSession.WorkspaceID,
+		"environment_external_id": input.EnvironmentExternalID,
+		"work_external_id":        input.WorkExternalID,
+	}
+	work, err := getEnvironmentWorkSQLX(ctx, tx, lockManagedAgentEnvironmentWorkQuery, workArguments)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
@@ -66,31 +85,31 @@ func (d *DB) CreateManagedAgentRuntime(
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	codeSession, err := createCodeSessionTx(ctx, tx, input.CodeSession)
+	codeSession, err := insertCodeSessionSQLX(ctx, tx, input.CodeSession)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	lastInboundSequence, err := appendInitialCodeSessionEvents(ctx, tx, codeSession, inboundEvents)
+	lastInboundSequence, err := appendCodeSessionInboundEventsSQLX(ctx, tx, codeSession, inboundEvents)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
 	codeSession.LastInboundSequenceNum = lastInboundSequence
-	if _, err := patchSessionMetadataTx(ctx, tx, codeSession.WorkspaceID, codeSession.SessionExternalID, input.SessionMetadataPatch); err != nil {
-		return CreateManagedAgentRuntimeResult{}, err
-	}
-	work, err = patchEnvironmentWorkMetadataTx(
+	if _, err := patchSessionMetadataSQLX(
 		ctx,
 		tx,
 		codeSession.WorkspaceID,
-		input.EnvironmentExternalID,
-		input.WorkExternalID,
-		input.EnvironmentWorkPreparationPatch,
-		input.EnvironmentWorkRuntimePatch,
-	)
+		codeSession.SessionExternalID,
+		input.SessionMetadataPatch,
+	); err != nil {
+		return CreateManagedAgentRuntimeResult{}, err
+	}
+	workArguments["preparation_patch"] = jsonArg(input.EnvironmentWorkPreparationPatch)
+	workArguments["runtime_patch"] = jsonArg(input.EnvironmentWorkRuntimePatch)
+	work, err = getEnvironmentWorkSQLX(ctx, tx, patchManagedAgentWorkMetadataQuery, workArguments)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	credentials, err := getCodeSessionCredentialContextForIssueTx(
+	credentials, err := getCodeSessionCredentialContextForIssueSQLX(
 		ctx,
 		tx,
 		codeSession.OrganizationID,
@@ -98,14 +117,6 @@ func (d *DB) CreateManagedAgentRuntime(
 		codeSession.ExternalID,
 	)
 	if err != nil {
-		return CreateManagedAgentRuntimeResult{}, err
-	}
-	if beforeCommit != nil {
-		if err := beforeCommit(credentials); err != nil {
-			return CreateManagedAgentRuntimeResult{}, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
 	return CreateManagedAgentRuntimeResult{
@@ -118,77 +129,14 @@ func (d *DB) CreateManagedAgentRuntime(
 // lockSessionAndListEventsTx 与 AppendSessionEvents 使用同一条 Session 行锁。
 // 锁内读取的最终快照会随 Code Session 一起提交；锁后写入的事件则会在
 // Runtime 提交后通过实时转发路径进入 inbound queue。
-func lockSessionAndListEventsTx(ctx context.Context, tx pgx.Tx, workspaceID int64, sessionExternalID string) ([]SessionEvent, error) {
-	session, err := scanSession(tx.QueryRow(ctx, `
-		select `+sessionColumns()+`
-		from sessions
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		for update
-	`, workspaceID, sessionExternalID))
+func lockSessionAndListEventsTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, sessionExternalID string) ([]SessionEvent, error) {
+	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+	session, err := getSessionSQLX(ctx, tx, lockSessionForEventsQuery, arguments)
 	if err != nil {
 		return nil, err
 	}
 	if session.ArchivedAt != nil || session.Status != "idle" {
 		return nil, ErrInvalidState
 	}
-	rows, err := tx.Query(ctx, `
-		select `+sessionEventColumns()+`
-		from session_events
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
-		order by created_at asc, id asc
-	`, workspaceID, sessionExternalID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSessionEventRows(rows)
-}
-
-func appendInitialCodeSessionEvents(ctx context.Context, tx pgx.Tx, session CodeSession, inputs []AppendCodeSessionEventInput) (int64, error) {
-	sequence := session.LastInboundSequenceNum
-	for _, input := range inputs {
-		if input.RequiredWorkerEpoch != nil {
-			return sequence, ErrWorkerEpochMismatch
-		}
-		nextSequence := sequence + 1
-		createdAt := input.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = time.Now().UTC()
-		}
-		commandTag, err := tx.Exec(ctx, `
-			insert into code_session_inbound_events (
-				external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
-				sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
-				payload_hash, idempotency_key, delivery_status, source, created_at, updated_at
-			)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16, $16)
-			on conflict (workspace_id, idempotency_key)
-				where deleted_at is null and idempotency_key <> ''
-				do nothing
-		`, input.ExternalID, session.OrganizationID, session.WorkspaceID, session.ID, session.ExternalID,
-			nextSequence, input.EventType, input.EventSubtype, input.PayloadUUID, input.RequestID, jsonArg(input.Payload),
-			input.PayloadHash, input.IdempotencyKey, input.DeliveryStatus, input.Source, createdAt)
-		if err != nil {
-			return sequence, err
-		}
-		if commandTag.RowsAffected() == 0 {
-			continue
-		}
-		sequence = nextSequence
-	}
-	if sequence == session.LastInboundSequenceNum {
-		return sequence, nil
-	}
-	commandTag, err := tx.Exec(ctx, `
-		update code_sessions
-		set last_inbound_sequence_num = $1, updated_at = now()
-		where id = $2
-	`, sequence, session.ID)
-	if err != nil {
-		return sequence, err
-	}
-	if commandTag.RowsAffected() != 1 {
-		return sequence, errors.New("update managed agent code session sequence")
-	}
-	return sequence, nil
+	return listSessionEventsSQLX(ctx, tx, listManagedAgentSessionEventsQuery, arguments)
 }

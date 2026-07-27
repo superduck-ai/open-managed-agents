@@ -13,6 +13,7 @@ import (
 const (
 	managerPackageType          = "packages"
 	maxPackageSpecLength        = 255
+	maxPackageManifestBytes     = 1 << 20
 	invalidPackagesTypeMessage  = `config.packages.type must be "packages"`
 	invalidPackageOptionMessage = "config.packages entries must be package specs, not manager options"
 )
@@ -80,7 +81,24 @@ func normalizePackages(raw json.RawMessage) (*environmentPackages, error) {
 		return nil, err
 	}
 	packages.ensureLists()
+	if err := packages.checkManifestSize(); err != nil {
+		return nil, err
+	}
 	return packages, nil
+}
+
+// checkManifestSize 在 API 边界拒绝编码后超过 Environment Manager stdin 合同
+// 上限（1 MiB）的 packages。否则 Environment 能创建成功，但之后每个 Session
+// sandbox 都会在装包阶段被 Manager 拒绝而失败。
+func (p *environmentPackages) checkManifestSize() error {
+	encoded, err := json.Marshal(packageManifest{Version: 1, Packages: *p})
+	if err != nil {
+		return err
+	}
+	if len(encoded) > maxPackageManifestBytes {
+		return errors.New("config.packages exceeds the 1 MiB manifest limit")
+	}
+	return nil
 }
 
 func (p *environmentPackages) validate() error {

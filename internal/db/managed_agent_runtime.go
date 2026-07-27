@@ -63,18 +63,26 @@ func (d *DB) CreateManagedAgentRuntime(
 }
 
 // createManagedAgentRuntimeTx 在同一只 sqlx.Tx 中完成 Managed Agent 启动提交：
-//  1. 锁定 active Environment Work（锁序第一步）
-//  2. 锁定 idle Session 并读取事件快照（锁序第二步）
+//  1. 锁定 idle Session 并读取事件快照（锁序第一步）
+//  2. 锁定 active Environment Work（锁序第二步）
 //  3. 回调拼装 initial inbound（禁止再访问数据库）
 //  4. 插入 Code Session，并写入 inbound 事件、推进 sequence
 //  5. 发布 Session / Work runtime metadata
 //  6. 加载签发 session-ingress JWT 所需的凭证上下文
+//
+// 锁序固定为 Session → Work，与 DeleteSession（先锁 sessions 行再更新
+// environment_work）一致，避免二者并发时以相反顺序抢锁而死锁。
 func createManagedAgentRuntimeTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
 	input CreateManagedAgentRuntimeInput,
 	buildInitialInboundEvents func([]SessionEvent) ([]AppendCodeSessionEventInput, error),
 ) (CreateManagedAgentRuntimeResult, error) {
+	publicEvents, err := lockSessionAndListEventsTx(ctx, tx, input.CodeSession.WorkspaceID, input.CodeSession.SessionExternalID)
+	if err != nil {
+		return CreateManagedAgentRuntimeResult{}, err
+	}
+
 	work, err := lockManagedAgentEnvironmentWork(
 		ctx,
 		tx,
@@ -87,11 +95,6 @@ func createManagedAgentRuntimeTx(
 	}
 	if work.State != "active" {
 		return CreateManagedAgentRuntimeResult{}, ErrInvalidState
-	}
-
-	publicEvents, err := lockSessionAndListEventsTx(ctx, tx, input.CodeSession.WorkspaceID, input.CodeSession.SessionExternalID)
-	if err != nil {
-		return CreateManagedAgentRuntimeResult{}, err
 	}
 
 	inboundEvents, err := buildInitialInboundEvents(publicEvents)

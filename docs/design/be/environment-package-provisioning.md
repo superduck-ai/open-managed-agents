@@ -439,7 +439,7 @@ Environment Manager：
 任何Provisioning协议、stdin transport、Manager执行或结果校验失败都进入统一的`failCreatedSandbox`语义：
 
 - `environment_sandboxes.state`变为`failed`。
-- `last_error`只保存不含spec和credential的阶段上下文。
+- `last_error`只保存不含spec和credential的阶段上下文。其中`package_count`是唯一允许的spec派生聚合：它只是六个数组的spec总数（一个整数），不含任何spec文本、URL或凭据，因此可作为“失败发生在装多少个包时”的诊断保留；除此之外不得写入任何spec派生内容。
 - Environment Work被强制停止。
 - 已创建的provider Sandbox在独立的两分钟cleanup context中best-effort终止。
 - `task-run` startup payload尚未发送，Claude Agent不会启动。

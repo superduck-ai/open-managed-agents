@@ -312,6 +312,13 @@ func (r *Runner) createProviderSandbox(
 	if strings.TrimSpace(providerSandboxID) == "" {
 		return record, providerSandboxID, nil
 	}
+	// 立即把 provider_sandbox_id 落到 Sandbox 记录列上（仍保持 creating）。
+	// 装包可能持续数分钟，其间 force-stop 通过 GetActiveEnvironmentSandboxForWork
+	// 查找计费中的 Sandbox，而该查询要求该列非空；不能等到 markRunning 才写。
+	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "creating", &providerSandboxID, nil, nil); err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return db.EnvironmentSandbox{}, "", err
+	}
 	nextMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
 		"provider_sandbox_id": providerSandboxID,
 	})

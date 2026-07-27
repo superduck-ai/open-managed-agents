@@ -67,6 +67,20 @@ func TestNormalizePackages(t *testing.T) {
 		}
 	})
 
+	t.Run("manifest above the 1 MiB limit is rejected", func(t *testing.T) {
+		oversized := make([]string, 0, 5000)
+		for len(oversized) < 5000 {
+			oversized = append(oversized, strings.Repeat("a", maxPackageSpecLength))
+		}
+		packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
+			"type": managerPackageType,
+			"pip":  oversized,
+		}))
+		if err == nil || packages != nil || !strings.Contains(err.Error(), "1 MiB manifest limit") {
+			t.Fatalf("normalizePackages() = (%#v, %v), want 1 MiB manifest limit error", packages, err)
+		}
+	})
+
 	t.Run("absent packages normalize to empty lists", func(t *testing.T) {
 		packages, err := normalizePackages(nil)
 		if err != nil || packages == nil {

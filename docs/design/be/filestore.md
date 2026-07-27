@@ -202,7 +202,7 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 - `filestore_filesystems`：保存自身的内部 bigint ID、稳定 UUID、workspace 内的外部 ID；组织、工作区、public session、可选 code session 与创建 API key 均以稳定 UUID 绑定，避免租户搬迁或跨库合并时依赖源库 identity 值。
 - `filestore_entries`：统一保存 file/directory/archive、规范化绝对路径、parent path、响应元数据、hash、TTL 和不可变 S3 object reference；Session File resource 的借用 entry 另保存源 File UUID，skill archive entry 保存具体 version UUID，两者都使用不可由 HTTP metadata 设置的 ownership 列。组织、工作区、filesystem 及可选创建者引用均保存对应 UUID，不冗余保存其他表的 identity 或 filesystem external ID。
 
-迁移 `00032_add_filestore_skill_archives.sql` 曾新增独立 archive 投影表，并为历史活动 filesystem 补齐 `/skills` 根。`00034_unify_filestore_skill_archives.sql` 删除该表，把每个 `/skills/<directory>` 改为 `filestore_entries.kind=archive` 的受管 entry，并增加对象形状与具体 version UUID 唯一约束；旧投影 rows 按产品决策直接丢弃，不做数据迁移。`00035_validate_filestore_archive_entries.sql` 单独验证新增约束。archive entry 不拥有 catalog 对象、不写成员 entry，也不计入 Filestore 容量。
+迁移 `00032_add_filestore_archive_entries.sql` 直接把 `archive` 加入 `filestore_entries.kind`，增加对象形状与具体 version UUID 唯一约束，并为历史活动 filesystem 补齐 `/skills` 根；没有独立的 skill archive 投影表。`00033_validate_filestore_archive_entries.sql` 单独验证新增约束，避免在替换约束的短事务内扫描历史 rows。archive entry 不拥有 catalog 对象、不写成员 entry，也不计入 Filestore 容量。
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 

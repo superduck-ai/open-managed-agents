@@ -132,12 +132,12 @@ Runner 每次全量替换 `/skills` 投影时，会在同一事务中软删除�
 - `/mnt/skills`、`/workspace/skills` 解压目录，以及 Claude skill discovery 软链；
 - Environment Manager 的 managed-agent skill 解压职责。
 
-迁移 `00032_add_filestore_skill_archives.sql` 曾创建独立投影表、为历史活动 filesystem
-补齐 `/skills` 根并清除遗留的 `skill_prewarm` jobs。迁移
-`00034_unify_filestore_skill_archives.sql` 把 `archive` 加入 entry kind，增加 archive
-对象与 ownership 形状约束，并直接删除旧表；按产品决策，旧表历史 rows 不迁移。
-`00035_validate_filestore_archive_entries.sql` 单独验证新约束。两张 catalog version 表仍是
-archive 所有权来源，schema 不创建 PostgreSQL 外键。
+迁移 `00032_add_filestore_archive_entries.sql` 直接把 `archive` 加入 entry kind，增加
+archive 对象与 ownership 形状约束，为历史活动 filesystem 补齐 `/skills` 根，并清除
+遗留的 `skill_prewarm` jobs；整个模型不创建独立的 skill archive 投影表。迁移
+`00033_validate_filestore_archive_entries.sql` 单独验证新约束，避免在替换约束的短事务内
+扫描历史 rows。两张 catalog version 表仍是 archive 所有权来源，schema 不创建
+PostgreSQL 外键。
 
 ## 验收重点
 

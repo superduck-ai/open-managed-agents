@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
 const (
 	sessionFileResourceManagedBy = "session_file_resource"
+	sessionFileProjectionScope   = "session"
 	countSessionFileResourcesSQL = `
 		select count(*)
 		from session_resources
@@ -34,6 +36,116 @@ const (
 			)
 		order by entry.path
 		limit 1
+	`
+	upsertSessionFileProjectionSQL = `
+		insert into files (
+			uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
+			s3_bucket, s3_key, downloadable, scope_type, scope_id,
+			created_by_api_key_id, created_at
+		)
+		values (
+			CAST(:file_uuid AS uuid),
+			concat('file_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+			:workspace_id, :filename, :mime_type, :size_bytes, :sha256,
+			:s3_bucket, :s3_key, :downloadable, :scope_type, :scope_id,
+			:created_by_api_key_id, :created_at
+		)
+		on conflict (uuid) do update
+		set filename = excluded.filename,
+			mime_type = excluded.mime_type,
+			size_bytes = excluded.size_bytes,
+			sha256 = excluded.sha256,
+			s3_bucket = excluded.s3_bucket,
+			s3_key = excluded.s3_key,
+			downloadable = excluded.downloadable,
+			scope_type = excluded.scope_type,
+			scope_id = excluded.scope_id,
+			created_by_api_key_id = excluded.created_by_api_key_id,
+			created_at = excluded.created_at,
+			deleted_at = null
+	`
+	softDeleteSessionFileProjectionSQL = `
+		update files
+		set deleted_at = now()
+		where workspace_id = :workspace_id
+			and uuid = CAST(:file_uuid AS uuid)
+			and scope_type = :scope_type
+			and scope_id = :scope_id
+			and deleted_at is null
+	`
+	syncSessionOutputFileProjectionSQL = `
+		with active_outputs as materialized (
+			select entry.uuid, entry.path, entry.size_bytes,
+				coalesce(entry.detected_mime_type, entry.media_type, 'application/octet-stream') as mime_type,
+				entry.sha256, entry.s3_bucket, entry.s3_key, entry.downloadable, entry.created_at
+			from filestore_entries entry
+			where entry.workspace_uuid = :workspace_uuid
+				and entry.filesystem_uuid = :filesystem_uuid
+				and entry.kind = 'file'
+				and left(entry.path, char_length(:outputs_prefix)) = :outputs_prefix
+				and entry.size_bytes is not null
+				and entry.sha256 is not null
+				and entry.s3_bucket is not null
+				and entry.s3_key is not null
+				and entry.deleted_at is null
+				and (entry.expires_at is null or entry.expires_at > now())
+		),
+		upserted as (
+			insert into files (
+				uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
+				s3_bucket, s3_key, downloadable, scope_type, scope_id,
+				created_by_api_key_id, created_at
+			)
+			select
+				output.uuid,
+				concat('file_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+				:workspace_id,
+				regexp_replace(output.path, '^.*/', ''),
+				output.mime_type,
+				output.size_bytes,
+				output.sha256,
+				output.s3_bucket,
+				output.s3_key,
+				output.downloadable,
+				:scope_type,
+				:scope_id,
+				:created_by_api_key_id,
+				output.created_at
+			from active_outputs output
+			on conflict (uuid) do update
+			set filename = excluded.filename,
+				mime_type = excluded.mime_type,
+				size_bytes = excluded.size_bytes,
+				sha256 = excluded.sha256,
+				s3_bucket = excluded.s3_bucket,
+				s3_key = excluded.s3_key,
+				downloadable = excluded.downloadable,
+				scope_type = excluded.scope_type,
+				scope_id = excluded.scope_id,
+				created_by_api_key_id = excluded.created_by_api_key_id,
+				created_at = excluded.created_at,
+				deleted_at = null
+			returning uuid
+		)
+		update files projection
+		set deleted_at = now()
+		where projection.workspace_id = :workspace_id
+			and projection.scope_type = :scope_type
+			and projection.scope_id = :scope_id
+			and projection.deleted_at is null
+			and exists (
+				select 1
+				from filestore_entries history
+				where history.workspace_uuid = :workspace_uuid
+					and history.filesystem_uuid = :filesystem_uuid
+					and history.uuid = projection.uuid
+					and left(history.path, char_length(:outputs_prefix)) = :outputs_prefix
+			)
+			and not exists (
+				select 1
+				from active_outputs output
+				where output.uuid = projection.uuid
+			)
 	`
 )
 
@@ -167,7 +279,7 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 			return err
 		}
 	}
-	_, err = getFilestoreEntrySQLX(ctx, tx, `
+	entry, err := getFilestoreEntrySQLX(ctx, tx, `
 		insert into filestore_entries (
 			uuid, external_id, organization_uuid, workspace_uuid, filesystem_uuid,
 			kind, path, parent_path, size_bytes, media_type, metadata,
@@ -212,6 +324,35 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	if isUniqueViolation(err) {
 		return ErrFilestorePathExists
 	}
+	if err != nil {
+		return err
+	}
+	return upsertSessionFileProjectionTx(ctx, tx, session, entry.UUID, file, resource.CreatedAt)
+}
+
+func upsertSessionFileProjectionTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	session Session,
+	entryUUID string,
+	file FileRecord,
+	createdAt time.Time,
+) error {
+	_, err := namedExecContext(ctx, tx, upsertSessionFileProjectionSQL, map[string]any{
+		"file_uuid":             entryUUID,
+		"workspace_id":          session.WorkspaceID,
+		"filename":              file.Filename,
+		"mime_type":             file.MimeType,
+		"size_bytes":            file.SizeBytes,
+		"sha256":                file.SHA256,
+		"s3_bucket":             file.S3Bucket,
+		"s3_key":                file.S3Key,
+		"downloadable":          true,
+		"scope_type":            sessionFileProjectionScope,
+		"scope_id":              session.ExternalID,
+		"created_by_api_key_id": session.CreatedByAPIKeyID,
+		"created_at":            filestoreNow(createdAt),
+	})
 	return err
 }
 
@@ -315,7 +456,55 @@ func unbindSessionFileResourceTx(
 	`, map[string]any{"entry_id": entry.ID}); err != nil {
 		return err
 	}
+	if _, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionSQL, map[string]any{
+		"workspace_id": session.WorkspaceID,
+		"file_uuid":    entry.UUID,
+		"scope_type":   sessionFileProjectionScope,
+		"scope_id":     session.ExternalID,
+	}); err != nil {
+		return err
+	}
 	return nil
+}
+
+// SyncSessionFileProjection 把当前 /outputs 命名空间物化为 Files API 的
+// session-scoped 视图。对象字节与配额仍由 Filestore entry 管理，这里只同步元数据。
+func (d *DB) SyncSessionFileProjection(
+	ctx context.Context,
+	workspaceID int64,
+	sessionExternalID string,
+) error {
+	tx, err := d.sql.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	session, err := getSessionSQLX(
+		ctx,
+		tx,
+		lockSessionForResourceMutationQuery,
+		sessionLookupArguments(workspaceID, sessionExternalID),
+	)
+	if err != nil {
+		return err
+	}
+	filesystem, err := lockSessionFilestoreMutationTx(ctx, tx, session)
+	if err != nil {
+		return err
+	}
+	if _, err := namedExecContext(ctx, tx, syncSessionOutputFileProjectionSQL, map[string]any{
+		"workspace_id":          session.WorkspaceID,
+		"workspace_uuid":        filesystem.WorkspaceUUID,
+		"filesystem_uuid":       filesystem.UUID,
+		"outputs_prefix":        "/outputs/",
+		"scope_type":            sessionFileProjectionScope,
+		"scope_id":              session.ExternalID,
+		"created_by_api_key_id": session.CreatedByAPIKeyID,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func softDeleteSessionResourceSQLX(

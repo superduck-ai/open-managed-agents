@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -1135,6 +1136,100 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("primary thread status after details-only update = %+v, want running", threads.Data)
 	}
 
+	sessionRecord := mustSessionRecord(t, app, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(
+		context.Background(),
+		sessionRecord.WorkspaceID,
+		sessionRecord.ExternalID,
+	)
+	if err != nil {
+		t.Fatalf("load Session filesystem for output projection: %v", err)
+	}
+	outputContent := []byte("worker output")
+	outputKey := "session-output/" + strings.TrimPrefix(session.ID, "sesn_")
+	if _, err := app.store.Upload(
+		context.Background(),
+		outputKey,
+		bytes.NewReader(outputContent),
+		storage.UploadOptions{Size: int64(len(outputContent)), ContentType: "text/plain"},
+	); err != nil {
+		t.Fatalf("upload output fixture: %v", err)
+	}
+	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceID:  sessionRecord.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/worker-output.txt",
+		Blob: db.FilestoreFileBlob{
+			SizeBytes:    int64(len(outputContent)),
+			MediaType:    "text/plain",
+			Downloadable: true,
+			MD5:          "00000000000000000000000000000000",
+			SHA256:       strings.Repeat("a", 64),
+			S3Bucket:     app.store.Name(),
+			S3Key:        outputKey,
+		},
+	}); err != nil {
+		t.Fatalf("create output entry: %v", err)
+	}
+	beforeIdleFiles := listFiles(t, app, "scope_id="+session.ID)
+	for _, file := range beforeIdleFiles.Data {
+		if file.Filename == "worker-output.txt" {
+			t.Fatalf("output was projected before idle: %+v", beforeIdleFiles.Data)
+		}
+	}
+
+	const projectionFailureConstraint = "files_reject_session_projection_sync_test"
+	dropProjectionFailureConstraint := func() {
+		t.Helper()
+		if _, err := app.db.Pool.Exec(
+			context.Background(),
+			"alter table files drop constraint if exists "+projectionFailureConstraint,
+		); err != nil {
+			t.Fatalf("drop projection failure constraint: %v", err)
+		}
+	}
+	dropProjectionFailureConstraint()
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		alter table files
+		add constraint `+projectionFailureConstraint+`
+		check (scope_id is null) not valid
+	`); err != nil {
+		t.Fatalf("install projection failure constraint: %v", err)
+	}
+	projectionFailureConstraintActive := true
+	defer func() {
+		if projectionFailureConstraintActive {
+			dropProjectionFailureConstraint()
+		}
+	}()
+
+	failedIdle := doCodeSessionWorkerRequestWithMethod(
+		t,
+		app,
+		http.MethodPut,
+		codeSessionID,
+		"",
+		`{"worker_epoch":`+quoteJSON(workerEpoch)+
+			`,"worker_status":"idle","external_metadata":{"pending_action":null}}`,
+	)
+	assertError(t, failedIdle, http.StatusInternalServerError, "api_error")
+	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "running" {
+		t.Fatalf("public session status after failed projection sync = %q, want running", got)
+	}
+	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
+	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
+		t.Fatalf("primary thread status after failed projection sync = %+v, want running", threads.Data)
+	}
+	filesAfterFailedSync := listFiles(t, app, "scope_id="+session.ID)
+	for _, file := range filesAfterFailedSync.Data {
+		if file.Filename == "worker-output.txt" {
+			t.Fatalf("output was projected after failed sync: %+v", filesAfterFailedSync.Data)
+		}
+	}
+
+	dropProjectionFailureConstraint()
+	projectionFailureConstraintActive = false
+
 	idleState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"idle","external_metadata":{"pending_action":null}}`)
 	if idleState.Worker.WorkerStatus != "idle" || !rawMessageIsJSONNull(idleState.Worker.RequiresActionDetails) {
 		t.Fatalf("idle worker state = %+v, details=%s; want idle with cleared details", idleState.Worker, idleState.Worker.RequiresActionDetails)
@@ -1148,6 +1243,36 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
 	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
 		t.Fatalf("primary thread status after idle = %+v, want idle", threads.Data)
+	}
+	afterIdleFiles := listFiles(t, app, "scope_id="+session.ID)
+	var outputFile *metadataResponse
+	for index := range afterIdleFiles.Data {
+		if afterIdleFiles.Data[index].Filename == "worker-output.txt" {
+			outputFile = &afterIdleFiles.Data[index]
+			break
+		}
+	}
+	if outputFile == nil {
+		t.Fatalf("scoped files after idle = %+v, want worker output", afterIdleFiles.Data)
+	}
+	if !outputFile.Downloadable {
+		t.Fatalf("output projection = %+v, want downloadable", *outputFile)
+	}
+	outputDownload := app.do(
+		t,
+		http.MethodGet,
+		"/v1/files/"+outputFile.ID+"/content?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	defer outputDownload.Body.Close()
+	if outputDownload.StatusCode != http.StatusOK {
+		t.Fatalf("download output status = %d: %s", outputDownload.StatusCode, readAll(t, outputDownload.Body))
+	}
+	if got := readAll(t, outputDownload.Body); !bytes.Equal(got, outputContent) {
+		t.Fatalf("download output = %q, want %q", got, outputContent)
 	}
 	readBackState := getCodeSessionWorkerReadStateResponse(t, app, codeSessionID, workerEpoch)
 	readBackMetadata := codeSessionWorkerReadExternalMetadata(t, readBackState)

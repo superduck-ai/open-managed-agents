@@ -4,6 +4,7 @@ import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming'
 import { type QueryClient } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, normalizeMemoryFolderPath } from './resources/ManagedResources';
+import { sessionFileAPIMountPath } from './sessions/file-resource-path';
 import { compareSessionEvents, sessionEventType } from './sessions/SessionDetailPage';
 import {
   type AgentApiResponse,
@@ -1593,7 +1594,11 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
         environment_id: values.environmentId,
         vault_ids: values.vaultIds,
         metadata: {},
-        resources: [],
+        resources: values.fileResources.map((resource) => ({
+          type: 'file',
+          file_id: resource.fileId.trim(),
+          mount_path: sessionFileAPIMountPath(resource.mountPath),
+        })),
       };
     case 'deployments':
       return {

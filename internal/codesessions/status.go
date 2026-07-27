@@ -15,6 +15,11 @@ func (s *Service) syncPublicSessionStatusFromWorker(ctx context.Context, record 
 	if !ok || strings.TrimSpace(record.SessionExternalID) == "" {
 		return nil
 	}
+	if workerStatus == "idle" {
+		if err := s.db.SyncSessionFileProjection(ctx, record.WorkspaceID, record.SessionExternalID); err != nil && !errors.Is(err, db.ErrNotFound) {
+			return err
+		}
+	}
 	if err := s.db.SetSessionStatus(ctx, record.WorkspaceID, record.SessionExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
 		return err
 	}

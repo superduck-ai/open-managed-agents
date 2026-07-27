@@ -69,7 +69,10 @@ const (
 			where entry.workspace_uuid = (
 				select uuid from workspaces where id = :workspace_id
 			)
-				and entry.source_file_uuid = :file_uuid
+				and (
+					entry.source_file_uuid = CAST(:file_uuid AS uuid)
+					or entry.uuid = CAST(:file_uuid AS uuid)
+				)
 				and entry.deleted_at is null
 		)
 	`

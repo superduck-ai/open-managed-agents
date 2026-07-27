@@ -35,21 +35,6 @@ func filestoreFilesystemColumns() string {
 		created_at, updated_at, deleted_at`
 }
 
-func scanFilestoreFilesystemPGX(row filestorePGXScanner) (FilestoreFilesystem, error) {
-	var databaseRow filestoreFilesystemRow
-	err := row.Scan(&databaseRow.ID, &databaseRow.UUID, &databaseRow.ExternalID,
-		&databaseRow.OrganizationUUID, &databaseRow.WorkspaceUUID, &databaseRow.SessionUUID,
-		&databaseRow.CodeSessionUUID, &databaseRow.CreatedByAPIKeyUUID,
-		&databaseRow.CreatedAt, &databaseRow.UpdatedAt, &databaseRow.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return FilestoreFilesystem{}, ErrNotFound
-	}
-	if err != nil {
-		return FilestoreFilesystem{}, err
-	}
-	return databaseRow.filesystem(), nil
-}
-
 func filestoreEntrySelectSQL() string {
 	return "select " + filestoreEntryColumns() + " from filestore_entries"
 }

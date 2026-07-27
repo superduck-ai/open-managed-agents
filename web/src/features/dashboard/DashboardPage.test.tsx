@@ -423,6 +423,62 @@ describe('Dashboard i18n', () => {
 });
 
 describe('Files page', () => {
+  test('uploads a file and refreshes the workspace file list', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/files');
+    let uploaded = false;
+    const requests = mockFilesList((url, _headers, method) => {
+      if (url === '/v1/files?beta=true' && method === 'POST') {
+        uploaded = true;
+        return {
+          id: 'file_uploaded123456',
+          type: 'file',
+          filename: 'session-input.txt',
+          mime_type: 'text/plain',
+          size_bytes: 13,
+          created_at: new Date().toISOString(),
+          downloadable: false,
+        };
+      }
+      return {
+        data: uploaded
+          ? [
+              {
+                id: 'file_uploaded123456',
+                type: 'file',
+                filename: 'session-input.txt',
+                mime_type: 'text/plain',
+                size_bytes: 13,
+                created_at: new Date().toISOString(),
+                downloadable: false,
+              },
+            ]
+          : [],
+        has_more: false,
+        first_id: uploaded ? 'file_uploaded123456' : null,
+        last_id: uploaded ? 'file_uploaded123456' : null,
+      };
+    });
+
+    renderFilesPage();
+
+    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    const file = new File(['session input'], 'session-input.txt', { type: 'text/plain' });
+    fireEvent.change(await screen.findByLabelText('Choose files to upload'), { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(requests.map((request) => `${request.method} ${request.url}`)).toContain('POST /v1/files?beta=true'),
+    );
+    expect(await screen.findByText('session-input.txt')).toBeTruthy();
+    const uploadRequest = requests.find(
+      (request) => request.url === '/v1/files?beta=true' && request.method === 'POST',
+    );
+    expect(uploadRequest?.body).toBeInstanceOf(FormData);
+    const uploadedFile = (uploadRequest?.body as FormData).get('file') as File;
+    expect(uploadedFile.name).toBe('session-input.txt');
+    expect(await uploadedFile.text()).toBe('session input');
+    expect(uploadRequest?.headers.get('x-workspace-id')).toBe('default');
+  });
+
   test('renders files in the platform table shape with copy and disabled download actions', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/files');
     const clipboardWrite = mock(async (_value: string) => undefined);
@@ -1698,13 +1754,21 @@ function makeWorkspaceContextValue(workspace?: Partial<Workspace>): WorkspaceCon
   };
 }
 
-function mockFilesList(handler: (url: string, headers: Headers) => unknown) {
-  const requests: Array<{ url: string; headers: Headers }> = [];
+function mockFilesList(handler: (url: string, headers: Headers, method: string, body?: BodyInit | null) => unknown) {
+  const requests: Array<{ url: string; method: string; headers: Headers; body?: BodyInit | null }> = [];
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const headers = new Headers(init?.headers);
-    requests.push({ url, headers });
-    const result = handler(url, headers);
+    const request = input instanceof Request ? input : null;
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : new URL(input.url).pathname + new URL(input.url).search;
+    const method = init?.method ?? request?.method ?? 'GET';
+    const headers = new Headers(init?.headers ?? request?.headers);
+    const body = init?.body ?? request?.body;
+    requests.push({ url, method, headers, body });
+    const result = handler(url, headers, method, body);
     if (result instanceof Response) {
       return result;
     }

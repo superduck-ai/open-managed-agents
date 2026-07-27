@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -255,6 +256,41 @@ func TestSessionFileResourceContract(t *testing.T) {
 			file.ID,
 			"/uploads/"+file.ID,
 		)
+		scopedFiles := listFiles(t, app, "scope_id="+created.ID)
+		if len(scopedFiles.Data) != 1 {
+			t.Fatalf("scoped files after create = %+v, want one input projection", scopedFiles.Data)
+		}
+		if scopedFiles.Data[0].ID == file.ID || scopedFiles.Data[0].Filename != file.Filename {
+			t.Fatalf(
+				"input projection = %+v, want a new file ID with filename %q",
+				scopedFiles.Data[0],
+				file.Filename,
+			)
+		}
+		if !scopedFiles.Data[0].Downloadable {
+			t.Fatalf("input projection = %+v, want downloadable", scopedFiles.Data[0])
+		}
+		inputDownload := app.do(
+			t,
+			http.MethodGet,
+			"/v1/files/"+scopedFiles.Data[0].ID+"/content?beta=true",
+			nil,
+			defaultTestKey,
+			true,
+			"",
+		)
+		defer inputDownload.Body.Close()
+		if inputDownload.StatusCode != http.StatusOK {
+			t.Fatalf(
+				"download input projection status = %d: %s",
+				inputDownload.StatusCode,
+				readAll(t, inputDownload.Body),
+			)
+		}
+		wantInput := []byte("quarter,total\nQ1,10\n")
+		if got := readAll(t, inputDownload.Body); !bytes.Equal(got, wantInput) {
+			t.Fatalf("download input projection = %q, want %q", got, wantInput)
+		}
 
 		resp := doSessionRequest(
 			t,
@@ -280,6 +316,13 @@ func TestSessionFileResourceContract(t *testing.T) {
 			file.ID,
 			"/uploads/workspace/data.csv",
 		)
+		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
+		if len(scopedFiles.Data) != 2 {
+			t.Fatalf("scoped files after add = %+v, want two input projections", scopedFiles.Data)
+		}
+		if scopedFiles.Data[0].ID == scopedFiles.Data[1].ID {
+			t.Fatalf("input projections reused file ID: %+v", scopedFiles.Data)
+		}
 		sessionRecord := mustSessionRecord(t, app, created.ID)
 		if _, err := app.db.Pool.Exec(context.Background(), `
 			update workspace_storage_usage
@@ -299,9 +342,18 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if err := app.db.Pool.QueryRow(context.Background(), `
 			select
 				coalesce((
-					select sum(size_bytes)
-					from files
-					where workspace_id = $1 and deleted_at is null
+					select sum(file.size_bytes)
+					from files file
+					where file.workspace_id = $1
+						and file.deleted_at is null
+						and not exists (
+							select 1
+							from filestore_entries entry
+							where entry.workspace_uuid = (
+								select uuid from workspaces where id = $1
+							)
+								and entry.uuid = file.uuid
+						)
 				), 0)
 				+
 				coalesce((
@@ -381,6 +433,10 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if _, err := app.db.GetFile(context.Background(), session.WorkspaceID, file.ID); err != nil {
 			t.Fatalf("source File was changed by resource delete: %v", err)
 		}
+		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
+		if len(scopedFiles.Data) != 1 {
+			t.Fatalf("scoped files after resource delete = %+v, want one remaining input", scopedFiles.Data)
+		}
 	})
 
 	t.Run("success file paths are isolated beneath uploads", func(t *testing.T) {
@@ -392,6 +448,17 @@ func TestSessionFileResourceContract(t *testing.T) {
 		defer deleteSession(t, app, created.ID)
 		if len(created.Resources) != 3 {
 			t.Fatalf("created resources = %d, want 3", len(created.Resources))
+		}
+	})
+
+	t.Run("success deleting session removes scoped projections", func(t *testing.T) {
+		created := createSession(t, app, `{`+base+`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]}`)
+		if scoped := listFiles(t, app, "scope_id="+created.ID); len(scoped.Data) != 1 {
+			t.Fatalf("scoped files before Session delete = %+v, want one input", scoped.Data)
+		}
+		deleteSession(t, app, created.ID)
+		if scoped := listFiles(t, app, "scope_id="+created.ID); len(scoped.Data) != 0 {
+			t.Fatalf("scoped files after Session delete = %+v, want none", scoped.Data)
 		}
 	})
 }
@@ -438,6 +505,20 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 		file.ID,
 		"/uploads/workspace/protected.txt",
 	)
+	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
+	if len(scopedFiles.Data) != 1 {
+		t.Fatalf("scoped files = %+v, want one input projection", scopedFiles.Data)
+	}
+	rejectedProjectionDelete := app.do(
+		t,
+		http.MethodDelete,
+		"/v1/files/"+scopedFiles.Data[0].ID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	assertError(t, rejectedProjectionDelete, http.StatusConflict, "conflict_error")
 	sessionRecord := mustSessionRecord(t, app, session.ID)
 	fileRecord, err := app.db.GetFile(
 		context.Background(),
@@ -560,6 +641,298 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 
 	deleteSession(t, app, session.ID)
 	sessionDeleted = true
+}
+
+func TestSessionFileProjectionWorkspaceIsolation(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("session-file-projection-isolation-bucket"))
+	defer app.close()
+
+	otherKey := "sk-ant-session-file-projection-other"
+	seedWorkspaceKey(
+		t,
+		app.db,
+		"org_session_file_projection_other",
+		"workspace_session_file_projection_other",
+		"api_key_session_file_projection_other",
+		otherKey,
+	)
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-file-projection-isolation-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"session-file-projection-isolation-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	source := uploadFile(t, app, "workspace-private.txt", "text/plain", []byte("workspace private"))
+	defer deleteFile(t, app, source.ID)
+	session := createSession(
+		t,
+		app,
+		`{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+
+			`,"resources":[{"type":"file","file_id":`+quoteJSON(source.ID)+
+			`,"mount_path":"/uploads/workspace-private.txt"}]}`,
+	)
+	defer deleteSession(t, app, session.ID)
+
+	ownerPage := listFiles(t, app, "scope_id="+session.ID)
+	if len(ownerPage.Data) != 1 {
+		t.Fatalf("owner scoped files = %+v, want one input projection", ownerPage.Data)
+	}
+
+	otherPageResponse := app.do(
+		t,
+		http.MethodGet,
+		"/v1/files?beta=true&scope_id="+session.ID,
+		nil,
+		otherKey,
+		true,
+		"",
+	)
+	defer otherPageResponse.Body.Close()
+	if otherPageResponse.StatusCode != http.StatusOK {
+		t.Fatalf(
+			"other workspace scoped list status = %d: %s",
+			otherPageResponse.StatusCode,
+			readAll(t, otherPageResponse.Body),
+		)
+	}
+	var otherPage pageResponse
+	decodeJSON(t, otherPageResponse.Body, &otherPage)
+	if len(otherPage.Data) != 0 {
+		t.Fatalf("other workspace scoped files = %+v, want none", otherPage.Data)
+	}
+
+	otherDownload := app.do(
+		t,
+		http.MethodGet,
+		"/v1/files/"+ownerPage.Data[0].ID+"/content?beta=true",
+		nil,
+		otherKey,
+		true,
+		"",
+	)
+	assertError(t, otherDownload, http.StatusNotFound, "not_found_error")
+}
+
+func TestSessionOutputProjectionSyncsMultipleFiles(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("session-output-multiple-projection-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-output-multiple-projection-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"session-output-multiple-projection-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+	record := mustSessionRecord(t, app, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	)
+	if err != nil {
+		t.Fatalf("load Session filesystem: %v", err)
+	}
+	if _, err := app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/reports",
+		MakeParents:  true,
+	}); err != nil {
+		t.Fatalf("create output directory: %v", err)
+	}
+
+	for _, output := range []struct {
+		path string
+		size int64
+	}{
+		{path: "/outputs/summary.txt", size: 7},
+		{path: "/outputs/reports/details.json", size: 11},
+	} {
+		blob := workspaceStorageBlob(output.size, nil)
+		blob.Downloadable = true
+		if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+			WorkspaceID:  record.WorkspaceID,
+			FilesystemID: filesystem.ID,
+			Path:         output.path,
+			Blob:         blob,
+		}); err != nil {
+			t.Fatalf("create output entry %s: %v", output.path, err)
+		}
+	}
+
+	if err := app.db.SyncSessionFileProjection(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	); err != nil {
+		t.Fatalf("sync multiple output projections: %v", err)
+	}
+
+	page := listFiles(t, app, "scope_id="+session.ID)
+	if len(page.Data) != 2 {
+		t.Fatalf("scoped files after multiple output sync = %+v, want two", page.Data)
+	}
+	byFilename := make(map[string]metadataResponse, len(page.Data))
+	for _, file := range page.Data {
+		byFilename[file.Filename] = file
+	}
+	for filename, size := range map[string]int64{
+		"summary.txt":  7,
+		"details.json": 11,
+	} {
+		file, ok := byFilename[filename]
+		if !ok || file.SizeBytes != size || !file.Downloadable {
+			t.Fatalf(
+				"output projection %q = %+v, present=%t; want size=%d downloadable",
+				filename,
+				file,
+				ok,
+				size,
+			)
+		}
+	}
+}
+
+func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("session-output-projection-bucket"))
+	defer app.close()
+
+	t.Run("failure missing Session", func(t *testing.T) {
+		err := app.db.SyncSessionFileProjection(context.Background(), 1, "session_missing_projection")
+		if !errors.Is(err, db.ErrNotFound) {
+			t.Fatalf("SyncSessionFileProjection() error = %v, want ErrNotFound", err)
+		}
+	})
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-output-projection-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"session-output-projection-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+	record := mustSessionRecord(t, app, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	)
+	if err != nil {
+		t.Fatalf("load Session filesystem: %v", err)
+	}
+	if _, err := app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/reports",
+		MakeParents:  true,
+	}); err != nil {
+		t.Fatalf("create output directory: %v", err)
+	}
+
+	firstBlob := workspaceStorageBlob(7, nil)
+	firstBlob.Downloadable = true
+	entry, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/reports/result.txt",
+		Blob:         firstBlob,
+	})
+	if err != nil {
+		t.Fatalf("create output entry: %v", err)
+	}
+	beforeSyncBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load storage before projection sync: %v", err)
+	}
+	if err := app.db.SyncSessionFileProjection(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	); err != nil {
+		t.Fatalf("sync output projection: %v", err)
+	}
+	afterSyncBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load storage after projection sync: %v", err)
+	}
+	if afterSyncBytes != beforeSyncBytes {
+		t.Fatalf("projection sync storage = %d, want unchanged %d", afterSyncBytes, beforeSyncBytes)
+	}
+	files, err := app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list output projections: %v", err)
+	}
+	if len(files) != 1 || files[0].UUID != entry.Entry.UUID || files[0].S3Key != firstBlob.S3Key ||
+		files[0].Filename != "result.txt" || !files[0].Downloadable {
+		t.Fatalf("output projection = %+v, want current Filestore entry", files)
+	}
+	projectedFileID := files[0].ExternalID
+
+	if err := app.db.SyncSessionFileProjection(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	); err != nil {
+		t.Fatalf("repeat output projection sync: %v", err)
+	}
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list repeated output projections: %v", err)
+	}
+	if len(files) != 1 || files[0].ExternalID != projectedFileID {
+		t.Fatalf("repeated sync projections = %+v, want stable file ID %q", files, projectedFileID)
+	}
+
+	replacement := workspaceStorageBlob(9, nil)
+	replacement.Downloadable = true
+	replaced, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceID:       record.WorkspaceID,
+		FilesystemID:      filesystem.ID,
+		Path:              "/outputs/reports/result.txt",
+		Blob:              replacement,
+		OverwriteExisting: true,
+	})
+	if err != nil {
+		t.Fatalf("overwrite output entry: %v", err)
+	}
+	if replaced.Entry.UUID != entry.Entry.UUID {
+		t.Fatalf("overwritten entry UUID = %q, want stable %q", replaced.Entry.UUID, entry.Entry.UUID)
+	}
+	if err := app.db.SyncSessionFileProjection(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	); err != nil {
+		t.Fatalf("sync overwritten output projection: %v", err)
+	}
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list overwritten output projection: %v", err)
+	}
+	if len(files) != 1 || files[0].ExternalID != projectedFileID || files[0].S3Key != replacement.S3Key ||
+		files[0].SizeBytes != replacement.SizeBytes {
+		t.Fatalf("overwritten projection = %+v, want updated stable file", files)
+	}
+
+	if _, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveFilestoreEntryInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/reports/result.txt",
+	}); err != nil {
+		t.Fatalf("remove output entry: %v", err)
+	}
+	if err := app.db.SyncSessionFileProjection(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	); err != nil {
+		t.Fatalf("sync removed output projection: %v", err)
+	}
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list removed output projection: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("projections after output removal = %+v, want none", files)
+	}
 }
 
 func TestSessionFileReferenceUsesMutableFilestoreView(t *testing.T) {

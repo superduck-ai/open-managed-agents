@@ -1,7 +1,8 @@
-import { Download, FileText } from 'lucide-react';
+import { Download, FileText, Upload } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
+import { Button } from '@/shared/ui/button';
 import {
   CopyIdCell,
   DataTableCell,
@@ -12,6 +13,7 @@ import {
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { toast } from '@/shared/ui/sonner';
 import { useI18n } from '../../shared/i18n';
 import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
@@ -21,6 +23,7 @@ import {
   formatFileId,
   formatRelativeTime,
   listFiles,
+  uploadFile,
   useDashboardWorkspaceScope,
   type ConsoleFile,
   type FilesPageCursor,
@@ -32,6 +35,8 @@ export function FilesPage() {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCursors, setPageCursors] = useState<FilesPageCursor[]>([{}]);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const paginationWorkspaceIdRef = useRef(workspaceId);
   const cursor = paginationWorkspaceIdRef.current === workspaceId ? (pageCursors[pageIndex] ?? {}) : {};
   const filesQuery = useQuery({
@@ -81,6 +86,32 @@ export function FilesPage() {
     }
   };
 
+  const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.currentTarget.files ?? []);
+    if (!selectedFiles.length || uploading) {
+      return;
+    }
+    setUploading(true);
+    try {
+      await Promise.all(selectedFiles.map((file) => uploadFile(file, workspaceId)));
+      toast.success(
+        msg('files.upload.success', '{count, plural, one {File uploaded} other {# files uploaded}}', {
+          count: selectedFiles.length,
+        }),
+      );
+      await filesQuery.refetch();
+    } catch (error) {
+      toast.error(msg('files.upload.error', 'File upload failed'), {
+        description: errorMessage(error),
+      });
+    } finally {
+      setUploading(false);
+      if (uploadInputRef.current) {
+        uploadInputRef.current.value = '';
+      }
+    }
+  };
+
   return (
     <ConsolePageFrame
       title={msg('files.title', 'Files')}
@@ -90,6 +121,22 @@ export function FilesPage() {
         "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
         { workspaceName },
       )}
+      actions={
+        <>
+          <input
+            ref={uploadInputRef}
+            className="sr-only"
+            type="file"
+            multiple
+            aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
+            onChange={(event) => void handleUpload(event)}
+          />
+          <Button type="button" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+            <Upload aria-hidden />
+            {uploading ? msg('files.upload.uploading', 'Uploading...') : msg('files.upload.action', 'Upload files')}
+          </Button>
+        </>
+      }
     >
       <FilesTable
         files={files}

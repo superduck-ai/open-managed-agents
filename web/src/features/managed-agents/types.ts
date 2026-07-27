@@ -536,6 +536,12 @@ export type ManagedEntityFormValues = {
   timezone: string;
   vaultIds: string[];
   memoryStoreIds: string[];
+  fileResources: SessionFileResourceFormValue[];
+};
+
+export type SessionFileResourceFormValue = {
+  fileId: string;
+  mountPath: string;
 };
 
 export type EntityOption = {

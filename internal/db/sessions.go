@@ -330,60 +330,94 @@ func (d *DB) ArchiveSession(ctx context.Context, workspaceID int64, externalID s
 }
 
 func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID string) (Session, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return Session{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	session, err := scanSession(tx.QueryRow(ctx, `
+	session, err := getSessionSQLX(ctx, tx, `
 		update sessions
 		set deleted_at = coalesce(deleted_at, now()),
 			updated_at = now()
-		where workspace_id = $1
-			and external_id = $2
+		where workspace_id = :workspace_id
+			and external_id = :session_external_id
 			and deleted_at is null
 			and status not in ('running', 'rescheduling')
-		returning `+sessionColumns()+`
-	`, workspaceID, externalID))
+		returning `+sessionSQLXColumns+`
+	`, sessionLookupArguments(workspaceID, externalID))
 	if err != nil {
+		return Session{}, err
+	}
+	if _, err := namedExecContext(ctx, tx, `
+		update files projection
+		set deleted_at = coalesce(projection.deleted_at, now())
+		where projection.workspace_id = :workspace_id
+			and projection.scope_type = :scope_type
+			and projection.scope_id = :session_external_id
+			and projection.deleted_at is null
+			and exists (
+				select 1
+				from filestore_entries entry
+				join filestore_filesystems filesystem
+					on filesystem.uuid = entry.filesystem_uuid
+					and filesystem.workspace_uuid = entry.workspace_uuid
+				where entry.uuid = projection.uuid
+					and filesystem.session_uuid = CAST(:session_uuid AS uuid)
+			)
+	`, map[string]any{
+		"workspace_id":        session.WorkspaceID,
+		"scope_type":          sessionFileProjectionScope,
+		"session_external_id": session.ExternalID,
+		"session_uuid":        session.UUID,
+	}); err != nil {
 		return Session{}, err
 	}
 	if err := retireSessionFilesystemTx(ctx, tx, session); err != nil {
 		return Session{}, err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := namedExecContext(ctx, tx, `
 		update session_threads set deleted_at = coalesce(deleted_at, now()), updated_at = now()
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
-	`, workspaceID, externalID); err != nil {
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
+	`, sessionLookupArguments(workspaceID, externalID)); err != nil {
 		return Session{}, err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := namedExecContext(ctx, tx, `
 		update session_resources set deleted_at = coalesce(deleted_at, now()), updated_at = now()
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
-	`, workspaceID, externalID); err != nil {
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
+	`, sessionLookupArguments(workspaceID, externalID)); err != nil {
 		return Session{}, err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := namedExecContext(ctx, tx, `
 		update session_events set deleted_at = coalesce(deleted_at, now())
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
-	`, workspaceID, externalID); err != nil {
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
+	`, sessionLookupArguments(workspaceID, externalID)); err != nil {
 		return Session{}, err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := namedExecContext(ctx, tx, `
 		update environment_work
 		set state = case when state in ('stopped') then state else 'stopping' end,
 			stop_requested_at = coalesce(stop_requested_at, now()),
 			updated_at = now()
-		where workspace_id = $1
-			and environment_external_id = $2
-			and data->>'id' = $3
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and data->>'id' = :session_external_id
 			and deleted_at is null
 			and state not in ('stopped')
-	`, workspaceID, session.EnvironmentExternalID, externalID); err != nil {
+	`, map[string]any{
+		"workspace_id":            session.WorkspaceID,
+		"environment_external_id": session.EnvironmentExternalID,
+		"session_external_id":     session.ExternalID,
+	}); err != nil {
 		return Session{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return Session{}, err
 	}
 	return session, nil

@@ -53,8 +53,18 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int
 	if err := namedGetContext(ctx, tx, &usage, `
 		select
 			coalesce((
-				select sum(size_bytes) from files
-				where workspace_id = :workspace_id and deleted_at is null
+				select sum(file.size_bytes)
+				from files file
+				where file.workspace_id = :workspace_id
+					and file.deleted_at is null
+					and not exists (
+						select 1
+						from filestore_entries entry
+						where entry.workspace_uuid = (
+							select uuid from workspaces where id = :workspace_id
+						)
+							and entry.uuid = file.uuid
+					)
 			), 0) as files_bytes,
 			coalesce((
 				select sum(size_bytes) from filestore_entries

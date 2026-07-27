@@ -8,6 +8,9 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// Managed Agent 启动事务编排：锁序固定为 Environment Work → Session，
+// SQL 常量与 Terminate 实现见 managed_agent_runtime_sqlx.go。
+
 type CreateManagedAgentRuntimeInput struct {
 	CodeSession                 CreateCodeSessionInput
 	SessionMetadataPatch        json.RawMessage
@@ -58,32 +61,43 @@ func (d *DB) CreateManagedAgentRuntime(
 	return result, nil
 }
 
+// createManagedAgentRuntimeTx 在同一只 sqlx.Tx 中完成 Managed Agent 启动提交：
+//  1. 锁定 active Environment Work（锁序第一步）
+//  2. 锁定 idle Session 并读取事件快照（锁序第二步）
+//  3. 回调拼装 initial inbound（禁止再访问数据库）
+//  4. 插入 Code Session，并写入 inbound 事件、推进 sequence
+//  5. 发布 Session / Work runtime metadata
+//  6. 加载签发 session-ingress JWT 所需的凭证上下文
 func createManagedAgentRuntimeTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
 	input CreateManagedAgentRuntimeInput,
 	buildInitialInboundEvents func([]SessionEvent) ([]AppendCodeSessionEventInput, error),
 ) (CreateManagedAgentRuntimeResult, error) {
-	workArguments := map[string]any{
-		"workspace_id":            input.CodeSession.WorkspaceID,
-		"environment_external_id": input.EnvironmentExternalID,
-		"work_external_id":        input.WorkExternalID,
-	}
-	work, err := getEnvironmentWorkSQLX(ctx, tx, lockManagedAgentEnvironmentWorkQuery, workArguments)
+	work, err := lockManagedAgentEnvironmentWork(
+		ctx,
+		tx,
+		input.CodeSession.WorkspaceID,
+		input.EnvironmentExternalID,
+		input.WorkExternalID,
+	)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
 	if work.State != "active" {
 		return CreateManagedAgentRuntimeResult{}, ErrInvalidState
 	}
+
 	publicEvents, err := lockSessionAndListEventsTx(ctx, tx, input.CodeSession.WorkspaceID, input.CodeSession.SessionExternalID)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
+
 	inboundEvents, err := buildInitialInboundEvents(publicEvents)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
+
 	codeSession, err := insertCodeSessionSQLX(ctx, tx, input.CodeSession)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
@@ -93,6 +107,7 @@ func createManagedAgentRuntimeTx(
 		return CreateManagedAgentRuntimeResult{}, err
 	}
 	codeSession.LastInboundSequenceNum = lastInboundSequence
+
 	if _, err := patchSessionMetadataSQLX(
 		ctx,
 		tx,
@@ -102,11 +117,18 @@ func createManagedAgentRuntimeTx(
 	); err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	workArguments["runtime_patch"] = jsonArg(input.EnvironmentWorkRuntimePatch)
-	work, err = getEnvironmentWorkSQLX(ctx, tx, patchManagedAgentWorkMetadataQuery, workArguments)
+	work, err = patchManagedAgentWorkMetadata(
+		ctx,
+		tx,
+		codeSession.WorkspaceID,
+		input.EnvironmentExternalID,
+		input.WorkExternalID,
+		input.EnvironmentWorkRuntimePatch,
+	)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
+
 	credentials, err := getCodeSessionCredentialContextForIssueSQLX(
 		ctx,
 		tx,
@@ -136,5 +158,5 @@ func lockSessionAndListEventsTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 	if session.ArchivedAt != nil || session.Status != "idle" {
 		return nil, ErrInvalidState
 	}
-	return listSessionEventsSQLX(ctx, tx, listManagedAgentSessionEventsQuery, arguments)
+	return listManagedAgentSessionEvents(ctx, tx, workspaceID, sessionExternalID)
 }

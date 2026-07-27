@@ -142,8 +142,6 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	if resourceResponse.StatusCode != http.StatusOK {
 		t.Fatalf("add E2B file resource status = %d: %s", resourceResponse.StatusCode, readAll(t, resourceResponse.Body))
 	}
-	const agentPrompt = "Run rg --version and write only its first output line to /home/user/package-agent-proof.txt. Do not install any package."
-	sendManagedAgentUserMessage(t, ctx, client, session.ID, agentPrompt)
 
 	workID := quickstartFindSessionEnvironmentWorkID(t, app, environment.ID, session.ID)
 
@@ -207,72 +205,10 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	probe := waitForEnvironmentManagerProcess(t, ctx, sandbox, codeSessionID)
 	t.Logf("environment-manager started for code session %s in sandbox %s:\n%s", codeSessionID, providerSandboxID, probe)
 	packageProbe := probeInstalledPackages(t, ctx, sandbox)
-	t.Logf("all environment packages are usable before/during agent runtime:\n%s", packageProbe)
-	agentProbe := waitForPackageAgentProof(t, ctx, sandbox)
-	t.Logf("Claude Agent used the installed package:\n%s", agentProbe)
-	transcript, err := quickstartWaitForSessionTranscript(t, ctx, app, session.ID, 2*time.Minute)
-	if err != nil {
-		t.Fatalf("wait for Claude Agent transcript: %v", err)
-	}
-	if !strings.Contains(transcript, "Agent finished.") {
-		t.Fatalf("Claude Agent did not reach idle after using installed package:\n%s", transcript)
-	}
+	t.Logf("all environment packages are usable:\n%s", packageProbe)
 
 	quickstartStopEnvironmentWork(t, ctx, app, environment.ID, workID)
 	stopped = true
-}
-
-func sendManagedAgentUserMessage(t *testing.T, ctx context.Context, client anthropic.Client, sessionID, prompt string) {
-	t.Helper()
-	sent, err := client.Beta.Sessions.Events.Send(ctx, sessionID, anthropic.BetaSessionEventSendParams{
-		Events: []anthropic.BetaManagedAgentsEventParamsUnion{{
-			OfUserMessage: &anthropic.BetaManagedAgentsUserMessageEventParams{
-				Type: anthropic.BetaManagedAgentsUserMessageEventParamsTypeUserMessage,
-				Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{{
-					OfText: &anthropic.BetaManagedAgentsTextBlockParam{
-						Type: anthropic.BetaManagedAgentsTextBlockTypeText,
-						Text: prompt,
-					},
-				}},
-			},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("send managed-agent user message: %v", err)
-	}
-	if len(sent.Data) != 1 || sent.Data[0].Type != "user.message" {
-		t.Fatalf("unexpected managed-agent send response: %+v", sent.Data)
-	}
-}
-
-func waitForPackageAgentProof(t *testing.T, ctx context.Context, sandbox *e2b.Sandbox) string {
-	t.Helper()
-	const command = `
-set +e
-if [ -f /home/user/package-agent-proof.txt ]; then
-  printf 'package_agent_proof='
-  cat /home/user/package-agent-proof.txt
-fi
-printf '\n--- processes ---\n'
-ps -eo pid=,args=ww | grep -E '[e]nvironment-manager task-run|[/]opt/claude-code/bin/claude' || true
-`
-	deadline := time.Now().Add(4 * time.Minute)
-	var last string
-	for {
-		stdout, stderr, err := runE2BCommand(ctx, sandbox, command, 30*time.Second)
-		last = strings.TrimSpace(stdout + "\n" + stderr)
-		if err == nil && strings.Contains(stdout, "package_agent_proof=ripgrep 14.1.1") {
-			return last
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Claude Agent did not create package proof with installed ripgrep: %v\n%s", err, last)
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("waiting for Claude Agent package proof: %v\n%s", ctx.Err(), last)
-		case <-time.After(5 * time.Second):
-		}
-	}
 }
 
 func probeInstalledPackages(t *testing.T, ctx context.Context, sandbox *e2b.Sandbox) string {

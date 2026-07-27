@@ -131,17 +131,6 @@ bootstrap:
 	}
 }
 
-func TestLoadDefaultsToManagedAgentSandboxTemplateName(t *testing.T) {
-	prepareLoadTest(t)
-	cfg, err := loadConfigTestYAML(t, "")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.E2B.Template != "managed-agent-sandbox" {
-		t.Fatalf("E2B.Template = %q, want managed-agent-sandbox", cfg.E2B.Template)
-	}
-}
-
 func TestLoadRejectsChainedAnthropicUpstreamModelMappings(t *testing.T) {
 	prepareLoadTest(t)
 	_, err := loadConfigTestYAML(t, `

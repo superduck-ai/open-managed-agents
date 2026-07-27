@@ -3,10 +3,14 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/samber/lo"
 )
+
+// Managed Agent 启动相关的 SQL 常量、Terminate 与具名查询 helper。
+// 事务编排见 managed_agent_runtime.go。
 
 const (
 	// lockManagedAgentEnvironmentWorkQuery 与 patchManagedAgentWorkMetadataQuery
@@ -118,6 +122,50 @@ func (d *DB) TerminateManagedAgentCodeSession(
 		return err
 	}
 	return tx.Commit()
+}
+
+func lockManagedAgentEnvironmentWork(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	workspaceID int64,
+	environmentExternalID string,
+	workExternalID string,
+) (EnvironmentWork, error) {
+	return getEnvironmentWorkSQLX(ctx, database, lockManagedAgentEnvironmentWorkQuery, map[string]any{
+		"workspace_id":            workspaceID,
+		"environment_external_id": environmentExternalID,
+		"work_external_id":        workExternalID,
+	})
+}
+
+func patchManagedAgentWorkMetadata(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	workspaceID int64,
+	environmentExternalID string,
+	workExternalID string,
+	runtimePatch json.RawMessage,
+) (EnvironmentWork, error) {
+	return getEnvironmentWorkSQLX(ctx, database, patchManagedAgentWorkMetadataQuery, map[string]any{
+		"workspace_id":            workspaceID,
+		"environment_external_id": environmentExternalID,
+		"work_external_id":        workExternalID,
+		"runtime_patch":           jsonArg(runtimePatch),
+	})
+}
+
+func listManagedAgentSessionEvents(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	workspaceID int64,
+	sessionExternalID string,
+) ([]SessionEvent, error) {
+	return listSessionEventsSQLX(
+		ctx,
+		database,
+		listManagedAgentSessionEventsQuery,
+		sessionLookupArguments(workspaceID, sessionExternalID),
+	)
 }
 
 func getEnvironmentWorkSQLX(

@@ -26,7 +26,7 @@ OMA 不创造统一的 name/version DSL，也不增加 Build、Artifact、Runtim
 - Environment Manager 拥有把 v1 Packages Manifest 应用到当前 Sandbox 文件系统的 Go 实现。
 - `managed-agent-sandbox` 拥有固定 runtime、Package Manager、mirror、PATH、安装前缀、root 身份和 Environment Manager binary 的镜像合同。
 
-本 PR 在每个新 Session Sandbox 中调用 Environment Manager 安装一次 Packages。OMA 不再包含或向 Sandbox 写入 Python Provisioner、manifest 文件或其他安装 executable。长期按 ADR 0002/0003 将同一安装能力复用于 Packages Template materialization，避免再次迁移 Package Manager 实现。
+本 PR 在每个新 Session Sandbox 中调用 Environment Manager 安装一次 Packages。OMA 不再包含或向 Sandbox 写入 Python Provisioner、manifest 文件或其他安装 executable。后续可将同一安装能力复用于 Packages Template materialization，避免再次迁移 Package Manager 实现。
 
 | 范围 | 安装发生位置 | 安装调用方 | Session Sandbox 网络边界 |
 |---|---|---|---|
@@ -475,7 +475,7 @@ limited Environment若未启用`allow_package_managers`，Package安装会按默
 - Proxy每次CONNECT重新读取当前Environment与AgentSnapshot并执行limited/unrestricted、MCP、Package Manager host、SSRF和目标校验。
 - 直接socket、unset proxy、非HTTPS或不遵守代理环境变量的进程可以绕过proxy的“每次CONNECT读取最新策略”，但仍受Sandbox创建时E2B网络快照约束。
 
-因此proxy层仍是best-effort的动态策略执行点，不能把它单独描述为完整隔离；E2B创建时策略提供静态纵深防御，ADR 0005/0006和CCR upstream proxy设计同步记录两层边界。
+因此proxy层仍是best-effort的动态策略执行点，不能把它单独描述为完整隔离；E2B创建时策略提供静态纵深防御。两层边界见 `docs/design/be/ccrv2/upstream-proxy-and-model-runtime.md`。
 
 ## 9. 三个仓库的实现位置
 
@@ -601,9 +601,9 @@ E2B实现执行`Start → SendStdin → CloseStdin → Wait`。它不能复用�
 
 - `internal/environments/package_provisioner_test.go`覆盖manifest、空配置、特殊字符、安全校验和结果解析；Package Manager执行顺序由Environment Manager仓库测试覆盖。
 - `tests/environments_api_test.go`继续覆盖官方Go SDK强类型创建、更新、读取和列出Packages。
-- `tests/environments_runner_cloud_test.go`调整为stdin command顺序、网络过渡、固定命令、失败/stop不创建Code Session、event handoff和清理日志。
+- `tests/environments_runner_cloud_test.go`覆盖stdin command顺序、失败/JSON/stop不启动manager、装包窗口内 event handoff，以及成功路径创建 Code Session。
 - `tests/environments_packages_lifecycle_e2e_test.go`继续验证Environment更新只影响后续Sandbox，并保持Session文件系统隔离。
-- `tests/environments_full_e2b_bridge_integration_test.go`继续通过六类真实Packages与Claude Agent probe证明安装结果可见。
+- `tests/environments_full_e2b_bridge_integration_test.go`通过六类真实 Packages 的命令探测证明安装结果在 sandbox PATH/runtime 中可见。
 
 CI在没有E2B凭证时仍必须编译tagged acceptance tests：
 
@@ -649,12 +649,10 @@ Build Key标识规范化输入，不是Artifact digest，也不承诺未固定�
 
 ## 13. 后续文档同步
 
-本文获批后再同步以下决策记录和外部合同：
+本文获批后再同步以下外部合同与领域说明：
 
-- 更新ADR 0002，区分OMA materialization controller与Manager filesystem executor。
-- 更新ADR 0005/0006，记录limited创建时投影、Package Manager host catalog与运行期动态proxy的组合边界。
 - 修正`CONTEXT.md`中Environment Manager、Sandbox root runtime与User-owned Packages layer的冲突定义。
 - 在Environment Manager仓库补充命令级实现说明。
 - 更新`managed-agent-sandbox` README与contract verifier说明。
 
-这些同步必须在代码实现合并前完成，避免设计文档、领域语言和实际安全边界互相矛盾。
+这些同步应在相关实现合并前后完成，避免设计文档、领域语言和实际安全边界互相矛盾。

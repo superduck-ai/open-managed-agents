@@ -49,7 +49,7 @@ flowchart LR
 
 应用启动时只创建一个 `internal/storage.Client`，再用配置中的默认 bucket 名派生并检查一个 `storage.ObjectStore`，供 Files、Skills、Batches、Memory 和 Filestore 共享。`Client.ForBucket(name)` 不新建网络连接，只生成不可变的 bucket 作用域对象存储；通用对象清理 worker 因任务本身持久化了 bucket 名，直接按每条任务选择对象存储，因此可以在同一 endpoint、region 和凭证范围内清理多个 bucket。各资源统一依赖 `storage.ObjectStore` 的 `Upload`、`Open`、`Copy` 和 `Delete` 操作，不再保留旧 `Put/Get/Delete` 方言或 Filestore 专属适配接口。`UploadOptions.Size` 区分已知长度与未知长度流；`Open` 的可选字节区间支持范围读取；`DeleteOptions` 分别表达普通删除、精确版本删除和同键全部版本清理。S3 错误分类、版本查询及删除标记清理由共享实现统一负责。
 
-数据库访问采用渐进迁移：Files API 的创建、读取、列表/游标分页、软删除、对象清理任务和配额账本更新全部使用 `sqlx` 的命名参数与结构体映射；创建和软删除分别在一只 `sqlx.Tx` 中持有 workspace lock 并更新账本。Filestore 独立查询、目录枚举、命名空间写入、filesystem cleanup job 处理、对象清理任务状态变更及工作区用量读取也使用相同边界。Session API 与手动 Deployment Run 内嵌 Session 都复用 `insertSessionSQLXTx`，Session、filesystem、固定根目录、thread、resources、File resource 对应的 Filestore entry 和 environment work 只保留一条创建路径；手动 Run 的 deployment 锁、初始 events、run row 和 `last_run_at` 也在同一只 `sqlx.Tx` 中提交。单独新增或删除 resource 会锁定活动 Session，并在同一只 `sqlx.Tx` 中同时维护 resource 与对应的 Filestore entry，避免 API 合同和 filesystem namespace 分叉。创建、覆盖、移动和删除普通 entry 时，workspace/filesystem advisory lock、`FOR UPDATE` 校验、容量账本变更与清理任务写入全部加入同一只 `sqlx.Tx`，不会在一次业务事务中混用 `pgx.Tx` 与 `sqlx.Tx`。Managed Agent 启动事务同样落在这条边界上：Work 行锁、Session 行锁与事件快照、Code Session 创建、initial inbound event 入队、Session/Work runtime metadata 发布和凭证上下文查询共用同一只 `sqlx.Tx`；`code_sessions` 的插入、凭证投影和 `PatchSessionMetadata` 因此一并迁移到命名参数与 `codeSessionRow`/`codeSessionCredentialContextRow` 结构体映射，事务内外只保留一条 SQL 路径。本期未实质修改的 Session 删除事务和 TTL 到期扫描仍保留既有原生 `pgx.Tx` 事务链。`sqlx` 通过 `pgx/stdlib` 复用应用唯一的 `pgxpool`，`database/sql` 包装层的空闲连接上限固定为 0，物理连接数量与寿命仍由 `pgxpool` 统一管理。
+数据库访问采用渐进迁移：Files API 的创建、读取、列表/游标分页、软删除、对象清理任务和配额账本更新全部使用 `sqlx` 的命名参数与结构体映射；创建和软删除分别在一只 `sqlx.Tx` 中持有 workspace lock 并更新账本。Filestore 独立查询、目录枚举、命名空间写入、filesystem cleanup job 处理、对象清理任务状态变更及工作区用量读取也使用相同边界。Session API 与手动 Deployment Run 内嵌 Session 都复用 `insertSessionSQLXTx`，Session、filesystem、固定根目录、thread、resources、File resource 对应的 Filestore entry 和 environment work 只保留一条创建路径；手动 Run 的 deployment 锁、初始 events、run row 和 `last_run_at` 也在同一只 `sqlx.Tx` 中提交。单独新增或删除 resource 会锁定活动 Session，并在同一只 `sqlx.Tx` 中同时维护 resource 与对应的 Filestore entry，避免 API 合同和 filesystem namespace 分叉。创建、覆盖、移动和删除普通 entry 时，workspace/filesystem advisory lock、`FOR UPDATE` 校验、容量账本变更与清理任务写入全部加入同一只 `sqlx.Tx`，不会在一次业务事务中混用 `pgx.Tx` 与 `sqlx.Tx`。本期未实质修改的 Session 删除事务和 TTL 到期扫描仍保留既有原生 `pgx.Tx` 事务链。`sqlx` 通过 `pgx/stdlib` 复用应用唯一的 `pgxpool`，`database/sql` 包装层的空闲连接上限固定为 0，物理连接数量与寿命仍由 `pgxpool` 统一管理。
 
 ## 鉴权和租户边界
 
@@ -150,7 +150,6 @@ sequenceDiagram
     R->>D: Atomically replace /skills archive entries
     R->>E: Create Sandbox
     R->>E: Provision Environment Packages
-    R->>D: Heartbeat Work and verify Session is launchable
     R->>D: Resolve trusted filesystem scope
     R->>R: Issue filesystem RW and readonly tokens
     R->>E: Write 0600 rclone config
@@ -160,9 +159,10 @@ sequenceDiagram
         R->>E: Files.Exists(/tmp/rclone-mounts/ready)
     end
     R->>E: Delete token config, retry up to 3 times
-    R->>R: Mark Sandbox running
-    R->>D: Atomically create Code Session/events and publish runtime metadata
+    R->>R: Mark running and heartbeat Work
+    R->>D: Create local Code Session
     R->>M: Start Environment Manager
+    R->>D: Atomically publish Session and Work runtime metadata
 ```
 
 Session 与 Deployment File resource 的公开合同固定为：
@@ -194,7 +194,7 @@ File resource 写入时，服务在当前 workspace 中解析并锁定活动 Fil
 
 Environment Manager 不再接收 `type=file` resource。它只在 rclone ready 后看到已经完成的 `/uploads` 文件系统视图；File 的下载、路径投影或内容刷新均不属于 Environment Manager 职责。
 
-Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的 Packages、heartbeat/Session 预检、身份解析、rclone 启动、ready、runtime 事务或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 Packages 成功、首次 heartbeat、Session 预检、rclone ready 和 Sandbox running 之后创建；同一事务写入 initial events 并发布 Session/Work runtime metadata。Environment Manager 启动失败时，Runner 将 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，并在 metadata 仍指向该 Code Session 时撤销 runtime 字段，再 Kill Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
+Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的 Packages、身份解析、rclone 启动、ready、heartbeat 或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 Packages 成功、rclone ready、Sandbox running 和首次 heartbeat 成功之后创建；Environment Manager 启动或运行时 metadata 原子发布失败时，Runner 将 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
 
 ## 数据模型
 

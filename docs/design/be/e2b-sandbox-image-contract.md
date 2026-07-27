@@ -51,30 +51,24 @@ File resource 不新增独立 FUSE mount，也不创建逐文件软链接。`mou
 flowchart TD
     R["Resolve trusted Session filesystem scope"] --> A["Create E2B Sandbox"]
     A --> P["Provision Environment Packages"]
-    P --> L["Heartbeat Work and verify Session is launchable"]
-    L --> W["Write config and chmod 0600"]
-    W --> B["Start fixed rclone-filestore binary"]
+    P --> W["Write config and chmod 0600"]
+    W --> S["Remove legacy skill symlink and create mountpoint"]
+    S --> B["Start fixed rclone-filestore binary"]
     B --> C{"All five mounts ready?"}
     C -->|"probe error / 20s timeout"| F["Fail work and kill Sandbox"]
     C -->|"yes"| D["Delete token config, retry up to 3 times"]
-    D --> G["Mark Sandbox running"]
-    G --> I["Atomically create Code Session/events and publish runtime metadata"]
+    D --> G["Mark Sandbox running and heartbeat Work"]
+    G --> I["Create local Code Session"]
     I --> H["Start Environment Manager"]
-    H --> J{"Start accepted?"}
-    J -->|"no"| F
-    J -->|"yes"| K["Environment Manager registers worker and starts Claude"]
+    H --> J["Publish runtime metadata atomically"]
 ```
 
-File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Runner 不在启动时修复 namespace。Environment Manager 不能先于 Packages 成功、Work/Session 预检和 rclone ready 启动；最终 runtime 事务会再次锁定并验证 active Work 与 idle、未归档 Session。身份解析、启动或 ready 错误进入统一失败清理。Environment Manager 启动失败会终止刚创建的 Code Session，并只在 runtime metadata 仍指向该 Code Session 时撤销相应字段。ready 后配置删除失败会有限重试并记录脱敏告警，不会杀掉已经就绪的 Sandbox；outputs token 在协议层只允许写 `/outputs`。
+File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Runner 不在启动时修复 namespace。Environment Manager 不能先于 Packages 成功和 rclone ready 启动；身份解析、启动或 ready 错误进入统一失败清理。ready 后配置删除失败会有限重试并记录脱敏告警，不会杀掉已经就绪的 Sandbox；outputs token 在协议层只允许写 `/outputs`。
 
 ## 镜像验收
 
-仓库中的真实 E2E 固定使用本地 Docker 标签
-`managed-agent-sandbox:latest`（由 `just pull-sandbox-image` /
-`scripts/pull-managed-agent-sandbox.sh` 从
-`registry.gz.cvte.cn/oma/managed-agent-sandbox:latest` 拉取并打标）。
-e2b-local 按短名 `name:tag` 发现模板，完整 registry 路径在本地会 404。
-避免测试配置静默回退到不含
+仓库中的真实 E2E 固定使用
+`registry.gz.cvte.cn/oma/managed-agent-sandbox:latest`，避免测试配置静默回退到不含
 `rclone-filestore` 的通用 template。部署前仍应将通过验收的镜像 digest 固化到发布系统，
 不能把可变的 `latest` 当作生产可复现性边界。
 

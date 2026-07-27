@@ -37,24 +37,6 @@ Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
 同一 filesystem 内，路径和具体 skill version UUID 都唯一。Snapshot 中两个 skill
 若声明相同目录但不是同一具体版本，启动失败，不能让后一个静默覆盖前一个。
 
-技能投影与网络、Packages 和 runtime 提交的组合顺序如下：
-
-1. Runner 先按 Environment 开关解析 Session snapshot 中的 MCP hosts，并在 Provider
-   `Resolve` 前覆盖 `mcp_allowed_hosts` Work metadata；空集合也显式写成 `[]`，清除陈旧授权。
-2. E2B Provider 将 limited policy 的显式 hosts、Package Manager hosts 和受开关约束的
-   MCP hosts 组合成创建时 `NetworkOpts`；畸形配置或 metadata fail closed。
-3. `Resolve` 成功后，Runner 解析具体 skill versions，并在 Session filesystem 中原子替换
-   archive entries。该步骤只读 catalog metadata，不下载 archive。
-4. Sandbox 创建后，Runner 通过固定的
-   `environment-manager provision-packages --protocol v1 --stdin` 合同安装 Environment
-   Packages；包清单只走 stdin，结果按 protocol version、status 和 exit code 严格校验。
-5. Packages 成功后，Runner heartbeat Work、确认 Session 仍为 idle 且未归档，然后启动
-   包含 `/skills` 在内的五个 rclone mount 并等待 ready。
-6. Runner 标记 Sandbox running，再以单个 sqlx 事务锁定 active Work 与 idle Session，
-   读取锁内最终 event 快照，创建 Code Session/initial inbound queue，并发布 Work/Session
-   runtime identity。随后才把双凭证通过 stdin 交给 Environment Manager；启动失败会终止
-   Code Session、按匹配 identity 撤销 runtime metadata 并清理 Sandbox。
-
 ```mermaid
 flowchart LR
     A["Session agent snapshot"] --> B["Resolve concrete catalog versions"]

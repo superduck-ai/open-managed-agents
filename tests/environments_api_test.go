@@ -75,10 +75,16 @@ type environmentWorkStatsAPIResponse struct {
 	WorkersPolling *int    `json:"workers_polling"`
 }
 
-func assertSDKPackages(t *testing.T, packages anthropic.BetaPackages, wantAPT, wantPIP []string) {
+func assertSDKPackages(t *testing.T, packages anthropic.BetaPackages, want anthropic.BetaPackagesParams) {
 	t.Helper()
-	if packages.Type != anthropic.BetaPackagesTypePackages || !slices.Equal(packages.Apt, wantAPT) || !slices.Equal(packages.Pip, wantPIP) {
-		t.Fatalf("SDK packages = %#v, want apt=%#v pip=%#v", packages, wantAPT, wantPIP)
+	if packages.Type != anthropic.BetaPackagesTypePackages ||
+		!slices.Equal(packages.Apt, want.Apt) ||
+		!slices.Equal(packages.Cargo, want.Cargo) ||
+		!slices.Equal(packages.Gem, want.Gem) ||
+		!slices.Equal(packages.Go, want.Go) ||
+		!slices.Equal(packages.Npm, want.Npm) ||
+		!slices.Equal(packages.Pip, want.Pip) {
+		t.Fatalf("SDK packages = %#v, want %#v", packages, want)
 	}
 }
 
@@ -251,15 +257,20 @@ func TestOfficialSDKEnvironmentPackagesRoundTrip(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("environment-sdk-packages-bucket"))
 	defer app.close()
 	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
+	createdPackages := anthropic.BetaPackagesParams{
+		Type:  anthropic.BetaPackagesParamsTypePackages,
+		Apt:   []string{"ffmpeg"},
+		Cargo: []string{"ripgrep@14.1.1"},
+		Gem:   []string{"rake:13.2.1"},
+		Go:    []string{"golang.org/x/tools/cmd/goimports@v0.35.0"},
+		Npm:   []string{"typescript@5.9.3"},
+		Pip:   []string{"numpy==2.3.5"},
+	}
 	created, err := client.Beta.Environments.New(ctx, anthropic.BetaEnvironmentNewParams{
 		Name: "sdk-packages-" + strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", ""),
 		Config: anthropic.BetaEnvironmentNewParamsConfigUnion{OfCloud: &anthropic.BetaCloudConfigParams{
 			Networking: anthropic.BetaCloudConfigParamsNetworkingUnion{OfUnrestricted: &anthropic.BetaUnrestrictedNetworkParam{}},
-			Packages: anthropic.BetaPackagesParams{
-				Type: anthropic.BetaPackagesParamsTypePackages, Apt: []string{"ffmpeg"}, Cargo: []string{"ripgrep@14.1.1"},
-				Gem: []string{"rake:13.2.1"}, Go: []string{"golang.org/x/tools/cmd/goimports@v0.35.0"},
-				Npm: []string{"typescript@5.9.3"}, Pip: []string{"numpy==2.3.5"},
-			},
+			Packages:   createdPackages,
 		}},
 	})
 	if err != nil {
@@ -267,23 +278,28 @@ func TestOfficialSDKEnvironmentPackagesRoundTrip(t *testing.T) {
 	}
 	defer cleanupEnvironmentRows(t, app.db, created.ID)
 	defer client.Beta.Environments.Delete(context.Background(), created.ID, anthropic.BetaEnvironmentDeleteParams{})
-	assertSDKPackages(t, created.Config.Packages, []string{"ffmpeg"}, []string{"numpy==2.3.5"})
+	assertSDKPackages(t, created.Config.Packages, createdPackages)
 
+	updatedPackages := anthropic.BetaPackagesParams{
+		Type: anthropic.BetaPackagesParamsTypePackages,
+		Apt:  []string{"jq"},
+		Pip:  []string{"httpx==0.28.1"},
+	}
 	updated, err := client.Beta.Environments.Update(ctx, created.ID, anthropic.BetaEnvironmentUpdateParams{
 		Config: anthropic.BetaEnvironmentUpdateParamsConfigUnion{OfCloud: &anthropic.BetaCloudConfigParams{
-			Packages: anthropic.BetaPackagesParams{Type: anthropic.BetaPackagesParamsTypePackages, Apt: []string{"jq"}, Pip: []string{"httpx==0.28.1"}},
+			Packages: updatedPackages,
 		}},
 	})
 	if err != nil {
 		t.Fatalf("SDK update environment: %v", err)
 	}
-	assertSDKPackages(t, updated.Config.Packages, []string{"jq"}, []string{"httpx==0.28.1"})
+	assertSDKPackages(t, updated.Config.Packages, updatedPackages)
 
 	got, err := client.Beta.Environments.Get(ctx, created.ID, anthropic.BetaEnvironmentGetParams{})
 	if err != nil {
 		t.Fatalf("SDK get environment: %v", err)
 	}
-	assertSDKPackages(t, got.Config.Packages, []string{"jq"}, []string{"httpx==0.28.1"})
+	assertSDKPackages(t, got.Config.Packages, updatedPackages)
 
 	page, err := client.Beta.Environments.List(ctx, anthropic.BetaEnvironmentListParams{})
 	if err != nil {
@@ -291,7 +307,7 @@ func TestOfficialSDKEnvironmentPackagesRoundTrip(t *testing.T) {
 	}
 	for _, environment := range page.Data {
 		if environment.ID == created.ID {
-			assertSDKPackages(t, environment.Config.Packages, []string{"jq"}, []string{"httpx==0.28.1"})
+			assertSDKPackages(t, environment.Config.Packages, updatedPackages)
 			return
 		}
 	}
@@ -316,25 +332,6 @@ func TestEnvironmentsSchemaHasNoForeignKeys(t *testing.T) {
 	}
 	if foreignKeyCount != 0 {
 		t.Fatalf("environments foreign key count = %d, want 0", foreignKeyCount)
-	}
-}
-
-func TestEnvironmentsSchemaDefaultsToManagedAgentSandboxTemplateName(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("environments-template-default-bucket"))
-	defer app.close()
-
-	var columnDefault string
-	if err := app.db.Pool.QueryRow(context.Background(), `
-		select column_default
-		from information_schema.columns
-		where table_schema = current_schema()
-			and table_name = 'environments'
-			and column_name = 'resolved_template'
-	`).Scan(&columnDefault); err != nil {
-		t.Fatalf("load environments.resolved_template default: %v", err)
-	}
-	if columnDefault != "'managed-agent-sandbox'::text" {
-		t.Fatalf("environments.resolved_template default = %q, want managed-agent-sandbox", columnDefault)
 	}
 }
 

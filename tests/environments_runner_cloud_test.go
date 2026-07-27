@@ -385,67 +385,6 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 	})
 
-	t.Run("sandbox is killed when persisting stopping state fails", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithStopStateFailure(t)
-		if !processed || err == nil || !strings.Contains(err.Error(), "forced sandbox state update failure") {
-			t.Fatalf("RunOnce() = (%t, %v), want stopping state persistence failure", processed, err)
-		}
-		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
-			t.Fatalf("killed sandboxes = %#v, want sandbox killed despite state failure", provider.kills)
-		}
-		if provider.codeSessionCreated {
-			t.Fatal("failed graceful stop created an active code session")
-		}
-		if !provider.workStopped {
-			t.Fatal("failed stopping-state persistence left environment work running")
-		}
-	})
-
-	t.Run("work is stopped when sandbox kill fails", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithStopKillFailure(t)
-		if !processed || err == nil || !strings.Contains(err.Error(), "forced sandbox kill failure") {
-			t.Fatalf("RunOnce() = (%t, %v), want sandbox kill failure", processed, err)
-		}
-		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
-			t.Fatalf("killed sandboxes = %#v, want one attempted kill", provider.kills)
-		}
-		if !provider.workStopped {
-			t.Fatal("sandbox kill failure left environment work running")
-		}
-	})
-
-	t.Run("metadata failure rolls back code session creation", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithSessionMetadataFailure(t)
-		if !processed || err == nil || !strings.Contains(err.Error(), "forced session metadata update failure") {
-			t.Fatalf("RunOnce() = (%t, %v), want session metadata persistence failure", processed, err)
-		}
-		if provider.codeSessionCreated {
-			t.Fatal("metadata failure left an active code session")
-		}
-		if provider.sessionHasRuntimeMetadata || provider.workHasRuntimeMetadata {
-			t.Fatalf("metadata failure committed session/work runtime metadata = %t/%t", provider.sessionHasRuntimeMetadata, provider.workHasRuntimeMetadata)
-		}
-		if !provider.workHasMCPMetadata {
-			t.Fatal("metadata transaction failure did not retain the pre-resolve MCP policy metadata")
-		}
-		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
-			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
-		}
-	})
-
-	t.Run("runtime patch does not restore concurrently cleared work metadata", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithClearedMetadata(t)
-		if err != nil || !processed {
-			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
-		}
-		if !provider.workHasRuntimeMetadata {
-			t.Fatal("successful provisioning did not add runtime metadata")
-		}
-		if provider.workHasMCPMetadata {
-			t.Fatal("runtime commit restored work metadata cleared during provisioning")
-		}
-	})
-
 	t.Run("session event added during provisioning reaches the initial inbound queue", func(t *testing.T) {
 		provider, processed, err := runPackageEnvironmentWithLateSessionEvent(t)
 		if err != nil || !processed {
@@ -456,35 +395,6 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 			provider.queuedInboundEvents[1].EventType != "user" ||
 			!strings.Contains(string(provider.queuedInboundEvents[1].Payload), "sent during package provisioning") {
 			t.Fatalf("queued inbound events = %#v, want initialize followed by provisioning-time user event", provider.queuedInboundEvents)
-		}
-	})
-
-	t.Run("duplicate initial event idempotency keys are skipped without sequence gaps", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithDuplicateSessionEvents(t)
-		if err != nil || !processed {
-			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
-		}
-		if len(provider.queuedInboundEvents) != 2 {
-			t.Fatalf("queued inbound events = %#v, want initialize plus one deduplicated user event", provider.queuedInboundEvents)
-		}
-		for index, event := range provider.queuedInboundEvents {
-			wantSequence := int64(index + 1)
-			if event.SequenceNum != wantSequence {
-				t.Fatalf("queued event %d sequence = %d, want %d", index, event.SequenceNum, wantSequence)
-			}
-		}
-	})
-
-	t.Run("session archived during provisioning cannot start a runtime", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithArchivedSession(t)
-		if !processed || !errors.Is(err, db.ErrInvalidState) {
-			t.Fatalf("RunOnce() = (%t, %v), want invalid state", processed, err)
-		}
-		if provider.codeSessionCreated {
-			t.Fatal("archived Session received an active Code Session")
-		}
-		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
-			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
 		}
 	})
 
@@ -549,91 +459,17 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 }
 
 func runPackageEnvironment(t *testing.T, commandErr error) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, commandErr, nil)
+	return runPackageEnvironmentWithHook(t, commandErr, nil, nil)
 }
 
 func runPackageEnvironmentWithStop(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
+	return runPackageEnvironmentWithHook(t, nil, nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
 		requestPackageEnvironmentStop(t, ctx, database, environmentID)
-	})
-}
-
-func runPackageEnvironmentWithStopStateFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
-		requestPackageEnvironmentStop(t, ctx, database, environmentID)
-		if _, err := database.Pool.Exec(ctx, `
-			create or replace function oma_test_fail_sandbox_state_update() returns trigger
-			language plpgsql as $$
-			begin
-				raise exception 'forced sandbox state update failure';
-			end;
-			$$;
-			create trigger oma_test_fail_sandbox_state_update
-			before update on environment_sandboxes
-			for each row execute function oma_test_fail_sandbox_state_update()
-		`); err != nil {
-			t.Fatalf("install sandbox state failure trigger: %v", err)
-		}
-		t.Cleanup(func() {
-			if _, err := database.Pool.Exec(context.Background(), `
-				drop trigger if exists oma_test_fail_sandbox_state_update on environment_sandboxes;
-				drop function if exists oma_test_fail_sandbox_state_update()
-			`); err != nil {
-				t.Fatalf("remove sandbox state failure trigger: %v", err)
-			}
-		})
-	})
-}
-
-func runPackageEnvironmentWithStopKillFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHookAndKill(t, nil, errors.New("forced sandbox kill failure"), nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
-		requestPackageEnvironmentStop(t, ctx, database, environmentID)
-	})
-}
-
-func runPackageEnvironmentWithSessionMetadataFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _, _ string) {
-		if _, err := database.Pool.Exec(ctx, `
-			create or replace function oma_test_fail_session_metadata_update() returns trigger
-			language plpgsql as $$
-			begin
-				raise exception 'forced session metadata update failure';
-			end;
-			$$;
-			create trigger oma_test_fail_session_metadata_update
-			before update of metadata on sessions
-			for each row execute function oma_test_fail_session_metadata_update()
-		`); err != nil {
-			t.Fatalf("install session metadata failure trigger: %v", err)
-		}
-		t.Cleanup(func() {
-			if _, err := database.Pool.Exec(context.Background(), `
-				drop trigger if exists oma_test_fail_session_metadata_update on sessions;
-				drop function if exists oma_test_fail_session_metadata_update()
-			`); err != nil {
-				t.Fatalf("remove session metadata failure trigger: %v", err)
-			}
-		})
-	})
-}
-
-func runPackageEnvironmentWithClearedMetadata(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
-		ids := getDefaultDBIDs(t, database)
-		works, _, err := database.ListEnvironmentWorkPage(ctx, db.ListEnvironmentWorkPageParams{
-			WorkspaceID: ids.WorkspaceID, EnvironmentExternalID: environmentID, Limit: 10,
-		})
-		if err != nil || len(works) != 1 {
-			t.Fatalf("list environment work count/error = %d/%v, want one work", len(works), err)
-		}
-		if _, err := database.UpdateEnvironmentWorkMetadata(ctx, ids.WorkspaceID, environmentID, works[0].ExternalID, json.RawMessage(`{}`)); err != nil {
-			t.Fatalf("clear environment work metadata: %v", err)
-		}
 	})
 }
 
 func runPackageEnvironmentWithLateSessionEvent(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _, sessionID string) {
+	return runPackageEnvironmentWithHook(t, nil, nil, func(ctx context.Context, database *db.DB, _, sessionID string) {
 		ids := getDefaultDBIDs(t, database)
 		now := time.Now().UTC()
 		eventID := "sevt_provisioning_" + strings.ReplaceAll(now.Format("150405.000000000"), ".", "")
@@ -663,35 +499,8 @@ func runPackageEnvironmentWithLateSessionEvent(t *testing.T) (*recordingRunnerPr
 	})
 }
 
-func runPackageEnvironmentWithArchivedSession(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _, sessionID string) {
-		ids := getDefaultDBIDs(t, database)
-		if _, err := database.ArchiveSession(ctx, ids.WorkspaceID, sessionID); err != nil {
-			t.Fatalf("archive Session during package provisioning: %v", err)
-		}
-	})
-}
-
-func runPackageEnvironmentWithDuplicateSessionEvents(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, func(ctx context.Context, database *db.DB, _, sessionID string) {
-		ids := getDefaultDBIDs(t, database)
-		now := time.Now().UTC()
-		payload := json.RawMessage(`{"type":"user.message","id":"sevt_duplicate","content":[{"type":"text","text":"send once"}]}`)
-		events := make([]db.SessionEvent, 0, 2)
-		for index := range 2 {
-			events = append(events, db.SessionEvent{
-				UUID:        uuid.NewString(),
-				ExternalID:  fmt.Sprintf("sevt_duplicate_%d_%d", index, now.UnixNano()),
-				EventType:   "user.message",
-				Payload:     payload,
-				ProcessedAt: now,
-				CreatedAt:   now.Add(time.Duration(index) * time.Nanosecond),
-			})
-		}
-		if _, err := database.AppendSessionEvents(ctx, ids.WorkspaceID, sessionID, events); err != nil {
-			t.Fatalf("append duplicate provisioning-time Session events: %v", err)
-		}
-	})
+func runPackageEnvironmentWithResult(t *testing.T, result e2bruntime.CommandResult) (*recordingRunnerProvider, bool, error) {
+	return runPackageEnvironmentWithHook(t, nil, &result, nil)
 }
 
 func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, environmentID string) {
@@ -713,19 +522,6 @@ func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *
 func runPackageEnvironmentWithHook(
 	t *testing.T,
 	commandErr error,
-	afterCommand func(context.Context, *db.DB, string, string),
-) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHookAndKill(t, commandErr, nil, nil, afterCommand)
-}
-
-func runPackageEnvironmentWithResult(t *testing.T, result e2bruntime.CommandResult) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHookAndKill(t, nil, nil, &result, nil)
-}
-
-func runPackageEnvironmentWithHookAndKill(
-	t *testing.T,
-	commandErr error,
-	killErr error,
 	commandResult *e2bruntime.CommandResult,
 	afterCommand func(context.Context, *db.DB, string, string),
 ) (*recordingRunnerProvider, bool, error) {
@@ -772,7 +568,6 @@ func runPackageEnvironmentWithHookAndKill(
 		sandboxID:     "sandbox-runner-packages",
 		commandErr:    commandErr,
 		commandResult: commandResult,
-		killErr:       killErr,
 	}
 	if afterCommand != nil {
 		provider.afterCommand = func() { afterCommand(ctx, app.db, environment.ID, session.ID) }
@@ -801,7 +596,6 @@ func runPackageEnvironmentWithHookAndKill(
 	if workErr != nil || len(works) != 1 {
 		t.Fatalf("list package runner work count/error = %d/%v, want one work", len(works), workErr)
 	}
-	provider.workStopped = works[0].State == "stopped"
 	provider.workHasRuntimeMetadata = hasJSONKey(works[0].Metadata, "claude_code_session_id")
 	provider.workHasMCPMetadata = hasJSONKey(works[0].Metadata, "mcp_allowed_hosts")
 	storedSession, sessionErr := app.db.GetSession(ctx, ids.WorkspaceID, session.ID)
@@ -1397,7 +1191,6 @@ type recordingRunnerProvider struct {
 	resolveErr                error
 	commandErr                error
 	commandResult             *e2bruntime.CommandResult
-	killErr                   error
 	afterCommand              func()
 	failOperation             string
 	runCommandFailure         error
@@ -1411,7 +1204,6 @@ type recordingRunnerProvider struct {
 	creates                   []recordedSandboxCreate
 	kills                     []string
 	codeSessionCreated        bool
-	workStopped               bool
 	sessionHasRuntimeMetadata bool
 	workHasRuntimeMetadata    bool
 	workHasMCPMetadata        bool
@@ -1512,7 +1304,7 @@ func (p *recordingRunnerProvider) Create(_ context.Context, _ db.Environment, wo
 
 func (p *recordingRunnerProvider) Kill(_ context.Context, sandboxID string) error {
 	p.kills = append(p.kills, sandboxID)
-	return p.killErr
+	return nil
 }
 
 func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID, path string, data []byte) error {

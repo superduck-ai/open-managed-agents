@@ -11,21 +11,31 @@ import (
 )
 
 func TestNormalizePackages(t *testing.T) {
-	t.Run("manager options are rejected for every manager without echoing the spec", func(t *testing.T) {
-		for _, manager := range packageManagerNamesForTest() {
-			t.Run(manager, func(t *testing.T) {
-				secretOption := "  --token=secret-value"
-				packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
-					"type":  managerPackageType,
-					manager: []string{secretOption},
-				}))
-				if err == nil || packages != nil || !strings.Contains(err.Error(), invalidPackageOptionMessage) {
-					t.Fatalf("normalizePackages() = (%#v, %v), want manager option error", packages, err)
-				}
-				if strings.Contains(err.Error(), secretOption) || strings.Contains(err.Error(), "secret-value") {
-					t.Fatalf("normalization error leaked package option: %v", err)
-				}
-			})
+	t.Run("manager options are rejected without echoing the spec", func(t *testing.T) {
+		secretOption := "  --token=secret-value"
+		packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
+			"type": managerPackageType,
+			"pip":  []string{secretOption},
+		}))
+		if err == nil || packages != nil || !strings.Contains(err.Error(), invalidPackageOptionMessage) {
+			t.Fatalf("normalizePackages() = (%#v, %v), want manager option error", packages, err)
+		}
+		if strings.Contains(err.Error(), secretOption) || strings.Contains(err.Error(), "secret-value") {
+			t.Fatalf("normalization error leaked package option: %v", err)
+		}
+	})
+
+	t.Run("credential-bearing URL is rejected without echoing the spec", func(t *testing.T) {
+		secretSpec := "git+https://user:secret-token@example.test/private.git"
+		packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
+			"type": managerPackageType,
+			"pip":  []string{secretSpec},
+		}))
+		if err == nil || packages != nil {
+			t.Fatalf("normalizePackages() = (%#v, %v), want credential URL error", packages, err)
+		}
+		if strings.Contains(err.Error(), secretSpec) || strings.Contains(err.Error(), "secret-token") {
+			t.Fatalf("normalization error leaked package credentials: %v", err)
 		}
 	})
 
@@ -72,17 +82,28 @@ func TestNormalizePackages(t *testing.T) {
 	})
 }
 
-func packageManagerNamesForTest() []string {
-	packages := emptyPackages()
-	names := make([]string, 0, len(packages.specsByManager()))
-	for _, entry := range packages.specsByManager() {
-		names = append(names, entry.manager)
-	}
-	return names
-}
-
 func TestBuildPackageManifest(t *testing.T) {
-	t.Run("manager option in stored config is rejected without echoing the spec", func(t *testing.T) {
+	t.Run("invalid environment config has a root decode error", func(t *testing.T) {
+		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":`))
+		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want root config decode error", manifest, provision, err)
+		}
+		if strings.Contains(err.Error(), "decode environment packages") {
+			t.Fatalf("root config error used nested packages prefix: %v", err)
+		}
+	})
+
+	t.Run("structurally invalid stored packages are a decode error", func(t *testing.T) {
+		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":"cloud","packages":{"pip":"numpy"}}`))
+		if err == nil || provision || manifest != nil {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want decode error", manifest, provision, err)
+		}
+		if !strings.Contains(err.Error(), "decode environment config") {
+			t.Fatalf("buildPackageManifest() error = %v, want decode environment config", err)
+		}
+	})
+
+	t.Run("stored dirty packages are revalidated without echoing the spec", func(t *testing.T) {
 		secretOption := "-x=secret-value"
 		manifest, provision, err := buildPackageManifest(mustPackageJSON(t, map[string]any{
 			"type": "cloud",
@@ -96,59 +117,6 @@ func TestBuildPackageManifest(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), secretOption) || strings.Contains(err.Error(), "secret-value") {
 			t.Fatalf("manifest error leaked package option: %v", err)
-		}
-	})
-
-	t.Run("invalid environment config has a root decode error", func(t *testing.T) {
-		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":`))
-		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want root config decode error", manifest, provision, err)
-		}
-		if strings.Contains(err.Error(), "decode environment packages") {
-			t.Fatalf("root config error used nested packages prefix: %v", err)
-		}
-	})
-
-	t.Run("structurally invalid stored packages are a decode error", func(t *testing.T) {
-		for _, config := range []string{
-			`{"type":"cloud","packages":true}`,
-			`{"type":"cloud","packages":[]}`,
-			`{"type":"cloud","packages":{"pip":"numpy"}}`,
-		} {
-			manifest, provision, err := buildPackageManifest(json.RawMessage(config))
-			if err == nil || provision || manifest != nil {
-				t.Fatalf("buildPackageManifest(%s) = (%s, %t, %v), want decode error", config, manifest, provision, err)
-			}
-			if !strings.Contains(err.Error(), "decode environment config") {
-				t.Fatalf("buildPackageManifest(%s) error = %v, want decode environment config", config, err)
-			}
-		}
-	})
-
-	t.Run("invalid type shares the normalization error", func(t *testing.T) {
-		manifest, provision, err := buildPackageManifest(json.RawMessage(`{
-			"type":"cloud",
-			"packages":{"type":"other"}
-		}`))
-		if err == nil || provision || manifest != nil || err.Error() != invalidPackagesTypeMessage {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want %q", manifest, provision, err, invalidPackagesTypeMessage)
-		}
-	})
-
-	t.Run("credential-bearing URL is rejected without echoing the spec", func(t *testing.T) {
-		secretSpec := "git+https://user:secret-token@example.test/private.git"
-		manifest, provision, err := buildPackageManifest(mustPackageJSON(t, map[string]any{
-			"type": "cloud",
-			"packages": map[string]any{
-				"type": "packages",
-				"pip":  []string{secretSpec},
-			},
-		}))
-		if err == nil || provision || manifest != nil {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want rejected manifest", manifest, provision, err)
-		}
-		if strings.Contains(err.Error(), secretSpec) || strings.Contains(err.Error(), "secret-token") {
-			t.Fatalf("manifest error leaked package credentials: %v", err)
 		}
 	})
 

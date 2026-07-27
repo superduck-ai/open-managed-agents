@@ -548,22 +548,31 @@ func (r *Runner) failManagedAgentRuntime(
 }
 
 func (r *Runner) failCreatedSandbox(_ context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
-	// 清理必须独立于可能已取消的请求 context：runner/server context 取消时，
-	// 仍要把 Sandbox 标记 failed 并停止 Work，否则 Work 会卡在 starting 无法再被 poll。
-	dbCtx, cancelDB := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancelDB()
+	// 清理必须独立于可能已取消的请求 context，且每一步各自拥有完整预算：
+	// 任一步阻塞到超时，都不能吃掉后续步骤的时间，否则会把 Sandbox 或 Work
+	// 卡在 failed 之前的中间态、无法再被 poll，或漏杀计费中的 provider Sandbox。
 	now := time.Now().UTC()
 	message := cause.Error()
-	_ = r.db.UpdateEnvironmentSandboxState(dbCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
-	_, _ = r.db.StopEnvironmentWork(dbCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	withCleanupContext(func(ctx context.Context) {
+		_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
+	})
+	withCleanupContext(func(ctx context.Context) {
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	})
 	if strings.TrimSpace(providerSandboxID) == "" {
 		return
 	}
-	// Kill 用独立的 bounded context：即使上面的 DB 写入耗尽了各自的预算，
-	// 也要保证仍有完整的 2 分钟去终止计费中的 provider Sandbox。
-	killCtx, cancelKill := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancelKill()
-	_ = r.provider.Kill(killCtx, providerSandboxID)
+	withCleanupContext(func(ctx context.Context) {
+		_ = r.provider.Kill(ctx, providerSandboxID)
+	})
+}
+
+// withCleanupContext 为一步失败清理动作分配独立的 2 分钟 bounded context，
+// 使每一步都拥有完整预算，前一步阻塞到超时不会吃掉后续步骤的时间。
+func withCleanupContext(step func(context.Context)) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	step(ctx)
 }
 
 func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*managedAgentLaunchPreparation, error) {

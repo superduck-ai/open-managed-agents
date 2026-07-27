@@ -68,10 +68,12 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 
 ## 镜像验收
 
-仓库中的真实 E2E 固定使用
-`registry.gz.cvte.cn/oma/managed-agent-sandbox:latest`，避免测试配置静默回退到不含
-`rclone-filestore` 的通用 template。部署前仍应将通过验收的镜像 digest 固化到发布系统，
-不能把可变的 `latest` 当作生产可复现性边界。
+仓库中的真实 E2E 固定使用短标签
+`managed-agent-sandbox:latest`。本地 e2b-local 把 Docker RepoTags 作为短 `name:tag`
+template 发现：把镜像 pull 下来再 retag 后，registry 路径与短标签会collapse 成同一个
+template ID，继续用 registry 别名反而会 404，因此测试统一选短标签以稳定命中本地
+template，而不是静默回退到不含 `rclone-filestore` 的通用 template。部署前仍应将通过
+验收的镜像 digest 固化到发布系统，不能把可变的 `latest` 当作生产可复现性边界。
 
 发布新的 E2B template 前至少验证：
 

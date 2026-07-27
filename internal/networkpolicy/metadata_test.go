@@ -50,7 +50,7 @@ func TestParseWorkMetadataMCPAllowedHostsTreatsMissingFieldAsEmpty(t *testing.T)
 
 func TestPatchWorkMetadataMCPAllowedHostsPreservesOtherFields(t *testing.T) {
 	patched, err := PatchWorkMetadataMCPAllowedHosts(
-		json.RawMessage(`{"managed_agent_skills_mount":{"volume_name":"skills"},"mcp_allowed_hosts":["stale.example"]}`),
+		json.RawMessage(`{"unrelated":{"value":"keep"},"mcp_allowed_hosts":["stale.example"]}`),
 		[]string{"MCP.Example.com", "mcp.example.com"},
 	)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestPatchWorkMetadataMCPAllowedHostsPreservesOtherFields(t *testing.T) {
 	if err := json.Unmarshal(patched, &fields); err != nil {
 		t.Fatalf("decode patched metadata: %v", err)
 	}
-	if _, ok := fields["managed_agent_skills_mount"]; !ok {
+	if _, ok := fields["unrelated"]; !ok {
 		t.Fatalf("unrelated metadata was removed: %s", patched)
 	}
 	hosts, err := ParseWorkMetadataMCPAllowedHosts(patched)

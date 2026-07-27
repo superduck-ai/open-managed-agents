@@ -140,7 +140,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		Provider:        provider,
 		Config:          cfg,
 		CodeSessions:    codesessions.NewServiceWithCredentials(database, credentials, nil),
-		Skills:          skillsapi.NewRuntimeResolver(cfg, database, objectStore),
+		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: filestoreCredentials,
 	})
 	if err != nil {

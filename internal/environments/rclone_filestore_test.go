@@ -25,13 +25,13 @@ func TestBuildRcloneMultimountConfig(t *testing.T) {
 	if got.ReadyFile != rcloneReadyPath || got.StateDir != rcloneStateDirectory || got.ServiceURL != "http://host.docker.internal:38080" {
 		t.Fatalf("unexpected multimount envelope: %+v", got)
 	}
-	if len(got.Mounts) != 4 {
-		t.Fatalf("mount count = %d, want 4", len(got.Mounts))
+	if len(got.Mounts) != 5 {
+		t.Fatalf("mount count = %d, want 5", len(got.Mounts))
 	}
-	wantSources := []string{"/outputs", "/uploads", "/transcripts", "/tool_results"}
-	wantDestinations := []string{"/mnt/user-data/outputs", "/mnt/session/uploads", "/mnt/transcripts", "/mnt/user-data/tool_results"}
-	wantCaches := []float64{3600, 1, 10, 3}
-	for index, mount := range got.Mounts {
+	wantSources := []string{"/outputs", "/uploads", "/transcripts", "/tool_results", "/skills"}
+	wantDestinations := []string{"/mnt/user-data/outputs", "/mnt/session/uploads", "/mnt/transcripts", "/mnt/user-data/tool_results", "/root/.claude/skills"}
+	wantCaches := []float64{3600, 1, 10, 3, 60}
+	for index, mount := range got.Mounts[:4] {
 		if mount.Source != wantSources[index] || mount.Destination != wantDestinations[index] || mount.CacheDurationSeconds != wantCaches[index] {
 			t.Fatalf("mount %d = %+v", index, mount)
 		}
@@ -48,6 +48,13 @@ func TestBuildRcloneMultimountConfig(t *testing.T) {
 		if mount.Readonly != wantReadonly || mount.AuthToken != wantToken {
 			t.Fatalf("mount %d authority = readonly:%t token:%q", index, mount.Readonly, mount.AuthToken)
 		}
+	}
+	skills := got.Mounts[4]
+	if skills.Source != wantSources[4] || skills.Destination != wantDestinations[4] ||
+		skills.CacheDurationSeconds != wantCaches[4] || !skills.Readonly || skills.AuthToken != readonly ||
+		skills.UID != 999 || skills.GID != 1000 || skills.DirectoryPermissions != "0755" ||
+		skills.FilePermissions != "0644" {
+		t.Fatalf("skills mount = %+v", skills)
 	}
 }
 

@@ -2,6 +2,7 @@ package db
 
 var filestoreFixedRootPaths = [...]string{
 	"/outputs",
+	"/skills",
 	"/uploads",
 	"/transcripts",
 	"/tool_results",
@@ -19,7 +20,7 @@ func filestoreFixedRootForPath(entryPath string) (string, bool) {
 
 // validateFilestoreDirectoryMoveRoots 拒绝会破坏固定顶层命名空间语义的目录移动。
 //
-// 它先判断源路径和目标路径是否位于 `/outputs`、`/uploads`、`/transcripts`、`/tool_results`
+// 它先判断源路径和目标路径是否位于 `/outputs`、`/skills`、`/uploads`、`/transcripts`、`/tool_results`
 // 这些固定根之一。
 // 它不允许把固定根目录本身改名或搬到别处。
 // 它也不允许目录跨固定根移动、离开固定根，或从普通路径移入固定根。

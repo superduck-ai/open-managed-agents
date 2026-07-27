@@ -396,7 +396,7 @@ func TestSkillsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("success delete object queues cleanup job", func(t *testing.T) {
+	t.Run("success delete retains archive for active projections", func(t *testing.T) {
 		cleanupStore := newFakeStore("fake-bucket")
 		cleanupStore.deleteErr = errors.New("object storage unavailable")
 		cleanupApp := newTestAppWithStore(t, nil, cleanupStore)
@@ -418,6 +418,9 @@ func TestSkillsAPI(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("delete cleanup skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
+		if _, ok := cleanupStore.objects[objectKey]; !ok {
+			t.Fatalf("skill archive %s was removed while a session projection may still reference it", objectKey)
+		}
 
 		var jobCount int
 		if err := cleanupApp.db.Pool.QueryRow(context.Background(), `
@@ -430,8 +433,8 @@ func TestSkillsAPI(t *testing.T) {
 		`, objectKey).Scan(&jobCount); err != nil {
 			t.Fatalf("count cleanup jobs: %v", err)
 		}
-		if jobCount != 1 {
-			t.Fatalf("cleanup job count = %d, want 1", jobCount)
+		if jobCount != 0 {
+			t.Fatalf("cleanup job count = %d, want 0", jobCount)
 		}
 	})
 

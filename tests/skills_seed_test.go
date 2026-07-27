@@ -162,8 +162,8 @@ func TestSeedBuiltinSkillsPrune(t *testing.T) {
 	if _, err := app.db.GetBuiltinSkill(context.Background(), pdfID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("get pruned pdf err = %v, want not found", err)
 	}
-	if _, ok := store.objects[pdfVersion.S3Key]; ok {
-		t.Fatalf("pruned pdf object %s still present in store", pdfVersion.S3Key)
+	if _, ok := store.objects[pdfVersion.S3Key]; !ok {
+		t.Fatalf("pruned pdf object %s was removed while a session projection may still reference it", pdfVersion.S3Key)
 	}
 }
 

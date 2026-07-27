@@ -18,7 +18,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
-	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -167,7 +166,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 			}
 		},
 	}
-	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -358,7 +357,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 		failOperation:     "rclone-ready",
 		runCommandFailure: errors.New("simulated rclone ready failure: " + providerSecretMarker),
 	}
-	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "runner-rclone-failure-test")
 	if err == nil || err.Error() != "rclone-filestore readiness check failed" {
 		t.Fatalf("RunOnce error = %v, want rclone ready failure", err)
@@ -443,7 +442,7 @@ func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) 
 		failOperation:     "environment-manager",
 		runCommandFailure: errors.New("simulated environment-manager launch failure"),
 	}
-	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "runner-manager-failure-test")
 	if err == nil || err.Error() != "environment manager process start failed" {
 		t.Fatalf("RunOnce error = %v, want manager launch failure", err)
@@ -527,7 +526,7 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-runner-skills"}
-	runner := newManagedAgentRunner(t, app, provider, cfg, store)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-skills-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -539,20 +538,24 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if len(provider.launches) != 1 {
 		t.Fatalf("sandbox launches = %#v, want one environment-manager background process", provider.launches)
 	}
-	if len(provider.skillMounts) != 1 {
-		t.Fatalf("skill mounts = %#v, want one prepared mount", provider.skillMounts)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("get session filestore: %v", err)
 	}
-	mount := provider.skillMounts[0].mount
-	if mount.MountPath != e2bruntime.SandboxSkillsMountPath || mount.VolumeName == "" || mount.ManifestSHA256 == "" {
-		t.Fatalf("unexpected skill mount: %#v", mount)
+	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
+		ctx,
+		getDefaultDBIDs(t, app.db).WorkspaceID,
+		filesystem.ID,
+	)
+	if err != nil {
+		t.Fatalf("list skill archive entries: %v", err)
 	}
-	if len(mount.Skills) != 1 || mount.Skills[0].Directory != "runtime-skill" {
-		t.Fatalf("unexpected skill mount manifest: %#v", mount.Skills)
+	if len(archiveEntries) != 1 ||
+		archiveEntries[0].Kind != db.FilestoreEntryKindArchive ||
+		archiveEntries[0].Path != "/skills/runtime-skill" ||
+		string(archiveEntries[0].Metadata) != `{"skill_source": "custom"}` {
+		t.Fatalf("skill archive entries = %#v", archiveEntries)
 	}
-	if len(provider.skillMounts[0].runtimeSkills) != 1 {
-		t.Fatalf("runtime skills = %#v, want one", provider.skillMounts[0].runtimeSkills)
-	}
-	assertZipContains(t, provider.skillMounts[0].runtimeSkills[0].Archive, "runtime-skill/SKILL.md")
 	if len(provider.creates) != 1 {
 		t.Fatalf("sandbox creates = %#v, want one", provider.creates)
 	}
@@ -560,12 +563,8 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if err := json.Unmarshal(provider.creates[0].metadata, &workMetadata); err != nil {
 		t.Fatalf("decode work metadata: %v", err)
 	}
-	rawMount, ok := workMetadata[e2bruntime.SkillMountMetadataKey].(map[string]any)
-	if !ok {
-		t.Fatalf("work metadata missing skill mount: %#v", workMetadata)
-	}
-	if rawMount["mount_path"] != e2bruntime.SandboxSkillsMountPath || rawMount["volume_name"] != mount.VolumeName {
-		t.Fatalf("unexpected work skill mount metadata: %#v", rawMount)
+	if _, exists := workMetadata["managed_agent_skills_mount"]; exists {
+		t.Fatalf("work metadata still contains legacy skill mount: %#v", workMetadata)
 	}
 	if strings.Contains(provider.launches[0].command, "installed managed agent skills") ||
 		strings.Contains(provider.launches[0].command, "$HOME/.claude/skills") {
@@ -573,7 +572,7 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	}
 }
 
-func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
+func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := config.Load()
@@ -628,17 +627,34 @@ func TestEnvironmentRunnerFailsWhenSkillResolverUnavailable(t *testing.T) {
 	}
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
-	provider := &recordingRunnerProvider{sandboxID: "sandbox-should-not-start"}
-	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+	provider := &recordingRunnerProvider{sandboxID: "sandbox-skill-projection-only"}
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-no-resolver-test")
-	if err == nil || !strings.Contains(err.Error(), "custom skill resolver is unavailable") {
-		t.Fatalf("RunOnce error = %v, want custom resolver error", err)
+	if err != nil {
+		t.Fatalf("RunOnce error = %v", err)
 	}
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if len(provider.creates) != 0 || len(provider.commands) != 0 || len(provider.launches) != 0 {
-		t.Fatalf("provider should not be called after missing resolver: creates=%#v commands=%#v launches=%#v", provider.creates, provider.commands, provider.launches)
+	if len(provider.creates) != 1 || len(provider.launches) != 1 {
+		t.Fatalf("provider launch counts = creates:%d launches:%d, want one each", len(provider.creates), len(provider.launches))
+	}
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("get session filestore: %v", err)
+	}
+	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
+		ctx,
+		getDefaultDBIDs(t, app.db).WorkspaceID,
+		filesystem.ID,
+	)
+	if err != nil {
+		t.Fatalf("list archive entries: %v", err)
+	}
+	if len(archiveEntries) != 1 ||
+		archiveEntries[0].Kind != db.FilestoreEntryKindArchive ||
+		archiveEntries[0].Path != "/skills/missing-resolver-skill" {
+		t.Fatalf("archive entries = %#v", archiveEntries)
 	}
 }
 
@@ -688,7 +704,7 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-network-order"}
-	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-network-order-test")
 	if err != nil {
 		t.Fatalf("run once: %v", err)
@@ -779,7 +795,7 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			}
 
 			provider := &recordingRunnerProvider{sandboxID: "sandbox-empty-mcp"}
-			runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+			runner := newManagedAgentRunner(t, app, provider, cfg)
 			processed, err := runner.RunOnce(ctx, "runner-cloud-empty-mcp-test")
 			if err != nil || !processed {
 				t.Fatalf("RunOnce() = processed %v, error %v", processed, err)
@@ -860,7 +876,7 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 		sandboxID:  "sandbox-should-not-start",
 		resolveErr: fmt.Errorf("network config invalid"),
 	}
-	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-resolve-failure-test")
 	if err == nil || !strings.Contains(err.Error(), "network config invalid") {
 		t.Fatalf("RunOnce error = %v, want resolve error", err)
@@ -891,7 +907,6 @@ type recordingRunnerProvider struct {
 	operations        []string
 	kills             []string
 	creates           []recordedSandboxCreate
-	skillMounts       []recordedSkillMount
 }
 
 type recordedSandboxResolve struct {
@@ -916,17 +931,11 @@ type recordedSandboxCreate struct {
 	resolution e2bruntime.Resolution
 }
 
-type recordedSkillMount struct {
-	mount         e2bruntime.SkillMount
-	runtimeSkills []skillsapi.RuntimeSkill
-}
-
 func newManagedAgentRunner(
 	t *testing.T,
 	app *testApp,
 	provider e2bruntime.Provider,
 	cfg config.Config,
-	skillStore storage.ObjectStore,
 ) *environments.Runner {
 	t.Helper()
 	runner, err := environments.NewRunner(environments.RunnerDependencies{
@@ -934,7 +943,7 @@ func newManagedAgentRunner(
 		Provider:        provider,
 		Config:          cfg,
 		CodeSessions:    codesessions.NewServiceWithCredentials(app.db, app.credentials, nil),
-		Skills:          skillsapi.NewRuntimeResolver(cfg, app.db, skillStore),
+		Skills:          skillsapi.NewRuntimeResolver(app.db),
 		FilestoreTokens: app.filestoreCredentials,
 	})
 	if err != nil {
@@ -1029,33 +1038,6 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 		return p.runCommandFailure
 	}
 	return nil
-}
-
-func (p *recordingRunnerProvider) PrepareSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*e2bruntime.SkillMount, error) {
-	manifest, _, manifestSHA256, err := skillsapi.BuildMountManifest(runtimeSkills)
-	if err != nil {
-		return nil, err
-	}
-	mount := e2bruntime.SkillMount{
-		MountPath:      e2bruntime.SandboxSkillsMountPath,
-		VolumeName:     "test-managed-agent-skills-" + manifestSHA256[:12],
-		ManifestSHA256: manifestSHA256,
-		Skills:         manifest.Skills,
-	}
-	copied := make([]skillsapi.RuntimeSkill, 0, len(runtimeSkills))
-	for _, skill := range runtimeSkills {
-		archive, err := skill.LoadArchive(ctx)
-		if err != nil {
-			return nil, err
-		}
-		skill.Archive = archive
-		copied = append(copied, skill)
-	}
-	p.skillMounts = append(p.skillMounts, recordedSkillMount{
-		mount:         mount,
-		runtimeSkills: copied,
-	})
-	return &mount, nil
 }
 
 func (p *recordingRunnerProvider) StartBackgroundCommand(_ context.Context, sandboxID string, command string, stdin []byte) error {

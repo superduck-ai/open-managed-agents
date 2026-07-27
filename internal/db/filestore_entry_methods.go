@@ -9,10 +9,12 @@ func (entry *FilestoreEntry) BorrowsSourceObject() bool {
 }
 
 // OwnedBytes returns the bytes that this entry contributes to Filestore-owned
-// storage accounting. Borrowed Files API objects remain visible in the
-// namespace, but they do not consume Filestore-owned bytes.
+// storage accounting. Only ordinary file entries own their objects. Files API
+// references and skill archives borrow objects from their source catalogs.
 func (entry *FilestoreEntry) OwnedBytes() int64 {
-	if entry == nil || entry.BorrowsSourceObject() {
+	if entry == nil ||
+		entry.Kind != FilestoreEntryKindFile ||
+		entry.BorrowsSourceObject() {
 		return 0
 	}
 	return filestoreInt64(entry.SizeBytes)

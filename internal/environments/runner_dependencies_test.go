@@ -18,7 +18,7 @@ func TestNewRunnerRejectsMissingDependencies(t *testing.T) {
 		DB:              database,
 		Provider:        e2bruntime.NewProvider(config.E2BConfig{}),
 		CodeSessions:    codesessions.NewServiceWithCredentials(database, new(codesessions.SessionCredentials), nil),
-		Skills:          skillsapi.NewRuntimeResolver(config.Config{}, database, nil),
+		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: new(filestore.TokenCredentials),
 	}
 	tests := []struct {
@@ -75,7 +75,7 @@ func TestNewRunnerAcceptsCompleteDependencies(t *testing.T) {
 		Provider:        e2bruntime.NewProvider(config.E2BConfig{}),
 		Config:          config.Config{},
 		CodeSessions:    codesessions.NewServiceWithCredentials(database, new(codesessions.SessionCredentials), nil),
-		Skills:          skillsapi.NewRuntimeResolver(config.Config{}, database, nil),
+		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: new(filestore.TokenCredentials),
 	})
 	if err != nil {

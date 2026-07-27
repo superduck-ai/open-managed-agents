@@ -30,7 +30,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
-	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -93,7 +92,6 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	codeSessionLogger := componentLogger("codesessions")
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger)
-	skillPrewarmEnqueuer := skillprewarm.NewEnqueuer(deps.DB)
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
 	workbenchLogger := componentLogger("workbench")
@@ -110,10 +108,10 @@ func NewServer(deps ServerDeps) *Server {
 		platformStore:        platformStore,
 		filestoreCredentials: deps.FilestoreCredentials,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
-		agents:               agents.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer, componentLogger("agents")),
+		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, codeSessionLogger),
-		deployments:          deploymentsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, skillPrewarmEnqueuer, webhookEnqueuer, componentLogger("deployments")),
+		deployments:          deploymentsapi.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.Config, deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
@@ -122,7 +120,7 @@ func NewServer(deps ServerDeps) *Server {
 		messages:             messagesapi.NewHandler(deps.Config, componentLogger("messages")),
 		models:               modelsapi.NewHandler(deps.Config.AnthropicUpstream),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, componentLogger("sessions")),
-		skills:               skillsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, deps.ObjectStore, skillPrewarmEnqueuer, componentLogger("skills")),
+		skills:               skillsapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("skills")),
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("vaults")),
 		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 	}

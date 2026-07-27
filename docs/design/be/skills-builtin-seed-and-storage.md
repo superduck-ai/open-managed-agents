@@ -85,7 +85,7 @@ builtin-skills/{skill_id}/versions/{version}/{sha256}.skill
 - 缺省版本号由 archive 内容 sha 派生；生产导入推荐通过 `--versions` 显式指定平台版本号。
 - 同一个 `skill_id + version + sha256` 重跑只刷新 catalog，不产生语义变化，并保留已存在 active version 的 `created_at`，避免版本排序被幂等重跑改变。
 - 同一个 `skill_id + version` 但内容 sha 不同会返回冲突错误，管理员需要换新版本号。
-- `--prune` 软删除 DB 行，并 best-effort 删除对应对象；对象删除失败会记录日志但不阻塞 DB 软删除。
+- `--prune` 只软删除 DB row，不立即删除对应对象。已启动 Session 可能仍通过具体 version UUID 的 Filestore skill 投影借用该 archive；物理删除必须由后续 reference-aware catalog GC 在确认无活动投影后执行。
 
 ## API 行为
 

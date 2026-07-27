@@ -11,6 +11,7 @@ import (
 const (
 	FilestoreEntryKindFile      = "file"
 	FilestoreEntryKindDirectory = "directory"
+	FilestoreEntryKindArchive   = "archive"
 
 	filestoreMaxPathBytes             = filestorepath.MaxBytes
 	filestoreCleanupJobType           = "filestore_object_cleanup"
@@ -78,8 +79,8 @@ type ProvisionFilestoreFilesystemInput struct {
 }
 
 // FilestoreEntry 是目录树中的一个持久化节点。
-// 目录字段保持为空；文件字段指向对象存储中的一个不可变对象版本。
-// Managed 字段标识由 Session File resource 管理且借用 Files API 对象的条目。
+// 目录字段保持为空；文件与 archive 字段指向对象存储中的不可变对象版本。
+// Managed 字段标识借用其他资源对象、但投影到 Session 命名空间中的条目。
 type FilestoreEntry struct {
 	ID                       int64
 	UUID                     string
@@ -131,6 +132,18 @@ type FilestoreFileBlob struct {
 	S3ETag                string
 	S3VersionID           string
 	ExpiresAt             *time.Time
+}
+
+// FilestoreSkillArchiveEntryInput 描述一个已解析的不可变 skill ZIP。
+// Source 只写入通用 metadata；对象及其生命周期仍由 skill catalog 管理。
+type FilestoreSkillArchiveEntryInput struct {
+	Source           string
+	SkillVersionUUID string
+	Directory        string
+	S3Bucket         string
+	S3Key            string
+	SizeBytes        int64
+	SHA256           string
 }
 
 // FilestoreEntryPageCursor 保存键集分页的最后一个 (Path, ID) 排序键。

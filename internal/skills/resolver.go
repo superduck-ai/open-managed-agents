@@ -1,50 +1,32 @@
 package skills
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 type RuntimeResolver struct {
-	db    *db.DB
-	store storage.ObjectStore
+	db *db.DB
 }
 
 type RuntimeSkill struct {
 	Source           string
 	SkillID          string
+	VersionUUID      string
 	RequestedVersion string
 	Version          string
 	Directory        string
 	Name             string
 	Description      string
+	S3Bucket         string
+	S3Key            string
 	SHA256           string
-	Archive          []byte
 	SizeBytes        int64
-	archiveLoader    func(context.Context) ([]byte, error)
-}
-
-func (s RuntimeSkill) LoadArchive(ctx context.Context) ([]byte, error) {
-	if len(s.Archive) > 0 {
-		return s.Archive, nil
-	}
-	if s.archiveLoader == nil {
-		return nil, fmt.Errorf("skill archive loader is unavailable for %s/%s@%s", s.Source, s.SkillID, s.Version)
-	}
-	return s.archiveLoader(ctx)
 }
 
 type runtimeSkillRef struct {
@@ -53,11 +35,8 @@ type runtimeSkillRef struct {
 	Version string `json:"version"`
 }
 
-func NewRuntimeResolver(_ config.Config, database *db.DB, store storage.ObjectStore) *RuntimeResolver {
-	return &RuntimeResolver{
-		db:    database,
-		store: store,
-	}
+func NewRuntimeResolver(database *db.DB) *RuntimeResolver {
+	return &RuntimeResolver{db: database}
 }
 
 func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage) ([]RuntimeSkill, error) {
@@ -157,25 +136,24 @@ func (r *RuntimeResolver) resolveBuiltin(ctx context.Context, ref runtimeSkillRe
 		}
 		return RuntimeSkill{}, err
 	}
-	versionRecord := record
 	return RuntimeSkill{
 		Source:           "anthropic",
 		SkillID:          record.SkillExternalID,
+		VersionUUID:      record.UUID,
 		RequestedVersion: ref.Version,
 		Version:          record.Version,
 		Directory:        record.Directory,
 		Name:             firstNonEmpty(record.Name, record.Directory, record.SkillExternalID),
 		Description:      record.Description,
+		S3Bucket:         record.S3Bucket,
+		S3Key:            record.S3Key,
 		SHA256:           record.SHA256,
 		SizeBytes:        record.SizeBytes,
-		archiveLoader: func(ctx context.Context) ([]byte, error) {
-			return r.loadBuiltinArchive(ctx, versionRecord)
-		},
 	}, nil
 }
 
 func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceID int64, ref runtimeSkillRef) (RuntimeSkill, error) {
-	if r.db == nil || r.store == nil {
+	if r.db == nil {
 		return RuntimeSkill{}, errors.New("custom skill resolver is unavailable")
 	}
 	var record db.SkillVersion
@@ -194,142 +172,18 @@ func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceID int64, 
 		}
 		return RuntimeSkill{}, err
 	}
-	versionRecord := record
 	return RuntimeSkill{
 		Source:           "custom",
 		SkillID:          ref.SkillID,
+		VersionUUID:      record.UUID,
 		RequestedVersion: ref.Version,
 		Version:          record.Version,
 		Directory:        record.Directory,
 		Name:             record.Name,
 		Description:      record.Description,
+		S3Bucket:         record.S3Bucket,
+		S3Key:            record.S3Key,
 		SHA256:           record.SHA256,
 		SizeBytes:        record.SizeBytes,
-		archiveLoader: func(ctx context.Context) ([]byte, error) {
-			return r.loadCustomArchive(ctx, versionRecord)
-		},
 	}, nil
-}
-
-func (r *RuntimeResolver) loadBuiltinArchive(ctx context.Context, record db.BuiltinSkillVersion) ([]byte, error) {
-	if r.store == nil {
-		return nil, errors.New("built-in skill object store is unavailable")
-	}
-	object, err := r.store.Open(ctx, record.S3Key, nil)
-	if err != nil {
-		return nil, fmt.Errorf("read built-in skill object %s@%s: %w", record.SkillExternalID, record.Version, err)
-	}
-	defer object.Body.Close()
-	data, err := io.ReadAll(object.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read built-in skill archive %s@%s: %w", record.SkillExternalID, record.Version, err)
-	}
-	if err := validateRuntimeSkillArchive(data, "built-in skill", record.SkillExternalID, record.Version, record.Directory, record.SHA256, record.SizeBytes); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func (r *RuntimeResolver) loadCustomArchive(ctx context.Context, record db.SkillVersion) ([]byte, error) {
-	object, err := r.store.Open(ctx, record.S3Key, nil)
-	if err != nil {
-		return nil, fmt.Errorf("read custom skill object %s@%s: %w", record.SkillExternalID, record.Version, err)
-	}
-	defer object.Body.Close()
-	data, err := io.ReadAll(object.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read custom skill archive %s@%s: %w", record.SkillExternalID, record.Version, err)
-	}
-	if err := validateRuntimeSkillArchive(data, "custom skill", record.SkillExternalID, record.Version, record.Directory, record.SHA256, record.SizeBytes); err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func validateRuntimeSkillArchive(data []byte, label string, skillID string, version string, directory string, sha string, sizeBytes int64) error {
-	if int64(len(data)) != sizeBytes {
-		return fmt.Errorf("%s archive size mismatch %s@%s: got %d want %d", label, skillID, version, len(data), sizeBytes)
-	}
-	if got := sha256Hex(data); got != sha {
-		return fmt.Errorf("%s archive checksum mismatch %s@%s", label, skillID, version)
-	}
-	archiveDirectory, _, err := inspectSkillArchiveBytes(data)
-	if err != nil {
-		return fmt.Errorf("inspect %s %s@%s: %w", label, skillID, version, err)
-	}
-	if archiveDirectory != directory {
-		return fmt.Errorf("%s %s@%s directory changed from %q to %q", label, skillID, version, directory, archiveDirectory)
-	}
-	return nil
-}
-
-func inspectSkillArchiveBytes(data []byte) (string, []byte, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return "", nil, err
-	}
-	return inspectSkillZipFiles(reader.File)
-}
-
-func inspectSkillZipFiles(files []*zip.File) (string, []byte, error) {
-	var top string
-	var skillMD []byte
-	var uncompressedSize uint64
-	for _, file := range files {
-		name := strings.ReplaceAll(file.Name, "\\", "/")
-		if name == "" {
-			continue
-		}
-		if strings.HasPrefix(name, "/") || strings.Contains(name, "\x00") {
-			return "", nil, fmt.Errorf("invalid zip path %q", file.Name)
-		}
-		cleanName := strings.TrimSuffix(name, "/")
-		if cleanName == "" {
-			return "", nil, fmt.Errorf("invalid zip path %q", file.Name)
-		}
-		parts := strings.Split(cleanName, "/")
-		if len(parts) == 0 || parts[0] == "" || parts[0] == "." || parts[0] == ".." {
-			return "", nil, fmt.Errorf("invalid zip top-level path %q", file.Name)
-		}
-		for _, part := range parts {
-			if part == "" || part == "." || part == ".." {
-				return "", nil, fmt.Errorf("invalid zip path %q", file.Name)
-			}
-		}
-		if file.Mode()&os.ModeSymlink != 0 {
-			return "", nil, fmt.Errorf("zip contains symlink: %s", file.Name)
-		}
-		if top == "" {
-			top = parts[0]
-		} else if top != parts[0] {
-			return "", nil, fmt.Errorf("multiple top-level directories: %s and %s", top, parts[0])
-		}
-		if file.FileInfo().IsDir() {
-			continue
-		}
-		var err error
-		uncompressedSize, err = addZipFileUncompressedSize(uncompressedSize, file)
-		if err != nil {
-			return "", nil, err
-		}
-		if cleanName == top+"/SKILL.md" {
-			data, err := readZipFile(file, MaxSkillPackageBytes)
-			if err != nil {
-				return "", nil, err
-			}
-			skillMD = data
-		}
-	}
-	if top == "" {
-		return "", nil, errors.New("archive is empty")
-	}
-	if len(skillMD) == 0 {
-		return "", nil, fmt.Errorf("%s/SKILL.md not found", top)
-	}
-	return top, skillMD, nil
-}
-
-func sha256Hex(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }

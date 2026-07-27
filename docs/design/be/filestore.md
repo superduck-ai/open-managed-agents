@@ -21,6 +21,8 @@
 
 Filestore 是现有单体中的独立资源切片。handler 负责 wire contract 和流式 HTTP，service 负责校验及业务编排，`internal/db` 负责事务和租户范围内的持久化。对象读写、错误分类和版本清理统一交给绑定单个 bucket 的 `internal/storage.ObjectStore`；生产环境由共享 `storage.Client` 复用 AWS SDK 连接，再按名称派生轻量对象存储。
 
+Service 在完成请求校验和 filesystem 租户鉴权后，通过 `pathRouter` 把 list、file read 和 metadata read 分发给持久化 backend 或只读虚拟 backend。普通 namespace 的读取由持久化 backend 访问数据库和对象存储，`/skills` 的 archive 索引、缓存与成员读取由独立 skill backend 处理。虚拟 backend 自己声明读取匹配范围，router 则统一拒绝对其整棵 namespace 的 mutation；普通写入仍由 Service 编排既有数据库事务和对象存储操作。这样新增只读虚拟 namespace 时只需注册新的 backend，不需要在每个 Filestore API 入口增加特例。
+
 Filestore 还拥有独立的 `filestore.Principal`。API 中间件完成专用 JWT 验证与数据库回查后，只把资源所需的租户、account、filesystem 和策略范围映射到该类型，并通过 Filestore 私有的 context key 交给 handler。全局 `auth.Principal` 不保存 `filesystem_id`、`readonly`、`org_taints` 或 CMEK 等 Filestore 专属状态；Filestore handler/service 也不依赖全局 Principal。
 
 ```mermaid
@@ -29,6 +31,13 @@ flowchart LR
     AUTH["API auth boundary"] --> P["filestore.Principal"]
     P --> H
     H --> S["Filestore service"]
+    S --> PR["pathRouter"]
+    PR --> PB["persistent read backend"]
+    PR --> SB["skill read backend"]
+    PB --> D
+    PB --> T
+    SB --> D
+    SB --> T
     S --> D["PostgreSQL namespace"]
     S --> T["default storage.ObjectStore"]
     SC["shared storage.Client"] --> T
@@ -96,9 +105,9 @@ curl -H "Authorization: Bearer ${FILESTORE_TOKEN}" http://127.0.0.1:38080/v1/fil
 - token 自签发起 1 小时后失效；长时间 mount 或联调需要在到期前重新签发并更新客户端凭证。
 - 所有身份和策略字段都必须与当前数据库一致，且 `filesystem-id` 必须已经存在，否则服务端验签后的范围回查仍会拒绝请求。
 
-当前公开合同没有 filesystem 创建接口，Filestore 鉴权也不会根据其他凭证惰性建档。public Session 创建事务会自动建立唯一 filesystem，并在同一事务中建立 `/outputs`、`/uploads`、`/transcripts`、`/tool_results` 四个固定一级目录；JWT 在 sandbox 启动等受信边界按需签发，不持久化。请求改用同 workspace 的其他 filesystem、同名 filesystem 已被其他 Session 绑定，或数据库记录尚未创建时，都必须拒绝，不能改绑或泄露其存在性。每次鉴权还会回查所属 Session；Session 一旦归档、终止或删除，既有 JWT 立即失效。
+当前公开合同没有 filesystem 创建接口，Filestore 鉴权也不会根据其他凭证惰性建档。public Session 创建事务会自动建立唯一 filesystem，并在同一事务中建立 `/outputs`、`/skills`、`/uploads`、`/transcripts`、`/tool_results` 五个固定一级目录；JWT 在 sandbox 启动等受信边界按需签发，不持久化。请求改用同 workspace 的其他 filesystem、同名 filesystem 已被其他 Session 绑定，或数据库记录尚未创建时，都必须拒绝，不能改绑或泄露其存在性。每次鉴权还会回查所属 Session；Session 一旦归档、终止或删除，既有 JWT 立即失效。
 
-四个一级目录是 Sandbox 运行时合同，不是普通用户目录：通用 Filestore mutation 不能移动或删除固定根、覆盖固定根，也不能把目录跨固定根边界移动；同一固定根内部的普通目录移动和删除仍按既有规则执行。这样 filesystem 的目录树始终由数据库维护，同时不会在 Session 启动时重新扫描、清空或修复 `/uploads`。
+五个一级目录是 Sandbox 运行时合同，不是普通用户目录：通用 Filestore mutation 不能移动或删除固定根、覆盖固定根，也不能把目录跨固定根边界移动；同一普通固定根内部的目录移动和删除仍按既有规则执行。`/skills` 进一步保留为全树只读命名空间，其后代由 skill archive 投影虚拟生成，任何以 `/skills` 为 source 或 destination 的 mutation 都由服务层拒绝。这样 filesystem 的目录树始终由数据库维护，同时不会在 Session 启动时重新扫描、清空或修复 `/uploads`。
 
 `filesystemId` 同时允许 tagged external ID 和 UUID。查询同时命中两列时必须优先选择精确 `external_id`，仅在 external ID 未命中时才按内部 UUID 解析；JWT scope 回查与资源层查询使用相同优先级，避免跨命名空间的非确定选择。
 
@@ -114,8 +123,11 @@ filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经�
 | `/uploads` | `/mnt/session/uploads` | 只读 | 1s |
 | `/transcripts` | `/mnt/transcripts` | 只读 | 10s |
 | `/tool_results` | `/mnt/user-data/tool_results` | 只读 | 3s |
+| `/skills` | `/root/.claude/skills` | 只读 | 60s |
 
-四个挂载统一使用 `uid=999`、`gid=1000`、目录权限 `0755`、文件权限 `0644`、`vfs_cache_mode=full` 和 `vfs_cache_max_size=1G`。`/outputs` 使用读写 Token，其余三个 source 共享只读 Token；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
+五个挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个 source 共享只读 Token 并设置 `readonly=true`；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
+
+Runner 不执行独立的 mount preparation；`rclone-filestore multimount` 在内部对每个 destination 执行 `MkdirAll`。镜像和 Environment Manager 不得创建 skill 软链，也不会复制或解压 archive；destination 无法创建时，由 multimount 启动或 ready 阶段失败并进入统一 Sandbox 清理。
 
 Runner 先通过 E2B Files API 完整写入强类型 JSON，再将 `/tmp/rclone-mount-config.json` 权限设置为 `0600`。文件写入完成后才直接执行固定镜像命令，不使用 stdin bootstrap、临时文件或 shell trap：
 
@@ -132,12 +144,15 @@ sequenceDiagram
     participant R as Environment Runner
     participant E as E2B Sandbox
     participant M as Environment Manager
-    A->>D: Create filesystem and four fixed roots
+    A->>D: Create filesystem and five fixed roots
     A->>D: Write resource and borrowed /uploads entry
+    R->>D: Resolve concrete skill versions
+    R->>D: Atomically replace /skills archive entries
     R->>E: Create Sandbox
     R->>D: Resolve trusted filesystem scope
     R->>R: Issue filesystem RW and readonly tokens
     R->>E: Write 0600 rclone config
+    R->>E: Remove legacy skill symlink and create mountpoint
     R->>E: Start fixed rclone binary
     loop Every 200ms, up to 20s
         R->>E: Files.Exists(/tmp/rclone-mounts/ready)
@@ -185,13 +200,15 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 迁移 `00018_add_filestore.sql` 新增：
 
 - `filestore_filesystems`：保存自身的内部 bigint ID、稳定 UUID、workspace 内的外部 ID；组织、工作区、public session、可选 code session 与创建 API key 均以稳定 UUID 绑定，避免租户搬迁或跨库合并时依赖源库 identity 值。
-- `filestore_entries`：统一保存 file/directory、规范化绝对路径、parent path、响应元数据、hash、TTL 和不可变 S3 object reference；Session File resource 的借用 entry 另保存源 File UUID 以及不可由 HTTP metadata 设置的 ownership 列。组织、工作区、filesystem 及可选创建者引用均保存对应 UUID，不冗余保存其他表的 identity 或 filesystem external ID。
+- `filestore_entries`：统一保存 file/directory/archive、规范化绝对路径、parent path、响应元数据、hash、TTL 和不可变 S3 object reference；Session File resource 的借用 entry 另保存源 File UUID，skill archive entry 保存具体 version UUID，两者都使用不可由 HTTP metadata 设置的 ownership 列。组织、工作区、filesystem 及可选创建者引用均保存对应 UUID，不冗余保存其他表的 identity 或 filesystem external ID。
+
+迁移 `00032_add_filestore_archive_entries.sql` 直接把 `archive` 加入 `filestore_entries.kind`，增加对象形状与具体 version UUID 唯一约束，并为历史活动 filesystem 补齐 `/skills` 根；没有独立的 skill archive 投影表。`00033_validate_filestore_archive_entries.sql` 单独验证新增约束，避免在替换约束的短事务内扫描历史 rows。archive entry 不拥有 catalog 对象、不写成员 entry，也不计入 Filestore 容量。
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 
 迁移 `00023_provision_session_filesystems.sql` 建立“同一 Session 只能拥有一个有效 filesystem”的唯一部分索引，并为历史未软删除的 Session 回填缺失记录。创建索引前会检查历史重复；发现同一 Session 存在多个有效 filesystem 时迁移直接中止，不猜测应保留哪一条。迁移 `00024_use_uuid_filestore_entry_references.sql` 进一步把 entry 的组织、工作区、filesystem 和创建者引用改为稳定 UUID；旧引用存在孤立或租户错配时同样中止迁移。迁移 `00026_validate_filestore_filesystem_reference_scopes.sql` 在最终 UUID schema 上补验 filesystem 的组织、工作区、Session、Code Session 与 API Key 归属链，弥补早期回填只核对主键和 external ID 的不足。迁移 `00027_add_filestore_entry_management.sql` 在短事务中新增内部 ownership 列及 `NOT VALID` 形状约束，`00028_validate_filestore_entry_management.sql` 再以较弱锁单独验证历史行；两列必须成对为空或成对非空。迁移 `00029_add_filestore_file_references.sql` 新增 `source_file_uuid`、活动引用索引、每个 Session resource 唯一活动 entry 约束，并为历史活动 filesystem 补齐四个固定根目录；已有同名 entry 只有在它确实是 `parent_path=/` 的普通目录时才会复用，否则迁移中止。借用 entry 允许没有 Files API 未提供的 MD5，但必须与非过期的 `session_file_resource` 管理关系双向对应。`00030_validate_filestore_file_references.sql` 再单独验证放宽后的 blob 形状和 File reference 形状两个 `NOT VALID` 约束。回滚 `00029` 时只要仍有借用引用就明确失败；四个普通目录 row 会保留，因为 schema 没有把迁移回填目录与原有用户目录做额外标记，盲目删除会破坏数据。所有这些引用都由应用维护，不增加 PostgreSQL 外键。
 
-根目录 `/` 是由 filesystem 合成的虚拟目录，不写 marker row 或 S3 marker object；四个固定一级目录是真实 directory entry，由 filesystem 创建事务写入，历史活动 filesystem 通过迁移补齐。文件系统和目录节点的归属都使用 `organization_uuid`、`workspace_uuid`、`filesystem_uuid` 等稳定引用；entry 的创建者审计 UUID 直接继承已经过租户链校验的 filesystem 归属，不再从 Filestore 请求构造空的内部主键 actor。请求进入数据库后仍可使用当前库内部 ID 取得工作区用量锁与 filesystem 锁，但 entry 的持久化与热查询只使用 UUID 边界。schema 不创建 PostgreSQL 外键；源 File UUID 的完整性由同事务行锁、删除守卫和 E2E 测试维护。
+根目录 `/` 是由 filesystem 合成的虚拟目录，不写 marker row 或 S3 marker object；五个固定一级目录是真实 directory entry，由 filesystem 创建事务写入，历史活动 filesystem 通过迁移补齐。每个 `/skills/<directory>` 是 archive entry；只有 zip 内部成员由 central directory 合成，不逐个写 entry。普通 entry 枚举排除 archive kind，`/skills` 专用只读视图负责把 archive 表现为目录并按需展开。文件系统和目录节点的归属都使用 `organization_uuid`、`workspace_uuid`、`filesystem_uuid` 等稳定引用；entry 的创建者审计 UUID 直接继承已经过租户链校验的 filesystem 归属，不再从 Filestore 请求构造空的内部主键 actor。请求进入数据库后仍可使用当前库内部 ID 取得工作区用量锁与 filesystem 锁，但 entry 的持久化与热查询只使用 UUID 边界。schema 不创建 PostgreSQL 外键；源 File UUID 的完整性由同事务行锁、删除守卫和 E2E 测试维护。
 
 文件对象 key 固定为：
 
@@ -205,7 +222,7 @@ workspaces/{workspaceUUID}/filestores/{filesystemUUID}/blobs/{blobUUID}
 
 public Session 是 filesystem 的生命周期归属者；Code Session 只是可重建的执行实例，调度、重试或替换 Code Session 都复用同一个 filesystem。因此新建记录的 `code_session_uuid` 固定为 `NULL`，按 Session 查询 filesystem 时也不使用 Code Session 作为所有权条件。
 
-普通 Session 与 Deployment Session 最终都进入共享的 `insertSessionSQLXTx`。Session 行写入后，事务立即通过 `INSERT ... SELECT` 解析并保存 `organization_uuid`、`workspace_uuid`、`session_uuid` 和 `created_by_api_key_uuid`，创建四个固定一级目录，再继续写 Thread、Resources、File resource 引用 entry 与 EnvironmentWork；任一步失败都回滚整个 Session 图。
+普通 Session 与 Deployment Session 最终都进入共享的 `insertSessionSQLXTx`。Session 行写入后，事务立即通过 `INSERT ... SELECT` 解析并保存 `organization_uuid`、`workspace_uuid`、`session_uuid` 和 `created_by_api_key_uuid`，创建五个固定一级目录，再继续写 Thread、Resources、File resource 引用 entry 与 EnvironmentWork；任一步失败都回滚整个 Session 图。
 
 filesystem external ID 的格式为 `claude_chat_<24 位 Base62>`。生成器使用 `crypto/rand`，只接受小于 248 的随机字节，再以 `% 62` 映射字符；248 是不超过 256 的最大 62 倍数，因此不会产生取模偏差。24 位 Base62 约有 143 bit 熵、约 `1.04 × 10^43` 种组合；即使生成十亿个 ID，理论碰撞概率也约为 `4.8 × 10^-26`。随机性只降低碰撞概率，数据库仍是最终裁决者：
 

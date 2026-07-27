@@ -1,149 +1,152 @@
 # Managed Agent Skills Runtime
 
-## 背景
+## 背景与目标
 
-Managed Agents API 已经支持 `skills` 字段和 Skills API：
+Managed Agents API 的 agent snapshot 只保存 `{type, skill_id, version}` 引用。custom skill 和
+built-in skill 的每个具体版本都已经是一个规范化的不可变 zip，并由 catalog version row
+记录对象存储 bucket、key、大小、SHA-256 和顶层目录。
 
-- custom skill 上传时会被规范化为单顶层目录 zip，并存入对象存储。
-- built-in skill（`source: "anthropic"`）由管理员 seed 到 `builtin_skills` / `builtin_skill_versions`，archive 存对象存储；运行时按 DB catalog 解析，不再依赖本地 `SKILLS_BUILTIN_DIR`。
-- agent 只保存 `{type, skill_id, version}` 引用，并把它们写入 agent version / session snapshot。
+Claude Code 需要在本地 discovery 目录中看到解包后的目录树。运行时因此把 zip 内容作为
+Filestore 的虚拟只读目录直接映射到 `/root/.claude/skills`，不再建立 E2B skill volume，
+也不再由 Runner 或 Environment Manager 预热、复制或解压文件。
 
-Claude Code 的 skill 发现边界仍然是本地文件系统目录。Managed Agents 运行时的目标不是让 Claude Code 读取 API/DB，而是给 sandbox 提供一个稳定的 `/mnt/skills` 视图，由 `environment-manager` 负责把其中的 skill archives 解压到 sandbox 内的统一目录。
+## 启动流程
 
-## 运行时挂载策略
+Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
 
-Environment runner 在启动云端 managed agent session 时执行以下步骤：
+1. 从 Session 的 agent snapshot 严格解析 `skills[]`。
+2. `type=anthropic` 从 `builtin_skills` / `builtin_skill_versions` 解析版本；`type=custom`
+   在当前 workspace 内从 `skills` / `skill_versions` 解析版本。
+3. `latest` 在启动时解析为具体 active version row。后续 catalog 的 latest 变化不会改变
+   已启动 Session 的视图。
+4. 在一只 `sqlx.Tx` 中锁定 Session filesystem 和 namespace，确保 `/skills` 固定根存在，
+   并原子替换该 filesystem 中 `kind=archive`、`managed_by=skill_archive` 的 entry 集合。
+   替换时旧的活动投影统一写入 `deleted_at`，不做硬删除；新的投影作为新 entry 插入。
+5. 创建 Sandbox 后，Runner 直接启动 rclone-filestore 的五个固定 mount；multimount
+   在内部对 destination 执行 `MkdirAll`，Runner 不执行独立 mount preparation。
+6. `/skills` 使用只读 Filestore Token，直接挂载到 `/root/.claude/skills`。rclone ready
+   后才启动 Environment Manager；Environment Manager 不再处理 skill。
 
-1. 从 session 的 agent snapshot 读取受信任的 MCP/Skills 输入；当 Environment 为 limited 且 `allow_mcp_servers=true` 时，严格解析 MCP HTTP server hosts，并在任何 Provider `Resolve` 之前用当前解析结果覆盖专用 `mcp_allowed_hosts` work metadata。开关关闭或网络为 unrestricted 时不读取 Session MCP 配置，直接以空数组覆盖该字段；这样所有状态转换都会清除旧值。缺少 session work 身份、畸形 snapshot（包括 JSON `null`）或非空 MCP URL 都使启动 fail-closed；其他 managed-agent metadata key 不参与网络授权。
-2. 对更新后的 environment work 调用 runtime provider `Resolve`，得到 sandbox template、网络策略和基础 env/metadata；E2B Adapter 只在 Environment 开关开启时消费上述专用 MCP host key。
-3. 从同一 agent snapshot 读取 `skills[]`。
-4. 对 `type=anthropic`，从 `builtin_skills` / `builtin_skill_versions` 读取 archive 元数据；`latest` 解析到当前 `builtin_skills.latest_version` 对应的 version row。
-5. 对 `type=custom`，按 workspace scope 从 DB 解析 `latest` 或指定版本，并读取 skill version 元数据；`latest` 通过单个 join 查询解析到当前 active version row，避免在读取 `skills.latest_version` 和读取 `skill_versions` 之间产生 torn read。
-6. 生成确定性的 `manifest.json`，其中列出每个 skill 的 source、id、resolved version、directory、filename、sha256 和 size。`requested_version` 不进入 manifest/hash，因此 `latest` 与同一个 resolved version 的显式引用会复用同一个 volume。
-7. 用完整 manifest SHA256 生成 E2B volume 名称；如果同 hash volume 已有 `.ready` 标记，且 marker 内容等于完整 manifest SHA256，则直接复用，不读取对象存储 archive。
-8. volume miss 时才按 manifest 顺序逐个读取对应 zip archive，并校验 archive 大小、checksum、解压总大小、单顶层目录和顶层 `SKILL.md`，然后写入该 volume；runner 不会把所有 archive 同时预载到内存。
-9. 把 mount 信息写入 environment work metadata，sandbox create 时用第 2 步得到的 resolution 和当前 work metadata 挂载到 `/mnt/skills`。
-10. Session File resources 已由 resource 写事务维护为对应 `filesystem_id` 下的 `/uploads` 数据库 entry；runner 不扫描、调和或复制这些文件。runner 先创建 E2B Sandbox，再签发绑定完整 filesystem 写权限的读写 Token 与只读 Token，启动固定 rclone-filestore 四挂载并等待 ready，随后最多重试三次删除临时 Token 配置。`/uploads` 整体只读挂载到 `/mnt/session/uploads`，无需逐文件投影。
-11. runner 标记 Sandbox running、发送 Environment Work heartbeat，再创建 local Code Session、写入 `environment-manager` stdin 并启动 environment-manager；启动失败会撤销刚创建的 Code Session。Environment Manager 启动成功后，Session 与 Environment Work 的 runtime metadata 在一个数据库事务中发布。不再把 skill zip 写进 sandbox 临时目录，也不在启动 shell 中解压 skill。
+每条 archive entry 对应一个具体 skill version zip，保存：
 
-`/mnt/skills` 的约定视图：
+- organization、workspace、filesystem 的稳定 UUID；
+- `metadata.skill_source` 和 `managed_resource_uuid` 中的具体 skill version UUID；
+- 唯一路径 `/skills/<directory>`；
+- archive 的 bucket、key、size 和 SHA-256。
 
-```text
-/mnt/skills/
-  manifest.json
-  anthropic__xlsx__builtin__<sha>.zip
-  custom__skill_...__1__<sha>.zip
-  .ready
-```
-
-`environment-manager` 会在 environment 初始化前把 Claude Code 的 skill discovery 目录软链到 `/workspace/skills`，再在 Claude Code 启动前把 `/mnt/skills/*.zip` 解压到 `/workspace/skills`。`manifest.json` 和 `.ready` 当前由 runner/E2B volume 侧用于确定性缓存和冷启动复用；`.ready` 内容必须是完整 manifest SHA256。environment-manager 暂不强依赖 manifest/checksum。
-
-同样的顺序也适用于 MCP 网络策略：runner 从 Session Agent Snapshot 提取 MCP HTTP server hosts，并在 Sandbox 创建前通过命名 network metadata schema 用当前 host 集合覆盖 Environment Work metadata；当前集合为空、MCP 开关关闭或网络变为 unrestricted 时都必须写入空数组，以清除任何历史或伪造值。schema helper 在保留其他 work metadata key 的同时，对类型错误、`null` 或非法 host fail-closed，不再通过 `map[string]any` / `[]any` 静默跳过坏值。该 metadata 只是受信任的解析输入，不能自行扩大 Environment 权限；仅当 Environment 配置为 `networking.type=limited` 且 `allow_mcp_servers=true` 时，E2B Adapter 才把这些 hosts 加入本次 Sandbox 的 `AllowOut`。Code Session upstream proxy 同样受该开关约束，但会在每次 CONNECT 时从 Session Agent Snapshot 现场提取 hosts；`allow_mcp_servers=false` 时，即使 metadata 或 snapshot 中存在 MCP hosts 也不得放行。E2B `AllowOut` 是 Sandbox 创建时的快照，proxy 则读取当前配置，因此 Environment 收紧对存活 Sandbox 的下一次代理 CONNECT 即时生效。
-
-## 当前流程
+同一 filesystem 内，路径和具体 skill version UUID 都唯一。Snapshot 中两个 skill
+若声明相同目录但不是同一具体版本，启动失败，不能让后一个静默覆盖前一个。
 
 ```mermaid
-flowchart TD
-  Z["Agent/deployment/skill version write"] --> ZA["Enqueue skill_prewarm job"]
-  ZA --> ZB["Skill prewarm worker resolves snapshots"]
-  ZB --> ZC["Prepare or reuse E2B skill volume"]
-  A["Agent snapshot contains MCP and skills refs"] --> B["Environment runner loads session snapshot"]
-  B --> BA["Patch switch-gated MCP hosts before Resolve"]
-  BA --> AA["Resolve sandbox template and network"]
-  AA --> C["Resolve skill refs by workspace scope"]
-  C --> D{"Skill source"}
-  D -->|"anthropic"| E["Read builtin_skill_versions metadata"]
-  D -->|"custom"| F["Read skill version DB metadata"]
-  E --> H["Build deterministic manifest.json"]
-  F --> H
-  H --> I["Compute manifest hash"]
-  I --> J{"E2B volume exists with .ready?"}
-  J -->|"yes"| K["Reuse cached skill volume without archive read"]
-  J -->|"no"| L["Load and validate zip archives"]
-  L --> LA["Write manifest.json and zip archives, then .ready"]
-  K --> M["Patch work metadata with managed_agent_skills_mount"]
-  LA --> M
-  M --> N["Create sandbox with precomputed network and /mnt/skills volume mount"]
-  N --> NA["Start rclone-filestore and wait ready"]
-  NA --> NB["Delete token config, retry up to 3 times"]
-  NB --> NC["Mark running and heartbeat"]
-  NC --> ND["Create local Code Session"]
-  ND --> O["Write environment-manager stdin"]
-  O --> P["Start environment-manager"]
-  P --> PA["Atomically publish Session and Work runtime metadata"]
-  PA --> Q["Symlink Claude skill dirs to /workspace/skills"]
-  Q --> R["environment-manager extracts /mnt/skills/*.zip to /workspace/skills"]
+flowchart LR
+    A["Session agent snapshot"] --> B["Resolve concrete catalog versions"]
+    B --> C["Replace kind=archive entries in one transaction"]
+    C --> D["Filestore /skills virtual view"]
+    E["Immutable zip objects"] --> D
+    D --> F["rclone readonly mount"]
+    F --> G["/root/.claude/skills"]
+    G --> H["Claude Code discovery"]
 ```
 
-## 异步 prewarm
+## 虚拟目录合同
 
-Agent create/update、deployment create/update 和 custom skill version create 会 best-effort 写入 `jobs.type = 'skill_prewarm'` outbox。API 请求只做轻量 enqueue，enqueue 使用短超时 context；失败只记录日志，不影响主请求响应。
+Filestore 对外呈现的是 archive 成员，而不是 zip 文件本身：
 
-enqueue 的短超时属于 handler/resource 边界，而不是 `skillprewarm.Enqueuer` 的内部策略。这样 agents、deployments、skills handler 只依赖本包定义的最小接口，只有 `internal/api` 组合根依赖 `internal/skillprewarm` 具体实现。当前三处 handler 使用相同的 3 秒 best-effort 超时；如果后续需要集中配置，应抽到中性的运行时 policy/config，而不是让资源 handler 重新依赖 prewarm 实现包。
+```text
+/skills/
+  pdf/
+    SKILL.md
+    references/
+      forms.md
+  xlsx/
+    SKILL.md
+```
 
-触发条件：
+Sandbox 中同一棵树直接位于：
 
-- agent create：`skills` 非空时 enqueue snapshot。
-- agent update：仅当 `skills` 变化且更新后非空时 enqueue snapshot。
-- deployment create：`agent_snapshot.skills` 非空时 enqueue snapshot。
-- deployment update：仅当 `agent_snapshot.skills` 变化且更新后非空时 enqueue snapshot；agent 的 name、description、tools、metadata 等非 skill 变化不会触发。
-- custom skill version create：enqueue fanout。
+```text
+/root/.claude/skills/
+  pdf/SKILL.md
+  xlsx/SKILL.md
+```
 
-`skills` 的 enqueue 判定只把非空数组视为需要预热。缺失 `skills`、`skills:null` 和 `skills:[]` 都视为无 skills，不触发 prewarm；实际 session 启动时仍由 runtime resolver 解析 snapshot，作为最终正确性兜底。
+`/skills` 是真实的固定一级 directory entry；每个 `/skills/<directory>` 是
+`filestore_entries` 中的 archive entry，成员则根据 zip central directory 合成，不逐个
+写 entry。archive entry 只借用 catalog 对象，不复制对象，也不计入 `filestore_bytes`。
+虚拟文件 UUID 由 filesystem、具体 version UUID 和成员路径确定，Runner 重试不会改变
+同一节点的身份。
 
-`skill_prewarm` job 分两类：
+List、metadata 和 ranged read 都由 Filestore 服务实现。对 `/skills` 本身、其后代，以及
+以 `/skills` 为 source 或 destination 的任意 mutation 均返回 `403 permission_denied`。
+HTTP 只读 Token 和 rclone `readonly=true` 构成 Sandbox 的只读边界；`/skills` 与其他
+只读 mount 统一使用目录权限 `0755` 和文件权限 `0644`。
 
-- `snapshot`：包含 agent snapshot、source、source_id 和 trigger；worker 复用 runtime resolver 解析 `skills[]`，再调用同一套 `PrepareSkillMount` 创建或复用 manifest hash 对应的 E2B volume。
-- `fanout`：由 custom skill version 创建触发，分页扫描引用该 custom skill 且 version 为 `latest` 或缺省的 agent/deployment snapshot，再生成 `snapshot` jobs。payload 中包含触发的 skill version，因此同一 agent snapshot 在不同 latest version 发布后仍会重新预热。
+非递归列举 `/skills` 时，Filestore 直接使用 archive entry 的 `path` 返回一级 skill
+目录，不下载 archive。递归列举或访问具体 skill 子树时，才按需加载并校验对应 archive。
 
-prewarm 只是冷启动优化，不是正确性边界。即使 job 丢失、失败或延迟，session 启动路径仍会在 sandbox create 前执行 lazy prepare，并把最终 mount metadata 写入 environment work。
+## archive 校验与缓存
 
-session 启动路径中的 skill resolution/mount prepare 是正确性边界，而不是 best-effort：如果 snapshot 引用的 skill 不存在、版本不可用、目录冲突、custom skill 对象存储不可用或 volume prepare 失败，runner 必须失败该 work，不能静默跳过单个 skill 后继续启动。这样用户不会得到一个看似成功但缺失声明能力的 Claude Code session。
+Filestore 在第一次访问某个具体 archive 时按需下载并建立内存索引：
 
-worker 失败时沿用 jobs 表的 retry 状态机，并在 payload 中记录 `last_error` 和 `last_error_at` 供排查；达到最大尝试次数后进入 `failed`。
+- 压缩 archive 最大 8 MiB，并同时校验 DB size 和 SHA-256；
+- 必须是有效 zip，且只有与投影目录一致的单一顶层目录；
+- 顶层必须包含 `SKILL.md`；
+- 拒绝绝对路径、反斜杠、NUL、空段、`.`、`..`、重复路径、文件/目录冲突和 symlink；
+- 解压大小按 archive header 累加并限制为 500 MiB；
+- 读取单个成员时流式解压；range offset 通过丢弃前缀实现，不把解压结果整体缓存。
 
-worker complete/fail 状态推进必须校验当前 worker 仍持有 job lease：`status = 'running'` 且 `locked_by` 等于本 worker。若更新 0 行，视为 lease 已被其他 worker 接管或 job 状态已变化，当前 worker 不再覆盖 job 状态。
+进程内以 `bucket + key + sha256 + archive path` 为 key，使用最多 20 个 archive 的有界
+LRU 缓存压缩 archive 和目录索引。单个压缩 archive 最大 8 MiB，因此缓存中的压缩数据
+理论上最多为 160 MiB，另有目录索引开销。同一个 key 的并发 cache miss 通过 singleflight
+合并，只有一个共享任务下载、校验并建立索引。共享任务使用独立的 30 秒服务端超时，不继承
+首个请求的取消信号，避免 leader 断开导致其他等待者一起失败；每个调用者通过自己的 context
+独立等待，取消只会结束该调用者，不会终止或 Forget 仍可服务其他请求的共享任务。所有调用者
+都取消后，共享任务仍允许在超时内完成并填充缓存。失败结果不写缓存，后续请求可以重新加载。
+archive entry 仍是每次请求的授权事实来源；Session entry 删除后，缓存中残留的字节无法再通过
+Filestore 路径访问。
 
-## 版本与组合语义
+## 生命周期与对象保留
 
-`version:"latest"` 在 session launch 时解析成当时的 active latest。已经启动的 Claude Code session 使用当次 manifest 对应的挂载视图，不会因为后续 skill 上传新版本而变化。
+Session filesystem 删除后沿用现有有界 cleanup job。最后一批普通文件退休后，同一事务
+软删除该 filesystem 的 directory 和 archive entries。archive entry 只是借用 catalog
+archive，不会产生 Filestore 对象清理任务或容量扣减。
 
-多个 skill 组合由 manifest hash 唯一标识，因此相同 resolved skill 组合可复用同一个 volume，减少重复写入。manifest hash 不包含调用方请求的 `latest`/显式版本文本，只包含最终 resolved version 和 archive 元数据。若多个 archive 使用同一个顶层目录，runner 会在启动前失败；Claude Code 的 filesystem discovery 以目录为单位，目录冲突无法无歧义表达。
+Runner 每次全量替换 `/skills` 投影时，会在同一事务中软删除旧的活动 archive entries
+并插入新集合。这样被移除或换版的 skill 投影仍可用于审计，活动读取和唯一索引只考虑
+`deleted_at is null` 的记录。历史投影不拥有 catalog archive，也不会触发对象回收。
 
-## 实现边界与后续优化
+删除 custom skill/version 或用 `seed-builtin-skills --prune` 软删除 built-in catalog row 时，
+不立即删除 archive 对象，也不创建通用 `object_cleanup` job。原因是已经启动的 Session
+可能仍通过具体 version UUID 投影借用该对象。物理 GC 必须先确认没有任何活动投影引用，
+属于独立的 reference-aware catalog GC；当前实现选择保留对象，优先保证运行中 Session
+的快照稳定性。
 
-runtime resolver 返回的是 skill 元数据和懒加载 archive loader。`BuildMountManifest` 只能读取元数据，不允许触发 archive 下载；`PrepareSkillMount` 命中已有 `.ready` volume 时也必须直接返回，保持零对象存储 archive IO。只有 volume miss 写入阶段才调用 `RuntimeSkill.LoadArchive`，并再次校验 archive 大小、checksum、解压总大小和目录结构。写入阶段按 manifest 顺序逐个 load/write archive，避免多个大 zip 同时驻留在内存中。
+## 移除的旧链路
 
-启动组合根创建 runtime resolver，并通过 `RunnerDependencies` 把它作为 Runner 的必需依赖注入；Runner 不再自行用配置和 object store 组装 resolver，也不存在缺少 resolver 的半初始化构造入口。built-in 与 custom skill 的元数据都来自 DB；两者的 archive 都需要对象存储。如果 managed agent session snapshot 包含任意 skill，而 resolver 未配置 object store，runner 必须在 volume miss 的 archive load 阶段显式失败并停止该 work，不能继续创建缺失 `/mnt/skills` 的 sandbox。没有 skills 的 session 不会读取 archive，因此仍可使用未绑定 object store 的 resolver。
+本方案删除以下运行时机制：
 
-`RuntimeSkill.LoadArchive` 返回的字节归调用方只读使用；当前 runner/E2B 写入路径不会修改返回值，因此不再额外做 defensive copy。若以后新增会修改 archive bytes 的调用方，必须在该调用方本地复制，或把 loader contract 升级为显式独占所有权。
+- `skill_prewarm` job、fanout、worker 和启动组合；
+- E2B skill volume、manifest hash、`manifest.json` 和 `.ready`；
+- Environment Work 中的 `managed_agent_skills_mount` metadata；
+- Runner 启动时下载/校验 zip 并写 volume；
+- `/mnt/skills`、`/workspace/skills` 解压目录，以及 Claude skill discovery 软链；
+- Environment Manager 的 managed-agent skill 解压职责。
 
-`RuntimeSkill.archiveLoader` 是私有字段，导出的 `RuntimeSkill` 字面量如果没有 loader，只适合测试 fake 或已经带 `Archive` 字节的场景；真实 custom/built-in skill 应由 `RuntimeResolver` 构造。后续若有外部包需要安全构造 loader，应优先增加 constructor 或 option setter，而不是直接暴露字段。
+迁移 `00032_add_filestore_archive_entries.sql` 直接把 `archive` 加入 entry kind，增加
+archive 对象与 ownership 形状约束，为历史活动 filesystem 补齐 `/skills` 根，并清除
+遗留的 `skill_prewarm` jobs；整个模型不创建独立的 skill archive 投影表。迁移
+`00033_validate_filestore_archive_entries.sql` 单独验证新约束，避免在替换约束的短事务内
+扫描历史 rows。两张 catalog version 表仍是 archive 所有权来源，schema 不创建
+PostgreSQL 外键。
 
-E2B volume 当前通过 `ListVolumes` 做 name 到 id 的映射，create 失败后会再 list 一次处理并发创建。正确性依赖完整 manifest hash volume name 和 `.ready` marker 内容校验，不依赖本地缓存。若 workspace volume 数量变大，可优先使用 SDK 的按名称查询能力；如果 SDK 暂无该能力，再在 provider 内增加短 TTL name cache，并保留 create-conflict 后重新查询的兜底路径。
+## 验收重点
 
-## API 与数据模型
-
-本实现不新增公开 Skills API。built-in skill catalog 的 DB schema（`builtin_skills` / `builtin_skill_versions`）由 builtin seed 功能提供；本运行时路径只消费这些表和对象存储中的 archive。
-
-上传后的 custom skill zip 已经存入对象存储，agent/session snapshot 已经持久化 skill 引用；运行时只需要解析这些引用并生成 sandbox mount metadata。异步 prewarm 复用现有 `jobs` 表作为 outbox，不改变 agent、deployment、session 或 skill 的公开数据模型。
-
-## Environment Manager 契约
-
-Runner 只允许可解析且规范化后非空的 `github_repository.mount_path` 成为 Environment Manager 的 `environment.cwd`；同一个命名 DTO 也为 Environment Manager source 提供规范化后的 repository URL 和 mount path，避免 clone 目标与 cwd 分叉。`file`、`memory_store`、未知 resource 类型以及畸形或空的 repository payload 都不参与工作目录选择；没有合法候选时回退到 `/home/user`。存在多个 repository 时选择最早附加到 Session 的活动 repository，按 `created_at`、内部递增 `id` 依次判定，不能依赖资源列表当前的返回顺序。后续若增加显式 workdir resource，必须在同一选择器中定义高于 repository 的明确优先级。
-
-`environment-manager` 需要在 Claude Code executor 启动前处理 `/mnt/skills`：
-
-- 如果 `/mnt/skills` 不存在或没有 `*.zip`，视为无 managed agent skills。
-- 当前只扫描 `*.zip`，不读取 `manifest.json`，也不校验 `.ready`。
-- 每个 archive 仍需是单顶层目录并包含顶层 `SKILL.md`，同时拒绝路径逃逸、symlink 和解压大小超限。
-- environment 初始化前，将当前用户和 `/home/claude` 的 `.claude/skills` 目录软链到 `/workspace/skills`。
-- 解压目标为 `/workspace/skills`，因此 Claude Code 通过原 discovery 目录即可看到 mounted skills。
-- manifest/checksum 校验后置；需要时可在 environment-manager 中升级为读取 `manifest.json` 并校验 sha256、directory 和 ready marker。
-
-## 非目标
-
-- 不在创建 agent 时为每个 agent 打包组合 zip。
-- 不提前安装所有 skills。
-- 不把 DB 层改成对象存储读取方。
-- 不要求 sandbox 内部知道 custom skill 的 API/DB 身份；sandbox 只看到 `/mnt/skills` 文件视图。
+- resolver 只读取 DB metadata，不在 Session 启动路径下载 archive；
+- `latest` 被钉住为具体 version，archive entry 替换是全量且原子的；
+- `/skills` list、recursive list、metadata 和 ranged read 返回 archive 成员；
+- checksum、路径穿越、缺少 `SKILL.md` 等损坏 archive fail closed；
+- 所有 `/skills` mutation 被拒绝；
+- rclone 第五个 mount 直达 `/root/.claude/skills`，destination 由 multimount 内部创建；
+- Runner 不写 legacy mount metadata，E2B runtime 不创建 skill volume；
+- catalog soft delete/prune 不破坏活动 Session archive entry；
+- Session filesystem cleanup 会软删除 archive entry，但不删除借用的 catalog object。

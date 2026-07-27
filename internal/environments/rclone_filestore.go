@@ -18,6 +18,7 @@ const (
 	rcloneStateDirectory      = "/tmp/rclone-mounts"
 	rcloneReadyPath           = rcloneStateDirectory + "/ready"
 	rcloneUploadsDestination  = "/mnt/session/uploads"
+	rcloneSkillsDestination   = "/root/.claude/skills"
 	rcloneReadyPollInterval   = 200 * time.Millisecond
 	rcloneReadyTimeout        = 20 * time.Second
 	rcloneCommandGraceTimeout = 5 * time.Second
@@ -95,7 +96,7 @@ func filestoreTokenIdentityFromScope(scope db.FilestoreTokenScope) filestore.Tok
 	}
 }
 
-// buildRcloneMultimountConfig 把 sandbox 内几个固定挂载点映射到同一个
+// buildRcloneMultimountConfig 把 sandbox 内五个固定挂载点映射到同一个
 // filestore filesystem：outputs 读写，其余目录按最小权限原则只读挂载。
 func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, readonlyToken string) rcloneMultimountConfig {
 	mount := func(source, destination string, cacheSeconds float64, readonly bool, token string) rcloneMountConfig {
@@ -120,6 +121,7 @@ func buildRcloneMultimountConfig(filesystemID, serviceURL, readWriteToken, reado
 			mount("/uploads", rcloneUploadsDestination, 1, true, readonlyToken),
 			mount("/transcripts", "/mnt/transcripts", 10, true, readonlyToken),
 			mount("/tool_results", "/mnt/user-data/tool_results", 3, true, readonlyToken),
+			mount("/skills", rcloneSkillsDestination, 60, true, readonlyToken),
 		},
 		ReadyFile:  rcloneReadyPath,
 		ServiceURL: strings.TrimRight(strings.TrimSpace(serviceURL), "/"),

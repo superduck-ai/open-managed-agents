@@ -3,8 +3,8 @@
 ## 本地重启脚本
 
 - 在仓库根目录使用 `just restart-server` 重启本地后端服务，地址为 `127.0.0.1:38080`。
-- `just restart-server` 会调用 `./scripts/restart-server.sh`，杀掉所有监听 `PORT`（默认 `38080`）的进程，等待端口释放，必要时升级为 `kill -9`，然后以前台方式执行 `ADDR=127.0.0.1:$PORT go run .`。
-- 仅在有意测试不同绑定地址时，才使用 `PORT=...` 或 `ADDR=... just restart-server` 覆盖默认值。
+- `just restart-server` 会调用 `./scripts/restart-server.sh`，杀掉所有监听 `PORT`（默认 `38080`）的进程，等待端口释放，必要时升级为 `kill -9`，然后以前台方式执行 `go run .`；监听地址由 `config/config.yaml` 的 `server.addr` 决定。
+- 仅在 `server.addr` 已改为其他端口时，才使用 `PORT=... just restart-server` 指定需要释放的对应端口。
 - 如果修改了 `web/` 下的前端代码，在使用浏览器或 SuperDuck 验证前，也要从仓库根目录执行 `just restart-web` 重启前端开发服务器。该命令会调用 `./scripts/restart-web.sh`，只停止当前仓库路径启动的 Vite 监听进程；如果目标端口被其他路径的进程占用，则保留该进程并自动选择后续可用端口以前台方式启动前端。
 
 ## GitHub PR 提交身份
@@ -44,6 +44,24 @@
 - TypeScript/React 的类型、接口、类和组件使用 PascalCase；普通变量、函数和参数使用 camelCase；模块级常量可使用 UPPER_CASE；泛型类型参数使用 PascalCase。以 PascalCase 命名的函数参数只用于组件或构造器引用等可调用类型。
 - Anthropic/API、数据库和第三方 payload 的字段名属于外部合同，可在边界 DTO、对象属性和解构中保留 `snake_case`；进入内部变量或业务模型后应映射为上述语言惯例，不要把例外扩散到业务标识符。
 - Go 命名由 `.golangci.yml` 中 `revive/var-naming` 强制；前端命名由 `bun run lint:naming` 强制，并在 pre-commit 与 `.github/workflows/web-naming.yml` 中执行。
+
+## JSON 与 schema 边界
+
+- `json.RawMessage` 只用于数据库 JSON/JSONB、HTTP/第三方 payload、延迟解析和未知字段透传等序列化边界。业务逻辑一旦需要读取其中字段，应在边界附近解析为命名 schema/DTO，再映射为内部领域类型。
+- 不要让 `json.RawMessage`、`map[string]any` 或 `[]any` 作为内部业务模型跨 package 扩散，也不要用它们规避已知字段的 schema 定义。
+- 需要保留未知 JSON 字段时，可以在边界使用 `map[string]json.RawMessage` 作为 envelope，但已知字段仍必须通过命名 schema 解析和校验。
+- DB 层可以返回原始 JSONB 值，但不承担 HTTP/DTO 解析或领域策略；调用方应在 resource/service/policy 边界尽早完成结构化转换。
+
+## Go 日志规范
+
+- 生产代码统一使用标准库 `log/slog` 作为日志 API；不要直接使用标准库 `log`、`fmt.Printf` 式日志、logrus、zap、zerolog 或自建 printf 包装器。面向终端用户的 CLI 输出不属于运行日志，可以继续写入 stdout/stderr。
+- logger 和 handler 统一在可执行程序的组装层通过 `internal/logging` 创建，并在启动早期调用 `slog.SetDefault`。根 logger 通过 `ServerDeps`、资源构造函数或 worker 构造函数显式注入；组装层用 `logger.With("component", "...")` 创建组件 logger，业务方法使用自身持有的 logger。`config.Config` 只承载可序列化的业务/部署数据，不得包含 `*slog.Logger` 或其他运行时依赖。构造边界使用 `logging.LoggerOrDefault` 统一兼容 nil logger，组件内部不得重复读取 `slog.Default()`；生产组装必须显式传入 logger。稳定的 DB、配置和 logger 依赖应由 Handler、Service、Enqueuer 或 Worker 持有，不要在每次业务调用中重复透传；纯解析、转换和 I/O helper 优先返回结果与 error，由拥有方决定是否记录。不要为了 logger 注入把静态 logger 塞入请求 context；只有基于 request ID、trace 等请求域数据派生的 request-scoped logger 才适合随请求传递。业务包不要各自创建 handler，也不要在启动完成后修改全局默认 logger。
+- 日志采用结构化字段：消息使用稳定、简短的事件描述，动态值放入属性；新增属性名使用 `snake_case`。错误统一放在 `error` 字段，资源标识使用 `request_id`、`organization_id`、`workspace_id`、`session_id` 等明确字段，不要用 `fmt.Sprintf` 或格式化占位符拼接日志。
+- 已持有 `context.Context` 的请求、worker 和后台任务路径优先使用 `DebugContext`、`InfoContext`、`WarnContext`、`ErrorContext`，以便 handler 关联请求 ID、trace 和调用域字段。
+- 级别语义保持一致：`Debug` 用于默认关闭的诊断细节，`Info` 用于正常生命周期与重要状态变化，`Warn` 用于可恢复降级、预期拒绝或需要关注的异常输入，`Error` 用于操作未能完成的非预期故障。同一错误只在负责最终处理或补充关键边界信息的层记录一次。
+- 应用运行日志禁止记录原始请求/响应 body、完整 query string、`Authorization`、Cookie、token、API key、secret、OAuth code/state、签名或凭据 payload。确需诊断时只记录白名单元数据、长度、摘要或脱敏且有上限的值。协议明确要求的 telemetry/capture 数据必须通过独立、显式配置的安全存储实现，不得混入 `slog` 运行日志。
+- 业务包不得调用 `Fatal`、`Panic` 或 `os.Exit`；错误应向上传递。可执行程序的 `main` 在 defer 可完成的 `run` 返回后记录一次终止错误并设置退出码。panic recovery 记录 `request_id` 和 stack，但不得包含敏感 payload。
+- 新增公共日志字段或修改日志 handler 时应补充针对结构化 record 的测试；优先检查 level、message 和 attrs，不要依赖 ConsoleHandler 的整行文本格式。
 
 ## 前端设计方向
 
@@ -104,6 +122,17 @@
 - 不要为了凑文档而写重复内容；优先更新最贴近该功能的后端、前端或跨端设计文档，并保持实现细节、兼容说明和测试计划一致。
 - 编写或更新设计文档时，优先用 Mermaid 辅助说明复杂流程、状态机、组件/服务依赖、时序交互和数据流；图示应服务于理解，不要替代必要的文字说明。
 
+## Go 数据库访问与 sqlx 强制规则
+
+- 所有新增的应用运行时 SQL 操作，包括查询、写入、事务和返回行扫描，都必须使用 `github.com/jmoiron/sqlx`；禁止新增通过 `pgxpool.Query`、`pgxpool.QueryRow`、`pgxpool.Exec`、`pgx.Tx` 或等价原生 `pgx` 接口执行的 SQL。
+- 本次任务实质修改到的既有普通 SQL 也必须迁移到 `sqlx`。不要为了统一形式而批量改写本次任务未涉及的 `pgx` 代码。
+- `sqlx` 必须通过 `pgx/stdlib` 复用应用现有的唯一 `pgxpool`，不得为它另建连接池。关闭数据库时同时释放 `sqlx` 包装层与底层 pool，但不能让两者形成重复连接或彼此独立的容量配置。
+- 查询统一使用命名参数和带 `db` tag 的数据库行结构，并通过 `GetContext`、`SelectContext` 或 `StructScan` 显式映射；数据库行、领域模型和 API DTO 语义不一致时应分别定义并在边界转换，不要让数据库 tag 或 nullable/编码细节泄漏到业务模型。
+- 使用 sqlx 命名参数的 PostgreSQL SQL 不要写 `value::type`，因为冒号可能与命名参数解析冲突；统一写成 `CAST(value AS type)`。
+- 已有 `pgx.Tx` 事务链不得只迁移其中一段，避免同一业务事务跨 `pgx` 与 `sqlx` 两个句柄。需要在既有 `pgx.Tx` 事务链中增加或修改 SQL 时，必须先将整条事务链迁移为同一只 `sqlx.Tx`，再实施变更。
+- 只有本次任务完全未触碰的既有事务编排、批量/COPY、PostgreSQL 特有类型或 API 路径可以继续保留原生 `pgx`；该例外不得用于新增 SQL。
+- sqlx 迁移至少覆盖查询生成与参数绑定单测；涉及 nullable、JSON、数组、自定义类型或 PostgreSQL cast 时，还要增加真实 PostgreSQL 测试，验证命名参数绑定和结构体扫描，而不能只依赖 mock。
+
 ## PostgreSQL Schema 规则
 
 - 不要创建 PostgreSQL 外键约束。
@@ -123,7 +152,7 @@
 - 修改 `web/` 下的文件后，运行 `just web-format-check`，确保 Prettier 格式门禁通过。
 - 修改 Go 代码后，运行 `just lint`；该命令使用仓库根目录的 `.golangci.yml` 执行与 CI 相同的静态分析和格式检查。
 - 修改 schema 或 handler 后，运行 `go test ./... -count=1`。
-- 做真实 E2E 时，先用 `ADDR=127.0.0.1:18080 go run .` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
+- 做真实 E2E 时，先将测试配置的 `server.addr` 设为 `127.0.0.1:18080` 并用 `CONFIG_FILE=/path/to/test-config.yaml go run .` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
 - 自定义 SDK E2E 覆盖：
   - Go：`go test ./tests -run TestGoSDKFilesE2E -count=1 -v`
   - Python：在官方 Python SDK virtualenv 中运行 `tests/e2e/python/files_e2e.py`。

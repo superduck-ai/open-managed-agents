@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -19,10 +20,12 @@ import (
 type Handler struct {
 	service *Service
 	router  chi.Router
+	logger  *slog.Logger
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	h := &Handler{service: NewService(cfg, database)}
+func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{service: NewService(cfg, database), logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(routeNotFound)
 	router.MethodNotAllowed(routeNotFound)
@@ -589,7 +592,7 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpapi.WriteError(w, r, httpapi.NewError(serviceErr.status, serviceErr.typ, serviceErr.message))
 		return
 	}
-	log.Printf("admin api: %v", err)
+	h.logger.ErrorContext(r.Context(), "admin api", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Internal server error"))
 }
 

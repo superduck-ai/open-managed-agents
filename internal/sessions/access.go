@@ -23,12 +23,12 @@ func (h *Handler) authorizeSession(w http.ResponseWriter, r *http.Request, sessi
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
 		return db.Session{}, false
 	}
-	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.OfficialSDKFixtureSessionID {
+	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
 		return h.fixtureDBSession(principal), true
 	}
 	session, err := h.db.GetSession(r.Context(), principal.WorkspaceID, sessionID)
 	if err != nil {
-		writeSessionLoadError(w, r, err, sessionID)
+		h.writeSessionLoadError(w, r, err, sessionID)
 		return db.Session{}, false
 	}
 	if isSessionManagerCredential(principal) {

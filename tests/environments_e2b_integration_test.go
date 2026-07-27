@@ -5,6 +5,8 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,8 +19,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 
 	"github.com/google/uuid"
 	e2b "github.com/superduck-ai/e2b-go-sdk"
@@ -36,17 +40,17 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if strings.TrimSpace(cfg.E2BAPIKey) == "" {
-		t.Fatal("E2B_API_KEY is required for the real E2B integration test")
+	if strings.TrimSpace(cfg.E2B.APIKey) == "" {
+		t.Fatal("e2b.api_key is required in config/config.yaml for the real E2B integration test")
 	}
-	if cfg.E2BDebug {
-		t.Fatal("E2B_DEBUG must be false for the real E2B integration test")
+	if cfg.E2B.Debug {
+		t.Fatal("e2b.debug must be false for the real E2B integration test")
 	}
-	if cfg.E2BRequestTimeout < 2*time.Minute {
-		cfg.E2BRequestTimeout = 2 * time.Minute
+	if cfg.E2B.RequestTimeout < 2*time.Minute {
+		cfg.E2B.RequestTimeout = 2 * time.Minute
 	}
-	if cfg.E2BSandboxTimeout < time.Minute {
-		cfg.E2BSandboxTimeout = time.Minute
+	if cfg.E2B.SandboxTimeout < time.Minute {
+		cfg.E2B.SandboxTimeout = time.Minute
 	}
 
 	database, err := db.Open(ctx, cfg)
@@ -57,16 +61,25 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if err := database.Migrate(ctx); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
-	if err := database.Seed(ctx, cfg.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		t.Fatalf("seed database: %v", err)
 	}
+	credentials, err := codesessions.NewSessionCredentials(cfg)
+	if err != nil {
+		t.Fatalf("create code session credentials: %v", err)
+	}
+	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
+	if err != nil {
+		t.Fatalf("create filestore credentials: %v", err)
+	}
+	objectStore := newFakeStore("e2b-integration-fake")
 
 	apiKey, err := database.GetAPIKey(ctx, auth.HashAPIKey(config.DefaultAPIKey))
 	if err != nil {
 		t.Fatalf("load default api key: %v", err)
 	}
 
-	template := strings.TrimSpace(cfg.E2BTemplate)
+	template := strings.TrimSpace(cfg.E2B.Template)
 	if template == "" {
 		template = "claude-code-interpreter"
 	}
@@ -121,8 +134,18 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		t.Fatalf("create environment work: %v", err)
 	}
 
-	provider := e2bruntime.NewProvider(cfg)
-	runner := environments.NewRunner(database, provider)
+	provider := e2bruntime.NewProvider(cfg.E2B)
+	runner, err := environments.NewRunner(environments.RunnerDependencies{
+		DB:              database,
+		Provider:        provider,
+		Config:          cfg,
+		CodeSessions:    codesessions.NewServiceWithCredentials(database, credentials, nil),
+		Skills:          skillsapi.NewRuntimeResolver(database),
+		FilestoreTokens: filestoreCredentials,
+	})
+	if err != nil {
+		t.Fatalf("create environment runner: %v", err)
+	}
 	processed, err := runner.RunOnce(ctx, "e2b-integration-test")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)
@@ -155,7 +178,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	}()
 
 	connected, err := e2b.Connect(ctx, sandboxID, &e2b.SandboxConnectOpts{
-		ConnectionOpts: e2bConnectionOptsFromConfig(cfg),
+		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(cfg.E2B),
 	})
 	if err != nil {
 		t.Fatalf("connect to real sandbox %s: %v", sandboxID, err)
@@ -175,18 +198,14 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		t.Fatalf("sandbox command stdout = %q, want sandbox-ok; stderr=%q", got, result.Stderr)
 	}
 
-	credentials, err := codesessions.NewSessionCredentials(cfg)
-	if err != nil {
-		t.Fatalf("create code session credentials: %v", err)
-	}
-	server := httptest.NewServer(api.NewServerWithPlatformSessionsAndCredentials(
-		cfg,
-		database,
-		newFakeStore("e2b-integration-fake"),
-		nil,
-		nil,
-		credentials,
-	))
+	server := httptest.NewServer(api.NewServer(api.ServerDeps{
+		Config:                 cfg,
+		DB:                     database,
+		ObjectStore:            objectStore,
+		Logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+		CodeSessionCredentials: credentials,
+		FilestoreCredentials:   filestoreCredentials,
+	}))
 	defer server.Close()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/environments/"+env.ExternalID+"/work/"+work.ExternalID+"/stop?beta=true", strings.NewReader(`{"force":true}`))
 	if err != nil {
@@ -222,7 +241,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	}
 
 	_, err = e2b.Connect(ctx, sandboxID, &e2b.SandboxConnectOpts{
-		ConnectionOpts: e2bConnectionOptsFromConfig(cfg),
+		ConnectionOpts: e2bruntime.ConnectionOptsFromConfig(cfg.E2B),
 	})
 	if err == nil {
 		_ = provider.Kill(context.Background(), sandboxID)
@@ -237,20 +256,6 @@ func mustJSON(t *testing.T, value any) json.RawMessage {
 		t.Fatalf("marshal json: %v", err)
 	}
 	return data
-}
-
-func e2bConnectionOptsFromConfig(cfg config.Config) e2b.ConnectionOpts {
-	requestTimeoutMs := int(cfg.E2BRequestTimeout / time.Millisecond)
-	debug := cfg.E2BDebug
-	return e2b.ConnectionOpts{
-		ApiKey:           cfg.E2BAPIKey,
-		AccessToken:      cfg.E2BAccessToken,
-		Domain:           cfg.E2BDomain,
-		ApiUrl:           cfg.E2BAPIURL,
-		SandboxUrl:       cfg.E2BSandboxURL,
-		Debug:            &debug,
-		RequestTimeoutMs: &requestTimeoutMs,
-	}
 }
 
 func loadE2BSandboxRow(t *testing.T, database *db.DB, envID, workID string) (providerSandboxID, externalID, state, template, lastError string) {

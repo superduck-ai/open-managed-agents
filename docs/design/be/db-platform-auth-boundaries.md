@@ -6,7 +6,7 @@
 
 - `internal/db`
   - 保留数据库连接、迁移、seed、事务开启、SQL 查询和写入原语。
-  - `internal/db/files.go` 承载 file record、file CRUD、workspace storage 统计和 object cleanup job 数据访问。
+  - `internal/db/files.go` 暴露 file record、file CRUD、workspace storage 统计和 object cleanup job 数据访问；具体 SQL 位于 `files_sqlx.go`，统一使用命名参数、结构体映射和 `sqlx.Tx`。
   - `internal/db/platform_auth.go` 只暴露 platform auth 所需的事务内数据访问原语，例如按邮箱查询用户上下文、插入 organization/user/workspace/workspace_member/api_key，以及 session identity 查询。
 - `internal/platformauth`
   - 承载 magic-link 登录的领域编排。

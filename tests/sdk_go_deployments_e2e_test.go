@@ -1,5 +1,4 @@
 //go:build e2e
-// +build e2e
 
 package tests
 
@@ -188,17 +187,17 @@ func TestGoSDKDeploymentsManualRunRealSandboxE2E(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	if !quickstartShouldRunRealSandbox(cfg) {
-		t.Skip("real deployment sandbox E2E requires E2B_API_KEY and E2B_DEBUG=false")
+		t.Skip("real deployment sandbox E2E requires e2b.api_key and e2b.debug=false")
 	}
 	if externalBaseURL := strings.TrimSpace(os.Getenv("TEST_API_BASE_URL")); externalBaseURL != "" {
 		t.Logf("Ignoring TEST_API_BASE_URL=%s; this test starts its own in-process API server so it can run the environment runner and inspect E2B sandbox state", externalBaseURL)
 	}
 	quickstartRequireRealSandboxConfig(t, cfg)
-	if cfg.E2BRequestTimeout < 2*time.Minute {
-		cfg.E2BRequestTimeout = 2 * time.Minute
+	if cfg.E2B.RequestTimeout < 2*time.Minute {
+		cfg.E2B.RequestTimeout = 2 * time.Minute
 	}
-	if cfg.E2BSandboxTimeout < 2*time.Minute {
-		cfg.E2BSandboxTimeout = 2 * time.Minute
+	if cfg.E2B.SandboxTimeout < 2*time.Minute {
+		cfg.E2B.SandboxTimeout = 2 * time.Minute
 	}
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("deployments-real-sandbox-bucket"))

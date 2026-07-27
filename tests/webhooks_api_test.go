@@ -47,7 +47,7 @@ func TestWebhooksAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.WebhookAllowInsecure = false
+	cfg.Webhook.AllowInsecure = false
 	app := newTestAppWithStore(t, &cfg, newFakeStore("webhooks-api-bucket"))
 	defer app.close()
 	clearWebhookState(t, app)
@@ -159,10 +159,10 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.WebhookAllowInsecure = true
-	cfg.WebhookWorkerEnabled = true
-	cfg.WebhookTimeout = time.Second
-	cfg.WebhookMaxAttempts = 3
+	cfg.Webhook.AllowInsecure = true
+	cfg.Webhook.WorkerEnabled = true
+	cfg.Webhook.Timeout = time.Second
+	cfg.Webhook.MaxAttempts = 3
 	app := newTestAppWithStore(t, &cfg, newFakeStore("webhooks-delivery-bucket"))
 	defer app.close()
 	clearWebhookState(t, app)
@@ -178,12 +178,22 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load api key: %v", err)
 	}
+	enqueuer := webhooks.NewEnqueuer(app.db, app.cfg.Webhook, nil)
+	enqueue := func(eventType, resourceID string) {
+		enqueuer.Enqueue(ctx, webhooks.EnqueueInput{
+			WorkspaceID:            apiKey.WorkspaceID,
+			OrganizationExternalID: apiKey.OrganizationExternalID,
+			WorkspaceExternalID:    apiKey.WorkspaceExternalID,
+			EventType:              eventType,
+			ResourceID:             resourceID,
+		})
+	}
 	sessionID := "sesn_webhook_endpoint_delivery"
-	webhooks.Enqueue(ctx, app.db, app.cfg, apiKey.WorkspaceID, apiKey.OrganizationExternalID, apiKey.WorkspaceExternalID, "session.status_idled", sessionID, nil)
+	enqueue("session.status_idled", sessionID)
 	if count := webhookJobCount(t, app, "session.status_idled", sessionID); count != 1 {
 		t.Fatalf("session.status_idled webhook jobs = %d, want 1", count)
 	}
-	if err := webhooks.RunOnce(ctx, app.db, app.cfg, "webhook-endpoint-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(ctx, "webhook-endpoint-worker"); err != nil {
 		t.Fatalf("run endpoint webhook delivery: %v", err)
 	}
 
@@ -216,7 +226,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	}
 
 	unsubscribedSessionID := "sesn_webhook_endpoint_unsubscribed"
-	webhooks.Enqueue(ctx, app.db, app.cfg, apiKey.WorkspaceID, apiKey.OrganizationExternalID, apiKey.WorkspaceExternalID, "session.status_terminated", unsubscribedSessionID, nil)
+	enqueue("session.status_terminated", unsubscribedSessionID)
 	if count := webhookJobCount(t, app, "session.status_terminated", unsubscribedSessionID); count != 0 {
 		t.Fatalf("session.status_terminated webhook jobs = %d, want 0 due endpoint filter", count)
 	}
@@ -227,8 +237,8 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	defer redirectReceiver.Close()
 	redirectEndpoint := createWebhook(t, app, `{"url":`+quoteJSON(redirectReceiver.URL)+`,"name":"redirect callback","enabled_events":["session.status_terminated"]}`)
 	redirectSessionID := "sesn_webhook_endpoint_redirect"
-	webhooks.Enqueue(ctx, app.db, app.cfg, apiKey.WorkspaceID, apiKey.OrganizationExternalID, apiKey.WorkspaceExternalID, "session.status_terminated", redirectSessionID, nil)
-	if err := webhooks.RunOnce(ctx, app.db, app.cfg, "webhook-redirect-worker"); err != nil {
+	enqueue("session.status_terminated", redirectSessionID)
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(ctx, "webhook-redirect-worker"); err != nil {
 		t.Fatalf("run redirect webhook delivery: %v", err)
 	}
 	disabled := retrieveWebhook(t, app, redirectEndpoint.ID)

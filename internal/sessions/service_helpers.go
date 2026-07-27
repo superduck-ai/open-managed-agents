@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
 	"github.com/google/uuid"
 )
@@ -97,7 +98,13 @@ func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, r
 	return httpapi.MarshalRaw(ids)
 }
 
-func (h *Handler) resourcesFromCreate(r *http.Request, principal auth.Principal, sessionID string, raw json.RawMessage, now time.Time) ([]db.SessionResource, error) {
+func (h *Handler) resourcesFromCreate(
+	r *http.Request,
+	principal auth.Principal,
+	sessionID string,
+	raw json.RawMessage,
+	now time.Time,
+) ([]normalizedSessionResource, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return nil, nil
 	}
@@ -105,7 +112,7 @@ func (h *Handler) resourcesFromCreate(r *http.Request, principal auth.Principal,
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, errors.New("resources must be an array")
 	}
-	resources := make([]db.SessionResource, 0, len(items))
+	resources := make([]normalizedSessionResource, 0, len(items))
 	session := db.Session{
 		ExternalID:     sessionID,
 		OrganizationID: principal.OrganizationID,
@@ -118,46 +125,56 @@ func (h *Handler) resourcesFromCreate(r *http.Request, principal auth.Principal,
 		}
 		resources = append(resources, resource)
 	}
+	if err := validateNormalizedSessionResources(resources); err != nil {
+		return nil, err
+	}
 	return resources, nil
 }
 
-func (h *Handler) resourceFromFields(r *http.Request, session db.Session, fields map[string]json.RawMessage, now time.Time) (db.SessionResource, error) {
+func (h *Handler) resourceFromFields(
+	r *http.Request,
+	session db.Session,
+	fields map[string]json.RawMessage,
+	now time.Time,
+) (normalizedSessionResource, error) {
 	resourceType, err := parseRequiredStringField(fields, "type")
 	if err != nil {
-		return db.SessionResource{}, err
+		return normalizedSessionResource{}, err
 	}
 	resourceID, err := ids.New("sesrsc_")
 	if err != nil {
-		return db.SessionResource{}, err
+		return normalizedSessionResource{}, err
 	}
 	payload := map[string]any{"id": resourceID, "type": resourceType}
 	var secret json.RawMessage
+	var normalizedFileSpec *sessionresource.FileSpec
 	switch resourceType {
-	case "file":
-		fileID, err := parseRequiredStringField(fields, "file_id")
+	case sessionresource.FileType:
+		fileID, err := sessionresource.ParseFileID(fields)
 		if err != nil {
-			return db.SessionResource{}, err
+			return normalizedSessionResource{}, err
 		}
-		if _, err := h.db.GetFile(r.Context(), session.WorkspaceID, fileID); err != nil {
+		_, err = h.db.GetFile(r.Context(), session.WorkspaceID, fileID)
+		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
-				return db.SessionResource{}, fmt.Errorf("file not found: %s", fileID)
+				return normalizedSessionResource{}, db.ErrFileReferenceNotFound
 			}
-			return db.SessionResource{}, err
+			return normalizedSessionResource{}, err
 		}
-		mountPath, err := optionalStringWithDefault(fields["mount_path"], "/mnt/data/"+fileID, "mount_path")
+		fileSpec, err := sessionresource.NormalizeFileSpec(fileID, fields["source"], fields["mount_path"])
 		if err != nil {
-			return db.SessionResource{}, err
+			return normalizedSessionResource{}, err
 		}
-		payload["file_id"] = fileID
-		payload["mount_path"] = mountPath
+		payload = fileSpec.PayloadFields(resourceID)
+		normalizedFileSpec = &fileSpec
 	case "github_repository":
 		url, err := parseRequiredStringField(fields, "url")
 		if err != nil {
-			return db.SessionResource{}, err
+			return normalizedSessionResource{}, err
 		}
 		mountPath, err := optionalStringWithDefault(fields["mount_path"], "/workspace/repository", "mount_path")
 		if err != nil {
-			return db.SessionResource{}, err
+			return normalizedSessionResource{}, err
 		}
 		payload["url"] = url
 		payload["mount_path"] = mountPath
@@ -167,14 +184,14 @@ func (h *Handler) resourceFromFields(r *http.Request, session db.Session, fields
 	case "memory_store":
 		memoryStoreID, err := parseRequiredStringField(fields, "memory_store_id")
 		if err != nil {
-			return db.SessionResource{}, err
+			return normalizedSessionResource{}, err
 		}
 		store, err := h.db.GetMemoryStore(r.Context(), session.WorkspaceID, memoryStoreID)
 		if err != nil {
-			return db.SessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: err}
+			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: err}
 		}
 		if store.ArchivedAt != nil {
-			return db.SessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
+			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
 		}
 		payload["memory_store_id"] = memoryStoreID
 		copyOptionalPayloadString(payload, fields, "access")
@@ -183,23 +200,26 @@ func (h *Handler) resourceFromFields(r *http.Request, session db.Session, fields
 		copyOptionalPayloadString(payload, fields, "mount_path")
 		copyOptionalPayloadString(payload, fields, "name")
 	default:
-		return db.SessionResource{}, errors.New("resource type must be file, github_repository, or memory_store")
+		return normalizedSessionResource{}, errors.New("resource type must be file, github_repository, or memory_store")
 	}
 	payloadRaw, err := httpapi.MarshalRaw(payload)
 	if err != nil {
-		return db.SessionResource{}, err
+		return normalizedSessionResource{}, err
 	}
-	return db.SessionResource{
-		UUID:              uuid.NewString(),
-		ExternalID:        resourceID,
-		OrganizationID:    session.OrganizationID,
-		WorkspaceID:       session.WorkspaceID,
-		SessionExternalID: session.ExternalID,
-		ResourceType:      resourceType,
-		Payload:           payloadRaw,
-		SecretPayload:     secret,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+	return normalizedSessionResource{
+		resource: db.SessionResource{
+			UUID:              uuid.NewString(),
+			ExternalID:        resourceID,
+			OrganizationID:    session.OrganizationID,
+			WorkspaceID:       session.WorkspaceID,
+			SessionExternalID: session.ExternalID,
+			ResourceType:      resourceType,
+			Payload:           payloadRaw,
+			SecretPayload:     secret,
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+		fileSpec: normalizedFileSpec,
 	}, nil
 }
 

@@ -3,12 +3,14 @@ package platformapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -16,6 +18,12 @@ import (
 func RegisterOrganizationProxyRoutes(r chi.Router, cfg config.Config) {
 	r.Post("/proxy/v1/messages", handleProxyMessages(cfg))
 }
+
+type messagesRewriteFields struct {
+	Model string `json:"model"`
+}
+
+type rawJSONEnvelope map[string]json.RawMessage
 
 func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +44,13 @@ func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 		}
 		defer func() { _ = r.Body.Close() }()
 
+		rewrittenBody, err := rewriteMappedModel(body, cfg.AnthropicUpstream.ModelMappings)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_request_error", "message": err.Error()})
+			return
+		}
+		body = rewrittenBody
+
 		upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, targetURL, bytes.NewReader(body))
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": err.Error()})
@@ -44,7 +59,7 @@ func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 		upstreamReq.Header = r.Header.Clone()
 		upstreamReq.Header.Del("Authorization")
 		upstreamReq.Header.Del("Host")
-		upstreamReq.Header.Set("X-API-Key", strings.TrimSpace(cfg.AnthropicUpstreamAPIKey))
+		upstreamReq.Header.Set("X-API-Key", strings.TrimSpace(cfg.AnthropicUpstream.APIKey))
 
 		upstreamRes, err := http.DefaultClient.Do(upstreamReq)
 		if err != nil {
@@ -82,8 +97,36 @@ func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 	}
 }
 
+func rewriteMappedModel(body []byte, mappings map[string]string) ([]byte, error) {
+	if len(mappings) == 0 {
+		return body, nil
+	}
+	var fields messagesRewriteFields
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return body, nil
+	}
+	upstreamModel := modelmapping.Resolve(fields.Model, mappings)
+	if upstreamModel == fields.Model {
+		return body, nil
+	}
+	var payload rawJSONEnvelope
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, nil
+	}
+	encodedModel, err := json.Marshal(upstreamModel)
+	if err != nil {
+		return nil, fmt.Errorf("encode mapped Messages model: %w", err)
+	}
+	payload["model"] = encodedModel
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode Messages request: %w", err)
+	}
+	return rewritten, nil
+}
+
 func anthropicMessagesEndpointFromConfig(cfg config.Config) (string, error) {
-	baseURL := strings.TrimSpace(cfg.AnthropicUpstreamBaseURL)
+	baseURL := strings.TrimSpace(cfg.AnthropicUpstream.BaseURL)
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
 	}

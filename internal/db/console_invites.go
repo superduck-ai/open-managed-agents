@@ -9,33 +9,81 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 )
 
-type consoleInviteScanner interface {
-	Scan(dest ...any) error
-}
+const (
+	consoleInviteColumns = `
+		i.external_id AS id,
+		i.email,
+		i.role,
+		i.status,
+		i.invited_at,
+		i.expires_at
+	`
+	createConsoleInviteQuery = `
+		with org as (
+			select id
+			from organizations
+			where CAST(uuid AS text) = :org_uuid or external_id = :org_uuid
+			limit 1
+		)
+		insert into organization_invites (
+			external_id, organization_id, email, role, status, invited_at, expires_at
+		)
+		select :external_id, org.id, :email, :role, 'pending', :invited_at, :expires_at
+		from org
+		returning
+			external_id AS id,
+			email,
+			role,
+			status,
+			invited_at,
+			expires_at
+	`
+	resendConsoleInviteQuery = `
+		update organization_invites i
+		set status = 'pending',
+			invited_at = :invited_at,
+			expires_at = :expires_at
+		from organizations o
+		where i.organization_id = o.id
+			and (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+			and i.external_id = :invite_id
+			and i.deleted_at is null
+		returning ` + consoleInviteColumns + `
+	`
+	deleteConsoleInviteQuery = `
+		update organization_invites i
+		set status = 'deleted',
+			deleted_at = coalesce(i.deleted_at, now())
+		from organizations o
+		where i.organization_id = o.id
+			and (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+			and i.external_id = :invite_id
+		returning ` + consoleInviteColumns + `
+	`
+)
 
-func scanConsoleInvite(row consoleInviteScanner) (platform.ConsoleInvite, error) {
-	var invite platform.ConsoleInvite
-	err := row.Scan(&invite.ID, &invite.Email, &invite.Role, &invite.Status, &invite.InvitedAt, &invite.ExpiresAt)
-	if err != nil {
-		return platform.ConsoleInvite{}, mapNoRows(err)
-	}
-	return invite, nil
+type consoleInviteRow struct {
+	ID        string    `db:"id"`
+	Email     string    `db:"email"`
+	Role      string    `db:"role"`
+	Status    string    `db:"status"`
+	InvitedAt time.Time `db:"invited_at"`
+	ExpiresAt time.Time `db:"expires_at"`
 }
 
 func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status string, limit int) ([]platform.ConsoleInvite, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" {
 		return []platform.ConsoleInvite{}, nil
 	}
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
 	query := `
-		select i.external_id, i.email, i.role, i.status, i.invited_at, i.expires_at
+		select ` + consoleInviteColumns + `
 		from organization_invites i
 		join organizations o on o.id = i.organization_id
-		where (o.uuid::text = $1 or o.external_id = $1)
+		where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
 	`
-	args := []any{strings.TrimSpace(orgUUID)}
 	switch strings.TrimSpace(strings.ToLower(status)) {
 	case "":
 		query += ` and i.deleted_at is null`
@@ -50,31 +98,29 @@ func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status stri
 	default:
 		return []platform.ConsoleInvite{}, nil
 	}
-	query += ` order by i.invited_at desc, i.id desc limit $2`
-	args = append(args, limit)
+	query += ` order by i.invited_at desc, i.id desc limit :limit`
 
-	rows, err := d.Pool.Query(ctx, query, args...)
+	var rows []consoleInviteRow
+	err := namedSelectContext(ctx, d.sql, &rows, query, map[string]any{
+		"org_uuid": strings.TrimSpace(orgUUID),
+		"limit":    limit,
+	})
 	if err != nil {
 		if isUndefinedTableError(err) {
 			return []platform.ConsoleInvite{}, nil
 		}
 		return nil, err
 	}
-	defer rows.Close()
 
-	out := []platform.ConsoleInvite{}
-	for rows.Next() {
-		invite, err := scanConsoleInvite(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, invite)
+	out := make([]platform.ConsoleInvite, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.invite())
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (d *DB) CreateConsoleInvite(ctx context.Context, input platform.CreateConsoleInviteInput) (platform.ConsoleInvite, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(input.OrgUUID) == "" ||
+	if d == nil || d.sql == nil || strings.TrimSpace(input.OrgUUID) == "" ||
 		strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.Role) == "" {
 		return platform.ConsoleInvite{}, platform.ErrNotFound
 	}
@@ -83,20 +129,14 @@ func (d *DB) CreateConsoleInvite(ctx context.Context, input platform.CreateConso
 		return platform.ConsoleInvite{}, err
 	}
 	now := time.Now().UTC()
-	invite, err := scanConsoleInvite(d.Pool.QueryRow(ctx, `
-		with org as (
-			select id
-			from organizations
-			where uuid::text = $1 or external_id = $1
-			limit 1
-		)
-		insert into organization_invites (
-			external_id, organization_id, email, role, status, invited_at, expires_at
-		)
-		select $2, org.id, $3, $4, 'pending', $5, $6
-		from org
-		returning external_id, email, role, status, invited_at, expires_at
-	`, strings.TrimSpace(input.OrgUUID), externalID, strings.TrimSpace(input.Email), strings.TrimSpace(input.Role), now, now.Add(21*24*time.Hour)))
+	invite, err := getConsoleInviteSQLX(ctx, d.sql, createConsoleInviteQuery, map[string]any{
+		"org_uuid":    strings.TrimSpace(input.OrgUUID),
+		"external_id": externalID,
+		"email":       strings.TrimSpace(input.Email),
+		"role":        strings.TrimSpace(input.Role),
+		"invited_at":  now,
+		"expires_at":  now.Add(21 * 24 * time.Hour),
+	})
 	if isUniqueViolation(err) {
 		return platform.ConsoleInvite{}, err
 	}
@@ -104,36 +144,48 @@ func (d *DB) CreateConsoleInvite(ctx context.Context, input platform.CreateConso
 }
 
 func (d *DB) ResendConsoleInvite(ctx context.Context, orgUUID string, inviteID string) (platform.ConsoleInvite, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(inviteID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(inviteID) == "" {
 		return platform.ConsoleInvite{}, platform.ErrNotFound
 	}
 	now := time.Now().UTC()
-	return scanConsoleInvite(d.Pool.QueryRow(ctx, `
-		update organization_invites i
-		set status = 'pending',
-			invited_at = $3,
-			expires_at = $4
-		from organizations o
-		where i.organization_id = o.id
-			and (o.uuid::text = $1 or o.external_id = $1)
-			and i.external_id = $2
-			and i.deleted_at is null
-		returning i.external_id, i.email, i.role, i.status, i.invited_at, i.expires_at
-	`, strings.TrimSpace(orgUUID), strings.TrimSpace(inviteID), now, now.Add(21*24*time.Hour)))
+	return getConsoleInviteSQLX(ctx, d.sql, resendConsoleInviteQuery, map[string]any{
+		"org_uuid":   strings.TrimSpace(orgUUID),
+		"invite_id":  strings.TrimSpace(inviteID),
+		"invited_at": now,
+		"expires_at": now.Add(21 * 24 * time.Hour),
+	})
 }
 
 func (d *DB) DeleteConsoleInvite(ctx context.Context, orgUUID string, inviteID string) (platform.ConsoleInvite, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(inviteID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(inviteID) == "" {
 		return platform.ConsoleInvite{}, platform.ErrNotFound
 	}
-	return scanConsoleInvite(d.Pool.QueryRow(ctx, `
-		update organization_invites i
-		set status = 'deleted',
-			deleted_at = coalesce(i.deleted_at, now())
-		from organizations o
-		where i.organization_id = o.id
-			and (o.uuid::text = $1 or o.external_id = $1)
-			and i.external_id = $2
-		returning i.external_id, i.email, i.role, i.status, i.invited_at, i.expires_at
-	`, strings.TrimSpace(orgUUID), strings.TrimSpace(inviteID)))
+	return getConsoleInviteSQLX(ctx, d.sql, deleteConsoleInviteQuery, map[string]any{
+		"org_uuid":  strings.TrimSpace(orgUUID),
+		"invite_id": strings.TrimSpace(inviteID),
+	})
+}
+
+func getConsoleInviteSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (platform.ConsoleInvite, error) {
+	var row consoleInviteRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		return platform.ConsoleInvite{}, mapNoRows(err)
+	}
+	return row.invite(), nil
+}
+
+func (r consoleInviteRow) invite() platform.ConsoleInvite {
+	return platform.ConsoleInvite{
+		ID:        r.ID,
+		Email:     r.Email,
+		Role:      r.Role,
+		Status:    r.Status,
+		InvitedAt: r.InvitedAt,
+		ExpiresAt: r.ExpiresAt,
+	}
 }

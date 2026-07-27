@@ -272,18 +272,18 @@ OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer {session_ingress_token},x-w
 
 后端会在成功认证并通过 activity/epoch 检查后 best-effort 解码 OTLP HTTP body，并可写入本地 JSONL 文件。该功能不改变 OTLP HTTP 响应；解码或写文件失败只打印服务端日志。
 
-| 环境变量 | 默认值 | 描述 |
+| YAML 配置 | 默认值 | 描述 |
 |----------|--------|------|
-| `CODE_SESSION_OTLP_FILE_LOG_ENABLED` | development 默认 `true`，production/prod 默认 `false` | 是否写本地 OTLP JSONL |
-| `CODE_SESSION_OTLP_LOG_ROOT` | `./logs` | 本地 OTLP JSONL 根目录，默认相对于服务进程当前工作目录 |
-| `CODE_SESSION_OTLP_LOG_BODY_PREVIEW_BYTES` | `262144` | `requests.jsonl` body preview 截断字节数 |
+| `code_session.otlp_file_log_enabled` | development 默认 `true`，production/prod 默认 `false` | 是否写本地 OTLP JSONL |
+| `code_session.otlp_log_root` | `./logs` | 本地 OTLP JSONL 根目录，默认相对于配置文件目录 |
+| `code_session.otlp_log_body_preview_bytes` | `262144` | `requests.jsonl` body preview 截断字节数 |
 
 文件路径：
 
 ```text
-{CODE_SESSION_OTLP_LOG_ROOT}/{safe_code_session_id}/otlp/requests.jsonl
-{CODE_SESSION_OTLP_LOG_ROOT}/{safe_code_session_id}/otlp/metrics.jsonl
-{CODE_SESSION_OTLP_LOG_ROOT}/{safe_code_session_id}/otlp/logs.jsonl
+{code_session.otlp_log_root}/{safe_code_session_id}/otlp/requests.jsonl
+{code_session.otlp_log_root}/{safe_code_session_id}/otlp/metrics.jsonl
+{code_session.otlp_log_root}/{safe_code_session_id}/otlp/logs.jsonl
 ```
 
 `safe_code_session_id` 只保留 ASCII 字母、数字、`_` 与 `-`，其他字符统一替换为 `_`，避免路径分隔符或 `..` 影响日志根目录边界。日志目录以 `0700` 创建，JSONL 文件以 `0600` 创建。
@@ -554,7 +554,7 @@ Code session OTLP 端点运行时必须同时具备：
 | 当前 worker lease 已过期 | 410 | `session_expired` |
 | body 超过限制 | 413 | `invalid_request_error` |
 
-调试日志会在 body 读取失败、epoch 解析失败以及 DB/epoch/lease 拒绝路径打印。日志包含 request id、signal、path/query、content type、accept、user agent、content length、body byte 数、epoch presence/value/source 和 reason；不会打印 `Authorization` 或完整原始 headers。body 会按 `maxLoggedWorkerRequestBytes` 截断：JSON/text-like 请求以 UTF-8 文本打印，protobuf/binary 请求以 base64 预览打印，并记录 `body_truncated`。
+body 读取失败、epoch 解析失败以及 DB/epoch/lease 拒绝路径使用 `slog` 输出结构化运行日志。日志只包含 request id、signal、method、path、code session id、content type、content length、body byte 数、epoch presence/value/source、reason 和 error；不记录 query、body、`Authorization` 或完整原始 headers。成功通过认证与 activity/epoch 检查后，显式启用的本地 OTLP JSONL capture 仍按“服务端本地 JSONL 日志配置”保存有界 body preview；它使用独立安全存储，不混入应用运行日志。
 
 ### 当前成功响应
 
@@ -988,7 +988,7 @@ curl -X POST http://127.0.0.1:38080/v1/code/sessions/cse_abc123/worker/otlp/metr
 4. 调用 `TouchCodeSessionWorkerActivityForActiveLease()`，同时检查当前 epoch 与未过期 lease。
 5. JSON 请求返回 `{}`；protobuf 请求返回 200 空 body。
 6. stale epoch 返回 `409 conflict_error`；缺失或非法 epoch 返回 `400 invalid_request_error`；过期 lease 返回 `410 session_expired`。
-7. 调试日志记录 OTLP 请求元数据和有界 body 预览；JSON/text-like body 以 UTF-8 打印，protobuf/binary body 以 base64 打印。
+7. `slog` 运行日志只记录白名单请求元数据与失败原因，不记录 query 或 body；显式启用的本地 OTLP JSONL capture 才保存有界 body preview，JSON/text-like body 以 UTF-8 保存，protobuf/binary body 以 base64 保存。
 8. 成功通过认证与 activity/epoch 检查后，best-effort 解码 OTLP JSON/protobuf，并写入本地 JSONL；未知 OTLP JSON 字段按兼容字段忽略，解码或文件写入失败不改变 HTTP 响应。
 9. 本地 JSONL 使用安全路径段、`0700` 目录和 `0600` 文件权限，避免 session id 影响日志根目录边界并降低本机敏感 telemetry 暴露面。
 

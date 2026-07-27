@@ -3,7 +3,7 @@ package messages
 import (
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,6 +11,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
 // maxRequestBodyBytes 是流式读取上限；MaxBytesReader 不会据此预分配 32 MiB 内存。
@@ -52,6 +53,7 @@ var responseHeadersToRemove = map[string]struct{}{
 type Handler struct {
 	cfg    config.Config
 	client *http.Client
+	logger *slog.Logger
 }
 
 // flushingResponseWriter 在每次复制一块响应后主动 flush，避免 SSE 被 net/http 缓冲。
@@ -61,8 +63,9 @@ type flushingResponseWriter struct {
 }
 
 // NewHandler 创建复用连接池的 Messages 代理 handler。
-func NewHandler(cfg config.Config) *Handler {
-	return &Handler{cfg: cfg, client: &http.Client{Transport: newProxyTransport()}}
+func NewHandler(cfg config.Config, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	return &Handler{cfg: cfg, client: &http.Client{Transport: newProxyTransport()}, logger: logger}
 }
 
 func newProxyTransport() http.RoundTripper {
@@ -84,17 +87,17 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
 		return
 	}
-	if strings.TrimSpace(h.cfg.AnthropicUpstreamAPIKey) == "" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "ANTHROPIC_UPSTREAM_API_KEY is required for Messages"))
+	if strings.TrimSpace(h.cfg.AnthropicUpstream.APIKey) == "" {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "anthropic_upstream.api_key is required for Messages"))
 		return
 	}
 	if r.ContentLength > maxRequestBodyBytes {
 		writeRequestTooLarge(w, r)
 		return
 	}
-	target, err := messagesEndpoint(h.cfg.AnthropicUpstreamBaseURL, r.URL.RawQuery)
+	target, err := messagesEndpoint(h.cfg.AnthropicUpstream.BaseURL, r.URL.RawQuery)
 	if err != nil {
-		log.Printf("build messages upstream endpoint: %v", err)
+		h.logger.ErrorContext(r.Context(), "build messages upstream endpoint", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
@@ -102,14 +105,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, r.Body)
 	if err != nil {
-		log.Printf("build messages upstream request: %v", err)
+		h.logger.ErrorContext(r.Context(), "build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
 	upstreamRequest.ContentLength = r.ContentLength
 	// 先清除客户端鉴权和租户 header，再注入只存在于 OMA 服务端的真实上游 key。
 	upstreamRequest.Header = sanitizedRequestHeaders(r.Header)
-	upstreamRequest.Header.Set("X-Api-Key", strings.TrimSpace(h.cfg.AnthropicUpstreamAPIKey))
+	upstreamRequest.Header.Set("X-Api-Key", strings.TrimSpace(h.cfg.AnthropicUpstream.APIKey))
 	upstreamResponse, err := h.client.Do(upstreamRequest)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -117,13 +120,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			writeRequestTooLarge(w, r)
 			return
 		}
-		log.Printf("proxy messages upstream request: %v", err)
+		h.logger.ErrorContext(r.Context(), "proxy messages upstream request", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages upstream is unavailable"))
 		return
 	}
 	defer upstreamResponse.Body.Close()
 	if err := writeProxyResponse(w, upstreamResponse); err != nil && r.Context().Err() == nil {
-		log.Printf("stream Messages upstream response: %v", err)
+		h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
 	}
 }
 

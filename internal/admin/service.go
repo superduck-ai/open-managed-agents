@@ -844,7 +844,7 @@ func (s *Service) tunnelFromRecord(record db.AdminTunnel) tunnelResponse {
 		DisplayName: record.DisplayName,
 		Domain:      record.Domain,
 		Type:        "tunnel",
-		WorkspaceID: nullableWorkspaceIDFromPtr(record.WorkspaceExternalID, s.cfg.DefaultWorkspaceExternalID),
+		WorkspaceID: nullableWorkspaceIDFromPtr(record.WorkspaceExternalID, s.cfg.Bootstrap.WorkspaceExternalID),
 	}
 }
 
@@ -935,7 +935,7 @@ func effectiveAPIKeyStatus(record db.AdminAPIKey) string {
 }
 
 func (s *Service) nullableWorkspaceID(workspaceID string) *string {
-	if workspaceID == "" || workspaceID == s.cfg.DefaultWorkspaceExternalID {
+	if workspaceID == "" || workspaceID == s.cfg.Bootstrap.WorkspaceExternalID {
 		return nil
 	}
 	return &workspaceID

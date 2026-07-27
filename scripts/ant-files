@@ -33,7 +33,7 @@ Examples:
   scripts/ant-files delete "$FILE_ID"
 
 The local service should be running first, for example:
-  ADDR=127.0.0.1:38080 go run .
+  go run .  # server.addr comes from config/config.yaml
 EOF
 }
 

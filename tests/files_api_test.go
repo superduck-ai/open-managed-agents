@@ -12,7 +12,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -27,25 +27,28 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 const defaultTestKey = config.DefaultAPIKey
 const onePixelGIFBase64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 
 type testApp struct {
-	cfg         config.Config
-	db          *db.DB
-	store       storage.ObjectStore
-	sessions    *platformsession.MemoryStore
-	credentials *codesessions.SessionCredentials
-	server      *httptest.Server
-	baseURL     string
-	client      *http.Client
+	cfg                  config.Config
+	db                   *db.DB
+	store                storage.ObjectStore
+	sessions             *platformsession.MemoryStore
+	credentials          *codesessions.SessionCredentials
+	filestoreCredentials *filestore.TokenCredentials
+	server               *httptest.Server
+	baseURL              string
+	client               *http.Client
 }
 
 type errorResponse struct {
@@ -382,7 +385,7 @@ func TestFilesAPI(t *testing.T) {
 
 	t.Run("failure file too large", func(t *testing.T) {
 		smallLimit := app.cfg
-		smallLimit.MaxFileBytes = 4
+		smallLimit.Storage.MaxFileBytes = 4
 		limited := newTestApp(t, &smallLimit)
 		defer limited.close()
 
@@ -393,11 +396,11 @@ func TestFilesAPI(t *testing.T) {
 
 	t.Run("failure request body exceeds max bytes reader", func(t *testing.T) {
 		smallLimit := app.cfg
-		smallLimit.MaxFileBytes = 1
+		smallLimit.Storage.MaxFileBytes = 1
 		limited := newTestApp(t, &smallLimit)
 		defer limited.close()
 
-		content := bytes.Repeat([]byte("x"), int(smallLimit.MaxFileBytes+1024*1024+1))
+		content := bytes.Repeat([]byte("x"), int(smallLimit.Storage.MaxFileBytes+1024*1024+1))
 		body, contentType := multipartBody(t, "huge.txt", "text/plain", content, false)
 		resp := limited.do(t, http.MethodPost, "/v1/files?beta=true", body, defaultTestKey, true, contentType)
 		assertError(t, resp, http.StatusRequestEntityTooLarge, "invalid_request_error")
@@ -434,8 +437,10 @@ func TestFilesAPI(t *testing.T) {
 	})
 
 	t.Run("failure download logs truncated object stream", func(t *testing.T) {
+		var logs bytes.Buffer
 		store := newFakeStore("fake-bucket")
-		fakeApp := newTestAppWithStore(t, nil, store)
+		logger := slog.New(slog.NewTextHandler(&logs, nil))
+		fakeApp := newTestAppWithStoreAndLogger(t, nil, store, logger)
 		defer fakeApp.close()
 
 		fileID, objectKey := createDownloadableFile(t, fakeApp, "truncated.txt", "text/plain", []byte("complete"))
@@ -446,10 +451,6 @@ func TestFilesAPI(t *testing.T) {
 			Size:        10,
 			ContentType: "text/plain",
 		}
-		var logs bytes.Buffer
-		originalLogWriter := log.Writer()
-		log.SetOutput(&logs)
-		defer log.SetOutput(originalLogWriter)
 
 		resp := fakeApp.do(t, http.MethodGet, "/v1/files/"+fileID+"/content?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
@@ -471,7 +472,7 @@ func TestFilesAPI(t *testing.T) {
 
 	t.Run("failure delete object queues cleanup job", func(t *testing.T) {
 		store := newFakeStore("fake-bucket")
-		store.deleteErr = errors.New("minio unavailable")
+		store.deleteErr = errors.New("object storage unavailable")
 		fakeApp := newTestAppWithStore(t, nil, store)
 		defer fakeApp.close()
 
@@ -500,10 +501,10 @@ func TestFilesAPI(t *testing.T) {
 
 	t.Run("failure upload metadata rejection queues cleanup job when object delete fails", func(t *testing.T) {
 		store := newFakeStore("fake-bucket")
-		store.deleteErr = errors.New("minio unavailable")
+		store.deleteErr = errors.New("object storage unavailable")
 		limitedConfig := app.cfg
-		limitedConfig.MaxFileBytes = 1024
-		limitedConfig.WorkspaceStorageLimitBytes = 1
+		limitedConfig.Storage.MaxFileBytes = 1024
+		limitedConfig.Storage.WorkspaceLimitBytes = 1
 		fakeApp := newTestAppWithStore(t, &limitedConfig, store)
 		defer fakeApp.close()
 
@@ -585,7 +586,7 @@ func TestFilesAPI(t *testing.T) {
 		downloadableID, objectKey := createDownloadableFile(t, app, "docs-download.txt", "text/plain", content)
 		defer func() {
 			softDeleteFile(t, app.db, downloadableID)
-			_ = app.store.Delete(context.Background(), objectKey)
+			_ = app.store.Delete(context.Background(), objectKey, storage.DeleteOptions{})
 		}()
 		resp = app.do(t, http.MethodGet, "/v1/files/"+downloadableID+"/content", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
@@ -684,12 +685,51 @@ func TestFilesAPI(t *testing.T) {
 		_ = third
 	})
 
+	t.Run("success before_id returns nearest previous pages", func(t *testing.T) {
+		scopeID := "pagination_" + uuid.NewString()
+		fileIDs := make([]string, 6)
+		for index := range fileIDs {
+			fileIDs[index] = createMetadataOnlyFile(t, app, scopeID)
+			defer softDeleteFile(t, app.db, fileIDs[index])
+		}
+
+		assertPageIDs := func(page pageResponse, want ...string) {
+			t.Helper()
+			if len(page.Data) != len(want) {
+				t.Fatalf("page length = %d, want %d: %+v", len(page.Data), len(want), page)
+			}
+			for index, fileID := range want {
+				if page.Data[index].ID != fileID {
+					t.Fatalf("page[%d].id = %s, want %s: %+v", index, page.Data[index].ID, fileID, page)
+				}
+			}
+		}
+
+		oldestPage := listFiles(t, app, "limit=2&scope_id="+scopeID+"&after_id="+fileIDs[2])
+		assertPageIDs(oldestPage, fileIDs[1], fileIDs[0])
+		if oldestPage.FirstID == nil {
+			t.Fatalf("oldest page is missing first_id: %+v", oldestPage)
+		}
+
+		middlePage := listFiles(t, app, "limit=2&scope_id="+scopeID+"&before_id="+*oldestPage.FirstID)
+		assertPageIDs(middlePage, fileIDs[3], fileIDs[2])
+		if !middlePage.HasMore || middlePage.FirstID == nil {
+			t.Fatalf("middle page should have an earlier page: %+v", middlePage)
+		}
+
+		newestPage := listFiles(t, app, "limit=2&scope_id="+scopeID+"&before_id="+*middlePage.FirstID)
+		assertPageIDs(newestPage, fileIDs[5], fileIDs[4])
+		if newestPage.HasMore {
+			t.Fatalf("newest page unexpectedly has more records: %+v", newestPage)
+		}
+	})
+
 	t.Run("success downloadable file returns bytes", func(t *testing.T) {
 		content := []byte("generated content")
 		fileID, objectKey := createDownloadableFile(t, app, "generated.txt", "text/plain", content)
 		defer func() {
 			softDeleteFile(t, app.db, fileID)
-			_ = app.store.Delete(context.Background(), objectKey)
+			_ = app.store.Delete(context.Background(), objectKey, storage.DeleteOptions{})
 		}()
 
 		resp := app.do(t, http.MethodGet, "/v1/files/"+fileID+"/content?beta=true", nil, defaultTestKey, true, "")
@@ -798,7 +838,7 @@ func TestObjectCleanupJobAttemptsIncrementOnFailure(t *testing.T) {
 	ctx := context.Background()
 	defaultIDs := getDefaultDBIDs(t, app.db)
 	objectKey := "attempts-test/" + uuid.NewString()
-	if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceID, app.store.Bucket(), objectKey, "file_attempts_test"); err != nil {
+	if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceID, app.store.Name(), objectKey, "file_attempts_test"); err != nil {
 		t.Fatalf("enqueue cleanup job: %v", err)
 	}
 	defer app.db.Pool.Exec(ctx, `delete from jobs where payload->>'key' = $1`, objectKey)
@@ -846,29 +886,38 @@ func TestObjectCleanupJobAttemptsIncrementOnFailure(t *testing.T) {
 }
 
 func TestObjectCleanupWorkerContinuesAfterJobFailure(t *testing.T) {
-	store := newFakeStore("fake-bucket")
-	store.deleteErrByKey = map[string]error{"cleanup-worker/fail": errors.New("delete failed")}
-	app := newTestAppWithStore(t, nil, store)
+	failedBucket := newFakeStore("failed-bucket")
+	failedBucket.deleteErrByKey = map[string]error{"cleanup-worker/fail": errors.New("delete failed")}
+	successfulBucket := newFakeStore("successful-bucket")
+	successfulBucket.objects["cleanup-worker/succeed"] = fakeObject{data: []byte("cleanup")}
+	app := newTestAppWithStore(t, nil, failedBucket)
 	defer app.close()
 
 	ctx := context.Background()
 	defaultIDs := getDefaultDBIDs(t, app.db)
-	keys := []string{"cleanup-worker/fail", "cleanup-worker/succeed"}
-	for _, key := range keys {
-		if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceID, store.Bucket(), key, "file_"+strings.ReplaceAll(key, "/", "_")); err != nil {
-			t.Fatalf("enqueue cleanup job %s: %v", key, err)
+	jobs := []struct {
+		bucket storage.ObjectStore
+		key    string
+	}{
+		{bucket: failedBucket, key: "cleanup-worker/fail"},
+		{bucket: successfulBucket, key: "cleanup-worker/succeed"},
+	}
+	for _, job := range jobs {
+		if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceID, job.bucket.Name(), job.key, "file_"+strings.ReplaceAll(job.key, "/", "_")); err != nil {
+			t.Fatalf("enqueue cleanup job %s: %v", job.key, err)
 		}
-		defer app.db.Pool.Exec(ctx, `delete from jobs where payload->>'key' = $1`, key)
+		defer app.db.Pool.Exec(ctx, `delete from jobs where payload->>'key' = $1`, job.key)
 	}
 	if _, err := app.db.Pool.Exec(ctx, `
 		update jobs
 		set run_after = '2000-01-01T00:00:00Z', created_at = '2000-01-01T00:00:00Z'
 		where payload->>'key' in ($1, $2)
-	`, keys[0], keys[1]); err != nil {
+	`, jobs[0].key, jobs[1].key); err != nil {
 		t.Fatalf("prioritize cleanup jobs: %v", err)
 	}
 
-	if err := cleanup.RunObjectCleanupOnce(ctx, app.db, store, "cleanup-worker-test"); err != nil {
+	worker := cleanup.NewWorker(app.db, newFakeStorageClient(failedBucket, successfulBucket), 0, nil)
+	if err := worker.RunOnce(ctx, "cleanup-worker-test"); err != nil {
 		t.Fatalf("run cleanup once: %v", err)
 	}
 
@@ -877,7 +926,7 @@ func TestObjectCleanupWorkerContinuesAfterJobFailure(t *testing.T) {
 		select payload->>'key', status
 		from jobs
 		where payload->>'key' in ($1, $2)
-	`, keys[0], keys[1])
+	`, jobs[0].key, jobs[1].key)
 	if err != nil {
 		t.Fatalf("query cleanup jobs: %v", err)
 	}
@@ -898,39 +947,52 @@ func TestObjectCleanupWorkerContinuesAfterJobFailure(t *testing.T) {
 	if statusByKey["cleanup-worker/succeed"] != "completed" {
 		t.Fatalf("succeeded job status = %s, want completed", statusByKey["cleanup-worker/succeed"])
 	}
+	if _, exists := successfulBucket.objects["cleanup-worker/succeed"]; exists {
+		t.Fatal("successful object still exists in its recorded bucket")
+	}
 }
 
 func newTestApp(t *testing.T, override *config.Config) *testApp {
 	t.Helper()
-	store, cfg := newMinIOStore(t, override)
+	store, cfg := newS3ObjectStore(t, override)
 	return newTestAppWithStore(t, &cfg, store)
 }
 
-func newMinIOStore(t *testing.T, override *config.Config) (storage.ObjectStore, config.Config) {
+func newS3ObjectStore(t *testing.T, override *config.Config) (storage.ObjectStore, config.Config) {
 	t.Helper()
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionOTLPFileLogEnabled = false
+	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
-	store, err := storage.NewMinIO(cfg)
+	client, err := storage.New(cfg.Storage)
 	if err != nil {
-		t.Fatalf("create minio store: %v", err)
+		t.Fatalf("create S3 client: %v", err)
+	}
+	store, err := client.ForBucket(cfg.Storage.S3.Bucket)
+	if err != nil {
+		t.Fatalf("bind S3 bucket: %v", err)
 	}
 	return store, cfg
 }
 
 func newTestAppWithStore(t *testing.T, override *config.Config, store storage.ObjectStore) *testApp {
 	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return newTestAppWithStoreAndLogger(t, override, store, logger)
+}
+
+func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store storage.ObjectStore, logger *slog.Logger) *testApp {
+	t.Helper()
 	ctx := context.Background()
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionOTLPFileLogEnabled = false
+	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
@@ -942,7 +1004,7 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 		database.Close()
 		t.Fatalf("migrate database: %v", err)
 	}
-	if err := database.Seed(ctx, cfg.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		database.Close()
 		t.Fatalf("seed database: %v", err)
 	}
@@ -952,12 +1014,35 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 		database.Close()
 		t.Fatalf("create code session credentials: %v", err)
 	}
-	if err := store.EnsureBucket(ctx); err != nil {
+	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
+	if err != nil {
+		database.Close()
+		t.Fatalf("create filestore credentials: %v", err)
+	}
+	if err := store.Ensure(ctx); err != nil {
 		database.Close()
 		t.Fatalf("ensure object store bucket: %v", err)
 	}
-	server := httptest.NewServer(api.NewServerWithPlatformSessionsAndCredentials(cfg, database, store, nil, platformSessions, credentials))
-	return &testApp{cfg: cfg, db: database, store: store, sessions: platformSessions, credentials: credentials, server: server, baseURL: server.URL, client: server.Client()}
+	server := httptest.NewServer(api.NewServer(api.ServerDeps{
+		Config:                 cfg,
+		DB:                     database,
+		ObjectStore:            store,
+		Logger:                 logger,
+		PlatformStore:          platformSessions,
+		CodeSessionCredentials: credentials,
+		FilestoreCredentials:   filestoreCredentials,
+	}))
+	return &testApp{
+		cfg:                  cfg,
+		db:                   database,
+		store:                store,
+		sessions:             platformSessions,
+		credentials:          credentials,
+		filestoreCredentials: filestoreCredentials,
+		server:               server,
+		baseURL:              server.URL,
+		client:               server.Client(),
+	}
 }
 
 func (a *testApp) close() {
@@ -969,8 +1054,8 @@ func (a *testApp) seedPlatformSession(t *testing.T, sessionKey string) {
 	t.Helper()
 	session, err := a.db.ResolvePlatformSessionIdentity(context.Background(), platformsession.CreateInput{
 		SessionKey: sessionKey,
-		UserUUID:   a.cfg.DefaultUserExternalID,
-		OrgUUID:    a.cfg.DefaultOrganizationExternalID,
+		UserUUID:   a.cfg.Bootstrap.UserExternalID,
+		OrgUUID:    a.cfg.Bootstrap.OrganizationExternalID,
 	})
 	if err != nil {
 		t.Fatalf("resolve platform session identity: %v", err)
@@ -1188,7 +1273,7 @@ func createMetadataOnlyFile(t *testing.T, app *testApp, scopeID string) string {
 		MimeType:          "text/plain",
 		SizeBytes:         1,
 		SHA256:            "00",
-		S3Bucket:          app.store.Bucket(),
+		S3Bucket:          app.store.Name(),
 		S3Key:             "metadata-only/" + fileExternalID,
 		Downloadable:      false,
 		ScopeType:         &scopeType,
@@ -1210,7 +1295,7 @@ func createDownloadableFile(t *testing.T, app *testApp, filename, contentType st
 	fileUUID := uuid.NewString()
 	defaultIDs := getDefaultDBIDs(t, app.db)
 	objectKey := "workspaces/" + defaultIDs.WorkspaceUUID + "/files/" + fileUUID + "/" + filename
-	if err := app.store.Put(context.Background(), objectKey, bytes.NewReader(content), int64(len(content)), contentType); err != nil {
+	if _, err := app.store.Upload(context.Background(), objectKey, bytes.NewReader(content), storage.UploadOptions{Size: int64(len(content)), ContentType: contentType}); err != nil {
 		t.Fatalf("put downloadable object: %v", err)
 	}
 	sum := sha256.Sum256(content)
@@ -1222,13 +1307,13 @@ func createDownloadableFile(t *testing.T, app *testApp, filename, contentType st
 		MimeType:          contentType,
 		SizeBytes:         int64(len(content)),
 		SHA256:            fmt.Sprintf("%x", sum),
-		S3Bucket:          app.store.Bucket(),
+		S3Bucket:          app.store.Name(),
 		S3Key:             objectKey,
 		Downloadable:      true,
 		CreatedByAPIKeyID: defaultIDs.APIKeyID,
 		CreatedAt:         time.Now().UTC(),
 	}); err != nil {
-		_ = app.store.Delete(context.Background(), objectKey)
+		_ = app.store.Delete(context.Background(), objectKey, storage.DeleteOptions{})
 		t.Fatalf("create downloadable metadata: %v", err)
 	}
 	return fileExternalID, objectKey
@@ -1236,7 +1321,15 @@ func createDownloadableFile(t *testing.T, app *testApp, filename, contentType st
 
 func softDeleteFile(t *testing.T, database *db.DB, fileID string) {
 	t.Helper()
-	if _, err := database.Pool.Exec(context.Background(), `update files set deleted_at = now() where external_id = $1`, fileID); err != nil {
+	var workspaceID int64
+	if err := database.Pool.QueryRow(context.Background(), `
+		select workspace_id from files where external_id = $1 and deleted_at is null
+	`, fileID).Scan(&workspaceID); errors.Is(err, pgx.ErrNoRows) {
+		return
+	} else if err != nil {
+		t.Fatalf("load file %s before soft delete: %v", fileID, err)
+	}
+	if err := database.SoftDeleteFile(context.Background(), workspaceID, fileID); err != nil {
 		t.Fatalf("soft delete file %s: %v", fileID, err)
 	}
 }
@@ -1321,35 +1414,56 @@ func newFakeStore(bucket string) *fakeStore {
 	return &fakeStore{bucket: bucket, objects: make(map[string]fakeObject)}
 }
 
-func (s *fakeStore) EnsureBucket(context.Context) error {
+func (s *fakeStore) Ensure(context.Context) error {
 	return nil
 }
 
-func (s *fakeStore) Put(_ context.Context, key string, body io.Reader, _ int64, contentType string) error {
+func (s *fakeStore) Upload(_ context.Context, key string, body io.Reader, options storage.UploadOptions) (storage.UploadResult, error) {
 	data, err := io.ReadAll(body)
 	if err != nil {
-		return err
+		return storage.UploadResult{}, err
 	}
-	s.objects[key] = fakeObject{data: data, contentType: contentType}
-	return nil
+	s.objects[key] = fakeObject{data: data, contentType: options.ContentType}
+	return storage.UploadResult{Size: int64(len(data))}, nil
 }
 
-func (s *fakeStore) Get(_ context.Context, key string) (storage.Object, error) {
+func (s *fakeStore) Open(_ context.Context, key string, byteRange *storage.ByteRange) (storage.Object, error) {
 	if s.getOverride.Body != nil {
 		return s.getOverride, nil
 	}
 	object, ok := s.objects[key]
 	if !ok {
-		return storage.Object{}, db.ErrNotFound
+		return storage.Object{}, storage.ErrNotFound
+	}
+	data := object.data
+	if byteRange != nil {
+		start := byteRange.Offset
+		if start < 0 || start > int64(len(data)) {
+			return storage.Object{}, storage.ErrInvalidRange
+		}
+		end := int64(len(data))
+		if byteRange.Length >= 0 && start+byteRange.Length < end {
+			end = start + byteRange.Length
+		}
+		data = data[start:end]
 	}
 	return storage.Object{
-		Body:        io.NopCloser(bytes.NewReader(object.data)),
-		Size:        int64(len(object.data)),
+		Body:        io.NopCloser(bytes.NewReader(data)),
+		Size:        int64(len(data)),
 		ContentType: object.contentType,
 	}, nil
 }
 
-func (s *fakeStore) Delete(_ context.Context, key string) error {
+func (s *fakeStore) Copy(_ context.Context, sourceKey, destinationKey string) (storage.CopyResult, error) {
+	object, ok := s.objects[sourceKey]
+	if !ok {
+		return storage.CopyResult{}, storage.ErrNotFound
+	}
+	s.objects[destinationKey] = fakeObject{data: append([]byte(nil), object.data...), contentType: object.contentType}
+	return storage.CopyResult{}, nil
+}
+
+func (s *fakeStore) Delete(_ context.Context, key string, _ storage.DeleteOptions) error {
 	if err := s.deleteErrByKey[key]; err != nil {
 		return err
 	}
@@ -1360,8 +1474,28 @@ func (s *fakeStore) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-func (s *fakeStore) Bucket() string {
+func (s *fakeStore) Name() string {
 	return s.bucket
+}
+
+type fakeStorageClient struct {
+	buckets map[string]storage.ObjectStore
+}
+
+func newFakeStorageClient(buckets ...storage.ObjectStore) *fakeStorageClient {
+	client := &fakeStorageClient{buckets: make(map[string]storage.ObjectStore, len(buckets))}
+	for _, bucket := range buckets {
+		client.buckets[bucket.Name()] = bucket
+	}
+	return client
+}
+
+func (c *fakeStorageClient) ForBucket(name string) (storage.ObjectStore, error) {
+	bucket, ok := c.buckets[name]
+	if !ok {
+		return nil, fmt.Errorf("bucket %q is not configured", name)
+	}
+	return bucket, nil
 }
 
 type errorReadCloser struct {

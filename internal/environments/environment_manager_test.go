@@ -6,21 +6,240 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
+func TestCodeSessionSandboxAPIBaseURLDoesNotInferServerAddress(t *testing.T) {
+	cfg := config.Config{Server: config.ServerConfig{Addr: "127.0.0.1:38080"}}
+
+	if baseURL := codeSessionSandboxAPIBaseURL(cfg); baseURL != "" {
+		t.Fatalf("codeSessionSandboxAPIBaseURL() = %q, want empty value", baseURL)
+	}
+}
+
+func TestCodeSessionSandboxAPIBaseURLUsesConfiguredValue(t *testing.T) {
+	cfg := config.Config{
+		Server:      config.ServerConfig{Addr: "127.0.0.1:38080"},
+		CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "  http://sandbox-api.example.test/  "},
+	}
+
+	if baseURL := codeSessionSandboxAPIBaseURL(cfg); baseURL != "http://sandbox-api.example.test" {
+		t.Fatalf("codeSessionSandboxAPIBaseURL() = %q, want configured value", baseURL)
+	}
+}
+
+func managedAgentRuntimeSourceValues(
+	t *testing.T,
+	sources []json.RawMessage,
+) []any {
+	t.Helper()
+	raw, err := json.Marshal(sources)
+	if err != nil {
+		t.Fatalf("marshal runtime sources: %v", err)
+	}
+	var values []any
+	if err := json.Unmarshal(raw, &values); err != nil {
+		t.Fatalf("decode runtime sources: %v", err)
+	}
+	return values
+}
+
+func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ResourceType: "file",
+			Payload:      json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory"}`),
+		},
+		{
+			ResourceType: "future_resource",
+			Payload:      json.RawMessage(`{"type":"future_resource","mount_path":"/workspace/future"}`),
+		},
+	}
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != defaultEnvironmentWorkDir {
+		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, defaultEnvironmentWorkDir)
+	}
+}
+
+func TestManagedAgentWorkDirSkipsInvalidRepositoryCandidates(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ID:           1,
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":`),
+		},
+		{
+			ID:           2,
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"  "}`),
+		},
+	}
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != defaultEnvironmentWorkDir {
+		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, defaultEnvironmentWorkDir)
+	}
+
+	resources = append(resources, db.SessionResource{
+		ID:           3,
+		ResourceType: "github_repository",
+		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/valid"}`),
+	})
+	if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/valid" {
+		t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/valid")
+	}
+}
+
+func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T) {
+	repository := db.SessionResource{
+		ID:           2,
+		ResourceType: "github_repository",
+		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":" /workspace/repository "}`),
+	}
+	file := db.SessionResource{
+		ID:           1,
+		ResourceType: "file",
+		Payload:      json.RawMessage(`{"type":"file","mount_path":"/workspace/data.csv"}`),
+	}
+	memoryStore := db.SessionResource{
+		ID:           3,
+		ResourceType: "memory_store",
+		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/workspace/memory"}`),
+	}
+	for name, resources := range map[string][]db.SessionResource{
+		"repository first": {repository, file, memoryStore},
+		"repository last":  {memoryStore, file, repository},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/repository" {
+				t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/repository")
+			}
+		})
+	}
+}
+
+func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
+	createdAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+	first := db.SessionResource{
+		ID:           10,
+		ExternalID:   "sesrsc_first",
+		ResourceType: "github_repository",
+		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/first"}`),
+		CreatedAt:    createdAt,
+	}
+	later := db.SessionResource{
+		ID:           11,
+		ExternalID:   "sesrsc_later",
+		ResourceType: "github_repository",
+		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/later"}`),
+		CreatedAt:    createdAt.Add(time.Minute),
+	}
+	sameTimeLater := later
+	sameTimeLater.CreatedAt = createdAt
+
+	for name, resources := range map[string][]db.SessionResource{
+		"reverse list order":      {later, first},
+		"forward list order":      {first, later},
+		"same timestamp uses id":  {sameTimeLater, first},
+		"same timestamp reversed": {first, sameTimeLater},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/first" {
+				t.Fatalf("managedAgentWorkDir() = %q, want %q", workDir, "/workspace/first")
+			}
+		})
+	}
+}
+
+func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ResourceType: "file",
+			Payload:      json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}`),
+		},
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":" https://github.com/acme/widgets ","mount_path":" /workspace/widgets ","checkout":"main"}`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/workspace/memory","runtime_extension":{"enabled":true}}`),
+		},
+	}
+
+	want := []any{
+		map[string]any{
+			"type":       "git_repository",
+			"url":        "https://github.com/acme/widgets",
+			"mount_path": "/workspace/widgets",
+			"checkout":   "main",
+		},
+		map[string]any{
+			"type":            "memory_store",
+			"memory_store_id": "mem_test",
+			"mount_path":      "/workspace/memory",
+			"runtime_extension": map[string]any{
+				"enabled": true,
+			},
+		},
+	}
+	sources := managedAgentRuntimeSourceValues(
+		t,
+		resolveManagedAgentRuntimeResources(resources).sources,
+	)
+	if !reflect.DeepEqual(sources, want) {
+		t.Fatalf("managedAgentSources() = %#v, want %#v", sources, want)
+	}
+}
+
+func TestManagedAgentRuntimeResourcesSkipInvalidSources(t *testing.T) {
+	resources := []db.SessionResource{
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":`),
+		},
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":"  ","mount_path":"/workspace/empty-url"}`),
+		},
+		{
+			ResourceType: "github_repository",
+			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/empty-path","mount_path":"  "}`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":`),
+		},
+		{
+			ResourceType: "memory_store",
+			Payload:      json.RawMessage(`null`),
+		},
+	}
+
+	if sources := resolveManagedAgentRuntimeResources(resources).sources; len(sources) != 0 {
+		t.Fatalf("managedAgentSources() = %#v, want no sources", sources)
+	}
+}
+
 func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	// 故意给配置放入可识别的上游密钥，后续断言它不会进入 payload 或 shell 命令。
 	cfg := config.Config{
-		CodeSessionAPIBaseURL:        "http://127.0.0.1:18081/",
-		CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/",
-		AnthropicUpstreamBaseURL:     "https://api.anthropic.test/",
-		AnthropicUpstreamAPIKey:      "sk-ant-test-secret",
-		EnvironmentManagerPath:       "/opt/env manager/bin/environment-manager",
-		ClaudeAgentVersion:           "2.1.120",
-		ClaudePath:                   "/opt/claude path/bin/claude",
+		CodeSession: config.CodeSessionConfig{
+			SandboxAPIBaseURL: "http://host.docker.internal:18081/",
+		},
+		AnthropicUpstream: config.AnthropicUpstreamConfig{
+			BaseURL: "https://api.anthropic.test/",
+			APIKey:  "sk-ant-test-secret",
+		},
+		EnvironmentRunner: config.EnvironmentRunnerConfig{
+			ManagerPath:        "/opt/env manager/bin/environment-manager",
+			ClaudeAgentVersion: "2.1.120",
+			ClaudePath:         "/opt/claude path/bin/claude",
+		},
 	}
 	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
@@ -44,6 +263,16 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" ||
 		startupEnv["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
 		t.Fatalf("unexpected startup environment variables: %#v", startupEnv)
+	}
+	for _, key := range []string{
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+	} {
+		if startupEnv[key] != "claude-opus-4-8" {
+			t.Fatalf("%s = %q, want session model", key, startupEnv[key])
+		}
 	}
 	if _, ok := startupEnv["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
 		t.Fatalf("session access token environment variable must not mask the WebSocket auth FD: %#v", startupEnv)
@@ -79,7 +308,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if _, ok := environment["environment"]; ok {
 		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
-	if strings.Contains(string(payload), cfg.AnthropicUpstreamAPIKey) {
+	if strings.Contains(string(payload), cfg.AnthropicUpstream.APIKey) {
 		t.Fatalf("payload leaked upstream anthropic api key: %s", payload)
 	}
 
@@ -117,8 +346,23 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 }
 
+func TestClaudeRuntimeModelEnvironment(t *testing.T) {
+	if environment := claudeRuntimeModelEnvironment(" \t "); environment != nil {
+		t.Fatalf("empty model environment = %#v, want nil", environment)
+	}
+	want := map[string]string{
+		"ANTHROPIC_MODEL":                "glm-5-turbo",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "glm-5-turbo",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5-turbo",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  "glm-5-turbo",
+	}
+	if environment := claudeRuntimeModelEnvironment(" glm-5-turbo "); !reflect.DeepEqual(environment, want) {
+		t.Fatalf("model environment = %#v, want %#v", environment, want)
+	}
+}
+
 func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_METRICS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
@@ -159,7 +403,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPMetricsEnvironment(t *
 }
 
 func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_LOGS_EXPORTER":"console",
 		"OTEL_EXPORTER_OTLP_HEADERS":"x-custom=value"
@@ -196,7 +440,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomOTLPLogsEnvironment(t *tes
 }
 
 func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com"
 	}}`)
@@ -227,7 +471,7 @@ func TestBuildEnvironmentManagerPayloadPreservesCustomGenericOTLPEndpoint(t *tes
 }
 
 func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://collector.example.com/v1/metrics"
 	}}`)
@@ -256,7 +500,7 @@ func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomMetricsEndpoint
 }
 
 func TestBuildEnvironmentManagerPayloadDoesNotLeakHeadersToCustomLogsEndpoint(t *testing.T) {
-	cfg := config.Config{CodeSessionSandboxAPIBaseURL: "http://host.docker.internal:18081/"}
+	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{"environment_variables":{
 		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"https://collector.example.com/v1/logs"
 	}}`)
@@ -302,7 +546,7 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 		VaultIDs: json.RawMessage(`["vault_cred_123"]`),
 	}
 
-	raw := managedAgentSessionConfig(session, nil)
+	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode session config: %v", err)
@@ -328,9 +572,6 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 	vaultIDs := body["vault_ids"].([]any)
 	if len(vaultIDs) != 1 || vaultIDs[0] != "vault_cred_123" {
 		t.Fatalf("unexpected vault ids: %#v", vaultIDs)
-	}
-	if hosts := managedAgentMCPAllowedHosts(session.AgentSnapshot); !reflect.DeepEqual(hosts, []string{"mcp.notion.com"}) {
-		t.Fatalf("mcp hosts = %#v", hosts)
 	}
 	claudeArgs := body["claude_code_args"].(map[string]any)
 	if claudeArgs["mcp-config"] != managedAgentMCPConfigPath {

@@ -1,17 +1,48 @@
 package messages
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
 type proxyErrorReader struct {
 	err error
+}
+
+func TestHandlerUsesInjectedLogger(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil)).With("component", "messages")
+	handler := NewHandler(config.Config{
+		AnthropicUpstream: config.AnthropicUpstreamConfig{
+			APIKey:  "test-key",
+			BaseURL: "%",
+		},
+	}, logger)
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`))
+	request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{
+		CredentialType: auth.CredentialTypeAPIKey,
+	}))
+
+	handler.Create(httptest.NewRecorder(), request)
+
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatalf("decode log entry: %v", err)
+	}
+	if entry["component"] != "messages" || entry["msg"] != "build messages upstream endpoint" {
+		t.Fatalf("unexpected log entry: %#v", entry)
+	}
 }
 
 func (r proxyErrorReader) Read([]byte) (int, error) {

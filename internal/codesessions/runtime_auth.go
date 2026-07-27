@@ -8,18 +8,18 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
-func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+func (h *Handler) authenticateRuntimeSession(w http.ResponseWriter, r *http.Request) (SessionCredentialClaims, string, bool) {
 	token := auth.ExtractAPIKey(r)
 	if token == "" {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing code session token"))
-		return "", "", false
+		return SessionCredentialClaims{}, "", false
 	}
 	claims, err := h.service.AuthenticateSessionIngress(token, "")
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid code session token"))
-		return "", "", false
+		return SessionCredentialClaims{}, "", false
 	}
-	return claims.SessionID, token, true
+	return claims, token, true
 }
 
 func (h *Handler) authorizeSessionIngress(w http.ResponseWriter, r *http.Request, codeSessionID string) bool {

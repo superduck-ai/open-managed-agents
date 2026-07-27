@@ -1,11 +1,14 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -16,8 +19,14 @@ type Handler struct {
 	cfg          config.Config
 	db           *db.DB
 	codeSessions *codesessions.Service
+	webhooks     webhookEnqueuer
+	logger       *slog.Logger
 	router       chi.Router
 	streams      *streamHub
+}
+
+type webhookEnqueuer interface {
+	Enqueue(context.Context, webhooks.EnqueueInput)
 }
 
 type pageResponse[T any] struct {

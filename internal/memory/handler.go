@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -40,6 +41,7 @@ const (
 type Handler struct {
 	cfg    config.Config
 	db     *db.DB
+	logger *slog.Logger
 	store  storage.ObjectStore
 	router chi.Router
 }
@@ -123,8 +125,9 @@ type memoryListItem struct {
 	Prefix *string
 }
 
-func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore) *Handler {
-	h := &Handler{cfg: cfg, db: database, store: store}
+func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, logger: logger, store: store}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -210,7 +213,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 	})
 	if err != nil {
-		log.Printf("create memory store: %v", err)
+		h.logger.ErrorContext(r.Context(), "create memory store", "error", err)
 		writeAPIError(w, r, "Could not create memory store")
 		return
 	}
@@ -253,7 +256,7 @@ func (h *Handler) listStores(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		log.Printf("list memory stores: %v", err)
+		h.logger.ErrorContext(r.Context(), "list memory stores", "error", err)
 		writeAPIError(w, r, "Could not list memory stores")
 		return
 	}
@@ -277,7 +280,7 @@ func (h *Handler) retrieveStore(w http.ResponseWriter, r *http.Request, storeID 
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	record, err := h.memoryStoreForRead(r.Context(), principal, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
@@ -302,7 +305,7 @@ func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID st
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	current, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	if current.ArchivedAt != nil {
@@ -361,7 +364,7 @@ func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID st
 			writeBadRequest(w, r, errors.New("memory store must not be archived"))
 			return
 		}
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(updated))
@@ -375,7 +378,7 @@ func (h *Handler) archiveStore(w http.ResponseWriter, r *http.Request, storeID s
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	record, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceID, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
@@ -389,7 +392,7 @@ func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID st
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	refs, err := h.db.DeleteMemoryStore(r.Context(), principal.WorkspaceID, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	for _, ref := range refs {
@@ -430,7 +433,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 	}
 	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	if store.ArchivedAt != nil {
@@ -445,12 +448,12 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 	}
 	contentBytes := []byte(content)
 	contentSHA := sha256Hex(contentBytes)
-	if err := h.store.Put(r.Context(), objectKey, bytes.NewReader(contentBytes), int64(len(contentBytes)), "text/plain; charset=utf-8"); err != nil {
-		log.Printf("put memory content: %v", err)
+	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(contentBytes), storage.UploadOptions{Size: int64(len(contentBytes)), ContentType: "text/plain; charset=utf-8"}); err != nil {
+		h.logger.ErrorContext(r.Context(), "put memory content", "error", err)
 		writeAPIError(w, r, "Could not store memory content")
 		return
 	}
-	ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Bucket(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
+	ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Name(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
 	now := time.Now().UTC()
 	record, err := h.db.CreateMemory(r.Context(), db.Memory{
 		UUID:                  memoryUUID,
@@ -461,7 +464,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		Path:                  path,
 		ContentSizeBytes:      int64(len(contentBytes)),
 		ContentSHA256:         contentSHA,
-		S3Bucket:              h.store.Bucket(),
+		S3Bucket:              h.store.Name(),
 		S3Key:                 objectKey,
 		CreatedAt:             now,
 		UpdatedAt:             now,
@@ -472,14 +475,14 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		Path:             &path,
 		ContentSizeBytes: ptrInt64(int64(len(contentBytes))),
 		ContentSHA256:    &contentSHA,
-		S3Bucket:         ptrString(h.store.Bucket()),
+		S3Bucket:         ptrString(h.store.Name()),
 		S3Key:            &objectKey,
 		CreatedBy:        apiActor(principal),
 		CreatedAt:        now,
 	})
 	if err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), ref)
-		writeMemoryMutationError(w, r, err, storeID, "")
+		h.writeMemoryMutationError(w, r, err, storeID, "")
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.responseFromMemoryWithKnownContent(record, view, content))
@@ -531,7 +534,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		}
 		store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
 		if err != nil {
-			writeStoreLoadError(w, r, err, storeID)
+			h.writeStoreLoadError(w, r, err, storeID)
 			return
 		}
 		h.listMemoriesWithDepth(w, r, store.WorkspaceID, storeID, view, limit, order, pathPrefix, *depth)
@@ -544,7 +547,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 	}
 	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	records, hasMore, err := h.db.ListMemoriesPage(r.Context(), db.ListMemoriesPageParams{
@@ -557,14 +560,14 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		OrderBy:               orderBy,
 	})
 	if err != nil {
-		writeMemoryLoadError(w, r, err, storeID, "")
+		h.writeMemoryLoadError(w, r, err, storeID, "")
 		return
 	}
 	data := make([]any, 0, len(records))
 	for _, record := range records {
 		resp, err := h.responseFromMemory(r.Context(), record, view)
 		if err != nil {
-			log.Printf("read memory list content memory_id=%s key=%s: %v", record.ExternalID, record.S3Key, err)
+			h.logger.ErrorContext(r.Context(), "read memory list content", "memory_id", record.ExternalID, "key", record.S3Key, "error", err)
 			writeAPIError(w, r, "Could not read memory content")
 			return
 		}
@@ -585,7 +588,7 @@ func (h *Handler) listMemoriesWithDepth(w http.ResponseWriter, r *http.Request, 
 		PathPrefix:            pathPrefix,
 	})
 	if err != nil {
-		writeMemoryLoadError(w, r, err, storeID, "")
+		h.writeMemoryLoadError(w, r, err, storeID, "")
 		return
 	}
 	items := rollupMemoryItems(records, pathPrefix, depth)
@@ -621,7 +624,7 @@ func (h *Handler) listMemoriesWithDepth(w http.ResponseWriter, r *http.Request, 
 		}
 		resp, err := h.responseFromMemory(r.Context(), *item.Memory, view)
 		if err != nil {
-			log.Printf("read memory depth content memory_id=%s key=%s: %v", item.Memory.ExternalID, item.Memory.S3Key, err)
+			h.logger.ErrorContext(r.Context(), "read memory depth content", "memory_id", item.Memory.ExternalID, "key", item.Memory.S3Key, "error", err)
 			writeAPIError(w, r, "Could not read memory content")
 			return
 		}
@@ -648,17 +651,17 @@ func (h *Handler) retrieveMemory(w http.ResponseWriter, r *http.Request, storeID
 	}
 	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	record, err := h.db.GetMemory(r.Context(), store.WorkspaceID, storeID, memoryID)
 	if err != nil {
-		writeMemoryLoadError(w, r, err, storeID, memoryID)
+		h.writeMemoryLoadError(w, r, err, storeID, memoryID)
 		return
 	}
 	resp, err := h.responseFromMemory(r.Context(), record, view)
 	if err != nil {
-		log.Printf("read memory content memory_id=%s key=%s: %v", memoryID, record.S3Key, err)
+		h.logger.ErrorContext(r.Context(), "read memory content", "memory_id", memoryID, "key", record.S3Key, "error", err)
 		writeAPIError(w, r, "Could not read memory content")
 		return
 	}
@@ -698,7 +701,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 	}
 	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	if store.ArchivedAt != nil {
@@ -710,7 +713,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 	for attempt := 0; attempt < 3; attempt++ {
 		record, err := h.db.GetMemory(r.Context(), principal.WorkspaceID, storeID, memoryID)
 		if err != nil {
-			writeMemoryLoadError(w, r, err, storeID, memoryID)
+			h.writeMemoryLoadError(w, r, err, storeID, memoryID)
 			return
 		}
 		targetPath := record.Path
@@ -734,7 +737,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		if record.Path == targetPath && record.ContentSHA256 == targetSHA {
 			resp, err := h.responseFromMemory(r.Context(), record, view)
 			if err != nil {
-				log.Printf("read memory no-op content memory_id=%s key=%s: %v", memoryID, record.S3Key, err)
+				h.logger.ErrorContext(r.Context(), "read memory no-op content", "memory_id", memoryID, "key", record.S3Key, "error", err)
 				writeAPIError(w, r, "Could not read memory content")
 				return
 			}
@@ -745,7 +748,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		if !contentPresent {
 			copied, err := h.readObjectContent(r.Context(), record.S3Key, record.ContentSizeBytes)
 			if err != nil {
-				log.Printf("copy memory content memory_id=%s key=%s: %v", memoryID, record.S3Key, err)
+				h.logger.ErrorContext(r.Context(), "copy memory content", "memory_id", memoryID, "key", record.S3Key, "error", err)
 				writeAPIError(w, r, "Could not read memory content")
 				return
 			}
@@ -761,12 +764,12 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		objectKey := memoryObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
 		contentBytes := []byte(targetContent)
 		contentSHA := sha256Hex(contentBytes)
-		if err := h.store.Put(r.Context(), objectKey, bytes.NewReader(contentBytes), int64(len(contentBytes)), "text/plain; charset=utf-8"); err != nil {
-			log.Printf("put memory update content: %v", err)
+		if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(contentBytes), storage.UploadOptions{Size: int64(len(contentBytes)), ContentType: "text/plain; charset=utf-8"}); err != nil {
+			h.logger.ErrorContext(r.Context(), "put memory update content", "error", err)
 			writeAPIError(w, r, "Could not store memory content")
 			return
 		}
-		ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Bucket(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
+		ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Name(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
 		result, err := h.db.UpdateMemory(r.Context(), db.UpdateMemoryInput{
 			WorkspaceID:           principal.WorkspaceID,
 			MemoryStoreExternalID: storeID,
@@ -777,7 +780,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			ContentProvided:       true,
 			ContentSizeBytes:      int64(len(contentBytes)),
 			ContentSHA256:         contentSHA,
-			S3Bucket:              h.store.Bucket(),
+			S3Bucket:              h.store.Name(),
 			S3Key:                 objectKey,
 			ExpectedContentSHA256: expectedHash,
 			BaseVersionExternalID: record.CurrentVersionExternalID,
@@ -791,7 +794,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		}
 		if err != nil {
 			h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), ref)
-			writeMemoryMutationError(w, r, err, storeID, memoryID)
+			h.writeMemoryMutationError(w, r, err, storeID, memoryID)
 			return
 		}
 		if !result.VersionCreated {
@@ -803,14 +806,14 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		}
 		resp, err := h.responseFromMemory(r.Context(), result.Memory, view)
 		if err != nil {
-			log.Printf("read memory update response memory_id=%s key=%s: %v", memoryID, result.Memory.S3Key, err)
+			h.logger.ErrorContext(r.Context(), "read memory update response", "memory_id", memoryID, "key", result.Memory.S3Key, "error", err)
 			writeAPIError(w, r, "Could not read memory content")
 			return
 		}
 		httpapi.WriteJSON(w, http.StatusOK, resp)
 		return
 	}
-	log.Printf("update memory retry exhausted memory_id=%s: %v", memoryID, lastErr)
+	h.logger.ErrorContext(r.Context(), "update memory retry exhausted", "memory_id", memoryID, "error", lastErr)
 	writeAPIError(w, r, "Could not update memory")
 }
 
@@ -844,7 +847,7 @@ func (h *Handler) deleteMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		Actor:                 apiActor(principal),
 		Now:                   time.Now().UTC(),
 	}); err != nil {
-		writeMemoryMutationError(w, r, err, storeID, memoryID)
+		h.writeMemoryMutationError(w, r, err, storeID, memoryID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": memoryID, "type": "memory_deleted"})
@@ -891,7 +894,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, storeID s
 	}
 	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	records, hasMore, err := h.db.ListMemoryVersionsPage(r.Context(), db.ListMemoryVersionsPageParams{
@@ -907,14 +910,14 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, storeID s
 		CreatedAtLTE:          createdAtLTE,
 	})
 	if err != nil {
-		writeVersionLoadError(w, r, err, storeID, "")
+		h.writeVersionLoadError(w, r, err, storeID, "")
 		return
 	}
 	data := make([]versionResponse, 0, len(records))
 	for _, record := range records {
 		resp, err := h.responseFromVersion(r.Context(), record, view)
 		if err != nil {
-			log.Printf("read memory version list content version_id=%s: %v", record.ExternalID, err)
+			h.logger.ErrorContext(r.Context(), "read memory version list content", "version_id", record.ExternalID, "error", err)
 			writeAPIError(w, r, "Could not read memory version content")
 			return
 		}
@@ -941,17 +944,17 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, storeI
 	}
 	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
 	if err != nil {
-		writeStoreLoadError(w, r, err, storeID)
+		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	record, err := h.db.GetMemoryVersion(r.Context(), store.WorkspaceID, storeID, versionID)
 	if err != nil {
-		writeVersionLoadError(w, r, err, storeID, versionID)
+		h.writeVersionLoadError(w, r, err, storeID, versionID)
 		return
 	}
 	resp, err := h.responseFromVersion(r.Context(), record, view)
 	if err != nil {
-		log.Printf("read memory version content version_id=%s: %v", versionID, err)
+		h.logger.ErrorContext(r.Context(), "read memory version content", "version_id", versionID, "error", err)
 		writeAPIError(w, r, "Could not read memory version content")
 		return
 	}
@@ -970,7 +973,7 @@ func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID,
 			writeBadRequest(w, r, errors.New("cannot redact the active memory version"))
 			return
 		}
-		writeVersionLoadError(w, r, err, storeID, versionID)
+		h.writeVersionLoadError(w, r, err, storeID, versionID)
 		return
 	}
 	if ref != nil {
@@ -1014,7 +1017,7 @@ func (h *Handler) responseFromVersion(ctx context.Context, record db.MemoryVersi
 }
 
 func (h *Handler) readObjectContent(ctx context.Context, key string, expectedSize int64) (string, error) {
-	object, err := h.store.Get(ctx, key)
+	object, err := h.store.Open(ctx, key, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1024,7 +1027,7 @@ func (h *Handler) readObjectContent(ctx context.Context, key string, expectedSiz
 		return "", err
 	}
 	if int64(len(data)) != expectedSize {
-		log.Printf("memory object size mismatch key=%s bytes=%d expected=%d", key, len(data), expectedSize)
+		h.logger.WarnContext(ctx, "memory object size mismatch", "key", key, "actual_size", len(data), "expected_size", expectedSize)
 	}
 	return string(data), nil
 }
@@ -1058,10 +1061,10 @@ func (h *Handler) deleteObjectOrEnqueue(ctx context.Context, ref db.ObjectRef) {
 	if ref.Key == "" {
 		return
 	}
-	if err := h.store.Delete(ctx, ref.Key); err != nil {
-		log.Printf("delete memory object resource_type=%s resource_id=%s key=%s: %v", ref.ResourceType, ref.ResourceID, ref.Key, err)
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{}); err != nil {
+		h.logger.ErrorContext(ctx, "delete memory object", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(ctx, ref.WorkspaceID, ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID); enqueueErr != nil {
-			log.Printf("enqueue memory object cleanup resource_type=%s resource_id=%s key=%s: %v", ref.ResourceType, ref.ResourceID, ref.Key, enqueueErr)
+			h.logger.ErrorContext(ctx, "enqueue memory object cleanup", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", enqueueErr)
 		}
 	}
 }
@@ -1739,16 +1742,16 @@ func writeAPIError(w http.ResponseWriter, r *http.Request, message string) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", message))
 }
 
-func writeStoreLoadError(w http.ResponseWriter, r *http.Request, err error, storeID string) {
+func (h *Handler) writeStoreLoadError(w http.ResponseWriter, r *http.Request, err error, storeID string) {
 	if errors.Is(err, db.ErrNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Memory store not found: "+storeID))
 		return
 	}
-	log.Printf("memory store operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "memory store operation", "error", err)
 	writeAPIError(w, r, "Memory store operation failed")
 }
 
-func writeMemoryLoadError(w http.ResponseWriter, r *http.Request, err error, storeID, memoryID string) {
+func (h *Handler) writeMemoryLoadError(w http.ResponseWriter, r *http.Request, err error, storeID, memoryID string) {
 	if errors.Is(err, db.ErrNotFound) {
 		message := "Memory store not found: " + storeID
 		if memoryID != "" {
@@ -1757,11 +1760,11 @@ func writeMemoryLoadError(w http.ResponseWriter, r *http.Request, err error, sto
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", message))
 		return
 	}
-	log.Printf("memory operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "memory operation", "error", err)
 	writeAPIError(w, r, "Memory operation failed")
 }
 
-func writeVersionLoadError(w http.ResponseWriter, r *http.Request, err error, storeID, versionID string) {
+func (h *Handler) writeVersionLoadError(w http.ResponseWriter, r *http.Request, err error, storeID, versionID string) {
 	if errors.Is(err, db.ErrNotFound) {
 		message := "Memory store not found: " + storeID
 		if versionID != "" {
@@ -1770,11 +1773,11 @@ func writeVersionLoadError(w http.ResponseWriter, r *http.Request, err error, st
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", message))
 		return
 	}
-	log.Printf("memory version operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "memory version operation", "error", err)
 	writeAPIError(w, r, "Memory version operation failed")
 }
 
-func writeMemoryMutationError(w http.ResponseWriter, r *http.Request, err error, storeID, memoryID string) {
+func (h *Handler) writeMemoryMutationError(w http.ResponseWriter, r *http.Request, err error, storeID, memoryID string) {
 	var pathConflict *db.MemoryPathConflictError
 	if errors.As(err, &pathConflict) {
 		writePathConflict(w, r, pathConflict)
@@ -1800,7 +1803,7 @@ func writeMemoryMutationError(w http.ResponseWriter, r *http.Request, err error,
 		writeMemorySpecificError(w, r, http.StatusConflict, "memory_path_conflict_error", "Memory path conflicts with existing memory", nil)
 		return
 	}
-	log.Printf("memory mutation: %v", err)
+	h.logger.ErrorContext(r.Context(), "memory mutation", "error", err)
 	writeAPIError(w, r, "Memory mutation failed")
 }
 

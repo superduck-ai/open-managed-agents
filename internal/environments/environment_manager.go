@@ -3,7 +3,6 @@ package environments
 import (
 	"encoding/base64"
 	"encoding/json"
-	"net"
 	urlpkg "net/url"
 	"path"
 	"strings"
@@ -20,14 +19,17 @@ const (
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
 )
 
-func managedAgentSessionConfig(session db.Session, resources []db.SessionResource) json.RawMessage {
+func managedAgentSessionConfig(
+	session db.Session,
+	runtimeResources managedAgentRuntimeResources,
+) json.RawMessage {
 	agentSnapshot := rawJSONObject(session.AgentSnapshot)
 	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
 	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
 		"origin":   "managed_agents_api",
 		"model":    modelIDFromAgentSnapshot(session.AgentSnapshot),
-		"sources":  managedAgentSources(resources),
+		"sources":  runtimeResources.sources,
 		"outcomes": []any{},
 	}
 	if len(mcpServers) > 0 {
@@ -161,31 +163,6 @@ func mcpServerTransportType(serverType string, rawURL string) string {
 	return "http"
 }
 
-func managedAgentMCPAllowedHosts(raw json.RawMessage) []string {
-	snapshot := rawJSONObject(raw)
-	servers := arrayValue(snapshot["mcp_servers"])
-	hosts := make([]string, 0, len(servers))
-	for _, value := range servers {
-		server, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		host := hostnameFromURL(stringFromMap(server, "url"))
-		if host != "" {
-			hosts = append(hosts, host)
-		}
-	}
-	return uniqueStrings(hosts)
-}
-
-func hostnameFromURL(raw string) string {
-	parsed, err := urlpkg.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(strings.ToLower(parsed.Hostname()))
-}
-
 func rawJSONObject(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
 		return map[string]any{}
@@ -229,61 +206,6 @@ func arrayValue(value any) []any {
 	return values
 }
 
-func uniqueStrings(values []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
-func managedAgentWorkDir(resources []db.SessionResource) string {
-	for _, resource := range resources {
-		var payload map[string]any
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
-			continue
-		}
-		if mountPath, ok := payload["mount_path"].(string); ok && strings.TrimSpace(mountPath) != "" {
-			return strings.TrimSpace(mountPath)
-		}
-	}
-	return defaultEnvironmentWorkDir
-}
-
-func managedAgentSources(resources []db.SessionResource) []any {
-	sources := make([]any, 0, len(resources))
-	for _, resource := range resources {
-		var payload map[string]any
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
-			continue
-		}
-		switch resource.ResourceType {
-		case "github_repository":
-			source := map[string]any{
-				"type":       "git_repository",
-				"url":        stringFromMap(payload, "url"),
-				"mount_path": stringFromMap(payload, "mount_path"),
-			}
-			if checkout, ok := payload["checkout"]; ok {
-				source["checkout"] = checkout
-			}
-			sources = append(sources, source)
-		case "file", "memory_store":
-			sources = append(sources, payload)
-		}
-	}
-	return sources
-}
-
 func modelIDFromAgentSnapshot(raw json.RawMessage) string {
 	var snapshot map[string]any
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
@@ -311,6 +233,9 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	environmentVariables["CLAUDE_CODE_USE_CCR_V2"] = "1"
 	environmentVariables["CLAUDE_CODE_WORKER_EPOCH"] = "1"
 	environmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1" // 还需 REMOTE_SESSION_ID 和 /run/ccr/session_token 才会注入 HTTPS_PROXY。
+	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
+		environmentVariables[key] = value
+	}
 	applyCodeSessionOTLPEnvironment(environmentVariables, stringFromMap(startupContext, "api_base_url"), codeSessionID, sessionIngressToken, "1")
 	startupContext["environment_variables"] = environmentVariables
 	if _, ok := startupContext["sources"]; !ok {
@@ -340,6 +265,19 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 		"environment":     environment,
 		"auth":            auth,
 	})
+}
+
+func claudeRuntimeModelEnvironment(modelID string) map[string]string {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil
+	}
+	return map[string]string{
+		"ANTHROPIC_MODEL":                modelID,
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   modelID,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": modelID,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  modelID,
+	}
 }
 
 func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, apiBaseURL string, codeSessionID string, sessionIngressToken string, workerEpoch string) {
@@ -438,28 +376,16 @@ func commaListContains(raw string, want string) bool {
 }
 
 func codeSessionSandboxAPIBaseURL(cfg config.Config) string {
-	if baseURL := strings.TrimRight(firstNonEmpty(cfg.CodeSessionSandboxAPIBaseURL, cfg.CodeSessionAPIBaseURL, cfg.PublicBaseURL), "/"); baseURL != "" {
-		return baseURL
-	}
-	port := "8080"
-	addr := strings.TrimSpace(cfg.Addr)
-	if addr != "" {
-		if _, parsedPort, err := net.SplitHostPort(addr); err == nil && parsedPort != "" {
-			port = parsedPort
-		} else if strings.HasPrefix(addr, ":") && strings.TrimPrefix(addr, ":") != "" {
-			port = strings.TrimPrefix(addr, ":")
-		}
-	}
-	return "http://host.docker.internal:" + port
+	return strings.TrimRight(strings.TrimSpace(cfg.CodeSession.SandboxAPIBaseURL), "/")
 }
 
 func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, payload []byte) environmentManagerCommand {
 	safeSessionID := strings.NewReplacer("/", "_", "\\", "_", " ", "_").Replace(codeSessionID)
 	baseDir := path.Join("/tmp/claude-code-sessions", safeSessionID)
 	logPath := path.Join(baseDir, "environment-manager.log")
-	managerPath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentManagerPath), defaultEnvironmentManagerPath)
-	agentVersion := firstNonEmpty(strings.TrimSpace(cfg.ClaudeAgentVersion), defaultClaudeAgentVersion)
-	claudePath := firstNonEmpty(strings.TrimSpace(cfg.ClaudePath), defaultClaudePath)
+	managerPath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ManagerPath), defaultEnvironmentManagerPath)
+	agentVersion := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ClaudeAgentVersion), defaultClaudeAgentVersion)
+	claudePath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ClaudePath), defaultClaudePath)
 	versionPattern := `s/.*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p`
 	command := strings.Join([]string{
 		"set -eu",

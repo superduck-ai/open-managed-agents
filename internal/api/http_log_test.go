@@ -18,7 +18,7 @@ func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 	handler := requestLoggingMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	req := httptest.NewRequest(http.MethodGet, "/v1/files?beta=true", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/files?beta=true&state=secret-state", nil)
 	req.Host = "127.0.0.1:18080"
 	req = req.WithContext(httpapi.WithRequestID(req.Context(), "req_test"))
 	req.Header.Set("User-Agent", "anthropic-sdk-go/1.0.0")
@@ -36,14 +36,14 @@ func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 	}
 
 	requestEntry := entries[0]
-	if requestEntry["level"] != "INFO" || requestEntry["msg"] != ">>> GET /v1/files?beta=true" {
+	if requestEntry["level"] != "INFO" || requestEntry["msg"] != "http request" {
 		t.Fatalf("unexpected request log: %#v", requestEntry)
 	}
 	if requestEntry["component"] != "http" ||
 		requestEntry["event"] != "request" ||
 		requestEntry["requestId"] != "req_test" ||
 		requestEntry["method"] != "GET" ||
-		requestEntry["url"] != "/v1/files?beta=true" ||
+		requestEntry["url"] != "/v1/files" ||
 		requestEntry["path"] != "/v1/files" ||
 		requestEntry["host"] != "127.0.0.1:18080" ||
 		requestEntry["clientKind"] != "web" ||
@@ -52,8 +52,11 @@ func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 	}
 
 	responseEntry := entries[1]
-	if responseEntry["level"] != "INFO" || responseEntry["msg"] != "<<< GET /v1/files?beta=true 200" {
+	if responseEntry["level"] != "INFO" || responseEntry["msg"] != "http response" {
 		t.Fatalf("unexpected response log: %#v", responseEntry)
+	}
+	if strings.Contains(buf.String(), "secret-state") {
+		t.Fatalf("request query leaked into logs: %s", buf.String())
 	}
 	if responseEntry["event"] != "response" || responseEntry["status"] != float64(http.StatusOK) {
 		t.Fatalf("response log fields mismatch: %#v", responseEntry)
@@ -82,7 +85,7 @@ func TestRequestLoggingMiddlewareLogsNon2xxAsError(t *testing.T) {
 	}
 	responseEntry := entries[1]
 	if responseEntry["level"] != "ERROR" ||
-		responseEntry["msg"] != "<<< POST /v1/files?beta=true 500" ||
+		responseEntry["msg"] != "http response" ||
 		responseEntry["status"] != float64(http.StatusInternalServerError) {
 		t.Fatalf("unexpected error response log: %#v", responseEntry)
 	}

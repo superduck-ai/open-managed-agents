@@ -7,22 +7,19 @@
 # OrbStack（macOS）支持 host 网络并可正常工作，详见 docs/design/。
 #
 # 启动：
+#   just init-compose-config                    # 首次创建 gitignored 本地配置
 #   docker compose up -d                     # 启动全部服务
 #   docker compose down                      # 停止并清理
 #   docker compose down -v                   # 同时删除数据卷
 #
 # 访问入口：
-#   控制台前端: http://localhost:28080（可通过 CADDY_HOST_PORT 自定义）
+#   控制台前端: http://localhost:28080
 #   oma API:    http://localhost:38080
 #   e2b-local:  http://localhost:3099
 #   MinIO Web:  http://localhost:9001
 #
-# Caddy 默认使用 28080 端口（非特权端口）。如果 28080 被占用：
-#   - 在 .env 中设置 CADDY_HOST_PORT=<其他端口>
-#   - 或设置 CADDY_HOST_PORT=0，Docker 自动分配随机端口（用 `docker compose port caddy 80` 查看）
-#
-# 配置上游 Anthropic API（在 .env 中设置）：
-#   ANTHROPIC_UPSTREAM_API_KEY=sk-ant-...
+# Caddy 使用 28080 端口（非特权端口）。
+# oma-server 只读挂载 gitignored 的 oma-server.local.yaml；受跟踪的 oma-server.yaml 仅作为无密钥模板。
 # =============================================================================
 
 services:
@@ -164,25 +161,14 @@ services:
       retries: 10
       start_period: 10s
     environment:
-      APP_ENV: production
-      ADDR: ":8080"
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:38080}
-      DATABASE_URL: postgresql://claude:123456@postgres:5432/claude_api?sslmode=disable
-      DB_AUTO_MIGRATE: "true"
-      REDIS_URL: redis://redis:6379
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: claude-files
-      S3_REGION: us-east-1
-      S3_ACCESS_KEY_ID: minioadmin
-      S3_SECRET_ACCESS_KEY: minioadmin
-      S3_FORCE_PATH_STYLE: "true"
-      E2B_API_URL: http://host.docker.internal:3099
-      E2B_SANDBOX_URL: http://host.docker.internal:3099
-      E2B_TEMPLATE: claude-code-interpreter
-      # 调试模式默认关闭，需要时在 .env 中设置 E2B_DEBUG=true
-      E2B_DEBUG: ${E2B_DEBUG:-false}
-      ANTHROPIC_UPSTREAM_API_KEY: ${ANTHROPIC_UPSTREAM_API_KEY:-}
-      ANTHROPIC_UPSTREAM_BASE_URL: ${ANTHROPIC_UPSTREAM_BASE_URL:-https://api.anthropic.com}
+      CONFIG_FILE: /etc/open-managed-agents/config.yaml
+    volumes:
+      - type: bind
+        source: ./deploy/docker-compose/oma-server.local.yaml
+        target: /etc/open-managed-agents/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -196,9 +182,7 @@ services:
       oma-server:
         condition: service_healthy
     ports:
-      - "${CADDY_HOST_PORT:-28080}:80"
-    environment:
-      - CADDY_HOST_PORT=${CADDY_HOST_PORT:-28080}
+      - "28080:80"
     volumes:
       - ./deploy/docker-compose/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./deploy/docker-compose/caddy-entrypoint.sh:/entrypoint.sh:ro

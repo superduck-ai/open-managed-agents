@@ -6,9 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +17,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 
 	"github.com/go-chi/chi/v5"
@@ -26,11 +27,10 @@ import (
 
 const maxEnvironmentBodySize = 4 << 20
 
-var allowedHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
-
 type Handler struct {
 	cfg    config.Config
 	db     *db.DB
+	logger *slog.Logger
 	router chi.Router
 }
 
@@ -95,8 +95,9 @@ type workStatsResponse struct {
 	WorkersPolling *int    `json:"workers_polling"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	h := &Handler{cfg: cfg, db: database}
+func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -141,7 +142,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.isOfficialSDKPrincipal(principal) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(h.cfg.OfficialSDKFixtureEnvironmentID, false))
+		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false))
 		return
 	}
 	name, err := parseRequiredStringField(fields, "name")
@@ -195,7 +196,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Environment name already exists"))
 			return
 		}
-		log.Printf("create environment: %v", err)
+		h.logger.ErrorContext(r.Context(), "create environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create environment"))
 		return
 	}
@@ -215,7 +216,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	cursor, err := decodeEnvironmentCursor(r.URL.Query().Get("page"))
 	if err != nil {
 		if h.isOfficialSDKPrincipal(principal) {
-			httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.OfficialSDKFixtureEnvironmentID, false)}})
+			httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false)}})
 			return
 		}
 		writeBadRequest(w, r, err)
@@ -233,12 +234,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: includeArchived,
 	})
 	if err != nil {
-		log.Printf("list environments: %v", err)
+		h.logger.ErrorContext(r.Context(), "list environments", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list environments"))
 		return
 	}
 	if h.isOfficialSDKPrincipal(principal) && len(records) == 0 {
-		httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.OfficialSDKFixtureEnvironmentID, false)}})
+		httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false)}})
 		return
 	}
 	data := make([]environmentResponse, 0, len(records))
@@ -272,7 +273,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, environmentID
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("get environment: %v", err)
+		h.logger.ErrorContext(r.Context(), "get environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment"))
 		return
 	}
@@ -298,7 +299,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("get environment before update: %v", err)
+		h.logger.ErrorContext(r.Context(), "get environment before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment"))
 		return
 	}
@@ -355,7 +356,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("update environment: %v", err)
+		h.logger.ErrorContext(r.Context(), "update environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment"))
 		return
 	}
@@ -381,7 +382,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("archive environment: %v", err)
+		h.logger.ErrorContext(r.Context(), "archive environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive environment"))
 		return
 	}
@@ -407,7 +408,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		log.Printf("delete environment: %v", err)
+		h.logger.ErrorContext(r.Context(), "delete environment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete environment"))
 		return
 	}
@@ -420,7 +421,7 @@ func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.isOfficialSDKRequest(r) {
-		httpapi.WriteJSON(w, http.StatusOK, workPageResponse{Data: []workResponse{h.fixtureWork(env.ExternalID, h.cfg.OfficialSDKFixtureWorkID, "queued")}})
+		httpapi.WriteJSON(w, http.StatusOK, workPageResponse{Data: []workResponse{h.fixtureWork(env.ExternalID, h.cfg.SDKFixtures.WorkID, "queued")}})
 		return
 	}
 	limit, err := parseLimit(r)
@@ -440,7 +441,7 @@ func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) {
 		Cursor:                cursor,
 	})
 	if err != nil {
-		log.Printf("list environment work: %v", err)
+		h.logger.ErrorContext(r.Context(), "list environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list environment work"))
 		return
 	}
@@ -472,7 +473,7 @@ func (h *Handler) retrieveWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("get environment work: %v", err)
+		h.logger.ErrorContext(r.Context(), "get environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment work"))
 		return
 	}
@@ -500,7 +501,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("get environment work before update: %v", err)
+		h.logger.ErrorContext(r.Context(), "get environment work before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment work"))
 		return
 	}
@@ -514,7 +515,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := h.db.UpdateEnvironmentWorkMetadata(r.Context(), env.WorkspaceID, env.ExternalID, workID, metadata)
 	if err != nil {
-		log.Printf("update environment work: %v", err)
+		h.logger.ErrorContext(r.Context(), "update environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment work"))
 		return
 	}
@@ -527,7 +528,7 @@ func (h *Handler) pollWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.isOfficialSDKRequest(r) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, h.cfg.OfficialSDKFixtureWorkID, "queued"))
+		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, h.cfg.SDKFixtures.WorkID, "queued"))
 		return
 	}
 	blockFor, err := parseBlockMS(r)
@@ -545,7 +546,7 @@ func (h *Handler) pollWorkRoute(w http.ResponseWriter, r *http.Request) {
 	for {
 		work, err := h.db.PollEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workerID, claimFor)
 		if err != nil {
-			log.Printf("poll environment work: %v", err)
+			h.logger.ErrorContext(r.Context(), "poll environment work", "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not poll environment work"))
 			return
 		}
@@ -576,7 +577,7 @@ func (h *Handler) workStatsRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, err := h.db.EnvironmentWorkStats(r.Context(), env.WorkspaceID, env.ExternalID)
 	if err != nil {
-		log.Printf("environment work stats: %v", err)
+		h.logger.ErrorContext(r.Context(), "environment work stats", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment work stats"))
 		return
 	}
@@ -599,7 +600,7 @@ func (h *Handler) ackWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("ack environment work: %v", err)
+		h.logger.ErrorContext(r.Context(), "ack environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not ack environment work"))
 		return
 	}
@@ -638,7 +639,7 @@ func (h *Handler) heartbeatWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("heartbeat environment work: %v", err)
+		h.logger.ErrorContext(r.Context(), "heartbeat environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not heartbeat environment work"))
 		return
 	}
@@ -679,13 +680,13 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("retrieve environment work before stop: %v", err)
+		h.logger.ErrorContext(r.Context(), "retrieve environment work before stop", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment work"))
 		return
 	}
 	if force {
 		if err := h.killSandboxForWork(r.Context(), env, current); err != nil {
-			log.Printf("kill environment sandbox for work %s: %v", workID, err)
+			h.logger.ErrorContext(r.Context(), "kill environment sandbox for work", "work_id", workID, "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment sandbox"))
 			return
 		}
@@ -696,7 +697,7 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
 			return
 		}
-		log.Printf("stop environment work: %v", err)
+		h.logger.ErrorContext(r.Context(), "stop environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment work"))
 		return
 	}
@@ -718,7 +719,7 @@ func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, wo
 	if err := h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
 		return err
 	}
-	if err := e2bruntime.NewProvider(h.cfg).Kill(ctx, providerSandboxID); err != nil {
+	if err := e2bruntime.NewProvider(h.cfg.E2B).Kill(ctx, providerSandboxID); err != nil {
 		message := err.Error()
 		_ = h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "failed", &providerSandboxID, &message, nil)
 		return err
@@ -759,7 +760,7 @@ func (h *Handler) authorizeWork(w http.ResponseWriter, r *http.Request) (db.Envi
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return db.Environment{}, false
 		}
-		log.Printf("authorize environment work: %v", err)
+		h.logger.ErrorContext(r.Context(), "authorize environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment"))
 		return db.Environment{}, false
 	}
@@ -781,10 +782,10 @@ func isWorkspaceCredential(principal auth.Principal) bool {
 }
 
 func (h *Handler) resolvedTemplate(json.RawMessage) string {
-	if strings.TrimSpace(h.cfg.E2BTemplate) == "" {
+	if strings.TrimSpace(h.cfg.E2B.Template) == "" {
 		return "claude-code-interpreter"
 	}
-	return h.cfg.E2BTemplate
+	return h.cfg.E2B.Template
 }
 
 func responseFromEnvironment(env db.Environment) environmentResponse {
@@ -1007,7 +1008,7 @@ func (h *Handler) fixtureWork(environmentID, workID, state string) workResponse 
 
 func (h *Handler) isOfficialSDKPrincipal(principal auth.Principal) bool {
 	return principal.CredentialType == "api_key" &&
-		principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID
+		principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
 }
 
 func (h *Handler) isOfficialSDKRequest(r *http.Request) bool {
@@ -1017,14 +1018,13 @@ func (h *Handler) isOfficialSDKRequest(r *http.Request) bool {
 
 func (h *Handler) isOfficialSDKEnvironmentFixture(principal auth.Principal, environmentID string) bool {
 	return h.isOfficialSDKPrincipal(principal) &&
-		environmentID == h.cfg.OfficialSDKFixtureEnvironmentID
+		environmentID == h.cfg.SDKFixtures.EnvironmentID
 }
 
 func (h *Handler) isOfficialSDKWorkFixture(r *http.Request, workID string) bool {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.CredentialType == "api_key" &&
-		principal.APIKeyExternalID == h.cfg.OfficialSDKResourceAPIKeyExternalID &&
-		workID == h.cfg.OfficialSDKFixtureWorkID
+	return h.isOfficialSDKPrincipal(principal) &&
+		workID == h.cfg.SDKFixtures.WorkID
 }
 
 func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
@@ -1250,7 +1250,7 @@ func normalizeNetworking(raw json.RawMessage) (map[string]any, error) {
 				return nil, err
 			}
 			for _, host := range values {
-				if err := validateAllowedHost(host); err != nil {
+				if err := networkpolicy.ValidateAllowedHost(host); err != nil {
 					return nil, err
 				}
 			}
@@ -1273,16 +1273,6 @@ func normalizeNetworking(raw json.RawMessage) (map[string]any, error) {
 	default:
 		return nil, errors.New("config.networking.type must be unrestricted or limited")
 	}
-}
-
-func validateAllowedHost(host string) error {
-	if strings.Contains(host, "://") || strings.Contains(host, "/") || !allowedHostPattern.MatchString(host) {
-		return errors.New("config.networking.allowed_hosts entries must be hostnames without URL schemes")
-	}
-	if len(host) > 253 {
-		return errors.New("config.networking.allowed_hosts entries must be at most 253 characters")
-	}
-	return nil
 }
 
 func normalizeMetadata(raw json.RawMessage) (json.RawMessage, error) {

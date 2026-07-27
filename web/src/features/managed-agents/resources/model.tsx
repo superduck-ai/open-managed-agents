@@ -535,11 +535,36 @@ export function environmentEditValues(entity: EnvironmentApiResponse): Environme
     name: entity.name,
     description: entity.description || '',
     networkType: networking.type === 'limited' ? 'limited' : 'unrestricted',
+    allowMcpServers: networking.allow_mcp_servers === true,
+    allowPackageManagers: networking.allow_package_managers === true,
+    allowedHostsText: stringArrayValue(networking.allowed_hosts).join('\n'),
     packages: packages.length ? packages : [{ manager: 'pip', value: '' }],
     metadataRows: Object.entries(metadata).length
       ? Object.entries(metadata).map(([key, value]) => ({ key, value: String(value) }))
       : [{ key: '', value: '' }],
   };
+}
+
+function stringArrayValue(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '');
+}
+
+// parseAllowedHostsText 把逗号/换行分隔的输入归一化为去重、保序的 host 数组。
+function parseAllowedHostsText(text: string): string[] {
+  const seen = new Set<string>();
+  const hosts: string[] = [];
+  for (const entry of text.split(/[\s,]+/)) {
+    const host = entry.trim();
+    if (!host || seen.has(host)) {
+      continue;
+    }
+    seen.add(host);
+    hosts.push(host);
+  }
+  return hosts;
 }
 
 export function environmentPackageRows(packages: unknown): EnvironmentPackageRow[] {
@@ -585,7 +610,12 @@ export function environmentConfigBody(values: EnvironmentEditValues) {
     packages,
     networking:
       values.networkType === 'limited'
-        ? { type: 'limited', allowed_hosts: [], allow_mcp_servers: false, allow_package_managers: false }
+        ? {
+            type: 'limited',
+            allowed_hosts: parseAllowedHostsText(values.allowedHostsText),
+            allow_mcp_servers: values.allowMcpServers,
+            allow_package_managers: values.allowPackageManagers,
+          }
         : { type: 'unrestricted' },
   };
 }

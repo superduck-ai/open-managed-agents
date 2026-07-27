@@ -19,6 +19,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 type skillAPIResponse struct {
@@ -395,9 +396,9 @@ func TestSkillsAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("success delete object queues cleanup job", func(t *testing.T) {
+	t.Run("success delete retains archive for active projections", func(t *testing.T) {
 		cleanupStore := newFakeStore("fake-bucket")
-		cleanupStore.deleteErr = errors.New("minio unavailable")
+		cleanupStore.deleteErr = errors.New("object storage unavailable")
 		cleanupApp := newTestAppWithStore(t, nil, cleanupStore)
 		defer cleanupApp.close()
 
@@ -417,6 +418,9 @@ func TestSkillsAPI(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("delete cleanup skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
+		if _, ok := cleanupStore.objects[objectKey]; !ok {
+			t.Fatalf("skill archive %s was removed while a session projection may still reference it", objectKey)
+		}
 
 		var jobCount int
 		if err := cleanupApp.db.Pool.QueryRow(context.Background(), `
@@ -429,8 +433,8 @@ func TestSkillsAPI(t *testing.T) {
 		`, objectKey).Scan(&jobCount); err != nil {
 			t.Fatalf("count cleanup jobs: %v", err)
 		}
-		if jobCount != 1 {
-			t.Fatalf("cleanup job count = %d, want 1", jobCount)
+		if jobCount != 0 {
+			t.Fatalf("cleanup job count = %d, want 0", jobCount)
 		}
 	})
 
@@ -475,11 +479,11 @@ func TestSkillsAPI(t *testing.T) {
 		}
 		var created skillAPIResponse
 		decodeJSON(t, resp.Body, &created)
-		if created.ID != app.cfg.OfficialSDKFixtureSkillID {
-			t.Fatalf("official create id = %s, want %s", created.ID, app.cfg.OfficialSDKFixtureSkillID)
+		if created.ID != app.cfg.SDKFixtures.SkillID {
+			t.Fatalf("official create id = %s, want %s", created.ID, app.cfg.SDKFixtures.SkillID)
 		}
 
-		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.OfficialSDKFixtureSkillID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official retrieve status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -493,37 +497,37 @@ func TestSkillsAPI(t *testing.T) {
 		versionBody, versionContentType := skillMultipartBody(t, "", []skillUploadFile{
 			{FieldName: "files[]", Filename: "anonymous_file", Content: "Example data"},
 		})
-		resp = doSkillRequest(t, app, http.MethodPost, "/v1/skills/"+app.cfg.OfficialSDKFixtureSkillID+"/versions?beta=true", versionBody, config.OfficialSDKResourceAPIKey, true, versionContentType)
+		resp = doSkillRequest(t, app, http.MethodPost, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"/versions?beta=true", versionBody, config.OfficialSDKResourceAPIKey, true, versionContentType)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official create version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 
-		officialVersions := listSkillVersionsWithKey(t, app, app.cfg.OfficialSDKFixtureSkillID, "page=page&limit=0", config.OfficialSDKResourceAPIKey)
-		if len(officialVersions.Data) != 1 || officialVersions.Data[0].Version != app.cfg.OfficialSDKFixtureSkillVersion {
+		officialVersions := listSkillVersionsWithKey(t, app, app.cfg.SDKFixtures.SkillID, "page=page&limit=0", config.OfficialSDKResourceAPIKey)
+		if len(officialVersions.Data) != 1 || officialVersions.Data[0].Version != app.cfg.SDKFixtures.SkillVersion {
 			t.Fatalf("official versions = %+v", officialVersions)
 		}
 
-		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.OfficialSDKFixtureSkillID+"/versions/"+app.cfg.OfficialSDKFixtureSkillVersion+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"/versions/"+app.cfg.SDKFixtures.SkillVersion+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official retrieve version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 
-		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.OfficialSDKFixtureSkillID+"/versions/"+app.cfg.OfficialSDKFixtureSkillVersion+"/content?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"/versions/"+app.cfg.SDKFixtures.SkillVersion+"/content?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official download version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 		assertZipContains(t, readAll(t, resp.Body), "fixture-skill/SKILL.md")
 
-		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+app.cfg.OfficialSDKFixtureSkillID+"/versions/"+app.cfg.OfficialSDKFixtureSkillVersion+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"/versions/"+app.cfg.SDKFixtures.SkillVersion+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official delete version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 
-		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+app.cfg.OfficialSDKFixtureSkillID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official delete skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -852,7 +856,7 @@ func seedBuiltinSkill(t *testing.T, app *testApp, store *fakeStore, skillID, ver
 	sum := sha256.Sum256(archive)
 	shaHex := hex.EncodeToString(sum[:])
 	key := "builtin-skills/" + skillID + "/versions/" + version + "/" + shaHex + ".skill"
-	if err := store.Put(context.Background(), key, bytes.NewReader(archive), int64(len(archive)), "application/zip"); err != nil {
+	if _, err := store.Upload(context.Background(), key, bytes.NewReader(archive), storage.UploadOptions{Size: int64(len(archive)), ContentType: "application/zip"}); err != nil {
 		t.Fatalf("seed builtin object: %v", err)
 	}
 	now := time.Now().UTC()
@@ -866,7 +870,7 @@ func seedBuiltinSkill(t *testing.T, app *testApp, store *fakeStore, skillID, ver
 		Name:        skillID,
 		Description: "builtin " + skillID,
 		Directory:   skillID,
-		S3Bucket:    store.Bucket(),
+		S3Bucket:    store.Name(),
 		S3Key:       key,
 		SizeBytes:   int64(len(archive)),
 		SHA256:      shaHex,

@@ -42,7 +42,7 @@ Skills 资源现在分成两类：
 flowchart LR
   A["Admin assets dir"] --> B["cmd/seed-builtin-skills"]
   B --> C["Validate .skill archive"]
-  C --> D["Upload archive to MinIO"]
+  C --> D["Upload archive to S3-compatible storage"]
   C --> E["Parse SKILL.md metadata"]
   D --> F["builtin_skill_versions"]
   E --> F
@@ -64,7 +64,7 @@ go run ./cmd/seed-builtin-skills --dir /path/to/assets/skills/public --versions 
 - `--versions` 可选，支持 JSON object 或 `skill_id=version` 行格式。生产导入推荐显式指定平台版本号。
 - `--prune` 可选，软删除本次目录中缺失的 builtin skill/version；默认只 upsert，不删除旧项。
 
-CLI 会在导入前主动执行 goose migrations，不依赖服务端运行时的 `DB_AUTO_MIGRATE` 配置。这样管理员可以在新环境里先运行 seed 工具完成表结构和 catalog 初始化。
+CLI 会在导入前主动执行 goose migrations，不依赖服务端运行时的 `database.auto_migrate` 配置。这样管理员可以在新环境里先运行 seed 工具完成表结构和 catalog 初始化。
 
 Archive 校验规则：
 
@@ -85,7 +85,7 @@ builtin-skills/{skill_id}/versions/{version}/{sha256}.skill
 - 缺省版本号由 archive 内容 sha 派生；生产导入推荐通过 `--versions` 显式指定平台版本号。
 - 同一个 `skill_id + version + sha256` 重跑只刷新 catalog，不产生语义变化，并保留已存在 active version 的 `created_at`，避免版本排序被幂等重跑改变。
 - 同一个 `skill_id + version` 但内容 sha 不同会返回冲突错误，管理员需要换新版本号。
-- `--prune` 软删除 DB 行，并 best-effort 删除对应对象；对象删除失败会记录日志但不阻塞 DB 软删除。
+- `--prune` 只软删除 DB row，不立即删除对应对象。已启动 Session 可能仍通过具体 version UUID 的 Filestore skill 投影借用该 archive；物理删除必须由后续 reference-aware catalog GC 在确认无活动投影后执行。
 
 ## API 行为
 
@@ -97,7 +97,7 @@ builtin-skills/{skill_id}/versions/{version}/{sha256}.skill
 
 未指定 `source` 的合并分页按逻辑序列 `builtin catalog -> workspace custom skills` 处理，`next_page` cursor 覆盖这个合并序列的 offset。即使当前页刚好在 builtin 尾部结束，只要后面仍存在 custom skill，响应也必须返回 `has_more=true` 和下一页 cursor，避免 custom 资源被隐藏。
 
-Builtin retrieve、versions 和 content/download 都从 DB metadata 定位 MinIO archive；服务不再读取 `assets` 目录。
+Builtin retrieve、versions 和 content/download 都从 DB metadata 定位 S3-compatible archive；服务不再读取 `assets` 目录。
 
 Custom create 是纯创建语义，不会把同名 skill 自动合并成新版本。`display_title` 是当前 workspace 内 custom skill 的业务唯一键：
 
@@ -124,7 +124,7 @@ Builtin 写操作保持只读：
 - seed 成功导入、幂等重跑、同版本不同 sha 冲突。
 - seed archive 失败场景：缺 `SKILL.md`、多顶层目录、路径穿越。
 - `--prune` 软删除。
-- API 从 DB + MinIO 返回 builtin list/retrieve/version/content。
+- API 从 DB + S3-compatible storage 返回 builtin list/retrieve/version/content。
 - builtin update/delete 只读。
 - custom create 复用同 workspace `display_title` 返回 `400 invalid_request_error`，并提示使用 version update。
 - custom 单 `.zip` / `.skill` archive 与目录 multipart 上传。

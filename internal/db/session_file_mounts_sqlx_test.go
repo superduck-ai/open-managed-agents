@@ -136,6 +136,8 @@ func TestSessionFileProjectionQueriesBindNamedArguments(t *testing.T) {
 			wantClauses: []string{
 				"with active_outputs as materialized",
 				"active_inputs as materialized",
+				"active_projections as materialized",
+				"from active_projections active",
 				"on conflict (uuid) do update",
 				"history.uuid = projection.uuid",
 				"output.uuid = projection.uuid",

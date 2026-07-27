@@ -156,6 +156,11 @@ code_session:
 
 监听地址由 `config/config.yaml` 的 `server.addr` 决定。修改端口后，用 `PORT` 告诉重启脚本释放对应监听端口：
 
+```yaml
+server:
+  addr: 127.0.0.1:18080
+```
+
 ```bash
 PORT=18080 ./scripts/restart-server.sh
 ```
@@ -163,7 +168,7 @@ PORT=18080 ./scripts/restart-server.sh
 健康检查：
 
 ```bash
-curl http://127.0.0.1:38080/healthz
+curl http://127.0.0.1:18080/healthz
 ```
 
 预期返回：

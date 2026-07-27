@@ -75,7 +75,7 @@ const (
 	`
 	syncSessionOutputFileProjectionSQL = `
 		with active_outputs as materialized (
-			select entry.uuid, entry.path, entry.size_bytes,
+			select entry.uuid, regexp_replace(entry.path, '^.*/', '') as filename, entry.size_bytes,
 				coalesce(entry.detected_mime_type, entry.media_type, 'application/octet-stream') as mime_type,
 				entry.sha256, entry.s3_bucket, entry.s3_key, entry.downloadable, entry.created_at
 			from filestore_entries entry
@@ -91,8 +91,13 @@ const (
 				and (entry.expires_at is null or entry.expires_at > now())
 		),
 		active_inputs as materialized (
-			select entry.uuid
+			select entry.uuid, source.filename, source.size_bytes, source.mime_type,
+				source.sha256, source.s3_bucket, source.s3_key, source.downloadable, entry.created_at
 			from filestore_entries entry
+			join files source
+				on source.uuid = entry.source_file_uuid
+				and source.workspace_id = :workspace_id
+				and source.deleted_at is null
 			where entry.workspace_uuid = :workspace_uuid
 				and entry.filesystem_uuid = :filesystem_uuid
 				and entry.kind = 'file'
@@ -102,6 +107,15 @@ const (
 				and entry.deleted_at is null
 				and (entry.expires_at is null or entry.expires_at > now())
 		),
+		active_projections as materialized (
+			select uuid, filename, size_bytes, mime_type, sha256, s3_bucket, s3_key,
+				downloadable, created_at
+			from active_outputs
+			union all
+			select uuid, filename, size_bytes, mime_type, sha256, s3_bucket, s3_key,
+				downloadable, created_at
+			from active_inputs
+		),
 		upserted as (
 			insert into files (
 				uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
@@ -109,21 +123,21 @@ const (
 				created_by_api_key_id, created_at
 			)
 			select
-				output.uuid,
+				active.uuid,
 				concat('file_', replace(CAST(gen_random_uuid() AS text), '-', '')),
 				:workspace_id,
-				regexp_replace(output.path, '^.*/', ''),
-				output.mime_type,
-				output.size_bytes,
-				output.sha256,
-				output.s3_bucket,
-				output.s3_key,
-				output.downloadable,
+				active.filename,
+				active.mime_type,
+				active.size_bytes,
+				active.sha256,
+				active.s3_bucket,
+				active.s3_key,
+				active.downloadable,
 				:scope_type,
 				:scope_id,
 				:created_by_api_key_id,
-				output.created_at
-			from active_outputs output
+				active.created_at
+			from active_projections active
 			on conflict (uuid) do update
 			set filename = excluded.filename,
 				mime_type = excluded.mime_type,
@@ -363,7 +377,7 @@ func upsertSessionFileProjectionTx(
 		"sha256":                file.SHA256,
 		"s3_bucket":             file.S3Bucket,
 		"s3_key":                file.S3Key,
-		"downloadable":          true,
+		"downloadable":          file.Downloadable,
 		"scope_type":            sessionFileProjectionScope,
 		"scope_id":              session.ExternalID,
 		"created_by_api_key_id": session.CreatedByAPIKeyID,

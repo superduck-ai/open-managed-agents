@@ -20,7 +20,7 @@ multipart/form-data
 X-Workspace-ID: <当前 Workspace>
 ```
 
-全部成功后刷新列表；任一请求失败时显示错误 toast。多文件并发上传可能部分成功，当前实现不回滚，也不会在失败分支自动刷新列表。
+所有上传请求结束后分别统计成功与失败结果。只要至少一个文件上传成功，就使用实际成功数量显示成功 toast，清空当前游标并刷新第一页；任一请求失败时同时显示错误 toast。多文件并发上传可能部分成功，当前实现不回滚。
 
 ## Create Session 表单
 
@@ -69,4 +69,4 @@ File 是否存在、Workspace 隔离、100 个上限、跨卡片路径冲突、F
 - `web/src/features/managed-agents/sessions/file-resource-path.ts`：路径转换；
 - `web/src/features/managed-agents/api.ts`：Create Session 请求体。
 
-测试覆盖上传成功/失败、Workspace header、空资源、路径转换、非法输入禁用创建、删除草稿卡片、Files 链接和运行时路径预览。
+测试覆盖上传成功/失败与部分成功、上传后返回第一页、Workspace header、空资源、路径转换及非法路径段、非法输入禁用创建、删除草稿卡片、Files 链接和运行时路径预览。

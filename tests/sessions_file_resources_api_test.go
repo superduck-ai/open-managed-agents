@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -242,6 +241,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 	})
 
 	t.Run("success defaults and add resource use uploads", func(t *testing.T) {
+		expectedBytes := defaultWorkspaceStorageBytes(t, app)
 		created := createSession(t, app, `{`+base+`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]}`)
 		defer deleteSession(t, app, created.ID)
 		if len(created.Resources) != 1 {
@@ -267,8 +267,8 @@ func TestSessionFileResourceContract(t *testing.T) {
 				file.Filename,
 			)
 		}
-		if !scopedFiles.Data[0].Downloadable {
-			t.Fatalf("input projection = %+v, want downloadable", scopedFiles.Data[0])
+		if scopedFiles.Data[0].Downloadable {
+			t.Fatalf("input projection = %+v, want source download policy preserved", scopedFiles.Data[0])
 		}
 		inputDownload := app.do(
 			t,
@@ -279,18 +279,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 			true,
 			"",
 		)
-		defer inputDownload.Body.Close()
-		if inputDownload.StatusCode != http.StatusOK {
-			t.Fatalf(
-				"download input projection status = %d: %s",
-				inputDownload.StatusCode,
-				readAll(t, inputDownload.Body),
-			)
-		}
-		wantInput := []byte("quarter,total\nQ1,10\n")
-		if got := readAll(t, inputDownload.Body); !bytes.Equal(got, wantInput) {
-			t.Fatalf("download input projection = %q, want %q", got, wantInput)
-		}
+		assertError(t, inputDownload, http.StatusBadRequest, "invalid_request_error")
 
 		resp := doSessionRequest(
 			t,
@@ -348,37 +337,6 @@ func TestSessionFileResourceContract(t *testing.T) {
 		)
 		if err != nil {
 			t.Fatalf("reconcile workspace storage usage: %v", err)
-		}
-		var expectedBytes int64
-		if err := app.db.Pool.QueryRow(context.Background(), `
-			select
-				coalesce((
-					select sum(file.size_bytes)
-					from files file
-					where file.workspace_id = $1
-						and file.deleted_at is null
-						and not exists (
-							select 1
-							from filestore_entries entry
-							where entry.workspace_uuid = (
-								select uuid from workspaces where id = $1
-							)
-								and entry.uuid = file.uuid
-						)
-				), 0)
-				+
-				coalesce((
-					select sum(size_bytes)
-					from filestore_entries
-					where workspace_uuid = (
-						select uuid from workspaces where id = $1
-					)
-						and kind = 'file'
-						and source_file_uuid is null
-						and deleted_at is null
-				), 0)
-		`, sessionRecord.WorkspaceID).Scan(&expectedBytes); err != nil {
-			t.Fatalf("calculate expected workspace storage usage: %v", err)
 		}
 		if reconciledBytes != expectedBytes {
 			t.Fatalf(
@@ -472,6 +430,71 @@ func TestSessionFileResourceContract(t *testing.T) {
 			t.Fatalf("scoped files after Session delete = %+v, want none", scoped.Data)
 		}
 	})
+}
+
+func TestSessionInputProjectionPreservesSourcePolicyAndSelfHeals(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("session-input-projection-policy-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-input-projection-policy-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"session-input-projection-policy-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	file := uploadFile(t, app, "private-input.txt", "text/plain", []byte("private input"))
+	defer deleteFile(t, app, file.ID)
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		update files
+		set downloadable = false
+		where external_id = $1 and deleted_at is null
+	`, file.ID); err != nil {
+		t.Fatalf("mark source file non-downloadable: %v", err)
+	}
+
+	session := createSession(
+		t,
+		app,
+		`{"agent":`+quoteJSON(agent.ID)+
+			`,"environment_id":`+quoteJSON(env.ID)+
+			`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+
+			`,"mount_path":"/private-input.txt"}]}`,
+	)
+	defer deleteSession(t, app, session.ID)
+	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
+	if len(scopedFiles.Data) != 1 || scopedFiles.Data[0].Downloadable {
+		t.Fatalf("input projection = %+v, want one non-downloadable file", scopedFiles.Data)
+	}
+
+	record := mustSessionRecord(t, app, session.ID)
+	beforeSyncBytes := defaultWorkspaceStorageBytes(t, app)
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		delete from files
+		where workspace_id = $1
+			and scope_type = 'session'
+			and scope_id = $2
+	`, record.WorkspaceID, record.ExternalID); err != nil {
+		t.Fatalf("remove input projection to simulate pre-deployment data: %v", err)
+	}
+	if err := app.db.SyncSessionFileProjection(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	); err != nil {
+		t.Fatalf("self-heal input projection: %v", err)
+	}
+	afterSyncBytes := defaultWorkspaceStorageBytes(t, app)
+	if afterSyncBytes != beforeSyncBytes {
+		t.Fatalf("input projection self-heal storage = %d, want unchanged %d", afterSyncBytes, beforeSyncBytes)
+	}
+	scopedFiles = listFiles(t, app, "scope_id="+session.ID)
+	if len(scopedFiles.Data) != 1 ||
+		scopedFiles.Data[0].Filename != file.Filename ||
+		scopedFiles.Data[0].Downloadable {
+		t.Fatalf(
+			"self-healed input projection = %+v, want filename %q and non-downloadable",
+			scopedFiles.Data,
+			file.Filename,
+		)
+	}
 }
 
 func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
@@ -978,6 +1001,34 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 		Path:         "/outputs/reports/result.txt",
 	}); err != nil {
 		t.Fatalf("remove output entry: %v", err)
+	}
+	afterRemovalBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load storage after output removal: %v", err)
+	}
+	deleteProjection := app.do(
+		t,
+		http.MethodDelete,
+		"/v1/files/"+projectedFileID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	assertError(t, deleteProjection, http.StatusConflict, "conflict_error")
+	afterRejectedDeleteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load storage after rejected projection delete: %v", err)
+	}
+	if afterRejectedDeleteBytes != afterRemovalBytes {
+		t.Fatalf(
+			"storage after rejected projection delete = %d, want unchanged %d",
+			afterRejectedDeleteBytes,
+			afterRemovalBytes,
+		)
+	}
+	if _, err := app.db.GetFile(context.Background(), record.WorkspaceID, projectedFileID); err != nil {
+		t.Fatalf("load stale projection after rejected delete: %v", err)
 	}
 	if err := app.db.SyncSessionFileProjection(
 		context.Background(),

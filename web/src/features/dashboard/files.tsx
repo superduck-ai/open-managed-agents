@@ -1,5 +1,5 @@
 import { Download, FileText, Upload } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
 import { Button } from '@/shared/ui/button';
@@ -31,6 +31,7 @@ import {
 
 export function FilesPage() {
   const { msg } = useI18n();
+  const queryClient = useQueryClient();
   const { workspaceId, workspaceName } = useDashboardWorkspaceScope();
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCursors, setPageCursors] = useState<FilesPageCursor[]>([{}]);
@@ -93,17 +94,32 @@ export function FilesPage() {
     }
     setUploading(true);
     try {
-      await Promise.all(selectedFiles.map((file) => uploadFile(file, workspaceId)));
-      toast.success(
-        msg('files.upload.success', '{count, plural, one {File uploaded} other {# files uploaded}}', {
-          count: selectedFiles.length,
-        }),
-      );
-      await filesQuery.refetch();
-    } catch (error) {
-      toast.error(msg('files.upload.error', 'File upload failed'), {
-        description: errorMessage(error),
-      });
+      const results = await Promise.allSettled(selectedFiles.map((file) => uploadFile(file, workspaceId)));
+      const succeeded = results.filter((result) => result.status === 'fulfilled').length;
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (succeeded > 0) {
+        if (pageIndex === 0) {
+          await filesQuery.refetch();
+        } else {
+          await queryClient.invalidateQueries({
+            queryKey: ['files', workspaceId, '', ''],
+            exact: true,
+            refetchType: 'none',
+          });
+          setPageIndex(0);
+          setPageCursors([{}]);
+        }
+        toast.success(
+          msg('files.upload.success', '{count, plural, one {File uploaded} other {# files uploaded}}', {
+            count: succeeded,
+          }),
+        );
+      }
+      if (failed) {
+        toast.error(msg('files.upload.error', 'File upload failed'), {
+          description: errorMessage(failed.reason),
+        });
+      }
     } finally {
       setUploading(false);
       if (uploadInputRef.current) {

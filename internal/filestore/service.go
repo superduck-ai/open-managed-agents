@@ -66,7 +66,7 @@ func NewService(cfg config.Config, database filestoreDatabase, store storage.Obj
 	skills := &skillArchivePathBackend{
 		db:    database,
 		store: store,
-		cache: newSkillArchiveCache(defaultSkillArchiveCacheBytes),
+		cache: newSkillArchiveCache(defaultSkillArchiveCacheEntries),
 	}
 	return &Service{
 		cfg:   cfg,

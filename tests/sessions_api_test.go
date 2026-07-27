@@ -3497,7 +3497,7 @@ func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string
 		cfg.CodeSession.SandboxAPIBaseURL = "http://sandbox-api.example.test"
 	}
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-" + strings.TrimPrefix(sessionID, "sesn_")}
-	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		processed, err := runner.RunOnce(ctx, "sessions-code-session-test")

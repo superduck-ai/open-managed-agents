@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 type RuntimeResolver struct {
@@ -37,7 +35,7 @@ type runtimeSkillRef struct {
 	Version string `json:"version"`
 }
 
-func NewRuntimeResolver(_ config.Config, database *db.DB, _ storage.ObjectStore) *RuntimeResolver {
+func NewRuntimeResolver(database *db.DB) *RuntimeResolver {
 	return &RuntimeResolver{db: database}
 }
 

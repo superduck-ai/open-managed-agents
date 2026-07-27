@@ -6,9 +6,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -53,6 +57,69 @@ func TestSkillArchiveViewRejectsInvalidArchives(t *testing.T) {
 			})
 			assertServiceAPIError(t, apiErr, http.StatusInternalServerError, "internal")
 		})
+	}
+}
+
+func TestSkillArchiveLoadRetriesAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	archiveBytes := buildSkillArchiveTestZip(t, map[string]string{"demo/SKILL.md": "# Demo"})
+	archiveEntry := skillArchiveTestEntry(archiveBytes)
+	var openCount atomic.Int32
+	backend := &skillArchivePathBackend{
+		store: &fakeServiceBlobStore{
+			openFn: func(context.Context, string, *storage.ByteRange) (storage.Object, error) {
+				if openCount.Add(1) == 1 {
+					return storage.Object{}, storage.ErrNotFound
+				}
+				return storage.Object{
+					Body: io.NopCloser(bytes.NewReader(archiveBytes)),
+					Size: int64(len(archiveBytes)),
+				}, nil
+			},
+		},
+		cache: newSkillArchiveCache(defaultSkillArchiveCacheEntries),
+	}
+
+	_, apiErr := backend.loadSkillArchive(context.Background(), archiveEntry)
+	assertServiceAPIError(t, apiErr, http.StatusNotFound, "not_found")
+
+	archive, apiErr := backend.loadSkillArchive(context.Background(), archiveEntry)
+	if apiErr != nil {
+		t.Fatalf("loadSkillArchive() retry error = %v", apiErr)
+	}
+	if _, ok := archive.nodes["/skills/demo/SKILL.md"]; !ok {
+		t.Fatalf("loadSkillArchive() retry archive = %#v, want SKILL.md", archive)
+	}
+	if got := openCount.Load(); got != 2 {
+		t.Fatalf("object opens = %d, want 2", got)
+	}
+}
+
+func TestSkillArchiveCacheKeepsTwentyMostRecentArchives(t *testing.T) {
+	t.Parallel()
+
+	cache := newSkillArchiveCache(defaultSkillArchiveCacheEntries)
+	for index := range defaultSkillArchiveCacheEntries {
+		cache.Add(
+			fmt.Sprintf("skill-%d", index),
+			&loadedSkillArchive{data: []byte{byte(index)}},
+		)
+	}
+	if _, ok := cache.Get("skill-0"); !ok {
+		t.Fatal("cache does not contain the oldest inserted archive")
+	}
+
+	cache.Add("skill-20", &loadedSkillArchive{data: []byte{20}})
+
+	if _, ok := cache.Peek("skill-1"); ok {
+		t.Fatal("cache retained the least recently used archive after exceeding 20 entries")
+	}
+	if _, ok := cache.Peek("skill-0"); !ok {
+		t.Fatal("cache evicted an archive refreshed before capacity was exceeded")
+	}
+	if got := cache.Len(); got != defaultSkillArchiveCacheEntries {
+		t.Fatalf("cache length = %d, want %d", got, defaultSkillArchiveCacheEntries)
 	}
 }
 
@@ -182,6 +249,79 @@ func TestSkillArchiveNamespaceIsReadOnly(t *testing.T) {
 			t.Parallel()
 			assertServiceAPIError(t, test.run(), http.StatusForbidden, "permission_denied")
 		})
+	}
+}
+
+func TestSkillArchiveConcurrentColdLoadUsesSingleObjectRead(t *testing.T) {
+	t.Parallel()
+
+	archiveBytes := buildSkillArchiveTestZip(t, map[string]string{"demo/SKILL.md": "# Demo"})
+	archiveEntry := skillArchiveTestEntry(archiveBytes)
+	firstOpen := make(chan struct{})
+	secondOpen := make(chan struct{})
+	releaseOpen := make(chan struct{})
+	var openCount atomic.Int32
+	backend := &skillArchivePathBackend{
+		store: &fakeServiceBlobStore{
+			openFn: func(context.Context, string, *storage.ByteRange) (storage.Object, error) {
+				switch openCount.Add(1) {
+				case 1:
+					close(firstOpen)
+				case 2:
+					close(secondOpen)
+				}
+				<-releaseOpen
+				return storage.Object{
+					Body: io.NopCloser(bytes.NewReader(archiveBytes)),
+					Size: int64(len(archiveBytes)),
+				}, nil
+			},
+		},
+		cache: newSkillArchiveCache(defaultSkillArchiveCacheEntries),
+	}
+
+	const callers = 16
+	start := make(chan struct{})
+	archives := make([]*loadedSkillArchive, callers)
+	apiErrors := make([]*apiError, callers)
+	var ready sync.WaitGroup
+	var complete sync.WaitGroup
+	ready.Add(callers)
+	complete.Add(callers)
+	for index := range callers {
+		go func() {
+			defer complete.Done()
+			ready.Done()
+			<-start
+			archives[index], apiErrors[index] = backend.loadSkillArchive(context.Background(), archiveEntry)
+		}()
+	}
+	ready.Wait()
+	close(start)
+	<-firstOpen
+
+	duplicateOpen := false
+	select {
+	case <-secondOpen:
+		duplicateOpen = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseOpen)
+	complete.Wait()
+
+	if duplicateOpen {
+		t.Fatalf("concurrent cold load opened the archive %d times, want 1", openCount.Load())
+	}
+	if got := openCount.Load(); got != 1 {
+		t.Fatalf("object opens = %d, want 1", got)
+	}
+	for index := range callers {
+		if apiErrors[index] != nil {
+			t.Fatalf("loadSkillArchive() caller %d error = %v", index, apiErrors[index])
+		}
+		if archives[index] != archives[0] {
+			t.Fatalf("loadSkillArchive() caller %d received a different archive pointer", index)
+		}
 	}
 }
 

@@ -102,7 +102,7 @@ func main() {
 		Provider:        e2bruntime.NewProvider(cfg.E2B),
 		Config:          cfg,
 		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials),
-		Skills:          skillsapi.NewRuntimeResolver(cfg, database, objectStore),
+		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: filestoreCredentials,
 	})
 	if err != nil {

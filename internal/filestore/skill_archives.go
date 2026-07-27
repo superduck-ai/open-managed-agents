@@ -3,7 +3,6 @@ package filestore
 import (
 	"archive/zip"
 	"bytes"
-	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,19 +15,20 @@ import (
 	"path"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
-	skillNamespacePath                   = "/skills"
-	maxSkillArchiveBytes          int64  = 8 * 1024 * 1024
-	maxSkillUncompressedBytes     uint64 = 500 * 1024 * 1024
-	defaultSkillArchiveCacheBytes        = 64 * 1024 * 1024
+	skillNamespacePath                     = "/skills"
+	maxSkillArchiveBytes            int64  = 8 * 1024 * 1024
+	maxSkillUncompressedBytes       uint64 = 500 * 1024 * 1024
+	defaultSkillArchiveCacheEntries        = 20
 )
 
 type skillArchiveNode struct {
@@ -44,70 +44,19 @@ type loadedSkillArchive struct {
 	nodes map[string]skillArchiveNode
 }
 
-type skillArchiveCacheEntry struct {
-	key     string
-	archive *loadedSkillArchive
-}
-
-type skillArchiveCache struct {
-	mu       sync.Mutex
-	maxBytes int
-	bytes    int
-	entries  map[string]*list.Element
-	order    *list.List
-}
-
 type skillArchivePathBackend struct {
-	db    filestoreDatabase
-	store storage.ObjectStore
-	cache *skillArchiveCache
+	db           filestoreDatabase
+	store        storage.ObjectStore
+	cache        *lru.Cache[string, *loadedSkillArchive]
+	archiveLoads singleflight.Group
 }
 
-func newSkillArchiveCache(maxBytes int) *skillArchiveCache {
-	return &skillArchiveCache{
-		maxBytes: maxBytes,
-		entries:  make(map[string]*list.Element),
-		order:    list.New(),
+func newSkillArchiveCache(maxEntries int) *lru.Cache[string, *loadedSkillArchive] {
+	cache, err := lru.New[string, *loadedSkillArchive](maxEntries)
+	if err != nil {
+		panic(fmt.Sprintf("create skill archive cache: %v", err))
 	}
-}
-
-func (c *skillArchiveCache) get(key string) (*loadedSkillArchive, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	element, ok := c.entries[key]
-	if !ok {
-		return nil, false
-	}
-	c.order.MoveToFront(element)
-	return element.Value.(skillArchiveCacheEntry).archive, true
-}
-
-func (c *skillArchiveCache) put(key string, archive *loadedSkillArchive) {
-	if c == nil || archive == nil || len(archive.data) > c.maxBytes {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if element, ok := c.entries[key]; ok {
-		c.bytes -= len(element.Value.(skillArchiveCacheEntry).archive.data)
-		element.Value = skillArchiveCacheEntry{key: key, archive: archive}
-		c.bytes += len(archive.data)
-		c.order.MoveToFront(element)
-	} else {
-		element := c.order.PushFront(skillArchiveCacheEntry{key: key, archive: archive})
-		c.entries[key] = element
-		c.bytes += len(archive.data)
-	}
-	for c.bytes > c.maxBytes {
-		element := c.order.Back()
-		if element == nil {
-			break
-		}
-		entry := element.Value.(skillArchiveCacheEntry)
-		delete(c.entries, entry.key)
-		c.bytes -= len(entry.archive.data)
-		c.order.Remove(element)
-	}
+	return cache
 }
 
 func (b *skillArchivePathBackend) namespaceRoot() string {
@@ -308,9 +257,46 @@ func (b *skillArchivePathBackend) loadSkillArchive(
 		return nil, internalError("load skill archive", err)
 	}
 	cacheKey := strings.Join([]string{bucket, objectKey, checksum, archiveEntry.Path}, "\x00")
-	if archive, ok := b.cache.get(cacheKey); ok {
+	if archive, ok := b.cache.Get(cacheKey); ok {
 		return archive, nil
 	}
+	value, loadErr, _ := b.archiveLoads.Do(cacheKey, func() (any, error) {
+		// 快路径 miss 后，可能已有同 key 的加载刚完成；进入 singleflight 后必须再次检查缓存。
+		if archive, ok := b.cache.Get(cacheKey); ok {
+			return archive, nil
+		}
+		archive, apiErr := b.fetchSkillArchive(ctx, archiveEntry, bucket, objectKey, checksum, sizeBytes)
+		if apiErr != nil {
+			return nil, apiErr
+		}
+		b.cache.Add(cacheKey, archive)
+		return archive, nil
+	})
+	if loadErr != nil {
+		apiErr, ok := loadErr.(*apiError)
+		if !ok {
+			return nil, internalError("load skill archive", loadErr)
+		}
+		return nil, apiErr
+	}
+	archive, ok := value.(*loadedSkillArchive)
+	if !ok {
+		return nil, internalError(
+			"load skill archive",
+			fmt.Errorf("unexpected archive load result type %T", value),
+		)
+	}
+	return archive, nil
+}
+
+func (b *skillArchivePathBackend) fetchSkillArchive(
+	ctx context.Context,
+	archiveEntry db.FilestoreEntry,
+	bucket string,
+	objectKey string,
+	checksum string,
+	sizeBytes int64,
+) (*loadedSkillArchive, *apiError) {
 	if b.store == nil {
 		return nil, internalError("load skill archive", errors.New("object store is unavailable"))
 	}
@@ -340,7 +326,6 @@ func (b *skillArchivePathBackend) loadSkillArchive(
 	if err != nil {
 		return nil, internalError("validate skill archive", err)
 	}
-	b.cache.put(cacheKey, archive)
 	return archive, nil
 }
 

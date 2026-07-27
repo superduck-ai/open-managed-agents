@@ -94,8 +94,11 @@ Filestore 在第一次访问某个具体 archive 时按需下载并建立内存�
 - 解压大小按 archive header 累加并限制为 500 MiB；
 - 读取单个成员时流式解压；range offset 通过丢弃前缀实现，不把解压结果整体缓存。
 
-进程内以 `bucket + key + sha256 + archive path` 为 key 使用 64 MiB 有界 LRU 缓存压缩
-archive 和目录索引。
+进程内以 `bucket + key + sha256 + archive path` 为 key，使用最多 20 个 archive 的有界
+LRU 缓存压缩 archive 和目录索引。单个压缩 archive 最大 8 MiB，因此缓存中的压缩数据
+理论上最多为 160 MiB，另有目录索引开销。同一个 key 的并发 cache miss 通过 singleflight
+合并，只有首个请求下载、校验并建立索引，等待者共享同一结果或错误；失败结果不写缓存，
+后续请求可以重新加载。
 archive entry 仍是每次请求的授权事实来源；Session entry 删除后，缓存中残留的字节无法再通过
 Filestore 路径访问。
 

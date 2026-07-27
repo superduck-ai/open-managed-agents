@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/samber/lo"
 )
 
 func TestWorkbenchCreatorUsesPrincipalWhenCookiePresent(t *testing.T) {
@@ -56,18 +57,135 @@ func TestWorkbenchGeneratePromptFallsBackWithoutAnthropicToken(t *testing.T) {
 		`{"task":"Summarize support tickets into action items"}`,
 	)
 	rec := httptest.NewRecorder()
+	upstream := config.AnthropicUpstreamConfig{ModelMappings: map[string]string{
+		"claude-sonnet-4-6": "glm-5-turbo",
+	}}
 
-	handler := newWorkbenchHandler(nil, config.AnthropicUpstreamConfig{}, nil)
+	handler := newWorkbenchHandler(nil, upstream, nil)
 	handler.handleWorkbenchGeneratePrompt(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"event: content_block_delta", `\u003cplanning\u003e`, `\u003c/planning\u003e`, `\u003cInstructions\u003e`, "Summarize support tickets into action items", `\u003c/Instructions\u003e`} {
+	for _, want := range []string{`"model":"glm-5-turbo"`, "event: content_block_delta", `\u003cplanning\u003e`, `\u003c/planning\u003e`, `\u003cInstructions\u003e`, "Summarize support tickets into action items", `\u003c/Instructions\u003e`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("fallback generate prompt stream missing %q: %s", want, body)
 		}
+	}
+}
+
+func TestWorkbenchGeneratePromptUsesMappedUpstreamModel(t *testing.T) {
+	var upstreamModel string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		upstreamModel = body.Model
+		http.Error(w, "force fallback", http.StatusBadGateway)
+	}))
+	defer upstreamServer.Close()
+
+	req := workbenchPostTestRequest(
+		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
+		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/generate_prompt",
+		`{"task":"Summarize support tickets into action items"}`,
+	)
+	rec := httptest.NewRecorder()
+	upstream := config.AnthropicUpstreamConfig{
+		BaseURL: upstreamServer.URL,
+		APIKey:  "yaml-key",
+		ModelMappings: map[string]string{
+			"claude-sonnet-4-6": "glm-5-turbo",
+		},
+	}
+
+	handler := newWorkbenchHandler(nil, upstream, nil)
+	handler.handleWorkbenchGeneratePrompt(rec, req)
+
+	if upstreamModel != "glm-5-turbo" {
+		t.Fatalf("upstream model = %q, want glm-5-turbo", upstreamModel)
+	}
+}
+
+func TestWorkbenchCompletionsUseMappedUpstreamModel(t *testing.T) {
+	var upstreamModel string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		upstreamModel = body.Model
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer upstreamServer.Close()
+
+	req := workbenchPostTestRequest(
+		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
+		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/completions",
+		`{"model_name":"claude-sonnet-4-6","messages":[{"role":"user","content":"Hello"}]}`,
+	)
+	rec := httptest.NewRecorder()
+	upstream := config.AnthropicUpstreamConfig{
+		BaseURL: upstreamServer.URL,
+		APIKey:  "yaml-key",
+		ModelMappings: map[string]string{
+			"claude-sonnet-4-6": "glm-5-turbo",
+		},
+	}
+
+	handler := newWorkbenchHandler(nil, upstream, nil)
+	handler.handleWorkbenchCompletions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if upstreamModel != "glm-5-turbo" {
+		t.Fatalf("upstream model = %q, want glm-5-turbo", upstreamModel)
+	}
+}
+
+func TestWorkbenchAnthropicTextResolvesUpstreamModelAtRequestBoundary(t *testing.T) {
+	var upstreamModel string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		upstreamModel = body.Model
+		writeJSON(w, http.StatusOK, map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "Generated value"}},
+			"usage":   map[string]any{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer upstreamServer.Close()
+
+	req := workbenchCreatorTestRequest("7482d00f-2e42-478b-b2db-07c3d056a3b6")
+	upstream := config.AnthropicUpstreamConfig{
+		BaseURL: upstreamServer.URL,
+		APIKey:  "yaml-key",
+		ModelMappings: map[string]string{
+			"claude-sonnet-4-6": "glm-5-turbo",
+		},
+	}
+	handler := newWorkbenchHandler(nil, upstream, nil)
+	if _, _, _, ok := handler.anthropicTextFromBody(req, map[string]any{
+		"model":    "claude-sonnet-4-6",
+		"messages": []any{},
+	}); !ok {
+		t.Fatal("anthropicTextFromBody() failed")
+	}
+
+	if upstreamModel != "glm-5-turbo" {
+		t.Fatalf("upstream model = %q, want glm-5-turbo", upstreamModel)
 	}
 }
 
@@ -107,6 +225,75 @@ func TestWorkbenchAnthropicTokenUsesConfig(t *testing.T) {
 	}
 }
 
+func TestWorkbenchModelsExposeEffectiveModelMappings(t *testing.T) {
+	orgUUID := "7482d00f-2e42-478b-b2db-07c3d056a3b6"
+	req := workbenchCreatorTestRequest(orgUUID)
+	rec := httptest.NewRecorder()
+	upstream := config.AnthropicUpstreamConfig{
+		ModelMappings: map[string]string{
+			"claude-sonnet-4-6": "glm-5-turbo",
+			"claude-opus-4-8":   "glm-5.2",
+		},
+	}
+
+	handler := newWorkbenchHandler(nil, upstream, nil)
+	handler.handleWorkbenchModels(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		ModelMappings map[string]string `json:"model_mappings"`
+		Models        []struct {
+			ModelName string `json:"model_name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.ModelMappings["claude-sonnet-4-6"] != "glm-5-turbo" {
+		t.Fatalf("model_mappings = %#v", body.ModelMappings)
+	}
+	modelNames := make([]string, 0, len(body.Models))
+	for _, model := range body.Models {
+		modelNames = append(modelNames, model.ModelName)
+	}
+	for _, want := range []string{"glm-5-turbo", "glm-5.2"} {
+		if !lo.Contains(modelNames, want) {
+			t.Fatalf("models = %#v, missing %q", modelNames, want)
+		}
+	}
+}
+
+func TestWorkbenchRevisionModelUsesMappingAtWriteAndReadBoundaries(t *testing.T) {
+	orgUUID := "3458f354-f4ba-4bcd-95ef-ef48b2534447"
+	promptID := "prompt_model_mapping"
+	revisionID := "revision_model_mapping"
+	req := workbenchCreatorTestRequest(orgUUID)
+	handler := newWorkbenchHandler(nil, config.AnthropicUpstreamConfig{
+		ModelMappings: map[string]string{"claude-sonnet-4-6": "glm-5-turbo"},
+	}, nil)
+
+	created := handler.revisionFromBody(
+		req,
+		map[string]any{"model_name": "claude-sonnet-4-6"},
+		revisionID,
+		false,
+		false,
+	)
+	if created["model_name"] != "glm-5-turbo" {
+		t.Fatalf("created revision model = %#v, want glm-5-turbo", created["model_name"])
+	}
+
+	key := workbenchRevisionStoreKey(req, promptID, revisionID)
+	workbenchLocalRevisions.Store(key, map[string]any{"id": revisionID, "model_name": "claude-sonnet-4-6"})
+	defer workbenchLocalRevisions.Delete(key)
+	stored, ok := handler.storedRevision(req, promptID, revisionID, false, false)
+	if !ok || stored["model_name"] != "glm-5-turbo" {
+		t.Fatalf("stored revision = %#v, want mapped model", stored)
+	}
+}
+
 func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
 	req := workbenchPostTestRequest(
 		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
@@ -137,6 +324,7 @@ func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
 }
 
 func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
+	var upstreamModel string
 	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/anthropic/v1/messages" {
 			http.Error(w, "unexpected path", http.StatusNotFound)
@@ -146,6 +334,13 @@ func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
 			http.Error(w, "unexpected API key", http.StatusUnauthorized)
 			return
 		}
+		var requestBody struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		upstreamModel = requestBody.Model
 		writeJSON(w, http.StatusOK, map[string]any{
 			"content": []any{map[string]any{"type": "text", "text": "Configured YAML title"}},
 			"usage":   map[string]any{"input_tokens": 7, "output_tokens": 3},
@@ -159,7 +354,13 @@ func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
 		`{"message_content":"Summarize planning notes","model":"claude-opus-4-8"}`,
 	)
 	rec := httptest.NewRecorder()
-	upstream := config.AnthropicUpstreamConfig{BaseURL: upstreamServer.URL + "/anthropic", APIKey: "yaml-key"}
+	upstream := config.AnthropicUpstreamConfig{
+		BaseURL: upstreamServer.URL + "/anthropic",
+		APIKey:  "yaml-key",
+		ModelMappings: map[string]string{
+			"claude-opus-4-8": "glm-5.2",
+		},
+	}
 
 	handler := newWorkbenchHandler(nil, upstream, nil)
 	handler.handleWorkbenchGenerateTitle(rec, req)
@@ -173,6 +374,9 @@ func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
 	}
 	if body["completion"] != "Configured YAML title" || body["input_tokens"] != float64(7) || body["output_tokens"] != float64(3) {
 		t.Fatalf("unexpected configured upstream response: %#v", body)
+	}
+	if upstreamModel != "glm-5.2" {
+		t.Fatalf("upstream model = %q, want glm-5.2", upstreamModel)
 	}
 }
 

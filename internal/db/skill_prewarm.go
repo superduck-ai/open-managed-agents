@@ -186,27 +186,26 @@ func (d *DB) ListAgentsForSkillPrewarmFanout(ctx context.Context, workspaceID in
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := d.Pool.Query(ctx, agentSelectSQL()+`
-		where workspace_id = $1
-			and id > $3
+	agents, err := selectAgentsSQLX(ctx, d.sql, agentSelectSQL()+`
+		where workspace_id = :workspace_id
+			and id > :after_id
 			and deleted_at is null
 				and archived_at is null
 				and exists (
 					select 1
-					from jsonb_array_elements(coalesce(skills, '[]'::jsonb)) elem
+					from jsonb_array_elements(coalesce(skills, CAST('[]' AS jsonb))) elem
 					where elem->>'type' = 'custom'
-						and elem->>'skill_id' = $2
+						and elem->>'skill_id' = :skill_id
 						and coalesce(nullif(elem->>'version', ''), 'latest') = 'latest'
 			)
 		order by id asc
-		limit $4
-	`, workspaceID, skillID, afterID, limit+1)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-
-	agents, err := scanAgentRows(rows)
+		limit :limit
+	`, map[string]any{
+		"workspace_id": workspaceID,
+		"skill_id":     skillID,
+		"after_id":     afterID,
+		"limit":        limit + 1,
+	})
 	if err != nil {
 		return nil, false, err
 	}

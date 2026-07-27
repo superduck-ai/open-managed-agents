@@ -490,15 +490,19 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 }
 
 // TestCCRV2UpstreamProxyNetworkPolicyAllow 在关闭 SSRF 地址过滤的 app 上验证策略放行路径：
-// 授权 host 通过策略后进入拨号（127.0.0.1:443 无监听 → 502），收紧配置后同一目标变成
-// 策略 403。SSRF 关闭时 403 只能来自策略授权，与地址过滤的 403 无歧义。
+// 授权 host 通过策略后进入拨号（本机 443 有监听时为 200，否则为 502），收紧配置后
+// 同一目标变成策略 403。SSRF 关闭时 403 只能来自策略授权，与地址过滤的 403 无歧义。
 func TestCCRV2UpstreamProxyNetworkPolicyAllow(t *testing.T) {
 	app := newSSRFDisabledTestApp(t, "ccrv2-network-policy-allow-bucket")
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"ccrv2-network-policy-allow-agent"}`)
 	defer cleanupAgentRows(t, app.db, agent.ID)
-	environment := createEnvironment(t, app, `{"name":"ccrv2-network-policy-allow-env","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["127.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
+	environmentName, err := ids.New("ccrv2-network-policy-allow-env-")
+	if err != nil {
+		t.Fatalf("generate environment name: %v", err)
+	}
+	environment := createEnvironment(t, app, `{"name":`+quoteJSON(environmentName)+`,"config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["127.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
 	defer cleanupEnvironmentRows(t, app.db, environment.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(environment.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
@@ -517,8 +521,10 @@ func TestCCRV2UpstreamProxyNetworkPolicyAllow(t *testing.T) {
 
 	t.Run("success listed host reaches dial before live policy tightening", func(t *testing.T) {
 		status := connect(t, "127.0.0.1:443")
-		if !strings.HasPrefix(status, "HTTP/1.1 502 Bad Gateway") {
-			t.Fatalf("listed CONNECT status = %q, want 502 (policy allowed, dial refused)", status)
+		dialSucceeded := strings.HasPrefix(status, "HTTP/1.1 200 Connection Established")
+		dialRefused := strings.HasPrefix(status, "HTTP/1.1 502 Bad Gateway")
+		if !dialSucceeded && !dialRefused {
+			t.Fatalf("listed CONNECT status = %q, want 200 or 502 after policy allows dialing", status)
 		}
 		updateEnvironment(t, app, environment.ID, `{"config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}}`, http.StatusOK)
 		status = connect(t, "127.0.0.1:443")

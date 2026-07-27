@@ -398,6 +398,9 @@ func writeBadRequest(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeFileResourcePersistenceError(w, r, err) {
+		return
+	}
 	var refErr resourceReferenceError
 	if errors.As(err, &refErr) {
 		if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
@@ -416,6 +419,9 @@ func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) writeSessionLoadError(w http.ResponseWriter, r *http.Request, err error, sessionID string) {
+	if writeFileResourcePersistenceError(w, r, err) {
+		return
+	}
 	if errors.Is(err, db.ErrNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Session not found: "+sessionID))
 		return
@@ -426,6 +432,36 @@ func (h *Handler) writeSessionLoadError(w http.ResponseWriter, r *http.Request, 
 	}
 	h.logger.ErrorContext(r.Context(), "session operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Session operation failed"))
+}
+
+func writeFileResourcePersistenceError(w http.ResponseWriter, r *http.Request, err error) bool {
+	var limitErr *db.SessionFileResourceLimitError
+	if errors.As(err, &limitErr) {
+		writeBadRequest(w, r, limitErr)
+		return true
+	}
+	var mountConflictErr *db.SessionFileMountConflictError
+	if errors.As(err, &mountConflictErr) {
+		writeBadRequest(w, r, errors.New("file resource mount_path conflicts with another Session file resource"))
+		return true
+	}
+	if errors.Is(err, db.ErrFileReferenceNotFound) {
+		httpapi.WriteError(w, r, httpapi.NewError(
+			http.StatusNotFound,
+			"not_found_error",
+			"File referenced by the session resource was not found",
+		))
+		return true
+	}
+	if errors.Is(err, db.ErrFilestorePathExists) {
+		httpapi.WriteError(w, r, httpapi.NewError(
+			http.StatusConflict,
+			"conflict_error",
+			"File resource mount_path conflicts with the session filesystem",
+		))
+		return true
+	}
+	return false
 }
 
 func (h *Handler) writeThreadLoadError(w http.ResponseWriter, r *http.Request, err error, threadID string) {

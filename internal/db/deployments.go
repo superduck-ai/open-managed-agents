@@ -279,18 +279,16 @@ func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPage
 }
 
 func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDeploymentRunInput) (DeploymentRun, Session, SessionThread, []SessionEvent, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	deployment, err := scanDeployment(tx.QueryRow(ctx, `
-		select `+deploymentColumns()+`
-		from deployments
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		for update
-	`, input.Run.WorkspaceID, input.DeploymentExternalID))
+	deployment, err := getDeploymentSQLX(ctx, tx, lockDeploymentForManualRunQuery, map[string]any{
+		"workspace_id":           input.Run.WorkspaceID,
+		"deployment_external_id": input.DeploymentExternalID,
+	})
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
@@ -298,11 +296,11 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, ErrInvalidState
 	}
 
-	session, thread, _, _, err := insertSessionTx(ctx, tx, input.Session)
+	session, thread, _, _, err := insertSessionSQLXTx(ctx, tx, input.Session)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	events, err := insertSessionEventsTx(ctx, tx, session, input.Events, false)
+	events, err := insertSessionEventsSQLXTx(ctx, tx, session, input.Events, false)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
@@ -316,30 +314,25 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	run.AgentSnapshot = deployment.AgentSnapshot
 	run.SessionExternalID = &session.ExternalID
 	run.Error = nil
-	createdRun, err := insertDeploymentRunTx(ctx, tx, run)
+	createdRun, err := insertDeploymentRunSQLX(ctx, tx, run)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		update deployments
-		set last_run_at = $3,
-			updated_at = $3
-		where workspace_id = $1 and external_id = $2
-	`, deployment.WorkspaceID, deployment.ExternalID, input.Now); err != nil {
+	if err := updateDeploymentLastRunSQLX(ctx, tx, deployment.WorkspaceID, deployment.ExternalID, input.Now); err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
 	return createdRun, session, thread, events, nil
 }
 
 func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployment, run DeploymentRun) (DeploymentRun, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return DeploymentRun{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 	run.DeploymentID = deployment.ID
 	run.DeploymentExternalID = deployment.ExternalID
 	run.AgentID = deployment.AgentID
@@ -347,19 +340,14 @@ func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployme
 	run.AgentVersion = deployment.AgentVersion
 	run.AgentSnapshot = deployment.AgentSnapshot
 	run.SessionExternalID = nil
-	created, err := insertDeploymentRunTx(ctx, tx, run)
+	created, err := insertDeploymentRunSQLX(ctx, tx, run)
 	if err != nil {
 		return DeploymentRun{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-		update deployments
-		set last_run_at = $3,
-			updated_at = $3
-		where workspace_id = $1 and external_id = $2
-	`, deployment.WorkspaceID, deployment.ExternalID, run.CreatedAt); err != nil {
+	if err := updateDeploymentLastRunSQLX(ctx, tx, deployment.WorkspaceID, deployment.ExternalID, run.CreatedAt); err != nil {
 		return DeploymentRun{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return DeploymentRun{}, err
 	}
 	return created, nil
@@ -443,27 +431,6 @@ func (d *DB) ListDeploymentRunsPage(ctx context.Context, params ListDeploymentRu
 		runs = runs[:params.Limit]
 	}
 	return runs, hasMore, nil
-}
-
-func insertDeploymentRunTx(ctx context.Context, tx pgx.Tx, run DeploymentRun) (DeploymentRun, error) {
-	return scanDeploymentRun(tx.QueryRow(ctx, `
-		insert into deployment_runs (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			deployment_id, deployment_external_id, agent_id, agent_external_id,
-			agent_version, agent_snapshot, session_external_id, error, trigger_type,
-			trigger_context, created_at
-		)
-		values (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9,
-			$10, $11::jsonb, $12, $13::jsonb, $14,
-			$15::jsonb, $16
-		)
-		returning `+deploymentRunColumns()+`
-	`, run.UUID, run.ExternalID, run.OrganizationID, run.WorkspaceID, run.CreatedByAPIKeyID,
-		run.DeploymentID, run.DeploymentExternalID, run.AgentID, run.AgentExternalID,
-		run.AgentVersion, jsonArg(run.AgentSnapshot), run.SessionExternalID, jsonArg(run.Error),
-		run.TriggerType, jsonArg(run.TriggerContext), run.CreatedAt))
 }
 
 func deploymentColumns() string {

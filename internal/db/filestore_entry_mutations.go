@@ -106,6 +106,14 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 	if source.Kind != FilestoreEntryKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
+	if source.BorrowsSourceObject() {
+		// 借用引用可以作为命名空间节点被移动或删除，但 CopyFilestoreFile 的
+		// 语义是“把对象存储端已经完成服务端复制（server-side copy）的新对象
+		// 落库成 Filestore 自有文件”，不是客户端先读源文件、再创建目标文件。
+		// borrowed entry 故意缺少这条 owned-file 落库路径所需的专属元数据
+		// （例如 MD5），因此这里不允许把 borrowed source 隐式物化为 owned copy。
+		return FilestoreMutationResult{}, ErrPreconditionFailed
+	}
 	if input.ExpectedSourceS3Key != "" && filestoreString(source.S3Key) != input.ExpectedSourceS3Key {
 		// 对象复制发生在数据库事务之外；以对象键和版本号作乐观锁，拒绝陈旧副本落库。
 		return FilestoreMutationResult{}, ErrVersionConflict
@@ -187,13 +195,15 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 			}
 		}
 		if destination.Kind == FilestoreEntryKindFile {
-			job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
+			job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
 				WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 			}, destination, "move_overwrite", input.Now)
 			if err != nil {
 				return FilestoreMutationResult{}, err
 			}
-			cleanupJobs = append(cleanupJobs, job)
+			if enqueued {
+				cleanupJobs = append(cleanupJobs, job)
+			}
 		}
 		if _, err := namedExecContext(ctx, tx, `
 			update filestore_entries
@@ -210,9 +220,10 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		}); err != nil {
 			return FilestoreMutationResult{}, err
 		}
-		if destination.Kind == FilestoreEntryKindFile {
+		removedBytes := destination.OwnedBytes()
+		if destination.Kind == FilestoreEntryKindFile && removedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
-				ctx, tx, input.WorkspaceID, 0, -filestoreInt64(destination.SizeBytes), 0,
+				ctx, tx, input.WorkspaceID, 0, -removedBytes, 0,
 			); err != nil {
 				return FilestoreMutationResult{}, err
 			}
@@ -254,6 +265,9 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	if input.SourcePath == "/" || input.DestinationPath == "/" ||
 		filestorePathIsDescendant(input.SourcePath, input.DestinationPath) {
 		return FilestoreMutationResult{}, ErrFilestoreInvalidMove
+	}
+	if err := validateFilestoreDirectoryMoveRoots(input.SourcePath, input.DestinationPath); err != nil {
+		return FilestoreMutationResult{}, err
 	}
 	input.Now = filestoreNow(input.Now)
 	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
@@ -376,7 +390,7 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	return FilestoreMutationResult{Entry: moved, CleanupJobs: cleanupJobs}, nil
 }
 
-// RemoveFilestoreFile 软删除文件，并在同一事务内为其精确对象版本创建清理任务。
+// RemoveFilestoreFile 软删除逻辑文件引用；仅为 Filestore 自有对象创建清理任务。
 func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveFilestoreEntryInput) (FilestoreMutationResult, error) {
 	if err := validateFilestorePath(input.Path); err != nil || input.Path == "/" {
 		if err != nil {
@@ -397,7 +411,7 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveFilestoreEntry
 	if entry.Kind != FilestoreEntryKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
-	job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
+	job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
 		WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 	}, entry, "remove_file", input.Now)
 	if err != nil {
@@ -418,24 +432,30 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveFilestoreEntry
 	}); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if err := applyWorkspaceStorageDeltaSQLXTx(
-		ctx, tx, input.WorkspaceID, 0, -filestoreInt64(entry.SizeBytes), 0,
-	); err != nil {
-		return FilestoreMutationResult{}, err
+	if removedBytes := entry.OwnedBytes(); removedBytes > 0 {
+		if err := applyWorkspaceStorageDeltaSQLXTx(
+			ctx, tx, input.WorkspaceID, 0, -removedBytes, 0,
+		); err != nil {
+			return FilestoreMutationResult{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	return FilestoreMutationResult{Entry: entry, CleanupJobs: []FilestoreObjectCleanupJob{job}}, nil
+	result := FilestoreMutationResult{Entry: entry}
+	if enqueued {
+		result.CleanupJobs = []FilestoreObjectCleanupJob{job}
+	}
+	return result, nil
 }
 
-// RemoveFilestoreDirectory 软删除目录；递归删除时为子树内每个文件创建对象清理任务。
+// RemoveFilestoreDirectory 软删除目录视图；递归删除只清理子树内 Filestore 自有对象。
 func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestoreDirectoryInput) (FilestoreMutationResult, error) {
 	if err := validateFilestorePath(input.Path); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if input.Path == "/" {
-		return FilestoreMutationResult{}, ErrFilestoreInvalidMove
+	if err := validateFilestoreDirectoryRemovalRoot(input.Path); err != nil {
+		return FilestoreMutationResult{}, err
 	}
 	input.Now = filestoreNow(input.Now)
 	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
@@ -450,7 +470,6 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	if entry.Kind != FilestoreEntryKindDirectory {
 		return FilestoreMutationResult{}, ErrFilestoreNotDirectory
 	}
-
 	var childCount int
 	entryArguments := map[string]any{
 		"workspace_uuid":  filesystem.WorkspaceUUID,

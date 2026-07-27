@@ -56,6 +56,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
+  queryOptions: { seedModelMappings?: boolean } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -63,6 +64,9 @@ export function render(
       mutations: { retry: false },
     },
   });
+  if (queryOptions.seedModelMappings !== false) {
+    queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
+  }
   return testingLibrary.render(
     <AuthContext.Provider value={managedAgentsAuthContextValue}>
       <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
@@ -136,6 +140,7 @@ export function renderManagedAgentsPage(
       },
     },
   });
+  queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
   const history = createBrowserHistory({ window });
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
@@ -227,6 +232,8 @@ export type MockAgentsApiOptions = {
   mcpToolCatalogRefreshWait?: Promise<void>;
   analyticsOverview?: Record<string, unknown>;
   analyticsTimeseries?: Array<Record<string, unknown>>;
+  modelMappings?: Record<string, string>;
+  modelMappingsErrorOnce?: boolean;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
   quickstartStreamErrorOnce?: boolean;
   agentUpdateErrorStatus?: number;
@@ -250,6 +257,7 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
+  let modelMappingsErrorsRemaining = options.modelMappingsErrorOnce ? 1 : 0;
   let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
   let mcpToolCatalogs = options.mcpToolCatalogs?.map((catalog) => ({ ...catalog }));
   const now = new Date().toISOString();
@@ -299,6 +307,14 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
+
+    if (url.match(/^\/api\/organizations\/[^/]+\/models$/) && method === 'GET') {
+      if (modelMappingsErrorsRemaining > 0) {
+        modelMappingsErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 503);
+      }
+      return jsonResponse({ model_mappings: options.modelMappings ?? {} });
+    }
 
     const mcpCatalogMatch = url.match(
       /^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/agents\/([^/]+)\/mcp_tool_catalogs(?:\/refresh)?(?:\?|$)/,

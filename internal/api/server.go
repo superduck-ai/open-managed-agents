@@ -77,6 +77,7 @@ type ServerDeps struct {
 	PlatformStore          platformsession.Store
 	CodeSessionCredentials *codesessions.SessionCredentials
 	FilestoreCredentials   *filestoreapi.TokenCredentials
+	FilestoreService       *filestoreapi.Service
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -97,11 +98,11 @@ func NewServer(deps ServerDeps) *Server {
 	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
 	workbenchLogger := componentLogger("workbench")
 	mcpCatalogHandler := mcpcatalogs.NewHandler(deps.DB, componentLogger("mcp_catalogs"))
-	filestoreHandler := filestoreapi.NewHandler(
-		deps.Config,
-		filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore),
-		componentLogger("filestore"),
-	)
+	filestoreService := deps.FilestoreService
+	if filestoreService == nil {
+		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore)
+	}
+	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	s := &Server{
 		cfg:                  deps.Config,
 		db:                   deps.DB,
@@ -119,7 +120,7 @@ func NewServer(deps ServerDeps) *Server {
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")),
 		messages:             messagesapi.NewHandler(deps.Config, componentLogger("messages")),
-		models:               modelsapi.NewHandler(),
+		models:               modelsapi.NewHandler(deps.Config.AnthropicUpstream),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, componentLogger("sessions")),
 		skills:               skillsapi.NewHandlerWithSkillPrewarm(deps.Config, deps.DB, deps.ObjectStore, skillPrewarmEnqueuer, componentLogger("skills")),
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("vaults")),
@@ -172,16 +173,10 @@ func (s *Server) registerVersionedAPIRoutes(router chi.Router) {
 
 func (s *Server) filestoreAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		principal, apiErr := s.authenticateFilestore(r)
-		if apiErr != nil {
-			code := "unauthenticated"
-			message := "Invalid bearer token"
-			if apiErr.Status >= http.StatusInternalServerError {
-				code = "internal"
-				message = "Authentication failed"
-			}
+		principal, authErr := s.authenticateFilestore(r)
+		if authErr != nil {
 			// 鉴权发生在 Handler 之外，也必须维持 rclone-filestore 可识别的扁平错误信封。
-			filestoreapi.WriteProtocolError(w, apiErr.Status, code, message)
+			filestoreapi.WriteProtocolError(w, authErr.status, authErr.code, authErr.message)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(filestoreapi.WithPrincipal(r.Context(), principal)))

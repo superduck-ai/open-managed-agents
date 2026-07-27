@@ -94,6 +94,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		h.writeResourceBuildError(w, r, err)
 		return
 	}
+	resourceInputs, err := sessionResourceWriteInputs(resources)
+	if err != nil {
+		h.writeResourceBuildError(w, r, err)
+		return
+	}
 	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
 	created, thread, _, _, err := h.db.CreateSession(r.Context(), db.CreateSessionInput{
 		Session: db.Session{
@@ -130,7 +135,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		},
-		Resources: resources,
+		Resources: resourceInputs,
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewString(),
 			ExternalID:            workID,
@@ -146,6 +151,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
+		if writeFileResourcePersistenceError(w, r, err) {
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "create session", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
 		return
@@ -650,7 +658,15 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeResourceBuildError(w, r, err)
 		return
 	}
-	created, err := h.db.CreateSessionResource(r.Context(), resource)
+	resourceInput, err := sessionResourceWriteInput(resource)
+	if err != nil {
+		h.writeResourceBuildError(w, r, err)
+		return
+	}
+	created, err := h.db.CreateSessionResource(
+		r.Context(),
+		resourceInput,
+	)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
@@ -748,6 +764,10 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceID, session.ExternalID, resourceID); err != nil {
+		if errors.Is(err, db.ErrInvalidState) {
+			h.writeSessionLoadError(w, r, err, sessionID)
+			return
+		}
 		h.writeResourceLoadError(w, r, err, resourceID)
 		return
 	}

@@ -64,6 +64,9 @@ type filestoreEntryRow struct {
 	S3ETag                   *string    `db:"s3_etag"`
 	S3VersionID              *string    `db:"s3_version_id"`
 	ExpiresAt                *time.Time `db:"expires_at"`
+	ManagedBy                *string    `db:"managed_by"`
+	ManagedResourceUUID      *string    `db:"managed_resource_uuid"`
+	SourceFileUUID           *string    `db:"source_file_uuid"`
 	CreatedByAPIKeyUUID      *string    `db:"created_by_api_key_uuid"`
 	CreatedBySessionUUID     *string    `db:"created_by_session_uuid"`
 	CreatedByCodeSessionUUID *string    `db:"created_by_code_session_uuid"`
@@ -240,29 +243,34 @@ func (row filestoreEntryRow) entry() (FilestoreEntry, error) {
 		tags = []string{}
 	}
 	return FilestoreEntry{
-		ID:                       row.ID,
-		UUID:                     row.UUID,
-		ExternalID:               row.ExternalID,
-		OrganizationUUID:         row.OrganizationUUID,
-		WorkspaceUUID:            row.WorkspaceUUID,
-		FilesystemUUID:           row.FilesystemUUID,
-		Kind:                     row.Kind,
-		Path:                     row.Path,
-		ParentPath:               row.ParentPath,
-		SizeBytes:                row.SizeBytes,
-		MediaType:                row.MediaType,
-		DetectedMimeType:         row.DetectedMimeType,
-		Metadata:                 copyRaw(row.Metadata),
-		AuthorizationMetadata:    copyRaw(row.AuthorizationMetadata),
-		Tags:                     tags,
-		Downloadable:             row.Downloadable,
-		MD5:                      row.MD5,
-		SHA256:                   row.SHA256,
-		S3Bucket:                 row.S3Bucket,
-		S3Key:                    row.S3Key,
-		S3ETag:                   row.S3ETag,
-		S3VersionID:              row.S3VersionID,
-		ExpiresAt:                row.ExpiresAt,
+		ID:                    row.ID,
+		UUID:                  row.UUID,
+		ExternalID:            row.ExternalID,
+		OrganizationUUID:      row.OrganizationUUID,
+		WorkspaceUUID:         row.WorkspaceUUID,
+		FilesystemUUID:        row.FilesystemUUID,
+		Kind:                  row.Kind,
+		Path:                  row.Path,
+		ParentPath:            row.ParentPath,
+		SizeBytes:             row.SizeBytes,
+		MediaType:             row.MediaType,
+		DetectedMimeType:      row.DetectedMimeType,
+		Metadata:              copyRaw(row.Metadata),
+		AuthorizationMetadata: copyRaw(row.AuthorizationMetadata),
+		Tags:                  tags,
+		Downloadable:          row.Downloadable,
+		MD5:                   row.MD5,
+		SHA256:                row.SHA256,
+		S3Bucket:              row.S3Bucket,
+		S3Key:                 row.S3Key,
+		S3ETag:                row.S3ETag,
+		S3VersionID:           row.S3VersionID,
+		ExpiresAt:             row.ExpiresAt,
+		// ManagedBy 记录管理来源，ManagedResourceUUID 指向受管的 Session resource，
+		// SourceFileUUID 指向被借用的 Files API 对象，避免重复计费或误删源对象。
+		ManagedBy:                row.ManagedBy,
+		ManagedResourceUUID:      row.ManagedResourceUUID,
+		SourceFileUUID:           row.SourceFileUUID,
 		CreatedByAPIKeyUUID:      row.CreatedByAPIKeyUUID,
 		CreatedBySessionUUID:     row.CreatedBySessionUUID,
 		CreatedByCodeSessionUUID: row.CreatedByCodeSessionUUID,

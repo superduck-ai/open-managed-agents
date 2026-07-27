@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 type Session struct {
@@ -57,6 +58,16 @@ type SessionThread struct {
 	ArchivedAt             *time.Time
 	DeletedAt              *time.Time
 }
+
+const (
+	// SessionResourceTypeFile identifies a Files API object attached to a
+	// Session. It is distinct from FilestoreEntryKindFile, which classifies
+	// filesystem nodes.
+	SessionResourceTypeFile = sessioncontract.FileResourceType
+	// MaxSessionFileResources is the write-time limit for active File resources
+	// attached to one Session.
+	MaxSessionFileResources = sessioncontract.MaxFileResources
+)
 
 type SessionResource struct {
 	ID                int64
@@ -148,119 +159,71 @@ type ListSessionThreadsPageParams struct {
 type CreateSessionInput struct {
 	Session   Session
 	Thread    SessionThread
-	Resources []SessionResource
+	Resources []CreateSessionResourceInput
 	Work      EnvironmentWork
 }
 
-func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Session, SessionThread, []SessionResource, EnvironmentWork, error) {
-	tx, err := d.Pool.Begin(ctx)
-	if err != nil {
-		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
-	}
-	defer tx.Rollback(ctx)
-
-	session, thread, resources, work, err := insertSessionTx(ctx, tx, input)
-	if err != nil {
-		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
-	}
-	return session, thread, resources, work, nil
+// CreateSessionResourceInput contains the normalized resource row and its
+// optional Filestore binding. CreateSessionResource applies all write-time
+// invariants while holding the owning Session row lock.
+type CreateSessionResourceInput struct {
+	Resource  SessionResource
+	FileMount *SessionFileMount
 }
 
-func insertSessionTx(ctx context.Context, tx pgx.Tx, input CreateSessionInput) (Session, SessionThread, []SessionResource, EnvironmentWork, error) {
-	session, err := scanSession(tx.QueryRow(ctx, `
-		insert into sessions (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			environment_id, environment_external_id, agent_id, agent_external_id,
-			agent_version, agent_snapshot, deployment_id, title, metadata, vault_ids,
-			status, usage, stats, outcome_evaluations, created_at, updated_at
-		)
-		values (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9,
-			$10, $11::jsonb, $12, $13, $14::jsonb, $15::jsonb,
-			$16, $17::jsonb, $18::jsonb, $19::jsonb, $20, $20
-		)
-		returning `+sessionColumns()+`
-	`, input.Session.UUID, input.Session.ExternalID, input.Session.OrganizationID, input.Session.WorkspaceID,
-		input.Session.CreatedByAPIKeyID, input.Session.EnvironmentID, input.Session.EnvironmentExternalID,
-		input.Session.AgentID, input.Session.AgentExternalID, input.Session.AgentVersion,
-		jsonArg(input.Session.AgentSnapshot), input.Session.DeploymentID, input.Session.Title,
-		jsonArg(input.Session.Metadata), jsonArg(input.Session.VaultIDs), input.Session.Status,
-		jsonArg(input.Session.Usage), jsonArg(input.Session.Stats), jsonArg(input.Session.OutcomeEvaluations),
-		input.Session.CreatedAt))
+// SessionFileMount is the already-normalized database binding for one file
+// resource. Path is the full path inside the Session Filestore namespace.
+type SessionFileMount struct {
+	ResourceExternalID string
+	FileExternalID     string
+	Path               string
+}
+
+// SessionFileResourceLimitError reports that an atomic resource mutation would
+// exceed the maximum number of active File resources for one Session.
+type SessionFileResourceLimitError struct {
+	Limit int
+}
+
+func (e *SessionFileResourceLimitError) Error() string {
+	return fmt.Sprintf("at most %d managed-agent file resources are allowed", e.Limit)
+}
+
+// SessionFileMountConflictError reports a conflict between two active
+// Session-managed File resource paths. Conflicts with ordinary Filestore
+// entries continue to use ErrFilestorePathExists.
+type SessionFileMountConflictError struct {
+	Path            string
+	ConflictingPath string
+}
+
+func (e *SessionFileMountConflictError) Error() string {
+	return fmt.Sprintf(
+		"file resource mount path %q conflicts with active resource path %q",
+		e.Path,
+		e.ConflictingPath,
+	)
+}
+
+func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Session, SessionThread, []SessionResource, EnvironmentWork, error) {
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
-	if _, err := insertSessionFilesystemTx(ctx, tx, session); err != nil {
-		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
-	}
+	defer tx.Rollback()
 
-	input.Thread.SessionID = session.ID
-	input.Thread.SessionExternalID = session.ExternalID
-	thread, err := scanSessionThread(tx.QueryRow(ctx, `
-		insert into session_threads (
-			uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
-			parent_thread_id, parent_thread_external_id, agent_snapshot, status, usage, stats,
-			created_at, updated_at
-		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12::jsonb, $13, $13)
-		returning `+sessionThreadColumns()+`
-	`, input.Thread.UUID, input.Thread.ExternalID, input.Thread.OrganizationID, input.Thread.WorkspaceID,
-		input.Thread.SessionID, input.Thread.SessionExternalID, input.Thread.ParentThreadID,
-		input.Thread.ParentThreadExternalID, jsonArg(input.Thread.AgentSnapshot), input.Thread.Status,
-		jsonArg(input.Thread.Usage), jsonArg(input.Thread.Stats), input.Thread.CreatedAt))
+	session, thread, resources, work, err := insertSessionSQLXTx(ctx, tx, input)
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
-
-	resources := make([]SessionResource, 0, len(input.Resources))
-	for _, resource := range input.Resources {
-		resource.SessionID = session.ID
-		resource.SessionExternalID = session.ExternalID
-		created, err := scanSessionResource(tx.QueryRow(ctx, `
-			insert into session_resources (
-				uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
-				resource_type, payload, secret_payload, created_at, updated_at
-			)
-			values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $10)
-			returning `+sessionResourceColumns()+`
-		`, resource.UUID, resource.ExternalID, resource.OrganizationID, resource.WorkspaceID,
-			resource.SessionID, resource.SessionExternalID, resource.ResourceType, jsonArg(resource.Payload),
-			jsonArg(resource.SecretPayload), resource.CreatedAt))
-		if err != nil {
-			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
-		}
-		resources = append(resources, created)
-	}
-
-	work, err := scanEnvironmentWork(tx.QueryRow(ctx, `
-		insert into environment_work (
-			uuid, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, created_at, updated_at
-		)
-		values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $11)
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-	`, input.Work.UUID, input.Work.ExternalID, input.Work.OrganizationID, input.Work.WorkspaceID,
-		input.Work.EnvironmentID, input.Work.EnvironmentExternalID, jsonArg(input.Work.Data),
-		jsonArg(input.Work.Metadata), input.Work.Secret, input.Work.State, input.Work.CreatedAt))
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
 	return session, thread, resources, work, nil
 }
 
 func (d *DB) GetSession(ctx context.Context, workspaceID int64, externalID string) (Session, error) {
-	return scanSession(d.Pool.QueryRow(ctx, `
-		select `+sessionColumns()+`
-		from sessions
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID))
+	return getSessionSQLX(ctx, d.sql, getSessionQuery, sessionLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) UpdateSession(ctx context.Context, workspaceID int64, externalID string, next Session) (Session, error) {
@@ -605,28 +568,71 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceID int64, sessio
 	`, workspaceID, sessionExternalID, threadExternalID))
 }
 
-func (d *DB) CreateSessionResource(ctx context.Context, resource SessionResource) (SessionResource, error) {
-	var sessionID int64
-	if err := d.Pool.QueryRow(ctx, `
-		select id
-		from sessions
-		where workspace_id = $1 and external_id = $2 and deleted_at is null and archived_at is null
-	`, resource.WorkspaceID, resource.SessionExternalID).Scan(&sessionID); errors.Is(err, pgx.ErrNoRows) {
-		return SessionResource{}, ErrNotFound
-	} else if err != nil {
+func (d *DB) CreateSessionResource(
+	ctx context.Context,
+	input CreateSessionResourceInput,
+) (SessionResource, error) {
+	resource := input.Resource
+	tx, err := d.sql.BeginTxx(ctx, nil)
+	if err != nil {
 		return SessionResource{}, err
 	}
-	resource.SessionID = sessionID
-	return scanSessionResource(d.Pool.QueryRow(ctx, `
-		insert into session_resources (
-			uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
-			resource_type, payload, secret_payload, created_at, updated_at
-		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $10)
-		returning `+sessionResourceColumns()+`
-	`, resource.UUID, resource.ExternalID, resource.OrganizationID, resource.WorkspaceID,
-		resource.SessionID, resource.SessionExternalID, resource.ResourceType, jsonArg(resource.Payload),
-		jsonArg(resource.SecretPayload), resource.CreatedAt))
+	defer tx.Rollback()
+
+	session, err := getSessionSQLX(
+		ctx,
+		tx,
+		lockSessionForResourceMutationQuery,
+		sessionLookupArguments(resource.WorkspaceID, resource.SessionExternalID),
+	)
+	if err != nil {
+		return SessionResource{}, err
+	}
+	if session.ArchivedAt != nil {
+		return SessionResource{}, ErrInvalidState
+	}
+	if session.OrganizationID != resource.OrganizationID {
+		return SessionResource{}, ErrPreconditionFailed
+	}
+	if resource.ResourceType == SessionResourceTypeFile {
+		if err := enforceSessionFileResourceCapacityTx(
+			ctx,
+			tx,
+			resource.WorkspaceID,
+			resource.SessionExternalID,
+			1,
+		); err != nil {
+			return SessionResource{}, err
+		}
+	}
+	created, err := createSessionResourceSQLX(ctx, tx, resource)
+	if err != nil {
+		return SessionResource{}, err
+	}
+	if created.ResourceType != SessionResourceTypeFile {
+		if input.FileMount != nil {
+			return SessionResource{}, ErrPreconditionFailed
+		}
+	} else {
+		filesystem, err := lockSessionFilestoreMutationTx(ctx, tx, session)
+		if err != nil {
+			return SessionResource{}, err
+		}
+		if err := bindSessionFileResourceWithLockedFilesystemTx(
+			ctx,
+			tx,
+			session,
+			filesystem,
+			created,
+			input.FileMount,
+		); err != nil {
+			return SessionResource{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return SessionResource{}, err
+	}
+	return created, nil
 }
 
 func (d *DB) GetSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string) (SessionResource, error) {
@@ -638,17 +644,12 @@ func (d *DB) GetSessionResource(ctx context.Context, workspaceID int64, sessionE
 }
 
 func (d *DB) ListSessionResources(ctx context.Context, workspaceID int64, sessionExternalID string) ([]SessionResource, error) {
-	rows, err := d.Pool.Query(ctx, `
-		select `+sessionResourceColumns()+`
-		from session_resources
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
-		order by created_at desc, id desc
-	`, workspaceID, sessionExternalID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSessionResourceRows(rows)
+	return listSessionResourcesSQLX(
+		ctx,
+		d.sql,
+		listSessionResourcesQuery,
+		sessionLookupArguments(workspaceID, sessionExternalID),
+	)
 }
 
 func (d *DB) UpdateSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string, payload, secretPayload json.RawMessage) (SessionResource, error) {
@@ -663,74 +664,92 @@ func (d *DB) UpdateSessionResource(ctx context.Context, workspaceID int64, sessi
 }
 
 func (d *DB) DeleteSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string) error {
-	tag, err := d.Pool.Exec(ctx, `
-		update session_resources
-		set deleted_at = coalesce(deleted_at, now()),
-			updated_at = now()
-		where workspace_id = $1 and session_external_id = $2 and external_id = $3 and deleted_at is null
-	`, workspaceID, sessionExternalID, resourceExternalID)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	defer tx.Rollback()
+
+	session, err := getSessionSQLX(
+		ctx,
+		tx,
+		lockSessionForResourceMutationQuery,
+		sessionLookupArguments(workspaceID, sessionExternalID),
+	)
+	if err != nil {
+		return err
 	}
-	return nil
+	if session.ArchivedAt != nil {
+		return ErrInvalidState
+	}
+	resource, err := getSessionResourceForMutationSQLX(
+		ctx,
+		tx,
+		workspaceID,
+		sessionExternalID,
+		resourceExternalID,
+	)
+	if err != nil {
+		return err
+	}
+	if err := unbindSessionFileResourceTx(ctx, tx, session, resource); err != nil {
+		return err
+	}
+	if err := softDeleteSessionResourceSQLX(
+		ctx,
+		tx,
+		workspaceID,
+		sessionExternalID,
+		resourceExternalID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *DB) AppendSessionEvents(ctx context.Context, workspaceID int64, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	session, err := scanSession(tx.QueryRow(ctx, `
-		select `+sessionColumns()+`
-		from sessions
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		for update
-	`, workspaceID, sessionExternalID))
+	session, err := getSessionSQLX(ctx, tx, lockSessionForEventsQuery, sessionLookupArguments(workspaceID, sessionExternalID))
 	if err != nil {
 		return nil, err
 	}
 	if session.ArchivedAt != nil {
 		return nil, ErrInvalidState
 	}
-	created, err := insertSessionEventsTx(ctx, tx, session, events, false)
+	created, err := insertSessionEventsSQLXTx(ctx, tx, session, events, false)
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return created, nil
 }
 
 func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceID int64, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	session, err := scanSession(tx.QueryRow(ctx, `
-		select `+sessionColumns()+`
-		from sessions
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		for update
-	`, workspaceID, sessionExternalID))
+	session, err := getSessionSQLX(ctx, tx, lockSessionForEventsQuery, sessionLookupArguments(workspaceID, sessionExternalID))
 	if err != nil {
 		return nil, err
 	}
 	if session.ArchivedAt != nil {
 		return nil, ErrInvalidState
 	}
-	created, err := insertSessionEventsTx(ctx, tx, session, events, true)
+	created, err := insertSessionEventsSQLXTx(ctx, tx, session, events, true)
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return created, nil
@@ -749,64 +768,6 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceID int64, sessionExte
 			and external_id = $3
 			and deleted_at is null
 	`, workspaceID, sessionExternalID, eventExternalID))
-}
-
-func insertSessionEventsTx(ctx context.Context, tx pgx.Tx, session Session, events []SessionEvent, ignoreExisting bool) ([]SessionEvent, error) {
-	primary, err := scanSessionThread(tx.QueryRow(ctx, `
-		select `+sessionThreadColumns()+`
-		from session_threads
-		where workspace_id = $1 and session_external_id = $2 and parent_thread_id is null and deleted_at is null
-		order by created_at asc, id asc
-		limit 1
-	`, session.WorkspaceID, session.ExternalID))
-	if err != nil {
-		return nil, err
-	}
-
-	created := make([]SessionEvent, 0, len(events))
-	for _, event := range events {
-		event.OrganizationID = session.OrganizationID
-		event.WorkspaceID = session.WorkspaceID
-		event.SessionID = session.ID
-		event.SessionExternalID = session.ExternalID
-		if event.ThreadExternalID == nil {
-			event.ThreadID = &primary.ID
-			threadID := primary.ExternalID
-			event.ThreadExternalID = &threadID
-		} else {
-			thread, err := scanSessionThread(tx.QueryRow(ctx, `
-				select `+sessionThreadColumns()+`
-				from session_threads
-				where workspace_id = $1 and session_external_id = $2 and external_id = $3 and deleted_at is null
-			`, session.WorkspaceID, session.ExternalID, *event.ThreadExternalID))
-			if err != nil {
-				return nil, err
-			}
-			event.ThreadID = &thread.ID
-		}
-		query := `
-			insert into session_events (
-				uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
-				thread_id, thread_external_id, event_type, payload, processed_at, created_at
-			)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
-		`
-		if ignoreExisting {
-			query += ` on conflict (workspace_id, external_id) do nothing`
-		}
-		query += ` returning ` + sessionEventColumns()
-		inserted, err := scanSessionEvent(tx.QueryRow(ctx, query, event.UUID, event.ExternalID, event.OrganizationID, event.WorkspaceID, event.SessionID,
-			event.SessionExternalID, event.ThreadID, event.ThreadExternalID, event.EventType,
-			jsonArg(event.Payload), event.ProcessedAt, event.CreatedAt))
-		if ignoreExisting && errors.Is(err, ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		created = append(created, inserted)
-	}
-	return created, nil
 }
 
 func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
@@ -1050,18 +1011,6 @@ func scanSessionResource(row rowScanner) (SessionResource, error) {
 	resource.Payload = copyRaw(payload)
 	resource.SecretPayload = copyRaw(secretPayload)
 	return resource, nil
-}
-
-func scanSessionResourceRows(rows rowsScanner) ([]SessionResource, error) {
-	var resources []SessionResource
-	for rows.Next() {
-		resource, err := scanSessionResource(rows)
-		if err != nil {
-			return nil, err
-		}
-		resources = append(resources, resource)
-	}
-	return resources, rows.Err()
 }
 
 func scanSessionEvent(row rowScanner) (SessionEvent, error) {

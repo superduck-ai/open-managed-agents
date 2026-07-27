@@ -54,7 +54,8 @@ type Provider interface {
 	Kill(ctx context.Context, sandboxID string) error
 	Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error)
 	WriteFile(ctx context.Context, sandboxID string, path string, data []byte) error
-	RunCommand(ctx context.Context, sandboxID string, command string) error
+	FileExists(ctx context.Context, sandboxID string, path string) (bool, error)
+	RunCommand(ctx context.Context, sandboxID string, command string, timeout time.Duration) error
 	StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error
 }
 
@@ -178,7 +179,21 @@ func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath 
 	return err
 }
 
-func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command string) error {
+func (p *E2BProvider) FileExists(ctx context.Context, sandboxID string, filePath string) (bool, error) {
+	if strings.TrimSpace(sandboxID) == "" {
+		return false, errors.New("sandbox id is required")
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return false, errors.New("sandbox file path is required")
+	}
+	sandbox, err := p.connect(ctx, sandboxID)
+	if err != nil {
+		return false, err
+	}
+	return sandbox.Files.Exists(ctx, filePath, nil)
+}
+
+func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command string, timeout time.Duration) error {
 	if strings.TrimSpace(sandboxID) == "" {
 		return errors.New("sandbox id is required")
 	}
@@ -189,7 +204,10 @@ func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command 
 	if err != nil {
 		return err
 	}
-	timeoutMs := int(p.cfg.RequestTimeout / time.Millisecond)
+	timeoutMs := int(timeout / time.Millisecond)
+	if timeoutMs <= 0 {
+		timeoutMs = int(p.cfg.RequestTimeout / time.Millisecond)
+	}
 	if timeoutMs <= 0 {
 		timeoutMs = int((60 * time.Second) / time.Millisecond)
 	}
@@ -211,7 +229,8 @@ func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, command 
 	return nil
 }
 
-// StartBackgroundCommand 通过 E2B 进程 API 启动后台命令，并把敏感启动数据直接写入其 stdin。
+// StartBackgroundCommand 通过 E2B 进程 API 启动后台命令。
+// stdin 非空时直接写入进程并关闭 EOF；为空时不启用 stdin 通道。
 func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error {
 	if strings.TrimSpace(sandboxID) == "" {
 		return errors.New("sandbox id is required")
@@ -219,18 +238,16 @@ func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID stri
 	if strings.TrimSpace(command) == "" {
 		return errors.New("sandbox command is required")
 	}
-	if len(stdin) == 0 {
-		return errors.New("sandbox command stdin is required")
-	}
 	sandbox, err := p.connect(ctx, sandboxID)
 	if err != nil {
 		return err
 	}
-	stdinEnabled := true
-	execution, err := sandbox.Commands.Run(ctx, command, &e2b.CommandStartOpts{
-		Background: true,
-		Stdin:      &stdinEnabled,
-	})
+	opts := &e2b.CommandStartOpts{Background: true}
+	if len(stdin) != 0 {
+		stdinEnabled := true
+		opts.Stdin = &stdinEnabled
+	}
+	execution, err := sandbox.Commands.Run(ctx, command, opts)
 	if err != nil {
 		return fmt.Errorf("start sandbox background command: %w", err)
 	}
@@ -239,6 +256,12 @@ func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID stri
 		return fmt.Errorf("sandbox background command execution type = %T, want *e2b.CommandHandle", execution)
 	}
 	defer handle.Disconnect()
+	if handle.Pid == 0 {
+		return errors.New("sandbox background command returned an invalid PID")
+	}
+	if len(stdin) == 0 {
+		return nil
+	}
 	if err := sandbox.Commands.SendStdin(ctx, handle.Pid, stdin, nil); err != nil {
 		_, _ = handle.Kill()
 		return fmt.Errorf("send sandbox command stdin: %w", err)

@@ -23,3 +23,18 @@ bun run run-agent \
 ```
 
 If `--agent-id` or `--environment-id` is omitted, the command creates temporary quickstart resources and cleans them up after the stream reaches idle. Add `--keep-resources` to keep those resources for inspection.
+
+To exercise the Managed Agents files flow from the Claude docs, run the dedicated smoke case:
+
+```bash
+cd tests/js-test
+bun install
+bun run run-agent-files --base-url http://127.0.0.1:38080
+```
+
+This smoke case verifies:
+
+- `files.upload`
+- `sessions.create(...resources=[{type:"file"}])` with an explicit `mount_path`
+- agent reads the mounted file from `/mnt/session/uploads...`
+- `sessions.resources.add/list/delete` with the default mount path behavior

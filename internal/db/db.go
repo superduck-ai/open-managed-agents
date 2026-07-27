@@ -31,6 +31,8 @@ var (
 	ErrStorageLimitExceeded  = errors.New("storage limit exceeded")
 	ErrStorageUsageUnderflow = errors.New("storage usage underflow")
 	ErrLimitExceeded         = errors.New("limit exceeded")
+	ErrFileInUse             = errors.New("file is in use")
+	ErrFileReferenceNotFound = errors.New("file reference not found")
 )
 
 type DB struct {

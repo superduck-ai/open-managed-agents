@@ -738,6 +738,32 @@ func TestServiceCopyFilePreservesMetadataAndUsesCopiedObjectIdentity(t *testing.
 	}
 }
 
+func TestServiceCopyFileRejectsBorrowedSourceBeforeObjectCopy(t *testing.T) {
+	t.Parallel()
+
+	filesystem := serviceTestFilesystem()
+	source := serviceTestFileEntry(filesystem, "/uploads/source.txt", []byte("source"))
+	source.SourceFileUUID = serviceTestPointer("11111111-1111-4111-8111-111111111111")
+	source.ManagedBy = serviceTestPointer("session_resource")
+	source.ManagedResourceUUID = serviceTestPointer("22222222-2222-4222-8222-222222222222")
+	database := &fakeServiceDatabase{
+		getFilesystemFn: serviceFilesystemLookup(filesystem),
+		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.FilestoreEntry, error) {
+			if entryPath == source.Path {
+				return source, nil
+			}
+			return db.FilestoreEntry{}, db.ErrNotFound
+		},
+	}
+	service := newServiceUnderTest(config.Config{}, database, &fakeServiceBlobStore{})
+	_, apiErr := service.CopyFile(context.Background(), serviceTestPrincipal(), copyMoveFileRequest{
+		FilesystemID: filesystem.ExternalID,
+		Source:       source.Path,
+		Destination:  "/copy.txt",
+	})
+	assertServiceAPIError(t, apiErr, http.StatusConflict, "failed_precondition")
+}
+
 func TestServiceMoveOperationsReturnDatabaseEntries(t *testing.T) {
 	t.Parallel()
 

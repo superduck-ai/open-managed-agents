@@ -21,7 +21,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
@@ -89,6 +91,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load filestore credentials: %w", err)
 	}
+	filestoreService := filestore.NewService(cfg, database, objectStore)
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)
@@ -99,7 +102,20 @@ func run(logger *slog.Logger) error {
 		batches.NewHTTPUpstreamClient(cfg),
 		logger.With("component", "batches"),
 	).Start(ctx)
-	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials, logger.With("component", "environment_runner"))
+	environmentLogger := logger.With("component", "environment_runner")
+	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
+		DB:              database,
+		Provider:        e2bruntime.NewProvider(cfg.E2B),
+		Config:          cfg,
+		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger),
+		Skills:          skillsapi.NewRuntimeResolver(cfg, database, objectStore),
+		FilestoreTokens: filestoreCredentials,
+		Logger:          environmentLogger,
+	})
+	if err != nil {
+		return fmt.Errorf("create environment runner: %w", err)
+	}
+	environmentRunner.Start(ctx)
 	skillprewarm.StartWorker(ctx, database, objectStore, cfg, logger.With("component", "skill_prewarm"))
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 
@@ -113,6 +129,7 @@ func run(logger *slog.Logger) error {
 			PlatformStore:          platformSessions,
 			CodeSessionCredentials: codeSessionCredentials,
 			FilestoreCredentials:   filestoreCredentials,
+			FilestoreService:       filestoreService,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

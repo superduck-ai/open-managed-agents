@@ -632,6 +632,8 @@
   "managedAgents.memoryStores.manage": "Manage memory stores",
   "managedAgents.memoryStores.searchPlaceholder": "Search by name or exact ID",
   "managedAgents.memoryStores.title": "Memory stores",
+  "managedAgents.models.loadFailed": "Could not load model configuration.",
+  "managedAgents.models.loadFailedBody": "Retry before creating an agent so its displayed and saved model IDs stay consistent.",
   "managedAgents.quickstart.accessToken": "Access token",
   "managedAgents.quickstart.addCredentialFor": "Add credential for",
   "managedAgents.quickstart.agentCreated": "Agent created",

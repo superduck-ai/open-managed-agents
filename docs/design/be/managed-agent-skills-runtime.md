@@ -23,7 +23,8 @@ Environment runner 在启动云端 managed agent session 时执行以下步骤�
 7. 用完整 manifest SHA256 生成 E2B volume 名称；如果同 hash volume 已有 `.ready` 标记，且 marker 内容等于完整 manifest SHA256，则直接复用，不读取对象存储 archive。
 8. volume miss 时才按 manifest 顺序逐个读取对应 zip archive，并校验 archive 大小、checksum、解压总大小、单顶层目录和顶层 `SKILL.md`，然后写入该 volume；runner 不会把所有 archive 同时预载到内存。
 9. 把 mount 信息写入 environment work metadata，sandbox create 时用第 2 步得到的 resolution 和当前 work metadata 挂载到 `/mnt/skills`。
-10. runner 创建 local code session、写入 `environment-manager` stdin 并启动 environment-manager；不再把 skill zip 写进 sandbox 临时目录，也不在启动 shell 中解压 skill。
+10. Session File resources 已由 resource 写事务维护为对应 `filesystem_id` 下的 `/uploads` 数据库 entry；runner 不扫描、调和或复制这些文件。runner 先创建 E2B Sandbox，再签发绑定完整 filesystem 写权限的读写 Token 与只读 Token，启动固定 rclone-filestore 四挂载并等待 ready，随后最多重试三次删除临时 Token 配置。`/uploads` 整体只读挂载到 `/mnt/session/uploads`，无需逐文件投影。
+11. runner 标记 Sandbox running、发送 Environment Work heartbeat，再创建 local Code Session、写入 `environment-manager` stdin 并启动 environment-manager；启动失败会撤销刚创建的 Code Session。Environment Manager 启动成功后，Session 与 Environment Work 的 runtime metadata 在一个数据库事务中发布。不再把 skill zip 写进 sandbox 临时目录，也不在启动 shell 中解压 skill。
 
 `/mnt/skills` 的约定视图：
 
@@ -63,9 +64,14 @@ flowchart TD
   K --> M["Patch work metadata with managed_agent_skills_mount"]
   LA --> M
   M --> N["Create sandbox with precomputed network and /mnt/skills volume mount"]
-  N --> O["Write environment-manager stdin"]
+  N --> NA["Start rclone-filestore and wait ready"]
+  NA --> NB["Delete token config, retry up to 3 times"]
+  NB --> NC["Mark running and heartbeat"]
+  NC --> ND["Create local Code Session"]
+  ND --> O["Write environment-manager stdin"]
   O --> P["Start environment-manager"]
-  P --> Q["Symlink Claude skill dirs to /workspace/skills"]
+  P --> PA["Atomically publish Session and Work runtime metadata"]
+  PA --> Q["Symlink Claude skill dirs to /workspace/skills"]
   Q --> R["environment-manager extracts /mnt/skills/*.zip to /workspace/skills"]
 ```
 
@@ -108,7 +114,7 @@ worker complete/fail 状态推进必须校验当前 worker 仍持有 job lease�
 
 runtime resolver 返回的是 skill 元数据和懒加载 archive loader。`BuildMountManifest` 只能读取元数据，不允许触发 archive 下载；`PrepareSkillMount` 命中已有 `.ready` volume 时也必须直接返回，保持零对象存储 archive IO。只有 volume miss 写入阶段才调用 `RuntimeSkill.LoadArchive`，并再次校验 archive 大小、checksum、解压总大小和目录结构。写入阶段按 manifest 顺序逐个 load/write archive，避免多个大 zip 同时驻留在内存中。
 
-`NewRunnerWithConfig` 会创建 runtime resolver。built-in 与 custom skill 的元数据都来自 DB；两者的 archive 都需要对象存储。如果 managed agent session snapshot 包含任意 skill，而 runner 未配置 object store，runner 必须在 volume miss 的 archive load 阶段显式失败并停止该 work，不能继续创建缺失 `/mnt/skills` 的 sandbox。没有 skills 的 session 仍可通过旧 runner 构造入口正常启动。
+启动组合根创建 runtime resolver，并通过 `RunnerDependencies` 把它作为 Runner 的必需依赖注入；Runner 不再自行用配置和 object store 组装 resolver，也不存在缺少 resolver 的半初始化构造入口。built-in 与 custom skill 的元数据都来自 DB；两者的 archive 都需要对象存储。如果 managed agent session snapshot 包含任意 skill，而 resolver 未配置 object store，runner 必须在 volume miss 的 archive load 阶段显式失败并停止该 work，不能继续创建缺失 `/mnt/skills` 的 sandbox。没有 skills 的 session 不会读取 archive，因此仍可使用未绑定 object store 的 resolver。
 
 `RuntimeSkill.LoadArchive` 返回的字节归调用方只读使用；当前 runner/E2B 写入路径不会修改返回值，因此不再额外做 defensive copy。若以后新增会修改 archive bytes 的调用方，必须在该调用方本地复制，或把 loader contract 升级为显式独占所有权。
 
@@ -123,6 +129,8 @@ E2B volume 当前通过 `ListVolumes` 做 name 到 id 的映射，create 失败�
 上传后的 custom skill zip 已经存入对象存储，agent/session snapshot 已经持久化 skill 引用；运行时只需要解析这些引用并生成 sandbox mount metadata。异步 prewarm 复用现有 `jobs` 表作为 outbox，不改变 agent、deployment、session 或 skill 的公开数据模型。
 
 ## Environment Manager 契约
+
+Runner 只允许可解析且规范化后非空的 `github_repository.mount_path` 成为 Environment Manager 的 `environment.cwd`；同一个命名 DTO 也为 Environment Manager source 提供规范化后的 repository URL 和 mount path，避免 clone 目标与 cwd 分叉。`file`、`memory_store`、未知 resource 类型以及畸形或空的 repository payload 都不参与工作目录选择；没有合法候选时回退到 `/home/user`。存在多个 repository 时选择最早附加到 Session 的活动 repository，按 `created_at`、内部递增 `id` 依次判定，不能依赖资源列表当前的返回顺序。后续若增加显式 workdir resource，必须在同一选择器中定义高于 repository 的明确优先级。
 
 `environment-manager` 需要在 Claude Code executor 启动前处理 `/mnt/skills`：
 

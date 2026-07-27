@@ -406,7 +406,7 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if len(provider.commands) != 3 || len(provider.launches) != 1 {
 			t.Fatalf("success commands/launches = %d/%d, want provision, rclone setup/cleanup, and one manager launch", len(provider.commands), len(provider.launches))
 		}
-		if provider.commands[0].request.Command != "/usr/local/bin/environment-manager provision-packages --protocol v1 --stdin" || !strings.Contains(provider.launches[0].command, "task-run") {
+		if provider.commands[0].request.Command != "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin" || !strings.Contains(provider.launches[0].command, "task-run") {
 			t.Fatalf("sandbox provision command/manager command = %q/%q", provider.commands[0].request.Command, provider.launches[0].command)
 		}
 		if !reflect.DeepEqual(provider.operations, []string{
@@ -1343,7 +1343,7 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 	p.commands = append(p.commands, recordedSandboxCommand{sandboxID: sandboxID, request: request})
 	operation := "command:other"
 	switch {
-	case request.Command == "/usr/local/bin/environment-manager provision-packages --protocol v1 --stdin":
+	case request.Command == "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin":
 		operation = "command:provision"
 	case strings.HasPrefix(request.Command, "chmod 0600 "):
 		operation = "rclone-config-chmod"

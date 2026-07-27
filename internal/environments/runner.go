@@ -468,7 +468,7 @@ func (r *Runner) provisionPackages(ctx context.Context, workExternalID, sandboxI
 		)
 	}()
 	result, runErr := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
-		Command: packageProvisionCommand,
+		Command: buildPackageProvisionCommand(r.cfg),
 		Stdin:   manifest,
 		Timeout: r.cfg.E2B.SandboxTimeout,
 	})

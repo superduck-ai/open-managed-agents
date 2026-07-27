@@ -6,13 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/samber/lo"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
-const packageProvisionCommand = "/usr/local/bin/environment-manager provision-packages --protocol v1 --stdin"
+const packageProvisionArgs = "provision-packages --protocol v1 --stdin"
+
+// buildPackageProvisionCommand 用配置的 manager path（与 task-run 相同的
+// firstNonEmpty 兜底与 shell 引用）构造 provision 命令，避免部署把
+// environment_runner.manager_path 指向别处时，无包 session 正常而有包 session
+// 在启动前全部失败。固定 flag 不含任何用户数据，spec 只经由 stdin 传入。
+func buildPackageProvisionCommand(cfg config.Config) string {
+	managerPath := firstNonEmpty(strings.TrimSpace(cfg.EnvironmentRunner.ManagerPath), defaultEnvironmentManagerPath)
+	return shellQuote(managerPath) + " " + packageProvisionArgs
+}
 
 type packageManifest struct {
 	Version  int                 `json:"version"`

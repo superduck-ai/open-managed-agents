@@ -7,8 +7,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
+
+func TestBuildPackageProvisionCommand(t *testing.T) {
+	t.Run("default manager path", func(t *testing.T) {
+		if got := buildPackageProvisionCommand(config.Config{}); got != "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin" {
+			t.Fatalf("buildPackageProvisionCommand() = %q, want the default quoted path", got)
+		}
+	})
+
+	t.Run("configured manager path is honored and shell quoted", func(t *testing.T) {
+		cfg := config.Config{}
+		cfg.EnvironmentRunner.ManagerPath = "/opt/env manager/bin/environment-manager"
+		if got := buildPackageProvisionCommand(cfg); got != "'/opt/env manager/bin/environment-manager' provision-packages --protocol v1 --stdin" {
+			t.Fatalf("buildPackageProvisionCommand() = %q, want the configured quoted path", got)
+		}
+	})
+}
 
 func TestNormalizePackages(t *testing.T) {
 	t.Run("manager options are rejected without echoing the spec", func(t *testing.T) {
@@ -154,7 +171,7 @@ func TestBuildPackageManifest(t *testing.T) {
 			`requests[socks] @ https://example.test/archive.whl ; python_version >= "3.11"`,
 			"package name; touch /tmp/oma-package-spec-was-shell",
 		}
-		config := mustPackageJSON(t, map[string]any{
+		configJSON := mustPackageJSON(t, map[string]any{
 			"type": "cloud",
 			"packages": map[string]any{
 				"type": "packages",
@@ -162,7 +179,7 @@ func TestBuildPackageManifest(t *testing.T) {
 				"pip":  specs[1:],
 			},
 		})
-		manifest, provision, err := buildPackageManifest(config)
+		manifest, provision, err := buildPackageManifest(configJSON)
 		if err != nil || !provision {
 			t.Fatalf("buildPackageManifest() provision = %t, error = %v", provision, err)
 		}
@@ -173,8 +190,9 @@ func TestBuildPackageManifest(t *testing.T) {
 		if decoded.Version != 1 || !reflect.DeepEqual(decoded.Packages.NPM, specs[:1]) || !reflect.DeepEqual(decoded.Packages.PIP, specs[1:]) {
 			t.Fatalf("manifest changed package specs: %#v", decoded)
 		}
-		if strings.Contains(packageProvisionCommand, specs[0]) || strings.Contains(packageProvisionCommand, specs[2]) {
-			t.Fatalf("fixed provision command contains a package spec: %q", packageProvisionCommand)
+		provisionCommand := buildPackageProvisionCommand(config.Config{})
+		if strings.Contains(provisionCommand, specs[0]) || strings.Contains(provisionCommand, specs[2]) {
+			t.Fatalf("fixed provision command contains a package spec: %q", provisionCommand)
 		}
 		if bytes.Contains(manifest, []byte(":null")) {
 			t.Fatalf("manifest contains null package manager arrays: %s", manifest)

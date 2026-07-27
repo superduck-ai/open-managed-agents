@@ -20,6 +20,25 @@ const (
 )
 
 var (
+	retireSessionFilesystemQuery = `
+		with retired as (
+			update filestore_filesystems fs
+			set deleted_at = coalesce(fs.deleted_at, :retired_at),
+				updated_at = :retired_at
+			from workspaces w, organizations o
+			where w.id = :workspace_id
+				and o.id = :organization_id
+				and w.organization_id = o.id
+				and fs.workspace_uuid = w.uuid
+				and fs.organization_uuid = o.uuid
+				and fs.session_uuid = :session_uuid
+				and fs.deleted_at is null
+			returning fs.id
+		)
+		select ` + filestoreFilesystemColumns() + `
+		from filestore_filesystems
+		where id = (select id from retired)
+	`
 	provisionFilestoreAdvisoryLockQuery = `
 		select pg_advisory_xact_lock(
 			hashtextextended(
@@ -521,28 +540,11 @@ func filestoreSessionTokenScopeArguments(workspaceID int64, sessionExternalID st
 // 文件元数据和 S3 对象都由 worker 分批处理，Session 删除事务不会随文件数量增长。
 func retireSessionFilesystemTx(ctx context.Context, tx *sqlx.Tx, session Session) error {
 	retiredAt := filestoreNow(session.UpdatedAt)
-	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, `
-		with retired as (
-			update filestore_filesystems fs
-			set deleted_at = coalesce(fs.deleted_at, :retired_at), updated_at = :retired_at
-			from workspaces w, organizations o
-			where w.id = :workspace_id
-				and o.id = :organization_id
-				and w.organization_id = o.id
-				and fs.workspace_uuid = w.uuid
-				and fs.organization_uuid = o.uuid
-				and fs.session_uuid = CAST(:session_uuid AS uuid)
-				and fs.deleted_at is null
-			returning fs.id
-		)
-		select `+filestoreFilesystemColumns()+`
-		from filestore_filesystems
-		where id = (select id from retired)
-	`, map[string]any{
+	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, retireSessionFilesystemQuery, map[string]any{
 		"workspace_id":    session.WorkspaceID,
 		"organization_id": session.OrganizationID,
-		"retired_at":      retiredAt,
 		"session_uuid":    session.UUID,
+		"retired_at":      retiredAt,
 	})
 	if errors.Is(err, ErrNotFound) {
 		// 兼容自动建档上线前已经存在、但尚未回填 filesystem 的历史会话。

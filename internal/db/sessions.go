@@ -2,13 +2,13 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
@@ -227,106 +227,81 @@ func (d *DB) GetSession(ctx context.Context, workspaceID int64, externalID strin
 }
 
 func (d *DB) UpdateSession(ctx context.Context, workspaceID int64, externalID string, next Session) (Session, error) {
-	return scanSession(d.Pool.QueryRow(ctx, `
-		update sessions
-		set agent_snapshot = $3::jsonb,
-			title = $4,
-			metadata = $5::jsonb,
-			updated_at = $6
-		where workspace_id = $1
-			and external_id = $2
-			and deleted_at is null
-			and archived_at is null
-			and status = 'idle'
-		returning `+sessionColumns()+`
-	`, workspaceID, externalID, jsonArg(next.AgentSnapshot), next.Title, jsonArg(next.Metadata), next.UpdatedAt))
+	return getSessionSQLX(ctx, d.sql, updateSessionQuery, map[string]any{
+		"workspace_id":        workspaceID,
+		"session_external_id": externalID,
+		"agent_snapshot":      jsonArg(next.AgentSnapshot),
+		"title":               next.Title,
+		"metadata":            jsonArg(next.Metadata),
+		"updated_at":          next.UpdatedAt,
+	})
 }
 
 func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceID int64, externalID string, patch json.RawMessage) (Session, error) {
-	return scanSession(d.Pool.QueryRow(ctx, `
-		update sessions
-		set metadata = coalesce(metadata, '{}'::jsonb) || $3::jsonb,
-			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning `+sessionColumns()+`
-	`, workspaceID, externalID, jsonArg(patch)))
+	return getSessionSQLX(ctx, d.sql, patchSessionMetadataQuery, map[string]any{
+		"workspace_id":        workspaceID,
+		"session_external_id": externalID,
+		"metadata_patch":      jsonArg(patch),
+	})
 }
 
 func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceID int64, externalID string, evaluations json.RawMessage) (Session, error) {
-	return scanSession(d.Pool.QueryRow(ctx, `
-		update sessions
-		set outcome_evaluations = $3::jsonb,
-			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning `+sessionColumns()+`
-	`, workspaceID, externalID, jsonArg(evaluations)))
+	return getSessionSQLX(ctx, d.sql, setSessionOutcomeEvaluationsQuery, map[string]any{
+		"workspace_id":        workspaceID,
+		"session_external_id": externalID,
+		"outcome_evaluations": jsonArg(evaluations),
+	})
 }
 
 func (d *DB) SetSessionStatus(ctx context.Context, workspaceID int64, externalID, status string) error {
-	tag, err := d.Pool.Exec(ctx, `
-		update sessions
-		set status = $3,
-			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID, status)
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, setSessionStatusQuery, map[string]any{
+		"workspace_id":        workspaceID,
+		"session_external_id": externalID,
+		"status":              status,
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (d *DB) SetSessionThreadStatus(ctx context.Context, workspaceID int64, sessionExternalID, threadExternalID, status string) error {
-	tag, err := d.Pool.Exec(ctx, `
-		update session_threads
-		set status = $4,
-			updated_at = now()
-		where workspace_id = $1 and session_external_id = $2 and external_id = $3 and deleted_at is null
-	`, workspaceID, sessionExternalID, threadExternalID, status)
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, setSessionThreadStatusQuery, map[string]any{
+		"workspace_id":        workspaceID,
+		"session_external_id": sessionExternalID,
+		"thread_external_id":  threadExternalID,
+		"status":              status,
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThread) (SessionThread, error) {
-	inserted, err := scanSessionThread(d.Pool.QueryRow(ctx, `
-		insert into session_threads (
-			uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
-			parent_thread_id, parent_thread_external_id, agent_snapshot, status, usage, stats,
-			created_at, updated_at
-		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12::jsonb, $13, $13)
-		on conflict (workspace_id, external_id) do nothing
-		returning `+sessionThreadColumns()+`
-	`, thread.UUID, thread.ExternalID, thread.OrganizationID, thread.WorkspaceID, thread.SessionID,
-		thread.SessionExternalID, thread.ParentThreadID, thread.ParentThreadExternalID, jsonArg(thread.AgentSnapshot),
-		thread.Status, jsonArg(thread.Usage), jsonArg(thread.Stats), thread.CreatedAt))
+	inserted, err := insertSessionThreadWithQuerySQLX(
+		ctx,
+		d.sql,
+		createSessionThreadIfAbsentQuery,
+		createSessionThreadArguments(thread),
+	)
 	if err == nil {
 		return inserted, nil
 	}
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return SessionThread{}, err
 	}
 	return d.GetSessionThread(ctx, thread.WorkspaceID, thread.SessionExternalID, thread.ExternalID)
 }
 
 func (d *DB) ArchiveSession(ctx context.Context, workspaceID int64, externalID string) (Session, error) {
-	return scanSession(d.Pool.QueryRow(ctx, `
-		update sessions
-		set archived_at = coalesce(archived_at, now()),
-			updated_at = now()
-		where workspace_id = $1
-			and external_id = $2
-			and deleted_at is null
-			and status not in ('running', 'rescheduling')
-		returning `+sessionColumns()+`
-	`, workspaceID, externalID))
+	return getSessionSQLX(ctx, d.sql, archiveSessionQuery, sessionLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID string) (Session, error) {
@@ -336,16 +311,8 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 	}
 	defer tx.Rollback()
 
-	session, err := getSessionSQLX(ctx, tx, `
-		update sessions
-		set deleted_at = coalesce(deleted_at, now()),
-			updated_at = now()
-		where workspace_id = :workspace_id
-			and external_id = :session_external_id
-			and deleted_at is null
-			and status not in ('running', 'rescheduling')
-		returning `+sessionSQLXColumns+`
-	`, sessionLookupArguments(workspaceID, externalID))
+	arguments := sessionLookupArguments(workspaceID, externalID)
+	session, err := getSessionSQLX(ctx, tx, deleteSessionQuery, arguments)
 	if err != nil {
 		return Session{}, err
 	}
@@ -376,45 +343,17 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 	if err := retireSessionFilesystemTx(ctx, tx, session); err != nil {
 		return Session{}, err
 	}
-	if _, err := namedExecContext(ctx, tx, `
-		update session_threads set deleted_at = coalesce(deleted_at, now()), updated_at = now()
-		where workspace_id = :workspace_id
-			and session_external_id = :session_external_id
-			and deleted_at is null
-	`, sessionLookupArguments(workspaceID, externalID)); err != nil {
+	if _, err := namedExecContext(ctx, tx, deleteSessionThreadsQuery, arguments); err != nil {
 		return Session{}, err
 	}
-	if _, err := namedExecContext(ctx, tx, `
-		update session_resources set deleted_at = coalesce(deleted_at, now()), updated_at = now()
-		where workspace_id = :workspace_id
-			and session_external_id = :session_external_id
-			and deleted_at is null
-	`, sessionLookupArguments(workspaceID, externalID)); err != nil {
+	if _, err := namedExecContext(ctx, tx, deleteSessionResourcesQuery, arguments); err != nil {
 		return Session{}, err
 	}
-	if _, err := namedExecContext(ctx, tx, `
-		update session_events set deleted_at = coalesce(deleted_at, now())
-		where workspace_id = :workspace_id
-			and session_external_id = :session_external_id
-			and deleted_at is null
-	`, sessionLookupArguments(workspaceID, externalID)); err != nil {
+	if _, err := namedExecContext(ctx, tx, deleteSessionEventsQuery, arguments); err != nil {
 		return Session{}, err
 	}
-	if _, err := namedExecContext(ctx, tx, `
-		update environment_work
-		set state = case when state in ('stopped') then state else 'stopping' end,
-			stop_requested_at = coalesce(stop_requested_at, now()),
-			updated_at = now()
-		where workspace_id = :workspace_id
-			and environment_external_id = :environment_external_id
-			and data->>'id' = :session_external_id
-			and deleted_at is null
-			and state not in ('stopped')
-	`, map[string]any{
-		"workspace_id":            session.WorkspaceID,
-		"environment_external_id": session.EnvironmentExternalID,
-		"session_external_id":     session.ExternalID,
-	}); err != nil {
+	arguments["environment_external_id"] = session.EnvironmentExternalID
+	if _, err := namedExecContext(ctx, tx, stopDeletedSessionEnvironmentWorkQuery, arguments); err != nil {
 		return Session{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -436,81 +375,72 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 		comparison = ">"
 	}
 	query := `
-		select ` + sessionColumns() + `
+		select ` + sessionSQLXColumns + `
 		from sessions s
-		where s.workspace_id = $1 and s.deleted_at is null
+		where s.workspace_id = :workspace_id and s.deleted_at is null
 	`
-	args := []any{params.WorkspaceID}
-	nextArg := 2
+	arguments := map[string]any{
+		"workspace_id": params.WorkspaceID,
+		"limit":        params.Limit + 1,
+	}
 	if !params.IncludeArchived {
 		query += " and s.archived_at is null"
 	}
 	if params.AgentExternalID != "" {
-		query += fmt.Sprintf(" and s.agent_external_id = $%d", nextArg)
-		args = append(args, params.AgentExternalID)
-		nextArg++
+		query += " and s.agent_external_id = :agent_external_id"
+		arguments["agent_external_id"] = params.AgentExternalID
 	}
 	if params.AgentVersion != nil {
-		query += fmt.Sprintf(" and s.agent_version = $%d", nextArg)
-		args = append(args, *params.AgentVersion)
-		nextArg++
+		query += " and s.agent_version = :agent_version"
+		arguments["agent_version"] = *params.AgentVersion
 	}
 	if params.DeploymentID != "" {
-		query += fmt.Sprintf(" and s.deployment_id = $%d", nextArg)
-		args = append(args, params.DeploymentID)
-		nextArg++
+		query += " and s.deployment_id = :deployment_id"
+		arguments["deployment_id"] = params.DeploymentID
 	}
 	if params.MemoryStoreID != "" {
-		query += fmt.Sprintf(` and exists (
+		query += ` and exists (
 			select 1 from session_resources sr
 			where sr.workspace_id = s.workspace_id
 				and sr.session_external_id = s.external_id
 				and sr.deleted_at is null
 				and sr.resource_type = 'memory_store'
-				and (sr.payload->>'memory_store_id' = $%d or sr.payload->>'id' = $%d)
-		)`, nextArg, nextArg)
-		args = append(args, params.MemoryStoreID)
-		nextArg++
+				and (
+					sr.payload->>'memory_store_id' = :memory_store_id
+					or sr.payload->>'id' = :memory_store_id
+				)
+		)`
+		arguments["memory_store_id"] = params.MemoryStoreID
 	}
 	if len(params.Statuses) > 0 {
-		query += fmt.Sprintf(" and s.status = any($%d::text[])", nextArg)
-		args = append(args, params.Statuses)
-		nextArg++
+		query += " and s.status = any(CAST(:statuses AS text[]))"
+		arguments["statuses"] = params.Statuses
 	}
 	if params.CreatedAtGT != nil {
-		query += fmt.Sprintf(" and s.created_at > $%d", nextArg)
-		args = append(args, *params.CreatedAtGT)
-		nextArg++
+		query += " and s.created_at > :created_at_gt"
+		arguments["created_at_gt"] = *params.CreatedAtGT
 	}
 	if params.CreatedAtGTE != nil {
-		query += fmt.Sprintf(" and s.created_at >= $%d", nextArg)
-		args = append(args, *params.CreatedAtGTE)
-		nextArg++
+		query += " and s.created_at >= :created_at_gte"
+		arguments["created_at_gte"] = *params.CreatedAtGTE
 	}
 	if params.CreatedAtLT != nil {
-		query += fmt.Sprintf(" and s.created_at < $%d", nextArg)
-		args = append(args, *params.CreatedAtLT)
-		nextArg++
+		query += " and s.created_at < :created_at_lt"
+		arguments["created_at_lt"] = *params.CreatedAtLT
 	}
 	if params.CreatedAtLTE != nil {
-		query += fmt.Sprintf(" and s.created_at <= $%d", nextArg)
-		args = append(args, *params.CreatedAtLTE)
-		nextArg++
+		query += " and s.created_at <= :created_at_lte"
+		arguments["created_at_lte"] = *params.CreatedAtLTE
 	}
 	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (s.created_at %s $%d or (s.created_at = $%d and s.id %s $%d))", comparison, nextArg, nextArg, comparison, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
+		query += " and (s.created_at " + comparison + ` :cursor_created_at
+			or (s.created_at = :cursor_created_at and s.id ` + comparison + ` :cursor_id))`
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
 	}
-	query += fmt.Sprintf(" order by s.created_at %s, s.id %s limit $%d", order, order, nextArg)
-	args = append(args, params.Limit+1)
+	query += " order by s.created_at " + order + ", s.id " + order + " limit :limit"
 
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	sessions, err := scanSessionRows(rows)
+	sessions, err := listSessionsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -522,21 +452,13 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 }
 
 func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceID int64, sessionExternalID string) (SessionThread, error) {
-	return scanSessionThread(d.Pool.QueryRow(ctx, `
-		select `+sessionThreadColumns()+`
-		from session_threads
-		where workspace_id = $1 and session_external_id = $2 and parent_thread_id is null and deleted_at is null
-		order by created_at asc, id asc
-		limit 1
-	`, workspaceID, sessionExternalID))
+	return getSessionThreadSQLX(ctx, d.sql, primarySessionThreadQuery, sessionLookupArguments(workspaceID, sessionExternalID))
 }
 
 func (d *DB) GetSessionThread(ctx context.Context, workspaceID int64, sessionExternalID, threadExternalID string) (SessionThread, error) {
-	return scanSessionThread(d.Pool.QueryRow(ctx, `
-		select `+sessionThreadColumns()+`
-		from session_threads
-		where workspace_id = $1 and session_external_id = $2 and external_id = $3 and deleted_at is null
-	`, workspaceID, sessionExternalID, threadExternalID))
+	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+	arguments["thread_external_id"] = threadExternalID
+	return getSessionThreadSQLX(ctx, d.sql, sessionThreadByExternalIDQuery, arguments)
 }
 
 func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThreadsPageParams) ([]SessionThread, bool, error) {
@@ -544,25 +466,22 @@ func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThrea
 		params.Limit = 20
 	}
 	query := `
-		select ` + sessionThreadColumns() + `
+		select ` + sessionThreadSQLXColumns + `
 		from session_threads
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
 	`
-	args := []any{params.WorkspaceID, params.SessionExternalID}
-	nextArg := 3
+	arguments := sessionLookupArguments(params.WorkspaceID, params.SessionExternalID)
+	arguments["limit"] = params.Limit + 1
 	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
+		query += ` and (created_at < :cursor_created_at
+			or (created_at = :cursor_created_at and id < :cursor_id))`
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
 	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	threads, err := scanSessionThreadRows(rows)
+	query += " order by created_at desc, id desc limit :limit"
+	threads, err := listSessionThreadsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -574,32 +493,31 @@ func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThrea
 }
 
 func (d *DB) ListSessionThreads(ctx context.Context, workspaceID int64, sessionExternalID string) ([]SessionThread, error) {
-	rows, err := d.Pool.Query(ctx, `
-		select `+sessionThreadColumns()+`
+	return listSessionThreadsSQLX(ctx, d.sql, `
+		select `+sessionThreadSQLXColumns+`
 		from session_threads
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
 		order by created_at asc, id asc
-	`, workspaceID, sessionExternalID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanSessionThreadRows(rows)
+	`, sessionLookupArguments(workspaceID, sessionExternalID))
 }
 
 func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceID int64, sessionExternalID, threadExternalID string) (SessionThread, error) {
-	return scanSessionThread(d.Pool.QueryRow(ctx, `
+	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+	arguments["thread_external_id"] = threadExternalID
+	return getSessionThreadSQLX(ctx, d.sql, `
 		update session_threads
 		set archived_at = coalesce(archived_at, now()),
 			status = 'terminated',
 			updated_at = now()
-		where workspace_id = $1
-			and session_external_id = $2
-			and external_id = $3
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and external_id = :thread_external_id
 			and deleted_at is null
 			and status not in ('running', 'rescheduling')
-		returning `+sessionThreadColumns()+`
-	`, workspaceID, sessionExternalID, threadExternalID))
+		returning `+sessionThreadSQLXColumns+`
+	`, arguments)
 }
 
 func (d *DB) CreateSessionResource(
@@ -670,11 +588,9 @@ func (d *DB) CreateSessionResource(
 }
 
 func (d *DB) GetSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string) (SessionResource, error) {
-	return scanSessionResource(d.Pool.QueryRow(ctx, `
-		select `+sessionResourceColumns()+`
-		from session_resources
-		where workspace_id = $1 and session_external_id = $2 and external_id = $3 and deleted_at is null
-	`, workspaceID, sessionExternalID, resourceExternalID))
+	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+	arguments["resource_external_id"] = resourceExternalID
+	return getSessionResourceSQLX(ctx, d.sql, getSessionResourceQuery, arguments)
 }
 
 func (d *DB) ListSessionResources(ctx context.Context, workspaceID int64, sessionExternalID string) ([]SessionResource, error) {
@@ -687,14 +603,11 @@ func (d *DB) ListSessionResources(ctx context.Context, workspaceID int64, sessio
 }
 
 func (d *DB) UpdateSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string, payload, secretPayload json.RawMessage) (SessionResource, error) {
-	return scanSessionResource(d.Pool.QueryRow(ctx, `
-		update session_resources
-		set payload = $4::jsonb,
-			secret_payload = $5::jsonb,
-			updated_at = now()
-		where workspace_id = $1 and session_external_id = $2 and external_id = $3 and deleted_at is null
-		returning `+sessionResourceColumns()+`
-	`, workspaceID, sessionExternalID, resourceExternalID, jsonArg(payload), jsonArg(secretPayload)))
+	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+	arguments["resource_external_id"] = resourceExternalID
+	arguments["payload"] = jsonArg(payload)
+	arguments["secret_payload"] = jsonArg(secretPayload)
+	return getSessionResourceSQLX(ctx, d.sql, updateSessionResourceQuery, arguments)
 }
 
 func (d *DB) DeleteSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string) error {
@@ -794,14 +707,16 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceID int64, sessionExte
 	if eventExternalID == "" {
 		return SessionEvent{}, ErrNotFound
 	}
-	return scanSessionEvent(d.Pool.QueryRow(ctx, `
-		select `+sessionEventColumns()+`
+	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+	arguments["event_external_id"] = eventExternalID
+	return getSessionEventSQLX(ctx, d.sql, `
+		select `+sessionEventSQLXColumns+`
 		from session_events
-		where workspace_id = $1
-			and session_external_id = $2
-			and external_id = $3
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and external_id = :event_external_id
 			and deleted_at is null
-	`, workspaceID, sessionExternalID, eventExternalID))
+	`, arguments)
 }
 
 func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {
@@ -817,63 +732,57 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 		comparison = "<"
 	}
 	query := `
-		select ` + sessionEventColumns() + `
+		select ` + sessionEventSQLXColumns + `
 		from session_events
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
 	`
-	args := []any{params.WorkspaceID, params.SessionExternalID}
-	nextArg := 3
+	arguments := sessionLookupArguments(params.WorkspaceID, params.SessionExternalID)
+	arguments["limit"] = params.Limit + 1
 	if params.ThreadExternalID != "" {
-		query += fmt.Sprintf(" and thread_external_id = $%d", nextArg)
-		args = append(args, params.ThreadExternalID)
-		nextArg++
+		query += " and thread_external_id = :thread_external_id"
+		arguments["thread_external_id"] = params.ThreadExternalID
 	} else if params.PrimaryOnly {
 		query += ` and thread_external_id = (
 			select external_id
 			from session_threads
-			where workspace_id = $1 and session_external_id = $2 and parent_thread_id is null and deleted_at is null
+			where workspace_id = :workspace_id
+				and session_external_id = :session_external_id
+				and parent_thread_id is null
+				and deleted_at is null
 			order by created_at asc, id asc
 			limit 1
 		)`
 	}
 	if len(params.Types) > 0 {
-		query += fmt.Sprintf(" and event_type = any($%d::text[])", nextArg)
-		args = append(args, params.Types)
-		nextArg++
+		query += " and event_type = any(CAST(:event_types AS text[]))"
+		arguments["event_types"] = params.Types
 	}
 	if params.CreatedAtGT != nil {
-		query += fmt.Sprintf(" and created_at > $%d", nextArg)
-		args = append(args, *params.CreatedAtGT)
-		nextArg++
+		query += " and created_at > :created_at_gt"
+		arguments["created_at_gt"] = *params.CreatedAtGT
 	}
 	if params.CreatedAtGTE != nil {
-		query += fmt.Sprintf(" and created_at >= $%d", nextArg)
-		args = append(args, *params.CreatedAtGTE)
-		nextArg++
+		query += " and created_at >= :created_at_gte"
+		arguments["created_at_gte"] = *params.CreatedAtGTE
 	}
 	if params.CreatedAtLT != nil {
-		query += fmt.Sprintf(" and created_at < $%d", nextArg)
-		args = append(args, *params.CreatedAtLT)
-		nextArg++
+		query += " and created_at < :created_at_lt"
+		arguments["created_at_lt"] = *params.CreatedAtLT
 	}
 	if params.CreatedAtLTE != nil {
-		query += fmt.Sprintf(" and created_at <= $%d", nextArg)
-		args = append(args, *params.CreatedAtLTE)
-		nextArg++
+		query += " and created_at <= :created_at_lte"
+		arguments["created_at_lte"] = *params.CreatedAtLTE
 	}
 	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at %s $%d or (created_at = $%d and id %s $%d))", comparison, nextArg, nextArg, comparison, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
+		query += " and (created_at " + comparison + ` :cursor_created_at
+			or (created_at = :cursor_created_at and id ` + comparison + ` :cursor_id))`
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
 	}
-	query += fmt.Sprintf(" order by created_at %s, id %s limit $%d", order, order, nextArg)
-	args = append(args, params.Limit+1)
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	events, err := scanSessionEventRows(rows)
+	query += " order by created_at " + order + ", id " + order + " limit :limit"
+	events, err := listSessionEventsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -888,7 +797,8 @@ func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceID int64, sess
 	if len(toolUseIDs) == 0 {
 		return map[string]struct{}{}, nil
 	}
-	rows, err := d.Pool.Query(ctx, `
+	var toolUseIDRows []string
+	err := namedSelectContext(ctx, d.sql, &toolUseIDRows, `
 		select distinct coalesce(
 			e.payload->>'tool_use_id',
 			e.payload->>'mcp_tool_use_id',
@@ -901,176 +811,32 @@ func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceID int64, sess
 			and t.session_external_id = e.session_external_id
 			and t.external_id = e.thread_external_id
 			and t.deleted_at is null
-		where e.workspace_id = $1
-			and e.session_external_id = $2
+		where e.workspace_id = :workspace_id
+			and e.session_external_id = :session_external_id
 			and e.deleted_at is null
 			and t.parent_thread_id is not null
-			and e.event_type = any($3::text[])
+			and e.event_type = any(CAST(:event_types AS text[]))
 			and coalesce(
 				e.payload->>'tool_use_id',
 				e.payload->>'mcp_tool_use_id',
 				e.payload->>'custom_tool_use_id',
 				e.payload->>'id'
-			) = any($4::text[])
-	`, workspaceID, sessionExternalID, []string{"agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use"}, toolUseIDs)
+			) = any(CAST(:tool_use_ids AS text[]))
+	`, map[string]any{
+		"workspace_id":        workspaceID,
+		"session_external_id": sessionExternalID,
+		"event_types":         []string{"agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use"},
+		"tool_use_ids":        toolUseIDs,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	found := make(map[string]struct{})
-	for rows.Next() {
-		var toolUseID string
-		if err := rows.Scan(&toolUseID); err != nil {
-			return nil, err
-		}
+	for _, toolUseID := range toolUseIDRows {
 		toolUseID = strings.TrimSpace(toolUseID)
 		if toolUseID != "" {
 			found[toolUseID] = struct{}{}
 		}
 	}
-	return found, rows.Err()
-}
-
-func sessionColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, created_by_api_key_id,
-		environment_id, environment_external_id, agent_id, agent_external_id, agent_version,
-		agent_snapshot, deployment_id, title, metadata, vault_ids, status, usage, stats,
-		outcome_evaluations, created_at, updated_at, archived_at, deleted_at`
-}
-
-func sessionThreadColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, session_id, session_external_id,
-		parent_thread_id, parent_thread_external_id, agent_snapshot, status, usage, stats,
-		created_at, updated_at, archived_at, deleted_at`
-}
-
-func sessionResourceColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, session_id, session_external_id,
-		resource_type, payload, secret_payload, created_at, updated_at, deleted_at`
-}
-
-func sessionEventColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, session_id, session_external_id,
-		thread_id, thread_external_id, event_type, payload, processed_at, created_at, deleted_at`
-}
-
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
-type rowsScanner interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}
-
-func scanSession(row rowScanner) (Session, error) {
-	var session Session
-	var agentSnapshot, metadata, vaultIDs, usage, stats, outcomes []byte
-	err := row.Scan(&session.ID, &session.UUID, &session.ExternalID, &session.OrganizationID, &session.WorkspaceID,
-		&session.CreatedByAPIKeyID, &session.EnvironmentID, &session.EnvironmentExternalID, &session.AgentID,
-		&session.AgentExternalID, &session.AgentVersion, &agentSnapshot, &session.DeploymentID, &session.Title,
-		&metadata, &vaultIDs, &session.Status, &usage, &stats, &outcomes, &session.CreatedAt, &session.UpdatedAt,
-		&session.ArchivedAt, &session.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Session{}, ErrNotFound
-	}
-	if err != nil {
-		return Session{}, err
-	}
-	session.AgentSnapshot = copyRaw(agentSnapshot)
-	session.Metadata = copyRaw(metadata)
-	session.VaultIDs = copyRaw(vaultIDs)
-	session.Usage = copyRaw(usage)
-	session.Stats = copyRaw(stats)
-	session.OutcomeEvaluations = copyRaw(outcomes)
-	return session, nil
-}
-
-func scanSessionRows(rows rowsScanner) ([]Session, error) {
-	var sessions []Session
-	for rows.Next() {
-		session, err := scanSession(rows)
-		if err != nil {
-			return nil, err
-		}
-		sessions = append(sessions, session)
-	}
-	return sessions, rows.Err()
-}
-
-func scanSessionThread(row rowScanner) (SessionThread, error) {
-	var thread SessionThread
-	var agentSnapshot, usage, stats []byte
-	err := row.Scan(&thread.ID, &thread.UUID, &thread.ExternalID, &thread.OrganizationID, &thread.WorkspaceID,
-		&thread.SessionID, &thread.SessionExternalID, &thread.ParentThreadID, &thread.ParentThreadExternalID,
-		&agentSnapshot, &thread.Status, &usage, &stats, &thread.CreatedAt, &thread.UpdatedAt,
-		&thread.ArchivedAt, &thread.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SessionThread{}, ErrNotFound
-	}
-	if err != nil {
-		return SessionThread{}, err
-	}
-	thread.AgentSnapshot = copyRaw(agentSnapshot)
-	thread.Usage = copyRaw(usage)
-	thread.Stats = copyRaw(stats)
-	return thread, nil
-}
-
-func scanSessionThreadRows(rows rowsScanner) ([]SessionThread, error) {
-	var threads []SessionThread
-	for rows.Next() {
-		thread, err := scanSessionThread(rows)
-		if err != nil {
-			return nil, err
-		}
-		threads = append(threads, thread)
-	}
-	return threads, rows.Err()
-}
-
-func scanSessionResource(row rowScanner) (SessionResource, error) {
-	var resource SessionResource
-	var payload, secretPayload []byte
-	err := row.Scan(&resource.ID, &resource.UUID, &resource.ExternalID, &resource.OrganizationID, &resource.WorkspaceID,
-		&resource.SessionID, &resource.SessionExternalID, &resource.ResourceType, &payload, &secretPayload,
-		&resource.CreatedAt, &resource.UpdatedAt, &resource.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SessionResource{}, ErrNotFound
-	}
-	if err != nil {
-		return SessionResource{}, err
-	}
-	resource.Payload = copyRaw(payload)
-	resource.SecretPayload = copyRaw(secretPayload)
-	return resource, nil
-}
-
-func scanSessionEvent(row rowScanner) (SessionEvent, error) {
-	var event SessionEvent
-	var payload []byte
-	err := row.Scan(&event.ID, &event.UUID, &event.ExternalID, &event.OrganizationID, &event.WorkspaceID,
-		&event.SessionID, &event.SessionExternalID, &event.ThreadID, &event.ThreadExternalID,
-		&event.EventType, &payload, &event.ProcessedAt, &event.CreatedAt, &event.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SessionEvent{}, ErrNotFound
-	}
-	if err != nil {
-		return SessionEvent{}, err
-	}
-	event.Payload = copyRaw(payload)
-	return event, nil
-}
-
-func scanSessionEventRows(rows rowsScanner) ([]SessionEvent, error) {
-	var events []SessionEvent
-	for rows.Next() {
-		event, err := scanSessionEvent(rows)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, rows.Err()
+	return found, nil
 }

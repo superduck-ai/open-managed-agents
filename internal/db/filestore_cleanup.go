@@ -13,6 +13,31 @@ import (
 )
 
 var (
+	enqueueFilestoreFilesystemCleanupJobQuery = `
+		with inserted_job as (
+			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
+			select
+				concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+				w.id, :job_type, 'pending',
+				jsonb_build_object(
+					'workspace_uuid', CAST(w.uuid AS text),
+					'filesystem_uuid', CAST(fs.uuid AS text)
+				),
+				:run_after
+			from workspaces w
+			join filestore_filesystems fs
+				on fs.id = :filesystem_id and fs.workspace_uuid = w.uuid
+			where w.id = :workspace_id
+			returning *
+		)
+		select ` + filestoreFilesystemCleanupJobColumns("j", "w", "fs") + `
+		from inserted_job j
+		join workspaces w
+			on CAST(w.uuid AS text) = j.payload->>'workspace_uuid'
+		join filestore_filesystems fs
+			on CAST(fs.uuid AS text) = j.payload->>'filesystem_uuid'
+			and fs.workspace_uuid = w.uuid
+	`
 	leasedFilesystemCleanupJobQuery = `
 		select ` + filestoreFilesystemCleanupJobColumns("j", "w", "fs") + `
 		from jobs j
@@ -627,34 +652,10 @@ func enqueueFilestoreFilesystemCleanupJobTx(
 	runAfter time.Time,
 ) (FilestoreFilesystemCleanupJob, error) {
 	var job FilestoreFilesystemCleanupJob
-	err := namedGetContext(ctx, tx, &job, `
-		with inserted_job as (
-			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
-			select
-				concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
-				w.id, :job_type, 'pending',
-				jsonb_build_object(
-					'workspace_uuid', CAST(w.uuid AS text),
-					'filesystem_uuid', CAST(fs.uuid AS text)
-				),
-				:run_after
-			from workspaces w
-			join filestore_filesystems fs
-				on fs.id = :filesystem_id and fs.workspace_uuid = w.uuid
-			where w.id = :workspace_id
-			returning *
-		)
-		select `+filestoreFilesystemCleanupJobColumns("j", "w", "fs")+`
-		from inserted_job j
-		join workspaces w
-			on CAST(w.uuid AS text) = j.payload->>'workspace_uuid'
-		join filestore_filesystems fs
-			on CAST(fs.uuid AS text) = j.payload->>'filesystem_uuid'
-			and fs.workspace_uuid = w.uuid
-	`, map[string]any{
+	err := namedGetContext(ctx, tx, &job, enqueueFilestoreFilesystemCleanupJobQuery, map[string]any{
 		"workspace_id":  workspaceID,
-		"job_type":      filestoreFilesystemCleanupJobType,
 		"filesystem_id": filesystem.ID,
+		"job_type":      filestoreFilesystemCleanupJobType,
 		"run_after":     runAfter,
 	})
 	if errors.Is(err, sql.ErrNoRows) {

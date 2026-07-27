@@ -3,9 +3,6 @@ package db
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-
-	"github.com/jackc/pgx/v5"
 )
 
 func filestoreFilesystemSelectSQL() string {
@@ -20,21 +17,6 @@ func filestoreFilesystemColumns() string {
 		cast(code_session_uuid as text) as code_session_uuid,
 		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
 		created_at, updated_at, deleted_at`
-}
-
-func scanFilestoreFilesystemPGX(row filestorePGXScanner) (FilestoreFilesystem, error) {
-	var databaseRow filestoreFilesystemRow
-	err := row.Scan(&databaseRow.ID, &databaseRow.UUID, &databaseRow.ExternalID,
-		&databaseRow.OrganizationUUID, &databaseRow.WorkspaceUUID, &databaseRow.SessionUUID,
-		&databaseRow.CodeSessionUUID, &databaseRow.CreatedByAPIKeyUUID,
-		&databaseRow.CreatedAt, &databaseRow.UpdatedAt, &databaseRow.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return FilestoreFilesystem{}, ErrNotFound
-	}
-	if err != nil {
-		return FilestoreFilesystem{}, err
-	}
-	return databaseRow.filesystem(), nil
 }
 
 func filestoreEntrySelectSQL() string {
@@ -55,10 +37,6 @@ func filestoreEntryColumns() string {
 		cast(created_by_session_uuid as text) as created_by_session_uuid,
 		cast(created_by_code_session_uuid as text) as created_by_code_session_uuid,
 		created_at, updated_at, deleted_at`
-}
-
-type filestorePGXScanner interface {
-	Scan(...any) error
 }
 
 func virtualFilestoreRoot(filesystem FilestoreFilesystem) FilestoreEntry {

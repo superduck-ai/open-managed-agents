@@ -138,6 +138,39 @@ func getSessionThreadSQLX(
 	return row.thread(), nil
 }
 
+func getSessionEventSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (SessionEvent, error) {
+	var row sessionEventRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionEvent{}, ErrNotFound
+		}
+		return SessionEvent{}, err
+	}
+	return row.event(), nil
+}
+
+func listSessionEventsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]SessionEvent, error) {
+	var rows []sessionEventRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	events := make([]SessionEvent, len(rows))
+	for index := range rows {
+		events[index] = rows[index].event()
+	}
+	return events, nil
+}
+
 func insertSessionEventSQLX(
 	ctx context.Context,
 	database sqlxNamedQueryer,

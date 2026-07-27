@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 const (
@@ -54,6 +55,12 @@ type skillArchiveCache struct {
 	bytes    int
 	entries  map[string]*list.Element
 	order    *list.List
+}
+
+type skillArchivePathBackend struct {
+	db    filestoreDatabase
+	store storage.ObjectStore
+	cache *skillArchiveCache
 }
 
 func newSkillArchiveCache(maxBytes int) *skillArchiveCache {
@@ -103,11 +110,24 @@ func (c *skillArchiveCache) put(key string, archive *loadedSkillArchive) {
 	}
 }
 
-func isSkillNamespacePath(value string) bool {
+func (b *skillArchivePathBackend) namespaceRoot() string {
+	return skillNamespacePath
+}
+
+func (b *skillArchivePathBackend) containsPath(value string) bool {
 	return value == skillNamespacePath || strings.HasPrefix(value, skillNamespacePath+"/")
 }
 
-func (s *Service) listSkillDirectory(
+func (b *skillArchivePathBackend) matchesRead(operation readOperation, value string) bool {
+	if strings.HasPrefix(value, skillNamespacePath+"/") {
+		return true
+	}
+	// /skills 本身是持久化目录：只有目录列举需要切换到虚拟 archive 视图，
+	// metadata 和 file read 仍按普通 entry 语义处理。
+	return operation == readOperationListDirectory && value == skillNamespacePath
+}
+
+func (b *skillArchivePathBackend) listDirectory(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
@@ -115,7 +135,7 @@ func (s *Service) listSkillDirectory(
 	cursor directoryCursor,
 	limit int,
 ) (listDirectoryResponse, *apiError) {
-	archiveEntries, err := s.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceID, filesystem.ID)
+	archiveEntries, err := b.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceID, filesystem.ID)
 	if err != nil {
 		return listDirectoryResponse{}, mapDatabaseError("list skill archive entries", err)
 	}
@@ -135,7 +155,7 @@ func (s *Service) listSkillDirectory(
 			!strings.HasPrefix(request.Path, archiveEntry.Path+"/") {
 			continue
 		}
-		archive, apiErr := s.loadSkillArchive(ctx, archiveEntry)
+		archive, apiErr := b.loadSkillArchive(ctx, archiveEntry)
 		if apiErr != nil {
 			return listDirectoryResponse{}, apiErr
 		}
@@ -192,26 +212,26 @@ func (s *Service) listSkillDirectory(
 	return response, nil
 }
 
-func (s *Service) readSkillMetadata(
+func (b *skillArchivePathBackend) readMetadata(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
 ) (entryPayload, *apiError) {
-	archiveEntry, _, node, apiErr := s.resolveSkillNode(ctx, principal, filesystem, entryPath)
+	archiveEntry, _, node, apiErr := b.resolveSkillNode(ctx, principal, filesystem, entryPath)
 	if apiErr != nil {
 		return entryPayload{}, apiErr
 	}
 	return skillNodePayload(node, filesystem.ExternalID, []db.FilestoreEntry{archiveEntry}), nil
 }
 
-func (s *Service) readSkillFile(
+func (b *skillArchivePathBackend) readFile(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
 	request readFileRequest,
 ) (readFileResult, *apiError) {
-	_, _, node, apiErr := s.resolveSkillNode(ctx, principal, filesystem, request.Path)
+	_, _, node, apiErr := b.resolveSkillNode(ctx, principal, filesystem, request.Path)
 	if apiErr != nil {
 		return readFileResult{}, apiErr
 	}
@@ -249,13 +269,13 @@ func (s *Service) readSkillFile(
 	}, nil
 }
 
-func (s *Service) resolveSkillNode(
+func (b *skillArchivePathBackend) resolveSkillNode(
 	ctx context.Context,
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
 ) (db.FilestoreEntry, *loadedSkillArchive, skillArchiveNode, *apiError) {
-	archiveEntries, err := s.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceID, filesystem.ID)
+	archiveEntries, err := b.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceID, filesystem.ID)
 	if err != nil {
 		return db.FilestoreEntry{}, nil, skillArchiveNode{}, mapDatabaseError("list skill archive entries", err)
 	}
@@ -263,7 +283,7 @@ func (s *Service) resolveSkillNode(
 		if entryPath != archiveEntry.Path && !strings.HasPrefix(entryPath, archiveEntry.Path+"/") {
 			continue
 		}
-		archive, apiErr := s.loadSkillArchive(ctx, archiveEntry)
+		archive, apiErr := b.loadSkillArchive(ctx, archiveEntry)
 		if apiErr != nil {
 			return db.FilestoreEntry{}, nil, skillArchiveNode{}, apiErr
 		}
@@ -276,11 +296,11 @@ func (s *Service) resolveSkillNode(
 	return db.FilestoreEntry{}, nil, skillArchiveNode{}, notFound("resource does not exist")
 }
 
-func (s *Service) loadSkillArchive(
+func (b *skillArchivePathBackend) loadSkillArchive(
 	ctx context.Context,
 	archiveEntry db.FilestoreEntry,
 ) (*loadedSkillArchive, *apiError) {
-	if s.skillArchives == nil {
+	if b.cache == nil {
 		return nil, internalError("load skill archive", errors.New("skill archive cache is unavailable"))
 	}
 	bucket, objectKey, checksum, sizeBytes, err := skillArchiveObject(archiveEntry)
@@ -288,19 +308,19 @@ func (s *Service) loadSkillArchive(
 		return nil, internalError("load skill archive", err)
 	}
 	cacheKey := strings.Join([]string{bucket, objectKey, checksum, archiveEntry.Path}, "\x00")
-	if archive, ok := s.skillArchives.get(cacheKey); ok {
+	if archive, ok := b.cache.get(cacheKey); ok {
 		return archive, nil
 	}
-	if s.store == nil {
+	if b.store == nil {
 		return nil, internalError("load skill archive", errors.New("object store is unavailable"))
 	}
-	if bucket != s.store.Name() {
+	if bucket != b.store.Name() {
 		return nil, internalError("load skill archive", errors.New("skill archive bucket is unavailable"))
 	}
 	if sizeBytes > maxSkillArchiveBytes {
 		return nil, internalError("load skill archive", errors.New("skill archive size is invalid"))
 	}
-	object, err := s.store.Open(ctx, objectKey, nil)
+	object, err := b.store.Open(ctx, objectKey, nil)
 	if err != nil {
 		return nil, mapBlobstoreError("load skill archive", err)
 	}
@@ -320,7 +340,7 @@ func (s *Service) loadSkillArchive(
 	if err != nil {
 		return nil, internalError("validate skill archive", err)
 	}
-	s.skillArchives.put(cacheKey, archive)
+	b.cache.put(cacheKey, archive)
 	return archive, nil
 }
 

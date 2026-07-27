@@ -21,6 +21,8 @@
 
 Filestore 是现有单体中的独立资源切片。handler 负责 wire contract 和流式 HTTP，service 负责校验及业务编排，`internal/db` 负责事务和租户范围内的持久化。对象读写、错误分类和版本清理统一交给绑定单个 bucket 的 `internal/storage.ObjectStore`；生产环境由共享 `storage.Client` 复用 AWS SDK 连接，再按名称派生轻量对象存储。
 
+Service 在完成请求校验和 filesystem 租户鉴权后，通过 `pathRouter` 把 list、file read 和 metadata read 分发给持久化 backend 或只读虚拟 backend。普通 namespace 的读取由持久化 backend 访问数据库和对象存储，`/skills` 的 archive 索引、缓存与成员读取由独立 skill backend 处理。虚拟 backend 自己声明读取匹配范围，router 则统一拒绝对其整棵 namespace 的 mutation；普通写入仍由 Service 编排既有数据库事务和对象存储操作。这样新增只读虚拟 namespace 时只需注册新的 backend，不需要在每个 Filestore API 入口增加特例。
+
 Filestore 还拥有独立的 `filestore.Principal`。API 中间件完成专用 JWT 验证与数据库回查后，只把资源所需的租户、account、filesystem 和策略范围映射到该类型，并通过 Filestore 私有的 context key 交给 handler。全局 `auth.Principal` 不保存 `filesystem_id`、`readonly`、`org_taints` 或 CMEK 等 Filestore 专属状态；Filestore handler/service 也不依赖全局 Principal。
 
 ```mermaid
@@ -29,6 +31,13 @@ flowchart LR
     AUTH["API auth boundary"] --> P["filestore.Principal"]
     P --> H
     H --> S["Filestore service"]
+    S --> PR["pathRouter"]
+    PR --> PB["persistent read backend"]
+    PR --> SB["skill read backend"]
+    PB --> D
+    PB --> T
+    SB --> D
+    SB --> T
     S --> D["PostgreSQL namespace"]
     S --> T["default storage.ObjectStore"]
     SC["shared storage.Client"] --> T

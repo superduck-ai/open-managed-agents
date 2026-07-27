@@ -114,6 +114,8 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 	}
 
 	if opts.Prune {
+		// TODO: 将 prune 的 builtin archive 纳入 reference-aware catalog GC；
+		// 当前只软删除 catalog row，避免破坏活动 Session 借用的对象。
 		prunedVersions, err := database.SoftDeleteMissingBuiltinSkills(ctx, result.Skills, now)
 		if err != nil {
 			return BuiltinSeedResult{}, err

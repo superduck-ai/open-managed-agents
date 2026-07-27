@@ -70,6 +70,16 @@ func TestSkillArchiveNamespaceIsReadOnly(t *testing.T) {
 		run  func() *apiError
 	}{
 		{
+			name: "make directory",
+			run: func() *apiError {
+				_, apiErr := service.MakeDirectory(context.Background(), principal, makeDirectoryRequest{
+					FilesystemID: "fs_test",
+					Path:         "/skills/demo/new",
+				})
+				return apiErr
+			},
+		},
+		{
 			name: "create file",
 			run: func() *apiError {
 				_, apiErr := service.CreateFile(context.Background(), principal, createFileParams{
@@ -91,12 +101,76 @@ func TestSkillArchiveNamespaceIsReadOnly(t *testing.T) {
 			},
 		},
 		{
-			name: "move into skills",
+			name: "remove file",
+			run: func() *apiError {
+				return service.RemoveFile(context.Background(), principal, pathRequest{
+					FilesystemID: "fs_test",
+					Path:         "/skills/demo/a.txt",
+				})
+			},
+		},
+		{
+			name: "copy from skills",
+			run: func() *apiError {
+				_, apiErr := service.CopyFile(context.Background(), principal, copyMoveFileRequest{
+					FilesystemID: "fs_test",
+					Source:       "/skills/demo/a.txt",
+					Destination:  "/outputs/a.txt",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "copy into skills",
+			run: func() *apiError {
+				_, apiErr := service.CopyFile(context.Background(), principal, copyMoveFileRequest{
+					FilesystemID: "fs_test",
+					Source:       "/outputs/a.txt",
+					Destination:  "/skills/demo/a.txt",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "move file from skills",
+			run: func() *apiError {
+				_, apiErr := service.MoveFile(context.Background(), principal, copyMoveFileRequest{
+					FilesystemID: "fs_test",
+					Source:       "/skills/demo/a.txt",
+					Destination:  "/outputs/a.txt",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "move file into skills",
 			run: func() *apiError {
 				_, apiErr := service.MoveFile(context.Background(), principal, copyMoveFileRequest{
 					FilesystemID: "fs_test",
 					Source:       "/outputs/a.txt",
 					Destination:  "/skills/demo/a.txt",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "move directory from skills",
+			run: func() *apiError {
+				_, apiErr := service.MoveDirectory(context.Background(), principal, moveDirectoryRequest{
+					FilesystemID: "fs_test",
+					Source:       "/skills/demo",
+					Destination:  "/outputs/demo",
+				})
+				return apiErr
+			},
+		},
+		{
+			name: "move directory into skills",
+			run: func() *apiError {
+				_, apiErr := service.MoveDirectory(context.Background(), principal, moveDirectoryRequest{
+					FilesystemID: "fs_test",
+					Source:       "/outputs/demo",
+					Destination:  "/skills/demo",
 				})
 				return apiErr
 			},
@@ -135,6 +209,17 @@ func TestSkillArchiveViewListsMetadataAndReadsRanges(t *testing.T) {
 	}
 	if *openCount != 0 {
 		t.Fatalf("top-level ListDirectory(/skills) object opens = %d, want 0", *openCount)
+	}
+
+	rootMetadata, apiErr := service.ReadMetadata(ctx, principal, pathRequest{
+		FilesystemID: "fs_test",
+		Path:         "/skills",
+	})
+	if apiErr != nil {
+		t.Fatalf("ReadMetadata(/skills) error = %v", apiErr)
+	}
+	if rootMetadata.Directory == nil || rootMetadata.Directory.Path != "/skills" {
+		t.Fatalf("ReadMetadata(/skills) = %#v", rootMetadata)
 	}
 
 	nested, apiErr := service.ListDirectory(ctx, principal, listDirectoryRequest{
@@ -191,6 +276,14 @@ func skillArchiveTestService(
 	openCount := 0
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
+		getEntryFn: func(_ context.Context, workspaceID, filesystemID int64, entryPath string) (db.FilestoreEntry, error) {
+			if workspaceID != serviceTestPrincipal().WorkspaceID ||
+				filesystemID != filesystem.ID ||
+				entryPath != skillNamespacePath {
+				return db.FilestoreEntry{}, db.ErrNotFound
+			}
+			return serviceTestDirectoryEntry(filesystem, 70, skillNamespacePath), nil
+		},
 		listSkillArchiveEntriesFn: func(context.Context, int64, int64) ([]db.FilestoreEntry, error) {
 			return []db.FilestoreEntry{archiveEntry}, nil
 		},

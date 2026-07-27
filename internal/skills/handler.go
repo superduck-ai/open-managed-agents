@@ -364,6 +364,9 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	h.delete(w, r, chi.URLParam(r, "skill_id"))
 }
 
+// TODO: 将 custom skill/version 软删除产生的 archive 标记为 catalog GC candidate，
+// 并仅在不存在活动 Filestore skill_archive entry 引用时由后台任务删除对象。
+// 当前必须保留 archive，以保证已经启动的 Session 仍能读取钉住的具体版本。
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if err := requireWorkspaceCredential(principal); err != nil {

@@ -1,7 +1,6 @@
 package filestore
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -48,11 +47,11 @@ type filestoreDatabase interface {
 // Service 编排 Filestore 的鉴权上下文、元数据事务与对象存储操作。
 // 数据库负责命名空间一致性，对象存储负责字节内容，两者通过持久化清理任务实现最终一致。
 type Service struct {
-	cfg           config.Config
-	db            filestoreDatabase
-	store         storage.ObjectStore
-	now           func() time.Time
-	skillArchives *skillArchiveCache
+	cfg   config.Config
+	db    filestoreDatabase
+	store storage.ObjectStore
+	now   func() time.Time
+	paths pathRouter
 }
 
 type readFileResult struct {
@@ -63,12 +62,21 @@ type readFileResult struct {
 
 // NewService 创建 Filestore 业务服务。
 func NewService(cfg config.Config, database filestoreDatabase, store storage.ObjectStore) *Service {
+	persistent := &persistentPathBackend{db: database, store: store}
+	skills := &skillArchivePathBackend{
+		db:    database,
+		store: store,
+		cache: newSkillArchiveCache(defaultSkillArchiveCacheBytes),
+	}
 	return &Service{
-		cfg:           cfg,
-		db:            database,
-		store:         store,
-		now:           time.Now,
-		skillArchives: newSkillArchiveCache(defaultSkillArchiveCacheBytes),
+		cfg:   cfg,
+		db:    database,
+		store: store,
+		now:   time.Now,
+		paths: pathRouter{
+			persistent: persistent,
+			readOnly:   []readOnlyPathBackend{skills},
+		},
 	}
 }
 
@@ -92,48 +100,8 @@ func (s *Service) ListDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return listDirectoryResponse{}, apiErr
 	}
-	if isSkillNamespacePath(request.Path) {
-		return s.listSkillDirectory(ctx, principal, filesystem, request, cursor, int(limit))
-	}
-	params := db.ListFilestoreEntriesPageParams{
-		WorkspaceID:   principal.WorkspaceID,
-		FilesystemID:  filesystem.ID,
-		DirectoryPath: request.Path,
-		Recursive:     request.Recursive,
-		Limit:         int(limit),
-	}
-	if request.Cursor != "" {
-		// Path 是主排序键，ID 在路径相同的边界情形下提供稳定的决胜键。
-		params.Cursor = &db.FilestoreEntryPageCursor{Path: cursor.LastPath, ID: cursor.LastID}
-	}
-	page, err := s.db.ListFilestoreEntriesPage(ctx, params)
-	if err != nil {
-		return listDirectoryResponse{}, mapDatabaseError("list directory", err)
-	}
-	entries := page.Entries
-	response := listDirectoryResponse{Entries: make([]entryPayload, 0, len(entries))}
-	for _, entry := range entries {
-		payload, err := payloadFromEntry(entry, filesystem.ExternalID)
-		if err != nil {
-			return listDirectoryResponse{}, internalError("encode directory entry", err)
-		}
-		response.Entries = append(response.Entries, payload)
-	}
-	if page.HasMore && len(entries) != 0 {
-		// 只在确有下一页时签发游标；最后一页返回空 cursor，rclone 据此停止翻页。
-		last := entries[len(entries)-1]
-		response.Cursor, err = encodeDirectoryCursor(directoryCursor{
-			FilesystemID: request.FilesystemID,
-			Path:         request.Path,
-			Recursive:    request.Recursive,
-			LastPath:     last.Path,
-			LastID:       last.ID,
-		})
-		if err != nil {
-			return listDirectoryResponse{}, internalError("encode directory cursor", err)
-		}
-	}
-	return response, nil
+	backend := s.paths.backendFor(readOperationListDirectory, request.Path)
+	return backend.listDirectory(ctx, principal, filesystem, request, cursor, int(limit))
 }
 
 // MakeDirectory 创建目录；MakeParents 为真时在同一事务内补齐整条父目录链。
@@ -145,7 +113,7 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
-	if apiErr := rejectSkillMutation(request.Path); apiErr != nil {
+	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
 	entry, err := s.db.MakeFilestoreDirectory(ctx, db.MakeFilestoreDirectoryInput{
@@ -170,7 +138,7 @@ func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, requ
 	if apiErr != nil {
 		return apiErr
 	}
-	if apiErr := rejectSkillMutation(request.Path); apiErr != nil {
+	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
 		return apiErr
 	}
 	_, err := s.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
@@ -199,7 +167,7 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if apiErr := rejectSkillMutation(params.Path); apiErr != nil {
+	if apiErr := s.paths.authorizeMutation(params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, params.Path); apiErr != nil {
@@ -285,7 +253,7 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if apiErr := rejectSkillMutation(request.Source, request.Destination); apiErr != nil {
+	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	source, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, request.Source)
@@ -358,7 +326,7 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if apiErr := rejectSkillMutation(request.Source, request.Destination); apiErr != nil {
+	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.MoveFilestoreFile(ctx, db.MoveFilestoreFileInput{
@@ -394,7 +362,7 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
-	if apiErr := rejectSkillMutation(request.Source, request.Destination); apiErr != nil {
+	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
 	result, err := s.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
@@ -419,35 +387,8 @@ func (s *Service) ReadFile(ctx context.Context, principal Principal, request rea
 	if apiErr != nil {
 		return readFileResult{}, apiErr
 	}
-	if strings.HasPrefix(request.Path, skillNamespacePath+"/") {
-		return s.readSkillFile(ctx, principal, filesystem, request)
-	}
-	entry, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, request.Path)
-	if err != nil {
-		return readFileResult{}, mapDatabaseError("read file metadata", err)
-	}
-	if entry.Kind != db.FilestoreEntryKindFile || entry.S3Key == nil || entry.SizeBytes == nil {
-		return readFileResult{}, failedPrecondition("path is not a file")
-	}
-	objectRange, responseSize, apiErr := resolveReadRange(request.Range, *entry.SizeBytes)
-	if apiErr != nil {
-		return readFileResult{}, apiErr
-	}
-	mediaType := stringValue(entry.MediaType)
-	if responseSize == 0 {
-		// 空区间无需访问 S3；仍返回可关闭的空流，使 Handler 的生命周期保持统一。
-		return readFileResult{Body: io.NopCloser(bytes.NewReader(nil)), MediaType: mediaType}, nil
-	}
-	object, err := s.store.Open(ctx, *entry.S3Key, objectRange)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return readFileResult{}, internalError("read file object", errors.New("object metadata exists but blob is missing"))
-		}
-		return readFileResult{}, mapBlobstoreError("read file", err)
-	}
-	// 数据库元数据与已解析区间共同决定协议层应返回的精确字节数。
-	// S3 响应可能没有 Content-Length（Object.Size 为 -1），不能让传输语义取决于该可选响应头。
-	return readFileResult{Body: object.Body, Size: responseSize, MediaType: mediaType}, nil
+	backend := s.paths.backendFor(readOperationFile, request.Path)
+	return backend.readFile(ctx, principal, filesystem, request)
 }
 
 // RemoveFile 软删除元数据并登记对象清理任务；重复删除按幂等成功处理。
@@ -459,7 +400,7 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 	if apiErr != nil {
 		return apiErr
 	}
-	if apiErr := rejectSkillMutation(request.Path); apiErr != nil {
+	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
 		return apiErr
 	}
 	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveFilestoreEntryInput{
@@ -483,27 +424,8 @@ func (s *Service) ReadMetadata(ctx context.Context, principal Principal, request
 	if apiErr != nil {
 		return entryPayload{}, apiErr
 	}
-	if strings.HasPrefix(request.Path, skillNamespacePath+"/") {
-		return s.readSkillMetadata(ctx, principal, filesystem, request.Path)
-	}
-	entry, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, request.Path)
-	if err != nil {
-		return entryPayload{}, mapDatabaseError("read metadata", err)
-	}
-	payload, err := payloadFromEntry(entry, filesystem.ExternalID)
-	if err != nil {
-		return entryPayload{}, internalError("encode metadata", err)
-	}
-	return payload, nil
-}
-
-func rejectSkillMutation(paths ...string) *apiError {
-	for _, value := range paths {
-		if isSkillNamespacePath(value) {
-			return permissionDenied("the /skills namespace is read-only")
-		}
-	}
-	return nil
+	backend := s.paths.backendFor(readOperationMetadata, request.Path)
+	return backend.readMetadata(ctx, principal, filesystem, request.Path)
 }
 
 func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, filesystemID string) (db.FilestoreFilesystem, *apiError) {

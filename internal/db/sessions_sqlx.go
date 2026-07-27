@@ -25,6 +25,117 @@ const (
 			and external_id = :session_external_id
 			and deleted_at is null
 	`
+	updateSessionQuery = `
+		update sessions
+		set agent_snapshot = CAST(:agent_snapshot AS jsonb),
+			title = :title,
+			metadata = CAST(:metadata AS jsonb),
+			updated_at = :updated_at
+		where workspace_id = :workspace_id
+			and external_id = :session_external_id
+			and deleted_at is null
+			and archived_at is null
+			and status = 'idle'
+		returning ` + sessionSQLXColumns + `
+	`
+	patchSessionMetadataQuery = `
+		update sessions
+		set metadata = coalesce(metadata, CAST('{}' AS jsonb)) || CAST(:metadata_patch AS jsonb),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :session_external_id
+			and deleted_at is null
+		returning ` + sessionSQLXColumns + `
+	`
+	setSessionOutcomeEvaluationsQuery = `
+		update sessions
+		set outcome_evaluations = CAST(:outcome_evaluations AS jsonb),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :session_external_id
+			and deleted_at is null
+		returning ` + sessionSQLXColumns + `
+	`
+	setSessionStatusQuery = `
+		update sessions
+		set status = :status, updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :session_external_id
+			and deleted_at is null
+	`
+	setSessionThreadStatusQuery = `
+		update session_threads
+		set status = :status, updated_at = now()
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and external_id = :thread_external_id
+			and deleted_at is null
+	`
+	createSessionThreadIfAbsentQuery = `
+		insert into session_threads (
+			uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
+			parent_thread_id, parent_thread_external_id, agent_snapshot, status, usage, stats,
+			created_at, updated_at
+		)
+		values (
+			:thread_uuid, :thread_external_id, :organization_id, :workspace_id,
+			:session_id, :session_external_id, :parent_thread_id, :parent_thread_external_id,
+			CAST(:agent_snapshot AS jsonb), :status, CAST(:usage AS jsonb),
+			CAST(:stats AS jsonb), :created_at, :created_at
+		)
+		on conflict (workspace_id, external_id) do nothing
+		returning ` + sessionThreadSQLXColumns + `
+	`
+	archiveSessionQuery = `
+		update sessions
+		set archived_at = coalesce(archived_at, now()), updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :session_external_id
+			and deleted_at is null
+			and status not in ('running', 'rescheduling')
+		returning ` + sessionSQLXColumns + `
+	`
+	deleteSessionQuery = `
+		update sessions
+		set deleted_at = coalesce(deleted_at, now()), updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :session_external_id
+			and deleted_at is null
+			and status not in ('running', 'rescheduling')
+		returning ` + sessionSQLXColumns + `
+	`
+	deleteSessionThreadsQuery = `
+		update session_threads
+		set deleted_at = coalesce(deleted_at, now()), updated_at = now()
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
+	`
+	deleteSessionResourcesQuery = `
+		update session_resources
+		set deleted_at = coalesce(deleted_at, now()), updated_at = now()
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
+	`
+	deleteSessionEventsQuery = `
+		update session_events
+		set deleted_at = coalesce(deleted_at, now())
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
+	`
+	stopDeletedSessionEnvironmentWorkQuery = `
+		update environment_work
+		set state = case when state in ('stopped') then state else 'stopping' end,
+			stop_requested_at = coalesce(stop_requested_at, now()),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and data->>'id' = :session_external_id
+			and deleted_at is null
+			and state not in ('stopped')
+	`
 	listSessionResourcesQuery = `
 		select ` + sessionResourceSQLXColumns + `
 		from session_resources
@@ -40,15 +151,6 @@ const (
 			and external_id = :session_external_id
 			and deleted_at is null
 		for update
-	`
-	patchSessionMetadataQuery = `
-		update sessions
-		set metadata = coalesce(metadata, CAST('{}' AS jsonb)) || CAST(:metadata_patch AS jsonb),
-			updated_at = now()
-		where workspace_id = :workspace_id
-			and external_id = :session_external_id
-			and deleted_at is null
-		returning ` + sessionSQLXColumns + `
 	`
 	createSessionResourceQuery = `
 		insert into session_resources (
@@ -96,6 +198,25 @@ const (
 			CAST(:stats AS jsonb), :created_at, :created_at
 		)
 		returning ` + sessionThreadSQLXColumns + `
+	`
+	getSessionResourceQuery = `
+		select ` + sessionResourceSQLXColumns + `
+		from session_resources
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and external_id = :resource_external_id
+			and deleted_at is null
+	`
+	updateSessionResourceQuery = `
+		update session_resources
+		set payload = CAST(:payload AS jsonb),
+			secret_payload = CAST(:secret_payload AS jsonb),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and external_id = :resource_external_id
+			and deleted_at is null
+		returning ` + sessionResourceSQLXColumns + `
 	`
 	createEnvironmentWorkQuery = `
 		insert into environment_work (
@@ -243,6 +364,56 @@ func patchSessionMetadataSQLX(
 	return getSessionSQLX(ctx, database, patchSessionMetadataQuery, arguments)
 }
 
+func listSessionsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]Session, error) {
+	var rows []sessionRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	sessions := make([]Session, len(rows))
+	for index := range rows {
+		sessions[index] = rows[index].session()
+	}
+	return sessions, nil
+}
+
+func listSessionThreadsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]SessionThread, error) {
+	var rows []sessionThreadRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	threads := make([]SessionThread, len(rows))
+	for index := range rows {
+		threads[index] = rows[index].thread()
+	}
+	return threads, nil
+}
+
+func getSessionResourceSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (SessionResource, error) {
+	var row sessionResourceRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionResource{}, ErrNotFound
+		}
+		return SessionResource{}, err
+	}
+	return row.resource(), nil
+}
+
 func listSessionResourcesSQLX(
 	ctx context.Context,
 	database sqlxNamedQueryer,
@@ -377,8 +548,22 @@ func insertSessionThreadSQLX(
 	database sqlxNamedQueryer,
 	thread SessionThread,
 ) (SessionThread, error) {
+	return insertSessionThreadWithQuerySQLX(
+		ctx,
+		database,
+		createSessionThreadQuery,
+		createSessionThreadArguments(thread),
+	)
+}
+
+func insertSessionThreadWithQuerySQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (SessionThread, error) {
 	var row sessionThreadRow
-	err := namedGetContext(ctx, database, &row, createSessionThreadQuery, createSessionThreadArguments(thread))
+	err := namedGetContext(ctx, database, &row, query, arguments)
 	if err != nil {
 		return SessionThread{}, err
 	}

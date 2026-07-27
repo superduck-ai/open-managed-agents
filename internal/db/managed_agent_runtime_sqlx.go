@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-
-	"github.com/samber/lo"
 )
 
 // Managed Agent 启动相关的 SQL 常量、Terminate 与具名查询 helper。
@@ -166,19 +164,4 @@ func listManagedAgentSessionEvents(
 		listManagedAgentSessionEventsQuery,
 		sessionLookupArguments(workspaceID, sessionExternalID),
 	)
-}
-
-func listSessionEventsSQLX(
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	query string,
-	arguments map[string]any,
-) ([]SessionEvent, error) {
-	var rows []sessionEventRow
-	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
-		return nil, err
-	}
-	return lo.Map(rows, func(row sessionEventRow, _ int) SessionEvent {
-		return row.event()
-	}), nil
 }

@@ -9,11 +9,35 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jmoiron/sqlx"
 )
 
 var (
+	enqueueFilestoreFilesystemCleanupJobQuery = `
+		with inserted_job as (
+			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
+			select
+				concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+				w.id, :job_type, 'pending',
+				jsonb_build_object(
+					'workspace_uuid', CAST(w.uuid AS text),
+					'filesystem_uuid', CAST(fs.uuid AS text)
+				),
+				:run_after
+			from workspaces w
+			join filestore_filesystems fs
+				on fs.id = :filesystem_id and fs.workspace_uuid = w.uuid
+			where w.id = :workspace_id
+			returning *
+		)
+		select ` + filestoreFilesystemCleanupJobColumns("j", "w", "fs") + `
+		from inserted_job j
+		join workspaces w
+			on CAST(w.uuid AS text) = j.payload->>'workspace_uuid'
+		join filestore_filesystems fs
+			on CAST(fs.uuid AS text) = j.payload->>'filesystem_uuid'
+			and fs.workspace_uuid = w.uuid
+	`
 	leasedFilesystemCleanupJobQuery = `
 		select ` + filestoreFilesystemCleanupJobColumns("j", "w", "fs") + `
 		from jobs j
@@ -620,32 +644,18 @@ func (d *DB) failLeasedFilestoreCleanupJob(ctx context.Context, jobID int64, lea
 	return nil
 }
 
-func enqueueFilestoreFilesystemCleanupJobTx(ctx context.Context, tx pgx.Tx, filesystem FilestoreFilesystem, workspaceID int64, runAfter time.Time) (FilestoreFilesystemCleanupJob, error) {
-	return scanFilestoreFilesystemCleanupJobPGX(tx.QueryRow(ctx, `
-		with inserted_job as (
-			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
-			select
-				concat('job_', replace(gen_random_uuid()::text, '-', '')),
-				w.id, $2, 'pending',
-				jsonb_build_object(
-					'workspace_uuid', w.uuid::text,
-					'filesystem_uuid', fs.uuid::text
-				),
-				$4
-			from workspaces w
-			join filestore_filesystems fs
-				on fs.id = $3 and fs.workspace_uuid = w.uuid
-			where w.id = $1
-			returning *
-		)
-		select `+filestoreFilesystemCleanupJobColumns("j", "w", "fs")+`
-		from inserted_job j
-		join workspaces w
-			on w.uuid::text = j.payload->>'workspace_uuid'
-		join filestore_filesystems fs
-			on fs.uuid::text = j.payload->>'filesystem_uuid'
-			and fs.workspace_uuid = w.uuid
-	`, workspaceID, filestoreFilesystemCleanupJobType, filesystem.ID, runAfter))
+func enqueueFilestoreFilesystemCleanupJobTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, workspaceID int64, runAfter time.Time) (FilestoreFilesystemCleanupJob, error) {
+	var job FilestoreFilesystemCleanupJob
+	err := namedGetContext(ctx, tx, &job, enqueueFilestoreFilesystemCleanupJobQuery, map[string]any{
+		"workspace_id":  workspaceID,
+		"filesystem_id": filesystem.ID,
+		"job_type":      filestoreFilesystemCleanupJobType,
+		"run_after":     runAfter,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return FilestoreFilesystemCleanupJob{}, ErrNotFound
+	}
+	return job, err
 }
 
 // CancelFilestoreObjectCleanupJob 取消尚未被 worker 执行的清理任务。
@@ -899,23 +909,4 @@ func filestoreFilesystemCleanupJobColumns(jobAlias, workspaceAlias, filesystemAl
 		%[3]s.external_id as filesystem_external_id,
 		%[1]s.attempts as attempts, %[1]s.run_after as run_after`,
 		jobAlias, workspaceAlias, filesystemAlias)
-}
-
-func scanFilestoreFilesystemCleanupJobPGX(row filestorePGXScanner) (FilestoreFilesystemCleanupJob, error) {
-	var job FilestoreFilesystemCleanupJob
-	err := row.Scan(
-		&job.ID,
-		&job.ExternalID,
-		&job.WorkspaceUUID,
-		&job.FilesystemUUID,
-		&job.WorkspaceID,
-		&job.FilesystemID,
-		&job.FilesystemExternalID,
-		&job.Attempts,
-		&job.RunAfter,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return FilestoreFilesystemCleanupJob{}, ErrNotFound
-	}
-	return job, err
 }

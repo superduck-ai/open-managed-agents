@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -88,49 +87,6 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int
 		return 0, err
 	}
 	return usage.FilesBytes + usage.FilestoreBytes, nil
-}
-
-// applyWorkspaceStorageDeltaTx 在资源事务内维护账本，并在增加用量时执行共享配额检查。
-// 调用方必须先持有正数 workspace advisory lock，使 Files 与 Filestore 共用串行点。
-func applyWorkspaceStorageDeltaTx(
-	ctx context.Context,
-	tx pgx.Tx,
-	workspaceID, filesDelta, filestoreDelta, workspaceStorageLimitBytes int64,
-) error {
-	if _, err := tx.Exec(ctx, `
-		insert into workspace_storage_usage (workspace_id)
-		values ($1)
-		on conflict (workspace_id) do nothing
-	`, workspaceID); err != nil {
-		return err
-	}
-
-	var usage workspaceStorageUsage
-	if err := tx.QueryRow(ctx, `
-		select files_bytes, filestore_bytes
-		from workspace_storage_usage
-		where workspace_id = $1
-		for update
-	`, workspaceID).Scan(&usage.FilesBytes, &usage.FilestoreBytes); err != nil {
-		return err
-	}
-
-	nextFilesBytes, nextFilestoreBytes, err := nextWorkspaceStorageUsage(
-		workspaceID,
-		usage,
-		filesDelta,
-		filestoreDelta,
-		workspaceStorageLimitBytes,
-	)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, `
-		update workspace_storage_usage
-		set files_bytes = $2, filestore_bytes = $3, updated_at = now()
-		where workspace_id = $1
-	`, workspaceID, nextFilesBytes, nextFilestoreBytes)
-	return err
 }
 
 func applyWorkspaceStorageDeltaSQLXTx(

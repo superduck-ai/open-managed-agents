@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 const skillDisplayTitleUniqueIndex = "skills_workspace_display_title_active_key"
@@ -546,20 +544,4 @@ func (r skillVersionRow) version() SkillVersion {
 		CreatedAt:         r.CreatedAt,
 		DeletedAt:         r.DeletedAt,
 	}
-}
-
-// These legacy scanner interfaces are still used by builtin_skills.go. They can
-// be removed once that file's independent sqlx migration is merged.
-type skillTx interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-type skillScanner interface {
-	Scan(dest ...any) error
-}
-
-type skillRows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
 }

@@ -51,19 +51,20 @@ File resource 不新增独立 FUSE mount，也不创建逐文件软链接。`mou
 flowchart TD
     R["Resolve trusted Session filesystem scope"] --> A["Create E2B Sandbox"]
     A --> P["Provision Environment Packages"]
-    P --> W["Write config and chmod 0600"]
+    P --> HB["Heartbeat Work, establish lease, precheck Session launchable"]
+    HB -->|"lease lost / Session not idle"| F["Fail work and kill Sandbox"]
+    HB -->|"ok"| W["Write config and chmod 0600"]
     W --> S["Remove legacy skill symlink and create mountpoint"]
     S --> B["Start fixed rclone-filestore binary"]
     B --> C{"All five mounts ready?"}
-    C -->|"probe error / 20s timeout"| F["Fail work and kill Sandbox"]
+    C -->|"probe error / 20s timeout"| F
     C -->|"yes"| D["Delete token config, retry up to 3 times"]
-    D --> G["Mark Sandbox running and heartbeat Work"]
-    G --> I["Create local Code Session"]
+    D --> G["Mark Sandbox running"]
+    G --> I["Atomically commit Code Session and runtime metadata"]
     I --> H["Start Environment Manager"]
-    H --> J["Publish runtime metadata atomically"]
 ```
 
-File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Runner 不在启动时修复 namespace。Environment Manager 不能先于 Packages 成功和 rclone ready 启动；身份解析、启动或 ready 错误进入统一失败清理。ready 后配置删除失败会有限重试并记录脱敏告警，不会杀掉已经就绪的 Sandbox；outputs token 在协议层只允许写 `/outputs`。
+File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Runner 不在启动时修复 namespace。Environment Manager 不能先于 Packages 成功和 rclone ready 启动；身份解析、启动或 ready 错误进入统一失败清理。Packages 成功后先 heartbeat 续约并预检 Session，lease 失效或 Session 非 idle 时体面停止已创建 Sandbox；随后才挂载 rclone。Code Session 与 Session/Work runtime metadata 在同一数据库事务中原子提交，提交成功后才启动 Environment Manager，Manager 启动失败进入统一失败清理。ready 后配置删除失败会有限重试并记录脱敏告警，不会杀掉已经就绪的 Sandbox；outputs token 在协议层只允许写 `/outputs`。
 
 ## 镜像验收
 

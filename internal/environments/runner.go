@@ -540,17 +540,19 @@ func (r *Runner) failManagedAgentRuntime(
 	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
 }
 
-func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
+func (r *Runner) failCreatedSandbox(_ context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
+	// 清理必须独立于可能已取消的请求 context：runner/server context 取消时，
+	// 仍要把 Sandbox 标记 failed 并停止 Work，否则 Work 会卡在 starting 无法再被 poll。
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	now := time.Now().UTC()
 	message := cause.Error()
-	_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
-	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	_ = r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
+	_, _ = r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 	if strings.TrimSpace(providerSandboxID) == "" {
 		return
 	}
-	killCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	_ = r.provider.Kill(killCtx, providerSandboxID)
+	_ = r.provider.Kill(cleanupCtx, providerSandboxID)
 }
 
 func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*managedAgentLaunchPreparation, error) {

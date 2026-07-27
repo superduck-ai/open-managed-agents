@@ -530,7 +530,7 @@ E2B实现执行`Start → SendStdin → CloseStdin → Wait`。它不能复用�
 
 #### 默认Template迁移
 
-`00031_managed_agent_sandbox_default.sql`是本次唯一改动`environments.resolved_template`默认值的migration，把默认值设为裸名称`managed-agent-sandbox`；down恢复`claude-code-interpreter`。已有Environment保留各自的`resolved_template`，不做数据回写。
+`00034_managed_agent_sandbox_default.sql`是本次唯一改动`environments.resolved_template`默认值的migration，把默认值设为裸名称`managed-agent-sandbox`；down恢复`claude-code-interpreter`。已有Environment保留各自的`resolved_template`，不做数据回写。
 
 ### 9.3 `managed-agent-sandbox`
 

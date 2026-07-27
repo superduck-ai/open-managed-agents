@@ -438,6 +438,17 @@ func (r *Runner) markRunningAndStartManagedAgent(
 		return nil
 	}
 
+	// Runtime 提交事务的 Session 行锁已释放；在启动 Environment Manager 前再复检一次
+	// 归档状态，收窄“提交后到发起后台命令前”这段 handoff 窗口内 Session 被归档、却仍
+	// 为其启动 Agent 的竞态。命中则按 runtime 失败清理，不启动 Manager。
+	if session, err := r.db.GetSession(ctx, preparation.session.WorkspaceID, preparation.session.ExternalID); err != nil {
+		r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.session, launch.CodeSessionID, err)
+		return err
+	} else if session.ArchivedAt != nil || session.Status != "idle" {
+		r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.session, launch.CodeSessionID, db.ErrInvalidState)
+		return db.ErrInvalidState
+	}
+
 	// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
 	// 并在启动 Claude 前 register worker，建立首个 CCR lease。
 	if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
@@ -587,6 +598,14 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	if err != nil {
 		return nil, err
 	}
+	return r.buildManagedAgentLaunchPreparation(ctx, session)
+}
+
+// buildManagedAgentLaunchPreparation 从给定 Session 派生全部启动数据（resources、
+// skills archive、config、model、title、workDir）。装包窗口内 Session 仍为 idle 可被
+// 更新，因此 ensureManagedAgentSessionLaunchable 刷新 Session 后必须整体重建，而不是
+// 只替换 session 字段，否则会用装包前的旧 model/prompt/skills 启动 Agent。
+func (r *Runner) buildManagedAgentLaunchPreparation(ctx context.Context, session db.Session) (*managedAgentLaunchPreparation, error) {
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceID, session.ExternalID)
 	if err != nil {
 		return nil, err
@@ -663,6 +682,9 @@ func (r *Runner) commitManagedAgentLaunch(
 	}, nil
 }
 
+// ensureManagedAgentSessionLaunchable 在装包后重读 Session，确认仍 idle 且未归档，
+// 并从刷新后的 Session 整体重建启动数据。装包窗口内允许的更新（model、prompt、
+// skills、resources）因此会反映到真正启动的 Agent，而不是沿用装包前的旧快照。
 func (r *Runner) ensureManagedAgentSessionLaunchable(
 	ctx context.Context,
 	preparation *managedAgentLaunchPreparation,
@@ -681,7 +703,11 @@ func (r *Runner) ensureManagedAgentSessionLaunchable(
 	if session.ArchivedAt != nil || session.Status != "idle" {
 		return db.ErrInvalidState
 	}
-	preparation.session = session
+	refreshed, err := r.buildManagedAgentLaunchPreparation(ctx, session)
+	if err != nil {
+		return err
+	}
+	*preparation = *refreshed
 	return nil
 }
 

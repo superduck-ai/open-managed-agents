@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,18 @@ func TestEnvironmentQueriesUseSQLXNamedParameters(t *testing.T) {
 			arguments:    environmentWorkLookupArguments(42, "env_test", "work_test"),
 			wantArgCount: 3,
 		},
+		{
+			name: "merge environment work metadata",
+			query: `update environment_work
+				set metadata = coalesce(metadata, CAST('{}' AS jsonb)) || CAST(:metadata_patch AS jsonb),
+					updated_at = now()
+				where workspace_id = :workspace_id
+					and environment_external_id = :environment_external_id
+					and external_id = :work_external_id
+					and deleted_at is null`,
+			arguments:    mergeEnvironmentWorkMetadataTestArguments(),
+			wantArgCount: 4,
+		},
 	}
 
 	for _, test := range tests {
@@ -81,6 +94,12 @@ func TestEnvironmentQueriesUseSQLXNamedParameters(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mergeEnvironmentWorkMetadataTestArguments() map[string]any {
+	arguments := environmentWorkLookupArguments(42, "env_test", "work_test")
+	arguments["metadata_patch"] = jsonArg(json.RawMessage(`{"provider_sandbox_id":"sbx_test"}`))
+	return arguments
 }
 
 func TestEnvironmentArgumentsPreserveJSONBoundaries(t *testing.T) {

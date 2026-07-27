@@ -319,19 +319,20 @@ func (r *Runner) createProviderSandbox(
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return db.EnvironmentSandbox{}, "", err
 	}
-	nextMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
-		"provider_sandbox_id": providerSandboxID,
-	})
+	// provider_sandbox_id 通过数据库侧原子 jsonb 合并写入，而不是读取 work.Metadata
+	// 快照后整列替换：Create 阻塞期间若有并发 PATCH 修改 metadata，整列替换会用陈旧
+	// 快照静默覆盖并丢弃该更新，合并只写这一个键。
+	providerPatch, err := json.Marshal(map[string]any{"provider_sandbox_id": providerSandboxID})
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return db.EnvironmentSandbox{}, "", err
 	}
-	updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(
+	updatedWork, err := r.db.MergeEnvironmentWorkMetadata(
 		ctx,
 		work.WorkspaceID,
 		work.EnvironmentExternalID,
 		work.ExternalID,
-		nextMetadata,
+		providerPatch,
 	)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
@@ -946,17 +947,4 @@ func cloudEnvironment(env db.Environment) bool {
 		return false
 	}
 	return strings.TrimSpace(config.Type) == "cloud"
-}
-
-func patchJSONMetadata(raw json.RawMessage, patch map[string]any) (json.RawMessage, error) {
-	metadata := map[string]any{}
-	if len(raw) > 0 && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &metadata); err != nil {
-			return nil, err
-		}
-	}
-	for key, value := range patch {
-		metadata[key] = value
-	}
-	return json.Marshal(metadata)
 }

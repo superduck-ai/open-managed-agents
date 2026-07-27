@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,17 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
+
+type observedDoneContext struct {
+	context.Context
+	observed chan struct{}
+	once     sync.Once
+}
+
+func (c *observedDoneContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.observed) })
+	return c.Context.Done()
+}
 
 func TestSkillArchiveViewRejectsInvalidArchives(t *testing.T) {
 	t.Parallel()
@@ -93,6 +105,223 @@ func TestSkillArchiveLoadRetriesAfterFailure(t *testing.T) {
 	}
 	if got := openCount.Load(); got != 2 {
 		t.Fatalf("object opens = %d, want 2", got)
+	}
+}
+
+func TestSkillArchiveSharedLoadTimeoutDoesNotCacheFailure(t *testing.T) {
+	t.Parallel()
+
+	archiveBytes := buildSkillArchiveTestZip(t, map[string]string{"demo/SKILL.md": "# Demo"})
+	archiveEntry := skillArchiveTestEntry(archiveBytes)
+	var openCount atomic.Int32
+	backend := &skillArchivePathBackend{
+		store: &fakeServiceBlobStore{
+			openFn: func(ctx context.Context, _ string, _ *storage.ByteRange) (storage.Object, error) {
+				if openCount.Add(1) == 1 {
+					<-ctx.Done()
+					return storage.Object{}, ctx.Err()
+				}
+				return storage.Object{
+					Body: io.NopCloser(bytes.NewReader(archiveBytes)),
+					Size: int64(len(archiveBytes)),
+				}, nil
+			},
+		},
+		cache:       newSkillArchiveCache(defaultSkillArchiveCacheEntries),
+		loadTimeout: 20 * time.Millisecond,
+	}
+
+	_, apiErr := backend.loadSkillArchive(context.Background(), archiveEntry)
+	assertServiceAPIError(t, apiErr, http.StatusServiceUnavailable, "unavailable")
+	if !errors.Is(apiErr, context.DeadlineExceeded) {
+		t.Fatalf("loadSkillArchive() timeout error = %v, want context deadline exceeded", apiErr)
+	}
+
+	archive, apiErr := backend.loadSkillArchive(context.Background(), archiveEntry)
+	if apiErr != nil {
+		t.Fatalf("loadSkillArchive() retry error = %v", apiErr)
+	}
+	if _, ok := archive.nodes["/skills/demo/SKILL.md"]; !ok {
+		t.Fatalf("loadSkillArchive() retry archive = %#v, want SKILL.md", archive)
+	}
+	if got := openCount.Load(); got != 2 {
+		t.Fatalf("object opens = %d, want 2", got)
+	}
+}
+
+func TestSkillArchiveAlreadyCanceledRequestDoesNotStartLoad(t *testing.T) {
+	t.Parallel()
+
+	archiveBytes := buildSkillArchiveTestZip(t, map[string]string{"demo/SKILL.md": "# Demo"})
+	archiveEntry := skillArchiveTestEntry(archiveBytes)
+	var openCount atomic.Int32
+	backend := &skillArchivePathBackend{
+		store: &fakeServiceBlobStore{
+			openFn: func(context.Context, string, *storage.ByteRange) (storage.Object, error) {
+				openCount.Add(1)
+				return storage.Object{}, errors.New("unexpected object read")
+			},
+		},
+		cache: newSkillArchiveCache(defaultSkillArchiveCacheEntries),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, apiErr := backend.loadSkillArchive(ctx, archiveEntry)
+	assertServiceAPIError(t, apiErr, http.StatusRequestTimeout, "request_canceled")
+	if !errors.Is(apiErr, context.Canceled) {
+		t.Fatalf("loadSkillArchive() error = %v, want context canceled", apiErr)
+	}
+	if got := openCount.Load(); got != 0 {
+		t.Fatalf("object opens = %d, want 0", got)
+	}
+}
+
+func TestSkillArchiveLeaderCancellationDoesNotAbortSharedLoad(t *testing.T) {
+	t.Parallel()
+
+	archiveBytes := buildSkillArchiveTestZip(t, map[string]string{"demo/SKILL.md": "# Demo"})
+	archiveEntry := skillArchiveTestEntry(archiveBytes)
+	openStarted := make(chan struct{})
+	releaseOpen := make(chan struct{})
+	var openCount atomic.Int32
+	backend := &skillArchivePathBackend{
+		store: &fakeServiceBlobStore{
+			openFn: func(ctx context.Context, _ string, _ *storage.ByteRange) (storage.Object, error) {
+				if openCount.Add(1) == 1 {
+					close(openStarted)
+				}
+				select {
+				case <-ctx.Done():
+					return storage.Object{}, ctx.Err()
+				case <-releaseOpen:
+					return storage.Object{
+						Body: io.NopCloser(bytes.NewReader(archiveBytes)),
+						Size: int64(len(archiveBytes)),
+					}, nil
+				}
+			},
+		},
+		cache: newSkillArchiveCache(defaultSkillArchiveCacheEntries),
+	}
+
+	type loadResult struct {
+		archive *loadedSkillArchive
+		apiErr  *apiError
+	}
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderResult := make(chan loadResult, 1)
+	go func() {
+		archive, apiErr := backend.loadSkillArchive(leaderCtx, archiveEntry)
+		leaderResult <- loadResult{archive: archive, apiErr: apiErr}
+	}()
+	<-openStarted
+	cancelLeader()
+
+	select {
+	case result := <-leaderResult:
+		assertServiceAPIError(t, result.apiErr, http.StatusRequestTimeout, "request_canceled")
+		if !errors.Is(result.apiErr, context.Canceled) {
+			t.Fatalf("leader error = %v, want context canceled", result.apiErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("leader did not stop waiting after its context was canceled")
+	}
+
+	waiterResult := make(chan loadResult, 1)
+	go func() {
+		archive, apiErr := backend.loadSkillArchive(context.Background(), archiveEntry)
+		waiterResult <- loadResult{archive: archive, apiErr: apiErr}
+	}()
+	close(releaseOpen)
+
+	select {
+	case result := <-waiterResult:
+		if result.apiErr != nil {
+			t.Fatalf("waiter load error = %v", result.apiErr)
+		}
+		if _, ok := result.archive.nodes["/skills/demo/SKILL.md"]; !ok {
+			t.Fatalf("waiter archive = %#v, want SKILL.md", result.archive)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiter did not receive the shared load result")
+	}
+	if got := openCount.Load(); got != 1 {
+		t.Fatalf("object opens = %d, want 1", got)
+	}
+}
+
+func TestSkillArchiveCanceledWaiterReturnsBeforeSharedLoadCompletes(t *testing.T) {
+	t.Parallel()
+
+	archiveBytes := buildSkillArchiveTestZip(t, map[string]string{"demo/SKILL.md": "# Demo"})
+	archiveEntry := skillArchiveTestEntry(archiveBytes)
+	openStarted := make(chan struct{})
+	releaseOpen := make(chan struct{})
+	var openCount atomic.Int32
+	backend := &skillArchivePathBackend{
+		store: &fakeServiceBlobStore{
+			openFn: func(ctx context.Context, _ string, _ *storage.ByteRange) (storage.Object, error) {
+				if openCount.Add(1) == 1 {
+					close(openStarted)
+				}
+				select {
+				case <-ctx.Done():
+					return storage.Object{}, ctx.Err()
+				case <-releaseOpen:
+					return storage.Object{
+						Body: io.NopCloser(bytes.NewReader(archiveBytes)),
+						Size: int64(len(archiveBytes)),
+					}, nil
+				}
+			},
+		},
+		cache: newSkillArchiveCache(defaultSkillArchiveCacheEntries),
+	}
+
+	leaderResult := make(chan *apiError, 1)
+	go func() {
+		_, apiErr := backend.loadSkillArchive(context.Background(), archiveEntry)
+		leaderResult <- apiErr
+	}()
+	<-openStarted
+
+	waiterBaseCtx, cancelWaiter := context.WithCancel(context.Background())
+	waiterCtx := &observedDoneContext{
+		Context:  waiterBaseCtx,
+		observed: make(chan struct{}),
+	}
+	waiterResult := make(chan *apiError, 1)
+	go func() {
+		_, apiErr := backend.loadSkillArchive(waiterCtx, archiveEntry)
+		waiterResult <- apiErr
+	}()
+	// Done() 只会在 DoChan 已经注册当前 waiter 后被 select 读取，因此这里取消可以
+	// 稳定验证“已加入共享 flight 的 waiter”会独立退出，而不是测试调用前取消。
+	<-waiterCtx.observed
+	cancelWaiter()
+
+	select {
+	case apiErr := <-waiterResult:
+		assertServiceAPIError(t, apiErr, http.StatusRequestTimeout, "request_canceled")
+		if !errors.Is(apiErr, context.Canceled) {
+			t.Fatalf("waiter error = %v, want context canceled", apiErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled waiter remained blocked on the shared load")
+	}
+	if got := openCount.Load(); got != 1 {
+		t.Fatalf("object opens before release = %d, want 1", got)
+	}
+
+	close(releaseOpen)
+	select {
+	case apiErr := <-leaderResult:
+		if apiErr != nil {
+			t.Fatalf("leader load error = %v", apiErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("leader did not complete after the object read was released")
 	}
 }
 

@@ -35,12 +35,14 @@ var (
 		limit 1
 		for update
 	`
-	filestoreSkillArchiveEntryDeleteQuery = `
-		delete from filestore_entries
+	filestoreSkillArchiveEntryRetireQuery = `
+		update filestore_entries
+		set deleted_at = :now, updated_at = :now
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and kind = 'archive'
 			and managed_by = 'skill_archive'
+			and deleted_at is null
 	`
 	filestoreSkillArchiveEntryInsertQuery = `
 		insert into filestore_entries (
@@ -152,9 +154,10 @@ func (d *DB) ReplaceFilestoreSkillArchiveEntries(
 	if err := ensureFilestoreFixedRootsTx(ctx, tx, workspaceID, filesystem, now); err != nil {
 		return err
 	}
-	if _, err := namedExecContext(ctx, tx, filestoreSkillArchiveEntryDeleteQuery, map[string]any{
+	if _, err := namedExecContext(ctx, tx, filestoreSkillArchiveEntryRetireQuery, map[string]any{
 		"workspace_uuid":  filesystem.WorkspaceUUID,
 		"filesystem_uuid": filesystem.UUID,
+		"now":             now,
 	}); err != nil {
 		return err
 	}

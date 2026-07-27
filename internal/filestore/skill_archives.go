@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"mime"
+	"net/http"
 	"os"
 	"path"
 	"sort"
@@ -29,6 +30,7 @@ const (
 	maxSkillArchiveBytes            int64  = 8 * 1024 * 1024
 	maxSkillUncompressedBytes       uint64 = 500 * 1024 * 1024
 	defaultSkillArchiveCacheEntries        = 20
+	defaultSkillArchiveLoadTimeout         = 30 * time.Second
 )
 
 type skillArchiveNode struct {
@@ -49,6 +51,7 @@ type skillArchivePathBackend struct {
 	store        storage.ObjectStore
 	cache        *lru.Cache[string, *loadedSkillArchive]
 	archiveLoads singleflight.Group
+	loadTimeout  time.Duration
 }
 
 func newSkillArchiveCache(maxEntries int) *lru.Cache[string, *loadedSkillArchive] {
@@ -260,18 +263,55 @@ func (b *skillArchivePathBackend) loadSkillArchive(
 	if archive, ok := b.cache.Get(cacheKey); ok {
 		return archive, nil
 	}
-	value, loadErr, _ := b.archiveLoads.Do(cacheKey, func() (any, error) {
+	// 已经取消的请求不应凭空创建一个没有等待者的后台加载；只有在注册 singleflight
+	// 之后发生的取消，才允许共享任务继续服务其他调用者或预热缓存。
+	if err := ctx.Err(); err != nil {
+		return nil, skillArchiveRequestCanceled(err)
+	}
+	resultChannel := b.archiveLoads.DoChan(cacheKey, func() (any, error) {
 		// 快路径 miss 后，可能已有同 key 的加载刚完成；进入 singleflight 后必须再次检查缓存。
 		if archive, ok := b.cache.Get(cacheKey); ok {
 			return archive, nil
 		}
-		archive, apiErr := b.fetchSkillArchive(ctx, archiveEntry, bucket, objectKey, checksum, sizeBytes)
+
+		// singleflight 的共享加载不能绑定首个调用者的取消信号。否则 leader 的客户端断开时，
+		// S3 下载会被取消，仍在等待的其他请求也会收到同一个失败结果。WithoutCancel 保留
+		// tracing 等 context values，但切断首个请求的取消和 deadline；随后再施加服务端自己的
+		// 有界超时，避免所有调用者都离开后共享加载无限占用连接或 goroutine。
+		loadCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			b.effectiveLoadTimeout(),
+		)
+		defer cancel()
+
+		archive, apiErr := b.fetchSkillArchive(loadCtx, archiveEntry, bucket, objectKey, checksum, sizeBytes)
 		if apiErr != nil {
 			return nil, apiErr
 		}
 		b.cache.Add(cacheKey, archive)
 		return archive, nil
 	})
+
+	// DoChan 让当前调用者可以独立响应自己的取消，而不终止共享加载。这里不能在取消时调用
+	// Forget：共享任务仍可能服务其他 waiter 或填充缓存；Forget 会允许后续请求启动第二次
+	// 同 key 下载，重新引入冷启动并发拉取。即使所有 waiter 都取消，共享任务也只会继续到
+	// 下载完成或上面的服务端超时。
+	select {
+	case <-ctx.Done():
+		return nil, skillArchiveRequestCanceled(ctx.Err())
+	case result := <-resultChannel:
+		return decodeSkillArchiveLoadResult(result.Val, result.Err)
+	}
+}
+
+func (b *skillArchivePathBackend) effectiveLoadTimeout() time.Duration {
+	if b.loadTimeout > 0 {
+		return b.loadTimeout
+	}
+	return defaultSkillArchiveLoadTimeout
+}
+
+func decodeSkillArchiveLoadResult(value any, loadErr error) (*loadedSkillArchive, *apiError) {
 	if loadErr != nil {
 		apiErr, ok := loadErr.(*apiError)
 		if !ok {
@@ -287,6 +327,15 @@ func (b *skillArchivePathBackend) loadSkillArchive(
 		)
 	}
 	return archive, nil
+}
+
+func skillArchiveRequestCanceled(cause error) *apiError {
+	return &apiError{
+		Status:  http.StatusRequestTimeout,
+		Code:    "request_canceled",
+		Message: "Skill archive request was canceled",
+		Cause:   cause,
+	}
 }
 
 func (b *skillArchivePathBackend) fetchSkillArchive(

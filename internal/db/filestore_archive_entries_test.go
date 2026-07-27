@@ -33,7 +33,7 @@ func TestFilestoreSkillArchiveEntryQueriesUseSQLXNamedParameters(t *testing.T) {
 		wantArgCount int
 	}{
 		{"filesystem", filestoreSkillArchiveEntryFilesystemQuery, 3},
-		{"delete", filestoreSkillArchiveEntryDeleteQuery, 2},
+		{"retire", filestoreSkillArchiveEntryRetireQuery, 4},
 		{"insert", filestoreSkillArchiveEntryInsertQuery, 15},
 		{"list", filestoreSkillArchiveEntryListQuery, 3},
 	}

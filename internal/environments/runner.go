@@ -645,9 +645,9 @@ func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) (
 // /skills/<directory>，来源保存在通用 metadata 中。
 //
 // DB 操作会校验来源、目录、版本 UUID、对象大小和 SHA-256。它在同一个事务中锁定 Session
-// filesystem 记录及其命名空间，确保固定根目录存在，然后删除旧 entries 并插入新集合。采用
-// 全量替换，是为了让已从 Agent snapshot 移除的 skill 同步消失，并避免读取方或并发的
-// 命名空间写入方看到只更新了一部分的视图。
+// filesystem 记录及其命名空间，确保固定根目录存在，然后软删除旧 entries 并插入新集合。
+// 采用全量替换，是为了让已从 Agent snapshot 移除的 skill 同步消失，并避免读取方或并发的
+// 命名空间写入方看到只更新了一部分的视图；软删除则保留历史投影供审计。
 //
 // 成功时返回 nil，确保固定根目录存在并替换 archive entries；catalog 对象仍归 skill
 // catalog 所有。runtimeSkills 为空时会清空 archive 子目录，但保留 /skills 根目录。元数据无效、

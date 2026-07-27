@@ -21,6 +21,7 @@ Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
    已启动 Session 的视图。
 4. 在一只 `sqlx.Tx` 中锁定 Session filesystem 和 namespace，确保 `/skills` 固定根存在，
    并原子替换该 filesystem 中 `kind=archive`、`managed_by=skill_archive` 的 entry 集合。
+   替换时旧的活动投影统一写入 `deleted_at`，不做硬删除；新的投影作为新 entry 插入。
 5. 创建 Sandbox 后，Runner 直接启动 rclone-filestore 的五个固定 mount；multimount
    在内部对 destination 执行 `MkdirAll`，Runner 不执行独立 mount preparation。
 6. `/skills` 使用只读 Filestore Token，直接挂载到 `/root/.claude/skills`。rclone ready
@@ -97,8 +98,10 @@ Filestore 在第一次访问某个具体 archive 时按需下载并建立内存�
 进程内以 `bucket + key + sha256 + archive path` 为 key，使用最多 20 个 archive 的有界
 LRU 缓存压缩 archive 和目录索引。单个压缩 archive 最大 8 MiB，因此缓存中的压缩数据
 理论上最多为 160 MiB，另有目录索引开销。同一个 key 的并发 cache miss 通过 singleflight
-合并，只有首个请求下载、校验并建立索引，等待者共享同一结果或错误；失败结果不写缓存，
-后续请求可以重新加载。
+合并，只有一个共享任务下载、校验并建立索引。共享任务使用独立的 30 秒服务端超时，不继承
+首个请求的取消信号，避免 leader 断开导致其他等待者一起失败；每个调用者通过自己的 context
+独立等待，取消只会结束该调用者，不会终止或 Forget 仍可服务其他请求的共享任务。所有调用者
+都取消后，共享任务仍允许在超时内完成并填充缓存。失败结果不写缓存，后续请求可以重新加载。
 archive entry 仍是每次请求的授权事实来源；Session entry 删除后，缓存中残留的字节无法再通过
 Filestore 路径访问。
 
@@ -107,6 +110,10 @@ Filestore 路径访问。
 Session filesystem 删除后沿用现有有界 cleanup job。最后一批普通文件退休后，同一事务
 软删除该 filesystem 的 directory 和 archive entries。archive entry 只是借用 catalog
 archive，不会产生 Filestore 对象清理任务或容量扣减。
+
+Runner 每次全量替换 `/skills` 投影时，会在同一事务中软删除旧的活动 archive entries
+并插入新集合。这样被移除或换版的 skill 投影仍可用于审计，活动读取和唯一索引只考虑
+`deleted_at is null` 的记录。历史投影不拥有 catalog archive，也不会触发对象回收。
 
 删除 custom skill/version 或用 `seed-builtin-skills --prune` 软删除 built-in catalog row 时，
 不立即删除 archive 对象，也不创建通用 `object_cleanup` job。原因是已经启动的 Session

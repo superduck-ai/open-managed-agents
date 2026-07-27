@@ -928,6 +928,7 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 		t.Fatalf("archive entry count = %d, want 1", len(entries))
 	}
 	entry := entries[0]
+	replacedEntryID := entry.ID
 	var metadata struct {
 		SkillSource string `json:"skill_source"`
 	}
@@ -989,6 +990,17 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("archive entries after clear = %#v", entries)
+	}
+	var retiredAt *time.Time
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select deleted_at
+		from filestore_entries
+		where id = $1
+	`, replacedEntryID).Scan(&retiredAt); err != nil {
+		t.Fatalf("load retired archive entry: %v", err)
+	}
+	if retiredAt == nil {
+		t.Fatal("retired archive entry deleted_at = nil")
 	}
 	skillsRoot, err := app.db.GetFilestoreEntry(
 		context.Background(),

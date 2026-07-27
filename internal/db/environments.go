@@ -2,12 +2,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type Environment struct {
@@ -127,23 +125,19 @@ type EnvironmentSandbox struct {
 }
 
 func (d *DB) CreateEnvironment(ctx context.Context, env Environment) (Environment, error) {
-	created, err := scanEnvironment(d.Pool.QueryRow(ctx, `
+	created, err := getEnvironmentSQLX(ctx, d.sql, `
 		insert into environments (
 			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
 			name, description, config, metadata, scope, provider, resolved_template,
 			created_at, updated_at
 		)
 		values (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8::jsonb, $9::jsonb, $10, $11, $12,
-			$13, $13
+			:uuid, :external_id, :organization_id, :workspace_id, :created_by_api_key_id,
+			:name, :description, CAST(:config AS jsonb), CAST(:metadata AS jsonb),
+			:scope, :provider, :resolved_template, :created_at, :created_at
 		)
-		returning id, uuid::text, external_id, organization_id, workspace_id, created_by_api_key_id,
-			name, description, config, metadata, scope, provider, resolved_template,
-			created_at, updated_at, archived_at, deleted_at
-	`, env.UUID, env.ExternalID, env.OrganizationID, env.WorkspaceID, env.CreatedByAPIKeyID,
-		env.Name, env.Description, jsonArg(env.Config), jsonArg(env.Metadata), env.Scope, env.Provider,
-		env.ResolvedTemplate, env.CreatedAt))
+		returning `+environmentSQLXColumns+`
+	`, environmentArguments(env))
 	if isUniqueViolation(err) {
 		return Environment{}, ErrDuplicate
 	}
@@ -151,27 +145,27 @@ func (d *DB) CreateEnvironment(ctx context.Context, env Environment) (Environmen
 }
 
 func (d *DB) GetEnvironment(ctx context.Context, workspaceID int64, externalID string) (Environment, error) {
-	return scanEnvironment(d.Pool.QueryRow(ctx, environmentSelectSQL()+`
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID))
+	return getEnvironmentSQLX(ctx, d.sql, environmentSelectSQL()+`
+		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+	`, environmentLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) UpdateEnvironment(ctx context.Context, workspaceID int64, externalID string, next Environment) (Environment, error) {
-	updated, err := scanEnvironment(d.Pool.QueryRow(ctx, `
+	arguments := environmentArguments(next)
+	arguments["workspace_id"] = workspaceID
+	arguments["external_id"] = externalID
+	updated, err := getEnvironmentSQLX(ctx, d.sql, `
 		update environments
-		set name = $3,
-			description = $4,
-			config = $5::jsonb,
-			metadata = $6::jsonb,
-			scope = $7,
-			resolved_template = $8,
-			updated_at = $9
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id, created_by_api_key_id,
-			name, description, config, metadata, scope, provider, resolved_template,
-			created_at, updated_at, archived_at, deleted_at
-	`, workspaceID, externalID, next.Name, next.Description, jsonArg(next.Config), jsonArg(next.Metadata),
-		next.Scope, next.ResolvedTemplate, next.UpdatedAt))
+		set name = :name,
+			description = :description,
+			config = CAST(:config AS jsonb),
+			metadata = CAST(:metadata AS jsonb),
+			scope = :scope,
+			resolved_template = :resolved_template,
+			updated_at = :updated_at
+		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		returning `+environmentSQLXColumns+`
+	`, arguments)
 	if isUniqueViolation(err) {
 		return Environment{}, ErrDuplicate
 	}
@@ -179,87 +173,67 @@ func (d *DB) UpdateEnvironment(ctx context.Context, workspaceID int64, externalI
 }
 
 func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceID int64, externalID string) (Environment, error) {
-	return scanEnvironment(d.Pool.QueryRow(ctx, `
+	return getEnvironmentSQLX(ctx, d.sql, `
 		update environments
 		set archived_at = coalesce(archived_at, now()),
 			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id, created_by_api_key_id,
-			name, description, config, metadata, scope, provider, resolved_template,
-			created_at, updated_at, archived_at, deleted_at
-	`, workspaceID, externalID))
+		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		returning `+environmentSQLXColumns+`
+	`, environmentLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) DeleteEnvironment(ctx context.Context, workspaceID int64, externalID string) error {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
 	var environmentID int64
-	if err := tx.QueryRow(ctx, `
+	err = namedGetContext(ctx, tx, &environmentID, `
 		select id
 		from environments
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
+		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
 		for update
-	`, workspaceID, externalID).Scan(&environmentID); errors.Is(err, pgx.ErrNoRows) {
+	`, environmentLookupArguments(workspaceID, externalID))
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
-	} else if err != nil {
+	}
+	if err != nil {
 		return err
 	}
 
 	var activeWork int
-	if err := tx.QueryRow(ctx, `
+	if err := namedGetContext(ctx, tx, &activeWork, `
 		select count(*)
 		from environment_work
-		where workspace_id = $1
-			and environment_id = $2
+		where workspace_id = :workspace_id
+			and environment_id = :environment_id
 			and deleted_at is null
 			and state <> 'stopped'
-	`, workspaceID, environmentID).Scan(&activeWork); err != nil {
+	`, map[string]any{"workspace_id": workspaceID, "environment_id": environmentID}); err != nil {
 		return err
 	}
 	if activeWork > 0 {
 		return ErrInvalidState
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := namedExecContext(ctx, tx, `
 		update environments
 		set deleted_at = coalesce(deleted_at, now()),
 			updated_at = now()
-		where workspace_id = $1 and id = $2 and deleted_at is null
-	`, workspaceID, environmentID); err != nil {
+		where workspace_id = :workspace_id and id = :environment_id and deleted_at is null
+	`, map[string]any{"workspace_id": workspaceID, "environment_id": environmentID}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 func (d *DB) ListEnvironmentsPage(ctx context.Context, params ListEnvironmentsPageParams) ([]Environment, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	query := environmentSelectSQL() + `
-		where workspace_id = $1 and deleted_at is null
-	`
-	args := []any{params.WorkspaceID}
-	nextArg := 2
-	if !params.IncludeArchived {
-		query += " and archived_at is null"
-	}
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	environments, err := scanEnvironmentRows(rows)
+	query, arguments := listEnvironmentsQuery(params)
+	environments, err := selectEnvironmentsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -270,13 +244,33 @@ func (d *DB) ListEnvironmentsPage(ctx context.Context, params ListEnvironmentsPa
 	return environments, hasMore, nil
 }
 
+func listEnvironmentsQuery(params ListEnvironmentsPageParams) (string, map[string]any) {
+	query := environmentSelectSQL() + `
+		where workspace_id = :workspace_id and deleted_at is null
+	`
+	arguments := map[string]any{"workspace_id": params.WorkspaceID, "limit": params.Limit + 1}
+	if !params.IncludeArchived {
+		query += " and archived_at is null"
+	}
+	if params.Cursor != nil {
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
+	}
+	query += " order by created_at desc, id desc limit :limit"
+	return query, arguments
+}
+
 func (d *DB) CreateEnvironmentKey(ctx context.Context, key EnvironmentKey, keyHash string) error {
-	_, err := d.Pool.Exec(ctx, `
+	_, err := namedExecContext(ctx, d.sql, `
 		insert into environment_keys (
 			external_id, organization_id, workspace_id, environment_id,
 			environment_external_id, key_hash, status
 		)
-		values ($1, $2, $3, $4, $5, $6, 'active')
+		values (
+			:external_id, :organization_id, :workspace_id, :environment_id,
+			:environment_external_id, :key_hash, 'active'
+		)
 		on conflict (external_id) do update set
 			organization_id = excluded.organization_id,
 			workspace_id = excluded.workspace_id,
@@ -284,94 +278,81 @@ func (d *DB) CreateEnvironmentKey(ctx context.Context, key EnvironmentKey, keyHa
 			environment_external_id = excluded.environment_external_id,
 			key_hash = excluded.key_hash,
 			status = 'active'
-	`, key.ExternalID, key.OrganizationID, key.WorkspaceID, key.EnvironmentID, key.EnvironmentExternalID, keyHash)
+	`, map[string]any{
+		"external_id":             key.ExternalID,
+		"organization_id":         key.OrganizationID,
+		"workspace_id":            key.WorkspaceID,
+		"environment_id":          key.EnvironmentID,
+		"environment_external_id": key.EnvironmentExternalID,
+		"key_hash":                keyHash,
+	})
 	return err
 }
 
 func (d *DB) GetEnvironmentKey(ctx context.Context, keyHash string) (EnvironmentKey, error) {
-	var key EnvironmentKey
-	err := d.Pool.QueryRow(ctx, `
+	var row environmentKeyRow
+	err := namedGetContext(ctx, d.sql, &row, `
 		with updated as (
 			update environment_keys
 			set last_used_at = now()
-			where key_hash = $1 and status = 'active'
+			where key_hash = :key_hash and status = 'active'
 			returning id, external_id, organization_id, workspace_id, environment_id, environment_external_id
 		)
-		select updated.id, updated.external_id, updated.organization_id, organizations.external_id,
-			updated.workspace_id, workspaces.uuid::text, workspaces.external_id,
+		select updated.id, updated.external_id, updated.organization_id,
+			organizations.external_id AS organization_external_id,
+			updated.workspace_id, CAST(workspaces.uuid AS text) AS workspace_uuid,
+			workspaces.external_id AS workspace_external_id,
 			updated.environment_id, updated.environment_external_id
 		from updated
 		join organizations on organizations.id = updated.organization_id
 		join workspaces on workspaces.id = updated.workspace_id
-	`, keyHash).Scan(
-		&key.ID, &key.ExternalID, &key.OrganizationID, &key.OrganizationExternalID,
-		&key.WorkspaceID, &key.WorkspaceUUID, &key.WorkspaceExternalID,
-		&key.EnvironmentID, &key.EnvironmentExternalID,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	`, map[string]any{"key_hash": keyHash})
+	if errors.Is(err, sql.ErrNoRows) {
 		return EnvironmentKey{}, ErrNotFound
 	}
-	return key, err
+	if err != nil {
+		return EnvironmentKey{}, err
+	}
+	return row.key(), nil
 }
 
 func (d *DB) CreateEnvironmentWork(ctx context.Context, work EnvironmentWork) (EnvironmentWork, error) {
-	return scanEnvironmentWork(d.Pool.QueryRow(ctx, `
-		insert into environment_work (
-			uuid, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, created_at, updated_at
-		)
-		values (
-			$1, $2, $3, $4, $5,
-			$6, $7::jsonb, $8::jsonb, $9, $10, $11, $11
-		)
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-	`, work.UUID, work.ExternalID, work.OrganizationID, work.WorkspaceID, work.EnvironmentID,
-		work.EnvironmentExternalID, jsonArg(work.Data), jsonArg(work.Metadata), work.Secret, coalesceWorkState(work.State), work.CreatedAt))
+	work.State = coalesceWorkState(work.State)
+	return insertEnvironmentWorkSQLX(ctx, d.sql, work)
 }
 
 func (d *DB) GetEnvironmentWork(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID string) (EnvironmentWork, error) {
-	return scanEnvironmentWork(d.Pool.QueryRow(ctx, environmentWorkSelectSQL()+`
-		where workspace_id = $1 and environment_external_id = $2 and external_id = $3 and deleted_at is null
-	`, workspaceID, environmentExternalID, workExternalID))
+	return getEnvironmentWorkSQLX(ctx, d.sql, environmentWorkSelectSQL()+`
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and external_id = :work_external_id
+			and deleted_at is null
+	`, environmentWorkLookupArguments(workspaceID, environmentExternalID, workExternalID))
 }
 
 func (d *DB) GetLatestEnvironmentWorkByData(ctx context.Context, workspaceID int64, environmentExternalID, dataType, dataID string) (EnvironmentWork, error) {
-	return scanEnvironmentWork(d.Pool.QueryRow(ctx, environmentWorkSelectSQL()+`
-		where workspace_id = $1
-			and environment_external_id = $2
-			and data->>'type' = $3
-			and data->>'id' = $4
+	return getEnvironmentWorkSQLX(ctx, d.sql, environmentWorkSelectSQL()+`
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and data->>'type' = :data_type
+			and data->>'id' = :data_id
 			and deleted_at is null
 		order by created_at desc, id desc
 		limit 1
-	`, workspaceID, environmentExternalID, dataType, dataID))
+	`, map[string]any{
+		"workspace_id":            workspaceID,
+		"environment_external_id": environmentExternalID,
+		"data_type":               dataType,
+		"data_id":                 dataID,
+	})
 }
 
 func (d *DB) ListEnvironmentWorkPage(ctx context.Context, params ListEnvironmentWorkPageParams) ([]EnvironmentWork, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	query := environmentWorkSelectSQL() + `
-		where workspace_id = $1 and environment_external_id = $2 and deleted_at is null
-	`
-	args := []any{params.WorkspaceID, params.EnvironmentExternalID}
-	nextArg := 3
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	work, err := scanEnvironmentWorkRows(rows)
+	query, arguments := listEnvironmentWorkQuery(params)
+	work, err := selectEnvironmentWorkSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -382,40 +363,66 @@ func (d *DB) ListEnvironmentWorkPage(ctx context.Context, params ListEnvironment
 	return work, hasMore, nil
 }
 
+func listEnvironmentWorkQuery(params ListEnvironmentWorkPageParams) (string, map[string]any) {
+	query := environmentWorkSelectSQL() + `
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and deleted_at is null
+	`
+	arguments := map[string]any{
+		"workspace_id":            params.WorkspaceID,
+		"environment_external_id": params.EnvironmentExternalID,
+		"limit":                   params.Limit + 1,
+	}
+	if params.Cursor != nil {
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
+	}
+	query += " order by created_at desc, id desc limit :limit"
+	return query, arguments
+}
+
 func (d *DB) PollEnvironmentWork(ctx context.Context, workspaceID int64, environmentExternalID, workerID string, claimFor time.Duration) (*EnvironmentWork, error) {
 	if claimFor <= 0 {
 		claimFor = 5 * time.Second
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
 	if workerID != "" {
-		if _, err := tx.Exec(ctx, `
+		if _, err := namedExecContext(ctx, tx, `
 			insert into environment_worker_polls (
 				organization_id, workspace_id, environment_id, environment_external_id, worker_id, last_poll_at
 			)
-			select organization_id, workspace_id, id, external_id, $3, now()
+			select organization_id, workspace_id, id, external_id, :worker_id, now()
 			from environments
-			where workspace_id = $1 and external_id = $2 and deleted_at is null
+			where workspace_id = :workspace_id
+				and external_id = :environment_external_id
+				and deleted_at is null
 			on conflict (environment_id, worker_id) do update set last_poll_at = excluded.last_poll_at
-		`, workspaceID, environmentExternalID, workerID); err != nil {
+		`, map[string]any{
+			"workspace_id":            workspaceID,
+			"environment_external_id": environmentExternalID,
+			"worker_id":               workerID,
+		}); err != nil {
 			return nil, err
 		}
 	}
 
-	work, err := scanEnvironmentWork(tx.QueryRow(ctx, `
+	work, err := getEnvironmentWorkSQLX(ctx, tx, `
 		update environment_work
-		set claimed_by_worker_id = $3,
-			claim_expires_at = $4,
+		set claimed_by_worker_id = :worker_id,
+			claim_expires_at = :claim_expires_at,
 			updated_at = now()
 		where id = (
 			select id
 			from environment_work
-			where workspace_id = $1
-				and environment_external_id = $2
+			where workspace_id = :workspace_id
+				and environment_external_id = :environment_external_id
 				and deleted_at is null
 				and state = 'queued'
 				and (claim_expires_at is null or claim_expires_at <= now())
@@ -423,13 +430,15 @@ func (d *DB) PollEnvironmentWork(ctx context.Context, workspaceID int64, environ
 			limit 1
 			for update skip locked
 		)
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-	`, workspaceID, environmentExternalID, nullableWorkerID(workerID), time.Now().UTC().Add(claimFor)))
+		returning `+environmentWorkSQLXColumns+`
+	`, map[string]any{
+		"workspace_id":            workspaceID,
+		"environment_external_id": environmentExternalID,
+		"worker_id":               nullableWorkerID(workerID),
+		"claim_expires_at":        time.Now().UTC().Add(claimFor),
+	})
 	if errors.Is(err, ErrNotFound) {
-		if err := tx.Commit(ctx); err != nil {
+		if err := tx.Commit(); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -437,7 +446,7 @@ func (d *DB) PollEnvironmentWork(ctx context.Context, workspaceID int64, environ
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return &work, nil
@@ -455,10 +464,10 @@ func (d *DB) PollNextEnvironmentWorkForRunner(ctx context.Context, workerID stri
 	if !includeSessionWork {
 		filter = "and coalesce(data->>'type', '') <> 'session'"
 	}
-	work, err := scanEnvironmentWork(d.Pool.QueryRow(ctx, fmt.Sprintf(`
+	work, err := getEnvironmentWorkSQLX(ctx, d.sql, `
 		update environment_work
-		set claimed_by_worker_id = $1,
-			claim_expires_at = $2,
+		set claimed_by_worker_id = :worker_id,
+			claim_expires_at = :claim_expires_at,
 			updated_at = now()
 		where id = (
 			select id
@@ -466,16 +475,16 @@ func (d *DB) PollNextEnvironmentWorkForRunner(ctx context.Context, workerID stri
 			where deleted_at is null
 				and state = 'queued'
 				and (claim_expires_at is null or claim_expires_at <= now())
-				%s
+				`+filter+`
 			order by created_at asc, id asc
 			limit 1
 			for update skip locked
 		)
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-	`, filter), nullableWorkerID(workerID), time.Now().UTC().Add(claimFor)))
+		returning `+environmentWorkSQLXColumns+`
+	`, map[string]any{
+		"worker_id":        nullableWorkerID(workerID),
+		"claim_expires_at": time.Now().UTC().Add(claimFor),
+	})
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
 	}
@@ -486,42 +495,41 @@ func (d *DB) PollNextEnvironmentWorkForRunner(ctx context.Context, workerID stri
 }
 
 func (d *DB) GetEnvironmentByInternalID(ctx context.Context, workspaceID, environmentID int64) (Environment, error) {
-	return scanEnvironment(d.Pool.QueryRow(ctx, environmentSelectSQL()+`
-		where workspace_id = $1 and id = $2 and deleted_at is null
-	`, workspaceID, environmentID))
+	return getEnvironmentSQLX(ctx, d.sql, environmentSelectSQL()+`
+		where workspace_id = :workspace_id and id = :environment_id and deleted_at is null
+	`, map[string]any{"workspace_id": workspaceID, "environment_id": environmentID})
 }
 
 func (d *DB) AckEnvironmentWork(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID string) (EnvironmentWork, error) {
-	return scanEnvironmentWork(d.Pool.QueryRow(ctx, `
+	return getEnvironmentWorkSQLX(ctx, d.sql, `
 		update environment_work
 		set state = case when state = 'queued' then 'starting' else state end,
 			acknowledged_at = coalesce(acknowledged_at, now()),
 			started_at = coalesce(started_at, now()),
 			claim_expires_at = null,
 			updated_at = now()
-		where workspace_id = $1
-			and environment_external_id = $2
-			and external_id = $3
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and external_id = :work_external_id
 			and deleted_at is null
 			and state in ('queued', 'starting', 'active')
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-	`, workspaceID, environmentExternalID, workExternalID))
+		returning `+environmentWorkSQLXColumns+`
+	`, environmentWorkLookupArguments(workspaceID, environmentExternalID, workExternalID))
 }
 
 func (d *DB) UpdateEnvironmentWorkMetadata(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID string, metadata json.RawMessage) (EnvironmentWork, error) {
-	return scanEnvironmentWork(d.Pool.QueryRow(ctx, `
+	arguments := environmentWorkLookupArguments(workspaceID, environmentExternalID, workExternalID)
+	arguments["metadata"] = jsonArg(metadata)
+	return getEnvironmentWorkSQLX(ctx, d.sql, `
 		update environment_work
-		set metadata = $4::jsonb,
+		set metadata = CAST(:metadata AS jsonb),
 			updated_at = now()
-		where workspace_id = $1 and environment_external_id = $2 and external_id = $3 and deleted_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-	`, workspaceID, environmentExternalID, workExternalID, jsonArg(metadata)))
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and external_id = :work_external_id
+			and deleted_at is null
+		returning `+environmentWorkSQLXColumns+`
+	`, arguments)
 }
 
 func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID, expectedLastHeartbeat string, ttlSeconds int, format func(time.Time) string) (WorkHeartbeatResult, error) {
@@ -534,16 +542,20 @@ func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceID int64, en
 	if ttlSeconds > 300 {
 		ttlSeconds = 300
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return WorkHeartbeatResult{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	current, err := scanEnvironmentWork(tx.QueryRow(ctx, environmentWorkSelectSQL()+`
-		where workspace_id = $1 and environment_external_id = $2 and external_id = $3 and deleted_at is null
+	arguments := environmentWorkLookupArguments(workspaceID, environmentExternalID, workExternalID)
+	current, err := getEnvironmentWorkSQLX(ctx, tx, environmentWorkSelectSQL()+`
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and external_id = :work_external_id
+			and deleted_at is null
 		for update
-	`, workspaceID, environmentExternalID, workExternalID))
+	`, arguments)
 	if err != nil {
 		return WorkHeartbeatResult{}, err
 	}
@@ -562,22 +574,24 @@ func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceID int64, en
 	if nextState == "queued" || nextState == "starting" {
 		nextState = "active"
 	}
-	updated, err := scanEnvironmentWork(tx.QueryRow(ctx, `
+	arguments["work_id"] = current.ID
+	arguments["state"] = nextState
+	arguments["ttl_seconds"] = ttlSeconds
+	updated, err := getEnvironmentWorkSQLX(ctx, tx, `
 		update environment_work
-		set state = $4,
+		set state = :state,
 			latest_heartbeat_at = now(),
-			heartbeat_ttl_seconds = $5,
+			heartbeat_ttl_seconds = :ttl_seconds,
 			updated_at = now()
-		where id = $1 and workspace_id = $2 and environment_external_id = $3
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-	`, current.ID, workspaceID, environmentExternalID, nextState, ttlSeconds))
+		where id = :work_id
+			and workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+		returning `+environmentWorkSQLXColumns+`
+	`, arguments)
 	if err != nil {
 		return WorkHeartbeatResult{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return WorkHeartbeatResult{}, err
 	}
 	lastHeartbeat := ""
@@ -592,206 +606,384 @@ func (d *DB) StopEnvironmentWork(ctx context.Context, workspaceID int64, environ
 	if !force {
 		nextState = "stopping"
 	}
-	return scanEnvironmentWork(d.Pool.QueryRow(ctx, `
+	arguments := environmentWorkLookupArguments(workspaceID, environmentExternalID, workExternalID)
+	arguments["state"] = nextState
+	return getEnvironmentWorkSQLX(ctx, d.sql, `
 		update environment_work
-		set state = $4,
+		set state = :state,
 			stop_requested_at = coalesce(stop_requested_at, now()),
-			stopped_at = case when $4 = 'stopped' then coalesce(stopped_at, now()) else stopped_at end,
+			stopped_at = case when :state = 'stopped' then coalesce(stopped_at, now()) else stopped_at end,
 			updated_at = now()
-		where workspace_id = $1
-			and environment_external_id = $2
-			and external_id = $3
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and external_id = :work_external_id
 			and deleted_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-	`, workspaceID, environmentExternalID, workExternalID, nextState))
+		returning `+environmentWorkSQLXColumns+`
+	`, arguments)
 }
 
 func (d *DB) EnvironmentWorkStats(ctx context.Context, workspaceID int64, environmentExternalID string) (EnvironmentWorkStats, error) {
-	var stats EnvironmentWorkStats
-	var workers int
-	err := d.Pool.QueryRow(ctx, `
+	var row environmentWorkStatsRow
+	err := namedGetContext(ctx, d.sql, &row, `
 		select
-			count(*) filter (
+			CAST(count(*) filter (
 				where state = 'queued'
 					and (claim_expires_at is null or claim_expires_at <= now())
-			)::int as depth,
-			count(*) filter (where state <> 'stopped')::int as pending,
+			) AS int) as depth,
+			CAST(count(*) filter (where state <> 'stopped') AS int) as pending,
 			min(created_at) filter (where state = 'queued') as oldest_queued_at,
 			coalesce((
-				select count(distinct worker_id)::int
+				select CAST(count(distinct worker_id) AS int)
 				from environment_worker_polls p
-				where p.workspace_id = $1
-					and p.environment_external_id = $2
+				where p.workspace_id = :workspace_id
+					and p.environment_external_id = :environment_external_id
 					and p.last_poll_at > now() - interval '30 seconds'
-			), 0)::int as workers_polling
+			), 0) as workers_polling
 		from environment_work
-		where workspace_id = $1
-			and environment_external_id = $2
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
 			and deleted_at is null
-	`, workspaceID, environmentExternalID).Scan(&stats.Depth, &stats.Pending, &stats.OldestQueuedAt, &workers)
+	`, map[string]any{
+		"workspace_id":            workspaceID,
+		"environment_external_id": environmentExternalID,
+	})
 	if err != nil {
 		return EnvironmentWorkStats{}, err
 	}
-	if workers > 0 {
-		stats.WorkersPolling = &workers
+	stats := EnvironmentWorkStats{
+		Depth:          row.Depth,
+		Pending:        row.Pending,
+		OldestQueuedAt: row.OldestQueuedAt,
+	}
+	if row.WorkersPolling > 0 {
+		stats.WorkersPolling = &row.WorkersPolling
 	}
 	return stats, nil
 }
 
 func (d *DB) CreateEnvironmentSandbox(ctx context.Context, sandbox EnvironmentSandbox) (EnvironmentSandbox, error) {
-	return scanEnvironmentSandbox(d.Pool.QueryRow(ctx, `
+	return getEnvironmentSandboxSQLX(ctx, d.sql, `
 		insert into environment_sandboxes (
 			uuid, external_id, organization_id, workspace_id, environment_id,
 			environment_external_id, work_id, work_external_id, provider, template,
 			provider_sandbox_id, state, metadata, last_error, created_at, updated_at
 		)
 		values (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9, $10,
-			$11, $12, $13::jsonb, $14, $15, $15
+			:uuid, :external_id, :organization_id, :workspace_id, :environment_id,
+			:environment_external_id, :work_id, :work_external_id, :provider, :template,
+			:provider_sandbox_id, :state, CAST(:metadata AS jsonb), :last_error,
+			:created_at, :created_at
 		)
-		returning id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, work_id, work_external_id, provider, template,
-			provider_sandbox_id, state, metadata, last_error, created_at, updated_at, stopped_at
-	`, sandbox.UUID, sandbox.ExternalID, sandbox.OrganizationID, sandbox.WorkspaceID, sandbox.EnvironmentID,
-		sandbox.EnvironmentExternalID, sandbox.WorkID, sandbox.WorkExternalID, sandbox.Provider, sandbox.Template,
-		sandbox.ProviderSandboxID, sandbox.State, jsonArg(sandbox.Metadata), sandbox.LastError, sandbox.CreatedAt))
+		returning `+environmentSandboxSQLXColumns+`
+	`, environmentSandboxArguments(sandbox))
 }
 
 func (d *DB) UpdateEnvironmentSandboxState(ctx context.Context, workspaceID int64, externalID, state string, providerSandboxID *string, lastError *string, stoppedAt *time.Time) error {
-	_, err := d.Pool.Exec(ctx, `
+	_, err := namedExecContext(ctx, d.sql, `
 		update environment_sandboxes
-		set state = $3,
-			provider_sandbox_id = coalesce($4, provider_sandbox_id),
-			last_error = $5,
-			stopped_at = coalesce($6, stopped_at),
+		set state = :state,
+			provider_sandbox_id = coalesce(:provider_sandbox_id, provider_sandbox_id),
+			last_error = :last_error,
+			stopped_at = coalesce(:stopped_at, stopped_at),
 			updated_at = now()
-		where workspace_id = $1 and external_id = $2
-	`, workspaceID, externalID, state, providerSandboxID, lastError, stoppedAt)
+		where workspace_id = :workspace_id and external_id = :external_id
+	`, map[string]any{
+		"workspace_id":        workspaceID,
+		"external_id":         externalID,
+		"state":               state,
+		"provider_sandbox_id": providerSandboxID,
+		"last_error":          lastError,
+		"stopped_at":          stoppedAt,
+	})
 	return err
 }
 
 func (d *DB) GetActiveEnvironmentSandboxForWork(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID string) (EnvironmentSandbox, error) {
-	return scanEnvironmentSandbox(d.Pool.QueryRow(ctx, `
-		select id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, work_id, work_external_id, provider, template,
-			provider_sandbox_id, state, metadata, last_error, created_at, updated_at, stopped_at
+	return getEnvironmentSandboxSQLX(ctx, d.sql, `
+		select `+environmentSandboxSQLXColumns+`
 		from environment_sandboxes
-		where workspace_id = $1
-			and environment_external_id = $2
-			and work_external_id = $3
+		where workspace_id = :workspace_id
+			and environment_external_id = :environment_external_id
+			and work_external_id = :work_external_id
 			and provider_sandbox_id is not null
 			and state in ('creating', 'running', 'stopping')
 		order by created_at desc, id desc
 		limit 1
-	`, workspaceID, environmentExternalID, workExternalID))
+	`, environmentWorkLookupArguments(workspaceID, environmentExternalID, workExternalID))
+}
+
+const (
+	environmentSQLXColumns = `id, CAST(uuid AS text) AS uuid, external_id, organization_id,
+		workspace_id, created_by_api_key_id, name, description, config, metadata, scope,
+		provider, resolved_template, created_at, updated_at, archived_at, deleted_at`
+	environmentSandboxSQLXColumns = `id, CAST(uuid AS text) AS uuid, external_id,
+		organization_id, workspace_id, environment_id, environment_external_id, work_id,
+		work_external_id, provider, template, provider_sandbox_id, state, metadata,
+		last_error, created_at, updated_at, stopped_at`
+)
+
+type environmentRow struct {
+	ID                int64      `db:"id"`
+	UUID              string     `db:"uuid"`
+	ExternalID        string     `db:"external_id"`
+	OrganizationID    int64      `db:"organization_id"`
+	WorkspaceID       int64      `db:"workspace_id"`
+	CreatedByAPIKeyID int64      `db:"created_by_api_key_id"`
+	Name              string     `db:"name"`
+	Description       string     `db:"description"`
+	Config            []byte     `db:"config"`
+	Metadata          []byte     `db:"metadata"`
+	Scope             *string    `db:"scope"`
+	Provider          string     `db:"provider"`
+	ResolvedTemplate  string     `db:"resolved_template"`
+	CreatedAt         time.Time  `db:"created_at"`
+	UpdatedAt         time.Time  `db:"updated_at"`
+	ArchivedAt        *time.Time `db:"archived_at"`
+	DeletedAt         *time.Time `db:"deleted_at"`
+}
+
+type environmentKeyRow struct {
+	ID                     int64  `db:"id"`
+	ExternalID             string `db:"external_id"`
+	OrganizationID         int64  `db:"organization_id"`
+	OrganizationExternalID string `db:"organization_external_id"`
+	WorkspaceID            int64  `db:"workspace_id"`
+	WorkspaceUUID          string `db:"workspace_uuid"`
+	WorkspaceExternalID    string `db:"workspace_external_id"`
+	EnvironmentID          int64  `db:"environment_id"`
+	EnvironmentExternalID  string `db:"environment_external_id"`
+}
+
+type environmentWorkStatsRow struct {
+	Depth          int        `db:"depth"`
+	Pending        int        `db:"pending"`
+	OldestQueuedAt *time.Time `db:"oldest_queued_at"`
+	WorkersPolling int        `db:"workers_polling"`
+}
+
+type environmentSandboxRow struct {
+	ID                    int64      `db:"id"`
+	UUID                  string     `db:"uuid"`
+	ExternalID            string     `db:"external_id"`
+	OrganizationID        int64      `db:"organization_id"`
+	WorkspaceID           int64      `db:"workspace_id"`
+	EnvironmentID         int64      `db:"environment_id"`
+	EnvironmentExternalID string     `db:"environment_external_id"`
+	WorkID                *int64     `db:"work_id"`
+	WorkExternalID        *string    `db:"work_external_id"`
+	Provider              string     `db:"provider"`
+	Template              string     `db:"template"`
+	ProviderSandboxID     *string    `db:"provider_sandbox_id"`
+	State                 string     `db:"state"`
+	Metadata              []byte     `db:"metadata"`
+	LastError             *string    `db:"last_error"`
+	CreatedAt             time.Time  `db:"created_at"`
+	UpdatedAt             time.Time  `db:"updated_at"`
+	StoppedAt             *time.Time `db:"stopped_at"`
 }
 
 func environmentSelectSQL() string {
-	return `
-		select id, uuid::text, external_id, organization_id, workspace_id, created_by_api_key_id,
-			name, description, config, metadata, scope, provider, resolved_template,
-			created_at, updated_at, archived_at, deleted_at
-		from environments
-	`
+	return `select ` + environmentSQLXColumns + ` from environments`
 }
 
 func environmentWorkSelectSQL() string {
-	return `
-		select id, uuid::text, external_id, organization_id, workspace_id, environment_id,
-			environment_external_id, data, metadata, secret, state, claimed_by_worker_id,
-			claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
-			heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at
-		from environment_work
-	`
+	return `select ` + environmentWorkSQLXColumns + ` from environment_work`
 }
 
-type environmentScanner interface {
-	Scan(dest ...any) error
-}
-
-type environmentRows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}
-
-func scanEnvironment(row environmentScanner) (Environment, error) {
-	var env Environment
-	var config, metadata []byte
-	err := row.Scan(&env.ID, &env.UUID, &env.ExternalID, &env.OrganizationID, &env.WorkspaceID, &env.CreatedByAPIKeyID,
-		&env.Name, &env.Description, &config, &metadata, &env.Scope, &env.Provider, &env.ResolvedTemplate,
-		&env.CreatedAt, &env.UpdatedAt, &env.ArchivedAt, &env.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Environment{}, ErrNotFound
-	}
-	if err != nil {
+func getEnvironmentSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (Environment, error) {
+	var row environmentRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Environment{}, ErrNotFound
+		}
 		return Environment{}, err
 	}
-	env.Config = copyRaw(config)
-	env.Metadata = copyRaw(metadata)
-	return env, nil
+	return row.environment(), nil
 }
 
-func scanEnvironmentRows(rows environmentRows) ([]Environment, error) {
-	var environments []Environment
-	for rows.Next() {
-		env, err := scanEnvironment(rows)
-		if err != nil {
-			return nil, err
+func selectEnvironmentsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]Environment, error) {
+	var rows []environmentRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	environments := make([]Environment, len(rows))
+	for index := range rows {
+		environments[index] = rows[index].environment()
+	}
+	return environments, nil
+}
+
+func getEnvironmentWorkSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (EnvironmentWork, error) {
+	var row environmentWorkRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return EnvironmentWork{}, ErrNotFound
 		}
-		environments = append(environments, env)
-	}
-	return environments, rows.Err()
-}
-
-func scanEnvironmentWork(row environmentScanner) (EnvironmentWork, error) {
-	var work EnvironmentWork
-	var data, metadata []byte
-	err := row.Scan(&work.ID, &work.UUID, &work.ExternalID, &work.OrganizationID, &work.WorkspaceID, &work.EnvironmentID,
-		&work.EnvironmentExternalID, &data, &metadata, &work.Secret, &work.State, &work.ClaimedByWorkerID,
-		&work.ClaimExpiresAt, &work.AcknowledgedAt, &work.StartedAt, &work.LatestHeartbeatAt,
-		&work.HeartbeatTTLSeconds, &work.StopRequestedAt, &work.StoppedAt, &work.CreatedAt, &work.UpdatedAt, &work.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return EnvironmentWork{}, ErrNotFound
-	}
-	if err != nil {
 		return EnvironmentWork{}, err
 	}
-	work.Data = copyRaw(data)
-	work.Metadata = copyRaw(metadata)
+	return row.work(), nil
+}
+
+func selectEnvironmentWorkSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]EnvironmentWork, error) {
+	var rows []environmentWorkRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	work := make([]EnvironmentWork, len(rows))
+	for index := range rows {
+		work[index] = rows[index].work()
+	}
 	return work, nil
 }
 
-func scanEnvironmentWorkRows(rows environmentRows) ([]EnvironmentWork, error) {
-	var work []EnvironmentWork
-	for rows.Next() {
-		item, err := scanEnvironmentWork(rows)
-		if err != nil {
-			return nil, err
+func getEnvironmentSandboxSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (EnvironmentSandbox, error) {
+	var row environmentSandboxRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return EnvironmentSandbox{}, ErrNotFound
 		}
-		work = append(work, item)
-	}
-	return work, rows.Err()
-}
-
-func scanEnvironmentSandbox(row environmentScanner) (EnvironmentSandbox, error) {
-	var sandbox EnvironmentSandbox
-	var metadata []byte
-	err := row.Scan(&sandbox.ID, &sandbox.UUID, &sandbox.ExternalID, &sandbox.OrganizationID, &sandbox.WorkspaceID, &sandbox.EnvironmentID,
-		&sandbox.EnvironmentExternalID, &sandbox.WorkID, &sandbox.WorkExternalID, &sandbox.Provider, &sandbox.Template,
-		&sandbox.ProviderSandboxID, &sandbox.State, &metadata, &sandbox.LastError, &sandbox.CreatedAt, &sandbox.UpdatedAt, &sandbox.StoppedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return EnvironmentSandbox{}, ErrNotFound
-	}
-	if err != nil {
 		return EnvironmentSandbox{}, err
 	}
-	sandbox.Metadata = copyRaw(metadata)
-	return sandbox, nil
+	return row.sandbox(), nil
+}
+
+func environmentLookupArguments(workspaceID int64, externalID string) map[string]any {
+	return map[string]any{"workspace_id": workspaceID, "external_id": externalID}
+}
+
+func environmentWorkLookupArguments(
+	workspaceID int64,
+	environmentExternalID string,
+	workExternalID string,
+) map[string]any {
+	return map[string]any{
+		"workspace_id":            workspaceID,
+		"environment_external_id": environmentExternalID,
+		"work_external_id":        workExternalID,
+	}
+}
+
+func environmentArguments(env Environment) map[string]any {
+	return map[string]any{
+		"uuid":                  env.UUID,
+		"external_id":           env.ExternalID,
+		"organization_id":       env.OrganizationID,
+		"workspace_id":          env.WorkspaceID,
+		"created_by_api_key_id": env.CreatedByAPIKeyID,
+		"name":                  env.Name,
+		"description":           env.Description,
+		"config":                jsonArg(env.Config),
+		"metadata":              jsonArg(env.Metadata),
+		"scope":                 env.Scope,
+		"provider":              env.Provider,
+		"resolved_template":     env.ResolvedTemplate,
+		"created_at":            env.CreatedAt,
+		"updated_at":            env.UpdatedAt,
+	}
+}
+
+func environmentSandboxArguments(sandbox EnvironmentSandbox) map[string]any {
+	return map[string]any{
+		"uuid":                    sandbox.UUID,
+		"external_id":             sandbox.ExternalID,
+		"organization_id":         sandbox.OrganizationID,
+		"workspace_id":            sandbox.WorkspaceID,
+		"environment_id":          sandbox.EnvironmentID,
+		"environment_external_id": sandbox.EnvironmentExternalID,
+		"work_id":                 sandbox.WorkID,
+		"work_external_id":        sandbox.WorkExternalID,
+		"provider":                sandbox.Provider,
+		"template":                sandbox.Template,
+		"provider_sandbox_id":     sandbox.ProviderSandboxID,
+		"state":                   sandbox.State,
+		"metadata":                jsonArg(sandbox.Metadata),
+		"last_error":              sandbox.LastError,
+		"created_at":              sandbox.CreatedAt,
+	}
+}
+
+func (r environmentRow) environment() Environment {
+	return Environment{
+		ID:                r.ID,
+		UUID:              r.UUID,
+		ExternalID:        r.ExternalID,
+		OrganizationID:    r.OrganizationID,
+		WorkspaceID:       r.WorkspaceID,
+		CreatedByAPIKeyID: r.CreatedByAPIKeyID,
+		Name:              r.Name,
+		Description:       r.Description,
+		Config:            copyRaw(r.Config),
+		Metadata:          copyRaw(r.Metadata),
+		Scope:             r.Scope,
+		Provider:          r.Provider,
+		ResolvedTemplate:  r.ResolvedTemplate,
+		CreatedAt:         r.CreatedAt,
+		UpdatedAt:         r.UpdatedAt,
+		ArchivedAt:        r.ArchivedAt,
+		DeletedAt:         r.DeletedAt,
+	}
+}
+
+func (r environmentKeyRow) key() EnvironmentKey {
+	return EnvironmentKey{
+		ID:                     r.ID,
+		ExternalID:             r.ExternalID,
+		OrganizationID:         r.OrganizationID,
+		OrganizationExternalID: r.OrganizationExternalID,
+		WorkspaceID:            r.WorkspaceID,
+		WorkspaceUUID:          r.WorkspaceUUID,
+		WorkspaceExternalID:    r.WorkspaceExternalID,
+		EnvironmentID:          r.EnvironmentID,
+		EnvironmentExternalID:  r.EnvironmentExternalID,
+	}
+}
+
+func (r environmentSandboxRow) sandbox() EnvironmentSandbox {
+	return EnvironmentSandbox{
+		ID:                    r.ID,
+		UUID:                  r.UUID,
+		ExternalID:            r.ExternalID,
+		OrganizationID:        r.OrganizationID,
+		WorkspaceID:           r.WorkspaceID,
+		EnvironmentID:         r.EnvironmentID,
+		EnvironmentExternalID: r.EnvironmentExternalID,
+		WorkID:                r.WorkID,
+		WorkExternalID:        r.WorkExternalID,
+		Provider:              r.Provider,
+		Template:              r.Template,
+		ProviderSandboxID:     r.ProviderSandboxID,
+		State:                 r.State,
+		Metadata:              copyRaw(r.Metadata),
+		LastError:             r.LastError,
+		CreatedAt:             r.CreatedAt,
+		UpdatedAt:             r.UpdatedAt,
+		StoppedAt:             r.StoppedAt,
+	}
 }
 
 func coalesceWorkState(state string) string {

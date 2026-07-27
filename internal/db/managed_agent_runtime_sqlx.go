@@ -168,22 +168,6 @@ func listManagedAgentSessionEvents(
 	)
 }
 
-func getEnvironmentWorkSQLX(
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	query string,
-	arguments map[string]any,
-) (EnvironmentWork, error) {
-	var row environmentWorkRow
-	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return EnvironmentWork{}, ErrNotFound
-		}
-		return EnvironmentWork{}, err
-	}
-	return row.work(), nil
-}
-
 func listSessionEventsSQLX(
 	ctx context.Context,
 	database sqlxNamedQueryer,

@@ -9,72 +9,108 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
-
-	"github.com/jackc/pgx/v5"
 )
 
-type workbenchScanner interface {
-	Scan(dest ...any) error
+type workbenchPromptRow struct {
+	OrgUUID               string         `db:"org_uuid"`
+	PromptUUID            string         `db:"prompt_uuid"`
+	WorkspaceID           string         `db:"workspace_id"`
+	Name                  string         `db:"name"`
+	IsSharedWithWorkspace bool           `db:"is_shared_with_workspace"`
+	LatestRevisionUUID    sql.NullString `db:"latest_revision_uuid"`
+	DeletedAt             sql.NullTime   `db:"deleted_at"`
+	CreatedAt             time.Time      `db:"created_at"`
+	UpdatedAt             time.Time      `db:"updated_at"`
+}
+
+type workbenchRevisionRow struct {
+	OrgUUID      string    `db:"org_uuid"`
+	PromptUUID   string    `db:"prompt_uuid"`
+	RevisionUUID string    `db:"revision_uuid"`
+	PayloadJSON  string    `db:"payload_json"`
+	CreatedAt    time.Time `db:"created_at"`
+	UpdatedAt    time.Time `db:"updated_at"`
+}
+
+type workbenchKVRow struct {
+	OrgUUID     string         `db:"org_uuid"`
+	PromptUUID  string         `db:"prompt_uuid"`
+	Key         string         `db:"key"`
+	Value       string         `db:"value"`
+	VersionJSON sql.NullString `db:"version_json"`
+	CreatedAt   time.Time      `db:"created_at"`
+	UpdatedAt   time.Time      `db:"updated_at"`
+}
+
+type workbenchEvaluationRow struct {
+	OrgUUID        string    `db:"org_uuid"`
+	RevisionUUID   string    `db:"revision_uuid"`
+	EvaluationUUID string    `db:"evaluation_uuid"`
+	PayloadJSON    string    `db:"payload_json"`
+	CreatedAt      time.Time `db:"created_at"`
+	UpdatedAt      time.Time `db:"updated_at"`
+}
+
+type workbenchGeneratedTestCaseRow struct {
+	ID         int64  `db:"id"`
+	ValuesJSON string `db:"values_json"`
 }
 
 func mapNoRows(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return platform.ErrNotFound
 	}
 	return err
 }
 
 func (d *DB) GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID string) (*platform.WorkbenchPromptRecord, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" {
 		return nil, platform.ErrNotFound
 	}
-	record, err := scanWorkbenchPrompt(d.Pool.QueryRow(ctx, `
+	var row workbenchPromptRow
+	err := namedGetContext(ctx, d.sql, &row, `
 		SELECT org_uuid, prompt_uuid, workspace_id, name, is_shared_with_workspace, latest_revision_uuid, deleted_at, created_at, updated_at
 		FROM workbench_prompts
-		WHERE org_uuid = $1
-		  AND prompt_uuid = $2
+		WHERE org_uuid = :org_uuid
+		  AND prompt_uuid = :prompt_uuid
 		LIMIT 1
-	`, orgUUID, promptUUID))
+	`, map[string]any{"org_uuid": orgUUID, "prompt_uuid": promptUUID})
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
+	record := row.record()
 	return &record, nil
 }
 
 func (d *DB) ListWorkbenchPrompts(ctx context.Context, orgUUID string, workspaceID string) ([]platform.WorkbenchPromptRecord, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" {
 		return nil, nil
 	}
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID == "" {
 		workspaceID = "default"
 	}
-	rows, err := d.Pool.Query(ctx, `
+	var rows []workbenchPromptRow
+	err := namedSelectContext(ctx, d.sql, &rows, `
 		SELECT org_uuid, prompt_uuid, workspace_id, name, is_shared_with_workspace, latest_revision_uuid, deleted_at, created_at, updated_at
 		FROM workbench_prompts
-		WHERE org_uuid = $1
-		  AND workspace_id = $2
+		WHERE org_uuid = :org_uuid
+		  AND workspace_id = :workspace_id
 		  AND deleted_at IS NULL
 		ORDER BY updated_at DESC, id DESC
-	`, strings.TrimSpace(orgUUID), workspaceID)
+	`, map[string]any{"org_uuid": strings.TrimSpace(orgUUID), "workspace_id": workspaceID})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	records := []platform.WorkbenchPromptRecord{}
-	for rows.Next() {
-		record, err := scanWorkbenchPrompt(rows)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
+	records := make([]platform.WorkbenchPromptRecord, len(rows))
+	for index := range rows {
+		records[index] = rows[index].record()
 	}
-	return records, rows.Err()
+	return records, nil
 }
 
 func (d *DB) UpsertWorkbenchPrompt(ctx context.Context, record platform.WorkbenchPromptRecord) (platform.WorkbenchPromptRecord, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" {
 		return platform.WorkbenchPromptRecord{}, platform.ErrNotFound
 	}
 	record.OrgUUID = strings.TrimSpace(record.OrgUUID)
@@ -97,12 +133,16 @@ func (d *DB) UpsertWorkbenchPrompt(ctx context.Context, record platform.Workbenc
 	if record.DeletedAt != nil && !record.DeletedAt.IsZero() {
 		deletedAt = record.DeletedAt.UTC()
 	}
-	saved, err := scanWorkbenchPrompt(d.Pool.QueryRow(ctx, `
+	var row workbenchPromptRow
+	err := namedGetContext(ctx, d.sql, &row, `
 		INSERT INTO workbench_prompts (
 			org_uuid, prompt_uuid, workspace_id, name, is_shared_with_workspace,
 			latest_revision_uuid, deleted_at, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
+		VALUES (
+			:org_uuid, :prompt_uuid, :workspace_id, :name, :is_shared_with_workspace,
+			:latest_revision_uuid, :deleted_at, :created_at, CURRENT_TIMESTAMP
+		)
 		ON CONFLICT (org_uuid, prompt_uuid) DO UPDATE
 		SET workspace_id = EXCLUDED.workspace_id,
 		    name = EXCLUDED.name,
@@ -111,393 +151,414 @@ func (d *DB) UpsertWorkbenchPrompt(ctx context.Context, record platform.Workbenc
 		    deleted_at = EXCLUDED.deleted_at,
 		    updated_at = CURRENT_TIMESTAMP
 		RETURNING org_uuid, prompt_uuid, workspace_id, name, is_shared_with_workspace, latest_revision_uuid, deleted_at, created_at, updated_at
-	`, record.OrgUUID, record.PromptUUID, record.WorkspaceID, record.Name, record.IsSharedWithWorkspace, latestRevisionUUID, deletedAt, record.CreatedAt))
+	`, map[string]any{
+		"org_uuid":                 record.OrgUUID,
+		"prompt_uuid":              record.PromptUUID,
+		"workspace_id":             record.WorkspaceID,
+		"name":                     record.Name,
+		"is_shared_with_workspace": record.IsSharedWithWorkspace,
+		"latest_revision_uuid":     latestRevisionUUID,
+		"deleted_at":               deletedAt,
+		"created_at":               record.CreatedAt,
+	})
 	if err != nil {
 		return platform.WorkbenchPromptRecord{}, err
 	}
-	return saved, nil
+	return row.record(), nil
 }
 
 func (d *DB) DeleteWorkbenchPromptState(ctx context.Context, orgUUID string, promptUUID string) error {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" {
 		return nil
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer tx.Rollback()
 
-	if _, err := tx.Exec(ctx, `
+	arguments := map[string]any{"org_uuid": orgUUID, "prompt_uuid": promptUUID}
+	if _, err := namedExecContext(ctx, tx, `
 		INSERT INTO workbench_prompts (org_uuid, prompt_uuid, workspace_id, name, deleted_at, created_at, updated_at)
-		VALUES ($1, $2, 'default', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		VALUES (:org_uuid, :prompt_uuid, 'default', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (org_uuid, prompt_uuid) DO UPDATE
 		SET name = '',
 		    is_shared_with_workspace = FALSE,
 		    latest_revision_uuid = NULL,
 		    deleted_at = CURRENT_TIMESTAMP,
 		    updated_at = CURRENT_TIMESTAMP
-	`, orgUUID, promptUUID); err != nil {
+	`, arguments); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM workbench_prompt_revisions WHERE org_uuid = $1 AND prompt_uuid = $2`, orgUUID, promptUUID); err != nil {
+	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_prompt_revisions WHERE org_uuid = :org_uuid AND prompt_uuid = :prompt_uuid`, arguments); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM workbench_prompt_kv WHERE org_uuid = $1 AND prompt_uuid = $2`, orgUUID, promptUUID); err != nil {
+	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_prompt_kv WHERE org_uuid = :org_uuid AND prompt_uuid = :prompt_uuid`, arguments); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM workbench_evaluations WHERE org_uuid = $1`, orgUUID); err != nil {
+	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_evaluations WHERE org_uuid = :org_uuid`, arguments); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM workbench_generated_test_cases WHERE org_uuid = $1`, orgUUID); err != nil {
+	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_generated_test_cases WHERE org_uuid = :org_uuid`, arguments); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 func (d *DB) GetWorkbenchRevision(ctx context.Context, orgUUID string, promptUUID string, revisionUUID string) (*platform.WorkbenchRevisionRecord, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(revisionUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(revisionUUID) == "" {
 		return nil, platform.ErrNotFound
 	}
-	var record platform.WorkbenchRevisionRecord
-	var payloadJSON string
-	err := d.Pool.QueryRow(ctx, `
-		SELECT org_uuid, prompt_uuid, revision_uuid, payload::text, created_at, updated_at
+	var row workbenchRevisionRow
+	err := namedGetContext(ctx, d.sql, &row, `
+		SELECT org_uuid, prompt_uuid, revision_uuid, CAST(payload AS text) AS payload_json, created_at, updated_at
 		FROM workbench_prompt_revisions
-		WHERE org_uuid = $1
-		  AND prompt_uuid = $2
-		  AND revision_uuid = $3
+		WHERE org_uuid = :org_uuid
+		  AND prompt_uuid = :prompt_uuid
+		  AND revision_uuid = :revision_uuid
 		LIMIT 1
-	`, orgUUID, promptUUID, revisionUUID).Scan(&record.OrgUUID, &record.PromptUUID, &record.RevisionUUID, &payloadJSON, &record.CreatedAt, &record.UpdatedAt)
+	`, map[string]any{"org_uuid": orgUUID, "prompt_uuid": promptUUID, "revision_uuid": revisionUUID})
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
-	record.Payload = parseWorkbenchMapJSON(payloadJSON)
+	record := row.record()
 	return &record, nil
 }
 
+const upsertWorkbenchRevisionQuery = `
+	INSERT INTO workbench_prompt_revisions (org_uuid, prompt_uuid, revision_uuid, payload, created_at, updated_at)
+	VALUES (:org_uuid, :prompt_uuid, :revision_uuid, CAST(:payload AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	ON CONFLICT (org_uuid, prompt_uuid, revision_uuid) DO UPDATE
+	SET payload = EXCLUDED.payload,
+	    updated_at = CURRENT_TIMESTAMP
+`
+
 func (d *DB) UpsertWorkbenchRevision(ctx context.Context, record platform.WorkbenchRevisionRecord) error {
-	if d == nil || d.Pool == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" || strings.TrimSpace(record.RevisionUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" || strings.TrimSpace(record.RevisionUUID) == "" {
 		return nil
 	}
 	payloadJSON, err := marshalWorkbenchJSON(record.Payload, map[string]any{})
 	if err != nil {
 		return err
 	}
-	_, err = d.Pool.Exec(ctx, `
-		INSERT INTO workbench_prompt_revisions (org_uuid, prompt_uuid, revision_uuid, payload, created_at, updated_at)
-		VALUES ($1, $2, $3, $4::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT (org_uuid, prompt_uuid, revision_uuid) DO UPDATE
-		SET payload = EXCLUDED.payload,
-		    updated_at = CURRENT_TIMESTAMP
-	`, strings.TrimSpace(record.OrgUUID), strings.TrimSpace(record.PromptUUID), strings.TrimSpace(record.RevisionUUID), payloadJSON)
+	_, err = namedExecContext(ctx, d.sql, upsertWorkbenchRevisionQuery, map[string]any{
+		"org_uuid":      strings.TrimSpace(record.OrgUUID),
+		"prompt_uuid":   strings.TrimSpace(record.PromptUUID),
+		"revision_uuid": strings.TrimSpace(record.RevisionUUID),
+		"payload":       payloadJSON,
+	})
 	return err
 }
 
 func (d *DB) ListWorkbenchEvaluationRevisionIDs(ctx context.Context, orgUUID string) ([]string, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" {
 		return nil, nil
 	}
-	rows, err := d.Pool.Query(ctx, `
+	var revisionIDs []string
+	err := namedSelectContext(ctx, d.sql, &revisionIDs, `
 		SELECT DISTINCT revision_uuid
 		FROM workbench_evaluations
-		WHERE org_uuid = $1
+		WHERE org_uuid = :org_uuid
 		ORDER BY revision_uuid ASC
-	`, orgUUID)
+	`, map[string]any{"org_uuid": orgUUID})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var revisionIDs []string
-	for rows.Next() {
-		var revisionID string
-		if err := rows.Scan(&revisionID); err != nil {
-			return nil, err
-		}
+	filtered := revisionIDs[:0]
+	for _, revisionID := range revisionIDs {
 		if strings.TrimSpace(revisionID) != "" {
-			revisionIDs = append(revisionIDs, revisionID)
+			filtered = append(filtered, revisionID)
 		}
 	}
-	return revisionIDs, rows.Err()
+	return filtered, nil
 }
 
 func (d *DB) GetWorkbenchKV(ctx context.Context, orgUUID string, promptUUID string, key string) (*platform.WorkbenchKVRecord, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(key) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(key) == "" {
 		return nil, platform.ErrNotFound
 	}
-	record, err := scanWorkbenchKV(d.Pool.QueryRow(ctx, `
-		SELECT org_uuid, prompt_uuid, key, value, version::text, created_at, updated_at
+	var row workbenchKVRow
+	err := namedGetContext(ctx, d.sql, &row, `
+		SELECT org_uuid, prompt_uuid, key, value, CAST(version AS text) AS version_json, created_at, updated_at
 		FROM workbench_prompt_kv
-		WHERE org_uuid = $1
-		  AND prompt_uuid = $2
-		  AND key = $3
+		WHERE org_uuid = :org_uuid
+		  AND prompt_uuid = :prompt_uuid
+		  AND key = :key
 		LIMIT 1
-	`, orgUUID, promptUUID, key))
+	`, map[string]any{"org_uuid": orgUUID, "prompt_uuid": promptUUID, "key": key})
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
+	record := row.record()
 	return &record, nil
 }
 
 func (d *DB) UpsertWorkbenchKV(ctx context.Context, record platform.WorkbenchKVRecord) error {
-	if d == nil || d.Pool == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" || strings.TrimSpace(record.Key) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" || strings.TrimSpace(record.Key) == "" {
 		return nil
 	}
 	versionJSON, err := marshalWorkbenchNullableJSON(record.Version)
 	if err != nil {
 		return err
 	}
-	_, err = d.Pool.Exec(ctx, `
+	_, err = namedExecContext(ctx, d.sql, `
 		INSERT INTO workbench_prompt_kv (org_uuid, prompt_uuid, key, value, version, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		VALUES (:org_uuid, :prompt_uuid, :key, :value, CAST(:version AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (org_uuid, prompt_uuid, key) DO UPDATE
 		SET value = EXCLUDED.value,
 		    version = EXCLUDED.version,
 		    updated_at = CURRENT_TIMESTAMP
-	`, strings.TrimSpace(record.OrgUUID), strings.TrimSpace(record.PromptUUID), strings.TrimSpace(record.Key), record.Value, versionJSON)
+	`, map[string]any{
+		"org_uuid":    strings.TrimSpace(record.OrgUUID),
+		"prompt_uuid": strings.TrimSpace(record.PromptUUID),
+		"key":         strings.TrimSpace(record.Key),
+		"value":       record.Value,
+		"version":     versionJSON,
+	})
 	return err
 }
 
 func (d *DB) DeleteWorkbenchKV(ctx context.Context, orgUUID string, promptUUID string, key string) error {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(key) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(key) == "" {
 		return nil
 	}
-	_, err := d.Pool.Exec(ctx, `
+	_, err := namedExecContext(ctx, d.sql, `
 		DELETE FROM workbench_prompt_kv
-		WHERE org_uuid = $1
-		  AND prompt_uuid = $2
-		  AND key = $3
-	`, orgUUID, promptUUID, key)
+		WHERE org_uuid = :org_uuid
+		  AND prompt_uuid = :prompt_uuid
+		  AND key = :key
+	`, map[string]any{"org_uuid": orgUUID, "prompt_uuid": promptUUID, "key": key})
 	return err
 }
 
 func (d *DB) ListWorkbenchEvaluations(ctx context.Context, orgUUID string, revisionUUID string) ([]platform.WorkbenchEvaluationRecord, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(revisionUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(revisionUUID) == "" {
 		return nil, nil
 	}
-	rows, err := d.Pool.Query(ctx, `
-		SELECT org_uuid, revision_uuid, evaluation_uuid, payload::text, created_at, updated_at
+	var rows []workbenchEvaluationRow
+	err := namedSelectContext(ctx, d.sql, &rows, `
+		SELECT org_uuid, revision_uuid, evaluation_uuid, CAST(payload AS text) AS payload_json, created_at, updated_at
 		FROM workbench_evaluations
-		WHERE org_uuid = $1
-		  AND revision_uuid = $2
+		WHERE org_uuid = :org_uuid
+		  AND revision_uuid = :revision_uuid
 		ORDER BY created_at ASC, id ASC
-	`, orgUUID, revisionUUID)
+	`, map[string]any{"org_uuid": orgUUID, "revision_uuid": revisionUUID})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var records []platform.WorkbenchEvaluationRecord
-	for rows.Next() {
-		record, err := scanWorkbenchEvaluationRows(rows)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
+	records := make([]platform.WorkbenchEvaluationRecord, len(rows))
+	for index := range rows {
+		records[index] = rows[index].record()
 	}
-	return records, rows.Err()
+	return records, nil
 }
 
 func (d *DB) GetWorkbenchEvaluation(ctx context.Context, orgUUID string, evaluationUUID string) (*platform.WorkbenchEvaluationRecord, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(evaluationUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(evaluationUUID) == "" {
 		return nil, platform.ErrNotFound
 	}
-	record, err := scanWorkbenchEvaluation(d.Pool.QueryRow(ctx, `
-		SELECT org_uuid, revision_uuid, evaluation_uuid, payload::text, created_at, updated_at
+	var row workbenchEvaluationRow
+	err := namedGetContext(ctx, d.sql, &row, `
+		SELECT org_uuid, revision_uuid, evaluation_uuid, CAST(payload AS text) AS payload_json, created_at, updated_at
 		FROM workbench_evaluations
-		WHERE org_uuid = $1
-		  AND evaluation_uuid = $2
+		WHERE org_uuid = :org_uuid
+		  AND evaluation_uuid = :evaluation_uuid
 		LIMIT 1
-	`, orgUUID, evaluationUUID))
+	`, map[string]any{"org_uuid": orgUUID, "evaluation_uuid": evaluationUUID})
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
+	record := row.record()
 	return &record, nil
 }
 
 func (d *DB) UpsertWorkbenchEvaluation(ctx context.Context, record platform.WorkbenchEvaluationRecord) error {
-	if d == nil || d.Pool == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.RevisionUUID) == "" || strings.TrimSpace(record.EvaluationUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.RevisionUUID) == "" || strings.TrimSpace(record.EvaluationUUID) == "" {
 		return nil
 	}
 	payloadJSON, err := marshalWorkbenchJSON(record.Payload, map[string]any{})
 	if err != nil {
 		return err
 	}
-	_, err = d.Pool.Exec(ctx, `
+	_, err = namedExecContext(ctx, d.sql, `
 		INSERT INTO workbench_evaluations (org_uuid, revision_uuid, evaluation_uuid, payload, created_at, updated_at)
-		VALUES ($1, $2, $3, $4::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		VALUES (:org_uuid, :revision_uuid, :evaluation_uuid, CAST(:payload AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (org_uuid, evaluation_uuid) DO UPDATE
 		SET revision_uuid = EXCLUDED.revision_uuid,
 		    payload = EXCLUDED.payload,
 		    updated_at = CURRENT_TIMESTAMP
-	`, strings.TrimSpace(record.OrgUUID), strings.TrimSpace(record.RevisionUUID), strings.TrimSpace(record.EvaluationUUID), payloadJSON)
+	`, map[string]any{
+		"org_uuid":        strings.TrimSpace(record.OrgUUID),
+		"revision_uuid":   strings.TrimSpace(record.RevisionUUID),
+		"evaluation_uuid": strings.TrimSpace(record.EvaluationUUID),
+		"payload":         payloadJSON,
+	})
 	return err
 }
 
 func (d *DB) DeleteWorkbenchEvaluation(ctx context.Context, orgUUID string, evaluationUUID string) (*platform.WorkbenchEvaluationRecord, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(evaluationUUID) == "" {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(evaluationUUID) == "" {
 		return nil, platform.ErrNotFound
 	}
-	record, err := scanWorkbenchEvaluation(d.Pool.QueryRow(ctx, `
+	var row workbenchEvaluationRow
+	err := namedGetContext(ctx, d.sql, &row, `
 		DELETE FROM workbench_evaluations
-		WHERE org_uuid = $1
-		  AND evaluation_uuid = $2
-		RETURNING org_uuid, revision_uuid, evaluation_uuid, payload::text, created_at, updated_at
-	`, orgUUID, evaluationUUID))
+		WHERE org_uuid = :org_uuid
+		  AND evaluation_uuid = :evaluation_uuid
+		RETURNING org_uuid, revision_uuid, evaluation_uuid, CAST(payload AS text) AS payload_json, created_at, updated_at
+	`, map[string]any{"org_uuid": orgUUID, "evaluation_uuid": evaluationUUID})
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
+	record := row.record()
 	return &record, nil
 }
 
 func (d *DB) AppendWorkbenchGeneratedTestCase(ctx context.Context, orgUUID string, values map[string]any) error {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || len(values) == 0 {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || len(values) == 0 {
 		return nil
 	}
 	valuesJSON, err := marshalWorkbenchJSON(values, map[string]any{})
 	if err != nil {
 		return err
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer tx.Rollback()
 
-	if _, err := tx.Exec(ctx, `
+	arguments := map[string]any{"org_uuid": orgUUID, "values": valuesJSON}
+	if _, err := namedExecContext(ctx, tx, `
 		INSERT INTO workbench_generated_test_cases (org_uuid, values, created_at)
-		VALUES ($1, $2::jsonb, CURRENT_TIMESTAMP)
-	`, orgUUID, valuesJSON); err != nil {
+		VALUES (:org_uuid, CAST(:values AS jsonb), CURRENT_TIMESTAMP)
+	`, arguments); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := namedExecContext(ctx, tx, `
 		DELETE FROM workbench_generated_test_cases
-		WHERE org_uuid = $1
+		WHERE org_uuid = :org_uuid
 		  AND id NOT IN (
 		      SELECT id
 		      FROM workbench_generated_test_cases
-		      WHERE org_uuid = $1
+		      WHERE org_uuid = :org_uuid
 		      ORDER BY id DESC
 		      LIMIT 10
 		  )
-	`, orgUUID); err != nil {
+	`, arguments); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 func (d *DB) TakeWorkbenchGeneratedTestCase(ctx context.Context, orgUUID string, requested map[string]any) (map[string]any, bool, error) {
-	if d == nil || d.Pool == nil || strings.TrimSpace(orgUUID) == "" || len(requested) == 0 {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || len(requested) == 0 {
 		return nil, false, nil
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, false, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer tx.Rollback()
 
-	rows, err := tx.Query(ctx, `
-		SELECT id, values::text
+	var rows []workbenchGeneratedTestCaseRow
+	err = namedSelectContext(ctx, tx, &rows, `
+		SELECT id, CAST(values AS text) AS values_json
 		FROM workbench_generated_test_cases
-		WHERE org_uuid = $1
+		WHERE org_uuid = :org_uuid
 		ORDER BY id ASC
 		FOR UPDATE
-	`, orgUUID)
+	`, map[string]any{"org_uuid": orgUUID})
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
 
 	var selectedID int64
 	var selectedValues map[string]any
-	for rows.Next() {
-		var id int64
-		var valuesJSON string
-		if err := rows.Scan(&id, &valuesJSON); err != nil {
-			return nil, false, err
-		}
-		values := parseWorkbenchMapJSON(valuesJSON)
+	for _, row := range rows {
+		values := parseWorkbenchMapJSON(row.ValuesJSON)
 		if workbenchGeneratedValuesMatchRequest(values, requested) {
-			selectedID = id
+			selectedID = row.ID
 			selectedValues = values
 			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, false, err
-	}
-	rows.Close()
 	if selectedID == 0 {
-		if err := tx.Commit(ctx); err != nil {
+		if err := tx.Commit(); err != nil {
 			return nil, false, err
 		}
 		return nil, false, nil
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM workbench_generated_test_cases WHERE id = $1`, selectedID); err != nil {
+	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_generated_test_cases WHERE id = :id`, map[string]any{
+		"id": selectedID,
+	}); err != nil {
 		return nil, false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
 	return selectedValues, true, nil
 }
 
-func scanWorkbenchPrompt(row workbenchScanner) (platform.WorkbenchPromptRecord, error) {
-	var record platform.WorkbenchPromptRecord
-	var latestRevisionUUID sql.NullString
-	var deletedAt sql.NullTime
-	if err := row.Scan(
-		&record.OrgUUID,
-		&record.PromptUUID,
-		&record.WorkspaceID,
-		&record.Name,
-		&record.IsSharedWithWorkspace,
-		&latestRevisionUUID,
-		&deletedAt,
-		&record.CreatedAt,
-		&record.UpdatedAt,
-	); err != nil {
-		return platform.WorkbenchPromptRecord{}, err
+func (r workbenchPromptRow) record() platform.WorkbenchPromptRecord {
+	record := platform.WorkbenchPromptRecord{
+		OrgUUID:               r.OrgUUID,
+		PromptUUID:            r.PromptUUID,
+		WorkspaceID:           r.WorkspaceID,
+		Name:                  r.Name,
+		IsSharedWithWorkspace: r.IsSharedWithWorkspace,
+		CreatedAt:             r.CreatedAt,
+		UpdatedAt:             r.UpdatedAt,
 	}
-	if latestRevisionUUID.Valid {
-		value := latestRevisionUUID.String
+	if r.LatestRevisionUUID.Valid {
+		value := r.LatestRevisionUUID.String
 		record.LatestRevisionUUID = &value
 	}
-	if deletedAt.Valid {
-		value := deletedAt.Time
+	if r.DeletedAt.Valid {
+		value := r.DeletedAt.Time
 		record.DeletedAt = &value
 	}
-	return record, nil
+	return record
 }
 
-func scanWorkbenchKV(row workbenchScanner) (platform.WorkbenchKVRecord, error) {
-	var record platform.WorkbenchKVRecord
-	var versionJSON sql.NullString
-	if err := row.Scan(&record.OrgUUID, &record.PromptUUID, &record.Key, &record.Value, &versionJSON, &record.CreatedAt, &record.UpdatedAt); err != nil {
-		return platform.WorkbenchKVRecord{}, err
+func (r workbenchRevisionRow) record() platform.WorkbenchRevisionRecord {
+	return platform.WorkbenchRevisionRecord{
+		OrgUUID:      r.OrgUUID,
+		PromptUUID:   r.PromptUUID,
+		RevisionUUID: r.RevisionUUID,
+		Payload:      parseWorkbenchMapJSON(r.PayloadJSON),
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
 	}
-	if versionJSON.Valid && strings.TrimSpace(versionJSON.String) != "" {
+}
+
+func (r workbenchKVRow) record() platform.WorkbenchKVRecord {
+	record := platform.WorkbenchKVRecord{
+		OrgUUID:    r.OrgUUID,
+		PromptUUID: r.PromptUUID,
+		Key:        r.Key,
+		Value:      r.Value,
+		CreatedAt:  r.CreatedAt,
+		UpdatedAt:  r.UpdatedAt,
+	}
+	if r.VersionJSON.Valid && strings.TrimSpace(r.VersionJSON.String) != "" {
 		var version any
-		if err := json.Unmarshal([]byte(versionJSON.String), &version); err == nil {
+		if err := json.Unmarshal([]byte(r.VersionJSON.String), &version); err == nil {
 			record.Version = version
 		}
 	}
-	return record, nil
+	return record
 }
 
-func scanWorkbenchEvaluation(row workbenchScanner) (platform.WorkbenchEvaluationRecord, error) {
-	return scanWorkbenchEvaluationRows(row)
-}
-
-func scanWorkbenchEvaluationRows(row workbenchScanner) (platform.WorkbenchEvaluationRecord, error) {
-	var record platform.WorkbenchEvaluationRecord
-	var payloadJSON string
-	if err := row.Scan(&record.OrgUUID, &record.RevisionUUID, &record.EvaluationUUID, &payloadJSON, &record.CreatedAt, &record.UpdatedAt); err != nil {
-		return platform.WorkbenchEvaluationRecord{}, err
+func (r workbenchEvaluationRow) record() platform.WorkbenchEvaluationRecord {
+	return platform.WorkbenchEvaluationRecord{
+		OrgUUID:        r.OrgUUID,
+		RevisionUUID:   r.RevisionUUID,
+		EvaluationUUID: r.EvaluationUUID,
+		Payload:        parseWorkbenchMapJSON(r.PayloadJSON),
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
 	}
-	record.Payload = parseWorkbenchMapJSON(payloadJSON)
-	return record, nil
 }
 
 func marshalWorkbenchJSON(value any, fallback any) (string, error) {

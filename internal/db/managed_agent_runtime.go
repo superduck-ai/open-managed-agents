@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -129,12 +130,15 @@ func createManagedAgentRuntimeTx(
 		return CreateManagedAgentRuntimeResult{}, err
 	}
 
-	credentials, err := getCodeSessionCredentialContextForIssueSQLX(
+	credentials, err := getCodeSessionCredentialContextSQLX(
 		ctx,
 		tx,
-		codeSession.OrganizationID,
-		codeSession.WorkspaceID,
-		codeSession.ExternalID,
+		codeSessionCredentialContextForIssueQuery,
+		map[string]any{
+			"code_session_external_id": strings.TrimSpace(codeSession.ExternalID),
+			"organization_id":          codeSession.OrganizationID,
+			"workspace_id":             codeSession.WorkspaceID,
+		},
 	)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err

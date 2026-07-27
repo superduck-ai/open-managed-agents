@@ -9,43 +9,32 @@ import (
 	"time"
 )
 
-const (
-	codeSessionSQLXColumns = `id, cast(uuid as text) as uuid, external_id, organization_id, workspace_id,
-		session_id, session_external_id, environment_id, environment_external_id, work_dir,
-		permission_mode, model, status, metadata, connection_status, last_inbound_sequence_num,
-		last_outbound_sequence_num, last_internal_sequence_num, last_worker_connected_at,
-		last_worker_activity_at, current_worker_epoch, worker_lease_expires_at,
-		worker_registered_at, worker_last_heartbeat_at, worker_token_session_id, worker_binding,
-		worker_status, worker_external_metadata, worker_requires_action_details,
-		created_at, updated_at, deleted_at`
-	createCodeSessionQuery = `
+// createCodeSessionQuery / insertCodeSessionInboundEventQuery 同时服务
+// CreateCodeSession、Managed Agent 原子启动，以及命名参数绑定测试。
+var createCodeSessionQuery = `
 		insert into code_sessions (
 			external_id, organization_id, workspace_id, session_id, session_external_id,
 			environment_id, environment_external_id, work_dir, permission_mode, model,
 			status, metadata, oauth_access_token_hash, created_at, updated_at
 		)
 		values (
-			:code_session_external_id, :organization_id, :workspace_id, :session_id, :session_external_id,
-			:environment_id, :environment_external_id, :work_dir, :permission_mode, :model,
-			:status, CAST(:metadata AS jsonb), :oauth_access_token_hash, :created_at, :created_at
+			:external_id, :organization_id, :workspace_id, :session_id,
+			:session_external_id, :environment_id, :environment_external_id,
+			:work_dir, :permission_mode, :model, :status, CAST(:metadata AS jsonb),
+			:oauth_access_token_hash, :created_at, :created_at
 		)
-		returning ` + codeSessionSQLXColumns + `
-	`
-	codeSessionCredentialContextForIssueQuery = codeSessionCredentialContextSelect + `
-		where cs.external_id = :code_session_external_id
-			and cs.organization_id = :organization_id
-			and cs.workspace_id = :workspace_id
-	` + activeCodeSessionCredentialConditions
-	// insertCodeSessionInboundEventQuery 复用 AppendCodeSessionInboundEvent 的
-	// workspace 幂等键：同一 workspace 内重复的 idempotency_key 不再入队。
-	insertCodeSessionInboundEventQuery = `
+		returning ` + codeSessionColumns()
+
+// insertCodeSessionInboundEventQuery 复用 AppendCodeSessionInboundEvent 的
+// workspace 幂等键：同一 workspace 内重复的 idempotency_key 不再入队。
+const insertCodeSessionInboundEventQuery = `
 		insert into code_session_inbound_events (
 			external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
 			sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
 			payload_hash, idempotency_key, delivery_status, source, created_at, updated_at
 		)
 		values (
-			:event_external_id, :organization_id, :workspace_id, :code_session_id, :code_session_external_id,
+			:external_id, :organization_id, :workspace_id, :code_session_id, :code_session_external_id,
 			:sequence_num, :event_type, :event_subtype, :payload_uuid, :request_id, CAST(:payload AS jsonb),
 			:payload_hash, :idempotency_key, :delivery_status, :source, :created_at, :created_at
 		)
@@ -53,15 +42,13 @@ const (
 			where deleted_at is null and idempotency_key <> ''
 			do nothing
 	`
-	updateCodeSessionInboundSequenceQuery = `
+
+const updateCodeSessionInboundSequenceQuery = `
 		update code_sessions
 		set last_inbound_sequence_num = :sequence_num, updated_at = now()
 		where id = :code_session_id
 	`
-)
 
-// codeSessionRow 是 code_sessions 的 sqlx 扫描边界。JSONB 列以 []byte 落地，
-// 由 codeSession() 转换成领域模型持有的 json.RawMessage。
 type codeSessionRow struct {
 	ID                          int64      `db:"id"`
 	UUID                        string     `db:"uuid"`
@@ -97,8 +84,60 @@ type codeSessionRow struct {
 	DeletedAt                   *time.Time `db:"deleted_at"`
 }
 
-// codeSessionCredentialContextRow 与 codeSessionCredentialContextSelect 的列别名
-// 一一对应，使 OAuth 鉴权与 JWT 签发共用同一份身份投影。
+type codeSessionEventRow struct {
+	ID                    int64      `db:"id"`
+	UUID                  string     `db:"uuid"`
+	ExternalID            string     `db:"external_id"`
+	OrganizationID        int64      `db:"organization_id"`
+	WorkspaceID           int64      `db:"workspace_id"`
+	CodeSessionID         int64      `db:"code_session_id"`
+	CodeSessionExternalID string     `db:"code_session_external_id"`
+	SequenceNum           int64      `db:"sequence_num"`
+	EventType             string     `db:"event_type"`
+	EventSubtype          string     `db:"event_subtype"`
+	PayloadUUID           *string    `db:"payload_uuid"`
+	RequestID             *string    `db:"request_id"`
+	Payload               []byte     `db:"payload"`
+	PayloadHash           string     `db:"payload_hash"`
+	IdempotencyKey        string     `db:"idempotency_key"`
+	DeliveryStatus        string     `db:"delivery_status"`
+	Source                string     `db:"source"`
+	SentAt                *time.Time `db:"sent_at"`
+	DeliveryWorkerEpoch   *int64     `db:"delivery_worker_epoch"`
+	ReceivedAt            *time.Time `db:"received_at"`
+	ProcessingAt          *time.Time `db:"processing_at"`
+	ProcessedAt           *time.Time `db:"processed_at"`
+	LastDeliveryAttemptAt *time.Time `db:"last_delivery_attempt_at"`
+	LastDeliveryUpdateAt  *time.Time `db:"last_delivery_update_at"`
+	DeliveryAttempts      int        `db:"delivery_attempts"`
+	Ephemeral             bool       `db:"ephemeral"`
+	CreatedAt             time.Time  `db:"created_at"`
+	UpdatedAt             time.Time  `db:"updated_at"`
+	DeletedAt             *time.Time `db:"deleted_at"`
+}
+
+type codeSessionInternalEventRow struct {
+	ID                    int64      `db:"id"`
+	UUID                  string     `db:"uuid"`
+	ExternalID            string     `db:"external_id"`
+	OrganizationID        int64      `db:"organization_id"`
+	WorkspaceID           int64      `db:"workspace_id"`
+	CodeSessionID         int64      `db:"code_session_id"`
+	CodeSessionExternalID string     `db:"code_session_external_id"`
+	SequenceNum           int64      `db:"sequence_num"`
+	EventType             string     `db:"event_type"`
+	PayloadUUID           string     `db:"payload_uuid"`
+	AgentID               *string    `db:"agent_id"`
+	IsCompaction          bool       `db:"is_compaction"`
+	Payload               []byte     `db:"payload"`
+	PayloadHash           string     `db:"payload_hash"`
+	IdempotencyKey        string     `db:"idempotency_key"`
+	EventMetadata         []byte     `db:"event_metadata"`
+	CreatedAt             time.Time  `db:"created_at"`
+	UpdatedAt             time.Time  `db:"updated_at"`
+	DeletedAt             *time.Time `db:"deleted_at"`
+}
+
 type codeSessionCredentialContextRow struct {
 	CodeSessionID           int64  `db:"code_session_id"`
 	CodeSessionExternalID   string `db:"code_session_external_id"`
@@ -116,58 +155,65 @@ type codeSessionCredentialContextRow struct {
 	AccountEmail            string `db:"account_email"`
 }
 
+type codeSessionNetworkPolicyContextRow struct {
+	OrganizationID        int64  `db:"organization_id"`
+	WorkspaceID           int64  `db:"workspace_id"`
+	EnvironmentExternalID string `db:"environment_external_id"`
+	EnvironmentConfig     []byte `db:"environment_config"`
+	AgentSnapshot         []byte `db:"agent_snapshot"`
+}
+
+type codeSessionWorkerLeaseRow struct {
+	ID                   int64        `db:"id"`
+	CurrentWorkerEpoch   int64        `db:"current_worker_epoch"`
+	WorkerLeaseExpiresAt sql.NullTime `db:"worker_lease_expires_at"`
+}
+
+func getCodeSessionSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (CodeSession, error) {
+	var row codeSessionRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CodeSession{}, ErrNotFound
+		}
+		return CodeSession{}, err
+	}
+	return row.session(), nil
+}
+
 func insertCodeSessionSQLX(
 	ctx context.Context,
 	database sqlxNamedQueryer,
 	input CreateCodeSessionInput,
 ) (CodeSession, error) {
-	if input.CreatedAt.IsZero() {
-		input.CreatedAt = time.Now().UTC()
+	now := input.CreatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
 	}
-	if input.Status == "" {
-		input.Status = "active"
+	status := input.Status
+	if status == "" {
+		status = "active"
 	}
-	var row codeSessionRow
-	if err := namedGetContext(ctx, database, &row, createCodeSessionQuery, map[string]any{
-		"code_session_external_id": input.ExternalID,
-		"organization_id":          input.OrganizationID,
-		"workspace_id":             input.WorkspaceID,
-		"session_id":               input.SessionID,
-		"session_external_id":      input.SessionExternalID,
-		"environment_id":           input.EnvironmentID,
-		"environment_external_id":  input.EnvironmentExternalID,
-		"work_dir":                 input.WorkDir,
-		"permission_mode":          input.PermissionMode,
-		"model":                    input.Model,
-		"status":                   input.Status,
-		"metadata":                 jsonArg(input.Metadata),
-		"oauth_access_token_hash":  nullableString(strings.TrimSpace(input.OAuthAccessTokenHash)),
-		"created_at":               input.CreatedAt,
-	}); err != nil {
-		return CodeSession{}, err
-	}
-	return row.codeSession(), nil
-}
-
-func getCodeSessionCredentialContextForIssueSQLX(
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	organizationID int64,
-	workspaceID int64,
-	codeSessionExternalID string,
-) (CodeSessionCredentialContext, error) {
-	var row codeSessionCredentialContextRow
-	if err := namedGetContext(ctx, database, &row, codeSessionCredentialContextForIssueQuery, map[string]any{
-		"code_session_external_id": strings.TrimSpace(codeSessionExternalID),
-		"organization_id":          organizationID,
-		"workspace_id":             workspaceID,
-	}); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return CodeSessionCredentialContext{}, ErrNotFound
-		}
-		return CodeSessionCredentialContext{}, err
-	}
-	return row.credentialContext(), nil
+	return getCodeSessionSQLX(ctx, database, createCodeSessionQuery, map[string]any{
+		"external_id":             input.ExternalID,
+		"organization_id":         input.OrganizationID,
+		"workspace_id":            input.WorkspaceID,
+		"session_id":              input.SessionID,
+		"session_external_id":     input.SessionExternalID,
+		"environment_id":          input.EnvironmentID,
+		"environment_external_id": input.EnvironmentExternalID,
+		"work_dir":                input.WorkDir,
+		"permission_mode":         input.PermissionMode,
+		"model":                   input.Model,
+		"status":                  status,
+		"metadata":                jsonArg(input.Metadata),
+		"oauth_access_token_hash": nullableString(strings.TrimSpace(input.OAuthAccessTokenHash)),
+		"created_at":              now,
+	})
 }
 
 // appendCodeSessionInboundEventsSQLX 按顺序为 inputs 分配 inbound sequence，并在
@@ -188,8 +234,12 @@ func appendCodeSessionInboundEventsSQLX(
 		if createdAt.IsZero() {
 			createdAt = time.Now().UTC()
 		}
+		deliveryStatus := input.DeliveryStatus
+		if deliveryStatus == "" {
+			deliveryStatus = "queued"
+		}
 		inserted, err := namedExecRowsAffected(ctx, database, insertCodeSessionInboundEventQuery, map[string]any{
-			"event_external_id":        input.ExternalID,
+			"external_id":              input.ExternalID,
 			"organization_id":          session.OrganizationID,
 			"workspace_id":             session.WorkspaceID,
 			"code_session_id":          session.ID,
@@ -202,7 +252,7 @@ func appendCodeSessionInboundEventsSQLX(
 			"payload":                  jsonArg(input.Payload),
 			"payload_hash":             input.PayloadHash,
 			"idempotency_key":          input.IdempotencyKey,
-			"delivery_status":          input.DeliveryStatus,
+			"delivery_status":          deliveryStatus,
 			"source":                   input.Source,
 			"created_at":               createdAt,
 		})
@@ -230,7 +280,89 @@ func appendCodeSessionInboundEventsSQLX(
 	return sequence, nil
 }
 
-func (r codeSessionRow) codeSession() CodeSession {
+func getCodeSessionEventSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (CodeSessionEvent, error) {
+	var row codeSessionEventRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CodeSessionEvent{}, ErrNotFound
+		}
+		return CodeSessionEvent{}, err
+	}
+	return row.event(), nil
+}
+
+func selectCodeSessionEventsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]CodeSessionEvent, error) {
+	var rows []codeSessionEventRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	events := make([]CodeSessionEvent, len(rows))
+	for index := range rows {
+		events[index] = rows[index].event()
+	}
+	return events, nil
+}
+
+func getCodeSessionInternalEventSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (CodeSessionInternalEvent, error) {
+	var row codeSessionInternalEventRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CodeSessionInternalEvent{}, ErrNotFound
+		}
+		return CodeSessionInternalEvent{}, err
+	}
+	return row.event(), nil
+}
+
+func selectCodeSessionInternalEventsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]CodeSessionInternalEvent, error) {
+	var rows []codeSessionInternalEventRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	events := make([]CodeSessionInternalEvent, len(rows))
+	for index := range rows {
+		events[index] = rows[index].event()
+	}
+	return events, nil
+}
+
+func getCodeSessionCredentialContextSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (CodeSessionCredentialContext, error) {
+	var row codeSessionCredentialContextRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CodeSessionCredentialContext{}, ErrNotFound
+		}
+		return CodeSessionCredentialContext{}, err
+	}
+	return row.context(), nil
+}
+
+func (r codeSessionRow) session() CodeSession {
 	workerExternalMetadata := copyRaw(r.WorkerExternalMetadata)
 	if len(workerExternalMetadata) == 0 {
 		workerExternalMetadata = json.RawMessage(`{}`)
@@ -271,7 +403,65 @@ func (r codeSessionRow) codeSession() CodeSession {
 	}
 }
 
-func (r codeSessionCredentialContextRow) credentialContext() CodeSessionCredentialContext {
+func (r codeSessionEventRow) event() CodeSessionEvent {
+	return CodeSessionEvent{
+		ID:                    r.ID,
+		UUID:                  r.UUID,
+		ExternalID:            r.ExternalID,
+		OrganizationID:        r.OrganizationID,
+		WorkspaceID:           r.WorkspaceID,
+		CodeSessionID:         r.CodeSessionID,
+		CodeSessionExternalID: r.CodeSessionExternalID,
+		SequenceNum:           r.SequenceNum,
+		EventType:             r.EventType,
+		EventSubtype:          r.EventSubtype,
+		PayloadUUID:           r.PayloadUUID,
+		RequestID:             r.RequestID,
+		Payload:               copyRaw(r.Payload),
+		PayloadHash:           r.PayloadHash,
+		IdempotencyKey:        r.IdempotencyKey,
+		DeliveryStatus:        r.DeliveryStatus,
+		Source:                r.Source,
+		SentAt:                r.SentAt,
+		DeliveryWorkerEpoch:   r.DeliveryWorkerEpoch,
+		ReceivedAt:            r.ReceivedAt,
+		ProcessingAt:          r.ProcessingAt,
+		ProcessedAt:           r.ProcessedAt,
+		LastDeliveryAttemptAt: r.LastDeliveryAttemptAt,
+		LastDeliveryUpdateAt:  r.LastDeliveryUpdateAt,
+		DeliveryAttempts:      r.DeliveryAttempts,
+		Ephemeral:             r.Ephemeral,
+		CreatedAt:             r.CreatedAt,
+		UpdatedAt:             r.UpdatedAt,
+		DeletedAt:             r.DeletedAt,
+	}
+}
+
+func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {
+	return CodeSessionInternalEvent{
+		ID:                    r.ID,
+		UUID:                  r.UUID,
+		ExternalID:            r.ExternalID,
+		OrganizationID:        r.OrganizationID,
+		WorkspaceID:           r.WorkspaceID,
+		CodeSessionID:         r.CodeSessionID,
+		CodeSessionExternalID: r.CodeSessionExternalID,
+		SequenceNum:           r.SequenceNum,
+		EventType:             r.EventType,
+		PayloadUUID:           r.PayloadUUID,
+		AgentID:               r.AgentID,
+		IsCompaction:          r.IsCompaction,
+		Payload:               copyRaw(r.Payload),
+		PayloadHash:           r.PayloadHash,
+		IdempotencyKey:        r.IdempotencyKey,
+		EventMetadata:         copyRaw(r.EventMetadata),
+		CreatedAt:             r.CreatedAt,
+		UpdatedAt:             r.UpdatedAt,
+		DeletedAt:             r.DeletedAt,
+	}
+}
+
+func (r codeSessionCredentialContextRow) context() CodeSessionCredentialContext {
 	return CodeSessionCredentialContext{
 		CodeSessionID:           r.CodeSessionID,
 		CodeSessionExternalID:   r.CodeSessionExternalID,

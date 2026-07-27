@@ -8,8 +8,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type CodeSession struct {
@@ -253,17 +251,35 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 		status = "active"
 	}
 	oauthAccessTokenHash := nullableString(strings.TrimSpace(input.OAuthAccessTokenHash))
-	return scanCodeSession(d.Pool.QueryRow(ctx, `
+	return getCodeSessionSQLX(ctx, d.sql, `
 		insert into code_sessions (
 			external_id, organization_id, workspace_id, session_id, session_external_id,
 			environment_id, environment_external_id, work_dir, permission_mode, model,
 			status, metadata, oauth_access_token_hash, created_at, updated_at
 		)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $14)
+		values (
+			:external_id, :organization_id, :workspace_id, :session_id,
+			:session_external_id, :environment_id, :environment_external_id,
+			:work_dir, :permission_mode, :model, :status, CAST(:metadata AS jsonb),
+			:oauth_access_token_hash, :created_at, :created_at
+		)
 		returning `+codeSessionColumns()+`
-	`, input.ExternalID, input.OrganizationID, input.WorkspaceID, input.SessionID, input.SessionExternalID,
-		input.EnvironmentID, input.EnvironmentExternalID, input.WorkDir, input.PermissionMode, input.Model,
-		status, jsonArg(input.Metadata), oauthAccessTokenHash, now))
+	`, map[string]any{
+		"external_id":             input.ExternalID,
+		"organization_id":         input.OrganizationID,
+		"workspace_id":            input.WorkspaceID,
+		"session_id":              input.SessionID,
+		"session_external_id":     input.SessionExternalID,
+		"environment_id":          input.EnvironmentID,
+		"environment_external_id": input.EnvironmentExternalID,
+		"work_dir":                input.WorkDir,
+		"permission_mode":         input.PermissionMode,
+		"model":                   input.Model,
+		"status":                  status,
+		"metadata":                jsonArg(input.Metadata),
+		"oauth_access_token_hash": oauthAccessTokenHash,
+		"created_at":              now,
+	})
 }
 
 // codeSessionCredentialContextSelect 查询 code session 的鉴权身份信息。
@@ -271,11 +287,14 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 // JOIN 中同时校验 organization、workspace 和 session 的归属，防止跨租户查询。
 // worker lease 不在这里校验：OAuth 鉴权要求有效 lease，首次签发 JWT 时还没有 lease。
 const codeSessionCredentialContextSelect = `
-	select cs.id, cs.external_id,
-		cs.organization_id, o.uuid::text, o.external_id,
-		cs.workspace_id, w.uuid::text, w.external_id,
-		s.id, s.external_id, s.agent_id, s.agent_external_id, s.agent_version,
-		coalesce(u.email, '')
+	select cs.id AS code_session_id, cs.external_id AS code_session_external_id,
+		cs.organization_id, CAST(o.uuid AS text) AS organization_uuid,
+		o.external_id AS organization_external_id,
+		cs.workspace_id, CAST(w.uuid AS text) AS workspace_uuid,
+		w.external_id AS workspace_external_id,
+		s.id AS public_session_id, s.external_id AS public_session_external_id,
+		s.agent_id, s.agent_external_id, s.agent_version,
+		coalesce(u.email, '') AS account_email
 	from code_sessions cs
 	join organizations o on o.id = cs.organization_id
 	join workspaces w on w.id = cs.workspace_id and w.organization_id = cs.organization_id
@@ -296,25 +315,33 @@ const activeCodeSessionCredentialConditions = `
 	and s.status <> 'terminated'
 `
 
+const codeSessionByOAuthAccessTokenHashQuery = codeSessionCredentialContextSelect + `
+	where cs.oauth_access_token_hash = :token_hash
+` + activeCodeSessionCredentialConditions + `
+	and cs.worker_lease_expires_at > now()
+`
+
+const codeSessionCredentialContextForIssueQuery = codeSessionCredentialContextSelect + `
+	where cs.external_id = :code_session_external_id
+		and cs.organization_id = :organization_id
+		and cs.workspace_id = :workspace_id
+` + activeCodeSessionCredentialConditions
+
 // GetCodeSessionByOAuthAccessTokenHash 只返回 session 与 CCR worker lease 仍存活的凭证上下文。
 func (d *DB) GetCodeSessionByOAuthAccessTokenHash(ctx context.Context, tokenHash string) (CodeSessionCredentialContext, error) {
 	// 调用方只传 SHA-256 hash，明文 OAuth-compatible token 不进入数据库边界。
-	row := d.Pool.QueryRow(ctx, codeSessionCredentialContextSelect+`
-		where cs.oauth_access_token_hash = $1
-	`+activeCodeSessionCredentialConditions+`
-		and cs.worker_lease_expires_at > now()
-	`, strings.TrimSpace(tokenHash))
-	return scanCodeSessionCredentialContext(row)
+	return getCodeSessionCredentialContextSQLX(ctx, d.sql, codeSessionByOAuthAccessTokenHashQuery, map[string]any{
+		"token_hash": strings.TrimSpace(tokenHash),
+	})
 }
 
 // GetCodeSessionCredentialContextForIssue 用于初始 session-ingress JWT 签发，并将查询绑定到预期租户。
 func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
-	row := d.Pool.QueryRow(ctx, codeSessionCredentialContextSelect+`
-		where cs.external_id = $1
-			and cs.organization_id = $2
-			and cs.workspace_id = $3
-	`+activeCodeSessionCredentialConditions, strings.TrimSpace(codeSessionExternalID), organizationID, workspaceID)
-	return scanCodeSessionCredentialContext(row)
+	return getCodeSessionCredentialContextSQLX(ctx, d.sql, codeSessionCredentialContextForIssueQuery, map[string]any{
+		"code_session_external_id": strings.TrimSpace(codeSessionExternalID),
+		"organization_id":          organizationID,
+		"workspace_id":             workspaceID,
+	})
 }
 
 // GetCodeSessionNetworkPolicyContext 从已验签的租户身份出发，一次性加载并校验
@@ -326,8 +353,11 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 	organizationUUID string,
 	workspaceUUID string,
 ) (CodeSessionNetworkPolicyContext, error) {
-	row := d.Pool.QueryRow(ctx, `
-		select cs.organization_id, cs.workspace_id, e.external_id, e.config, s.agent_snapshot
+	var row codeSessionNetworkPolicyContextRow
+	err := namedGetContext(ctx, d.sql, &row, `
+		select cs.organization_id, cs.workspace_id,
+			e.external_id AS environment_external_id,
+			e.config AS environment_config, s.agent_snapshot
 		from code_sessions cs
 		join organizations o
 			on o.id = cs.organization_id
@@ -348,89 +378,66 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 			and s.environment_id = cs.environment_id
 			and s.environment_external_id = cs.environment_external_id
 			and s.deleted_at is null
-		where cs.external_id = $1
-			and o.uuid::text = $2
-			and w.uuid::text = $3
+		where cs.external_id = :code_session_external_id
+			and CAST(o.uuid AS text) = :organization_uuid
+			and CAST(w.uuid AS text) = :workspace_uuid
 	`+activeCodeSessionCredentialConditions,
-		strings.TrimSpace(codeSessionExternalID),
-		strings.TrimSpace(organizationUUID),
-		strings.TrimSpace(workspaceUUID),
-	)
-	var value CodeSessionNetworkPolicyContext
-	var environmentConfig []byte
-	var agentSnapshot []byte
-	err := row.Scan(
-		&value.OrganizationID,
-		&value.WorkspaceID,
-		&value.EnvironmentExternalID,
-		&environmentConfig,
-		&agentSnapshot,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
+		map[string]any{
+			"code_session_external_id": strings.TrimSpace(codeSessionExternalID),
+			"organization_uuid":        strings.TrimSpace(organizationUUID),
+			"workspace_uuid":           strings.TrimSpace(workspaceUUID),
+		})
+	if errors.Is(err, sql.ErrNoRows) {
 		return CodeSessionNetworkPolicyContext{}, ErrNotFound
 	}
 	if err != nil {
 		return CodeSessionNetworkPolicyContext{}, err
 	}
-	value.EnvironmentConfig = copyRaw(environmentConfig)
-	value.AgentSnapshot = copyRaw(agentSnapshot)
-	return value, nil
-}
-
-func scanCodeSessionCredentialContext(row rowScanner) (CodeSessionCredentialContext, error) {
-	// 所有鉴权查询共用同一列顺序，避免 hash 查询与 session 查询产生身份字段漂移。
-	var value CodeSessionCredentialContext
-	err := row.Scan(
-		&value.CodeSessionID, &value.CodeSessionExternalID,
-		&value.OrganizationID, &value.OrganizationUUID, &value.OrganizationExternalID,
-		&value.WorkspaceID, &value.WorkspaceUUID, &value.WorkspaceExternalID,
-		&value.PublicSessionID, &value.PublicSessionExternalID,
-		&value.AgentID, &value.AgentExternalID, &value.AgentVersion,
-		&value.AccountEmail,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CodeSessionCredentialContext{}, ErrNotFound
-	}
-	if err != nil {
-		return CodeSessionCredentialContext{}, err
-	}
-	return value, nil
+	return CodeSessionNetworkPolicyContext{
+		OrganizationID:        row.OrganizationID,
+		WorkspaceID:           row.WorkspaceID,
+		EnvironmentExternalID: row.EnvironmentExternalID,
+		EnvironmentConfig:     copyRaw(row.EnvironmentConfig),
+		AgentSnapshot:         copyRaw(row.AgentSnapshot),
+	}, nil
 }
 
 func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, error) {
-	return scanCodeSession(d.Pool.QueryRow(ctx, `
+	return getCodeSessionSQLX(ctx, d.sql, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where external_id = $1 and deleted_at is null
-	`, externalID))
+		where external_id = :external_id and deleted_at is null
+	`, map[string]any{"external_id": externalID})
 }
 
 func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceID int64, sessionExternalID string) (CodeSession, error) {
-	return scanCodeSession(d.Pool.QueryRow(ctx, `
+	return getCodeSessionSQLX(ctx, d.sql, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where workspace_id = $1 and session_external_id = $2 and deleted_at is null
+		where workspace_id = :workspace_id
+			and session_external_id = :session_external_id
+			and deleted_at is null
 		order by created_at desc, id desc
 		limit 1
-	`, workspaceID, sessionExternalID))
+	`, map[string]any{"workspace_id": workspaceID, "session_external_id": sessionExternalID})
 }
 
 func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalID string, binding CodeSessionWorkerBinding, leaseTTL time.Duration) (int64, time.Time, error) {
 	if leaseTTL <= 0 {
 		leaseTTL = time.Minute
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return 0, time.Time{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	session, err := scanCodeSession(tx.QueryRow(ctx, `
+	session, err := getCodeSessionSQLX(ctx, tx, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where external_id = $1 and deleted_at is null
+		where external_id = :external_id and deleted_at is null
 		for update
-	`, codeSessionExternalID))
+	`, map[string]any{"external_id": codeSessionExternalID})
 	if err != nil {
 		return 0, time.Time{}, err
 	}
@@ -444,24 +451,31 @@ func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalI
 	}
 
 	var epoch int64
-	if err := tx.QueryRow(ctx, `
+	if err := namedGetContext(ctx, tx, &epoch, `
 		update code_sessions
-		set current_worker_epoch = $1,
-			worker_lease_expires_at = $2,
-			worker_registered_at = $3,
+		set current_worker_epoch = :epoch,
+			worker_lease_expires_at = :expires_at,
+			worker_registered_at = :now,
 			worker_last_heartbeat_at = null,
-			worker_token_session_id = $4,
-			worker_binding = coalesce($5::jsonb, '{}'::jsonb),
+			worker_token_session_id = :worker_token_session_id,
+			worker_binding = coalesce(CAST(:worker_binding AS jsonb), CAST('{}' AS jsonb)),
 			connection_status = 'connected',
-			last_worker_connected_at = $3,
-			last_worker_activity_at = $3,
-			updated_at = $3
-		where id = $6
+			last_worker_connected_at = :now,
+			last_worker_activity_at = :now,
+			updated_at = :now
+		where id = :id
 		returning current_worker_epoch
-	`, nextEpoch, expiresAt, now, nullableWorkerTokenSessionID(binding.TokenSessionID), jsonArg(json.RawMessage(bindingJSON)), session.ID).Scan(&epoch); err != nil {
+	`, map[string]any{
+		"epoch":                   nextEpoch,
+		"expires_at":              expiresAt,
+		"now":                     now,
+		"worker_token_session_id": nullableWorkerTokenSessionID(binding.TokenSessionID),
+		"worker_binding":          jsonArg(json.RawMessage(bindingJSON)),
+		"id":                      session.ID,
+	}); err != nil {
 		return 0, time.Time{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return 0, time.Time{}, err
 	}
 	return epoch, expiresAt, nil
@@ -472,12 +486,12 @@ func (d *DB) ValidateCodeSessionWorkerEpoch(ctx context.Context, codeSessionExte
 		return ErrWorkerEpochMismatch
 	}
 	var current int64
-	err := d.Pool.QueryRow(ctx, `
+	err := namedGetContext(ctx, d.sql, &current, `
 		select current_worker_epoch
 		from code_sessions
-		where external_id = $1 and deleted_at is null
-	`, codeSessionExternalID).Scan(&current)
-	if errors.Is(err, pgx.ErrNoRows) {
+		where external_id = :external_id and deleted_at is null
+	`, map[string]any{"external_id": codeSessionExternalID})
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
@@ -498,30 +512,37 @@ func (d *DB) HeartbeatCodeSessionWorker(ctx context.Context, codeSessionExternal
 	}
 	now := time.Now().UTC()
 	expiresAt := now.Add(leaseTTL)
-	err := d.Pool.QueryRow(ctx, `
+	err := namedGetContext(ctx, d.sql, &expiresAt, `
 		update code_sessions
-		set worker_last_heartbeat_at = $3,
-			worker_lease_expires_at = $4,
-			last_worker_activity_at = $3,
+		set worker_last_heartbeat_at = :now,
+			worker_lease_expires_at = :expires_at,
+			last_worker_activity_at = :now,
 			connection_status = 'connected',
-			updated_at = $3
-		where external_id = $1 and current_worker_epoch = $2 and deleted_at is null
+			updated_at = :now
+		where external_id = :external_id
+			and current_worker_epoch = :epoch
+			and deleted_at is null
 		returning worker_lease_expires_at
-	`, codeSessionExternalID, epoch, now, expiresAt).Scan(&expiresAt)
+	`, map[string]any{
+		"external_id": codeSessionExternalID,
+		"epoch":       epoch,
+		"now":         now,
+		"expires_at":  expiresAt,
+	})
 	if err == nil {
 		return expiresAt, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, err
 	}
 
 	var current int64
-	err = d.Pool.QueryRow(ctx, `
+	err = namedGetContext(ctx, d.sql, &current, `
 		select current_worker_epoch
 		from code_sessions
-		where external_id = $1 and deleted_at is null
-	`, codeSessionExternalID).Scan(&current)
-	if errors.Is(err, pgx.ErrNoRows) {
+		where external_id = :external_id and deleted_at is null
+	`, map[string]any{"external_id": codeSessionExternalID})
+	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, ErrNotFound
 	}
 	if err != nil {
@@ -540,28 +561,29 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 	if grace < 0 {
 		grace = 0
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return time.Time{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	var sessionID int64
-	var currentEpoch int64
-	var lease sql.NullTime
-	err = tx.QueryRow(ctx, `
+	var leaseRow codeSessionWorkerLeaseRow
+	err = namedGetContext(ctx, tx, &leaseRow, `
 		select id, current_worker_epoch, worker_lease_expires_at
 		from code_sessions
-		where external_id = $1 and deleted_at is null
+		where external_id = :external_id and deleted_at is null
 		for update
-	`, codeSessionExternalID).Scan(&sessionID, &currentEpoch, &lease)
-	if errors.Is(err, pgx.ErrNoRows) {
+	`, map[string]any{"external_id": codeSessionExternalID})
+	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, ErrNotFound
 	}
 	if err != nil {
 		return time.Time{}, err
 	}
 
+	sessionID := leaseRow.ID
+	currentEpoch := leaseRow.CurrentWorkerEpoch
+	lease := leaseRow.WorkerLeaseExpiresAt
 	var leaseExpiresAt *time.Time
 	if lease.Valid {
 		value := lease.Time.UTC()
@@ -595,19 +617,19 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 	}
 
 	expiresAt := now.Add(leaseTTL)
-	if err := tx.QueryRow(ctx, `
+	if err := namedGetContext(ctx, tx, &expiresAt, `
 		update code_sessions
-		set worker_last_heartbeat_at = $1,
-			worker_lease_expires_at = $2,
-			last_worker_activity_at = $1,
+		set worker_last_heartbeat_at = :now,
+			worker_lease_expires_at = :expires_at,
+			last_worker_activity_at = :now,
 			connection_status = 'connected',
-			updated_at = $1
-		where id = $3
+			updated_at = :now
+		where id = :id
 		returning worker_lease_expires_at
-	`, now, expiresAt, sessionID).Scan(&expiresAt); err != nil {
+	`, map[string]any{"now": now, "expires_at": expiresAt, "id": sessionID}); err != nil {
 		return time.Time{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return time.Time{}, err
 	}
 	return expiresAt, nil
@@ -617,18 +639,18 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 	if input.WorkerEpoch <= 0 {
 		return CodeSession{}, ErrWorkerEpochMismatch
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return CodeSession{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	current, err := scanCodeSession(tx.QueryRow(ctx, `
+	current, err := getCodeSessionSQLX(ctx, tx, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where external_id = $1 and deleted_at is null
+		where external_id = :external_id and deleted_at is null
 		for update
-	`, codeSessionExternalID))
+	`, map[string]any{"external_id": codeSessionExternalID})
 	if err != nil {
 		return CodeSession{}, err
 	}
@@ -662,22 +684,28 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 	}
 
 	now := time.Now().UTC()
-	updated, err := scanCodeSession(tx.QueryRow(ctx, `
+	updated, err := getCodeSessionSQLX(ctx, tx, `
 		update code_sessions
-		set worker_status = $2,
-			worker_requires_action_details = $3::jsonb,
-			worker_external_metadata = $4::jsonb,
+		set worker_status = :worker_status,
+			worker_requires_action_details = CAST(:requires_action_details AS jsonb),
+			worker_external_metadata = CAST(:external_metadata AS jsonb),
 			connection_status = 'connected',
-			last_worker_connected_at = $5,
-			last_worker_activity_at = $5,
-			updated_at = $5
-		where id = $1
+			last_worker_connected_at = :now,
+			last_worker_activity_at = :now,
+			updated_at = :now
+		where id = :id
 		returning `+codeSessionColumns()+`
-	`, current.ID, workerStatus, jsonArg(requiresActionDetails), jsonArg(externalMetadata), now))
+	`, map[string]any{
+		"id":                      current.ID,
+		"worker_status":           workerStatus,
+		"requires_action_details": jsonArg(requiresActionDetails),
+		"external_metadata":       jsonArg(externalMetadata),
+		"now":                     now,
+	})
 	if err != nil {
 		return CodeSession{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return CodeSession{}, err
 	}
 	return updated, nil
@@ -695,18 +723,18 @@ func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExt
 	if workerEpoch <= 0 {
 		return nil, ErrWorkerEpochMismatch
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	session, err := scanCodeSession(tx.QueryRow(ctx, `
+	session, err := getCodeSessionSQLX(ctx, tx, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where external_id = $1 and deleted_at is null
+		where external_id = :external_id and deleted_at is null
 		for update
-	`, codeSessionExternalID))
+	`, map[string]any{"external_id": codeSessionExternalID})
 	if err != nil {
 		return nil, err
 	}
@@ -723,18 +751,37 @@ func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExt
 		if createdAt.IsZero() {
 			createdAt = now
 		}
-		event, err := scanCodeSessionInternalEvent(tx.QueryRow(ctx, `
+		event, err := getCodeSessionInternalEventSQLX(ctx, tx, `
 			insert into code_session_internal_events (
 				external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
 				sequence_num, event_type, payload_uuid, agent_id, is_compaction, payload,
 				payload_hash, idempotency_key, event_metadata, created_at, updated_at
 				)
-				values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15, $15)
+				values (
+					:external_id, :organization_id, :workspace_id, :code_session_id,
+					:code_session_external_id, :sequence_num, :event_type, :payload_uuid,
+					:agent_id, :is_compaction, CAST(:payload AS jsonb), :payload_hash,
+					:idempotency_key, CAST(:event_metadata AS jsonb), :created_at, :created_at
+				)
 				on conflict (workspace_id, idempotency_key) where deleted_at is null and idempotency_key <> '' do nothing
 				returning `+codeSessionInternalEventColumns()+`
-			`, input.ExternalID, session.OrganizationID, session.WorkspaceID, session.ID, session.ExternalID,
-			nextSequence, input.EventType, input.PayloadUUID, input.AgentID, input.IsCompaction, jsonArg(input.Payload),
-			input.PayloadHash, input.IdempotencyKey, jsonArg(input.EventMetadata), createdAt))
+			`, map[string]any{
+			"external_id":              input.ExternalID,
+			"organization_id":          session.OrganizationID,
+			"workspace_id":             session.WorkspaceID,
+			"code_session_id":          session.ID,
+			"code_session_external_id": session.ExternalID,
+			"sequence_num":             nextSequence,
+			"event_type":               input.EventType,
+			"payload_uuid":             input.PayloadUUID,
+			"agent_id":                 input.AgentID,
+			"is_compaction":            input.IsCompaction,
+			"payload":                  jsonArg(input.Payload),
+			"payload_hash":             input.PayloadHash,
+			"idempotency_key":          input.IdempotencyKey,
+			"event_metadata":           jsonArg(input.EventMetadata),
+			"created_at":               createdAt,
+		})
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
@@ -746,15 +793,15 @@ func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExt
 	}
 
 	if sequence != session.LastInternalSequenceNum {
-		if _, err := tx.Exec(ctx, `
+		if _, err := namedExecContext(ctx, tx, `
 			update code_sessions
-			set last_internal_sequence_num = $1, updated_at = $2
-			where id = $3
-		`, sequence, now, session.ID); err != nil {
+			set last_internal_sequence_num = :sequence_num, updated_at = :now
+			where id = :id
+		`, map[string]any{"sequence_num": sequence, "now": now, "id": session.ID}); err != nil {
 			return nil, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return created, nil
@@ -764,18 +811,18 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 	if input.RequiredWorkerEpoch != nil && *input.RequiredWorkerEpoch <= 0 {
 		return CodeSessionEvent{}, false, ErrWorkerEpochMismatch
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return CodeSessionEvent{}, false, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	session, err := scanCodeSession(tx.QueryRow(ctx, `
+	session, err := getCodeSessionSQLX(ctx, tx, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where external_id = $1 and deleted_at is null
+		where external_id = :external_id and deleted_at is null
 		for update
-	`, codeSessionExternalID))
+	`, map[string]any{"external_id": codeSessionExternalID})
 	if err != nil {
 		return CodeSessionEvent{}, false, err
 	}
@@ -785,7 +832,7 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 	if input.IdempotencyKey != "" {
 		existing, err := d.getCodeSessionEventTx(ctx, tx, direction, session.WorkspaceID, input.IdempotencyKey)
 		if err == nil {
-			return existing, true, tx.Commit(ctx)
+			return existing, true, tx.Commit()
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return CodeSessionEvent{}, false, err
@@ -808,58 +855,88 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 	}
 
 	var event CodeSessionEvent
+	eventArguments := map[string]any{
+		"external_id":              input.ExternalID,
+		"organization_id":          session.OrganizationID,
+		"workspace_id":             session.WorkspaceID,
+		"code_session_id":          session.ID,
+		"code_session_external_id": session.ExternalID,
+		"sequence_num":             sequence,
+		"event_type":               input.EventType,
+		"event_subtype":            input.EventSubtype,
+		"payload_uuid":             input.PayloadUUID,
+		"request_id":               input.RequestID,
+		"payload":                  jsonArg(input.Payload),
+		"payload_hash":             input.PayloadHash,
+		"idempotency_key":          input.IdempotencyKey,
+		"source":                   input.Source,
+		"created_at":               now,
+	}
 	if direction == "inbound" {
-		event, err = scanCodeSessionEvent(tx.QueryRow(ctx, `
+		eventArguments["delivery_status"] = deliveryStatus
+		event, err = getCodeSessionEventSQLX(ctx, tx, `
 			insert into code_session_inbound_events (
 				external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
 				sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
 				payload_hash, idempotency_key, delivery_status, source, created_at, updated_at
 			)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16, $16)
+			values (
+				:external_id, :organization_id, :workspace_id, :code_session_id,
+				:code_session_external_id, :sequence_num, :event_type, :event_subtype,
+				:payload_uuid, :request_id, CAST(:payload AS jsonb), :payload_hash,
+				:idempotency_key, :delivery_status, :source, :created_at, :created_at
+			)
 			returning `+codeSessionInboundEventColumns()+`
-		`, input.ExternalID, session.OrganizationID, session.WorkspaceID, session.ID, session.ExternalID,
-			sequence, input.EventType, input.EventSubtype, input.PayloadUUID, input.RequestID, jsonArg(input.Payload),
-			input.PayloadHash, input.IdempotencyKey, deliveryStatus, input.Source, now))
+		`, eventArguments)
 	} else {
-		event, err = scanCodeSessionEvent(tx.QueryRow(ctx, `
+		eventArguments["ephemeral"] = input.Ephemeral
+		event, err = getCodeSessionEventSQLX(ctx, tx, `
 			insert into code_session_outbound_events (
 				external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
 				sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
 				payload_hash, idempotency_key, source, ephemeral, created_at, updated_at
 			)
-			values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16, $16)
+			values (
+				:external_id, :organization_id, :workspace_id, :code_session_id,
+				:code_session_external_id, :sequence_num, :event_type, :event_subtype,
+				:payload_uuid, :request_id, CAST(:payload AS jsonb), :payload_hash,
+				:idempotency_key, :source, :ephemeral, :created_at, :created_at
+			)
 			returning `+codeSessionOutboundEventColumns()+`
-		`, input.ExternalID, session.OrganizationID, session.WorkspaceID, session.ID, session.ExternalID,
-			sequence, input.EventType, input.EventSubtype, input.PayloadUUID, input.RequestID, jsonArg(input.Payload),
-			input.PayloadHash, input.IdempotencyKey, input.Source, input.Ephemeral, now))
+		`, eventArguments)
 	}
 	if err != nil {
 		return CodeSessionEvent{}, false, err
 	}
-	if _, err := tx.Exec(ctx, `update code_sessions set `+sequenceColumn+` = $1, updated_at = $2 where id = $3`, sequence, now, session.ID); err != nil {
+	if _, err := namedExecContext(ctx, tx, `update code_sessions set `+sequenceColumn+` = :sequence_num, updated_at = :now where id = :id`, map[string]any{
+		"sequence_num": sequence,
+		"now":          now,
+		"id":           session.ID,
+	}); err != nil {
 		return CodeSessionEvent{}, false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return CodeSessionEvent{}, false, err
 	}
 	return event, false, nil
 }
 
-func (d *DB) getCodeSessionEventTx(ctx context.Context, tx pgx.Tx, direction string, workspaceID int64, idempotencyKey string) (CodeSessionEvent, error) {
+func (d *DB) getCodeSessionEventTx(ctx context.Context, tx sqlxNamedQueryer, direction string, workspaceID int64, idempotencyKey string) (CodeSessionEvent, error) {
+	arguments := map[string]any{"workspace_id": workspaceID, "idempotency_key": idempotencyKey}
 	if direction == "outbound" {
-		return scanCodeSessionEvent(tx.QueryRow(ctx, `
+		return getCodeSessionEventSQLX(ctx, tx, `
 			select `+codeSessionOutboundEventColumns()+`
 			from code_session_outbound_events
-			where workspace_id = $1 and idempotency_key = $2 and deleted_at is null
+			where workspace_id = :workspace_id and idempotency_key = :idempotency_key and deleted_at is null
 			limit 1
-		`, workspaceID, idempotencyKey))
+		`, arguments)
 	}
-	return scanCodeSessionEvent(tx.QueryRow(ctx, `
+	return getCodeSessionEventSQLX(ctx, tx, `
 		select `+codeSessionInboundEventColumns()+`
 		from code_session_inbound_events
-		where workspace_id = $1 and idempotency_key = $2 and deleted_at is null
+		where workspace_id = :workspace_id and idempotency_key = :idempotency_key and deleted_at is null
 		limit 1
-	`, workspaceID, idempotencyKey))
+	`, arguments)
 }
 
 func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListCodeSessionInternalEventsPageParams) ([]CodeSessionInternalEvent, bool, error) {
@@ -870,61 +947,62 @@ func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListC
 	if params.AfterSequence < 0 {
 		params.AfterSequence = 0
 	}
-	var rows pgx.Rows
-	var err error
+	arguments := map[string]any{
+		"workspace_id":             params.WorkspaceID,
+		"code_session_external_id": params.CodeSessionExternalID,
+		"after_sequence":           params.AfterSequence,
+		"limit":                    limit + 1,
+	}
+	var query string
 	if params.Subagents {
-		rows, err = d.Pool.Query(ctx, `
+		query = `
 			with boundaries as (
 				select distinct on (e.agent_id) e.agent_id, e.sequence_num
 				from code_session_internal_events e
-				where e.workspace_id = $1
-					and e.code_session_external_id = $2
+				where e.workspace_id = :workspace_id
+					and e.code_session_external_id = :code_session_external_id
 					and e.deleted_at is null
 					and e.agent_id is not null
 					and e.is_compaction
 				order by e.agent_id, e.sequence_num desc
 			)
-			select `+codeSessionInternalEventColumnsWithAlias("e")+`
+			select ` + codeSessionInternalEventColumnsWithAlias("e") + `
 			from code_session_internal_events e
 			left join boundaries b on b.agent_id = e.agent_id
-			where e.workspace_id = $1
-				and e.code_session_external_id = $2
+			where e.workspace_id = :workspace_id
+				and e.code_session_external_id = :code_session_external_id
 				and e.deleted_at is null
 				and e.agent_id is not null
-				and e.sequence_num > greatest($3::bigint, coalesce(b.sequence_num - 1, 0))
+				and e.sequence_num > greatest(CAST(:after_sequence AS bigint), coalesce(b.sequence_num - 1, 0))
 			order by e.sequence_num asc
-			limit $4
-		`, params.WorkspaceID, params.CodeSessionExternalID, params.AfterSequence, limit+1)
+			limit :limit
+		`
 	} else {
-		rows, err = d.Pool.Query(ctx, `
+		query = `
 			with boundary as (
 				select e.sequence_num
 				from code_session_internal_events e
-				where e.workspace_id = $1
-					and e.code_session_external_id = $2
+				where e.workspace_id = :workspace_id
+					and e.code_session_external_id = :code_session_external_id
 					and e.deleted_at is null
 					and e.agent_id is null
 					and e.is_compaction
 				order by e.sequence_num desc
 				limit 1
 			)
-			select `+codeSessionInternalEventColumnsWithAlias("e")+`
+			select ` + codeSessionInternalEventColumnsWithAlias("e") + `
 			from code_session_internal_events e
 			left join boundary b on true
-			where e.workspace_id = $1
-				and e.code_session_external_id = $2
+			where e.workspace_id = :workspace_id
+				and e.code_session_external_id = :code_session_external_id
 				and e.deleted_at is null
 				and e.agent_id is null
-				and e.sequence_num > greatest($3::bigint, coalesce(b.sequence_num - 1, 0))
+				and e.sequence_num > greatest(CAST(:after_sequence AS bigint), coalesce(b.sequence_num - 1, 0))
 			order by e.sequence_num asc
-			limit $4
-		`, params.WorkspaceID, params.CodeSessionExternalID, params.AfterSequence, limit+1)
+			limit :limit
+		`
 	}
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	events, err := scanCodeSessionInternalEventRows(rows)
+	events, err := selectCodeSessionInternalEventsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -936,40 +1014,32 @@ func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListC
 }
 
 func (d *DB) ListQueuedCodeSessionInboundEvents(ctx context.Context, codeSessionExternalID string) ([]CodeSessionEvent, error) {
-	rows, err := d.Pool.Query(ctx, `
+	return selectCodeSessionEventsSQLX(ctx, d.sql, `
 		select `+codeSessionInboundEventColumns()+`
 		from code_session_inbound_events
-		where code_session_external_id = $1 and delivery_status = 'queued' and deleted_at is null
+		where code_session_external_id = :external_id
+			and delivery_status = 'queued'
+			and deleted_at is null
 		order by sequence_num asc
-	`, codeSessionExternalID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanCodeSessionEventRows(rows)
+	`, map[string]any{"external_id": codeSessionExternalID})
 }
 
 func (d *DB) ListQueuedCodeSessionInboundEventsForEpoch(ctx context.Context, codeSessionExternalID string, epoch int64) ([]CodeSessionEvent, error) {
 	if epoch <= 0 {
 		return nil, ErrWorkerEpochMismatch
 	}
-	rows, err := d.Pool.Query(ctx, `
+	events, err := selectCodeSessionEventsSQLX(ctx, d.sql, `
 		select `+codeSessionInboundEventColumnsWithAlias("e")+`
 		from code_session_inbound_events e
 		join code_sessions cs on cs.id = e.code_session_id
-		where e.code_session_external_id = $1
+		where e.code_session_external_id = :external_id
 			and e.delivery_status = 'queued'
 			and e.deleted_at is null
 			and cs.deleted_at is null
-			and cs.current_worker_epoch = $2
+			and cs.current_worker_epoch = :epoch
 			and cs.current_worker_epoch > 0
 		order by e.sequence_num asc
-	`, codeSessionExternalID, epoch)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	events, err := scanCodeSessionEventRows(rows)
+	`, map[string]any{"external_id": codeSessionExternalID, "epoch": epoch})
 	if err != nil {
 		return nil, err
 	}
@@ -989,12 +1059,12 @@ func (d *DB) ListCodeSessionInboundEventsForWorkerStream(ctx context.Context, co
 	if afterSequence < 0 {
 		afterSequence = 0
 	}
-	rows, err := d.Pool.Query(ctx, `
+	events, err := selectCodeSessionEventsSQLX(ctx, d.sql, `
 		select `+codeSessionInboundEventColumnsWithAlias("e")+`
 		from code_session_inbound_events e
 		join code_sessions cs on cs.id = e.code_session_id
-		where e.code_session_external_id = $1
-			and e.sequence_num > $3
+		where e.code_session_external_id = :external_id
+			and e.sequence_num > :after_sequence
 			and e.delivery_status <> 'processed'
 			and not (
 				e.delivery_status = 'sent'
@@ -1005,15 +1075,14 @@ func (d *DB) ListCodeSessionInboundEventsForWorkerStream(ctx context.Context, co
 			)
 			and e.deleted_at is null
 			and cs.deleted_at is null
-			and cs.current_worker_epoch = $2
+			and cs.current_worker_epoch = :epoch
 			and cs.current_worker_epoch > 0
 		order by e.sequence_num asc
-	`, codeSessionExternalID, epoch, afterSequence)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	events, err := scanCodeSessionEventRows(rows)
+	`, map[string]any{
+		"external_id":    codeSessionExternalID,
+		"epoch":          epoch,
+		"after_sequence": afterSequence,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1030,18 +1099,19 @@ func (d *DB) ListCodeSessionOutboundEventsAfter(ctx context.Context, codeSession
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := d.Pool.Query(ctx, `
+	return selectCodeSessionEventsSQLX(ctx, d.sql, `
 		select `+codeSessionOutboundEventColumns()+`
 		from code_session_outbound_events
-		where code_session_external_id = $1 and sequence_num > $2 and deleted_at is null
+		where code_session_external_id = :external_id
+			and sequence_num > :after_sequence
+			and deleted_at is null
 		order by sequence_num asc
-		limit $3
-	`, codeSessionExternalID, afterSequence, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanCodeSessionEventRows(rows)
+		limit :limit
+	`, map[string]any{
+		"external_id":    codeSessionExternalID,
+		"after_sequence": afterSequence,
+		"limit":          limit,
+	})
 }
 
 func (d *DB) GetLatestCodeSessionToolPermissionRequest(ctx context.Context, codeSessionExternalID string, toolUseID string) (CodeSessionEvent, error) {
@@ -1049,33 +1119,33 @@ func (d *DB) GetLatestCodeSessionToolPermissionRequest(ctx context.Context, code
 	if toolUseID == "" {
 		return CodeSessionEvent{}, ErrNotFound
 	}
-	return scanCodeSessionEvent(d.Pool.QueryRow(ctx, `
+	return getCodeSessionEventSQLX(ctx, d.sql, `
 		select `+codeSessionOutboundEventColumns()+`
 		from code_session_outbound_events
-		where code_session_external_id = $1
+		where code_session_external_id = :external_id
 			and event_type = 'control_request'
 			and event_subtype = 'can_use_tool'
-			and payload->'request'->>'tool_use_id' = $2
+			and payload->'request'->>'tool_use_id' = :tool_use_id
 			and deleted_at is null
 		order by sequence_num desc
 		limit 1
-	`, codeSessionExternalID, toolUseID))
+	`, map[string]any{"external_id": codeSessionExternalID, "tool_use_id": toolUseID})
 }
 
 func (d *DB) MarkCodeSessionInboundEventSent(ctx context.Context, eventExternalID string) error {
-	tag, err := d.Pool.Exec(ctx, `
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
 		update code_session_inbound_events
 		set delivery_status = case when delivery_status = 'queued' then 'sent' else delivery_status end,
 			sent_at = coalesce(sent_at, now()),
 			last_delivery_attempt_at = now(),
 			delivery_attempts = delivery_attempts + 1,
 			updated_at = now()
-		where external_id = $1 and deleted_at is null
-	`, eventExternalID)
+		where external_id = :event_external_id and deleted_at is null
+	`, map[string]any{"event_external_id": eventExternalID})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -1085,27 +1155,31 @@ func (d *DB) MarkCodeSessionInboundEventSentForEpoch(ctx context.Context, codeSe
 	if epoch <= 0 {
 		return ErrWorkerEpochMismatch
 	}
-	tag, err := d.Pool.Exec(ctx, `
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
 		update code_session_inbound_events e
 		set delivery_status = case when e.delivery_status = 'queued' then 'sent' else e.delivery_status end,
 			sent_at = coalesce(e.sent_at, now()),
-			delivery_worker_epoch = $3,
+			delivery_worker_epoch = :epoch,
 			last_delivery_attempt_at = now(),
 			delivery_attempts = e.delivery_attempts + 1,
 			updated_at = now()
 		from code_sessions cs
-		where e.external_id = $1
-			and e.code_session_external_id = $2
+		where e.external_id = :event_external_id
+			and e.code_session_external_id = :code_session_external_id
 			and e.deleted_at is null
 			and cs.id = e.code_session_id
 			and cs.deleted_at is null
-			and cs.current_worker_epoch = $3
+			and cs.current_worker_epoch = :epoch
 			and cs.current_worker_epoch > 0
-	`, eventExternalID, codeSessionExternalID, epoch)
+	`, map[string]any{
+		"event_external_id":        eventExternalID,
+		"code_session_external_id": codeSessionExternalID,
+		"epoch":                    epoch,
+	})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() > 0 {
+	if rowsAffected > 0 {
 		return nil
 	}
 	if err := d.ValidateCodeSessionWorkerEpoch(ctx, codeSessionExternalID, epoch); err != nil {
@@ -1118,18 +1192,18 @@ func (d *DB) ApplyCodeSessionWorkerDeliveryUpdates(ctx context.Context, codeSess
 	if epoch <= 0 {
 		return CodeSessionWorkerDeliveryResult{}, ErrWorkerEpochMismatch
 	}
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return CodeSessionWorkerDeliveryResult{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	session, err := scanCodeSession(tx.QueryRow(ctx, `
+	session, err := getCodeSessionSQLX(ctx, tx, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where external_id = $1 and deleted_at is null
+		where external_id = :external_id and deleted_at is null
 		for update
-	`, codeSessionExternalID))
+	`, map[string]any{"external_id": codeSessionExternalID})
 	if err != nil {
 		return CodeSessionWorkerDeliveryResult{}, err
 	}
@@ -1164,47 +1238,56 @@ func (d *DB) ApplyCodeSessionWorkerDeliveryUpdates(ctx context.Context, codeSess
 		if rank > codeSessionDeliveryStatusRank(event.DeliveryStatus) {
 			targetStatus = status
 		}
-		if _, err := tx.Exec(ctx, `
+		if _, err := namedExecContext(ctx, tx, `
 			update code_session_inbound_events
-			set delivery_status = $2,
-				received_at = case when $3 then coalesce(received_at, $7) else received_at end,
-				processing_at = case when $4 then coalesce(processing_at, $7) else processing_at end,
-				processed_at = case when $5 then coalesce(processed_at, $7) else processed_at end,
-				delivery_worker_epoch = $6,
-				last_delivery_update_at = $7,
-				updated_at = $7
-			where id = $1 and deleted_at is null
-		`, event.ID, targetStatus, rank >= codeSessionDeliveryStatusRank("received"), rank >= codeSessionDeliveryStatusRank("processing"), rank >= codeSessionDeliveryStatusRank("processed"), epoch, now); err != nil {
+			set delivery_status = :target_status,
+				received_at = case when :mark_received then coalesce(received_at, :now) else received_at end,
+				processing_at = case when :mark_processing then coalesce(processing_at, :now) else processing_at end,
+				processed_at = case when :mark_processed then coalesce(processed_at, :now) else processed_at end,
+				delivery_worker_epoch = :epoch,
+				last_delivery_update_at = :now,
+				updated_at = :now
+			where id = :id and deleted_at is null
+		`, map[string]any{
+			"id":              event.ID,
+			"target_status":   targetStatus,
+			"mark_received":   rank >= codeSessionDeliveryStatusRank("received"),
+			"mark_processing": rank >= codeSessionDeliveryStatusRank("processing"),
+			"mark_processed":  rank >= codeSessionDeliveryStatusRank("processed"),
+			"epoch":           epoch,
+			"now":             now,
+		}); err != nil {
 			return CodeSessionWorkerDeliveryResult{}, err
 		}
 		result.Applied++
 	}
 	if result.Applied > 0 {
-		if _, err := tx.Exec(ctx, `
+		if _, err := namedExecContext(ctx, tx, `
 			update code_sessions
-			set last_worker_activity_at = $1, updated_at = $1
-			where id = $2 and deleted_at is null
-		`, now, session.ID); err != nil {
+			set last_worker_activity_at = :now, updated_at = :now
+			where id = :id and deleted_at is null
+		`, map[string]any{"now": now, "id": session.ID}); err != nil {
 			return CodeSessionWorkerDeliveryResult{}, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return CodeSessionWorkerDeliveryResult{}, err
 	}
 	return result, nil
 }
 
-func getCodeSessionInboundDeliveryEventTx(ctx context.Context, tx pgx.Tx, codeSessionID int64, eventID string) (CodeSessionEvent, error) {
-	event, err := scanCodeSessionEvent(tx.QueryRow(ctx, `
+func getCodeSessionInboundDeliveryEventTx(ctx context.Context, tx sqlxNamedQueryer, codeSessionID int64, eventID string) (CodeSessionEvent, error) {
+	arguments := map[string]any{"code_session_id": codeSessionID, "event_id": eventID}
+	event, err := getCodeSessionEventSQLX(ctx, tx, `
 		select `+codeSessionInboundEventColumns()+`
 		from code_session_inbound_events
-		where code_session_id = $1
-			and payload_uuid = $2
+		where code_session_id = :code_session_id
+			and payload_uuid = :event_id
 			and deleted_at is null
 		order by sequence_num asc
 		limit 1
 		for update
-	`, codeSessionID, eventID))
+	`, arguments)
 	if err == nil {
 		return event, nil
 	}
@@ -1212,15 +1295,15 @@ func getCodeSessionInboundDeliveryEventTx(ctx context.Context, tx pgx.Tx, codeSe
 		return CodeSessionEvent{}, err
 	}
 
-	return scanCodeSessionEvent(tx.QueryRow(ctx, `
+	return getCodeSessionEventSQLX(ctx, tx, `
 		select `+codeSessionInboundEventColumns()+`
 		from code_session_inbound_events
-		where code_session_id = $1
-			and external_id = $2
+		where code_session_id = :code_session_id
+			and external_id = :event_id
 			and deleted_at is null
 		limit 1
 		for update
-	`, codeSessionID, eventID))
+	`, arguments)
 }
 
 func codeSessionDeliveryStatusRank(status string) int {
@@ -1271,18 +1354,18 @@ func (d *DB) TouchCodeSessionWorkerActivityForActiveLease(ctx context.Context, c
 		return ErrWorkerEpochMismatch
 	}
 	now := time.Now().UTC()
-	tag, err := d.Pool.Exec(ctx, `
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
 		update code_sessions
-		set last_worker_activity_at = $1, updated_at = $1
-		where external_id = $2
-			and current_worker_epoch = $3
-			and worker_lease_expires_at > $1
+		set last_worker_activity_at = :now, updated_at = :now
+		where external_id = :external_id
+			and current_worker_epoch = :epoch
+			and worker_lease_expires_at > :now
 			and deleted_at is null
-	`, now, codeSessionExternalID, epoch)
+	`, map[string]any{"now": now, "external_id": codeSessionExternalID, "epoch": epoch})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() > 0 {
+	if rowsAffected > 0 {
 		return nil
 	}
 	// 条件更新未命中后再读取当前状态，以便把 takeover 与 lease 过期映射为不同 HTTP 错误。
@@ -1303,23 +1386,23 @@ func (d *DB) touchCodeSessionWorkerActivity(ctx context.Context, codeSessionExte
 	now := time.Now().UTC()
 	query := `
 		update code_sessions
-		set last_worker_activity_at = $1, updated_at = $1
-		where external_id = $2 and deleted_at is null
+		set last_worker_activity_at = :now, updated_at = :now
+		where external_id = :external_id and deleted_at is null
 	`
-	args := []any{now, codeSessionExternalID}
+	arguments := map[string]any{"now": now, "external_id": codeSessionExternalID}
 	if requiredEpoch != nil {
 		query = `
 			update code_sessions
-			set last_worker_activity_at = $1, updated_at = $1
-			where external_id = $2 and current_worker_epoch = $3 and deleted_at is null
+			set last_worker_activity_at = :now, updated_at = :now
+			where external_id = :external_id and current_worker_epoch = :epoch and deleted_at is null
 		`
-		args = append(args, *requiredEpoch)
+		arguments["epoch"] = *requiredEpoch
 	}
-	tag, err := d.Pool.Exec(ctx, query, args...)
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, query, arguments)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() > 0 {
+	if rowsAffected > 0 {
 		return nil
 	}
 	return d.codeSessionWorkerEpochUpdateError(ctx, codeSessionExternalID, requiredEpoch)
@@ -1332,38 +1415,38 @@ func (d *DB) updateCodeSessionConnection(ctx context.Context, codeSessionExterna
 	now := time.Now().UTC()
 	query := `
 		update code_sessions
-		set connection_status = $1, last_worker_activity_at = $2, updated_at = $2
-		where external_id = $3 and deleted_at is null
+		set connection_status = :status, last_worker_activity_at = :now, updated_at = :now
+		where external_id = :external_id and deleted_at is null
 	`
-	args := []any{status, now, codeSessionExternalID}
+	arguments := map[string]any{"status": status, "now": now, "external_id": codeSessionExternalID}
 	if connected {
 		query = `
 			update code_sessions
-			set connection_status = $1, last_worker_connected_at = $2, last_worker_activity_at = $2, updated_at = $2
-			where external_id = $3 and deleted_at is null
+			set connection_status = :status, last_worker_connected_at = :now, last_worker_activity_at = :now, updated_at = :now
+			where external_id = :external_id and deleted_at is null
 		`
 	}
 	if requiredEpoch != nil {
 		if connected {
 			query = `
 				update code_sessions
-				set connection_status = $1, last_worker_connected_at = $2, last_worker_activity_at = $2, updated_at = $2
-				where external_id = $3 and current_worker_epoch = $4 and deleted_at is null
+				set connection_status = :status, last_worker_connected_at = :now, last_worker_activity_at = :now, updated_at = :now
+				where external_id = :external_id and current_worker_epoch = :epoch and deleted_at is null
 			`
 		} else {
 			query = `
 				update code_sessions
-				set connection_status = $1, last_worker_activity_at = $2, updated_at = $2
-				where external_id = $3 and current_worker_epoch = $4 and deleted_at is null
+				set connection_status = :status, last_worker_activity_at = :now, updated_at = :now
+				where external_id = :external_id and current_worker_epoch = :epoch and deleted_at is null
 			`
 		}
-		args = append(args, *requiredEpoch)
+		arguments["epoch"] = *requiredEpoch
 	}
-	tag, err := d.Pool.Exec(ctx, query, args...)
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, query, arguments)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return d.codeSessionWorkerEpochUpdateError(ctx, codeSessionExternalID, requiredEpoch)
 	}
 	return nil
@@ -1375,12 +1458,12 @@ func (d *DB) codeSessionWorkerEpochUpdateError(ctx context.Context, codeSessionE
 	}
 
 	var current int64
-	err := d.Pool.QueryRow(ctx, `
+	err := namedGetContext(ctx, d.sql, &current, `
 		select current_worker_epoch
 		from code_sessions
-		where external_id = $1 and deleted_at is null
-	`, codeSessionExternalID).Scan(&current)
-	if errors.Is(err, pgx.ErrNoRows) {
+		where external_id = :external_id and deleted_at is null
+	`, map[string]any{"external_id": codeSessionExternalID})
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
@@ -1390,7 +1473,7 @@ func (d *DB) codeSessionWorkerEpochUpdateError(ctx context.Context, codeSessionE
 }
 
 func codeSessionColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, session_id, session_external_id,
+	return `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
 		environment_id, environment_external_id, work_dir, permission_mode, model, status, metadata,
 		connection_status, last_inbound_sequence_num, last_outbound_sequence_num, last_internal_sequence_num,
 		last_worker_connected_at, last_worker_activity_at, current_worker_epoch, worker_lease_expires_at,
@@ -1400,7 +1483,7 @@ func codeSessionColumns() string {
 }
 
 func codeSessionInboundEventColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+	return `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
 		sequence_num, event_type, event_subtype, payload_uuid, request_id, payload, payload_hash,
 		idempotency_key, delivery_status, source, sent_at, delivery_worker_epoch, received_at, processing_at,
 		processed_at, last_delivery_attempt_at, last_delivery_update_at, delivery_attempts,
@@ -1412,7 +1495,7 @@ func codeSessionInboundEventColumnsWithAlias(alias string) string {
 	if prefix != "" {
 		prefix += "."
 	}
-	return prefix + `id, ` + prefix + `uuid::text, ` + prefix + `external_id, ` + prefix + `organization_id, ` + prefix + `workspace_id, ` + prefix + `code_session_id, ` + prefix + `code_session_external_id,
+	return prefix + `id, CAST(` + prefix + `uuid AS text) AS uuid, ` + prefix + `external_id, ` + prefix + `organization_id, ` + prefix + `workspace_id, ` + prefix + `code_session_id, ` + prefix + `code_session_external_id,
 		` + prefix + `sequence_num, ` + prefix + `event_type, ` + prefix + `event_subtype, ` + prefix + `payload_uuid, ` + prefix + `request_id, ` + prefix + `payload, ` + prefix + `payload_hash,
 		` + prefix + `idempotency_key, ` + prefix + `delivery_status, ` + prefix + `source, ` + prefix + `sent_at, ` + prefix + `delivery_worker_epoch, ` + prefix + `received_at, ` + prefix + `processing_at,
 		` + prefix + `processed_at, ` + prefix + `last_delivery_attempt_at, ` + prefix + `last_delivery_update_at, ` + prefix + `delivery_attempts,
@@ -1420,17 +1503,17 @@ func codeSessionInboundEventColumnsWithAlias(alias string) string {
 }
 
 func codeSessionOutboundEventColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+	return `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
 		sequence_num, event_type, event_subtype, payload_uuid, request_id, payload, payload_hash,
-		idempotency_key, ''::text as delivery_status, source, null::timestamptz as sent_at,
-		null::bigint as delivery_worker_epoch, null::timestamptz as received_at, null::timestamptz as processing_at,
-		null::timestamptz as processed_at, null::timestamptz as last_delivery_attempt_at,
-		null::timestamptz as last_delivery_update_at, 0::integer as delivery_attempts,
+		idempotency_key, CAST('' AS text) AS delivery_status, source, CAST(null AS timestamptz) AS sent_at,
+		CAST(null AS bigint) AS delivery_worker_epoch, CAST(null AS timestamptz) AS received_at, CAST(null AS timestamptz) AS processing_at,
+		CAST(null AS timestamptz) AS processed_at, CAST(null AS timestamptz) AS last_delivery_attempt_at,
+		CAST(null AS timestamptz) AS last_delivery_update_at, CAST(0 AS integer) AS delivery_attempts,
 		ephemeral, created_at, updated_at, deleted_at`
 }
 
 func codeSessionInternalEventColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+	return `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
 		sequence_num, event_type, payload_uuid, agent_id, is_compaction, payload, payload_hash,
 		idempotency_key, event_metadata, created_at, updated_at, deleted_at`
 }
@@ -1440,39 +1523,9 @@ func codeSessionInternalEventColumnsWithAlias(alias string) string {
 	if prefix != "" {
 		prefix += "."
 	}
-	return prefix + `id, ` + prefix + `uuid::text, ` + prefix + `external_id, ` + prefix + `organization_id, ` + prefix + `workspace_id, ` + prefix + `code_session_id, ` + prefix + `code_session_external_id,
+	return prefix + `id, CAST(` + prefix + `uuid AS text) AS uuid, ` + prefix + `external_id, ` + prefix + `organization_id, ` + prefix + `workspace_id, ` + prefix + `code_session_id, ` + prefix + `code_session_external_id,
 		` + prefix + `sequence_num, ` + prefix + `event_type, ` + prefix + `payload_uuid, ` + prefix + `agent_id, ` + prefix + `is_compaction, ` + prefix + `payload, ` + prefix + `payload_hash,
 		` + prefix + `idempotency_key, ` + prefix + `event_metadata, ` + prefix + `created_at, ` + prefix + `updated_at, ` + prefix + `deleted_at`
-}
-
-func scanCodeSession(row rowScanner) (CodeSession, error) {
-	var session CodeSession
-	var metadata []byte
-	var workerBinding []byte
-	var workerExternalMetadata []byte
-	var workerRequiresActionDetails []byte
-	err := row.Scan(&session.ID, &session.UUID, &session.ExternalID, &session.OrganizationID, &session.WorkspaceID,
-		&session.SessionID, &session.SessionExternalID, &session.EnvironmentID, &session.EnvironmentExternalID,
-		&session.WorkDir, &session.PermissionMode, &session.Model, &session.Status, &metadata,
-		&session.ConnectionStatus, &session.LastInboundSequenceNum, &session.LastOutboundSequenceNum,
-		&session.LastInternalSequenceNum, &session.LastWorkerConnectedAt, &session.LastWorkerActivityAt, &session.CurrentWorkerEpoch,
-		&session.WorkerLeaseExpiresAt, &session.WorkerRegisteredAt, &session.WorkerLastHeartbeatAt,
-		&session.WorkerTokenSessionID, &workerBinding, &session.WorkerStatus, &workerExternalMetadata,
-		&workerRequiresActionDetails, &session.CreatedAt, &session.UpdatedAt, &session.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CodeSession{}, ErrNotFound
-	}
-	if err != nil {
-		return CodeSession{}, err
-	}
-	session.Metadata = copyRaw(metadata)
-	session.WorkerBinding = copyRaw(workerBinding)
-	session.WorkerExternalMetadata = copyRaw(workerExternalMetadata)
-	if len(session.WorkerExternalMetadata) == 0 {
-		session.WorkerExternalMetadata = json.RawMessage(`{}`)
-	}
-	session.WorkerRequiresActionDetails = copyRaw(workerRequiresActionDetails)
-	return session, nil
 }
 
 func mergeCodeSessionWorkerExternalMetadata(base json.RawMessage, patch json.RawMessage) (json.RawMessage, error) {
@@ -1502,65 +1555,4 @@ func mergeCodeSessionWorkerExternalMetadata(base json.RawMessage, patch json.Raw
 func rawIsJSONNull(raw json.RawMessage) bool {
 	raw = bytes.TrimSpace(raw)
 	return len(raw) == 0 || bytes.Equal(raw, []byte("null"))
-}
-
-func scanCodeSessionEvent(row rowScanner) (CodeSessionEvent, error) {
-	var event CodeSessionEvent
-	var payload []byte
-	err := row.Scan(&event.ID, &event.UUID, &event.ExternalID, &event.OrganizationID, &event.WorkspaceID,
-		&event.CodeSessionID, &event.CodeSessionExternalID, &event.SequenceNum, &event.EventType, &event.EventSubtype,
-		&event.PayloadUUID, &event.RequestID, &payload, &event.PayloadHash, &event.IdempotencyKey,
-		&event.DeliveryStatus, &event.Source, &event.SentAt, &event.DeliveryWorkerEpoch, &event.ReceivedAt,
-		&event.ProcessingAt, &event.ProcessedAt, &event.LastDeliveryAttemptAt, &event.LastDeliveryUpdateAt,
-		&event.DeliveryAttempts, &event.Ephemeral, &event.CreatedAt, &event.UpdatedAt, &event.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CodeSessionEvent{}, ErrNotFound
-	}
-	if err != nil {
-		return CodeSessionEvent{}, err
-	}
-	event.Payload = copyRaw(payload)
-	return event, nil
-}
-
-func scanCodeSessionInternalEvent(row rowScanner) (CodeSessionInternalEvent, error) {
-	var event CodeSessionInternalEvent
-	var payload, eventMetadata []byte
-	err := row.Scan(&event.ID, &event.UUID, &event.ExternalID, &event.OrganizationID, &event.WorkspaceID,
-		&event.CodeSessionID, &event.CodeSessionExternalID, &event.SequenceNum, &event.EventType,
-		&event.PayloadUUID, &event.AgentID, &event.IsCompaction, &payload, &event.PayloadHash,
-		&event.IdempotencyKey, &eventMetadata, &event.CreatedAt, &event.UpdatedAt, &event.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CodeSessionInternalEvent{}, ErrNotFound
-	}
-	if err != nil {
-		return CodeSessionInternalEvent{}, err
-	}
-	event.Payload = copyRaw(payload)
-	event.EventMetadata = copyRaw(eventMetadata)
-	return event, nil
-}
-
-func scanCodeSessionEventRows(rows rowsScanner) ([]CodeSessionEvent, error) {
-	var events []CodeSessionEvent
-	for rows.Next() {
-		event, err := scanCodeSessionEvent(rows)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, rows.Err()
-}
-
-func scanCodeSessionInternalEventRows(rows rowsScanner) ([]CodeSessionInternalEvent, error) {
-	var events []CodeSessionInternalEvent
-	for rows.Next() {
-		event, err := scanCodeSessionInternalEvent(rows)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, rows.Err()
 }

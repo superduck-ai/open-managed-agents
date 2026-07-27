@@ -816,13 +816,3 @@ func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceID int64, sess
 	}
 	return found, nil
 }
-
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
-type rowsScanner interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}

@@ -2,11 +2,145 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
+)
 
-	"github.com/jackc/pgx/v5"
+const (
+	builtinSkillColumns = `
+		id,
+		CAST(uuid AS text) AS uuid,
+		external_id,
+		display_title,
+		latest_version,
+		created_at,
+		updated_at,
+		deleted_at
+	`
+	builtinSkillVersionColumns = `
+		id,
+		CAST(uuid AS text) AS uuid,
+		external_id,
+		skill_id,
+		skill_external_id,
+		version,
+		name,
+		description,
+		directory,
+		s3_bucket,
+		s3_key,
+		size_bytes,
+		sha256,
+		created_at,
+		deleted_at
+	`
+	upsertBuiltinSkillQuery = `
+		insert into builtin_skills (
+			external_id, display_title, latest_version, created_at, updated_at, deleted_at
+		)
+		values (:external_id, :display_title, :latest_version, :created_at, :created_at, null)
+		on conflict (external_id) do update set
+			display_title = excluded.display_title,
+			latest_version = excluded.latest_version,
+			updated_at = excluded.updated_at,
+			deleted_at = null
+		returning ` + builtinSkillColumns + `
+	`
+	upsertBuiltinSkillVersionQuery = `
+		insert into builtin_skill_versions (
+			external_id, skill_id, skill_external_id, version, name, description,
+			directory, s3_bucket, s3_key, size_bytes, sha256, created_at, deleted_at
+		)
+		values (
+			:external_id, :skill_id, :skill_external_id, :version, :name, :description,
+			:directory, :s3_bucket, :s3_key, :size_bytes, :sha256, :created_at, null
+		)
+		on conflict (skill_id, version) do update set
+			name = excluded.name,
+			description = excluded.description,
+			directory = excluded.directory,
+			s3_bucket = excluded.s3_bucket,
+			s3_key = excluded.s3_key,
+			size_bytes = excluded.size_bytes,
+			sha256 = excluded.sha256,
+			created_at = case
+				when builtin_skill_versions.deleted_at is not null then excluded.created_at
+				else builtin_skill_versions.created_at
+			end,
+			deleted_at = null
+		where builtin_skill_versions.sha256 = excluded.sha256
+		returning ` + builtinSkillVersionColumns + `
+	`
+	listBuiltinSkillsPageQuery = `
+		select ` + builtinSkillColumns + `
+		from builtin_skills
+		where deleted_at is null
+		order by created_at desc, id desc
+		limit :limit offset :offset
+	`
+	countBuiltinSkillsQuery = `
+		select count(*)
+		from builtin_skills
+		where deleted_at is null
+	`
+	getBuiltinSkillQuery = `
+		select ` + builtinSkillColumns + `
+		from builtin_skills
+		where external_id = :external_id and deleted_at is null
+	`
+	getBuiltinSkillIDQuery = `
+		select id
+		from builtin_skills
+		where external_id = :external_id and deleted_at is null
+	`
+	listBuiltinSkillVersionsPageQuery = `
+		select ` + builtinSkillVersionColumns + `
+		from builtin_skill_versions
+		where skill_id = :skill_id and deleted_at is null
+		order by created_at desc, id desc
+		limit :limit offset :offset
+	`
+	getBuiltinSkillVersionQuery = `
+		select ` + builtinSkillVersionColumns + `
+		from builtin_skill_versions
+		where skill_external_id = :skill_external_id
+			and version = :version
+			and deleted_at is null
+	`
+	listMissingBuiltinSkillVersionsQuery = `
+		select ` + builtinSkillVersionColumns + `
+		from builtin_skill_versions
+		where deleted_at is null
+			and not exists (
+				select 1
+				from jsonb_array_elements_text(CAST(:keep_external_ids AS jsonb)) AS kept(external_id)
+				where kept.external_id = builtin_skill_versions.skill_external_id
+			)
+		order by skill_external_id, version
+	`
+	softDeleteMissingBuiltinSkillVersionsQuery = `
+		update builtin_skill_versions
+		set deleted_at = :deleted_at
+		where deleted_at is null
+			and not exists (
+				select 1
+				from jsonb_array_elements_text(CAST(:keep_external_ids AS jsonb)) AS kept(external_id)
+				where kept.external_id = builtin_skill_versions.skill_external_id
+			)
+	`
+	softDeleteMissingBuiltinSkillsQuery = `
+		update builtin_skills
+		set deleted_at = :deleted_at,
+			updated_at = :deleted_at
+		where deleted_at is null
+			and not exists (
+				select 1
+				from jsonb_array_elements_text(CAST(:keep_external_ids AS jsonb)) AS kept(external_id)
+				where kept.external_id = builtin_skills.external_id
+			)
+	`
 )
 
 type BuiltinSkill struct {
@@ -49,25 +183,52 @@ type ListBuiltinSkillVersionsPageParams struct {
 	Offset          int
 }
 
-func (d *DB) UpsertBuiltinSkillWithVersion(ctx context.Context, skill BuiltinSkill, version BuiltinSkillVersion) (BuiltinSkill, BuiltinSkillVersion, error) {
-	tx, err := d.Pool.Begin(ctx)
+type builtinSkillRow struct {
+	ID            int64      `db:"id"`
+	UUID          string     `db:"uuid"`
+	ExternalID    string     `db:"external_id"`
+	DisplayTitle  string     `db:"display_title"`
+	LatestVersion *string    `db:"latest_version"`
+	CreatedAt     time.Time  `db:"created_at"`
+	UpdatedAt     time.Time  `db:"updated_at"`
+	DeletedAt     *time.Time `db:"deleted_at"`
+}
+
+type builtinSkillVersionRow struct {
+	ID              int64      `db:"id"`
+	UUID            string     `db:"uuid"`
+	ExternalID      string     `db:"external_id"`
+	SkillID         int64      `db:"skill_id"`
+	SkillExternalID string     `db:"skill_external_id"`
+	Version         string     `db:"version"`
+	Name            string     `db:"name"`
+	Description     string     `db:"description"`
+	Directory       string     `db:"directory"`
+	S3Bucket        string     `db:"s3_bucket"`
+	S3Key           string     `db:"s3_key"`
+	SizeBytes       int64      `db:"size_bytes"`
+	SHA256          string     `db:"sha256"`
+	CreatedAt       time.Time  `db:"created_at"`
+	DeletedAt       *time.Time `db:"deleted_at"`
+}
+
+func (d *DB) UpsertBuiltinSkillWithVersion(
+	ctx context.Context,
+	skill BuiltinSkill,
+	version BuiltinSkillVersion,
+) (BuiltinSkill, BuiltinSkillVersion, error) {
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return BuiltinSkill{}, BuiltinSkillVersion{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback() }()
 
-	createdSkill, err := scanBuiltinSkill(tx.QueryRow(ctx, `
-		insert into builtin_skills (
-			external_id, display_title, latest_version, created_at, updated_at, deleted_at
-		)
-		values ($1, $2, $3, $4, $4, null)
-		on conflict (external_id) do update set
-			display_title = excluded.display_title,
-			latest_version = excluded.latest_version,
-			updated_at = excluded.updated_at,
-			deleted_at = null
-		returning id, uuid::text, external_id, display_title, latest_version, created_at, updated_at, deleted_at
-	`, skill.ExternalID, skill.DisplayTitle, version.Version, skill.CreatedAt))
+	createdSkill, err := getBuiltinSkillSQLX(ctx, tx, upsertBuiltinSkillQuery, map[string]any{
+		"external_id":    skill.ExternalID,
+		"display_title":  skill.DisplayTitle,
+		"latest_version": version.Version,
+		"created_at":     skill.CreatedAt,
+	})
 	if err != nil {
 		return BuiltinSkill{}, BuiltinSkillVersion{}, err
 	}
@@ -76,65 +237,52 @@ func (d *DB) UpsertBuiltinSkillWithVersion(ctx context.Context, skill BuiltinSki
 	version.SkillExternalID = createdSkill.ExternalID
 	createdVersion, err := upsertBuiltinSkillVersion(ctx, tx, version)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			return BuiltinSkill{}, BuiltinSkillVersion{}, ErrVersionConflict
 		}
 		return BuiltinSkill{}, BuiltinSkillVersion{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return BuiltinSkill{}, BuiltinSkillVersion{}, err
 	}
 	return createdSkill, createdVersion, nil
 }
 
-func upsertBuiltinSkillVersion(ctx context.Context, tx skillTx, version BuiltinSkillVersion) (BuiltinSkillVersion, error) {
-	return scanBuiltinSkillVersion(tx.QueryRow(ctx, `
-		insert into builtin_skill_versions (
-			external_id, skill_id, skill_external_id, version, name, description,
-			directory, s3_bucket, s3_key, size_bytes, sha256, created_at, deleted_at
-		)
-		values (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11, $12, null
-		)
-		on conflict (skill_id, version) do update set
-			name = excluded.name,
-			description = excluded.description,
-			directory = excluded.directory,
-			s3_bucket = excluded.s3_bucket,
-			s3_key = excluded.s3_key,
-			size_bytes = excluded.size_bytes,
-			sha256 = excluded.sha256,
-			created_at = case
-				when builtin_skill_versions.deleted_at is not null then excluded.created_at
-				else builtin_skill_versions.created_at
-			end,
-			deleted_at = null
-		where builtin_skill_versions.sha256 = excluded.sha256
-		returning id, uuid::text, external_id, skill_id, skill_external_id, version,
-			name, description, directory, s3_bucket, s3_key, size_bytes, sha256, created_at, deleted_at
-	`, version.ExternalID, version.SkillID, version.SkillExternalID, version.Version, version.Name, version.Description,
-		version.Directory, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt))
+func upsertBuiltinSkillVersion(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	version BuiltinSkillVersion,
+) (BuiltinSkillVersion, error) {
+	return getBuiltinSkillVersionSQLX(ctx, database, upsertBuiltinSkillVersionQuery, map[string]any{
+		"external_id":       version.ExternalID,
+		"skill_id":          version.SkillID,
+		"skill_external_id": version.SkillExternalID,
+		"version":           version.Version,
+		"name":              version.Name,
+		"description":       version.Description,
+		"directory":         version.Directory,
+		"s3_bucket":         version.S3Bucket,
+		"s3_key":            version.S3Key,
+		"size_bytes":        version.SizeBytes,
+		"sha256":            version.SHA256,
+		"created_at":        version.CreatedAt,
+	})
 }
 
-func (d *DB) ListBuiltinSkillsPage(ctx context.Context, params ListBuiltinSkillsPageParams) ([]BuiltinSkill, bool, error) {
+func (d *DB) ListBuiltinSkillsPage(
+	ctx context.Context,
+	params ListBuiltinSkillsPageParams,
+) ([]BuiltinSkill, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
 	if params.Offset < 0 {
 		params.Offset = 0
 	}
-	rows, err := d.Pool.Query(ctx, builtinSkillSelectSQL()+`
-		where deleted_at is null
-		order by created_at desc, id desc
-		limit $1 offset $2
-	`, params.Limit+1, params.Offset)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-
-	skills, err := scanBuiltinSkillRows(rows)
+	skills, err := selectBuiltinSkillsSQLX(ctx, d.sql, listBuiltinSkillsPageQuery, map[string]any{
+		"limit":  params.Limit + 1,
+		"offset": params.Offset,
+	})
 	if err != nil {
 		return nil, false, err
 	}
@@ -147,21 +295,20 @@ func (d *DB) ListBuiltinSkillsPage(ctx context.Context, params ListBuiltinSkills
 
 func (d *DB) CountBuiltinSkills(ctx context.Context) (int, error) {
 	var count int
-	err := d.Pool.QueryRow(ctx, `
-		select count(*)
-		from builtin_skills
-		where deleted_at is null
-	`).Scan(&count)
+	err := namedGetContext(ctx, d.sql, &count, countBuiltinSkillsQuery, map[string]any{})
 	return count, err
 }
 
 func (d *DB) GetBuiltinSkill(ctx context.Context, externalID string) (BuiltinSkill, error) {
-	return scanBuiltinSkill(d.Pool.QueryRow(ctx, builtinSkillSelectSQL()+`
-		where external_id = $1 and deleted_at is null
-	`, externalID))
+	return getBuiltinSkillSQLX(ctx, d.sql, getBuiltinSkillQuery, map[string]any{
+		"external_id": externalID,
+	})
 }
 
-func (d *DB) ListBuiltinSkillVersionsPage(ctx context.Context, params ListBuiltinSkillVersionsPageParams) ([]BuiltinSkillVersion, bool, error) {
+func (d *DB) ListBuiltinSkillVersionsPage(
+	ctx context.Context,
+	params ListBuiltinSkillVersionsPageParams,
+) ([]BuiltinSkillVersion, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
@@ -169,27 +316,21 @@ func (d *DB) ListBuiltinSkillVersionsPage(ctx context.Context, params ListBuilti
 		params.Offset = 0
 	}
 	var skillID int64
-	if err := d.Pool.QueryRow(ctx, `
-		select id
-		from builtin_skills
-		where external_id = $1 and deleted_at is null
-	`, params.SkillExternalID).Scan(&skillID); errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, ErrNotFound
-	} else if err != nil {
-		return nil, false, err
+	if err := namedGetContext(ctx, d.sql, &skillID, getBuiltinSkillIDQuery, map[string]any{
+		"external_id": params.SkillExternalID,
+	}); err != nil {
+		return nil, false, mapNoRows(err)
 	}
-
-	rows, err := d.Pool.Query(ctx, builtinSkillVersionSelectSQL()+`
-		where skill_id = $1 and deleted_at is null
-		order by created_at desc, id desc
-		limit $2 offset $3
-	`, skillID, params.Limit+1, params.Offset)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-
-	versions, err := scanBuiltinSkillVersionRows(rows)
+	versions, err := selectBuiltinSkillVersionsSQLX(
+		ctx,
+		d.sql,
+		listBuiltinSkillVersionsPageQuery,
+		map[string]any{
+			"skill_id": skillID,
+			"limit":    params.Limit + 1,
+			"offset":   params.Offset,
+		},
+	)
 	if err != nil {
 		return nil, false, err
 	}
@@ -200,7 +341,11 @@ func (d *DB) ListBuiltinSkillVersionsPage(ctx context.Context, params ListBuilti
 	return versions, hasMore, nil
 }
 
-func (d *DB) GetBuiltinSkillVersion(ctx context.Context, skillExternalID, version string) (BuiltinSkillVersion, error) {
+func (d *DB) GetBuiltinSkillVersion(
+	ctx context.Context,
+	skillExternalID string,
+	version string,
+) (BuiltinSkillVersion, error) {
 	if version == "latest" {
 		skill, err := d.GetBuiltinSkill(ctx, skillExternalID)
 		if err != nil {
@@ -211,113 +356,141 @@ func (d *DB) GetBuiltinSkillVersion(ctx context.Context, skillExternalID, versio
 		}
 		version = *skill.LatestVersion
 	}
-	return scanBuiltinSkillVersion(d.Pool.QueryRow(ctx, builtinSkillVersionSelectSQL()+`
-		where skill_external_id = $1
-			and version = $2
-			and deleted_at is null
-	`, skillExternalID, version))
+	return getBuiltinSkillVersionSQLX(ctx, d.sql, getBuiltinSkillVersionQuery, map[string]any{
+		"skill_external_id": skillExternalID,
+		"version":           version,
+	})
 }
 
-func (d *DB) SoftDeleteMissingBuiltinSkills(ctx context.Context, keepExternalIDs []string, deletedAt time.Time) ([]BuiltinSkillVersion, error) {
-	tx, err := d.Pool.Begin(ctx)
+func (d *DB) SoftDeleteMissingBuiltinSkills(
+	ctx context.Context,
+	keepExternalIDs []string,
+	deletedAt time.Time,
+) ([]BuiltinSkillVersion, error) {
+	keepExternalIDsJSON, err := json.Marshal(append([]string{}, keepExternalIDs...))
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	arguments := map[string]any{
+		"keep_external_ids": keepExternalIDsJSON,
+		"deleted_at":        deletedAt,
+	}
+	tx, err := d.sql.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 
-	rows, err := tx.Query(ctx, builtinSkillVersionSelectSQL()+`
-		where deleted_at is null
-			and skill_external_id <> all($1::text[])
-		order by skill_external_id, version
-	`, keepExternalIDs)
+	versions, err := selectBuiltinSkillVersionsSQLX(
+		ctx,
+		tx,
+		listMissingBuiltinSkillVersionsQuery,
+		arguments,
+	)
 	if err != nil {
 		return nil, err
 	}
-	versions, err := scanBuiltinSkillVersionRows(rows)
-	rows.Close()
-	if err != nil {
+	if _, err := namedExecContext(ctx, tx, softDeleteMissingBuiltinSkillVersionsQuery, arguments); err != nil {
 		return nil, err
 	}
-
-	if _, err := tx.Exec(ctx, `
-		update builtin_skill_versions
-		set deleted_at = $2
-		where deleted_at is null
-			and skill_external_id <> all($1::text[])
-	`, keepExternalIDs, deletedAt); err != nil {
+	if _, err := namedExecContext(ctx, tx, softDeleteMissingBuiltinSkillsQuery, arguments); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		update builtin_skills
-		set deleted_at = $2,
-			updated_at = $2
-		where deleted_at is null
-			and external_id <> all($1::text[])
-	`, keepExternalIDs, deletedAt); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return versions, nil
 }
 
-func builtinSkillSelectSQL() string {
-	return `
-		select id, uuid::text, external_id, display_title, latest_version, created_at, updated_at, deleted_at
-		from builtin_skills
-	`
-}
-
-func builtinSkillVersionSelectSQL() string {
-	return `
-		select id, uuid::text, external_id, skill_id, skill_external_id, version,
-			name, description, directory, s3_bucket, s3_key, size_bytes, sha256, created_at, deleted_at
-		from builtin_skill_versions
-	`
-}
-
-func scanBuiltinSkill(row skillScanner) (BuiltinSkill, error) {
-	var skill BuiltinSkill
-	err := row.Scan(&skill.ID, &skill.UUID, &skill.ExternalID, &skill.DisplayTitle, &skill.LatestVersion,
-		&skill.CreatedAt, &skill.UpdatedAt, &skill.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return BuiltinSkill{}, ErrNotFound
+func getBuiltinSkillSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (BuiltinSkill, error) {
+	var row builtinSkillRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		return BuiltinSkill{}, mapNoRows(err)
 	}
-	return skill, err
+	return row.skill(), nil
 }
 
-func scanBuiltinSkillRows(rows skillRows) ([]BuiltinSkill, error) {
-	var skills []BuiltinSkill
-	for rows.Next() {
-		skill, err := scanBuiltinSkill(rows)
-		if err != nil {
-			return nil, err
-		}
-		skills = append(skills, skill)
+func selectBuiltinSkillsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]BuiltinSkill, error) {
+	var rows []builtinSkillRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
 	}
-	return skills, rows.Err()
+	skills := make([]BuiltinSkill, 0, len(rows))
+	for _, row := range rows {
+		skills = append(skills, row.skill())
+	}
+	return skills, nil
 }
 
-func scanBuiltinSkillVersion(row skillScanner) (BuiltinSkillVersion, error) {
-	var version BuiltinSkillVersion
-	err := row.Scan(&version.ID, &version.UUID, &version.ExternalID, &version.SkillID, &version.SkillExternalID,
-		&version.Version, &version.Name, &version.Description, &version.Directory, &version.S3Bucket,
-		&version.S3Key, &version.SizeBytes, &version.SHA256, &version.CreatedAt, &version.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return BuiltinSkillVersion{}, ErrNotFound
+func getBuiltinSkillVersionSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (BuiltinSkillVersion, error) {
+	var row builtinSkillVersionRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		return BuiltinSkillVersion{}, mapNoRows(err)
 	}
-	return version, err
+	return row.skillVersion(), nil
 }
 
-func scanBuiltinSkillVersionRows(rows skillRows) ([]BuiltinSkillVersion, error) {
-	var versions []BuiltinSkillVersion
-	for rows.Next() {
-		version, err := scanBuiltinSkillVersion(rows)
-		if err != nil {
-			return nil, err
-		}
-		versions = append(versions, version)
+func selectBuiltinSkillVersionsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]BuiltinSkillVersion, error) {
+	var rows []builtinSkillVersionRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
 	}
-	return versions, rows.Err()
+	versions := make([]BuiltinSkillVersion, 0, len(rows))
+	for _, row := range rows {
+		versions = append(versions, row.skillVersion())
+	}
+	return versions, nil
+}
+
+func (r builtinSkillRow) skill() BuiltinSkill {
+	return BuiltinSkill{
+		ID:            r.ID,
+		UUID:          r.UUID,
+		ExternalID:    r.ExternalID,
+		DisplayTitle:  r.DisplayTitle,
+		LatestVersion: r.LatestVersion,
+		CreatedAt:     r.CreatedAt,
+		UpdatedAt:     r.UpdatedAt,
+		DeletedAt:     r.DeletedAt,
+	}
+}
+
+func (r builtinSkillVersionRow) skillVersion() BuiltinSkillVersion {
+	return BuiltinSkillVersion{
+		ID:              r.ID,
+		UUID:            r.UUID,
+		ExternalID:      r.ExternalID,
+		SkillID:         r.SkillID,
+		SkillExternalID: r.SkillExternalID,
+		Version:         r.Version,
+		Name:            r.Name,
+		Description:     r.Description,
+		Directory:       r.Directory,
+		S3Bucket:        r.S3Bucket,
+		S3Key:           r.S3Key,
+		SizeBytes:       r.SizeBytes,
+		SHA256:          r.SHA256,
+		CreatedAt:       r.CreatedAt,
+		DeletedAt:       r.DeletedAt,
+	}
 }

@@ -484,7 +484,8 @@ func unbindSessionFileResourceTx(
 }
 
 // SyncSessionFileProjection 把当前 /outputs 命名空间物化为 Files API 的
-// session-scoped 视图。对象字节与配额仍由 Filestore entry 管理，这里只同步元数据。
+// session-scoped 视图。scoped Files 列表在读取前调用它，以返回当前目录状态；
+// 对象字节与配额仍由 Filestore entry 管理，这里只同步元数据。
 func (d *DB) SyncSessionFileProjection(
 	ctx context.Context,
 	workspaceID int64,

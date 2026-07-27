@@ -29,7 +29,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const filesBeta = "files-api-2025-04-14"
+const (
+	filesBeta          = "files-api-2025-04-14"
+	sessionScopePrefix = "sesn_"
+)
 
 type Handler struct {
 	cfg    config.Config
@@ -183,10 +186,18 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	afterID := r.URL.Query().Get("after_id")
 	beforeID := r.URL.Query().Get("before_id")
+	scopeID := r.URL.Query().Get("scope_id")
+	if strings.HasPrefix(scopeID, sessionScopePrefix) {
+		if err := h.db.SyncSessionFileProjection(r.Context(), principal.WorkspaceID, scopeID); err != nil && !errors.Is(err, db.ErrNotFound) {
+			h.logger.ErrorContext(r.Context(), "sync session file projection", "session_id", scopeID, "error", err)
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list files"))
+			return
+		}
+	}
 
 	records, hasMore, err := h.db.ListFilesPage(r.Context(), db.ListFilesPageParams{
 		WorkspaceID: principal.WorkspaceID,
-		ScopeID:     r.URL.Query().Get("scope_id"),
+		ScopeID:     scopeID,
 		AfterID:     afterID,
 		BeforeID:    beforeID,
 		Limit:       limit,

@@ -6,13 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 
 	"github.com/google/uuid"
@@ -23,6 +24,7 @@ import (
 type Service struct {
 	db          *db.DB
 	credentials *SessionCredentials
+	logger      *slog.Logger
 	sinkMu      sync.Mutex
 	sink        PublicEventSink
 }
@@ -32,20 +34,26 @@ type workerOutputEvent struct {
 	Ephemeral bool
 }
 
-func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials) *Service {
+func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
 	// 显式注入避免 Service 在同一进程中各自生成临时 Ed25519 密钥。
 	if credentials == nil {
 		panic("codesessions: session credentials are required")
 	}
-	return &Service{db: database, credentials: credentials}
+	logger = logging.LoggerOrDefault(logger)
+	return &Service{db: database, credentials: credentials, logger: logger}
 }
 
-func initialPublicSessionWorkerPayloads(codeSessionID string, payloads []json.RawMessage, now time.Time) []json.RawMessage {
+func (s *Service) initialPublicSessionWorkerPayloads(
+	ctx context.Context,
+	codeSessionID string,
+	payloads []json.RawMessage,
+	now time.Time,
+) []json.RawMessage {
 	workerPayloads := make([]json.RawMessage, 0, len(payloads))
 	for _, raw := range payloads {
 		object, err := decodeJSONObject(raw)
 		if err != nil {
-			log.Printf("skip initial code session event code_session_id=%s: %v", codeSessionID, err)
+			s.logger.WarnContext(ctx, "skip initial code session event", "code_session_id", codeSessionID, "error", err)
 			continue
 		}
 		if !forwardPublicEventToWorker(stringField(object, "type")) {
@@ -53,7 +61,7 @@ func initialPublicSessionWorkerPayloads(codeSessionID string, payloads []json.Ra
 		}
 		payload, err := workerPayloadForPublicEvent(codeSessionID, raw, now)
 		if err != nil {
-			log.Printf("convert initial code session event code_session_id=%s: %v", codeSessionID, err)
+			s.logger.ErrorContext(ctx, "convert initial code session event", "code_session_id", codeSessionID, "error", err)
 			continue
 		}
 		workerPayloads = append(workerPayloads, payload)
@@ -88,7 +96,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		}
 		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.ProcessedAt)
 		if err != nil {
-			log.Printf("convert public session event to code session payload session_id=%s event_id=%s: %v", session.ExternalID, event.ExternalID, err)
+			s.logger.ErrorContext(ctx, "convert public session event to code session payload", "session_id", session.ExternalID, "event_id", event.ExternalID, "error", err)
 			continue
 		}
 		payloads = append(payloads, payload)
@@ -353,7 +361,7 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 		return nil
 	}
 	if err := s.publishSubagentInternalEvents(ctx, codeSession); err != nil {
-		log.Printf("publish subagent internal events code_session_id=%s session_id=%s: %v", codeSession.ExternalID, codeSession.SessionExternalID, err)
+		s.logger.ErrorContext(ctx, "publish subagent internal events", "code_session_id", codeSession.ExternalID, "session_id", codeSession.SessionExternalID, "error", err)
 	}
 	return nil
 }

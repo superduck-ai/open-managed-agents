@@ -39,7 +39,7 @@ func TestRecordCodeSessionWorkerOTLPFileLogRecordsDecodeErrors(t *testing.T) {
 			OTLPFileLogEnabled: true,
 			OTLPLogRoot:        root,
 		},
-	}, newTestService(t, nil))
+	}, newTestService(t, nil), nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_bad/worker/otlp/logs", bytes.NewReader([]byte(`{"resourceLogs":[`)))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -151,7 +151,7 @@ func TestRecordCodeSessionWorkerOTLPFileLogWritesRequestAndExpandedRecords(t *te
 			OTLPLogRoot:             root,
 			OTLPLogBodyPreviewBytes: 8,
 		},
-	}, newTestService(t, nil))
+	}, newTestService(t, nil), nil)
 
 	metricsBody, err := proto.Marshal(testOTLPMetricsRequest())
 	if err != nil {

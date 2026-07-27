@@ -158,7 +158,7 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 		}
 	}()
 
-	runner := newManagedAgentRunner(t, app, provider, cfg, nil)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "full-e2b-bridge-test")
 	if err != nil {
 		t.Fatalf("run environment runner once: %v", err)

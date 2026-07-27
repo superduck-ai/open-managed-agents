@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
@@ -59,26 +60,25 @@ type RunnerDependencies struct {
 	CodeSessions    CodeSessionRuntime
 	Skills          RuntimeSkillResolver
 	FilestoreTokens FilestoreTokenIssuer
+	Logger          *slog.Logger
 }
 
 type Runner struct {
-	db           *db.DB
-	provider     e2bruntime.Provider
-	cfg          config.Config
-	codeSessions CodeSessionRuntime
-	skills       RuntimeSkillResolver
-
+	db              *db.DB
+	provider        e2bruntime.Provider
+	cfg             config.Config
+	codeSessions    CodeSessionRuntime
+	skills          RuntimeSkillResolver
 	filestoreTokens FilestoreTokenIssuer
+	logger          *slog.Logger
 }
 
 type managedAgentLaunchPreparation struct {
-	session               db.Session
-	sessionConfig         json.RawMessage
-	persistedWorkMetadata json.RawMessage
-	skillMount            *e2bruntime.SkillMount
-	workDir               string
-	title                 string
-	model                 string
+	session       db.Session
+	sessionConfig json.RawMessage
+	workDir       string
+	title         string
+	model         string
 }
 
 type managedAgentRuntimeLaunch struct {
@@ -109,6 +109,7 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 		codeSessions:    deps.CodeSessions,
 		skills:          deps.Skills,
 		filestoreTokens: deps.FilestoreTokens,
+		logger:          logging.LoggerOrDefault(deps.Logger),
 	}, nil
 }
 
@@ -160,7 +161,7 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 		}
 		processed, err := r.RunOnce(ctx, workerID)
 		if err != nil {
-			log.Printf("environment runner worker=%s: %v", workerID, err)
+			r.logger.ErrorContext(ctx, "environment runner", "worker_id", workerID, "error", err)
 		}
 		if processed {
 			continue
@@ -207,12 +208,12 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
+	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
 	}
-	resolution, err := r.provider.Resolve(env, work)
+	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
 		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return true, err
@@ -252,30 +253,24 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	}
 	providerSandboxID := sandbox.ID
 	if strings.TrimSpace(providerSandboxID) != "" {
-		persistedMetadata := work.Metadata
-		if preparation != nil {
-			persistedMetadata = preparation.persistedWorkMetadata
-		}
-		nextPersistedMetadata, err := patchJSONMetadata(persistedMetadata, map[string]any{
+		nextMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
 			"provider_sandbox_id": providerSandboxID,
 		})
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
-		updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, nextPersistedMetadata)
+		updatedWork, err := r.db.UpdateEnvironmentWorkMetadata(
+			ctx,
+			work.WorkspaceID,
+			work.EnvironmentExternalID,
+			work.ExternalID,
+			nextMetadata,
+		)
 		if err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
-		nextRuntimeMetadata, err := patchJSONMetadata(work.Metadata, map[string]any{
-			"provider_sandbox_id": providerSandboxID,
-		})
-		if err != nil {
-			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-			return true, err
-		}
-		updatedWork.Metadata = nextRuntimeMetadata
 		*work = updatedWork
 	}
 
@@ -307,9 +302,9 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		return true, err
 	}
 
-	// 只有 Cloud Session Managed Agent 使用固定的四组 Filestore 挂载。
+	// 只有 Cloud Session Managed Agent 使用固定的五组 Filestore 挂载。
 	// 必须等 rclone ready 后才能继续，确保 Claude 启动时 uploads、outputs、
-	// transcripts 和 tool_results 已经可用。
+	// transcripts、tool_results 和 skills 已经可用。
 	if preparation != nil {
 		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.session)
 		if err != nil {
@@ -337,7 +332,8 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
 		// 并在启动 Claude 前 register worker，建立首个 CCR lease。
 		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
-			publicError := logManagedAgentRuntimeStageFailure(
+			publicError := r.logManagedAgentRuntimeStageFailure(
+				ctx,
 				"environment_manager_start",
 				errEnvironmentManagerStart,
 				err,
@@ -355,13 +351,14 @@ func (r *Runner) provisionPackages(ctx context.Context, workExternalID, sandboxI
 	// Provisioning 独占一个 runner worker slot 直到返回，因此起始行是排队诊断的唯一
 	// 依据：安装挂住时只有它会出现。两条日志都不含 spec、manifest 或 Sandbox 输出。
 	startedAt := time.Now()
-	log.Printf("environment packages provisioning start work_id=%s", workExternalID)
+	r.logger.InfoContext(ctx, "environment packages provisioning start", "work_id", workExternalID)
 	defer func() {
-		log.Printf(
-			"environment packages provisioning done work_id=%s duration_ms=%d ok=%t",
-			workExternalID,
-			time.Since(startedAt).Milliseconds(),
-			err == nil,
+		r.logger.InfoContext(
+			ctx,
+			"environment packages provisioning done",
+			"work_id", workExternalID,
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+			"ok", err == nil,
 		)
 	}()
 	result, runErr := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
@@ -433,11 +430,12 @@ func (r *Runner) failManagedAgentRuntime(
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, codeSessionID); err != nil {
-		log.Printf(
-			"terminate failed managed-agent runtime code_session_id=%s stage_error_type=%T cleanup_error_type=%T",
-			codeSessionID,
-			cause,
-			err,
+		r.logger.ErrorContext(
+			cleanupCtx,
+			"terminate failed managed agent runtime",
+			"code_session_id", codeSessionID,
+			"stage_error_type", fmt.Sprintf("%T", cause),
+			"error", err,
 		)
 	}
 	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
@@ -476,8 +474,7 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	if err != nil {
 		return nil, err
 	}
-	skillMount, err := r.prepareRuntimeSkillMount(ctx, runtimeSkills)
-	if err != nil {
+	if err := r.replaceRuntimeSkillArchives(ctx, session, runtimeSkills); err != nil {
 		return nil, err
 	}
 	runtimeResources := resolveManagedAgentRuntimeResources(resources)
@@ -487,26 +484,12 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	if session.Title != nil {
 		title = *session.Title
 	}
-	persistedWorkMetadata := append(json.RawMessage(nil), work.Metadata...)
-	workMetadataPatch := map[string]any{}
-	if skillMount != nil {
-		workMetadataPatch[e2bruntime.SkillMountMetadataKey] = skillMount
-	}
-	if len(workMetadataPatch) > 0 {
-		nextWorkMetadata, err := patchJSONMetadata(work.Metadata, workMetadataPatch)
-		if err != nil {
-			return nil, err
-		}
-		work.Metadata = nextWorkMetadata
-	}
 	return &managedAgentLaunchPreparation{
-		session:               session,
-		sessionConfig:         sessionConfig,
-		persistedWorkMetadata: persistedWorkMetadata,
-		skillMount:            skillMount,
-		workDir:               workDir,
-		title:                 title,
-		model:                 modelIDFromAgentSnapshot(session.AgentSnapshot),
+		session:       session,
+		sessionConfig: sessionConfig,
+		workDir:       workDir,
+		title:         title,
+		model:         modelIDFromAgentSnapshot(session.AgentSnapshot),
 	}, nil
 }
 
@@ -519,15 +502,6 @@ func (r *Runner) commitManagedAgentLaunch(
 	if preparation == nil {
 		return nil, nil
 	}
-	workPreparationMetadata := codesessions.ManagedAgentWorkPreparationMetadata{}
-	if preparation.skillMount != nil {
-		workPreparationMetadata.SkillMount = &codesessions.ManagedAgentSkillMountMetadata{
-			MountPath:      preparation.skillMount.MountPath,
-			VolumeName:     preparation.skillMount.VolumeName,
-			ManifestSHA256: preparation.skillMount.ManifestSHA256,
-			Skills:         preparation.skillMount.Skills,
-		}
-	}
 	local, err := r.codeSessions.CreateManagedAgentCodeSession(ctx, codesessions.ManagedAgentCreateInput{
 		Session:                    preparation.session,
 		Environment:                env,
@@ -538,7 +512,6 @@ func (r *Runner) commitManagedAgentLaunch(
 		PermissionMode:             "bypassPermissions",
 		DangerouslySkipPermissions: true,
 		Config:                     preparation.sessionConfig,
-		WorkPreparationMetadata:    workPreparationMetadata,
 	})
 	if err != nil {
 		return nil, err
@@ -594,19 +567,19 @@ func (r *Runner) ensureManagedAgentSessionLaunchable(
 func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
 	if err := r.provider.WriteFile(ctx, sandboxID, rcloneConfigPath, launch.ConfigPayload); err != nil {
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("config_write", errRcloneConfigWrite, err)
+		return r.logRcloneStageFailure(ctx, "config_write", errRcloneConfigWrite, err)
 	}
 	if err := r.runSandboxCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("config_permissions", errRcloneConfigPermissions, err)
+		return r.logRcloneStageFailure(ctx, "config_permissions", errRcloneConfigPermissions, err)
 	}
 	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("process_start", errRcloneProcessStart, err)
+		return r.logRcloneStageFailure(ctx, "process_start", errRcloneProcessStart, err)
 	}
 	if err := r.waitForRcloneReady(ctx, sandboxID, rcloneReadyPollInterval, rcloneReadyTimeout); err != nil {
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("readiness", errRcloneReadiness, err)
+		return r.logRcloneStageFailure(ctx, "readiness", errRcloneReadiness, err)
 	}
 	r.removeRcloneConfig(ctx, sandboxID)
 	return nil
@@ -623,26 +596,30 @@ func (r *Runner) removeRcloneConfig(ctx context.Context, sandboxID string) {
 		if cleanupErr == nil {
 			return
 		}
-		log.Printf(
-			"rclone-filestore stage=config_cleanup attempt=%d error_type=%T",
-			attempt,
-			cleanupErr,
+		r.logger.WarnContext(
+			ctx,
+			"rclone filestore config cleanup",
+			"attempt", attempt,
+			"error", cleanupErr,
 		)
 		exists, probeErr := r.provider.FileExists(ctx, sandboxID, rcloneConfigPath)
 		if probeErr == nil && !exists {
 			return
 		}
 		if probeErr != nil {
-			log.Printf(
-				"rclone-filestore stage=config_cleanup_probe attempt=%d error_type=%T",
-				attempt,
-				probeErr,
+			r.logger.WarnContext(
+				ctx,
+				"rclone filestore config cleanup probe",
+				"attempt", attempt,
+				"error", probeErr,
 			)
 		}
 	}
-	log.Printf(
-		"rclone-filestore stage=config_cleanup exhausted_attempts=%d config_may_remain=true",
-		rcloneConfigCleanupTries,
+	r.logger.ErrorContext(
+		ctx,
+		"rclone filestore config cleanup exhausted",
+		"attempts", rcloneConfigCleanupTries,
+		"config_may_remain", true,
 	)
 }
 
@@ -665,13 +642,13 @@ func (r *Runner) runSandboxCommand(
 	return nil
 }
 
-func logRcloneStageFailure(stage string, publicError, cause error) error {
-	log.Printf("rclone-filestore stage=%s error_type=%T", stage, cause)
+func (r *Runner) logRcloneStageFailure(ctx context.Context, stage string, publicError, cause error) error {
+	r.logger.ErrorContext(ctx, "rclone filestore stage failed", "stage", stage, "error", cause)
 	return publicError
 }
 
-func logManagedAgentRuntimeStageFailure(stage string, publicError, cause error) error {
-	log.Printf("managed-agent runtime stage=%s error_type=%T", stage, cause)
+func (r *Runner) logManagedAgentRuntimeStageFailure(ctx context.Context, stage string, publicError, cause error) error {
+	r.logger.ErrorContext(ctx, "managed agent runtime stage failed", "stage", stage, "error", cause)
 	return publicError
 }
 
@@ -752,21 +729,54 @@ func (r *Runner) prepareManagedAgentNetworkMetadata(ctx context.Context, env db.
 	return nil
 }
 
-func (r *Runner) prepareRuntimeSkillMount(ctx context.Context, runtimeSkills []skillsapi.RuntimeSkill) (*e2bruntime.SkillMount, error) {
-	if len(runtimeSkills) == 0 {
-		return nil, nil
-	}
-	preparer, ok := r.provider.(e2bruntime.SkillMountPreparer)
-	if !ok {
-		return nil, fmt.Errorf("runtime provider cannot prepare managed agent skill mount")
-	}
-	return preparer.PrepareSkillMount(ctx, runtimeSkills)
-}
-
 func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) ([]skillsapi.RuntimeSkill, error) {
 	return r.skills.ResolveAgentSnapshot(ctx, session.WorkspaceID, session.AgentSnapshot)
 }
 
+// replaceRuntimeSkillArchives 使用已解析的不可变 skill archive，完整替换 Managed Agent
+// Session 的 /skills archive entries。
+//
+// runtimeSkills 必须已经包含具体的版本 UUID 和可信对象元数据；"latest" 会在调用本函数
+// 前解析为确定版本。本函数只保留将 zip 映射为 /skills/<directory> 所需的字段，不下载、
+// 复制或解压 archive。每个 zip 作为 kind=archive 的受管 entry 写入
+// /skills/<directory>，来源保存在通用 metadata 中。
+//
+// DB 操作会校验来源、目录、版本 UUID、对象大小和 SHA-256。它在同一个事务中锁定 Session
+// filesystem 记录及其命名空间，确保固定根目录存在，然后软删除旧 entries 并插入新集合。
+// 采用全量替换，是为了让已从 Agent snapshot 移除的 skill 同步消失，并避免读取方或并发的
+// 命名空间写入方看到只更新了一部分的视图；软删除则保留历史投影供审计。
+//
+// 成功时返回 nil，确保固定根目录存在并替换 archive entries；catalog 对象仍归 skill
+// catalog 所有。runtimeSkills 为空时会清空 archive 子目录，但保留 /skills 根目录。元数据无效、
+// Session filesystem 不存在、目录重复，或事务、加锁、写入失败时，函数返回包装后的
+// 错误，并回滚整个替换操作。
+//
+// 示例：
+//   - [pdf@v2, sheets@v1] 成功映射为 /skills/pdf 和 /skills/sheets。
+//   - [] 会删除所有 skill 投影目录，但保留 /skills。
+//   - 两个 skill 同时使用目录 "pdf" 时返回错误，旧视图保持不变。
+func (r *Runner) replaceRuntimeSkillArchives(
+	ctx context.Context,
+	session db.Session,
+	runtimeSkills []skillsapi.RuntimeSkill,
+) error {
+	archives := make([]db.FilestoreSkillArchiveEntryInput, 0, len(runtimeSkills))
+	for _, skill := range runtimeSkills {
+		archives = append(archives, db.FilestoreSkillArchiveEntryInput{
+			Source:           skill.Source,
+			SkillVersionUUID: skill.VersionUUID,
+			Directory:        skill.Directory,
+			S3Bucket:         skill.S3Bucket,
+			S3Key:            skill.S3Key,
+			SizeBytes:        skill.SizeBytes,
+			SHA256:           skill.SHA256,
+		})
+	}
+	if err := r.db.ReplaceFilestoreSkillArchiveEntries(ctx, session.WorkspaceID, session.ExternalID, archives); err != nil {
+		return fmt.Errorf("replace managed agent skill archive entries: %w", err)
+	}
+	return nil
+}
 func sessionIDFromEnvironmentWork(work db.EnvironmentWork) (string, bool) {
 	var data struct {
 		Type string `json:"type"`

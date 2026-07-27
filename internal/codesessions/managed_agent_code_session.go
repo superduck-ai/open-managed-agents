@@ -12,7 +12,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
-	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 // ManagedAgentCreateInput 汇总为 managed agent 创建 code session 和签发 sandbox 凭证所需的上下文。
@@ -26,7 +25,6 @@ type ManagedAgentCreateInput struct {
 	PermissionMode             string
 	DangerouslySkipPermissions bool
 	Config                     json.RawMessage
-	WorkPreparationMetadata    ManagedAgentWorkPreparationMetadata
 }
 
 // ManagedAgentCreateResult 只在创建链路内短暂携带两份明文凭证，调用方应立即交给
@@ -45,17 +43,6 @@ type managedAgentRuntimeMetadata struct {
 	ClaudeCodePublicSessionID string `json:"claude_code_public_session_id"`
 	ClaudeCodeSDKURLPath      string `json:"claude_code_sdk_url_path"`
 	Runtime                   string `json:"runtime"`
-}
-
-type ManagedAgentSkillMountMetadata struct {
-	MountPath      string                         `json:"mount_path"`
-	VolumeName     string                         `json:"volume_name"`
-	ManifestSHA256 string                         `json:"manifest_sha256"`
-	Skills         []skillsapi.MountManifestSkill `json:"skills,omitempty"`
-}
-
-type ManagedAgentWorkPreparationMetadata struct {
-	SkillMount *ManagedAgentSkillMountMetadata `json:"managed_agent_skills_mount,omitempty"`
 }
 
 type managedAgentCodeSessionMetadataSchema struct {
@@ -97,10 +84,6 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	workPreparationPatch, err := marshalRaw(input.WorkPreparationMetadata)
-	if err != nil {
-		return ManagedAgentCreateResult{}, err
-	}
 	var sessionIngressToken string
 	created, err := s.db.CreateManagedAgentRuntime(ctx, db.CreateManagedAgentRuntimeInput{
 		CodeSession: db.CreateCodeSessionInput{
@@ -120,16 +103,15 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 			OAuthAccessTokenHash: auth.HashAPIKey(oauthAccessToken),
 			CreatedAt:            now,
 		},
-		SessionMetadataPatch:            runtimeMetadataPatch,
-		EnvironmentWorkPreparationPatch: workPreparationPatch,
-		EnvironmentWorkRuntimePatch:     runtimeMetadataPatch,
-		EnvironmentExternalID:           input.Environment.ExternalID,
-		WorkExternalID:                  input.EnvironmentWork.ExternalID,
+		SessionMetadataPatch:        runtimeMetadataPatch,
+		EnvironmentWorkRuntimePatch: runtimeMetadataPatch,
+		EnvironmentExternalID:       input.Environment.ExternalID,
+		WorkExternalID:              input.EnvironmentWork.ExternalID,
 	}, func(sessionEvents []db.SessionEvent) ([]db.AppendCodeSessionEventInput, error) {
 		payloads := lo.Map(sessionEvents, func(event db.SessionEvent, _ int) json.RawMessage {
 			return event.Payload
 		})
-		return managedAgentInitialInboundEvents(codeSessionID, input.Config, payloads, now)
+		return s.managedAgentInitialInboundEvents(ctx, codeSessionID, input.Config, payloads, now)
 	}, func(credentialContext db.CodeSessionCredentialContext) error {
 		var issueErr error
 		sessionIngressToken, issueErr = s.issueSessionIngressToken(credentialContext)
@@ -148,12 +130,18 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	}, nil
 }
 
-func managedAgentInitialInboundEvents(codeSessionID string, configRaw json.RawMessage, publicEvents []json.RawMessage, now time.Time) ([]db.AppendCodeSessionEventInput, error) {
+func (s *Service) managedAgentInitialInboundEvents(
+	ctx context.Context,
+	codeSessionID string,
+	configRaw json.RawMessage,
+	publicEvents []json.RawMessage,
+	now time.Time,
+) ([]db.AppendCodeSessionEventInput, error) {
 	initialize, err := managedAgentInitializePayload(codeSessionID, configRaw, now)
 	if err != nil {
 		return nil, err
 	}
-	payloads := initialPublicSessionWorkerPayloads(codeSessionID, publicEvents, now)
+	payloads := s.initialPublicSessionWorkerPayloads(ctx, codeSessionID, publicEvents, now)
 	inputs := make([]db.AppendCodeSessionEventInput, 0, len(payloads)+1)
 	initializeInput, err := buildInboundEventInput(codeSessionID, initialize, "internal", now)
 	if err != nil {

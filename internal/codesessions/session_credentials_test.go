@@ -123,7 +123,7 @@ func TestAuthenticateSessionIngressUsesSignedIdentityWithoutDatabaseLifecycle(t 
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
 	}
-	service := NewServiceWithCredentials(nil, credentials)
+	service := NewServiceWithCredentials(nil, credentials, nil)
 	claims, err := service.AuthenticateSessionIngress(token, "cse_test")
 	if err != nil {
 		t.Fatalf("AuthenticateSessionIngress() error = %v", err)

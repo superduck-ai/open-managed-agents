@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -22,6 +22,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -34,6 +35,7 @@ type Handler struct {
 	cfg    config.Config
 	db     *db.DB
 	store  storage.ObjectStore
+	logger *slog.Logger
 	router chi.Router
 }
 
@@ -55,8 +57,9 @@ type pageResponse struct {
 	LastID  *string        `json:"last_id"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore) *Handler {
-	h := &Handler{cfg: cfg, db: database, store: store}
+func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, store: store, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -134,7 +137,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	hash := sha256.New()
 	reader := io.TeeReader(file, hash)
 	if _, err := h.store.Upload(r.Context(), objectKey, reader, storage.UploadOptions{Size: header.Size, ContentType: contentType}); err != nil {
-		log.Printf("put object: %v", err)
+		h.logger.ErrorContext(r.Context(), "put object", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store file"))
 		return
 	}
@@ -159,7 +162,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace storage limit exceeded"))
 			return
 		}
-		log.Printf("create file metadata: %v", err)
+		h.logger.ErrorContext(r.Context(), "create file metadata", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create file metadata"))
 		return
 	}
@@ -189,7 +192,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		Limit:       limit,
 	})
 	if err != nil {
-		log.Printf("list files: %v", err)
+		h.logger.ErrorContext(r.Context(), "list files", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list files"))
 		return
 	}
@@ -230,7 +233,7 @@ func (h *Handler) retrieveMetadata(w http.ResponseWriter, r *http.Request, fileI
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
 		}
-		log.Printf("get file metadata: %v", err)
+		h.logger.ErrorContext(r.Context(), "get file metadata", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file metadata"))
 		return
 	}
@@ -249,7 +252,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
 		}
-		log.Printf("get file before delete: %v", err)
+		h.logger.ErrorContext(r.Context(), "get file before delete", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete file"))
 		return
 	}
@@ -266,21 +269,21 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 			))
 			return
 		}
-		log.Printf("soft delete file: %v", err)
+		h.logger.ErrorContext(r.Context(), "soft delete file", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete file"))
 		return
 	}
 	if err := h.store.Delete(r.Context(), record.S3Key, storage.DeleteOptions{}); err != nil {
-		log.Printf("delete object after soft delete file_id=%s: %v", fileID, err)
+		h.logger.ErrorContext(r.Context(), "delete object after soft delete", "file_id", fileID, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
-			log.Printf("enqueue object cleanup file_id=%s key=%s: %v", fileID, record.S3Key, enqueueErr)
+			h.logger.ErrorContext(r.Context(), "enqueue object cleanup", "file_id", fileID, "key", record.S3Key, "error", enqueueErr)
 		}
 	}
 	if thumbnailKey := platformThumbnailKey(record); thumbnailKey != "" {
 		if err := h.store.Delete(r.Context(), thumbnailKey, storage.DeleteOptions{}); err != nil {
-			log.Printf("delete thumbnail object after soft delete file_id=%s key=%s: %v", fileID, thumbnailKey, err)
+			h.logger.ErrorContext(r.Context(), "delete thumbnail object after soft delete", "file_id", fileID, "key", thumbnailKey, "error", err)
 			if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(r.Context(), record.WorkspaceID, record.S3Bucket, thumbnailKey, "file_variant", record.ExternalID); enqueueErr != nil {
-				log.Printf("enqueue thumbnail cleanup file_id=%s key=%s: %v", fileID, thumbnailKey, enqueueErr)
+				h.logger.ErrorContext(r.Context(), "enqueue thumbnail cleanup", "file_id", fileID, "key", thumbnailKey, "error", enqueueErr)
 			}
 		}
 	}
@@ -295,7 +298,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
 		}
-		log.Printf("get file before download: %v", err)
+		h.logger.ErrorContext(r.Context(), "get file before download", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download file"))
 		return
 	}
@@ -305,7 +308,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 	}
 	object, err := h.store.Open(r.Context(), record.S3Key, nil)
 	if err != nil {
-		log.Printf("get object: %v", err)
+		h.logger.ErrorContext(r.Context(), "get object", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download file"))
 		return
 	}
@@ -316,11 +319,11 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 	w.WriteHeader(http.StatusOK)
 	copied, copyErr := io.Copy(w, object.Body)
 	if copyErr != nil {
-		log.Printf("download object stream failed file_id=%s key=%s bytes_copied=%d expected_size=%d: %v", fileID, record.S3Key, copied, record.SizeBytes, copyErr)
+		h.logger.ErrorContext(r.Context(), "download object stream failed", "file_id", fileID, "key", record.S3Key, "bytes_copied", copied, "expected_size", record.SizeBytes, "error", copyErr)
 		return
 	}
 	if copied != record.SizeBytes {
-		log.Printf("download object stream size mismatch file_id=%s key=%s bytes_copied=%d expected_size=%d", fileID, record.S3Key, copied, record.SizeBytes)
+		h.logger.WarnContext(r.Context(), "download object stream size mismatch", "file_id", fileID, "key", record.S3Key, "bytes_copied", copied, "expected_size", record.SizeBytes)
 	}
 }
 
@@ -328,9 +331,9 @@ func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context,
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	if err := h.store.Delete(cleanupCtx, record.S3Key, storage.DeleteOptions{}); err != nil {
-		log.Printf("delete object after metadata failure file_id=%s key=%s: %v", record.ExternalID, record.S3Key, err)
+		h.logger.ErrorContext(ctx, "delete object after metadata failure", "file_id", record.ExternalID, "key", record.S3Key, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, record.WorkspaceID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
-			log.Printf("enqueue object cleanup after metadata failure file_id=%s key=%s: %v", record.ExternalID, record.S3Key, enqueueErr)
+			h.logger.ErrorContext(ctx, "enqueue object cleanup after metadata failure", "file_id", record.ExternalID, "key", record.S3Key, "error", enqueueErr)
 		}
 	}
 }

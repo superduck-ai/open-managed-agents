@@ -5,6 +5,8 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,8 +139,8 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		DB:              database,
 		Provider:        provider,
 		Config:          cfg,
-		CodeSessions:    codesessions.NewServiceWithCredentials(database, credentials),
-		Skills:          skillsapi.NewRuntimeResolver(cfg, database, objectStore),
+		CodeSessions:    codesessions.NewServiceWithCredentials(database, credentials, nil),
+		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: filestoreCredentials,
 	})
 	if err != nil {
@@ -200,6 +202,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		Config:                 cfg,
 		DB:                     database,
 		ObjectStore:            objectStore,
+		Logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
 		CodeSessionCredentials: credentials,
 		FilestoreCredentials:   filestoreCredentials,
 	}))

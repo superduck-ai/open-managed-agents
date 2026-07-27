@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -398,7 +397,7 @@ func writeBadRequest(w http.ResponseWriter, r *http.Request, err error) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 }
 
-func writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) {
+func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) {
 	if writeFileResourcePersistenceError(w, r, err) {
 		return
 	}
@@ -412,14 +411,14 @@ func writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) 
 			writeBadRequest(w, r, errors.New("memory store must not be archived"))
 			return
 		}
-		log.Printf("session resource reference %s %s: %v", refErr.ResourceType, refErr.ResourceID, refErr.Err)
+		h.logger.ErrorContext(r.Context(), "session resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not validate session resource"))
 		return
 	}
 	writeBadRequest(w, r, err)
 }
 
-func writeSessionLoadError(w http.ResponseWriter, r *http.Request, err error, sessionID string) {
+func (h *Handler) writeSessionLoadError(w http.ResponseWriter, r *http.Request, err error, sessionID string) {
 	if writeFileResourcePersistenceError(w, r, err) {
 		return
 	}
@@ -431,7 +430,7 @@ func writeSessionLoadError(w http.ResponseWriter, r *http.Request, err error, se
 		writeBadRequest(w, r, errors.New("session state does not allow this operation"))
 		return
 	}
-	log.Printf("session operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "session operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Session operation failed"))
 }
 
@@ -465,20 +464,20 @@ func writeFileResourcePersistenceError(w http.ResponseWriter, r *http.Request, e
 	return false
 }
 
-func writeThreadLoadError(w http.ResponseWriter, r *http.Request, err error, threadID string) {
+func (h *Handler) writeThreadLoadError(w http.ResponseWriter, r *http.Request, err error, threadID string) {
 	if errors.Is(err, db.ErrNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Thread not found: "+threadID))
 		return
 	}
-	log.Printf("thread operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "thread operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Thread operation failed"))
 }
 
-func writeResourceLoadError(w http.ResponseWriter, r *http.Request, err error, resourceID string) {
+func (h *Handler) writeResourceLoadError(w http.ResponseWriter, r *http.Request, err error, resourceID string) {
 	if errors.Is(err, db.ErrNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Resource not found: "+resourceID))
 		return
 	}
-	log.Printf("resource operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "resource operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Resource operation failed"))
 }

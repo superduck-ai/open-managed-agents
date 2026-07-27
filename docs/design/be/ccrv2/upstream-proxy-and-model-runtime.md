@@ -180,12 +180,12 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 
 ## Environment 网络策略执行
 
-upstream proxy 是当前 Environment networking（`unrestricted` / `limited`）的执行点。每 Session Packages 过渡期，E2B Provider 不投影 `SandboxNetworkOpts`，以允许 Agent 启动前的 Package provisioning 直接访问外网；因此运行期策略是 best-effort HTTPS proxy policy，完整边界与恢复 E2B 纵深防御的条件见 `docs/adr/0006`。
+upstream proxy 是 Environment networking（`unrestricted` / `limited`）的运行期动态执行点；E2B Provider 同时把创建时策略快照投影为 `SandboxNetworkOpts`。Runner 在 `Resolve` 前写入受开关约束的 Session MCP hosts，Provider 再合并显式 hosts、MCP hosts 与 `allow_package_managers=true` 时的共享 Registry/Mirror catalog。E2B 层提供创建时纵深防御，proxy 则在每次 CONNECT 读取最新 Environment 与 AgentSnapshot；两层的时效性和绕过边界见 `docs/adr/0006`。
 
 ### 策略来源与解析时机
 
-- 策略模块是 `internal/networkpolicy`：纯策略深模块，不访问数据库。Environment 配置与 Session AgentSnapshot 的原始 JSON 只在加载边界出现，随后按命名 wire schema 解析为领域 `Config`，其中 allowlist 字符串只解析一次并保存为已校验、已归一化的 host/port/wildcard 值，再编译为类型化 `Policy`。当前由 proxy matcher 消费这份领域值；runner 复用相同解析器准备 MCP metadata，但 E2B Provider 暂不生成网络投影。授权函数只接收编译后策略与 CONNECT target，返回带机器可测 reason 的 `Decision`；org/workspace/environment 标识保留在 `codesessions` 上下文中用于数据库作用域与审计日志。
-- proxy 在 CONNECT Basic 双重凭证校验**之后**、DNS 解析与拨号**之前**，保留经 JWT 验证的 code session ID、organization UUID 与 workspace UUID，并通过单条租户作用域查询同时校验 `CodeSession` → Environment / Session 的内部 ID、external ID、organization 和 workspace 关系，读取 Environment 当前配置与 Session AgentSnapshot。查询同时要求 Code Session 为 `active` 且 Session 未 `terminated`，使会话停止后的下一次 CONNECT 立即失效。该查询在**每次 CONNECT 新鲜执行**（不缓存）。Environment 编辑因此对存活 Sandbox 的下一次代理 CONNECT 即时生效；当前 E2B 层没有对应的创建时快照，直接 socket 仍可绕过代理。跨 CONNECT 复用 DB 结果与编译策略需要明确 revision 与失效语义，在 [#137](https://github.com/superduck-ai/open-managed-agents/issues/137) 单独设计；本阶段不引入可能延迟权限撤销的临时缓存。
+- 策略模块是 `internal/networkpolicy`：纯策略深模块，不访问数据库。Environment 配置与 Session AgentSnapshot 的原始 JSON 只在加载边界出现，随后按命名 wire schema 解析为领域 `Config`，其中 allowlist 字符串只解析一次并保存为已校验、已归一化的 host/port/wildcard 值，再编译为类型化 `Policy`。proxy matcher 消费编译后的策略；runner 复用同一 MCP 提取器准备创建时 metadata，E2B Provider 复用同一 Config 与 Package Manager catalog 生成网络投影。授权函数只接收编译后策略与 CONNECT target，返回带机器可测 reason 的 `Decision`；org/workspace/environment 标识保留在 `codesessions` 上下文中用于数据库作用域与审计日志。
+- proxy 在 CONNECT Basic 双重凭证校验**之后**、DNS 解析与拨号**之前**，保留经 JWT 验证的 code session ID、organization UUID 与 workspace UUID，并通过单条租户作用域查询同时校验 `CodeSession` → Environment / Session 的内部 ID、external ID、organization 和 workspace 关系，读取 Environment 当前配置与 Session AgentSnapshot。查询同时要求 Code Session 为 `active` 且 Session 未 `terminated`，使会话停止后的下一次 CONNECT 立即失效。该查询在**每次 CONNECT 新鲜执行**（不缓存）。Environment 编辑因此对存活 Sandbox 的下一次代理 CONNECT 即时生效；E2B 层仍保持 Sandbox 创建时快照，直接 socket 只能绕过 proxy 的新鲜读取，不能扩大到该静态 allowlist 之外。跨 CONNECT 复用 DB 结果与编译策略需要明确 revision 与失效语义，在 [#137](https://github.com/superduck-ai/open-managed-agents/issues/137) 单独设计；本阶段不引入可能延迟权限撤销的临时缓存。
 - Code Session、Environment、Session 任一读取失败，Environment 配置畸形，或 `allow_mcp_servers=true` 时 Session AgentSnapshot（包括 JSON `null`）/ 非空 MCP URL 无法解析，都必须 **fail-closed**：拒绝 CONNECT 并记录 `policy_unavailable`，绝不降级为 unrestricted 或跳过坏条目后部分放行。`networking` 对象存在但 `type` 未知（含空串）同样 fail-closed；只有顶层 `type` 为 `cloud` 的 Environment 配置才评估 networking（非 cloud Environment 没有受管 Sandbox 出口，视为 unrestricted）。整条链从已认证的 Code Session 行出发，relay 提交的任何 environment ID 或 allowlist 都不被信任，跨 workspace 借用 allowlist 在结构上不可能。
 
 ```mermaid
@@ -227,7 +227,7 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 
 ### 绕过边界（best-effort 声明）
 
-`HTTPS_PROXY` 继承是应用层约定：Sandbox 内进程可以 unset 代理或直接 socket 出网。**在部署级出口约束（只允许 Sandbox 访问 OMA proxy/control plane、拒绝直连公网）落地之前，本机制是 best-effort proxy policy，不构成完整安全隔离。** 该约束位于独立 egress gateway、云网络 ACL 或 Provider 外部网络层，不在本仓库的 e2b-local 内复刻；落地前所有对外表述不得宣称"安全隔离"。
+`HTTPS_PROXY` 继承是应用层约定：Sandbox 内进程可以 unset 代理或直接 socket，因而绕过 proxy 的每 CONNECT 新鲜策略与审计。E2B `SandboxNetworkOpts` 把这类流量限制在创建时 allowlist 内，但不会随运行中 Environment 更新而收紧。**因此 proxy 仍是 best-effort 动态策略层，不能单独宣称完整安全隔离；完整边界由 Provider 创建时网络策略、部署级出口约束与 proxy 共同构成。**
 
 ## 失败语义
 

@@ -262,10 +262,10 @@ func createFilestoreFilesystemWithGeneratedID(
 // 它先检查 external ID 和各个引用 UUID，再从数据库确认 Organization、Workspace、
 // Session、可选 Code Session 和可选 API key 的归属关系。Session 和 Workspace
 // 必须仍然有效。校验通过后，函数会复用已有 filesystem 或创建新记录，并确保
-// /outputs、/uploads、/transcripts 和 /tool_results 四个固定根目录存在。
+// /outputs、/skills、/uploads、/transcripts 和 /tool_results 五个固定根目录存在。
 //
 // 例如：
-//   - Session 尚无 filesystem：创建 filesystem 和四个根目录，返回 filesystem、
+//   - Session 尚无 filesystem：创建 filesystem 和五个根目录，返回 filesystem、
 //     true、nil。
 //   - 使用相同 external ID 和 Session 重试：复用原记录并补齐可能缺失的根目录，
 //     返回 filesystem、false、nil。false 只表示本次没有新建 filesystem 记录。
@@ -409,17 +409,17 @@ func ensureProvisionedFilestoreRootsTx(
 	return ensureFilestoreFixedRootsTx(ctx, tx, workspaceID, filesystem, now)
 }
 
-// ensureFilestoreFixedRootsTx 在指定 filesystem 的数据库命名空间中确保四个固定根目录存在。
+// ensureFilestoreFixedRootsTx 在指定 filesystem 的数据库命名空间中确保五个固定根目录存在。
 //
-// 固定根目录是 /outputs、/uploads、/transcripts 和 /tool_results。rclone 会把这些
+// 固定根目录是 /outputs、/skills、/uploads、/transcripts 和 /tool_results。rclone 会把这些
 // 路径挂载到 Sandbox，因此目录必须先存在于 Filestore 数据库中。每个路径都通过
 // ensureFilestoreDirectoryTx 幂等处理：已有目录保持不变，缺失目录会被创建；如果
 // 路径上是已过期文件，则会释放旧文件的存储归属并把该 entry 改成目录；其中由
 // Filestore 拥有的对象还会进入清理队列。
 //
 // 例如：
-//   - 新 filesystem 中还没有任何 entry：创建四个目录并返回 nil。
-//   - 四个目录已经存在：不重复插入，直接返回 nil。
+//   - 新 filesystem 中还没有任何 entry：创建五个目录并返回 nil。
+//   - 五个目录已经存在：不重复插入，直接返回 nil。
 //   - /uploads 被一个未过期文件占用：返回 ErrFilestorePathExists，避免 rclone 把
 //     文件路径当成目录挂载。
 //

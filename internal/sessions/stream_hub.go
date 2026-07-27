@@ -118,7 +118,7 @@ func (h *Handler) streamThreadEventsRoute(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if _, err := h.db.GetSessionThread(r.Context(), workspaceIDFromRequest(r), sessionID, threadID); err != nil {
-		writeThreadLoadError(w, r, err, threadID)
+		h.writeThreadLoadError(w, r, err, threadID)
 		return
 	}
 	h.streamEvents(w, r, sessionID, threadID)
@@ -133,7 +133,7 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 	if subscribeThreadID == "" {
 		primary, err := h.ensurePrimarySessionThread(r.Context(), session)
 		if err != nil {
-			writeSessionLoadError(w, r, err, sessionID)
+			h.writeSessionLoadError(w, r, err, sessionID)
 			return
 		}
 		subscribeThreadID = primary.ExternalID

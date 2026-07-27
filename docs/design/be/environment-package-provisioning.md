@@ -30,8 +30,8 @@ OMA 不创造统一的 name/version DSL，也不增加 Build、Artifact、Runtim
 
 | 范围 | 安装发生位置 | 安装调用方 | Session Sandbox 网络边界 |
 |---|---|---|---|
-| 本 PR | 每个 Session Sandbox | OMA 调用 Environment Manager `provision-packages` | 不投影 `limited` 到 E2B；运行期 HTTPS proxy 提供 best-effort 策略 |
-| 后续 Template materialization | 独立 Template Build 环境 | Packages Template Worker 调用同一命令 | Session 不再安装 Packages，并恢复 E2B `NetworkOpts` 纵深防御 |
+| 本 PR | 每个 Session Sandbox | OMA 调用 Environment Manager `provision-packages` | 创建时投影 `limited` 到 E2B；`allow_package_managers=true` 时加入受信任 Registry/Mirror hosts |
+| 后续 Template materialization | 独立 Template Build 环境 | Packages Template Worker 调用同一命令 | Session 不再现场安装 Packages，继续保留 E2B `NetworkOpts` 与运行期 proxy 双层约束 |
 
 本文中的 **Provisioner** 不指一个独立部署的组件。Environment Manager 的一次性 `provision-packages` 子命令承担 Sandbox-local 安装；OMA 或后续 Template Worker 是该命令的调用方和生命周期所有者。
 
@@ -79,12 +79,13 @@ OMA 通过 stdin 发送 manifest，不写入中间 manifest 文件，不依赖 P
 
 - Environment更新不改变已经创建的Sandbox；Runner创建新Sandbox时读取Environment生效配置，因此只影响之后的Sandbox创建，包括为旧Session重新创建Sandbox。
 - 每个Session通过一次独立的E2B `Create`获得隔离文件系统。
-- `mcp_allowed_hosts`与`managed_agent_skills_mount`是Sandbox创建输入，在`Resolve`/`Create`前准备；preparation只修改Runner内存中的Work，不提前持久化runtime成功状态。
+- `mcp_allowed_hosts`是Sandbox创建输入，在`Resolve`/`Create`前按当前Session snapshot覆盖到Work；空集合也必须写入`[]`以清除陈旧授权。
+- Skills在`Resolve`成功后解析为具体版本，并原子替换Session Filestore的`/skills/<directory>` archive entries；不写`managed_agent_skills_mount`，也不创建E2B skill volume。
 - `provider_sandbox_id`在Sandbox创建后独立持久化，供失败清理使用。
-- `environment_sandboxes.metadata`是一次创建尝试的输入快照，可保留MCP/skill preparation信息，但不表示runtime commit成功。
+- `environment_sandboxes.metadata`是一次创建尝试的输入快照，可保留创建时MCP网络输入，但不表示runtime commit成功。
 - Packages完成后，Runner必须heartbeat并检查`lease_extended`，再确认Session仍为`idle`且未归档；任一条件不满足时终止Sandbox，不创建active Code Session或凭证。
-- Work与Session预检通过后，Runner启动固定rclone filestore并等待四个mount ready，再把Sandbox标记为`running`。
-- rclone ready后，Runner在同一数据库事务中锁定并重新确认Work为`active`、Session为`idle`且未归档，使用Session行锁读取最终event快照，创建active Code Session，写入initialize/initial inbound events，并提交preparation与runtime identity metadata。
+- Work与Session预检通过后，Runner启动固定rclone filestore并等待五个mount ready，再把Sandbox标记为`running`。
+- rclone ready后，Runner在同一数据库事务中锁定并重新确认Work为`active`、Session为`idle`且未归档，使用Session行锁读取最终event快照，创建active Code Session，写入initialize/initial inbound events，并提交runtime identity metadata。
 - initial inbound event按idempotency key去重；冲突项不占用sequence，也不回滚整个runtime事务。
 - 锁前提交的Session event进入初始inbound queue；锁后event等待runtime commit后走实时转发路径。Packages安装期间的消息不能落在两条路径之间。
 - 任一数据库写入或提交前凭证签发失败都会回滚runtime commit；已经创建的Sandbox仍按统一失败路径清理。
@@ -109,7 +110,7 @@ OMA 通过 stdin 发送 manifest，不写入中间 manifest 文件，不依赖 P
 
 ```mermaid
 flowchart TD
-    A["用户保存Environment Packages"] --> B["OMA创建unrestricted Session Sandbox"]
+    A["用户保存Environment Packages"] --> B["OMA按Environment网络策略创建Session Sandbox"]
     B --> C{"Packages是否为空"}
     C -->|是| F["OMA执行Heartbeat并检查Work lease"]
     C -->|否| D["Environment Manager通过stdin执行provision-packages"]
@@ -119,7 +120,7 @@ flowchart TD
     G -->|是| F
     F --> H{"Work lease是否有效"}
     H -->|否| X
-    H -->|是| R["OMA启动rclone并等待四个mount ready"]
+    H -->|是| R["OMA启动rclone并等待五个mount ready"]
     R --> I["OMA原子提交Code Session runtime"]
     I --> J["Environment Manager通过task-run启动Claude Agent"]
     J --> K["Agent运行期HTTPS经过CCR Relay和OMA Proxy"]
@@ -129,7 +130,7 @@ flowchart TD
 
 1. OMA拥有Sandbox和Session生命周期，Environment Manager只负责Sandbox内安装与Agent启动。
 2. Packages为空时跳过安装，直接进入heartbeat。
-3. Package安装阶段直接访问外部Registry，不经过OMA HTTPS proxy。
+3. Package安装阶段直接访问E2B创建时allowlist允许的Registry/Mirror/CDN，不经过OMA HTTPS proxy。
 4. 只有安装结果和Work lease都成功，OMA才提交Code Session runtime并启动Agent。
 5. 任一启动阶段失败都停止Work并丢弃Sandbox；只有Agent运行期HTTPS进入CCR Relay和OMA proxy。
 
@@ -148,10 +149,11 @@ sequenceDiagram
 
     Runner->>DB: Claim Work并读取生效Environment
     DB-->>Runner: Packages与Networking
-    Runner->>Runner: 准备MCP hosts与skill mount
-    Runner->>Runner: Resolve Template且不投影limited NetworkOpts
+    Runner->>Runner: 覆盖受开关约束的MCP hosts
+    Runner->>Runner: Resolve Template与limited NetworkOpts
+    Runner->>DB: 解析skills并原子替换Filestore archive entries
     Runner->>DB: 创建state=creating的Sandbox记录
-    Runner->>Sandbox: 创建unrestricted Session Sandbox
+    Runner->>Sandbox: 按创建时网络快照创建Session Sandbox
     Sandbox-->>Runner: provider_sandbox_id
     Runner->>DB: 持久化provider_sandbox_id
     Runner->>Runner: 构建并校验v1 Manifest
@@ -200,7 +202,7 @@ sequenceDiagram
         Runner->>Sandbox: Kill
     else Work lease有效
         Runner->>DB: 确认Session idle且未归档
-        Runner->>Sandbox: 启动rclone并等待四个mount ready
+        Runner->>Sandbox: 启动rclone并等待五个mount ready
         Runner->>DB: Sandbox标记running
         Runner->>DB: 锁定Work与Session并读取最终event快照
         Runner->>Runner: 签发凭证并构建startup payload
@@ -458,22 +460,22 @@ Provisioning在`RunOnce`内同步执行，因此它改变了两项容量特性�
 
 ### 8.1 Provisioning阶段
 
-- OMA解析并保存Environment networking，但本 PR 不将`limited`投影为Session Sandbox的E2B `NetworkOpts`。
-- Session Sandbox创建时允许公网egress。
-- `provision-packages`、Package Manager和lifecycle hook直接访问外网。
+- OMA在Sandbox创建前解析Environment networking，并将`limited`投影为E2B `NetworkOpts`。
+- allowlist合并显式`allowed_hosts`、受`allow_mcp_servers`约束的Session MCP hosts，以及`allow_package_managers=true`时的共享Registry/Mirror/CDN catalog。
+- `provision-packages`、Package Manager和lifecycle hook直接访问创建时allowlist允许的目标；不经过尚未启动的Code Session proxy。
 - 此时Code Session、local CCR relay和OMA HTTPS proxy尚未启动。
 - Manager manifest不接收networking或allowed hosts。
 
-这会避免Registry、mirror、CDN、redirect、VCS和lifecycle下载被Session网络策略提前阻断，但不能保证Packages一定成功；版本不存在、编译、Registry、限流、TLS、磁盘和timeout仍可能失败。
+limited Environment若未启用`allow_package_managers`，Package安装会按默认拒绝策略失败；即使启用，该共享catalog也不放行任意VCS host，未覆盖的redirect或lifecycle下载仍会失败。版本不存在、编译、Registry、限流、TLS、磁盘和timeout同样可能导致失败。
 
 ### 8.2 Agent运行阶段
 
 - `task-run`启动Claude后，本地CCR relay向子进程注入`HTTPS_PROXY`。
 - 正常HTTPS CONNECT通过OMA Code Session HTTPS proxy。
 - Proxy每次CONNECT重新读取当前Environment与AgentSnapshot并执行limited/unrestricted、MCP、Package Manager host、SSRF和目标校验。
-- 直接socket、unset proxy、非HTTPS或不遵守代理环境变量的进程可能绕过该策略。
+- 直接socket、unset proxy、非HTTPS或不遵守代理环境变量的进程可以绕过proxy的“每次CONNECT读取最新策略”，但仍受Sandbox创建时E2B网络快照约束。
 
-因此过渡期只能描述为best-effort HTTPS proxy policy，不能宣称不可绕过的Sandbox网络隔离；ADR 0005/0006和CCR upstream proxy设计同步记录这一边界。
+因此proxy层仍是best-effort的动态策略执行点，不能把它单独描述为完整隔离；E2B创建时策略提供静态纵深防御，ADR 0005/0006和CCR upstream proxy设计同步记录两层边界。
 
 ## 9. 三个仓库的实现位置
 
@@ -577,10 +579,10 @@ E2B实现执行`Start → SendStdin → CloseStdin → Wait`。它不能复用�
 - 安装未成功时不commit Code Session、不发送startup payload。
 - 失败时Sandbox/Work状态与独立cleanup context。
 - Packages路径不写manifest/Python，固定命令不含spec。
-- Session Sandbox不施加limited E2B projection。
+- limited Session Sandbox生成E2B创建时allowlist，包含开关允许的MCP与Package Manager hosts。
 - Agent启动后Proxy仍按最新Environment策略允许/拒绝CONNECT。
 - Packages安装期间提交的Session event仍进入正确的initial或realtime路径。
-- preparation metadata、provider sandbox ID和runtime metadata仍按原事务边界持久化。
+- MCP创建输入、provider sandbox ID和runtime metadata按各自边界持久化；legacy skill preparation metadata不得恢复。
 - 每类manager的空白spec、超长spec、manager option和URL credential都被拒绝且不回显spec。
 - 已持久化config结构非法时返回`decode environment config`，语义非法时与HTTP边界共用同一条错误。
 - Managed Agent启动事务的每条命名查询都能绑定参数，且不含与命名参数冲突的`::`cast。
@@ -618,7 +620,7 @@ go test ./tests -tags='e2b_integration e2e' -run '^$'
 5. 只有成功JSON与exit code 0同时成立，Sandbox才进入runtime commit。
 6. 失败、取消、timeout或协议损坏都丢弃当前Sandbox。
 7. Session credential只在Packages成功后发送。
-8. 网络策略只对经过OMA Proxy的运行期CONNECT提供best-effort约束。
+8. E2B创建时网络快照提供Sandbox级纵深防御；OMA Proxy对经过它的运行期CONNECT执行最新策略。
 
 ## 12. 后续 Packages Template materialization
 
@@ -641,7 +643,7 @@ flowchart LR
 - Provisioning、验证、E2B发布和数据库Artifact记录全部完成后才ready。
 - 失败只保留诊断记录，不发布部分Template。
 - Session从ready Template创建，不再现场安装Packages。
-- Session Sandbox恢复E2B `NetworkOpts`纵深防御；OMA HTTPS proxy继续执行每CONNECT最新策略。
+- Session Sandbox继续使用E2B `NetworkOpts`纵深防御；OMA HTTPS proxy继续执行每CONNECT最新策略。
 
 Build Key标识规范化输入，不是Artifact digest，也不承诺未固定版本可完全复现。Physical Template GC、E2B image content digest、limited-network Build授权和public Build UI继续留在后续范围。
 
@@ -650,7 +652,7 @@ Build Key标识规范化输入，不是Artifact digest，也不承诺未固定�
 本文获批后再同步以下决策记录和外部合同：
 
 - 更新ADR 0002，区分OMA materialization controller与Manager filesystem executor。
-- 更新ADR 0006，记录本 PR 不投影E2B limited策略及其best-effort后果。
+- 更新ADR 0005/0006，记录limited创建时投影、Package Manager host catalog与运行期动态proxy的组合边界。
 - 修正`CONTEXT.md`中Environment Manager、Sandbox root runtime与User-owned Packages layer的冲突定义。
 - 在Environment Manager仓库补充命令级实现说明。
 - 更新`managed-agent-sandbox` README与contract verifier说明。

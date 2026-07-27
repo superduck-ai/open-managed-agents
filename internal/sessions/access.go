@@ -28,7 +28,7 @@ func (h *Handler) authorizeSession(w http.ResponseWriter, r *http.Request, sessi
 	}
 	session, err := h.db.GetSession(r.Context(), principal.WorkspaceID, sessionID)
 	if err != nil {
-		writeSessionLoadError(w, r, err, sessionID)
+		h.writeSessionLoadError(w, r, err, sessionID)
 		return db.Session{}, false
 	}
 	if isSessionManagerCredential(principal) {

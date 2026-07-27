@@ -297,7 +297,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate Session Filestore roots: %v", err)
 	}
-	wantRootPaths := []string{"/outputs", "/tool_results", "/transcripts", "/uploads"}
+	wantRootPaths := []string{"/outputs", "/skills", "/tool_results", "/transcripts", "/uploads"}
 	if !reflect.DeepEqual(rootPaths, wantRootPaths) {
 		t.Fatalf("Session Filestore roots = %v, want %v", rootPaths, wantRootPaths)
 	}
@@ -743,6 +743,17 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put cleanup file: %v", err)
 	}
+	if err := app.db.ReplaceFilestoreSkillArchiveEntries(context.Background(), workspaceID, created.ExternalID, []db.FilestoreSkillArchiveEntryInput{{
+		Source:           "custom",
+		SkillVersionUUID: uuid.NewString(),
+		Directory:        "cleanup-skill",
+		S3Bucket:         "filestore-session-delete",
+		S3Key:            "catalog/cleanup-skill.zip",
+		SizeBytes:        128,
+		SHA256:           strings.Repeat("a", 64),
+	}}); err != nil {
+		t.Fatalf("project cleanup skill: %v", err)
+	}
 	var entryOrganizationUUID, entryWorkspaceUUID, entryFilesystemUUID string
 	var entryAPIKeyUUID, entrySessionUUID string
 	var entryCodeSessionUUID *string
@@ -814,20 +825,29 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	if err != nil || !done {
 		t.Fatalf("process filesystem cleanup = done %v, error %v", done, err)
 	}
-	var activeEntries, cleanupObjects int
+	var activeEntries, activeSkillArchiveEntries, cleanupObjects int
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select
 			(select count(*) from filestore_entries where filesystem_uuid = $1 and deleted_at is null),
+			(select count(*) from filestore_entries
+				where filesystem_uuid = $1
+					and kind = 'archive'
+					and deleted_at is null),
 			(select count(*) from jobs where type = 'filestore_object_cleanup'
 				and payload->>'filesystem_uuid' = $1::text
 				and payload->>'workspace_uuid' = $2
 				and not (payload ? 'filesystem_id')
 				and payload->>'reason' = 'session_deleted')
-	`, filesystem.UUID, workspaceUUID).Scan(&activeEntries, &cleanupObjects); err != nil {
+	`, filesystem.UUID, workspaceUUID).Scan(&activeEntries, &activeSkillArchiveEntries, &cleanupObjects); err != nil {
 		t.Fatalf("load processed cleanup state: %v", err)
 	}
-	if activeEntries != 0 || cleanupObjects != 1 {
-		t.Fatalf("processed cleanup = active entries %d, object jobs %d; want 0, 1", activeEntries, cleanupObjects)
+	if activeEntries != 0 || activeSkillArchiveEntries != 0 || cleanupObjects != 1 {
+		t.Fatalf(
+			"processed cleanup = active entries %d, skill archive entries %d, object jobs %d; want 0, 0, 1",
+			activeEntries,
+			activeSkillArchiveEntries,
+			cleanupObjects,
+		)
 	}
 	if _, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
 		context.Background(),
@@ -843,6 +863,156 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	}
 	if storageBytes != 0 {
 		t.Fatalf("workspace storage bytes = %d, want 0", storageBytes)
+	}
+}
+
+func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("filestore-archive-entry"))
+	t.Cleanup(app.close)
+	organizationID, workspaceID, _, _, apiKeyID, _, _, _, _, _ := seedFilestoreLookupScope(t, app)
+	created, _, _, _, err := app.db.CreateSession(
+		context.Background(),
+		filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID),
+	)
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(
+		context.Background(),
+		workspaceID,
+		created.ExternalID,
+	)
+	if err != nil {
+		t.Fatalf("load Session filesystem: %v", err)
+	}
+
+	var legacyTable *string
+	if err := app.db.Pool.QueryRow(
+		context.Background(),
+		`select cast(to_regclass('filestore_skill_archives') as text)`,
+	).Scan(&legacyTable); err != nil {
+		t.Fatalf("check legacy archive table: %v", err)
+	}
+	if legacyTable != nil {
+		t.Fatalf("legacy archive table still exists: %s", *legacyTable)
+	}
+
+	versionUUID := uuid.NewString()
+	err = app.db.ReplaceFilestoreSkillArchiveEntries(
+		context.Background(),
+		workspaceID,
+		created.ExternalID,
+		[]db.FilestoreSkillArchiveEntryInput{{
+			Source:           "custom",
+			SkillVersionUUID: versionUUID,
+			Directory:        "demo",
+			S3Bucket:         "filestore-archive-entry",
+			S3Key:            "catalog/demo.zip",
+			SizeBytes:        128,
+			SHA256:           strings.Repeat("a", 64),
+		}},
+	)
+	if err != nil {
+		t.Fatalf("replace archive entries: %v", err)
+	}
+
+	entries, err := app.db.ListFilestoreSkillArchiveEntries(
+		context.Background(),
+		workspaceID,
+		filesystem.ID,
+	)
+	if err != nil {
+		t.Fatalf("list archive entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("archive entry count = %d, want 1", len(entries))
+	}
+	entry := entries[0]
+	replacedEntryID := entry.ID
+	var metadata struct {
+		SkillSource string `json:"skill_source"`
+	}
+	if err := json.Unmarshal(entry.Metadata, &metadata); err != nil {
+		t.Fatalf("decode archive entry metadata: %v", err)
+	}
+	if entry.Kind != db.FilestoreEntryKindArchive ||
+		entry.Path != "/skills/demo" ||
+		entry.ParentPath == nil ||
+		*entry.ParentPath != "/skills" ||
+		entry.ManagedBy == nil ||
+		*entry.ManagedBy != "skill_archive" ||
+		entry.ManagedResourceUUID == nil ||
+		*entry.ManagedResourceUUID != versionUUID ||
+		entry.S3Key == nil ||
+		*entry.S3Key != "catalog/demo.zip" ||
+		metadata.SkillSource != "custom" {
+		t.Fatalf("archive entry = %#v, metadata = %#v", entry, metadata)
+	}
+
+	page, err := app.db.ListFilestoreEntriesPage(context.Background(), db.ListFilestoreEntriesPageParams{
+		WorkspaceID:   workspaceID,
+		FilesystemID:  filesystem.ID,
+		DirectoryPath: "/",
+		Recursive:     true,
+		Limit:         100,
+	})
+	if err != nil {
+		t.Fatalf("list ordinary entries: %v", err)
+	}
+	for _, listedEntry := range page.Entries {
+		if listedEntry.Kind == db.FilestoreEntryKindArchive {
+			t.Fatalf("ordinary entry listing exposed archive: %#v", listedEntry)
+		}
+	}
+	storageBytes, err := app.db.WorkspaceStorageBytes(context.Background(), workspaceID)
+	if err != nil {
+		t.Fatalf("load workspace storage: %v", err)
+	}
+	if storageBytes != 0 {
+		t.Fatalf("workspace storage bytes = %d, want 0", storageBytes)
+	}
+
+	if err := app.db.ReplaceFilestoreSkillArchiveEntries(
+		context.Background(),
+		workspaceID,
+		created.ExternalID,
+		nil,
+	); err != nil {
+		t.Fatalf("clear archive entries: %v", err)
+	}
+	entries, err = app.db.ListFilestoreSkillArchiveEntries(
+		context.Background(),
+		workspaceID,
+		filesystem.ID,
+	)
+	if err != nil {
+		t.Fatalf("list cleared archive entries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("archive entries after clear = %#v", entries)
+	}
+	var retiredAt *time.Time
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select deleted_at
+		from filestore_entries
+		where id = $1
+	`, replacedEntryID).Scan(&retiredAt); err != nil {
+		t.Fatalf("load retired archive entry: %v", err)
+	}
+	if retiredAt == nil {
+		t.Fatal("retired archive entry deleted_at = nil")
+	}
+	skillsRoot, err := app.db.GetFilestoreEntry(
+		context.Background(),
+		workspaceID,
+		filesystem.ID,
+		"/skills",
+	)
+	if err != nil {
+		t.Fatalf("load /skills root: %v", err)
+	}
+	if skillsRoot.Kind != db.FilestoreEntryKindDirectory {
+		t.Fatalf("/skills kind = %q, want directory", skillsRoot.Kind)
 	}
 }
 
@@ -945,6 +1115,7 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 			{statement: `delete from files where workspace_id = $1`, argument: workspaceID},
 			{statement: `delete from workspace_storage_usage where workspace_id = $1`, argument: workspaceID},
 			{statement: `delete from code_sessions where id = $1`, argument: codeSessionID},
+			{statement: `delete from environment_work where workspace_id = $1`, argument: workspaceID},
 			{statement: `delete from sessions where workspace_id = $1`, argument: workspaceID},
 			{statement: `delete from api_keys where id = $1`, argument: apiKeyID},
 			{statement: `delete from workspaces where id = $1`, argument: workspaceID},

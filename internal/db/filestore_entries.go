@@ -61,6 +61,7 @@ func buildFilestoreEntriesPageQuery(filesystem FilestoreFilesystem, params ListF
 	query := filestoreEntrySelectSQL() + `
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
+			and kind <> 'archive'
 			and deleted_at is null
 			and (expires_at is null or expires_at > now())
 	`

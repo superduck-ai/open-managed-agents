@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -26,6 +29,7 @@ const (
 type Handler struct {
 	cfg     config.Config
 	service serviceAPI
+	logger  *slog.Logger
 	router  chi.Router
 }
 
@@ -44,8 +48,9 @@ type serviceAPI interface {
 
 // NewHandler 构造 Filestore HTTP 边界，并只注册协议明确支持的操作。
 // 未知路径与错误方法统一返回 Filestore 错误结构，不泄漏 chi 的默认响应。
-func NewHandler(cfg config.Config, service serviceAPI) *Handler {
-	h := &Handler{cfg: cfg, service: service}
+func NewHandler(cfg config.Config, service serviceAPI, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, service: service, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(h.notFound)
 	router.MethodNotAllowed(h.notFound)
@@ -86,7 +91,13 @@ func (h *Handler) requireWritableToken(next http.Handler) http.Handler {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			log.Printf("filestore panic: %v", recovered)
+			h.logger.ErrorContext(
+				r.Context(),
+				"filestore panic recovered",
+				"request_id", httpapi.RequestID(r.Context()),
+				"panic", recovered,
+				"stack", string(debug.Stack()),
+			)
 			writeFilestoreError(w, &apiError{Status: http.StatusInternalServerError, Code: "internal", Message: "Internal server error"})
 		}
 	}()
@@ -100,7 +111,7 @@ func (h *Handler) listDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.ListDirectory(r.Context(), principal, request)
-	writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) makeDirectory(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +121,7 @@ func (h *Handler) makeDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.MakeDirectory(r.Context(), principal, request)
-	writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) removeDirectory(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +131,7 @@ func (h *Handler) removeDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiErr = h.service.RemoveDirectory(r.Context(), principal, request)
-	writeFilestoreResult(w, struct{}{}, apiErr)
+	h.writeFilestoreResult(r.Context(), w, struct{}{}, apiErr)
 }
 
 func (h *Handler) createFile(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +140,7 @@ func (h *Handler) createFile(w http.ResponseWriter, r *http.Request) {
 		writeFilestoreError(w, apiErr)
 		return
 	}
-	extendFilestoreDeadlines(w)
+	h.extendFilestoreDeadlines(r.Context(), w)
 	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.Storage.MaxFileBytes+maxFilestoreJSONBody)
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -160,7 +171,7 @@ func (h *Handler) createFile(w http.ResponseWriter, r *http.Request) {
 	defer filePart.Close()
 	// params 必须先于 file，服务层才能在读取大文件前完成路径、配额上下文等校验。
 	response, apiErr := h.service.CreateFile(r.Context(), principal, params, filePart)
-	writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 // copyFile 对应 rclone-filestore 协议里的 server-side copy 能力。
@@ -174,7 +185,7 @@ func (h *Handler) copyFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.CopyFile(r.Context(), principal, request)
-	writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) moveFile(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +195,7 @@ func (h *Handler) moveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.MoveFile(r.Context(), principal, request)
-	writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) moveDirectory(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +205,7 @@ func (h *Handler) moveDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.MoveDirectory(r.Context(), principal, request)
-	writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
@@ -203,10 +214,10 @@ func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
 		writeFilestoreError(w, apiErr)
 		return
 	}
-	extendFilestoreDeadlines(w)
+	h.extendFilestoreDeadlines(r.Context(), w)
 	result, apiErr := h.service.ReadFile(r.Context(), principal, request)
 	if apiErr != nil {
-		logFilestoreRequestError(apiErr)
+		h.logFilestoreRequestError(r.Context(), apiErr)
 		writeFilestoreError(w, apiErr)
 		return
 	}
@@ -235,7 +246,7 @@ func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		// 响应头发出后已无法改写为 JSON 错误，只记录流中断供服务端诊断。
-		log.Printf("stream filestore object: %v", err)
+		h.logger.ErrorContext(r.Context(), "stream filestore object", "error", err)
 	}
 }
 
@@ -246,7 +257,7 @@ func (h *Handler) removeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiErr = h.service.RemoveFile(r.Context(), principal, request)
-	writeFilestoreResult(w, struct{}{}, apiErr)
+	h.writeFilestoreResult(r.Context(), w, struct{}{}, apiErr)
 }
 
 func (h *Handler) readMetadata(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +267,7 @@ func (h *Handler) readMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.ReadMetadata(r.Context(), principal, request)
-	writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func decodeAuthenticatedJSON[T any](w http.ResponseWriter, r *http.Request) (Principal, T, *apiError) {
@@ -288,34 +299,34 @@ func authenticatedPrincipal(r *http.Request) (Principal, *apiError) {
 	return principal, nil
 }
 
-func writeFilestoreResult(w http.ResponseWriter, value any, apiErr *apiError) {
+func (h *Handler) writeFilestoreResult(ctx context.Context, w http.ResponseWriter, value any, apiErr *apiError) {
 	if apiErr != nil {
-		logFilestoreRequestError(apiErr)
+		h.logFilestoreRequestError(ctx, apiErr)
 		writeFilestoreError(w, apiErr)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		log.Printf("encode filestore response: %v", err)
+		h.logger.ErrorContext(ctx, "encode filestore response", "error", err)
 	}
 }
 
-func logFilestoreRequestError(apiErr *apiError) {
+func (h *Handler) logFilestoreRequestError(ctx context.Context, apiErr *apiError) {
 	if apiErr != nil && apiErr.Status >= http.StatusInternalServerError {
-		log.Printf("filestore request failed: %v", apiErr)
+		h.logger.ErrorContext(ctx, "filestore request failed", "error", apiErr)
 	}
 }
 
-func extendFilestoreDeadlines(w http.ResponseWriter) {
+func (h *Handler) extendFilestoreDeadlines(ctx context.Context, w http.ResponseWriter) {
 	controller := http.NewResponseController(w)
 	// 全局 HTTP 超时仍是最后防线；这里只为大对象上传下载提供协议允许的传输窗口。
 	deadline := time.Now().Add(filestoreTransferTTL)
 	if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		log.Printf("set filestore read deadline: %v", err)
+		h.logger.ErrorContext(ctx, "set filestore read deadline", "error", err)
 	}
 	if err := controller.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		log.Printf("set filestore write deadline: %v", err)
+		h.logger.ErrorContext(ctx, "set filestore write deadline", "error", err)
 	}
 }
 

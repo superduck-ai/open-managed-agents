@@ -11,7 +11,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
-func TestRunFilestoreCleanupOnceSchedulesBucketResolutionFailureRetry(t *testing.T) {
+func TestCleanupWorkerRunCleanupOnceSchedulesBucketResolutionFailureRetry(t *testing.T) {
 	t.Parallel()
 
 	bucketErr := errors.New("bucket name is invalid")
@@ -26,15 +26,11 @@ func TestRunFilestoreCleanupOnceSchedulesBucketResolutionFailureRetry(t *testing
 		forBucketErrors: map[string]error{"invalid-bucket": bucketErr},
 	}
 
-	err := RunFilestoreCleanupOnce(
-		context.Background(),
-		database,
-		client,
-		"worker-1",
-	)
+	worker := NewCleanupWorker(database, client, nil)
+	err := worker.RunCleanupOnce(context.Background(), "worker-1")
 
 	if err != nil {
-		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
+		t.Fatalf("RunCleanupOnce() error = %v", err)
 	}
 	if len(client.requestedBuckets) != 1 || client.requestedBuckets[0] != "invalid-bucket" {
 		t.Fatalf("requested buckets = %v", client.requestedBuckets)
@@ -51,7 +47,7 @@ func TestRunFilestoreCleanupOnceSchedulesBucketResolutionFailureRetry(t *testing
 	}
 }
 
-func TestRunFilestoreCleanupOnceSchedulesDeleteFailureRetry(t *testing.T) {
+func TestCleanupWorkerRunCleanupOnceSchedulesDeleteFailureRetry(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{{
@@ -65,15 +61,11 @@ func TestRunFilestoreCleanupOnceSchedulesDeleteFailureRetry(t *testing.T) {
 	deleteErr := errors.New("object store unavailable")
 	store := &fakeCleanupBlobStore{deleteError: deleteErr}
 
-	err := RunFilestoreCleanupOnce(
-		context.Background(),
-		database,
-		newFakeCleanupStorageClient(store),
-		"worker-2",
-	)
+	worker := NewCleanupWorker(database, newFakeCleanupStorageClient(store), nil)
+	err := worker.RunCleanupOnce(context.Background(), "worker-2")
 
 	if err != nil {
-		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
+		t.Fatalf("RunCleanupOnce() error = %v", err)
 	}
 	if len(store.deleteCalls) != 1 || store.deleteCalls[0].key != "objects/b" || store.deleteCalls[0].versionID != "version-2" {
 		t.Fatalf("Delete calls = %+v", store.deleteCalls)
@@ -93,7 +85,7 @@ func TestRunFilestoreCleanupOnceSchedulesDeleteFailureRetry(t *testing.T) {
 	}
 }
 
-func TestRunFilestoreCleanupOnceCompletesMissingObject(t *testing.T) {
+func TestCleanupWorkerRunCleanupOnceCompletesMissingObject(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{{
@@ -105,15 +97,11 @@ func TestRunFilestoreCleanupOnceCompletesMissingObject(t *testing.T) {
 	}}}
 	store := &fakeCleanupBlobStore{deleteError: errors.Join(errors.New("delete failed"), storage.ErrNotFound)}
 
-	err := RunFilestoreCleanupOnce(
-		context.Background(),
-		database,
-		newFakeCleanupStorageClient(store),
-		"worker-3",
-	)
+	worker := NewCleanupWorker(database, newFakeCleanupStorageClient(store), nil)
+	err := worker.RunCleanupOnce(context.Background(), "worker-3")
 
 	if err != nil {
-		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
+		t.Fatalf("RunCleanupOnce() error = %v", err)
 	}
 	if len(database.completed) != 1 || database.completed[0] != 3 {
 		t.Fatalf("completed jobs = %v", database.completed)
@@ -136,7 +124,7 @@ func TestRunFilestoreCleanupOnceCompletesMissingObject(t *testing.T) {
 	}
 }
 
-func TestRunFilestoreCleanupOnceDeletesObjectsFromMultipleBuckets(t *testing.T) {
+func TestCleanupWorkerRunCleanupOnceDeletesObjectsFromMultipleBuckets(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{
@@ -147,10 +135,11 @@ func TestRunFilestoreCleanupOnceDeletesObjectsFromMultipleBuckets(t *testing.T) 
 	secondStore := &fakeCleanupBlobStore{bucket: "second-bucket"}
 	client := newFakeCleanupStorageClient(firstStore, secondStore)
 
-	err := RunFilestoreCleanupOnce(context.Background(), database, client, "worker-multi")
+	worker := NewCleanupWorker(database, client, nil)
+	err := worker.RunCleanupOnce(context.Background(), "worker-multi")
 
 	if err != nil {
-		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
+		t.Fatalf("RunCleanupOnce() error = %v", err)
 	}
 	if len(client.requestedBuckets) != 2 ||
 		client.requestedBuckets[0] != "first-bucket" ||
@@ -175,7 +164,7 @@ func TestRunFilestoreCleanupOnceDeletesObjectsFromMultipleBuckets(t *testing.T) 
 	}
 }
 
-func TestRunFilestoreCleanupOnceReturnsStateTransitionErrors(t *testing.T) {
+func TestCleanupWorkerRunCleanupOnceReturnsStateTransitionErrors(t *testing.T) {
 	t.Parallel()
 
 	completeErr := errors.New("complete failed")
@@ -193,15 +182,11 @@ func TestRunFilestoreCleanupOnceReturnsStateTransitionErrors(t *testing.T) {
 	client := newFakeCleanupStorageClient(store)
 	client.forBucketErrors = map[string]error{"invalid-bucket": bucketErr}
 
-	err := RunFilestoreCleanupOnce(
-		context.Background(),
-		database,
-		client,
-		"worker-4",
-	)
+	worker := NewCleanupWorker(database, client, nil)
+	err := worker.RunCleanupOnce(context.Background(), "worker-4")
 
 	if !errors.Is(err, completeErr) || !errors.Is(err, failErr) {
-		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
+		t.Fatalf("RunCleanupOnce() error = %v", err)
 	}
 	if !strings.Contains(err.Error(), "cleanup-4") || !strings.Contains(err.Error(), "cleanup-5") {
 		t.Fatalf("error lacks job context: %v", err)
@@ -211,25 +196,21 @@ func TestRunFilestoreCleanupOnceReturnsStateTransitionErrors(t *testing.T) {
 	}
 }
 
-func TestRunFilestoreCleanupOnceReturnsLeaseError(t *testing.T) {
+func TestCleanupWorkerRunCleanupOnceReturnsLeaseError(t *testing.T) {
 	t.Parallel()
 
 	leaseErr := errors.New("lease failed")
 	database := &fakeFilestoreCleanupDatabase{leaseError: leaseErr}
 
-	err := RunFilestoreCleanupOnce(
-		context.Background(),
-		database,
-		newFakeCleanupStorageClient(),
-		"worker-5",
-	)
+	worker := NewCleanupWorker(database, newFakeCleanupStorageClient(), nil)
+	err := worker.RunCleanupOnce(context.Background(), "worker-5")
 
 	if !errors.Is(err, leaseErr) {
-		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
+		t.Fatalf("RunCleanupOnce() error = %v", err)
 	}
 }
 
-func TestRunFilestoreCleanupOnceStopsOnCanceledDelete(t *testing.T) {
+func TestCleanupWorkerRunCleanupOnceStopsOnCanceledDelete(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{
@@ -238,15 +219,11 @@ func TestRunFilestoreCleanupOnceStopsOnCanceledDelete(t *testing.T) {
 	}}
 	store := &fakeCleanupBlobStore{deleteError: context.Canceled}
 
-	err := RunFilestoreCleanupOnce(
-		context.Background(),
-		database,
-		newFakeCleanupStorageClient(store),
-		"worker-6",
-	)
+	worker := NewCleanupWorker(database, newFakeCleanupStorageClient(store), nil)
+	err := worker.RunCleanupOnce(context.Background(), "worker-6")
 
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("RunFilestoreCleanupOnce() error = %v", err)
+		t.Fatalf("RunCleanupOnce() error = %v", err)
 	}
 	if len(store.deleteCalls) != 1 {
 		t.Fatalf("Delete calls = %+v", store.deleteCalls)
@@ -259,33 +236,35 @@ func TestRunFilestoreCleanupOnceStopsOnCanceledDelete(t *testing.T) {
 	}
 }
 
-func TestRunFilestoreTTLSweepOnceUsesBoundedBatch(t *testing.T) {
+func TestCleanupWorkerRunTTLSweepOnceUsesBoundedBatch(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{}
 
-	if err := RunFilestoreTTLSweepOnce(context.Background(), database); err != nil {
-		t.Fatalf("RunFilestoreTTLSweepOnce() error = %v", err)
+	worker := NewCleanupWorker(database, nil, nil)
+	if err := worker.RunTTLSweepOnce(context.Background()); err != nil {
+		t.Fatalf("RunTTLSweepOnce() error = %v", err)
 	}
 	if database.expireCalls != 1 || database.expireLimit != filestoreTTLSweepBatchSize {
 		t.Fatalf("ExpireFilestoreEntries calls = %d, limit = %d", database.expireCalls, database.expireLimit)
 	}
 }
 
-func TestRunFilestoreTTLSweepOnceReturnsDatabaseError(t *testing.T) {
+func TestCleanupWorkerRunTTLSweepOnceReturnsDatabaseError(t *testing.T) {
 	t.Parallel()
 
 	expireErr := errors.New("expiry failed")
 	database := &fakeFilestoreCleanupDatabase{expireError: expireErr}
 
-	err := RunFilestoreTTLSweepOnce(context.Background(), database)
+	worker := NewCleanupWorker(database, nil, nil)
+	err := worker.RunTTLSweepOnce(context.Background())
 
 	if !errors.Is(err, expireErr) {
-		t.Fatalf("RunFilestoreTTLSweepOnce() error = %v", err)
+		t.Fatalf("RunTTLSweepOnce() error = %v", err)
 	}
 }
 
-func TestRunFilestoreFilesystemCleanupOnceSchedulesProcessFailureRetry(t *testing.T) {
+func TestCleanupWorkerRunFilesystemCleanupOnceSchedulesProcessFailureRetry(t *testing.T) {
 	t.Parallel()
 
 	processErr := errors.New("database unavailable")
@@ -298,9 +277,10 @@ func TestRunFilestoreFilesystemCleanupOnceSchedulesProcessFailureRetry(t *testin
 		filesystemProcessError: processErr,
 	}
 
-	err := RunFilestoreFilesystemCleanupOnce(context.Background(), database, "worker-8")
+	worker := NewCleanupWorker(database, nil, nil)
+	err := worker.RunFilesystemCleanupOnce(context.Background(), "worker-8")
 	if err != nil {
-		t.Fatalf("RunFilestoreFilesystemCleanupOnce() error = %v", err)
+		t.Fatalf("RunFilesystemCleanupOnce() error = %v", err)
 	}
 	if len(database.filesystemFailures) != 1 {
 		t.Fatalf("filesystem failures = %+v", database.filesystemFailures)
@@ -314,13 +294,14 @@ func TestRunFilestoreFilesystemCleanupOnceSchedulesProcessFailureRetry(t *testin
 	}
 }
 
-func TestRunFilestoreFilesystemCleanupOnceUsesBoundedBatch(t *testing.T) {
+func TestCleanupWorkerRunFilesystemCleanupOnceUsesBoundedBatch(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{filesystemJobs: []db.FilestoreFilesystemCleanupJob{{ID: 9}}}
 
-	if err := RunFilestoreFilesystemCleanupOnce(context.Background(), database, "worker-9"); err != nil {
-		t.Fatalf("RunFilestoreFilesystemCleanupOnce() error = %v", err)
+	worker := NewCleanupWorker(database, nil, nil)
+	if err := worker.RunFilesystemCleanupOnce(context.Background(), "worker-9"); err != nil {
+		t.Fatalf("RunFilesystemCleanupOnce() error = %v", err)
 	}
 	if database.filesystemLeasedWorkerID != "worker-9" ||
 		database.filesystemLeasedLimit != filestoreCleanupBatchSize ||

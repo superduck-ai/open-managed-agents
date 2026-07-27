@@ -2,7 +2,6 @@ package codesessions
 
 import (
 	"context"
-	"log/slog"
 	"net"
 
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
@@ -57,7 +56,6 @@ func (h *Handler) loadUpstreamProxyPolicyContext(ctx context.Context, identity u
 func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity upstreamProxyIdentity, target string) bool {
 	policyContext, err := h.loadPolicyContext(ctx, identity)
 	attrs := []any{
-		"component", "codesessions",
 		"event", "upstream_proxy_policy",
 		"organization_uuid", identity.organizationUUID,
 		"workspace_uuid", identity.workspaceUUID,
@@ -69,7 +67,7 @@ func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity ups
 			"host", normalizedTargetHost(target),
 			"error", err.Error(),
 		)
-		slog.WarnContext(ctx, "upstream proxy policy denied", attrs...)
+		h.logger.WarnContext(ctx, "upstream proxy policy denied", attrs...)
 		return false
 	}
 	attrs = append(attrs,
@@ -83,10 +81,10 @@ func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity ups
 		"host", decision.Host,
 	)
 	if !decision.Allow {
-		slog.WarnContext(ctx, "upstream proxy policy denied", attrs...)
+		h.logger.WarnContext(ctx, "upstream proxy policy denied", attrs...)
 		return false
 	}
-	slog.DebugContext(ctx, "upstream proxy policy allowed", attrs...)
+	h.logger.DebugContext(ctx, "upstream proxy policy allowed", attrs...)
 	return true
 }
 

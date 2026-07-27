@@ -130,10 +130,9 @@ func TestManagedAgentRuntimeQueriesUseSQLXNamedParameters(t *testing.T) {
 				"workspace_id":            int64(2),
 				"environment_external_id": "env_test",
 				"work_external_id":        "envwork_test",
-				"preparation_patch":       []byte(`{"managed_agent_skills_mount":null}`),
 				"runtime_patch":           []byte(`{"runtime":"claude_code_local"}`),
 			},
-			wantArgCount: 5,
+			wantArgCount: 4,
 		},
 		{
 			name:  "issue Code Session credential context",

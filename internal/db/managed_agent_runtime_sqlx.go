@@ -23,7 +23,6 @@ const (
 	patchManagedAgentWorkMetadataQuery = `
 		update environment_work
 		set metadata = coalesce(metadata, CAST('{}' AS jsonb))
-				|| CAST(:preparation_patch AS jsonb)
 				|| CAST(:runtime_patch AS jsonb),
 			updated_at = now()
 		where workspace_id = :workspace_id

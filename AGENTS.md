@@ -52,6 +52,17 @@
 - 需要保留未知 JSON 字段时，可以在边界使用 `map[string]json.RawMessage` 作为 envelope，但已知字段仍必须通过命名 schema 解析和校验。
 - DB 层可以返回原始 JSONB 值，但不承担 HTTP/DTO 解析或领域策略；调用方应在 resource/service/policy 边界尽早完成结构化转换。
 
+## Go 日志规范
+
+- 生产代码统一使用标准库 `log/slog` 作为日志 API；不要直接使用标准库 `log`、`fmt.Printf` 式日志、logrus、zap、zerolog 或自建 printf 包装器。面向终端用户的 CLI 输出不属于运行日志，可以继续写入 stdout/stderr。
+- logger 和 handler 统一在可执行程序的组装层通过 `internal/logging` 创建，并在启动早期调用 `slog.SetDefault`。根 logger 通过 `ServerDeps`、资源构造函数或 worker 构造函数显式注入；组装层用 `logger.With("component", "...")` 创建组件 logger，业务方法使用自身持有的 logger。`config.Config` 只承载可序列化的业务/部署数据，不得包含 `*slog.Logger` 或其他运行时依赖。构造边界使用 `logging.LoggerOrDefault` 统一兼容 nil logger，组件内部不得重复读取 `slog.Default()`；生产组装必须显式传入 logger。稳定的 DB、配置和 logger 依赖应由 Handler、Service、Enqueuer 或 Worker 持有，不要在每次业务调用中重复透传；纯解析、转换和 I/O helper 优先返回结果与 error，由拥有方决定是否记录。不要为了 logger 注入把静态 logger 塞入请求 context；只有基于 request ID、trace 等请求域数据派生的 request-scoped logger 才适合随请求传递。业务包不要各自创建 handler，也不要在启动完成后修改全局默认 logger。
+- 日志采用结构化字段：消息使用稳定、简短的事件描述，动态值放入属性；新增属性名使用 `snake_case`。错误统一放在 `error` 字段，资源标识使用 `request_id`、`organization_id`、`workspace_id`、`session_id` 等明确字段，不要用 `fmt.Sprintf` 或格式化占位符拼接日志。
+- 已持有 `context.Context` 的请求、worker 和后台任务路径优先使用 `DebugContext`、`InfoContext`、`WarnContext`、`ErrorContext`，以便 handler 关联请求 ID、trace 和调用域字段。
+- 级别语义保持一致：`Debug` 用于默认关闭的诊断细节，`Info` 用于正常生命周期与重要状态变化，`Warn` 用于可恢复降级、预期拒绝或需要关注的异常输入，`Error` 用于操作未能完成的非预期故障。同一错误只在负责最终处理或补充关键边界信息的层记录一次。
+- 应用运行日志禁止记录原始请求/响应 body、完整 query string、`Authorization`、Cookie、token、API key、secret、OAuth code/state、签名或凭据 payload。确需诊断时只记录白名单元数据、长度、摘要或脱敏且有上限的值。协议明确要求的 telemetry/capture 数据必须通过独立、显式配置的安全存储实现，不得混入 `slog` 运行日志。
+- 业务包不得调用 `Fatal`、`Panic` 或 `os.Exit`；错误应向上传递。可执行程序的 `main` 在 defer 可完成的 `run` 返回后记录一次终止错误并设置退出码。panic recovery 记录 `request_id` 和 stack，但不得包含敏感 payload。
+- 新增公共日志字段或修改日志 handler 时应补充针对结构化 record 的测试；优先检查 level、message 和 attrs，不要依赖 ConsoleHandler 的整行文本格式。
+
 ## 前端设计方向
 
 - 前端实现细节位于 `web/AGENTS.md`。

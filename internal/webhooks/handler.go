@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -56,6 +58,7 @@ var supportedEndpointEventTypes = map[string]struct{}{
 type Handler struct {
 	cfg    config.WebhookConfig
 	db     *db.DB
+	logger *slog.Logger
 	router chi.Router
 }
 
@@ -87,8 +90,9 @@ type regenerateSigningSecretResponse struct {
 	SigningSecret string `json:"signing_secret"`
 }
 
-func NewHandler(cfg config.WebhookConfig, database *db.DB) *Handler {
-	h := &Handler{cfg: cfg, db: database}
+func NewHandler(cfg config.WebhookConfig, database *db.DB, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)

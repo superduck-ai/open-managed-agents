@@ -136,8 +136,8 @@ func assertManagedAgentCodeSession(t *testing.T, fixture managedAgentRuntimeFixt
 
 func assertManagedAgentWorkMetadata(t *testing.T, work EnvironmentWork) {
 	t.Helper()
-	if jsonFieldForTest(t, work.Metadata, "managed_agent_skills_mount") != `"/opt/skills"` {
-		t.Fatalf("work preparation patch = %s, want the merged preparation document", work.Metadata)
+	if jsonFieldForTest(t, work.Metadata, "managed_agent_skills_mount") != "" {
+		t.Fatalf("work metadata = %s, want no legacy skill mount", work.Metadata)
 	}
 	if jsonFieldForTest(t, work.Metadata, "runtime") != `"claude_code_local"` {
 		t.Fatalf("work runtime patch = %s, want the merged runtime document", work.Metadata)
@@ -188,11 +188,10 @@ func (f managedAgentRuntimeFixture) runtimeInput() CreateManagedAgentRuntimeInpu
 			OAuthAccessTokenHash:  "hash_" + f.session.ExternalID,
 			CreatedAt:             f.session.CreatedAt,
 		},
-		SessionMetadataPatch:            json.RawMessage(`{"claude_code_session_id":"cse_` + f.session.ExternalID + `","runtime":"claude_code_local"}`),
-		EnvironmentWorkPreparationPatch: json.RawMessage(`{"managed_agent_skills_mount":"/opt/skills"}`),
-		EnvironmentWorkRuntimePatch:     json.RawMessage(`{"runtime":"claude_code_local"}`),
-		EnvironmentExternalID:           f.environmentExternalID,
-		WorkExternalID:                  f.work.ExternalID,
+		SessionMetadataPatch:        json.RawMessage(`{"claude_code_session_id":"cse_` + f.session.ExternalID + `","runtime":"claude_code_local"}`),
+		EnvironmentWorkRuntimePatch: json.RawMessage(`{"runtime":"claude_code_local"}`),
+		EnvironmentExternalID:       f.environmentExternalID,
+		WorkExternalID:              f.work.ExternalID,
 	}
 }
 

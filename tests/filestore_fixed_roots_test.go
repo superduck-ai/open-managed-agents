@@ -15,7 +15,7 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 	makeFilestoreTestDirectory(t, fixture, "/outputs/cross-root")
 
 	t.Run("rejects moving fixed roots", func(t *testing.T) {
-		for _, rootPath := range []string{"/outputs", "/uploads", "/transcripts", "/tool_results"} {
+		for _, rootPath := range []string{"/outputs", "/skills", "/uploads", "/transcripts", "/tool_results"} {
 			_, err := fixture.app.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
 				WorkspaceID:     fixture.workspaceID,
 				FilesystemID:    fixture.filesystem.ID,
@@ -29,7 +29,7 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 	})
 
 	t.Run("rejects removing fixed roots", func(t *testing.T) {
-		for _, rootPath := range []string{"/outputs", "/uploads", "/transcripts", "/tool_results"} {
+		for _, rootPath := range []string{"/outputs", "/skills", "/uploads", "/transcripts", "/tool_results"} {
 			_, err := fixture.app.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
 				WorkspaceID:  fixture.workspaceID,
 				FilesystemID: fixture.filesystem.ID,

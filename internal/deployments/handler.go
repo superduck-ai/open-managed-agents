@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -26,24 +27,25 @@ import (
 )
 
 const (
-	maxDeploymentBodySize      = 4 << 20
-	skillPrewarmEnqueueTimeout = 3 * time.Second
+	maxDeploymentBodySize = 4 << 20
 )
 
 type Handler struct {
-	cfg     config.Config
-	db      *db.DB
-	prewarm skillPrewarmSnapshotEnqueuer
-	router  chi.Router
+	cfg      config.Config
+	db       *db.DB
+	webhooks webhookEnqueuer
+	logger   *slog.Logger
+	router   chi.Router
 }
 
-type skillPrewarmSnapshotEnqueuer interface {
-	EnqueueSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) error
+type webhookEnqueuer interface {
+	Enqueue(context.Context, webhooks.EnqueueInput)
 }
 
 type RunsHandler struct {
 	cfg    config.Config
 	db     *db.DB
+	logger *slog.Logger
 	router chi.Router
 }
 
@@ -88,12 +90,9 @@ type resolvedAgent struct {
 	ref      json.RawMessage
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	return NewHandlerWithSkillPrewarm(cfg, database, nil)
-}
-
-func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer) *Handler {
-	h := &Handler{cfg: cfg, db: database, prewarm: prewarm}
+func NewHandler(cfg config.Config, database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -111,8 +110,9 @@ func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skil
 	return h
 }
 
-func NewRunsHandler(cfg config.Config, database *db.DB) *RunsHandler {
-	h := &RunsHandler{cfg: cfg, db: database}
+func NewRunsHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *RunsHandler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &RunsHandler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -168,7 +168,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, environmentID)
 	if err != nil {
-		writeEnvironmentLoadError(w, r, err, environmentID)
+		h.writeEnvironmentLoadError(w, r, err, environmentID)
 		return
 	}
 	if env.ArchivedAt != nil {
@@ -197,7 +197,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	resources, resourceSecrets, err := h.normalizeResources(r, principal, fieldOrDefault(fields, "resources", `[]`))
 	if err != nil {
-		writeResourceBuildError(w, r, err)
+		h.writeResourceBuildError(w, r, err)
 		return
 	}
 	vaultIDs, err := h.normalizeVaultIDs(r, principal, fieldOrDefault(fields, "vault_ids", `[]`))
@@ -241,11 +241,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:             now,
 	})
 	if err != nil {
-		log.Printf("create deployment: %v", err)
+		h.logger.ErrorContext(r.Context(), "create deployment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment"))
 		return
 	}
-	h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, created.AgentSnapshot, "deployment", created.ExternalID, "deployment_create")
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(created, now))
 }
 
@@ -299,7 +298,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		log.Printf("list deployments: %v", err)
+		h.logger.ErrorContext(r.Context(), "list deployments", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list deployments"))
 		return
 	}
@@ -328,7 +327,7 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := h.db.GetDeployment(r.Context(), principal.WorkspaceID, deploymentID)
 	if err != nil {
-		writeDeploymentLoadError(w, r, err, deploymentID)
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(record, time.Now().UTC()))
@@ -351,7 +350,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	current, err := h.db.GetDeployment(r.Context(), principal.WorkspaceID, deploymentID)
 	if err != nil {
-		writeDeploymentLoadError(w, r, err, deploymentID)
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
 	if current.ArchivedAt != nil {
@@ -378,7 +377,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		}
 		env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, environmentID)
 		if err != nil {
-			writeEnvironmentLoadError(w, r, err, environmentID)
+			h.writeEnvironmentLoadError(w, r, err, environmentID)
 			return
 		}
 		if env.ArchivedAt != nil {
@@ -422,7 +421,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	if raw, ok := fields["resources"]; ok {
 		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, raw)
 		if err != nil {
-			writeResourceBuildError(w, r, err)
+			h.writeResourceBuildError(w, r, err)
 			return
 		}
 	}
@@ -443,11 +442,8 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateDeployment(r.Context(), principal.WorkspaceID, deploymentID, next)
 	if err != nil {
-		writeDeploymentLoadError(w, r, err, deploymentID)
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
-	}
-	if !agentsnapshot.SnapshotSkillsEqual(current.AgentSnapshot, updated.AgentSnapshot) {
-		h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, updated.AgentSnapshot, "deployment", updated.ExternalID, "deployment_update")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(updated, time.Now().UTC()))
 }
@@ -464,7 +460,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	archived, err := h.db.ArchiveDeployment(r.Context(), principal.WorkspaceID, deploymentID)
 	if err != nil {
-		writeDeploymentLoadError(w, r, err, deploymentID)
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(archived, time.Now().UTC()))
@@ -483,7 +479,7 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	paused, err := h.db.PauseDeployment(r.Context(), principal.WorkspaceID, deploymentID, reason)
 	if err != nil {
-		writeDeploymentLoadError(w, r, err, deploymentID)
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(paused, time.Now().UTC()))
@@ -501,7 +497,7 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceID, deploymentID)
 	if err != nil {
-		writeDeploymentLoadError(w, r, err, deploymentID)
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(unpaused, time.Now().UTC()))
@@ -519,7 +515,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	deployment, err := h.db.GetDeployment(r.Context(), principal.WorkspaceID, deploymentID)
 	if err != nil {
-		writeDeploymentLoadError(w, r, err, deploymentID)
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
 	if deployment.ArchivedAt != nil {
@@ -637,18 +633,32 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 			))
 			return
 		}
-		writeDeploymentLoadError(w, r, err, deploymentID)
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.created", session.ExternalID, nil)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.pending", session.ExternalID, nil)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.status_idled", session.ExternalID, nil)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_created", session.ExternalID, &thread.ExternalID)
-	webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.thread_idled", session.ExternalID, &thread.ExternalID)
+	h.enqueueWebhook(r.Context(), principal, "session.created", session.ExternalID, nil)
+	h.enqueueWebhook(r.Context(), principal, "session.pending", session.ExternalID, nil)
+	h.enqueueWebhook(r.Context(), principal, "session.status_idled", session.ExternalID, nil)
+	h.enqueueWebhook(r.Context(), principal, "session.thread_created", session.ExternalID, &thread.ExternalID)
+	h.enqueueWebhook(r.Context(), principal, "session.thread_idled", session.ExternalID, &thread.ExternalID)
 	if outcomesChanged(createdEvents) {
-		webhooks.Enqueue(r.Context(), h.db, h.cfg.Webhook, principal.WorkspaceID, principal.OrganizationExternalID, principal.WorkspaceExternalID, "session.outcome_evaluation_ended", session.ExternalID, nil)
+		h.enqueueWebhook(r.Context(), principal, "session.outcome_evaluation_ended", session.ExternalID, nil)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromRun(run))
+}
+
+func (h *Handler) enqueueWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
+	if h.webhooks == nil {
+		return
+	}
+	h.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
+		WorkspaceID:            principal.WorkspaceID,
+		OrganizationExternalID: principal.OrganizationExternalID,
+		WorkspaceExternalID:    principal.WorkspaceExternalID,
+		EventType:              eventType,
+		ResourceID:             resourceID,
+		Options:                webhooks.EventOptions{SessionThreadID: sessionThreadID},
+	})
 }
 
 func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Request, principal auth.Principal, deployment db.Deployment, runError json.RawMessage) {
@@ -670,7 +680,7 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 		CreatedAt:         now,
 	})
 	if err != nil {
-		log.Printf("create deployment run failure: %v", err)
+		h.logger.ErrorContext(r.Context(), "create deployment run failure", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment run"))
 		return
 	}
@@ -747,7 +757,7 @@ func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := h.db.GetDeploymentRun(r.Context(), principal.WorkspaceID, runID)
 	if err != nil {
-		writeRunLoadError(w, r, err, runID)
+		h.writeRunLoadError(w, r, err, runID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromRun(run))
@@ -811,7 +821,7 @@ func (h *RunsHandler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:         createdAtLTE,
 	})
 	if err != nil {
-		log.Printf("list deployment runs: %v", err)
+		h.logger.ErrorContext(r.Context(), "list deployment runs", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list deployment runs"))
 		return
 	}
@@ -1621,17 +1631,6 @@ func defaultRepoMountPath(rawURL string) string {
 	return "/workspace/" + name
 }
 
-func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) {
-	if h == nil || h.prewarm == nil || !agentsnapshot.SnapshotHasSkills(snapshot) {
-		return
-	}
-	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
-	defer cancel()
-	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, source, sourceID, trigger); err != nil {
-		log.Printf("enqueue deployment skill prewarm source=%s source_id=%s trigger=%s: %v", source, sourceID, trigger, err)
-	}
-}
-
 func cloneMap(input map[string]any) map[string]any {
 	output := make(map[string]any, len(input))
 	for key, value := range input {
@@ -1720,16 +1719,16 @@ func writeBadRequest(w http.ResponseWriter, r *http.Request, err error) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 }
 
-func writeEnvironmentLoadError(w http.ResponseWriter, r *http.Request, err error, environmentID string) {
+func (h *Handler) writeEnvironmentLoadError(w http.ResponseWriter, r *http.Request, err error, environmentID string) {
 	if errors.Is(err, db.ErrNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 		return
 	}
-	log.Printf("environment operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "environment operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Environment operation failed"))
 }
 
-func writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) {
+func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) {
 	var refErr resourceReferenceError
 	if errors.As(err, &refErr) {
 		if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
@@ -1740,14 +1739,14 @@ func writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) 
 			writeBadRequest(w, r, errors.New("memory store must not be archived"))
 			return
 		}
-		log.Printf("deployment resource reference %s %s: %v", refErr.ResourceType, refErr.ResourceID, refErr.Err)
+		h.logger.ErrorContext(r.Context(), "deployment resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not validate deployment resource"))
 		return
 	}
 	writeBadRequest(w, r, err)
 }
 
-func writeDeploymentLoadError(w http.ResponseWriter, r *http.Request, err error, deploymentID string) {
+func (h *Handler) writeDeploymentLoadError(w http.ResponseWriter, r *http.Request, err error, deploymentID string) {
 	if errors.Is(err, db.ErrNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Deployment not found: "+deploymentID))
 		return
@@ -1756,15 +1755,15 @@ func writeDeploymentLoadError(w http.ResponseWriter, r *http.Request, err error,
 		writeBadRequest(w, r, errors.New("deployment state does not allow this operation"))
 		return
 	}
-	log.Printf("deployment operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "deployment operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Deployment operation failed"))
 }
 
-func writeRunLoadError(w http.ResponseWriter, r *http.Request, err error, runID string) {
+func (h *RunsHandler) writeRunLoadError(w http.ResponseWriter, r *http.Request, err error, runID string) {
 	if errors.Is(err, db.ErrNotFound) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Deployment run not found: "+runID))
 		return
 	}
-	log.Printf("deployment run operation: %v", err)
+	h.logger.ErrorContext(r.Context(), "deployment run operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Deployment run operation failed"))
 }

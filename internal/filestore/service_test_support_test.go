@@ -170,19 +170,27 @@ func assertServiceAPIError(t *testing.T, apiErr *apiError, status int, code stri
 }
 
 type fakeServiceDatabase struct {
-	getFilesystemFn   func(context.Context, int64, string) (db.FilestoreFilesystem, error)
-	getEntryFn        func(context.Context, int64, int64, string) (db.FilestoreEntry, error)
-	listEntriesFn     func(context.Context, db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error)
-	makeDirectoryFn   func(context.Context, db.MakeFilestoreDirectoryInput) (db.FilestoreEntry, error)
-	putFileFn         func(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
-	copyFileFn        func(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)
-	moveFileFn        func(context.Context, db.MoveFilestoreFileInput) (db.FilestoreMutationResult, error)
-	moveDirectoryFn   func(context.Context, db.MoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
-	removeFileFn      func(context.Context, db.RemoveFilestoreEntryInput) (db.FilestoreMutationResult, error)
-	removeDirectoryFn func(context.Context, db.RemoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
-	enqueueCleanupFn  func(context.Context, db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error)
-	attachCleanupFn   func(context.Context, int64, string, string, string) error
-	completeCleanupFn func(context.Context, int64) error
+	getFilesystemFn           func(context.Context, int64, string) (db.FilestoreFilesystem, error)
+	getEntryFn                func(context.Context, int64, int64, string) (db.FilestoreEntry, error)
+	listEntriesFn             func(context.Context, db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error)
+	listSkillArchiveEntriesFn func(context.Context, int64, int64) ([]db.FilestoreEntry, error)
+	makeDirectoryFn           func(context.Context, db.MakeFilestoreDirectoryInput) (db.FilestoreEntry, error)
+	putFileFn                 func(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
+	copyFileFn                func(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)
+	moveFileFn                func(context.Context, db.MoveFilestoreFileInput) (db.FilestoreMutationResult, error)
+	moveDirectoryFn           func(context.Context, db.MoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
+	removeFileFn              func(context.Context, db.RemoveFilestoreEntryInput) (db.FilestoreMutationResult, error)
+	removeDirectoryFn         func(context.Context, db.RemoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
+	enqueueCleanupFn          func(context.Context, db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error)
+	attachCleanupFn           func(context.Context, int64, string, string, string) error
+	completeCleanupFn         func(context.Context, int64) error
+}
+
+func (f *fakeServiceDatabase) ListFilestoreSkillArchiveEntries(ctx context.Context, workspaceID, filesystemID int64) ([]db.FilestoreEntry, error) {
+	if f.listSkillArchiveEntriesFn == nil {
+		panic("unexpected ListFilestoreSkillArchiveEntries call")
+	}
+	return f.listSkillArchiveEntriesFn(ctx, workspaceID, filesystemID)
 }
 
 func (f *fakeServiceDatabase) GetFilestoreFilesystem(ctx context.Context, workspaceID int64, externalID string) (db.FilestoreFilesystem, error) {

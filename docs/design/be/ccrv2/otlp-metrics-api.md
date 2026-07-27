@@ -554,7 +554,7 @@ Code session OTLP 端点运行时必须同时具备：
 | 当前 worker lease 已过期 | 410 | `session_expired` |
 | body 超过限制 | 413 | `invalid_request_error` |
 
-调试日志会在 body 读取失败、epoch 解析失败以及 DB/epoch/lease 拒绝路径打印。日志包含 request id、signal、path/query、content type、accept、user agent、content length、body byte 数、epoch presence/value/source 和 reason；不会打印 `Authorization` 或完整原始 headers。body 会按 `maxLoggedWorkerRequestBytes` 截断：JSON/text-like 请求以 UTF-8 文本打印，protobuf/binary 请求以 base64 预览打印，并记录 `body_truncated`。
+body 读取失败、epoch 解析失败以及 DB/epoch/lease 拒绝路径使用 `slog` 输出结构化运行日志。日志只包含 request id、signal、method、path、code session id、content type、content length、body byte 数、epoch presence/value/source、reason 和 error；不记录 query、body、`Authorization` 或完整原始 headers。成功通过认证与 activity/epoch 检查后，显式启用的本地 OTLP JSONL capture 仍按“服务端本地 JSONL 日志配置”保存有界 body preview；它使用独立安全存储，不混入应用运行日志。
 
 ### 当前成功响应
 
@@ -988,7 +988,7 @@ curl -X POST http://127.0.0.1:38080/v1/code/sessions/cse_abc123/worker/otlp/metr
 4. 调用 `TouchCodeSessionWorkerActivityForActiveLease()`，同时检查当前 epoch 与未过期 lease。
 5. JSON 请求返回 `{}`；protobuf 请求返回 200 空 body。
 6. stale epoch 返回 `409 conflict_error`；缺失或非法 epoch 返回 `400 invalid_request_error`；过期 lease 返回 `410 session_expired`。
-7. 调试日志记录 OTLP 请求元数据和有界 body 预览；JSON/text-like body 以 UTF-8 打印，protobuf/binary body 以 base64 打印。
+7. `slog` 运行日志只记录白名单请求元数据与失败原因，不记录 query 或 body；显式启用的本地 OTLP JSONL capture 才保存有界 body preview，JSON/text-like body 以 UTF-8 保存，protobuf/binary body 以 base64 保存。
 8. 成功通过认证与 activity/epoch 检查后，best-effort 解码 OTLP JSON/protobuf，并写入本地 JSONL；未知 OTLP JSON 字段按兼容字段忽略，解码或文件写入失败不改变 HTTP 响应。
 9. 本地 JSONL 使用安全路径段、`0700` 目录和 `0600` 文件权限，避免 session id 影响日志根目录边界并降低本机敏感 telemetry 暴露面。
 

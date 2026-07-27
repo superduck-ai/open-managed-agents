@@ -2,9 +2,10 @@ package files
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,14 +23,14 @@ func TestStreamPlatformObject(t *testing.T) {
 			Size: 4,
 		}
 
-		logOutput := capturePlatformLog(t, func() {
-			streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
+		logOutput := capturePlatformLog(t, func(handler *Handler) {
+			handler.streamPlatformObject(context.Background(), response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
 		})
 
 		if response.Code != http.StatusOK {
 			t.Fatalf("response status = %d, want %d", response.Code, http.StatusOK)
 		}
-		for _, want := range []string{"stream platform file preview failed", "file_uuid=file-uuid", "key=object-key", "bytes_copied=0", "expected_size=4", readErr.Error()} {
+		for _, want := range []string{"stream platform file failed", "variant=preview", "file_uuid=file-uuid", "key=object-key", "bytes_copied=0", "expected_size=4", readErr.Error()} {
 			if !strings.Contains(logOutput, want) {
 				t.Fatalf("log output = %q, want containing %q", logOutput, want)
 			}
@@ -43,14 +44,14 @@ func TestStreamPlatformObject(t *testing.T) {
 			Size: 5,
 		}
 
-		logOutput := capturePlatformLog(t, func() {
-			streamPlatformObject(response, "file-uuid", "object-key", "thumbnail", object, "application/octet-stream")
+		logOutput := capturePlatformLog(t, func(handler *Handler) {
+			handler.streamPlatformObject(context.Background(), response, "file-uuid", "object-key", "thumbnail", object, "application/octet-stream")
 		})
 
 		if response.Code != http.StatusOK || response.Body.String() != "body" {
 			t.Fatalf("response = status %d body %q", response.Code, response.Body.String())
 		}
-		for _, want := range []string{"stream platform file thumbnail size mismatch", "bytes_copied=4", "expected_size=5"} {
+		for _, want := range []string{"stream platform file size mismatch", "variant=thumbnail", "bytes_copied=4", "expected_size=5"} {
 			if !strings.Contains(logOutput, want) {
 				t.Fatalf("log output = %q, want containing %q", logOutput, want)
 			}
@@ -65,7 +66,7 @@ func TestStreamPlatformObject(t *testing.T) {
 			ContentType: "text/plain",
 		}
 
-		streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
+		(&Handler{logger: slog.Default()}).streamPlatformObject(context.Background(), response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
 
 		if got := response.Header().Get("Content-Length"); got != "" {
 			t.Fatalf("Content-Length = %q, want omitted", got)
@@ -82,7 +83,7 @@ func TestStreamPlatformObject(t *testing.T) {
 			Size: 4,
 		}
 
-		streamPlatformObject(response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
+		(&Handler{logger: slog.Default()}).streamPlatformObject(context.Background(), response, "file-uuid", "object-key", "preview", object, "application/octet-stream")
 
 		if got := response.Header().Get("Content-Length"); got != "4" {
 			t.Fatalf("Content-Length = %q, want 4", got)
@@ -102,20 +103,10 @@ func (*failingObjectBody) Close() error {
 	return nil
 }
 
-func capturePlatformLog(t *testing.T, fn func()) string {
+func capturePlatformLog(t *testing.T, fn func(*Handler)) string {
 	t.Helper()
 	var output bytes.Buffer
-	previousWriter := log.Writer()
-	previousFlags := log.Flags()
-	previousPrefix := log.Prefix()
-	log.SetOutput(&output)
-	log.SetFlags(0)
-	log.SetPrefix("")
-	defer func() {
-		log.SetOutput(previousWriter)
-		log.SetFlags(previousFlags)
-		log.SetPrefix(previousPrefix)
-	}()
-	fn()
+	handler := &Handler{logger: slog.New(slog.NewTextHandler(&output, nil))}
+	fn(handler)
 	return output.String()
 }

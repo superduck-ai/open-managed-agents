@@ -9,12 +9,11 @@ import (
 )
 
 type CreateManagedAgentRuntimeInput struct {
-	CodeSession                     CreateCodeSessionInput
-	SessionMetadataPatch            json.RawMessage
-	EnvironmentWorkPreparationPatch json.RawMessage
-	EnvironmentWorkRuntimePatch     json.RawMessage
-	EnvironmentExternalID           string
-	WorkExternalID                  string
+	CodeSession                 CreateCodeSessionInput
+	SessionMetadataPatch        json.RawMessage
+	EnvironmentWorkRuntimePatch json.RawMessage
+	EnvironmentExternalID       string
+	WorkExternalID              string
 }
 
 type CreateManagedAgentRuntimeResult struct {
@@ -103,7 +102,6 @@ func createManagedAgentRuntimeTx(
 	); err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	workArguments["preparation_patch"] = jsonArg(input.EnvironmentWorkPreparationPatch)
 	workArguments["runtime_patch"] = jsonArg(input.EnvironmentWorkRuntimePatch)
 	work, err = getEnvironmentWorkSQLX(ctx, tx, patchManagedAgentWorkMetadataQuery, workArguments)
 	if err != nil {

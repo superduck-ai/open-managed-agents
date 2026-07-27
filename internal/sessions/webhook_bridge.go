@@ -3,10 +3,10 @@ package sessions
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
@@ -17,7 +17,7 @@ func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspace
 	}
 	workspaceIDs, err := h.db.GetWorkspaceIdentifiers(ctx, workspaceID)
 	if err != nil {
-		log.Printf("load workspace identifiers for session webhook session_id=%s: %v", sessionID, err)
+		h.logger.ErrorContext(ctx, "load workspace identifiers for session webhook", "session_id", sessionID, "error", err)
 		return
 	}
 	seen := map[string]struct{}{}
@@ -31,9 +31,33 @@ func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspace
 				continue
 			}
 			seen[key] = struct{}{}
-			webhooks.Enqueue(ctx, h.db, h.cfg.Webhook, workspaceID, workspaceIDs.OrganizationExternalID, workspaceIDs.WorkspaceExternalID, webhookEvent.EventType, sessionID, webhookEvent.ThreadID)
+			h.enqueueWebhook(ctx, webhooks.EnqueueInput{
+				WorkspaceID:            workspaceID,
+				OrganizationExternalID: workspaceIDs.OrganizationExternalID,
+				WorkspaceExternalID:    workspaceIDs.WorkspaceExternalID,
+				EventType:              webhookEvent.EventType,
+				ResourceID:             sessionID,
+				Options:                webhooks.EventOptions{SessionThreadID: webhookEvent.ThreadID},
+			})
 		}
 	}
+}
+
+func (h *Handler) enqueueWebhook(ctx context.Context, input webhooks.EnqueueInput) {
+	if h.webhooks != nil {
+		h.webhooks.Enqueue(ctx, input)
+	}
+}
+
+func (h *Handler) enqueuePrincipalWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
+	h.enqueueWebhook(ctx, webhooks.EnqueueInput{
+		WorkspaceID:            principal.WorkspaceID,
+		OrganizationExternalID: principal.OrganizationExternalID,
+		WorkspaceExternalID:    principal.WorkspaceExternalID,
+		EventType:              eventType,
+		ResourceID:             resourceID,
+		Options:                webhooks.EventOptions{SessionThreadID: sessionThreadID},
+	})
 }
 
 type sessionWebhookEvent struct {

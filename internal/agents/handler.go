@@ -1,24 +1,23 @@
 package agents
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
@@ -26,21 +25,16 @@ import (
 )
 
 const (
-	maxAgentBodySize           = 4 << 20
-	skillPrewarmEnqueueTimeout = 3 * time.Second
+	maxAgentBodySize = 4 << 20
 )
 
 var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Handler struct {
-	cfg     config.Config
-	db      *db.DB
-	prewarm skillPrewarmSnapshotEnqueuer
-	router  chi.Router
-}
-
-type skillPrewarmSnapshotEnqueuer interface {
-	EnqueueSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage, source string, sourceID string, trigger string) error
+	cfg    config.Config
+	db     *db.DB
+	logger *slog.Logger
+	router chi.Router
 }
 
 type agentResponse struct {
@@ -91,12 +85,9 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	return NewHandlerWithSkillPrewarm(cfg, database, nil)
-}
-
-func NewHandlerWithSkillPrewarm(cfg config.Config, database *db.DB, prewarm skillPrewarmSnapshotEnqueuer) *Handler {
-	h := &Handler{cfg: cfg, db: database, prewarm: prewarm}
+func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -169,11 +160,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 	}, versionID)
 	if err != nil {
-		log.Printf("create agent: %v", err)
+		h.logger.ErrorContext(r.Context(), "create agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create agent"))
 		return
 	}
-	h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, created, "agent_create")
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(created))
 }
 
@@ -214,7 +204,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		log.Printf("list agents: %v", err)
+		h.logger.ErrorContext(r.Context(), "list agents", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agents"))
 		return
 	}
@@ -256,7 +246,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: derefBool(body.IncludeArchived),
 	})
 	if err != nil {
-		log.Printf("search agents: %v", err)
+		h.logger.ErrorContext(r.Context(), "search agents", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not search agents"))
 		return
 	}
@@ -297,7 +287,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("get agent: %v", err)
+		h.logger.ErrorContext(r.Context(), "get agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve agent"))
 		return
 	}
@@ -336,7 +326,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("get agent before update: %v", err)
+		h.logger.ErrorContext(r.Context(), "get agent before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
 	}
@@ -375,12 +365,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("update agent: %v", err)
+		h.logger.ErrorContext(r.Context(), "update agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
-	}
-	if !agentsnapshot.SameRawJSON(current.Skills, updated.Skills) {
-		h.enqueueSkillPrewarm(r.Context(), principal.WorkspaceID, updated, "agent_update")
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
 }
@@ -401,7 +388,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("archive agent: %v", err)
+		h.logger.ErrorContext(r.Context(), "archive agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive agent"))
 		return
 	}
@@ -439,7 +426,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("list agent versions: %v", err)
+		h.logger.ErrorContext(r.Context(), "list agent versions", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agent versions"))
 		return
 	}
@@ -1258,22 +1245,6 @@ func responseFromAgent(agent db.Agent) agentResponse {
 		Type:        "agent",
 		UpdatedAt:   httpapi.FormatTime(agent.UpdatedAt),
 		Version:     agent.CurrentVersion,
-	}
-}
-
-func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, agent db.Agent, trigger string) {
-	if h == nil || h.prewarm == nil || !agentsnapshot.SkillsRawHasEntries(agent.Skills) {
-		return
-	}
-	snapshot, err := agentsnapshot.FromAgent(agent)
-	if err != nil {
-		log.Printf("build agent skill prewarm snapshot agent_id=%s trigger=%s: %v", agent.ExternalID, trigger, err)
-		return
-	}
-	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
-	defer cancel()
-	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, "agent", agent.ExternalID, trigger); err != nil {
-		log.Printf("enqueue agent skill prewarm agent_id=%s trigger=%s: %v", agent.ExternalID, trigger, err)
 	}
 }
 

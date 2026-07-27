@@ -33,6 +33,28 @@ YAML 使用严格字段解析，未知字段、显式 `null`、类型错误和�
 
 需要区分“未配置”和“显式配置为 `false` 或空列表”的字段，在私有 YAML 输入类型中使用 `optional[T]`。输入模型解析完成后再转换为不含指针和 Optional 的运行时 `Config`。这样 presence 是字段类型的一部分，不依赖字符串路径集合；新增派生默认值时必须显式建模，并由 YAML 输入与运行时配置字段合同测试防止两种类型发生字段漂移。
 
+## 配置与运行时依赖分离
+
+`config.Config` 只表示可以由 YAML 加载、校验和复现的数据，不持有 logger、数据库连接、对象存储 client 或其他进程内对象。`*slog.Logger` 属于运行时依赖：可执行程序通过 `internal/logging` 创建根 logger 后，通过 `api.ServerDeps` 和组件构造函数显式注入。HTTP Server 组装层从根 logger 派生带稳定 `component` 字段的子 logger，各 handler、service、enqueuer 和 worker 保存并使用自己的 logger；构造边界通过 `logging.LoggerOrDefault` 统一兼容 nil，组件内部不再读取全局默认 logger。HTTP access middleware 同样使用归一化后的 `component=http` logger 并始终安装；nil 只表示回落到 `slog.Default()`，不用于隐式关闭 access log。
+
+稳定依赖按生命周期归属组件，而不是在每次调用中机械透传。例如 webhook 入队由 `webhooks.Enqueuer` 持有数据库、Webhook 配置和 `component=webhooks` logger，sessions、deployments 与 vaults 只依赖其入队能力；Workbench 路由组由 `workbenchHandler` 持有 persistence store、Anthropic upstream 配置和 logger；delivery、batch、object cleanup 和 filestore cleanup 的数据库、对象存储、配置、upstream、循环状态与 logger 则由各自 Worker 持有。Worker 的 `RunOnce` 类方法只接收 `context.Context`、worker ID、当前时间等单次执行数据，测试也通过构造 Worker 调用这些方法，不再重复传入稳定依赖。叶子 helper 不接受 logger，应该返回结果或 error，由拥有请求或任务上下文的组件记录。数据库、upstream 配置和静态组件 logger 不放入请求 context；request context 只承载取消信号、deadline、认证 principal、request ID、trace 等请求域数据。
+
+```mermaid
+flowchart LR
+    yaml["YAML"] --> config["config.Load → Config"]
+    main["main 组装层"] --> rootLogger["根 slog.Logger"]
+    config --> serverDeps["api.ServerDeps"]
+    rootLogger --> componentLoggers["component 子 logger"]
+    componentLoggers --> serverDeps
+    serverDeps --> handlers["Handlers / Services"]
+    serverDeps --> enqueuer["Webhook Enqueuer"]
+    enqueuer --> handlers
+    config --> workers["Workers"]
+    componentLoggers --> workers
+```
+
+该边界让配置比较、序列化和测试保持确定性，也让日志级别、输出 handler 与公共字段由进程入口统一控制。领域代码不能通过把 logger 塞进 `Config` 来绕过依赖声明，也不能自行创建另一套全局 handler。
+
 Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业务字段，也不做 YAML merge。本地 Compose 从受跟踪的无密钥模板 `deploy/docker-compose/oma-server.yaml` 初始化 gitignored 的 `deploy/docker-compose/oma-server.local.yaml`，并只读挂载后者；密码、API key 和私钥路径只能写入本地文件。生产环境应由容器平台或 Secret Manager 将受权限保护的完整 YAML 只读挂载到同一目标路径。
 
 ## 从 `.env` 迁移
@@ -106,7 +128,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base_url` 作为 rclone `service_url`，因此启用 Environment Runner 时该地址必须同时能从 E2B Sandbox 访问 Filestore HTTP 路由。Runner 通过 E2B Files API 每 `200ms` 探测 `/tmp/rclone-mounts/ready`，最长 `20s`；这两个值是运行时合同，不提供 YAML 配置。
 
-`rclone-filestore` 的路径不是配置项。E2B 镜像合同固定要求可执行文件位于 `/opt/rclone/rclone-filestore`；缺失或不可执行会使该次 Sandbox 启动失败。四个 source、destination、cache、权限、ready/config/state 路径同样属于版本化运行时合同，不能通过租户数据、Session resource 或 YAML 改写。
+`rclone-filestore` 的路径不是配置项。E2B 镜像合同固定要求可执行文件位于 `/opt/rclone/rclone-filestore`；缺失或不可执行会使该次 Sandbox 启动失败。五个 source、destination、cache、权限、ready/config/state 路径同样属于版本化运行时合同，不能通过租户数据、Session resource 或 YAML 改写。第五个 source 固定为 Filestore `/skills`，以只读方式直接挂载到 `/root/.claude/skills`；destination 由 `rclone-filestore multimount` 内部创建，Runner 不执行独立准备命令。
 
 默认 Docker Compose 是显式的本地开发配置：`env: dev`、`database.auto_migrate: true`，并省略 `code_session.jwt_signing_private_key_file`。Code Session 与 Filestore 各自使用 oma-server 进程级临时 Ed25519 密钥，服务重启会轮换信任并使此前签发的两类 JWT 失效。独立运行的 `cmd/filestore-token` 不会生成另一把临时密钥；手动签发必须为 CLI 与服务配置同一个持久化私钥文件，否则服务无法验证另一个进程签出的 token。生产环境中，两个签发器可读取同一份稳定的只读 Ed25519 私钥，但使用不同的 claims 与验证入口，不会互相代用。生产部署必须使用 `env: prod`、稳定的只读私钥路径并关闭自动迁移；缺少 JWT 私钥时启动边界会拒绝生产配置。
 

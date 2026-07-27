@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
@@ -29,7 +30,8 @@ type BuiltinSeedResult struct {
 	Skills   []string
 }
 
-func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.ObjectStore, opts BuiltinSeedOptions) (BuiltinSeedResult, error) {
+func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.ObjectStore, opts BuiltinSeedOptions, logger *slog.Logger) (BuiltinSeedResult, error) {
+	logger = logging.LoggerOrDefault(logger)
 	dir := strings.TrimSpace(opts.Dir)
 	if dir == "" {
 		return BuiltinSeedResult{}, errors.New("--dir is required")
@@ -80,7 +82,7 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 			version = defaultBuiltinSeedVersion(info.ModTime(), pkg.SHA256)
 		}
 		objectKey := fmt.Sprintf("builtin-skills/%s/versions/%s/%s.skill", sanitizeForKey(skillID), sanitizeForKey(version), pkg.SHA256)
-		if err := store.Put(ctx, objectKey, bytes.NewReader(pkg.Zip), pkg.Size, skillArchiveContentType); err != nil {
+		if _, err := store.Upload(ctx, objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
 			return BuiltinSeedResult{}, fmt.Errorf("upload %s: %w", archivePath, err)
 		}
 
@@ -94,15 +96,15 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 			Name:        firstNonEmpty(pkg.Name, skillID),
 			Description: pkg.Description,
 			Directory:   pkg.Directory,
-			S3Bucket:    store.Bucket(),
+			S3Bucket:    store.Name(),
 			S3Key:       objectKey,
 			SizeBytes:   pkg.Size,
 			SHA256:      pkg.SHA256,
 			CreatedAt:   now,
 		})
 		if err != nil {
-			if deleteErr := store.Delete(ctx, objectKey); deleteErr != nil {
-				log.Printf("seed builtin skills: cleanup failed for %s: %v", objectKey, deleteErr)
+			if deleteErr := store.Delete(ctx, objectKey, storage.DeleteOptions{}); deleteErr != nil {
+				logger.ErrorContext(ctx, "seed builtin skills: cleanup failed", "object_key", objectKey, "error", deleteErr)
 			}
 			if errors.Is(err, db.ErrVersionConflict) {
 				return BuiltinSeedResult{}, fmt.Errorf("%s version %s already exists with different content; choose a new version", skillID, version)
@@ -114,14 +116,11 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 	}
 
 	if opts.Prune {
+		// TODO: 将 prune 的 builtin archive 纳入 reference-aware catalog GC；
+		// 当前只软删除 catalog row，避免破坏活动 Session 借用的对象。
 		prunedVersions, err := database.SoftDeleteMissingBuiltinSkills(ctx, result.Skills, now)
 		if err != nil {
 			return BuiltinSeedResult{}, err
-		}
-		for _, version := range prunedVersions {
-			if err := store.Delete(ctx, version.S3Key); err != nil {
-				log.Printf("seed builtin skills: delete pruned object failed for %s version %s (%s): %v", version.SkillExternalID, version.Version, version.S3Key, err)
-			}
 		}
 		result.Pruned = len(prunedVersions)
 	}

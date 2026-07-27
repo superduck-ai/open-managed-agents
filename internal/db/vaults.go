@@ -2,12 +2,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type Vault struct {
@@ -72,139 +70,121 @@ type ListVaultCredentialsPageParams struct {
 }
 
 func (d *DB) CreateVault(ctx context.Context, vault Vault) (Vault, error) {
-	return scanVault(d.Pool.QueryRow(ctx, `
+	return getVaultSQLX(ctx, d.sql, `
 		insert into vaults (
 			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
 			display_name, metadata, created_at, updated_at
 		)
-		values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $8)
-		returning id, uuid::text, external_id, organization_id, workspace_id,
-			created_by_api_key_id, display_name, metadata, created_at, updated_at,
-			archived_at, deleted_at
-	`, vault.UUID, vault.ExternalID, vault.OrganizationID, vault.WorkspaceID, vault.CreatedByAPIKeyID,
-		vault.DisplayName, jsonArg(vault.Metadata), vault.CreatedAt))
+		values (
+			:uuid, :external_id, :organization_id, :workspace_id, :created_by_api_key_id,
+			:display_name, CAST(:metadata AS jsonb), :created_at, :created_at
+		)
+		returning `+vaultSQLXColumns+`
+	`, vaultArguments(vault))
 }
 
 func (d *DB) GetVault(ctx context.Context, workspaceID int64, externalID string) (Vault, error) {
-	return scanVault(d.Pool.QueryRow(ctx, vaultSelectSQL()+`
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID))
+	return getVaultSQLX(ctx, d.sql, vaultSelectSQL()+`
+		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+	`, vaultLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) GetVaultByExternalIDOrUUID(ctx context.Context, workspaceID int64, identifier string) (Vault, error) {
-	return scanVault(d.Pool.QueryRow(ctx, vaultSelectSQL()+`
-		where workspace_id = $1
-			and (external_id = $2 or uuid::text = $2)
+	return getVaultSQLX(ctx, d.sql, vaultSelectSQL()+`
+		where workspace_id = :workspace_id
+			and (external_id = :identifier or CAST(uuid AS text) = :identifier)
 			and deleted_at is null
-	`, workspaceID, identifier))
+	`, map[string]any{"workspace_id": workspaceID, "identifier": identifier})
 }
 
 func (d *DB) UpdateVault(ctx context.Context, workspaceID int64, externalID string, next Vault) (Vault, error) {
-	return scanVault(d.Pool.QueryRow(ctx, `
+	arguments := vaultArguments(next)
+	arguments["workspace_id"] = workspaceID
+	arguments["external_id"] = externalID
+	return getVaultSQLX(ctx, d.sql, `
 		update vaults
-		set display_name = $3,
-			metadata = $4::jsonb,
-			updated_at = $5
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id,
-			created_by_api_key_id, display_name, metadata, created_at, updated_at,
-			archived_at, deleted_at
-	`, workspaceID, externalID, next.DisplayName, jsonArg(next.Metadata), next.UpdatedAt))
+		set display_name = :display_name,
+			metadata = CAST(:metadata AS jsonb),
+			updated_at = :updated_at
+		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		returning `+vaultSQLXColumns+`
+	`, arguments)
 }
 
 func (d *DB) ArchiveVault(ctx context.Context, workspaceID int64, externalID string) (Vault, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return Vault{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	vault, err := scanVault(tx.QueryRow(ctx, `
+	vault, err := getVaultSQLX(ctx, tx, `
 		update vaults
 		set archived_at = coalesce(archived_at, now()),
 			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id,
-			created_by_api_key_id, display_name, metadata, created_at, updated_at,
-			archived_at, deleted_at
-	`, workspaceID, externalID))
+		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		returning `+vaultSQLXColumns+`
+	`, vaultLookupArguments(workspaceID, externalID))
 	if err != nil {
 		return Vault{}, err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := namedExecContext(ctx, tx, `
 		update vault_credentials
 		set archived_at = coalesce(archived_at, now()),
 			secret_payload = null,
 			updated_at = now()
-		where workspace_id = $1 and vault_id = $2 and deleted_at is null
-	`, workspaceID, vault.ID); err != nil {
+		where workspace_id = :workspace_id and vault_id = :vault_id and deleted_at is null
+	`, map[string]any{"workspace_id": workspaceID, "vault_id": vault.ID}); err != nil {
 		return Vault{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return Vault{}, err
 	}
 	return vault, nil
 }
 
 func (d *DB) DeleteVault(ctx context.Context, workspaceID int64, externalID string) error {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
 	var vaultID int64
-	if err := tx.QueryRow(ctx, `
+	err = namedGetContext(ctx, tx, &vaultID, `
 		select id
 		from vaults
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
+		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
 		for update
-	`, workspaceID, externalID).Scan(&vaultID); errors.Is(err, pgx.ErrNoRows) {
+	`, vaultLookupArguments(workspaceID, externalID))
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
-	} else if err != nil {
+	}
+	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
+	arguments := map[string]any{"workspace_id": workspaceID, "vault_id": vaultID}
+	if _, err := namedExecContext(ctx, tx, `
 		delete from vault_credentials
-		where workspace_id = $1 and vault_id = $2
-	`, workspaceID, vaultID); err != nil {
+		where workspace_id = :workspace_id and vault_id = :vault_id
+	`, arguments); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := namedExecContext(ctx, tx, `
 		delete from vaults
-		where workspace_id = $1 and id = $2
-	`, workspaceID, vaultID); err != nil {
+		where workspace_id = :workspace_id and id = :vault_id
+	`, arguments); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 func (d *DB) ListVaultsPage(ctx context.Context, params ListVaultsPageParams) ([]Vault, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	query := vaultSelectSQL() + `
-		where workspace_id = $1 and deleted_at is null
-	`
-	args := []any{params.WorkspaceID}
-	nextArg := 2
-	if !params.IncludeArchived {
-		query += " and archived_at is null"
-	}
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	vaults, err := scanVaultRows(rows)
+	query, arguments := listVaultsQuery(params)
+	vaults, err := selectVaultsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -216,33 +196,41 @@ func (d *DB) ListVaultsPage(ctx context.Context, params ListVaultsPageParams) ([
 }
 
 func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredential) (VaultCredential, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return VaultCredential{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
 	var vaultID int64
-	if err := tx.QueryRow(ctx, `
+	err = namedGetContext(ctx, tx, &vaultID, `
 		select id
 		from vaults
-		where workspace_id = $1 and external_id = $2 and deleted_at is null and archived_at is null
+		where workspace_id = :workspace_id
+			and external_id = :vault_external_id
+			and deleted_at is null
+			and archived_at is null
 		for update
-	`, credential.WorkspaceID, credential.VaultExternalID).Scan(&vaultID); errors.Is(err, pgx.ErrNoRows) {
+	`, map[string]any{
+		"workspace_id":      credential.WorkspaceID,
+		"vault_external_id": credential.VaultExternalID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
 		return VaultCredential{}, ErrNotFound
-	} else if err != nil {
+	}
+	if err != nil {
 		return VaultCredential{}, err
 	}
 
 	var activeCount int
-	if err := tx.QueryRow(ctx, `
-		select count(*)::int
+	if err := namedGetContext(ctx, tx, &activeCount, `
+		select CAST(count(*) AS int)
 		from vault_credentials
-		where workspace_id = $1
-			and vault_id = $2
+		where workspace_id = :workspace_id
+			and vault_id = :vault_id
 			and deleted_at is null
 			and archived_at is null
-	`, credential.WorkspaceID, vaultID).Scan(&activeCount); err != nil {
+	`, map[string]any{"workspace_id": credential.WorkspaceID, "vault_id": vaultID}); err != nil {
 		return VaultCredential{}, err
 	}
 	if activeCount >= 20 {
@@ -250,97 +238,89 @@ func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredenti
 	}
 
 	credential.VaultID = vaultID
-	created, err := scanVaultCredential(tx.QueryRow(ctx, `
+	created, err := getVaultCredentialSQLX(ctx, tx, `
 		insert into vault_credentials (
 			uuid, external_id, organization_id, workspace_id, vault_id, vault_external_id,
 			created_by_api_key_id, display_name, metadata, auth_type, credential_key,
 			auth, secret_payload, created_at, updated_at
 		)
 		values (
-			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9::jsonb, $10, $11,
-			$12::jsonb, $13::jsonb, $14, $14
+			:uuid, :external_id, :organization_id, :workspace_id, :vault_id,
+			:vault_external_id, :created_by_api_key_id, :display_name,
+			CAST(:metadata AS jsonb), :auth_type, :credential_key,
+			CAST(:auth AS jsonb), CAST(:secret_payload AS jsonb),
+			:created_at, :created_at
 		)
-		returning id, uuid::text, external_id, organization_id, workspace_id, vault_id,
-			vault_external_id, created_by_api_key_id, display_name, metadata, auth_type,
-			credential_key, auth, secret_payload, created_at, updated_at, archived_at,
-			deleted_at
-	`, credential.UUID, credential.ExternalID, credential.OrganizationID, credential.WorkspaceID,
-		credential.VaultID, credential.VaultExternalID, credential.CreatedByAPIKeyID,
-		credential.DisplayName, jsonArg(credential.Metadata), credential.AuthType,
-		credential.CredentialKey, jsonArg(credential.Auth), jsonArg(credential.SecretPayload),
-		credential.CreatedAt))
+		returning `+vaultCredentialSQLXColumns+`
+	`, vaultCredentialArguments(credential))
 	if isUniqueViolation(err) {
 		return VaultCredential{}, ErrDuplicate
 	}
 	if err != nil {
 		return VaultCredential{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return VaultCredential{}, err
 	}
 	return created, nil
 }
 
 func (d *DB) GetVaultCredential(ctx context.Context, workspaceID int64, vaultExternalID, credentialExternalID string) (VaultCredential, error) {
-	return scanVaultCredential(d.Pool.QueryRow(ctx, vaultCredentialSelectSQL()+`
-		where workspace_id = $1
-			and vault_external_id = $2
-			and external_id = $3
+	return getVaultCredentialSQLX(ctx, d.sql, vaultCredentialSelectSQL()+`
+		where workspace_id = :workspace_id
+			and vault_external_id = :vault_external_id
+			and external_id = :credential_external_id
 			and deleted_at is null
-	`, workspaceID, vaultExternalID, credentialExternalID))
+	`, vaultCredentialLookupArguments(workspaceID, vaultExternalID, credentialExternalID))
 }
 
 func (d *DB) UpdateVaultCredential(ctx context.Context, workspaceID int64, vaultExternalID, credentialExternalID string, next VaultCredential) (VaultCredential, error) {
-	return scanVaultCredential(d.Pool.QueryRow(ctx, `
+	arguments := vaultCredentialArguments(next)
+	arguments["workspace_id"] = workspaceID
+	arguments["vault_external_id"] = vaultExternalID
+	arguments["credential_external_id"] = credentialExternalID
+	return getVaultCredentialSQLX(ctx, d.sql, `
 		update vault_credentials
-		set display_name = $4,
-			metadata = $5::jsonb,
-			auth = $6::jsonb,
-			secret_payload = $7::jsonb,
-			updated_at = $8
-		where workspace_id = $1
-			and vault_external_id = $2
-			and external_id = $3
+		set display_name = :display_name,
+			metadata = CAST(:metadata AS jsonb),
+			auth = CAST(:auth AS jsonb),
+			secret_payload = CAST(:secret_payload AS jsonb),
+			updated_at = :updated_at
+		where workspace_id = :workspace_id
+			and vault_external_id = :vault_external_id
+			and external_id = :credential_external_id
 			and deleted_at is null
 			and archived_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id, vault_id,
-			vault_external_id, created_by_api_key_id, display_name, metadata, auth_type,
-			credential_key, auth, secret_payload, created_at, updated_at, archived_at,
-			deleted_at
-	`, workspaceID, vaultExternalID, credentialExternalID, next.DisplayName,
-		jsonArg(next.Metadata), jsonArg(next.Auth), jsonArg(next.SecretPayload), next.UpdatedAt))
+		returning `+vaultCredentialSQLXColumns+`
+	`, arguments)
 }
 
 func (d *DB) ArchiveVaultCredential(ctx context.Context, workspaceID int64, vaultExternalID, credentialExternalID string) (VaultCredential, error) {
-	return scanVaultCredential(d.Pool.QueryRow(ctx, `
+	return getVaultCredentialSQLX(ctx, d.sql, `
 		update vault_credentials
 		set archived_at = coalesce(archived_at, now()),
 			secret_payload = null,
 			updated_at = now()
-		where workspace_id = $1
-			and vault_external_id = $2
-			and external_id = $3
+		where workspace_id = :workspace_id
+			and vault_external_id = :vault_external_id
+			and external_id = :credential_external_id
 			and deleted_at is null
-		returning id, uuid::text, external_id, organization_id, workspace_id, vault_id,
-			vault_external_id, created_by_api_key_id, display_name, metadata, auth_type,
-			credential_key, auth, secret_payload, created_at, updated_at, archived_at,
-			deleted_at
-	`, workspaceID, vaultExternalID, credentialExternalID))
+		returning `+vaultCredentialSQLXColumns+`
+	`, vaultCredentialLookupArguments(workspaceID, vaultExternalID, credentialExternalID))
 }
 
 func (d *DB) DeleteVaultCredential(ctx context.Context, workspaceID int64, vaultExternalID, credentialExternalID string) error {
-	tag, err := d.Pool.Exec(ctx, `
+	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
 		delete from vault_credentials
-		where workspace_id = $1
-			and vault_external_id = $2
-			and external_id = $3
+		where workspace_id = :workspace_id
+			and vault_external_id = :vault_external_id
+			and external_id = :credential_external_id
 			and deleted_at is null
-	`, workspaceID, vaultExternalID, credentialExternalID)
+	`, vaultCredentialLookupArguments(workspaceID, vaultExternalID, credentialExternalID))
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -350,30 +330,8 @@ func (d *DB) ListVaultCredentialsPage(ctx context.Context, params ListVaultCrede
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	query := vaultCredentialSelectSQL() + `
-		where workspace_id = $1
-			and vault_external_id = $2
-			and deleted_at is null
-	`
-	args := []any{params.WorkspaceID, params.VaultExternalID}
-	nextArg := 3
-	if !params.IncludeArchived {
-		query += " and archived_at is null"
-	}
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	credentials, err := scanVaultCredentialRows(rows)
+	query, arguments := listVaultCredentialsQuery(params)
+	credentials, err := selectVaultCredentialsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -384,92 +342,250 @@ func (d *DB) ListVaultCredentialsPage(ctx context.Context, params ListVaultCrede
 	return credentials, hasMore, nil
 }
 
+const (
+	vaultSQLXColumns = `id, CAST(uuid AS text) AS uuid, external_id, organization_id,
+		workspace_id, created_by_api_key_id, display_name, metadata, created_at,
+		updated_at, archived_at, deleted_at`
+	vaultCredentialSQLXColumns = `id, CAST(uuid AS text) AS uuid, external_id,
+		organization_id, workspace_id, vault_id, vault_external_id, created_by_api_key_id,
+		display_name, metadata, auth_type, credential_key, auth, secret_payload,
+		created_at, updated_at, archived_at, deleted_at`
+)
+
+type vaultRow struct {
+	ID                int64      `db:"id"`
+	UUID              string     `db:"uuid"`
+	ExternalID        string     `db:"external_id"`
+	OrganizationID    int64      `db:"organization_id"`
+	WorkspaceID       int64      `db:"workspace_id"`
+	CreatedByAPIKeyID int64      `db:"created_by_api_key_id"`
+	DisplayName       string     `db:"display_name"`
+	Metadata          []byte     `db:"metadata"`
+	CreatedAt         time.Time  `db:"created_at"`
+	UpdatedAt         time.Time  `db:"updated_at"`
+	ArchivedAt        *time.Time `db:"archived_at"`
+	DeletedAt         *time.Time `db:"deleted_at"`
+}
+
+type vaultCredentialRow struct {
+	ID                int64      `db:"id"`
+	UUID              string     `db:"uuid"`
+	ExternalID        string     `db:"external_id"`
+	OrganizationID    int64      `db:"organization_id"`
+	WorkspaceID       int64      `db:"workspace_id"`
+	VaultID           int64      `db:"vault_id"`
+	VaultExternalID   string     `db:"vault_external_id"`
+	CreatedByAPIKeyID int64      `db:"created_by_api_key_id"`
+	DisplayName       string     `db:"display_name"`
+	Metadata          []byte     `db:"metadata"`
+	AuthType          string     `db:"auth_type"`
+	CredentialKey     string     `db:"credential_key"`
+	Auth              []byte     `db:"auth"`
+	SecretPayload     []byte     `db:"secret_payload"`
+	CreatedAt         time.Time  `db:"created_at"`
+	UpdatedAt         time.Time  `db:"updated_at"`
+	ArchivedAt        *time.Time `db:"archived_at"`
+	DeletedAt         *time.Time `db:"deleted_at"`
+}
+
 func vaultSelectSQL() string {
-	return `
-		select id, uuid::text, external_id, organization_id, workspace_id,
-			created_by_api_key_id, display_name, metadata, created_at, updated_at,
-			archived_at, deleted_at
-		from vaults
-	`
+	return `select ` + vaultSQLXColumns + ` from vaults`
 }
 
 func vaultCredentialSelectSQL() string {
-	return `
-		select id, uuid::text, external_id, organization_id, workspace_id, vault_id,
-			vault_external_id, created_by_api_key_id, display_name, metadata, auth_type,
-			credential_key, auth, secret_payload, created_at, updated_at, archived_at,
-			deleted_at
-		from vault_credentials
-	`
+	return `select ` + vaultCredentialSQLXColumns + ` from vault_credentials`
 }
 
-type vaultScanner interface {
-	Scan(dest ...any) error
-}
-
-type vaultRows interface {
-	Next() bool
-	Scan(dest ...any) error
-	Err() error
-}
-
-func scanVault(row vaultScanner) (Vault, error) {
-	var vault Vault
-	var metadata []byte
-	err := row.Scan(&vault.ID, &vault.UUID, &vault.ExternalID, &vault.OrganizationID,
-		&vault.WorkspaceID, &vault.CreatedByAPIKeyID, &vault.DisplayName, &metadata,
-		&vault.CreatedAt, &vault.UpdatedAt, &vault.ArchivedAt, &vault.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Vault{}, ErrNotFound
+func listVaultsQuery(params ListVaultsPageParams) (string, map[string]any) {
+	query := vaultSelectSQL() + ` where workspace_id = :workspace_id and deleted_at is null`
+	arguments := map[string]any{"workspace_id": params.WorkspaceID, "limit": params.Limit + 1}
+	if !params.IncludeArchived {
+		query += " and archived_at is null"
 	}
-	if err != nil {
+	if params.Cursor != nil {
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
+	}
+	query += " order by created_at desc, id desc limit :limit"
+	return query, arguments
+}
+
+func listVaultCredentialsQuery(params ListVaultCredentialsPageParams) (string, map[string]any) {
+	query := vaultCredentialSelectSQL() + `
+		where workspace_id = :workspace_id
+			and vault_external_id = :vault_external_id
+			and deleted_at is null
+	`
+	arguments := map[string]any{
+		"workspace_id":      params.WorkspaceID,
+		"vault_external_id": params.VaultExternalID,
+		"limit":             params.Limit + 1,
+	}
+	if !params.IncludeArchived {
+		query += " and archived_at is null"
+	}
+	if params.Cursor != nil {
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
+	}
+	query += " order by created_at desc, id desc limit :limit"
+	return query, arguments
+}
+
+func getVaultSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (Vault, error) {
+	var row vaultRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Vault{}, ErrNotFound
+		}
 		return Vault{}, err
 	}
-	vault.Metadata = copyRaw(metadata)
-	return vault, nil
+	return row.vault(), nil
 }
 
-func scanVaultRows(rows vaultRows) ([]Vault, error) {
-	var vaults []Vault
-	for rows.Next() {
-		vault, err := scanVault(rows)
-		if err != nil {
-			return nil, err
+func selectVaultsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]Vault, error) {
+	var rows []vaultRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	vaults := make([]Vault, len(rows))
+	for index := range rows {
+		vaults[index] = rows[index].vault()
+	}
+	return vaults, nil
+}
+
+func getVaultCredentialSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (VaultCredential, error) {
+	var row vaultCredentialRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return VaultCredential{}, ErrNotFound
 		}
-		vaults = append(vaults, vault)
-	}
-	return vaults, rows.Err()
-}
-
-func scanVaultCredential(row vaultScanner) (VaultCredential, error) {
-	var credential VaultCredential
-	var metadata, auth, secretPayload []byte
-	err := row.Scan(&credential.ID, &credential.UUID, &credential.ExternalID,
-		&credential.OrganizationID, &credential.WorkspaceID, &credential.VaultID,
-		&credential.VaultExternalID, &credential.CreatedByAPIKeyID, &credential.DisplayName,
-		&metadata, &credential.AuthType, &credential.CredentialKey, &auth, &secretPayload,
-		&credential.CreatedAt, &credential.UpdatedAt, &credential.ArchivedAt,
-		&credential.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return VaultCredential{}, ErrNotFound
-	}
-	if err != nil {
 		return VaultCredential{}, err
 	}
-	credential.Metadata = copyRaw(metadata)
-	credential.Auth = copyRaw(auth)
-	credential.SecretPayload = copyRaw(secretPayload)
-	return credential, nil
+	return row.credential(), nil
 }
 
-func scanVaultCredentialRows(rows vaultRows) ([]VaultCredential, error) {
-	var credentials []VaultCredential
-	for rows.Next() {
-		credential, err := scanVaultCredential(rows)
-		if err != nil {
-			return nil, err
-		}
-		credentials = append(credentials, credential)
+func selectVaultCredentialsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]VaultCredential, error) {
+	var rows []vaultCredentialRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
 	}
-	return credentials, rows.Err()
+	credentials := make([]VaultCredential, len(rows))
+	for index := range rows {
+		credentials[index] = rows[index].credential()
+	}
+	return credentials, nil
+}
+
+func vaultLookupArguments(workspaceID int64, externalID string) map[string]any {
+	return map[string]any{"workspace_id": workspaceID, "external_id": externalID}
+}
+
+func vaultCredentialLookupArguments(
+	workspaceID int64,
+	vaultExternalID string,
+	credentialExternalID string,
+) map[string]any {
+	return map[string]any{
+		"workspace_id":           workspaceID,
+		"vault_external_id":      vaultExternalID,
+		"credential_external_id": credentialExternalID,
+	}
+}
+
+func vaultArguments(vault Vault) map[string]any {
+	return map[string]any{
+		"uuid":                  vault.UUID,
+		"external_id":           vault.ExternalID,
+		"organization_id":       vault.OrganizationID,
+		"workspace_id":          vault.WorkspaceID,
+		"created_by_api_key_id": vault.CreatedByAPIKeyID,
+		"display_name":          vault.DisplayName,
+		"metadata":              jsonArg(vault.Metadata),
+		"created_at":            vault.CreatedAt,
+		"updated_at":            vault.UpdatedAt,
+	}
+}
+
+func vaultCredentialArguments(credential VaultCredential) map[string]any {
+	return map[string]any{
+		"uuid":                  credential.UUID,
+		"external_id":           credential.ExternalID,
+		"organization_id":       credential.OrganizationID,
+		"workspace_id":          credential.WorkspaceID,
+		"vault_id":              credential.VaultID,
+		"vault_external_id":     credential.VaultExternalID,
+		"created_by_api_key_id": credential.CreatedByAPIKeyID,
+		"display_name":          credential.DisplayName,
+		"metadata":              jsonArg(credential.Metadata),
+		"auth_type":             credential.AuthType,
+		"credential_key":        credential.CredentialKey,
+		"auth":                  jsonArg(credential.Auth),
+		"secret_payload":        jsonArg(credential.SecretPayload),
+		"created_at":            credential.CreatedAt,
+		"updated_at":            credential.UpdatedAt,
+	}
+}
+
+func (r vaultRow) vault() Vault {
+	return Vault{
+		ID:                r.ID,
+		UUID:              r.UUID,
+		ExternalID:        r.ExternalID,
+		OrganizationID:    r.OrganizationID,
+		WorkspaceID:       r.WorkspaceID,
+		CreatedByAPIKeyID: r.CreatedByAPIKeyID,
+		DisplayName:       r.DisplayName,
+		Metadata:          copyRaw(r.Metadata),
+		CreatedAt:         r.CreatedAt,
+		UpdatedAt:         r.UpdatedAt,
+		ArchivedAt:        r.ArchivedAt,
+		DeletedAt:         r.DeletedAt,
+	}
+}
+
+func (r vaultCredentialRow) credential() VaultCredential {
+	return VaultCredential{
+		ID:                r.ID,
+		UUID:              r.UUID,
+		ExternalID:        r.ExternalID,
+		OrganizationID:    r.OrganizationID,
+		WorkspaceID:       r.WorkspaceID,
+		VaultID:           r.VaultID,
+		VaultExternalID:   r.VaultExternalID,
+		CreatedByAPIKeyID: r.CreatedByAPIKeyID,
+		DisplayName:       r.DisplayName,
+		Metadata:          copyRaw(r.Metadata),
+		AuthType:          r.AuthType,
+		CredentialKey:     r.CredentialKey,
+		Auth:              copyRaw(r.Auth),
+		SecretPayload:     copyRaw(r.SecretPayload),
+		CreatedAt:         r.CreatedAt,
+		UpdatedAt:         r.UpdatedAt,
+		ArchivedAt:        r.ArchivedAt,
+		DeletedAt:         r.DeletedAt,
+	}
 }

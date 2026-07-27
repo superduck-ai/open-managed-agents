@@ -242,7 +242,7 @@ func TestMemoryStoresAPI(t *testing.T) {
 
 func TestMemoryStoreObjectCleanupJobs(t *testing.T) {
 	store := newFakeStore("memory-cleanup-bucket")
-	store.deleteErr = errors.New("minio unavailable")
+	store.deleteErr = errors.New("object storage unavailable")
 	app := newTestAppWithStore(t, nil, store)
 	defer app.close()
 

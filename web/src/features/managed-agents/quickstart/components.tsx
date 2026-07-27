@@ -1822,6 +1822,7 @@ export function TemplateDetailPanel({
   onFormatChange,
   onUseTemplate,
   isUsing,
+  modelMappings,
 }: {
   template: AgentTemplate;
   format: CodeFormat;
@@ -1829,9 +1830,10 @@ export function TemplateDetailPanel({
   onFormatChange: (format: CodeFormat) => void;
   onUseTemplate: () => void;
   isUsing: boolean;
+  modelMappings: Record<string, string>;
 }) {
   const { msg, locale } = useI18n();
-  const code = codeForTemplate(template, format, locale);
+  const code = codeForTemplate(template, format, locale, modelMappings);
   const title = templateTitle(template, msg);
   return (
     <Card className="relative h-full min-h-0 overflow-hidden border border-border bg-card py-0 shadow-sm ring-0">
@@ -1894,6 +1896,7 @@ export function CreatedAgentConfigPanel({
   onConfigureEnvironment,
   onFormatChange,
   onTabChange,
+  modelMappings,
 }: {
   template: AgentTemplate;
   agent: AgentApiResponse | null;
@@ -1912,9 +1915,12 @@ export function CreatedAgentConfigPanel({
   onConfigureEnvironment: () => Promise<void>;
   onFormatChange: (format: CodeFormat) => void;
   onTabChange: (tab: AgentPanelTab) => void;
+  modelMappings: Record<string, string>;
 }) {
   const { msg, locale } = useI18n();
-  const displayedConfig = displayAgentConfig(agentConfig ?? createDialogAgentConfig(template, locale));
+  const displayedConfig = displayAgentConfig(
+    agentConfig ?? createDialogAgentConfig(template, locale, undefined, modelMappings),
+  );
   const code = format === 'YAML' ? yamlStringify(displayedConfig) : JSON.stringify(displayedConfig, null, 2);
   return (
     <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-sm">

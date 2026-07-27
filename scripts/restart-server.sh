@@ -3,9 +3,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_PATH="$REPO_ROOT/config/config.yaml"
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "Required config file not found: $CONFIG_PATH" >&2
+  echo "Create it with: cp $REPO_ROOT/config/config.example.yaml $CONFIG_PATH" >&2
+  exit 1
+fi
+
+export CONFIG_FILE="$CONFIG_PATH"
 
 PORT="${PORT:-38080}"
-ADDR="${ADDR:-127.0.0.1:${PORT}}"
 
 listening_pids() {
   lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | sort -u || true
@@ -54,7 +62,7 @@ stop_listeners() {
 
 stop_listeners
 
-echo "Starting claude-api-server on $ADDR in foreground"
+echo "Starting claude-api-server with $CONFIG_FILE in foreground"
 echo "Press Ctrl+C to stop"
 cd "$REPO_ROOT"
-exec env ADDR="$ADDR" go run .
+exec go run .

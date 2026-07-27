@@ -1,15 +1,21 @@
 package models
 
 import (
+	"maps"
 	"net/http"
+	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/samber/lo"
 )
 
 type Handler struct {
-	router chi.Router
+	router        chi.Router
+	modelMappings map[string]string
 }
 
 type listResponse struct {
@@ -19,8 +25,8 @@ type listResponse struct {
 	LastID  string           `json:"last_id"`
 }
 
-func NewHandler() *Handler {
-	h := &Handler{}
+func NewHandler(upstream config.AnthropicUpstreamConfig) *Handler {
+	h := &Handler{modelMappings: upstream.ModelMappings}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -38,7 +44,7 @@ func notFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, _ *http.Request) {
-	models := buildPlatformModels()
+	models := resolvePlatformModels(buildPlatformModels(), h.modelMappings)
 	firstID := ""
 	lastID := ""
 	if len(models) > 0 {
@@ -50,6 +56,24 @@ func (h *Handler) list(w http.ResponseWriter, _ *http.Request) {
 		HasMore: false,
 		FirstID: firstID,
 		LastID:  lastID,
+	})
+}
+
+func resolvePlatformModels(models []map[string]any, mappings map[string]string) []map[string]any {
+	resolved := lo.Map(models, func(model map[string]any, _ int) map[string]any {
+		out := maps.Clone(model)
+		modelID, _ := out["id"].(string)
+		sourceID := strings.TrimSpace(modelID)
+		effectiveID := modelmapping.Resolve(modelID, mappings)
+		out["id"] = effectiveID
+		if effectiveID != sourceID {
+			out["display_name"] = effectiveID
+		}
+		return out
+	})
+	return lo.UniqBy(resolved, func(model map[string]any) string {
+		modelID, _ := model["id"].(string)
+		return modelID
 	})
 }
 

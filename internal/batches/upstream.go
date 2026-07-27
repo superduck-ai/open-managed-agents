@@ -34,7 +34,7 @@ type HTTPUpstreamClient struct {
 }
 
 func NewHTTPUpstreamClient(cfg config.Config) *HTTPUpstreamClient {
-	timeout := cfg.BatchUpstreamTimeout
+	timeout := cfg.Batch.UpstreamTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
 	}
@@ -46,7 +46,7 @@ func NewHTTPUpstreamClient(cfg config.Config) *HTTPUpstreamClient {
 
 func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, req db.MessageBatchRequest) (UpstreamResult, error) {
 	body := normalizeParams(req.Params)
-	endpoint, err := url.JoinPath(c.cfg.AnthropicUpstreamBaseURL, "/v1/messages")
+	endpoint, err := url.JoinPath(c.cfg.AnthropicUpstream.BaseURL, "/v1/messages")
 	if err != nil {
 		return erroredResult("api_error", "invalid upstream base URL"), nil
 	}
@@ -57,7 +57,7 @@ func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, re
 	if err != nil {
 		return erroredResult("api_error", "could not create upstream request"), nil
 	}
-	httpReq.Header.Set("x-api-key", c.cfg.AnthropicUpstreamAPIKey)
+	httpReq.Header.Set("x-api-key", c.cfg.AnthropicUpstream.APIKey)
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("anthropic-version", batch.AnthropicVersion)
 	if batch.APIVariant == "beta" && len(batch.BetaHeaders) > 0 {

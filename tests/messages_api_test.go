@@ -26,7 +26,7 @@ func TestMessagesAPIFailures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load config: %v", err)
 		}
-		cfg.AnthropicUpstreamAPIKey = ""
+		cfg.AnthropicUpstream.APIKey = ""
 		app := newTestAppWithStore(t, &cfg, newFakeStore("messages-no-upstream-key-bucket"))
 		defer app.close()
 
@@ -44,8 +44,8 @@ func TestMessagesAPIFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.AnthropicUpstreamBaseURL = upstream.URL
-	cfg.AnthropicUpstreamAPIKey = "sk-ant-messages-failure-upstream"
+	cfg.AnthropicUpstream.BaseURL = upstream.URL
+	cfg.AnthropicUpstream.APIKey = "sk-ant-messages-failure-upstream"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("messages-failures-bucket"))
 	defer app.close()
 
@@ -177,8 +177,8 @@ func TestMessagesAPISuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.AnthropicUpstreamBaseURL = upstream.URL
-	cfg.AnthropicUpstreamAPIKey = "sk-ant-messages-upstream"
+	cfg.AnthropicUpstream.BaseURL = upstream.URL
+	cfg.AnthropicUpstream.APIKey = "sk-ant-messages-upstream"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("messages-success-bucket"))
 	defer app.close()
 	payload := `{"model":"` + messagesTestModel + `","max_tokens":16,"messages":[{"role":"user","content":"hello"}]}`
@@ -247,7 +247,7 @@ func TestMessagesAPISuccess(t *testing.T) {
 		t.Fatalf("upstream requests = %#v, want 4", observed)
 	}
 	first := observed[0]
-	if first.Path != "/v1/messages" || first.Query != "beta=true" || first.APIKey != cfg.AnthropicUpstreamAPIKey {
+	if first.Path != "/v1/messages" || first.Query != "beta=true" || first.APIKey != cfg.AnthropicUpstream.APIKey {
 		t.Fatalf("unexpected upstream target or credential: %#v", first)
 	}
 	if first.Authorization != "" || first.Cookie != "" || first.OrganizationUUID != "" || first.WorkspaceID != "" {
@@ -260,7 +260,7 @@ func TestMessagesAPISuccess(t *testing.T) {
 		t.Fatalf("code session request bodies = %q, %q; want %q", observed[1].Body, observed[2].Body, codeSessionPayload)
 	}
 	for _, request := range observed {
-		if request.APIKey != cfg.AnthropicUpstreamAPIKey {
+		if request.APIKey != cfg.AnthropicUpstream.APIKey {
 			t.Fatalf("upstream API key = %q, want configured key", request.APIKey)
 		}
 	}

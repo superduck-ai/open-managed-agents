@@ -75,6 +75,7 @@ import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDi
 import {
   buildCreateWorkspaceInput,
   workspaceApiKeysPath,
+  workspaceColor,
   workspaceIdFromPath,
   workspaceWebhooksPath,
 } from '../../shared/workspaces/presentation';
@@ -478,7 +479,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
             }
           >
             <span className="grid aspect-square size-8 shrink-0 place-items-center rounded-lg border border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground">
-              <Box className="size-4" aria-hidden />
+              <Box className="size-4" style={{ color: workspaceColor(activeWorkspace) }} aria-hidden />
             </span>
             {collapsed ? null : (
               <>
@@ -511,7 +512,7 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                     onClick={() => handleSelect(workspace)}
                   >
                     <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background text-muted-foreground">
-                      <Box className="size-4" aria-hidden />
+                      <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
                     </span>
                     <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
                     <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>

@@ -64,7 +64,9 @@ func TestUpstreamProxyCertificateAuthorityIgnoresDormantPrivateKey(t *testing.T)
 	t.Parallel()
 
 	missingKeyFile := filepath.Join(t.TempDir(), "missing-key.pem")
-	handler := NewHandler(config.Config{CodeSessionUpstreamProxyCAKeyFile: missingKeyFile}, newTestService(t, nil))
+	handler := NewHandler(config.Config{
+		CodeSession: config.CodeSessionConfig{UpstreamProxyCAKeyFile: missingKeyFile},
+	}, newTestService(t, nil), nil)
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("loadUpstreamProxyCA() error = %v", err)
@@ -243,7 +245,7 @@ func TestUpstreamProxyCACertificateHandlerReturnsGeneratedCertificate(t *testing
 	t.Parallel()
 
 	files := writeTestUpstreamProxyCA(t, "handler")
-	handler := NewHandler(files.config(), newTestService(t, nil))
+	handler := NewHandler(files.config(), newTestService(t, nil), nil)
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("load generated handler CA: %v", err)
@@ -279,7 +281,8 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	files := writeTestUpstreamProxyCA(t, "tunnel")
 	upstreamRequests := make(chan *http.Request, 1)
 	dialTargets := make(chan string, 1)
-	handler := NewHandler(files.config(), newTestService(t, nil))
+	handler := NewHandler(files.config(), newTestService(t, nil), nil)
+	stubUnrestrictedPolicyContext(t, handler)
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
 		t.Fatalf("load generated tunnel CA: %v", err)
@@ -293,7 +296,7 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	server := httptest.NewServer(websocket.Server{
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 		Handler: func(connection *websocket.Conn) {
-			handler.serveUpstreamProxyTunnel(connection, "cse_test", "sk-ant-si-test")
+			handler.serveUpstreamProxyTunnel(connection, testUpstreamProxyIdentity(), "sk-ant-si-test")
 		},
 	})
 	defer server.Close()
@@ -385,8 +388,10 @@ func writeTestUpstreamProxyCA(t *testing.T, name string) testUpstreamProxyCAFile
 
 func (files testUpstreamProxyCAFiles) config() config.Config {
 	return config.Config{
-		CodeSessionUpstreamProxyMITMEnabled: true,
-		CodeSessionUpstreamProxyCAKeyFile:   files.keyFile,
+		CodeSession: config.CodeSessionConfig{
+			UpstreamProxyMITMEnabled: true,
+			UpstreamProxyCAKeyFile:   files.keyFile,
+		},
 	}
 }
 

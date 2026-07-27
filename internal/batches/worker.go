@@ -9,12 +9,13 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
@@ -23,15 +24,49 @@ const (
 	batchJobMaxAttempts       = 10
 )
 
-func StartBatchWorker(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config) {
+// Worker owns the message batch processing and expiry loops.
+type Worker struct {
+	database *db.DB
+	store    storage.ObjectStore
+	cfg      config.BatchConfig
+	upstream UpstreamClient
+	logger   *slog.Logger
+}
+
+// NewWorker constructs a message batch worker.
+func NewWorker(
+	database *db.DB,
+	store storage.ObjectStore,
+	cfg config.BatchConfig,
+	upstream UpstreamClient,
+	logger *slog.Logger,
+) *Worker {
+	return &Worker{
+		database: database,
+		store:    store,
+		cfg:      cfg,
+		upstream: upstream,
+		logger:   logging.LoggerOrDefault(logger),
+	}
+}
+
+// Start launches batch processing and expiry loops when batch workers are enabled.
+func (w *Worker) Start(ctx context.Context) {
+	if w == nil || w.database == nil || w.store == nil || w.upstream == nil || !w.cfg.WorkerEnabled {
+		return
+	}
+	w.startProcessing(ctx)
+	w.startExpirySweep(ctx)
+}
+
+func (w *Worker) startProcessing(ctx context.Context) {
 	workerID := fmt.Sprintf("message-batch-%d", os.Getpid())
-	upstream := NewHTTPUpstreamClient(cfg)
 	go func() {
 		ticker := time.NewTicker(defaultWorkerPollInterval)
 		defer ticker.Stop()
 		for {
-			if err := RunBatchOnce(ctx, database, store, cfg, upstream, workerID); err != nil {
-				log.Printf("message batch worker: %v", err)
+			if err := w.RunOnce(ctx, workerID); err != nil {
+				w.logger.ErrorContext(ctx, "message batch worker", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -42,8 +77,8 @@ func StartBatchWorker(ctx context.Context, database *db.DB, store storage.Object
 	}()
 }
 
-func StartBatchExpirySweep(ctx context.Context, database *db.DB, cfg config.Config) {
-	interval := cfg.BatchExpirySweepInterval
+func (w *Worker) startExpirySweep(ctx context.Context) {
+	interval := w.cfg.ExpirySweepInterval
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
@@ -51,8 +86,8 @@ func StartBatchExpirySweep(ctx context.Context, database *db.DB, cfg config.Conf
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
-			if err := RunBatchExpirySweepOnce(ctx, database, time.Now().UTC()); err != nil {
-				log.Printf("message batch expiry sweep: %v", err)
+			if err := w.runExpirySweepOnce(ctx, time.Now().UTC()); err != nil {
+				w.logger.ErrorContext(ctx, "message batch expiry sweep", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -63,30 +98,31 @@ func StartBatchExpirySweep(ctx context.Context, database *db.DB, cfg config.Conf
 	}()
 }
 
-func RunBatchExpirySweepOnce(ctx context.Context, database *db.DB, now time.Time) error {
-	batches, err := database.ListExpiredBatches(ctx, now, 100)
+func (w *Worker) runExpirySweepOnce(ctx context.Context, now time.Time) error {
+	batches, err := w.database.ListExpiredBatches(ctx, now, 100)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, batch := range batches {
-		if err := database.EnqueueMessageBatchJob(ctx, batch.WorkspaceID, batch.ID, batch.ExternalID); err != nil {
+		if err := w.database.EnqueueMessageBatchJob(ctx, batch.WorkspaceID, batch.ID, batch.ExternalID); err != nil {
 			errs = append(errs, fmt.Errorf("enqueue expired batch %s: %w", batch.ExternalID, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func RunBatchOnce(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, upstream UpstreamClient, workerID string) error {
-	jobs, err := database.LeaseMessageBatchJobs(ctx, workerID, cfg.BatchWorkerConcurrency, cfg.BatchJobLeaseDuration)
+// RunOnce leases and processes one batch of message batch jobs.
+func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
+	jobs, err := w.database.LeaseMessageBatchJobs(ctx, workerID, w.cfg.WorkerConcurrency, w.cfg.JobLeaseDuration)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, job := range jobs {
-		if err := processBatchJob(ctx, database, store, cfg, upstream, workerID, job); err != nil {
+		if err := w.processJob(ctx, workerID, job); err != nil {
 			delay := retryDelay(job.Attempts + 1)
-			if markErr := database.FailMessageBatchJob(ctx, job.ID, job.Attempts, err.Error(), delay, batchJobMaxAttempts); markErr != nil {
+			if markErr := w.database.FailMessageBatchJob(ctx, job.ID, job.Attempts, err.Error(), delay, batchJobMaxAttempts); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark batch job %s retry: %w", job.ExternalID, markErr))
 			}
 			errs = append(errs, fmt.Errorf("process batch job %s: %w", job.ExternalID, err))
@@ -95,27 +131,27 @@ func RunBatchOnce(ctx context.Context, database *db.DB, store storage.ObjectStor
 	return errors.Join(errs...)
 }
 
-func processBatchJob(ctx context.Context, database *db.DB, store storage.ObjectStore, cfg config.Config, upstream UpstreamClient, workerID string, job db.MessageBatchJob) error {
+func (w *Worker) processJob(ctx context.Context, workerID string, job db.MessageBatchJob) error {
 	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
 	defer stopHeartbeat()
-	heartbeatErr := startHeartbeat(heartbeatCtx, database, job.ID, workerID, cfg)
+	heartbeatErr := w.startHeartbeat(heartbeatCtx, job.ID, workerID)
 
-	batch, err := database.GetMessageBatchByID(ctx, job.MessageBatchID)
+	batch, err := w.database.GetMessageBatchByID(ctx, job.MessageBatchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return database.CompleteMessageBatchJob(ctx, job.ID)
+			return w.database.CompleteMessageBatchJob(ctx, job.ID)
 		}
 		return err
 	}
 	if batch.DeletedAt != nil || batch.ProcessingStatus == "ended" {
-		return database.CompleteMessageBatchJob(ctx, job.ID)
+		return w.database.CompleteMessageBatchJob(ctx, job.ID)
 	}
 
-	staleBefore := time.Now().UTC().Add(-cfg.BatchUpstreamTimeout - time.Minute)
-	if cfg.BatchUpstreamTimeout <= 0 {
+	staleBefore := time.Now().UTC().Add(-w.cfg.UpstreamTimeout - time.Minute)
+	if w.cfg.UpstreamTimeout <= 0 {
 		staleBefore = time.Now().UTC().Add(-11 * time.Minute)
 	}
-	if _, err := database.MarkStaleInFlightRequestsErrored(ctx, batch.ID, staleBefore, unknownStatusResult()); err != nil {
+	if _, err := w.database.MarkStaleInFlightRequestsErrored(ctx, batch.ID, staleBefore, unknownStatusResult()); err != nil {
 		return err
 	}
 
@@ -123,52 +159,52 @@ func processBatchJob(ctx context.Context, database *db.DB, store storage.ObjectS
 		if err := pollHeartbeat(heartbeatErr); err != nil {
 			return err
 		}
-		current, err := database.GetMessageBatchByID(ctx, batch.ID)
+		current, err := w.database.GetMessageBatchByID(ctx, batch.ID)
 		if err != nil {
 			return err
 		}
 		if current.ProcessingStatus == "canceling" || time.Now().UTC().After(current.ExpiresAt) {
 			break
 		}
-		req, err := database.GetMessageBatchRequestByIndex(ctx, batch.ID, i)
+		req, err := w.database.GetMessageBatchRequestByIndex(ctx, batch.ID, i)
 		if err != nil {
 			return err
 		}
 		if req.Status != "queued" {
 			continue
 		}
-		ok, err := database.ClaimMessageBatchRequest(ctx, req.ID, workerID, time.Now().UTC())
+		ok, err := w.database.ClaimMessageBatchRequest(ctx, req.ID, workerID, time.Now().UTC())
 		if err != nil {
 			return err
 		}
 		if !ok {
 			continue
 		}
-		result, err := upstream.Send(ctx, batch, req)
+		result, err := w.upstream.Send(ctx, batch, req)
 		if err != nil {
 			return err
 		}
-		if _, err := database.CompleteMessageBatchRequest(ctx, req.ID, result.Status, result.Result, result.UpstreamRequestID, time.Now().UTC()); err != nil {
+		if _, err := w.database.CompleteMessageBatchRequest(ctx, req.ID, result.Status, result.Result, result.UpstreamRequestID, time.Now().UTC()); err != nil {
 			return err
 		}
 	}
 
-	current, err := database.GetMessageBatchByID(ctx, batch.ID)
+	current, err := w.database.GetMessageBatchByID(ctx, batch.ID)
 	if err != nil {
 		return err
 	}
 	switch {
 	case current.CancelInitiatedAt != nil || current.ProcessingStatus == "canceling":
-		if err := database.FinalizePendingRequests(ctx, batch.ID, "canceled", json.RawMessage(`{"type":"canceled"}`)); err != nil {
+		if err := w.database.FinalizePendingRequests(ctx, batch.ID, "canceled", json.RawMessage(`{"type":"canceled"}`)); err != nil {
 			return err
 		}
 	case time.Now().UTC().After(current.ExpiresAt):
-		if err := database.FinalizePendingRequests(ctx, batch.ID, "expired", json.RawMessage(`{"type":"expired"}`)); err != nil {
+		if err := w.database.FinalizePendingRequests(ctx, batch.ID, "expired", json.RawMessage(`{"type":"expired"}`)); err != nil {
 			return err
 		}
 	}
 
-	processing, succeeded, errored, canceled, expired, err := database.CountRequestsByStatus(ctx, batch.ID)
+	processing, succeeded, errored, canceled, expired, err := w.database.CountRequestsByStatus(ctx, batch.ID)
 	if err != nil {
 		return err
 	}
@@ -176,26 +212,26 @@ func processBatchJob(ctx context.Context, database *db.DB, store storage.ObjectS
 		return fmt.Errorf("batch %s still has %d processing requests", batch.ExternalID, processing)
 	}
 
-	bucket, key, size, shaHex, err := uploadResults(ctx, store, database, batch)
+	bucket, key, size, shaHex, err := w.uploadResults(ctx, batch)
 	if err != nil {
 		return err
 	}
-	if err := database.FinalizeMessageBatch(ctx, batch.ID, 0, succeeded, errored, canceled, expired, bucket, key, size, shaHex, time.Now().UTC()); err != nil {
+	if err := w.database.FinalizeMessageBatch(ctx, batch.ID, 0, succeeded, errored, canceled, expired, bucket, key, size, shaHex, time.Now().UTC()); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
-			return database.CompleteMessageBatchJob(ctx, job.ID)
+			return w.database.CompleteMessageBatchJob(ctx, job.ID)
 		}
 		return err
 	}
-	return database.CompleteMessageBatchJob(ctx, job.ID)
+	return w.database.CompleteMessageBatchJob(ctx, job.ID)
 }
 
-func startHeartbeat(ctx context.Context, database *db.DB, jobID int64, workerID string, cfg config.Config) <-chan error {
+func (w *Worker) startHeartbeat(ctx context.Context, jobID int64, workerID string) <-chan error {
 	errCh := make(chan error, 1)
-	interval := cfg.BatchJobLeaseHeartbeatInterval
+	interval := w.cfg.JobLeaseHeartbeatInterval
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
-	lease := cfg.BatchJobLeaseDuration
+	lease := w.cfg.JobLeaseDuration
 	if lease <= 0 {
 		lease = 2 * time.Minute
 	}
@@ -207,7 +243,7 @@ func startHeartbeat(ctx context.Context, database *db.DB, jobID int64, workerID 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := database.ExtendMessageBatchJobLease(ctx, jobID, workerID, lease); err != nil {
+				if err := w.database.ExtendMessageBatchJobLease(ctx, jobID, workerID, lease); err != nil {
 					select {
 					case errCh <- fmt.Errorf("extend batch job lease: %w", err):
 					default:
@@ -229,52 +265,52 @@ func pollHeartbeat(errCh <-chan error) error {
 	}
 }
 
-func uploadResults(ctx context.Context, store storage.ObjectStore, database *db.DB, batch db.MessageBatch) (bucket, key string, size int64, shaHex string, err error) {
+func (w *Worker) uploadResults(ctx context.Context, batch db.MessageBatch) (bucket, key string, size int64, shaHex string, err error) {
 	key = fmt.Sprintf("workspaces/%s/message_batches/%s/results.jsonl", batch.WorkspaceUUID, batch.UUID)
 	// producer 和对象存储通过无缓冲 pipe 传输结果。uploadResults 持有读取端，
 	// 因此必须保证所有返回路径都会关闭读取端。
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
-	// 使用子 context，使 Put 提前返回时可以中断数据库读取；如果 producer
+	// 使用子 context，使 Upload 提前返回时可以中断数据库读取；如果 producer
 	// 已经阻塞在 Write，后续关闭 pipe 会负责解除阻塞。
 	producerCtx, cancelProducer := context.WithCancel(ctx)
 	defer cancelProducer()
-	// 使用带缓冲的结果通道，避免 Put 返回期间 producer 因上报结果而再次阻塞。
+	// 使用带缓冲的结果通道，避免 Upload 返回期间 producer 因上报结果而再次阻塞。
 	producerDone := make(chan error, 1)
 	go func() {
-		producerErr := writeResultsJSONL(producerCtx, database, batch.ID, pw)
+		producerErr := w.writeResultsJSONL(producerCtx, batch.ID, pw)
 		_ = pw.CloseWithError(producerErr)
 		producerDone <- producerErr
 	}()
 	reader := newCountingHashReader(pr)
-	putErr := store.Put(ctx, key, reader, -1, "application/x-jsonl")
-	// Put 可能在未消费完 body 时失败。等待 producer 前必须先关闭读取端，
+	_, uploadErr := w.store.Upload(ctx, key, reader, storage.UploadOptions{Size: -1, ContentType: "application/x-jsonl"})
+	// Upload 可能在未消费完 body 时失败。等待 producer 前必须先关闭读取端，
 	// 让阻塞在 PipeWriter.Write 的 producer 能够退出。
 	cancelProducer()
-	if putErr != nil {
-		_ = pr.CloseWithError(putErr)
+	if uploadErr != nil {
+		_ = pr.CloseWithError(uploadErr)
 	} else {
 		_ = pr.Close()
 	}
 	producerErr := <-producerDone
-	if putErr != nil {
+	if uploadErr != nil {
 		// 优先保留真实的存储错误；producer 错误通常只是上述取消操作或
 		// CloseWithError 派生出的后续错误。
-		return "", "", 0, "", putErr
+		return "", "", 0, "", uploadErr
 	}
 	if producerErr != nil {
 		return "", "", 0, "", producerErr
 	}
-	return store.Bucket(), key, reader.Size(), reader.SHA256Hex(), nil
+	return w.store.Name(), key, reader.Size(), reader.SHA256Hex(), nil
 }
 
-func writeResultsJSONL(ctx context.Context, database *db.DB, batchID int64, w io.Writer) error {
-	requests, err := database.ListMessageBatchRequestsOrdered(ctx, batchID)
+func (w *Worker) writeResultsJSONL(ctx context.Context, batchID int64, output io.Writer) error {
+	requests, err := w.database.ListMessageBatchRequestsOrdered(ctx, batchID)
 	if err != nil {
 		return err
 	}
-	encoder := json.NewEncoder(w)
+	encoder := json.NewEncoder(output)
 	for _, req := range requests {
 		if len(req.Result) == 0 {
 			return fmt.Errorf("request %s has no terminal result", req.CustomID)

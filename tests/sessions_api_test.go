@@ -24,7 +24,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -108,7 +107,7 @@ func TestSessionsAPI(t *testing.T) {
 			"title":"Order #1234 inquiry",
 			"metadata":{"case":"1234"},
 			"resources":[
-				{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/mnt/data/session-resource.txt"},
+				{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/session-resource.txt"},
 				{"type":"memory_store","memory_store_id":`+quoteJSON(memoryStore.ID)+`,"name":"memory"}
 			]
 		}`)
@@ -192,6 +191,79 @@ func TestSessionsAPI(t *testing.T) {
 		resp = doSessionRequest(t, app, http.MethodGet, "/v1/sessions/"+created.ID+"?beta=true", nil, defaultTestKey, true)
 		assertError(t, resp, http.StatusNotFound, "not_found_error")
 	})
+}
+
+func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("archived-session-resources-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"archived-session-resource-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"archived-session-resource-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	created := createSession(t, app, `{
+		"agent":`+quoteJSON(agent.ID)+`,
+		"environment_id":`+quoteJSON(env.ID)+`,
+		"resources":[{
+			"type":"github_repository",
+			"url":"https://github.com/example/repository",
+			"mount_path":"/workspace/repository"
+		}]
+	}`)
+	defer deleteSession(t, app, created.ID)
+
+	session := mustSessionRecord(t, app, created.ID)
+	resources, err := app.db.ListSessionResources(context.Background(), session.WorkspaceID, session.ExternalID)
+	if err != nil {
+		t.Fatalf("list Session resources: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("Session resources = %+v, want one", resources)
+	}
+	archiveSession(t, app, created.ID)
+
+	t.Run("failure add resource", func(t *testing.T) {
+		resp := doSessionRequest(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/sessions/"+created.ID+"/resources?beta=true",
+			strings.NewReader(`{
+				"type":"github_repository",
+				"url":"https://github.com/example/second",
+				"mount_path":"/workspace/second"
+			}`),
+			defaultTestKey,
+			true,
+		)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("failure delete resource", func(t *testing.T) {
+		resp := doSessionRequest(
+			t,
+			app,
+			http.MethodDelete,
+			"/v1/sessions/"+created.ID+"/resources/"+resources[0].ExternalID+"?beta=true",
+			nil,
+			defaultTestKey,
+			true,
+		)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+}
+
+func mustSessionRecord(t *testing.T, app *testApp, sessionExternalID string) db.Session {
+	t.Helper()
+	session, err := app.db.GetSession(
+		context.Background(),
+		getDefaultDBIDs(t, app.db).WorkspaceID,
+		sessionExternalID,
+	)
+	if err != nil {
+		t.Fatalf("load Session %q: %v", sessionExternalID, err)
+	}
+	return session
 }
 
 func TestSessionsEnvironmentKeyAccess(t *testing.T) {
@@ -376,11 +448,11 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.WebhookEndpointURL = receiver.URL
-	cfg.WebhookSigningKey = "whsec_c2VjcmV0Cg=="
-	cfg.WebhookEventTypes = []string{"session.status_idled"}
-	cfg.WebhookWorkerEnabled = true
-	cfg.WebhookAllowInsecure = true
+	cfg.Webhook.EndpointURL = receiver.URL
+	cfg.Webhook.SigningKey = "whsec_c2VjcmV0Cg=="
+	cfg.Webhook.EventTypes = []string{"session.status_idled"}
+	cfg.Webhook.WorkerEnabled = true
+	cfg.Webhook.AllowInsecure = true
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("sessions-events-ingress-bucket"))
 	defer app.close()
@@ -405,7 +477,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
 		t.Fatalf("ingress events missing worker outputs: %+v", events)
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg, "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
 		t.Fatalf("deliver ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -427,7 +499,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if len(again.Data) != 1 {
 		t.Fatalf("ingress should be idempotent, agent.message count = %d", len(again.Data))
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg, "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
 		t.Fatalf("deliver duplicate ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -2324,9 +2396,9 @@ func TestCodeSessionWorkerOTLPFileLogWritesAcceptedTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSessionOTLPFileLogEnabled = true
-	cfg.CodeSessionOTLPLogRoot = t.TempDir()
-	cfg.CodeSessionOTLPLogBodyPreviewBytes = 128
+	cfg.CodeSession.OTLPFileLogEnabled = true
+	cfg.CodeSession.OTLPLogRoot = t.TempDir()
+	cfg.CodeSession.OTLPLogBodyPreviewBytes = 128
 	app := newTestAppWithStore(t, &cfg, newFakeStore("sessions-code-worker-otlp-file-log-bucket"))
 	defer app.close()
 
@@ -2352,7 +2424,7 @@ func TestCodeSessionWorkerOTLPFileLogWritesAcceptedTelemetry(t *testing.T) {
 		t.Fatalf("post current-epoch logs status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
-	otlpDir := filepath.Join(cfg.CodeSessionOTLPLogRoot, codeSessionID, "otlp")
+	otlpDir := filepath.Join(cfg.CodeSession.OTLPLogRoot, codeSessionID, "otlp")
 	requestLines := readJSONLObjectsForTest(t, filepath.Join(otlpDir, "requests.jsonl"))
 	if len(requestLines) != 2 {
 		t.Fatalf("request jsonl lines = %d, want 2: %#v", len(requestLines), requestLines)
@@ -3019,13 +3091,13 @@ func TestSessionWebhooks(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	signingKey := "whsec_c2VjcmV0Cg=="
-	cfg.WebhookEndpointURL = receiver.URL
-	cfg.WebhookSigningKey = signingKey
-	cfg.WebhookEventTypes = []string{"session.created"}
-	cfg.WebhookWorkerEnabled = true
-	cfg.WebhookAllowInsecure = true
-	cfg.WebhookTimeout = time.Second
-	cfg.WebhookMaxAttempts = 3
+	cfg.Webhook.EndpointURL = receiver.URL
+	cfg.Webhook.SigningKey = signingKey
+	cfg.Webhook.EventTypes = []string{"session.created"}
+	cfg.Webhook.WorkerEnabled = true
+	cfg.Webhook.AllowInsecure = true
+	cfg.Webhook.Timeout = time.Second
+	cfg.Webhook.MaxAttempts = 3
 	app := newTestAppWithStore(t, &cfg, newFakeStore("sessions-webhooks-bucket"))
 	defer app.close()
 	clearWebhookState(t, app)
@@ -3044,7 +3116,7 @@ func TestSessionWebhooks(t *testing.T) {
 		t.Fatalf("session.pending webhook jobs = %d, want 0 due filter", count)
 	}
 
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg, "webhook-test-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "webhook-test-worker"); err != nil {
 		t.Fatalf("webhook run once failure path: %v", err)
 	}
 	status, attempts := latestWebhookJobStatus(t, app, "session.created", session.ID)
@@ -3054,7 +3126,7 @@ func TestSessionWebhooks(t *testing.T) {
 	if _, err := app.db.Pool.Exec(context.Background(), `update jobs set run_after = now() where type = 'webhook_delivery' and payload->>'event_type' = 'session.created' and payload->'event'->'data'->>'id' = $1`, session.ID); err != nil {
 		t.Fatalf("reset webhook run_after: %v", err)
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg, "webhook-test-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "webhook-test-worker"); err != nil {
 		t.Fatalf("webhook run once success path: %v", err)
 	}
 	status, attempts = latestWebhookJobStatus(t, app, "session.created", session.ID)
@@ -3421,8 +3493,11 @@ func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string
 	t.Helper()
 	ctx := context.Background()
 	cfg := app.cfg
+	if strings.TrimSpace(cfg.CodeSession.SandboxAPIBaseURL) == "" {
+		cfg.CodeSession.SandboxAPIBaseURL = "http://sandbox-api.example.test"
+	}
 	provider := &recordingRunnerProvider{sandboxID: "sandbox-" + strings.TrimPrefix(sessionID, "sesn_")}
-	runner := environments.NewRunnerWithConfigStoreAndCredentials(app.db, provider, cfg, nil, app.credentials)
+	runner := newManagedAgentRunner(t, app, provider, cfg)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		processed, err := runner.RunOnce(ctx, "sessions-code-session-test")

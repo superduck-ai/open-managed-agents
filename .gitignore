@@ -10,8 +10,9 @@ Thumbs.db
 # Local environment and secrets
 .env
 .env.*
-!.env.example
-!.env.*.example
+/config/config.yaml
+/config/config.local.yaml
+/deploy/docker-compose/oma-server.local.yaml
 
 # Logs and runtime files
 *.log
@@ -66,3 +67,4 @@ logs/
 # Codex 全局个人偏好放 ~/.codex/AGENTS.override.md，不在此处。
 CLAUDE.local.md
 AGENTS.override.md
+.worktrees/

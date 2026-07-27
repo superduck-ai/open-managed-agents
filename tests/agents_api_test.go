@@ -37,6 +37,30 @@ type agentPageResponse struct {
 	NextPage *string            `json:"next_page"`
 }
 
+func TestAgentsPersistMappedModelIDs(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AnthropicUpstream.ModelMappings = map[string]string{
+		"claude-sonnet-4-6": "glm-5-turbo",
+		"claude-opus-4-8":   "glm-5.2",
+	}
+	app := newTestAppWithStore(t, &cfg, newFakeStore("agents-model-mappings-bucket"))
+	defer app.close()
+
+	created := createAgent(t, app, `{"model":"claude-sonnet-4-6","name":"mapped-agent"}`)
+	defer cleanupAgentRows(t, app.db, created.ID)
+	assertRawContains(t, created.Model, `"id":"glm-5-turbo"`)
+
+	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"claude-opus-4-8","speed":"fast"}}`, http.StatusOK)
+	assertRawContains(t, updated.Model, `"id":"glm-5.2"`)
+	assertRawContains(t, updated.Model, `"speed":"fast"`)
+
+	versionOne := retrieveAgent(t, app, created.ID, "version=1")
+	assertRawContains(t, versionOne.Model, `"id":"glm-5-turbo"`)
+}
+
 func TestAgentsAPI(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("agents-bucket"))
 	defer app.close()
@@ -305,18 +329,18 @@ func TestAgentsOfficialSDKFixture(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("agents-fixture-bucket"))
 	defer app.close()
 
-	updateResp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+app.cfg.OfficialSDKFixtureAgentID+"?beta=true", strings.NewReader(`{"version":1,"name":"fixture"}`), config.OfficialSDKResourceAPIKey, true)
+	updateResp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+app.cfg.SDKFixtures.AgentID+"?beta=true", strings.NewReader(`{"version":1,"name":"fixture"}`), config.OfficialSDKResourceAPIKey, true)
 	defer updateResp.Body.Close()
 	if updateResp.StatusCode != http.StatusOK {
 		t.Fatalf("fixture update status = %d, want 200: %s", updateResp.StatusCode, readAll(t, updateResp.Body))
 	}
 	var updated agentAPIResponse
 	decodeJSON(t, updateResp.Body, &updated)
-	if updated.ID != app.cfg.OfficialSDKFixtureAgentID || updated.Version != 2 {
+	if updated.ID != app.cfg.SDKFixtures.AgentID || updated.Version != 2 {
 		t.Fatalf("unexpected fixture update response: %+v", updated)
 	}
 
-	archiveResp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+app.cfg.OfficialSDKFixtureAgentID+"/archive?beta=true", nil, config.OfficialSDKResourceAPIKey, true)
+	archiveResp := doAgentRequest(t, app, http.MethodPost, "/v1/agents/"+app.cfg.SDKFixtures.AgentID+"/archive?beta=true", nil, config.OfficialSDKResourceAPIKey, true)
 	defer archiveResp.Body.Close()
 	if archiveResp.StatusCode != http.StatusOK {
 		t.Fatalf("fixture archive status = %d, want 200: %s", archiveResp.StatusCode, readAll(t, archiveResp.Body))

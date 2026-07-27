@@ -64,6 +64,13 @@ export const agentSearchMaxPages = 3;
 
 export const exactAgentIdPattern = /^agent_(?:staging_|local_)?[0-9a-zA-Z]{20,}$/i;
 
+export async function getEffectiveModelMappings(orgUuid: string) {
+  const response = await consoleApi<{ model_mappings?: Record<string, string> }>(
+    `/api/organizations/${encodeURIComponent(orgUuid)}/models`,
+  );
+  return response.model_mappings ?? {};
+}
+
 export function createdFilterStartISOString(filter: AgentCreatedFilter) {
   const now = Date.now();
   if (filter === 'last7') {
@@ -1604,7 +1611,7 @@ export function createManagedEntityBody(section: ManagedEntitySection, values: M
       return {
         name,
         description,
-        scope: 'workspace',
+        scope: 'organization',
         metadata: {},
         config: {
           type: 'cloud',

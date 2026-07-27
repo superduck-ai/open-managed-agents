@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 type batchResponse struct {
@@ -36,10 +37,10 @@ func TestMessageBatchesAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.AnthropicUpstreamAPIKey = "sk-ant-upstream-test"
-	cfg.BatchWorkerConcurrency = 1
-	cfg.BatchJobLeaseDuration = time.Minute
-	cfg.BatchJobLeaseHeartbeatInterval = time.Hour
+	cfg.AnthropicUpstream.APIKey = "sk-ant-upstream-test"
+	cfg.Batch.WorkerConcurrency = 1
+	cfg.Batch.JobLeaseDuration = time.Minute
+	cfg.Batch.JobLeaseHeartbeatInterval = time.Hour
 	app := newTestAppWithStore(t, &cfg, store)
 	defer app.close()
 
@@ -53,7 +54,7 @@ func TestMessageBatchesAPI(t *testing.T) {
 
 	t.Run("failure official sdk fixture create bypasses real validation", func(t *testing.T) {
 		fixtureCfg := app.cfg
-		fixtureCfg.AnthropicUpstreamAPIKey = ""
+		fixtureCfg.AnthropicUpstream.APIKey = ""
 		fixtureApp := newTestAppWithStore(t, &fixtureCfg, newFakeStore("fixture-bucket"))
 		defer fixtureApp.close()
 
@@ -74,7 +75,7 @@ func TestMessageBatchesAPI(t *testing.T) {
 		uploadErr := errors.New("result upload failed")
 		failingStore := &earlyFailBatchStore{
 			fakeStore: newFakeStore("early-fail-bucket"),
-			putErr:    uploadErr,
+			uploadErr: uploadErr,
 		}
 		failingApp := newTestAppWithStore(t, &cfg, failingStore)
 		defer failingApp.close()
@@ -83,7 +84,8 @@ func TestMessageBatchesAPI(t *testing.T) {
 		defer cleanupBatchRows(t, failingApp.db, created.ID)
 		prioritizeBatchJob(t, failingApp.db, created.ID)
 
-		err := batches.RunBatchOnce(context.Background(), failingApp.db, failingStore, failingApp.cfg, &fakeBatchUpstream{}, "batch-worker-upload-failure-test")
+		worker := batches.NewWorker(failingApp.db, failingStore, failingApp.cfg.Batch, &fakeBatchUpstream{}, nil)
+		err := worker.RunOnce(context.Background(), "batch-worker-upload-failure-test")
 		if !errors.Is(err, uploadErr) {
 			t.Fatalf("run batch worker error = %v, want %v", err, uploadErr)
 		}
@@ -109,7 +111,8 @@ func TestMessageBatchesAPI(t *testing.T) {
 
 		prioritizeBatchJob(t, app.db, created.ID)
 		upstream := &fakeBatchUpstream{}
-		if err := batches.RunBatchOnce(context.Background(), app.db, store, app.cfg, upstream, "batch-worker-test"); err != nil {
+		worker := batches.NewWorker(app.db, store, app.cfg.Batch, upstream, nil)
+		if err := worker.RunOnce(context.Background(), "batch-worker-test"); err != nil {
 			t.Fatalf("run batch worker: %v", err)
 		}
 		if len(upstream.calls) != 2 {
@@ -179,21 +182,21 @@ type fakeBatchUpstream struct {
 
 type earlyFailBatchStore struct {
 	*fakeStore
-	putErr    error
+	uploadErr error
 	body      io.Reader
 	bytesRead int
 	readErr   error
 }
 
-func (s *earlyFailBatchStore) Put(_ context.Context, _ string, body io.Reader, _ int64, _ string) error {
+func (s *earlyFailBatchStore) Upload(_ context.Context, _ string, body io.Reader, _ storage.UploadOptions) (storage.UploadResult, error) {
 	s.body = body
 	// 失败前只消费一个字节，确保 producer 稳定阻塞在同一次无缓冲 pipe 写入中，
 	// 且该次写入仍有剩余数据尚未被读取。
 	s.bytesRead, s.readErr = body.Read(make([]byte, 1))
 	if s.readErr != nil {
-		return s.readErr
+		return storage.UploadResult{}, s.readErr
 	}
-	return s.putErr
+	return storage.UploadResult{}, s.uploadErr
 }
 
 func (u *fakeBatchUpstream) Send(_ context.Context, batch db.MessageBatch, req db.MessageBatchRequest) (batches.UpstreamResult, error) {

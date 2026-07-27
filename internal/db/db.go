@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
@@ -13,25 +14,30 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 )
 
 var (
-	ErrNotFound             = platform.ErrNotFound
-	ErrInvalidState         = errors.New("invalid state")
-	ErrPreconditionFailed   = errors.New("precondition failed")
-	ErrDuplicate            = errors.New("duplicate")
-	ErrVersionConflict      = errors.New("version conflict")
-	ErrWorkerEpochMismatch  = errors.New("worker epoch mismatch")
-	ErrWorkerNotRegistered  = errors.New("worker not registered")
-	ErrWorkerLeaseExpired   = errors.New("worker lease expired")
-	ErrStorageLimitExceeded = errors.New("storage limit exceeded")
-	ErrLimitExceeded        = errors.New("limit exceeded")
+	ErrNotFound              = platform.ErrNotFound
+	ErrInvalidState          = errors.New("invalid state")
+	ErrPreconditionFailed    = errors.New("precondition failed")
+	ErrDuplicate             = errors.New("duplicate")
+	ErrVersionConflict       = errors.New("version conflict")
+	ErrWorkerEpochMismatch   = errors.New("worker epoch mismatch")
+	ErrWorkerNotRegistered   = errors.New("worker not registered")
+	ErrWorkerLeaseExpired    = errors.New("worker lease expired")
+	ErrStorageLimitExceeded  = errors.New("storage limit exceeded")
+	ErrStorageUsageUnderflow = errors.New("storage usage underflow")
+	ErrLimitExceeded         = errors.New("limit exceeded")
+	ErrFileInUse             = errors.New("file is in use")
+	ErrFileReferenceNotFound = errors.New("file reference not found")
 )
 
 type DB struct {
 	Pool *pgxpool.Pool
+	sql  *sqlx.DB
 }
 
 type APIKey struct {
@@ -44,21 +50,140 @@ type APIKey struct {
 	WorkspaceExternalID    string
 }
 
+type foreignKeyRow struct {
+	Table string `db:"table_name"`
+	Name  string `db:"constraint_name"`
+}
+
+type apiKeyRow struct {
+	ID                     int64  `db:"id"`
+	ExternalID             string `db:"external_id"`
+	OrganizationID         int64  `db:"organization_id"`
+	OrganizationExternalID string `db:"organization_external_id"`
+	WorkspaceID            int64  `db:"workspace_id"`
+	WorkspaceUUID          string `db:"workspace_uuid"`
+	WorkspaceExternalID    string `db:"workspace_external_id"`
+}
+
+const (
+	maintenanceRoleExistsQuery     = `select exists(select 1 from pg_roles where rolname = :role)`
+	maintenanceDatabaseExistsQuery = `
+		select exists(select 1 from pg_database where datname = :database_name)
+	`
+	idColumnDataTypeQuery = `
+		select coalesce((
+			select data_type
+			from information_schema.columns
+			where table_schema = current_schema()
+				and table_name = :table_name
+				and column_name = 'id'
+		), '')
+	`
+	legacyTableExistsQuery = `select to_regclass(:table_name) is not null`
+	seedOrganizationQuery  = `
+		insert into organizations (external_id, name)
+		values (:external_id, :name)
+		on conflict (external_id) do update set name = excluded.name
+		returning id
+	`
+	seedWorkspaceQuery = `
+		insert into workspaces (external_id, organization_id, name)
+		values (:external_id, :organization_id, :name)
+		on conflict (external_id) do update set
+			organization_id = excluded.organization_id,
+			name = excluded.name
+		returning id
+	`
+	seedUserQuery = `
+		insert into users (external_id, organization_id, email, name, role)
+		values (:external_id, :organization_id, :email, :name, 'admin')
+		on conflict (external_id) do update set
+			organization_id = excluded.organization_id,
+			email = excluded.email,
+			name = excluded.name,
+			role = excluded.role,
+			deleted_at = null,
+			updated_at = now()
+		returning id
+	`
+	seedWorkspaceMemberQuery = `
+		insert into workspace_members (
+			external_id, organization_id, workspace_id, workspace_external_id,
+			user_id, user_external_id, workspace_role
+		)
+		values (
+			:external_id, :organization_id, :workspace_id, :workspace_external_id,
+			:user_id, :user_external_id, 'workspace_admin'
+		)
+		on conflict (external_id) do update set
+			organization_id = excluded.organization_id,
+			workspace_id = excluded.workspace_id,
+			workspace_external_id = excluded.workspace_external_id,
+			user_id = excluded.user_id,
+			user_external_id = excluded.user_external_id,
+			workspace_role = excluded.workspace_role,
+			deleted_at = null,
+			updated_at = now()
+	`
+	seedAPIKeyQuery = `
+		insert into api_keys (external_id, workspace_id, key_hash, status, created_by_user_id, name, partial_key_hint)
+		values (
+			:external_id, :workspace_id, :key_hash, 'active',
+			:created_by_user_id, :name, :partial_key_hint
+		)
+		on conflict (external_id) do update set
+			workspace_id = excluded.workspace_id,
+			key_hash = excluded.key_hash,
+			status = 'active',
+			created_by_user_id = excluded.created_by_user_id,
+			name = excluded.name,
+			partial_key_hint = excluded.partial_key_hint,
+			updated_at = now()
+	`
+	getAPIKeyQuery = `
+		select ak.id, ak.external_id,
+			o.id as organization_id, o.external_id as organization_external_id,
+			w.id as workspace_id, CAST(w.uuid AS text) as workspace_uuid,
+			w.external_id as workspace_external_id
+		from api_keys ak
+		join workspaces w on w.id = ak.workspace_id
+		join organizations o on o.id = w.organization_id
+		where ak.key_hash = :key_hash
+			and ak.status = 'active'
+			and (ak.expires_at is null or ak.expires_at > now())
+	`
+)
+
 func Open(ctx context.Context, cfg config.Config) (*DB, error) {
-	pool, err := openPool(ctx, cfg.DatabaseURL)
+	pool, err := openPool(ctx, cfg.Database.URL)
 	if err == nil {
-		return &DB{Pool: pool}, nil
+		return newDB(pool), nil
 	}
 
-	if bootstrapErr := EnsureDatabase(ctx, cfg.DatabaseURL, cfg.PostgresAdminURL); bootstrapErr != nil {
+	if bootstrapErr := EnsureDatabase(ctx, cfg.Database.URL); bootstrapErr != nil {
 		return nil, fmt.Errorf("connect database: %w; bootstrap database: %v", err, bootstrapErr)
 	}
 
-	pool, err = openPool(ctx, cfg.DatabaseURL)
+	pool, err = openPool(ctx, cfg.Database.URL)
 	if err != nil {
 		return nil, fmt.Errorf("connect database after bootstrap: %w", err)
 	}
-	return &DB{Pool: pool}, nil
+	return newDB(pool), nil
+}
+
+func newDB(pool *pgxpool.Pool) *DB {
+	return &DB{
+		Pool: pool,
+		sql:  newSQLXDB(pool),
+	}
+}
+
+func newSQLXDB(pool *pgxpool.Pool) *sqlx.DB {
+	// sqlx 只提供命名参数与结构体映射，物理连接仍统一由 pgxpool 管理。
+	// OpenDBFromPool 会把 database/sql 的 MaxIdleConns 固定为 0，避免包装层长期占住
+	// pgxpool 连接；最大连接数与连接寿命继续由上面的唯一 pgxpool 约束。
+	standardDB := stdlib.OpenDBFromPool(pool)
+	return sqlx.NewDb(standardDB, "pgx")
 }
 
 func openPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
@@ -79,19 +204,25 @@ func openPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 }
 
 func (d *DB) Close() {
-	if d != nil && d.Pool != nil {
+	if d == nil {
+		return
+	}
+	if d.sql != nil {
+		_ = d.sql.Close()
+	}
+	if d.Pool != nil {
 		d.Pool.Close()
 	}
 }
 
-func EnsureDatabase(ctx context.Context, databaseURL, adminURL string) error {
-	candidates := []string{adminURL}
+func EnsureDatabase(ctx context.Context, databaseURL string) error {
+	var candidates []string
 	for _, maintenanceDB := range []string{"postgres", "template1"} {
 		if candidate, err := maintenanceURL(databaseURL, maintenanceDB); err == nil && !slices.Contains(candidates, candidate) {
 			candidates = append(candidates, candidate)
 		}
 	}
-	for _, candidate := range currentUserAdminURLs(databaseURL) {
+	for _, candidate := range currentUserMaintenanceURLs(databaseURL) {
 		if !slices.Contains(candidates, candidate) {
 			candidates = append(candidates, candidate)
 		}
@@ -99,56 +230,64 @@ func EnsureDatabase(ctx context.Context, databaseURL, adminURL string) error {
 
 	var errs []string
 	for _, candidate := range candidates {
-		if err := ensureDatabaseWithAdmin(ctx, databaseURL, candidate); err != nil {
+		if err := ensureDatabaseWithMaintenanceConnection(ctx, databaseURL, candidate); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", redactPassword(candidate), err))
 			continue
 		}
 		return nil
 	}
-	return fmt.Errorf("all admin connection attempts failed: %s", strings.Join(errs, "; "))
+	return fmt.Errorf("all database bootstrap connection attempts failed: %s", strings.Join(errs, "; "))
 }
 
-func ensureDatabaseWithAdmin(ctx context.Context, databaseURL, adminURL string) error {
+func ensureDatabaseWithMaintenanceConnection(ctx context.Context, databaseURL, maintenanceDatabaseURL string) error {
 	target, err := url.Parse(databaseURL)
 	if err != nil {
-		return fmt.Errorf("parse DATABASE_URL: %w", err)
+		return fmt.Errorf("parse database URL: %w", err)
 	}
 	dbName := strings.TrimPrefix(target.Path, "/")
 	if dbName == "" {
-		return errors.New("DATABASE_URL must include a database name")
+		return errors.New("database URL must include a database name")
 	}
 	role := target.User.Username()
 	password, _ := target.User.Password()
 	if role == "" {
-		return errors.New("DATABASE_URL must include a database user")
+		return errors.New("database URL must include a database user")
 	}
 
-	adminPool, err := openPool(ctx, adminURL)
+	maintenancePool, err := openPool(ctx, maintenanceDatabaseURL)
 	if err != nil {
-		return fmt.Errorf("connect POSTGRES_ADMIN_URL: %w", err)
+		return fmt.Errorf("connect maintenance database: %w", err)
 	}
-	defer adminPool.Close()
+	defer maintenancePool.Close()
+	maintenanceSQL := newSQLXDB(maintenancePool)
+	defer maintenanceSQL.Close()
 
 	var roleExists bool
-	if err := adminPool.QueryRow(ctx, "select exists(select 1 from pg_roles where rolname=$1)", role).Scan(&roleExists); err != nil {
+	if err := namedGetContext(ctx, maintenanceSQL, &roleExists,
+		maintenanceRoleExistsQuery,
+		map[string]any{"role": role},
+	); err != nil {
 		return fmt.Errorf("check role: %w", err)
 	}
 	if !roleExists {
-		if _, err := adminPool.Exec(ctx, fmt.Sprintf("create role %s login password %s", quoteIdent(role), quoteLiteral(password))); err != nil {
+		if _, err := maintenanceSQL.ExecContext(ctx, fmt.Sprintf("create role %s login password %s", quoteIdent(role), quoteLiteral(password))); err != nil {
 			return fmt.Errorf("create role %s: %w", role, err)
 		}
 	} else if password != "" {
-		if _, err := adminPool.Exec(ctx, fmt.Sprintf("alter role %s with password %s", quoteIdent(role), quoteLiteral(password))); err != nil {
+		if _, err := maintenanceSQL.ExecContext(ctx, fmt.Sprintf("alter role %s with password %s", quoteIdent(role), quoteLiteral(password))); err != nil {
 			return fmt.Errorf("alter role %s password: %w", role, err)
 		}
 	}
 
 	var dbExists bool
-	if err := adminPool.QueryRow(ctx, "select exists(select 1 from pg_database where datname=$1)", dbName).Scan(&dbExists); err != nil {
+	if err := namedGetContext(ctx, maintenanceSQL, &dbExists,
+		maintenanceDatabaseExistsQuery,
+		map[string]any{"database_name": dbName},
+	); err != nil {
 		return fmt.Errorf("check database: %w", err)
 	}
 	if !dbExists {
-		if _, err := adminPool.Exec(ctx, fmt.Sprintf("create database %s owner %s", quoteIdent(dbName), quoteIdent(role))); err != nil {
+		if _, err := maintenanceSQL.ExecContext(ctx, fmt.Sprintf("create database %s owner %s", quoteIdent(dbName), quoteIdent(role))); err != nil {
 			return fmt.Errorf("create database %s: %w", dbName, err)
 		}
 	}
@@ -164,7 +303,7 @@ func maintenanceURL(databaseURL, databaseName string) (string, error) {
 	return parsed.String(), nil
 }
 
-func currentUserAdminURLs(databaseURL string) []string {
+func currentUserMaintenanceURLs(databaseURL string) []string {
 	current, err := user.Current()
 	if err != nil || current.Username == "" {
 		return nil
@@ -197,30 +336,25 @@ func redactPassword(raw string) string {
 
 func (d *DB) idColumnDataType(ctx context.Context, table string) (string, error) {
 	var dataType string
-	err := d.Pool.QueryRow(ctx, `
-		select coalesce((
-			select data_type
-			from information_schema.columns
-			where table_schema = current_schema()
-				and table_name = $1
-				and column_name = 'id'
-		), '')
-	`, table).Scan(&dataType)
+	err := namedGetContext(ctx, d.sql, &dataType, idColumnDataTypeQuery, map[string]any{"table_name": table})
 	return dataType, err
 }
 
 func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
 	tables := []string{"jobs", "files", "api_keys", "workspaces", "organizations"}
 	for _, table := range tables {
 		legacy := table + "_legacy_text_ids"
 		var exists bool
-		if err := tx.QueryRow(ctx, "select to_regclass($1) is not null", legacy).Scan(&exists); err != nil {
+		if err := namedGetContext(ctx, tx, &exists,
+			legacyTableExistsQuery,
+			map[string]any{"table_name": legacy},
+		); err != nil {
 			return err
 		}
 		if exists {
@@ -230,16 +364,16 @@ func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
 
 	for _, table := range tables {
 		legacy := table + "_legacy_text_ids"
-		if _, err := tx.Exec(ctx, fmt.Sprintf("alter table if exists %s rename to %s", quoteIdent(table), quoteIdent(legacy))); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("alter table if exists %s rename to %s", quoteIdent(table), quoteIdent(legacy))); err != nil {
 			return fmt.Errorf("rename %s to %s: %w", table, legacy, err)
 		}
 	}
 
-	if _, err := tx.Exec(ctx, schemaSQL); err != nil {
+	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("create bigint-id schema: %w", err)
 	}
 
-	if _, err := tx.Exec(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		insert into organizations (external_id, name, created_at)
 		select id, name, created_at
 		from organizations_legacy_text_ids
@@ -247,7 +381,7 @@ func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
 	`); err != nil {
 		return fmt.Errorf("copy organizations: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		insert into workspaces (external_id, organization_id, name, created_at)
 		select w.id, o.id, w.name, w.created_at
 		from workspaces_legacy_text_ids w
@@ -256,7 +390,7 @@ func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
 	`); err != nil {
 		return fmt.Errorf("copy workspaces: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		insert into api_keys (external_id, workspace_id, key_hash, status, created_at)
 		select ak.id, w.id, ak.key_hash, ak.status, ak.created_at
 		from api_keys_legacy_text_ids ak
@@ -265,7 +399,7 @@ func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
 	`); err != nil {
 		return fmt.Errorf("copy api_keys: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		insert into files (
 			external_id, workspace_id, filename, mime_type, size_bytes, sha256,
 			s3_bucket, s3_key, downloadable, scope_type, scope_id, created_by_api_key_id, created_at, deleted_at
@@ -279,7 +413,7 @@ func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
 	`); err != nil {
 		return fmt.Errorf("copy files: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		insert into jobs (
 			external_id, workspace_id, type, status, payload, attempts,
 			locked_by, locked_until, run_after, created_at, updated_at
@@ -293,7 +427,7 @@ func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
 		return fmt.Errorf("copy jobs: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 func (d *DB) Migrate(ctx context.Context) error {
@@ -313,102 +447,66 @@ func (d *DB) Migrate(ctx context.Context) error {
 }
 
 func (d *DB) DropForeignKeyConstraints(ctx context.Context) error {
-	rows, err := d.Pool.Query(ctx, `
-		select cls.relname, con.conname
+	var constraints []foreignKeyRow
+	if err := d.sql.SelectContext(ctx, &constraints, `
+		select cls.relname as table_name, con.conname as constraint_name
 		from pg_constraint con
 		join pg_class cls on cls.oid = con.conrelid
 		join pg_namespace ns on ns.oid = cls.relnamespace
 		where con.contype = 'f'
-			and ns.oid = current_schema()::regnamespace
+			and ns.oid = CAST(current_schema() AS regnamespace)
 		order by cls.relname, con.conname
-	`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	type foreignKey struct {
-		table string
-		name  string
-	}
-	var constraints []foreignKey
-	for rows.Next() {
-		var fk foreignKey
-		if err := rows.Scan(&fk.table, &fk.name); err != nil {
-			return err
-		}
-		constraints = append(constraints, fk)
-	}
-	if err := rows.Err(); err != nil {
+	`); err != nil {
 		return err
 	}
 
 	for _, fk := range constraints {
-		if _, err := d.Pool.Exec(ctx, fmt.Sprintf("alter table %s drop constraint %s", quoteIdent(fk.table), quoteIdent(fk.name))); err != nil {
-			return fmt.Errorf("drop foreign key %s on %s: %w", fk.name, fk.table, err)
+		if _, err := d.sql.ExecContext(ctx, fmt.Sprintf("alter table %s drop constraint %s", quoteIdent(fk.Table), quoteIdent(fk.Name))); err != nil {
+			return fmt.Errorf("drop foreign key %s on %s: %w", fk.Name, fk.Table, err)
 		}
 	}
 	return nil
 }
 
 func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
 	var organizationID int64
-	if err := tx.QueryRow(ctx, `
-		insert into organizations (external_id, name)
-		values ($1, $2)
-		on conflict (external_id) do update set name = excluded.name
-		returning id
-	`, "org_default", "default").Scan(&organizationID); err != nil {
+	if err := namedGetContext(ctx, tx, &organizationID, seedOrganizationQuery, map[string]any{
+		"external_id": "org_default",
+		"name":        "default",
+	}); err != nil {
 		return err
 	}
 	var workspaceID int64
-	if err := tx.QueryRow(ctx, `
-		insert into workspaces (external_id, organization_id, name)
-		values ($1, $2, $3)
-		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
-			name = excluded.name
-		returning id
-	`, "workspace_default", organizationID, "default").Scan(&workspaceID); err != nil {
+	if err := namedGetContext(ctx, tx, &workspaceID, seedWorkspaceQuery, map[string]any{
+		"external_id":     "workspace_default",
+		"organization_id": organizationID,
+		"name":            "default",
+	}); err != nil {
 		return err
 	}
 	var userID int64
-	if err := tx.QueryRow(ctx, `
-		insert into users (external_id, organization_id, email, name, role)
-		values ($1, $2, $3, $4, 'admin')
-		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
-			email = excluded.email,
-			name = excluded.name,
-			role = excluded.role,
-			deleted_at = null,
-			updated_at = now()
-		returning id
-	`, "user_default", organizationID, "admin@example.local", "Local Admin").Scan(&userID); err != nil {
+	if err := namedGetContext(ctx, tx, &userID, seedUserQuery, map[string]any{
+		"external_id":     "user_default",
+		"organization_id": organizationID,
+		"email":           "admin@example.local",
+		"name":            "Local Admin",
+	}); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		insert into workspace_members (
-			external_id, organization_id, workspace_id, workspace_external_id,
-			user_id, user_external_id, workspace_role
-		)
-		values ($1, $2, $3, $4, $5, $6, 'workspace_admin')
-		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
-			workspace_id = excluded.workspace_id,
-			workspace_external_id = excluded.workspace_external_id,
-			user_id = excluded.user_id,
-			user_external_id = excluded.user_external_id,
-			workspace_role = excluded.workspace_role,
-			deleted_at = null,
-			updated_at = now()
-	`, "wmem_default", organizationID, workspaceID, "workspace_default", userID, "user_default"); err != nil {
+	if _, err := namedExecContext(ctx, tx, seedWorkspaceMemberQuery, map[string]any{
+		"external_id":           "wmem_default",
+		"organization_id":       organizationID,
+		"workspace_id":          workspaceID,
+		"workspace_external_id": "workspace_default",
+		"user_id":               userID,
+		"user_external_id":      "user_default",
+	}); err != nil {
 		return err
 	}
 
@@ -416,39 +514,42 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 		if strings.TrimSpace(key.ExternalID) == "" || key.Key == "" {
 			return errors.New("seed api keys must include external_id and key")
 		}
-		if _, err := tx.Exec(ctx, `
-			insert into api_keys (external_id, workspace_id, key_hash, status, created_by_user_id, name, partial_key_hint)
-			values ($1, $2, $3, 'active', $4, $5, $6)
-			on conflict (external_id) do update set
-				workspace_id = excluded.workspace_id,
-				key_hash = excluded.key_hash,
-				status = 'active',
-				created_by_user_id = excluded.created_by_user_id,
-				name = excluded.name,
-				partial_key_hint = excluded.partial_key_hint,
-				updated_at = now()
-		`, key.ExternalID, workspaceID, auth.HashAPIKey(key.Key), userID, key.ExternalID, partialAPIKeyHint(key.Key)); err != nil {
+		if _, err := namedExecContext(ctx, tx, seedAPIKeyQuery, map[string]any{
+			"external_id":        key.ExternalID,
+			"workspace_id":       workspaceID,
+			"key_hash":           auth.HashAPIKey(key.Key),
+			"created_by_user_id": userID,
+			"name":               key.ExternalID,
+			"partial_key_hint":   partialAPIKeyHint(key.Key),
+		}); err != nil {
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 func (d *DB) GetAPIKey(ctx context.Context, keyHash string) (APIKey, error) {
-	var key APIKey
-	err := d.Pool.QueryRow(ctx, `
-		select ak.id, ak.external_id, o.id, o.external_id, w.id, w.uuid::text, w.external_id
-		from api_keys ak
-		join workspaces w on w.id = ak.workspace_id
-		join organizations o on o.id = w.organization_id
-		where ak.key_hash = $1
-			and ak.status = 'active'
-			and (ak.expires_at is null or ak.expires_at > now())
-	`, keyHash).Scan(&key.ID, &key.ExternalID, &key.OrganizationID, &key.OrganizationExternalID, &key.WorkspaceID, &key.WorkspaceUUID, &key.WorkspaceExternalID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	var row apiKeyRow
+	err := namedGetContext(ctx, d.sql, &row, getAPIKeyQuery, map[string]any{"key_hash": keyHash})
+	if errors.Is(err, sql.ErrNoRows) {
 		return APIKey{}, ErrNotFound
 	}
-	return key, err
+	if err != nil {
+		return APIKey{}, err
+	}
+	return row.apiKey(), nil
+}
+
+func (r apiKeyRow) apiKey() APIKey {
+	return APIKey{
+		ID:                     r.ID,
+		ExternalID:             r.ExternalID,
+		OrganizationID:         r.OrganizationID,
+		OrganizationExternalID: r.OrganizationExternalID,
+		WorkspaceID:            r.WorkspaceID,
+		WorkspaceUUID:          r.WorkspaceUUID,
+		WorkspaceExternalID:    r.WorkspaceExternalID,
+	}
 }
 
 func partialAPIKeyHint(key string) string {

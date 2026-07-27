@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,77 +18,117 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
-	"github.com/superduck-ai/open-managed-agents/internal/observability"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
-	"github.com/superduck-ai/open-managed-agents/internal/skillprewarm"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
 func main() {
-	logger := slog.New(observability.NewConsoleHandler(os.Stdout, slog.LevelInfo))
+	logger := slog.New(logging.NewConsoleHandler(os.Stdout, slog.LevelInfo))
+	slog.SetDefault(logger)
 
-	exitCode := 0
-	defer func() {
-		if exitCode != 0 {
-			os.Exit(exitCode)
-		}
-	}()
+	if err := run(logger); err != nil {
+		logger.Error("application stopped", "error", err)
+		os.Exit(1)
+	}
+}
 
+func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	database, err := db.Open(ctx, cfg)
 	if err != nil {
-		log.Fatalf("open database: %v", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer database.Close()
 
-	if cfg.DatabaseAutoMigrate {
+	if cfg.Database.AutoMigrate {
 		if err := database.Migrate(ctx); err != nil {
-			log.Fatalf("migrate database: %v", err)
+			return fmt.Errorf("migrate database: %w", err)
 		}
 	} else {
-		logger.Info("database auto migration disabled", "app_env", cfg.AppEnv)
+		logger.Info("database auto migration disabled", "env", cfg.Env)
 	}
-	if err := database.Seed(ctx, cfg.SeedAPIKeys); err != nil {
-		log.Fatalf("seed database: %v", err)
+	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+		return fmt.Errorf("seed database: %w", err)
 	}
-	platformSessions, err := platformsession.NewRedisStore(ctx, cfg.RedisURL)
+	platformSessions, err := platformsession.NewRedisStore(ctx, cfg.Redis.URL)
 	if err != nil {
-		log.Fatalf("open platform session store: %v", err)
+		return fmt.Errorf("open platform session store: %w", err)
 	}
 	defer platformSessions.Close()
 
-	objectStore, err := storage.NewMinIO(cfg)
+	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
-		log.Fatalf("create object store: %v", err)
+		return fmt.Errorf("create object storage client: %w", err)
 	}
-	if err := objectStore.EnsureBucket(ctx); err != nil {
-		log.Fatalf("ensure object store bucket: %v", err)
+	objectStore, err := storageClient.ForBucket(cfg.Storage.S3.Bucket)
+	if err != nil {
+		return fmt.Errorf("bind object storage bucket: %w", err)
+	}
+	if err := objectStore.Ensure(ctx); err != nil {
+		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
 	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)
 	if err != nil {
-		log.Fatalf("load code-session credentials: %v", err)
+		return fmt.Errorf("load code-session credentials: %w", err)
 	}
-	cleanup.StartObjectCleanupWorker(ctx, database, objectStore, 30*time.Second)
-	if cfg.BatchWorkerEnabled {
-		batches.StartBatchWorker(ctx, database, objectStore, cfg)
-		batches.StartBatchExpirySweep(ctx, database, cfg)
+	// Filestore 与 code-session ingress 使用独立的 claims 与验证器；
+	// 生产环境可共用同一 Ed25519 私钥文件，但两种 token 绝不互相代用。
+	filestoreCredentials, err := filestore.NewTokenCredentials(cfg)
+	if err != nil {
+		return fmt.Errorf("load filestore credentials: %w", err)
 	}
-	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials)
-	skillprewarm.StartWorker(ctx, database, objectStore, cfg)
-	webhooks.StartWorker(ctx, database, cfg)
+	filestoreService := filestore.NewService(cfg, database, objectStore)
+	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
+	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
+	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)
+	batches.NewWorker(
+		database,
+		objectStore,
+		cfg.Batch,
+		batches.NewHTTPUpstreamClient(cfg),
+		logger.With("component", "batches"),
+	).Start(ctx)
+	environmentLogger := logger.With("component", "environment_runner")
+	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
+		DB:              database,
+		Provider:        e2bruntime.NewProvider(cfg.E2B),
+		Config:          cfg,
+		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger),
+		Skills:          skillsapi.NewRuntimeResolver(database),
+		FilestoreTokens: filestoreCredentials,
+		Logger:          environmentLogger,
+	})
+	if err != nil {
+		return fmt.Errorf("create environment runner: %w", err)
+	}
+	environmentRunner.Start(ctx)
+	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
 
 	server := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           api.NewServerWithPlatformSessionsAndCredentials(cfg, database, objectStore, logger, platformSessions, codeSessionCredentials),
+		Addr: cfg.Server.Addr,
+		Handler: api.NewServer(api.ServerDeps{
+			Config:                 cfg,
+			DB:                     database,
+			ObjectStore:            objectStore,
+			Logger:                 logger,
+			PlatformStore:          platformSessions,
+			CodeSessionCredentials: codeSessionCredentials,
+			FilestoreCredentials:   filestoreCredentials,
+			FilestoreService:       filestoreService,
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,
 		WriteTimeout:      10 * time.Minute,
@@ -97,7 +137,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("claude api server listening", "addr", cfg.Addr)
+		logger.Info("claude api server listening", "addr", cfg.Server.Addr)
 		errCh <- server.ListenAndServe()
 	}()
 
@@ -106,15 +146,12 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("shutdown server: %v", err)
-			exitCode = 1
-			return
+			return fmt.Errorf("shutdown server: %w", err)
 		}
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("serve: %v", err)
-			exitCode = 1
-			return
+			return fmt.Errorf("serve: %w", err)
 		}
 	}
+	return nil
 }

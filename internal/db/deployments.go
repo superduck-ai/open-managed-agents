@@ -2,12 +2,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type Deployment struct {
@@ -103,8 +101,8 @@ type CreateManualDeploymentRunInput struct {
 	Now                  time.Time
 }
 
-func (d *DB) CreateDeployment(ctx context.Context, deployment Deployment) (Deployment, error) {
-	return scanDeployment(d.Pool.QueryRow(ctx, `
+const (
+	createDeploymentQuery = `
 		insert into deployments (
 			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
 			environment_id, environment_external_id, agent_id, agent_external_id,
@@ -113,161 +111,141 @@ func (d *DB) CreateDeployment(ctx context.Context, deployment Deployment) (Deplo
 			paused_reason, created_at, updated_at
 		)
 		values (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9,
-			$10, $11::jsonb, $12, $13, $14::jsonb, $15::jsonb,
-			$16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb, $20, $21,
-			$22::jsonb, $23, $23
+			:uuid, :external_id, :organization_id, :workspace_id, :created_by_api_key_id,
+			:environment_id, :environment_external_id, :agent_id, :agent_external_id,
+			:agent_version, CAST(:agent_snapshot AS jsonb), :name, :description,
+			CAST(:metadata AS jsonb), CAST(:initial_events AS jsonb),
+			CAST(:resources AS jsonb), CAST(:resource_secrets AS jsonb),
+			CAST(:vault_ids AS jsonb), CAST(:schedule AS jsonb), :last_run_at, :status,
+			CAST(:paused_reason AS jsonb), :created_at, :created_at
 		)
-		returning `+deploymentColumns()+`
-	`, deployment.UUID, deployment.ExternalID, deployment.OrganizationID, deployment.WorkspaceID,
-		deployment.CreatedByAPIKeyID, deployment.EnvironmentID, deployment.EnvironmentExternalID,
-		deployment.AgentID, deployment.AgentExternalID, deployment.AgentVersion,
-		jsonArg(deployment.AgentSnapshot), deployment.Name, deployment.Description, jsonArg(deployment.Metadata),
-		jsonArg(deployment.InitialEvents), jsonArg(deployment.Resources), jsonArg(deployment.ResourceSecrets),
-		jsonArg(deployment.VaultIDs), jsonArg(deployment.Schedule), deployment.LastRunAt, deployment.Status,
-		jsonArg(deployment.PausedReason), deployment.CreatedAt))
+		returning ` + deploymentSQLXColumns + `
+	`
+	getDeploymentQuery = `
+		select ` + deploymentSQLXColumns + `
+		from deployments
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+	`
+	lockDeploymentForUpdateQuery = getDeploymentQuery + ` for update`
+	updateDeploymentQuery        = `
+		update deployments
+		set environment_id = :environment_id,
+			environment_external_id = :environment_external_id,
+			agent_id = :agent_id,
+			agent_external_id = :agent_external_id,
+			agent_version = :agent_version,
+			agent_snapshot = CAST(:agent_snapshot AS jsonb),
+			name = :name,
+			description = :description,
+			metadata = CAST(:metadata AS jsonb),
+			initial_events = CAST(:initial_events AS jsonb),
+			resources = CAST(:resources AS jsonb),
+			resource_secrets = CAST(:resource_secrets AS jsonb),
+			vault_ids = CAST(:vault_ids AS jsonb),
+			schedule = CAST(:schedule AS jsonb),
+			updated_at = :updated_at
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+		returning ` + deploymentSQLXColumns + `
+	`
+	archiveDeploymentQuery = `
+		update deployments
+		set archived_at = coalesce(archived_at, now()),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+		returning ` + deploymentSQLXColumns + `
+	`
+	pauseDeploymentQuery = `
+		update deployments
+		set status = 'paused',
+			paused_reason = CAST(:paused_reason AS jsonb),
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+			and archived_at is null
+		returning ` + deploymentSQLXColumns + `
+	`
+	unpauseDeploymentQuery = `
+		update deployments
+		set status = 'active',
+			paused_reason = null,
+			updated_at = now()
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+			and archived_at is null
+		returning ` + deploymentSQLXColumns + `
+	`
+	getDeploymentRunQuery = `
+		select ` + deploymentRunSQLXColumns + `
+		from deployment_runs
+		where workspace_id = :workspace_id
+			and external_id = :external_id
+			and deleted_at is null
+	`
+)
+
+func (d *DB) CreateDeployment(ctx context.Context, deployment Deployment) (Deployment, error) {
+	return getDeploymentSQLX(ctx, d.sql, createDeploymentQuery, deploymentArguments(deployment))
 }
 
 func (d *DB) GetDeployment(ctx context.Context, workspaceID int64, externalID string) (Deployment, error) {
-	return scanDeployment(d.Pool.QueryRow(ctx, `
-		select `+deploymentColumns()+`
-		from deployments
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID))
+	return getDeploymentSQLX(ctx, d.sql, getDeploymentQuery, deploymentLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) UpdateDeployment(ctx context.Context, workspaceID int64, externalID string, next Deployment) (Deployment, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return Deployment{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	current, err := scanDeployment(tx.QueryRow(ctx, `
-		select `+deploymentColumns()+`
-		from deployments
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		for update
-	`, workspaceID, externalID))
+	arguments := deploymentArguments(next)
+	arguments["workspace_id"] = workspaceID
+	arguments["external_id"] = externalID
+	current, err := getDeploymentSQLX(ctx, tx, lockDeploymentForUpdateQuery, arguments)
 	if err != nil {
 		return Deployment{}, err
 	}
 	if current.ArchivedAt != nil {
 		return Deployment{}, ErrInvalidState
 	}
-	updated, err := scanDeployment(tx.QueryRow(ctx, `
-		update deployments
-		set environment_id = $3,
-			environment_external_id = $4,
-			agent_id = $5,
-			agent_external_id = $6,
-			agent_version = $7,
-			agent_snapshot = $8::jsonb,
-			name = $9,
-			description = $10,
-			metadata = $11::jsonb,
-			initial_events = $12::jsonb,
-			resources = $13::jsonb,
-			resource_secrets = $14::jsonb,
-			vault_ids = $15::jsonb,
-			schedule = $16::jsonb,
-			updated_at = $17
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning `+deploymentColumns()+`
-	`, workspaceID, externalID, next.EnvironmentID, next.EnvironmentExternalID, next.AgentID,
-		next.AgentExternalID, next.AgentVersion, jsonArg(next.AgentSnapshot), next.Name,
-		next.Description, jsonArg(next.Metadata), jsonArg(next.InitialEvents), jsonArg(next.Resources),
-		jsonArg(next.ResourceSecrets), jsonArg(next.VaultIDs), jsonArg(next.Schedule), next.UpdatedAt))
+	updated, err := getDeploymentSQLX(ctx, tx, updateDeploymentQuery, arguments)
 	if err != nil {
 		return Deployment{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return Deployment{}, err
 	}
 	return updated, nil
 }
 
 func (d *DB) ArchiveDeployment(ctx context.Context, workspaceID int64, externalID string) (Deployment, error) {
-	return scanDeployment(d.Pool.QueryRow(ctx, `
-		update deployments
-		set archived_at = coalesce(archived_at, now()),
-			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		returning `+deploymentColumns()+`
-	`, workspaceID, externalID))
+	return getDeploymentSQLX(ctx, d.sql, archiveDeploymentQuery, deploymentLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) PauseDeployment(ctx context.Context, workspaceID int64, externalID string, pausedReason json.RawMessage) (Deployment, error) {
-	return scanDeployment(d.Pool.QueryRow(ctx, `
-		update deployments
-		set status = 'paused',
-			paused_reason = $3::jsonb,
-			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null and archived_at is null
-		returning `+deploymentColumns()+`
-	`, workspaceID, externalID, jsonArg(pausedReason)))
+	arguments := deploymentLookupArguments(workspaceID, externalID)
+	arguments["paused_reason"] = jsonArg(pausedReason)
+	return getDeploymentSQLX(ctx, d.sql, pauseDeploymentQuery, arguments)
 }
 
 func (d *DB) UnpauseDeployment(ctx context.Context, workspaceID int64, externalID string) (Deployment, error) {
-	return scanDeployment(d.Pool.QueryRow(ctx, `
-		update deployments
-		set status = 'active',
-			paused_reason = null,
-			updated_at = now()
-		where workspace_id = $1 and external_id = $2 and deleted_at is null and archived_at is null
-		returning `+deploymentColumns()+`
-	`, workspaceID, externalID))
+	return getDeploymentSQLX(ctx, d.sql, unpauseDeploymentQuery, deploymentLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPageParams) ([]Deployment, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	query := `
-		select ` + deploymentColumns() + `
-		from deployments
-		where workspace_id = $1 and deleted_at is null
-	`
-	args := []any{params.WorkspaceID}
-	nextArg := 2
-	if !params.IncludeArchived {
-		query += " and archived_at is null"
-	}
-	if params.AgentExternalID != "" {
-		query += fmt.Sprintf(" and agent_external_id = $%d", nextArg)
-		args = append(args, params.AgentExternalID)
-		nextArg++
-	}
-	if params.Status != "" {
-		query += fmt.Sprintf(" and status = $%d", nextArg)
-		args = append(args, params.Status)
-		nextArg++
-	}
-	if params.CreatedAtGTE != nil {
-		query += fmt.Sprintf(" and created_at >= $%d", nextArg)
-		args = append(args, *params.CreatedAtGTE)
-		nextArg++
-	}
-	if params.CreatedAtLTE != nil {
-		query += fmt.Sprintf(" and created_at <= $%d", nextArg)
-		args = append(args, *params.CreatedAtLTE)
-		nextArg++
-	}
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	deployments, err := scanDeploymentRows(rows)
+	query, arguments := listDeploymentsQuery(params)
+	deployments, err := selectDeploymentsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -279,18 +257,16 @@ func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPage
 }
 
 func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDeploymentRunInput) (DeploymentRun, Session, SessionThread, []SessionEvent, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 
-	deployment, err := scanDeployment(tx.QueryRow(ctx, `
-		select `+deploymentColumns()+`
-		from deployments
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-		for update
-	`, input.Run.WorkspaceID, input.DeploymentExternalID))
+	deployment, err := getDeploymentSQLX(ctx, tx, lockDeploymentForManualRunQuery, map[string]any{
+		"workspace_id":           input.Run.WorkspaceID,
+		"deployment_external_id": input.DeploymentExternalID,
+	})
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
@@ -298,11 +274,11 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, ErrInvalidState
 	}
 
-	session, thread, _, _, err := insertSessionTx(ctx, tx, input.Session)
+	session, thread, _, _, err := insertSessionSQLXTx(ctx, tx, input.Session)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	events, err := insertSessionEventsTx(ctx, tx, session, input.Events, false)
+	events, err := insertSessionEventsSQLXTx(ctx, tx, session, input.Events, false)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
@@ -316,30 +292,25 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	run.AgentSnapshot = deployment.AgentSnapshot
 	run.SessionExternalID = &session.ExternalID
 	run.Error = nil
-	createdRun, err := insertDeploymentRunTx(ctx, tx, run)
+	createdRun, err := insertDeploymentRunSQLX(ctx, tx, run)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		update deployments
-		set last_run_at = $3,
-			updated_at = $3
-		where workspace_id = $1 and external_id = $2
-	`, deployment.WorkspaceID, deployment.ExternalID, input.Now); err != nil {
+	if err := updateDeploymentLastRunSQLX(ctx, tx, deployment.WorkspaceID, deployment.ExternalID, input.Now); err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
 	return createdRun, session, thread, events, nil
 }
 
 func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployment, run DeploymentRun) (DeploymentRun, error) {
-	tx, err := d.Pool.Begin(ctx)
+	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return DeploymentRun{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback()
 	run.DeploymentID = deployment.ID
 	run.DeploymentExternalID = deployment.ExternalID
 	run.AgentID = deployment.AgentID
@@ -347,94 +318,29 @@ func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployme
 	run.AgentVersion = deployment.AgentVersion
 	run.AgentSnapshot = deployment.AgentSnapshot
 	run.SessionExternalID = nil
-	created, err := insertDeploymentRunTx(ctx, tx, run)
+	created, err := insertDeploymentRunSQLX(ctx, tx, run)
 	if err != nil {
 		return DeploymentRun{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-		update deployments
-		set last_run_at = $3,
-			updated_at = $3
-		where workspace_id = $1 and external_id = $2
-	`, deployment.WorkspaceID, deployment.ExternalID, run.CreatedAt); err != nil {
+	if err := updateDeploymentLastRunSQLX(ctx, tx, deployment.WorkspaceID, deployment.ExternalID, run.CreatedAt); err != nil {
 		return DeploymentRun{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(); err != nil {
 		return DeploymentRun{}, err
 	}
 	return created, nil
 }
 
 func (d *DB) GetDeploymentRun(ctx context.Context, workspaceID int64, externalID string) (DeploymentRun, error) {
-	return scanDeploymentRun(d.Pool.QueryRow(ctx, `
-		select `+deploymentRunColumns()+`
-		from deployment_runs
-		where workspace_id = $1 and external_id = $2 and deleted_at is null
-	`, workspaceID, externalID))
+	return getDeploymentRunSQLX(ctx, d.sql, getDeploymentRunQuery, deploymentLookupArguments(workspaceID, externalID))
 }
 
 func (d *DB) ListDeploymentRunsPage(ctx context.Context, params ListDeploymentRunsPageParams) ([]DeploymentRun, bool, error) {
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	query := `
-		select ` + deploymentRunColumns() + `
-		from deployment_runs
-		where workspace_id = $1 and deleted_at is null
-	`
-	args := []any{params.WorkspaceID}
-	nextArg := 2
-	if params.DeploymentExternalID != "" {
-		query += fmt.Sprintf(" and deployment_external_id = $%d", nextArg)
-		args = append(args, params.DeploymentExternalID)
-		nextArg++
-	}
-	if params.TriggerType != "" {
-		query += fmt.Sprintf(" and trigger_type = $%d", nextArg)
-		args = append(args, params.TriggerType)
-		nextArg++
-	}
-	if params.HasError != nil {
-		if *params.HasError {
-			query += " and error is not null"
-		} else {
-			query += " and error is null"
-		}
-	}
-	if params.CreatedAtGT != nil {
-		query += fmt.Sprintf(" and created_at > $%d", nextArg)
-		args = append(args, *params.CreatedAtGT)
-		nextArg++
-	}
-	if params.CreatedAtGTE != nil {
-		query += fmt.Sprintf(" and created_at >= $%d", nextArg)
-		args = append(args, *params.CreatedAtGTE)
-		nextArg++
-	}
-	if params.CreatedAtLT != nil {
-		query += fmt.Sprintf(" and created_at < $%d", nextArg)
-		args = append(args, *params.CreatedAtLT)
-		nextArg++
-	}
-	if params.CreatedAtLTE != nil {
-		query += fmt.Sprintf(" and created_at <= $%d", nextArg)
-		args = append(args, *params.CreatedAtLTE)
-		nextArg++
-	}
-	if params.Cursor != nil {
-		query += fmt.Sprintf(" and (created_at < $%d or (created_at = $%d and id < $%d))", nextArg, nextArg, nextArg+1)
-		args = append(args, params.Cursor.CreatedAt, params.Cursor.ID)
-		nextArg += 2
-	}
-	query += fmt.Sprintf(" order by created_at desc, id desc limit $%d", nextArg)
-	args = append(args, params.Limit+1)
-
-	rows, err := d.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	runs, err := scanDeploymentRunRows(rows)
+	query, arguments := listDeploymentRunsQuery(params)
+	runs, err := selectDeploymentRunsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
 	}
@@ -445,108 +351,185 @@ func (d *DB) ListDeploymentRunsPage(ctx context.Context, params ListDeploymentRu
 	return runs, hasMore, nil
 }
 
-func insertDeploymentRunTx(ctx context.Context, tx pgx.Tx, run DeploymentRun) (DeploymentRun, error) {
-	return scanDeploymentRun(tx.QueryRow(ctx, `
-		insert into deployment_runs (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			deployment_id, deployment_external_id, agent_id, agent_external_id,
-			agent_version, agent_snapshot, session_external_id, error, trigger_type,
-			trigger_context, created_at
-		)
-		values (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9,
-			$10, $11::jsonb, $12, $13::jsonb, $14,
-			$15::jsonb, $16
-		)
-		returning `+deploymentRunColumns()+`
-	`, run.UUID, run.ExternalID, run.OrganizationID, run.WorkspaceID, run.CreatedByAPIKeyID,
-		run.DeploymentID, run.DeploymentExternalID, run.AgentID, run.AgentExternalID,
-		run.AgentVersion, jsonArg(run.AgentSnapshot), run.SessionExternalID, jsonArg(run.Error),
-		run.TriggerType, jsonArg(run.TriggerContext), run.CreatedAt))
-}
-
-func deploymentColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, created_by_api_key_id,
-		environment_id, environment_external_id, agent_id, agent_external_id, agent_version,
-		agent_snapshot, name, description, metadata, initial_events, resources,
-		resource_secrets, vault_ids, schedule, last_run_at, status, paused_reason,
-		created_at, updated_at, archived_at, deleted_at`
-}
-
-func deploymentRunColumns() string {
-	return `id, uuid::text, external_id, organization_id, workspace_id, created_by_api_key_id,
-		deployment_id, deployment_external_id, agent_id, agent_external_id, agent_version,
-		agent_snapshot, session_external_id, error, trigger_type, trigger_context,
-		created_at, deleted_at`
-}
-
-func scanDeployment(row rowScanner) (Deployment, error) {
-	var deployment Deployment
-	var agentSnapshot, metadata, initialEvents, resources, resourceSecrets, vaultIDs, schedule, pausedReason []byte
-	err := row.Scan(&deployment.ID, &deployment.UUID, &deployment.ExternalID, &deployment.OrganizationID,
-		&deployment.WorkspaceID, &deployment.CreatedByAPIKeyID, &deployment.EnvironmentID,
-		&deployment.EnvironmentExternalID, &deployment.AgentID, &deployment.AgentExternalID,
-		&deployment.AgentVersion, &agentSnapshot, &deployment.Name, &deployment.Description,
-		&metadata, &initialEvents, &resources, &resourceSecrets, &vaultIDs, &schedule,
-		&deployment.LastRunAt, &deployment.Status, &pausedReason, &deployment.CreatedAt,
-		&deployment.UpdatedAt, &deployment.ArchivedAt, &deployment.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Deployment{}, ErrNotFound
+func listDeploymentsQuery(params ListDeploymentsPageParams) (string, map[string]any) {
+	query := `
+		select ` + deploymentSQLXColumns + `
+		from deployments
+		where workspace_id = :workspace_id and deleted_at is null
+	`
+	arguments := map[string]any{
+		"workspace_id": params.WorkspaceID,
+		"limit":        params.Limit + 1,
 	}
-	if err != nil {
-		return Deployment{}, err
+	if !params.IncludeArchived {
+		query += " and archived_at is null"
 	}
-	deployment.AgentSnapshot = copyRaw(agentSnapshot)
-	deployment.Metadata = copyRaw(metadata)
-	deployment.InitialEvents = copyRaw(initialEvents)
-	deployment.Resources = copyRaw(resources)
-	deployment.ResourceSecrets = copyRaw(resourceSecrets)
-	deployment.VaultIDs = copyRaw(vaultIDs)
-	deployment.Schedule = copyRaw(schedule)
-	deployment.PausedReason = copyRaw(pausedReason)
-	return deployment, nil
+	if params.AgentExternalID != "" {
+		query += " and agent_external_id = :agent_external_id"
+		arguments["agent_external_id"] = params.AgentExternalID
+	}
+	if params.Status != "" {
+		query += " and status = :status"
+		arguments["status"] = params.Status
+	}
+	if params.CreatedAtGTE != nil {
+		query += " and created_at >= :created_at_gte"
+		arguments["created_at_gte"] = *params.CreatedAtGTE
+	}
+	if params.CreatedAtLTE != nil {
+		query += " and created_at <= :created_at_lte"
+		arguments["created_at_lte"] = *params.CreatedAtLTE
+	}
+	if params.Cursor != nil {
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
+	}
+	query += " order by created_at desc, id desc limit :limit"
+	return query, arguments
 }
 
-func scanDeploymentRows(rows rowsScanner) ([]Deployment, error) {
-	var deployments []Deployment
-	for rows.Next() {
-		deployment, err := scanDeployment(rows)
-		if err != nil {
-			return nil, err
+func listDeploymentRunsQuery(params ListDeploymentRunsPageParams) (string, map[string]any) {
+	query := `
+		select ` + deploymentRunSQLXColumns + `
+		from deployment_runs
+		where workspace_id = :workspace_id and deleted_at is null
+	`
+	arguments := map[string]any{
+		"workspace_id": params.WorkspaceID,
+		"limit":        params.Limit + 1,
+	}
+	if params.DeploymentExternalID != "" {
+		query += " and deployment_external_id = :deployment_external_id"
+		arguments["deployment_external_id"] = params.DeploymentExternalID
+	}
+	if params.TriggerType != "" {
+		query += " and trigger_type = :trigger_type"
+		arguments["trigger_type"] = params.TriggerType
+	}
+	if params.HasError != nil {
+		if *params.HasError {
+			query += " and error is not null"
+		} else {
+			query += " and error is null"
 		}
-		deployments = append(deployments, deployment)
 	}
-	return deployments, rows.Err()
+	query, arguments = deploymentRunTimeFilters(query, arguments, params)
+	if params.Cursor != nil {
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		arguments["cursor_created_at"] = params.Cursor.CreatedAt
+		arguments["cursor_id"] = params.Cursor.ID
+	}
+	query += " order by created_at desc, id desc limit :limit"
+	return query, arguments
 }
 
-func scanDeploymentRun(row rowScanner) (DeploymentRun, error) {
-	var run DeploymentRun
-	var agentSnapshot, runError, triggerContext []byte
-	err := row.Scan(&run.ID, &run.UUID, &run.ExternalID, &run.OrganizationID, &run.WorkspaceID,
-		&run.CreatedByAPIKeyID, &run.DeploymentID, &run.DeploymentExternalID, &run.AgentID,
-		&run.AgentExternalID, &run.AgentVersion, &agentSnapshot, &run.SessionExternalID,
-		&runError, &run.TriggerType, &triggerContext, &run.CreatedAt, &run.DeletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DeploymentRun{}, ErrNotFound
+func deploymentRunTimeFilters(
+	query string,
+	arguments map[string]any,
+	params ListDeploymentRunsPageParams,
+) (string, map[string]any) {
+	if params.CreatedAtGT != nil {
+		query += " and created_at > :created_at_gt"
+		arguments["created_at_gt"] = *params.CreatedAtGT
 	}
-	if err != nil {
+	if params.CreatedAtGTE != nil {
+		query += " and created_at >= :created_at_gte"
+		arguments["created_at_gte"] = *params.CreatedAtGTE
+	}
+	if params.CreatedAtLT != nil {
+		query += " and created_at < :created_at_lt"
+		arguments["created_at_lt"] = *params.CreatedAtLT
+	}
+	if params.CreatedAtLTE != nil {
+		query += " and created_at <= :created_at_lte"
+		arguments["created_at_lte"] = *params.CreatedAtLTE
+	}
+	return query, arguments
+}
+
+func deploymentLookupArguments(workspaceID int64, externalID string) map[string]any {
+	return map[string]any{
+		"workspace_id": workspaceID,
+		"external_id":  externalID,
+	}
+}
+
+func deploymentArguments(deployment Deployment) map[string]any {
+	return map[string]any{
+		"uuid":                    deployment.UUID,
+		"external_id":             deployment.ExternalID,
+		"organization_id":         deployment.OrganizationID,
+		"workspace_id":            deployment.WorkspaceID,
+		"created_by_api_key_id":   deployment.CreatedByAPIKeyID,
+		"environment_id":          deployment.EnvironmentID,
+		"environment_external_id": deployment.EnvironmentExternalID,
+		"agent_id":                deployment.AgentID,
+		"agent_external_id":       deployment.AgentExternalID,
+		"agent_version":           deployment.AgentVersion,
+		"agent_snapshot":          jsonArg(deployment.AgentSnapshot),
+		"name":                    deployment.Name,
+		"description":             deployment.Description,
+		"metadata":                jsonArg(deployment.Metadata),
+		"initial_events":          jsonArg(deployment.InitialEvents),
+		"resources":               jsonArg(deployment.Resources),
+		"resource_secrets":        jsonArg(deployment.ResourceSecrets),
+		"vault_ids":               jsonArg(deployment.VaultIDs),
+		"schedule":                jsonArg(deployment.Schedule),
+		"last_run_at":             deployment.LastRunAt,
+		"status":                  deployment.Status,
+		"paused_reason":           jsonArg(deployment.PausedReason),
+		"created_at":              deployment.CreatedAt,
+		"updated_at":              deployment.UpdatedAt,
+	}
+}
+
+func selectDeploymentsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]Deployment, error) {
+	var rows []deploymentRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
+	}
+	deployments := make([]Deployment, len(rows))
+	for index := range rows {
+		deployments[index] = rows[index].deployment()
+	}
+	return deployments, nil
+}
+
+func getDeploymentRunSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (DeploymentRun, error) {
+	var row deploymentRunRow
+	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DeploymentRun{}, ErrNotFound
+		}
 		return DeploymentRun{}, err
 	}
-	run.AgentSnapshot = copyRaw(agentSnapshot)
-	run.Error = copyRaw(runError)
-	run.TriggerContext = copyRaw(triggerContext)
-	return run, nil
+	return row.run(), nil
 }
 
-func scanDeploymentRunRows(rows rowsScanner) ([]DeploymentRun, error) {
-	var runs []DeploymentRun
-	for rows.Next() {
-		run, err := scanDeploymentRun(rows)
-		if err != nil {
-			return nil, err
-		}
-		runs = append(runs, run)
+func selectDeploymentRunsSQLX(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]DeploymentRun, error) {
+	var rows []deploymentRunRow
+	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
+		return nil, err
 	}
-	return runs, rows.Err()
+	runs := make([]DeploymentRun, len(rows))
+	for index := range rows {
+		runs[index] = rows[index].run()
+	}
+	return runs, nil
 }

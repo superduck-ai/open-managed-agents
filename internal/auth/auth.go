@@ -58,11 +58,17 @@ func ExtractAPIKey(r *http.Request) string {
 	if key := strings.TrimSpace(r.Header.Get("X-Api-Key")); key != "" {
 		return key
 	}
+	return ExtractBearerToken(r)
+}
+
+// ExtractBearerToken 只读取 Authorization: Bearer，供不接受 API key 的资源使用。
+func ExtractBearerToken(r *http.Request) string {
 	authz := strings.TrimSpace(r.Header.Get("Authorization"))
-	if strings.HasPrefix(strings.ToLower(authz), "bearer ") {
-		return strings.TrimSpace(authz[len("bearer "):])
+	scheme, token, ok := strings.Cut(authz, " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
 	}
-	return ""
+	return strings.TrimSpace(token)
 }
 
 func ExtractPlatformSessionKey(r *http.Request) string {

@@ -2,8 +2,54 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
+
+func TestMCPToolCatalogQueriesUseSQLXNamedParameters(t *testing.T) {
+	tests := []struct {
+		name         string
+		query        string
+		arguments    map[string]any
+		wantArgCount int
+	}{
+		{
+			name:  "get catalog",
+			query: getMCPToolCatalogQuery,
+			arguments: map[string]any{
+				"transport_type": "url",
+				"endpoint_url":   "https://mcp.example.test/mcp",
+			},
+			wantArgCount: 2,
+		},
+		{
+			name:  "upsert catalog",
+			query: upsertMCPToolCatalogQuery,
+			arguments: map[string]any{
+				"external_id":    "mcpc_test",
+				"transport_type": "url",
+				"endpoint_url":   "https://mcp.example.test/mcp",
+				"tools":          []byte(`[]`),
+			},
+			wantArgCount: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query, arguments, err := bindNamed(postgresRebinder{}, tt.query, tt.arguments)
+			if err != nil {
+				t.Fatalf("bindNamed() error = %v", err)
+			}
+			if len(arguments) != tt.wantArgCount {
+				t.Fatalf("bindNamed() arguments = %#v, want %d arguments", arguments, tt.wantArgCount)
+			}
+			if strings.Contains(query, ":") {
+				t.Fatalf("bound query still contains a named parameter: %s", query)
+			}
+		})
+	}
+}
 
 func TestUpsertMCPToolCatalogRejectsNilTools(t *testing.T) {
 	database := &DB{}

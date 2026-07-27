@@ -33,6 +33,9 @@ anthropic_upstream:
 e2b:
   api_url: http://host.docker.internal:3099
   sandbox_url: http://host.docker.internal:3099
+  # e2b-local 用本地 Docker 短标签发现 template；显式固定为 :latest，
+  # 避免落到裸名默认值（hosted 会解析成 :default，本地无此 tag 而创建失败）。
+  template: managed-agent-sandbox:latest
 
 code_session:
   sandbox_api_base_url: http://host.docker.internal:38080

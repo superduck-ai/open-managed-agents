@@ -13,7 +13,7 @@ import {
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import { toast } from '@/shared/ui/sonner';
+import { toast, Toaster } from '@/shared/ui/sonner';
 import { useI18n } from '../../shared/i18n';
 import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
@@ -113,46 +113,54 @@ export function FilesPage() {
   };
 
   return (
-    <ConsolePageFrame
-      title={msg('files.title', 'Files')}
-      icon={FileText}
-      description={msg(
-        'files.description',
-        "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
-        { workspaceName },
-      )}
-      actions={
-        <>
-          <input
-            ref={uploadInputRef}
-            className="sr-only"
-            type="file"
-            multiple
-            aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
-            onChange={(event) => void handleUpload(event)}
-          />
-          <Button type="button" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
-            <Upload aria-hidden />
-            {uploading ? msg('files.upload.uploading', 'Uploading...') : msg('files.upload.action', 'Upload files')}
-          </Button>
-        </>
-      }
-    >
-      <FilesTable
-        files={files}
-        workspaceName={workspaceName}
-        isLoading={filesQuery.isLoading}
-        isFetching={filesQuery.isFetching}
-        error={filesQuery.error}
-        canPrevious={pageIndex > 0 && !filesQuery.isFetching}
-        canNext={Boolean(response?.has_more && lastId) && !filesQuery.isFetching}
-        downloadingFileId={downloadingFileId}
-        onRetry={() => void filesQuery.refetch()}
-        onPrevious={goPrevious}
-        onNext={goNext}
-        onDownload={(file) => void handleDownload(file)}
+    <>
+      <Toaster
+        position="top-right"
+        duration={2200}
+        closeButton
+        toastOptions={{ closeButtonAriaLabel: msg('common.close', 'Close') }}
       />
-    </ConsolePageFrame>
+      <ConsolePageFrame
+        title={msg('files.title', 'Files')}
+        icon={FileText}
+        description={msg(
+          'files.description',
+          "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
+          { workspaceName },
+        )}
+        actions={
+          <>
+            <input
+              ref={uploadInputRef}
+              className="sr-only"
+              type="file"
+              multiple
+              aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
+              onChange={(event) => void handleUpload(event)}
+            />
+            <Button type="button" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+              <Upload aria-hidden />
+              {uploading ? msg('files.upload.uploading', 'Uploading...') : msg('files.upload.action', 'Upload files')}
+            </Button>
+          </>
+        }
+      >
+        <FilesTable
+          files={files}
+          workspaceName={workspaceName}
+          isLoading={filesQuery.isLoading}
+          isFetching={filesQuery.isFetching}
+          error={filesQuery.error}
+          canPrevious={pageIndex > 0 && !filesQuery.isFetching}
+          canNext={Boolean(response?.has_more && lastId) && !filesQuery.isFetching}
+          downloadingFileId={downloadingFileId}
+          onRetry={() => void filesQuery.refetch()}
+          onPrevious={goPrevious}
+          onNext={goNext}
+          onDownload={(file) => void handleDownload(file)}
+        />
+      </ConsolePageFrame>
+    </>
   );
 }
 

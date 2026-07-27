@@ -321,7 +321,7 @@ Session filesystem 是输入与输出字节的事实来源，但 scoped Files AP
 投影复用对应 `filestore_entries.uuid` 作为 `files.uuid`。这个 UUID 是跨表的稳定关联键，不新增映射表或 nullable 引用列：
 
 - attach File resource 时，在创建 `/uploads` 借用 entry 的同一事务内创建输入投影；同一个 source File 多次 attach 会产生不同 entry UUID 和不同 `file_` external ID。
-- Worker 通过 state PUT 报告真正的 `idle` 时，先同步 `/outputs` 的活动 file entries，再由该请求路径更新 Session 和主线程的 `idle`。重复同步通过 entry UUID upsert，覆盖写保持已有 `file_` external ID 并更新当前对象元数据；删除或过期 entry 会软删除对应投影。
+- Worker 通过 state PUT 报告真正的 `idle` 时，先同步 `/outputs` 的活动 file entries，再由该请求路径更新 Session 和主线程的 `idle`。重复同步通过 entry UUID upsert，覆盖写保持已有 `file_` external ID 并更新当前对象元数据；删除、过期或移出 `/outputs` 的 entry 会软删除对应输出投影，仍位于 `/uploads` 的活动 File resource 输入投影不受影响。
 - `requires_action` 虽然对外映射为 `idle`，但不触发输出同步；真正结束这一轮时的 `idle` 上报才提交当前输出目录。
 - 删除 File resource 会在同一事务内软删除输入 entry 与投影；删除 Session 会先撤销该 filesystem 对应的全部 scoped 投影，再退休 filesystem 并投递既有的分批清理任务。
 

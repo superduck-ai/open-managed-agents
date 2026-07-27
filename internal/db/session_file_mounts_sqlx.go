@@ -90,6 +90,18 @@ const (
 				and entry.deleted_at is null
 				and (entry.expires_at is null or entry.expires_at > now())
 		),
+		active_inputs as materialized (
+			select entry.uuid
+			from filestore_entries entry
+			where entry.workspace_uuid = :workspace_uuid
+				and entry.filesystem_uuid = :filesystem_uuid
+				and entry.kind = 'file'
+				and left(entry.path, char_length(:uploads_prefix)) = :uploads_prefix
+				and entry.managed_by = :file_resource_managed_by
+				and entry.source_file_uuid is not null
+				and entry.deleted_at is null
+				and (entry.expires_at is null or entry.expires_at > now())
+		),
 		upserted as (
 			insert into files (
 				uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
@@ -139,12 +151,16 @@ const (
 				where history.workspace_uuid = :workspace_uuid
 					and history.filesystem_uuid = :filesystem_uuid
 					and history.uuid = projection.uuid
-					and left(history.path, char_length(:outputs_prefix)) = :outputs_prefix
 			)
 			and not exists (
 				select 1
 				from active_outputs output
 				where output.uuid = projection.uuid
+			)
+			and not exists (
+				select 1
+				from active_inputs input
+				where input.uuid = projection.uuid
 			)
 	`
 )
@@ -494,13 +510,15 @@ func (d *DB) SyncSessionFileProjection(
 		return err
 	}
 	if _, err := namedExecContext(ctx, tx, syncSessionOutputFileProjectionSQL, map[string]any{
-		"workspace_id":          session.WorkspaceID,
-		"workspace_uuid":        filesystem.WorkspaceUUID,
-		"filesystem_uuid":       filesystem.UUID,
-		"outputs_prefix":        "/outputs/",
-		"scope_type":            sessionFileProjectionScope,
-		"scope_id":              session.ExternalID,
-		"created_by_api_key_id": session.CreatedByAPIKeyID,
+		"workspace_id":             session.WorkspaceID,
+		"workspace_uuid":           filesystem.WorkspaceUUID,
+		"filesystem_uuid":          filesystem.UUID,
+		"outputs_prefix":           "/outputs/",
+		"uploads_prefix":           "/uploads/",
+		"file_resource_managed_by": sessionFileResourceManagedBy,
+		"scope_type":               sessionFileProjectionScope,
+		"scope_id":                 session.ExternalID,
+		"created_by_api_key_id":    session.CreatedByAPIKeyID,
 	}); err != nil {
 		return err
 	}

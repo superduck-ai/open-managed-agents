@@ -324,6 +324,17 @@ func TestSessionFileResourceContract(t *testing.T) {
 			t.Fatalf("input projections reused file ID: %+v", scopedFiles.Data)
 		}
 		sessionRecord := mustSessionRecord(t, app, created.ID)
+		if err := app.db.SyncSessionFileProjection(
+			context.Background(),
+			sessionRecord.WorkspaceID,
+			sessionRecord.ExternalID,
+		); err != nil {
+			t.Fatalf("sync outputs while input projections are active: %v", err)
+		}
+		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
+		if len(scopedFiles.Data) != 2 {
+			t.Fatalf("scoped files after output sync = %+v, want two active inputs", scopedFiles.Data)
+		}
 		if _, err := app.db.Pool.Exec(context.Background(), `
 			update workspace_storage_usage
 			set filestore_bytes = 123
@@ -712,6 +723,16 @@ func TestSessionFileProjectionWorkspaceIsolation(t *testing.T) {
 	assertError(t, otherDownload, http.StatusNotFound, "not_found_error")
 }
 
+func TestSessionOutputProjectionRejectsMissingSession(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("session-output-missing-projection-bucket"))
+	defer app.close()
+
+	err := app.db.SyncSessionFileProjection(context.Background(), 1, "session_missing_projection")
+	if !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("SyncSessionFileProjection() error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestSessionOutputProjectionSyncsMultipleFiles(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("session-output-multiple-projection-bucket"))
 	defer app.close()
@@ -795,13 +816,6 @@ func TestSessionOutputProjectionSyncsMultipleFiles(t *testing.T) {
 func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("session-output-projection-bucket"))
 	defer app.close()
-
-	t.Run("failure missing Session", func(t *testing.T) {
-		err := app.db.SyncSessionFileProjection(context.Background(), 1, "session_missing_projection")
-		if !errors.Is(err, db.ErrNotFound) {
-			t.Fatalf("SyncSessionFileProjection() error = %v, want ErrNotFound", err)
-		}
-	})
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-output-projection-agent"}`)
 	defer cleanupAgentRows(t, app.db, agent.ID)
@@ -910,6 +924,52 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	if len(files) != 1 || files[0].ExternalID != projectedFileID || files[0].S3Key != replacement.S3Key ||
 		files[0].SizeBytes != replacement.SizeBytes {
 		t.Fatalf("overwritten projection = %+v, want updated stable file", files)
+	}
+
+	if _, err := app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
+		WorkspaceID:     record.WorkspaceID,
+		FilesystemID:    filesystem.ID,
+		SourcePath:      "/outputs/reports/result.txt",
+		DestinationPath: "/transcripts/result.txt",
+	}); err != nil {
+		t.Fatalf("move output outside public roots: %v", err)
+	}
+	if err := app.db.SyncSessionFileProjection(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	); err != nil {
+		t.Fatalf("sync output moved outside public roots: %v", err)
+	}
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list projections after output move: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("projections after output moved to transcripts = %+v, want none", files)
+	}
+
+	if _, err := app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
+		WorkspaceID:     record.WorkspaceID,
+		FilesystemID:    filesystem.ID,
+		SourcePath:      "/transcripts/result.txt",
+		DestinationPath: "/outputs/reports/result.txt",
+	}); err != nil {
+		t.Fatalf("move output back into public root: %v", err)
+	}
+	if err := app.db.SyncSessionFileProjection(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	); err != nil {
+		t.Fatalf("sync output moved back into public root: %v", err)
+	}
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list projections after output return: %v", err)
+	}
+	if len(files) != 1 || files[0].ExternalID != projectedFileID {
+		t.Fatalf("projection after output return = %+v, want stable file ID %q", files, projectedFileID)
 	}
 
 	if _, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveFilestoreEntryInput{

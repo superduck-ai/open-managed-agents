@@ -60,6 +60,7 @@ assets/
 # ghcr.io/superduck-ai/e2b-local image.  Docker daemon needs host-accessible
 # envd to bind-mount into sandbox containers.
 envd-bin/
+e2b-volumes/
 logs/
 
 # AI agent 个人本地覆盖文件（不提交）

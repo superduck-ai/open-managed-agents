@@ -1341,6 +1341,41 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByText('updated nested memory')).toBeTruthy();
   });
 
+  test('removes a draft file resource before creating a session', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
+    expect(within(dialog).getByLabelText('File ID')).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove file resource 1' }));
+    expect(within(dialog).queryByLabelText('File ID')).toBeNull();
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Environment' }).textContent).toContain('Environment one'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([]);
+  });
+
   test('creates a session with selected agent and environment references', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();

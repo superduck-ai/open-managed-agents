@@ -423,6 +423,42 @@ describe('Dashboard i18n', () => {
 });
 
 describe('Files page', () => {
+  test('reports upload failures and restores the upload action', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/files');
+    const requests = mockFilesList((url, _headers, method) => {
+      if (url === '/v1/files?beta=true' && method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'api_error', message: 'storage unavailable' },
+          }),
+          {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+      return {
+        data: [],
+        has_more: false,
+        first_id: null,
+        last_id: null,
+      };
+    });
+
+    renderFilesPage();
+
+    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    const file = new File(['session input'], 'session-input.txt', { type: 'text/plain' });
+    fireEvent.change(await screen.findByLabelText('Choose files to upload'), { target: { files: [file] } });
+
+    expect(await screen.findByText('File upload failed')).toBeTruthy();
+    expect(requests.some((request) => request.method === 'POST')).toBe(true);
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Upload files' }) as HTMLButtonElement).disabled).toBe(false),
+    );
+  });
+
   test('uploads a file and refreshes the workspace file list', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/files');
     let uploaded = false;

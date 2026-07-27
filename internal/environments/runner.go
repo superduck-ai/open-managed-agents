@@ -543,16 +543,20 @@ func (r *Runner) failManagedAgentRuntime(
 func (r *Runner) failCreatedSandbox(_ context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
 	// 清理必须独立于可能已取消的请求 context：runner/server context 取消时，
 	// 仍要把 Sandbox 标记 failed 并停止 Work，否则 Work 会卡在 starting 无法再被 poll。
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	dbCtx, cancelDB := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelDB()
 	now := time.Now().UTC()
 	message := cause.Error()
-	_ = r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
-	_, _ = r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	_ = r.db.UpdateEnvironmentSandboxState(dbCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
+	_, _ = r.db.StopEnvironmentWork(dbCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 	if strings.TrimSpace(providerSandboxID) == "" {
 		return
 	}
-	_ = r.provider.Kill(cleanupCtx, providerSandboxID)
+	// Kill 用独立的 bounded context：即使上面的 DB 写入耗尽了各自的预算，
+	// 也要保证仍有完整的 2 分钟去终止计费中的 provider Sandbox。
+	killCtx, cancelKill := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelKill()
+	_ = r.provider.Kill(killCtx, providerSandboxID)
 }
 
 func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*managedAgentLaunchPreparation, error) {

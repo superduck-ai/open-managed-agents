@@ -92,7 +92,13 @@ func run(logger *slog.Logger) error {
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)
-	batches.NewWorker(database, objectStore, cfg, logger.With("component", "batches")).Start(ctx)
+	batches.NewWorker(
+		database,
+		objectStore,
+		cfg.Batch,
+		batches.NewHTTPUpstreamClient(cfg),
+		logger.With("component", "batches"),
+	).Start(ctx)
 	environments.StartRunnerWithStoreAndCredentials(ctx, database, objectStore, cfg, codeSessionCredentials, logger.With("component", "environment_runner"))
 	skillprewarm.StartWorker(ctx, database, objectStore, cfg, logger.With("component", "skill_prewarm"))
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)

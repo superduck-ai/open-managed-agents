@@ -20,7 +20,7 @@ func (h *Handler) applySessionEventEffects(ctx context.Context, event db.Session
 		session, err := h.db.GetSession(ctx, event.WorkspaceID, event.SessionExternalID)
 		if err != nil {
 			if !errors.Is(err, db.ErrNotFound) {
-				h.logger.Error("load session for thread_created", "session_id", event.SessionExternalID, "error", err)
+				h.logger.ErrorContext(ctx, "load session for thread_created", "session_id", event.SessionExternalID, "error", err)
 			}
 			return
 		}
@@ -28,7 +28,7 @@ func (h *Handler) applySessionEventEffects(ctx context.Context, event db.Session
 			var payload map[string]any
 			_ = json.Unmarshal(event.Payload, &payload)
 			if err := h.ensureSessionThread(ctx, session, *threadID, payload, event.CreatedAt); err != nil && !errors.Is(err, db.ErrNotFound) {
-				h.logger.Error("ensure session thread", "session_id", event.SessionExternalID, "thread_id", *threadID, "error", err)
+				h.logger.ErrorContext(ctx, "ensure session thread", "session_id", event.SessionExternalID, "thread_id", *threadID, "error", err)
 			}
 		}
 		return
@@ -43,13 +43,13 @@ func (h *Handler) applySessionEventEffects(ctx context.Context, event db.Session
 			var payload map[string]any
 			_ = json.Unmarshal(event.Payload, &payload)
 			if err := h.ensureSessionThread(ctx, session, *threadID, payload, event.CreatedAt); err != nil && !errors.Is(err, db.ErrNotFound) {
-				h.logger.Error("ensure session thread for status", "session_id", event.SessionExternalID, "thread_id", *threadID, "error", err)
+				h.logger.ErrorContext(ctx, "ensure session thread for status", "session_id", event.SessionExternalID, "thread_id", *threadID, "error", err)
 			}
 		} else if !errors.Is(err, db.ErrNotFound) {
-			h.logger.Error("load session for thread status", "session_id", event.SessionExternalID, "error", err)
+			h.logger.ErrorContext(ctx, "load session for thread status", "session_id", event.SessionExternalID, "error", err)
 		}
 		if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceID, event.SessionExternalID, *threadID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-			h.logger.Error("update session thread status from event", "session_id", event.SessionExternalID, "thread_id", *threadID, "event_type", event.EventType, "error", err)
+			h.logger.ErrorContext(ctx, "update session thread status from event", "session_id", event.SessionExternalID, "thread_id", *threadID, "event_type", event.EventType, "error", err)
 			return
 		}
 		h.updateAggregatedSessionStatus(ctx, event.WorkspaceID, event.SessionExternalID)
@@ -60,14 +60,14 @@ func (h *Handler) applySessionEventEffects(ctx context.Context, event db.Session
 		return
 	}
 	if err := h.db.SetSessionStatus(ctx, event.WorkspaceID, event.SessionExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-		h.logger.Error("update session status from event", "session_id", event.SessionExternalID, "event_type", event.EventType, "error", err)
+		h.logger.ErrorContext(ctx, "update session status from event", "session_id", event.SessionExternalID, "event_type", event.EventType, "error", err)
 	}
 	thread, err := h.db.GetPrimarySessionThread(ctx, event.WorkspaceID, event.SessionExternalID)
 	if err != nil {
 		return
 	}
 	if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceID, event.SessionExternalID, thread.ExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-		h.logger.Error("update primary session thread status from event", "session_id", event.SessionExternalID, "thread_id", thread.ExternalID, "event_type", event.EventType, "error", err)
+		h.logger.ErrorContext(ctx, "update primary session thread status from event", "session_id", event.SessionExternalID, "thread_id", thread.ExternalID, "event_type", event.EventType, "error", err)
 	}
 }
 
@@ -83,7 +83,7 @@ func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceID
 	threads, err := h.db.ListSessionThreads(ctx, workspaceID, sessionID)
 	if err != nil {
 		if !errors.Is(err, db.ErrNotFound) {
-			h.logger.Error("list session threads for aggregate", "session_id", sessionID, "error", err)
+			h.logger.ErrorContext(ctx, "list session threads for aggregate", "session_id", sessionID, "error", err)
 		}
 		return
 	}
@@ -96,7 +96,7 @@ func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceID
 		case "running":
 			status = "running"
 			if err := h.db.SetSessionStatus(ctx, workspaceID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-				h.logger.Error("aggregate session status", "session_id", sessionID, "error", err)
+				h.logger.ErrorContext(ctx, "aggregate session status", "session_id", sessionID, "error", err)
 			}
 			return
 		case "rescheduling":
@@ -110,7 +110,7 @@ func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceID
 		}
 	}
 	if err := h.db.SetSessionStatus(ctx, workspaceID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
-		h.logger.Error("aggregate session status", "session_id", sessionID, "error", err)
+		h.logger.ErrorContext(ctx, "aggregate session status", "session_id", sessionID, "error", err)
 	}
 }
 

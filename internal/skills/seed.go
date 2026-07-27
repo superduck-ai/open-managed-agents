@@ -104,7 +104,7 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 		})
 		if err != nil {
 			if deleteErr := store.Delete(ctx, objectKey, storage.DeleteOptions{}); deleteErr != nil {
-				logger.Error("seed builtin skills: cleanup failed", "object_key", objectKey, "error", deleteErr)
+				logger.ErrorContext(ctx, "seed builtin skills: cleanup failed", "object_key", objectKey, "error", deleteErr)
 			}
 			if errors.Is(err, db.ErrVersionConflict) {
 				return BuiltinSeedResult{}, fmt.Errorf("%s version %s already exists with different content; choose a new version", skillID, version)
@@ -122,7 +122,7 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 		}
 		for _, version := range prunedVersions {
 			if err := store.Delete(ctx, version.S3Key, storage.DeleteOptions{}); err != nil {
-				logger.Error("seed builtin skills: delete pruned object failed for version", "skill_id", version.SkillExternalID, "version", version.Version, "key", version.S3Key, "error", err)
+				logger.ErrorContext(ctx, "seed builtin skills: delete pruned object failed for version", "skill_id", version.SkillExternalID, "version", version.Version, "key", version.S3Key, "error", err)
 			}
 		}
 		result.Pruned = len(prunedVersions)

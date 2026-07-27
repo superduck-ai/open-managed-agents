@@ -171,7 +171,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 	}, versionID)
 	if err != nil {
-		h.logger.Error("create agent", "error", err)
+		h.logger.ErrorContext(r.Context(), "create agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create agent"))
 		return
 	}
@@ -216,7 +216,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		h.logger.Error("list agents", "error", err)
+		h.logger.ErrorContext(r.Context(), "list agents", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agents"))
 		return
 	}
@@ -258,7 +258,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: derefBool(body.IncludeArchived),
 	})
 	if err != nil {
-		h.logger.Error("search agents", "error", err)
+		h.logger.ErrorContext(r.Context(), "search agents", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not search agents"))
 		return
 	}
@@ -299,7 +299,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		h.logger.Error("get agent", "error", err)
+		h.logger.ErrorContext(r.Context(), "get agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve agent"))
 		return
 	}
@@ -338,7 +338,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		h.logger.Error("get agent before update", "error", err)
+		h.logger.ErrorContext(r.Context(), "get agent before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
 	}
@@ -377,7 +377,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		h.logger.Error("update agent", "error", err)
+		h.logger.ErrorContext(r.Context(), "update agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
 	}
@@ -403,7 +403,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		h.logger.Error("archive agent", "error", err)
+		h.logger.ErrorContext(r.Context(), "archive agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive agent"))
 		return
 	}
@@ -441,7 +441,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		h.logger.Error("list agent versions", "error", err)
+		h.logger.ErrorContext(r.Context(), "list agent versions", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agent versions"))
 		return
 	}
@@ -1234,13 +1234,13 @@ func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, ag
 	}
 	snapshot, err := agentsnapshot.FromAgent(agent)
 	if err != nil {
-		h.logger.Error("build agent skill prewarm snapshot", "agent_id", agent.ExternalID, "trigger", trigger, "error", err)
+		h.logger.ErrorContext(ctx, "build agent skill prewarm snapshot", "agent_id", agent.ExternalID, "trigger", trigger, "error", err)
 		return
 	}
 	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
 	defer cancel()
 	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, "agent", agent.ExternalID, trigger); err != nil {
-		h.logger.Error("enqueue agent skill prewarm", "agent_id", agent.ExternalID, "trigger", trigger, "error", err)
+		h.logger.ErrorContext(ctx, "enqueue agent skill prewarm", "agent_id", agent.ExternalID, "trigger", trigger, "error", err)
 	}
 }
 

@@ -5,6 +5,8 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -188,6 +190,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		Config:                 cfg,
 		DB:                     database,
 		ObjectStore:            newFakeStore("e2b-integration-fake"),
+		Logger:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
 		CodeSessionCredentials: credentials,
 		FilestoreCredentials:   filestoreCredentials,
 	}))

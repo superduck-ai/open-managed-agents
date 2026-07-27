@@ -49,7 +49,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 			return
 		}
-		h.logger.Error("get environment for session", "error", err)
+		h.logger.ErrorContext(r.Context(), "get environment for session", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
 		return
 	}
@@ -146,7 +146,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		h.logger.Error("create session", "error", err)
+		h.logger.ErrorContext(r.Context(), "create session", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
 		return
 	}
@@ -157,7 +157,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.thread_idled", created.ExternalID, &thread.ExternalID)
 	response, err := h.responseFromSession(r, created)
 	if err != nil {
-		h.logger.Error("load session response", "error", err)
+		h.logger.ErrorContext(r.Context(), "load session response", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create session"))
 		return
 	}
@@ -236,7 +236,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		h.logger.Error("list sessions", "error", err)
+		h.logger.ErrorContext(r.Context(), "list sessions", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list sessions"))
 		return
 	}
@@ -244,7 +244,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	for _, record := range records {
 		response, err := h.responseFromSession(r, record)
 		if err != nil {
-			h.logger.Error("list session response", "error", err)
+			h.logger.ErrorContext(r.Context(), "list session response", "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list sessions"))
 			return
 		}
@@ -270,7 +270,7 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := h.responseFromSession(r, session)
 	if err != nil {
-		h.logger.Error("retrieve session response", "error", err)
+		h.logger.ErrorContext(r.Context(), "retrieve session response", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve session"))
 		return
 	}
@@ -339,7 +339,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := h.responseFromSession(r, updated)
 	if err != nil {
-		h.logger.Error("update session response", "error", err)
+		h.logger.ErrorContext(r.Context(), "update session response", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update session"))
 		return
 	}
@@ -373,7 +373,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 	h.enqueuePrincipalWebhook(r.Context(), principal, "session.archived", archived.ExternalID, nil)
 	response, err := h.responseFromSession(r, archived)
 	if err != nil {
-		h.logger.Error("archive session response", "error", err)
+		h.logger.ErrorContext(r.Context(), "archive session response", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive session"))
 		return
 	}
@@ -433,7 +433,7 @@ func (h *Handler) listThreadEventsRoute(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.backfillSubagentThreadEventsIfEmpty(r.Context(), session, threadID); err != nil {
-		h.logger.Error("backfill subagent thread events", "session_id", sessionID, "thread_id", threadID, "error", err)
+		h.logger.ErrorContext(r.Context(), "backfill subagent thread events", "session_id", sessionID, "thread_id", threadID, "error", err)
 	}
 	h.listEvents(w, r, sessionID, threadID)
 }
@@ -522,13 +522,13 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		CreatedAtLTE:      createdAtLTE,
 	})
 	if err != nil {
-		h.logger.Error("list session events", "error", err)
+		h.logger.ErrorContext(r.Context(), "list session events", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list events"))
 		return
 	}
 	hiddenPrimaryToolUseIDs, err := h.primaryOrphanToolUseIDsWithChildCopies(r.Context(), sessionID, threadID, records)
 	if err != nil {
-		h.logger.Error("list session events child tool projections", "error", err)
+		h.logger.ErrorContext(r.Context(), "list session events child tool projections", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list events"))
 		return
 	}
@@ -611,7 +611,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
-			h.logger.Error("queue session events for code session", "session_id", session.ExternalID, "error", err)
+			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
 		}
 	}
 	if outcomesChanged {
@@ -670,7 +670,7 @@ func (h *Handler) listResourcesRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceID, session.ExternalID)
 	if err != nil {
-		h.logger.Error("list session resources", "error", err)
+		h.logger.ErrorContext(r.Context(), "list session resources", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list resources"))
 		return
 	}
@@ -765,7 +765,7 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.ensurePrimarySessionThread(r.Context(), session); err != nil {
-		h.logger.Error("ensure primary session thread", "session_id", session.ExternalID, "error", err)
+		h.logger.ErrorContext(r.Context(), "ensure primary session thread", "session_id", session.ExternalID, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list threads"))
 		return
 	}
@@ -789,7 +789,7 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) {
 		Cursor:            cursor,
 	})
 	if err != nil {
-		h.logger.Error("list session threads", "error", err)
+		h.logger.ErrorContext(r.Context(), "list session threads", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list threads"))
 		return
 	}

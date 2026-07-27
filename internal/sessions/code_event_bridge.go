@@ -15,7 +15,7 @@ import (
 func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, events []db.SessionEvent) {
 	created, err := h.db.AppendSessionEvents(r.Context(), workspaceIDFromRequest(r), sessionID, events)
 	if err != nil {
-		h.logger.Error("append internal session events", "session_id", sessionID, "error", err)
+		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
 		return
 	}
 	for _, event := range created {
@@ -37,7 +37,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		if maevents.IsStreamDelta(rawSessionEventType(raw)) {
 			event, err := h.streamDeltaEventFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
 			if err != nil {
-				h.logger.Warn("skip code session stream delta", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
+				h.logger.WarnContext(ctx, "skip code session stream delta", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
 				continue
 			}
 			h.broadcastStreamDelta(event)
@@ -45,7 +45,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		batch, err := h.sessionEventsFromCodeSessionPayload(ctx, session, codeSession.ExternalID, raw, now)
 		if err != nil {
-			h.logger.Warn("skip code session event", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
+			h.logger.WarnContext(ctx, "skip code session event", "session_id", session.ExternalID, "code_session_id", codeSession.ExternalID, "error", err)
 			continue
 		}
 		events = append(events, batch...)

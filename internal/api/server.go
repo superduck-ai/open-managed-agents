@@ -68,7 +68,7 @@ type Server struct {
 // ServerDeps 汇总组装 HTTP API Server 所需依赖。
 // PlatformStore 为 nil 时回落到内存 store。
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
-// Logger 是进程根 logger；它属于运行时依赖而不是 config.Config，生产组装应显式传入。
+// Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
 	Config                 config.Config
 	DB                     *db.DB
@@ -127,9 +127,7 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
-	if deps.Logger != nil {
-		router.Use(requestLoggingMiddleware(deps.Logger.With("component", "http")))
-	}
+	router.Use(requestLoggingMiddleware(componentLogger("http")))
 	router.Use(s.recoverMiddleware)
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -411,7 +409,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		if errors.Is(err, platformsession.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session")
 		}
-		s.logger.Error("authenticate platform session", "error", err)
+		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	if strings.TrimSpace(session.OrganizationUUID) == "" && strings.TrimSpace(session.OrganizationExternalID) != "" {
@@ -433,7 +431,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		if errors.Is(err, db.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not found")
 		}
-		s.logger.Error("load platform workspace override", "error", err)
+		s.logger.ErrorContext(r.Context(), "load platform workspace override", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	if workspace.ArchivedAt != nil {
@@ -468,7 +466,7 @@ func (s *Server) recoverPlatformMirrorSession(r *http.Request) (auth.Principal, 
 			if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
 				return auth.Principal{}, "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session"), true
 			}
-			s.logger.Error("recover platform session context", "error", err)
+			s.logger.ErrorContext(r.Context(), "recover platform session context", "error", err)
 			return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
 		}
 	}
@@ -481,11 +479,11 @@ func (s *Server) recoverPlatformMirrorSession(r *http.Request) (auth.Principal, 
 		if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
 			return auth.Principal{}, "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session"), true
 		}
-		s.logger.Error("recover platform session identity", "error", err)
+		s.logger.ErrorContext(r.Context(), "recover platform session identity", "error", err)
 		return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
 	}
 	if err := s.platformStore.Save(r.Context(), sessionKey, session); err != nil {
-		s.logger.Error("save recovered platform session", "error", err)
+		s.logger.ErrorContext(r.Context(), "save recovered platform session", "error", err)
 		return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
 	}
 	principal := session.Principal()
@@ -506,7 +504,7 @@ func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal au
 		if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not found")
 		}
-		s.logger.Error("load platform organization override", "error", err)
+		s.logger.ErrorContext(r.Context(), "load platform organization override", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	if org.UUID != principal.OrganizationUUID && org.ExternalID != principal.OrganizationExternalID {
@@ -535,7 +533,7 @@ func (s *Server) platformMirrorOrganizationAlias(r *http.Request, principal auth
 	if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
 		return orgID
 	}
-	s.logger.Error("load platform mirror organization alias", "error", err)
+	s.logger.ErrorContext(r.Context(), "load platform mirror organization alias", "error", err)
 	return ""
 }
 

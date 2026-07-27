@@ -408,7 +408,7 @@ func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request
 			writeBadRequest(w, r, errors.New("memory store must not be archived"))
 			return
 		}
-		h.logger.Error("session resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
+		h.logger.ErrorContext(r.Context(), "session resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not validate session resource"))
 		return
 	}
@@ -424,7 +424,7 @@ func (h *Handler) writeSessionLoadError(w http.ResponseWriter, r *http.Request, 
 		writeBadRequest(w, r, errors.New("session state does not allow this operation"))
 		return
 	}
-	h.logger.Error("session operation", "error", err)
+	h.logger.ErrorContext(r.Context(), "session operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Session operation failed"))
 }
 
@@ -433,7 +433,7 @@ func (h *Handler) writeThreadLoadError(w http.ResponseWriter, r *http.Request, e
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Thread not found: "+threadID))
 		return
 	}
-	h.logger.Error("thread operation", "error", err)
+	h.logger.ErrorContext(r.Context(), "thread operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Thread operation failed"))
 }
 
@@ -442,6 +442,6 @@ func (h *Handler) writeResourceLoadError(w http.ResponseWriter, r *http.Request,
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Resource not found: "+resourceID))
 		return
 	}
-	h.logger.Error("resource operation", "error", err)
+	h.logger.ErrorContext(r.Context(), "resource operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Resource operation failed"))
 }

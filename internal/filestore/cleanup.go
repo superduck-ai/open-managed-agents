@@ -93,27 +93,27 @@ func (w *CleanupWorker) runLoop(ctx context.Context, workerID string) {
 }
 
 func (w *CleanupWorker) runFilesystemCleanupAndLog(ctx context.Context, workerID string) {
-	if err := RunFilestoreFilesystemCleanupOnce(ctx, w.database, workerID); err != nil {
+	if err := w.RunFilesystemCleanupOnce(ctx, workerID); err != nil {
 		w.logger.ErrorContext(ctx, "filestore filesystem cleanup worker", "error", err)
 	}
 }
 
 func (w *CleanupWorker) runCleanupAndLog(ctx context.Context, workerID string) {
-	if err := RunFilestoreCleanupOnce(ctx, w.database, w.client, workerID); err != nil {
+	if err := w.RunCleanupOnce(ctx, workerID); err != nil {
 		w.logger.ErrorContext(ctx, "filestore cleanup worker", "error", err)
 	}
 }
 
 func (w *CleanupWorker) runTTLSweepAndLog(ctx context.Context) {
-	if err := RunFilestoreTTLSweepOnce(ctx, w.database); err != nil {
+	if err := w.RunTTLSweepOnce(ctx); err != nil {
 		w.logger.ErrorContext(ctx, "filestore TTL sweep", "error", err)
 	}
 }
 
-// RunFilestoreFilesystemCleanupOnce 把已删除 filesystem 的一批元数据转换成对象清理任务。
+// RunFilesystemCleanupOnce 把已删除 filesystem 的一批元数据转换成对象清理任务。
 // 此阶段只访问数据库；真正的 S3 删除仍由对象任务在事务外完成。
-func RunFilestoreFilesystemCleanupOnce(ctx context.Context, database filestoreCleanupDatabase, workerID string) error {
-	jobs, err := database.LeaseFilestoreFilesystemCleanupJobs(
+func (w *CleanupWorker) RunFilesystemCleanupOnce(ctx context.Context, workerID string) error {
+	jobs, err := w.database.LeaseFilestoreFilesystemCleanupJobs(
 		ctx, workerID, filestoreCleanupBatchSize, filestoreCleanupMaxAttempts,
 	)
 	if err != nil {
@@ -125,7 +125,7 @@ func RunFilestoreFilesystemCleanupOnce(ctx context.Context, database filestoreCl
 			errs = append(errs, err)
 			break
 		}
-		_, processErr := database.ProcessLeasedFilestoreFilesystemCleanupJob(
+		_, processErr := w.database.ProcessLeasedFilestoreFilesystemCleanupJob(
 			ctx,
 			job.ID,
 			workerID,
@@ -138,7 +138,7 @@ func RunFilestoreFilesystemCleanupOnce(ctx context.Context, database filestoreCl
 			errs = append(errs, processErr)
 			break
 		}
-		if err := database.FailLeasedFilestoreFilesystemCleanupJob(
+		if err := w.database.FailLeasedFilestoreFilesystemCleanupJob(
 			ctx,
 			job.ID,
 			workerID,
@@ -152,15 +152,10 @@ func RunFilestoreFilesystemCleanupOnce(ctx context.Context, database filestoreCl
 	return errors.Join(errs...)
 }
 
-// RunFilestoreCleanupOnce 租约并处理一批有界的对象清理任务。
+// RunCleanupOnce 租约并处理一批有界的对象清理任务。
 // 每条任务按自身持久化的 bucket 选择对象存储；对象已不存在等同于目标已达成。
-func RunFilestoreCleanupOnce(
-	ctx context.Context,
-	database filestoreCleanupDatabase,
-	client storage.Client,
-	workerID string,
-) error {
-	jobs, err := database.LeaseFilestoreObjectCleanupJobs(
+func (w *CleanupWorker) RunCleanupOnce(ctx context.Context, workerID string) error {
+	jobs, err := w.database.LeaseFilestoreObjectCleanupJobs(
 		ctx, workerID, filestoreCleanupBatchSize, filestoreCleanupMaxAttempts,
 	)
 	if err != nil {
@@ -172,9 +167,9 @@ func RunFilestoreCleanupOnce(
 			errs = append(errs, err)
 			break
 		}
-		store, storeErr := client.ForBucket(job.Bucket)
+		store, storeErr := w.client.ForBucket(job.Bucket)
 		if storeErr != nil {
-			if err := database.FailLeasedFilestoreObjectCleanupJob(
+			if err := w.database.FailLeasedFilestoreObjectCleanupJob(
 				ctx,
 				job.ID,
 				workerID,
@@ -198,7 +193,7 @@ func RunFilestoreCleanupOnce(
 		if deleteErr != nil && !errors.Is(deleteErr, storage.ErrNotFound) {
 			// 失败次数由数据库原子递增，退避只决定下次可租约时间，不在 worker 中阻塞等待。
 			delay := filestoreCleanupRetryDelay(job.Attempts + 1)
-			if err := database.FailLeasedFilestoreObjectCleanupJob(
+			if err := w.database.FailLeasedFilestoreObjectCleanupJob(
 				ctx,
 				job.ID,
 				workerID,
@@ -210,16 +205,16 @@ func RunFilestoreCleanupOnce(
 			}
 			continue
 		}
-		if err := database.CompleteLeasedFilestoreObjectCleanupJob(ctx, job.ID, workerID); err != nil {
+		if err := w.database.CompleteLeasedFilestoreObjectCleanupJob(ctx, job.ID, workerID); err != nil {
 			errs = append(errs, fmt.Errorf("complete cleanup job %s: %w", job.ExternalID, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// RunFilestoreTTLSweepOnce 将一批到期条目原子地标记为删除，并同时创建对应的对象清理任务。
-func RunFilestoreTTLSweepOnce(ctx context.Context, database filestoreCleanupDatabase) error {
-	_, err := database.ExpireFilestoreEntries(ctx, filestoreTTLSweepBatchSize)
+// RunTTLSweepOnce 将一批到期条目原子地标记为删除，并同时创建对应的对象清理任务。
+func (w *CleanupWorker) RunTTLSweepOnce(ctx context.Context) error {
+	_, err := w.database.ExpireFilestoreEntries(ctx, filestoreTTLSweepBatchSize)
 	return err
 }
 

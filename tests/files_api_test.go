@@ -436,8 +436,10 @@ func TestFilesAPI(t *testing.T) {
 	})
 
 	t.Run("failure download logs truncated object stream", func(t *testing.T) {
+		var logs bytes.Buffer
 		store := newFakeStore("fake-bucket")
-		fakeApp := newTestAppWithStore(t, nil, store)
+		logger := slog.New(slog.NewTextHandler(&logs, nil))
+		fakeApp := newTestAppWithStoreAndLogger(t, nil, store, logger)
 		defer fakeApp.close()
 
 		fileID, objectKey := createDownloadableFile(t, fakeApp, "truncated.txt", "text/plain", []byte("complete"))
@@ -448,10 +450,6 @@ func TestFilesAPI(t *testing.T) {
 			Size:        10,
 			ContentType: "text/plain",
 		}
-		var logs bytes.Buffer
-		originalLogger := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-		defer slog.SetDefault(originalLogger)
 
 		resp := fakeApp.do(t, http.MethodGet, "/v1/files/"+fileID+"/content?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
@@ -878,7 +876,8 @@ func TestObjectCleanupWorkerContinuesAfterJobFailure(t *testing.T) {
 		t.Fatalf("prioritize cleanup jobs: %v", err)
 	}
 
-	if err := cleanup.RunObjectCleanupOnce(ctx, app.db, newFakeStorageClient(failedBucket, successfulBucket), "cleanup-worker-test"); err != nil {
+	worker := cleanup.NewWorker(app.db, newFakeStorageClient(failedBucket, successfulBucket), 0, nil)
+	if err := worker.RunOnce(ctx, "cleanup-worker-test"); err != nil {
 		t.Fatalf("run cleanup once: %v", err)
 	}
 
@@ -942,6 +941,12 @@ func newS3ObjectStore(t *testing.T, override *config.Config) (storage.ObjectStor
 
 func newTestAppWithStore(t *testing.T, override *config.Config, store storage.ObjectStore) *testApp {
 	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return newTestAppWithStoreAndLogger(t, override, store, logger)
+}
+
+func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store storage.ObjectStore, logger *slog.Logger) *testApp {
+	t.Helper()
 	ctx := context.Background()
 	cfg, err := config.Load()
 	if err != nil {
@@ -982,6 +987,7 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 		Config:                 cfg,
 		DB:                     database,
 		ObjectStore:            store,
+		Logger:                 logger,
 		PlatformStore:          platformSessions,
 		CodeSessionCredentials: credentials,
 		FilestoreCredentials:   filestoreCredentials,

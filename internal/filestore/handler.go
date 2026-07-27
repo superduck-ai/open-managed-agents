@@ -111,7 +111,7 @@ func (h *Handler) listDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.ListDirectory(r.Context(), principal, request)
-	h.writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) makeDirectory(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +121,7 @@ func (h *Handler) makeDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.MakeDirectory(r.Context(), principal, request)
-	h.writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) removeDirectory(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +131,7 @@ func (h *Handler) removeDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiErr = h.service.RemoveDirectory(r.Context(), principal, request)
-	h.writeFilestoreResult(w, struct{}{}, apiErr)
+	h.writeFilestoreResult(r.Context(), w, struct{}{}, apiErr)
 }
 
 func (h *Handler) createFile(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +140,7 @@ func (h *Handler) createFile(w http.ResponseWriter, r *http.Request) {
 		writeFilestoreError(w, apiErr)
 		return
 	}
-	h.extendFilestoreDeadlines(w)
+	h.extendFilestoreDeadlines(r.Context(), w)
 	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.Storage.MaxFileBytes+maxFilestoreJSONBody)
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -171,7 +171,7 @@ func (h *Handler) createFile(w http.ResponseWriter, r *http.Request) {
 	defer filePart.Close()
 	// params 必须先于 file，服务层才能在读取大文件前完成路径、配额上下文等校验。
 	response, apiErr := h.service.CreateFile(r.Context(), principal, params, filePart)
-	h.writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) copyFile(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +181,7 @@ func (h *Handler) copyFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.CopyFile(r.Context(), principal, request)
-	h.writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) moveFile(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +191,7 @@ func (h *Handler) moveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.MoveFile(r.Context(), principal, request)
-	h.writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) moveDirectory(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +201,7 @@ func (h *Handler) moveDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.MoveDirectory(r.Context(), principal, request)
-	h.writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
@@ -210,10 +210,10 @@ func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
 		writeFilestoreError(w, apiErr)
 		return
 	}
-	h.extendFilestoreDeadlines(w)
+	h.extendFilestoreDeadlines(r.Context(), w)
 	result, apiErr := h.service.ReadFile(r.Context(), principal, request)
 	if apiErr != nil {
-		h.logFilestoreRequestError(apiErr)
+		h.logFilestoreRequestError(r.Context(), apiErr)
 		writeFilestoreError(w, apiErr)
 		return
 	}
@@ -241,9 +241,8 @@ func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
 		_, err = io.Copy(w, result.Body)
 	}
 	if err != nil {
-		h.logger.
-			// 响应头发出后已无法改写为 JSON 错误，只记录流中断供服务端诊断。
-			Error("stream filestore object", "error", err)
+		// 响应头发出后已无法改写为 JSON 错误，只记录流中断供服务端诊断。
+		h.logger.ErrorContext(r.Context(), "stream filestore object", "error", err)
 	}
 }
 
@@ -254,7 +253,7 @@ func (h *Handler) removeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiErr = h.service.RemoveFile(r.Context(), principal, request)
-	h.writeFilestoreResult(w, struct{}{}, apiErr)
+	h.writeFilestoreResult(r.Context(), w, struct{}{}, apiErr)
 }
 
 func (h *Handler) readMetadata(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +263,7 @@ func (h *Handler) readMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, apiErr := h.service.ReadMetadata(r.Context(), principal, request)
-	h.writeFilestoreResult(w, response, apiErr)
+	h.writeFilestoreResult(r.Context(), w, response, apiErr)
 }
 
 func decodeAuthenticatedJSON[T any](w http.ResponseWriter, r *http.Request) (Principal, T, *apiError) {
@@ -296,34 +295,34 @@ func authenticatedPrincipal(r *http.Request) (Principal, *apiError) {
 	return principal, nil
 }
 
-func (h *Handler) writeFilestoreResult(w http.ResponseWriter, value any, apiErr *apiError) {
+func (h *Handler) writeFilestoreResult(ctx context.Context, w http.ResponseWriter, value any, apiErr *apiError) {
 	if apiErr != nil {
-		h.logFilestoreRequestError(apiErr)
+		h.logFilestoreRequestError(ctx, apiErr)
 		writeFilestoreError(w, apiErr)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		h.logger.Error("encode filestore response", "error", err)
+		h.logger.ErrorContext(ctx, "encode filestore response", "error", err)
 	}
 }
 
-func (h *Handler) logFilestoreRequestError(apiErr *apiError) {
+func (h *Handler) logFilestoreRequestError(ctx context.Context, apiErr *apiError) {
 	if apiErr != nil && apiErr.Status >= http.StatusInternalServerError {
-		h.logger.Error("filestore request failed", "error", apiErr)
+		h.logger.ErrorContext(ctx, "filestore request failed", "error", apiErr)
 	}
 }
 
-func (h *Handler) extendFilestoreDeadlines(w http.ResponseWriter) {
+func (h *Handler) extendFilestoreDeadlines(ctx context.Context, w http.ResponseWriter) {
 	controller := http.NewResponseController(w)
 	// 全局 HTTP 超时仍是最后防线；这里只为大对象上传下载提供协议允许的传输窗口。
 	deadline := time.Now().Add(filestoreTransferTTL)
 	if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		h.logger.Error("set filestore read deadline", "error", err)
+		h.logger.ErrorContext(ctx, "set filestore read deadline", "error", err)
 	}
 	if err := controller.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		h.logger.Error("set filestore write deadline", "error", err)
+		h.logger.ErrorContext(ctx, "set filestore write deadline", "error", err)
 	}
 }
 

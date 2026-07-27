@@ -592,7 +592,7 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpapi.WriteError(w, r, httpapi.NewError(serviceErr.status, serviceErr.typ, serviceErr.message))
 		return
 	}
-	h.logger.Error("admin api", "error", err)
+	h.logger.ErrorContext(r.Context(), "admin api", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Internal server error"))
 }
 

@@ -51,7 +51,7 @@ func (s *Service) queueInitialPublicSessionEvents(ctx context.Context, codeSessi
 	for _, raw := range payloads {
 		object, err := decodeJSONObject(raw)
 		if err != nil {
-			s.logger.Warn("skip initial code session event", "code_session_id", codeSession.ExternalID, "error", err)
+			s.logger.WarnContext(ctx, "skip initial code session event", "code_session_id", codeSession.ExternalID, "error", err)
 			continue
 		}
 		if !forwardPublicEventToWorker(stringField(object, "type")) {
@@ -59,7 +59,7 @@ func (s *Service) queueInitialPublicSessionEvents(ctx context.Context, codeSessi
 		}
 		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, raw, now)
 		if err != nil {
-			s.logger.Error("convert initial code session event", "code_session_id", codeSession.ExternalID, "error", err)
+			s.logger.ErrorContext(ctx, "convert initial code session event", "code_session_id", codeSession.ExternalID, "error", err)
 			continue
 		}
 		workerPayloads = append(workerPayloads, payload)
@@ -94,7 +94,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		}
 		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.ProcessedAt)
 		if err != nil {
-			s.logger.Error("convert public session event to code session payload", "session_id", session.ExternalID, "event_id", event.ExternalID, "error", err)
+			s.logger.ErrorContext(ctx, "convert public session event to code session payload", "session_id", session.ExternalID, "event_id", event.ExternalID, "error", err)
 			continue
 		}
 		payloads = append(payloads, payload)
@@ -356,7 +356,7 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 		return nil
 	}
 	if err := s.publishSubagentInternalEvents(ctx, codeSession); err != nil {
-		s.logger.Error("publish subagent internal events", "code_session_id", codeSession.ExternalID, "session_id", codeSession.SessionExternalID, "error", err)
+		s.logger.ErrorContext(ctx, "publish subagent internal events", "code_session_id", codeSession.ExternalID, "session_id", codeSession.SessionExternalID, "error", err)
 	}
 	return nil
 }

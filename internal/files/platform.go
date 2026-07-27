@@ -136,12 +136,12 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 	imageWidth, imageHeight, primaryColor := imageAssetInfoFromBytes(content)
 	thumbnail, hasThumbnail, thumbnailErr := buildPlatformThumbnail(contentType, content)
 	if thumbnailErr != nil {
-		h.logger.Error("generate platform thumbnail", "filename", filename, "content_type", contentType, "error", thumbnailErr)
+		h.logger.ErrorContext(r.Context(), "generate platform thumbnail", "filename", filename, "content_type", contentType, "error", thumbnailErr)
 	}
 	objectKey := fmt.Sprintf("workspaces/%s/files/%s/%s", scope.workspaceUUID, fileUUID, sanitizeForKey(filename))
 
 	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(content), storage.UploadOptions{Size: int64(len(content)), ContentType: contentType}); err != nil {
-		h.logger.Error("put platform upload object", "error", err)
+		h.logger.ErrorContext(r.Context(), "put platform upload object", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store file"))
 		return
 	}
@@ -167,7 +167,7 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace storage limit exceeded"))
 			return
 		}
-		h.logger.Error("create platform file metadata", "error", err)
+		h.logger.ErrorContext(r.Context(), "create platform file metadata", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create file metadata"))
 		return
 	}
@@ -177,7 +177,7 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 		thumbnailKey := platformThumbnailKey(record)
 		if thumbnailKey != "" {
 			if _, err := h.store.Upload(r.Context(), thumbnailKey, bytes.NewReader(thumbnail.Content), storage.UploadOptions{Size: int64(len(thumbnail.Content)), ContentType: thumbnail.ContentType}); err != nil {
-				h.logger.Error("put platform thumbnail object", "file_uuid", record.UUID, "key", thumbnailKey, "error", err)
+				h.logger.ErrorContext(r.Context(), "put platform thumbnail object", "file_uuid", record.UUID, "key", thumbnailKey, "error", err)
 			} else {
 				thumbnailWidth = thumbnail.Width
 				thumbnailHeight = thumbnail.Height
@@ -224,7 +224,7 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileUUID))
 			return
 		}
-		h.logger.Error("get platform file metadata", "variant", variant, "error", err)
+		h.logger.ErrorContext(r.Context(), "get platform file metadata", "variant", variant, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file"))
 		return
 	}
@@ -241,13 +241,13 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 				h.streamPlatformObject(r.Context(), w, record.UUID, objectKey, variant, object, objectContentType)
 				return
 			}
-			h.logger.Error("get platform thumbnail object failed, falling back to original", "file_uuid", fileUUID, "key", thumbnailKey, "error", thumbnailErr)
+			h.logger.ErrorContext(r.Context(), "get platform thumbnail object failed, falling back to original", "file_uuid", fileUUID, "key", thumbnailKey, "error", thumbnailErr)
 		}
 	}
 
 	object, err := h.store.Open(r.Context(), objectKey, nil)
 	if err != nil {
-		h.logger.Error("get platform file object", "variant", variant, "error", err)
+		h.logger.ErrorContext(r.Context(), "get platform file object", "variant", variant, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file"))
 		return
 	}

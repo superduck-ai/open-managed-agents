@@ -50,7 +50,7 @@ func (w *Worker) Start(ctx context.Context) {
 		defer ticker.Stop()
 
 		for {
-			if err := RunObjectCleanupOnce(ctx, w.database, w.client, workerID); err != nil {
+			if err := w.RunOnce(ctx, workerID); err != nil {
 				w.logger.ErrorContext(ctx, "object cleanup worker", "error", err)
 			}
 
@@ -63,16 +63,17 @@ func (w *Worker) Start(ctx context.Context) {
 	}()
 }
 
-func RunObjectCleanupOnce(ctx context.Context, database *db.DB, client storage.Client, workerID string) error {
-	jobs, err := database.LeaseObjectCleanupJobs(ctx, workerID, defaultBatchSize)
+// RunOnce leases and processes one batch of object cleanup jobs.
+func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
+	jobs, err := w.database.LeaseObjectCleanupJobs(ctx, workerID, defaultBatchSize)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, job := range jobs {
-		store, storeErr := client.ForBucket(job.Bucket)
+		store, storeErr := w.client.ForBucket(job.Bucket)
 		if storeErr != nil {
-			if err := database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, storeErr.Error(), time.Hour, defaultMaxAttempts); err != nil {
+			if err := w.database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, storeErr.Error(), time.Hour, defaultMaxAttempts); err != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s failed: %w", job.ExternalID, err))
 			}
 			continue
@@ -80,12 +81,12 @@ func RunObjectCleanupOnce(ctx context.Context, database *db.DB, client storage.C
 
 		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{}); err != nil {
 			delay := retryDelay(job.Attempts + 1)
-			if markErr := database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, err.Error(), delay, defaultMaxAttempts); markErr != nil {
+			if markErr := w.database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, err.Error(), delay, defaultMaxAttempts); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s retry: %w", job.ExternalID, markErr))
 			}
 			continue
 		}
-		if err := database.CompleteObjectCleanupJob(ctx, job.ID); err != nil {
+		if err := w.database.CompleteObjectCleanupJob(ctx, job.ID); err != nil {
 			errs = append(errs, fmt.Errorf("complete cleanup job %s: %w", job.ExternalID, err))
 		}
 	}

@@ -251,7 +251,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:             now,
 	})
 	if err != nil {
-		h.logger.Error("create deployment", "error", err)
+		h.logger.ErrorContext(r.Context(), "create deployment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment"))
 		return
 	}
@@ -309,7 +309,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		h.logger.Error("list deployments", "error", err)
+		h.logger.ErrorContext(r.Context(), "list deployments", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list deployments"))
 		return
 	}
@@ -676,7 +676,7 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 		CreatedAt:         now,
 	})
 	if err != nil {
-		h.logger.Error("create deployment run failure", "error", err)
+		h.logger.ErrorContext(r.Context(), "create deployment run failure", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment run"))
 		return
 	}
@@ -817,7 +817,7 @@ func (h *RunsHandler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:         createdAtLTE,
 	})
 	if err != nil {
-		h.logger.Error("list deployment runs", "error", err)
+		h.logger.ErrorContext(r.Context(), "list deployment runs", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list deployment runs"))
 		return
 	}
@@ -1803,7 +1803,7 @@ func (h *Handler) enqueueSkillPrewarm(ctx context.Context, workspaceID int64, sn
 	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPrewarmEnqueueTimeout)
 	defer cancel()
 	if err := h.prewarm.EnqueueSnapshot(enqueueCtx, workspaceID, snapshot, source, sourceID, trigger); err != nil {
-		h.logger.Error("enqueue deployment skill prewarm", "source", source, "source_id", sourceID, "trigger", trigger, "error", err)
+		h.logger.ErrorContext(ctx, "enqueue deployment skill prewarm", "source", source, "source_id", sourceID, "trigger", trigger, "error", err)
 	}
 }
 
@@ -1900,7 +1900,7 @@ func (h *Handler) writeEnvironmentLoadError(w http.ResponseWriter, r *http.Reque
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 		return
 	}
-	h.logger.Error("environment operation", "error", err)
+	h.logger.ErrorContext(r.Context(), "environment operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Environment operation failed"))
 }
 
@@ -1915,7 +1915,7 @@ func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request
 			writeBadRequest(w, r, errors.New("memory store must not be archived"))
 			return
 		}
-		h.logger.Error("deployment resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
+		h.logger.ErrorContext(r.Context(), "deployment resource reference", "resource_type", refErr.ResourceType, "resource_id", refErr.ResourceID, "error", refErr.Err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not validate deployment resource"))
 		return
 	}
@@ -1931,7 +1931,7 @@ func (h *Handler) writeDeploymentLoadError(w http.ResponseWriter, r *http.Reques
 		writeBadRequest(w, r, errors.New("deployment state does not allow this operation"))
 		return
 	}
-	h.logger.Error("deployment operation", "error", err)
+	h.logger.ErrorContext(r.Context(), "deployment operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Deployment operation failed"))
 }
 
@@ -1940,6 +1940,6 @@ func (h *RunsHandler) writeRunLoadError(w http.ResponseWriter, r *http.Request, 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Deployment run not found: "+runID))
 		return
 	}
-	h.logger.Error("deployment run operation", "error", err)
+	h.logger.ErrorContext(r.Context(), "deployment run operation", "error", err)
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Deployment run operation failed"))
 }

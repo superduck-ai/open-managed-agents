@@ -75,7 +75,7 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 		}
 		processed, err := r.RunOnce(ctx, workerID)
 		if err != nil {
-			r.logger.Error("environment runner", "worker_id", workerID, "error", err)
+			r.logger.ErrorContext(ctx, "environment runner", "worker_id", workerID, "error", err)
 		}
 		if processed {
 			continue

@@ -56,9 +56,7 @@ func buildPackageManifest(config json.RawMessage) ([]byte, bool, error) {
 	if packages.empty() {
 		return nil, false, nil
 	}
-	packages.Type = managerPackageType
-	packages.ensureLists()
-	data, err := json.Marshal(packageManifest{Version: 1, Packages: *packages})
+	data, err := json.Marshal(packageManifest{Version: 1, Packages: *packages.normalized()})
 	if err != nil {
 		return nil, false, fmt.Errorf("encode packages manifest: %w", err)
 	}
@@ -89,9 +87,9 @@ func validatePackageProvisioningResult(commandResult e2bruntime.CommandResult) e
 		}
 		return fmt.Errorf(
 			"provision environment packages: status=failed category=%s manager=%s stage=%s package_count=%s duration_ms=%d exit_code=%s",
-			optionalPackageProvisioningString(result.Category),
-			optionalPackageProvisioningString(result.Manager),
-			optionalPackageProvisioningString(result.Stage),
+			lo.FromPtrOr(result.Category, "unknown"),
+			lo.FromPtrOr(result.Manager, "unknown"),
+			lo.FromPtrOr(result.Stage, "unknown"),
 			optionalPackageProvisioningInt(result.PackageCount),
 			*result.DurationMS,
 			optionalPackageProvisioningInt(result.ExitCode),
@@ -116,10 +114,6 @@ func decodePackageProvisioningResult(stdout []byte) (packageProvisioningResult, 
 
 func hasPackageProvisioningFailureFields(result packageProvisioningResult) bool {
 	return result.Category != nil || result.Manager != nil || result.Stage != nil || result.ExitCode != nil
-}
-
-func optionalPackageProvisioningString(value *string) string {
-	return lo.FromPtrOr(value, "unknown")
 }
 
 func optionalPackageProvisioningInt(value *int) string {

@@ -50,9 +50,15 @@ func (p *environmentPackages) specsByManager() []managerSpecs {
 }
 
 func emptyPackages() *environmentPackages {
-	packages := &environmentPackages{Type: managerPackageType}
-	packages.ensureLists()
-	return packages
+	return (&environmentPackages{}).normalized()
+}
+
+// normalized 固定 Claude 兼容响应与 provisioner manifest 的字段形状：把 type 补成
+// managerPackageType，并让每个 manager 序列化成 [] 而非 null。返回自身便于链式调用。
+func (p *environmentPackages) normalized() *environmentPackages {
+	p.Type = managerPackageType
+	p.ensureLists()
+	return p
 }
 
 // normalizePackages 是 config.packages 的 HTTP 边界：它接受任意请求 JSON，

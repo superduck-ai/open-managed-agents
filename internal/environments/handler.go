@@ -913,9 +913,7 @@ func platformPackagesForResponse(raw json.RawMessage) *environmentPackages {
 	if len(raw) > 0 && !isJSONNull(raw) {
 		_ = json.Unmarshal(raw, packages)
 	}
-	packages.Type = managerPackageType
-	packages.ensureLists()
-	return packages
+	return packages.normalized()
 }
 
 func platformNetworkingForResponse(raw json.RawMessage) map[string]any {

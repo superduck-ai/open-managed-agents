@@ -280,6 +280,21 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		*work = updatedWork
 	}
 
+	manifest, provision, err := buildPackageManifest(env.Config)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	if provision {
+		proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest)
+		if err != nil {
+			return true, err
+		}
+		if !proceed {
+			return true, nil
+		}
+	}
+
 	// 只有 Cloud Session Managed Agent 使用固定的四组 Filestore 挂载。
 	// 必须等 rclone ready 后才能继续，确保 Claude 启动时 uploads、outputs、
 	// transcripts 和 tool_results 已经可用。
@@ -339,6 +354,52 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 
 	// true 表示本轮确实消费了一条 Work；nil 表示所需启动阶段全部完成。
 	return true, nil
+}
+
+func (r *Runner) provisionCreatedSandboxPackages(
+	ctx context.Context,
+	record db.EnvironmentSandbox,
+	work *db.EnvironmentWork,
+	providerSandboxID string,
+	manifest []byte,
+) (bool, error) {
+	if strings.TrimSpace(providerSandboxID) == "" {
+		err := errors.New("provider returned an empty sandbox id for package provisioning")
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return false, err
+	}
+	// Persist the provider ID before provisioning so a concurrent stop can
+	// find and terminate the sandbox while package installation is running.
+	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "creating", &providerSandboxID, nil, nil); err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return false, err
+	}
+	if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return false, err
+	}
+	heartbeat, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return false, err
+	}
+	if heartbeat.LeaseExtended {
+		return true, nil
+	}
+	r.failCreatedSandbox(ctx, record, work, providerSandboxID, errors.New("environment work stopped during package provisioning"))
+	return false, nil
+}
+
+func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte) error {
+	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
+		Command: buildPackageProvisionCommand(r.cfg),
+		Stdin:   manifest,
+		Timeout: r.cfg.E2B.SandboxTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("provision environment packages: %w", err)
+	}
+	return validatePackageProvisioningResult(result)
 }
 
 func (r *Runner) failManagedAgentRuntime(
@@ -497,19 +558,19 @@ func (r *Runner) publishManagedAgentRuntime(
 
 func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
 	if err := r.provider.WriteFile(ctx, sandboxID, rcloneConfigPath, launch.ConfigPayload); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "config_write", errRcloneConfigWrite, err)
 	}
-	if err := r.provider.RunCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+	if err := r.runSandboxCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
+		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "config_permissions", errRcloneConfigPermissions, err)
 	}
 	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "process_start", errRcloneProcessStart, err)
 	}
 	if err := r.waitForRcloneReady(ctx, sandboxID, rcloneReadyPollInterval, rcloneReadyTimeout); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "readiness", errRcloneReadiness, err)
 	}
 	r.removeRcloneConfig(ctx, sandboxID)
@@ -518,7 +579,7 @@ func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, lau
 
 func (r *Runner) removeRcloneConfig(ctx context.Context, sandboxID string) {
 	for attempt := 1; attempt <= rcloneConfigCleanupTries; attempt++ {
-		cleanupErr := r.provider.RunCommand(
+		cleanupErr := r.runSandboxCommand(
 			ctx,
 			sandboxID,
 			rcloneConfigCleanupCommand(),
@@ -552,6 +613,17 @@ func (r *Runner) removeRcloneConfig(ctx context.Context, sandboxID string) {
 		"attempts", rcloneConfigCleanupTries,
 		"config_may_remain", true,
 	)
+}
+
+func (r *Runner) runSandboxCommand(ctx context.Context, sandboxID, command string, timeout time.Duration) error {
+	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{Command: command, Timeout: timeout})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("sandbox command exited with code %d", result.ExitCode)
+	}
+	return nil
 }
 
 func (r *Runner) logRcloneStageFailure(ctx context.Context, stage string, publicError, cause error) error {

@@ -240,18 +240,18 @@ func (p *rcloneTestProvider) FileExists(_ context.Context, _ string, path string
 	return p.ready, nil
 }
 
-func (p *rcloneTestProvider) RunCommand(_ context.Context, _ string, command string, _ time.Duration) error {
-	p.runCommands = append(p.runCommands, command)
+func (p *rcloneTestProvider) RunCommand(_ context.Context, _ string, request e2bruntime.CommandRequest) (e2bruntime.CommandResult, error) {
+	p.runCommands = append(p.runCommands, request.Command)
 	index := len(p.runCommands) - 1
 	if index < len(p.runErrors) {
 		if p.runErrors[index] != nil {
-			return p.runErrors[index]
+			return e2bruntime.CommandResult{}, p.runErrors[index]
 		}
 	}
-	if command == rcloneConfigCleanupCommand() {
+	if request.Command == rcloneConfigCleanupCommand() {
 		p.configExists = false
 	}
-	return nil
+	return e2bruntime.CommandResult{}, nil
 }
 
 func (p *rcloneTestProvider) StartBackgroundCommand(context.Context, string, string, []byte) error {

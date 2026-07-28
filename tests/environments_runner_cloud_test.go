@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -315,6 +316,192 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if metadata["claude_code_session_id"] != codeSession.ExternalID || metadata["claude_code_sdk_url_path"] != "/v1/code/sessions/"+codeSession.ExternalID || metadata["runtime"] != "claude_code_local" {
 		t.Fatalf("session metadata was not patched: %#v", metadata)
 	}
+}
+
+func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
+	t.Run("failure terminates sandbox before manager startup", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{commandErr: errors.New("gem install failed")})
+		if !processed || err == nil || !strings.Contains(err.Error(), "provision environment packages") {
+			t.Fatalf("RunOnce() = (%t, %v), want processed provisioning failure", processed, err)
+		}
+		if len(provider.commands) == 0 || len(provider.launches) != 0 {
+			t.Fatalf("failure commands/launches = %d/%d, want provisioning and no manager launch", len(provider.commands), len(provider.launches))
+		}
+		if strings.Contains(provider.commands[0].request.Command, "@scope/package") || strings.Contains(provider.commands[0].request.Command, "touch /tmp") {
+			t.Fatalf("provision command contains package data: %q", provider.commands[0].request.Command)
+		}
+		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
+			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
+		}
+		if provider.codeSessionCreated {
+			t.Fatal("provisioning failure created an active code session")
+		}
+	})
+
+	t.Run("stop requested during provisioning terminates sandbox before manager startup", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{stopAfterProvision: true})
+		if err != nil || !processed {
+			t.Fatalf("RunOnce() = (%t, %v), want graceful stop", processed, err)
+		}
+		if len(provider.commands) == 0 || len(provider.launches) != 0 {
+			t.Fatalf("stop commands/launches = %d/%d, want provisioning and no manager launch", len(provider.commands), len(provider.launches))
+		}
+		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
+			t.Fatalf("killed sandboxes = %#v, want stopped sandbox", provider.kills)
+		}
+		if provider.codeSessionCreated {
+			t.Fatal("graceful stop during provisioning created an active code session")
+		}
+	})
+
+	t.Run("success starts manager after fixed provisioner", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{})
+		if err != nil || !processed {
+			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
+		}
+		if len(provider.commands) == 0 || len(provider.launches) != 1 {
+			t.Fatalf("success commands/launches = %d/%d, want provisioning and one manager launch", len(provider.commands), len(provider.launches))
+		}
+		if provider.commands[0].request.Command != "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin" || !strings.Contains(provider.launches[0].command, "task-run") {
+			t.Fatalf("sandbox provision command/manager command = %q/%q", provider.commands[0].request.Command, provider.launches[0].command)
+		}
+		provisionAt := slices.Index(provider.operations, "command:provision")
+		rcloneAt := slices.Index(provider.operations, "rclone-start")
+		managerAt := slices.Index(provider.operations, "environment-manager")
+		if provisionAt < 0 || provisionAt >= rcloneAt || rcloneAt >= managerAt {
+			t.Fatalf("provision/rclone/manager operation order = %#v", provider.operations)
+		}
+		var manifest struct {
+			Version  int `json:"version"`
+			Packages struct {
+				APT   []string `json:"apt"`
+				Cargo []string `json:"cargo"`
+				Gem   []string `json:"gem"`
+				Go    []string `json:"go"`
+				NPM   []string `json:"npm"`
+				PIP   []string `json:"pip"`
+			} `json:"packages"`
+		}
+		if err := json.Unmarshal(provider.commands[0].request.Stdin, &manifest); err != nil {
+			t.Fatalf("decode package manifest: %v", err)
+		}
+		if manifest.Version != 1 ||
+			!reflect.DeepEqual(manifest.Packages.APT, []string{"ffmpeg"}) ||
+			!reflect.DeepEqual(manifest.Packages.Cargo, []string{"ripgrep@14.1.1"}) ||
+			!reflect.DeepEqual(manifest.Packages.Gem, []string{"rake:13.2.1"}) ||
+			!reflect.DeepEqual(manifest.Packages.Go, []string{"golang.org/x/tools/cmd/goimports@v0.35.0"}) ||
+			!reflect.DeepEqual(manifest.Packages.NPM, []string{"@scope/package@5.9.3"}) ||
+			!reflect.DeepEqual(manifest.Packages.PIP, []string{`requests[socks] @ https://example.test/a.whl ; python_version >= "3.11"`, "name; touch /tmp/oma-package-shell"}) {
+			t.Fatalf("package manifest changed specs: %#v", manifest)
+		}
+		if len(provider.kills) != 0 {
+			t.Fatalf("successful sandbox was killed: %#v", provider.kills)
+		}
+		if !provider.codeSessionCreated {
+			t.Fatal("successful provisioning did not create a code session")
+		}
+		if !provider.sessionHasRuntimeMetadata || !provider.workHasRuntimeMetadata {
+			t.Fatalf("successful provisioning session/work runtime metadata = %t/%t, want true/true", provider.sessionHasRuntimeMetadata, provider.workHasRuntimeMetadata)
+		}
+	})
+}
+
+type packageRunnerCase struct {
+	commandErr         error
+	stopAfterProvision bool
+}
+
+func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, environmentID string) {
+	t.Helper()
+	ids := getDefaultDBIDs(t, database)
+	works, _, err := database.ListEnvironmentWorkPage(ctx, db.ListEnvironmentWorkPageParams{
+		WorkspaceID:           ids.WorkspaceID,
+		EnvironmentExternalID: environmentID,
+		Limit:                 10,
+	})
+	if err != nil || len(works) != 1 {
+		t.Fatalf("list environment work count/error = %d/%v, want one work", len(works), err)
+	}
+	if _, err := database.StopEnvironmentWork(ctx, ids.WorkspaceID, environmentID, works[0].ExternalID, false); err != nil {
+		t.Fatalf("request environment work stop: %v", err)
+	}
+}
+
+func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recordingRunnerProvider, bool, error) {
+	t.Helper()
+	runCtx := context.Background()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
+	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
+	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
+	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+	cfg.E2B.Template = "fake-template"
+	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-package-bucket"))
+	t.Cleanup(app.close)
+	agent := createAgent(t, app, `{
+		"model":"claude-opus-4-8",
+		"name":"Runner Package Agent"
+	}`)
+	t.Cleanup(func() { archiveAgent(t, app, agent.ID) })
+	environment := createEnvironment(t, app, `{
+		"name":"runner-packages-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`",
+		"config":{"type":"cloud","networking":{"type":"unrestricted"},"packages":{
+			"type":"packages","apt":["ffmpeg"],"cargo":["ripgrep@14.1.1"],"gem":["rake:13.2.1"],
+			"go":["golang.org/x/tools/cmd/goimports@v0.35.0"],"npm":["@scope/package@5.9.3"],
+			"pip":["requests[socks] @ https://example.test/a.whl ; python_version >= \"3.11\"","name; touch /tmp/oma-package-shell"]
+		}}
+	}`)
+	t.Cleanup(func() { cleanupEnvironmentRows(t, app.db, environment.ID) })
+	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
+	session, err := client.Beta.Sessions.New(runCtx, anthropic.BetaSessionNewParams{
+		Agent: anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)}, EnvironmentID: environment.ID,
+		Title: anthropic.String("Runner package session"),
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
+	})
+	provider := &recordingRunnerProvider{
+		sandboxID:  "sandbox-runner-packages",
+		commandErr: testCase.commandErr,
+	}
+	if testCase.stopAfterProvision {
+		provider.afterCommand = func() {
+			if testCase.stopAfterProvision {
+				requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID)
+			}
+		}
+	}
+	runner := newManagedAgentRunner(t, app, provider, cfg)
+	processed, runErr := runner.RunOnce(runCtx, "runner-package-test")
+	inspectionCtx := context.Background()
+	ids := getDefaultDBIDs(t, app.db)
+	_, codeSessionErr := app.db.GetCodeSessionBySessionExternalID(inspectionCtx, ids.WorkspaceID, session.ID)
+	switch {
+	case codeSessionErr == nil:
+		provider.codeSessionCreated = true
+	case errors.Is(codeSessionErr, db.ErrNotFound):
+	default:
+		t.Fatalf("look up package runner code session: %v", codeSessionErr)
+	}
+	works, _, workErr := app.db.ListEnvironmentWorkPage(inspectionCtx, db.ListEnvironmentWorkPageParams{
+		WorkspaceID: ids.WorkspaceID, EnvironmentExternalID: environment.ID, Limit: 10,
+	})
+	if workErr != nil || len(works) != 1 {
+		t.Fatalf("list package runner work count/error = %d/%v, want one work", len(works), workErr)
+	}
+	provider.workHasRuntimeMetadata = hasJSONKey(works[0].Metadata, "claude_code_session_id")
+	storedSession, sessionErr := app.db.GetSession(inspectionCtx, ids.WorkspaceID, session.ID)
+	if sessionErr != nil {
+		t.Fatalf("load package runner session: %v", sessionErr)
+	}
+	provider.sessionHasRuntimeMetadata = hasJSONKey(storedSession.Metadata, "claude_code_session_id")
+	return provider, processed, runErr
 }
 
 func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
@@ -894,19 +1081,24 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 }
 
 type recordingRunnerProvider struct {
-	sandboxID         string
-	resolveErr        error
-	failOperation     string
-	runCommandFailure error
-	beforeCreate      func()
-	resolves          []recordedSandboxResolve
-	commands          []string
-	launches          []recordedSandboxLaunch
-	rcloneLaunches    []recordedSandboxLaunch
-	writes            []recordedSandboxWrite
-	operations        []string
-	kills             []string
-	creates           []recordedSandboxCreate
+	sandboxID                 string
+	resolveErr                error
+	commandErr                error
+	afterCommand              func()
+	failOperation             string
+	runCommandFailure         error
+	beforeCreate              func()
+	resolves                  []recordedSandboxResolve
+	commands                  []recordedSandboxCommand
+	launches                  []recordedSandboxLaunch
+	rcloneLaunches            []recordedSandboxLaunch
+	writes                    []recordedSandboxWrite
+	operations                []string
+	creates                   []recordedSandboxCreate
+	kills                     []string
+	codeSessionCreated        bool
+	sessionHasRuntimeMetadata bool
+	workHasRuntimeMetadata    bool
 }
 
 type recordedSandboxResolve struct {
@@ -918,6 +1110,11 @@ type recordedSandboxLaunch struct {
 	sandboxID string
 	command   string
 	stdin     []byte
+}
+
+type recordedSandboxCommand struct {
+	sandboxID string
+	request   e2bruntime.CommandRequest
 }
 
 type recordedSandboxWrite struct {
@@ -1020,24 +1217,39 @@ func (p *recordingRunnerProvider) FileExists(_ context.Context, sandboxID, path 
 	return true, nil
 }
 
-func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, command string, _ time.Duration) error {
+func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string, request e2bruntime.CommandRequest) (e2bruntime.CommandResult, error) {
 	if sandboxID != p.sandboxID {
-		p.commands = append(p.commands, "wrong sandbox: "+sandboxID)
-		return nil
+		p.commands = append(p.commands, recordedSandboxCommand{sandboxID: sandboxID, request: request})
+		return e2bruntime.CommandResult{}, nil
 	}
-	p.commands = append(p.commands, command)
-	operation := "command"
+	request.Stdin = append([]byte(nil), request.Stdin...)
+	p.commands = append(p.commands, recordedSandboxCommand{sandboxID: sandboxID, request: request})
+	operation := "command:other"
 	switch {
-	case strings.HasPrefix(command, "chmod 0600 "):
+	case request.Command == "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin":
+		operation = "command:provision"
+	case strings.HasPrefix(request.Command, "chmod 0600 "):
 		operation = "rclone-config-chmod"
-	case strings.HasPrefix(command, "rm -f ") && strings.Contains(command, "rclone-mount-config.json"):
+	case strings.HasPrefix(request.Command, "rm -f ") && strings.Contains(request.Command, "rclone-mount-config.json"):
 		operation = "rclone-config-cleanup"
 	}
 	p.operations = append(p.operations, operation)
-	if operation == p.failOperation {
-		return p.runCommandFailure
+	if operation == "command:provision" {
+		if p.commandErr != nil {
+			return e2bruntime.CommandResult{}, p.commandErr
+		}
+		if p.afterCommand != nil {
+			p.afterCommand()
+		}
+		return e2bruntime.CommandResult{
+			ExitCode: 0,
+			Stdout:   []byte(`{"version":1,"status":"succeeded","package_count":7,"duration_ms":1}`),
+		}, nil
 	}
-	return nil
+	if operation == p.failOperation {
+		return e2bruntime.CommandResult{}, p.runCommandFailure
+	}
+	return e2bruntime.CommandResult{}, nil
 }
 
 func (p *recordingRunnerProvider) StartBackgroundCommand(_ context.Context, sandboxID string, command string, stdin []byte) error {

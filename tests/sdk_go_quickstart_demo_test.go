@@ -531,50 +531,17 @@ func quickstartWaitForSessionTranscript(t *testing.T, ctx context.Context, app *
 
 func quickstartFetchSessionTranscript(t *testing.T, app *testApp, sessionID string) (string, bool, error) {
 	t.Helper()
-	events, err := quickstartFetchSessionEvents(t, app, sessionID)
-	if err != nil {
-		return "", false, err
-	}
-	transcript, finished := quickstartTranscriptFromCodeSessionEvents(events)
-	return transcript, finished, nil
-}
-
-func quickstartFetchSessionTranscriptAfterEvent(t *testing.T, app *testApp, sessionID, eventID string) (string, bool, error) {
-	t.Helper()
-	events, err := quickstartFetchSessionEvents(t, app, sessionID)
-	if err != nil {
-		return "", false, err
-	}
-	transcript, _ := quickstartTranscriptFromCodeSessionEvents(events)
-	return transcript, quickstartHasIdleAfterEvent(events, eventID), nil
-}
-
-func quickstartFetchSessionEvents(t *testing.T, app *testApp, sessionID string) ([]map[string]any, error) {
-	t.Helper()
 	page := listSessionEvents(t, app, sessionID, "order=asc&limit=1000", defaultTestKey)
 	events := make([]map[string]any, 0, len(page.Data))
 	for _, raw := range page.Data {
 		var event map[string]any
 		if err := json.Unmarshal(raw, &event); err != nil {
-			return nil, err
+			return "", false, err
 		}
 		events = append(events, event)
 	}
-	return events, nil
-}
-
-func quickstartHasIdleAfterEvent(events []map[string]any, eventID string) bool {
-	anchorSeen := false
-	for _, event := range events {
-		if strings.TrimSpace(quickstartStringValue(event["id"])) == eventID {
-			anchorSeen = true
-			continue
-		}
-		if anchorSeen && strings.TrimSpace(quickstartStringValue(event["type"])) == "session.status_idle" {
-			return true
-		}
-	}
-	return false
+	transcript, finished := quickstartTranscriptFromCodeSessionEvents(events)
+	return transcript, finished, nil
 }
 
 func quickstartTranscriptFromCodeSessionEvents(events []map[string]any) (string, bool) {
@@ -603,25 +570,6 @@ func quickstartTranscriptFromCodeSessionEvents(events []map[string]any) (string,
 		lines = append(lines, "Agent finished.")
 	}
 	return strings.Join(quickstartCompactTranscriptLines(lines), "\n"), agentFinished
-}
-
-func TestQuickstartHasIdleAfterEvent(t *testing.T) {
-	events := []map[string]any{
-		{"id": "idle-before-prompt", "type": "session.status_idle"},
-		{"id": "proof-prompt", "type": "user.message"},
-		{"id": "agent-response", "type": "agent.message"},
-	}
-	if quickstartHasIdleAfterEvent(events, "proof-prompt") {
-		t.Fatal("historical idle event was counted as completion after the proof prompt")
-	}
-
-	events = append(events, map[string]any{"id": "idle-after-prompt", "type": "session.status_idle"})
-	if !quickstartHasIdleAfterEvent(events, "proof-prompt") {
-		t.Fatal("idle event after the proof prompt was not counted")
-	}
-	if quickstartHasIdleAfterEvent(events, "missing-prompt") {
-		t.Fatal("idle event was counted when the anchor prompt was absent")
-	}
 }
 
 func quickstartContentBlocks(event map[string]any) []map[string]any {

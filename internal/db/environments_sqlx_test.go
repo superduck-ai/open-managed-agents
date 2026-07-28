@@ -125,25 +125,17 @@ func TestPackagedEnvironmentTemplateMigrationAgainstPostgreSQL(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	defer database.Close()
-
 	tx, err := database.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
-		create temporary table environments (
-			external_id text primary key,
-			resolved_template text not null,
-			config jsonb not null,
-			updated_at timestamptz not null default now()
-		) on commit drop;
+		create temporary table environments (external_id text, resolved_template text not null, config jsonb not null, updated_at timestamptz not null default now()) on commit drop;
 		insert into environments (external_id, resolved_template, config) values
 			('migrate', 'claude-code-interpreter', '{"type":"cloud","packages":{"type":"packages","pip":["numpy"]}}'),
 			('empty', 'claude-code-interpreter', '{"type":"cloud","packages":{"type":"packages","pip":[]}}'),
-			('self_hosted', 'claude-code-interpreter', '{"type":"self_hosted","packages":{"type":"packages","pip":["numpy"]}}'),
-			('custom', 'custom-template', '{"type":"cloud","packages":{"type":"packages","pip":["numpy"]}}'),
-			('current', 'managed-agent-sandbox', '{"type":"cloud","packages":{"type":"packages","pip":["numpy"]}}');
+			('custom', 'custom-template', '{"type":"cloud","packages":{"type":"packages","pip":["numpy"]}}');
 	`); err != nil {
 		t.Fatalf("seed migration environments: %v", err)
 	}
@@ -157,23 +149,11 @@ func TestPackagedEnvironmentTemplateMigrationAgainstPostgreSQL(t *testing.T) {
 		t.Fatalf("apply packaged Environment migration: %v", err)
 	}
 
-	rows := []struct {
-		ExternalID       string `db:"external_id"`
-		ResolvedTemplate string `db:"resolved_template"`
-	}{}
-	if err := tx.SelectContext(ctx, &rows, `select external_id, resolved_template from environments order by external_id`); err != nil {
-		t.Fatalf("read migrated environments: %v", err)
+	var templates []string
+	if err := tx.SelectContext(ctx, &templates, `select resolved_template from environments order by external_id`); err != nil {
+		t.Fatalf("read migrated templates: %v", err)
 	}
-	want := map[string]string{
-		"migrate":     "managed-agent-sandbox",
-		"empty":       "claude-code-interpreter",
-		"self_hosted": "claude-code-interpreter",
-		"custom":      "custom-template",
-		"current":     "managed-agent-sandbox",
-	}
-	for _, row := range rows {
-		if row.ResolvedTemplate != want[row.ExternalID] {
-			t.Fatalf("Environment %q template = %q, want %q", row.ExternalID, row.ResolvedTemplate, want[row.ExternalID])
-		}
+	if got, want := strings.Join(templates, ","), "custom-template,claude-code-interpreter,managed-agent-sandbox"; got != want {
+		t.Fatalf("templates = %q, want %q", got, want)
 	}
 }

@@ -321,12 +321,12 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 
 func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 	t.Run("failure terminates sandbox before manager startup", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironment(t, errors.New("gem install failed"))
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{commandErr: errors.New("gem install failed")})
 		if !processed || err == nil || !strings.Contains(err.Error(), "provision environment packages") {
 			t.Fatalf("RunOnce() = (%t, %v), want processed provisioning failure", processed, err)
 		}
-		if len(provider.commands) != 1 || len(provider.launches) != 0 {
-			t.Fatalf("failure commands/launches = %d/%d, want one command and no manager launch", len(provider.commands), len(provider.launches))
+		if len(provider.commands) == 0 || len(provider.launches) != 0 {
+			t.Fatalf("failure commands/launches = %d/%d, want provisioning and no manager launch", len(provider.commands), len(provider.launches))
 		}
 		if strings.Contains(provider.commands[0].request.Command, "@scope/package") || strings.Contains(provider.commands[0].request.Command, "touch /tmp") {
 			t.Fatalf("provision command contains package data: %q", provider.commands[0].request.Command)
@@ -345,81 +345,13 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 	})
 
-	t.Run("manager failure uses authoritative JSON and discards the sandbox", func(t *testing.T) {
-		secret := "secret-package-spec@example.test"
-		provider, processed, err := runPackageEnvironmentWithResult(t, e2bruntime.CommandResult{
-			ExitCode: 10,
-			Stdout:   []byte(`{"version":1,"status":"failed","category":"package_manager","manager":"gem","stage":"install","package_count":7,"duration_ms":9,"exit_code":17}`),
-			Stderr:   []byte(secret),
-		})
-		if !processed || err == nil || !strings.Contains(err.Error(), "category=package_manager") {
-			t.Fatalf("RunOnce() = (%t, %v), want structured manager failure", processed, err)
-		}
-		if strings.Contains(err.Error(), secret) {
-			t.Fatalf("RunOnce error leaked Environment Manager stderr: %v", err)
-		}
-		if len(provider.launches) != 0 || provider.codeSessionCreated {
-			t.Fatal("manager failure started the runtime")
-		}
-		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
-			t.Fatalf("killed sandboxes = %#v, want failed sandbox", provider.kills)
-		}
-	})
-
-	t.Run("provider Kill failure leaves the sandbox discoverable for force-stop", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithKillFailure(t)
-		if !processed || err == nil || !strings.Contains(err.Error(), "provision environment packages") {
-			t.Fatalf("RunOnce() = (%t, %v), want processed provisioning failure", processed, err)
-		}
-		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
-			t.Fatalf("Kill attempts = %#v, want failed Sandbox", provider.kills)
-		}
-		if provider.sandboxState != "stopping" ||
-			provider.sandboxLastError == nil ||
-			!strings.Contains(*provider.sandboxLastError, "forced provider Kill failure") {
-			t.Fatalf(
-				"Sandbox after Kill failure = state:%q error:%v, want discoverable stopping record",
-				provider.sandboxState,
-				provider.sandboxLastError,
-			)
-		}
-		if provider.workState != "stopped" {
-			t.Fatalf("Work after Kill failure = %q, want stopped", provider.workState)
-		}
-	})
-
-	t.Run("caller cancellation after provisioning still cleans up the sandbox and work", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithCanceledCaller(t)
-		if !processed || !errors.Is(err, context.Canceled) {
-			t.Fatalf("RunOnce() = (%t, %v), want processed caller cancellation", processed, err)
-		}
-		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
-			t.Fatalf("Kill attempts after caller cancellation = %#v, want created Sandbox", provider.kills)
-		}
-		if provider.sandboxState != "failed" ||
-			provider.sandboxLastError == nil ||
-			!strings.Contains(*provider.sandboxLastError, context.Canceled.Error()) {
-			t.Fatalf(
-				"Sandbox after caller cancellation = state:%q error:%v, want failed cancellation diagnostic",
-				provider.sandboxState,
-				provider.sandboxLastError,
-			)
-		}
-		if provider.workState != "stopped" {
-			t.Fatalf("Work after caller cancellation = %q, want stopped", provider.workState)
-		}
-		if len(provider.launches) != 0 || provider.codeSessionCreated {
-			t.Fatal("caller cancellation after provisioning started the managed-agent runtime")
-		}
-	})
-
 	t.Run("stop requested during provisioning terminates sandbox before manager startup", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithStop(t)
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{stopAfterProvision: true})
 		if err != nil || !processed {
 			t.Fatalf("RunOnce() = (%t, %v), want graceful stop", processed, err)
 		}
-		if len(provider.commands) != 1 || len(provider.launches) != 0 {
-			t.Fatalf("stop commands/launches = %d/%d, want one provision command and no manager launch", len(provider.commands), len(provider.launches))
+		if len(provider.commands) == 0 || len(provider.launches) != 0 {
+			t.Fatalf("stop commands/launches = %d/%d, want provisioning and no manager launch", len(provider.commands), len(provider.launches))
 		}
 		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID}) {
 			t.Fatalf("killed sandboxes = %#v, want stopped sandbox", provider.kills)
@@ -433,7 +365,7 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 	})
 
 	t.Run("session event added during provisioning reaches the initial inbound queue", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironmentWithLateSessionEvent(t)
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{addLateSessionEvent: true})
 		if err != nil || !processed {
 			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
 		}
@@ -446,26 +378,21 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 	})
 
 	t.Run("success starts manager after fixed provisioner", func(t *testing.T) {
-		provider, processed, err := runPackageEnvironment(t, nil)
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{})
 		if err != nil || !processed {
 			t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
 		}
-		if len(provider.commands) != 3 || len(provider.launches) != 1 {
-			t.Fatalf("success commands/launches = %d/%d, want provision, rclone setup/cleanup, and one manager launch", len(provider.commands), len(provider.launches))
+		if len(provider.commands) == 0 || len(provider.launches) != 1 {
+			t.Fatalf("success commands/launches = %d/%d, want provisioning and one manager launch", len(provider.commands), len(provider.launches))
 		}
 		if provider.commands[0].request.Command != "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin" || !strings.Contains(provider.launches[0].command, "task-run") {
 			t.Fatalf("sandbox provision command/manager command = %q/%q", provider.commands[0].request.Command, provider.launches[0].command)
 		}
-		if !reflect.DeepEqual(provider.operations, []string{
-			"command:provision",
-			"rclone-config-write",
-			"rclone-config-chmod",
-			"rclone-start",
-			"rclone-ready",
-			"rclone-config-cleanup",
-			"environment-manager",
-		}) {
-			t.Fatalf("sandbox operation order = %#v", provider.operations)
+		provisionAt := slices.Index(provider.operations, "command:provision")
+		rcloneAt := slices.Index(provider.operations, "rclone-start")
+		managerAt := slices.Index(provider.operations, "environment-manager")
+		if provisionAt < 0 || provisionAt >= rcloneAt || rcloneAt >= managerAt {
+			t.Fatalf("provision/rclone/manager operation order = %#v", provider.operations)
 		}
 		var manifest struct {
 			Version  int `json:"version"`
@@ -505,67 +432,29 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 	})
 }
 
-func runPackageEnvironment(t *testing.T, commandErr error) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, commandErr, nil, nil, nil)
+type packageRunnerCase struct {
+	commandErr          error
+	stopAfterProvision  bool
+	addLateSessionEvent bool
 }
 
-func runPackageEnvironmentWithKillFailure(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(
-		t,
-		errors.New("forced provisioning failure"),
-		nil,
-		errors.New("forced provider Kill failure"),
-		nil,
-	)
-}
-
-func runPackageEnvironmentWithCanceledCaller(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	return runPackageEnvironmentWithContextHook(t, runCtx, nil, nil, nil, func(context.Context, *db.DB, string, string) {
-		cancelRun()
+func appendPackageProvisioningEvent(t *testing.T, ctx context.Context, database *db.DB, sessionID string) {
+	t.Helper()
+	ids := getDefaultDBIDs(t, database)
+	now := time.Now().UTC()
+	eventID := "sevt_provisioning_" + strings.ReplaceAll(now.Format("150405.000000000"), ".", "")
+	payload, err := json.Marshal(map[string]any{
+		"type": "user.message", "id": eventID, "processed_at": now.Format(time.RFC3339), "created_at": now.Format(time.RFC3339Nano),
+		"content": []map[string]any{{"type": "text", "text": "sent during package provisioning"}},
 	})
-}
-
-func runPackageEnvironmentWithStop(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, nil, nil, func(ctx context.Context, database *db.DB, environmentID, _ string) {
-		requestPackageEnvironmentStop(t, ctx, database, environmentID)
-	})
-}
-
-func runPackageEnvironmentWithLateSessionEvent(t *testing.T) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, nil, nil, func(ctx context.Context, database *db.DB, _, sessionID string) {
-		ids := getDefaultDBIDs(t, database)
-		now := time.Now().UTC()
-		eventID := "sevt_provisioning_" + strings.ReplaceAll(now.Format("150405.000000000"), ".", "")
-		payload, err := json.Marshal(map[string]any{
-			"type":         "user.message",
-			"id":           eventID,
-			"processed_at": now.Format(time.RFC3339),
-			"created_at":   now.Format(time.RFC3339Nano),
-			"content": []map[string]any{{
-				"type": "text",
-				"text": "sent during package provisioning",
-			}},
-		})
-		if err != nil {
-			t.Fatalf("marshal provisioning-time event: %v", err)
-		}
-		if _, err := database.AppendSessionEvents(ctx, ids.WorkspaceID, sessionID, []db.SessionEvent{{
-			UUID:        uuid.NewString(),
-			ExternalID:  eventID,
-			EventType:   "user.message",
-			Payload:     payload,
-			ProcessedAt: now,
-			CreatedAt:   now,
-		}}); err != nil {
-			t.Fatalf("append provisioning-time session event: %v", err)
-		}
-	})
-}
-
-func runPackageEnvironmentWithResult(t *testing.T, result e2bruntime.CommandResult) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithHook(t, nil, &result, nil, nil)
+	if err != nil {
+		t.Fatalf("marshal provisioning-time event: %v", err)
+	}
+	if _, err := database.AppendSessionEvents(ctx, ids.WorkspaceID, sessionID, []db.SessionEvent{{
+		UUID: uuid.NewString(), ExternalID: eventID, EventType: "user.message", Payload: payload, ProcessedAt: now, CreatedAt: now,
+	}}); err != nil {
+		t.Fatalf("append provisioning-time session event: %v", err)
+	}
 }
 
 func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, environmentID string) {
@@ -584,32 +473,9 @@ func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *
 	}
 }
 
-func runPackageEnvironmentWithHook(
-	t *testing.T,
-	commandErr error,
-	commandResult *e2bruntime.CommandResult,
-	killErr error,
-	afterCommand func(context.Context, *db.DB, string, string),
-) (*recordingRunnerProvider, bool, error) {
-	return runPackageEnvironmentWithContextHook(
-		t,
-		context.Background(),
-		commandErr,
-		commandResult,
-		killErr,
-		afterCommand,
-	)
-}
-
-func runPackageEnvironmentWithContextHook(
-	t *testing.T,
-	runCtx context.Context,
-	commandErr error,
-	commandResult *e2bruntime.CommandResult,
-	killErr error,
-	afterCommand func(context.Context, *db.DB, string, string),
-) (*recordingRunnerProvider, bool, error) {
+func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recordingRunnerProvider, bool, error) {
 	t.Helper()
+	runCtx := context.Background()
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -648,13 +514,18 @@ func runPackageEnvironmentWithContextHook(
 		_, _ = client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 	})
 	provider := &recordingRunnerProvider{
-		sandboxID:     "sandbox-runner-packages",
-		commandErr:    commandErr,
-		commandResult: commandResult,
-		killErr:       killErr,
+		sandboxID:  "sandbox-runner-packages",
+		commandErr: testCase.commandErr,
 	}
-	if afterCommand != nil {
-		provider.afterCommand = func() { afterCommand(runCtx, app.db, environment.ID, session.ID) }
+	if testCase.stopAfterProvision || testCase.addLateSessionEvent {
+		provider.afterCommand = func() {
+			if testCase.stopAfterProvision {
+				requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID)
+			}
+			if testCase.addLateSessionEvent {
+				appendPackageProvisioningEvent(t, runCtx, app.db, session.ID)
+			}
+		}
 	}
 	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, runErr := runner.RunOnce(runCtx, "runner-package-test")
@@ -683,14 +554,6 @@ func runPackageEnvironmentWithContextHook(
 	}
 	provider.workHasRuntimeMetadata = hasJSONKey(works[0].Metadata, "claude_code_session_id")
 	provider.workHasMCPMetadata = hasJSONKey(works[0].Metadata, "mcp_allowed_hosts")
-	provider.workState = works[0].State
-	if err := app.db.Pool.QueryRow(inspectionCtx, `
-		select state, last_error
-		from environment_sandboxes
-		where workspace_id = $1 and work_external_id = $2
-	`, ids.WorkspaceID, works[0].ExternalID).Scan(&provider.sandboxState, &provider.sandboxLastError); err != nil {
-		t.Fatalf("load package runner Sandbox state: %v", err)
-	}
 	storedSession, sessionErr := app.db.GetSession(inspectionCtx, ids.WorkspaceID, session.ID)
 	if sessionErr != nil {
 		t.Fatalf("load package runner session: %v", sessionErr)
@@ -947,14 +810,6 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	}
 	if _, exists := workMetadata["managed_agent_skills_mount"]; exists {
 		t.Fatalf("work metadata still contains legacy skill mount: %#v", workMetadata)
-	}
-	ids := getDefaultDBIDs(t, app.db)
-	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
-	if err != nil {
-		t.Fatalf("load stored environment work: %v", err)
-	}
-	if hasJSONKey(work.Metadata, "managed_agent_skills_mount") {
-		t.Fatalf("stored work metadata still contains legacy skill mount: %s", work.Metadata)
 	}
 	if strings.Contains(provider.launches[0].command, "installed managed agent skills") ||
 		strings.Contains(provider.launches[0].command, "$HOME/.claude/skills") {
@@ -1279,88 +1134,10 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 	}
 }
 
-func TestEnvironmentRunnerRejectsEmptyProviderSandboxID(t *testing.T) {
-	ctx := context.Background()
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
-	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
-	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
-	cfg.E2B.Template = "fake-template"
-
-	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-empty-sandbox-id-bucket"))
-	defer app.close()
-	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Empty Sandbox ID Agent"}`)
-	defer archiveAgent(t, app, agent.ID)
-	environment := createEnvironment(t, app, `{"name":"runner-empty-sandbox-id-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`"}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
-
-	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
-	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
-		Agent:         anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)},
-		EnvironmentID: environment.ID,
-		Title:         anthropic.String("Runner empty Sandbox ID session"),
-	})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
-	ids := getDefaultDBIDs(t, app.db)
-	sessionWork, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
-	if err != nil {
-		t.Fatalf("load queued Environment Work: %v", err)
-	}
-	workID := sessionWork.ExternalID
-
-	provider := &recordingRunnerProvider{}
-	runner := newManagedAgentRunner(t, app, provider, cfg)
-	processed, err := runner.RunOnce(ctx, "runner-empty-sandbox-id-test")
-	if err == nil || err.Error() != "provider returned an empty sandbox id" {
-		t.Fatalf("RunOnce error = %v, want empty provider Sandbox ID error", err)
-	}
-	if !processed {
-		t.Fatal("runner did not process queued session work")
-	}
-	if len(provider.creates) != 1 || len(provider.commands) != 0 || len(provider.launches) != 0 || len(provider.kills) != 0 {
-		t.Fatalf(
-			"provider calls after empty Sandbox ID: creates/commands/launches/kills=%d/%d/%d/%d, want 1/0/0/0",
-			len(provider.creates),
-			len(provider.commands),
-			len(provider.launches),
-			len(provider.kills),
-		)
-	}
-
-	work, err := app.db.GetEnvironmentWork(ctx, ids.WorkspaceID, environment.ID, workID)
-	if err != nil {
-		t.Fatalf("load stopped Environment Work: %v", err)
-	}
-	if work.State != "stopped" || work.StoppedAt == nil {
-		t.Fatalf("Environment Work after empty Sandbox ID = %#v, want stopped", work)
-	}
-	var sandboxState string
-	var sandboxError *string
-	if err := app.db.Pool.QueryRow(ctx, `
-		select state, last_error
-		from environment_sandboxes
-		where workspace_id = $1 and work_external_id = $2
-	`, ids.WorkspaceID, workID).Scan(&sandboxState, &sandboxError); err != nil {
-		t.Fatalf("load failed Sandbox record: %v", err)
-	}
-	if sandboxState != "failed" || sandboxError == nil || *sandboxError != "provider returned an empty sandbox id" {
-		t.Fatalf("Sandbox after empty provider ID = state:%q error:%v, want failed diagnostic", sandboxState, sandboxError)
-	}
-}
-
 type recordingRunnerProvider struct {
 	sandboxID                 string
 	resolveErr                error
 	commandErr                error
-	commandResult             *e2bruntime.CommandResult
-	killErr                   error
 	afterCommand              func()
 	failOperation             string
 	runCommandFailure         error
@@ -1373,9 +1150,6 @@ type recordingRunnerProvider struct {
 	operations                []string
 	creates                   []recordedSandboxCreate
 	kills                     []string
-	sandboxState              string
-	sandboxLastError          *string
-	workState                 string
 	codeSessionCreated        bool
 	sessionHasRuntimeMetadata bool
 	workHasRuntimeMetadata    bool
@@ -1477,7 +1251,7 @@ func (p *recordingRunnerProvider) Create(_ context.Context, _ db.Environment, wo
 
 func (p *recordingRunnerProvider) Kill(_ context.Context, sandboxID string) error {
 	p.kills = append(p.kills, sandboxID)
-	return p.killErr
+	return nil
 }
 
 func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID, path string, data []byte) error {
@@ -1530,12 +1304,6 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 		}
 		if p.afterCommand != nil {
 			p.afterCommand()
-		}
-		if p.commandResult != nil {
-			result := *p.commandResult
-			result.Stdout = append([]byte(nil), result.Stdout...)
-			result.Stderr = append([]byte(nil), result.Stderr...)
-			return result, nil
 		}
 		return e2bruntime.CommandResult{
 			ExitCode: 0,

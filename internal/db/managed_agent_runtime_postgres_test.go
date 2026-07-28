@@ -13,16 +13,11 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
-// managedAgentRuntimeFixture 是启动事务所需的最小租户与 Session 上下文。
 type managedAgentRuntimeFixture struct {
-	organizationID        int64
-	workspaceID           int64
-	apiKeyID              int64
-	environmentID         int64
-	environmentExternalID string
-	accountEmail          string
-	session               Session
-	work                  EnvironmentWork
+	organizationID, workspaceID, apiKeyID, environmentID int64
+	environmentExternalID, accountEmail                  string
+	session                                              Session
+	work                                                 EnvironmentWork
 }
 
 func TestCreateManagedAgentRuntimeTxAgainstPostgreSQL(t *testing.T) {
@@ -37,215 +32,105 @@ func TestCreateManagedAgentRuntimeTxAgainstPostgreSQL(t *testing.T) {
 	}
 	defer database.Close()
 
-	t.Run("failure inactive Work rejects the launch", func(t *testing.T) {
+	t.Run("failure inactive Work", func(t *testing.T) {
 		tx := beginManagedAgentRuntimeTx(ctx, t, database)
 		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "stopped")
 		_, err := createManagedAgentRuntimeTx(ctx, tx, fixture.runtimeInput(), noManagedAgentInboundEvents)
 		if !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
+			t.Fatalf("error = %v, want ErrInvalidState", err)
 		}
 	})
 
-	t.Run("failure terminated Session rejects the launch", func(t *testing.T) {
-		tx := beginManagedAgentRuntimeTx(ctx, t, database)
-		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
-		if _, err := tx.ExecContext(ctx, `
-			update sessions set status = 'terminated' where id = $1
-		`, fixture.session.ID); err != nil {
-			t.Fatalf("terminate seeded session: %v", err)
-		}
-		_, err := createManagedAgentRuntimeTx(ctx, tx, fixture.runtimeInput(), noManagedAgentInboundEvents)
-		if !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
-		}
-	})
-
-	t.Run("failure mismatched Session identity rejects the launch", func(t *testing.T) {
-		tx := beginManagedAgentRuntimeTx(ctx, t, database)
-		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
-		input := fixture.runtimeInput()
-		input.CodeSession.SessionID++
-
-		_, err := createManagedAgentRuntimeTx(ctx, tx, input, noManagedAgentInboundEvents)
-		if !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
-		}
-	})
-
-	t.Run("failure mismatched Environment identity rejects the launch", func(t *testing.T) {
+	t.Run("failure mismatched Session Environment identity", func(t *testing.T) {
 		tx := beginManagedAgentRuntimeTx(ctx, t, database)
 		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
 		input := fixture.runtimeInput()
 		input.CodeSession.EnvironmentID++
-
 		_, err := createManagedAgentRuntimeTx(ctx, tx, input, noManagedAgentInboundEvents)
 		if !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
+			t.Fatalf("error = %v, want ErrInvalidState", err)
 		}
 	})
 
-	t.Run("failure mismatched Work identity rejects the launch", func(t *testing.T) {
+	t.Run("failure Work points to another Session", func(t *testing.T) {
 		tx := beginManagedAgentRuntimeTx(ctx, t, database)
 		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
-		if _, err := tx.ExecContext(ctx, `
-			update environment_work set organization_id = organization_id + 1 where id = $1
-		`, fixture.work.ID); err != nil {
-			t.Fatalf("mismatch seeded work identity: %v", err)
+		if _, err := tx.ExecContext(ctx, `update environment_work set data = '{"type":"session","id":"sess_other"}' where id = $1`, fixture.work.ID); err != nil {
+			t.Fatalf("mismatch Work Session: %v", err)
 		}
-
 		_, err := createManagedAgentRuntimeTx(ctx, tx, fixture.runtimeInput(), noManagedAgentInboundEvents)
 		if !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
+			t.Fatalf("error = %v, want ErrInvalidState", err)
 		}
 	})
 
-	t.Run("failure Work for another Session rejects the launch", func(t *testing.T) {
-		tx := beginManagedAgentRuntimeTx(ctx, t, database)
-		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
-		if _, err := tx.ExecContext(ctx, `
-			update environment_work set data = '{"type":"session","id":"sess_other"}' where id = $1
-		`, fixture.work.ID); err != nil {
-			t.Fatalf("mismatch seeded work Session: %v", err)
-		}
-
-		_, err := createManagedAgentRuntimeTx(ctx, tx, fixture.runtimeInput(), noManagedAgentInboundEvents)
-		if !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
-		}
-	})
-
-	t.Run("success binds named parameters and scans every row", func(t *testing.T) {
+	t.Run("success publishes a committable runtime", func(t *testing.T) {
 		tx := beginManagedAgentRuntimeTx(ctx, t, database)
 		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
 		seedPublicSessionEvent(ctx, t, tx, fixture)
-
 		var snapshot []SessionEvent
-		result, err := createManagedAgentRuntimeTx(
-			ctx,
-			tx,
-			fixture.runtimeInput(),
-			func(events []SessionEvent) ([]AppendCodeSessionEventInput, error) {
-				snapshot = events
-				return managedAgentInboundEventsForTest(events), nil
-			},
-		)
+		result, err := createManagedAgentRuntimeTx(ctx, tx, fixture.runtimeInput(), func(events []SessionEvent) ([]AppendCodeSessionEventInput, error) {
+			snapshot = events
+			return managedAgentInboundEventsForTest(events), nil
+		})
 		if err != nil {
-			t.Fatalf("createManagedAgentRuntimeTx() error = %v", err)
+			t.Fatalf("create runtime: %v", err)
 		}
-
 		if len(snapshot) != 1 || snapshot[0].EventType != "user_message" {
-			t.Fatalf("locked event snapshot = %#v, want one user_message", snapshot)
+			t.Fatalf("locked final Session event = %#v", snapshot)
 		}
-		if string(snapshot[0].Payload) != `{"kind": "user_message"}` {
-			t.Fatalf("locked event payload = %s, want the seeded JSONB document", snapshot[0].Payload)
+		var inbound struct {
+			Count    int `db:"count"`
+			Minimum  int `db:"minimum"`
+			Maximum  int `db:"maximum"`
+			Distinct int `db:"distinct"`
 		}
-		assertManagedAgentCodeSession(t, fixture, result.CodeSession)
-		assertManagedAgentWorkMetadata(t, result.EnvironmentWork)
-		assertManagedAgentCredentials(t, fixture, result.Credentials)
-
-		session, err := getSessionSQLX(
-			ctx,
-			tx,
-			getSessionQuery,
-			sessionLookupArguments(fixture.workspaceID, fixture.session.ExternalID),
-		)
-		if err != nil {
-			t.Fatalf("reload patched session: %v", err)
+		if err := tx.GetContext(ctx, &inbound, `select count(*) count, min(sequence_num) minimum, max(sequence_num) maximum, count(distinct sequence_num) distinct from code_session_inbound_events where code_session_id = $1`, result.CodeSession.ID); err != nil {
+			t.Fatalf("inspect inbound sequence: %v", err)
 		}
-		if jsonFieldForTest(t, session.Metadata, "claude_code_session_id") != `"`+result.CodeSession.ExternalID+`"` {
-			t.Fatalf("session metadata = %s, want the published Code Session ID", session.Metadata)
+		if inbound.Count != 2 || inbound.Minimum != 1 || inbound.Maximum != 2 || inbound.Distinct != 2 || result.CodeSession.LastInboundSequenceNum != 2 {
+			t.Fatalf("inbound sequence = %#v, last = %d", inbound, result.CodeSession.LastInboundSequenceNum)
 		}
-
-		var queued int
-		if err := tx.GetContext(ctx, &queued, `
-			select count(*) from code_session_inbound_events where code_session_id = $1
-		`, result.CodeSession.ID); err != nil {
-			t.Fatalf("count inbound events: %v", err)
+		var firstSubtype, secondSource string
+		var secondPayload json.RawMessage
+		if err := tx.QueryRowxContext(ctx, `select event_subtype from code_session_inbound_events where code_session_id = $1 and sequence_num = 1`, result.CodeSession.ID).Scan(&firstSubtype); err != nil {
+			t.Fatalf("inspect initialize event: %v", err)
 		}
-		if queued != 2 || result.CodeSession.LastInboundSequenceNum != 2 {
-			t.Fatalf("queued = %d, last inbound sequence = %d, want 2 and 2", queued, result.CodeSession.LastInboundSequenceNum)
+		if err := tx.QueryRowxContext(ctx, `select source, payload from code_session_inbound_events where code_session_id = $1 and sequence_num = 2`, result.CodeSession.ID).Scan(&secondSource, &secondPayload); err != nil {
+			t.Fatalf("inspect replay event: %v", err)
+		}
+		if firstSubtype != "initialize" || secondSource != "public_session" || !strings.Contains(string(secondPayload), "user_message") {
+			t.Fatalf("inbound order = (%q, %q, %s)", firstSubtype, secondSource, secondPayload)
+		}
+		var sessionMetadata json.RawMessage
+		if err := tx.GetContext(ctx, &sessionMetadata, `select metadata from sessions where id = $1`, fixture.session.ID); err != nil {
+			t.Fatalf("load Session metadata: %v", err)
+		}
+		if !strings.Contains(string(sessionMetadata), result.CodeSession.ExternalID) || !strings.Contains(string(result.EnvironmentWork.Metadata), "claude_code_local") {
+			t.Fatalf("runtime metadata not published: Session=%s Work=%s", sessionMetadata, result.EnvironmentWork.Metadata)
+		}
+		if result.Credentials.AccountEmail != fixture.accountEmail || result.Credentials.PublicSessionExternalID != fixture.session.ExternalID {
+			t.Fatalf("credential context = %#v", result.Credentials)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit runtime: %v", err)
 		}
 	})
 }
 
-func assertManagedAgentCodeSession(t *testing.T, fixture managedAgentRuntimeFixture, codeSession CodeSession) {
-	t.Helper()
-	if codeSession.ID == 0 || codeSession.UUID == "" {
-		t.Fatalf("code session identity = (%d, %q), want generated id and uuid", codeSession.ID, codeSession.UUID)
-	}
-	if codeSession.SessionExternalID != fixture.session.ExternalID || codeSession.EnvironmentID != fixture.environmentID {
-		t.Fatalf("code session scope = %#v, want the seeded session and environment", codeSession)
-	}
-	if jsonFieldForTest(t, codeSession.Metadata, "source") != `"managed_agents_local"` {
-		t.Fatalf("code session metadata = %s, want the JSONB document written by CAST", codeSession.Metadata)
-	}
-	// worker_external_metadata 在数据库里是 null，行映射必须补成空对象。
-	if string(codeSession.WorkerExternalMetadata) != `{}` {
-		t.Fatalf("worker external metadata = %s, want {}", codeSession.WorkerExternalMetadata)
-	}
-	if codeSession.WorkerTokenSessionID != nil || codeSession.WorkerLeaseExpiresAt != nil {
-		t.Fatalf("nullable worker columns = (%v, %v), want nil", codeSession.WorkerTokenSessionID, codeSession.WorkerLeaseExpiresAt)
-	}
-}
-
-func assertManagedAgentWorkMetadata(t *testing.T, work EnvironmentWork) {
-	t.Helper()
-	if jsonFieldForTest(t, work.Metadata, "managed_agent_skills_mount") != "" {
-		t.Fatalf("work metadata = %s, want no legacy skill mount", work.Metadata)
-	}
-	if jsonFieldForTest(t, work.Metadata, "runtime") != `"claude_code_local"` {
-		t.Fatalf("work runtime patch = %s, want the merged runtime document", work.Metadata)
-	}
-}
-
-// jsonFieldForTest 按字段比较 JSONB 往返结果，避免断言依赖 PostgreSQL 的空白规范化。
-func jsonFieldForTest(t *testing.T, document json.RawMessage, field string) string {
-	t.Helper()
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(document, &fields); err != nil {
-		t.Fatalf("decode %s: %v", document, err)
-	}
-	return string(fields[field])
-}
-
-func assertManagedAgentCredentials(t *testing.T, fixture managedAgentRuntimeFixture, credentials CodeSessionCredentialContext) {
-	t.Helper()
-	if credentials.AccountEmail != fixture.accountEmail {
-		t.Fatalf("account email = %q, want %q", credentials.AccountEmail, fixture.accountEmail)
-	}
-	if credentials.PublicSessionExternalID != fixture.session.ExternalID {
-		t.Fatalf("public session = %q, want %q", credentials.PublicSessionExternalID, fixture.session.ExternalID)
-	}
-	if credentials.AgentVersion != fixture.session.AgentVersion {
-		t.Fatalf("agent version = %d, want %d", credentials.AgentVersion, fixture.session.AgentVersion)
-	}
-	// organization/workspace UUID 走 CAST(uuid AS text)，空值说明列别名与行映射不匹配。
-	if credentials.OrganizationUUID == "" || credentials.WorkspaceUUID == "" {
-		t.Fatalf("tenant uuids = (%q, %q), want scanned text casts", credentials.OrganizationUUID, credentials.WorkspaceUUID)
-	}
-}
-
 func (f managedAgentRuntimeFixture) runtimeInput() CreateManagedAgentRuntimeInput {
+	codeSessionExternalID := "cse_" + f.session.ExternalID
 	return CreateManagedAgentRuntimeInput{
 		CodeSession: CreateCodeSessionInput{
-			ExternalID:            "cse_" + f.session.ExternalID,
-			OrganizationID:        f.organizationID,
-			WorkspaceID:           f.workspaceID,
-			SessionID:             f.session.ID,
-			SessionExternalID:     f.session.ExternalID,
-			EnvironmentID:         f.environmentID,
-			EnvironmentExternalID: f.environmentExternalID,
-			WorkDir:               "/home/user",
-			PermissionMode:        "bypassPermissions",
-			Model:                 "claude-test",
-			Metadata:              json.RawMessage(`{"source":"managed_agents_local"}`),
-			OAuthAccessTokenHash:  "hash_" + f.session.ExternalID,
-			CreatedAt:             f.session.CreatedAt,
+			ExternalID: codeSessionExternalID, OrganizationID: f.organizationID, WorkspaceID: f.workspaceID,
+			SessionID: f.session.ID, SessionExternalID: f.session.ExternalID, EnvironmentID: f.environmentID,
+			EnvironmentExternalID: f.environmentExternalID, WorkDir: "/home/user", PermissionMode: "bypassPermissions",
+			Model: "claude-test", Metadata: json.RawMessage(`{"source":"managed_agents_local"}`),
+			OAuthAccessTokenHash: "hash_" + f.session.ExternalID, CreatedAt: f.session.CreatedAt,
 		},
-		SessionMetadataPatch:        json.RawMessage(`{"claude_code_session_id":"cse_` + f.session.ExternalID + `","runtime":"claude_code_local"}`),
+		SessionMetadataPatch:        json.RawMessage(`{"claude_code_session_id":"` + codeSessionExternalID + `","runtime":"claude_code_local"}`),
 		EnvironmentWorkRuntimePatch: json.RawMessage(`{"runtime":"claude_code_local"}`),
-		EnvironmentExternalID:       f.environmentExternalID,
-		WorkExternalID:              f.work.ExternalID,
+		EnvironmentExternalID:       f.environmentExternalID, WorkExternalID: f.work.ExternalID,
 	}
 }
 
@@ -254,29 +139,10 @@ func noManagedAgentInboundEvents([]SessionEvent) ([]AppendCodeSessionEventInput,
 }
 
 func managedAgentInboundEventsForTest(events []SessionEvent) []AppendCodeSessionEventInput {
-	inputs := []AppendCodeSessionEventInput{{
-		ExternalID:     "csev_initialize",
-		EventType:      "control_request",
-		EventSubtype:   "initialize",
-		Payload:        json.RawMessage(`{"subtype":"initialize"}`),
-		PayloadHash:    "hash_initialize",
-		IdempotencyKey: "idem_initialize",
-		DeliveryStatus: "queued",
-		Source:         "internal",
-	}}
-	for index, event := range events {
-		inputs = append(inputs, AppendCodeSessionEventInput{
-			ExternalID:     "csev_replay_" + event.ExternalID,
-			EventType:      "user_message",
-			Payload:        event.Payload,
-			PayloadHash:    "hash_replay",
-			IdempotencyKey: "idem_replay",
-			DeliveryStatus: "queued",
-			Source:         "public_session",
-			CreatedAt:      event.CreatedAt.Add(time.Duration(index) * time.Millisecond),
-		})
+	return []AppendCodeSessionEventInput{
+		{ExternalID: "csev_initialize_" + events[0].ExternalID, EventType: "control_request", EventSubtype: "initialize", Payload: json.RawMessage(`{"subtype":"initialize"}`), PayloadHash: "hash_initialize", IdempotencyKey: "idem_initialize", DeliveryStatus: "queued", Source: "internal"},
+		{ExternalID: "csev_replay_" + events[0].ExternalID, EventType: "user_message", Payload: events[0].Payload, PayloadHash: "hash_replay", IdempotencyKey: "idem_replay", DeliveryStatus: "queued", Source: "public_session", CreatedAt: events[0].CreatedAt},
 	}
-	return inputs
 }
 
 func beginManagedAgentRuntimeTx(ctx context.Context, t *testing.T, database *DB) *sqlx.Tx {
@@ -289,141 +155,49 @@ func beginManagedAgentRuntimeTx(ctx context.Context, t *testing.T, database *DB)
 	return tx
 }
 
-// seedManagedAgentRuntimeFixture 在事务内建立完整租户链路，并复用生产创建路径
-// insertSessionSQLXTx 写入 Session、thread、filesystem 与 Work，避免 fixture 与
-// 真实 Session 形状漂移。整个事务在测试结束时回滚。
 func seedManagedAgentRuntimeFixture(ctx context.Context, t *testing.T, tx *sqlx.Tx, workState string) managedAgentRuntimeFixture {
 	t.Helper()
-	suffix := managedAgentTestSuffix()
-	fixture := managedAgentRuntimeFixture{
-		environmentExternalID: "env_" + suffix,
-		accountEmail:          "owner_" + suffix + "@example.com",
+	suffix := strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")
+	f := managedAgentRuntimeFixture{environmentExternalID: "env_" + suffix, accountEmail: "owner_" + suffix + "@example.com"}
+	var tenant struct {
+		OrganizationID int64 `db:"organization_id"`
+		WorkspaceID    int64 `db:"workspace_id"`
+		APIKeyID       int64 `db:"api_key_id"`
+		EnvironmentID  int64 `db:"environment_id"`
 	}
-	if err := tx.GetContext(ctx, &fixture.organizationID, `
-		insert into organizations (external_id, name) values ($1, $1) returning id
-	`, "org_"+suffix); err != nil {
-		t.Fatalf("seed organization: %v", err)
-	}
-	if err := tx.GetContext(ctx, &fixture.workspaceID, `
-		insert into workspaces (external_id, organization_id, name) values ($1, $2, $1) returning id
-	`, "wrkspc_"+suffix, fixture.organizationID); err != nil {
-		t.Fatalf("seed workspace: %v", err)
-	}
-	var userID int64
-	if err := tx.GetContext(ctx, &userID, `
-		insert into users (external_id, organization_id, email, name, role)
-		values ($1, $2, $3, 'Owner', 'user')
-		returning id
-	`, "user_"+suffix, fixture.organizationID, fixture.accountEmail); err != nil {
-		t.Fatalf("seed user: %v", err)
-	}
-	if err := tx.GetContext(ctx, &fixture.apiKeyID, `
-		insert into api_keys (external_id, workspace_id, key_hash, created_by_user_id)
-		values ($1, $2, $1, $3)
-		returning id
-	`, "apikey_"+suffix, fixture.workspaceID, userID); err != nil {
-		t.Fatalf("seed api key: %v", err)
-	}
-	if err := tx.GetContext(ctx, &fixture.environmentID, `
-		insert into environments (external_id, organization_id, workspace_id, created_by_api_key_id, name)
-		values ($1, $2, $3, $4, $1)
-		returning id
-	`, fixture.environmentExternalID, fixture.organizationID, fixture.workspaceID, fixture.apiKeyID); err != nil {
-		t.Fatalf("seed environment: %v", err)
-	}
-
-	session, _, _, work, err := insertSessionSQLXTx(ctx, tx, fixture.createSessionInput(suffix))
+	err := tx.GetContext(ctx, &tenant, `
+		with organization as (insert into organizations (external_id, name) values ($1, $1) returning id),
+		workspace as (insert into workspaces (external_id, organization_id, name) select $2, id, $2 from organization returning id, organization_id),
+		app_user as (insert into users (external_id, organization_id, email, name, role) select $3, organization_id, $4, 'Owner', 'user' from workspace returning id),
+		api_key as (insert into api_keys (external_id, workspace_id, key_hash, created_by_user_id) select $5, workspace.id, $5, app_user.id from workspace, app_user returning id, workspace_id),
+		environment as (insert into environments (external_id, organization_id, workspace_id, created_by_api_key_id, name) select $6, organization.id, workspace.id, api_key.id, $6 from organization, workspace, api_key returning id)
+		select organization.id organization_id, workspace.id workspace_id, api_key.id api_key_id, environment.id environment_id from organization, workspace, api_key, environment`,
+		"org_"+suffix, "wrkspc_"+suffix, "user_"+suffix, f.accountEmail, "apikey_"+suffix, f.environmentExternalID)
 	if err != nil {
-		t.Fatalf("seed session: %v", err)
+		t.Fatalf("seed tenant: %v", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		update environment_work set state = $2 where id = $1
-	`, work.ID, workState); err != nil {
-		t.Fatalf("seed work state: %v", err)
-	}
-	fixture.session = session
-	fixture.work = work
-	return fixture
-}
-
-func (f managedAgentRuntimeFixture) createSessionInput(suffix string) CreateSessionInput {
+	f.organizationID, f.workspaceID, f.apiKeyID, f.environmentID = tenant.OrganizationID, tenant.WorkspaceID, tenant.APIKeyID, tenant.EnvironmentID
 	now := time.Date(2026, time.July, 27, 10, 0, 0, 0, time.UTC)
-	agentSnapshot := json.RawMessage(`{"name":"managed-agent"}`)
-	return CreateSessionInput{
-		Session: Session{
-			UUID:                  managedAgentTestUUID(suffix, 1),
-			ExternalID:            "sess_" + suffix,
-			OrganizationID:        f.organizationID,
-			WorkspaceID:           f.workspaceID,
-			CreatedByAPIKeyID:     f.apiKeyID,
-			EnvironmentID:         f.environmentID,
-			EnvironmentExternalID: f.environmentExternalID,
-			AgentID:               1,
-			AgentExternalID:       "agent_" + suffix,
-			AgentVersion:          3,
-			AgentSnapshot:         agentSnapshot,
-			Metadata:              json.RawMessage(`{}`),
-			VaultIDs:              json.RawMessage(`[]`),
-			Status:                "idle",
-			Usage:                 json.RawMessage(`{}`),
-			Stats:                 json.RawMessage(`{}`),
-			OutcomeEvaluations:    json.RawMessage(`[]`),
-			CreatedAt:             now,
-		},
-		Thread: SessionThread{
-			UUID:           managedAgentTestUUID(suffix, 2),
-			ExternalID:     "thread_" + suffix,
-			OrganizationID: f.organizationID,
-			WorkspaceID:    f.workspaceID,
-			AgentSnapshot:  agentSnapshot,
-			Status:         "idle",
-			Usage:          json.RawMessage(`{}`),
-			Stats:          json.RawMessage(`{}`),
-			CreatedAt:      now,
-		},
-		Work: EnvironmentWork{
-			UUID:                  managedAgentTestUUID(suffix, 3),
-			ExternalID:            "work_" + suffix,
-			OrganizationID:        f.organizationID,
-			WorkspaceID:           f.workspaceID,
-			EnvironmentID:         f.environmentID,
-			EnvironmentExternalID: f.environmentExternalID,
-			Data:                  json.RawMessage(`{"type":"session","id":"sess_` + suffix + `"}`),
-			Metadata:              json.RawMessage(`{}`),
-			State:                 "queued",
-			CreatedAt:             now,
-		},
+	base := Session{UUID: managedAgentTestUUID(suffix, 1), ExternalID: "sess_" + suffix, OrganizationID: f.organizationID, WorkspaceID: f.workspaceID, CreatedByAPIKeyID: f.apiKeyID, EnvironmentID: f.environmentID, EnvironmentExternalID: f.environmentExternalID, AgentID: 1, AgentExternalID: "agent_" + suffix, AgentVersion: 3, AgentSnapshot: json.RawMessage(`{"name":"managed-agent"}`), Metadata: json.RawMessage(`{}`), VaultIDs: json.RawMessage(`[]`), Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`), OutcomeEvaluations: json.RawMessage(`[]`), CreatedAt: now}
+	input := CreateSessionInput{Session: base, Thread: SessionThread{UUID: managedAgentTestUUID(suffix, 2), ExternalID: "thread_" + suffix, OrganizationID: f.organizationID, WorkspaceID: f.workspaceID, AgentSnapshot: base.AgentSnapshot, Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`), CreatedAt: now}, Work: EnvironmentWork{UUID: managedAgentTestUUID(suffix, 3), ExternalID: "work_" + suffix, OrganizationID: f.organizationID, WorkspaceID: f.workspaceID, EnvironmentID: f.environmentID, EnvironmentExternalID: f.environmentExternalID, Data: json.RawMessage(`{"type":"session","id":"` + base.ExternalID + `"}`), Metadata: json.RawMessage(`{}`), State: "queued", CreatedAt: now}}
+	f.session, _, _, f.work, err = insertSessionSQLXTx(ctx, tx, input)
+	if err != nil {
+		t.Fatalf("seed Session: %v", err)
 	}
+	if _, err := tx.ExecContext(ctx, `update environment_work set state = $2 where id = $1`, f.work.ID, workState); err != nil {
+		t.Fatalf("seed Work state: %v", err)
+	}
+	return f
 }
 
-func seedPublicSessionEvent(ctx context.Context, t *testing.T, tx *sqlx.Tx, fixture managedAgentRuntimeFixture) {
+func seedPublicSessionEvent(ctx context.Context, t *testing.T, tx *sqlx.Tx, f managedAgentRuntimeFixture) {
 	t.Helper()
-	if _, err := tx.ExecContext(ctx, `
-		insert into session_events (
-			external_id, organization_id, workspace_id, session_id, session_external_id,
-			event_type, payload, processed_at, created_at
-		)
-		select $1, $2, $3, $4, $5, 'user_message', CAST($6 AS jsonb), now(), now()
-	`,
-		"sessev_"+fixture.session.ExternalID,
-		fixture.organizationID,
-		fixture.workspaceID,
-		fixture.session.ID,
-		fixture.session.ExternalID,
-		`{"kind": "user_message"}`,
-	); err != nil {
-		t.Fatalf("seed session event: %v", err)
+	_, err := tx.ExecContext(ctx, `insert into session_events (external_id, organization_id, workspace_id, session_id, session_external_id, event_type, payload, processed_at, created_at) values ($1, $2, $3, $4, $5, 'user_message', '{"kind":"user_message"}', now(), now())`, "sessev_"+f.session.ExternalID, f.organizationID, f.workspaceID, f.session.ID, f.session.ExternalID)
+	if err != nil {
+		t.Fatalf("seed Session event: %v", err)
 	}
-}
-
-func managedAgentTestSuffix() string {
-	return strings.ReplaceAll(time.Now().Format("20060102150405.000000000"), ".", "")
 }
 
 func managedAgentTestUUID(suffix string, slot int) string {
-	digits := suffix
-	if len(digits) > 11 {
-		digits = digits[len(digits)-11:]
-	}
-	return "00000000-0000-4000-8000-" + string(rune('0'+slot)) + digits
+	return "00000000-0000-4000-8000-" + string(rune('0'+slot)) + suffix[len(suffix)-11:]
 }

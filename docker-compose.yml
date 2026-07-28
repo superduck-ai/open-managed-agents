@@ -134,9 +134,22 @@ services:
       - E2B_VOLUME_HOST_PATH=${PWD}/tmp/e2b-local-volumes
     command: >
       sh -c '
-        mkdir -p "$${E2B_VOLUME_HOST_PATH}/user-data" &&
-        sed -e "s|__ENVD_BIN_DIR__|$${ENVD_BIN_DIR}|g" -e "s|__VOLUME_HOST_PATH__|$${E2B_VOLUME_HOST_PATH}|g" /etc/e2b-local/config.yaml > /tmp/e2b-config.yaml &&
-        exec /usr/local/bin/e2b-local --config /tmp/e2b-config.yaml
+        set -eu
+        sed -e "s|__ENVD_BIN_DIR__|$${ENVD_BIN_DIR}|g" -e "s|__VOLUME_HOST_PATH__|$${E2B_VOLUME_HOST_PATH}|g" /etc/e2b-local/config.yaml > /tmp/e2b-config.yaml
+        /usr/local/bin/e2b-local --config /tmp/e2b-config.yaml &
+        gateway_pid=$$!
+        trap "kill $$gateway_pid 2>/dev/null || true" INT TERM
+        attempt=0
+        until /usr/local/bin/e2b-local --config /tmp/e2b-config.yaml volume create user-data; do
+          attempt=$$((attempt + 1))
+          if ! kill -0 $$gateway_pid 2>/dev/null || [ $$attempt -ge 30 ]; then
+            kill $$gateway_pid 2>/dev/null || true
+            wait $$gateway_pid || true
+            exit 1
+          fi
+          sleep 1
+        done
+        wait $$gateway_pid
       '
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

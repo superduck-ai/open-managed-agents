@@ -30,7 +30,8 @@ var (
 	errEnvironmentManagerStart = errors.New("environment manager process start failed")
 )
 
-const sandboxCleanupStepTimeout = 2 * time.Minute
+const sandboxCleanupTimeout = 2 * time.Minute
+const maxSandboxCleanupErrorBytes = 16 * 1024
 
 // CodeSessionRuntime exposes the managed-agent Code Session operations needed
 // by Runner without coupling it to the concrete service implementation.
@@ -176,112 +177,41 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 	}
 }
 
-// RunOnce 领取并处理一条 Environment Work。阶段顺序固定为：
-// claim → resolve/prepare → create sandbox → provision packages →
-// heartbeat/precheck → rclone mounts → commit runtime / start manager。
 func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
-	work, processed, err := r.pollAndAckEnvironmentWork(ctx, workerID)
-	if !processed {
-		return false, err
-	}
-	if err != nil {
-		return true, err
-	}
-
-	env, sandboxID, err := r.loadEnvironmentLaunchIDs(ctx, work)
-	if err != nil {
-		return true, err
-	}
-	resolution, preparation, err := r.resolveAndPrepareManagedAgentLaunch(ctx, env, work)
-	if err != nil {
-		return true, err
-	}
-	record, providerSandboxID, err := r.createProviderSandbox(ctx, env, work, sandboxID, resolution)
-	if err != nil {
-		return true, err
-	}
-	if err := r.provisionEnvironmentPackagesIfNeeded(ctx, env, work, record, providerSandboxID); err != nil {
-		return true, err
-	}
-	cont, err := r.heartbeatAndEnsureWorkLease(ctx, work, record, providerSandboxID)
-	if err != nil || !cont {
-		return true, err
-	}
-	if err := r.mountRcloneFilestoreIfNeeded(ctx, work, record, providerSandboxID, preparation); err != nil {
-		return true, err
-	}
-	if err := r.markRunningAndStartManagedAgent(ctx, env, work, record, providerSandboxID, preparation); err != nil {
-		return true, err
-	}
-	return true, nil
-}
-
-// pollAndAckEnvironmentWork 每次最多领取一条 queued Work。数据库使用
-// FOR UPDATE SKIP LOCKED 避免并发 worker 领取同一条记录，并以 5 秒 claim
-// 为 Ack 前的短暂保护。领取成功后推进到 starting 并清除 claim；此后无论
-// 后续成败，调用方都应把 processed 视为 true。
-func (r *Runner) pollAndAckEnvironmentWork(ctx context.Context, workerID string) (*db.EnvironmentWork, bool, error) {
 	work, err := r.db.PollNextEnvironmentWorkForRunner(ctx, workerID, 5*time.Second, true)
 	if err != nil || work == nil {
-		return nil, false, err
+		return false, err
 	}
 	if _, err := r.db.AckEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID); err != nil {
-		return nil, true, err
+		return true, err
 	}
-	return work, true, nil
-}
 
-// loadEnvironmentLaunchIDs 加载 Work 所属 Environment，并生成本服务对外使用的
-// envsbx_ ID。此时远端 Sandbox 尚未创建；失败只需停止 Work。
-func (r *Runner) loadEnvironmentLaunchIDs(ctx context.Context, work *db.EnvironmentWork) (db.Environment, string, error) {
 	env, err := r.db.GetEnvironmentByInternalID(ctx, work.WorkspaceID, work.EnvironmentID)
 	if err != nil {
-		r.stopEnvironmentWorkAfterLaunchFailure(work)
-		return db.Environment{}, "", err
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
 	}
 	sandboxID, err := ids.New("envsbx_")
 	if err != nil {
-		r.stopEnvironmentWorkAfterLaunchFailure(work)
-		return db.Environment{}, "", err
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
 	}
-	return env, sandboxID, nil
-}
 
-// resolveAndPrepareManagedAgentLaunch 在 Provider 解析前固化网络 metadata，
-// 再 Resolve Template/网络投影并准备 Managed Agent 启动上下文，避免 Create
-// 时策略漂移。失败时只停止 Work。
-func (r *Runner) resolveAndPrepareManagedAgentLaunch(
-	ctx context.Context,
-	env db.Environment,
-	work *db.EnvironmentWork,
-) (e2bruntime.Resolution, *managedAgentLaunchPreparation, error) {
 	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
-		r.stopEnvironmentWorkAfterLaunchFailure(work)
-		return e2bruntime.Resolution{}, nil, err
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
 	}
 	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
-		r.stopEnvironmentWorkAfterLaunchFailure(work)
-		return e2bruntime.Resolution{}, nil, err
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
 	}
 	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
-		r.stopEnvironmentWorkAfterLaunchFailure(work)
-		return e2bruntime.Resolution{}, nil, err
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
 	}
-	return resolution, preparation, nil
-}
 
-// createProviderSandbox 先落 creating 本地记录，再创建远端 Sandbox，并在
-// Work metadata 中记下 provider_sandbox_id。provider.Create 返回的 ID 与
-// envsbx_ 分属远端 Provider 与本服务两个命名空间。
-func (r *Runner) createProviderSandbox(
-	ctx context.Context,
-	env db.Environment,
-	work *db.EnvironmentWork,
-	sandboxID string,
-	resolution e2bruntime.Resolution,
-) (db.EnvironmentSandbox, string, error) {
 	record, err := r.db.CreateEnvironmentSandbox(ctx, db.EnvironmentSandbox{
 		UUID:                  uuid.NewString(),
 		ExternalID:            sandboxID,
@@ -298,27 +228,27 @@ func (r *Runner) createProviderSandbox(
 		CreatedAt:             time.Now().UTC(),
 	})
 	if err != nil {
-		r.stopEnvironmentWorkAfterLaunchFailure(work)
-		return db.EnvironmentSandbox{}, "", err
+		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return true, err
 	}
 
 	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, "", err)
-		return db.EnvironmentSandbox{}, "", err
+		return true, err
 	}
 	providerSandboxID := sandbox.ID
 	if strings.TrimSpace(providerSandboxID) == "" {
 		err := errors.New("provider returned an empty sandbox id")
 		r.failCreatedSandbox(ctx, record, work, "", err)
-		return db.EnvironmentSandbox{}, "", err
+		return true, err
 	}
 	// 立即把 provider_sandbox_id 落到 Sandbox 记录列上（仍保持 creating）。
 	// 装包可能持续数分钟，其间 force-stop 通过 GetActiveEnvironmentSandboxForWork
 	// 查找计费中的 Sandbox，而该查询要求该列非空；不能等到 markRunning 才写。
 	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "creating", &providerSandboxID, nil, nil); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return db.EnvironmentSandbox{}, "", err
+		return true, err
 	}
 	// provider_sandbox_id 通过数据库侧原子 jsonb 合并写入，而不是读取 work.Metadata
 	// 快照后整列替换：Create 阻塞期间若有并发 PATCH 修改 metadata，整列替换会用陈旧
@@ -326,7 +256,7 @@ func (r *Runner) createProviderSandbox(
 	providerPatch, err := json.Marshal(map[string]any{"provider_sandbox_id": providerSandboxID})
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return db.EnvironmentSandbox{}, "", err
+		return true, err
 	}
 	updatedWork, err := r.db.MergeEnvironmentWorkMetadata(
 		ctx,
@@ -337,102 +267,58 @@ func (r *Runner) createProviderSandbox(
 	)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return db.EnvironmentSandbox{}, "", err
+		return true, err
 	}
 	*work = updatedWork
-	return record, providerSandboxID, nil
-}
 
-func (r *Runner) provisionEnvironmentPackagesIfNeeded(
-	ctx context.Context,
-	env db.Environment,
-	work *db.EnvironmentWork,
-	record db.EnvironmentSandbox,
-	providerSandboxID string,
-) error {
 	manifest, provision, err := buildPackageManifest(env.Config)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return err
+		return true, err
 	}
-	if !provision {
-		return nil
+	if provision {
+		if err := r.provisionPackages(ctx, work.ExternalID, providerSandboxID, manifest); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
 	}
-	if err := r.provisionPackages(ctx, work.ExternalID, providerSandboxID, manifest); err != nil {
-		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return err
-	}
-	return nil
-}
 
-// heartbeatAndEnsureWorkLease 在装包后续约 Work。Lease 未续约时停止已创建
-// Sandbox，返回 cont=false；Managed Agent 的启动配置仍使用创建 Sandbox 前的快照。
-func (r *Runner) heartbeatAndEnsureWorkLease(
-	ctx context.Context,
-	work *db.EnvironmentWork,
-	record db.EnvironmentSandbox,
-	providerSandboxID string,
-) (bool, error) {
 	heartbeat, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return false, err
+		return true, err
 	}
 	if !heartbeat.LeaseExtended {
 		if err := r.stopCreatedSandbox(record, work, providerSandboxID); err != nil {
-			return false, err
+			return true, err
 		}
-		return false, nil
+		return true, nil
 	}
-	return true, nil
-}
 
-// mountRcloneFilestoreIfNeeded 仅 Cloud Session Managed Agent 挂载固定五组
-// Filestore；必须等 rclone ready 后才能继续启动 Claude。
-func (r *Runner) mountRcloneFilestoreIfNeeded(
-	ctx context.Context,
-	work *db.EnvironmentWork,
-	record db.EnvironmentSandbox,
-	providerSandboxID string,
-	preparation *managedAgentLaunchPreparation,
-) error {
-	if preparation == nil {
-		return nil
+	if preparation != nil {
+		rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.session)
+		if err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, fmt.Errorf("prepare rclone-filestore launch: %w", err)
+		}
+		if err := r.startRcloneFilestore(ctx, providerSandboxID, rcloneLaunch); err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return true, err
+		}
 	}
-	rcloneLaunch, err := r.prepareRcloneFilestoreLaunch(ctx, preparation.session)
-	if err != nil {
-		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return fmt.Errorf("prepare rclone-filestore launch: %w", err)
-	}
-	if err := r.startRcloneFilestore(ctx, providerSandboxID, rcloneLaunch); err != nil {
-		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return err
-	}
-	return nil
-}
 
-// markRunningAndStartManagedAgent 标记 Sandbox running，原子提交 Code Session
-// runtime，再通过 stdin 启动 Environment Manager。
-func (r *Runner) markRunningAndStartManagedAgent(
-	ctx context.Context,
-	env db.Environment,
-	work *db.EnvironmentWork,
-	record db.EnvironmentSandbox,
-	providerSandboxID string,
-	preparation *managedAgentLaunchPreparation,
-) error {
 	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "running", &providerSandboxID, nil, nil); err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return err
+		return true, err
 	}
 
 	launch, err := r.commitManagedAgentLaunch(ctx, env, work, preparation)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return err
+		return true, err
 	}
 	if launch == nil {
-		return nil
+		return true, nil
 	}
 
 	// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
@@ -445,9 +331,9 @@ func (r *Runner) markRunningAndStartManagedAgent(
 			err,
 		)
 		r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.session, launch.CodeSessionID, publicError)
-		return publicError
+		return true, publicError
 	}
-	return nil
+	return true, nil
 }
 
 func (r *Runner) provisionPackages(ctx context.Context, workExternalID, sandboxID string, manifest []byte) (err error) {
@@ -476,40 +362,21 @@ func (r *Runner) provisionPackages(ctx context.Context, workExternalID, sandboxI
 }
 
 func (r *Runner) stopCreatedSandbox(record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) error {
-	var result error
-	if strings.TrimSpace(providerSandboxID) != "" {
-		result = errors.Join(result, runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-			return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, nil, nil)
-		}))
-		killErr := runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-			return r.provider.Kill(cleanupCtx, providerSandboxID)
-		})
-		result = errors.Join(result, killErr)
-		if killErr != nil {
-			message := killErr.Error()
-			// Keep the record discoverable by force-stop while the provider Sandbox
-			// may still be alive. "failed" is terminal and excluded from active lookup.
-			result = errors.Join(result, runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-				return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, &message, nil)
-			}))
-		} else {
-			stoppedAt := time.Now().UTC()
-			result = errors.Join(result, runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-				return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt)
-			}))
-		}
-	}
-	return errors.Join(result, runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		_, err := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
-		return err
-	}))
-}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), sandboxCleanupTimeout)
+	defer cancel()
 
-func (r *Runner) stopEnvironmentWorkAfterLaunchFailure(work *db.EnvironmentWork) {
-	_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		_, err := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
-		return err
-	})
+	result := r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, nil, nil)
+	killErr := r.provider.Kill(cleanupCtx, providerSandboxID)
+	result = errors.Join(result, killErr)
+	if killErr != nil {
+		message := boundedSandboxCleanupError(killErr)
+		result = errors.Join(result, r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, &message, nil))
+	} else {
+		stoppedAt := time.Now().UTC()
+		result = errors.Join(result, r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt))
+	}
+	_, stopErr := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	return errors.Join(result, stopErr)
 }
 
 func (r *Runner) failManagedAgentRuntime(
@@ -536,50 +403,33 @@ func (r *Runner) failManagedAgentRuntime(
 }
 
 func (r *Runner) failCreatedSandbox(_ context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), sandboxCleanupTimeout)
+	defer cancel()
+
 	now := time.Now().UTC()
-	message := cause.Error()
-	hasProviderSandbox := strings.TrimSpace(providerSandboxID) != ""
-	initialState := "failed"
-	var stoppedAt *time.Time
-	if hasProviderSandbox {
-		// A provider-backed record remains active until Kill succeeds. If Kill fails,
-		// force-stop can still discover the "stopping" record and retry manually.
-		initialState = "stopping"
-	} else {
-		stoppedAt = &now
-	}
-	_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, initialState, &providerSandboxID, &message, stoppedAt)
-	})
-	_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		_, err := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
-		return err
-	})
-	if !hasProviderSandbox {
+	message := boundedSandboxCleanupError(cause)
+	if strings.TrimSpace(providerSandboxID) == "" {
+		_ = r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
+		_, _ = r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 		return
 	}
-	killErr := runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		return r.provider.Kill(cleanupCtx, providerSandboxID)
-	})
-	if killErr != nil {
-		message = errors.Join(cause, fmt.Errorf("kill provider sandbox: %w", killErr)).Error()
-		_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-			return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, &message, nil)
-		})
+
+	_ = r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, &message, nil)
+	_, _ = r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	if killErr := r.provider.Kill(cleanupCtx, providerSandboxID); killErr != nil {
+		message = boundedSandboxCleanupError(errors.Join(cause, fmt.Errorf("kill provider sandbox: %w", killErr)))
+		_ = r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, &message, nil)
 		return
 	}
-	_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
-	})
+	_ = r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
 }
 
-// runSandboxCleanupStep gives each cleanup side effect its own bounded context.
-// A canceled launch context or a slow preceding step cannot consume the budget
-// needed to update state, stop Work, or terminate the provider Sandbox.
-func runSandboxCleanupStep(step func(context.Context) error) error {
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), sandboxCleanupStepTimeout)
-	defer cancel()
-	return step(cleanupCtx)
+func boundedSandboxCleanupError(err error) string {
+	message := strings.ToValidUTF8(err.Error(), "?")
+	if len(message) <= maxSandboxCleanupErrorBytes {
+		return message
+	}
+	return strings.ToValidUTF8(message[:maxSandboxCleanupErrorBytes], "?")
 }
 
 func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*managedAgentLaunchPreparation, error) {

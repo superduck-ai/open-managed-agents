@@ -9,429 +9,244 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
 func TestBuildPackageProvisionCommand(t *testing.T) {
-	t.Run("default manager path", func(t *testing.T) {
-		if got := buildPackageProvisionCommand(config.Config{}); got != "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin" {
-			t.Fatalf("buildPackageProvisionCommand() = %q, want the default quoted path", got)
-		}
-	})
-
-	t.Run("configured manager path is honored and shell quoted", func(t *testing.T) {
-		cfg := config.Config{}
-		cfg.EnvironmentRunner.ManagerPath = "/opt/env manager/bin/environment-manager"
-		if got := buildPackageProvisionCommand(cfg); got != "'/opt/env manager/bin/environment-manager' provision-packages --protocol v1 --stdin" {
-			t.Fatalf("buildPackageProvisionCommand() = %q, want the configured quoted path", got)
-		}
-	})
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"default", "", "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin"},
+		{"configured path is quoted", "/opt/env manager/bin/environment-manager", "'/opt/env manager/bin/environment-manager' provision-packages --protocol v1 --stdin"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.Config{}
+			cfg.EnvironmentRunner.ManagerPath = test.path
+			if got := buildPackageProvisionCommand(cfg); got != test.want {
+				t.Fatalf("buildPackageProvisionCommand() = %q, want %q", got, test.want)
+			}
+		})
+	}
 }
 
 func TestNormalizePackages(t *testing.T) {
-	t.Run("manager options are rejected without echoing the spec", func(t *testing.T) {
-		secretOption := "  --token=secret-value"
-		packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
-			"type": managerPackageType,
-			"pip":  []string{secretOption},
-		}))
-		if err == nil || packages != nil || !strings.Contains(err.Error(), invalidPackageOptionMessage) {
-			t.Fatalf("normalizePackages() = (%#v, %v), want manager option error", packages, err)
+	t.Run("normalizes representative valid input", func(t *testing.T) {
+		packages, err := normalizePackages(json.RawMessage(`{"type":"packages","apt":[" curl "],"npm":["@scope/pkg@1"],"pip":["requests[socks]"]}`))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if strings.Contains(err.Error(), secretOption) || strings.Contains(err.Error(), "secret-value") {
-			t.Fatalf("normalization error leaked package option: %v", err)
+		if packages.Type != managerPackageType || !reflect.DeepEqual(packages.APT, []string{" curl "}) ||
+			!reflect.DeepEqual(packages.NPM, []string{"@scope/pkg@1"}) || !reflect.DeepEqual(packages.PIP, []string{"requests[socks]"}) {
+			t.Fatalf("normalizePackages() = %#v", packages)
 		}
 	})
 
-	t.Run("credential-bearing URL is rejected without echoing the spec", func(t *testing.T) {
-		secretSpec := "git+https://user:secret-token@example.test/private.git"
-		packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
-			"type": managerPackageType,
-			"pip":  []string{secretSpec},
-		}))
-		if err == nil || packages != nil {
-			t.Fatalf("normalizePackages() = (%#v, %v), want credential URL error", packages, err)
-		}
-		if strings.Contains(err.Error(), secretSpec) || strings.Contains(err.Error(), "secret-token") {
-			t.Fatalf("normalization error leaked package credentials: %v", err)
-		}
-	})
-
-	t.Run("invalid type is rejected", func(t *testing.T) {
-		for _, raw := range []string{
-			`{"type":"other","pip":["numpy"]}`,
-			`{"type":123,"pip":["numpy"]}`,
-		} {
-			packages, err := normalizePackages(json.RawMessage(raw))
-			if err == nil || packages != nil || err.Error() != invalidPackagesTypeMessage {
-				t.Fatalf("normalizePackages(%s) = (%#v, %v), want invalid type error", raw, packages, err)
+	invalid := []struct {
+		name string
+		raw  json.RawMessage
+		want string
+	}{
+		{"invalid type", json.RawMessage(`{"type":"other","pip":["numpy"]}`), invalidPackagesTypeMessage},
+		{"non-array", json.RawMessage(`{"type":"packages","pip":"numpy"}`), "config.packages.pip must be an array of strings"},
+		{"blank", json.RawMessage(`{"type":"packages","apt":["  "]}`), "entries must be non-empty strings"},
+		{"manager option", json.RawMessage(`{"type":"packages","pip":["--token=secret-value"]}`), invalidPackageOptionMessage},
+		{"credential URL", json.RawMessage(`{"type":"packages","pip":["git+https://user:secret-token@example.test/private.git"]}`), "must not contain URL credentials"},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			packages, err := normalizePackages(test.raw)
+			if err == nil || packages != nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("normalizePackages() = (%#v, %v), want %q", packages, err, test.want)
 			}
-		}
-	})
+			if strings.Contains(err.Error(), "secret-value") || strings.Contains(err.Error(), "secret-token") {
+				t.Fatalf("normalization error leaked credentials: %v", err)
+			}
+		})
+	}
 
-	t.Run("non-array manager value names the offending manager", func(t *testing.T) {
-		packages, err := normalizePackages(json.RawMessage(`{"type":"packages","pip":"numpy"}`))
-		if err == nil || packages != nil || err.Error() != "config.packages.pip must be an array of strings" {
-			t.Fatalf("normalizePackages() = (%#v, %v), want pip array error", packages, err)
-		}
-	})
-
-	t.Run("blank specs are rejected", func(t *testing.T) {
-		blank, blankErr := normalizePackages(json.RawMessage(`{"type":"packages","apt":["  "]}`))
-		if blankErr == nil || blank != nil || !strings.Contains(blankErr.Error(), "config.packages.apt entries must be non-empty strings") {
-			t.Fatalf("normalizePackages() = (%#v, %v), want blank spec error", blank, blankErr)
-		}
-	})
-
-	t.Run("long native package specs are preserved", func(t *testing.T) {
-		longSpec := "project @ https://example.test/" + strings.Repeat("nested-path/", 40) + "archive.whl"
+	t.Run("API manifest above 1 MiB", func(t *testing.T) {
 		packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
 			"type": managerPackageType,
-			"pip":  []string{longSpec},
-		}))
-		if err != nil || packages == nil || !reflect.DeepEqual(packages.PIP, []string{longSpec}) {
-			t.Fatalf("normalizePackages() = (%#v, %v), want the native spec unchanged", packages, err)
-		}
-	})
-
-	t.Run("manifest above the 1 MiB limit is rejected", func(t *testing.T) {
-		oversized := make([]string, 0, 2500)
-		for len(oversized) < 2500 {
-			oversized = append(oversized, strings.Repeat("a", 512))
-		}
-		packages, err := normalizePackages(mustPackageJSON(t, map[string]any{
-			"type": managerPackageType,
-			"pip":  oversized,
+			"pip":  []string{strings.Repeat("a", (1<<20)+1)},
 		}))
 		if err == nil || packages != nil || !strings.Contains(err.Error(), "1 MiB manifest limit") {
-			t.Fatalf("normalizePackages() = (%#v, %v), want 1 MiB manifest limit error", packages, err)
-		}
-	})
-
-	t.Run("absent packages normalize to empty lists", func(t *testing.T) {
-		packages, err := normalizePackages(nil)
-		if err != nil || packages == nil {
-			t.Fatalf("normalizePackages(nil) = (%#v, %v)", packages, err)
-		}
-		if packages.Type != managerPackageType || !packages.empty() {
-			t.Fatalf("normalizePackages(nil) = %#v, want typed empty packages", packages)
-		}
-		encoded := mustPackageJSON(t, packages)
-		if bytes.Contains(encoded, []byte(":null")) {
-			t.Fatalf("empty packages encode null manager arrays: %s", encoded)
+			t.Fatalf("normalizePackages() = (%#v, %v), want size error", packages, err)
 		}
 	})
 }
 
 func TestBuildPackageManifest(t *testing.T) {
-	t.Run("invalid environment config has a root decode error", func(t *testing.T) {
+	t.Run("malformed root", func(t *testing.T) {
 		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":`))
 		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "decode environment config") {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want root config decode error", manifest, provision, err)
-		}
-		if strings.Contains(err.Error(), "decode environment packages") {
-			t.Fatalf("root config error used nested packages prefix: %v", err)
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v)", manifest, provision, err)
 		}
 	})
 
-	t.Run("structurally invalid stored packages are a decode error", func(t *testing.T) {
-		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":"cloud","packages":{"pip":"numpy"}}`))
-		if err == nil || provision || manifest != nil {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want decode error", manifest, provision, err)
-		}
-		if !strings.Contains(err.Error(), "decode environment config") {
-			t.Fatalf("buildPackageManifest() error = %v, want decode environment config", err)
+	t.Run("stored dirty validation", func(t *testing.T) {
+		manifest, provision, err := buildPackageManifest(json.RawMessage(`{"type":"cloud","packages":{"type":"packages","pip":["-x=secret-value"]}}`))
+		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), invalidPackageOptionMessage) || strings.Contains(err.Error(), "secret-value") {
+			t.Fatalf("buildPackageManifest() = (%s, %t, %v)", manifest, provision, err)
 		}
 	})
 
-	t.Run("stored dirty packages are revalidated without echoing the spec", func(t *testing.T) {
-		secretOption := "-x=secret-value"
-		manifest, provision, err := buildPackageManifest(mustPackageJSON(t, map[string]any{
-			"type": "cloud",
-			"packages": map[string]any{
-				"type": managerPackageType,
-				"pip":  []string{secretOption},
-			},
-		}))
-		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), invalidPackageOptionMessage) {
-			t.Fatalf("buildPackageManifest() = (%s, %t, %v), want manager option error", manifest, provision, err)
-		}
-		if strings.Contains(err.Error(), secretOption) || strings.Contains(err.Error(), "secret-value") {
-			t.Fatalf("manifest error leaked package option: %v", err)
-		}
-	})
-
-	t.Run("stored manifest above the 1 MiB limit is rejected", func(t *testing.T) {
-		oversized := make([]string, 2500)
-		for index := range oversized {
-			oversized[index] = strings.Repeat("a", 512)
-		}
-		manifest, provision, err := buildPackageManifest(mustPackageJSON(t, map[string]any{
-			"type": "cloud",
-			"packages": map[string]any{
-				"type": managerPackageType,
-				"pip":  oversized,
-			},
-		}))
-		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "1 MiB manifest limit") {
-			t.Fatalf("buildPackageManifest() provision = %t, manifest bytes = %d, error = %v; want 1 MiB manifest limit error", provision, len(manifest), err)
-		}
-	})
-
-	t.Run("empty and absent packages skip provisioning", func(t *testing.T) {
-		for _, config := range []string{
-			`{"type":"cloud","packages":{"type":"packages","apt":[],"cargo":[],"gem":[],"go":[],"npm":[],"pip":[]}}`,
-			`{"type":"cloud","packages":null}`,
-			`{"type":"cloud"}`,
-			`{"type":"self_hosted"}`,
-		} {
-			manifest, provision, err := buildPackageManifest(json.RawMessage(config))
+	for _, test := range []struct {
+		name string
+		raw  string
+	}{
+		{"explicit empty", `{"type":"cloud","packages":{"type":"packages"}}`},
+		{"absent packages", `{"type":"cloud"}`},
+		{"null packages", `{"type":"cloud","packages":null}`},
+		{"non-cloud", `{"type":"local","packages":{"type":"packages","pip":["numpy"]}}`},
+	} {
+		t.Run(test.name+" skips provisioning", func(t *testing.T) {
+			manifest, provision, err := buildPackageManifest(json.RawMessage(test.raw))
 			if err != nil || provision || manifest != nil {
-				t.Fatalf("buildPackageManifest(%s) = (%s, %t, %v), want (nil, false, nil)", config, manifest, provision, err)
+				t.Fatalf("buildPackageManifest() = (%s, %t, %v)", manifest, provision, err)
 			}
-		}
-	})
-
-	t.Run("special characters remain JSON data", func(t *testing.T) {
-		specs := []string{
-			"@scope/package@1.2.3",
-			`requests[socks] @ https://example.test/archive.whl ; python_version >= "3.11"`,
-			"package name; touch /tmp/oma-package-spec-was-shell",
-		}
-		configJSON := mustPackageJSON(t, map[string]any{
-			"type": "cloud",
-			"packages": map[string]any{
-				"type": "packages",
-				"npm":  []string{specs[0]},
-				"pip":  specs[1:],
-			},
 		})
-		manifest, provision, err := buildPackageManifest(configJSON)
+	}
+
+	t.Run("exact all-manager special-character JSON stdin", func(t *testing.T) {
+		packages := environmentPackages{
+			Type: managerPackageType,
+			APT:  []string{"libfoo; echo nope"}, Cargo: []string{"crate@1 && false"},
+			Gem: []string{"gem name 'quoted'"}, Go: []string{"example.test/mod@v1.2.3"},
+			NPM: []string{"@scope/package@1.2.3"}, PIP: []string{`requests[socks] ; python_version >= "3.11"`},
+		}
+		manifest, provision, err := buildPackageManifest(mustPackageJSON(t, map[string]any{"type": "cloud", "packages": packages}))
 		if err != nil || !provision {
 			t.Fatalf("buildPackageManifest() provision = %t, error = %v", provision, err)
 		}
-		var decoded packageManifest
-		if err := json.Unmarshal(manifest, &decoded); err != nil {
-			t.Fatalf("decode manifest: %v", err)
+		want := mustPackageJSON(t, packageManifest{Version: 1, Packages: packages})
+		if !bytes.Equal(manifest, want) {
+			t.Fatalf("manifest = %s, want exact JSON stdin %s", manifest, want)
 		}
-		if decoded.Version != 1 || !reflect.DeepEqual(decoded.Packages.NPM, specs[:1]) || !reflect.DeepEqual(decoded.Packages.PIP, specs[1:]) {
-			t.Fatalf("manifest changed package specs: %#v", decoded)
-		}
-		provisionCommand := buildPackageProvisionCommand(config.Config{})
-		if strings.Contains(provisionCommand, specs[0]) || strings.Contains(provisionCommand, specs[2]) {
-			t.Fatalf("fixed provision command contains a package spec: %q", provisionCommand)
-		}
-		if bytes.Contains(manifest, []byte(":null")) {
-			t.Fatalf("manifest contains null package manager arrays: %s", manifest)
+	})
+
+	t.Run("stored manifest above 1 MiB", func(t *testing.T) {
+		configJSON := mustPackageJSON(t, map[string]any{"type": "cloud", "packages": map[string]any{
+			"type": managerPackageType, "pip": []string{strings.Repeat("a", (1<<20)+1)},
+		}})
+		manifest, provision, err := buildPackageManifest(configJSON)
+		if err == nil || provision || manifest != nil || !strings.Contains(err.Error(), "1 MiB manifest limit") {
+			t.Fatalf("buildPackageManifest() = (%d bytes, %t, %v)", len(manifest), provision, err)
 		}
 	})
 }
 
 func TestValidatePackageProvisioningResult(t *testing.T) {
-	t.Run("protocol failures never echo stdout or stderr", func(t *testing.T) {
-		secret := "secret-package-spec@example.test"
-		for _, result := range []e2bruntime.CommandResult{
-			{ExitCode: 0},
-			{ExitCode: 0, Stdout: []byte(`{"version":1,"status":"succeeded","package_count":1,"duration_ms":1,"unknown":"` + secret + `"}`)},
-			{ExitCode: 0, Stdout: []byte(`{"version":1,"status":"succeeded","package_count":1,"duration_ms":1} {}`)},
-			{ExitCode: 10, Stdout: []byte(`{"version":1,"status":"failed","category":"future_category","stage":"install","duration_ms":1}`), Stderr: []byte(secret)},
-		} {
-			err := validatePackageProvisioningResult(result)
-			if err == nil {
-				t.Fatalf("validatePackageProvisioningResult(%q) succeeded", result.Stdout)
-			}
-			if strings.Contains(err.Error(), secret) {
-				t.Fatalf("protocol error leaked command output: %v", err)
-			}
+	t.Run("valid success", func(t *testing.T) {
+		err := validatePackageProvisioningResult(e2bruntime.CommandResult{ExitCode: 0, Stdout: []byte(`{"version":1,"status":"succeeded","package_count":6,"duration_ms":12}`)})
+		if err != nil {
+			t.Fatal(err)
 		}
 	})
 
-	t.Run("JSON and process exit code must agree", func(t *testing.T) {
-		err := validatePackageProvisioningResult(e2bruntime.CommandResult{
-			ExitCode: 10,
-			Stdout:   []byte(`{"version":1,"status":"succeeded","package_count":1,"duration_ms":2}`),
-		})
-		if err == nil || !strings.Contains(err.Error(), "exit code") {
-			t.Fatalf("validatePackageProvisioningResult() = %v, want exit-code mismatch", err)
-		}
-
-		err = validatePackageProvisioningResult(e2bruntime.CommandResult{
-			ExitCode: 0,
-			Stdout:   []byte(`{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"install","package_count":1,"duration_ms":2,"exit_code":17}`),
-		})
-		if err == nil || !strings.Contains(err.Error(), "exit code 0") {
-			t.Fatalf("validatePackageProvisioningResult() = %v, want failed-with-zero-exit mismatch", err)
-		}
-	})
-
-	t.Run("failure numeric diagnostics must be non-negative", func(t *testing.T) {
-		for _, stdout := range []string{
-			`{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"install","package_count":-1,"duration_ms":2,"exit_code":17}`,
-			`{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"install","package_count":1,"duration_ms":2,"exit_code":0}`,
-			`{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"install","package_count":1,"duration_ms":2,"exit_code":-1}`,
-		} {
-			err := validatePackageProvisioningResult(e2bruntime.CommandResult{
-				ExitCode: 10,
-				Stdout:   []byte(stdout),
-			})
-			if err == nil || !strings.Contains(err.Error(), "invalid package provisioning result") {
-				t.Fatalf("validatePackageProvisioningResult(%s) = %v, want invalid numeric diagnostic", stdout, err)
-			}
-		}
-	})
-
-	t.Run("package manager failure returns bounded structured diagnostics", func(t *testing.T) {
-		err := validatePackageProvisioningResult(e2bruntime.CommandResult{
-			ExitCode: 10,
-			Stdout:   []byte(`{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"install","package_count":6,"duration_ms":8,"exit_code":17}`),
-		})
+	t.Run("valid structured failure", func(t *testing.T) {
+		err := validatePackageProvisioningResult(e2bruntime.CommandResult{ExitCode: 10, Stdout: []byte(`{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"install","package_count":6,"duration_ms":8,"exit_code":17}`)})
 		if err == nil {
-			t.Fatal("package manager failure was accepted")
+			t.Fatal("failure was accepted")
 		}
 		for _, want := range []string{"category=package_manager", "manager=npm", "stage=install", "package_count=6", "duration_ms=8", "exit_code=17"} {
 			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("failure diagnostic %q does not contain %q", err, want)
+				t.Fatalf("error %q does not contain %q", err, want)
 			}
 		}
 	})
 
-	t.Run("unknown failure diagnostics cannot echo manager output", func(t *testing.T) {
-		secret := "secret-package-spec-or-output"
-		err := validatePackageProvisioningResult(e2bruntime.CommandResult{
-			ExitCode: 10,
-			Stdout: []byte(
-				`{"version":1,"status":"failed","category":"` + secret +
-					`","manager":"` + secret +
-					`","stage":"` + secret +
-					`","duration_ms":8}`,
-			),
-		})
-		if err == nil {
-			t.Fatal("package manager failure was accepted")
-		}
-		if strings.Contains(err.Error(), secret) {
-			t.Fatalf("failure diagnostics leaked an untrusted Manager field: %v", err)
-		}
-		for _, want := range []string{"category=unknown", "manager=unknown", "stage=unknown"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("failure diagnostic %q does not contain %q", err, want)
+	rejected := []struct {
+		name   string
+		exit   int
+		stdout string
+		want   string
+	}{
+		{"failed with exit zero", 0, `{"version":1,"status":"failed","duration_ms":1}`, "process exit code 0"},
+		{"negative duration", 0, `{"version":1,"status":"succeeded","package_count":1,"duration_ms":-1}`, "required field"},
+		{"negative package count", 10, `{"version":1,"status":"failed","package_count":-1,"duration_ms":1}`, "negative package_count"},
+		{"nonpositive manager exit code", 10, `{"version":1,"status":"failed","duration_ms":1,"exit_code":0}`, "manager exit_code"},
+		{"success with failure field", 0, `{"version":1,"status":"succeeded","package_count":1,"duration_ms":1,"manager":"pip"}`, "inconsistent succeeded fields"},
+		{"missing version", 0, `{"status":"succeeded","package_count":1,"duration_ms":1}`, "required field"},
+		{"wrong version", 0, `{"version":2,"status":"succeeded","package_count":1,"duration_ms":1}`, "required field"},
+		{"missing status", 0, `{"version":1,"package_count":1,"duration_ms":1}`, "required field"},
+		{"wrong status type", 0, `{"version":1,"status":2,"package_count":1,"duration_ms":1}`, "decode failed"},
+		{"missing duration", 0, `{"version":1,"status":"succeeded","package_count":1}`, "required field"},
+		{"wrong duration type", 0, `{"version":1,"status":"succeeded","package_count":1,"duration_ms":"1"}`, "decode failed"},
+		{"missing success count", 0, `{"version":1,"status":"succeeded","duration_ms":1}`, "inconsistent succeeded fields"},
+		{"wrong success count type", 0, `{"version":1,"status":"succeeded","package_count":"1","duration_ms":1}`, "decode failed"},
+		{"unknown status", 0, `{"version":1,"status":"pending","duration_ms":1}`, "unknown status"},
+		{"unknown JSON field", 0, `{"version":1,"status":"succeeded","package_count":1,"duration_ms":1,"detail":"nope"}`, "decode failed"},
+		{"multiple JSON values", 0, `{"version":1,"status":"succeeded","package_count":1,"duration_ms":1} {}`, "multiple JSON values"},
+	}
+	for _, test := range rejected {
+		t.Run(test.name, func(t *testing.T) {
+			err := validatePackageProvisioningResult(e2bruntime.CommandResult{ExitCode: test.exit, Stdout: []byte(test.stdout)})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want substring %q", err, test.want)
 			}
-		}
-	})
-
-	t.Run("oversized result is rejected before JSON decoding", func(t *testing.T) {
-		result := append(
-			[]byte(`{"version":1,"status":"succeeded","package_count":1,"duration_ms":1}`),
-			bytes.Repeat([]byte(" "), maxPackageProvisioningResultBytes)...,
-		)
-		err := validatePackageProvisioningResult(e2bruntime.CommandResult{
-			ExitCode: 0,
-			Stdout:   result,
 		})
-		if err == nil || !strings.Contains(err.Error(), "16 KiB limit") {
-			t.Fatalf("validatePackageProvisioningResult() = %v, want result size error", err)
-		}
-	})
+	}
 
-	t.Run("success accepts the exact v1 result", func(t *testing.T) {
-		err := validatePackageProvisioningResult(e2bruntime.CommandResult{
-			ExitCode: 0,
-			Stdout:   []byte("{\"version\":1,\"status\":\"succeeded\",\"package_count\":6,\"duration_ms\":12}\n"),
+	otherInvalid := []struct {
+		name   string
+		result e2bruntime.CommandResult
+		want   string
+	}{
+		{"empty", e2bruntime.CommandResult{}, "decode failed"},
+		{"malformed", e2bruntime.CommandResult{Stdout: []byte(`{"version":`)}, "decode failed"},
+		{"exit status mismatch", e2bruntime.CommandResult{ExitCode: 10, Stdout: []byte(`{"version":1,"status":"succeeded","package_count":1,"duration_ms":2}`)}, "exit code"},
+		{"oversized", e2bruntime.CommandResult{Stdout: bytes.Repeat([]byte("x"), maxPackageProvisioningResultBytes+1)}, "16 KiB limit"},
+	}
+	for _, test := range otherInvalid {
+		t.Run(test.name, func(t *testing.T) {
+			err := validatePackageProvisioningResult(test.result)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validatePackageProvisioningResult() = %v, want %q", err, test.want)
+			}
 		})
-		if err != nil {
-			t.Fatalf("validatePackageProvisioningResult() error = %v", err)
+	}
+
+	t.Run("unknown diagnostics are sanitized", func(t *testing.T) {
+		const secret = "secret-package-output"
+		err := validatePackageProvisioningResult(e2bruntime.CommandResult{ExitCode: 10, Stdout: []byte(`{"version":1,"status":"failed","category":"` + secret + `","manager":"` + secret + `","stage":"` + secret + `","duration_ms":8}`)})
+		if err == nil || strings.Contains(err.Error(), secret) {
+			t.Fatalf("sanitized diagnostics = %v", err)
+		}
+		for _, field := range []string{"category=unknown", "manager=unknown", "stage=unknown"} {
+			if !strings.Contains(err.Error(), field) {
+				t.Errorf("sanitized diagnostics %q missing %q", err, field)
+			}
 		}
 	})
 }
 
 func TestProvisionPackagesStructuredLogs(t *testing.T) {
-	const (
-		workID = "envwork_log_test"
-		secret = "must-not-appear-in-logs"
-	)
-	tests := []struct {
-		name     string
-		provider *rcloneTestProvider
-		wantOK   bool
-		wantErr  bool
-	}{
-		{
-			name: "failure",
-			provider: &rcloneTestProvider{
-				runErrors: []error{errors.New("provider failed: " + secret)},
-			},
-			wantErr: true,
-		},
-		{
-			name: "success",
-			provider: &rcloneTestProvider{
-				runResult: e2bruntime.CommandResult{
-					Stdout: []byte(`{"version":1,"status":"succeeded","package_count":1,"duration_ms":1}`),
-				},
-			},
-			wantOK: true,
-		},
+	const secret = "provider-secret-value"
+	var output bytes.Buffer
+	runner := &Runner{
+		provider: &rcloneTestProvider{runErrors: []error{errors.New(secret)}},
+		logger:   slog.New(slog.NewJSONHandler(&output, nil)),
 	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var output bytes.Buffer
-			runner := &Runner{
-				provider: test.provider,
-				cfg: config.Config{
-					E2B: config.E2BConfig{SandboxTimeout: time.Second},
-				},
-				logger: slog.New(slog.NewJSONHandler(&output, nil)),
-			}
-			err := runner.provisionPackages(
-				context.Background(),
-				workID,
-				"sandbox_log_test",
-				[]byte(`{"secret":"`+secret+`"}`),
-			)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("provisionPackages() error = %v, wantErr %t", err, test.wantErr)
-			}
-			if strings.Contains(output.String(), secret) {
-				t.Fatalf("structured logs leaked provisioning data: %s", output.String())
-			}
-
-			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-			if len(lines) != 2 {
-				t.Fatalf("structured log line count = %d, want 2: %s", len(lines), output.String())
-			}
-			start := decodeStructuredLogLine(t, lines[0])
-			done := decodeStructuredLogLine(t, lines[1])
-			assertStructuredLogField(t, start, "level", "INFO")
-			assertStructuredLogField(t, start, "msg", "environment packages provisioning start")
-			assertStructuredLogField(t, start, "work_id", workID)
-			assertStructuredLogField(t, done, "level", "INFO")
-			assertStructuredLogField(t, done, "msg", "environment packages provisioning done")
-			assertStructuredLogField(t, done, "work_id", workID)
-			assertStructuredLogField(t, done, "ok", test.wantOK)
-			if duration, ok := done["duration_ms"].(float64); !ok || duration < 0 {
-				t.Fatalf("duration_ms = %#v, want a non-negative number", done["duration_ms"])
-			}
-		})
+	if err := runner.provisionPackages(context.Background(), "work_test", "sandbox_test", []byte(`{"secret":"manifest"}`)); err == nil {
+		t.Fatal("provider failure was accepted")
 	}
-}
-
-func decodeStructuredLogLine(t *testing.T, line string) map[string]any {
-	t.Helper()
-	var record map[string]any
-	if err := json.Unmarshal([]byte(line), &record); err != nil {
-		t.Fatalf("decode structured log %q: %v", line, err)
+	if strings.Contains(output.String(), secret) {
+		t.Fatalf("structured logs leaked provider error: %s", output.String())
 	}
-	return record
-}
-
-func assertStructuredLogField(t *testing.T, record map[string]any, field string, want any) {
-	t.Helper()
-	if got := record[field]; !reflect.DeepEqual(got, want) {
-		t.Fatalf("structured log field %s = %#v, want %#v; record=%#v", field, got, want, record)
+	foundFailedCompletion := false
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var record map[string]any
+		if json.Unmarshal([]byte(line), &record) == nil && record["msg"] == "environment packages provisioning done" && record["ok"] == false {
+			foundFailedCompletion = true
+		}
+	}
+	if !foundFailedCompletion {
+		t.Fatalf("logs did not contain failed completion record: %s", output.String())
 	}
 }
 

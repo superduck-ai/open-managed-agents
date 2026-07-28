@@ -716,51 +716,16 @@ func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, wo
 		return nil
 	}
 	providerSandboxID := *sandbox.ProviderSandboxID
-	if err := runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		return h.db.UpdateEnvironmentSandboxState(
-			cleanupCtx,
-			env.WorkspaceID,
-			sandbox.ExternalID,
-			"stopping",
-			&providerSandboxID,
-			nil,
-			nil,
-		)
-	}); err != nil {
+	if err := h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
 		return err
 	}
-	killErr := runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		return e2bruntime.NewProvider(h.cfg.E2B).Kill(cleanupCtx, providerSandboxID)
-	})
-	if killErr != nil {
-		message := killErr.Error()
-		stateErr := runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-			// Keep the provider-backed record active and discoverable. The remote
-			// Sandbox may still be alive, so a later force-stop must be able to retry.
-			return h.db.UpdateEnvironmentSandboxState(
-				cleanupCtx,
-				env.WorkspaceID,
-				sandbox.ExternalID,
-				"stopping",
-				&providerSandboxID,
-				&message,
-				nil,
-			)
-		})
-		return errors.Join(killErr, stateErr)
+	if err := e2bruntime.NewProvider(h.cfg.E2B).Kill(ctx, providerSandboxID); err != nil {
+		message := err.Error()
+		_ = h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "failed", &providerSandboxID, &message, nil)
+		return err
 	}
 	stoppedAt := time.Now().UTC()
-	return runSandboxCleanupStep(func(cleanupCtx context.Context) error {
-		return h.db.UpdateEnvironmentSandboxState(
-			cleanupCtx,
-			env.WorkspaceID,
-			sandbox.ExternalID,
-			"stopped",
-			&providerSandboxID,
-			nil,
-			&stoppedAt,
-		)
-	})
+	return h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt)
 }
 
 func (h *Handler) authorizeWork(w http.ResponseWriter, r *http.Request) (db.Environment, bool) {

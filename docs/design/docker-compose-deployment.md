@@ -101,7 +101,7 @@ oma-server 在 compose 网络中，e2b-local 在 host 网络中。`extra_hosts` 
 
 ### 4.3 Docker daemon 可见路径占位符替换
 
-e2b-local 配置文件 `deploy/docker-compose/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 和 `__VOLUME_HOST_PATH__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制和 Sandbox volume bind source。Compose 在启动网关前创建 `tmp/e2b-local-volumes/user-data`，并把同一宿主路径挂载进 e2b-local；不能使用只存在于网关容器内的 `/root/.e2b-local/volumes`，否则 Docker 创建 Sandbox 时会拒绝不存在的 bind source。
+e2b-local 配置文件 `deploy/docker-compose/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 和 `__VOLUME_HOST_PATH__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制和 Sandbox volume bind source。网关 ready 后，Compose 通过幂等的 `volume create user-data` 初始化 `tmp/e2b-local-volumes/user-data` 及其 managed metadata；不能只手工创建目录，也不能使用只存在于网关容器内的 `/root/.e2b-local/volumes`，否则最新版 e2b-local 会拒绝 unmanaged 或 Docker daemon 不可见的 bind source。
 
 ### 4.4 前端内建到 oma-server 镜像
 

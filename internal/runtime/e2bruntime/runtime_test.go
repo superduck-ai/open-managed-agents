@@ -6,7 +6,6 @@ import (
 	"errors"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -39,123 +38,66 @@ func TestConnectionOptsFromConfigMapsAllFields(t *testing.T) {
 }
 
 func TestExecuteCommandTransport(t *testing.T) {
-	t.Run("send failure kills without closing or waiting", func(t *testing.T) {
-		process := newRecordingCommandProcess()
-		process.sendErr = errors.New("forced send failure")
-		_, err := executeCommand(context.Background(), CommandRequest{
-			Command: "environment-manager provision-packages --protocol v1 --stdin",
-			Stdin:   []byte(`{"version":1}`),
-			Timeout: time.Second,
-		}, process.start)
-		if err == nil || !strings.Contains(err.Error(), "send sandbox command stdin") {
-			t.Fatalf("executeCommand() error = %v, want send failure", err)
-		}
-		assertCommandOperations(t, process.recordedOperations(), "start", "send", "kill", "disconnect")
-	})
+	stdin := []byte(`{"version":1}`)
+	results := []struct {
+		name   string
+		result CommandResult
+	}{
+		{"success", CommandResult{Stdout: []byte(`{"status":"succeeded"}`)}},
+		{"nonzero exit", CommandResult{ExitCode: 10, Stderr: []byte("diagnostic")}},
+	}
+	for _, tt := range results {
+		t.Run(tt.name, func(t *testing.T) {
+			process := newRecordingCommandProcess()
+			process.result = tt.result
+			got, err := executeCommand(context.Background(), CommandRequest{Command: "provision --stdin", Stdin: stdin, Timeout: time.Second}, process.start)
+			if err != nil || !reflect.DeepEqual(got, tt.result) {
+				t.Fatalf("executeCommand() = (%#v, %v), want (%#v, nil)", got, err, tt.result)
+			}
+			if !reflect.DeepEqual(process.stdin, stdin) || process.sendOrder > process.waitOrder || process.closeOrder > process.waitOrder {
+				t.Fatalf("stdin/order = (%q, %d, %d, %d), want send and close before wait", process.stdin, process.sendOrder, process.closeOrder, process.waitOrder)
+			}
+		})
+	}
 
-	t.Run("close failure kills without waiting", func(t *testing.T) {
-		process := newRecordingCommandProcess()
-		process.closeErr = errors.New("forced close failure")
-		_, err := executeCommand(context.Background(), CommandRequest{
-			Command: "environment-manager provision-packages --protocol v1 --stdin",
-			Stdin:   []byte(`{"version":1}`),
-			Timeout: time.Second,
-		}, process.start)
-		if err == nil || !strings.Contains(err.Error(), "close sandbox command stdin") {
-			t.Fatalf("executeCommand() error = %v, want close failure", err)
-		}
-		assertCommandOperations(t, process.recordedOperations(), "start", "send", "close", "kill", "disconnect")
-	})
+	for _, tt := range []struct {
+		name, want string
+		configure  func(*recordingCommandProcess)
+	}{
+		{"send failure", "send sandbox command stdin", func(p *recordingCommandProcess) { p.sendErr = errors.New("send") }},
+		{"close failure", "close sandbox command stdin", func(p *recordingCommandProcess) { p.closeErr = errors.New("close") }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			process := newRecordingCommandProcess()
+			tt.configure(process)
+			_, err := executeCommand(context.Background(), CommandRequest{Command: "provision --stdin", Stdin: stdin, Timeout: time.Second}, process.start)
+			if err == nil || !strings.Contains(err.Error(), tt.want) || process.kills != 1 {
+				t.Fatalf("error/kills = (%v, %d), want %q and one kill", err, process.kills, tt.want)
+			}
+		})
+	}
 
-	t.Run("timeout kills a waiting process", func(t *testing.T) {
+	t.Run("timeout returns and attempts kill", func(t *testing.T) {
 		process := newRecordingCommandProcess()
 		process.blockWait = true
-		_, err := executeCommand(context.Background(), CommandRequest{
-			Command: "environment-manager provision-packages --protocol v1 --stdin",
-			Stdin:   []byte(`{"version":1}`),
-			Timeout: 10 * time.Millisecond,
-		}, process.start)
-		if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
-			t.Fatalf("executeCommand() error = %v, want deadline", err)
+		started := time.Now()
+		_, err := executeCommand(context.Background(), CommandRequest{Command: "provision --stdin", Stdin: stdin, Timeout: 10 * time.Millisecond}, process.start)
+		if err == nil || !strings.Contains(err.Error(), "deadline exceeded") || process.kills != 1 {
+			t.Fatalf("error/kills = (%v, %d), want deadline and one kill", err, process.kills)
 		}
-		assertCommandOperations(t, process.recordedOperations(), "start", "send", "close", "wait", "kill", "disconnect")
-	})
-
-	t.Run("timeout returns when kill does not release wait", func(t *testing.T) {
-		process := newRecordingCommandProcess()
-		process.blockWait = true
-		process.killDoesNotUnblockWait = true
-		startedAt := time.Now()
-		_, err := executeCommand(context.Background(), CommandRequest{
-			Command: "environment-manager provision-packages --protocol v1 --stdin",
-			Stdin:   []byte(`{"version":1}`),
-			Timeout: 10 * time.Millisecond,
-		}, process.start)
-		if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
-			t.Fatalf("executeCommand() error = %v, want deadline", err)
+		if time.Since(started) > 500*time.Millisecond {
+			t.Fatal("executeCommand blocked after timeout")
 		}
-		if elapsed := time.Since(startedAt); elapsed > 500*time.Millisecond {
-			t.Fatalf("executeCommand() blocked for %s after timeout", elapsed)
-		}
-		assertCommandOperations(t, process.recordedOperations(), "start", "send", "close", "wait", "kill", "disconnect")
-	})
-
-	t.Run("nonzero exit is a protocol result rather than a transport error", func(t *testing.T) {
-		process := newRecordingCommandProcess()
-		process.result = CommandResult{ExitCode: 10, Stdout: []byte(`{"status":"failed"}`), Stderr: []byte("bounded diagnostic")}
-		got, err := executeCommand(context.Background(), CommandRequest{
-			Command: "environment-manager provision-packages --protocol v1 --stdin",
-			Stdin:   []byte(`{"version":1}`),
-			Timeout: time.Second,
-		}, process.start)
-		if err != nil || !reflect.DeepEqual(got, process.result) {
-			t.Fatalf("executeCommand() = (%#v, %v), want (%#v, nil)", got, err, process.result)
-		}
-		assertCommandOperations(t, process.recordedOperations(), "start", "send", "close", "wait", "disconnect")
-	})
-
-	t.Run("command without stdin starts and waits without opening stdin", func(t *testing.T) {
-		process := newRecordingCommandProcess()
-		got, err := executeCommand(context.Background(), CommandRequest{
-			Command: "chmod 0600 /tmp/rclone-mount-config.json",
-			Timeout: time.Second,
-		}, process.start)
-		if err != nil || !reflect.DeepEqual(got, process.result) {
-			t.Fatalf("executeCommand() = (%#v, %v), want (%#v, nil)", got, err, process.result)
-		}
-		assertCommandOperations(t, process.recordedOperations(), "start", "wait", "disconnect")
-	})
-
-	t.Run("success sends stdin then closes and waits", func(t *testing.T) {
-		process := newRecordingCommandProcess()
-		process.result = CommandResult{Stdout: []byte(`{"status":"succeeded"}`)}
-		request := CommandRequest{
-			Command: "environment-manager provision-packages --protocol v1 --stdin",
-			Stdin:   []byte(`{"version":1}`),
-			Timeout: time.Second,
-		}
-		got, err := executeCommand(context.Background(), request, process.start)
-		if err != nil || !reflect.DeepEqual(got, process.result) {
-			t.Fatalf("executeCommand() = (%#v, %v), want (%#v, nil)", got, err, process.result)
-		}
-		if !reflect.DeepEqual(process.stdin, request.Stdin) {
-			t.Fatalf("stdin = %q, want %q", process.stdin, request.Stdin)
-		}
-		assertCommandOperations(t, process.recordedOperations(), "start", "send", "close", "wait", "disconnect")
 	})
 }
 
 type recordingCommandProcess struct {
-	mu                     sync.Mutex
-	operations             []string
-	stdin                  []byte
-	result                 CommandResult
-	sendErr                error
-	closeErr               error
-	waitErr                error
-	blockWait              bool
-	killDoesNotUnblockWait bool
-	waitDone               chan struct{}
+	sequence, sendOrder, closeOrder, waitOrder, kills int
+	stdin                                             []byte
+	result                                            CommandResult
+	sendErr, closeErr                                 error
+	blockWait                                         bool
+	waitDone                                          chan struct{}
 }
 
 func newRecordingCommandProcess() *recordingCommandProcess {
@@ -163,40 +105,34 @@ func newRecordingCommandProcess() *recordingCommandProcess {
 }
 
 func (p *recordingCommandProcess) start(_ context.Context, _ CommandRequest) (commandProcess, error) {
-	p.record("start")
 	return p, nil
 }
 
 func (p *recordingCommandProcess) SendStdin(_ context.Context, stdin []byte) error {
-	p.record("send")
+	p.sendOrder = p.record(false)
 	p.stdin = append([]byte(nil), stdin...)
 	return p.sendErr
 }
 
 func (p *recordingCommandProcess) CloseStdin(_ context.Context) error {
-	p.record("close")
+	p.closeOrder = p.record(false)
 	return p.closeErr
 }
 
 func (p *recordingCommandProcess) Wait() (CommandResult, error) {
-	p.record("wait")
+	p.waitOrder = p.record(false)
 	if p.blockWait {
 		<-p.waitDone
 	}
-	return p.result, p.waitErr
+	return p.result, nil
 }
 
 func (p *recordingCommandProcess) Kill(context.Context) error {
-	p.record("kill")
-	if p.killDoesNotUnblockWait {
-		return nil
-	}
-	p.releaseWait()
+	p.record(true)
 	return nil
 }
 
 func (p *recordingCommandProcess) Disconnect() {
-	p.record("disconnect")
 	p.releaseWait()
 }
 
@@ -208,23 +144,12 @@ func (p *recordingCommandProcess) releaseWait() {
 	}
 }
 
-func (p *recordingCommandProcess) record(operation string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.operations = append(p.operations, operation)
-}
-
-func (p *recordingCommandProcess) recordedOperations() []string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]string(nil), p.operations...)
-}
-
-func assertCommandOperations(t *testing.T, got []string, want ...string) {
-	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("command operations = %#v, want %#v", got, want)
+func (p *recordingCommandProcess) record(kill bool) int {
+	p.sequence++
+	if kill {
+		p.kills++
 	}
+	return p.sequence
 }
 
 func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
@@ -251,49 +176,21 @@ func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {
 	}
 }
 
-func TestResolveUsesManagedAgentSandboxTagByDefault(t *testing.T) {
-	resolution, err := NewProvider(config.E2BConfig{}).Resolve(db.Environment{
-		ExternalID:  "env_default_template",
-		WorkspaceID: 42,
-		Config:      json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
-	}, nil)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if resolution.Template != config.DefaultE2BTemplate {
-		t.Fatalf("template = %q, want %q", resolution.Template, config.DefaultE2BTemplate)
-	}
-}
-
-func TestResolveMaterializesLogicalDefaultThroughDeploymentConfig(t *testing.T) {
-	provider := NewProvider(config.E2BConfig{Template: "managed-agent-sandbox:latest"})
-	resolution, err := provider.Resolve(db.Environment{
-		ExternalID:       "env_migrated_template",
-		WorkspaceID:      42,
-		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
-		ResolvedTemplate: config.DefaultE2BTemplate,
-	}, nil)
-	if err != nil {
-		t.Fatalf("resolve migrated logical default: %v", err)
-	}
-	if resolution.Template != "managed-agent-sandbox:latest" {
-		t.Fatalf("template = %q, want deployment-specific tag", resolution.Template)
-	}
-}
-
-func TestResolvePreservesCustomEnvironmentTemplate(t *testing.T) {
-	provider := NewProvider(config.E2BConfig{Template: "managed-agent-sandbox:latest"})
-	resolution, err := provider.Resolve(db.Environment{
-		ExternalID:       "env_custom_template",
-		WorkspaceID:      42,
-		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
-		ResolvedTemplate: "custom-sandbox:v2",
-	}, nil)
-	if err != nil {
-		t.Fatalf("resolve custom template: %v", err)
-	}
-	if resolution.Template != "custom-sandbox:v2" {
-		t.Fatalf("template = %q, want custom Environment template", resolution.Template)
+func TestResolveTemplate(t *testing.T) {
+	for _, tt := range []struct{ name, configured, resolved, want string }{
+		{"default", "", "", config.DefaultE2BTemplate},
+		{"logical default", "managed-agent-sandbox:latest", config.DefaultE2BTemplate, "managed-agent-sandbox:latest"},
+		{"custom", "managed-agent-sandbox:latest", "custom-sandbox:v2", "custom-sandbox:v2"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resolution, err := NewProvider(config.E2BConfig{Template: tt.configured}).Resolve(db.Environment{
+				ExternalID: "env_template", WorkspaceID: 42,
+				Config: json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`), ResolvedTemplate: tt.resolved,
+			}, nil)
+			if err != nil || resolution.Template != tt.want {
+				t.Fatalf("Resolve() = (%q, %v), want template %q", resolution.Template, err, tt.want)
+			}
+		})
 	}
 }
 

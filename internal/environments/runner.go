@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
@@ -363,7 +365,7 @@ func (r *Runner) provisionCreatedSandboxPackages(
 	providerSandboxID string,
 	manifest []byte,
 ) (bool, error) {
-	if strings.TrimSpace(providerSandboxID) == "" {
+	if collections.IsBlank(providerSandboxID) {
 		err := errors.New("provider returned an empty sandbox id for package provisioning")
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return false, err
@@ -655,12 +657,16 @@ func (r *Runner) runSandboxCommand(ctx context.Context, sandboxID, command strin
 }
 
 func truncateSandboxCommandOutput(value []byte) string {
-	trimmed := strings.TrimSpace(string(value))
+	trimmed := strings.TrimSpace(strings.ToValidUTF8(string(value), "\uFFFD"))
 	const limit = 2048
 	if len(trimmed) <= limit {
 		return trimmed
 	}
-	return trimmed[:limit] + "...[truncated]"
+	end := limit
+	for end > 0 && !utf8.RuneStart(trimmed[end]) {
+		end--
+	}
+	return trimmed[:end] + "...[truncated]"
 }
 
 func (r *Runner) logRcloneStageFailure(ctx context.Context, stage string, publicError, cause error) error {

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
+
 	"github.com/samber/lo"
 )
 
@@ -120,7 +122,7 @@ func (p *environmentPackages) validate() error {
 // 避免把私有仓库地址或 token 写进 API 错误和日志。
 func validatePackageSpecs(manager string, specs []string) error {
 	switch {
-	case lo.SomeBy(specs, isBlankPackageSpec):
+	case lo.SomeBy(specs, collections.IsBlank):
 		return fmt.Errorf("config.packages.%s entries must be non-empty strings", manager)
 	case lo.SomeBy(specs, isPackageManagerOption):
 		return errors.New(invalidPackageOptionMessage)
@@ -128,10 +130,6 @@ func validatePackageSpecs(manager string, specs []string) error {
 		return fmt.Errorf("config.packages.%s entries must not contain URL credentials", manager)
 	}
 	return nil
-}
-
-func isBlankPackageSpec(spec string) bool {
-	return strings.TrimSpace(spec) == ""
 }
 
 func isPackageManagerOption(spec string) bool {

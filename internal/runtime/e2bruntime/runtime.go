@@ -181,14 +181,16 @@ func (p *E2BProvider) RunCommand(ctx context.Context, sandboxID string, request 
 	if strings.TrimSpace(request.Command) == "" {
 		return CommandResult{}, errors.New("sandbox command is required")
 	}
-	sandbox, err := p.connect(ctx, sandboxID)
-	if err != nil {
-		return CommandResult{}, err
-	}
 	if request.Timeout <= 0 {
 		request.Timeout = p.cfg.RequestTimeout
 	}
-	return executeCommand(ctx, request, startE2BCommand(sandbox.Commands))
+	return runConnectedCommand(ctx, request, func(connectCtx context.Context) (commandStarter, error) {
+		sandbox, err := p.connect(connectCtx, sandboxID)
+		if err != nil {
+			return nil, err
+		}
+		return startE2BCommand(sandbox.Commands), nil
+	})
 }
 
 type commandProcess interface {
@@ -201,9 +203,26 @@ type commandProcess interface {
 
 type commandStarter func(context.Context, CommandRequest) (commandProcess, error)
 
+type commandConnector func(context.Context) (commandStarter, error)
+
 type commandWaitOutcome struct {
 	result CommandResult
 	err    error
+}
+
+func runConnectedCommand(ctx context.Context, request CommandRequest, connect commandConnector) (CommandResult, error) {
+	timeout := request.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+		request.Timeout = timeout
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	start, err := connect(commandCtx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return executeCommand(commandCtx, request, start)
 }
 
 func executeCommand(ctx context.Context, request CommandRequest, start commandStarter) (CommandResult, error) {

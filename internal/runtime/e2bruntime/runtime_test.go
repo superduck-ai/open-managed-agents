@@ -92,6 +92,24 @@ func TestExecuteCommandTransport(t *testing.T) {
 	})
 }
 
+func TestRunConnectedCommandAppliesDeadlineBeforeConnect(t *testing.T) {
+	started := time.Now()
+	_, err := runConnectedCommand(
+		context.Background(),
+		CommandRequest{Command: "provision", Timeout: 10 * time.Millisecond},
+		func(ctx context.Context) (commandStarter, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runConnectedCommand() error = %v, want deadline exceeded", err)
+	}
+	if time.Since(started) > 500*time.Millisecond {
+		t.Fatal("runConnectedCommand did not apply timeout to connect")
+	}
+}
+
 type recordingCommandProcess struct {
 	mu                                                sync.Mutex
 	sequence, sendOrder, closeOrder, waitOrder, kills int

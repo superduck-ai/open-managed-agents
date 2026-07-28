@@ -338,6 +338,25 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 	})
 
+	t.Run("force stop during failed provisioning preserves stopped sandbox", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{
+			commandErr:              context.Canceled,
+			forceStopAfterProvision: true,
+		})
+		if err != nil || !processed {
+			t.Fatalf("RunOnce() = (%t, %v), want force stop to win over command cancellation", processed, err)
+		}
+		if !reflect.DeepEqual(provider.kills, []string{provider.sandboxID, provider.sandboxID}) {
+			t.Fatalf("killed sandboxes = %#v, want stop handler and runner cleanup", provider.kills)
+		}
+		if provider.sandboxState != "stopped" || provider.sandboxError != nil {
+			t.Fatalf("force-stopped sandbox = state %q error %v, want stopped without error", provider.sandboxState, provider.sandboxError)
+		}
+		if provider.codeSessionCreated || len(provider.launches) != 0 {
+			t.Fatal("force stop during provisioning started the managed-agent runtime")
+		}
+	})
+
 	t.Run("stop requested during provisioning terminates sandbox before manager startup", func(t *testing.T) {
 		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{stopAfterProvision: true})
 		if err != nil || !processed {
@@ -413,13 +432,14 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 }
 
 type packageRunnerCase struct {
-	commandErr         error
-	stopAfterProvision bool
+	commandErr              error
+	stopAfterProvision      bool
+	forceStopAfterProvision bool
 }
 
 const cfgPackageProvisionTimeoutForTest = 37 * time.Second
 
-func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, environmentID string) {
+func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, environmentID string, force bool) {
 	t.Helper()
 	ids := getDefaultDBIDs(t, database)
 	works, _, err := database.ListEnvironmentWorkPage(ctx, db.ListEnvironmentWorkPageParams{
@@ -430,7 +450,7 @@ func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *
 	if err != nil || len(works) != 1 {
 		t.Fatalf("list environment work count/error = %d/%v, want one work", len(works), err)
 	}
-	if _, err := database.StopEnvironmentWork(ctx, ids.WorkspaceID, environmentID, works[0].ExternalID, false); err != nil {
+	if _, err := database.StopEnvironmentWork(ctx, ids.WorkspaceID, environmentID, works[0].ExternalID, force); err != nil {
 		t.Fatalf("request environment work stop: %v", err)
 	}
 }
@@ -479,9 +499,12 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 		sandboxID:  "sandbox-runner-packages",
 		commandErr: testCase.commandErr,
 	}
-	if testCase.stopAfterProvision {
+	if testCase.stopAfterProvision || testCase.forceStopAfterProvision {
 		provider.afterCommand = func() {
-			requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID)
+			requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID, testCase.forceStopAfterProvision)
+			if testCase.forceStopAfterProvision {
+				provider.Kill(runCtx, provider.sandboxID)
+			}
 		}
 	}
 	runner := newManagedAgentRunner(t, app, provider, cfg)
@@ -1253,11 +1276,11 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 	}
 	p.operations = append(p.operations, operation)
 	if operation == "command:provision" {
-		if p.commandErr != nil {
-			return e2bruntime.CommandResult{}, p.commandErr
-		}
 		if p.afterCommand != nil {
 			p.afterCommand()
+		}
+		if p.commandErr != nil {
+			return e2bruntime.CommandResult{}, p.commandErr
 		}
 		return e2bruntime.CommandResult{
 			ExitCode: 0,

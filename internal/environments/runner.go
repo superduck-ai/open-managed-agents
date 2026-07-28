@@ -375,6 +375,12 @@ func (r *Runner) provisionCreatedSandboxPackages(
 		return false, err
 	}
 	if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
+		currentWork, lookupErr := r.db.GetEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID)
+		if lookupErr == nil && (currentWork.State == "stopping" || currentWork.State == "stopped") {
+			*work = currentWork
+			r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
+			return false, nil
+		}
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return false, err
 	}

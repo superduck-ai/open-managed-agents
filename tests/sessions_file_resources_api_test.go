@@ -412,11 +412,39 @@ func TestSessionFileResourceContract(t *testing.T) {
 
 	t.Run("success deleting session removes scoped projections", func(t *testing.T) {
 		created := createSession(t, app, `{`+base+`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]}`)
-		if scoped := listFiles(t, app, "scope_id="+created.ID); len(scoped.Data) != 1 {
+		deleted := false
+		t.Cleanup(func() {
+			if !deleted {
+				deleteSession(t, app, created.ID)
+			}
+		})
+		scoped := listFiles(t, app, "scope_id="+created.ID)
+		if len(scoped.Data) != 1 {
 			t.Fatalf("scoped files before Session delete = %+v, want one input", scoped.Data)
 		}
+		session := mustSessionRecord(t, app, created.ID)
+		projection, err := app.db.GetFile(context.Background(), session.WorkspaceID, scoped.Data[0].ID)
+		if err != nil {
+			t.Fatalf("load scoped projection before Session delete: %v", err)
+		}
+		filesystem, err := app.db.GetFilestoreFilesystemBySession(
+			context.Background(),
+			session.WorkspaceID,
+			session.ExternalID,
+		)
+		if err != nil {
+			t.Fatalf("load Session filesystem before hard-deleting backing entry: %v", err)
+		}
+		if _, err := app.db.Pool.Exec(context.Background(), `
+			delete from filestore_entries
+			where workspace_uuid = $1
+				and uuid = $2
+		`, filesystem.WorkspaceUUID, projection.UUID); err != nil {
+			t.Fatalf("hard-delete backing entry before Session delete: %v", err)
+		}
 		deleteSession(t, app, created.ID)
-		if scoped := listFiles(t, app, "scope_id="+created.ID); len(scoped.Data) != 0 {
+		deleted = true
+		if scoped = listFiles(t, app, "scope_id="+created.ID); len(scoped.Data) != 0 {
 			t.Fatalf("scoped files after Session delete = %+v, want none", scoped.Data)
 		}
 	})

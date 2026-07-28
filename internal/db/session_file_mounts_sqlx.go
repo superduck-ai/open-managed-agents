@@ -76,6 +76,14 @@ const (
 			and scope_id = :scope_id
 			and deleted_at is null
 	`
+	softDeleteSessionFileProjectionsByScopeSQL = `
+		update files
+		set deleted_at = now()
+		where workspace_id = :workspace_id
+			and scope_type = :scope_type
+			and scope_id = :scope_id
+			and deleted_at is null
+	`
 	softDeleteSessionFileProjectionByEntrySQL = `
 		update files projection
 		set deleted_at = now()

@@ -319,27 +319,10 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 	if err := retireSessionFilesystemTx(ctx, tx, session); err != nil {
 		return Session{}, err
 	}
-	if _, err := namedExecContext(ctx, tx, `
-		update files projection
-		set deleted_at = coalesce(projection.deleted_at, now())
-		where projection.workspace_id = :workspace_id
-			and projection.scope_type = :scope_type
-			and projection.scope_id = :session_external_id
-			and projection.deleted_at is null
-			and exists (
-				select 1
-				from filestore_entries entry
-				join filestore_filesystems filesystem
-					on filesystem.uuid = entry.filesystem_uuid
-					and filesystem.workspace_uuid = entry.workspace_uuid
-				where entry.uuid = projection.uuid
-					and filesystem.session_uuid = CAST(:session_uuid AS uuid)
-			)
-	`, map[string]any{
-		"workspace_id":        session.WorkspaceID,
-		"scope_type":          sessionFileProjectionScope,
-		"session_external_id": session.ExternalID,
-		"session_uuid":        session.UUID,
+	if _, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionsByScopeSQL, map[string]any{
+		"workspace_id": session.WorkspaceID,
+		"scope_type":   sessionFileProjectionScope,
+		"scope_id":     session.ExternalID,
 	}); err != nil {
 		return Session{}, err
 	}

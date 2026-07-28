@@ -120,6 +120,20 @@ func TestSessionFileProjectionQueriesBindNamedArguments(t *testing.T) {
 			},
 		},
 		{
+			name:  "soft delete projections by scope",
+			query: softDeleteSessionFileProjectionsByScopeSQL,
+			arguments: map[string]any{
+				"workspace_id": int64(42),
+				"scope_type":   sessionFileProjectionScope,
+				"scope_id":     "session_test",
+			},
+			wantClauses: []string{
+				"workspace_id = $1",
+				"scope_type = $2",
+				"scope_id = $3",
+			},
+		},
+		{
 			name:  "soft delete projection by entry",
 			query: softDeleteSessionFileProjectionByEntrySQL,
 			arguments: map[string]any{

@@ -69,6 +69,8 @@ const (
 				select 1
 				from filestore_entries entry
 				where entry.workspace_uuid = (select uuid from target_workspace)
+					-- 投影不拥有对象也不计入 files_bytes。即使 backing entry 已退休，
+					-- 仍需阻止普通 Files 删除路径把投影当作源文件扣减容量。
 					and entry.uuid = CAST(:file_uuid AS uuid)
 			)
 			or exists (

@@ -352,6 +352,9 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		if provider.codeSessionCreated {
 			t.Fatal("graceful stop during provisioning created an active code session")
 		}
+		if provider.sandboxState != "stopped" || provider.sandboxError != nil {
+			t.Fatalf("graceful stop sandbox = state %q error %v, want stopped without error", provider.sandboxState, provider.sandboxError)
+		}
 	})
 
 	t.Run("success starts manager after fixed provisioner", func(t *testing.T) {
@@ -364,6 +367,9 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 		if provider.commands[0].request.Command != "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin" || !strings.Contains(provider.launches[0].command, "task-run") {
 			t.Fatalf("sandbox provision command/manager command = %q/%q", provider.commands[0].request.Command, provider.launches[0].command)
+		}
+		if provider.commands[0].request.Timeout != cfgPackageProvisionTimeoutForTest {
+			t.Fatalf("package provision timeout = %s, want dedicated runner timeout %s", provider.commands[0].request.Timeout, cfgPackageProvisionTimeoutForTest)
 		}
 		provisionAt := slices.Index(provider.operations, "command:provision")
 		rcloneAt := slices.Index(provider.operations, "rclone-start")
@@ -411,6 +417,8 @@ type packageRunnerCase struct {
 	stopAfterProvision bool
 }
 
+const cfgPackageProvisionTimeoutForTest = 37 * time.Second
+
 func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, environmentID string) {
 	t.Helper()
 	ids := getDefaultDBIDs(t, database)
@@ -438,6 +446,7 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
 	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
+	cfg.EnvironmentRunner.PackageProvisionTimeout = cfgPackageProvisionTimeoutForTest
 	cfg.E2B.Template = "fake-template"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-package-bucket"))
 	t.Cleanup(app.close)
@@ -472,9 +481,7 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 	}
 	if testCase.stopAfterProvision {
 		provider.afterCommand = func() {
-			if testCase.stopAfterProvision {
-				requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID)
-			}
+			requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID)
 		}
 	}
 	runner := newManagedAgentRunner(t, app, provider, cfg)
@@ -501,6 +508,15 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 		t.Fatalf("load package runner session: %v", sessionErr)
 	}
 	provider.sessionHasRuntimeMetadata = hasJSONKey(storedSession.Metadata, "claude_code_session_id")
+	if err := app.db.Pool.QueryRow(inspectionCtx, `
+		select state, last_error
+		from environment_sandboxes
+		where work_id = $1
+		order by id desc
+		limit 1
+	`, works[0].ID).Scan(&provider.sandboxState, &provider.sandboxError); err != nil {
+		t.Fatalf("load package runner sandbox: %v", err)
+	}
 	return provider, processed, runErr
 }
 
@@ -1099,6 +1115,8 @@ type recordingRunnerProvider struct {
 	codeSessionCreated        bool
 	sessionHasRuntimeMetadata bool
 	workHasRuntimeMetadata    bool
+	sandboxState              string
+	sandboxError              *string
 }
 
 type recordedSandboxResolve struct {

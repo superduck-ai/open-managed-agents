@@ -32,17 +32,6 @@ func TestBuildPackageProvisionCommand(t *testing.T) {
 }
 
 func TestNormalizePackages(t *testing.T) {
-	t.Run("normalizes representative valid input", func(t *testing.T) {
-		packages, err := normalizePackages(json.RawMessage(`{"type":"packages","apt":[" curl "],"npm":["@scope/pkg@1"],"pip":["requests[socks]"]}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if packages.Type != managerPackageType || !reflect.DeepEqual(packages.APT, []string{" curl "}) ||
-			!reflect.DeepEqual(packages.NPM, []string{"@scope/pkg@1"}) || !reflect.DeepEqual(packages.PIP, []string{"requests[socks]"}) {
-			t.Fatalf("normalizePackages() = %#v", packages)
-		}
-	})
-
 	invalid := []struct {
 		name string
 		raw  json.RawMessage
@@ -73,6 +62,17 @@ func TestNormalizePackages(t *testing.T) {
 		}))
 		if err == nil || packages != nil || !strings.Contains(err.Error(), "1 MiB manifest limit") {
 			t.Fatalf("normalizePackages() = (%#v, %v), want size error", packages, err)
+		}
+	})
+
+	t.Run("normalizes representative valid input", func(t *testing.T) {
+		packages, err := normalizePackages(json.RawMessage(`{"type":"packages","apt":[" curl "],"npm":["@scope/pkg@1"],"pip":["requests[socks]"]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if packages.Type != managerPackageType || !reflect.DeepEqual(packages.APT, []string{" curl "}) ||
+			!reflect.DeepEqual(packages.NPM, []string{"@scope/pkg@1"}) || !reflect.DeepEqual(packages.PIP, []string{"requests[socks]"}) {
+			t.Fatalf("normalizePackages() = %#v", packages)
 		}
 	})
 }
@@ -138,13 +138,6 @@ func TestBuildPackageManifest(t *testing.T) {
 }
 
 func TestValidatePackageProvisioningResult(t *testing.T) {
-	t.Run("valid success", func(t *testing.T) {
-		err := validatePackageProvisioningResult(e2bruntime.CommandResult{ExitCode: 0, Stdout: []byte(`{"version":1,"status":"succeeded","package_count":6,"duration_ms":12}`)})
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
-
 	t.Run("valid structured failure", func(t *testing.T) {
 		err := validatePackageProvisioningResult(e2bruntime.CommandResult{ExitCode: 10, Stdout: []byte(`{"version":1,"status":"failed","category":"package_manager","manager":"npm","stage":"install","package_count":6,"duration_ms":8,"exit_code":17}`)})
 		if err == nil {
@@ -218,6 +211,13 @@ func TestValidatePackageProvisioningResult(t *testing.T) {
 			if !strings.Contains(err.Error(), field) {
 				t.Errorf("sanitized diagnostics %q missing %q", err, field)
 			}
+		}
+	})
+
+	t.Run("valid success", func(t *testing.T) {
+		err := validatePackageProvisioningResult(e2bruntime.CommandResult{ExitCode: 0, Stdout: []byte(`{"version":1,"status":"succeeded","package_count":6,"duration_ms":12}`)})
+		if err != nil {
+			t.Fatal(err)
 		}
 	})
 }

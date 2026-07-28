@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,6 +93,7 @@ func TestExecuteCommandTransport(t *testing.T) {
 }
 
 type recordingCommandProcess struct {
+	mu                                                sync.Mutex
 	sequence, sendOrder, closeOrder, waitOrder, kills int
 	stdin                                             []byte
 	result                                            CommandResult
@@ -145,6 +147,8 @@ func (p *recordingCommandProcess) releaseWait() {
 }
 
 func (p *recordingCommandProcess) record(kill bool) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.sequence++
 	if kill {
 		p.kills++

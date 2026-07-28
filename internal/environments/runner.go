@@ -386,7 +386,7 @@ func (r *Runner) provisionCreatedSandboxPackages(
 	if heartbeat.LeaseExtended {
 		return true, nil
 	}
-	r.failCreatedSandbox(ctx, record, work, providerSandboxID, errors.New("environment work stopped during package provisioning"))
+	r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
 	return false, nil
 }
 
@@ -394,7 +394,7 @@ func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manife
 	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
 		Command: buildPackageProvisionCommand(r.cfg),
 		Stdin:   manifest,
-		Timeout: r.cfg.E2B.SandboxTimeout,
+		Timeout: r.cfg.EnvironmentRunner.PackageProvisionTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("provision environment packages: %w", err)
@@ -429,6 +429,18 @@ func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSa
 	now := time.Now().UTC()
 	message := cause.Error()
 	_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
+	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	if strings.TrimSpace(providerSandboxID) == "" {
+		return
+	}
+	killCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_ = r.provider.Kill(killCtx, providerSandboxID)
+}
+
+func (r *Runner) stopCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) {
+	now := time.Now().UTC()
+	_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &now)
 	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 	if strings.TrimSpace(providerSandboxID) == "" {
 		return
@@ -621,9 +633,23 @@ func (r *Runner) runSandboxCommand(ctx context.Context, sandboxID, command strin
 		return err
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("sandbox command exited with code %d", result.ExitCode)
+		return fmt.Errorf(
+			"sandbox command exited with code %d: stdout=%q stderr=%q",
+			result.ExitCode,
+			truncateSandboxCommandOutput(result.Stdout),
+			truncateSandboxCommandOutput(result.Stderr),
+		)
 	}
 	return nil
+}
+
+func truncateSandboxCommandOutput(value []byte) string {
+	trimmed := strings.TrimSpace(string(value))
+	const limit = 2048
+	if len(trimmed) <= limit {
+		return trimmed
+	}
+	return trimmed[:limit] + "...[truncated]"
 }
 
 func (r *Runner) logRcloneStageFailure(ctx context.Context, stage string, publicError, cause error) error {

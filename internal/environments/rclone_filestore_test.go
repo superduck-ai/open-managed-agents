@@ -97,6 +97,20 @@ func TestRcloneCommandsKeepTokensOutOfCommandText(t *testing.T) {
 	}
 }
 
+func TestRunSandboxCommandReportsBoundedOutput(t *testing.T) {
+	provider := &rcloneTestProvider{runResult: e2bruntime.CommandResult{
+		ExitCode: 17,
+		Stdout:   []byte("readiness probe output"),
+		Stderr:   []byte(strings.Repeat("x", 2049)),
+	}}
+	runner := &Runner{provider: provider}
+	err := runner.runSandboxCommand(context.Background(), "sandbox_test", "probe", time.Second)
+	if err == nil || !strings.Contains(err.Error(), `stdout="readiness probe output"`) ||
+		!strings.Contains(err.Error(), `stderr="`+strings.Repeat("x", 2048)+`...[truncated]"`) {
+		t.Fatalf("runSandboxCommand() error = %v, want bounded stdout and stderr", err)
+	}
+}
+
 func TestStartRcloneFilestoreFailures(t *testing.T) {
 	const secretMarker = "provider-secret-marker"
 	providerFailure := errors.New("provider failed with " + secretMarker)
@@ -198,6 +212,7 @@ type rcloneTestProvider struct {
 	ready           bool
 	readySequence   []bool
 	runErrors       []error
+	runResult       e2bruntime.CommandResult
 	runCommands     []string
 	writePath       string
 	writeData       []byte
@@ -251,7 +266,7 @@ func (p *rcloneTestProvider) RunCommand(_ context.Context, _ string, request e2b
 	if request.Command == rcloneConfigCleanupCommand() {
 		p.configExists = false
 	}
-	return e2bruntime.CommandResult{}, nil
+	return p.runResult, nil
 }
 
 func (p *rcloneTestProvider) StartBackgroundCommand(context.Context, string, string, []byte) error {

@@ -63,6 +63,7 @@ e2b:
 environment_runner:
   enabled: true
   concurrency: 2
+  package_provision_timeout: 2m
   manager_path: /usr/local/bin/environment-manager
   claude_agent_version: 2.1.120
   claude_path: /opt/claude-code/bin/claude

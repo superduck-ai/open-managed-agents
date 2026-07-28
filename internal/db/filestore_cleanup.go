@@ -226,6 +226,11 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 		`, map[string]any{"entry_id": entry.ID, "now": now}); err != nil {
 			return nil, err
 		}
+		if err := softDeleteSessionFileProjectionByEntryTx(
+			ctx, tx, scope.WorkspaceID, entry.UUID,
+		); err != nil {
+			return nil, err
+		}
 		releasedBytes, err := addWorkspaceStorageDelta(
 			releasedBytesByWorkspace[scope.WorkspaceID], filestoreInt64(entry.SizeBytes),
 		)

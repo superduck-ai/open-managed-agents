@@ -1171,52 +1171,6 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create output entry: %v", err)
 	}
-	const projectionFailureConstraint = "files_reject_session_projection_sync_test"
-	dropProjectionFailureConstraint := func() {
-		t.Helper()
-		if _, err := app.db.Pool.Exec(
-			context.Background(),
-			"alter table files drop constraint if exists "+projectionFailureConstraint,
-		); err != nil {
-			t.Fatalf("drop projection failure constraint: %v", err)
-		}
-	}
-	dropProjectionFailureConstraint()
-	if _, err := app.db.Pool.Exec(context.Background(), `
-		alter table files
-		add constraint `+projectionFailureConstraint+`
-		check (scope_id is null) not valid
-	`); err != nil {
-		t.Fatalf("install projection failure constraint: %v", err)
-	}
-	projectionFailureConstraintActive := true
-	defer func() {
-		if projectionFailureConstraintActive {
-			dropProjectionFailureConstraint()
-		}
-	}()
-
-	failedList := app.do(
-		t,
-		http.MethodGet,
-		"/v1/files?beta=true&scope_id="+session.ID,
-		nil,
-		defaultTestKey,
-		true,
-		"",
-	)
-	assertError(t, failedList, http.StatusInternalServerError, "api_error")
-	if got := retrieveSession(t, app, session.ID, defaultTestKey).Status; got != "running" {
-		t.Fatalf("public session status after failed file listing = %q, want running", got)
-	}
-	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
-	if len(threads.Data) != 1 || threads.Data[0].Status != "running" {
-		t.Fatalf("primary thread status after failed file listing = %+v, want running", threads.Data)
-	}
-
-	dropProjectionFailureConstraint()
-	projectionFailureConstraintActive = false
-
 	runningFiles := listFiles(t, app, "scope_id="+session.ID)
 	var outputFile *metadataResponse
 	for index := range runningFiles.Data {

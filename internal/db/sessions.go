@@ -316,6 +316,9 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 	if err != nil {
 		return Session{}, err
 	}
+	if err := retireSessionFilesystemTx(ctx, tx, session); err != nil {
+		return Session{}, err
+	}
 	if _, err := namedExecContext(ctx, tx, `
 		update files projection
 		set deleted_at = coalesce(projection.deleted_at, now())
@@ -338,9 +341,6 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 		"session_external_id": session.ExternalID,
 		"session_uuid":        session.UUID,
 	}); err != nil {
-		return Session{}, err
-	}
-	if err := retireSessionFilesystemTx(ctx, tx, session); err != nil {
 		return Session{}, err
 	}
 	if _, err := namedExecContext(ctx, tx, deleteSessionThreadsQuery, arguments); err != nil {

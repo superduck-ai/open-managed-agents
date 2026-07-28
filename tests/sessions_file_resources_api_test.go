@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -313,19 +314,8 @@ func TestSessionFileResourceContract(t *testing.T) {
 			t.Fatalf("input projections reused file ID: %+v", scopedFiles.Data)
 		}
 		sessionRecord := mustSessionRecord(t, app, created.ID)
-		if err := app.db.SyncSessionFileProjection(
-			context.Background(),
-			sessionRecord.WorkspaceID,
-			sessionRecord.ExternalID,
-		); err != nil {
-			t.Fatalf("sync outputs while input projections are active: %v", err)
-		}
-		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
-		if len(scopedFiles.Data) != 2 {
-			t.Fatalf("scoped files after output sync = %+v, want two active inputs", scopedFiles.Data)
-		}
 		if _, err := app.db.Pool.Exec(context.Background(), `
-			update workspace_storage_usage
+				update workspace_storage_usage
 			set filestore_bytes = 123
 			where workspace_id = $1
 		`, sessionRecord.WorkspaceID); err != nil {
@@ -432,7 +422,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 	})
 }
 
-func TestSessionInputProjectionPreservesSourcePolicyAndSelfHeals(t *testing.T) {
+func TestSessionInputProjectionPreservesSourcePolicy(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("session-input-projection-policy-bucket"))
 	defer app.close()
 
@@ -462,38 +452,6 @@ func TestSessionInputProjectionPreservesSourcePolicyAndSelfHeals(t *testing.T) {
 	scopedFiles := listFiles(t, app, "scope_id="+session.ID)
 	if len(scopedFiles.Data) != 1 || scopedFiles.Data[0].Downloadable {
 		t.Fatalf("input projection = %+v, want one non-downloadable file", scopedFiles.Data)
-	}
-
-	record := mustSessionRecord(t, app, session.ID)
-	beforeSyncBytes := defaultWorkspaceStorageBytes(t, app)
-	if _, err := app.db.Pool.Exec(context.Background(), `
-		delete from files
-		where workspace_id = $1
-			and scope_type = 'session'
-			and scope_id = $2
-	`, record.WorkspaceID, record.ExternalID); err != nil {
-		t.Fatalf("remove input projection to simulate pre-deployment data: %v", err)
-	}
-	if err := app.db.SyncSessionFileProjection(
-		context.Background(),
-		record.WorkspaceID,
-		record.ExternalID,
-	); err != nil {
-		t.Fatalf("self-heal input projection: %v", err)
-	}
-	afterSyncBytes := defaultWorkspaceStorageBytes(t, app)
-	if afterSyncBytes != beforeSyncBytes {
-		t.Fatalf("input projection self-heal storage = %d, want unchanged %d", afterSyncBytes, beforeSyncBytes)
-	}
-	scopedFiles = listFiles(t, app, "scope_id="+session.ID)
-	if len(scopedFiles.Data) != 1 ||
-		scopedFiles.Data[0].Filename != file.Filename ||
-		scopedFiles.Data[0].Downloadable {
-		t.Fatalf(
-			"self-healed input projection = %+v, want filename %q and non-downloadable",
-			scopedFiles.Data,
-			file.Filename,
-		)
 	}
 }
 
@@ -746,17 +704,77 @@ func TestSessionFileProjectionWorkspaceIsolation(t *testing.T) {
 	assertError(t, otherDownload, http.StatusNotFound, "not_found_error")
 }
 
-func TestSessionOutputProjectionRejectsMissingSession(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("session-output-missing-projection-bucket"))
+func TestSessionOutputProjectionWriteIsAtomic(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("session-output-atomic-projection-bucket"))
 	defer app.close()
 
-	err := app.db.SyncSessionFileProjection(context.Background(), 1, "session_missing_projection")
-	if !errors.Is(err, db.ErrNotFound) {
-		t.Fatalf("SyncSessionFileProjection() error = %v, want ErrNotFound", err)
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"session-output-atomic-projection-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"session-output-atomic-projection-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+	record := mustSessionRecord(t, app, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+	)
+	if err != nil {
+		t.Fatalf("load Session filesystem: %v", err)
+	}
+	beforeBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load storage before failed output write: %v", err)
+	}
+
+	const constraint = "files_reject_session_output_projection_write_test"
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		alter table files
+		add constraint `+constraint+`
+		check (scope_id is null) not valid
+	`); err != nil {
+		t.Fatalf("install projection failure constraint: %v", err)
+	}
+	defer func() {
+		if _, err := app.db.Pool.Exec(
+			context.Background(),
+			"alter table files drop constraint if exists "+constraint,
+		); err != nil {
+			t.Fatalf("drop projection failure constraint: %v", err)
+		}
+	}()
+
+	_, err = app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/failed.txt",
+		Blob:         workspaceStorageBlob(7, nil),
+	})
+	if err == nil {
+		t.Fatal("output write succeeded despite projection constraint")
+	}
+	if _, err := app.db.GetFilestoreEntry(
+		context.Background(),
+		record.WorkspaceID,
+		filesystem.ID,
+		"/outputs/failed.txt",
+	); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("output entry after failed projection = %v, want ErrNotFound", err)
+	}
+	afterBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load storage after failed output write: %v", err)
+	}
+	if afterBytes != beforeBytes {
+		t.Fatalf("storage after failed output write = %d, want %d", afterBytes, beforeBytes)
+	}
+	if files := listFiles(t, app, "scope_id="+session.ID); len(files.Data) != 0 {
+		t.Fatalf("files after failed output write = %+v, want none", files.Data)
 	}
 }
 
-func TestSessionOutputProjectionSyncsMultipleFiles(t *testing.T) {
+func TestSessionOutputProjectionMaterializesMultipleFiles(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("session-output-multiple-projection-bucket"))
 	defer app.close()
 
@@ -803,17 +821,9 @@ func TestSessionOutputProjectionSyncsMultipleFiles(t *testing.T) {
 		}
 	}
 
-	if err := app.db.SyncSessionFileProjection(
-		context.Background(),
-		record.WorkspaceID,
-		record.ExternalID,
-	); err != nil {
-		t.Fatalf("sync multiple output projections: %v", err)
-	}
-
 	page := listFiles(t, app, "scope_id="+session.ID)
 	if len(page.Data) != 2 {
-		t.Fatalf("scoped files after multiple output sync = %+v, want two", page.Data)
+		t.Fatalf("scoped files after multiple output writes = %+v, want two", page.Data)
 	}
 	byFilename := make(map[string]metadataResponse, len(page.Data))
 	for _, file := range page.Data {
@@ -833,6 +843,18 @@ func TestSessionOutputProjectionSyncsMultipleFiles(t *testing.T) {
 				size,
 			)
 		}
+	}
+	if _, err := app.db.RemoveFilestoreDirectory(context.Background(), db.RemoveFilestoreDirectoryInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/reports",
+		Recursive:    true,
+	}); err != nil {
+		t.Fatalf("remove output directory: %v", err)
+	}
+	page = listFiles(t, app, "scope_id="+session.ID)
+	if len(page.Data) != 1 || page.Data[0].Filename != "summary.txt" {
+		t.Fatalf("scoped files after output directory removal = %+v, want summary only", page.Data)
 	}
 }
 
@@ -866,6 +888,10 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 
 	firstBlob := workspaceStorageBlob(7, nil)
 	firstBlob.Downloadable = true
+	beforeWriteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load storage before output write: %v", err)
+	}
 	entry, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
 		WorkspaceID:  record.WorkspaceID,
 		FilesystemID: filesystem.ID,
@@ -875,23 +901,16 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create output entry: %v", err)
 	}
-	beforeSyncBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	afterWriteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
 	if err != nil {
-		t.Fatalf("load storage before projection sync: %v", err)
+		t.Fatalf("load storage after output write: %v", err)
 	}
-	if err := app.db.SyncSessionFileProjection(
-		context.Background(),
-		record.WorkspaceID,
-		record.ExternalID,
-	); err != nil {
-		t.Fatalf("sync output projection: %v", err)
-	}
-	afterSyncBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
-	if err != nil {
-		t.Fatalf("load storage after projection sync: %v", err)
-	}
-	if afterSyncBytes != beforeSyncBytes {
-		t.Fatalf("projection sync storage = %d, want unchanged %d", afterSyncBytes, beforeSyncBytes)
+	if afterWriteBytes != beforeWriteBytes+firstBlob.SizeBytes {
+		t.Fatalf(
+			"storage after output write = %d, want %d",
+			afterWriteBytes,
+			beforeWriteBytes+firstBlob.SizeBytes,
+		)
 	}
 	files, err := app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
 	if err != nil {
@@ -903,19 +922,12 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	}
 	projectedFileID := files[0].ExternalID
 
-	if err := app.db.SyncSessionFileProjection(
-		context.Background(),
-		record.WorkspaceID,
-		record.ExternalID,
-	); err != nil {
-		t.Fatalf("repeat output projection sync: %v", err)
-	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
 	if err != nil {
-		t.Fatalf("list repeated output projections: %v", err)
+		t.Fatalf("list output projection again: %v", err)
 	}
 	if len(files) != 1 || files[0].ExternalID != projectedFileID {
-		t.Fatalf("repeated sync projections = %+v, want stable file ID %q", files, projectedFileID)
+		t.Fatalf("repeated output listing = %+v, want stable file ID %q", files, projectedFileID)
 	}
 
 	replacement := workspaceStorageBlob(9, nil)
@@ -932,13 +944,6 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	}
 	if replaced.Entry.UUID != entry.Entry.UUID {
 		t.Fatalf("overwritten entry UUID = %q, want stable %q", replaced.Entry.UUID, entry.Entry.UUID)
-	}
-	if err := app.db.SyncSessionFileProjection(
-		context.Background(),
-		record.WorkspaceID,
-		record.ExternalID,
-	); err != nil {
-		t.Fatalf("sync overwritten output projection: %v", err)
 	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
 	if err != nil {
@@ -957,13 +962,6 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("move output outside public roots: %v", err)
 	}
-	if err := app.db.SyncSessionFileProjection(
-		context.Background(),
-		record.WorkspaceID,
-		record.ExternalID,
-	); err != nil {
-		t.Fatalf("sync output moved outside public roots: %v", err)
-	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list projections after output move: %v", err)
@@ -980,13 +978,6 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("move output back into public root: %v", err)
 	}
-	if err := app.db.SyncSessionFileProjection(
-		context.Background(),
-		record.WorkspaceID,
-		record.ExternalID,
-	); err != nil {
-		t.Fatalf("sync output moved back into public root: %v", err)
-	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list projections after output return: %v", err)
@@ -995,16 +986,9 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 		t.Fatalf("projection after output return = %+v, want stable file ID %q", files, projectedFileID)
 	}
 
-	if _, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveFilestoreEntryInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/reports/result.txt",
-	}); err != nil {
-		t.Fatalf("remove output entry: %v", err)
-	}
-	afterRemovalBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	beforeRejectedDeleteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
 	if err != nil {
-		t.Fatalf("load storage after output removal: %v", err)
+		t.Fatalf("load storage before rejected projection delete: %v", err)
 	}
 	deleteProjection := app.do(
 		t,
@@ -1020,22 +1004,38 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load storage after rejected projection delete: %v", err)
 	}
-	if afterRejectedDeleteBytes != afterRemovalBytes {
+	if afterRejectedDeleteBytes != beforeRejectedDeleteBytes {
 		t.Fatalf(
 			"storage after rejected projection delete = %d, want unchanged %d",
 			afterRejectedDeleteBytes,
-			afterRemovalBytes,
+			beforeRejectedDeleteBytes,
 		)
 	}
-	if _, err := app.db.GetFile(context.Background(), record.WorkspaceID, projectedFileID); err != nil {
-		t.Fatalf("load stale projection after rejected delete: %v", err)
+
+	if _, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveFilestoreEntryInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/reports/result.txt",
+	}); err != nil {
+		t.Fatalf("remove output entry: %v", err)
 	}
-	if err := app.db.SyncSessionFileProjection(
+	afterRemovalBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	if err != nil {
+		t.Fatalf("load storage after output removal: %v", err)
+	}
+	if afterRemovalBytes != beforeRejectedDeleteBytes-replacement.SizeBytes {
+		t.Fatalf(
+			"storage after output removal = %d, want %d",
+			afterRemovalBytes,
+			beforeRejectedDeleteBytes-replacement.SizeBytes,
+		)
+	}
+	if _, err := app.db.GetFile(
 		context.Background(),
 		record.WorkspaceID,
-		record.ExternalID,
-	); err != nil {
-		t.Fatalf("sync removed output projection: %v", err)
+		projectedFileID,
+	); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("output projection after removal = %v, want ErrNotFound", err)
 	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
 	if err != nil {
@@ -1043,6 +1043,60 @@ func TestSessionOutputFileProjectionLifecycle(t *testing.T) {
 	}
 	if len(files) != 0 {
 		t.Fatalf("projections after output removal = %+v, want none", files)
+	}
+
+	alreadyExpiredAt := time.Unix(0, 0).UTC()
+	alreadyExpiredBlob := workspaceStorageBlob(2, &alreadyExpiredAt)
+	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/reports/already-expired.txt",
+		Blob:         alreadyExpiredBlob,
+	}); err != nil {
+		t.Fatalf("create already expired output entry: %v", err)
+	}
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list output projections after already expired write: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("projections after already expired write = %+v, want none", files)
+	}
+
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	expiringBlob := workspaceStorageBlob(3, &expiresAt)
+	expiringEntry, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceID:  record.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/reports/expired.txt",
+		Blob:         expiringBlob,
+	})
+	if err != nil {
+		t.Fatalf("create expiring output entry: %v", err)
+	}
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list expired output projection before cleanup: %v", err)
+	}
+	if len(files) != 1 || files[0].Filename != "expired.txt" {
+		t.Fatalf("expired output projection before cleanup = %+v, want expired.txt", files)
+	}
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		update filestore_entries
+		set expires_at = to_timestamp(0)
+		where id = $1
+	`, expiringEntry.Entry.ID); err != nil {
+		t.Fatalf("expire output entry before cleanup: %v", err)
+	}
+	if _, err := app.db.ExpireFilestoreEntries(context.Background(), 1000); err != nil {
+		t.Fatalf("expire output entry: %v", err)
+	}
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	if err != nil {
+		t.Fatalf("list output projections after expiry: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("output projections after expiry = %+v, want none", files)
 	}
 }
 

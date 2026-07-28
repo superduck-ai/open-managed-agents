@@ -12,7 +12,6 @@ import (
 
 const (
 	managerPackageType          = "packages"
-	maxPackageSpecLength        = 255
 	maxPackageManifestBytes     = 1 << 20
 	invalidPackagesTypeMessage  = `config.packages.type must be "packages"`
 	invalidPackageOptionMessage = "config.packages entries must be package specs, not manager options"
@@ -37,8 +36,9 @@ type managerSpecs struct {
 	specs   *[]string
 }
 
-// specsByManager 是六类 Package Manager 的唯一真相源。校验、空判断和 provisioner
-// 的安装顺序都从这里派生，因此顺序固定为 apt → cargo → gem → go → npm → pip。
+// specsByManager 是 OMA 侧校验、空判断和列表规范化的唯一真相源；这里的顺序与
+// v1 manifest 的规范顺序 apt → cargo → gem → go → npm → pip 一致。实际安装顺序
+// 和首错停止由 Environment Manager 的 provision-packages 合同负责。
 func (p *environmentPackages) specsByManager() []managerSpecs {
 	return []managerSpecs{
 		{manager: "apt", specs: &p.APT},
@@ -73,6 +73,9 @@ func normalizePackages(raw json.RawMessage) (*environmentPackages, error) {
 	if err := json.Unmarshal(raw, packages); err != nil {
 		var typeError *json.UnmarshalTypeError
 		if errors.As(err, &typeError) && typeError.Field != "" {
+			if typeError.Field == "type" {
+				return nil, errors.New(invalidPackagesTypeMessage)
+			}
 			return nil, fmt.Errorf("config.packages.%s must be an array of strings", typeError.Field)
 		}
 		return nil, errors.New("config.packages must be an object or null")
@@ -119,8 +122,6 @@ func validatePackageSpecs(manager string, specs []string) error {
 	switch {
 	case lo.SomeBy(specs, isBlankPackageSpec):
 		return fmt.Errorf("config.packages.%s entries must be non-empty strings", manager)
-	case lo.SomeBy(specs, isOverlongPackageSpec):
-		return fmt.Errorf("config.packages.%s entries must be at most %d characters", manager, maxPackageSpecLength)
 	case lo.SomeBy(specs, isPackageManagerOption):
 		return errors.New(invalidPackageOptionMessage)
 	case lo.SomeBy(specs, packageCredentialURLPattern.MatchString):
@@ -131,10 +132,6 @@ func validatePackageSpecs(manager string, specs []string) error {
 
 func isBlankPackageSpec(spec string) bool {
 	return strings.TrimSpace(spec) == ""
-}
-
-func isOverlongPackageSpec(spec string) bool {
-	return len(spec) > maxPackageSpecLength
 }
 
 func isPackageManagerOption(spec string) bool {

@@ -30,6 +30,8 @@ var (
 	errEnvironmentManagerStart = errors.New("environment manager process start failed")
 )
 
+const sandboxCleanupStepTimeout = 2 * time.Minute
+
 // CodeSessionRuntime exposes the managed-agent Code Session operations needed
 // by Runner without coupling it to the concrete service implementation.
 type CodeSessionRuntime interface {
@@ -201,7 +203,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	if err := r.provisionEnvironmentPackagesIfNeeded(ctx, env, work, record, providerSandboxID); err != nil {
 		return true, err
 	}
-	cont, err := r.heartbeatAndEnsureManagedAgentLaunchable(ctx, work, record, providerSandboxID, preparation)
+	cont, err := r.heartbeatAndEnsureWorkLease(ctx, work, record, providerSandboxID)
 	if err != nil || !cont {
 		return true, err
 	}
@@ -234,12 +236,12 @@ func (r *Runner) pollAndAckEnvironmentWork(ctx context.Context, workerID string)
 func (r *Runner) loadEnvironmentLaunchIDs(ctx context.Context, work *db.EnvironmentWork) (db.Environment, string, error) {
 	env, err := r.db.GetEnvironmentByInternalID(ctx, work.WorkspaceID, work.EnvironmentID)
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.stopEnvironmentWorkAfterLaunchFailure(work)
 		return db.Environment{}, "", err
 	}
 	sandboxID, err := ids.New("envsbx_")
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.stopEnvironmentWorkAfterLaunchFailure(work)
 		return db.Environment{}, "", err
 	}
 	return env, sandboxID, nil
@@ -254,17 +256,17 @@ func (r *Runner) resolveAndPrepareManagedAgentLaunch(
 	work *db.EnvironmentWork,
 ) (e2bruntime.Resolution, *managedAgentLaunchPreparation, error) {
 	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.stopEnvironmentWorkAfterLaunchFailure(work)
 		return e2bruntime.Resolution{}, nil, err
 	}
 	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.stopEnvironmentWorkAfterLaunchFailure(work)
 		return e2bruntime.Resolution{}, nil, err
 	}
 	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.stopEnvironmentWorkAfterLaunchFailure(work)
 		return e2bruntime.Resolution{}, nil, err
 	}
 	return resolution, preparation, nil
@@ -296,21 +298,20 @@ func (r *Runner) createProviderSandbox(
 		CreatedAt:             time.Now().UTC(),
 	})
 	if err != nil {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.stopEnvironmentWorkAfterLaunchFailure(work)
 		return db.EnvironmentSandbox{}, "", err
 	}
 
 	sandbox, err := r.provider.Create(ctx, env, work, resolution)
 	if err != nil {
-		now := time.Now().UTC()
-		message := err.Error()
-		_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", nil, &message, &now)
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		r.failCreatedSandbox(ctx, record, work, "", err)
 		return db.EnvironmentSandbox{}, "", err
 	}
 	providerSandboxID := sandbox.ID
 	if strings.TrimSpace(providerSandboxID) == "" {
-		return record, providerSandboxID, nil
+		err := errors.New("provider returned an empty sandbox id")
+		r.failCreatedSandbox(ctx, record, work, "", err)
+		return db.EnvironmentSandbox{}, "", err
 	}
 	// 立即把 provider_sandbox_id 落到 Sandbox 记录列上（仍保持 creating）。
 	// 装包可能持续数分钟，其间 force-stop 通过 GetActiveEnvironmentSandboxForWork
@@ -364,14 +365,13 @@ func (r *Runner) provisionEnvironmentPackagesIfNeeded(
 	return nil
 }
 
-// heartbeatAndEnsureManagedAgentLaunchable 在装包后续约 Work，并确认 Session
-// 仍可启动。Lease 未续约时体面停止已创建 Sandbox，返回 cont=false。
-func (r *Runner) heartbeatAndEnsureManagedAgentLaunchable(
+// heartbeatAndEnsureWorkLease 在装包后续约 Work。Lease 未续约时停止已创建
+// Sandbox，返回 cont=false；Managed Agent 的启动配置仍使用创建 Sandbox 前的快照。
+func (r *Runner) heartbeatAndEnsureWorkLease(
 	ctx context.Context,
 	work *db.EnvironmentWork,
 	record db.EnvironmentSandbox,
 	providerSandboxID string,
-	preparation *managedAgentLaunchPreparation,
 ) (bool, error) {
 	heartbeat, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
 	if err != nil {
@@ -383,10 +383,6 @@ func (r *Runner) heartbeatAndEnsureManagedAgentLaunchable(
 			return false, err
 		}
 		return false, nil
-	}
-	if err := r.ensureManagedAgentSessionLaunchable(ctx, preparation); err != nil {
-		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
-		return false, err
 	}
 	return true, nil
 }
@@ -439,17 +435,6 @@ func (r *Runner) markRunningAndStartManagedAgent(
 		return nil
 	}
 
-	// Runtime 提交事务的 Session 行锁已释放；在启动 Environment Manager 前再复检一次
-	// 归档状态，收窄“提交后到发起后台命令前”这段 handoff 窗口内 Session 被归档、却仍
-	// 为其启动 Agent 的竞态。命中则按 runtime 失败清理，不启动 Manager。
-	if session, err := r.db.GetSession(ctx, preparation.session.WorkspaceID, preparation.session.ExternalID); err != nil {
-		r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.session, launch.CodeSessionID, err)
-		return err
-	} else if session.ArchivedAt != nil || session.Status != "idle" {
-		r.failManagedAgentRuntime(ctx, record, work, providerSandboxID, preparation.session, launch.CodeSessionID, db.ErrInvalidState)
-		return db.ErrInvalidState
-	}
-
 	// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
 	// 并在启动 Claude 前 register worker，建立首个 CCR lease。
 	if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
@@ -491,49 +476,40 @@ func (r *Runner) provisionPackages(ctx context.Context, workExternalID, sandboxI
 }
 
 func (r *Runner) stopCreatedSandbox(record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) error {
-	return runSandboxStopPhases(
-		2*time.Minute,
-		2*time.Minute,
-		func(killCtx context.Context) (error, error) {
-			var phaseErr error
-			if strings.TrimSpace(providerSandboxID) == "" {
-				return nil, nil
-			}
-			if err := r.db.UpdateEnvironmentSandboxState(killCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
-				phaseErr = errors.Join(phaseErr, err)
-			}
-			killErr := r.provider.Kill(killCtx, providerSandboxID)
-			return killErr, errors.Join(phaseErr, killErr)
-		},
-		func(cleanupCtx context.Context, killErr error) error {
-			var cleanupErr error
-			if killErr != nil {
-				message := killErr.Error()
-				cleanupErr = errors.Join(cleanupErr, r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, nil))
-			} else {
-				stoppedAt := time.Now().UTC()
-				cleanupErr = errors.Join(cleanupErr, r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt))
-			}
-			_, stopWorkErr := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
-			return errors.Join(cleanupErr, stopWorkErr)
-		},
-	)
+	var result error
+	if strings.TrimSpace(providerSandboxID) != "" {
+		result = errors.Join(result, runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+			return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, nil, nil)
+		}))
+		killErr := runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+			return r.provider.Kill(cleanupCtx, providerSandboxID)
+		})
+		result = errors.Join(result, killErr)
+		if killErr != nil {
+			message := killErr.Error()
+			// Keep the record discoverable by force-stop while the provider Sandbox
+			// may still be alive. "failed" is terminal and excluded from active lookup.
+			result = errors.Join(result, runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+				return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, &message, nil)
+			}))
+		} else {
+			stoppedAt := time.Now().UTC()
+			result = errors.Join(result, runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+				return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt)
+			}))
+		}
+	}
+	return errors.Join(result, runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+		_, err := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return err
+	}))
 }
 
-func runSandboxStopPhases(
-	killTimeout time.Duration,
-	cleanupTimeout time.Duration,
-	killPhase func(context.Context) (killErr error, phaseErr error),
-	cleanupPhase func(context.Context, error) error,
-) error {
-	killCtx, cancelKill := context.WithTimeout(context.Background(), killTimeout)
-	killErr, phaseErr := killPhase(killCtx)
-	cancelKill()
-
-	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), cleanupTimeout)
-	cleanupErr := cleanupPhase(cleanupCtx, killErr)
-	cancelCleanup()
-	return errors.Join(phaseErr, cleanupErr)
+func (r *Runner) stopEnvironmentWorkAfterLaunchFailure(work *db.EnvironmentWork) {
+	_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+		_, err := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return err
+	})
 }
 
 func (r *Runner) failManagedAgentRuntime(
@@ -560,31 +536,50 @@ func (r *Runner) failManagedAgentRuntime(
 }
 
 func (r *Runner) failCreatedSandbox(_ context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
-	// 清理必须独立于可能已取消的请求 context，且每一步各自拥有完整预算：
-	// 任一步阻塞到超时，都不能吃掉后续步骤的时间，否则会把 Sandbox 或 Work
-	// 卡在 failed 之前的中间态、无法再被 poll，或漏杀计费中的 provider Sandbox。
 	now := time.Now().UTC()
 	message := cause.Error()
-	withCleanupContext(func(ctx context.Context) {
-		_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
+	hasProviderSandbox := strings.TrimSpace(providerSandboxID) != ""
+	initialState := "failed"
+	var stoppedAt *time.Time
+	if hasProviderSandbox {
+		// A provider-backed record remains active until Kill succeeds. If Kill fails,
+		// force-stop can still discover the "stopping" record and retry manually.
+		initialState = "stopping"
+	} else {
+		stoppedAt = &now
+	}
+	_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+		return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, initialState, &providerSandboxID, &message, stoppedAt)
 	})
-	withCleanupContext(func(ctx context.Context) {
-		_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+		_, err := r.db.StopEnvironmentWork(cleanupCtx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+		return err
 	})
-	if strings.TrimSpace(providerSandboxID) == "" {
+	if !hasProviderSandbox {
 		return
 	}
-	withCleanupContext(func(ctx context.Context) {
-		_ = r.provider.Kill(ctx, providerSandboxID)
+	killErr := runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+		return r.provider.Kill(cleanupCtx, providerSandboxID)
+	})
+	if killErr != nil {
+		message = errors.Join(cause, fmt.Errorf("kill provider sandbox: %w", killErr)).Error()
+		_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+			return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "stopping", &providerSandboxID, &message, nil)
+		})
+		return
+	}
+	_ = runSandboxCleanupStep(func(cleanupCtx context.Context) error {
+		return r.db.UpdateEnvironmentSandboxState(cleanupCtx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
 	})
 }
 
-// withCleanupContext 为一步失败清理动作分配独立的 2 分钟 bounded context，
-// 使每一步都拥有完整预算，前一步阻塞到超时不会吃掉后续步骤的时间。
-func withCleanupContext(step func(context.Context)) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+// runSandboxCleanupStep gives each cleanup side effect its own bounded context.
+// A canceled launch context or a slow preceding step cannot consume the budget
+// needed to update state, stop Work, or terminate the provider Sandbox.
+func runSandboxCleanupStep(step func(context.Context) error) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), sandboxCleanupStepTimeout)
 	defer cancel()
-	step(ctx)
+	return step(cleanupCtx)
 }
 
 func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environment, work *db.EnvironmentWork) (*managedAgentLaunchPreparation, error) {
@@ -602,10 +597,9 @@ func (r *Runner) prepareManagedAgentLaunch(ctx context.Context, env db.Environme
 	return r.buildManagedAgentLaunchPreparation(ctx, session)
 }
 
-// buildManagedAgentLaunchPreparation 从给定 Session 派生全部启动数据（resources、
-// skills archive、config、model、title、workDir）。装包窗口内 Session 仍为 idle 可被
-// 更新，因此 ensureManagedAgentSessionLaunchable 刷新 Session 后必须整体重建，而不是
-// 只替换 session 字段，否则会用装包前的旧 model/prompt/skills 启动 Agent。
+// buildManagedAgentLaunchPreparation 从给定 Session 派生不可变的启动快照
+// （resources、skills archive、config、model、title、workDir）。装包期间的启动配置
+// 变更只影响后续启动尝试；最终 runtime 事务仅补充期间新增的 Session events。
 func (r *Runner) buildManagedAgentLaunchPreparation(ctx context.Context, session db.Session) (*managedAgentLaunchPreparation, error) {
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceID, session.ExternalID)
 	if err != nil {
@@ -681,35 +675,6 @@ func (r *Runner) commitManagedAgentLaunch(
 		CodeSessionID: local.CodeSessionID,
 		Manager:       buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload),
 	}, nil
-}
-
-// ensureManagedAgentSessionLaunchable 在装包后重读 Session，确认仍 idle 且未归档，
-// 并从刷新后的 Session 整体重建启动数据。装包窗口内允许的更新（model、prompt、
-// skills、resources）因此会反映到真正启动的 Agent，而不是沿用装包前的旧快照。
-func (r *Runner) ensureManagedAgentSessionLaunchable(
-	ctx context.Context,
-	preparation *managedAgentLaunchPreparation,
-) error {
-	if preparation == nil {
-		return nil
-	}
-	session, err := r.db.GetSession(
-		ctx,
-		preparation.session.WorkspaceID,
-		preparation.session.ExternalID,
-	)
-	if err != nil {
-		return err
-	}
-	if session.ArchivedAt != nil || session.Status != "idle" {
-		return db.ErrInvalidState
-	}
-	refreshed, err := r.buildManagedAgentLaunchPreparation(ctx, session)
-	if err != nil {
-		return err
-	}
-	*preparation = *refreshed
-	return nil
 }
 
 func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {

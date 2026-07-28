@@ -23,6 +23,8 @@ import (
 // both RepoTags collapse to the same short template ID and the registry alias 404s.
 const fullE2BManagedAgentSandboxImage = "managed-agent-sandbox:latest"
 
+const fullE2BAgentPackageProofPath = "/mnt/user-data/outputs/agent-rg-proof.txt"
+
 func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping real E2B managed-agent bridge integration test in short mode")
@@ -206,9 +208,94 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	t.Logf("environment-manager started for code session %s in sandbox %s:\n%s", codeSessionID, providerSandboxID, probe)
 	packageProbe := probeInstalledPackages(t, ctx, sandbox)
 	t.Logf("all environment packages are usable:\n%s", packageProbe)
+	agentProbe := verifyClaudeAgentUsesInstalledPackage(t, ctx, app, client, session.ID, sandbox)
+	t.Logf("Claude Agent used the provisioned ripgrep package and returned idle:\n%s", agentProbe)
 
 	quickstartStopEnvironmentWork(t, ctx, app, environment.ID, workID)
 	stopped = true
+}
+
+func verifyClaudeAgentUsesInstalledPackage(
+	t *testing.T,
+	ctx context.Context,
+	app *testApp,
+	client anthropic.Client,
+	sessionID string,
+	sandbox *e2b.Sandbox,
+) string {
+	t.Helper()
+	proofPath := shellPath(fullE2BAgentPackageProofPath)
+	if stdout, stderr, err := runE2BCommand(ctx, sandbox, "test ! -e "+proofPath, 30*time.Second); err != nil {
+		t.Fatalf("Agent package proof file existed before the prompt: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+
+	prompt := "Use the Bash tool to run `rg --version | head -n 1` and write that exact first line to " +
+		fullE2BAgentPackageProofPath + ". Do not simulate the command. Reply only after the file has been written."
+	sent, err := client.Beta.Sessions.Events.Send(ctx, sessionID, anthropic.BetaSessionEventSendParams{
+		Events: []anthropic.BetaManagedAgentsEventParamsUnion{{
+			OfUserMessage: &anthropic.BetaManagedAgentsUserMessageEventParams{
+				Type: anthropic.BetaManagedAgentsUserMessageEventParamsTypeUserMessage,
+				Content: []anthropic.BetaManagedAgentsUserMessageEventParamsContentUnion{{
+					OfText: &anthropic.BetaManagedAgentsTextBlockParam{
+						Type: anthropic.BetaManagedAgentsTextBlockTypeText,
+						Text: prompt,
+					},
+				}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("send Agent package proof prompt: %v", err)
+	}
+	if len(sent.Data) != 1 || sent.Data[0].Type != "user.message" || strings.TrimSpace(sent.Data[0].ID) == "" {
+		t.Fatalf("unexpected Agent package proof send response: %+v", sent.Data)
+	}
+	promptEventID := sent.Data[0].ID
+
+	deadline := time.Now().Add(4 * time.Minute)
+	var lastProof, lastTranscript, lastProbe string
+	for {
+		stdout, stderr, probeErr := runE2BCommand(
+			ctx,
+			sandbox,
+			"if test -f "+proofPath+"; then cat "+proofPath+"; fi",
+			30*time.Second,
+		)
+		lastProof = strings.TrimSpace(stdout)
+		lastProbe = strings.TrimSpace(stdout + "\n" + stderr)
+		transcript, idleAfterPrompt, transcriptErr := quickstartFetchSessionTranscriptAfterEvent(
+			t,
+			app,
+			sessionID,
+			promptEventID,
+		)
+		if transcriptErr != nil {
+			t.Fatalf("read Agent package proof transcript: %v", transcriptErr)
+		}
+		lastTranscript = transcript
+		if probeErr == nil && strings.Contains(lastProof, "ripgrep 14.1.1") && idleAfterPrompt {
+			return strings.TrimSpace(lastProof + "\n" + lastTranscript)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf(
+				"Claude Agent did not prove ripgrep use and return idle; proof=%q\nprobe=%s\ntranscript=%s",
+				lastProof,
+				lastProbe,
+				lastTranscript,
+			)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf(
+				"waiting for Claude Agent package proof: %v; proof=%q\nprobe=%s\ntranscript=%s",
+				ctx.Err(),
+				lastProof,
+				lastProbe,
+				lastTranscript,
+			)
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func probeInstalledPackages(t *testing.T, ctx context.Context, sandbox *e2b.Sandbox) string {

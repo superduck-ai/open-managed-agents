@@ -12,7 +12,7 @@ import (
 
 const (
 	// lockManagedAgentEnvironmentWorkQuery 与 patchManagedAgentWorkMetadataQuery
-	// 共用同一条 Work 行锁；启动事务先锁定 Work，再在提交前写入 runtime metadata。
+	// 共用同一条 Work 行锁；启动事务先锁定 Session，再锁定 Work，并在提交前写入 runtime metadata。
 	lockManagedAgentEnvironmentWorkQuery = `
 		select ` + environmentWorkSQLXColumns + `
 		from environment_work
@@ -129,11 +129,15 @@ func lockManagedAgentEnvironmentWork(
 	environmentExternalID string,
 	workExternalID string,
 ) (EnvironmentWork, error) {
-	return getEnvironmentWorkSQLX(ctx, database, lockManagedAgentEnvironmentWorkQuery, map[string]any{
+	work, err := getEnvironmentWorkSQLX(ctx, database, lockManagedAgentEnvironmentWorkQuery, map[string]any{
 		"workspace_id":            workspaceID,
 		"environment_external_id": environmentExternalID,
 		"work_external_id":        workExternalID,
 	})
+	if errors.Is(err, ErrNotFound) {
+		return EnvironmentWork{}, ErrInvalidState
+	}
+	return work, err
 }
 
 func patchManagedAgentWorkMetadata(

@@ -314,6 +314,86 @@ func TestOfficialSDKEnvironmentPackagesRoundTrip(t *testing.T) {
 	t.Fatalf("SDK list did not include environment %s", created.ID)
 }
 
+func TestEnvironmentForceStopKillFailureKeepsSandboxDiscoverable(t *testing.T) {
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.E2B.APIKey = "test-api-key"
+	cfg.E2B.Debug = true
+	cfg.E2B.APIURL = "http://127.0.0.1:1"
+	cfg.E2B.SandboxURL = "http://127.0.0.1:1"
+	cfg.E2B.RequestTimeout = 200 * time.Millisecond
+
+	app := newTestAppWithStore(t, &cfg, newFakeStore("environment-force-stop-kill-failure-bucket"))
+	defer app.close()
+
+	environment := createEnvironment(t, app, `{"name":"force-stop-kill-failure"}`)
+	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	record, err := app.db.GetEnvironment(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceID, environment.ID)
+	if err != nil {
+		t.Fatalf("get environment: %v", err)
+	}
+	workID := createEnvironmentWork(t, app, record)
+	work, err := app.db.GetEnvironmentWork(context.Background(), record.WorkspaceID, record.ExternalID, workID)
+	if err != nil {
+		t.Fatalf("get environment work: %v", err)
+	}
+	providerSandboxID := "sandbox-provider-kill-failure"
+	sandboxExternalID, err := ids.New("sandbox_")
+	if err != nil {
+		t.Fatalf("new sandbox id: %v", err)
+	}
+	if _, err := app.db.CreateEnvironmentSandbox(context.Background(), db.EnvironmentSandbox{
+		UUID:                  uuid.NewString(),
+		ExternalID:            sandboxExternalID,
+		OrganizationID:        record.OrganizationID,
+		WorkspaceID:           record.WorkspaceID,
+		EnvironmentID:         record.ID,
+		EnvironmentExternalID: record.ExternalID,
+		WorkID:                &work.ID,
+		WorkExternalID:        &work.ExternalID,
+		Provider:              "e2b",
+		Template:              record.ResolvedTemplate,
+		ProviderSandboxID:     &providerSandboxID,
+		State:                 "running",
+		Metadata:              json.RawMessage(`{}`),
+		CreatedAt:             time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create environment sandbox: %v", err)
+	}
+
+	resp := doEnvironmentRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/environments/"+record.ExternalID+"/work/"+work.ExternalID+"/stop?beta=true",
+		strings.NewReader(`{"force":true}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, resp, http.StatusInternalServerError, "api_error")
+
+	active, err := app.db.GetActiveEnvironmentSandboxForWork(
+		context.Background(),
+		record.WorkspaceID,
+		record.ExternalID,
+		work.ExternalID,
+	)
+	if err != nil {
+		t.Fatalf("get active sandbox after failed force-stop: %v", err)
+	}
+	if active.State != "stopping" {
+		t.Fatalf("sandbox state = %q, want stopping", active.State)
+	}
+	if active.LastError == nil || strings.TrimSpace(*active.LastError) == "" {
+		t.Fatal("sandbox last_error is empty after failed provider Kill")
+	}
+	if active.StoppedAt != nil {
+		t.Fatalf("sandbox stopped_at = %s, want nil", active.StoppedAt)
+	}
+}
+
 func TestEnvironmentsSchemaHasNoForeignKeys(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("environments-schema-bucket"))
 	defer app.close()

@@ -82,8 +82,12 @@ func ConnectionOptsFromConfig(cfg config.E2BConfig) e2b.ConnectionOpts {
 
 func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error) {
 	template := strings.TrimSpace(env.ResolvedTemplate)
-	if template == "" {
-		template = strings.TrimSpace(p.cfg.Template)
+	configuredTemplate := strings.TrimSpace(p.cfg.Template)
+	// The provider-neutral default is a logical alias. Migrations can safely
+	// persist it without guessing a deployment-specific hosted tag or local
+	// Docker RepoTag; Resolve materializes it through the current E2B config.
+	if (template == "" || template == config.DefaultE2BTemplate) && configuredTemplate != "" {
+		template = configuredTemplate
 	}
 	if template == "" {
 		template = config.DefaultE2BTemplate
@@ -201,17 +205,10 @@ type commandProcess interface {
 
 type commandStarter func(context.Context, CommandRequest) (commandProcess, error)
 
-type commandStartOutcome struct {
-	process commandProcess
-	err     error
-}
-
 type commandWaitOutcome struct {
 	result CommandResult
 	err    error
 }
-
-const commandWaitDisconnectGrace = 100 * time.Millisecond
 
 func executeCommand(ctx context.Context, request CommandRequest, start commandStarter) (CommandResult, error) {
 	timeout := request.Timeout
@@ -221,37 +218,14 @@ func executeCommand(ctx context.Context, request CommandRequest, start commandSt
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	processCtx, cancelProcess := context.WithCancel(context.WithoutCancel(ctx))
-	started := make(chan commandStartOutcome, 1)
-	go func() {
-		process, err := start(processCtx, request)
-		started <- commandStartOutcome{process: process, err: err}
-	}()
-
-	var process commandProcess
-	select {
-	case outcome := <-started:
-		if outcome.err != nil {
-			cancelProcess()
-			return CommandResult{}, fmt.Errorf("start sandbox command: %w", outcome.err)
-		}
-		if outcome.process == nil {
-			cancelProcess()
-			return CommandResult{}, errors.New("start sandbox command: missing process handle")
-		}
-		process = outcome.process
-	case <-commandCtx.Done():
-		cancelProcess()
-		go cleanupLateCommandStart(started)
-		return CommandResult{}, fmt.Errorf("start sandbox command: %w", commandCtx.Err())
+	process, err := start(commandCtx, request)
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("start sandbox command: %w", err)
 	}
-	defer cancelProcess()
-	disconnected := false
-	defer func() {
-		if !disconnected {
-			process.Disconnect()
-		}
-	}()
+	if process == nil {
+		return CommandResult{}, errors.New("start sandbox command: missing process handle")
+	}
+	defer process.Disconnect()
 	if len(request.Stdin) != 0 {
 		if err := sendCommandStdin(commandCtx, process, request.Stdin); err != nil {
 			return CommandResult{}, err
@@ -274,29 +248,11 @@ func executeCommand(ctx context.Context, request CommandRequest, start commandSt
 		}
 		return outcome.result, nil
 	case <-commandCtx.Done():
-		killErr := killCommandProcess(process)
-		grace := time.NewTimer(commandWaitDisconnectGrace)
-		defer grace.Stop()
-		select {
-		case <-waited:
-		case <-grace.C:
-			process.Disconnect()
-			disconnected = true
-		}
 		return CommandResult{}, errors.Join(
 			fmt.Errorf("sandbox command: %w", commandCtx.Err()),
-			killErr,
+			killCommandProcess(process),
 		)
 	}
-}
-
-func cleanupLateCommandStart(started <-chan commandStartOutcome) {
-	outcome := <-started
-	if outcome.process == nil {
-		return
-	}
-	_ = killCommandProcess(outcome.process)
-	outcome.process.Disconnect()
 }
 
 func killCommandProcess(process commandProcess) error {

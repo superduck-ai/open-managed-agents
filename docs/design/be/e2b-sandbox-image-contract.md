@@ -8,8 +8,8 @@
 
 镜像必须满足：
 
-- `/opt/rclone/rclone-filestore` 存在、是 Linux 可执行文件，并支持 `multimount --config <path>`。
-- Sandbox 具有 rclone-filestore 创建五个 FUSE mount 所需的设备、capability 和 mount namespace 权限。
+- `/opt/rclone/rclone-filestore` 和 `/bin/fusermount` 存在、是 Linux 可执行文件；前者支持 `multimount --config <path>`。
+- Sandbox 具有 rclone-filestore 创建五个 FUSE mount 所需的 `/dev/fuse`、`SYS_ADMIN` capability 和 mount namespace 权限；本地 e2b-local 配置必须显式启用 `docker.enable_fuse`。
 - `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 默认可执行；这两个路径仍可通过既有 Environment Runner 配置覆盖。
 - `rclone-filestore multimount` 可以创建 `/mnt/user-data/outputs`、`/mnt/session/uploads`、`/mnt/transcripts`、`/mnt/user-data/tool_results` 和 `/root/.claude/skills` 的挂载点，并能写入 `/tmp`。
 - 镜像和 Environment Manager 不能重新创建 `/root/.claude/skills` 软链，也不能依赖 `/mnt/skills` 或 `/workspace/skills` 解压目录。
@@ -49,13 +49,13 @@ File resource 不新增独立 FUSE mount，也不创建逐文件软链接。`mou
 
 ```mermaid
 flowchart TD
-    R["Resolve trusted Session filesystem scope"] --> A["Create E2B Sandbox"]
+    R["Prepare launch snapshot and skill projection"] --> A["Create E2B Sandbox"]
     A --> P["Provision Environment Packages"]
-    P --> HB["Heartbeat Work, establish lease, precheck Session launchable"]
-    HB -->|"lease lost / Session not idle"| F["Fail work and kill Sandbox"]
-    HB -->|"ok"| W["Write config and chmod 0600"]
-    W --> S["Remove legacy skill symlink and create mountpoint"]
-    S --> B["Start fixed rclone-filestore binary"]
+    P --> HB["Heartbeat Work and establish lease"]
+    HB -->|"lease lost"| F["Stop work and kill Sandbox"]
+    HB -->|"ok"| T["Resolve filesystem scope and issue tokens"]
+    T --> W["Write config and chmod 0600"]
+    W --> B["Start fixed rclone-filestore binary"]
     B --> C{"All five mounts ready?"}
     C -->|"probe error / 20s timeout"| F
     C -->|"yes"| D["Delete token config, retry up to 3 times"]
@@ -64,20 +64,20 @@ flowchart TD
     I --> H["Start Environment Manager"]
 ```
 
-File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Runner 不在启动时修复 namespace。Environment Manager 不能先于 Packages 成功和 rclone ready 启动；身份解析、启动或 ready 错误进入统一失败清理。Packages 成功后先 heartbeat 续约并预检 Session，lease 失效或 Session 非 idle 时体面停止已创建 Sandbox；随后才挂载 rclone。Code Session 与 Session/Work runtime metadata 在同一数据库事务中原子提交，提交成功后才启动 Environment Manager，Manager 启动失败进入统一失败清理。ready 后配置删除失败会有限重试并记录脱敏告警，不会杀掉已经就绪的 Sandbox；outputs token 在协议层只允许写 `/outputs`。
+File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Runner 不在启动时修复 namespace。Environment Manager 不能先于 Packages 成功和 rclone ready 启动；身份解析、启动或 ready 错误进入统一失败清理。Packages 成功后先 heartbeat 续约，lease 失效时停止已创建 Sandbox；随后才挂载 rclone。Code Session 与最终 Session event 快照、Session/Work runtime metadata 在同一数据库事务中提交，事务会锁定并验证 Session 和 Work 的状态与身份，提交成功后才启动 Environment Manager。Manager 启动失败进入现有补偿清理。ready 后配置删除失败会有限重试并记录脱敏告警，不会杀掉已经就绪的 Sandbox；outputs token 在协议层只允许写 `/outputs`。
 
 ## 镜像验收
 
 仓库中的真实 E2E 固定使用短标签
 `managed-agent-sandbox:latest`。本地 e2b-local 把 Docker RepoTags 作为短 `name:tag`
-template 发现：把镜像 pull 下来再 retag 后，registry 路径与短标签会collapse 成同一个
+template 发现：把镜像 pull 下来再 retag 后，registry 路径与短标签会 collapse 成同一个
 template ID，继续用 registry 别名反而会 404，因此测试统一选短标签以稳定命中本地
 template，而不是静默回退到不含 `rclone-filestore` 的通用 template。部署前仍应将通过
 验收的镜像 digest 固化到发布系统，不能把可变的 `latest` 当作生产可复现性边界。
 
 发布新的 E2B template 前至少验证：
 
-1. `test -x /opt/rclone/rclone-filestore` 成功。
+1. `test -x /opt/rclone/rclone-filestore`、`test -x /bin/fusermount` 和 `test -c /dev/fuse` 成功。
 2. 用临时测试 filesystem 启动固定 multimount，ready marker 在超时内出现。
 3. `/mnt/user-data/outputs` 可写，另外四个 destination 拒绝写入；`/root/.claude/skills/<skill>/SKILL.md` 可由 Claude Code 直接发现。
 4. 只通过 Files API 上传对象并给 Session 添加 File resource，不在测试侧直接写 Filestore；确认 resource 写入已创建 `/uploads/workspace/data.csv` 的数据库引用，启动后可通过 `/mnt/session/uploads/workspace/data.csv` 读取且写入失败。

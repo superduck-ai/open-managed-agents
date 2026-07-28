@@ -151,11 +151,9 @@ sequenceDiagram
     R->>E: Create Sandbox
     R->>E: Provision Environment Packages
     R->>D: Heartbeat Work and establish lease
-    R->>D: Precheck Session is idle and not archived
     R->>D: Resolve trusted filesystem scope
     R->>R: Issue filesystem RW and readonly tokens
     R->>E: Write 0600 rclone config
-    R->>E: Remove legacy skill symlink and create mountpoint
     R->>E: Start fixed rclone binary
     loop Every 200ms, up to 20s
         R->>E: Files.Exists(/tmp/rclone-mounts/ready)
@@ -195,7 +193,7 @@ File resource 写入时，服务在当前 workspace 中解析并锁定活动 Fil
 
 Environment Manager 不再接收 `type=file` resource。它只在 rclone ready 后看到已经完成的 `/uploads` 文件系统视图；File 的下载、路径投影或内容刷新均不属于 Environment Manager 职责。
 
-Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的 Packages、heartbeat/lease、身份解析、rclone 启动、ready 或 Environment Manager 启动失败会把 Sandbox 标记为 `failed`、停止 Environment Work 并 Kill provider Sandbox。Code Session 只在 Packages 成功、首次 heartbeat 续约且 Session 预检通过、rclone ready 和 Sandbox running 之后创建；Code Session 与 Session/Work runtime metadata 在同一数据库事务中原子提交，随后才启动 Environment Manager。Environment Manager 启动失败时，Runner 将 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
+Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 Sandbox 或 Code Session；创建后的 Packages、heartbeat/lease、身份解析、rclone 启动、ready 或 Environment Manager 启动失败会停止 Environment Work，并用独立有界 context Kill provider Sandbox。Kill 成功后 Sandbox 标记为 `failed`；Kill 失败时保持可由 force-stop 再次发现的 `stopping` 并保存错误，避免把仍运行的 provider Sandbox 变成不可查询的终态记录。Code Session 只在 Packages 成功、首次 heartbeat 续约、rclone ready 和 Sandbox running 之后创建；Code Session、最终 Session event 快照与 Session/Work runtime metadata 在同一数据库事务中提交，该事务锁定并验证 Session 和 Work。Environment Manager 启动失败时，Runner 将 Code Session 标记为 `terminated`、清除 OAuth hash 与 worker lease，再 Kill Sandbox。ready 失败路径会 best-effort 删除 Token 配置；ready 后的配置删除按上面的有限重试与告警处理，不使已就绪 Sandbox 失败。对外错误保留稳定阶段 sentinel，服务日志只记录阶段和错误类型，不包含 Token 或完整配置。
 
 ## 数据模型
 

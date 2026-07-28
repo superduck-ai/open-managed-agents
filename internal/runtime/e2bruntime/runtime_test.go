@@ -265,6 +265,38 @@ func TestResolveUsesManagedAgentSandboxTagByDefault(t *testing.T) {
 	}
 }
 
+func TestResolveMaterializesLogicalDefaultThroughDeploymentConfig(t *testing.T) {
+	provider := NewProvider(config.E2BConfig{Template: "managed-agent-sandbox:latest"})
+	resolution, err := provider.Resolve(db.Environment{
+		ExternalID:       "env_migrated_template",
+		WorkspaceID:      42,
+		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
+		ResolvedTemplate: config.DefaultE2BTemplate,
+	}, nil)
+	if err != nil {
+		t.Fatalf("resolve migrated logical default: %v", err)
+	}
+	if resolution.Template != "managed-agent-sandbox:latest" {
+		t.Fatalf("template = %q, want deployment-specific tag", resolution.Template)
+	}
+}
+
+func TestResolvePreservesCustomEnvironmentTemplate(t *testing.T) {
+	provider := NewProvider(config.E2BConfig{Template: "managed-agent-sandbox:latest"})
+	resolution, err := provider.Resolve(db.Environment{
+		ExternalID:       "env_custom_template",
+		WorkspaceID:      42,
+		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
+		ResolvedTemplate: "custom-sandbox:v2",
+	}, nil)
+	if err != nil {
+		t.Fatalf("resolve custom template: %v", err)
+	}
+	if resolution.Template != "custom-sandbox:v2" {
+		t.Fatalf("template = %q, want custom Environment template", resolution.Template)
+	}
+}
+
 func TestResolveLimitedNetworkFailsClosedOnInvalidAllowedHost(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	_, err := provider.Resolve(db.Environment{

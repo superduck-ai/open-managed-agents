@@ -198,6 +198,7 @@ type rcloneTestProvider struct {
 	ready           bool
 	readySequence   []bool
 	runErrors       []error
+	runResult       e2bruntime.CommandResult
 	runCommands     []string
 	writePath       string
 	writeData       []byte
@@ -251,7 +252,7 @@ func (p *rcloneTestProvider) RunCommand(_ context.Context, _ string, request e2b
 	if request.Command == rcloneConfigCleanupCommand() {
 		p.configExists = false
 	}
-	return e2bruntime.CommandResult{}, nil
+	return p.runResult, nil
 }
 
 func (p *rcloneTestProvider) StartBackgroundCommand(context.Context, string, string, []byte) error {

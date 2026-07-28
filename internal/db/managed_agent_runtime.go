@@ -9,7 +9,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// Managed Agent 启动事务编排：锁序固定为 Environment Work → Session，
+// Managed Agent 启动事务编排：锁序固定为 Session → Environment Work，
 // SQL 常量与 Terminate 实现见 managed_agent_runtime_sqlx.go。
 
 type CreateManagedAgentRuntimeInput struct {
@@ -78,9 +78,17 @@ func createManagedAgentRuntimeTx(
 	input CreateManagedAgentRuntimeInput,
 	buildInitialInboundEvents func([]SessionEvent) ([]AppendCodeSessionEventInput, error),
 ) (CreateManagedAgentRuntimeResult, error) {
-	publicEvents, err := lockSessionAndListEventsTx(ctx, tx, input.CodeSession.WorkspaceID, input.CodeSession.SessionExternalID)
+	lockedSession, publicEvents, err := lockSessionAndListEventsTx(ctx, tx, input.CodeSession.WorkspaceID, input.CodeSession.SessionExternalID)
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
+	}
+	if lockedSession.OrganizationID != input.CodeSession.OrganizationID ||
+		lockedSession.WorkspaceID != input.CodeSession.WorkspaceID ||
+		lockedSession.ID != input.CodeSession.SessionID ||
+		lockedSession.ExternalID != input.CodeSession.SessionExternalID ||
+		lockedSession.EnvironmentID != input.CodeSession.EnvironmentID ||
+		lockedSession.EnvironmentExternalID != input.CodeSession.EnvironmentExternalID {
+		return CreateManagedAgentRuntimeResult{}, ErrInvalidState
 	}
 
 	work, err := lockManagedAgentEnvironmentWork(
@@ -93,7 +101,22 @@ func createManagedAgentRuntimeTx(
 	if err != nil {
 		return CreateManagedAgentRuntimeResult{}, err
 	}
-	if work.State != "active" {
+	if work.OrganizationID != input.CodeSession.OrganizationID ||
+		work.WorkspaceID != input.CodeSession.WorkspaceID ||
+		work.EnvironmentID != input.CodeSession.EnvironmentID ||
+		work.EnvironmentExternalID != input.CodeSession.EnvironmentExternalID ||
+		work.EnvironmentExternalID != input.EnvironmentExternalID ||
+		work.ExternalID != input.WorkExternalID ||
+		work.State != "active" {
+		return CreateManagedAgentRuntimeResult{}, ErrInvalidState
+	}
+	var workIdentity struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if err := json.Unmarshal(work.Data, &workIdentity); err != nil ||
+		strings.TrimSpace(workIdentity.Type) != "session" ||
+		strings.TrimSpace(workIdentity.ID) != lockedSession.ExternalID {
 		return CreateManagedAgentRuntimeResult{}, ErrInvalidState
 	}
 
@@ -156,14 +179,21 @@ func createManagedAgentRuntimeTx(
 // lockSessionAndListEventsTx 与 AppendSessionEvents 使用同一条 Session 行锁。
 // 锁内读取的最终快照会随 Code Session 一起提交；锁后写入的事件则会在
 // Runtime 提交后通过实时转发路径进入 inbound queue。
-func lockSessionAndListEventsTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, sessionExternalID string) ([]SessionEvent, error) {
+func lockSessionAndListEventsTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, sessionExternalID string) (Session, []SessionEvent, error) {
 	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
 	session, err := getSessionSQLX(ctx, tx, lockSessionForEventsQuery, arguments)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, ErrNotFound) {
+			return Session{}, nil, ErrInvalidState
+		}
+		return Session{}, nil, err
 	}
 	if session.ArchivedAt != nil || session.Status != "idle" {
-		return nil, ErrInvalidState
+		return Session{}, nil, ErrInvalidState
 	}
-	return listManagedAgentSessionEvents(ctx, tx, workspaceID, sessionExternalID)
+	events, err := listManagedAgentSessionEvents(ctx, tx, workspaceID, sessionExternalID)
+	if err != nil {
+		return Session{}, nil, err
+	}
+	return session, events, nil
 }

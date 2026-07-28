@@ -14,6 +14,12 @@ runtime:
 docker:
   container_name_prefix: "e2b-envd-"
   health_timeout_seconds: 30
+  # rclone-filestore multimount requires both /dev/fuse and SYS_ADMIN in each
+  # sandbox. e2b-local injects both when this flag is enabled.
+  enable_fuse: true
+  # Sandbox volume bind sources must be paths visible to the host Docker daemon,
+  # not paths that exist only inside the e2b-local container.
+  volume_host_path: "__VOLUME_HOST_PATH__"
   # envd_binary 必须指向宿主机可访问的路径 — Docker daemon 在宿主机上运行。
   # 占位符 __ENVD_BIN_DIR__ 会被 docker-compose entrypoint wrapper 替换。
   envd_binary: "__ENVD_BIN_DIR__/envd-linux-amd64"

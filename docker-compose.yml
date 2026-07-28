@@ -131,15 +131,18 @@ services:
         condition: service_completed_successfully
     environment:
       - ENVD_BIN_DIR=${PWD}/envd-bin
+      - E2B_VOLUME_HOST_PATH=${PWD}/tmp/e2b-local-volumes
     command: >
       sh -c '
-        sed "s|__ENVD_BIN_DIR__|$${ENVD_BIN_DIR}|g" /etc/e2b-local/config.yaml > /tmp/e2b-config.yaml &&
+        mkdir -p "$${E2B_VOLUME_HOST_PATH}/user-data" &&
+        sed -e "s|__ENVD_BIN_DIR__|$${ENVD_BIN_DIR}|g" -e "s|__VOLUME_HOST_PATH__|$${E2B_VOLUME_HOST_PATH}|g" /etc/e2b-local/config.yaml > /tmp/e2b-config.yaml &&
         exec /usr/local/bin/e2b-local --config /tmp/e2b-config.yaml
       '
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./deploy/docker-compose/e2b-local.yaml:/etc/e2b-local/config.yaml:ro
       - ${PWD}/envd-bin:${PWD}/envd-bin:ro
+      - ${PWD}/tmp/e2b-local-volumes:${PWD}/tmp/e2b-local-volumes
     restart: unless-stopped
 
   # oma-server — Open Managed Agents 主 API 服务

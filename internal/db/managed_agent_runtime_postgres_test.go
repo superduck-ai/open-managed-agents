@@ -60,6 +60,60 @@ func TestCreateManagedAgentRuntimeTxAgainstPostgreSQL(t *testing.T) {
 		}
 	})
 
+	t.Run("failure mismatched Session identity rejects the launch", func(t *testing.T) {
+		tx := beginManagedAgentRuntimeTx(ctx, t, database)
+		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
+		input := fixture.runtimeInput()
+		input.CodeSession.SessionID++
+
+		_, err := createManagedAgentRuntimeTx(ctx, tx, input, noManagedAgentInboundEvents)
+		if !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
+		}
+	})
+
+	t.Run("failure mismatched Environment identity rejects the launch", func(t *testing.T) {
+		tx := beginManagedAgentRuntimeTx(ctx, t, database)
+		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
+		input := fixture.runtimeInput()
+		input.CodeSession.EnvironmentID++
+
+		_, err := createManagedAgentRuntimeTx(ctx, tx, input, noManagedAgentInboundEvents)
+		if !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
+		}
+	})
+
+	t.Run("failure mismatched Work identity rejects the launch", func(t *testing.T) {
+		tx := beginManagedAgentRuntimeTx(ctx, t, database)
+		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
+		if _, err := tx.ExecContext(ctx, `
+			update environment_work set organization_id = organization_id + 1 where id = $1
+		`, fixture.work.ID); err != nil {
+			t.Fatalf("mismatch seeded work identity: %v", err)
+		}
+
+		_, err := createManagedAgentRuntimeTx(ctx, tx, fixture.runtimeInput(), noManagedAgentInboundEvents)
+		if !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
+		}
+	})
+
+	t.Run("failure Work for another Session rejects the launch", func(t *testing.T) {
+		tx := beginManagedAgentRuntimeTx(ctx, t, database)
+		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
+		if _, err := tx.ExecContext(ctx, `
+			update environment_work set data = '{"type":"session","id":"sess_other"}' where id = $1
+		`, fixture.work.ID); err != nil {
+			t.Fatalf("mismatch seeded work Session: %v", err)
+		}
+
+		_, err := createManagedAgentRuntimeTx(ctx, tx, fixture.runtimeInput(), noManagedAgentInboundEvents)
+		if !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("createManagedAgentRuntimeTx() error = %v, want ErrInvalidState", err)
+		}
+	})
+
 	t.Run("success binds named parameters and scans every row", func(t *testing.T) {
 		tx := beginManagedAgentRuntimeTx(ctx, t, database)
 		fixture := seedManagedAgentRuntimeFixture(ctx, t, tx, "active")
@@ -334,7 +388,7 @@ func (f managedAgentRuntimeFixture) createSessionInput(suffix string) CreateSess
 			WorkspaceID:           f.workspaceID,
 			EnvironmentID:         f.environmentID,
 			EnvironmentExternalID: f.environmentExternalID,
-			Data:                  json.RawMessage(`{"session_external_id":"sess_` + suffix + `"}`),
+			Data:                  json.RawMessage(`{"type":"session","id":"sess_` + suffix + `"}`),
 			Metadata:              json.RawMessage(`{}`),
 			State:                 "queued",
 			CreatedAt:             now,

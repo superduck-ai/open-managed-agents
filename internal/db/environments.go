@@ -535,19 +535,20 @@ func (d *DB) UpdateEnvironmentWorkMetadata(ctx context.Context, workspaceID int6
 // MergeEnvironmentWorkMetadata 用数据库侧的 jsonb 顶层合并写入 patch 的键，保留其它
 // 已有字段。相比读取快照后整列替换，它不会丢弃在读取与写入之间由并发 API 提交的
 // metadata 更新，适用于 sandbox 启动等长阻塞期间的部分字段写入。
+const mergeEnvironmentWorkMetadataQuery = `
+	update environment_work
+	set metadata = coalesce(metadata, CAST('{}' AS jsonb)) || CAST(:metadata_patch AS jsonb),
+		updated_at = now()
+	where workspace_id = :workspace_id
+		and environment_external_id = :environment_external_id
+		and external_id = :work_external_id
+		and deleted_at is null
+	returning ` + environmentWorkSQLXColumns
+
 func (d *DB) MergeEnvironmentWorkMetadata(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID string, patch json.RawMessage) (EnvironmentWork, error) {
 	arguments := environmentWorkLookupArguments(workspaceID, environmentExternalID, workExternalID)
 	arguments["metadata_patch"] = jsonArg(patch)
-	return getEnvironmentWorkSQLX(ctx, d.sql, `
-		update environment_work
-		set metadata = coalesce(metadata, CAST('{}' AS jsonb)) || CAST(:metadata_patch AS jsonb),
-			updated_at = now()
-		where workspace_id = :workspace_id
-			and environment_external_id = :environment_external_id
-			and external_id = :work_external_id
-			and deleted_at is null
-		returning `+environmentWorkSQLXColumns+`
-	`, arguments)
+	return getEnvironmentWorkSQLX(ctx, d.sql, mergeEnvironmentWorkMetadataQuery, arguments)
 }
 
 func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceID int64, environmentExternalID, workExternalID, expectedLastHeartbeat string, ttlSeconds int, format func(time.Time) string) (WorkHeartbeatResult, error) {

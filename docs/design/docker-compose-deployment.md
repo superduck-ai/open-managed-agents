@@ -99,9 +99,9 @@ oma-server 在 compose 网络中，e2b-local 在 host 网络中。`extra_hosts` 
 
 **e2b-local 必须监听 `0.0.0.0`**：从 compose bridge 网络过来的流量目标地址是 `host-gateway` IP（如 `172.17.0.1`），而非 `127.0.0.1`。因此 `deploy/docker-compose/e2b-local.yaml` 中 `server.addr` 需设为 `0.0.0.0:3099`（已完成）。
 
-### 4.3 envd_binary 占位符替换
+### 4.3 Docker daemon 可见路径占位符替换
 
-e2b-local 配置文件 `deploy/docker-compose/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制。
+e2b-local 配置文件 `deploy/docker-compose/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 和 `__VOLUME_HOST_PATH__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制和 Sandbox volume bind source。Compose 在启动网关前创建 `tmp/e2b-local-volumes/user-data`，并把同一宿主路径挂载进 e2b-local；不能使用只存在于网关容器内的 `/root/.e2b-local/volumes`，否则 Docker 创建 Sandbox 时会拒绝不存在的 bind source。
 
 ### 4.4 前端内建到 oma-server 镜像
 
@@ -165,7 +165,16 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
    just init-compose-config
    ```
 
-   如需调用真实上游，只编辑 `deploy/docker-compose/oma-server.local.yaml` 的 `anthropic_upstream.api_key`。不要把真实密钥写入 `deploy/docker-compose/oma-server.yaml` 模板。
+   已有 `deploy/docker-compose/oma-server.local.yaml` 的用户需要手动加入：
+
+   ```yaml
+   e2b:
+     template: managed-agent-sandbox:latest
+   ```
+
+   `just init-compose-config` 不覆盖已有文件，因此不能依赖重新执行该命令完成升级。
+   如需调用真实上游，只编辑本地文件的 `anthropic_upstream.api_key`。不要把真实密钥写入
+   `deploy/docker-compose/oma-server.yaml` 模板。
 
 > **平台要求**：`e2b-local` 使用 `network_mode: host`，支持 Linux Docker Engine 20.10+ 和 OrbStack（macOS）。Docker Desktop for Mac/Windows 不支持 host 网络模式。
 

@@ -33,7 +33,7 @@ func TestManagedAgentRuntimeQueriesRejectDoubleColonCasts(t *testing.T) {
 	}
 }
 
-func TestManagedAgentRuntimeQueriesUseSQLXNamedParameters(t *testing.T) {
+func TestManagedAgentRuntimeQueriesBindNamedParameters(t *testing.T) {
 	tests := []struct {
 		name         string
 		query        string
@@ -176,8 +176,12 @@ func TestManagedAgentRuntimeQueriesUseSQLXNamedParameters(t *testing.T) {
 			wantArgCount: 3,
 		},
 	}
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			if strings.Contains(test.query, "::") {
+				t.Fatalf("query uses a :: cast that conflicts with named parameters: %q", test.query)
+			}
 			query, arguments, err := bindNamed(postgresRebinder{}, test.query, test.arguments)
 			if err != nil {
 				t.Fatalf("bind named query: %v", err)

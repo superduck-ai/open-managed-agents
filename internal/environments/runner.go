@@ -375,13 +375,9 @@ func (r *Runner) provisionCreatedSandboxPackages(
 		return false, err
 	}
 	if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
-		currentWork, lookupErr := r.db.GetEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID)
-		if lookupErr == nil && (currentWork.State == "stopping" || currentWork.State == "stopped") {
-			*work = currentWork
-			r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
+		if r.failCreatedSandbox(ctx, record, work, providerSandboxID, err) {
 			return false, nil
 		}
-		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return false, err
 	}
 	heartbeat, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
@@ -431,17 +427,26 @@ func (r *Runner) failManagedAgentRuntime(
 	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
 }
 
-func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
+// failCreatedSandbox returns true when a concurrent user stop already won and
+// the sandbox was kept stopped instead of being rewritten as failed.
+func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) bool {
+	currentWork, err := r.db.GetEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID)
+	if err == nil && (currentWork.State == "stopping" || currentWork.State == "stopped") {
+		*work = currentWork
+		r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
+		return true
+	}
 	now := time.Now().UTC()
 	message := cause.Error()
 	_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
 	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 	if strings.TrimSpace(providerSandboxID) == "" {
-		return
+		return false
 	}
 	killCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	_ = r.provider.Kill(killCtx, providerSandboxID)
+	return false
 }
 
 func (r *Runner) stopCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) {

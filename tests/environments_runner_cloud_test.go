@@ -357,6 +357,23 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 		}
 	})
 
+	t.Run("force stop during rclone startup preserves stopped sandbox", func(t *testing.T) {
+		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{
+			failOperation:          "rclone-ready",
+			runCommandFailure:      context.Canceled,
+			forceStopBeforeFailure: true,
+		})
+		if err == nil || !processed {
+			t.Fatalf("RunOnce() = (%t, %v), want rclone cancellation after force stop", processed, err)
+		}
+		if provider.sandboxState != "stopped" || provider.sandboxError != nil {
+			t.Fatalf("force-stopped sandbox = state %q error %v, want stopped without error", provider.sandboxState, provider.sandboxError)
+		}
+		if provider.codeSessionCreated || len(provider.launches) != 0 {
+			t.Fatal("force stop during rclone startup started the managed-agent runtime")
+		}
+	})
+
 	t.Run("stop requested during provisioning terminates sandbox before manager startup", func(t *testing.T) {
 		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{stopAfterProvision: true})
 		if err != nil || !processed {
@@ -433,8 +450,11 @@ func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 
 type packageRunnerCase struct {
 	commandErr              error
+	failOperation           string
+	runCommandFailure       error
 	stopAfterProvision      bool
 	forceStopAfterProvision bool
+	forceStopBeforeFailure  bool
 }
 
 const cfgPackageProvisionTimeoutForTest = 37 * time.Second
@@ -496,8 +516,10 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 		_, _ = client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 	})
 	provider := &recordingRunnerProvider{
-		sandboxID:  "sandbox-runner-packages",
-		commandErr: testCase.commandErr,
+		sandboxID:         "sandbox-runner-packages",
+		commandErr:        testCase.commandErr,
+		failOperation:     testCase.failOperation,
+		runCommandFailure: testCase.runCommandFailure,
 	}
 	if testCase.stopAfterProvision || testCase.forceStopAfterProvision {
 		provider.afterCommand = func() {
@@ -505,6 +527,12 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 			if testCase.forceStopAfterProvision {
 				provider.Kill(runCtx, provider.sandboxID)
 			}
+		}
+	}
+	if testCase.forceStopBeforeFailure {
+		provider.beforeRunFailure = func() {
+			requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID, true)
+			provider.Kill(runCtx, provider.sandboxID)
 		}
 	}
 	runner := newManagedAgentRunner(t, app, provider, cfg)
@@ -1127,6 +1155,7 @@ type recordingRunnerProvider struct {
 	failOperation             string
 	runCommandFailure         error
 	beforeCreate              func()
+	beforeRunFailure          func()
 	resolves                  []recordedSandboxResolve
 	commands                  []recordedSandboxCommand
 	launches                  []recordedSandboxLaunch
@@ -1253,6 +1282,9 @@ func (p *recordingRunnerProvider) FileExists(_ context.Context, sandboxID, path 
 	}
 	p.operations = append(p.operations, "rclone-ready")
 	if p.failOperation == "rclone-ready" {
+		if p.beforeRunFailure != nil {
+			p.beforeRunFailure()
+		}
 		return false, p.runCommandFailure
 	}
 	return true, nil

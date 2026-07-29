@@ -241,6 +241,44 @@ func TestSessionFileResourceContract(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
+	t.Run("success internal outputs do not consume file resource capacity", func(t *testing.T) {
+		created := createSession(t, app, `{`+base+`}`)
+		defer deleteSession(t, app, created.ID)
+		session := mustSessionRecord(t, app, created.ID)
+		filesystem, err := app.db.GetFilestoreFilesystemBySession(
+			context.Background(),
+			session.WorkspaceID,
+			session.ExternalID,
+		)
+		if err != nil {
+			t.Fatalf("load Session filesystem: %v", err)
+		}
+		for index := 0; index < db.MaxSessionFileResources; index++ {
+			if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+				WorkspaceID:  session.WorkspaceID,
+				FilesystemID: filesystem.ID,
+				Path:         "/outputs/generated-" + strconv.Itoa(index) + ".txt",
+				Blob:         workspaceStorageBlob(0, nil),
+			}); err != nil {
+				t.Fatalf("create internal Output %d: %v", index, err)
+			}
+		}
+
+		resp := doSessionRequest(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/sessions/"+created.ID+"/resources?beta=true",
+			strings.NewReader(`{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/attached.csv"}`),
+			defaultTestKey,
+			true,
+		)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("attach after internal Outputs status = %d: %s", resp.StatusCode, readAll(t, resp.Body))
+		}
+	})
+
 	t.Run("success defaults and add resource use uploads", func(t *testing.T) {
 		expectedBytes := defaultWorkspaceStorageBytes(t, app)
 		created := createSession(t, app, `{`+base+`,"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]}`)
@@ -267,6 +305,13 @@ func TestSessionFileResourceContract(t *testing.T) {
 				scopedFiles.Data[0],
 				file.ID,
 				file.Filename,
+			)
+		}
+		if scopedFiles.Data[0].CreatedAt != file.CreatedAt {
+			t.Fatalf(
+				"input catalog created_at = %q, want Source File created_at %q",
+				scopedFiles.Data[0].CreatedAt,
+				file.CreatedAt,
 			)
 		}
 		if scopedFiles.Data[0].Downloadable {
@@ -319,6 +364,13 @@ func TestSessionFileResourceContract(t *testing.T) {
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
 		if len(scopedFiles.Data) != 1 || scopedFiles.Data[0].ID != file.ID {
 			t.Fatalf("scoped files after repeated attach = %+v, want one deduplicated Source File %q", scopedFiles.Data, file.ID)
+		}
+		if scopedFiles.Data[0].CreatedAt != file.CreatedAt {
+			t.Fatalf(
+				"repeated attach changed Source File created_at to %q, want %q",
+				scopedFiles.Data[0].CreatedAt,
+				file.CreatedAt,
+			)
 		}
 		sessionRecord := mustSessionRecord(t, app, created.ID)
 		if _, err := app.db.Pool.Exec(context.Background(), `
@@ -938,6 +990,9 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	outputFileID := files[0].ExternalID
 	outputFileCreatedAt := files[0].CreatedAt
 	outputResourceCreatedAt := entry.Node.CreatedAt
+	if allFiles := listFiles(t, app, ""); !containsFile(allFiles.Data, outputFileID) {
+		t.Fatalf("unscoped Files list does not contain active Output %q: %+v", outputFileID, allFiles.Data)
+	}
 
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
 	if err != nil {
@@ -989,6 +1044,19 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	if len(files) != 0 {
 		t.Fatalf("catalog files after output moved to transcripts = %+v, want none", files)
 	}
+	if allFiles := listFiles(t, app, ""); containsFile(allFiles.Data, outputFileID) {
+		t.Fatalf("unscoped Files list exposed transcript File %q: %+v", outputFileID, allFiles.Data)
+	}
+	hiddenMetadata := app.do(
+		t,
+		http.MethodGet,
+		"/v1/files/"+outputFileID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	assertError(t, hiddenMetadata, http.StatusNotFound, "not_found_error")
 
 	if _, err := app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
 		WorkspaceID:     record.WorkspaceID,
@@ -1004,6 +1072,9 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	}
 	if len(files) != 1 || files[0].ExternalID != outputFileID {
 		t.Fatalf("catalog after output return = %+v, want stable file ID %q", files, outputFileID)
+	}
+	if allFiles := listFiles(t, app, ""); !containsFile(allFiles.Data, outputFileID) {
+		t.Fatalf("unscoped Files list did not restore Output %q: %+v", outputFileID, allFiles.Data)
 	}
 
 	beforeRejectedDeleteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)

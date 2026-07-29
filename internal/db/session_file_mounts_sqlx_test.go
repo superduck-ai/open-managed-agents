@@ -26,6 +26,7 @@ func TestSessionFileResourceQueriesBindNamedArguments(t *testing.T) {
 				"workspace_id = $1",
 				"session_external_id = $2",
 				"resource_type = $3",
+				"payload is not null",
 			},
 		},
 		{

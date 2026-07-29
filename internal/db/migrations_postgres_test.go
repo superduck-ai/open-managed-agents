@@ -103,7 +103,22 @@ const migrationBackfillFixtureSQL = `
 		null, null, null,
 		'30000000-0000-0000-0000-000000000001',
 		'40000000-0000-0000-0000-000000000001'
+	), (
+		'80000000-0000-0000-0000-000000000003', 'fse_expired_output_migration_184',
+		'10000000-0000-0000-0000-000000000001',
+		'20000000-0000-0000-0000-000000000001',
+		'70000000-0000-0000-0000-000000000001',
+		'file', '/outputs/expired.txt', '/outputs', 13, 'text/plain', 'text/plain',
+		'{"origin":"expired-output"}', '{"policy":"session"}', array['expired'], true,
+		'expired-md5', repeat('d', 64), 'migration-184', 'owned/expired.txt',
+		null, null, null,
+		'30000000-0000-0000-0000-000000000001',
+		'40000000-0000-0000-0000-000000000001'
 	);
+
+	update filestore_entries
+	set expires_at = to_timestamp(0)
+	where external_id = 'fse_expired_output_migration_184';
 
 	insert into files (
 		uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
@@ -142,6 +157,30 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	}
 	if _, err := provider.UpTo(ctx, 34); err != nil {
 		t.Fatalf("create legacy Input projection: %v", err)
+	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update filestore_entries
+		set managed_resource_uuid = '50000000-0000-0000-0000-000000000099'
+		where external_id = 'fse_input_migration_184'
+	`); err != nil {
+		t.Fatalf("break legacy Input reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 36); err == nil {
+		t.Fatal("migration accepted an unresolved legacy Input reference")
+	}
+	var oldTableExists bool
+	if err := standardDB.QueryRowContext(ctx, `select to_regclass('filestore_entries') is not null`).Scan(&oldTableExists); err != nil {
+		t.Fatalf("check old table after rejected migration: %v", err)
+	}
+	if !oldTableExists {
+		t.Fatal("rejected migration dropped filestore_entries")
+	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update filestore_entries
+		set managed_resource_uuid = '50000000-0000-0000-0000-000000000001'
+		where external_id = 'fse_input_migration_184'
+	`); err != nil {
+		t.Fatalf("restore legacy Input reference: %v", err)
 	}
 
 	if _, err := provider.UpTo(ctx, 36); err != nil {
@@ -212,8 +251,8 @@ func assertUnifiedMigrationState(t *testing.T, ctx context.Context, database *sq
 	if err := database.QueryRowContext(ctx, `select count(*) from files`).Scan(&fileCount); err != nil {
 		t.Fatalf("count migrated Files: %v", err)
 	}
-	if fileCount != 2 {
-		t.Fatalf("files count = %d, want source plus output only", fileCount)
+	if fileCount != 3 {
+		t.Fatalf("files count = %d, want source plus active and expired outputs", fileCount)
 	}
 
 	var outputExternalID, outputFilename, outputKey string
@@ -237,5 +276,24 @@ func assertUnifiedMigrationState(t *testing.T, ctx context.Context, database *sq
 	}
 	if outputFileUUID != "80000000-0000-0000-0000-000000000002" || resourceUUID == outputFileUUID {
 		t.Fatalf("migrated Output Resource = resource %q, file %q", resourceUUID, outputFileUUID)
+	}
+
+	var expiredPath, expiredFileUUID string
+	var expiresAtValid bool
+	if err := database.QueryRowContext(ctx, `
+		select path, cast(file_uuid as text), expires_at is not null
+		from session_resources where path = '/outputs/expired.txt'
+	`).Scan(&expiredPath, &expiredFileUUID, &expiresAtValid); err != nil {
+		t.Fatalf("load migrated expired Output Resource: %v", err)
+	}
+	if expiredPath != "/outputs/expired.txt" ||
+		expiredFileUUID != "80000000-0000-0000-0000-000000000003" ||
+		!expiresAtValid {
+		t.Fatalf(
+			"migrated expired Output = path %q, file %q, expires_at present %t",
+			expiredPath,
+			expiredFileUUID,
+			expiresAtValid,
+		)
 	}
 }

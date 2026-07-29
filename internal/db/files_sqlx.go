@@ -26,7 +26,7 @@ const (
 		file.s3_bucket, file.s3_key, file.s3_etag, file.s3_version_id,
 		file.downloadable, CAST('session' AS text) as scope_type,
 		resource.session_external_id as scope_id, file.created_by_api_key_id,
-		resource.created_at`
+		file.created_at as created_at`
 	sessionCatalogResourceCTE = `catalog_resource as (
 		select distinct on (resource.file_uuid) resource.*
 		from session_resources resource
@@ -43,30 +43,31 @@ const (
 			)
 		order by resource.file_uuid, resource.created_at desc, resource.id desc
 	)`
+	visibleFileSQLXPredicate = `
+		and (
+			not exists (
+				select 1 from session_resources owner
+				where owner.workspace_id = files.workspace_id
+					and owner.file_uuid = files.uuid
+					and owner.payload is null
+			)
+			or exists (
+				select 1 from session_resources owner
+				where owner.workspace_id = files.workspace_id
+					and owner.file_uuid = files.uuid
+					and owner.payload is null
+					and owner.deleted_at is null
+					and (owner.expires_at is null or owner.expires_at > now())
+					and left(owner.path, char_length('/outputs/')) = '/outputs/'
+			)
+		)`
 	getFileQuery = `
 		select ` + fileSQLXColumns + `
 		from files
 		where workspace_id = :workspace_id
 			and external_id = :file_external_id
 			and deleted_at is null
-			and (
-				not exists (
-					select 1 from session_resources owner
-					where owner.workspace_id = files.workspace_id
-						and owner.file_uuid = files.uuid
-						and owner.payload is null
-				)
-				or exists (
-					select 1 from session_resources owner
-					where owner.workspace_id = files.workspace_id
-						and owner.file_uuid = files.uuid
-						and owner.payload is null
-						and owner.deleted_at is null
-						and (owner.expires_at is null or owner.expires_at > now())
-						and left(owner.path, char_length('/outputs/')) = '/outputs/'
-				)
-			)
-	`
+	` + visibleFileSQLXPredicate
 	getFileByUUIDQuery = `
 		select ` + fileSQLXColumns + `
 		from files
@@ -394,7 +395,7 @@ func listFilesSQLXQuery(workspaceID int64, scopeID string) (string, map[string]a
 		from files
 		where workspace_id = :workspace_id
 			and deleted_at is null
-	`
+	` + visibleFileSQLXPredicate
 	arguments := map[string]any{"workspace_id": workspaceID}
 	if scopeID != "" {
 		query += " and scope_id = :scope_id"
@@ -508,7 +509,7 @@ func filePageCursorSQLXQuery(
 		where workspace_id = :workspace_id
 			and external_id = :cursor_external_id
 			and deleted_at is null
-	`
+	` + visibleFileSQLXPredicate
 	arguments := map[string]any{
 		"workspace_id":       params.WorkspaceID,
 		"cursor_external_id": cursorExternalID,
@@ -532,7 +533,7 @@ func listFilesPageSQLXQuery(
 		from files
 		where workspace_id = :workspace_id
 			and deleted_at is null
-	`
+	` + visibleFileSQLXPredicate
 	arguments := map[string]any{
 		"workspace_id": params.WorkspaceID,
 		"limit":        params.Limit + 1,

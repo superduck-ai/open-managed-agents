@@ -17,6 +17,7 @@ const (
 		where workspace_id = :workspace_id
 			and session_external_id = :session_external_id
 			and resource_type = :resource_type
+			and payload is not null
 			and deleted_at is null
 	`
 	findSessionFileMountConflictSQL = `

@@ -38,6 +38,20 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 	cursorQuery, cursorArguments := filePageCursorSQLXQuery(afterParams, afterParams.AfterID)
 	afterQuery, afterArguments := listFilesPageSQLXQuery(afterParams, cursor)
 	beforeQuery, beforeArguments := listFilesPageSQLXQuery(beforeParams, cursor)
+	if !strings.Contains(sessionCatalogFileSQLXColumns, "file.created_at as created_at") {
+		t.Fatalf("Session Catalog must return the real File created_at: %q", sessionCatalogFileSQLXColumns)
+	}
+	for name, query := range map[string]string{
+		"list":        listQuery,
+		"page cursor": cursorQuery,
+		"list after":  afterQuery,
+		"list before": beforeQuery,
+	} {
+		if !strings.Contains(query, "owner.payload is null") ||
+			!strings.Contains(query, "'/outputs/'") {
+			t.Fatalf("%s query does not enforce File Catalog visibility: %q", name, query)
+		}
+	}
 	if !strings.Contains(beforeQuery, "order by created_at asc, id asc") {
 		t.Fatalf("before page query does not fetch the nearest records first: %q", beforeQuery)
 	}

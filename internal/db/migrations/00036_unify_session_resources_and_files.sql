@@ -51,6 +51,75 @@ alter table session_resources
 		)
 	) not valid;
 
+-- 统一会删除旧 namespace 表，因此必须先证明每条仍有效的旧记录都能解析到
+-- 同一租户下的 filesystem 与 Session。无外键历史库中的孤立或错配引用不能
+-- 通过 INNER JOIN 静默消失。
+-- +goose StatementBegin
+do $$
+begin
+	if exists (
+		select 1
+		from filestore_entries entry
+		where entry.deleted_at is null
+			and not exists (
+				select 1
+				from filestore_filesystems filesystem
+				join sessions session
+					on session.uuid = filesystem.session_uuid
+					and session.deleted_at is null
+				join workspaces workspace
+					on workspace.id = session.workspace_id
+					and workspace.uuid = entry.workspace_uuid
+				join organizations organization
+					on organization.id = session.organization_id
+					and organization.uuid = entry.organization_uuid
+				where filesystem.uuid = entry.filesystem_uuid
+					and filesystem.workspace_uuid = entry.workspace_uuid
+					and filesystem.organization_uuid = entry.organization_uuid
+					and filesystem.deleted_at is null
+			)
+	) then
+		raise exception 'cannot unify Session namespace: an active entry has invalid tenant or Session references';
+	end if;
+
+	if exists (
+		select 1
+		from filestore_entries entry
+		where entry.kind = 'file'
+			and entry.managed_by = 'session_file_resource'
+			and entry.source_file_uuid is not null
+			and entry.deleted_at is null
+			and (
+				entry.expires_at is not null
+				or not exists (
+					select 1
+					from filestore_filesystems filesystem
+					join sessions session
+						on session.uuid = filesystem.session_uuid
+						and session.deleted_at is null
+					join session_resources resource
+						on resource.uuid = entry.managed_resource_uuid
+						and resource.organization_id = session.organization_id
+						and resource.workspace_id = session.workspace_id
+						and resource.session_id = session.id
+						and resource.resource_type = 'file'
+						and resource.deleted_at is null
+					join files source
+						on source.uuid = entry.source_file_uuid
+						and source.workspace_id = session.workspace_id
+						and source.deleted_at is null
+					where filesystem.uuid = entry.filesystem_uuid
+						and filesystem.workspace_uuid = entry.workspace_uuid
+						and filesystem.organization_uuid = entry.organization_uuid
+						and filesystem.deleted_at is null
+				)
+			)
+	) then
+		raise exception 'cannot unify Session namespace: an Input reference cannot be resolved';
+	end if;
+end $$;
+-- +goose StatementEnd
+
 -- Attached Input 保留原 Resource 身份，并接管 namespace path 与 Source File 引用。
 update session_resources resource
 set path = entry.path,
@@ -118,7 +187,6 @@ left join api_keys api_key
 	and api_key.workspace_id = session.workspace_id
 where entry.kind = 'file'
 	and entry.deleted_at is null
-	and (entry.expires_at is null or entry.expires_at > now())
 	and not (
 		entry.managed_by = 'session_file_resource'
 		and entry.source_file_uuid is not null
@@ -179,7 +247,6 @@ join sessions session
 	on session.uuid = filesystem.session_uuid
 	and session.deleted_at is null
 where entry.deleted_at is null
-	and (entry.expires_at is null or entry.expires_at > now())
 	and not (
 		entry.kind = 'file'
 		and entry.managed_by = 'session_file_resource'

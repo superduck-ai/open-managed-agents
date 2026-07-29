@@ -196,14 +196,22 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 			return SessionNamespaceNode{}, err
 		}
 		if _, err := namedExecContext(ctx, tx, `
-			update files file
-			set deleted_at = :now
-			where file.uuid = (
-				select resource.file_uuid from session_resources resource
-				where resource.id = :resource_id
-			)
-				and file.deleted_at is null
-		`, map[string]any{"resource_id": existing.ID, "now": now}); err != nil {
+				update files file
+				set deleted_at = :now
+				where file.workspace_id = :workspace_id
+					and file.uuid = (
+					select resource.file_uuid from session_resources resource
+					where resource.id = :resource_id
+						and resource.workspace_id = :workspace_id
+						and resource.session_id = :session_id
+				)
+					and file.deleted_at is null
+			`, map[string]any{
+			"workspace_id": workspaceID,
+			"session_id":   filesystem.SessionID,
+			"resource_id":  existing.ID,
+			"now":          now,
+		}); err != nil {
 			return SessionNamespaceNode{}, err
 		}
 		if _, err := namedExecContext(ctx, tx, `
@@ -357,9 +365,12 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				sha256 = :sha256, s3_bucket = :s3_bucket, s3_key = :s3_key,
 				s3_etag = :s3_etag, s3_version_id = :s3_version_id,
 				deleted_at = null
-			where file.uuid = (
+			where file.workspace_id = :workspace_id
+				and file.uuid = (
 				select resource.file_uuid from session_resources resource
 				where resource.id = :resource_id
+					and resource.workspace_id = :workspace_id
+					and resource.session_id = :session_id
 			)
 		`, arguments); err != nil {
 			return SessionNamespaceNode{}, err

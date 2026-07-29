@@ -270,6 +270,15 @@ type FilestoreObjectCleanupJob struct {
 	RunAfter             time.Time `db:"run_after"`
 }
 
+// FilestoreCleanupAnomaly 表示清理时发现无法定位底层对象的 Owned File。
+// 数据库仍会退休逻辑节点并修正账本；worker 负责记录该异常供运维追踪。
+type FilestoreCleanupAnomaly struct {
+	WorkspaceID     int64
+	FilesystemID    int64
+	EntryExternalID string
+	Reason          string
+}
+
 // FilestoreFilesystemCleanupJob 将已删除 Session 的整个文件系统拆成有界批次回收。
 // 它只负责退休元数据并投递对象任务，不在数据库事务中直接访问 S3。
 // UUID 是持久化引用，bigint ID 是 worker 在当前数据库中解析出的短期执行上下文。

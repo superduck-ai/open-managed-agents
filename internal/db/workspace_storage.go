@@ -47,7 +47,22 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int
 	`, arguments); err != nil {
 		return 0, err
 	}
+	usage, err := reconcileWorkspaceStorageUsageSQLXTx(ctx, tx, workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return usage.FilesBytes + usage.FilestoreBytes, nil
+}
 
+func reconcileWorkspaceStorageUsageSQLXTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	workspaceID int64,
+) (workspaceStorageUsage, error) {
+	arguments := map[string]any{"workspace_id": workspaceID}
 	var usage workspaceStorageUsage
 	if err := namedGetContext(ctx, tx, &usage, `
 		select
@@ -77,10 +92,10 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int
 				where file.workspace_id = :workspace_id and file.deleted_at is null
 			), 0) as filestore_bytes
 	`, arguments); err != nil {
-		return 0, err
+		return workspaceStorageUsage{}, err
 	}
 	if usage.FilesBytes > math.MaxInt64-usage.FilestoreBytes {
-		return 0, ErrStorageLimitExceeded
+		return workspaceStorageUsage{}, ErrStorageLimitExceeded
 	}
 	arguments["files_bytes"] = usage.FilesBytes
 	arguments["filestore_bytes"] = usage.FilestoreBytes
@@ -94,12 +109,9 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int
 			filestore_bytes = excluded.filestore_bytes,
 			updated_at = excluded.updated_at
 	`, arguments); err != nil {
-		return 0, err
+		return workspaceStorageUsage{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return usage.FilesBytes + usage.FilestoreBytes, nil
+	return usage, nil
 }
 
 func applyWorkspaceStorageDeltaSQLXTx(

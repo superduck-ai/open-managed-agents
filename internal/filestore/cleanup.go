@@ -26,12 +26,12 @@ const (
 
 type filestoreCleanupDatabase interface {
 	LeaseFilestoreFilesystemCleanupJobs(context.Context, string, int, int) ([]db.FilestoreFilesystemCleanupJob, error)
-	ProcessLeasedFilestoreFilesystemCleanupJob(context.Context, int64, string, int) (bool, error)
+	ProcessLeasedFilestoreFilesystemCleanupJob(context.Context, int64, string, int) (bool, []db.FilestoreCleanupAnomaly, error)
 	FailLeasedFilestoreFilesystemCleanupJob(context.Context, int64, string, string, time.Duration, int) error
 	LeaseFilestoreObjectCleanupJobs(context.Context, string, int, int) ([]db.FilestoreObjectCleanupJob, error)
 	CompleteLeasedFilestoreObjectCleanupJob(context.Context, int64, string) error
 	FailLeasedFilestoreObjectCleanupJob(context.Context, int64, string, string, time.Duration, int) error
-	ExpireSessionNamespaceNodes(context.Context, int) ([]db.FilestoreObjectCleanupJob, error)
+	ExpireSessionNamespaceNodes(context.Context, int) ([]db.FilestoreObjectCleanupJob, []db.FilestoreCleanupAnomaly, error)
 }
 
 // CleanupWorker owns the filestore cleanup and TTL sweep loops.
@@ -125,12 +125,13 @@ func (w *CleanupWorker) RunFilesystemCleanupOnce(ctx context.Context, workerID s
 			errs = append(errs, err)
 			break
 		}
-		_, processErr := w.database.ProcessLeasedFilestoreFilesystemCleanupJob(
+		_, anomalies, processErr := w.database.ProcessLeasedFilestoreFilesystemCleanupJob(
 			ctx,
 			job.ID,
 			workerID,
 			filestoreFilesystemCleanupBatchSize,
 		)
+		w.logCleanupAnomalies(ctx, anomalies)
 		if processErr == nil {
 			continue
 		}
@@ -214,8 +215,22 @@ func (w *CleanupWorker) RunCleanupOnce(ctx context.Context, workerID string) err
 
 // RunTTLSweepOnce 将一批到期命名空间节点原子地标记为删除，并同时创建对应的对象清理任务。
 func (w *CleanupWorker) RunTTLSweepOnce(ctx context.Context) error {
-	_, err := w.database.ExpireSessionNamespaceNodes(ctx, filestoreTTLSweepBatchSize)
+	_, anomalies, err := w.database.ExpireSessionNamespaceNodes(ctx, filestoreTTLSweepBatchSize)
+	w.logCleanupAnomalies(ctx, anomalies)
 	return err
+}
+
+func (w *CleanupWorker) logCleanupAnomalies(ctx context.Context, anomalies []db.FilestoreCleanupAnomaly) {
+	for _, anomaly := range anomalies {
+		w.logger.WarnContext(
+			ctx,
+			"filestore cleanup metadata anomaly",
+			"workspace_id", anomaly.WorkspaceID,
+			"filesystem_id", anomaly.FilesystemID,
+			"entry_external_id", anomaly.EntryExternalID,
+			"reason", anomaly.Reason,
+		)
+	}
 }
 
 func filestoreCleanupRetryDelay(attempts int) time.Duration {

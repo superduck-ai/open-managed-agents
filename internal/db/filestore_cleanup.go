@@ -119,7 +119,8 @@ const (
 )
 
 // ExpireSessionNamespaceNodes 原子软删除一批到期文件，并为每个失去引用的精确对象版本创建清理任务。
-func (d *DB) ExpireSessionNamespaceNodes(ctx context.Context, limit int) ([]FilestoreObjectCleanupJob, error) {
+// 无法定位对象的异常节点仍会被退休并通过 anomalies 返回给 worker 记录。
+func (d *DB) ExpireSessionNamespaceNodes(ctx context.Context, limit int) ([]FilestoreObjectCleanupJob, []FilestoreCleanupAnomaly, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -128,14 +129,14 @@ func (d *DB) ExpireSessionNamespaceNodes(ctx context.Context, limit int) ([]File
 	}
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer tx.Rollback()
 
 	var scopeRows []expiredFilestoreCleanupScopeRow
 	err = namedSelectContext(ctx, tx, &scopeRows, expiredFilestoreCleanupScopesQuery, map[string]any{"limit": limit})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	workspaceIDSet := make(map[int64]struct{})
 	filesystemIDSet := make(map[int64]struct{})
@@ -157,9 +158,9 @@ func (d *DB) ExpireSessionNamespaceNodes(ctx context.Context, limit int) ([]File
 	}
 	if len(workspaceIDs) == 0 {
 		if err := tx.Commit(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 	sort.Slice(workspaceIDs, func(i, j int) bool {
 		return workspaceIDs[i] < workspaceIDs[j]
@@ -172,14 +173,14 @@ func (d *DB) ExpireSessionNamespaceNodes(ctx context.Context, limit int) ([]File
 		if _, err := namedExecContext(ctx, tx, `select pg_advisory_xact_lock(:workspace_id)`, map[string]any{
 			"workspace_id": workspaceID,
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	for _, filesystemID := range filesystemIDs {
 		if _, err := namedExecContext(ctx, tx, `select pg_advisory_xact_lock(-CAST(:filesystem_id AS bigint))`, map[string]any{
 			"filesystem_id": filesystemID,
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -189,14 +190,16 @@ func (d *DB) ExpireSessionNamespaceNodes(ctx context.Context, limit int) ([]File
 		"limit":          limit,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	entries, err := sessionNamespaceNodesFromSQLXRows(entryRows)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	now := time.Now().UTC()
 	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
+	anomalies := make([]FilestoreCleanupAnomaly, 0)
+	anomalyWorkspaces := make(map[int64]struct{})
 	releasedBytesByWorkspace := make(map[int64]int64)
 	for _, entry := range entries {
 		// Input Resource 引用的 Source File 不由 Session namespace 拥有或计费。
@@ -206,37 +209,48 @@ func (d *DB) ExpireSessionNamespaceNodes(ctx context.Context, limit int) ([]File
 		}
 		scope, found := cleanupScopeByFilesystemUUID[entry.FilesystemUUID]
 		if !found {
-			return nil, ErrNotFound
+			return nil, nil, ErrNotFound
 		}
-		job, err := enqueueSessionNamespaceNodeCleanupJobTx(ctx, tx, scope, entry, "ttl_expired", now)
-		if err != nil {
-			return nil, err
+		if anomaly, malformed := sessionNamespaceNodeCleanupAnomaly(scope, entry); malformed {
+			anomalies = append(anomalies, anomaly)
+			anomalyWorkspaces[scope.WorkspaceID] = struct{}{}
+		} else {
+			job, err := enqueueSessionNamespaceNodeCleanupJobTx(ctx, tx, scope, entry, "ttl_expired", now)
+			if err != nil {
+				return nil, nil, err
+			}
+			jobs = append(jobs, job)
 		}
-		jobs = append(jobs, job)
 		if err := retireSessionNamespaceNodeTx(ctx, tx, scope.WorkspaceID, entry.ID, now); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		releasedBytes, err := addWorkspaceStorageDelta(
 			releasedBytesByWorkspace[scope.WorkspaceID], filestoreInt64(entry.SizeBytes),
 		)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		releasedBytesByWorkspace[scope.WorkspaceID] = releasedBytes
 	}
 	for _, workspaceID := range workspaceIDs {
+		if _, malformed := anomalyWorkspaces[workspaceID]; malformed {
+			if _, err := reconcileWorkspaceStorageUsageSQLXTx(ctx, tx, workspaceID); err != nil {
+				return nil, nil, err
+			}
+			continue
+		}
 		releasedBytes := releasedBytesByWorkspace[workspaceID]
 		if releasedBytes == 0 {
 			continue
 		}
 		if err := applyWorkspaceStorageDeltaSQLXTx(ctx, tx, workspaceID, 0, -releasedBytes, 0); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return jobs, nil
+	return jobs, anomalies, nil
 }
 
 // LeaseFilestoreFilesystemCleanupJobs 租约一批待拆分的整文件系统清理任务。
@@ -258,15 +272,16 @@ func (d *DB) LeaseFilestoreFilesystemCleanupJobs(ctx context.Context, workerID s
 }
 
 // ProcessLeasedFilestoreFilesystemCleanupJob 在一个短事务中退休有限数量的文件条目，
-// 并把每个精确对象版本转换为既有对象清理任务。返回值表示整个文件系统是否已经退休完毕。
+// 并把每个精确对象版本转换为既有对象清理任务。返回值表示整个文件系统是否已经退休完毕，
+// anomalies 则交给 worker 记录无法定位对象的异常节点。
 func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	ctx context.Context,
 	jobID int64,
 	leaseToken string,
 	limit int,
-) (bool, error) {
+) (bool, []FilestoreCleanupAnomaly, error) {
 	if strings.TrimSpace(leaseToken) == "" {
-		return false, ErrPreconditionFailed
+		return false, nil, ErrPreconditionFailed
 	}
 	if limit <= 0 {
 		limit = 100
@@ -277,7 +292,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	defer tx.Rollback()
 
@@ -291,24 +306,24 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	err = namedGetContext(ctx, tx, &job, leasedFilesystemCleanupJobQuery, arguments)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return false, ErrVersionConflict
+			return false, nil, ErrVersionConflict
 		}
-		return false, err
+		return false, nil, err
 	}
 	arguments["workspace_id"] = job.WorkspaceID
 	arguments["filesystem_id"] = job.FilesystemID
 	arguments["workspace_uuid"] = job.WorkspaceUUID
 	arguments["filesystem_uuid"] = job.FilesystemUUID
 	if _, err := namedExecContext(ctx, tx, filesystemCleanupWorkspaceLockQuery, arguments); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if _, err := namedExecContext(ctx, tx, filesystemCleanupFilesystemLockQuery, arguments); err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, filesystemCleanupFilesystemQuery, arguments)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	cleanupScope := sessionNamespaceNodeCleanupScope{
 		WorkspaceID: job.WorkspaceID, FilesystemID: filesystem.ID,
@@ -317,47 +332,56 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	var entryRows []sessionNamespaceNodeRow
 	err = namedSelectContext(ctx, tx, &entryRows, filesystemCleanupEntriesQuery, arguments)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	entries, err := sessionNamespaceNodesFromSQLXRows(entryRows)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	now := time.Now().UTC()
 	arguments["retired_at"] = now
 	arguments["session_id"] = filesystem.SessionID
+	anomalies := make([]FilestoreCleanupAnomaly, 0)
 	var releasedBytes int64
 	for _, entry := range entries {
 		if !entry.ReferencesSourceFile() {
-			if _, err := enqueueSessionNamespaceNodeCleanupJobTx(ctx, tx, cleanupScope, entry, "session_deleted", now); err != nil {
-				return false, err
-			}
-			releasedBytes, err = addWorkspaceStorageDelta(
-				releasedBytes,
-				filestoreInt64(entry.SizeBytes),
-			)
-			if err != nil {
-				return false, err
+			if anomaly, malformed := sessionNamespaceNodeCleanupAnomaly(cleanupScope, entry); malformed {
+				anomalies = append(anomalies, anomaly)
+			} else {
+				if _, err := enqueueSessionNamespaceNodeCleanupJobTx(ctx, tx, cleanupScope, entry, "session_deleted", now); err != nil {
+					return false, nil, err
+				}
+				releasedBytes, err = addWorkspaceStorageDelta(
+					releasedBytes,
+					filestoreInt64(entry.SizeBytes),
+				)
+				if err != nil {
+					return false, nil, err
+				}
 			}
 		}
 		if err := retireSessionNamespaceNodeTx(ctx, tx, job.WorkspaceID, entry.ID, now); err != nil {
-			return false, err
+			return false, nil, err
 		}
 	}
-	if releasedBytes > 0 {
+	if len(anomalies) > 0 {
+		if _, err := reconcileWorkspaceStorageUsageSQLXTx(ctx, tx, job.WorkspaceID); err != nil {
+			return false, nil, err
+		}
+	} else if releasedBytes > 0 {
 		if err := applyWorkspaceStorageDeltaSQLXTx(ctx, tx, job.WorkspaceID, 0, -releasedBytes, 0); err != nil {
-			return false, err
+			return false, nil, err
 		}
 	}
 
 	var filesRemain bool
 	if err := namedGetContext(ctx, tx, &filesRemain, filesystemCleanupFilesRemainQuery, arguments); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if !filesRemain {
 		if _, err := namedExecContext(ctx, tx, retireFilesystemCleanupNamespaceEntriesQuery, arguments); err != nil {
-			return false, err
+			return false, nil, err
 		}
 	}
 
@@ -368,15 +392,15 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	arguments["status"] = status
 	rowsAffected, err := namedExecRowsAffected(ctx, tx, completeFilesystemCleanupBatchQuery, arguments)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if rowsAffected == 0 {
-		return false, ErrVersionConflict
+		return false, nil, ErrVersionConflict
 	}
 	if err := tx.Commit(); err != nil {
-		return false, err
+		return false, nil, err
 	}
-	return !filesRemain, nil
+	return !filesRemain, anomalies, nil
 }
 
 // FailLeasedFilestoreFilesystemCleanupJob 记录整文件系统清理失败并按统一退避策略重试。
@@ -712,6 +736,25 @@ type expiredFilestoreCleanupScopeRow struct {
 	WorkspaceID    int64  `db:"workspace_id"`
 	FilesystemID   int64  `db:"filesystem_id"`
 	FilesystemUUID string `db:"filesystem_uuid"`
+}
+
+const filestoreCleanupAnomalyMissingObjectLocation = "missing_object_location"
+
+func sessionNamespaceNodeCleanupAnomaly(
+	scope sessionNamespaceNodeCleanupScope,
+	entry SessionNamespaceNode,
+) (FilestoreCleanupAnomaly, bool) {
+	if entry.Kind != SessionNamespaceNodeKindFile || entry.ReferencesSourceFile() ||
+		entry.S3Bucket != nil && strings.TrimSpace(*entry.S3Bucket) != "" &&
+			entry.S3Key != nil && strings.TrimSpace(*entry.S3Key) != "" {
+		return FilestoreCleanupAnomaly{}, false
+	}
+	return FilestoreCleanupAnomaly{
+		WorkspaceID:     scope.WorkspaceID,
+		FilesystemID:    scope.FilesystemID,
+		EntryExternalID: entry.ExternalID,
+		Reason:          filestoreCleanupAnomalyMissingObjectLocation,
+	}, true
 }
 
 func enqueueSessionNamespaceNodeCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope sessionNamespaceNodeCleanupScope, entry SessionNamespaceNode, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {

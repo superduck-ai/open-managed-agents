@@ -1179,7 +1179,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	`, expiringEntry.Node.ID); err != nil {
 		t.Fatalf("expire output entry before cleanup: %v", err)
 	}
-	if _, err := app.db.ExpireSessionNamespaceNodes(context.Background(), 1000); err != nil {
+	if _, _, err := app.db.ExpireSessionNamespaceNodes(context.Background(), 1000); err != nil {
 		t.Fatalf("expire output entry: %v", err)
 	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
@@ -1457,7 +1457,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 	`, filesystem.UUID).Scan(&cleanupJobID); err != nil {
 		t.Fatalf("lease Session filesystem cleanup: %v", err)
 	}
-	done, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
+	done, _, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
 		context.Background(),
 		cleanupJobID,
 		"input-resource-reference-retirement-test",

@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+const moveFilestoreFileResultQuery = `
+	where workspace_uuid = :workspace_uuid
+		and filesystem_uuid = :filesystem_uuid
+		and id = :entry_id
+		and deleted_at is null
+`
+
 // MakeFilestoreDirectory 创建目录；MakeParents 为真时整条父链在同一事务内完成。
 func (d *DB) MakeFilestoreDirectory(ctx context.Context, input MakeFilestoreDirectoryInput) (SessionNamespaceNode, error) {
 	if err := validateFilestorePath(input.Path); err != nil {
@@ -240,9 +247,14 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 	}); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	moved, err := getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
-		where id = :entry_id and deleted_at is null
-	`, map[string]any{"entry_id": source.ID})
+	resultArguments := sessionNamespaceNodeMutationArguments(filesystem, input.SourcePath)
+	resultArguments["entry_id"] = source.ID
+	moved, err := getSessionNamespaceNodeSQLX(
+		ctx,
+		tx,
+		sessionNamespaceNodeSelectSQL()+moveFilestoreFileResultQuery,
+		resultArguments,
+	)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}

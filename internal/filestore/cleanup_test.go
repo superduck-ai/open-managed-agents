@@ -1,8 +1,10 @@
 package filestore
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -250,6 +252,35 @@ func TestCleanupWorkerRunTTLSweepOnceUsesBoundedBatch(t *testing.T) {
 	}
 }
 
+func TestCleanupWorkerRunTTLSweepOnceLogsMetadataAnomalies(t *testing.T) {
+	t.Parallel()
+
+	database := &fakeFilestoreCleanupDatabase{expireAnomalies: []db.FilestoreCleanupAnomaly{{
+		WorkspaceID:     42,
+		FilesystemID:    43,
+		EntryExternalID: "sesrsc_malformed",
+		Reason:          "missing_object_location",
+	}}}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	worker := NewCleanupWorker(database, nil, logger)
+
+	if err := worker.RunTTLSweepOnce(context.Background()); err != nil {
+		t.Fatalf("RunTTLSweepOnce() error = %v", err)
+	}
+	for _, want := range []string{
+		`"msg":"filestore cleanup metadata anomaly"`,
+		`"workspace_id":42`,
+		`"filesystem_id":43`,
+		`"entry_external_id":"sesrsc_malformed"`,
+		`"reason":"missing_object_location"`,
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("cleanup anomaly log lacks %s: %s", want, logs.String())
+		}
+	}
+}
+
 func TestCleanupWorkerRunTTLSweepOnceReturnsDatabaseError(t *testing.T) {
 	t.Parallel()
 
@@ -406,7 +437,9 @@ type fakeFilestoreCleanupDatabase struct {
 	filesystemProcessed      []int64
 	filesystemProcessLimit   int
 	filesystemProcessError   error
+	filesystemAnomalies      []db.FilestoreCleanupAnomaly
 	filesystemFailures       []cleanupFailure
+	expireAnomalies          []db.FilestoreCleanupAnomaly
 }
 
 func (d *fakeFilestoreCleanupDatabase) LeaseFilestoreFilesystemCleanupJobs(
@@ -426,10 +459,10 @@ func (d *fakeFilestoreCleanupDatabase) ProcessLeasedFilestoreFilesystemCleanupJo
 	jobID int64,
 	_ string,
 	limit int,
-) (bool, error) {
+) (bool, []db.FilestoreCleanupAnomaly, error) {
 	d.filesystemProcessed = append(d.filesystemProcessed, jobID)
 	d.filesystemProcessLimit = limit
-	return d.filesystemProcessError == nil, d.filesystemProcessError
+	return d.filesystemProcessError == nil, d.filesystemAnomalies, d.filesystemProcessError
 }
 
 func (d *fakeFilestoreCleanupDatabase) FailLeasedFilestoreFilesystemCleanupJob(
@@ -489,8 +522,8 @@ func (d *fakeFilestoreCleanupDatabase) FailLeasedFilestoreObjectCleanupJob(
 func (d *fakeFilestoreCleanupDatabase) ExpireSessionNamespaceNodes(
 	_ context.Context,
 	limit int,
-) ([]db.FilestoreObjectCleanupJob, error) {
+) ([]db.FilestoreObjectCleanupJob, []db.FilestoreCleanupAnomaly, error) {
 	d.expireCalls++
 	d.expireLimit = limit
-	return nil, d.expireError
+	return nil, d.expireAnomalies, d.expireError
 }

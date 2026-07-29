@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path"
@@ -269,10 +270,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		"parent_path":  filestoreParentPath(directoryPath),
 		"now":          now,
 	})
-	if isUniqueViolation(err) {
-		return SessionNamespaceNode{}, ErrFilestorePathExists
-	}
-	if err != nil {
+	if err := mapSessionNamespaceInsertError(err); err != nil {
 		return SessionNamespaceNode{}, err
 	}
 	return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
@@ -430,16 +428,23 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 		join sessions session on session.id = :session_id
 		returning id
 	`, arguments)
-	if isUniqueViolation(err) {
-		return SessionNamespaceNode{}, ErrFilestorePathExists
-	}
-	if err != nil {
+	if err := mapSessionNamespaceInsertError(err); err != nil {
 		return SessionNamespaceNode{}, err
 	}
 	arguments["resource_id"] = resourceID
 	return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
 		where id = :resource_id and deleted_at is null
 	`, arguments)
+}
+
+func mapSessionNamespaceInsertError(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if isUniqueViolation(err) {
+		return ErrFilestorePathExists
+	}
+	return err
 }
 
 func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilestoreFileTxInput) map[string]any {

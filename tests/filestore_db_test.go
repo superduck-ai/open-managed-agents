@@ -712,6 +712,21 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put cleanup file: %v", err)
 	}
+	malformed, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceID: workspaceID, FilesystemID: filesystem.ID, Path: "/results/malformed.txt",
+		Blob: workspaceStorageBlob(5, nil),
+	})
+	if err != nil {
+		t.Fatalf("put malformed cleanup candidate: %v", err)
+	}
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		delete from files
+		where uuid = (
+			select file_uuid from session_resources where id = $1
+		)
+	`, malformed.Node.ID); err != nil {
+		t.Fatalf("remove malformed cleanup backing File: %v", err)
+	}
 	cleanupSkillVersionUUID := seedFilestoreSkillVersion(
 		t, app, workspaceID, apiKeyID, "cleanup-skill",
 		"filestore-session-delete", "catalog/cleanup-skill.zip", 128, strings.Repeat("a", 64),
@@ -800,9 +815,12 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 		jobs[0].FilesystemUUID != filesystem.UUID {
 		t.Fatalf("leased filesystem cleanup jobs = %+v, want filesystem %d", jobs, filesystem.ID)
 	}
-	done, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(context.Background(), jobs[0].ID, "session-cleanup-worker", 100)
+	done, anomalies, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(context.Background(), jobs[0].ID, "session-cleanup-worker", 100)
 	if err != nil || !done {
 		t.Fatalf("process filesystem cleanup = done %v, error %v", done, err)
+	}
+	if len(anomalies) != 1 || anomalies[0].EntryExternalID != malformed.Node.ExternalID {
+		t.Fatalf("filesystem cleanup anomalies = %+v", anomalies)
 	}
 	var activeEntries, activeSkillArchiveEntries, cleanupObjects int
 	if err := app.db.Pool.QueryRow(context.Background(), `
@@ -828,7 +846,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 			cleanupObjects,
 		)
 	}
-	if _, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
+	if _, _, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
 		context.Background(),
 		jobs[0].ID,
 		"session-cleanup-worker",

@@ -94,7 +94,7 @@ func getFilestoreFilesystemSQLX(ctx context.Context, database sqlxNamedQueryer, 
 	if err != nil {
 		return FilestoreFilesystem{}, err
 	}
-	return row.filesystem(), nil
+	return row.filesystem()
 }
 
 func getFilestoreTokenScopeSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (FilestoreTokenScope, error) {
@@ -192,7 +192,10 @@ func insertFilestoreObjectCleanupJobSQLX(
 	return job, nil
 }
 
-func (row filestoreFilesystemRow) filesystem() FilestoreFilesystem {
+func (row filestoreFilesystemRow) filesystem() (FilestoreFilesystem, error) {
+	if row.SessionID == 0 {
+		return FilestoreFilesystem{}, ErrNotFound
+	}
 	return FilestoreFilesystem{
 		ID:                  row.ID,
 		SessionID:           row.SessionID,
@@ -206,7 +209,7 @@ func (row filestoreFilesystemRow) filesystem() FilestoreFilesystem {
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,
 		DeletedAt:           row.DeletedAt,
-	}
+	}, nil
 }
 
 func (row filestoreTokenScopeRow) scope() (FilestoreTokenScope, error) {

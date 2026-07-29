@@ -274,6 +274,10 @@ create index session_resources_file_uuid_active_v1_idx
 	on session_resources (workspace_id, file_uuid)
 	where deleted_at is null and file_uuid is not null;
 
+create index session_resources_owned_file_uuid_v1_idx
+	on session_resources (workspace_id, file_uuid)
+	where file_uuid is not null and payload is null;
+
 create index session_resources_public_created_v1_idx
 	on session_resources (workspace_id, session_id, created_at desc, id desc)
 	where deleted_at is null and payload is not null;

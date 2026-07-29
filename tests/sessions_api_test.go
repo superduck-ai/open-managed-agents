@@ -3609,6 +3609,7 @@ func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string
 			// 但之前创建的 Work 仍在等待消费。runner 已将该 Work 停止，
 			// 此处继续轮询才能等到当前 Session 的 Work。
 			if errors.Is(err, db.ErrNotFound) && time.Now().Before(deadline) {
+				time.Sleep(25 * time.Millisecond)
 				continue
 			}
 			t.Fatalf("run environment runner for code session: %v", err)

@@ -67,7 +67,7 @@ File resource 与 `/uploads` entry 的一致性由 resource 写事务负责，Ru
 ## 镜像验收
 
 仓库中的真实 E2E 固定使用
-`registry.gz.cvte.cn/oma/managed-agent-sandbox:latest`，避免测试配置静默回退到不含
+`ghcr.io/superduck-ai/managed-agent-sandbox:latest`，避免测试配置静默回退到不含
 `rclone-filestore` 的通用 template。部署前仍应将通过验收的镜像 digest 固化到发布系统，
 不能把可变的 `latest` 当作生产可复现性边界。
 

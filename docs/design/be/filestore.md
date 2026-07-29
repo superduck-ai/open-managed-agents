@@ -208,6 +208,8 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 
 迁移 `00023_provision_session_filesystems.sql` 建立“同一 Session 只能拥有一个有效 filesystem”的唯一部分索引，并为历史未软删除的 Session 回填缺失记录。创建索引前会检查历史重复；发现同一 Session 存在多个有效 filesystem 时迁移直接中止，不猜测应保留哪一条。迁移 `00024_use_uuid_filestore_entry_references.sql` 进一步把 entry 的组织、工作区、filesystem 和创建者引用改为稳定 UUID；旧引用存在孤立或租户错配时同样中止迁移。迁移 `00026_validate_filestore_filesystem_reference_scopes.sql` 在最终 UUID schema 上补验 filesystem 的组织、工作区、Session、Code Session 与 API Key 归属链，弥补早期回填只核对主键和 external ID 的不足。迁移 `00027_add_filestore_entry_management.sql` 在短事务中新增内部 ownership 列及 `NOT VALID` 形状约束，`00028_validate_filestore_entry_management.sql` 再以较弱锁单独验证历史行；两列必须成对为空或成对非空。迁移 `00029_add_filestore_file_references.sql` 新增 `source_file_uuid`、活动引用索引、每个 Session resource 唯一活动 entry 约束，并为历史活动 filesystem 补齐四个固定根目录；已有同名 entry 只有在它确实是 `parent_path=/` 的普通目录时才会复用，否则迁移中止。借用 entry 允许没有 Files API 未提供的 MD5，但必须与非过期的 `session_file_resource` 管理关系双向对应。`00030_validate_filestore_file_references.sql` 再单独验证放宽后的 blob 形状和 File reference 形状两个 `NOT VALID` 约束。回滚 `00029` 时只要仍有借用引用就明确失败；四个普通目录 row 会保留，因为 schema 没有把迁移回填目录与原有用户目录做额外标记，盲目删除会破坏数据。所有这些引用都由应用维护，不增加 PostgreSQL 外键。
 
+迁移 `00034_backfill_session_file_projections.sql` 为升级前已经存在的活动 Session File resource 输入补齐 scoped Files 投影。它复用 entry UUID 和源 File 元数据，只写投影记录，不更新 `workspace_storage_usage`；升级完成后，新增输入由 resource attach 事务即时物化，新增输出由 Filestore 写事务即时物化。
+
 根目录 `/` 是由 filesystem 合成的虚拟目录，不写 marker row 或 S3 marker object；五个固定一级目录是真实 directory entry，由 filesystem 创建事务写入，历史活动 filesystem 通过迁移补齐。每个 `/skills/<directory>` 是 archive entry；只有 zip 内部成员由 central directory 合成，不逐个写 entry。普通 entry 枚举排除 archive kind，`/skills` 专用只读视图负责把 archive 表现为目录并按需展开。文件系统和目录节点的归属都使用 `organization_uuid`、`workspace_uuid`、`filesystem_uuid` 等稳定引用；entry 的创建者审计 UUID 直接继承已经过租户链校验的 filesystem 归属，不再从 Filestore 请求构造空的内部主键 actor。请求进入数据库后仍可使用当前库内部 ID 取得工作区用量锁与 filesystem 锁，但 entry 的持久化与热查询只使用 UUID 边界。schema 不创建 PostgreSQL 外键；源 File UUID 的完整性由同事务行锁、删除守卫和 E2E 测试维护。
 
 文件对象 key 固定为：
@@ -314,6 +316,21 @@ cursor 是版本化的 Base64URL JSON，包含 filesystem ID、查询目录、`r
 
 每一页是独立 SQL 语句，因此当前语义是稳定排序下的实时遍历，而不是分页开始时的数据库快照：cursor 之后新建的节点可能出现在后续页，cursor 之前新建的节点不会补入本轮遍历；删除、过期或跨 cursor 改名也可能使节点消失、遗漏或按新路径再次出现。键集分页解决的是 `OFFSET` 位移和深页性能问题；如果未来合同要求严格快照，则需要额外引入 listing revision、长事务快照或变更序列。
 
+## Session 文件资源与 Files API 投影
+
+Session filesystem 是输入与输出字节的事实来源，但 scoped Files API 继续读取 `files` 表。平台因此把 `/uploads` 与 `/outputs` 中需要公开的 file entry 物化为 `scope_type = 'session'`、`scope_id = <session external_id>` 的 Files API 投影记录；`/transcripts`、`/tool_results` 与 `/skills` 不进入这个公开目录。
+
+投影复用对应 `filestore_entries.uuid` 作为 `files.uuid`。这个 UUID 是跨表的稳定关联键，不新增映射表或 nullable 引用列：
+
+- attach File resource 时，在创建 `/uploads` 借用 entry 的同一事务内创建输入投影；同一个 source File 多次 attach 会产生不同 entry UUID 和不同 `file_` external ID。
+- `/outputs` file entry 在创建、复制或移入该根目录的同一 Filestore 事务内创建投影；覆盖写通过 entry UUID upsert，保持已有 `file_` external ID 并更新当前对象元数据。删除、TTL 过期、目录递归删除或移出 `/outputs` 也在对应命名空间事务内软删除投影。
+- Worker 状态上报和 scoped Files 列表都是纯状态/读取路径，不承担补同步职责；因此 Session 处于 `running` 或 `requires_action` 时，调用方也能立即读取已成功提交到 Filestore 的输出。
+- 删除 File resource 会在同一事务内软删除输入 entry 与投影；删除 Session 会先退休 filesystem 并投递既有的分批清理任务，再在同一事务内撤销该 filesystem 对应的全部 scoped 投影。
+
+投影不拥有对象，也不重复计费。Files API 原始上传对象由 `files` 源记录计入 `files_bytes`，Filestore 自有输出由 entry 计入 `filestore_bytes`；投影创建、更新和软删除都不修改用量账本。低频账本重算也通过共享 UUID 排除投影，避免把同一物理对象计算两次。Files API 删除入口在发现活动 source reference 或 backing entry 时返回 `ErrFileInUse`；投影只能跟随 Session resource 或 Filestore 生命周期撤销，避免错误扣减 `files_bytes` 或删除 Filestore 所有的对象。
+
+投影维护属于 Filestore 命名空间写事务的一部分，不引入公开状态或专门的 capture/降级状态机。投影写入失败时文件创建、覆盖、移动或删除整体回滚，不会留下 entry 与 Files 目录不一致的半提交状态。scoped Files 分页只读取已经提交的 `files` 投影，因此继续保留稳定的 `file_` ID、既有 cursor 语义和下载路由。
+
 ## 写入、配额与清理
 
 上传保持流式：请求 body 不落本地临时文件，AWS v2 multipart uploader 使用有限 part size 和并发度；读取过程中同时计算实际字节数、MD5 和 SHA-256。`storage.max_file_bytes` 在流式边界执行，`storage.workspace_limit_bytes` 配额同时统计 Files API 对象和 Filestore 自有对象；指向 Files API 对象的借用 entry 不重复计费。
@@ -369,4 +386,4 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 
 ## 验收
 
-自动化覆盖协议编解码、10 条路由、JWT 路由隔离、Session 自动建档与四根目录回滚、File resource 与借用 entry 的原子增删、借用引用随目录移动、混合所有权子树删除、借用路径覆盖后的容量核算、99 个 File resource 后并发添加两个只成功一个、资源路径冲突与普通 namespace 占用的 `400`/`409` 分流、源 File 删除并发守卫、Session 生命周期撤权、service 编排、AWS v2 请求、DB 不变量、清理重试和 TTL；用量账本另行覆盖共享限额并发、借用对象不重复计费、事务回滚、覆盖差值、覆盖式移动、递归删除与 TTL 释放。真实验收使用本地 PostgreSQL/MinIO 启动服务，再从 OrbStack 虚拟机运行 `/home/arthur/rclone-filestore`，验证目录创建、上传、列表、范围/完整读取、复制、移动、删除和 multimount 生命周期；E2B 验收另确认 Files API resource 形成的 `/uploads` 引用可以读取且不会生成第二份对象。
+自动化覆盖协议编解码、10 条路由、JWT 路由隔离、Session 自动建档与五个固定根目录回滚、File resource 与借用 entry 的原子增删、输入和输出投影写时可见、投影失败整体回滚、覆盖写 file ID 稳定、输出删除与 Session 删除撤销投影、借用引用随目录移动、混合所有权子树删除、借用路径覆盖后的容量核算、99 个 File resource 后并发添加两个只成功一个、资源路径冲突与普通 namespace 占用的 `400`/`409` 分流、源 File 和投影 File 删除守卫、Session 生命周期撤权、service 编排、AWS v2 请求、DB 不变量、清理重试和 TTL；用量账本另行覆盖共享限额并发、投影与借用对象不重复计费、事务回滚、覆盖差值、覆盖式移动、递归删除与 TTL 释放。真实验收使用本地 PostgreSQL/MinIO 启动服务，再从 OrbStack 虚拟机运行 `/home/arthur/rclone-filestore`，验证目录创建、上传、列表、范围/完整读取、复制、移动、删除和 multimount 生命周期；E2B 验收另确认 Files API resource 形成的 `/uploads` 引用可以读取且不会生成第二份对象，并验证 `/outputs` 在 Session 运行期间可通过 scoped Files API 列表和下载。

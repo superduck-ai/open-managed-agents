@@ -70,7 +70,7 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 			"active file reference",
 			activeFileReferenceQuery,
 			map[string]any{"workspace_id": int64(42), "file_uuid": file.UUID},
-			2,
+			3,
 		},
 		{"soft delete", softDeleteFileQuery, getFileArguments(42, file.ExternalID), 2},
 		{

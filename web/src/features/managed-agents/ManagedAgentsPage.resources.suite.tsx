@@ -1341,6 +1341,41 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByText('updated nested memory')).toBeTruthy();
   });
 
+  test('removes a draft file resource before creating a session', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
+    expect(within(dialog).getByLabelText('File ID')).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove file resource 1' }));
+    expect(within(dialog).queryByLabelText('File ID')).toBeNull();
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Environment' }).textContent).toContain('Environment one'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([]);
+  });
+
   test('creates a session with selected agent and environment references', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
@@ -1351,18 +1386,30 @@ export function registerManagedAgentsResourceTests() {
 
     const dialog = screen.getByRole('dialog', { name: 'Create session' });
     fireEvent.change(within(dialog).getByLabelText('Title'), { target: { value: 'Console session' } });
-    const resourceTrigger = within(dialog).getByRole('button', { name: 'Resource' });
-    expect(resourceTrigger.dataset.slot).toBe('collapsible-trigger');
-    const resourceCard = resourceTrigger.closest('[data-slot="card"]');
-    expect(resourceCard).toBeTruthy();
-    expect(resourceCard?.className.includes('bg-secondary')).toBe(false);
-    expect(resourceTrigger.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(resourceTrigger);
-    expect(resourceTrigger.getAttribute('aria-expanded')).toBe('true');
-    const resourceCopy = within(dialog).getByText(
-      'No resource attachments are configured. Add files, repositories, or memory stores after creation.',
+    expect(within(dialog).getByText('Mount files into the session uploads directory.')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
+    const createSessionButton = within(dialog).getByRole('button', { name: 'Create session' });
+    const fileIdInput = within(dialog).getByLabelText('File ID');
+    const mountPathInput = within(dialog).getByLabelText('Mount path');
+    expect(fileIdInput.hasAttribute('required')).toBe(true);
+    expect(mountPathInput.hasAttribute('required')).toBe(true);
+    expect(createSessionButton.hasAttribute('disabled')).toBe(true);
+
+    fireEvent.change(fileIdInput, { target: { value: 'file_input123456' } });
+    fireEvent.change(mountPathInput, {
+      target: { value: '/workspace/input.txt' },
+    });
+    expect(createSessionButton.hasAttribute('disabled')).toBe(true);
+    expect(within(dialog).getByText('Must start with /uploads/')).toBeTruthy();
+
+    fireEvent.change(mountPathInput, {
+      target: { value: '/uploads/input.txt' },
+    });
+    expect(within(dialog).getByText('Available at /mnt/session/uploads/input.txt')).toBeTruthy();
+    expect(within(dialog).getByRole('link', { name: 'Manage files' }).getAttribute('href')).toBe(
+      '/workspaces/default/files',
     );
-    expect(resourceCopy.closest('[data-slot="collapsible-content"]')).toBeTruthy();
 
     await waitFor(() =>
       expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
@@ -1383,6 +1430,13 @@ export function registerManagedAgentsResourceTests() {
     expect(createRequest?.body?.title).toBe('Console session');
     expect(createRequest?.body?.agent).toBe('agent_option123456');
     expect(createRequest?.body?.environment_id).toBe('env_option123456');
+    expect(createRequest?.body?.resources).toEqual([
+      {
+        type: 'file',
+        file_id: 'file_input123456',
+        mount_path: '/input.txt',
+      },
+    ]);
     expect(createRequest?.headers['x-workspace-id']).toBe('default');
   });
 

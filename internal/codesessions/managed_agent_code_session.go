@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"strings"
 	"time"
 
@@ -89,10 +88,11 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 			input.Session.WorkspaceID,
 			record.ExternalID,
 		); cleanupErr != nil {
-			log.Printf(
-				"terminate incomplete managed-agent code session code_session_id=%s cleanup_error_type=%T",
-				record.ExternalID,
-				cleanupErr,
+			s.logger.ErrorContext(
+				cleanupCtx,
+				"terminate incomplete managed agent code session",
+				"code_session_id", record.ExternalID,
+				"error", cleanupErr,
 			)
 		}
 	}()

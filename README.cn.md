@@ -150,9 +150,16 @@ code_session:
 ./scripts/restart-server.sh
 ```
 
+需要调试 Managed Agent Sandbox、Filestore FUSE 挂载或 Environment Runner 时，推荐让 Docker Compose 只运行 PostgreSQL、Redis、MinIO，并从源码在宿主机分别启动 e2b-local、oma-server 和 Vite。完整启动顺序与必要配置见[本地开发模式](docs/design/docker-compose-deployment.md#8-本地开发模式)。
+
 脚本要求存在 `config/config.yaml`，并在释放端口前完成检查；缺失时会直接退出。首次运行先执行 `cp config/config.example.yaml config/config.yaml`。
 
 监听地址由 `config/config.yaml` 的 `server.addr` 决定。修改端口后，用 `PORT` 告诉重启脚本释放对应监听端口：
+
+```yaml
+server:
+  addr: 127.0.0.1:18080
+```
 
 ```bash
 PORT=18080 ./scripts/restart-server.sh
@@ -161,7 +168,7 @@ PORT=18080 ./scripts/restart-server.sh
 健康检查：
 
 ```bash
-curl http://127.0.0.1:38080/healthz
+curl http://127.0.0.1:18080/healthz
 ```
 
 预期返回：

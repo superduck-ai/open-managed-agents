@@ -4,12 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
 const (
 	sessionFileResourceManagedBy = "session_file_resource"
+	sessionFileProjectionScope   = "session"
+	sessionOutputsRootPath       = "/outputs"
+	sessionUploadsRootPath       = "/uploads"
 	countSessionFileResourcesSQL = `
 		select count(*)
 		from session_resources
@@ -34,6 +39,76 @@ const (
 			)
 		order by entry.path
 		limit 1
+	`
+	upsertSessionFileProjectionSQL = `
+		insert into files (
+			uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
+			s3_bucket, s3_key, downloadable, scope_type, scope_id,
+			created_by_api_key_id, created_at
+		)
+		values (
+			CAST(:file_uuid AS uuid),
+			concat('file_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+			:workspace_id, :filename, :mime_type, :size_bytes, :sha256,
+			:s3_bucket, :s3_key, :downloadable, :scope_type, :scope_id,
+			:created_by_api_key_id, :created_at
+		)
+		on conflict (uuid) do update
+		set filename = excluded.filename,
+			mime_type = excluded.mime_type,
+			size_bytes = excluded.size_bytes,
+			sha256 = excluded.sha256,
+			s3_bucket = excluded.s3_bucket,
+			s3_key = excluded.s3_key,
+			downloadable = excluded.downloadable,
+			scope_type = excluded.scope_type,
+			scope_id = excluded.scope_id,
+			created_by_api_key_id = excluded.created_by_api_key_id,
+			created_at = excluded.created_at,
+			deleted_at = null
+	`
+	softDeleteSessionFileProjectionSQL = `
+		update files
+		set deleted_at = now()
+		where workspace_id = :workspace_id
+			and uuid = CAST(:file_uuid AS uuid)
+			and scope_type = :scope_type
+			and scope_id = :scope_id
+			and deleted_at is null
+	`
+	softDeleteSessionFileProjectionsByScopeSQL = `
+		update files
+		set deleted_at = now()
+		where workspace_id = :workspace_id
+			and scope_type = :scope_type
+			and scope_id = :scope_id
+			and deleted_at is null
+	`
+	softDeleteSessionFileProjectionByEntrySQL = `
+		update files projection
+		set deleted_at = now()
+		where projection.workspace_id = :workspace_id
+			and projection.scope_type = :scope_type
+			and projection.uuid = CAST(:file_uuid AS uuid)
+			and projection.deleted_at is null
+	`
+	softDeleteSessionFileProjectionSubtreeSQL = `
+		update files projection
+		set deleted_at = now()
+		where projection.workspace_id = :workspace_id
+			and projection.scope_type = :scope_type
+			and projection.deleted_at is null
+			and exists (
+				select 1
+				from filestore_entries entry
+				where entry.workspace_uuid = :workspace_uuid
+					and entry.filesystem_uuid = :filesystem_uuid
+					and entry.uuid = projection.uuid
+					and (
+						entry.path = :root_path
+						or left(entry.path, char_length(:root_path) + 1) = :root_path || '/'
+					)
+			)
 	`
 )
 
@@ -167,7 +242,7 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 			return err
 		}
 	}
-	_, err = getFilestoreEntrySQLX(ctx, tx, `
+	entry, err := getFilestoreEntrySQLX(ctx, tx, `
 		insert into filestore_entries (
 			uuid, external_id, organization_uuid, workspace_uuid, filesystem_uuid,
 			kind, path, parent_path, size_bytes, media_type, metadata,
@@ -212,6 +287,146 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	if isUniqueViolation(err) {
 		return ErrFilestorePathExists
 	}
+	if err != nil {
+		return err
+	}
+	return upsertSessionFileProjectionTx(ctx, tx, session, entry.UUID, file, resource.CreatedAt)
+}
+
+func upsertSessionFileProjectionTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	session Session,
+	entryUUID string,
+	file FileRecord,
+	createdAt time.Time,
+) error {
+	_, err := namedExecContext(ctx, tx, upsertSessionFileProjectionSQL, map[string]any{
+		"file_uuid":             entryUUID,
+		"workspace_id":          session.WorkspaceID,
+		"filename":              file.Filename,
+		"mime_type":             file.MimeType,
+		"size_bytes":            file.SizeBytes,
+		"sha256":                file.SHA256,
+		"s3_bucket":             file.S3Bucket,
+		"s3_key":                file.S3Key,
+		"downloadable":          file.Downloadable,
+		"scope_type":            sessionFileProjectionScope,
+		"scope_id":              session.ExternalID,
+		"created_by_api_key_id": session.CreatedByAPIKeyID,
+		"created_at":            filestoreNow(createdAt),
+	})
+	return err
+}
+
+func refreshSessionFileProjectionForEntryTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	workspaceID int64,
+	filesystem FilestoreFilesystem,
+	entry FilestoreEntry,
+) error {
+	if filestoreEntryExpired(entry, time.Now().UTC()) {
+		return softDeleteSessionFileProjectionByEntryTx(ctx, tx, workspaceID, entry.UUID)
+	}
+	if entry.Kind == FilestoreEntryKindFile &&
+		filestorePathIsDescendant(sessionOutputsRootPath, entry.Path) {
+		if entry.SizeBytes == nil || entry.SHA256 == nil ||
+			entry.S3Bucket == nil || entry.S3Key == nil {
+			return ErrPreconditionFailed
+		}
+		session, err := getSessionForFileProjectionTx(ctx, tx, workspaceID, filesystem.SessionUUID)
+		if err != nil {
+			return err
+		}
+		mimeType := filestoreString(entry.DetectedMimeType)
+		if mimeType == "" {
+			mimeType = filestoreString(entry.MediaType)
+		}
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		return upsertSessionFileProjectionTx(ctx, tx, session, entry.UUID, FileRecord{
+			Filename:     path.Base(entry.Path),
+			MimeType:     mimeType,
+			SizeBytes:    filestoreInt64(entry.SizeBytes),
+			SHA256:       filestoreString(entry.SHA256),
+			S3Bucket:     filestoreString(entry.S3Bucket),
+			S3Key:        filestoreString(entry.S3Key),
+			Downloadable: entry.Downloadable,
+		}, entry.CreatedAt)
+	}
+	if entry.Kind == FilestoreEntryKindFile &&
+		filestorePathIsDescendant(sessionUploadsRootPath, entry.Path) &&
+		filestoreString(entry.ManagedBy) == sessionFileResourceManagedBy &&
+		entry.ManagedResourceUUID != nil &&
+		entry.SourceFileUUID != nil {
+		session, err := getSessionForFileProjectionTx(ctx, tx, workspaceID, filesystem.SessionUUID)
+		if err != nil {
+			return err
+		}
+		source, err := getFileRecordSQLX(
+			ctx,
+			tx,
+			getFileByUUIDQuery,
+			fileUUIDArguments(workspaceID, filestoreString(entry.SourceFileUUID)),
+		)
+		if err != nil {
+			return err
+		}
+		return upsertSessionFileProjectionTx(
+			ctx, tx, session, entry.UUID, source, entry.CreatedAt,
+		)
+	}
+	return softDeleteSessionFileProjectionByEntryTx(ctx, tx, workspaceID, entry.UUID)
+}
+
+func getSessionForFileProjectionTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	workspaceID int64,
+	sessionUUID string,
+) (Session, error) {
+	return getSessionSQLX(ctx, tx, `
+		select `+sessionSQLXColumns+`
+		from sessions
+		where workspace_id = :workspace_id
+			and uuid = CAST(:session_uuid AS uuid)
+			and deleted_at is null
+	`, map[string]any{
+		"workspace_id": workspaceID,
+		"session_uuid": sessionUUID,
+	})
+}
+
+func softDeleteSessionFileProjectionByEntryTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	workspaceID int64,
+	entryUUID string,
+) error {
+	_, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionByEntrySQL, map[string]any{
+		"workspace_id": workspaceID,
+		"scope_type":   sessionFileProjectionScope,
+		"file_uuid":    entryUUID,
+	})
+	return err
+}
+
+func softDeleteSessionFileProjectionSubtreeTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	workspaceID int64,
+	filesystem FilestoreFilesystem,
+	rootPath string,
+) error {
+	_, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionSubtreeSQL, map[string]any{
+		"workspace_id":    workspaceID,
+		"scope_type":      sessionFileProjectionScope,
+		"workspace_uuid":  filesystem.WorkspaceUUID,
+		"filesystem_uuid": filesystem.UUID,
+		"root_path":       rootPath,
+	})
 	return err
 }
 
@@ -313,6 +528,14 @@ func unbindSessionFileResourceTx(
 		set deleted_at = now(), updated_at = now()
 		where id = :entry_id and deleted_at is null
 	`, map[string]any{"entry_id": entry.ID}); err != nil {
+		return err
+	}
+	if _, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionSQL, map[string]any{
+		"workspace_id": session.WorkspaceID,
+		"file_uuid":    entry.UUID,
+		"scope_type":   sessionFileProjectionScope,
+		"scope_id":     session.ExternalID,
+	}); err != nil {
 		return err
 	}
 	return nil

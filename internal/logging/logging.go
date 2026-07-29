@@ -1,6 +1,6 @@
-// Package observability provides logging helpers, including a console slog
+// Package logging provides logging helpers, including a console slog
 // handler that renders human-friendly, ANSI-colored output for local/dev use.
-package observability
+package logging
 
 import (
 	"context"
@@ -19,6 +19,16 @@ const (
 	ansiCyan   = "\033[36m"
 	ansiGray   = "\033[90m"
 )
+
+// LoggerOrDefault normalizes optional logger dependencies at component
+// construction boundaries. Component methods and private helpers should keep
+// and use the returned non-nil logger instead of consulting slog.Default.
+func LoggerOrDefault(logger *slog.Logger) *slog.Logger {
+	if logger != nil {
+		return logger
+	}
+	return slog.Default()
+}
 
 // ConsoleHandler writes colored, single-line logs. HTTP access logs
 // (component=http) are rendered as "[clientKind] METHOD STATUS durationMs URL".

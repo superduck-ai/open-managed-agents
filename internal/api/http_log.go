@@ -5,7 +5,6 @@ import (
 	"math"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +21,7 @@ func requestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handl
 			fields := requestLogFields(r)
 			requestID := httpapi.RequestID(r.Context())
 			startedAt := time.Now()
-			logger.Info(requestLogMessage(fields), httpLogAttrs("request", requestID, fields)...)
+			logger.InfoContext(r.Context(), "http request", httpLogAttrs("request", requestID, fields)...)
 
 			wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			next.ServeHTTP(wrapped, r)
@@ -35,11 +34,10 @@ func requestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handl
 				"status", status,
 				"durationMs", durationMilliseconds(startedAt),
 			)
-			message := responseLogMessage(fields, status)
 			if status >= http.StatusOK && status < http.StatusMultipleChoices {
-				logger.Info(message, attrs...)
+				logger.InfoContext(r.Context(), "http response", attrs...)
 			} else {
-				logger.Error(message, attrs...)
+				logger.ErrorContext(r.Context(), "http response", attrs...)
 			}
 		})
 	}
@@ -77,9 +75,8 @@ func requestLogURL(r *http.Request) string {
 	if r.URL == nil {
 		return ""
 	}
-	if uri := r.URL.RequestURI(); uri != "" {
-		return uri
-	}
+	// Query values commonly carry OAuth state/code and other credentials. Access
+	// logs keep the established "url" field but intentionally store path only.
 	return r.URL.Path
 }
 
@@ -104,14 +101,6 @@ func httpLogAttrs(event string, requestID string, fields logRequestFields, after
 		attrs = append(attrs, "anthropicClientApp", fields.anthropicClientApp)
 	}
 	return attrs
-}
-
-func requestLogMessage(fields logRequestFields) string {
-	return ">>> " + fields.method + " " + fields.url
-}
-
-func responseLogMessage(fields logRequestFields, status int) string {
-	return "<<< " + fields.method + " " + fields.url + " " + strconv.Itoa(status)
 }
 
 func durationMilliseconds(startedAt time.Time) float64 {

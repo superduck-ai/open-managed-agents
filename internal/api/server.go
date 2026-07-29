@@ -2,9 +2,9 @@ package api
 
 import (
 	"errors"
-	"log"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	adminapi "github.com/superduck-ai/open-managed-agents/internal/admin"
@@ -20,6 +20,7 @@ import (
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
@@ -41,6 +42,7 @@ import (
 type Server struct {
 	cfg                  config.Config
 	db                   *db.DB
+	logger               *slog.Logger
 	router               chi.Router
 	platformStore        platformsession.Store
 	filestoreCredentials *filestoreapi.TokenCredentials
@@ -65,6 +67,7 @@ type Server struct {
 // ServerDeps 汇总组装 HTTP API Server 所需依赖。
 // PlatformStore 为 nil 时回落到内存 store。
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
+// Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
 	Config                 config.Config
 	DB                     *db.DB
@@ -79,43 +82,51 @@ type ServerDeps struct {
 // NewServer 用显式依赖组装 HTTP API Server。
 // 注入 CodeSessionCredentials，保证 HTTP 验签与 sandbox 启动签发使用同一公钥身份。
 func NewServer(deps ServerDeps) *Server {
+	rootLogger := logging.LoggerOrDefault(deps.Logger)
+	componentLogger := func(component string) *slog.Logger {
+		return rootLogger.With("component", component)
+	}
 	platformStore := deps.PlatformStore
 	if platformStore == nil {
 		platformStore = platformsession.NewMemoryStore()
 	}
-	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials)
+	codeSessionLogger := componentLogger("codesessions")
+	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger)
+	webhookLogger := componentLogger("webhooks")
+	webhookEnqueuer := webhooksapi.NewEnqueuer(deps.DB, deps.Config.Webhook, webhookLogger)
+	workbenchLogger := componentLogger("workbench")
+	mcpCatalogHandler := mcpcatalogs.NewHandler(deps.DB, componentLogger("mcp_catalogs"))
 	filestoreService := deps.FilestoreService
 	if filestoreService == nil {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore)
 	}
-	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService)
+	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	s := &Server{
 		cfg:                  deps.Config,
 		db:                   deps.DB,
+		logger:               componentLogger("api"),
 		platformStore:        platformStore,
 		filestoreCredentials: deps.FilestoreCredentials,
-		admin:                adminapi.NewHandler(deps.Config, deps.DB),
-		agents:               agents.NewHandler(deps.Config, deps.DB),
-		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
-		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService),
-		deployments:          deploymentsapi.NewHandler(deps.Config, deps.DB),
-		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.Config, deps.DB),
-		envs:                 environments.NewHandler(deps.Config, deps.DB),
-		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
+		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
+		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
+		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
+		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, codeSessionLogger),
+		deployments:          deploymentsapi.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("deployments")),
+		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.Config, deps.DB, componentLogger("deployment_runs")),
+		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
+		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:            filestoreHandler,
-		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
-		messages:             messagesapi.NewHandler(deps.Config),
+		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")),
+		messages:             messagesapi.NewHandler(deps.Config, componentLogger("messages")),
 		models:               modelsapi.NewHandler(deps.Config.AnthropicUpstream),
-		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService),
-		skills:               skillsapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore),
-		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB),
-		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB),
+		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, componentLogger("sessions")),
+		skills:               skillsapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("skills")),
+		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("vaults")),
+		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 	}
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
-	if deps.Logger != nil {
-		router.Use(requestLoggingMiddleware(deps.Logger.With("component", "http")))
-	}
+	router.Use(requestLoggingMiddleware(componentLogger("http")))
 	router.Use(s.recoverMiddleware)
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -123,7 +134,7 @@ func NewServer(deps ServerDeps) *Server {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	s.registerVersionedAPIRoutes(router)
-	s.registerPlatformConsoleRoutes(router)
+	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler)
 	s.router = router
 	return s
 }
@@ -174,7 +185,7 @@ func filestoreNotFound(w http.ResponseWriter, _ *http.Request) {
 	filestoreapi.WriteProtocolError(w, http.StatusNotFound, "not_found", "Not found")
 }
 
-func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
+func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogger *slog.Logger, mcpCatalogHandler *mcpcatalogs.Handler) {
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
@@ -194,7 +205,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 			platformapi.RegisterOrganizationBillingRoutes(r)
 			platformapi.RegisterOrganizationAnalyticsRoutes(r)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.cfg)
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream)
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream, workbenchLogger)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 		})
 		r.Route("/api/oauth/organizations/{orgUuid}", func(r chi.Router) {
@@ -206,7 +217,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router) {
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db)
-			mcpcatalogs.NewHandler(s.db).RegisterRoutes(r)
+			mcpCatalogHandler.RegisterRoutes(r)
 		})
 		r.Route("/api/{orgUuid}", func(r chi.Router) {
 			s.files.RegisterPlatformRoutes(r)
@@ -254,7 +265,13 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				requestID := httpapi.RequestID(r.Context())
-				log.Printf("panic request_id=%s: %v", requestID, recovered)
+				s.logger.ErrorContext(
+					r.Context(),
+					"panic recovered",
+					"request_id", requestID,
+					"panic", recovered,
+					"stack", string(debug.Stack()),
+				)
 				httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Internal server error"))
 			}
 		}()
@@ -385,7 +402,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		if errors.Is(err, platformsession.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session")
 		}
-		log.Printf("authenticate platform session: %v", err)
+		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	if strings.TrimSpace(session.OrganizationUUID) == "" && strings.TrimSpace(session.OrganizationExternalID) != "" {
@@ -407,7 +424,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		if errors.Is(err, db.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not found")
 		}
-		log.Printf("load platform workspace override: %v", err)
+		s.logger.ErrorContext(r.Context(), "load platform workspace override", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	if workspace.ArchivedAt != nil {
@@ -442,7 +459,7 @@ func (s *Server) recoverPlatformMirrorSession(r *http.Request) (auth.Principal, 
 			if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
 				return auth.Principal{}, "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session"), true
 			}
-			log.Printf("recover platform session context: %v", err)
+			s.logger.ErrorContext(r.Context(), "recover platform session context", "error", err)
 			return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
 		}
 	}
@@ -455,11 +472,11 @@ func (s *Server) recoverPlatformMirrorSession(r *http.Request) (auth.Principal, 
 		if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
 			return auth.Principal{}, "", httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session"), true
 		}
-		log.Printf("recover platform session identity: %v", err)
+		s.logger.ErrorContext(r.Context(), "recover platform session identity", "error", err)
 		return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
 	}
 	if err := s.platformStore.Save(r.Context(), sessionKey, session); err != nil {
-		log.Printf("save recovered platform session: %v", err)
+		s.logger.ErrorContext(r.Context(), "save recovered platform session", "error", err)
 		return auth.Principal{}, "", httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed"), true
 	}
 	principal := session.Principal()
@@ -480,7 +497,7 @@ func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal au
 		if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not found")
 		}
-		log.Printf("load platform organization override: %v", err)
+		s.logger.ErrorContext(r.Context(), "load platform organization override", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	if org.UUID != principal.OrganizationUUID && org.ExternalID != principal.OrganizationExternalID {
@@ -509,7 +526,7 @@ func (s *Server) platformMirrorOrganizationAlias(r *http.Request, principal auth
 	if errors.Is(err, db.ErrNotFound) || errors.Is(err, platform.ErrNotFound) {
 		return orgID
 	}
-	log.Printf("load platform mirror organization alias: %v", err)
+	s.logger.ErrorContext(r.Context(), "load platform mirror organization alias", "error", err)
 	return ""
 }
 

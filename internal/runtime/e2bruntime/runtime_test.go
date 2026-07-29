@@ -1,8 +1,12 @@
 package e2bruntime
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +36,142 @@ func TestConnectionOptsFromConfigMapsAllFields(t *testing.T) {
 	if got.RequestTimeoutMs == nil || *got.RequestTimeoutMs != wantTimeoutMs {
 		t.Fatalf("ConnectionOptsFromConfig().RequestTimeoutMs = %v, want %d", got.RequestTimeoutMs, wantTimeoutMs)
 	}
+}
+
+func TestExecuteCommandTransport(t *testing.T) {
+	stdin := []byte(`{"version":1}`)
+	results := []struct {
+		name   string
+		result CommandResult
+	}{
+		{"success", CommandResult{Stdout: []byte(`{"status":"succeeded"}`)}},
+		{"nonzero exit", CommandResult{ExitCode: 10, Stderr: []byte("diagnostic")}},
+	}
+	for _, tt := range results {
+		t.Run(tt.name, func(t *testing.T) {
+			process := newRecordingCommandProcess()
+			process.result = tt.result
+			got, err := executeCommand(context.Background(), CommandRequest{Command: "provision --stdin", Stdin: stdin, Timeout: time.Second}, process.start)
+			if err != nil || !reflect.DeepEqual(got, tt.result) {
+				t.Fatalf("executeCommand() = (%#v, %v), want (%#v, nil)", got, err, tt.result)
+			}
+			if !reflect.DeepEqual(process.stdin, stdin) || process.sendOrder > process.waitOrder || process.closeOrder > process.waitOrder {
+				t.Fatalf("stdin/order = (%q, %d, %d, %d), want send and close before wait", process.stdin, process.sendOrder, process.closeOrder, process.waitOrder)
+			}
+		})
+	}
+
+	for _, tt := range []struct {
+		name, want string
+		configure  func(*recordingCommandProcess)
+	}{
+		{"send failure", "send sandbox command stdin", func(p *recordingCommandProcess) { p.sendErr = errors.New("send") }},
+		{"close failure", "close sandbox command stdin", func(p *recordingCommandProcess) { p.closeErr = errors.New("close") }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			process := newRecordingCommandProcess()
+			tt.configure(process)
+			_, err := executeCommand(context.Background(), CommandRequest{Command: "provision --stdin", Stdin: stdin, Timeout: time.Second}, process.start)
+			if err == nil || !strings.Contains(err.Error(), tt.want) || process.kills != 1 {
+				t.Fatalf("error/kills = (%v, %d), want %q and one kill", err, process.kills, tt.want)
+			}
+		})
+	}
+
+	t.Run("timeout returns and attempts kill", func(t *testing.T) {
+		process := newRecordingCommandProcess()
+		process.blockWait = true
+		started := time.Now()
+		_, err := executeCommand(context.Background(), CommandRequest{Command: "provision --stdin", Stdin: stdin, Timeout: 10 * time.Millisecond}, process.start)
+		if err == nil || !strings.Contains(err.Error(), "deadline exceeded") || process.kills != 1 {
+			t.Fatalf("error/kills = (%v, %d), want deadline and one kill", err, process.kills)
+		}
+		if time.Since(started) > 500*time.Millisecond {
+			t.Fatal("executeCommand blocked after timeout")
+		}
+	})
+}
+
+func TestRunConnectedCommandAppliesDeadlineBeforeConnect(t *testing.T) {
+	started := time.Now()
+	_, err := runConnectedCommand(
+		context.Background(),
+		CommandRequest{Command: "provision", Timeout: 10 * time.Millisecond},
+		func(ctx context.Context) (commandStarter, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runConnectedCommand() error = %v, want deadline exceeded", err)
+	}
+	if time.Since(started) > 500*time.Millisecond {
+		t.Fatal("runConnectedCommand did not apply timeout to connect")
+	}
+}
+
+type recordingCommandProcess struct {
+	mu                                                sync.Mutex
+	sequence, sendOrder, closeOrder, waitOrder, kills int
+	stdin                                             []byte
+	result                                            CommandResult
+	sendErr, closeErr                                 error
+	blockWait                                         bool
+	waitDone                                          chan struct{}
+}
+
+func newRecordingCommandProcess() *recordingCommandProcess {
+	return &recordingCommandProcess{waitDone: make(chan struct{})}
+}
+
+func (p *recordingCommandProcess) start(_ context.Context, _ CommandRequest) (commandProcess, error) {
+	return p, nil
+}
+
+func (p *recordingCommandProcess) SendStdin(_ context.Context, stdin []byte) error {
+	p.sendOrder = p.record(false)
+	p.stdin = append([]byte(nil), stdin...)
+	return p.sendErr
+}
+
+func (p *recordingCommandProcess) CloseStdin(_ context.Context) error {
+	p.closeOrder = p.record(false)
+	return p.closeErr
+}
+
+func (p *recordingCommandProcess) Wait() (CommandResult, error) {
+	p.waitOrder = p.record(false)
+	if p.blockWait {
+		<-p.waitDone
+	}
+	return p.result, nil
+}
+
+func (p *recordingCommandProcess) Kill(context.Context) error {
+	p.record(true)
+	return nil
+}
+
+func (p *recordingCommandProcess) Disconnect() {
+	p.releaseWait()
+}
+
+func (p *recordingCommandProcess) releaseWait() {
+	select {
+	case <-p.waitDone:
+	default:
+		close(p.waitDone)
+	}
+}
+
+func (p *recordingCommandProcess) record(kill bool) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sequence++
+	if kill {
+		p.kills++
+	}
+	return p.sequence
 }
 
 func TestSandboxVolumeMountsOnlyIncludeUserData(t *testing.T) {

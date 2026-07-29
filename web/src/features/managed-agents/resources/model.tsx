@@ -315,6 +315,7 @@ export function initialFormValues(
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
     memoryStoreIds: entity ? entityMemoryStoreIds(entity) : [],
+    fileResources: [],
   };
 }
 

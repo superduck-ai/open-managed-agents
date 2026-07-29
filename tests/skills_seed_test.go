@@ -56,7 +56,7 @@ func TestSeedBuiltinSkillsRejectsInvalidArchives(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeSkillArchive(t, dir, uniqueBuiltinSeedID("bad"), zipEntriesBytes(t, tt.entries))
-			_, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{Dir: dir})
+			_, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{Dir: dir}, nil)
 			if err == nil || !stringsContains(err.Error(), tt.want) {
 				t.Fatalf("seed invalid archive err = %v, want containing %q", err, tt.want)
 			}
@@ -82,7 +82,7 @@ func TestSeedBuiltinSkills(t *testing.T) {
 	result, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
 		Dir:          dir,
 		VersionsPath: versionsPath,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("seed builtin skills: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestSeedBuiltinSkills(t *testing.T) {
 	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
 		Dir:          dir,
 		VersionsPath: versionsPath,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("seed builtin skills idempotent rerun: %v", err)
 	}
 	rerunVersion, err := app.db.GetBuiltinSkillVersion(context.Background(), skillID, "latest")
@@ -122,7 +122,7 @@ func TestSeedBuiltinSkills(t *testing.T) {
 	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{
 		Dir:          dir,
 		VersionsPath: versionsPath,
-	}); err == nil || !stringsContains(err.Error(), "already exists with different content") {
+	}, nil); err == nil || !stringsContains(err.Error(), "already exists with different content") {
 		t.Fatalf("conflicting seed error = %v, want version conflict", err)
 	}
 }
@@ -139,7 +139,7 @@ func TestSeedBuiltinSkillsPrune(t *testing.T) {
 	pdfID := uniqueBuiltinSeedID("pdf")
 	writeSkillArchive(t, dir, xlsxID, skillArchiveBytes(t, xlsxID, "# xlsx\n"))
 	writeSkillArchive(t, dir, pdfID, skillArchiveBytes(t, pdfID, "# pdf\n"))
-	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{Dir: dir}); err != nil {
+	if _, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{Dir: dir}, nil); err != nil {
 		t.Fatalf("seed initial: %v", err)
 	}
 	pdfVersion, err := app.db.GetBuiltinSkillVersion(context.Background(), pdfID, "latest")
@@ -152,7 +152,7 @@ func TestSeedBuiltinSkillsPrune(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, pdfID+".skill")); err != nil {
 		t.Fatalf("remove pdf archive: %v", err)
 	}
-	result, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{Dir: dir, Prune: true})
+	result, err := skills.SeedBuiltinSkills(context.Background(), app.db, store, skills.BuiltinSeedOptions{Dir: dir, Prune: true}, nil)
 	if err != nil {
 		t.Fatalf("seed prune: %v", err)
 	}

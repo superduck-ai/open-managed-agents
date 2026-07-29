@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -18,6 +18,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -32,6 +33,7 @@ type Handler struct {
 	cfg    config.Config
 	db     *db.DB
 	store  storage.ObjectStore
+	logger *slog.Logger
 	router chi.Router
 }
 
@@ -79,8 +81,9 @@ type listResponse struct {
 	LastID  *string                `json:"last_id"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore) *Handler {
-	h := &Handler{cfg: cfg, db: database, store: store}
+func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, store: store, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -200,7 +203,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	}
 	created, err := h.db.CreateMessageBatch(r.Context(), record, reqs)
 	if err != nil {
-		log.Printf("create message batch: %v", err)
+		h.logger.ErrorContext(r.Context(), "create message batch", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create message batch"))
 		return
 	}
@@ -294,7 +297,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		Limit:       limit,
 	})
 	if err != nil {
-		log.Printf("list message batches: %v", err)
+		h.logger.ErrorContext(r.Context(), "list message batches", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list message batches"))
 		return
 	}
@@ -338,7 +341,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, batchID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
 			return
 		}
-		log.Printf("get message batch: %v", err)
+		h.logger.ErrorContext(r.Context(), "get message batch", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve message batch"))
 		return
 	}
@@ -357,13 +360,13 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, batchID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
 			return
 		}
-		log.Printf("cancel message batch: %v", err)
+		h.logger.ErrorContext(r.Context(), "cancel message batch", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not cancel message batch"))
 		return
 	}
 	if record.ProcessingStatus == "canceling" {
 		if err := h.db.EnqueueMessageBatchJob(r.Context(), record.WorkspaceID, record.ID, record.ExternalID); err != nil {
-			log.Printf("enqueue cancel message batch job batch_id=%s: %v", record.ExternalID, err)
+			h.logger.ErrorContext(r.Context(), "enqueue cancel message batch job", "batch_id", record.ExternalID, "error", err)
 		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, h.responseFromRecord(r, record))
@@ -381,7 +384,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
 			return
 		}
-		log.Printf("get message batch before delete: %v", err)
+		h.logger.ErrorContext(r.Context(), "get message batch before delete", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete message batch"))
 		return
 	}
@@ -394,15 +397,15 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
 			return
 		}
-		log.Printf("soft delete message batch: %v", err)
+		h.logger.ErrorContext(r.Context(), "soft delete message batch", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete message batch"))
 		return
 	}
 	if record.ResultsS3Key != nil {
 		if err := h.store.Delete(r.Context(), *record.ResultsS3Key, storage.DeleteOptions{}); err != nil {
-			log.Printf("delete message batch results after soft delete batch_id=%s key=%s: %v", batchID, *record.ResultsS3Key, err)
+			h.logger.ErrorContext(r.Context(), "delete message batch results after soft delete", "batch_id", batchID, "key", *record.ResultsS3Key, "error", err)
 			if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceID, valueOrEmpty(record.ResultsS3Bucket), *record.ResultsS3Key, record.ExternalID); enqueueErr != nil {
-				log.Printf("enqueue batch results cleanup batch_id=%s key=%s: %v", batchID, *record.ResultsS3Key, enqueueErr)
+				h.logger.ErrorContext(r.Context(), "enqueue batch results cleanup", "batch_id", batchID, "key", *record.ResultsS3Key, "error", enqueueErr)
 			}
 		}
 	}
@@ -423,7 +426,7 @@ func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
 			return
 		}
-		log.Printf("get message batch before results: %v", err)
+		h.logger.ErrorContext(r.Context(), "get message batch before results", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve message batch results"))
 		return
 	}
@@ -437,7 +440,7 @@ func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string
 	}
 	object, err := h.store.Open(r.Context(), *record.ResultsS3Key, nil)
 	if err != nil {
-		log.Printf("get message batch results object batch_id=%s key=%s: %v", batchID, *record.ResultsS3Key, err)
+		h.logger.ErrorContext(r.Context(), "get message batch results object", "batch_id", batchID, "key", *record.ResultsS3Key, "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve message batch results"))
 		return
 	}
@@ -448,11 +451,11 @@ func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string
 	w.WriteHeader(http.StatusOK)
 	copied, copyErr := io.Copy(w, object.Body)
 	if copyErr != nil {
-		log.Printf("download batch results stream failed batch_id=%s key=%s bytes_copied=%d expected_size=%d: %v", batchID, *record.ResultsS3Key, copied, *record.ResultsSizeBytes, copyErr)
+		h.logger.ErrorContext(r.Context(), "download batch results stream failed", "batch_id", batchID, "key", *record.ResultsS3Key, "bytes_copied", copied, "expected_size", *record.ResultsSizeBytes, "error", copyErr)
 		return
 	}
 	if copied != *record.ResultsSizeBytes {
-		log.Printf("download batch results size mismatch batch_id=%s key=%s bytes_copied=%d expected_size=%d", batchID, *record.ResultsS3Key, copied, *record.ResultsSizeBytes)
+		h.logger.WarnContext(r.Context(), "download batch results size mismatch", "batch_id", batchID, "key", *record.ResultsS3Key, "bytes_copied", copied, "expected_size", *record.ResultsSizeBytes)
 	}
 }
 

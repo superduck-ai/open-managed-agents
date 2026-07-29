@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
@@ -59,16 +62,17 @@ type RunnerDependencies struct {
 	CodeSessions    CodeSessionRuntime
 	Skills          RuntimeSkillResolver
 	FilestoreTokens FilestoreTokenIssuer
+	Logger          *slog.Logger
 }
 
 type Runner struct {
-	db           *db.DB
-	provider     e2bruntime.Provider
-	cfg          config.Config
-	codeSessions CodeSessionRuntime
-	skills       RuntimeSkillResolver
-
+	db              *db.DB
+	provider        e2bruntime.Provider
+	cfg             config.Config
+	codeSessions    CodeSessionRuntime
+	skills          RuntimeSkillResolver
 	filestoreTokens FilestoreTokenIssuer
+	logger          *slog.Logger
 }
 
 type managedAgentLaunchPreparation struct {
@@ -109,6 +113,7 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 		codeSessions:    deps.CodeSessions,
 		skills:          deps.Skills,
 		filestoreTokens: deps.FilestoreTokens,
+		logger:          logging.LoggerOrDefault(deps.Logger),
 	}, nil
 }
 
@@ -160,7 +165,7 @@ func (r *Runner) loop(ctx context.Context, workerID string) {
 		}
 		processed, err := r.RunOnce(ctx, workerID)
 		if err != nil {
-			log.Printf("environment runner worker=%s: %v", workerID, err)
+			r.logger.ErrorContext(ctx, "environment runner", "worker_id", workerID, "error", err)
 		}
 		if processed {
 			continue
@@ -277,6 +282,21 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		*work = updatedWork
 	}
 
+	manifest, provision, err := buildPackageManifest(env.Config)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	if provision {
+		proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest)
+		if err != nil {
+			return true, err
+		}
+		if !proceed {
+			return true, nil
+		}
+	}
+
 	// 只有 Cloud Session Managed Agent 使用固定的四组 Filestore 挂载。
 	// 必须等 rclone ready 后才能继续，确保 Claude 启动时 uploads、outputs、
 	// transcripts 和 tool_results 已经可用。
@@ -316,7 +336,8 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 		// rclone 和固定挂载已就绪；manager 随后通过 stdin 取得双凭证，
 		// 并在启动 Claude 前 register worker，建立首个 CCR lease。
 		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
-			publicError := logManagedAgentRuntimeStageFailure(
+			publicError := r.logManagedAgentRuntimeStageFailure(
+				ctx,
 				"environment_manager_start",
 				errEnvironmentManagerStart,
 				err,
@@ -337,6 +358,54 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 	return true, nil
 }
 
+func (r *Runner) provisionCreatedSandboxPackages(
+	ctx context.Context,
+	record db.EnvironmentSandbox,
+	work *db.EnvironmentWork,
+	providerSandboxID string,
+	manifest []byte,
+) (bool, error) {
+	if collections.IsBlank(providerSandboxID) {
+		err := errors.New("provider returned an empty sandbox id for package provisioning")
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return false, err
+	}
+	// Persist the provider ID before provisioning so a concurrent stop can
+	// find and terminate the sandbox while package installation is running.
+	if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "creating", &providerSandboxID, nil, nil); err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return false, err
+	}
+	if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
+		if r.failCreatedSandbox(ctx, record, work, providerSandboxID, err) {
+			return false, nil
+		}
+		return false, err
+	}
+	heartbeat, err := r.db.HeartbeatEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, "", 60, formatTime)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return false, err
+	}
+	if heartbeat.LeaseExtended {
+		return true, nil
+	}
+	r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
+	return false, nil
+}
+
+func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte) error {
+	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
+		Command: buildPackageProvisionCommand(r.cfg),
+		Stdin:   manifest,
+		Timeout: r.cfg.EnvironmentRunner.PackageProvisionTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("provision environment packages: %w", err)
+	}
+	return validatePackageProvisioningResult(result)
+}
+
 func (r *Runner) failManagedAgentRuntime(
 	ctx context.Context,
 	record db.EnvironmentSandbox,
@@ -349,20 +418,42 @@ func (r *Runner) failManagedAgentRuntime(
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, codeSessionID); err != nil {
-		log.Printf(
-			"terminate failed managed-agent runtime code_session_id=%s stage_error_type=%T cleanup_error_type=%T",
-			codeSessionID,
-			cause,
-			err,
+		r.logger.ErrorContext(
+			cleanupCtx,
+			"terminate failed managed agent runtime",
+			"code_session_id", codeSessionID,
+			"stage_error_type", fmt.Sprintf("%T", cause),
+			"error", err,
 		)
 	}
 	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
 }
 
-func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) {
+// failCreatedSandbox returns true when a concurrent user stop already won and
+// the sandbox was kept stopped instead of being rewritten as failed.
+func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) bool {
+	currentWork, err := r.db.GetEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID)
+	if err == nil && (currentWork.State == "stopping" || currentWork.State == "stopped") {
+		*work = currentWork
+		r.stopCreatedSandbox(ctx, record, work, providerSandboxID)
+		return true
+	}
 	now := time.Now().UTC()
 	message := cause.Error()
 	_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "failed", &providerSandboxID, &message, &now)
+	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
+	if strings.TrimSpace(providerSandboxID) == "" {
+		return false
+	}
+	killCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_ = r.provider.Kill(killCtx, providerSandboxID)
+	return false
+}
+
+func (r *Runner) stopCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string) {
+	now := time.Now().UTC()
+	_ = r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceID, record.ExternalID, "stopped", &providerSandboxID, nil, &now)
 	_, _ = r.db.StopEnvironmentWork(ctx, work.WorkspaceID, work.EnvironmentExternalID, work.ExternalID, true)
 	if strings.TrimSpace(providerSandboxID) == "" {
 		return
@@ -492,20 +583,20 @@ func (r *Runner) publishManagedAgentRuntime(
 
 func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
 	if err := r.provider.WriteFile(ctx, sandboxID, rcloneConfigPath, launch.ConfigPayload); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("config_write", errRcloneConfigWrite, err)
+		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return r.logRcloneStageFailure(ctx, "config_write", errRcloneConfigWrite, err)
 	}
-	if err := r.provider.RunCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("config_permissions", errRcloneConfigPermissions, err)
+	if err := r.runSandboxCommand(ctx, sandboxID, rcloneConfigPermissionsCommand(), rcloneCommandGraceTimeout); err != nil {
+		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return r.logRcloneStageFailure(ctx, "config_permissions", errRcloneConfigPermissions, err)
 	}
 	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("process_start", errRcloneProcessStart, err)
+		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return r.logRcloneStageFailure(ctx, "process_start", errRcloneProcessStart, err)
 	}
 	if err := r.waitForRcloneReady(ctx, sandboxID, rcloneReadyPollInterval, rcloneReadyTimeout); err != nil {
-		_ = r.provider.RunCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
-		return logRcloneStageFailure("readiness", errRcloneReadiness, err)
+		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
+		return r.logRcloneStageFailure(ctx, "readiness", errRcloneReadiness, err)
 	}
 	r.removeRcloneConfig(ctx, sandboxID)
 	return nil
@@ -513,7 +604,7 @@ func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, lau
 
 func (r *Runner) removeRcloneConfig(ctx context.Context, sandboxID string) {
 	for attempt := 1; attempt <= rcloneConfigCleanupTries; attempt++ {
-		cleanupErr := r.provider.RunCommand(
+		cleanupErr := r.runSandboxCommand(
 			ctx,
 			sandboxID,
 			rcloneConfigCleanupCommand(),
@@ -522,36 +613,69 @@ func (r *Runner) removeRcloneConfig(ctx context.Context, sandboxID string) {
 		if cleanupErr == nil {
 			return
 		}
-		log.Printf(
-			"rclone-filestore stage=config_cleanup attempt=%d error_type=%T",
-			attempt,
-			cleanupErr,
+		r.logger.WarnContext(
+			ctx,
+			"rclone filestore config cleanup",
+			"attempt", attempt,
+			"error", cleanupErr,
 		)
 		exists, probeErr := r.provider.FileExists(ctx, sandboxID, rcloneConfigPath)
 		if probeErr == nil && !exists {
 			return
 		}
 		if probeErr != nil {
-			log.Printf(
-				"rclone-filestore stage=config_cleanup_probe attempt=%d error_type=%T",
-				attempt,
-				probeErr,
+			r.logger.WarnContext(
+				ctx,
+				"rclone filestore config cleanup probe",
+				"attempt", attempt,
+				"error", probeErr,
 			)
 		}
 	}
-	log.Printf(
-		"rclone-filestore stage=config_cleanup exhausted_attempts=%d config_may_remain=true",
-		rcloneConfigCleanupTries,
+	r.logger.ErrorContext(
+		ctx,
+		"rclone filestore config cleanup exhausted",
+		"attempts", rcloneConfigCleanupTries,
+		"config_may_remain", true,
 	)
 }
 
-func logRcloneStageFailure(stage string, publicError, cause error) error {
-	log.Printf("rclone-filestore stage=%s error_type=%T", stage, cause)
+func (r *Runner) runSandboxCommand(ctx context.Context, sandboxID, command string, timeout time.Duration) error {
+	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{Command: command, Timeout: timeout})
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf(
+			"sandbox command exited with code %d: stdout=%q stderr=%q",
+			result.ExitCode,
+			truncateSandboxCommandOutput(result.Stdout),
+			truncateSandboxCommandOutput(result.Stderr),
+		)
+	}
+	return nil
+}
+
+func truncateSandboxCommandOutput(value []byte) string {
+	trimmed := strings.TrimSpace(strings.ToValidUTF8(string(value), "\uFFFD"))
+	const limit = 2048
+	if len(trimmed) <= limit {
+		return trimmed
+	}
+	end := limit
+	for end > 0 && !utf8.RuneStart(trimmed[end]) {
+		end--
+	}
+	return trimmed[:end] + "...[truncated]"
+}
+
+func (r *Runner) logRcloneStageFailure(ctx context.Context, stage string, publicError, cause error) error {
+	r.logger.ErrorContext(ctx, "rclone filestore stage failed", "stage", stage, "error", cause)
 	return publicError
 }
 
-func logManagedAgentRuntimeStageFailure(stage string, publicError, cause error) error {
-	log.Printf("managed-agent runtime stage=%s error_type=%T", stage, cause)
+func (r *Runner) logManagedAgentRuntimeStageFailure(ctx context.Context, stage string, publicError, cause error) error {
+	r.logger.ErrorContext(ctx, "managed agent runtime stage failed", "stage", stage, "error", cause)
 	return publicError
 }
 

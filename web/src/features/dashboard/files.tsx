@@ -1,7 +1,8 @@
-import { Download, FileText } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { Download, FileText, Upload } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
+import { Button } from '@/shared/ui/button';
 import {
   CopyIdCell,
   DataTableCell,
@@ -12,6 +13,7 @@ import {
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { toast, Toaster } from '@/shared/ui/sonner';
 import { useI18n } from '../../shared/i18n';
 import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
@@ -21,6 +23,7 @@ import {
   formatFileId,
   formatRelativeTime,
   listFiles,
+  uploadFile,
   useDashboardWorkspaceScope,
   type ConsoleFile,
   type FilesPageCursor,
@@ -28,10 +31,13 @@ import {
 
 export function FilesPage() {
   const { msg } = useI18n();
+  const queryClient = useQueryClient();
   const { workspaceId, workspaceName } = useDashboardWorkspaceScope();
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCursors, setPageCursors] = useState<FilesPageCursor[]>([{}]);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const paginationWorkspaceIdRef = useRef(workspaceId);
   const cursor = paginationWorkspaceIdRef.current === workspaceId ? (pageCursors[pageIndex] ?? {}) : {};
   const filesQuery = useQuery({
@@ -81,31 +87,96 @@ export function FilesPage() {
     }
   };
 
+  const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.currentTarget.files ?? []);
+    if (!selectedFiles.length || uploading) {
+      return;
+    }
+    setUploading(true);
+    try {
+      const results = await Promise.allSettled(selectedFiles.map((file) => uploadFile(file, workspaceId)));
+      const succeeded = results.filter((result) => result.status === 'fulfilled').length;
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (succeeded > 0) {
+        if (pageIndex === 0) {
+          await filesQuery.refetch();
+        } else {
+          await queryClient.invalidateQueries({
+            queryKey: ['files', workspaceId, '', ''],
+            exact: true,
+            refetchType: 'none',
+          });
+          setPageIndex(0);
+          setPageCursors([{}]);
+        }
+        toast.success(
+          msg('files.upload.success', '{count, plural, one {File uploaded} other {# files uploaded}}', {
+            count: succeeded,
+          }),
+        );
+      }
+      if (failed) {
+        toast.error(msg('files.upload.error', 'File upload failed'), {
+          description: errorMessage(failed.reason),
+        });
+      }
+    } finally {
+      setUploading(false);
+      if (uploadInputRef.current) {
+        uploadInputRef.current.value = '';
+      }
+    }
+  };
+
   return (
-    <ConsolePageFrame
-      title={msg('files.title', 'Files')}
-      icon={FileText}
-      description={msg(
-        'files.description',
-        "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
-        { workspaceName },
-      )}
-    >
-      <FilesTable
-        files={files}
-        workspaceName={workspaceName}
-        isLoading={filesQuery.isLoading}
-        isFetching={filesQuery.isFetching}
-        error={filesQuery.error}
-        canPrevious={pageIndex > 0 && !filesQuery.isFetching}
-        canNext={Boolean(response?.has_more && lastId) && !filesQuery.isFetching}
-        downloadingFileId={downloadingFileId}
-        onRetry={() => void filesQuery.refetch()}
-        onPrevious={goPrevious}
-        onNext={goNext}
-        onDownload={(file) => void handleDownload(file)}
+    <>
+      <Toaster
+        position="top-right"
+        duration={2200}
+        closeButton
+        toastOptions={{ closeButtonAriaLabel: msg('common.close', 'Close') }}
       />
-    </ConsolePageFrame>
+      <ConsolePageFrame
+        title={msg('files.title', 'Files')}
+        icon={FileText}
+        description={msg(
+          'files.description',
+          "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
+          { workspaceName },
+        )}
+        actions={
+          <>
+            <input
+              ref={uploadInputRef}
+              className="sr-only"
+              type="file"
+              multiple
+              aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
+              onChange={(event) => void handleUpload(event)}
+            />
+            <Button type="button" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+              <Upload aria-hidden />
+              {uploading ? msg('files.upload.uploading', 'Uploading...') : msg('files.upload.action', 'Upload files')}
+            </Button>
+          </>
+        }
+      >
+        <FilesTable
+          files={files}
+          workspaceName={workspaceName}
+          isLoading={filesQuery.isLoading}
+          isFetching={filesQuery.isFetching}
+          error={filesQuery.error}
+          canPrevious={pageIndex > 0 && !filesQuery.isFetching}
+          canNext={Boolean(response?.has_more && lastId) && !filesQuery.isFetching}
+          downloadingFileId={downloadingFileId}
+          onRetry={() => void filesQuery.refetch()}
+          onPrevious={goPrevious}
+          onNext={goNext}
+          onDownload={(file) => void handleDownload(file)}
+        />
+      </ConsolePageFrame>
+    </>
   );
 }
 

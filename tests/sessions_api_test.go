@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -477,7 +478,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if !eventPageContains(events, `"type":"agent.message"`) || !eventPageContains(events, `"type":"session.status_idle"`) || !eventPageContains(events, `hello from worker`) {
 		t.Fatalf("ingress events missing worker outputs: %+v", events)
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
 		t.Fatalf("deliver ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -499,7 +500,7 @@ func TestSessionEventsFromCodeSessionIngress(t *testing.T) {
 	if len(again.Data) != 1 {
 		t.Fatalf("ingress should be idempotent, agent.message count = %d", len(again.Data))
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "session-ingress-webhook-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "session-ingress-webhook-worker"); err != nil {
 		t.Fatalf("deliver duplicate ingress webhook: %v", err)
 	}
 	mu.Lock()
@@ -1135,6 +1136,72 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("primary thread status after details-only update = %+v, want running", threads.Data)
 	}
 
+	sessionRecord := mustSessionRecord(t, app, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(
+		context.Background(),
+		sessionRecord.WorkspaceID,
+		sessionRecord.ExternalID,
+	)
+	if err != nil {
+		t.Fatalf("load Session filesystem for output projection: %v", err)
+	}
+	outputContent := []byte("worker output")
+	outputKey := "session-output/" + strings.TrimPrefix(session.ID, "sesn_")
+	if _, err := app.store.Upload(
+		context.Background(),
+		outputKey,
+		bytes.NewReader(outputContent),
+		storage.UploadOptions{Size: int64(len(outputContent)), ContentType: "text/plain"},
+	); err != nil {
+		t.Fatalf("upload output fixture: %v", err)
+	}
+	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
+		WorkspaceID:  sessionRecord.WorkspaceID,
+		FilesystemID: filesystem.ID,
+		Path:         "/outputs/worker-output.txt",
+		Blob: db.FilestoreFileBlob{
+			SizeBytes:    int64(len(outputContent)),
+			MediaType:    "text/plain",
+			Downloadable: true,
+			MD5:          "00000000000000000000000000000000",
+			SHA256:       strings.Repeat("a", 64),
+			S3Bucket:     app.store.Name(),
+			S3Key:        outputKey,
+		},
+	}); err != nil {
+		t.Fatalf("create output entry: %v", err)
+	}
+	runningFiles := listFiles(t, app, "scope_id="+session.ID)
+	var outputFile *metadataResponse
+	for index := range runningFiles.Data {
+		if runningFiles.Data[index].Filename == "worker-output.txt" {
+			outputFile = &runningFiles.Data[index]
+			break
+		}
+	}
+	if outputFile == nil {
+		t.Fatalf("scoped files while running = %+v, want worker output", runningFiles.Data)
+	}
+	if !outputFile.Downloadable {
+		t.Fatalf("output projection = %+v, want downloadable", *outputFile)
+	}
+	outputDownload := app.do(
+		t,
+		http.MethodGet,
+		"/v1/files/"+outputFile.ID+"/content?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	defer outputDownload.Body.Close()
+	if outputDownload.StatusCode != http.StatusOK {
+		t.Fatalf("download output status = %d: %s", outputDownload.StatusCode, readAll(t, outputDownload.Body))
+	}
+	if got := readAll(t, outputDownload.Body); !bytes.Equal(got, outputContent) {
+		t.Fatalf("download output = %q, want %q", got, outputContent)
+	}
+
 	idleState := putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"idle","external_metadata":{"pending_action":null}}`)
 	if idleState.Worker.WorkerStatus != "idle" || !rawMessageIsJSONNull(idleState.Worker.RequiresActionDetails) {
 		t.Fatalf("idle worker state = %+v, details=%s; want idle with cleared details", idleState.Worker, idleState.Worker.RequiresActionDetails)
@@ -1148,6 +1215,20 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	threads = listSessionThreads(t, app, session.ID, defaultTestKey)
 	if len(threads.Data) != 1 || threads.Data[0].Status != "idle" {
 		t.Fatalf("primary thread status after idle = %+v, want idle", threads.Data)
+	}
+	afterIdleFiles := listFiles(t, app, "scope_id="+session.ID)
+	var outputFileAfterIdle *metadataResponse
+	for index := range afterIdleFiles.Data {
+		if afterIdleFiles.Data[index].Filename == "worker-output.txt" {
+			outputFileAfterIdle = &afterIdleFiles.Data[index]
+			break
+		}
+	}
+	if outputFileAfterIdle == nil {
+		t.Fatalf("scoped files after idle = %+v, want worker output", afterIdleFiles.Data)
+	}
+	if outputFileAfterIdle.ID != outputFile.ID {
+		t.Fatalf("output file id after idle = %q, want stable id %q", outputFileAfterIdle.ID, outputFile.ID)
 	}
 	readBackState := getCodeSessionWorkerReadStateResponse(t, app, codeSessionID, workerEpoch)
 	readBackMetadata := codeSessionWorkerReadExternalMetadata(t, readBackState)
@@ -3138,7 +3219,7 @@ func TestSessionWebhooks(t *testing.T) {
 		t.Fatalf("session.pending webhook jobs = %d, want 0 due filter", count)
 	}
 
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "webhook-test-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "webhook-test-worker"); err != nil {
 		t.Fatalf("webhook run once failure path: %v", err)
 	}
 	status, attempts := latestWebhookJobStatus(t, app, "session.created", session.ID)
@@ -3148,7 +3229,7 @@ func TestSessionWebhooks(t *testing.T) {
 	if _, err := app.db.Pool.Exec(context.Background(), `update jobs set run_after = now() where type = 'webhook_delivery' and payload->>'event_type' = 'session.created' and payload->'event'->'data'->>'id' = $1`, session.ID); err != nil {
 		t.Fatalf("reset webhook run_after: %v", err)
 	}
-	if err := webhooks.RunOnce(context.Background(), app.db, app.cfg.Webhook, "webhook-test-worker"); err != nil {
+	if err := webhooks.NewWorker(app.db, app.cfg.Webhook, nil).RunOnce(context.Background(), "webhook-test-worker"); err != nil {
 		t.Fatalf("webhook run once success path: %v", err)
 	}
 	status, attempts = latestWebhookJobStatus(t, app, "session.created", session.ID)

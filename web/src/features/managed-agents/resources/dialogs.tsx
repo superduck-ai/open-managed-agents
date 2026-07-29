@@ -1,7 +1,5 @@
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
-import { Card, CardContent } from '../../../shared/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import {
   Dialog,
   DialogContent,
@@ -10,7 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../../shared/ui/dialog';
-import { ChevronDown } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { listAgents, listManagedEntities, localTimezone } from '../api';
@@ -43,6 +40,7 @@ import {
   type VaultCredentialApiResponse,
 } from '../types';
 import { errorMessage } from '../utils';
+import { areSessionFileResourcesValid, SessionFileResourcesField } from '../sessions/SessionFileResourcesField';
 import { credentialFormValues, initialFormValues } from './model';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
@@ -276,7 +274,6 @@ function GenericManagedEntityDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const [resourceDisclosureOpen, setResourceDisclosureOpen] = useState(false);
   const needsReferences = section === 'sessions' || section === 'deployments';
   useEffect(() => {
     if (!needsReferences) {
@@ -368,6 +365,7 @@ function GenericManagedEntityDialog({
         !loadingOptions
       : section === 'sessions'
         ? (!needsReferences || (values.agentId.trim().length > 0 && values.environmentId.trim().length > 0)) &&
+          areSessionFileResourcesValid(values.fileResources) &&
           !submitting &&
           !loadingOptions
         : values.name.trim().length > 0 &&
@@ -586,30 +584,13 @@ function GenericManagedEntityDialog({
                   selectedIds={values.vaultIds}
                   onChange={(vaultIds) => setValues((current) => ({ ...current, vaultIds }))}
                 />
-                <Collapsible open={resourceDisclosureOpen} onOpenChange={setResourceDisclosureOpen}>
-                  <Card size="sm" className="gap-0 py-0">
-                    <CollapsibleTrigger
-                      type="button"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-                    >
-                      <ChevronDown
-                        className={`size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none ${resourceDisclosureOpen ? '' : '-rotate-90'}`}
-                        aria-hidden
-                      />
-                      <span>{msg('managedAgents.common.resource', 'Resource')}</span>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="border-t border-border">
-                      <CardContent className="px-3 pb-3 pt-2">
-                        <p className="text-sm leading-5 text-muted-foreground">
-                          {msg(
-                            'managedAgents.common.noResourceAttachments',
-                            'No resource attachments are configured. Add files, repositories, or memory stores after creation.',
-                          )}
-                        </p>
-                      </CardContent>
-                    </CollapsibleContent>
-                  </Card>
-                </Collapsible>
+                {section === 'sessions' ? (
+                  <SessionFileResourcesField
+                    resources={values.fileResources}
+                    workspaceId={workspaceId}
+                    onChange={(fileResources) => setValues((current) => ({ ...current, fileResources }))}
+                  />
+                ) : null}
               </>
             ) : null}
 

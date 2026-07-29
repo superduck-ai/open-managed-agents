@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -17,6 +17,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
@@ -32,6 +33,7 @@ var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 type Handler struct {
 	cfg    config.Config
 	db     *db.DB
+	logger *slog.Logger
 	router chi.Router
 }
 
@@ -83,8 +85,9 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB) *Handler {
-	h := &Handler{cfg: cfg, db: database}
+func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+	logger = logging.LoggerOrDefault(logger)
+	h := &Handler{cfg: cfg, db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -157,7 +160,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 	}, versionID)
 	if err != nil {
-		log.Printf("create agent: %v", err)
+		h.logger.ErrorContext(r.Context(), "create agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create agent"))
 		return
 	}
@@ -201,7 +204,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		log.Printf("list agents: %v", err)
+		h.logger.ErrorContext(r.Context(), "list agents", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agents"))
 		return
 	}
@@ -243,7 +246,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: derefBool(body.IncludeArchived),
 	})
 	if err != nil {
-		log.Printf("search agents: %v", err)
+		h.logger.ErrorContext(r.Context(), "search agents", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not search agents"))
 		return
 	}
@@ -284,7 +287,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("get agent: %v", err)
+		h.logger.ErrorContext(r.Context(), "get agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve agent"))
 		return
 	}
@@ -323,7 +326,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("get agent before update: %v", err)
+		h.logger.ErrorContext(r.Context(), "get agent before update", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
 	}
@@ -362,7 +365,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("update agent: %v", err)
+		h.logger.ErrorContext(r.Context(), "update agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
 	}
@@ -385,7 +388,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("archive agent: %v", err)
+		h.logger.ErrorContext(r.Context(), "archive agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive agent"))
 		return
 	}
@@ -423,7 +426,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
 			return
 		}
-		log.Printf("list agent versions: %v", err)
+		h.logger.ErrorContext(r.Context(), "list agent versions", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agent versions"))
 		return
 	}

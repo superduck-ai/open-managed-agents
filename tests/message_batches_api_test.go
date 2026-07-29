@@ -84,7 +84,8 @@ func TestMessageBatchesAPI(t *testing.T) {
 		defer cleanupBatchRows(t, failingApp.db, created.ID)
 		prioritizeBatchJob(t, failingApp.db, created.ID)
 
-		err := batches.RunBatchOnce(context.Background(), failingApp.db, failingStore, failingApp.cfg, &fakeBatchUpstream{}, "batch-worker-upload-failure-test")
+		worker := batches.NewWorker(failingApp.db, failingStore, failingApp.cfg.Batch, &fakeBatchUpstream{}, nil)
+		err := worker.RunOnce(context.Background(), "batch-worker-upload-failure-test")
 		if !errors.Is(err, uploadErr) {
 			t.Fatalf("run batch worker error = %v, want %v", err, uploadErr)
 		}
@@ -110,7 +111,8 @@ func TestMessageBatchesAPI(t *testing.T) {
 
 		prioritizeBatchJob(t, app.db, created.ID)
 		upstream := &fakeBatchUpstream{}
-		if err := batches.RunBatchOnce(context.Background(), app.db, store, app.cfg, upstream, "batch-worker-test"); err != nil {
+		worker := batches.NewWorker(app.db, store, app.cfg.Batch, upstream, nil)
+		if err := worker.RunOnce(context.Background(), "batch-worker-test"); err != nil {
 			t.Fatalf("run batch worker: %v", err)
 		}
 		if len(upstream.calls) != 2 {

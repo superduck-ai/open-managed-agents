@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +97,20 @@ func TestRcloneCommandsKeepTokensOutOfCommandText(t *testing.T) {
 	}
 }
 
+func TestRunSandboxCommandReportsBoundedOutput(t *testing.T) {
+	provider := &rcloneTestProvider{runResult: e2bruntime.CommandResult{
+		ExitCode: 17,
+		Stdout:   []byte("readiness probe output"),
+		Stderr:   []byte(strings.Repeat("x", 2049)),
+	}}
+	runner := &Runner{provider: provider}
+	err := runner.runSandboxCommand(context.Background(), "sandbox_test", "probe", time.Second)
+	if err == nil || !strings.Contains(err.Error(), `stdout="readiness probe output"`) ||
+		!strings.Contains(err.Error(), `stderr="`+strings.Repeat("x", 2048)+`...[truncated]"`) {
+		t.Fatalf("runSandboxCommand() error = %v, want bounded stdout and stderr", err)
+	}
+}
+
 func TestStartRcloneFilestoreFailures(t *testing.T) {
 	const secretMarker = "provider-secret-marker"
 	providerFailure := errors.New("provider failed with " + secretMarker)
@@ -142,6 +158,7 @@ func TestStartRcloneFilestoreFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			runner := &Runner{
 				provider: test.provider,
+				logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
 			err := runner.startRcloneFilestore(context.Background(), "sandbox_test", rcloneFilestoreLaunch{
 				ConfigPayload: []byte(`{"mounts":[]}`),
@@ -195,6 +212,7 @@ type rcloneTestProvider struct {
 	ready           bool
 	readySequence   []bool
 	runErrors       []error
+	runResult       e2bruntime.CommandResult
 	runCommands     []string
 	writePath       string
 	writeData       []byte
@@ -237,18 +255,18 @@ func (p *rcloneTestProvider) FileExists(_ context.Context, _ string, path string
 	return p.ready, nil
 }
 
-func (p *rcloneTestProvider) RunCommand(_ context.Context, _ string, command string, _ time.Duration) error {
-	p.runCommands = append(p.runCommands, command)
+func (p *rcloneTestProvider) RunCommand(_ context.Context, _ string, request e2bruntime.CommandRequest) (e2bruntime.CommandResult, error) {
+	p.runCommands = append(p.runCommands, request.Command)
 	index := len(p.runCommands) - 1
 	if index < len(p.runErrors) {
 		if p.runErrors[index] != nil {
-			return p.runErrors[index]
+			return e2bruntime.CommandResult{}, p.runErrors[index]
 		}
 	}
-	if command == rcloneConfigCleanupCommand() {
+	if request.Command == rcloneConfigCleanupCommand() {
 		p.configExists = false
 	}
-	return nil
+	return p.runResult, nil
 }
 
 func (p *rcloneTestProvider) StartBackgroundCommand(context.Context, string, string, []byte) error {

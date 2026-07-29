@@ -56,13 +56,14 @@ e2b:
   api_url: ""
   sandbox_url: ""
   debug: false
-  template: claude-code-interpreter
+  template: managed-agent-sandbox
   request_timeout: 60s
   sandbox_timeout: 5m
 
 environment_runner:
   enabled: true
   concurrency: 2
+  package_provision_timeout: 2m
   manager_path: /usr/local/bin/environment-manager
   claude_agent_version: 2.1.120
   claude_path: /opt/claude-code/bin/claude

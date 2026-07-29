@@ -13,5 +13,5 @@ func newTestService(t *testing.T, database *db.DB) *Service {
 	if err != nil {
 		t.Fatalf("create code session credentials: %v", err)
 	}
-	return NewServiceWithCredentials(database, credentials)
+	return NewServiceWithCredentials(database, credentials, nil)
 }

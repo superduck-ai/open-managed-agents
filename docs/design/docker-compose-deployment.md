@@ -20,7 +20,7 @@ docker compose
 caddy ──→ oma-server ──→ postgres / redis / minio
                     └──→ e2b-local (host.docker.internal:3099)
                               └──→ Docker daemon (宿主机)
-                                       └──→ sandbox 容器 (claude-code-interpreter 镜像)
+                                       └──→ sandbox 容器 (managed-agent-sandbox 镜像)
 ```
 
 ## 2. 镜像策略
@@ -153,9 +153,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
 
 1. 拉取 sandbox 模板镜像（由 e2b-local 使用）：
    ```bash
-   # sandbox 模板镜像需从 e2b-local 对应的镜像仓库拉取。
-   # 具体镜像名和 tag 取决于 oma-server 的 e2b.template 配置。
-   docker pull ghcr.io/superduck-ai/claude-code-interpreter:latest
+   docker pull ghcr.io/superduck-ai/managed-agent-sandbox:latest
    ```
 
 2. 初始化 Compose 本地运行配置；该命令不会覆盖已有文件：
@@ -187,31 +185,93 @@ docker compose down -v     # 同时删除数据卷
 
 ## 8. 本地开发模式
 
-如果已经安装了 Go 和 Bun，可以只启动基础设施，后端和前端在本地开发运行。
+本地开发推荐只用 Docker Compose 启动 PostgreSQL、Redis 和 MinIO；e2b-local、oma-server 与 Vite 都直接从宿主机源码启动。这样 oma-server 可以直接访问 Docker Sandbox 暴露在宿主机 loopback 上的动态 envd 端口，也可以直接验证 e2b-local 的最新源码。
 
-### 8.1 后端开发
+### 8.1 启动基础设施
 
-```bash
-# 启动基础设施
-docker compose up -d postgres redis minio e2b-local
-
-# 本地启动 oma-server
-go run .
-```
-
-### 8.2 前端开发（HMR 热更新）
+先停止完整 Compose 拓扑中的应用进程，避免端口冲突或两个 Environment Runner 竞争同一任务，再启动三个基础设施服务：
 
 ```bash
-# 启动后端（如果还没启动）
-docker compose up -d postgres redis minio e2b-local
-go run .
-
-# 另开终端，启动 Vite dev server
-cd web
-bun install
-bun run dev
+docker compose stop caddy oma-server e2b-local
+docker compose up -d postgres redis minio
 ```
 
-Vite dev server 默认监听 `http://127.0.0.1:5173`，`vite.config.ts` 中已配置 proxy 将 `/api`、`/v1`、`/auth`、`/oauth`、`/web-api` 请求自动转发到 `http://127.0.0.1:38080`（可通过 `VITE_API_PROXY_TARGET` 环境变量覆盖）。
+PostgreSQL、Redis 和 MinIO 分别发布到宿主机的 `5432`、`6379`、`9000`/`9001`。
 
-> **注意**：前端开发模式下不需要启动 Caddy 和 oma-server 容器（`docker compose up` 时不要包含它们）。Vite 的 proxy 替代了 Caddy 的反向代理功能，本地 `go run .` 替代了 oma-server 容器。
+### 8.2 从源码启动 e2b-local
+
+在 e2b-local 仓库准备本地 `config.yaml`。Docker runtime 至少需要以下配置：
+
+```yaml
+server:
+  addr: "127.0.0.1:3099"
+
+runtime:
+  type: "docker"
+
+docker:
+  container_name_prefix: "e2b-envd-"
+  enable_fuse: true
+  health_timeout_seconds: 30
+```
+
+`enable_fuse` 只应对受信的 Managed Agent Sandbox template 开启；e2b-local 会为动态 Sandbox 映射 `/dev/fuse` 并添加 `SYS_ADMIN` capability。Docker template 来自本机已有镜像，启动前应确认 OMA 配置引用的 Managed Agent Sandbox tag 已存在。
+
+从最新源码构建并在后台重启网关：
+
+```bash
+cd /path/to/e2b-local
+git pull --ff-only
+./scripts/restart-e2b-local-server.sh
+curl http://127.0.0.1:3099/health
+```
+
+该脚本默认读取仓库根目录的 `config.yaml`，日志写入 `e2b-local.log`。也可以用 `go run ./cmd/e2b-local --config config.yaml` 以前台方式启动。完整配置说明见 e2b-local 仓库的 `README.zh-CN.md`。
+
+### 8.3 从源码启动 oma-server
+
+OMA 的 `config/config.yaml` 应使用宿主机基础设施和 e2b-local 地址：
+
+```yaml
+server:
+  addr: 127.0.0.1:38080
+
+database:
+  url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
+
+redis:
+  url: redis://localhost:6379
+
+storage:
+  s3:
+    endpoint: http://localhost:9000
+
+e2b:
+  api_url: http://127.0.0.1:3099
+  sandbox_url: http://127.0.0.1:3099
+  template: ghcr.io/superduck-ai/managed-agent-sandbox:latest
+
+code_session:
+  sandbox_api_base_url: http://host.docker.internal:38080
+```
+
+`sandbox_api_base_url` 是动态 Sandbox 回调宿主机 OMA 的地址，不能写成 `127.0.0.1`；该地址在 Sandbox 内会指向 Sandbox 自身。
+
+在 OMA 仓库以前台方式启动：
+
+```bash
+./scripts/restart-server.sh
+curl http://127.0.0.1:38080/healthz
+```
+
+### 8.4 启动前端（HMR 热更新）
+
+另开终端运行：
+
+```bash
+./scripts/restart-web.sh
+```
+
+Vite 默认监听 `http://127.0.0.1:5173`，并把 `/api`、`/v1`、`/auth`、`/oauth`、`/web-api` 请求代理到 `http://127.0.0.1:38080`。可用 `VITE_API_PROXY_TARGET` 覆盖代理目标。
+
+本模式不使用 Caddy 和 oma-server 容器；Vite 代替 Caddy 提供前端和开发代理，本地 Go 进程代替容器化 oma-server。

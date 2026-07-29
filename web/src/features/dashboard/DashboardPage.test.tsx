@@ -423,6 +423,198 @@ describe('Dashboard i18n', () => {
 });
 
 describe('Files page', () => {
+  test('reports upload failures and restores the upload action', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/files');
+    const requests = mockFilesList((url, _headers, method) => {
+      if (url === '/v1/files?beta=true' && method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'api_error', message: 'storage unavailable' },
+          }),
+          {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+      return {
+        data: [],
+        has_more: false,
+        first_id: null,
+        last_id: null,
+      };
+    });
+
+    renderFilesPage();
+
+    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    const file = new File(['session input'], 'session-input.txt', { type: 'text/plain' });
+    fireEvent.change(await screen.findByLabelText('Choose files to upload'), { target: { files: [file] } });
+
+    expect(await screen.findByText('File upload failed')).toBeTruthy();
+    expect(requests.some((request) => request.method === 'POST')).toBe(true);
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Upload files' }) as HTMLButtonElement).disabled).toBe(false),
+    );
+  });
+
+  test('uploads a file and refreshes the workspace file list', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/files');
+    let uploaded = false;
+    const requests = mockFilesList((url, _headers, method) => {
+      if (url === '/v1/files?beta=true' && method === 'POST') {
+        uploaded = true;
+        return {
+          id: 'file_uploaded123456',
+          type: 'file',
+          filename: 'session-input.txt',
+          mime_type: 'text/plain',
+          size_bytes: 13,
+          created_at: new Date().toISOString(),
+          downloadable: false,
+        };
+      }
+      return {
+        data: uploaded
+          ? [
+              {
+                id: 'file_uploaded123456',
+                type: 'file',
+                filename: 'session-input.txt',
+                mime_type: 'text/plain',
+                size_bytes: 13,
+                created_at: new Date().toISOString(),
+                downloadable: false,
+              },
+            ]
+          : [],
+        has_more: false,
+        first_id: uploaded ? 'file_uploaded123456' : null,
+        last_id: uploaded ? 'file_uploaded123456' : null,
+      };
+    });
+
+    renderFilesPage();
+
+    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    const file = new File(['session input'], 'session-input.txt', { type: 'text/plain' });
+    fireEvent.change(await screen.findByLabelText('Choose files to upload'), { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(requests.map((request) => `${request.method} ${request.url}`)).toContain('POST /v1/files?beta=true'),
+    );
+    expect(await screen.findByText('session-input.txt')).toBeTruthy();
+    const uploadRequest = requests.find(
+      (request) => request.url === '/v1/files?beta=true' && request.method === 'POST',
+    );
+    expect(uploadRequest?.body).toBeInstanceOf(FormData);
+    const uploadedFile = (uploadRequest?.body as FormData).get('file') as File;
+    expect(uploadedFile.name).toBe('session-input.txt');
+    expect(await uploadedFile.text()).toBe('session input');
+    expect(uploadRequest?.headers.get('x-workspace-id')).toBe('default');
+  });
+
+  test('returns to the first page and refreshes successful files after a partial upload failure', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/files');
+    let uploaded = false;
+    const requests = mockFilesList((url, _headers, method, body) => {
+      if (url === '/v1/files?beta=true' && method === 'POST') {
+        const selectedFile = (body as FormData).get('file') as File;
+        if (selectedFile.name === 'failed.txt') {
+          return new Response(
+            JSON.stringify({
+              type: 'error',
+              error: { type: 'api_error', message: 'storage unavailable' },
+            }),
+            {
+              status: 500,
+              headers: { 'Content-Type': 'application/json' },
+            },
+          );
+        }
+        uploaded = true;
+        return {
+          id: 'file_partial_success',
+          type: 'file',
+          filename: 'partial-success.txt',
+          mime_type: 'text/plain',
+          size_bytes: 7,
+          created_at: new Date().toISOString(),
+          downloadable: false,
+        };
+      }
+      if (url.includes('after_id=file_page_one')) {
+        return {
+          data: [
+            {
+              id: 'file_page_two',
+              type: 'file',
+              filename: 'second-page.txt',
+              mime_type: 'text/plain',
+              size_bytes: 11,
+              created_at: new Date(Date.now() - 240_000).toISOString(),
+              downloadable: false,
+            },
+          ],
+          has_more: false,
+          first_id: 'file_page_two',
+          last_id: 'file_page_two',
+        };
+      }
+      return {
+        data: [
+          ...(uploaded
+            ? [
+                {
+                  id: 'file_partial_success',
+                  type: 'file',
+                  filename: 'partial-success.txt',
+                  mime_type: 'text/plain',
+                  size_bytes: 7,
+                  created_at: new Date().toISOString(),
+                  downloadable: false,
+                },
+              ]
+            : []),
+          {
+            id: 'file_page_one',
+            type: 'file',
+            filename: 'first-page.txt',
+            mime_type: 'text/plain',
+            size_bytes: 10,
+            created_at: new Date(Date.now() - 120_000).toISOString(),
+            downloadable: false,
+          },
+        ],
+        has_more: true,
+        first_id: uploaded ? 'file_partial_success' : 'file_page_one',
+        last_id: 'file_page_one',
+      };
+    });
+
+    renderFilesPage();
+
+    expect(await screen.findByText('first-page.txt')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('second-page.txt')).toBeTruthy();
+
+    const succeeded = new File(['success'], 'partial-success.txt', { type: 'text/plain' });
+    const failed = new File(['failure'], 'failed.txt', { type: 'text/plain' });
+    fireEvent.change(await screen.findByLabelText('Choose files to upload'), {
+      target: { files: [succeeded, failed] },
+    });
+
+    expect(await screen.findByText('File upload failed')).toBeTruthy();
+    expect(await screen.findByText('File uploaded')).toBeTruthy();
+    expect(await screen.findByText('partial-success.txt')).toBeTruthy();
+    expect(screen.queryByText('second-page.txt')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      requests.filter((request) => request.method === 'GET' && request.url === '/v1/files?beta=true&limit=20').length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
   test('renders files in the platform table shape with copy and disabled download actions', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/files');
     const clipboardWrite = mock(async (_value: string) => undefined);
@@ -1698,13 +1890,21 @@ function makeWorkspaceContextValue(workspace?: Partial<Workspace>): WorkspaceCon
   };
 }
 
-function mockFilesList(handler: (url: string, headers: Headers) => unknown) {
-  const requests: Array<{ url: string; headers: Headers }> = [];
+function mockFilesList(handler: (url: string, headers: Headers, method: string, body?: BodyInit | null) => unknown) {
+  const requests: Array<{ url: string; method: string; headers: Headers; body?: BodyInit | null }> = [];
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const headers = new Headers(init?.headers);
-    requests.push({ url, headers });
-    const result = handler(url, headers);
+    const request = input instanceof Request ? input : null;
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : new URL(input.url).pathname + new URL(input.url).search;
+    const method = init?.method ?? request?.method ?? 'GET';
+    const headers = new Headers(init?.headers ?? request?.headers);
+    const body = init?.body ?? request?.body;
+    requests.push({ url, method, headers, body });
+    const result = handler(url, headers, method, body);
     if (result instanceof Response) {
       return result;
     }

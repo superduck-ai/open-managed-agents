@@ -59,19 +59,31 @@ const (
 		for update
 	`
 	activeFileReferenceQuery = `
-		select exists (
-			select 1
-			from filestore_entries entry
-			join filestore_filesystems filesystem
-				on filesystem.uuid = entry.filesystem_uuid
-				and filesystem.workspace_uuid = entry.workspace_uuid
-				and filesystem.deleted_at is null
-			where entry.workspace_uuid = (
-				select uuid from workspaces where id = :workspace_id
-			)
-				and entry.source_file_uuid = :file_uuid
-				and entry.deleted_at is null
+		with target_workspace as (
+			select uuid
+			from workspaces
+			where id = :workspace_id
 		)
+		select
+			exists (
+				select 1
+				from filestore_entries entry
+				where entry.workspace_uuid = (select uuid from target_workspace)
+					-- 投影不拥有对象也不计入 files_bytes。即使 backing entry 已退休，
+					-- 仍需阻止普通 Files 删除路径把投影当作源文件扣减容量。
+					and entry.uuid = CAST(:file_uuid AS uuid)
+			)
+			or exists (
+				select 1
+				from filestore_entries entry
+				join filestore_filesystems filesystem
+					on filesystem.uuid = entry.filesystem_uuid
+					and filesystem.workspace_uuid = entry.workspace_uuid
+					and filesystem.deleted_at is null
+				where entry.workspace_uuid = (select uuid from target_workspace)
+					and entry.source_file_uuid = CAST(:file_uuid AS uuid)
+					and entry.deleted_at is null
+			)
 	`
 	softDeleteFileQuery = `
 		update files

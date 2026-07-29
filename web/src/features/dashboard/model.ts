@@ -145,6 +145,10 @@ export function listFiles(cursor: FilesPageCursor, workspaceId: string) {
   return anthropicBetaApi.files.list<ConsoleFile>(params, workspaceId) as Promise<FilesListResponse>;
 }
 
+export function uploadFile(file: File, workspaceId: string) {
+  return anthropicBetaApi.files.upload<ConsoleFile>(file, workspaceId);
+}
+
 export function listMessageBatches(cursor: MessageBatchesPageCursor, workspaceId: string) {
   const params: Record<string, string | number> = {
     limit: messageBatchesPageLimit,

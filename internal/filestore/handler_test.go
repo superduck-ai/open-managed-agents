@@ -18,7 +18,7 @@ func TestHandlerReturnsFlatUnauthorizedErrorWithoutPrincipal(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeFilestoreService{}
-	handler := NewHandler(config.Config{}, service)
+	handler := NewHandler(config.Config{}, service, nil)
 	request := httptest.NewRequest(http.MethodPost, "/readMetadata", strings.NewReader(`{"filesystemId":"fs_test","path":"/a"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -53,7 +53,7 @@ func TestHandlerEnforcesReadonlyFilestoreToken(t *testing.T) {
 		t.Run("reject_"+strings.TrimPrefix(path, "/"), func(t *testing.T) {
 			t.Parallel()
 			service := &fakeFilestoreService{}
-			handler := NewHandler(config.Config{}, service)
+			handler := NewHandler(config.Config{}, service, nil)
 			request := newHandlerRequestWithPrincipal(http.MethodPost, path, http.NoBody, readonlyPrincipal)
 			recorder := httptest.NewRecorder()
 
@@ -78,7 +78,7 @@ func TestHandlerEnforcesReadonlyFilestoreToken(t *testing.T) {
 		t.Run("allow_"+strings.TrimPrefix(test.path, "/"), func(t *testing.T) {
 			t.Parallel()
 			service := &fakeFilestoreService{}
-			handler := NewHandler(config.Config{}, service)
+			handler := NewHandler(config.Config{}, service, nil)
 			request := newHandlerRequestWithPrincipal(
 				http.MethodPost,
 				test.path,
@@ -127,7 +127,7 @@ func TestHandlerRejectsInvalidJSONRequests(t *testing.T) {
 			t.Parallel()
 
 			service := &fakeFilestoreService{}
-			handler := NewHandler(config.Config{}, service)
+			handler := NewHandler(config.Config{}, service, nil)
 			request := newAuthenticatedHandlerRequest(http.MethodPost, "/readMetadata", strings.NewReader(test.body))
 			request.Header.Set("Content-Type", test.contentType)
 			recorder := httptest.NewRecorder()
@@ -167,7 +167,7 @@ func TestHandlerRoutesAllFilestorePOSTOperations(t *testing.T) {
 			t.Parallel()
 
 			service := &fakeFilestoreService{}
-			handler := NewHandler(filestoreTestConfig(1024, 0, ""), service)
+			handler := NewHandler(filestoreTestConfig(1024, 0, ""), service, nil)
 			body, contentType := test.newBody(t)
 			request := newAuthenticatedHandlerRequest(http.MethodPost, test.path, body)
 			request.Header.Set("Content-Type", contentType)
@@ -195,7 +195,7 @@ func TestHandlerEncodesProtoInt64ResponseAsString(t *testing.T) {
 			Path:         "/a.txt",
 		}}},
 	}}
-	handler := NewHandler(config.Config{}, service)
+	handler := NewHandler(config.Config{}, service, nil)
 	request := newAuthenticatedHandlerRequest(http.MethodPost, "/listDirectory", strings.NewReader(`{"filesystemId":"fs_test","path":"/"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -230,7 +230,7 @@ func TestHandlerStreamsReadFileBodyWhenSizeIsUnknown(t *testing.T) {
 		Body: body,
 		Size: -1,
 	}}
-	handler := NewHandler(config.Config{}, service)
+	handler := NewHandler(config.Config{}, service, nil)
 	request := newAuthenticatedHandlerRequest(http.MethodPost, "/readFile", strings.NewReader(`{"filesystemId":"fs_test","path":"/a.bin"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -260,7 +260,7 @@ func TestHandlerStreamsReadFileBodyAndMetadata(t *testing.T) {
 		Size:      5,
 		MediaType: "text/plain",
 	}}
-	handler := NewHandler(config.Config{}, service)
+	handler := NewHandler(config.Config{}, service, nil)
 	request := newAuthenticatedHandlerRequest(http.MethodPost, "/readFile", strings.NewReader(`{"filesystemId":"fs_test","path":"/a.txt"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -288,7 +288,7 @@ func TestHandlerPassesCreateFileMultipartParamsAndStream(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeFilestoreService{}
-	handler := NewHandler(filestoreTestConfig(1024, 0, ""), service)
+	handler := NewHandler(filestoreTestConfig(1024, 0, ""), service, nil)
 	paramsJSON := `{"filesystemId":"fs_test","path":"/reports/a.txt","metadata":{"source":"test"},"mediaType":"text/plain","tags":["report"],"overwriteExisting":true,"ttlSeconds":"60"}`
 	body, contentType := multipartHandlerBody(paramsJSON, "streamed file contents")(t)
 	request := newAuthenticatedHandlerRequest(http.MethodPost, "/createFile", body)

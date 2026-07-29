@@ -7,6 +7,96 @@ import (
 	"time"
 )
 
+const (
+	enqueueWebhookDeliveryJobQuery = `
+		insert into jobs (external_id, workspace_id, type, status, payload)
+		values (
+			concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+			:workspace_id,
+			'webhook_delivery',
+			'pending',
+			jsonb_build_object(
+				'event_type', CAST(:event_type AS text),
+				'event', CAST(:event AS jsonb)
+			)
+		)
+	`
+	enqueueWebhookDeliveryJobForEndpointQuery = `
+		insert into jobs (external_id, workspace_id, type, status, payload)
+		values (
+			concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+			:workspace_id,
+			'webhook_delivery',
+			'pending',
+			jsonb_build_object(
+				'event_type', CAST(:event_type AS text),
+				'event', CAST(:event AS jsonb),
+				'webhook_endpoint_id', CAST(:webhook_endpoint_id AS bigint)
+			)
+		)
+	`
+	leaseWebhookDeliveryJobsQuery = `
+		with next_jobs as (
+			select id
+			from jobs
+			where type = 'webhook_delivery'
+				and run_after <= now()
+				and (
+					status in ('pending', 'retry')
+					or (status = 'running' and locked_until < now())
+				)
+			order by run_after, created_at
+			limit :limit
+			for update skip locked
+		),
+		updated_jobs as (
+			update jobs j
+			set status = 'running',
+				locked_by = :worker_id,
+				locked_until = now() + :lease_microseconds * interval '1 microsecond',
+				updated_at = now()
+			from next_jobs
+			where j.id = next_jobs.id
+			returning j.id, j.external_id, j.workspace_id, j.payload, j.attempts
+		)
+		select
+			u.id,
+			u.external_id,
+			u.workspace_id,
+			coalesce(u.payload->>'event_type', '') AS event_type,
+			coalesce(u.payload->'event', CAST('{}' AS jsonb)) AS event,
+			u.attempts,
+			we.id AS webhook_endpoint_id,
+			we.external_id AS webhook_endpoint_external_id,
+			we.url AS webhook_endpoint_url,
+			we.signing_secret AS webhook_endpoint_secret,
+			we.status AS webhook_endpoint_status
+		from updated_jobs u
+		left join webhook_endpoints we
+			on we.id = CAST(nullif(u.payload->>'webhook_endpoint_id', '') AS bigint)
+			and we.deleted_at is null
+	`
+	completeWebhookDeliveryJobQuery = `
+		update jobs
+		set status = 'completed',
+			locked_by = null,
+			locked_until = null,
+			updated_at = now()
+		where id = :job_id and type = 'webhook_delivery'
+	`
+	failWebhookDeliveryJobQuery = `
+		update jobs
+		set status = :status,
+			locked_by = null,
+			locked_until = null,
+			run_after = :run_after,
+			updated_at = now(),
+			attempts = :attempts,
+			payload = payload || jsonb_build_object('last_error', CAST(:reason AS text))
+		where id = :job_id and type = 'webhook_delivery'
+	`
+)
+
 type WebhookDeliveryJob struct {
 	ID                        int64
 	ExternalID                string
@@ -21,35 +111,36 @@ type WebhookDeliveryJob struct {
 	WebhookEndpointStatus     string
 }
 
+type webhookDeliveryJobRow struct {
+	ID                        int64          `db:"id"`
+	ExternalID                string         `db:"external_id"`
+	WorkspaceID               int64          `db:"workspace_id"`
+	EventType                 string         `db:"event_type"`
+	Event                     []byte         `db:"event"`
+	Attempts                  int            `db:"attempts"`
+	WebhookEndpointID         sql.NullInt64  `db:"webhook_endpoint_id"`
+	WebhookEndpointExternalID sql.NullString `db:"webhook_endpoint_external_id"`
+	WebhookEndpointURL        sql.NullString `db:"webhook_endpoint_url"`
+	WebhookEndpointSecret     sql.NullString `db:"webhook_endpoint_secret"`
+	WebhookEndpointStatus     sql.NullString `db:"webhook_endpoint_status"`
+}
+
 func (d *DB) EnqueueWebhookDeliveryJob(ctx context.Context, workspaceID int64, eventType string, event json.RawMessage) error {
-	_, err := d.Pool.Exec(ctx, `
-		insert into jobs (external_id, workspace_id, type, status, payload)
-		values (
-			concat('job_', replace(gen_random_uuid()::text, '-', '')),
-			$1,
-			'webhook_delivery',
-			'pending',
-			jsonb_build_object('event_type', $2::text, 'event', $3::jsonb)
-		)
-	`, workspaceID, eventType, jsonArg(event))
+	_, err := namedExecContext(ctx, d.sql, enqueueWebhookDeliveryJobQuery, map[string]any{
+		"workspace_id": workspaceID,
+		"event_type":   eventType,
+		"event":        jsonArg(event),
+	})
 	return err
 }
 
 func (d *DB) EnqueueWebhookDeliveryJobForEndpoint(ctx context.Context, workspaceID int64, eventType string, event json.RawMessage, endpointID int64) error {
-	_, err := d.Pool.Exec(ctx, `
-		insert into jobs (external_id, workspace_id, type, status, payload)
-		values (
-			concat('job_', replace(gen_random_uuid()::text, '-', '')),
-			$1,
-			'webhook_delivery',
-			'pending',
-			jsonb_build_object(
-				'event_type', $2::text,
-				'event', $3::jsonb,
-				'webhook_endpoint_id', $4::bigint
-			)
-		)
-	`, workspaceID, eventType, jsonArg(event), endpointID)
+	_, err := namedExecContext(ctx, d.sql, enqueueWebhookDeliveryJobForEndpointQuery, map[string]any{
+		"workspace_id":        workspaceID,
+		"event_type":          eventType,
+		"event":               jsonArg(event),
+		"webhook_endpoint_id": endpointID,
+	})
 	return err
 }
 
@@ -60,101 +151,26 @@ func (d *DB) LeaseWebhookDeliveryJobs(ctx context.Context, workerID string, limi
 	if leaseDuration <= 0 {
 		leaseDuration = time.Minute
 	}
-	rows, err := d.Pool.Query(ctx, `
-		with next_jobs as (
-			select id
-			from jobs
-			where type = 'webhook_delivery'
-				and run_after <= now()
-				and (
-					status in ('pending', 'retry')
-					or (status = 'running' and locked_until < now())
-				)
-			order by run_after, created_at
-			limit $1
-			for update skip locked
-		),
-		updated_jobs as (
-		update jobs j
-		set status = 'running',
-			locked_by = $2,
-			locked_until = now() + $3::interval,
-			updated_at = now()
-		from next_jobs
-		where j.id = next_jobs.id
-			returning j.id, j.external_id, j.workspace_id, j.payload, j.attempts
-		)
-		select u.id, u.external_id, u.workspace_id,
-			coalesce(u.payload->>'event_type', ''),
-			coalesce(u.payload->'event', '{}'::jsonb),
-			u.attempts,
-			we.id,
-			we.external_id,
-			we.url,
-			we.signing_secret,
-			we.status
-		from updated_jobs u
-		left join webhook_endpoints we
-			on we.id = nullif(u.payload->>'webhook_endpoint_id', '')::bigint
-			and we.deleted_at is null
-	`, limit, workerID, leaseDuration)
-	if err != nil {
+	var rows []webhookDeliveryJobRow
+	if err := namedSelectContext(ctx, d.sql, &rows, leaseWebhookDeliveryJobsQuery, map[string]any{
+		"limit":              limit,
+		"worker_id":          workerID,
+		"lease_microseconds": leaseDuration.Microseconds(),
+	}); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var jobs []WebhookDeliveryJob
-	for rows.Next() {
-		var job WebhookDeliveryJob
-		var event []byte
-		var endpointID sql.NullInt64
-		var endpointExternalID, endpointURL, endpointSecret, endpointStatus sql.NullString
-		if err := rows.Scan(
-			&job.ID,
-			&job.ExternalID,
-			&job.WorkspaceID,
-			&job.EventType,
-			&event,
-			&job.Attempts,
-			&endpointID,
-			&endpointExternalID,
-			&endpointURL,
-			&endpointSecret,
-			&endpointStatus,
-		); err != nil {
-			return nil, err
-		}
-		job.Event = copyRaw(event)
-		if endpointID.Valid {
-			value := endpointID.Int64
-			job.WebhookEndpointID = &value
-		}
-		if endpointExternalID.Valid {
-			job.WebhookEndpointExternalID = endpointExternalID.String
-		}
-		if endpointURL.Valid {
-			job.WebhookEndpointURL = endpointURL.String
-		}
-		if endpointSecret.Valid {
-			job.WebhookEndpointSecret = endpointSecret.String
-		}
-		if endpointStatus.Valid {
-			job.WebhookEndpointStatus = endpointStatus.String
-		}
-		jobs = append(jobs, job)
+	jobs := make([]WebhookDeliveryJob, 0, len(rows))
+	for _, row := range rows {
+		jobs = append(jobs, row.job())
 	}
-	return jobs, rows.Err()
+	return jobs, nil
 }
 
 func (d *DB) CompleteWebhookDeliveryJob(ctx context.Context, jobID int64) error {
-	_, err := d.Pool.Exec(ctx, `
-		update jobs
-		set status = 'completed',
-			locked_by = null,
-			locked_until = null,
-			updated_at = now()
-		where id = $1 and type = 'webhook_delivery'
-	`, jobID)
+	_, err := namedExecContext(ctx, d.sql, completeWebhookDeliveryJobQuery, map[string]any{
+		"job_id": jobID,
+	})
 	return err
 }
 
@@ -165,16 +181,32 @@ func (d *DB) FailWebhookDeliveryJob(ctx context.Context, jobID int64, attempts i
 		status = "failed"
 	}
 	runAfter := time.Now().UTC().Add(retryDelay)
-	_, err := d.Pool.Exec(ctx, `
-		update jobs
-		set status = $2,
-			locked_by = null,
-			locked_until = null,
-			run_after = $3,
-			updated_at = now(),
-			attempts = $5,
-			payload = payload || jsonb_build_object('last_error', $4::text)
-		where id = $1 and type = 'webhook_delivery'
-	`, jobID, status, runAfter, reason, nextAttempts)
+	_, err := namedExecContext(ctx, d.sql, failWebhookDeliveryJobQuery, map[string]any{
+		"job_id":    jobID,
+		"status":    status,
+		"run_after": runAfter,
+		"attempts":  nextAttempts,
+		"reason":    reason,
+	})
 	return err
+}
+
+func (r webhookDeliveryJobRow) job() WebhookDeliveryJob {
+	job := WebhookDeliveryJob{
+		ID:                        r.ID,
+		ExternalID:                r.ExternalID,
+		WorkspaceID:               r.WorkspaceID,
+		EventType:                 r.EventType,
+		Event:                     copyRaw(r.Event),
+		Attempts:                  r.Attempts,
+		WebhookEndpointExternalID: r.WebhookEndpointExternalID.String,
+		WebhookEndpointURL:        r.WebhookEndpointURL.String,
+		WebhookEndpointSecret:     r.WebhookEndpointSecret.String,
+		WebhookEndpointStatus:     r.WebhookEndpointStatus.String,
+	}
+	if r.WebhookEndpointID.Valid {
+		endpointID := r.WebhookEndpointID.Int64
+		job.WebhookEndpointID = &endpointID
+	}
+	return job
 }

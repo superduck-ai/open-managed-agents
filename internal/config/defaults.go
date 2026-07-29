@@ -2,6 +2,8 @@ package config
 
 import "time"
 
+const DefaultE2BTemplate = "managed-agent-sandbox"
+
 func defaultConfig() Config {
 	cfg := Config{
 		Storage: StorageConfig{
@@ -26,16 +28,17 @@ func defaultConfig() Config {
 			ExpirySweepInterval:       5 * time.Minute,
 		},
 		E2B: E2BConfig{
-			Template:       "claude-code-interpreter",
+			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,
 			SandboxTimeout: 5 * time.Minute,
 		},
 		EnvironmentRunner: EnvironmentRunnerConfig{
-			Enabled:            true,
-			Concurrency:        2,
-			ManagerPath:        "/usr/local/bin/environment-manager",
-			ClaudeAgentVersion: "2.1.120",
-			ClaudePath:         "/opt/claude-code/bin/claude",
+			Enabled:                 true,
+			Concurrency:             2,
+			PackageProvisionTimeout: 2 * time.Minute,
+			ManagerPath:             "/usr/local/bin/environment-manager",
+			ClaudeAgentVersion:      "2.1.120",
+			ClaudePath:              "/opt/claude-code/bin/claude",
 		},
 		CodeSession: CodeSessionConfig{
 			OTLPLogRoot:             "logs",

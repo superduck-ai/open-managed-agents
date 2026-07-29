@@ -199,7 +199,7 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 
 ## 数据模型
 
-迁移 `00035_unify_session_resources_and_files.sql` 完成一次原子切换：
+迁移 `00036_unify_session_resources_and_files.sql` 完成一次原子切换：
 
 - `filestore_filesystems` 继续只负责将 Filestore external ID 解析到唯一 public Session，不把 filesystem UUID 复制到 Resource。
 - `session_resources` 新增 `path`、`parent_path`、`file_uuid`、`skill_version_uuid` 与 `expires_at`，作为 Session namespace 唯一事实来源。
@@ -211,7 +211,7 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 
-迁移 `00023` 至 `00034` 描述统一前的 filesystem、旧 namespace、Source reference 与 scoped File 同步历史；这些结构只作为 `00035` 的一次性输入，不再是运行时模型。`00035` 成功后应用代码不再读取、写入或修复旧结构。
+迁移 `00023` 至 `00034` 描述统一前的 filesystem、旧 namespace、Source reference 与 scoped File 同步历史；这些结构只作为 `00036` 的一次性输入，不再是运行时模型。`00036` 成功后应用代码不再读取、写入或修复旧结构。
 
 根目录 `/` 仍由 filesystem 合成，不写 marker row 或 S3 marker object；五个固定一级目录是 `resource_type='directory'` 的内部 Resource。每个 `/skills/<directory>` 是 `resource_type='skill_archive'` 且引用具体 Skill Version 的内部 Resource；ZIP 成员根据 central directory 动态合成，不持久化成员，也不生成虚假 UUID 或 `fse_` ID。
 

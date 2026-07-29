@@ -144,8 +144,8 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 		t.Fatalf("create legacy Input projection: %v", err)
 	}
 
-	if _, err := provider.UpTo(ctx, 35); err != nil {
-		t.Fatalf("migrate fixture database to 35: %v", err)
+	if _, err := provider.UpTo(ctx, 36); err != nil {
+		t.Fatalf("migrate fixture database to 36: %v", err)
 	}
 
 	assertUnifiedMigrationState(t, ctx, standardDB)

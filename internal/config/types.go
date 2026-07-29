@@ -84,11 +84,12 @@ type E2BConfig struct {
 }
 
 type EnvironmentRunnerConfig struct {
-	Enabled            bool   `yaml:"enabled"`
-	Concurrency        int    `yaml:"concurrency"`
-	ManagerPath        string `yaml:"manager_path"`
-	ClaudeAgentVersion string `yaml:"claude_agent_version"`
-	ClaudePath         string `yaml:"claude_path"`
+	Enabled                 bool          `yaml:"enabled"`
+	Concurrency             int           `yaml:"concurrency"`
+	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
+	ManagerPath             string        `yaml:"manager_path"`
+	ClaudeAgentVersion      string        `yaml:"claude_agent_version"`
+	ClaudePath              string        `yaml:"claude_path"`
 }
 
 type CodeSessionConfig struct {

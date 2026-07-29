@@ -7,6 +7,11 @@ import (
 	"github.com/samber/lo"
 )
 
+// IsBlank reports whether value is empty after trimming whitespace.
+func IsBlank(value string) bool {
+	return strings.TrimSpace(value) == ""
+}
+
 // UniqueTrimmedStrings trims values, removes blanks, and keeps the first
 // occurrence of each value in stable order.
 func UniqueTrimmedStrings(values []string) []string {

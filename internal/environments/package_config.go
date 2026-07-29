@@ -1,0 +1,153 @@
+package environments
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
+
+	"github.com/samber/lo"
+)
+
+const (
+	managerPackageType          = "packages"
+	maxPackageManifestBytes     = 1 << 20
+	invalidPackagesTypeMessage  = `config.packages.type must be "packages"`
+	invalidPackageOptionMessage = "config.packages entries must be package specs, not manager options"
+)
+
+var packageCredentialURLPattern = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^/@\s]+@`)
+
+type environmentPackages struct {
+	Type  string   `json:"type"`
+	APT   []string `json:"apt"`
+	Cargo []string `json:"cargo"`
+	Gem   []string `json:"gem"`
+	Go    []string `json:"go"`
+	NPM   []string `json:"npm"`
+	PIP   []string `json:"pip"`
+}
+
+// managerSpecs 把一个 Package Manager 的名字和它的 spec 列表绑在一起。specs 是
+// 指针，使 ensureLists 能就地补齐 nil 列表。
+type managerSpecs struct {
+	manager string
+	specs   *[]string
+}
+
+// specsByManager 是 OMA 侧校验、空判断和列表规范化的唯一真相源；这里的顺序与
+// v1 manifest 的规范顺序 apt → cargo → gem → go → npm → pip 一致。实际安装顺序
+// 和首错停止由 Environment Manager 的 provision-packages 合同负责。
+func (p *environmentPackages) specsByManager() []managerSpecs {
+	return []managerSpecs{
+		{manager: "apt", specs: &p.APT},
+		{manager: "cargo", specs: &p.Cargo},
+		{manager: "gem", specs: &p.Gem},
+		{manager: "go", specs: &p.Go},
+		{manager: "npm", specs: &p.NPM},
+		{manager: "pip", specs: &p.PIP},
+	}
+}
+
+func emptyPackages() *environmentPackages {
+	return (&environmentPackages{}).normalized()
+}
+
+// normalized 固定 Claude 兼容响应与 provisioner manifest 的字段形状：把 type 补成
+// managerPackageType，并让每个 manager 序列化成 [] 而非 null。返回自身便于链式调用。
+func (p *environmentPackages) normalized() *environmentPackages {
+	p.Type = managerPackageType
+	p.ensureLists()
+	return p
+}
+
+// normalizePackages 是 config.packages 的 HTTP 边界：它接受任意请求 JSON，
+// 判断结构、校验语义，并返回已补齐空列表的命名 schema。存量配置改走
+// buildPackageManifest 的类型化解码，不再经过这里。
+func normalizePackages(raw json.RawMessage) (*environmentPackages, error) {
+	packages := emptyPackages()
+	if len(raw) == 0 || isJSONNull(raw) {
+		return packages, nil
+	}
+	if err := json.Unmarshal(raw, packages); err != nil {
+		var typeError *json.UnmarshalTypeError
+		if errors.As(err, &typeError) && typeError.Field != "" {
+			if typeError.Field == "type" {
+				return nil, errors.New(invalidPackagesTypeMessage)
+			}
+			return nil, fmt.Errorf("config.packages.%s must be an array of strings", typeError.Field)
+		}
+		return nil, errors.New("config.packages must be an object or null")
+	}
+	if err := packages.validate(); err != nil {
+		return nil, err
+	}
+	packages.ensureLists()
+	if err := packages.checkManifestSize(); err != nil {
+		return nil, err
+	}
+	return packages, nil
+}
+
+// checkManifestSize 在 API 边界拒绝编码后超过 Environment Manager stdin 合同
+// 上限（1 MiB）的 packages。否则 Environment 能创建成功，但之后每个 Session
+// sandbox 都会在装包阶段被 Manager 拒绝而失败。
+func (p *environmentPackages) checkManifestSize() error {
+	encoded, err := json.Marshal(packageManifest{Version: 1, Packages: *p})
+	if err != nil {
+		return err
+	}
+	if len(encoded) > maxPackageManifestBytes {
+		return errors.New("config.packages exceeds the 1 MiB manifest limit")
+	}
+	return nil
+}
+
+func (p *environmentPackages) validate() error {
+	if p.Type != "" && p.Type != managerPackageType {
+		return errors.New(invalidPackagesTypeMessage)
+	}
+	for _, entry := range p.specsByManager() {
+		if err := validatePackageSpecs(entry.manager, *entry.specs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validatePackageSpecs 只报告违规的 manager 和规则，不回显 spec 本身，
+// 避免把私有仓库地址或 token 写进 API 错误和日志。
+func validatePackageSpecs(manager string, specs []string) error {
+	switch {
+	case lo.SomeBy(specs, collections.IsBlank):
+		return fmt.Errorf("config.packages.%s entries must be non-empty strings", manager)
+	case lo.SomeBy(specs, isPackageManagerOption):
+		return errors.New(invalidPackageOptionMessage)
+	case lo.SomeBy(specs, packageCredentialURLPattern.MatchString):
+		return fmt.Errorf("config.packages.%s entries must not contain URL credentials", manager)
+	}
+	return nil
+}
+
+func isPackageManagerOption(spec string) bool {
+	return strings.HasPrefix(strings.TrimSpace(spec), "-")
+}
+
+func (p *environmentPackages) empty() bool {
+	return lo.EveryBy(p.specsByManager(), func(entry managerSpecs) bool {
+		return len(*entry.specs) == 0
+	})
+}
+
+// ensureLists 让每个 manager 都序列化成 []，而不是 null，使 Claude 兼容响应和
+// provisioner manifest 的字段形状保持稳定。
+func (p *environmentPackages) ensureLists() {
+	for _, entry := range p.specsByManager() {
+		if *entry.specs == nil {
+			*entry.specs = []string{}
+		}
+	}
+}

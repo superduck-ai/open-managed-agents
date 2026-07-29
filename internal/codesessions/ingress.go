@@ -499,9 +499,17 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !found {
-		err := errors.New("worker epoch is required")
-		h.logCodeSessionWorkerOTLPRequest(r, codeSessionID, body, 0, false, "", "", "missing_epoch", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		// environment-manager 自身会在 worker register 之前通过标准 OTLP exporter
+		// 上报启动与安装指标；该 exporter 只携带 session bearer token。无 epoch
+		// telemetry 只确认 session 仍存在，不刷新 worker activity 或 lease，避免旧
+		// exporter 借遥测请求维持已经失效的 worker 所有权。
+		if _, err := h.db.GetCodeSession(r.Context(), codeSessionID); err != nil {
+			h.logCodeSessionWorkerOTLPRequest(r, codeSessionID, body, 0, false, "", "", "session_load_error", err)
+			h.writeIngressLoadError(w, r, err)
+			return
+		}
+		h.recordCodeSessionWorkerOTLP(r, codeSessionID, body, false, "", "")
+		writeOTLPSuccess(w, r)
 		return
 	}
 	if err := h.db.TouchCodeSessionWorkerActivityForActiveLease(r.Context(), codeSessionID, epoch); err != nil {

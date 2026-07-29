@@ -2426,7 +2426,7 @@ func TestCodeSessionWorkerEpochValidationRejectsInvalidValues(t *testing.T) {
 	assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 }
 
-func TestCodeSessionWorkerOTLPRejectsMissingEpoch(t *testing.T) {
+func TestCodeSessionWorkerOTLPAcceptsMissingEpochWithoutWorkerActivity(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-otlp-missing-epoch-bucket"))
 	defer app.close()
 
@@ -2436,11 +2436,33 @@ func TestCodeSessionWorkerOTLPRejectsMissingEpoch(t *testing.T) {
 	defer cleanupEnvironmentRows(t, app.db, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	_ = registerCodeSessionWorker(t, app, codeSessionID)
+	before, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("load code session before OTLP: %v", err)
+	}
 
 	for _, suffix := range []string{"metrics", "logs"} {
 		resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "", "application/x-protobuf", nil)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("post epochless worker otlp/%s status = %d, want 200: %s", suffix, resp.StatusCode, readAll(t, resp.Body))
+		}
+		if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/x-protobuf") {
+			t.Fatalf("post epochless worker otlp/%s content-type = %q, want application/x-protobuf", suffix, contentType)
+		}
+		if body := readAll(t, resp.Body); len(body) != 0 {
+			t.Fatalf("post epochless worker otlp/%s body = %q, want empty protobuf response", suffix, string(body))
+		}
+	}
+
+	after, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("load code session after OTLP: %v", err)
+	}
+	if after.CurrentWorkerEpoch != before.CurrentWorkerEpoch ||
+		!nullableTimeEqual(after.LastWorkerActivityAt, before.LastWorkerActivityAt) ||
+		!nullableTimeEqual(after.WorkerLeaseExpiresAt, before.WorkerLeaseExpiresAt) {
+		t.Fatalf("epochless OTLP changed worker ownership state: before=%+v after=%+v", before, after)
 	}
 }
 

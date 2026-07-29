@@ -131,7 +131,7 @@ Runner 每次全量替换 `/skills` Resources 时，会在同一事务中软删�
 - `/mnt/skills`、`/workspace/skills` 解压目录，以及 Claude skill discovery 软链；
 - Environment Manager 的 managed-agent skill 解压职责。
 
-迁移 `00035_unify_session_resources_and_files.sql` 把活动的旧 Archive 节点转换为
+迁移 `00036_unify_session_resources_and_files.sql` 把活动的旧 Archive 节点转换为
 `resource_type='skill_archive'` 的内部 Resource，仅保留 path 与 Skill Version UUID。
 两张 catalog version 表仍是 archive 对象事实的唯一来源，Resource 不复制 bucket、key、size 或 SHA-256，
 schema 不创建 PostgreSQL 外键。

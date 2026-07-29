@@ -98,6 +98,7 @@ func validatePositiveValues(cfg Config) error {
 		{name: "e2b.request_timeout", valid: cfg.E2B.RequestTimeout > 0},
 		{name: "e2b.sandbox_timeout", valid: cfg.E2B.SandboxTimeout > 0},
 		{name: "environment_runner.concurrency", valid: cfg.EnvironmentRunner.Concurrency > 0},
+		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},
 		{name: "code_session.otlp_log_body_preview_bytes", valid: cfg.CodeSession.OTLPLogBodyPreviewBytes > 0},
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},
 		{name: "webhook.max_attempts", valid: cfg.Webhook.MaxAttempts > 0},

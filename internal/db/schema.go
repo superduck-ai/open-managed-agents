@@ -608,7 +608,7 @@ create table if not exists environments (
 	metadata jsonb not null default '{}'::jsonb,
 	scope text,
 	provider text not null default 'e2b',
-	resolved_template text not null default 'claude-code-interpreter',
+	resolved_template text not null default 'managed-agent-sandbox',
 	created_at timestamptz not null default now(),
 	updated_at timestamptz not null default now(),
 	archived_at timestamptz,

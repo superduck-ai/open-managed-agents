@@ -153,10 +153,7 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
 
 1. 拉取 sandbox 模板镜像（由 e2b-local 使用）：
    ```bash
-   # e2b-local 通过本地 Docker 的短 name:tag 发现 template，
-   # 因此拉取后需 retag 成 oma-server 选用的 managed-agent-sandbox:latest。
    docker pull ghcr.io/superduck-ai/managed-agent-sandbox:latest
-   docker tag ghcr.io/superduck-ai/managed-agent-sandbox:latest managed-agent-sandbox:latest
    ```
 
 2. 初始化 Compose 本地运行配置；该命令不会覆盖已有文件：
@@ -252,8 +249,7 @@ storage:
 e2b:
   api_url: http://127.0.0.1:3099
   sandbox_url: http://127.0.0.1:3099
-  # e2b-local 使用本地 Docker tag；Hosted E2B 默认使用裸名称 managed-agent-sandbox。
-  template: managed-agent-sandbox:latest
+  template: ghcr.io/superduck-ai/managed-agent-sandbox:latest
 
 code_session:
   sandbox_api_base_url: http://host.docker.internal:38080

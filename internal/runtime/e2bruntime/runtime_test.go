@@ -227,21 +227,6 @@ func TestResolveLimitedNetworkFailsClosedOnMalformedMCPMetadata(t *testing.T) {
 	}
 }
 
-func TestResolveDefaultsToManagedAgentSandboxTemplate(t *testing.T) {
-	provider := NewProvider(config.E2BConfig{})
-	resolution, err := provider.Resolve(db.Environment{
-		ExternalID:  "env_default_template",
-		WorkspaceID: 42,
-		Config:      json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`),
-	}, nil)
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-	if resolution.Template != config.DefaultE2BTemplate {
-		t.Fatalf("Resolution.Template = %q, want %q", resolution.Template, config.DefaultE2BTemplate)
-	}
-}
-
 func TestResolveLimitedNetworkCanonicalizesExplicitAllowedHosts(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	resolution, err := provider.Resolve(db.Environment{

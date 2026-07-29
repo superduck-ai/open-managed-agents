@@ -14,7 +14,7 @@ Package 安装发生在 rclone 和 Environment Manager 启动之前。安装失�
 
 安装命令使用独立的 `environment_runner.package_provision_timeout`，默认 2 分钟。E2B 命令超时与本地 context deadline 使用同一预算：前者约束 Sandbox 进程，后者保证网络或 Wait 调用不会无限阻塞。
 
-Sandbox 镜像或自定义 E2B template 必须提供 `/usr/local/bin/environment-manager`，并实现 `provision-packages` v1 合同。应用与 Hosted E2B 的默认 template 名称统一为 `managed-agent-sandbox`；e2b-local 通过本地 Docker tag 发现镜像，因此 Compose 和本地开发配置显式使用 `managed-agent-sandbox:latest`。配置的非空 `e2b.template` 仍原样传给 provider，允许部署方覆盖为已验收的自定义 template。migration `00035` 同步数据库列默认值，并把现有的旧默认 template 记录迁移到裸名称；显式的本地 `managed-agent-sandbox:latest` 和其他自定义 template 不受影响。Registry credential、重试、派生 template、持久化清理协调以及事务化 Session event 交接均不在本功能范围内。
+Sandbox 镜像或自定义 E2B template 必须提供 `/usr/local/bin/environment-manager`，并实现 `provision-packages` v1 合同。Registry credential、重试、派生 template、持久化清理协调以及事务化 Session event 交接均不在本功能范围内。
 
 聚焦验证命令：
 

@@ -131,17 +131,6 @@ bootstrap:
 	}
 }
 
-func TestLoadDefaultsToManagedAgentSandboxTemplate(t *testing.T) {
-	prepareLoadTest(t)
-	cfg, err := loadConfigTestYAML(t, "")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.E2B.Template != DefaultE2BTemplate {
-		t.Fatalf("E2B.Template = %q, want %q", cfg.E2B.Template, DefaultE2BTemplate)
-	}
-}
-
 func TestLoadRejectsChainedAnthropicUpstreamModelMappings(t *testing.T) {
 	prepareLoadTest(t)
 	_, err := loadConfigTestYAML(t, `
@@ -383,10 +372,7 @@ func TestDockerComposeConfigIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve Docker Compose config path: %v", err)
 	}
-	cfg := loadValidatedConfigTestFile(t, configPath)
-	if cfg.E2B.Template != "managed-agent-sandbox:latest" {
-		t.Fatalf("Compose e2b.template = %q, want managed-agent-sandbox:latest", cfg.E2B.Template)
-	}
+	validateConfigTestFile(t, configPath)
 }
 
 func TestDockerComposeKeepsSecretsOutOfTrackedTemplate(t *testing.T) {

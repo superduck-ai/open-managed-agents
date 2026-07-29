@@ -33,9 +33,7 @@ anthropic_upstream:
 e2b:
   api_url: http://host.docker.internal:3099
   sandbox_url: http://host.docker.internal:3099
-  # e2b-local discovers templates from local Docker name:tag values.
-  # Hosted E2B uses the application default, managed-agent-sandbox.
-  template: managed-agent-sandbox:latest
+  template: ghcr.io/superduck-ai/managed-agent-sandbox:latest
 
 code_session:
   sandbox_api_base_url: http://host.docker.internal:38080

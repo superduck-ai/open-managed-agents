@@ -2,6 +2,8 @@ package config
 
 import "time"
 
+const DefaultE2BTemplate = "managed-agent-sandbox"
+
 func defaultConfig() Config {
 	cfg := Config{
 		Storage: StorageConfig{
@@ -26,7 +28,7 @@ func defaultConfig() Config {
 			ExpirySweepInterval:       5 * time.Minute,
 		},
 		E2B: E2BConfig{
-			Template:       "claude-code-interpreter",
+			Template:       DefaultE2BTemplate,
 			RequestTimeout: 60 * time.Second,
 			SandboxTimeout: 5 * time.Minute,
 		},

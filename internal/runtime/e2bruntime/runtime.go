@@ -86,7 +86,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 		template = strings.TrimSpace(p.cfg.Template)
 	}
 	if template == "" {
-		template = "claude-code-interpreter"
+		template = config.DefaultE2BTemplate
 	}
 	resolved := Resolution{
 		Template:            template,

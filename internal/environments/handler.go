@@ -783,7 +783,7 @@ func isWorkspaceCredential(principal auth.Principal) bool {
 
 func (h *Handler) resolvedTemplate(json.RawMessage) string {
 	if strings.TrimSpace(h.cfg.E2B.Template) == "" {
-		return "claude-code-interpreter"
+		return config.DefaultE2BTemplate
 	}
 	return h.cfg.E2B.Template
 }

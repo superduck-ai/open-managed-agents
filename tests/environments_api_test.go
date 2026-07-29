@@ -191,6 +191,9 @@ func TestEnvironmentsAPI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("get environment db record: %v", err)
 		}
+		if record.ResolvedTemplate != config.DefaultE2BTemplate {
+			t.Fatalf("environment resolved template = %q, want %q", record.ResolvedTemplate, config.DefaultE2BTemplate)
+		}
 		envKey := "sk-ant-env-test"
 		if err := app.db.CreateEnvironmentKey(context.Background(), db.EnvironmentKey{
 			ExternalID:            "envkey_test",
@@ -302,6 +305,25 @@ func TestEnvironmentsSchemaHasNoForeignKeys(t *testing.T) {
 	}
 	if foreignKeyCount != 0 {
 		t.Fatalf("environments foreign key count = %d, want 0", foreignKeyCount)
+	}
+}
+
+func TestEnvironmentsSchemaDefaultsToManagedAgentSandboxTemplate(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("environments-template-default-bucket"))
+	defer app.close()
+
+	var columnDefault string
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select column_default
+		from information_schema.columns
+		where table_schema = current_schema()
+			and table_name = 'environments'
+			and column_name = 'resolved_template'
+	`).Scan(&columnDefault); err != nil {
+		t.Fatalf("load environments.resolved_template default: %v", err)
+	}
+	if columnDefault != "'managed-agent-sandbox'::text" {
+		t.Fatalf("environments.resolved_template default = %q, want managed-agent-sandbox", columnDefault)
 	}
 }
 

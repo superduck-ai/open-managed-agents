@@ -134,7 +134,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		}
 		assertWorkspaceStorageBytes(t, fixture, 8)
 
-		if _, err := fixture.app.db.RemoveFilestoreFile(context.Background(), db.RemoveFilestoreEntryInput{
+		if _, err := fixture.app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionNamespaceNodeInput{
 			WorkspaceID:  fixture.workspaceID,
 			FilesystemID: fixture.filesystem.ID,
 			Path:         "/shared.txt",
@@ -218,10 +218,10 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 			t.Fatalf("put expired file: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 4)
-		if _, err := fixture.app.db.GetFilestoreEntry(context.Background(), fixture.workspaceID, fixture.filesystem.ID, "/expired.txt"); !errors.Is(err, db.ErrNotFound) {
+		if _, err := fixture.app.db.GetSessionNamespaceNode(context.Background(), fixture.workspaceID, fixture.filesystem.ID, "/expired.txt"); !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("read expired file error = %v, want ErrNotFound", err)
 		}
-		if _, err := fixture.app.db.ExpireFilestoreEntries(context.Background(), 1000); err != nil {
+		if _, err := fixture.app.db.ExpireSessionNamespaceNodes(context.Background(), 1000); err != nil {
 			t.Fatalf("expire Filestore entries: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 0)

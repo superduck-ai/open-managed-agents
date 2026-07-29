@@ -2,25 +2,33 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
 type FileRecord struct {
-	ID                int64
-	UUID              string
-	ExternalID        string
-	WorkspaceID       int64
-	Filename          string
-	MimeType          string
-	SizeBytes         int64
-	SHA256            string
-	S3Bucket          string
-	S3Key             string
-	Downloadable      bool
-	ScopeType         *string
-	ScopeID           *string
-	CreatedByAPIKeyID int64
-	CreatedAt         time.Time
+	ID                    int64
+	UUID                  string
+	ExternalID            string
+	WorkspaceID           int64
+	Filename              string
+	MimeType              string
+	DetectedMimeType      *string
+	SizeBytes             int64
+	Metadata              json.RawMessage
+	AuthorizationMetadata json.RawMessage
+	Tags                  []string
+	MD5                   *string
+	SHA256                string
+	S3Bucket              string
+	S3Key                 string
+	S3ETag                *string
+	S3VersionID           *string
+	Downloadable          bool
+	ScopeType             *string
+	ScopeID               *string
+	CreatedByAPIKeyID     int64
+	CreatedAt             time.Time
 }
 
 type ListFilesPageParams struct {

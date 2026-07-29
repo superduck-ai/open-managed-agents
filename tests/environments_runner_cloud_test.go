@@ -542,19 +542,19 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session filestore: %v", err)
 	}
-	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
+	archiveEntries, err := app.db.ListSessionSkillArchiveResources(
 		ctx,
 		getDefaultDBIDs(t, app.db).WorkspaceID,
 		filesystem.ID,
 	)
 	if err != nil {
-		t.Fatalf("list skill archive entries: %v", err)
+		t.Fatalf("list skill Skill Archive Resources: %v", err)
 	}
 	if len(archiveEntries) != 1 ||
-		archiveEntries[0].Kind != db.FilestoreEntryKindArchive ||
+		archiveEntries[0].Kind != db.SessionNamespaceNodeKindArchive ||
 		archiveEntries[0].Path != "/skills/runtime-skill" ||
 		string(archiveEntries[0].Metadata) != `{"skill_source": "custom"}` {
-		t.Fatalf("skill archive entries = %#v", archiveEntries)
+		t.Fatalf("skill Skill Archive Resources = %#v", archiveEntries)
 	}
 	if len(provider.creates) != 1 {
 		t.Fatalf("sandbox creates = %#v, want one", provider.creates)
@@ -627,7 +627,7 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 	}
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
-	provider := &recordingRunnerProvider{sandboxID: "sandbox-skill-projection-only"}
+	provider := &recordingRunnerProvider{sandboxID: "sandbox-skill-resource-only"}
 	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, err := runner.RunOnce(ctx, "runner-cloud-no-resolver-test")
 	if err != nil {
@@ -643,18 +643,18 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 	if err != nil {
 		t.Fatalf("get session filestore: %v", err)
 	}
-	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
+	archiveEntries, err := app.db.ListSessionSkillArchiveResources(
 		ctx,
 		getDefaultDBIDs(t, app.db).WorkspaceID,
 		filesystem.ID,
 	)
 	if err != nil {
-		t.Fatalf("list archive entries: %v", err)
+		t.Fatalf("list Skill Archive Resources: %v", err)
 	}
 	if len(archiveEntries) != 1 ||
-		archiveEntries[0].Kind != db.FilestoreEntryKindArchive ||
+		archiveEntries[0].Kind != db.SessionNamespaceNodeKindArchive ||
 		archiveEntries[0].Path != "/skills/missing-resolver-skill" {
-		t.Fatalf("archive entries = %#v", archiveEntries)
+		t.Fatalf("Skill Archive Resources = %#v", archiveEntries)
 	}
 }
 

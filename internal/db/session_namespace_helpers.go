@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path"
 	"strings"
 	"time"
 
@@ -59,11 +60,11 @@ func (d *DB) resolveFilestoreDirectoryForRead(ctx context.Context, workspaceID, 
 	if directoryPath == "/" {
 		return filesystem, nil
 	}
-	entry, err := getActiveFilestoreEntrySQLX(ctx, d.sql, filesystem, directoryPath)
+	entry, err := getActiveSessionNamespaceNodeSQLX(ctx, d.sql, filesystem, directoryPath)
 	if err != nil {
 		return FilestoreFilesystem{}, err
 	}
-	if entry.Kind != FilestoreEntryKindDirectory {
+	if entry.Kind != SessionNamespaceNodeKindDirectory {
 		return FilestoreFilesystem{}, ErrFilestoreNotDirectory
 	}
 	return filesystem, nil
@@ -73,44 +74,42 @@ func requireFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fi
 	if directoryPath == "/" {
 		return nil
 	}
-	entry, err := getActiveFilestoreEntryForMutation(ctx, tx, filesystem, directoryPath)
+	entry, err := getActiveSessionNamespaceNodeForMutation(ctx, tx, filesystem, directoryPath)
 	if errors.Is(err, ErrNotFound) {
 		return ErrFilestoreParentMissing
 	}
 	if err != nil {
 		return err
 	}
-	if entry.Kind != FilestoreEntryKindDirectory {
+	if entry.Kind != SessionNamespaceNodeKindDirectory {
 		return ErrFilestoreNotDirectory
 	}
 	return nil
 }
 
-func getFilestoreEntryForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (FilestoreEntry, bool, error) {
-	entry, err := getFilestoreEntrySQLX(ctx, tx, filestoreEntrySelectSQL()+`
+func getSessionNamespaceNodeForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (SessionNamespaceNode, bool, error) {
+	entry, err := getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and path = :entry_path
 			and deleted_at is null
-		for update
-	`, filestoreEntryMutationArguments(filesystem, entryPath))
+	`, sessionNamespaceNodeMutationArguments(filesystem, entryPath))
 	if errors.Is(err, ErrNotFound) {
-		return FilestoreEntry{}, false, nil
+		return SessionNamespaceNode{}, false, nil
 	}
 	return entry, err == nil, err
 }
 
-func getActiveFilestoreEntryForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (FilestoreEntry, error) {
-	return getFilestoreEntrySQLX(ctx, tx, filestoreEntrySelectSQL()+`
+func getActiveSessionNamespaceNodeForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (SessionNamespaceNode, error) {
+	return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and path = :entry_path
 			and deleted_at is null and (expires_at is null or expires_at > now())
-		for update
-	`, filestoreEntryMutationArguments(filesystem, entryPath))
+	`, sessionNamespaceNodeMutationArguments(filesystem, entryPath))
 }
 
-func filestoreEntryMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
+func sessionNamespaceNodeMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
 	return map[string]any{
 		"workspace_uuid":  filesystem.WorkspaceUUID,
 		"filesystem_uuid": filesystem.UUID,
@@ -179,90 +178,98 @@ func filestoreNow(value time.Time) time.Time {
 // 如果这个路径被一个未过期的非目录 entry 占着，就返回 ErrFilestorePathExists。
 // 如果这个路径被一个“已过期的文件 entry”占着，它会先挂清理任务、扣回 owned bytes，然后把这条旧 row 原地改写成目录。
 // 如果这个路径根本不存在，就插入一条新的 directory entry。
-func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (FilestoreEntry, error) {
-	existing, found, err := getFilestoreEntryForMutation(ctx, tx, filesystem, directoryPath)
+func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (SessionNamespaceNode, error) {
+	existing, found, err := getSessionNamespaceNodeForMutation(ctx, tx, filesystem, directoryPath)
 	if err != nil {
-		return FilestoreEntry{}, err
+		return SessionNamespaceNode{}, err
 	}
 	if found {
-		if existing.Kind == FilestoreEntryKindDirectory {
+		if existing.Kind == SessionNamespaceNodeKindDirectory {
 			return existing, nil
 		}
-		if !filestoreEntryExpired(existing, now) {
-			return FilestoreEntry{}, ErrFilestorePathExists
+		if !sessionNamespaceNodeExpired(existing, now) {
+			return SessionNamespaceNode{}, ErrFilestorePathExists
 		}
-		if _, _, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
+		if _, _, err := enqueueOwnedSessionNamespaceNodeCleanupJobTx(ctx, tx, sessionNamespaceNodeCleanupScope{
 			WorkspaceID: workspaceID, FilesystemID: filesystem.ID,
 		}, existing, "expired_path_replaced", now); err != nil {
-			return FilestoreEntry{}, err
+			return SessionNamespaceNode{}, err
 		}
-		directory, err := getFilestoreEntrySQLX(ctx, tx, `
-			update filestore_entries
-			set kind = 'directory', parent_path = :parent_path,
-				size_bytes = null, media_type = null, detected_mime_type = null,
-				metadata = CAST('{}' AS jsonb), authorization_metadata = CAST('{}' AS jsonb),
-				tags = CAST(array[] AS text[]), downloadable = false,
-				md5 = null, sha256 = null, s3_bucket = null, s3_key = null,
-				s3_etag = null, s3_version_id = null, expires_at = null,
-				managed_by = null, managed_resource_uuid = null,
-				source_file_uuid = null,
-				created_by_api_key_uuid = :created_by_api_key_uuid,
-				created_by_session_uuid = :created_by_session_uuid,
-				created_by_code_session_uuid = :created_by_code_session_uuid,
-				created_at = :now, updated_at = :now
-			where workspace_uuid = :workspace_uuid
-				and filesystem_uuid = :filesystem_uuid
-				and id = :entry_id
-				and deleted_at is null
-			returning `+filestoreEntryColumns()+`
+		if _, err := namedExecContext(ctx, tx, `
+			update files file
+			set deleted_at = :now
+			where file.uuid = (
+				select resource.file_uuid from session_resources resource
+				where resource.id = :resource_id
+			)
+				and file.deleted_at is null
+		`, map[string]any{"resource_id": existing.ID, "now": now}); err != nil {
+			return SessionNamespaceNode{}, err
+		}
+		if _, err := namedExecContext(ctx, tx, `
+			update session_resources
+			set resource_type = 'directory', payload = null, secret_payload = null,
+				parent_path = :parent_path, file_uuid = null,
+				skill_version_uuid = null,
+				expires_at = null, created_at = :now, updated_at = :now
+			where workspace_id = :workspace_id and session_id = :session_id
+				and id = :resource_id and deleted_at is null
 		`, map[string]any{
-			"workspace_uuid":               filesystem.WorkspaceUUID,
-			"filesystem_uuid":              filesystem.UUID,
-			"entry_id":                     existing.ID,
-			"parent_path":                  filestoreParentPath(directoryPath),
-			"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
-			"created_by_session_uuid":      filesystem.SessionUUID,
-			"created_by_code_session_uuid": filesystem.CodeSessionUUID,
-			"now":                          now,
-		})
+			"workspace_id": workspaceID,
+			"session_id":   filesystem.SessionID,
+			"resource_id":  existing.ID,
+			"parent_path":  filestoreParentPath(directoryPath),
+			"now":          now,
+		}); err != nil {
+			return SessionNamespaceNode{}, err
+		}
+		directory, err := getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+			where id = :resource_id and deleted_at is null
+		`, map[string]any{"resource_id": existing.ID})
 		if err != nil {
-			return FilestoreEntry{}, err
+			return SessionNamespaceNode{}, err
 		}
 		if releasedBytes := existing.OwnedBytes(); releasedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
 				ctx, tx, workspaceID, 0, -releasedBytes, 0,
 			); err != nil {
-				return FilestoreEntry{}, err
+				return SessionNamespaceNode{}, err
 			}
 		}
 		return directory, nil
 	}
-	return getFilestoreEntrySQLX(ctx, tx, `
-		insert into filestore_entries (
-			uuid, external_id, organization_uuid, workspace_uuid, filesystem_uuid,
-			kind, path, parent_path,
-			created_by_api_key_uuid, created_by_session_uuid, created_by_code_session_uuid,
-			created_at, updated_at
+	var resourceID int64
+	err = namedGetContext(ctx, tx, &resourceID, `
+		insert into session_resources (
+			uuid, external_id, organization_id, workspace_id, session_id,
+			session_external_id, resource_type, payload, secret_payload,
+			path, parent_path, created_at, updated_at
 		)
-		values (
-			gen_random_uuid(), concat('fse_', replace(CAST(gen_random_uuid() AS text), '-', '')),
-			:organization_uuid, :workspace_uuid, :filesystem_uuid,
-			'directory', :entry_path, :parent_path,
-			:created_by_api_key_uuid, :created_by_session_uuid, :created_by_code_session_uuid,
-			:now, :now
-		)
-		returning `+filestoreEntryColumns()+`
+		select gen_random_uuid(),
+			concat('sesrsc_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+			session.organization_id, session.workspace_id, session.id,
+			session.external_id, 'directory', null, null,
+			:entry_path, :parent_path, :now, :now
+		from sessions session
+		where session.id = :session_id and session.workspace_id = :workspace_id
+			and session.deleted_at is null
+		returning id
 	`, map[string]any{
-		"organization_uuid":            filesystem.OrganizationUUID,
-		"workspace_uuid":               filesystem.WorkspaceUUID,
-		"filesystem_uuid":              filesystem.UUID,
-		"entry_path":                   directoryPath,
-		"parent_path":                  filestoreParentPath(directoryPath),
-		"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
-		"created_by_session_uuid":      filesystem.SessionUUID,
-		"created_by_code_session_uuid": filesystem.CodeSessionUUID,
-		"now":                          now,
+		"workspace_id": workspaceID,
+		"session_id":   filesystem.SessionID,
+		"entry_path":   directoryPath,
+		"parent_path":  filestoreParentPath(directoryPath),
+		"now":          now,
 	})
+	if isUniqueViolation(err) {
+		return SessionNamespaceNode{}, ErrFilestorePathExists
+	}
+	if err != nil {
+		return SessionNamespaceNode{}, err
+	}
+	return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+		where id = :resource_id and deleted_at is null
+	`, map[string]any{"resource_id": resourceID})
 }
 
 type putFilestoreFileTxInput struct {
@@ -279,7 +286,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	if err := requireFilestoreDirectoryTx(ctx, tx, filesystem, filestoreParentPath(input.Path)); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	existing, found, err := getFilestoreEntryForMutation(ctx, tx, filesystem, input.Path)
+	existing, found, err := getSessionNamespaceNodeForMutation(ctx, tx, filesystem, input.Path)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -289,13 +296,16 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 		return FilestoreMutationResult{}, err
 	}
 	var oldSize int64
-	if found && existing.Kind == FilestoreEntryKindFile {
+	if found && existing.Kind == SessionNamespaceNodeKindFile {
 		// 账本在 TTL 清理提交前仍统计到期文件；复用路径时必须以完整旧大小计算增量。
 		oldSize = existing.OwnedBytes()
 	}
-	if found && !filestoreEntryExpired(existing, quotaNow) {
-		if existing.Kind != FilestoreEntryKindFile {
+	if found && !sessionNamespaceNodeExpired(existing, quotaNow) {
+		if existing.Kind != SessionNamespaceNodeKindFile {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
+		}
+		if existing.ReferencesSourceFile() {
+			return FilestoreMutationResult{}, ErrPreconditionFailed
 		}
 		if !input.OverwriteExisting {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
@@ -309,8 +319,8 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	}
 
 	var cleanupJobs []FilestoreObjectCleanupJob
-	if found && existing.Kind == FilestoreEntryKindFile && !sameFilestoreObject(existing, input.Blob) {
-		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
+	if found && existing.Kind == SessionNamespaceNodeKindFile && !sameFilestoreObject(existing, input.Blob) {
+		job, enqueued, err := enqueueOwnedSessionNamespaceNodeCleanupJobTx(ctx, tx, sessionNamespaceNodeCleanupScope{
 			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 		}, existing, "file_replaced", input.Now)
 		if err != nil {
@@ -330,56 +340,94 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 			return FilestoreMutationResult{}, err
 		}
 	}
-	return FilestoreMutationResult{Entry: entry, CleanupJobs: cleanupJobs}, nil
+	return FilestoreMutationResult{Node: entry, CleanupJobs: cleanupJobs}, nil
 }
 
-func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, existing FilestoreEntry, found bool, input putFilestoreFileTxInput) (FilestoreEntry, error) {
+func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, existing SessionNamespaceNode, found bool, input putFilestoreFileTxInput) (SessionNamespaceNode, error) {
 	arguments := filestoreFileWriteArguments(filesystem, input)
 	if found {
-		arguments["entry_id"] = existing.ID
-		return getFilestoreEntrySQLX(ctx, tx, `
-			update filestore_entries
-			set kind = 'file', path = :entry_path, parent_path = :parent_path,
-				size_bytes = :size_bytes, media_type = :media_type,
-				detected_mime_type = :detected_mime_type,
+		arguments["resource_id"] = existing.ID
+		if _, err := namedExecContext(ctx, tx, `
+			update files file
+			set filename = :filename, mime_type = :media_type,
+				detected_mime_type = :detected_mime_type, size_bytes = :size_bytes,
 				metadata = CAST(:metadata AS jsonb),
 				authorization_metadata = CAST(:authorization_metadata AS jsonb),
-				tags = :tags, downloadable = :downloadable, md5 = :md5, sha256 = :sha256,
-				s3_bucket = :s3_bucket, s3_key = :s3_key, s3_etag = :s3_etag,
-				s3_version_id = :s3_version_id, expires_at = :expires_at,
-				managed_by = null, managed_resource_uuid = null,
-				source_file_uuid = null,
-				created_by_api_key_uuid = :created_by_api_key_uuid,
-				created_by_session_uuid = :created_by_session_uuid,
-				created_by_code_session_uuid = :created_by_code_session_uuid,
-				created_at = :now, updated_at = :now
-			where workspace_uuid = :workspace_uuid
-				and filesystem_uuid = :filesystem_uuid
-				and id = :entry_id
-				and deleted_at is null
-			returning `+filestoreEntryColumns()+`
+				tags = :tags, downloadable = :downloadable, md5 = :md5,
+				sha256 = :sha256, s3_bucket = :s3_bucket, s3_key = :s3_key,
+				s3_etag = :s3_etag, s3_version_id = :s3_version_id,
+				deleted_at = null
+			where file.uuid = (
+				select resource.file_uuid from session_resources resource
+				where resource.id = :resource_id
+			)
+		`, arguments); err != nil {
+			return SessionNamespaceNode{}, err
+		}
+		if _, err := namedExecContext(ctx, tx, `
+			update session_resources
+			set resource_type = 'file', payload = null, secret_payload = null,
+				path = :entry_path, parent_path = :parent_path,
+				skill_version_uuid = null,
+				expires_at = :expires_at, updated_at = :now
+			where id = :resource_id and workspace_id = :workspace_id
+				and session_id = :session_id and deleted_at is null
+		`, arguments); err != nil {
+			return SessionNamespaceNode{}, err
+		}
+		return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+			where id = :resource_id and deleted_at is null
 		`, arguments)
 	}
-	return getFilestoreEntrySQLX(ctx, tx, `
-		insert into filestore_entries (
-			uuid, external_id, organization_uuid, workspace_uuid, filesystem_uuid,
-			kind, path, parent_path, size_bytes, media_type, detected_mime_type,
-			metadata, authorization_metadata, tags, downloadable, md5, sha256,
-			s3_bucket, s3_key, s3_etag, s3_version_id, expires_at,
-			created_by_api_key_uuid, created_by_session_uuid, created_by_code_session_uuid,
-			created_at, updated_at
+	var resourceID int64
+	err := namedGetContext(ctx, tx, &resourceID, `
+		with inserted_file as (
+			insert into files (
+				uuid, external_id, workspace_id, filename, mime_type,
+				detected_mime_type, size_bytes, metadata, authorization_metadata,
+				tags, downloadable, md5, sha256, s3_bucket, s3_key,
+				s3_etag, s3_version_id, scope_type, scope_id,
+				created_by_api_key_id, created_at
+			)
+			select gen_random_uuid(),
+				concat('file_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+				:workspace_id, :filename, :media_type, :detected_mime_type,
+				:size_bytes, CAST(:metadata AS jsonb),
+				CAST(:authorization_metadata AS jsonb), :tags, :downloadable,
+				:md5, :sha256, :s3_bucket, :s3_key, :s3_etag, :s3_version_id,
+				'session', session.external_id,
+				coalesce(api_key.id, session.created_by_api_key_id), :now
+			from sessions session
+			left join api_keys api_key
+				on api_key.uuid = CAST(:created_by_api_key_uuid AS uuid)
+				and api_key.workspace_id = session.workspace_id
+			where session.id = :session_id and session.workspace_id = :workspace_id
+				and session.deleted_at is null
+			returning uuid
 		)
-		values (
-			gen_random_uuid(), concat('fse_', replace(CAST(gen_random_uuid() AS text), '-', '')),
-			:organization_uuid, :workspace_uuid, :filesystem_uuid,
-			'file', :entry_path, :parent_path, :size_bytes, :media_type,
-			:detected_mime_type, CAST(:metadata AS jsonb),
-			CAST(:authorization_metadata AS jsonb), :tags, :downloadable, :md5, :sha256,
-			:s3_bucket, :s3_key, :s3_etag, :s3_version_id, :expires_at,
-			:created_by_api_key_uuid, :created_by_session_uuid, :created_by_code_session_uuid,
-			:now, :now
+		insert into session_resources (
+			uuid, external_id, organization_id, workspace_id, session_id,
+			session_external_id, resource_type, payload, secret_payload,
+			path, parent_path, file_uuid, expires_at, created_at, updated_at
 		)
-		returning `+filestoreEntryColumns()+`
+		select gen_random_uuid(),
+			concat('sesrsc_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+			session.organization_id, session.workspace_id, session.id,
+			session.external_id, 'file', null, null, :entry_path, :parent_path,
+			inserted_file.uuid, :expires_at, :now, :now
+		from inserted_file
+		join sessions session on session.id = :session_id
+		returning id
+	`, arguments)
+	if isUniqueViolation(err) {
+		return SessionNamespaceNode{}, ErrFilestorePathExists
+	}
+	if err != nil {
+		return SessionNamespaceNode{}, err
+	}
+	arguments["resource_id"] = resourceID
+	return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+		where id = :resource_id and deleted_at is null
 	`, arguments)
 }
 
@@ -389,6 +437,7 @@ func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilest
 		"workspace_uuid":               filesystem.WorkspaceUUID,
 		"filesystem_uuid":              filesystem.UUID,
 		"entry_path":                   input.Path,
+		"filename":                     path.Base(input.Path),
 		"parent_path":                  filestoreParentPath(input.Path),
 		"size_bytes":                   input.Blob.SizeBytes,
 		"media_type":                   input.Blob.MediaType,
@@ -407,11 +456,13 @@ func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilest
 		"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
 		"created_by_session_uuid":      filesystem.SessionUUID,
 		"created_by_code_session_uuid": filesystem.CodeSessionUUID,
+		"workspace_id":                 input.WorkspaceID,
+		"session_id":                   filesystem.SessionID,
 		"now":                          input.Now,
 	}
 }
 
-func filestoreBlobFromEntry(entry FilestoreEntry) FilestoreFileBlob {
+func filestoreBlobFromEntry(entry SessionNamespaceNode) FilestoreFileBlob {
 	return FilestoreFileBlob{
 		SizeBytes:             filestoreInt64(entry.SizeBytes),
 		MediaType:             filestoreString(entry.MediaType),
@@ -430,10 +481,47 @@ func filestoreBlobFromEntry(entry FilestoreEntry) FilestoreFileBlob {
 	}
 }
 
-func filestoreEntryExpired(entry FilestoreEntry, now time.Time) bool {
+func sessionNamespaceNodeExpired(entry SessionNamespaceNode, now time.Time) bool {
 	return entry.ExpiresAt != nil && !entry.ExpiresAt.After(now)
 }
 
-func sameFilestoreObject(entry FilestoreEntry, blob FilestoreFileBlob) bool {
+func sameFilestoreObject(entry SessionNamespaceNode, blob FilestoreFileBlob) bool {
 	return filestoreString(entry.S3Bucket) == blob.S3Bucket && filestoreString(entry.S3Key) == blob.S3Key && filestoreString(entry.S3VersionID) == blob.S3VersionID
+}
+
+func retireSessionNamespaceNodeTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	workspaceID, resourceID int64,
+	retiredAt time.Time,
+) error {
+	if _, err := namedExecContext(ctx, tx, `
+		update files file
+		set deleted_at = coalesce(file.deleted_at, :retired_at)
+		where file.workspace_id = :workspace_id
+			and file.uuid = (
+				select resource.file_uuid
+				from session_resources resource
+				where resource.id = :resource_id
+					and resource.workspace_id = :workspace_id
+					and resource.payload is null
+			)
+	`, map[string]any{
+		"workspace_id": workspaceID,
+		"resource_id":  resourceID,
+		"retired_at":   retiredAt,
+	}); err != nil {
+		return err
+	}
+	_, err := namedExecContext(ctx, tx, `
+		update session_resources
+		set deleted_at = coalesce(deleted_at, :retired_at), updated_at = :retired_at
+		where id = :resource_id and workspace_id = :workspace_id
+			and deleted_at is null
+	`, map[string]any{
+		"workspace_id": workspaceID,
+		"resource_id":  resourceID,
+		"retired_at":   retiredAt,
+	})
+	return err
 }

@@ -3,8 +3,10 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -12,14 +14,58 @@ import (
 
 const (
 	fileSQLXColumns = `id, cast(uuid as text) as uuid, external_id, workspace_id, filename, mime_type,
-		size_bytes, sha256, s3_bucket, s3_key, downloadable, scope_type, scope_id,
+		detected_mime_type, size_bytes, metadata, authorization_metadata,
+		cast(to_jsonb(tags) as text) as tags_json, md5, sha256, s3_bucket, s3_key,
+		s3_etag, s3_version_id, downloadable, scope_type, scope_id,
 		created_by_api_key_id, created_at`
+	sessionCatalogFileSQLXColumns = `resource.id as id, cast(file.uuid as text) as uuid,
+		file.external_id as external_id,
+		file.workspace_id, file.filename, file.mime_type, file.detected_mime_type,
+		file.size_bytes, file.metadata, file.authorization_metadata,
+		cast(to_jsonb(file.tags) as text) as tags_json, file.md5, file.sha256,
+		file.s3_bucket, file.s3_key, file.s3_etag, file.s3_version_id,
+		file.downloadable, CAST('session' AS text) as scope_type,
+		resource.session_external_id as scope_id, file.created_by_api_key_id,
+		resource.created_at`
+	sessionCatalogResourceCTE = `catalog_resource as (
+		select distinct on (resource.file_uuid) resource.*
+		from session_resources resource
+		where resource.workspace_id = :workspace_id
+			and resource.session_external_id = :scope_id
+			and resource.resource_type = 'file'
+			and resource.deleted_at is null
+			and (resource.expires_at is null or resource.expires_at > now())
+			and (
+				(resource.payload is not null
+					and left(resource.path, char_length('/uploads/')) = '/uploads/')
+				or (resource.payload is null
+					and left(resource.path, char_length('/outputs/')) = '/outputs/')
+			)
+		order by resource.file_uuid, resource.created_at desc, resource.id desc
+	)`
 	getFileQuery = `
 		select ` + fileSQLXColumns + `
 		from files
 		where workspace_id = :workspace_id
 			and external_id = :file_external_id
 			and deleted_at is null
+			and (
+				not exists (
+					select 1 from session_resources owner
+					where owner.workspace_id = files.workspace_id
+						and owner.file_uuid = files.uuid
+						and owner.payload is null
+				)
+				or exists (
+					select 1 from session_resources owner
+					where owner.workspace_id = files.workspace_id
+						and owner.file_uuid = files.uuid
+						and owner.payload is null
+						and owner.deleted_at is null
+						and (owner.expires_at is null or owner.expires_at > now())
+						and left(owner.path, char_length('/outputs/')) = '/outputs/'
+				)
+			)
 	`
 	getFileByUUIDQuery = `
 		select ` + fileSQLXColumns + `
@@ -30,7 +76,9 @@ const (
 	`
 	getFileByUUIDInOrganizationQuery = `
 		select f.id, cast(f.uuid as text) as uuid, f.external_id, f.workspace_id,
-			f.filename, f.mime_type, f.size_bytes, f.sha256, f.s3_bucket, f.s3_key,
+			f.filename, f.mime_type, f.detected_mime_type, f.size_bytes,
+			f.metadata, f.authorization_metadata, cast(to_jsonb(f.tags) as text) as tags_json,
+			f.md5, f.sha256, f.s3_bucket, f.s3_key, f.s3_etag, f.s3_version_id,
 			f.downloadable, f.scope_type, f.scope_id, f.created_by_api_key_id, f.created_at
 		from files f
 		join workspaces w on w.id = f.workspace_id
@@ -40,13 +88,17 @@ const (
 	`
 	insertFileQuery = `
 		insert into files (
-			uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
-			s3_bucket, s3_key, downloadable, scope_type, scope_id, created_by_api_key_id, created_at
+			uuid, external_id, workspace_id, filename, mime_type, detected_mime_type,
+			size_bytes, metadata, authorization_metadata, tags, md5, sha256,
+			s3_bucket, s3_key, s3_etag, s3_version_id, downloadable, scope_type,
+			scope_id, created_by_api_key_id, created_at
 		)
 		values (
 			:file_uuid, :file_external_id, :workspace_id, :filename, :mime_type,
-			:size_bytes, :sha256, :s3_bucket, :s3_key, :downloadable, :scope_type,
-			:scope_id, :created_by_api_key_id, :created_at
+			:detected_mime_type, :size_bytes, CAST(:metadata AS jsonb),
+			CAST(:authorization_metadata AS jsonb), :tags, :md5, :sha256,
+			:s3_bucket, :s3_key, :s3_etag, :s3_version_id, :downloadable,
+			:scope_type, :scope_id, :created_by_api_key_id, :created_at
 		)
 	`
 	fileWorkspaceLockQuery    = `select pg_advisory_xact_lock(:workspace_id)`
@@ -54,42 +106,24 @@ const (
 		select ` + fileSQLXColumns + `
 		from files
 		where workspace_id = :workspace_id
-			and external_id = :file_external_id
+			and cast(uuid as text) = :file_uuid
 			and deleted_at is null
 		for update
 	`
 	activeFileReferenceQuery = `
-		with target_workspace as (
-			select uuid
-			from workspaces
-			where id = :workspace_id
+		select exists (
+			select 1
+			from session_resources resource
+			where resource.workspace_id = :workspace_id
+				and resource.file_uuid = CAST(:file_uuid AS uuid)
+				and resource.deleted_at is null
 		)
-		select
-			exists (
-				select 1
-				from filestore_entries entry
-				where entry.workspace_uuid = (select uuid from target_workspace)
-					-- 投影不拥有对象也不计入 files_bytes。即使 backing entry 已退休，
-					-- 仍需阻止普通 Files 删除路径把投影当作源文件扣减容量。
-					and entry.uuid = CAST(:file_uuid AS uuid)
-			)
-			or exists (
-				select 1
-				from filestore_entries entry
-				join filestore_filesystems filesystem
-					on filesystem.uuid = entry.filesystem_uuid
-					and filesystem.workspace_uuid = entry.workspace_uuid
-					and filesystem.deleted_at is null
-				where entry.workspace_uuid = (select uuid from target_workspace)
-					and entry.source_file_uuid = CAST(:file_uuid AS uuid)
-					and entry.deleted_at is null
-			)
 	`
 	softDeleteFileQuery = `
 		update files
 		set deleted_at = now()
 		where workspace_id = :workspace_id
-			and external_id = :file_external_id
+			and cast(uuid as text) = :file_uuid
 			and deleted_at is null
 	`
 	enqueueObjectCleanupResourceJobQuery = `
@@ -166,21 +200,28 @@ const (
 // fileRecordRow / objectCleanupJobRow 用于承接 sqlx 的结构化扫描结果，避免把
 // 数据库存储细节直接泄漏到上层文件服务。
 type fileRecordRow struct {
-	ID                int64     `db:"id"`
-	UUID              string    `db:"uuid"`
-	ExternalID        string    `db:"external_id"`
-	WorkspaceID       int64     `db:"workspace_id"`
-	Filename          string    `db:"filename"`
-	MimeType          string    `db:"mime_type"`
-	SizeBytes         int64     `db:"size_bytes"`
-	SHA256            string    `db:"sha256"`
-	S3Bucket          string    `db:"s3_bucket"`
-	S3Key             string    `db:"s3_key"`
-	Downloadable      bool      `db:"downloadable"`
-	ScopeType         *string   `db:"scope_type"`
-	ScopeID           *string   `db:"scope_id"`
-	CreatedByAPIKeyID int64     `db:"created_by_api_key_id"`
-	CreatedAt         time.Time `db:"created_at"`
+	ID                    int64     `db:"id"`
+	UUID                  string    `db:"uuid"`
+	ExternalID            string    `db:"external_id"`
+	WorkspaceID           int64     `db:"workspace_id"`
+	Filename              string    `db:"filename"`
+	MimeType              string    `db:"mime_type"`
+	DetectedMimeType      *string   `db:"detected_mime_type"`
+	SizeBytes             int64     `db:"size_bytes"`
+	Metadata              []byte    `db:"metadata"`
+	AuthorizationMetadata []byte    `db:"authorization_metadata"`
+	TagsJSON              string    `db:"tags_json"`
+	MD5                   *string   `db:"md5"`
+	SHA256                string    `db:"sha256"`
+	S3Bucket              string    `db:"s3_bucket"`
+	S3Key                 string    `db:"s3_key"`
+	S3ETag                *string   `db:"s3_etag"`
+	S3VersionID           *string   `db:"s3_version_id"`
+	Downloadable          bool      `db:"downloadable"`
+	ScopeType             *string   `db:"scope_type"`
+	ScopeID               *string   `db:"scope_id"`
+	CreatedByAPIKeyID     int64     `db:"created_by_api_key_id"`
+	CreatedAt             time.Time `db:"created_at"`
 }
 
 type filePageCursorRow struct {
@@ -214,20 +255,27 @@ func fileUUIDArguments(workspaceID int64, fileUUID string) map[string]any {
 
 func fileRecordArguments(file FileRecord) map[string]any {
 	return map[string]any{
-		"file_uuid":             file.UUID,
-		"file_external_id":      file.ExternalID,
-		"workspace_id":          file.WorkspaceID,
-		"filename":              file.Filename,
-		"mime_type":             file.MimeType,
-		"size_bytes":            file.SizeBytes,
-		"sha256":                file.SHA256,
-		"s3_bucket":             file.S3Bucket,
-		"s3_key":                file.S3Key,
-		"downloadable":          file.Downloadable,
-		"scope_type":            file.ScopeType,
-		"scope_id":              file.ScopeID,
-		"created_by_api_key_id": file.CreatedByAPIKeyID,
-		"created_at":            file.CreatedAt,
+		"file_uuid":              file.UUID,
+		"file_external_id":       file.ExternalID,
+		"workspace_id":           file.WorkspaceID,
+		"filename":               file.Filename,
+		"mime_type":              file.MimeType,
+		"detected_mime_type":     file.DetectedMimeType,
+		"size_bytes":             file.SizeBytes,
+		"metadata":               filestoreJSONObject(file.Metadata),
+		"authorization_metadata": filestoreJSONObject(file.AuthorizationMetadata),
+		"tags":                   filestoreTags(file.Tags),
+		"md5":                    file.MD5,
+		"sha256":                 file.SHA256,
+		"s3_bucket":              file.S3Bucket,
+		"s3_key":                 file.S3Key,
+		"s3_etag":                file.S3ETag,
+		"s3_version_id":          file.S3VersionID,
+		"downloadable":           file.Downloadable,
+		"scope_type":             file.ScopeType,
+		"scope_id":               file.ScopeID,
+		"created_by_api_key_id":  file.CreatedByAPIKeyID,
+		"created_at":             file.CreatedAt,
 	}
 }
 
@@ -329,6 +377,18 @@ func getFileRecordSQLX(
 }
 
 func listFilesSQLXQuery(workspaceID int64, scopeID string) (string, map[string]any) {
+	if isSessionFilesScope(scopeID) {
+		return `
+			with ` + sessionCatalogResourceCTE + `
+			select ` + sessionCatalogFileSQLXColumns + `
+			from catalog_resource resource
+			join files file
+				on file.uuid = resource.file_uuid
+				and file.workspace_id = resource.workspace_id
+				and file.deleted_at is null
+			order by resource.created_at desc, resource.id desc
+		`, map[string]any{"workspace_id": workspaceID, "scope_id": scopeID}
+	}
 	query := `
 		select ` + fileSQLXColumns + `
 		from files
@@ -426,6 +486,22 @@ func filePageCursorSQLXQuery(
 	params ListFilesPageParams,
 	cursorExternalID string,
 ) (string, map[string]any) {
+	if isSessionFilesScope(params.ScopeID) {
+		return `
+			with ` + sessionCatalogResourceCTE + `
+			select resource.id, resource.created_at
+			from catalog_resource resource
+			join files file
+				on file.uuid = resource.file_uuid
+				and file.workspace_id = resource.workspace_id
+				and file.deleted_at is null
+			where file.external_id = :cursor_external_id
+		`, map[string]any{
+				"workspace_id":       params.WorkspaceID,
+				"scope_id":           params.ScopeID,
+				"cursor_external_id": cursorExternalID,
+			}
+	}
 	query := `
 		select id, created_at
 		from files
@@ -448,6 +524,9 @@ func listFilesPageSQLXQuery(
 	params ListFilesPageParams,
 	cursor filePageCursorRow,
 ) (string, map[string]any) {
+	if isSessionFilesScope(params.ScopeID) {
+		return sessionCatalogFilesPageSQLXQuery(params, cursor)
+	}
 	query := `
 		select ` + fileSQLXColumns + `
 		from files
@@ -489,6 +568,52 @@ func listFilesPageSQLXQuery(
 	return query, arguments
 }
 
+func isSessionFilesScope(scopeID string) bool {
+	return strings.HasPrefix(scopeID, "sesn_")
+}
+
+func sessionCatalogFilesPageSQLXQuery(
+	params ListFilesPageParams,
+	cursor filePageCursorRow,
+) (string, map[string]any) {
+	query := `
+		with ` + sessionCatalogResourceCTE + `
+		select ` + sessionCatalogFileSQLXColumns + `
+		from catalog_resource resource
+		join files file
+			on file.uuid = resource.file_uuid
+			and file.workspace_id = resource.workspace_id
+			and file.deleted_at is null
+		where true
+	`
+	arguments := map[string]any{
+		"workspace_id": params.WorkspaceID,
+		"scope_id":     params.ScopeID,
+		"limit":        params.Limit + 1,
+	}
+	if params.AfterID != "" {
+		query += ` and (
+			resource.created_at < :cursor_created_at
+			or (resource.created_at = :cursor_created_at and resource.id < :cursor_id)
+		)`
+		arguments["cursor_created_at"] = cursor.CreatedAt
+		arguments["cursor_id"] = cursor.ID
+	} else if params.BeforeID != "" {
+		query += ` and (
+			resource.created_at > :cursor_created_at
+			or (resource.created_at = :cursor_created_at and resource.id > :cursor_id)
+		)`
+		arguments["cursor_created_at"] = cursor.CreatedAt
+		arguments["cursor_id"] = cursor.ID
+	}
+	if params.BeforeID != "" {
+		query += " order by resource.created_at asc, resource.id asc limit :limit"
+	} else {
+		query += " order by resource.created_at desc, resource.id desc limit :limit"
+	}
+	return query, arguments
+}
+
 func softDeleteFileSQLX(
 	ctx context.Context,
 	database *sqlx.DB,
@@ -505,11 +630,15 @@ func softDeleteFileSQLX(
 	if _, err := namedExecContext(ctx, tx, fileWorkspaceLockQuery, arguments); err != nil {
 		return err
 	}
+	resolved, err := getFileRecordSQLX(ctx, tx, getFileQuery, arguments)
+	if err != nil {
+		return err
+	}
+	arguments["file_uuid"] = resolved.UUID
 	file, err := getFileRecordSQLX(ctx, tx, softDeleteFileRecordQuery, arguments)
 	if err != nil {
 		return err
 	}
-	arguments["file_uuid"] = file.UUID
 	var referenced bool
 	if err := namedGetContext(ctx, tx, &referenced, activeFileReferenceQuery, arguments); err != nil {
 		return err
@@ -607,22 +736,36 @@ func failObjectCleanupJobSQLX(
 }
 
 func (r fileRecordRow) record() FileRecord {
+	var tags []string
+	if err := json.Unmarshal([]byte(r.TagsJSON), &tags); err != nil {
+		tags = []string{}
+	}
+	if tags == nil {
+		tags = []string{}
+	}
 	return FileRecord{
-		ID:                r.ID,
-		UUID:              r.UUID,
-		ExternalID:        r.ExternalID,
-		WorkspaceID:       r.WorkspaceID,
-		Filename:          r.Filename,
-		MimeType:          r.MimeType,
-		SizeBytes:         r.SizeBytes,
-		SHA256:            r.SHA256,
-		S3Bucket:          r.S3Bucket,
-		S3Key:             r.S3Key,
-		Downloadable:      r.Downloadable,
-		ScopeType:         r.ScopeType,
-		ScopeID:           r.ScopeID,
-		CreatedByAPIKeyID: r.CreatedByAPIKeyID,
-		CreatedAt:         r.CreatedAt,
+		ID:                    r.ID,
+		UUID:                  r.UUID,
+		ExternalID:            r.ExternalID,
+		WorkspaceID:           r.WorkspaceID,
+		Filename:              r.Filename,
+		MimeType:              r.MimeType,
+		DetectedMimeType:      r.DetectedMimeType,
+		SizeBytes:             r.SizeBytes,
+		Metadata:              copyRaw(r.Metadata),
+		AuthorizationMetadata: copyRaw(r.AuthorizationMetadata),
+		Tags:                  tags,
+		MD5:                   r.MD5,
+		SHA256:                r.SHA256,
+		S3Bucket:              r.S3Bucket,
+		S3Key:                 r.S3Key,
+		S3ETag:                r.S3ETag,
+		S3VersionID:           r.S3VersionID,
+		Downloadable:          r.Downloadable,
+		ScopeType:             r.ScopeType,
+		ScopeID:               r.ScopeID,
+		CreatedByAPIKeyID:     r.CreatedByAPIKeyID,
+		CreatedAt:             r.CreatedAt,
 	}
 }
 

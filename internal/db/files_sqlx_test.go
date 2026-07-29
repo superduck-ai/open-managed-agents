@@ -52,7 +52,7 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 		wantArgCount int
 	}{
 		{"workspace lock", fileWorkspaceLockQuery, map[string]any{"workspace_id": int64(42)}, 1},
-		{"insert file", insertFileQuery, fileRecordArguments(file), 14},
+		{"insert file", insertFileQuery, fileRecordArguments(file), 21},
 		{"get file", getFileQuery, getFileArguments(42, file.ExternalID), 2},
 		{"get file by uuid", getFileByUUIDQuery, fileUUIDArguments(42, file.UUID), 2},
 		{
@@ -65,14 +65,14 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 		{"page cursor", cursorQuery, cursorArguments, 3},
 		{"list after page", afterQuery, afterArguments, 6},
 		{"list before page", beforeQuery, beforeArguments, 5},
-		{"soft delete record", softDeleteFileRecordQuery, getFileArguments(42, file.ExternalID), 2},
+		{"soft delete record", softDeleteFileRecordQuery, fileUUIDArguments(42, file.UUID), 2},
 		{
 			"active file reference",
 			activeFileReferenceQuery,
 			map[string]any{"workspace_id": int64(42), "file_uuid": file.UUID},
-			3,
+			2,
 		},
-		{"soft delete", softDeleteFileQuery, getFileArguments(42, file.ExternalID), 2},
+		{"soft delete", softDeleteFileQuery, fileUUIDArguments(42, file.UUID), 2},
 		{
 			"enqueue cleanup",
 			enqueueObjectCleanupResourceJobQuery,

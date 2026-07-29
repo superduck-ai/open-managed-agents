@@ -246,7 +246,7 @@ func TestCleanupWorkerRunTTLSweepOnceUsesBoundedBatch(t *testing.T) {
 		t.Fatalf("RunTTLSweepOnce() error = %v", err)
 	}
 	if database.expireCalls != 1 || database.expireLimit != filestoreTTLSweepBatchSize {
-		t.Fatalf("ExpireFilestoreEntries calls = %d, limit = %d", database.expireCalls, database.expireLimit)
+		t.Fatalf("ExpireSessionNamespaceNodes calls = %d, limit = %d", database.expireCalls, database.expireLimit)
 	}
 }
 
@@ -486,7 +486,7 @@ func (d *fakeFilestoreCleanupDatabase) FailLeasedFilestoreObjectCleanupJob(
 	return d.failError
 }
 
-func (d *fakeFilestoreCleanupDatabase) ExpireFilestoreEntries(
+func (d *fakeFilestoreCleanupDatabase) ExpireSessionNamespaceNodes(
 	_ context.Context,
 	limit int,
 ) ([]db.FilestoreObjectCleanupJob, error) {

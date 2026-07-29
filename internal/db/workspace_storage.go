@@ -58,20 +58,23 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceID int
 					and file.deleted_at is null
 					and not exists (
 						select 1
-						from filestore_entries entry
-						where entry.workspace_uuid = (
-							select uuid from workspaces where id = :workspace_id
-						)
-							and entry.uuid = file.uuid
+						from session_resources resource
+						where resource.workspace_id = :workspace_id
+							and resource.file_uuid = file.uuid
+							and resource.payload is null
+							and resource.deleted_at is null
 					)
 			), 0) as files_bytes,
 			coalesce((
-				select sum(size_bytes) from filestore_entries
-				where workspace_uuid = (
-					select uuid from workspaces where id = :workspace_id
-				)
-					and kind = 'file' and deleted_at is null
-					and source_file_uuid is null
+				select sum(file.size_bytes)
+				from files file
+				join session_resources resource
+					on resource.file_uuid = file.uuid
+					and resource.workspace_id = file.workspace_id
+					and resource.resource_type = 'file'
+					and resource.payload is null
+					and resource.deleted_at is null
+				where file.workspace_id = :workspace_id and file.deleted_at is null
 			), 0) as filestore_bytes
 	`, arguments); err != nil {
 		return 0, err

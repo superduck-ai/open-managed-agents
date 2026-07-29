@@ -223,18 +223,15 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 		defer deleteSession(t, app, *run.SessionID)
 
-		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceID, *run.SessionID)
-		if err != nil {
-			t.Fatalf("list deployment run Session resources: %v", err)
-		}
-		if len(resources) != 1 {
-			t.Fatalf("deployment run Session resources = %d, want 1", len(resources))
+		runSession := retrieveSession(t, app, *run.SessionID, defaultTestKey)
+		if len(runSession.Resources) != 1 {
+			t.Fatalf("deployment run Session resources = %d, want 1", len(runSession.Resources))
 		}
 		assertSessionFileReference(
 			t,
 			app,
 			*run.SessionID,
-			resources[0].Payload,
+			runSession.Resources[0],
 			file.ID,
 			"/uploads/workspace/deployment.txt",
 		)

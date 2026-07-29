@@ -53,40 +53,40 @@ var (
 	filesystemCleanupFilesystemQuery = filestoreFilesystemSelectSQL() + `
 		where uuid = :filesystem_uuid and workspace_uuid = :workspace_uuid
 	`
-	filesystemCleanupEntriesQuery = filestoreEntrySelectSQL() + `
+	filesystemCleanupEntriesQuery = sessionNamespaceNodeSelectSQL() + `
 		where workspace_uuid = :workspace_uuid and filesystem_uuid = :filesystem_uuid
 			and kind = 'file' and deleted_at is null
 		order by id
 		limit :limit
-		for update
 	`
-	expiredFilestoreEntriesQuery = filestoreEntrySelectSQL() + `
+	expiredSessionNamespaceNodesQuery = sessionNamespaceNodeSelectSQL() + `
 		where kind = 'file' and deleted_at is null and expires_at <= now()
 			and filesystem_uuid in (
-				select uuid from filestore_filesystems
+				select cast(uuid as text) from filestore_filesystems
 				where id = any(CAST(:filesystem_ids AS bigint[]))
 			)
 		order by expires_at, id
 		limit :limit
-		for update skip locked
 	`
 )
 
 const (
 	expiredFilestoreCleanupScopesQuery = `
-		select distinct w.id AS workspace_id, fs.id AS filesystem_id,
-			CAST(oldest_expired.filesystem_uuid AS text) AS filesystem_uuid
+		select distinct workspace.id AS workspace_id, filesystem.id AS filesystem_id,
+			CAST(filesystem.uuid AS text) AS filesystem_uuid
 		from (
-			select workspace_uuid, filesystem_uuid, expires_at, id
-			from filestore_entries
-			where kind = 'file' and deleted_at is null and expires_at <= now()
+			select workspace_id, session_id, expires_at, id
+			from session_resources
+			where resource_type = 'file' and deleted_at is null and expires_at <= now()
 			order by expires_at, id
 			limit :limit
 		) oldest_expired
-		join workspaces w on w.uuid = oldest_expired.workspace_uuid
-		join filestore_filesystems fs
-			on fs.uuid = oldest_expired.filesystem_uuid
-			and fs.workspace_uuid = w.uuid
+		join workspaces workspace on workspace.id = oldest_expired.workspace_id
+		join sessions session on session.id = oldest_expired.session_id
+		join filestore_filesystems filesystem
+			on filesystem.session_uuid = session.uuid
+			and filesystem.workspace_uuid = workspace.uuid
+			and filesystem.deleted_at is null
 	`
 	filesystemCleanupWorkspaceLockQuery = `
 		select pg_advisory_xact_lock(:workspace_id)
@@ -94,25 +94,19 @@ const (
 	filesystemCleanupFilesystemLockQuery = `
 		select pg_advisory_xact_lock(-CAST(:filesystem_id AS bigint))
 	`
-	retireFilesystemCleanupEntryQuery = `
-		update filestore_entries
-		set deleted_at = :retired_at, updated_at = :retired_at
-		where id = :entry_id and deleted_at is null
-	`
 	filesystemCleanupFilesRemainQuery = `
 		select exists (
-			select 1 from filestore_entries
-			where workspace_uuid = :workspace_uuid
-				and filesystem_uuid = :filesystem_uuid
-				and kind = 'file' and deleted_at is null
+			select 1 from session_resources
+			where workspace_id = :workspace_id
+				and session_id = :session_id
+				and resource_type = 'file' and deleted_at is null
 		)
 	`
 	retireFilesystemCleanupNamespaceEntriesQuery = `
-		update filestore_entries
+		update session_resources
 		set deleted_at = :retired_at, updated_at = :retired_at
-		where workspace_uuid = :workspace_uuid
-			and filesystem_uuid = :filesystem_uuid
-			and kind in ('directory', 'archive') and deleted_at is null
+		where workspace_id = :workspace_id and session_id = :session_id
+			and resource_type in ('directory', 'skill_archive') and deleted_at is null
 	`
 	completeFilesystemCleanupBatchQuery = `
 		update jobs
@@ -124,8 +118,8 @@ const (
 	`
 )
 
-// ExpireFilestoreEntries 原子软删除一批到期文件，并为每个失去引用的精确对象版本创建清理任务。
-func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]FilestoreObjectCleanupJob, error) {
+// ExpireSessionNamespaceNodes 原子软删除一批到期文件，并为每个失去引用的精确对象版本创建清理任务。
+func (d *DB) ExpireSessionNamespaceNodes(ctx context.Context, limit int) ([]FilestoreObjectCleanupJob, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -145,7 +139,7 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 	}
 	workspaceIDSet := make(map[int64]struct{})
 	filesystemIDSet := make(map[int64]struct{})
-	cleanupScopeByFilesystemUUID := make(map[string]filestoreEntryCleanupScope)
+	cleanupScopeByFilesystemUUID := make(map[string]sessionNamespaceNodeCleanupScope)
 	var workspaceIDs []int64
 	var filesystemIDs []int64
 	for _, row := range scopeRows {
@@ -157,7 +151,7 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 			filesystemIDSet[row.FilesystemID] = struct{}{}
 			filesystemIDs = append(filesystemIDs, row.FilesystemID)
 		}
-		cleanupScopeByFilesystemUUID[row.FilesystemUUID] = filestoreEntryCleanupScope{
+		cleanupScopeByFilesystemUUID[row.FilesystemUUID] = sessionNamespaceNodeCleanupScope{
 			WorkspaceID: row.WorkspaceID, FilesystemID: row.FilesystemID,
 		}
 	}
@@ -189,15 +183,15 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 		}
 	}
 
-	var entryRows []filestoreEntryRow
-	err = namedSelectContext(ctx, tx, &entryRows, expiredFilestoreEntriesQuery, map[string]any{
+	var entryRows []sessionNamespaceNodeRow
+	err = namedSelectContext(ctx, tx, &entryRows, expiredSessionNamespaceNodesQuery, map[string]any{
 		"filesystem_ids": filesystemIDs,
 		"limit":          limit,
 	})
 	if err != nil {
 		return nil, err
 	}
-	entries, err := filestoreEntriesFromSQLXRows(entryRows)
+	entries, err := sessionNamespaceNodesFromSQLXRows(entryRows)
 	if err != nil {
 		return nil, err
 	}
@@ -205,30 +199,21 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
 	releasedBytesByWorkspace := make(map[int64]int64)
 	for _, entry := range entries {
-		// Borrowed Files API objects are not owned or accounted for by
-		// Filestore. The current schema forbids expiry on those references; the
-		// guard keeps cleanup safe if malformed historical data is encountered.
-		if entry.BorrowsSourceObject() {
+		// Input Resource 引用的 Source File 不由 Session namespace 拥有或计费。
+		// schema 禁止这类引用设置 TTL；此守卫仍可避免异常历史数据触发对象清理。
+		if entry.ReferencesSourceFile() {
 			continue
 		}
 		scope, found := cleanupScopeByFilesystemUUID[entry.FilesystemUUID]
 		if !found {
 			return nil, ErrNotFound
 		}
-		job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, "ttl_expired", now)
+		job, err := enqueueSessionNamespaceNodeCleanupJobTx(ctx, tx, scope, entry, "ttl_expired", now)
 		if err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)
-		if _, err := namedExecContext(ctx, tx, `
-			update filestore_entries set deleted_at = :now, updated_at = :now
-			where id = :entry_id and deleted_at is null
-		`, map[string]any{"entry_id": entry.ID, "now": now}); err != nil {
-			return nil, err
-		}
-		if err := softDeleteSessionFileProjectionByEntryTx(
-			ctx, tx, scope.WorkspaceID, entry.UUID,
-		); err != nil {
+		if err := retireSessionNamespaceNodeTx(ctx, tx, scope.WorkspaceID, entry.ID, now); err != nil {
 			return nil, err
 		}
 		releasedBytes, err := addWorkspaceStorageDelta(
@@ -325,26 +310,27 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	if err != nil {
 		return false, err
 	}
-	cleanupScope := filestoreEntryCleanupScope{
+	cleanupScope := sessionNamespaceNodeCleanupScope{
 		WorkspaceID: job.WorkspaceID, FilesystemID: filesystem.ID,
 	}
 
-	var entryRows []filestoreEntryRow
+	var entryRows []sessionNamespaceNodeRow
 	err = namedSelectContext(ctx, tx, &entryRows, filesystemCleanupEntriesQuery, arguments)
 	if err != nil {
 		return false, err
 	}
-	entries, err := filestoreEntriesFromSQLXRows(entryRows)
+	entries, err := sessionNamespaceNodesFromSQLXRows(entryRows)
 	if err != nil {
 		return false, err
 	}
 
 	now := time.Now().UTC()
 	arguments["retired_at"] = now
+	arguments["session_id"] = filesystem.SessionID
 	var releasedBytes int64
 	for _, entry := range entries {
-		if !entry.BorrowsSourceObject() {
-			if _, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, cleanupScope, entry, "session_deleted", now); err != nil {
+		if !entry.ReferencesSourceFile() {
+			if _, err := enqueueSessionNamespaceNodeCleanupJobTx(ctx, tx, cleanupScope, entry, "session_deleted", now); err != nil {
 				return false, err
 			}
 			releasedBytes, err = addWorkspaceStorageDelta(
@@ -355,8 +341,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 				return false, err
 			}
 		}
-		arguments["entry_id"] = entry.ID
-		if _, err := namedExecContext(ctx, tx, retireFilesystemCleanupEntryQuery, arguments); err != nil {
+		if err := retireSessionNamespaceNodeTx(ctx, tx, job.WorkspaceID, entry.ID, now); err != nil {
 			return false, err
 		}
 	}
@@ -718,7 +703,7 @@ func (d *DB) filestoreCleanupJobMutationMiss(ctx context.Context, workspaceID in
 	return ErrFilestoreCleanupJobNotCancelable
 }
 
-type filestoreEntryCleanupScope struct {
+type sessionNamespaceNodeCleanupScope struct {
 	WorkspaceID  int64
 	FilesystemID int64
 }
@@ -729,12 +714,11 @@ type expiredFilestoreCleanupScopeRow struct {
 	FilesystemUUID string `db:"filesystem_uuid"`
 }
 
-func enqueueFilestoreEntryCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope filestoreEntryCleanupScope, entry FilestoreEntry, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
-	// This helper is also used while retiring an entire filesystem. Managed
-	// entries that own their objects must be cleaned up there; only borrowed
-	// Files API objects are ineligible for object deletion.
-	if entry.Kind != FilestoreEntryKindFile || entry.S3Bucket == nil ||
-		entry.S3Key == nil || entry.BorrowsSourceObject() {
+func enqueueSessionNamespaceNodeCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope sessionNamespaceNodeCleanupScope, entry SessionNamespaceNode, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
+	// 该辅助函数也用于退役整个 filesystem。Owned File 必须进入对象清理；
+	// Input Resource 只引用 Files API 对象，不能登记对象删除。
+	if entry.Kind != SessionNamespaceNodeKindFile || entry.S3Bucket == nil ||
+		entry.S3Key == nil || entry.ReferencesSourceFile() {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
 	}
 	return insertFilestoreObjectCleanupJobSQLX(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
@@ -750,44 +734,43 @@ func enqueueFilestoreEntryCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope f
 	})
 }
 
-func enqueueOwnedFilestoreEntryCleanupJobTx(
+func enqueueOwnedSessionNamespaceNodeCleanupJobTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
-	scope filestoreEntryCleanupScope,
-	entry FilestoreEntry,
+	scope sessionNamespaceNodeCleanupScope,
+	entry SessionNamespaceNode,
 	reason string,
 	runAfter time.Time,
 ) (FilestoreObjectCleanupJob, bool, error) {
-	if entry.BorrowsSourceObject() {
+	if entry.ReferencesSourceFile() {
 		return FilestoreObjectCleanupJob{}, false, nil
 	}
-	job, err := enqueueFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, reason, runAfter)
+	job, err := enqueueSessionNamespaceNodeCleanupJobTx(ctx, tx, scope, entry, reason, runAfter)
 	return job, err == nil, err
 }
 
-func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scope filestoreEntryCleanupScope, filesystem FilestoreFilesystem, rootPath string, runAfter time.Time) ([]FilestoreObjectCleanupJob, int64, error) {
+func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scope sessionNamespaceNodeCleanupScope, filesystem FilestoreFilesystem, rootPath string, runAfter time.Time) ([]FilestoreObjectCleanupJob, int64, error) {
 	// rootPath 本身是目录，文件只可能出现在严格后代中；分隔符比较避免同前缀误选。
-	var rows []filestoreEntryRow
-	err := namedSelectContext(ctx, tx, &rows, filestoreEntrySelectSQL()+`
+	var rows []sessionNamespaceNodeRow
+	err := namedSelectContext(ctx, tx, &rows, sessionNamespaceNodeSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and kind = 'file'
 			and deleted_at is null
 			and left(path, char_length(:root_path) + 1) = :root_path || '/'
 		order by id
-		for update
 	`, filestoreSubtreeArguments(filesystem, rootPath))
 	if err != nil {
 		return nil, 0, err
 	}
-	entries, err := filestoreEntriesFromSQLXRows(rows)
+	entries, err := sessionNamespaceNodesFromSQLXRows(rows)
 	if err != nil {
 		return nil, 0, err
 	}
 	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
 	var removedBytes int64
 	for _, entry := range entries {
-		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, "remove_directory", runAfter)
+		job, enqueued, err := enqueueOwnedSessionNamespaceNodeCleanupJobTx(ctx, tx, scope, entry, "remove_directory", runAfter)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -805,13 +788,13 @@ func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scop
 func retireExpiredFilestoreSubtreeTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
-	scope filestoreEntryCleanupScope,
+	scope sessionNamespaceNodeCleanupScope,
 	filesystem FilestoreFilesystem,
 	rootPath string,
 	retiredAt time.Time,
 ) ([]FilestoreObjectCleanupJob, int64, error) {
-	var rows []filestoreEntryRow
-	err := namedSelectContext(ctx, tx, &rows, filestoreEntrySelectSQL()+`
+	var rows []sessionNamespaceNodeRow
+	err := namedSelectContext(ctx, tx, &rows, sessionNamespaceNodeSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and kind = 'file'
@@ -821,19 +804,18 @@ func retireExpiredFilestoreSubtreeTx(
 				or left(path, char_length(:root_path) + 1) = :root_path || '/'
 			)
 		order by id
-		for update
 	`, filestoreSubtreeArguments(filesystem, rootPath))
 	if err != nil {
 		return nil, 0, err
 	}
-	entries, err := filestoreEntriesFromSQLXRows(rows)
+	entries, err := sessionNamespaceNodesFromSQLXRows(rows)
 	if err != nil {
 		return nil, 0, err
 	}
 	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
 	var retiredBytes int64
 	for _, entry := range entries {
-		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, scope, entry, "expired_destination_replaced", retiredAt)
+		job, enqueued, err := enqueueOwnedSessionNamespaceNodeCleanupJobTx(ctx, tx, scope, entry, "expired_destination_replaced", retiredAt)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -844,14 +826,7 @@ func retireExpiredFilestoreSubtreeTx(
 		if err != nil {
 			return nil, 0, err
 		}
-		if _, err := namedExecContext(ctx, tx, `
-			update filestore_entries
-			set deleted_at = :retired_at, updated_at = :retired_at
-			where id = :entry_id and deleted_at is null
-		`, map[string]any{
-			"entry_id":   entry.ID,
-			"retired_at": retiredAt,
-		}); err != nil {
+		if err := retireSessionNamespaceNodeTx(ctx, tx, scope.WorkspaceID, entry.ID, retiredAt); err != nil {
 			return nil, 0, err
 		}
 	}

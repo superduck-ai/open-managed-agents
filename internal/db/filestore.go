@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	FilestoreEntryKindFile      = "file"
-	FilestoreEntryKindDirectory = "directory"
-	FilestoreEntryKindArchive   = "archive"
+	SessionNamespaceNodeKindFile      = "file"
+	SessionNamespaceNodeKindDirectory = "directory"
+	SessionNamespaceNodeKindArchive   = "archive"
 
 	filestoreMaxPathBytes             = filestorepath.MaxBytes
 	filestoreCleanupJobType           = "filestore_object_cleanup"
@@ -21,8 +21,8 @@ const (
 var (
 	ErrFilestorePathExists              = errors.New("filestore path already exists")
 	ErrFilestoreParentMissing           = errors.New("filestore parent directory does not exist")
-	ErrFilestoreNotFile                 = errors.New("filestore entry is not a file")
-	ErrFilestoreNotDirectory            = errors.New("filestore entry is not a directory")
+	ErrFilestoreNotFile                 = errors.New("filestore namespace node is not a file")
+	ErrFilestoreNotDirectory            = errors.New("filestore namespace node is not a directory")
 	ErrFilestoreDirectoryNotEmpty       = errors.New("filestore directory is not empty")
 	ErrFilestoreInvalidMove             = errors.New("invalid filestore move")
 	ErrFilestoreCleanupJobNotCancelable = errors.New("filestore cleanup job is not cancelable")
@@ -32,6 +32,7 @@ var (
 // 组织、工作区与会话都使用 UUID 持久化，不能仅凭 ExternalID 全局查找。
 type FilestoreFilesystem struct {
 	ID                  int64
+	SessionID           int64
 	UUID                string
 	ExternalID          string
 	OrganizationUUID    string
@@ -78,10 +79,9 @@ type ProvisionFilestoreFilesystemInput struct {
 	Now                 time.Time
 }
 
-// FilestoreEntry 是目录树中的一个持久化节点。
-// 目录字段保持为空；文件与 archive 字段指向对象存储中的不可变对象版本。
-// Managed 字段标识借用其他资源对象、但投影到 Session 命名空间中的条目。
-type FilestoreEntry struct {
+// SessionNamespaceNode 是由 Session Resource 与可选真实 File 组合出的命名空间节点。
+// 目录不关联 File；Input Resource 引用 Source File；Owned File 节点引用自身 File。
+type SessionNamespaceNode struct {
 	ID                       int64
 	UUID                     string
 	ExternalID               string
@@ -105,9 +105,8 @@ type FilestoreEntry struct {
 	S3ETag                   *string
 	S3VersionID              *string
 	ExpiresAt                *time.Time
-	ManagedBy                *string
-	ManagedResourceUUID      *string
-	SourceFileUUID           *string
+	SkillVersionUUID         *string
+	ReferencedFileUUID       *string
 	CreatedByAPIKeyUUID      *string
 	CreatedBySessionUUID     *string
 	CreatedByCodeSessionUUID *string
@@ -134,9 +133,9 @@ type FilestoreFileBlob struct {
 	ExpiresAt             *time.Time
 }
 
-// FilestoreSkillArchiveEntryInput 描述一个已解析的不可变 skill ZIP。
+// SessionSkillArchiveResourceInput 描述一个已解析的不可变 skill ZIP。
 // Source 只写入通用 metadata；对象及其生命周期仍由 skill catalog 管理。
-type FilestoreSkillArchiveEntryInput struct {
+type SessionSkillArchiveResourceInput struct {
 	Source           string
 	SkillVersionUUID string
 	Directory        string
@@ -146,26 +145,26 @@ type FilestoreSkillArchiveEntryInput struct {
 	SHA256           string
 }
 
-// FilestoreEntryPageCursor 保存键集分页的最后一个 (Path, ID) 排序键。
-type FilestoreEntryPageCursor struct {
+// SessionNamespaceNodePageCursor 保存键集分页的最后一个 (Path, ID) 排序键。
+type SessionNamespaceNodePageCursor struct {
 	Path string
 	ID   int64
 }
 
-// FilestoreEntryPage 表示一页目录节点及其后续页状态。
-type FilestoreEntryPage struct {
-	Entries []FilestoreEntry
+// SessionNamespaceNodePage 表示一页目录节点及其后续页状态。
+type SessionNamespaceNodePage struct {
+	Entries []SessionNamespaceNode
 	HasMore bool
 }
 
-// ListFilestoreEntriesPageParams 定义一次有界的目录枚举。
-type ListFilestoreEntriesPageParams struct {
+// ListSessionNamespaceNodesPageParams 定义一次有界的目录枚举。
+type ListSessionNamespaceNodesPageParams struct {
 	WorkspaceID   int64
 	FilesystemID  int64
 	DirectoryPath string
 	Recursive     bool
 	Limit         int
-	Cursor        *FilestoreEntryPageCursor
+	Cursor        *SessionNamespaceNodePageCursor
 }
 
 // MakeFilestoreDirectoryInput 描述目录创建及可选的父目录补齐行为。
@@ -227,8 +226,8 @@ type MoveFilestoreDirectoryInput struct {
 	Now             time.Time
 }
 
-// RemoveFilestoreEntryInput 描述单个文件的软删除。
-type RemoveFilestoreEntryInput struct {
+// RemoveSessionNamespaceNodeInput 描述单个文件的软删除。
+type RemoveSessionNamespaceNodeInput struct {
 	WorkspaceID  int64
 	FilesystemID int64
 	Path         string
@@ -244,9 +243,9 @@ type RemoveFilestoreDirectoryInput struct {
 	Now          time.Time
 }
 
-// FilestoreMutationResult 返回变更后的主条目及随事务创建的对象清理任务。
+// FilestoreMutationResult 返回变更后的 namespace 节点及随事务创建的对象清理任务。
 type FilestoreMutationResult struct {
-	Entry       FilestoreEntry
+	Node        SessionNamespaceNode
 	CleanupJobs []FilestoreObjectCleanupJob
 }
 

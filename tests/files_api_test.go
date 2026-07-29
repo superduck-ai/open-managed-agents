@@ -672,7 +672,7 @@ func TestFilesAPI(t *testing.T) {
 			t.Fatalf("before_id page length = %d, want 1", len(pageBefore.Data))
 		}
 
-		scopeID := "session_scope_test"
+		scopeID := "session_scope_" + uuid.NewString()
 		scopedID := createMetadataOnlyFile(t, app, scopeID)
 		defer softDeleteFile(t, app.db, scopedID)
 		scopedPage := listFiles(t, app, "scope_id="+scopeID)

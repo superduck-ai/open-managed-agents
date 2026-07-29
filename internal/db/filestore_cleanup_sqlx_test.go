@@ -28,7 +28,7 @@ func TestFilesystemCleanupProcessingQueriesUseSQLXNamedParameters(t *testing.T) 
 		"workspace_uuid":  "00000000-0000-0000-0000-000000000042",
 		"filesystem_uuid": "00000000-0000-0000-0000-000000000043",
 		"filesystem_ids":  []int64{43, 44},
-		"entry_id":        int64(44),
+		"session_id":      int64(45),
 		"retired_at":      retiredAt,
 		"status":          "completed",
 	}
@@ -38,13 +38,12 @@ func TestFilesystemCleanupProcessingQueriesUseSQLXNamedParameters(t *testing.T) 
 		wantArgCount int
 	}{
 		{"expired scopes", expiredFilestoreCleanupScopesQuery, 1},
-		{"expired entries", expiredFilestoreEntriesQuery, 2},
+		{"expired nodes", expiredSessionNamespaceNodesQuery, 2},
 		{"leased job", leasedFilesystemCleanupJobQuery, 3},
 		{"workspace lock", filesystemCleanupWorkspaceLockQuery, 1},
 		{"filesystem lock", filesystemCleanupFilesystemLockQuery, 1},
 		{"filesystem", filesystemCleanupFilesystemQuery, 2},
 		{"entries", filesystemCleanupEntriesQuery, 3},
-		{"retire entry", retireFilesystemCleanupEntryQuery, 3},
 		{"files remain", filesystemCleanupFilesRemainQuery, 2},
 		{"retire namespace entries", retireFilesystemCleanupNamespaceEntriesQuery, 4},
 		{"complete batch", completeFilesystemCleanupBatchQuery, 6},

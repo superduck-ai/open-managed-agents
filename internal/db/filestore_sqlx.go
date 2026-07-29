@@ -11,6 +11,7 @@ import (
 
 type filestoreFilesystemRow struct {
 	ID                  int64      `db:"id"`
+	SessionID           int64      `db:"session_id"`
 	UUID                string     `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
 	OrganizationUUID    string     `db:"organization_uuid"`
@@ -40,7 +41,7 @@ type filestoreTokenScopeRow struct {
 	WorkspaceCMEKEnabled   bool   `db:"workspace_cmek_enabled"`
 }
 
-type filestoreEntryRow struct {
+type sessionNamespaceNodeRow struct {
 	ID                       int64      `db:"id"`
 	UUID                     string     `db:"uuid"`
 	ExternalID               string     `db:"external_id"`
@@ -64,9 +65,8 @@ type filestoreEntryRow struct {
 	S3ETag                   *string    `db:"s3_etag"`
 	S3VersionID              *string    `db:"s3_version_id"`
 	ExpiresAt                *time.Time `db:"expires_at"`
-	ManagedBy                *string    `db:"managed_by"`
-	ManagedResourceUUID      *string    `db:"managed_resource_uuid"`
-	SourceFileUUID           *string    `db:"source_file_uuid"`
+	SkillVersionUUID         *string    `db:"skill_version_uuid"`
+	ReferencedFileUUID       *string    `db:"referenced_file_uuid"`
 	CreatedByAPIKeyUUID      *string    `db:"created_by_api_key_uuid"`
 	CreatedBySessionUUID     *string    `db:"created_by_session_uuid"`
 	CreatedByCodeSessionUUID *string    `db:"created_by_code_session_uuid"`
@@ -109,8 +109,8 @@ func getFilestoreTokenScopeSQLX(ctx context.Context, database sqlxNamedQueryer, 
 	return row.scope()
 }
 
-func getActiveFilestoreEntrySQLX(ctx context.Context, database sqlxNamedQueryer, filesystem FilestoreFilesystem, entryPath string) (FilestoreEntry, error) {
-	return getFilestoreEntrySQLX(ctx, database, filestoreEntrySelectSQL()+`
+func getActiveSessionNamespaceNodeSQLX(ctx context.Context, database sqlxNamedQueryer, filesystem FilestoreFilesystem, entryPath string) (SessionNamespaceNode, error) {
+	return getSessionNamespaceNodeSQLX(ctx, database, sessionNamespaceNodeSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and path = :entry_path
@@ -123,14 +123,14 @@ func getActiveFilestoreEntrySQLX(ctx context.Context, database sqlxNamedQueryer,
 	})
 }
 
-func getFilestoreEntrySQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (FilestoreEntry, error) {
-	var row filestoreEntryRow
+func getSessionNamespaceNodeSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (SessionNamespaceNode, error) {
+	var row sessionNamespaceNodeRow
 	err := namedGetContext(ctx, database, &row, query, arguments)
 	if errors.Is(err, sql.ErrNoRows) {
-		return FilestoreEntry{}, ErrNotFound
+		return SessionNamespaceNode{}, ErrNotFound
 	}
 	if err != nil {
-		return FilestoreEntry{}, err
+		return SessionNamespaceNode{}, err
 	}
 	return row.entry()
 }
@@ -195,6 +195,7 @@ func insertFilestoreObjectCleanupJobSQLX(
 func (row filestoreFilesystemRow) filesystem() FilestoreFilesystem {
 	return FilestoreFilesystem{
 		ID:                  row.ID,
+		SessionID:           row.SessionID,
 		UUID:                row.UUID,
 		ExternalID:          row.ExternalID,
 		OrganizationUUID:    row.OrganizationUUID,
@@ -234,15 +235,15 @@ func (row filestoreTokenScopeRow) scope() (FilestoreTokenScope, error) {
 	}, nil
 }
 
-func (row filestoreEntryRow) entry() (FilestoreEntry, error) {
+func (row sessionNamespaceNodeRow) entry() (SessionNamespaceNode, error) {
 	var tags []string
 	if err := json.Unmarshal([]byte(row.TagsJSON), &tags); err != nil {
-		return FilestoreEntry{}, fmt.Errorf("decode filestore entry tags: %w", err)
+		return SessionNamespaceNode{}, fmt.Errorf("decode filestore namespace node tags: %w", err)
 	}
 	if tags == nil {
 		tags = []string{}
 	}
-	return FilestoreEntry{
+	return SessionNamespaceNode{
 		ID:                    row.ID,
 		UUID:                  row.UUID,
 		ExternalID:            row.ExternalID,
@@ -266,11 +267,10 @@ func (row filestoreEntryRow) entry() (FilestoreEntry, error) {
 		S3ETag:                row.S3ETag,
 		S3VersionID:           row.S3VersionID,
 		ExpiresAt:             row.ExpiresAt,
-		// ManagedBy 记录管理来源，ManagedResourceUUID 指向受管的 Session resource，
-		// SourceFileUUID 指向被借用的 Files API 对象，避免重复计费或误删源对象。
-		ManagedBy:                row.ManagedBy,
-		ManagedResourceUUID:      row.ManagedResourceUUID,
-		SourceFileUUID:           row.SourceFileUUID,
+		// ReferencedFileUUID 标识 Input Resource 引用的 Source File；SkillVersionUUID
+		// 标识动态 Skill Archive 的真实版本，二者都不复制对象事实。
+		SkillVersionUUID:         row.SkillVersionUUID,
+		ReferencedFileUUID:       row.ReferencedFileUUID,
 		CreatedByAPIKeyUUID:      row.CreatedByAPIKeyUUID,
 		CreatedBySessionUUID:     row.CreatedBySessionUUID,
 		CreatedByCodeSessionUUID: row.CreatedByCodeSessionUUID,
@@ -280,8 +280,8 @@ func (row filestoreEntryRow) entry() (FilestoreEntry, error) {
 	}, nil
 }
 
-func filestoreEntriesFromSQLXRows(rows []filestoreEntryRow) ([]FilestoreEntry, error) {
-	entries := make([]FilestoreEntry, 0, len(rows))
+func sessionNamespaceNodesFromSQLXRows(rows []sessionNamespaceNodeRow) ([]SessionNamespaceNode, error) {
+	entries := make([]SessionNamespaceNode, 0, len(rows))
 	for _, row := range rows {
 		entry, err := row.entry()
 		if err != nil {

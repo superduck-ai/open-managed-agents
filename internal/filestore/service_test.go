@@ -197,7 +197,7 @@ func TestServiceReadFileRejectsInvalidRangesBeforeObjectLookup(t *testing.T) {
 				getFilesystemFn: func(context.Context, int64, string) (db.FilestoreFilesystem, error) {
 					return filesystem, nil
 				},
-				getEntryFn: func(context.Context, int64, int64, string) (db.FilestoreEntry, error) {
+				getEntryFn: func(context.Context, int64, int64, string) (db.SessionNamespaceNode, error) {
 					return serviceTestFileEntry(filesystem, "/file.txt", []byte("12345")), nil
 				},
 			}
@@ -295,14 +295,14 @@ func TestServiceCopyFileDiscardsOrphanGuardWhenCopyFails(t *testing.T) {
 	var completedJobID int64
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.FilestoreEntry, error) {
+		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.SessionNamespaceNode, error) {
 			switch entryPath {
 			case "/source.txt":
 				return source, nil
 			case "/archive":
 				return serviceTestDirectoryEntry(filesystem, 30, "/archive"), nil
 			default:
-				return db.FilestoreEntry{}, db.ErrNotFound
+				return db.SessionNamespaceNode{}, db.ErrNotFound
 			}
 		},
 		enqueueCleanupFn: func(_ context.Context, input db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error) {
@@ -441,7 +441,7 @@ func TestServiceReadFileReturnsEmptyBodyWithoutObjectLookup(t *testing.T) {
 	filesystem := serviceTestFilesystem()
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(context.Context, int64, int64, string) (db.FilestoreEntry, error) {
+		getEntryFn: func(context.Context, int64, int64, string) (db.SessionNamespaceNode, error) {
 			return serviceTestFileEntry(filesystem, "/empty-range.txt", []byte("12345")), nil
 		},
 	}
@@ -479,16 +479,16 @@ func TestServiceListDirectoryUsesBoundCursorAndReturnsNextCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode request cursor: %v", err)
 	}
-	entries := []db.FilestoreEntry{
+	entries := []db.SessionNamespaceNode{
 		serviceTestDirectoryEntry(filesystem, 11, "/reports/b"),
 		serviceTestDirectoryEntry(filesystem, 12, "/reports/c"),
 	}
-	var listInput db.ListFilestoreEntriesPageParams
+	var listInput db.ListSessionNamespaceNodesPageParams
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		listEntriesFn: func(_ context.Context, input db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error) {
+		listEntriesFn: func(_ context.Context, input db.ListSessionNamespaceNodesPageParams) (db.SessionNamespaceNodePage, error) {
 			listInput = input
-			return db.FilestoreEntryPage{Entries: entries, HasMore: true}, nil
+			return db.SessionNamespaceNodePage{Entries: entries, HasMore: true}, nil
 		},
 	}
 	service := newServiceUnderTest(config.Config{}, database, &fakeServiceBlobStore{})
@@ -545,7 +545,7 @@ func TestServiceCreateFileStreamsAndPersistsIntegrityMetadata(t *testing.T) {
 		},
 		putFileFn: func(_ context.Context, input db.PutFilestoreFileInput) (db.FilestoreMutationResult, error) {
 			putInput = input
-			return db.FilestoreMutationResult{Entry: serviceTestFileEntryFromBlob(filesystem, "file_created", input.Path, input.Blob)}, nil
+			return db.FilestoreMutationResult{Node: serviceTestFileEntryFromBlob(filesystem, "file_created", input.Path, input.Blob)}, nil
 		},
 		attachCleanupFn: func(_ context.Context, workspaceID int64, jobExternalID, etag, versionID string) error {
 			attachedWorkspaceID = workspaceID
@@ -654,14 +654,14 @@ func TestServiceCopyFilePreservesMetadataAndUsesCopiedObjectIdentity(t *testing.
 	var attachedVersionID string
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.FilestoreEntry, error) {
+		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.SessionNamespaceNode, error) {
 			switch entryPath {
 			case "/source.txt":
 				return source, nil
 			case "/archive":
 				return serviceTestDirectoryEntry(filesystem, 30, "/archive"), nil
 			default:
-				return db.FilestoreEntry{}, db.ErrNotFound
+				return db.SessionNamespaceNode{}, db.ErrNotFound
 			}
 		},
 		enqueueCleanupFn: func(_ context.Context, input db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error) {
@@ -685,7 +685,7 @@ func TestServiceCopyFilePreservesMetadataAndUsesCopiedObjectIdentity(t *testing.
 				S3ETag:                input.DestinationS3ETag,
 				S3VersionID:           input.DestinationS3VersionID,
 			}
-			return db.FilestoreMutationResult{Entry: serviceTestFileEntryFromBlob(filesystem, "file_copy", input.DestinationPath, blob)}, nil
+			return db.FilestoreMutationResult{Node: serviceTestFileEntryFromBlob(filesystem, "file_copy", input.DestinationPath, blob)}, nil
 		},
 		attachCleanupFn: func(_ context.Context, workspaceID int64, jobExternalID, etag, versionID string) error {
 			attachedWorkspaceID = workspaceID
@@ -738,21 +738,19 @@ func TestServiceCopyFilePreservesMetadataAndUsesCopiedObjectIdentity(t *testing.
 	}
 }
 
-func TestServiceCopyFileRejectsBorrowedSourceBeforeObjectCopy(t *testing.T) {
+func TestServiceCopyFileRejectsInputResourceBeforeObjectCopy(t *testing.T) {
 	t.Parallel()
 
 	filesystem := serviceTestFilesystem()
 	source := serviceTestFileEntry(filesystem, "/uploads/source.txt", []byte("source"))
-	source.SourceFileUUID = serviceTestPointer("11111111-1111-4111-8111-111111111111")
-	source.ManagedBy = serviceTestPointer("session_resource")
-	source.ManagedResourceUUID = serviceTestPointer("22222222-2222-4222-8222-222222222222")
+	source.ReferencedFileUUID = serviceTestPointer("11111111-1111-4111-8111-111111111111")
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.FilestoreEntry, error) {
+		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.SessionNamespaceNode, error) {
 			if entryPath == source.Path {
 				return source, nil
 			}
-			return db.FilestoreEntry{}, db.ErrNotFound
+			return db.SessionNamespaceNode{}, db.ErrNotFound
 		},
 	}
 	service := newServiceUnderTest(config.Config{}, database, &fakeServiceBlobStore{})
@@ -776,7 +774,7 @@ func TestServiceMoveOperationsReturnDatabaseEntries(t *testing.T) {
 			getFilesystemFn: serviceFilesystemLookup(filesystem),
 			moveFileFn: func(_ context.Context, input db.MoveFilestoreFileInput) (db.FilestoreMutationResult, error) {
 				moveInput = input
-				return db.FilestoreMutationResult{Entry: serviceTestFileEntry(filesystem, input.DestinationPath, []byte("moved"))}, nil
+				return db.FilestoreMutationResult{Node: serviceTestFileEntry(filesystem, input.DestinationPath, []byte("moved"))}, nil
 			},
 		}
 		service := newServiceUnderTest(config.Config{}, database, &fakeServiceBlobStore{})
@@ -808,7 +806,7 @@ func TestServiceMoveOperationsReturnDatabaseEntries(t *testing.T) {
 			getFilesystemFn: serviceFilesystemLookup(filesystem),
 			moveDirectoryFn: func(_ context.Context, input db.MoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error) {
 				moveInput = input
-				return db.FilestoreMutationResult{Entry: serviceTestDirectoryEntry(filesystem, 40, input.DestinationPath)}, nil
+				return db.FilestoreMutationResult{Node: serviceTestDirectoryEntry(filesystem, 40, input.DestinationPath)}, nil
 			},
 		}
 		service := newServiceUnderTest(config.Config{}, database, &fakeServiceBlobStore{})
@@ -837,10 +835,10 @@ func TestServiceRemoveOperationsAreIdempotentForMissingEntries(t *testing.T) {
 		t.Parallel()
 
 		filesystem := serviceTestFilesystem()
-		var removeInput db.RemoveFilestoreEntryInput
+		var removeInput db.RemoveSessionNamespaceNodeInput
 		database := &fakeServiceDatabase{
 			getFilesystemFn: serviceFilesystemLookup(filesystem),
-			removeFileFn: func(_ context.Context, input db.RemoveFilestoreEntryInput) (db.FilestoreMutationResult, error) {
+			removeFileFn: func(_ context.Context, input db.RemoveSessionNamespaceNodeInput) (db.FilestoreMutationResult, error) {
 				removeInput = input
 				return db.FilestoreMutationResult{}, db.ErrNotFound
 			},
@@ -893,7 +891,7 @@ func TestServiceReadFileUsesMetadataSizeWhenObjectSizeIsUnknown(t *testing.T) {
 	var openedRange *storage.ByteRange
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(context.Context, int64, int64, string) (db.FilestoreEntry, error) {
+		getEntryFn: func(context.Context, int64, int64, string) (db.SessionNamespaceNode, error) {
 			return entry, nil
 		},
 	}

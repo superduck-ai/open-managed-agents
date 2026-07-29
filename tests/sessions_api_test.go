@@ -3583,6 +3583,12 @@ func launchLocalCodeSession(t *testing.T, app *testApp, sessionID string) string
 	for {
 		processed, err := runner.RunOnce(ctx, "sessions-code-session-test")
 		if err != nil {
+			// 全量测试共享一个队列；其他用例可能已删除 Environment，
+			// 但之前创建的 Work 仍在等待消费。runner 已将该 Work 停止，
+			// 此处继续轮询才能等到当前 Session 的 Work。
+			if errors.Is(err, db.ErrNotFound) && time.Now().Before(deadline) {
+				continue
+			}
 			t.Fatalf("run environment runner for code session: %v", err)
 		}
 		retrieved := retrieveSession(t, app, sessionID, defaultTestKey)

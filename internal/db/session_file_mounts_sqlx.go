@@ -4,15 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path"
-	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
 const (
-	sessionFileResourceManagedBy = "session_file_resource"
-	sessionFileProjectionScope   = "session"
 	sessionOutputsRootPath       = "/outputs"
 	sessionUploadsRootPath       = "/uploads"
 	countSessionFileResourcesSQL = `
@@ -24,91 +20,22 @@ const (
 			and deleted_at is null
 	`
 	findSessionFileMountConflictSQL = `
-		select entry.path
-		from filestore_entries entry
+		select resource.path
+		from session_resources resource
 		cross join (values (CAST(:entry_path AS text))) as candidate(path)
-		where entry.workspace_uuid = :workspace_uuid
-			and entry.filesystem_uuid = :filesystem_uuid
-			and entry.managed_by = :managed_by
-			and entry.source_file_uuid is not null
-			and entry.deleted_at is null
+		where resource.workspace_id = (
+			select id from workspaces where uuid = CAST(:workspace_uuid AS uuid)
+		)
+			and resource.session_id = :session_id
+			and resource.payload is not null
+			and resource.deleted_at is null
 			and (
-				entry.path = candidate.path
-				or left(entry.path, length(candidate.path) + 1) = concat(candidate.path, '/')
-				or left(candidate.path, length(entry.path) + 1) = concat(entry.path, '/')
+				resource.path = candidate.path
+				or left(resource.path, length(candidate.path) + 1) = concat(candidate.path, '/')
+				or left(candidate.path, length(resource.path) + 1) = concat(resource.path, '/')
 			)
-		order by entry.path
+		order by resource.path
 		limit 1
-	`
-	upsertSessionFileProjectionSQL = `
-		insert into files (
-			uuid, external_id, workspace_id, filename, mime_type, size_bytes, sha256,
-			s3_bucket, s3_key, downloadable, scope_type, scope_id,
-			created_by_api_key_id, created_at
-		)
-		values (
-			CAST(:file_uuid AS uuid),
-			concat('file_', replace(CAST(gen_random_uuid() AS text), '-', '')),
-			:workspace_id, :filename, :mime_type, :size_bytes, :sha256,
-			:s3_bucket, :s3_key, :downloadable, :scope_type, :scope_id,
-			:created_by_api_key_id, :created_at
-		)
-		on conflict (uuid) do update
-		set filename = excluded.filename,
-			mime_type = excluded.mime_type,
-			size_bytes = excluded.size_bytes,
-			sha256 = excluded.sha256,
-			s3_bucket = excluded.s3_bucket,
-			s3_key = excluded.s3_key,
-			downloadable = excluded.downloadable,
-			scope_type = excluded.scope_type,
-			scope_id = excluded.scope_id,
-			created_by_api_key_id = excluded.created_by_api_key_id,
-			created_at = excluded.created_at,
-			deleted_at = null
-	`
-	softDeleteSessionFileProjectionSQL = `
-		update files
-		set deleted_at = now()
-		where workspace_id = :workspace_id
-			and uuid = CAST(:file_uuid AS uuid)
-			and scope_type = :scope_type
-			and scope_id = :scope_id
-			and deleted_at is null
-	`
-	softDeleteSessionFileProjectionsByScopeSQL = `
-		update files
-		set deleted_at = now()
-		where workspace_id = :workspace_id
-			and scope_type = :scope_type
-			and scope_id = :scope_id
-			and deleted_at is null
-	`
-	softDeleteSessionFileProjectionByEntrySQL = `
-		update files projection
-		set deleted_at = now()
-		where projection.workspace_id = :workspace_id
-			and projection.scope_type = :scope_type
-			and projection.uuid = CAST(:file_uuid AS uuid)
-			and projection.deleted_at is null
-	`
-	softDeleteSessionFileProjectionSubtreeSQL = `
-		update files projection
-		set deleted_at = now()
-		where projection.workspace_id = :workspace_id
-			and projection.scope_type = :scope_type
-			and projection.deleted_at is null
-			and exists (
-				select 1
-				from filestore_entries entry
-				where entry.workspace_uuid = :workspace_uuid
-					and entry.filesystem_uuid = :filesystem_uuid
-					and entry.uuid = projection.uuid
-					and (
-						entry.path = :root_path
-						or left(entry.path, char_length(:root_path) + 1) = :root_path || '/'
-					)
-			)
 	`
 )
 
@@ -196,24 +123,24 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	filesystem FilestoreFilesystem,
 	resource SessionResource,
 	mount *SessionFileMount,
-) error {
+) (SessionResource, error) {
 	if resource.ResourceType != SessionResourceTypeFile {
 		if mount != nil {
-			return ErrPreconditionFailed
+			return SessionResource{}, ErrPreconditionFailed
 		}
-		return nil
+		return resource, nil
 	}
 	if mount == nil ||
 		mount.ResourceExternalID != resource.ExternalID ||
 		mount.Path == "/uploads" ||
 		!filestorePathIsDescendant("/uploads", mount.Path) {
-		return ErrPreconditionFailed
+		return SessionResource{}, ErrPreconditionFailed
 	}
 	if err := validateFilestorePath(mount.Path); err != nil {
-		return err
+		return SessionResource{}, err
 	}
 	if err := rejectSessionFileMountConflictTx(ctx, tx, filesystem, mount.Path); err != nil {
-		return err
+		return SessionResource{}, err
 	}
 
 	file, err := getFileRecordSQLX(ctx, tx, `
@@ -225,10 +152,10 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 		for share
 	`, getFileArguments(session.WorkspaceID, mount.FileExternalID))
 	if errors.Is(err, ErrNotFound) {
-		return ErrFileReferenceNotFound
+		return SessionResource{}, ErrFileReferenceNotFound
 	}
 	if err != nil {
-		return err
+		return SessionResource{}, err
 	}
 	for _, directoryPath := range filestoreDirectoryChain(filestoreParentPath(mount.Path)) {
 		if _, err := ensureFilestoreDirectoryTx(
@@ -239,195 +166,34 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 			directoryPath,
 			filestoreNow(resource.CreatedAt),
 		); err != nil {
-			return err
+			return SessionResource{}, err
 		}
 	}
-	entry, err := getFilestoreEntrySQLX(ctx, tx, `
-		insert into filestore_entries (
-			uuid, external_id, organization_uuid, workspace_uuid, filesystem_uuid,
-			kind, path, parent_path, size_bytes, media_type, metadata,
-			authorization_metadata, tags, downloadable, md5, sha256,
-			s3_bucket, s3_key, expires_at, managed_by,
-			managed_resource_uuid, source_file_uuid,
-			created_by_api_key_uuid, created_by_session_uuid,
-			created_by_code_session_uuid, created_at, updated_at
-		)
-		values (
-			gen_random_uuid(),
-			concat('fse_', replace(CAST(gen_random_uuid() AS text), '-', '')),
-			:organization_uuid, :workspace_uuid, :filesystem_uuid,
-			'file', :entry_path, :parent_path, :size_bytes, :media_type,
-			CAST('{}' AS jsonb), CAST('{}' AS jsonb), CAST(array[] AS text[]),
-			:downloadable, null, :sha256, :s3_bucket, :s3_key, null,
-			:managed_by, :managed_resource_uuid, :source_file_uuid,
-			:created_by_api_key_uuid, :created_by_session_uuid,
-			:created_by_code_session_uuid, :created_at, :created_at
-		)
-		returning `+filestoreEntryColumns()+`
+	var row sessionResourceRow
+	err = namedGetContext(ctx, tx, &row, `
+		update session_resources
+		set path = :entry_path, parent_path = :parent_path,
+			file_uuid = CAST(:file_uuid AS uuid),
+			updated_at = :updated_at
+		where id = :resource_id and workspace_id = :workspace_id
+			and session_id = :session_id and deleted_at is null
+		returning `+sessionResourceSQLXColumns+`
 	`, map[string]any{
-		"organization_uuid":            filesystem.OrganizationUUID,
-		"workspace_uuid":               filesystem.WorkspaceUUID,
-		"filesystem_uuid":              filesystem.UUID,
-		"entry_path":                   mount.Path,
-		"parent_path":                  filestoreParentPath(mount.Path),
-		"size_bytes":                   file.SizeBytes,
-		"media_type":                   file.MimeType,
-		"downloadable":                 file.Downloadable,
-		"sha256":                       file.SHA256,
-		"s3_bucket":                    file.S3Bucket,
-		"s3_key":                       file.S3Key,
-		"managed_by":                   sessionFileResourceManagedBy,
-		"managed_resource_uuid":        resource.UUID,
-		"source_file_uuid":             file.UUID,
-		"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
-		"created_by_session_uuid":      filesystem.SessionUUID,
-		"created_by_code_session_uuid": filesystem.CodeSessionUUID,
-		"created_at":                   filestoreNow(resource.CreatedAt),
+		"entry_path":   mount.Path,
+		"parent_path":  filestoreParentPath(mount.Path),
+		"file_uuid":    file.UUID,
+		"updated_at":   filestoreNow(resource.CreatedAt),
+		"resource_id":  resource.ID,
+		"workspace_id": session.WorkspaceID,
+		"session_id":   session.ID,
 	})
 	if isUniqueViolation(err) {
-		return ErrFilestorePathExists
+		return SessionResource{}, ErrFilestorePathExists
 	}
 	if err != nil {
-		return err
+		return SessionResource{}, err
 	}
-	return upsertSessionFileProjectionTx(ctx, tx, session, entry.UUID, file, resource.CreatedAt)
-}
-
-func upsertSessionFileProjectionTx(
-	ctx context.Context,
-	tx *sqlx.Tx,
-	session Session,
-	entryUUID string,
-	file FileRecord,
-	createdAt time.Time,
-) error {
-	_, err := namedExecContext(ctx, tx, upsertSessionFileProjectionSQL, map[string]any{
-		"file_uuid":             entryUUID,
-		"workspace_id":          session.WorkspaceID,
-		"filename":              file.Filename,
-		"mime_type":             file.MimeType,
-		"size_bytes":            file.SizeBytes,
-		"sha256":                file.SHA256,
-		"s3_bucket":             file.S3Bucket,
-		"s3_key":                file.S3Key,
-		"downloadable":          file.Downloadable,
-		"scope_type":            sessionFileProjectionScope,
-		"scope_id":              session.ExternalID,
-		"created_by_api_key_id": session.CreatedByAPIKeyID,
-		"created_at":            filestoreNow(createdAt),
-	})
-	return err
-}
-
-func refreshSessionFileProjectionForEntryTx(
-	ctx context.Context,
-	tx *sqlx.Tx,
-	workspaceID int64,
-	filesystem FilestoreFilesystem,
-	entry FilestoreEntry,
-) error {
-	if filestoreEntryExpired(entry, time.Now().UTC()) {
-		return softDeleteSessionFileProjectionByEntryTx(ctx, tx, workspaceID, entry.UUID)
-	}
-	if entry.Kind == FilestoreEntryKindFile &&
-		filestorePathIsDescendant(sessionOutputsRootPath, entry.Path) {
-		if entry.SizeBytes == nil || entry.SHA256 == nil ||
-			entry.S3Bucket == nil || entry.S3Key == nil {
-			return ErrPreconditionFailed
-		}
-		session, err := getSessionForFileProjectionTx(ctx, tx, workspaceID, filesystem.SessionUUID)
-		if err != nil {
-			return err
-		}
-		mimeType := filestoreString(entry.DetectedMimeType)
-		if mimeType == "" {
-			mimeType = filestoreString(entry.MediaType)
-		}
-		if mimeType == "" {
-			mimeType = "application/octet-stream"
-		}
-		return upsertSessionFileProjectionTx(ctx, tx, session, entry.UUID, FileRecord{
-			Filename:     path.Base(entry.Path),
-			MimeType:     mimeType,
-			SizeBytes:    filestoreInt64(entry.SizeBytes),
-			SHA256:       filestoreString(entry.SHA256),
-			S3Bucket:     filestoreString(entry.S3Bucket),
-			S3Key:        filestoreString(entry.S3Key),
-			Downloadable: entry.Downloadable,
-		}, entry.CreatedAt)
-	}
-	if entry.Kind == FilestoreEntryKindFile &&
-		filestorePathIsDescendant(sessionUploadsRootPath, entry.Path) &&
-		filestoreString(entry.ManagedBy) == sessionFileResourceManagedBy &&
-		entry.ManagedResourceUUID != nil &&
-		entry.SourceFileUUID != nil {
-		session, err := getSessionForFileProjectionTx(ctx, tx, workspaceID, filesystem.SessionUUID)
-		if err != nil {
-			return err
-		}
-		source, err := getFileRecordSQLX(
-			ctx,
-			tx,
-			getFileByUUIDQuery,
-			fileUUIDArguments(workspaceID, filestoreString(entry.SourceFileUUID)),
-		)
-		if err != nil {
-			return err
-		}
-		return upsertSessionFileProjectionTx(
-			ctx, tx, session, entry.UUID, source, entry.CreatedAt,
-		)
-	}
-	return softDeleteSessionFileProjectionByEntryTx(ctx, tx, workspaceID, entry.UUID)
-}
-
-func getSessionForFileProjectionTx(
-	ctx context.Context,
-	tx *sqlx.Tx,
-	workspaceID int64,
-	sessionUUID string,
-) (Session, error) {
-	return getSessionSQLX(ctx, tx, `
-		select `+sessionSQLXColumns+`
-		from sessions
-		where workspace_id = :workspace_id
-			and uuid = CAST(:session_uuid AS uuid)
-			and deleted_at is null
-	`, map[string]any{
-		"workspace_id": workspaceID,
-		"session_uuid": sessionUUID,
-	})
-}
-
-func softDeleteSessionFileProjectionByEntryTx(
-	ctx context.Context,
-	tx *sqlx.Tx,
-	workspaceID int64,
-	entryUUID string,
-) error {
-	_, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionByEntrySQL, map[string]any{
-		"workspace_id": workspaceID,
-		"scope_type":   sessionFileProjectionScope,
-		"file_uuid":    entryUUID,
-	})
-	return err
-}
-
-func softDeleteSessionFileProjectionSubtreeTx(
-	ctx context.Context,
-	tx *sqlx.Tx,
-	workspaceID int64,
-	filesystem FilestoreFilesystem,
-	rootPath string,
-) error {
-	_, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionSubtreeSQL, map[string]any{
-		"workspace_id":    workspaceID,
-		"scope_type":      sessionFileProjectionScope,
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
-		"root_path":       rootPath,
-	})
-	return err
+	return row.resource(), nil
 }
 
 func rejectSessionFileMountConflictTx(
@@ -441,10 +207,9 @@ func rejectSessionFileMountConflictTx(
 	// return 400; ordinary occupied entries remain ErrFilestorePathExists/409.
 	var conflictingPath string
 	err := namedGetContext(ctx, tx, &conflictingPath, findSessionFileMountConflictSQL, map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
-		"managed_by":      sessionFileResourceManagedBy,
-		"entry_path":      path,
+		"workspace_uuid": filesystem.WorkspaceUUID,
+		"session_id":     filesystem.SessionID,
+		"entry_path":     path,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -472,6 +237,7 @@ func getSessionResourceForMutationSQLX(
 		where workspace_id = :workspace_id
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
+			and payload is not null
 			and deleted_at is null
 		for update
 	`, map[string]any{
@@ -497,48 +263,8 @@ func unbindSessionFileResourceTx(
 	if resource.ResourceType != SessionResourceTypeFile {
 		return nil
 	}
-	filesystem, err := lockSessionFilestoreMutationTx(ctx, tx, session)
-	if err != nil {
-		return err
-	}
-
-	var entry filestoreEntryRow
-	err = namedGetContext(ctx, tx, &entry, filestoreEntrySelectSQL()+`
-		where workspace_uuid = :workspace_uuid
-			and filesystem_uuid = :filesystem_uuid
-			and managed_by = :managed_by
-			and managed_resource_uuid = :resource_uuid
-			and source_file_uuid is not null
-			and deleted_at is null
-		for update
-	`, map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
-		"managed_by":      sessionFileResourceManagedBy,
-		"resource_uuid":   resource.UUID,
-	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if _, err := namedExecContext(ctx, tx, `
-		update filestore_entries
-		set deleted_at = now(), updated_at = now()
-		where id = :entry_id and deleted_at is null
-	`, map[string]any{"entry_id": entry.ID}); err != nil {
-		return err
-	}
-	if _, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionSQL, map[string]any{
-		"workspace_id": session.WorkspaceID,
-		"file_uuid":    entry.UUID,
-		"scope_type":   sessionFileProjectionScope,
-		"scope_id":     session.ExternalID,
-	}); err != nil {
-		return err
-	}
-	return nil
+	_, err := lockSessionFilestoreMutationTx(ctx, tx, session)
+	return err
 }
 
 func softDeleteSessionResourceSQLX(

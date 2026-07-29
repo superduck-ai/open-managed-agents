@@ -61,7 +61,7 @@ type SessionThread struct {
 
 const (
 	// SessionResourceTypeFile identifies a Files API object attached to a
-	// Session. It is distinct from FilestoreEntryKindFile, which classifies
+	// Session. It is distinct from SessionNamespaceNodeKindFile, which classifies
 	// filesystem nodes.
 	SessionResourceTypeFile = sessioncontract.FileResourceType
 	// MaxSessionFileResources is the write-time limit for active File resources
@@ -80,6 +80,11 @@ type SessionResource struct {
 	ResourceType      string
 	Payload           json.RawMessage
 	SecretPayload     json.RawMessage
+	Path              *string
+	ParentPath        *string
+	FileUUID          *string
+	SkillVersionUUID  *string
+	ExpiresAt         *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	DeletedAt         *time.Time
@@ -319,13 +324,6 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 	if err := retireSessionFilesystemTx(ctx, tx, session); err != nil {
 		return Session{}, err
 	}
-	if _, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionsByScopeSQL, map[string]any{
-		"workspace_id": session.WorkspaceID,
-		"scope_type":   sessionFileProjectionScope,
-		"scope_id":     session.ExternalID,
-	}); err != nil {
-		return Session{}, err
-	}
 	if _, err := namedExecContext(ctx, tx, deleteSessionThreadsQuery, arguments); err != nil {
 		return Session{}, err
 	}
@@ -553,14 +551,15 @@ func (d *DB) CreateSessionResource(
 		if err != nil {
 			return SessionResource{}, err
 		}
-		if err := bindSessionFileResourceWithLockedFilesystemTx(
+		created, err = bindSessionFileResourceWithLockedFilesystemTx(
 			ctx,
 			tx,
 			session,
 			filesystem,
 			created,
 			input.FileMount,
-		); err != nil {
+		)
+		if err != nil {
 			return SessionResource{}, err
 		}
 	}

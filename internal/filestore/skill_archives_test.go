@@ -639,22 +639,22 @@ func TestSkillArchiveViewListsMetadataAndReadsRanges(t *testing.T) {
 
 func skillArchiveTestService(
 	archiveBytes []byte,
-	archiveEntry db.FilestoreEntry,
+	archiveEntry db.SessionNamespaceNode,
 ) (*Service, *int) {
 	filesystem := serviceTestFilesystem()
 	openCount := 0
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, workspaceID, filesystemID int64, entryPath string) (db.FilestoreEntry, error) {
+		getEntryFn: func(_ context.Context, workspaceID, filesystemID int64, entryPath string) (db.SessionNamespaceNode, error) {
 			if workspaceID != serviceTestPrincipal().WorkspaceID ||
 				filesystemID != filesystem.ID ||
 				entryPath != skillNamespacePath {
-				return db.FilestoreEntry{}, db.ErrNotFound
+				return db.SessionNamespaceNode{}, db.ErrNotFound
 			}
 			return serviceTestDirectoryEntry(filesystem, 70, skillNamespacePath), nil
 		},
-		listSkillArchiveEntriesFn: func(context.Context, int64, int64) ([]db.FilestoreEntry, error) {
-			return []db.FilestoreEntry{archiveEntry}, nil
+		listSkillArchiveEntriesFn: func(context.Context, int64, int64) ([]db.SessionNamespaceNode, error) {
+			return []db.SessionNamespaceNode{archiveEntry}, nil
 		},
 	}
 	store := &fakeServiceBlobStore{
@@ -673,28 +673,27 @@ func skillArchiveTestService(
 	return newServiceUnderTest(filestoreTestConfig(1024, 4096, "filestore-test"), database, store), &openCount
 }
 
-func skillArchiveTestEntry(data []byte) db.FilestoreEntry {
+func skillArchiveTestEntry(data []byte) db.SessionNamespaceNode {
 	sum := sha256.Sum256(data)
-	return db.FilestoreEntry{
-		ID:                  71,
-		UUID:                "77777777-7777-4777-8777-777777777777",
-		ExternalID:          "fse_test",
-		OrganizationUUID:    serviceTestPrincipal().OrganizationUUID,
-		WorkspaceUUID:       serviceTestPrincipal().WorkspaceUUID,
-		FilesystemUUID:      serviceTestFilesystem().UUID,
-		Kind:                db.FilestoreEntryKindArchive,
-		Path:                "/skills/demo",
-		ParentPath:          serviceTestPointer("/skills"),
-		SizeBytes:           serviceTestPointer(int64(len(data))),
-		MediaType:           serviceTestPointer("application/zip"),
-		DetectedMimeType:    serviceTestPointer("application/zip"),
-		SHA256:              serviceTestPointer(hex.EncodeToString(sum[:])),
-		S3Bucket:            serviceTestPointer("filestore-test"),
-		S3Key:               serviceTestPointer("skills/demo/1.zip"),
-		ManagedBy:           serviceTestPointer("skill_archive"),
-		ManagedResourceUUID: serviceTestPointer("88888888-8888-4888-8888-888888888888"),
-		CreatedAt:           serviceTestNow,
-		UpdatedAt:           serviceTestNow,
+	return db.SessionNamespaceNode{
+		ID:               71,
+		UUID:             "77777777-7777-4777-8777-777777777777",
+		ExternalID:       "sesrsc_test",
+		OrganizationUUID: serviceTestPrincipal().OrganizationUUID,
+		WorkspaceUUID:    serviceTestPrincipal().WorkspaceUUID,
+		FilesystemUUID:   serviceTestFilesystem().UUID,
+		Kind:             db.SessionNamespaceNodeKindArchive,
+		Path:             "/skills/demo",
+		ParentPath:       serviceTestPointer("/skills"),
+		SizeBytes:        serviceTestPointer(int64(len(data))),
+		MediaType:        serviceTestPointer("application/zip"),
+		DetectedMimeType: serviceTestPointer("application/zip"),
+		SHA256:           serviceTestPointer(hex.EncodeToString(sum[:])),
+		S3Bucket:         serviceTestPointer("filestore-test"),
+		S3Key:            serviceTestPointer("skills/demo/1.zip"),
+		SkillVersionUUID: serviceTestPointer("88888888-8888-4888-8888-888888888888"),
+		CreatedAt:        serviceTestNow,
+		UpdatedAt:        serviceTestNow,
 	}
 }
 

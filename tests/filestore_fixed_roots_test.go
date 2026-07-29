@@ -103,13 +103,13 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MoveFilestoreDirectory() error = %v", err)
 		}
-		if moved.Entry.Path != "/outputs/published" {
-			t.Fatalf("moved path = %q, want /outputs/published", moved.Entry.Path)
+		if moved.Node.Path != "/outputs/published" {
+			t.Fatalf("moved path = %q, want /outputs/published", moved.Node.Path)
 		}
 		if _, err := fixture.app.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
 			WorkspaceID:  fixture.workspaceID,
 			FilesystemID: fixture.filesystem.ID,
-			Path:         moved.Entry.Path,
+			Path:         moved.Node.Path,
 		}); err != nil {
 			t.Fatalf("RemoveFilestoreDirectory() error = %v", err)
 		}

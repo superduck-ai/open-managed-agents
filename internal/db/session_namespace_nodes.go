@@ -3,62 +3,62 @@ package db
 import "context"
 
 const (
-	defaultFilestoreEntriesPageLimit = 100
-	maxFilestoreEntriesPageLimit     = 1000
+	defaultSessionNamespaceNodesPageLimit = 100
+	maxSessionNamespaceNodesPageLimit     = 1000
 )
 
-// GetFilestoreEntry 在工作区与文件系统双重边界内读取一个有效节点。
+// GetSessionNamespaceNode 在工作区与文件系统双重边界内读取一个有效节点。
 // 根目录不落表，由文件系统记录即时投影为虚拟目录。
-func (d *DB) GetFilestoreEntry(ctx context.Context, workspaceID, filesystemID int64, entryPath string) (FilestoreEntry, error) {
+func (d *DB) GetSessionNamespaceNode(ctx context.Context, workspaceID, filesystemID int64, entryPath string) (SessionNamespaceNode, error) {
 	if err := validateFilestorePath(entryPath); err != nil {
-		return FilestoreEntry{}, err
+		return SessionNamespaceNode{}, err
 	}
 	filesystem, err := getFilestoreFilesystemByIDSQLX(ctx, d.sql, workspaceID, filesystemID)
 	if err != nil {
-		return FilestoreEntry{}, err
+		return SessionNamespaceNode{}, err
 	}
 	if entryPath == "/" {
 		return virtualFilestoreRoot(filesystem), nil
 	}
-	return getActiveFilestoreEntrySQLX(ctx, d.sql, filesystem, entryPath)
+	return getActiveSessionNamespaceNodeSQLX(ctx, d.sql, filesystem, entryPath)
 }
 
-// ListFilestoreEntriesPage 以 (path, id) 为稳定排序键执行键集分页。
+// ListSessionNamespaceNodesPage 以 (path, id) 为稳定排序键执行键集分页。
 // 过期或软删除节点不会出现在结果中。
-func (d *DB) ListFilestoreEntriesPage(ctx context.Context, params ListFilestoreEntriesPageParams) (FilestoreEntryPage, error) {
+func (d *DB) ListSessionNamespaceNodesPage(ctx context.Context, params ListSessionNamespaceNodesPageParams) (SessionNamespaceNodePage, error) {
 	if err := validateFilestorePath(params.DirectoryPath); err != nil {
-		return FilestoreEntryPage{}, err
+		return SessionNamespaceNodePage{}, err
 	}
-	params.Limit = normalizeFilestoreEntriesPageLimit(params.Limit)
+	params.Limit = normalizeSessionNamespaceNodesPageLimit(params.Limit)
 	filesystem, err := d.resolveFilestoreDirectoryForRead(ctx, params.WorkspaceID, params.FilesystemID, params.DirectoryPath)
 	if err != nil {
-		return FilestoreEntryPage{}, err
+		return SessionNamespaceNodePage{}, err
 	}
-	query, args := buildFilestoreEntriesPageQuery(filesystem, params)
-	var rows []filestoreEntryRow
+	query, args := buildSessionNamespaceNodesPageQuery(filesystem, params)
+	var rows []sessionNamespaceNodeRow
 	if err := namedSelectContext(ctx, d.sql, &rows, query, args); err != nil {
-		return FilestoreEntryPage{}, err
+		return SessionNamespaceNodePage{}, err
 	}
-	entries, err := filestoreEntriesFromSQLXRows(rows)
+	entries, err := sessionNamespaceNodesFromSQLXRows(rows)
 	if err != nil {
-		return FilestoreEntryPage{}, err
+		return SessionNamespaceNodePage{}, err
 	}
-	return newFilestoreEntryPage(entries, params.Limit), nil
+	return newSessionNamespaceNodePage(entries, params.Limit), nil
 }
 
-func normalizeFilestoreEntriesPageLimit(limit int) int {
+func normalizeSessionNamespaceNodesPageLimit(limit int) int {
 	switch {
 	case limit <= 0:
-		return defaultFilestoreEntriesPageLimit
-	case limit > maxFilestoreEntriesPageLimit:
-		return maxFilestoreEntriesPageLimit
+		return defaultSessionNamespaceNodesPageLimit
+	case limit > maxSessionNamespaceNodesPageLimit:
+		return maxSessionNamespaceNodesPageLimit
 	default:
 		return limit
 	}
 }
 
-func buildFilestoreEntriesPageQuery(filesystem FilestoreFilesystem, params ListFilestoreEntriesPageParams) (string, map[string]any) {
-	query := filestoreEntrySelectSQL() + `
+func buildSessionNamespaceNodesPageQuery(filesystem FilestoreFilesystem, params ListSessionNamespaceNodesPageParams) (string, map[string]any) {
+	query := sessionNamespaceNodeSelectSQL() + `
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and kind <> 'archive'
@@ -95,8 +95,8 @@ func filestoreDirectoryPrefix(directoryPath string) string {
 	return directoryPath + "/"
 }
 
-func newFilestoreEntryPage(entries []FilestoreEntry, limit int) FilestoreEntryPage {
-	page := FilestoreEntryPage{Entries: entries, HasMore: len(entries) > limit}
+func newSessionNamespaceNodePage(entries []SessionNamespaceNode, limit int) SessionNamespaceNodePage {
+	page := SessionNamespaceNodePage{Entries: entries, HasMore: len(entries) > limit}
 	if page.HasMore {
 		page.Entries = entries[:limit]
 	}

@@ -155,8 +155,8 @@ PR: https://github.com/superduck-ai/open-managed-agents/pull/6
    ```bash
    # e2b-local 通过本地 Docker 的短 name:tag 发现 template，
    # 因此拉取后需 retag 成 oma-server 选用的 managed-agent-sandbox:latest。
-   docker pull registry.gz.cvte.cn/oma/managed-agent-sandbox:latest
-   docker tag registry.gz.cvte.cn/oma/managed-agent-sandbox:latest managed-agent-sandbox:latest
+   docker pull ghcr.io/superduck-ai/managed-agent-sandbox:latest
+   docker tag ghcr.io/superduck-ai/managed-agent-sandbox:latest managed-agent-sandbox:latest
    ```
 
 2. 初始化 Compose 本地运行配置；该命令不会覆盖已有文件：

@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,9 +47,40 @@ type testApp struct {
 	sessions             *platformsession.MemoryStore
 	credentials          *codesessions.SessionCredentials
 	filestoreCredentials *filestore.TokenCredentials
+	sandboxTimeouts      *recordingSandboxTimeoutExtender
 	server               *httptest.Server
 	baseURL              string
 	client               *http.Client
+}
+
+type sandboxTimeoutCall struct {
+	sandboxID string
+	timeout   time.Duration
+}
+
+type recordingSandboxTimeoutExtender struct {
+	mu    sync.Mutex
+	calls []sandboxTimeoutCall
+	err   error
+}
+
+func (e *recordingSandboxTimeoutExtender) SetTimeout(_ context.Context, sandboxID string, timeout time.Duration) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.calls = append(e.calls, sandboxTimeoutCall{sandboxID: sandboxID, timeout: timeout})
+	return e.err
+}
+
+func (e *recordingSandboxTimeoutExtender) setError(err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.err = err
+}
+
+func (e *recordingSandboxTimeoutExtender) snapshotCalls() []sandboxTimeoutCall {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]sandboxTimeoutCall(nil), e.calls...)
 }
 
 type errorResponse struct {
@@ -1023,6 +1055,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("ensure object store bucket: %v", err)
 	}
+	sandboxTimeouts := &recordingSandboxTimeoutExtender{}
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{
 		Config:                 cfg,
 		DB:                     database,
@@ -1030,6 +1063,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		Logger:                 logger,
 		PlatformStore:          platformSessions,
 		CodeSessionCredentials: credentials,
+		SandboxTimeoutExtender: sandboxTimeouts,
 		FilestoreCredentials:   filestoreCredentials,
 	}))
 	return &testApp{
@@ -1039,6 +1073,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		sessions:             platformSessions,
 		credentials:          credentials,
 		filestoreCredentials: filestoreCredentials,
+		sandboxTimeouts:      sandboxTimeouts,
 		server:               server,
 		baseURL:              server.URL,
 		client:               server.Client(),

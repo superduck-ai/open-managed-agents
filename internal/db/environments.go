@@ -712,6 +712,42 @@ func (d *DB) GetActiveEnvironmentSandboxForWork(ctx context.Context, workspaceID
 	`, environmentWorkLookupArguments(workspaceID, environmentExternalID, workExternalID))
 }
 
+// GetRenewableEnvironmentSandboxForCodeSession resolves the provider sandbox
+// owned by a running managed-agent Code Session. Idle and requires-action
+// workers intentionally return ErrNotFound so their heartbeats cannot keep the
+// sandbox alive indefinitely.
+func (d *DB) GetRenewableEnvironmentSandboxForCodeSession(ctx context.Context, codeSessionExternalID string) (EnvironmentSandbox, error) {
+	return getEnvironmentSandboxSQLX(ctx, d.sql, `
+		select `+environmentSandboxSQLXColumns+`
+		from environment_sandboxes
+		where id = (
+			select sandbox.id
+			from code_sessions code_session
+			join environment_work work
+				on work.organization_id = code_session.organization_id
+				and work.workspace_id = code_session.workspace_id
+				and work.environment_id = code_session.environment_id
+				and work.environment_external_id = code_session.environment_external_id
+				and work.data->>'type' = 'session'
+				and work.data->>'id' = code_session.session_external_id
+				and work.deleted_at is null
+			join environment_sandboxes sandbox
+				on sandbox.organization_id = code_session.organization_id
+				and sandbox.workspace_id = code_session.workspace_id
+				and sandbox.environment_id = code_session.environment_id
+				and sandbox.work_id = work.id
+				and sandbox.provider_sandbox_id is not null
+				and sandbox.state = 'running'
+			where code_session.external_id = :code_session_external_id
+				and code_session.status = 'active'
+				and code_session.worker_status = 'running'
+				and code_session.deleted_at is null
+			order by sandbox.created_at desc, sandbox.id desc
+			limit 1
+		)
+	`, map[string]any{"code_session_external_id": codeSessionExternalID})
+}
+
 const (
 	environmentSQLXColumns = `id, CAST(uuid AS text) AS uuid, external_id, organization_id,
 		workspace_id, created_by_api_key_id, name, description, config, metadata, scope,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -13,29 +14,37 @@ import (
 // Handler 是 code-session 的 HTTP transport 边界。
 // 它持有协议相关的鉴权、代理连接和日志状态；业务状态与业务编排统一委托给 Service。
 type Handler struct {
-	cfg           config.Config
-	db            *db.DB
-	service       *Service
-	logger        *slog.Logger
-	upstreamProxy upstreamProxyRuntime
+	cfg                    config.Config
+	db                     *db.DB
+	service                *Service
+	logger                 *slog.Logger
+	sandboxTimeoutExtender SandboxTimeoutExtender
+	upstreamProxy          upstreamProxyRuntime
 	// loadPolicyContext 解析 CONNECT 授权所需的策略上下文；测试可替换为 fixture。
 	loadPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	otlpLogMu         sync.Mutex
 }
 
+// SandboxTimeoutExtender renews the provider-side lifetime of a managed-agent
+// sandbox after its current worker proves liveness.
+type SandboxTimeoutExtender interface {
+	SetTimeout(ctx context.Context, sandboxID string, timeout time.Duration) error
+}
+
 // NewHandler 创建长生命周期的 HTTP handler。Handler 直接复用 Service 的数据库依赖，
 // 避免 HTTP 路由和跨资源业务服务意外连接到不同的数据源。
-func NewHandler(cfg config.Config, service *Service, logger *slog.Logger) *Handler {
+func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender SandboxTimeoutExtender, logger *slog.Logger) *Handler {
 	if service == nil {
 		panic("codesessions: service is required")
 	}
 	logger = logging.LoggerOrDefault(logger)
 	handler := &Handler{
-		cfg:           cfg,
-		db:            service.db,
-		service:       service,
-		logger:        logger,
-		upstreamProxy: newUpstreamProxyRuntime(),
+		cfg:                    cfg,
+		db:                     service.db,
+		service:                service,
+		logger:                 logger,
+		sandboxTimeoutExtender: sandboxTimeoutExtender,
+		upstreamProxy:          newUpstreamProxyRuntime(),
 	}
 	handler.loadPolicyContext = handler.loadUpstreamProxyPolicyContext
 	// 只有 MITM 开启时才在构造阶段读取稳定私钥并签发一年期根证书，使配置错误在启动期失败。

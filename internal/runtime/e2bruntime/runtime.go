@@ -62,6 +62,8 @@ type E2BProvider struct {
 	cfg config.E2BConfig
 }
 
+const defaultSandboxTimeout = 5 * time.Minute
+
 func NewProvider(cfg config.E2BConfig) *E2BProvider {
 	return &E2BProvider{cfg: cfg}
 }
@@ -122,7 +124,7 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 	}
 	timeoutMs := int(resolved.Timeout / time.Millisecond)
 	if timeoutMs <= 0 {
-		timeoutMs = int((5 * time.Minute) / time.Millisecond)
+		timeoutMs = int(defaultSandboxTimeout / time.Millisecond)
 	}
 	allowInternet := resolved.AllowInternetAccess
 	opts := &e2b.SandboxOpts{
@@ -152,6 +154,23 @@ func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
 		return err
 	}
 	return sandbox.Kill(ctx, nil)
+}
+
+// SetTimeout renews the provider-side sandbox lifetime from the time of this
+// request. The heartbeat caller passes the configured sandbox lifetime rather
+// than an absolute expiration timestamp.
+func (p *E2BProvider) SetTimeout(ctx context.Context, sandboxID string, timeout time.Duration) error {
+	if strings.TrimSpace(sandboxID) == "" {
+		return errors.New("sandbox id is required")
+	}
+	if timeout <= 0 {
+		timeout = p.sandboxTimeout()
+	}
+	sandbox, err := p.connect(ctx, sandboxID)
+	if err != nil {
+		return err
+	}
+	return sandbox.SetTimeout(ctx, int(timeout/time.Millisecond), nil)
 }
 
 func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
@@ -420,13 +439,22 @@ func (p *E2BProvider) StartBackgroundCommand(ctx context.Context, sandboxID stri
 }
 
 func (p *E2BProvider) connect(ctx context.Context, sandboxID string) (*e2b.Sandbox, error) {
+	timeoutMs := int(p.sandboxTimeout() / time.Millisecond)
 	sandbox, err := e2b.Connect(ctx, sandboxID, &e2b.SandboxConnectOpts{
 		ConnectionOpts: ConnectionOptsFromConfig(p.cfg),
+		TimeoutMs:      &timeoutMs,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return sandbox, nil
+}
+
+func (p *E2BProvider) sandboxTimeout() time.Duration {
+	if p.cfg.SandboxTimeout > 0 {
+		return p.cfg.SandboxTimeout
+	}
+	return defaultSandboxTimeout
 }
 
 func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork) (*e2b.SandboxNetworkOpts, bool, error) {

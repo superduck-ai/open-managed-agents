@@ -476,7 +476,32 @@ func (h *Handler) handleCodeSessionWorkerHeartbeat(w http.ResponseWriter, r *htt
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not record code session worker heartbeat"))
 		return
 	}
+	if err := h.extendCodeSessionSandboxTimeout(r.Context(), codeSessionID); err != nil {
+		h.logger.ErrorContext(r.Context(), "extend code session sandbox timeout", "code_session_id", codeSessionID, "error", err)
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "Could not extend code session sandbox timeout"))
+		return
+	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "worker_lease_expires_at": expiresAt.Format(time.RFC3339Nano)})
+}
+
+func (h *Handler) extendCodeSessionSandboxTimeout(ctx context.Context, codeSessionID string) error {
+	sandbox, err := h.db.GetRenewableEnvironmentSandboxForCodeSession(ctx, codeSessionID)
+	if errors.Is(err, db.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolve active sandbox: %w", err)
+	}
+	if h.sandboxTimeoutExtender == nil {
+		return errors.New("sandbox timeout extender is not configured")
+	}
+	if sandbox.ProviderSandboxID == nil || strings.TrimSpace(*sandbox.ProviderSandboxID) == "" {
+		return errors.New("active sandbox is missing provider sandbox id")
+	}
+	if err := h.sandboxTimeoutExtender.SetTimeout(ctx, *sandbox.ProviderSandboxID, h.cfg.E2B.SandboxTimeout); err != nil {
+		return fmt.Errorf("set provider sandbox timeout: %w", err)
+	}
+	return nil
 }
 
 func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Request) {

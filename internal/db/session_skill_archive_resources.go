@@ -50,8 +50,8 @@ var (
 			session_external_id, resource_type, payload, secret_payload,
 			path, parent_path, skill_version_uuid, created_at, updated_at
 		)
-		select gen_random_uuid(),
-			concat('sesrsc_', replace(cast(gen_random_uuid() as text), '-', '')),
+		select CAST(:resource_uuid AS uuid),
+			:resource_external_id,
 			session.organization_id, session.workspace_id, session.id,
 			session.external_id, 'skill_archive', null, null,
 			:entry_path, '/skills', CAST(:skill_version_uuid AS uuid), :now, :now
@@ -127,12 +127,18 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 		if err := validateFilestoreSkillArchiveVersionTx(ctx, tx, workspaceID, entry); err != nil {
 			return err
 		}
+		resourceUUID, resourceExternalID, err := newSessionResourceIdentity()
+		if err != nil {
+			return fmt.Errorf("generate Session skill archive identity: %w", err)
+		}
 		if _, err := namedExecContext(ctx, tx, sessionSkillArchiveResourceInsertQuery, map[string]any{
-			"workspace_id":       workspaceID,
-			"session_id":         filesystem.SessionID,
-			"entry_path":         entry.Path,
-			"skill_version_uuid": entry.SkillVersionUUID,
-			"now":                now,
+			"resource_uuid":        resourceUUID,
+			"resource_external_id": resourceExternalID,
+			"workspace_id":         workspaceID,
+			"session_id":           filesystem.SessionID,
+			"entry_path":           entry.Path,
+			"skill_version_uuid":   entry.SkillVersionUUID,
+			"now":                  now,
 		}); err != nil {
 			return fmt.Errorf("insert Session skill archive %s: %w", entry.SkillVersionUUID, err)
 		}

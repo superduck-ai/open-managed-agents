@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/filestorepath"
+	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -247,6 +249,10 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		}
 		return directory, nil
 	}
+	resourceUUID, resourceExternalID, err := newSessionResourceIdentity()
+	if err != nil {
+		return SessionResourceFile{}, err
+	}
 	var resourceID int64
 	err = namedGetContext(ctx, tx, &resourceID, `
 		insert into session_resources (
@@ -254,8 +260,8 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 			session_external_id, resource_type, payload, secret_payload,
 			path, parent_path, created_at, updated_at
 		)
-		select gen_random_uuid(),
-			concat('sesrsc_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+		select CAST(:resource_uuid AS uuid),
+			:resource_external_id,
 			session.organization_id, session.workspace_id, session.id,
 			session.external_id, 'directory', null, null,
 			:entry_path, :parent_path, :now, :now
@@ -264,11 +270,13 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 			and session.deleted_at is null
 		returning id
 	`, map[string]any{
-		"workspace_id": workspaceID,
-		"session_id":   filesystem.SessionID,
-		"entry_path":   directoryPath,
-		"parent_path":  filestoreParentPath(directoryPath),
-		"now":          now,
+		"resource_uuid":        resourceUUID,
+		"resource_external_id": resourceExternalID,
+		"workspace_id":         workspaceID,
+		"session_id":           filesystem.SessionID,
+		"entry_path":           directoryPath,
+		"parent_path":          filestoreParentPath(directoryPath),
+		"now":                  now,
 	})
 	if err := mapSessionNamespaceInsertError(err); err != nil {
 		return SessionResourceFile{}, err
@@ -388,8 +396,20 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 			where id = :resource_id and deleted_at is null
 		`, arguments)
 	}
+	fileUUID, fileExternalID, err := newFileIdentity()
+	if err != nil {
+		return SessionResourceFile{}, err
+	}
+	resourceUUID, resourceExternalID, err := newSessionResourceIdentity()
+	if err != nil {
+		return SessionResourceFile{}, err
+	}
+	arguments["file_uuid"] = fileUUID
+	arguments["file_external_id"] = fileExternalID
+	arguments["resource_uuid"] = resourceUUID
+	arguments["resource_external_id"] = resourceExternalID
 	var resourceID int64
-	err := namedGetContext(ctx, tx, &resourceID, `
+	err = namedGetContext(ctx, tx, &resourceID, `
 		with inserted_file as (
 			insert into files (
 				uuid, external_id, workspace_id, filename, mime_type,
@@ -398,8 +418,8 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				s3_etag, s3_version_id, scope_type, scope_id,
 				created_by_api_key_id, created_at
 			)
-			select gen_random_uuid(),
-				concat('file_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+			select CAST(:file_uuid AS uuid),
+				:file_external_id,
 				:workspace_id, :filename, :media_type, :detected_mime_type,
 				:size_bytes, CAST(:metadata AS jsonb),
 				CAST(:authorization_metadata AS jsonb), :tags, :downloadable,
@@ -419,8 +439,8 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 			session_external_id, resource_type, payload, secret_payload,
 			path, parent_path, file_uuid, expires_at, created_at, updated_at
 		)
-		select gen_random_uuid(),
-			concat('sesrsc_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+		select CAST(:resource_uuid AS uuid),
+			:resource_external_id,
 			session.organization_id, session.workspace_id, session.id,
 			session.external_id, 'file', null, null, :entry_path, :parent_path,
 			inserted_file.uuid, :expires_at, :now, :now
@@ -445,6 +465,25 @@ func mapSessionNamespaceInsertError(err error) error {
 		return ErrFilestorePathExists
 	}
 	return err
+}
+
+// newSessionResourceIdentity 在应用层生成 Session Resource 的 uuid 与 sesrsc_ external ID，
+// 使 namespace INSERT 只持久化已生成的身份，而不在 SQL 层拼接 gen_random_uuid + concat。
+func newSessionResourceIdentity() (resourceUUID, resourceExternalID string, err error) {
+	resourceExternalID, err = ids.New("sesrsc_")
+	if err != nil {
+		return "", "", err
+	}
+	return uuid.NewString(), resourceExternalID, nil
+}
+
+// newFileIdentity 在应用层生成真实 File 的 uuid 与 file_ external ID。
+func newFileIdentity() (fileUUID, fileExternalID string, err error) {
+	fileExternalID, err = ids.New("file_")
+	if err != nil {
+		return "", "", err
+	}
+	return uuid.NewString(), fileExternalID, nil
 }
 
 func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilestoreFileTxInput) map[string]any {

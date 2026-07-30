@@ -36,6 +36,9 @@ func NewService(cfg config.Config, database *db.DB) *Service {
 }
 
 func (s *Service) GetCurrentOrganization(ctx context.Context, principal auth.Principal) (organizationResponse, error) {
+	if strings.TrimSpace(principal.OrganizationUUID) == "" {
+		return organizationResponse{}, mapAdminDBError(db.ErrNotFound, "Organization not found")
+	}
 	org, err := s.db.GetAdminOrganization(ctx, principal.OrganizationUUID)
 	if err != nil {
 		return organizationResponse{}, mapAdminDBError(err, "Organization not found")

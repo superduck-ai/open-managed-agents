@@ -234,19 +234,28 @@ func sessionUserMessageStartupWindowSQLX(
 		return false, err
 	}
 
+	// Only cloud environments run managed Code Session activation that drains
+	// the queue (see Runner.prepareManagedAgentLaunch / cloudEnvironment).
 	var startupWorkExists bool
 	err = namedGetContext(ctx, database, &startupWorkExists, `
 		select exists (
 			select 1
-			from environment_work
-			where organization_id = :organization_id
-				and workspace_id = :workspace_id
-				and environment_id = :environment_id
-				and environment_external_id = :environment_external_id
-				and data->>'type' = 'session'
-				and data->>'id' = :session_external_id
-				and state in ('queued', 'starting', 'active')
-				and deleted_at is null
+			from environment_work ew
+			join environments e
+				on e.id = ew.environment_id
+				and e.organization_id = ew.organization_id
+				and e.workspace_id = ew.workspace_id
+				and e.external_id = ew.environment_external_id
+			where ew.organization_id = :organization_id
+				and ew.workspace_id = :workspace_id
+				and ew.environment_id = :environment_id
+				and ew.environment_external_id = :environment_external_id
+				and ew.data->>'type' = 'session'
+				and ew.data->>'id' = :session_external_id
+				and ew.state in ('queued', 'starting', 'active')
+				and ew.deleted_at is null
+				and e.deleted_at is null
+				and e.config->>'type' = 'cloud'
 		)
 	`, map[string]any{
 		"organization_id":         session.OrganizationID,

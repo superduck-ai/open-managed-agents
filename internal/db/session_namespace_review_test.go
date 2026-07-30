@@ -30,3 +30,10 @@ func TestFilestoreFilesystemRowRejectsMissingSession(t *testing.T) {
 		t.Fatalf("filestoreFilesystemRow.filesystem() error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestSessionNamespaceNodeSourceSQLFiltersDeletedFilesystems(t *testing.T) {
+	const predicate = "filesystem.deleted_at is null"
+	if !strings.Contains(sessionNamespaceNodeSourceSQL(), predicate) {
+		t.Fatalf("namespace source query lacks %q", predicate)
+	}
+}

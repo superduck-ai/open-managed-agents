@@ -98,6 +98,7 @@ func sessionNamespaceNodeSourceSQL() string {
 		join filestore_filesystems filesystem
 			on filesystem.session_uuid = session.uuid
 			and filesystem.workspace_uuid = workspace.uuid
+			and filesystem.deleted_at is null
 		left join files file
 			on file.uuid = resource.file_uuid
 			and file.workspace_id = resource.workspace_id

@@ -108,6 +108,21 @@ const (
 		where workspace_id = :workspace_id and session_id = :session_id
 			and resource_type in ('directory', 'skill_archive') and deleted_at is null
 	`
+	retireFilesystemCleanupSkillFilesQuery = `
+		update files file
+		set deleted_at = :retired_at
+		where file.workspace_id = :workspace_id
+			and file.deleted_at is null
+			and file.uuid in (
+				select resource.file_uuid
+				from session_resources resource
+				where resource.workspace_id = :workspace_id
+					and resource.session_id = :session_id
+					and resource.resource_type = 'skill_archive'
+					and resource.file_uuid is not null
+					and resource.deleted_at is null
+			)
+	`
 	completeFilesystemCleanupBatchQuery = `
 		update jobs
 		set status = :status, locked_by = null, locked_until = null,
@@ -380,6 +395,9 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 		return false, nil, err
 	}
 	if !filesRemain {
+		if _, err := namedExecContext(ctx, tx, retireFilesystemCleanupSkillFilesQuery, arguments); err != nil {
+			return false, nil, err
+		}
 		if _, err := namedExecContext(ctx, tx, retireFilesystemCleanupNamespaceEntriesQuery, arguments); err != nil {
 			return false, nil, err
 		}

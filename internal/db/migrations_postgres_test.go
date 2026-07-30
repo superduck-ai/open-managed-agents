@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,6 +24,31 @@ const migrationBackfillFixtureSQL = `
 	insert into api_keys (uuid, external_id, workspace_id, key_hash)
 	select '30000000-0000-0000-0000-000000000001', 'api_key_migration_184', id, 'migration-184-hash'
 	from workspaces where external_id = 'workspace_migration_184';
+
+	insert into skills (
+		uuid, external_id, workspace_id, created_by_api_key_id,
+		display_title, latest_version, source
+	)
+	select
+		'31000000-0000-0000-0000-000000000001', 'skill_migration_184',
+		w.id, ak.id, 'migration skill', 'v1', 'custom'
+	from workspaces w
+	join api_keys ak on ak.workspace_id = w.id
+	where w.external_id = 'workspace_migration_184';
+
+	insert into skill_versions (
+		uuid, external_id, workspace_id, skill_id, skill_external_id,
+		version, name, directory, s3_bucket, s3_key, size_bytes, sha256,
+		created_by_api_key_id
+	)
+	select
+		'32000000-0000-0000-0000-000000000001', 'skver_migration_184',
+		w.id, skill.id, skill.external_id, 'v1', 'Migration Skill', 'migration-skill',
+		'migration-184', 'skills/migration-skill.zip', 128, repeat('e', 64), ak.id
+	from skills skill
+	join workspaces w on w.id = skill.workspace_id
+	join api_keys ak on ak.workspace_id = w.id
+	where skill.external_id = 'skill_migration_184';
 
 	insert into sessions (
 		uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
@@ -114,6 +140,18 @@ const migrationBackfillFixtureSQL = `
 		null, null, null,
 		'30000000-0000-0000-0000-000000000001',
 		'40000000-0000-0000-0000-000000000001'
+	), (
+		'80000000-0000-0000-0000-000000000004', 'fse_skill_migration_184',
+		'10000000-0000-0000-0000-000000000001',
+		'20000000-0000-0000-0000-000000000001',
+		'70000000-0000-0000-0000-000000000001',
+		'archive', '/skills/migration-skill', '/skills', 128,
+		'application/zip', 'application/zip', '{"skill_source":"custom"}', '{}',
+		array[]::text[], false, null, repeat('e', 64), 'migration-184',
+		'skills/migration-skill.zip', 'skill_archive',
+		'32000000-0000-0000-0000-000000000001', null,
+		'30000000-0000-0000-0000-000000000001',
+		'40000000-0000-0000-0000-000000000001'
 	);
 
 	update filestore_entries
@@ -186,6 +224,37 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 36); err != nil {
 		t.Fatalf("migrate fixture database to 36: %v", err)
 	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set skill_version_uuid = '32000000-0000-0000-0000-000000000099'
+		where path = '/skills/migration-skill'
+	`); err != nil {
+		t.Fatalf("break legacy Skill Version reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 37); err == nil {
+		t.Fatal("migration accepted an unresolved active Skill Version reference")
+	}
+	var skillVersionUUID string
+	if err := standardDB.QueryRowContext(ctx, `
+		select cast(skill_version_uuid as text)
+		from session_resources
+		where path = '/skills/migration-skill'
+	`).Scan(&skillVersionUUID); err != nil {
+		t.Fatalf("load Skill Version reference after rejected migration: %v", err)
+	}
+	if skillVersionUUID != "32000000-0000-0000-0000-000000000099" {
+		t.Fatalf("rejected migration changed Skill Version reference to %q", skillVersionUUID)
+	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set skill_version_uuid = '32000000-0000-0000-0000-000000000001'
+		where path = '/skills/migration-skill'
+	`); err != nil {
+		t.Fatalf("restore legacy Skill Version reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 37); err != nil {
+		t.Fatalf("migrate fixture database to 37: %v", err)
+	}
 
 	assertUnifiedMigrationState(t, ctx, standardDB)
 }
@@ -247,12 +316,64 @@ func assertUnifiedMigrationState(t *testing.T, ctx context.Context, database *sq
 		t.Fatal("session_file_external_id still exists after migration")
 	}
 
+	var skillVersionColumnExists bool
+	if err := database.QueryRowContext(ctx, `
+		select exists (
+			select 1 from information_schema.columns
+			where table_schema = current_schema()
+				and table_name = 'session_resources'
+				and column_name = 'skill_version_uuid'
+		)
+	`).Scan(&skillVersionColumnExists); err != nil {
+		t.Fatalf("check removed Skill Version column: %v", err)
+	}
+	if skillVersionColumnExists {
+		t.Fatal("skill_version_uuid still exists after migration")
+	}
+
+	var skillResourceUUID, skillFileUUID, skillSource, skillFilename, skillKey, skillChecksum string
+	var skillSize int64
+	if err := database.QueryRowContext(ctx, `
+		select cast(resource.uuid as text), cast(file.uuid as text),
+			file.metadata->>'skill_source', file.filename, file.size_bytes,
+			file.sha256, file.s3_key
+		from session_resources resource
+		join files file
+			on file.uuid = resource.file_uuid
+			and file.workspace_id = resource.workspace_id
+		where resource.path = '/skills/migration-skill'
+	`).Scan(
+		&skillResourceUUID,
+		&skillFileUUID,
+		&skillSource,
+		&skillFilename,
+		&skillSize,
+		&skillChecksum,
+		&skillKey,
+	); err != nil {
+		t.Fatalf("load migrated Skill snapshot: %v", err)
+	}
+	if skillResourceUUID == skillFileUUID || skillSource != "custom" ||
+		skillFilename != "migration-skill.zip" || skillSize != 128 ||
+		skillChecksum != strings.Repeat("e", 64) || skillKey != "skills/migration-skill.zip" {
+		t.Fatalf(
+			"migrated Skill snapshot = resource %q file %q source %q filename %q size %d checksum %q key %q",
+			skillResourceUUID,
+			skillFileUUID,
+			skillSource,
+			skillFilename,
+			skillSize,
+			skillChecksum,
+			skillKey,
+		)
+	}
+
 	var fileCount int
 	if err := database.QueryRowContext(ctx, `select count(*) from files`).Scan(&fileCount); err != nil {
 		t.Fatalf("count migrated Files: %v", err)
 	}
-	if fileCount != 3 {
-		t.Fatalf("files count = %d, want source plus active and expired outputs", fileCount)
+	if fileCount != 4 {
+		t.Fatalf("files count = %d, want source, active and expired outputs, plus Skill snapshot", fileCount)
 	}
 
 	var outputExternalID, outputFilename, outputKey string

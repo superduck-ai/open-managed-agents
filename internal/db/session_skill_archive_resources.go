@@ -16,6 +16,7 @@ type normalizedSessionSkillArchiveResource struct {
 	Source           string
 	SkillVersionUUID string
 	Path             string
+	Filename         string
 	S3Bucket         string
 	S3Key            string
 	SizeBytes        int64
@@ -44,17 +45,47 @@ var (
 			and resource_type = 'skill_archive'
 			and deleted_at is null
 	`
+	sessionSkillArchiveFileRetireQuery = `
+		update files file
+		set deleted_at = :now
+		where file.workspace_id = :workspace_id
+			and file.deleted_at is null
+			and file.uuid in (
+				select resource.file_uuid
+				from session_resources resource
+				where resource.workspace_id = :workspace_id
+					and resource.session_id = :session_id
+					and resource.resource_type = 'skill_archive'
+					and resource.file_uuid is not null
+					and resource.deleted_at is null
+			)
+	`
+	sessionSkillArchiveFileInsertQuery = `
+		insert into files (
+			uuid, external_id, workspace_id, filename, mime_type, detected_mime_type,
+			size_bytes, metadata, authorization_metadata, tags, downloadable,
+			sha256, s3_bucket, s3_key, created_by_api_key_id, created_at
+		)
+		select CAST(:file_uuid AS uuid), :file_external_id, session.workspace_id,
+			:filename, 'application/zip', 'application/zip', :size_bytes,
+			jsonb_build_object('skill_source', CAST(:source AS text)),
+			CAST('{}' AS jsonb), CAST(ARRAY[] AS text[]), false,
+			:sha256, :s3_bucket, :s3_key, session.created_by_api_key_id, :now
+		from sessions session
+		where session.id = :session_id and session.workspace_id = :workspace_id
+			and session.deleted_at is null
+	`
 	sessionSkillArchiveResourceInsertQuery = `
 		insert into session_resources (
 			uuid, external_id, organization_id, workspace_id, session_id,
 			session_external_id, resource_type, payload, secret_payload,
-			path, parent_path, skill_version_uuid, created_at, updated_at
+			path, parent_path, file_uuid, created_at, updated_at
 		)
 		select CAST(:resource_uuid AS uuid),
 			:resource_external_id,
 			session.organization_id, session.workspace_id, session.id,
 			session.external_id, 'skill_archive', null, null,
-			:entry_path, '/skills', CAST(:skill_version_uuid AS uuid), :now, :now
+			:entry_path, '/skills', CAST(:file_uuid AS uuid), :now, :now
 		from sessions session
 		where session.id = :session_id and session.workspace_id = :workspace_id
 			and session.deleted_at is null
@@ -71,14 +102,13 @@ var (
 					and deleted_at is null
 			)
 			and kind = 'archive'
-			and skill_version_uuid is not null
 			and deleted_at is null
 		order by path, id
 	`
 )
 
 // ReplaceSessionSkillArchiveResources 原子替换一个公开 Session 的完整
-// /skills Skill Archive Resource 集合。调用前必须已把 "latest" 解析为具体版本。
+// /skills Skill Archive Resource 集合。每个 Skill Archive 由一条 File 快照承载。
 func (d *DB) ReplaceSessionSkillArchiveResources(
 	ctx context.Context,
 	workspaceID int64,
@@ -115,11 +145,15 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 	if err := ensureFilestoreFixedRootsTx(ctx, tx, workspaceID, filesystem, now); err != nil {
 		return fmt.Errorf("ensure Filestore roots for skill archives: %w", err)
 	}
-	if _, err := namedExecContext(ctx, tx, sessionSkillArchiveResourceRetireQuery, map[string]any{
+	retireArguments := map[string]any{
 		"workspace_id": workspaceID,
 		"session_id":   filesystem.SessionID,
 		"now":          now,
-	}); err != nil {
+	}
+	if _, err := namedExecContext(ctx, tx, sessionSkillArchiveFileRetireQuery, retireArguments); err != nil {
+		return fmt.Errorf("retire Session skill archive Files: %w", err)
+	}
+	if _, err := namedExecContext(ctx, tx, sessionSkillArchiveResourceRetireQuery, retireArguments); err != nil {
 		return fmt.Errorf("retire Session skill archives: %w", err)
 	}
 
@@ -127,20 +161,35 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 		if err := validateFilestoreSkillArchiveVersionTx(ctx, tx, workspaceID, entry); err != nil {
 			return err
 		}
+		fileUUID, fileExternalID, err := newFileIdentity()
+		if err != nil {
+			return fmt.Errorf("generate Session skill archive File identity: %w", err)
+		}
 		resourceUUID, resourceExternalID, err := newSessionResourceIdentity()
 		if err != nil {
 			return fmt.Errorf("generate Session skill archive identity: %w", err)
 		}
-		if _, err := namedExecContext(ctx, tx, sessionSkillArchiveResourceInsertQuery, map[string]any{
+		arguments := map[string]any{
+			"file_uuid":            fileUUID,
+			"file_external_id":     fileExternalID,
 			"resource_uuid":        resourceUUID,
 			"resource_external_id": resourceExternalID,
 			"workspace_id":         workspaceID,
 			"session_id":           filesystem.SessionID,
 			"entry_path":           entry.Path,
-			"skill_version_uuid":   entry.SkillVersionUUID,
+			"filename":             entry.Filename,
+			"source":               entry.Source,
+			"size_bytes":           entry.SizeBytes,
+			"sha256":               entry.SHA256,
+			"s3_bucket":            entry.S3Bucket,
+			"s3_key":               entry.S3Key,
 			"now":                  now,
-		}); err != nil {
-			return fmt.Errorf("insert Session skill archive %s: %w", entry.SkillVersionUUID, err)
+		}
+		if _, err := namedExecContext(ctx, tx, sessionSkillArchiveFileInsertQuery, arguments); err != nil {
+			return fmt.Errorf("insert Session skill archive File %s: %w", entry.Path, err)
+		}
+		if _, err := namedExecContext(ctx, tx, sessionSkillArchiveResourceInsertQuery, arguments); err != nil {
+			return fmt.Errorf("insert Session skill archive %s: %w", entry.Path, err)
 		}
 	}
 	return tx.Commit()
@@ -274,6 +323,7 @@ func normalizeSessionSkillArchiveResource(
 		Source:           source,
 		SkillVersionUUID: versionUUID,
 		Path:             entryPath,
+		Filename:         directory + ".zip",
 		S3Bucket:         strings.TrimSpace(input.S3Bucket),
 		S3Key:            strings.TrimSpace(input.S3Key),
 		SizeBytes:        input.SizeBytes,

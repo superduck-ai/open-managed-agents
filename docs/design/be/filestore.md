@@ -149,8 +149,8 @@ sequenceDiagram
     participant M as Environment Manager
     A->>D: Create filesystem and five fixed roots
     A->>D: Write Input Resource referencing Source File
-    R->>D: Resolve concrete skill versions
-    R->>D: Atomically replace /skills archive Resources
+    R->>D: Resolve concrete skill contents
+    R->>D: Atomically snapshot /skills archive Resources
     R->>E: Create Sandbox
     R->>D: Resolve trusted filesystem scope
     R->>R: Issue filesystem RW and readonly tokens
@@ -202,21 +202,22 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 
 ## 数据模型
 
-迁移 `00036_unify_session_resources_and_files.sql` 完成一次原子切换：
+迁移 `00036_unify_session_resources_and_files.sql` 完成 namespace 的原子切换，迁移
+`00037_snapshot_session_skills.sql` 将 Skill Archive 从 catalog version 投影转换为 Session File 快照：
 
 - `filestore_filesystems` 继续只负责将 Filestore external ID 解析到唯一 public Session，不把 filesystem UUID 复制到 Resource。
-- `session_resources` 新增 `path`、`parent_path`、`file_uuid`、`skill_version_uuid` 与 `expires_at`，作为 Session namespace 唯一事实来源。
+- `session_resources` 只使用 `path`、`parent_path`、`file_uuid` 与 `expires_at` 表达 File、Directory 和 Skill Archive 节点；Skill ZIP 的大小、SHA-256、bucket 与 key 与普通文件一样保存在 `files` 行中。
 - `files` 新增 detected MIME、metadata、authorization metadata、tags、MD5、ETag 与 Version ID，保存所有真实文件元数据和对象事实。
 - 不新增 `attached`、`cataloged`、`namespace_role`、`filesystem_uuid`、`files.source_file_uuid` 或 ownership 列。公开 Resource 由 `payload is not null` 判断，Catalog 角色由固定根路径判断。
-- schema 不创建 PostgreSQL 外键；workspace/session/file/skill 的完整性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
+- schema 不创建 PostgreSQL 外键；workspace/session/file 的引用完整性和 Skill 快照的来源真实性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
 
-迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource，Skill Archive 只保存 Skill Version 引用。切换提交同时删除旧表，不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
+迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00036` 接入统一 Resource，再由 `00037` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 
 迁移 `00023` 至 `00034` 描述统一前的 filesystem、旧 namespace、Source reference 与 scoped File 同步历史；这些结构只作为 `00036` 的一次性输入，不再是运行时模型。`00036` 成功后应用代码不再读取、写入或修复旧结构。
 
-根目录 `/` 仍由 filesystem 合成，不写 marker row 或 S3 marker object；五个固定一级目录是 `resource_type='directory'` 的内部 Resource。每个 `/skills/<directory>` 是 `resource_type='skill_archive'` 且引用具体 Skill Version 的内部 Resource；ZIP 成员根据 central directory 动态合成，不持久化成员，也不生成虚假 UUID 或 `fse_` ID。
+根目录 `/` 仍由 filesystem 合成，不写 marker row 或 S3 marker object；五个固定一级目录是 `resource_type='directory'` 的内部 Resource。每个 `/skills/<directory>` 是 `resource_type='skill_archive'` 的内部 Resource，并通过 `file_uuid` 指向一份不可变 ZIP File 快照；ZIP 成员根据 central directory 动态合成，不持久化成员，也不生成虚假 UUID 或 `fse_` ID。
 
 文件对象 key 固定为：
 
@@ -366,7 +367,7 @@ sequenceDiagram
 
 Owned File 的覆盖、删除、递归删除和 TTL 过期在同一个数据库事务中软删除/替换 Resource 与 File、更新用量账本，并写入 `filestore_object_cleanup` job。Input Resource 禁止通用 mutation；删除它只退休 Resource，不进入对象清理或容量释放。独立 worker 按 job 中的 bucket、key 和 VersionID 幂等删除 Owned File 对象；provider not-found 视为成功，失败使用有界重试与租约保护。
 
-删除 Session 时，短事务立即退休公开 Resources 与 filesystem，并投递一个 `filestore_filesystem_cleanup` 父任务，不遍历全部 Owned File，也不调用 S3。worker 每次最多退休 100 个 Owned File Resource：生成精确版本 cleanup 子任务并扣减容量；全部 File 退休后再软删除内部目录与 Skill Archive Resources。Input Resource 已在 Session 删除事务中退休，不生成对象清理。
+删除 Session 时，短事务立即退休公开 Resources 与 filesystem，并投递一个 `filestore_filesystem_cleanup` 父任务，不遍历全部 Owned File，也不调用 S3。worker 每次最多退休 100 个 Owned File Resource：生成精确版本 cleanup 子任务并扣减容量；全部 Owned File 退休后再软删除内部目录、Skill Archive Resources 及其 File 快照。Skill File 只借用 catalog 对象，不生成对象清理；Input Resource 已在 Session 删除事务中退休，也不生成对象清理。
 
 两类 Filestore cleanup job 的持久化 payload 都只保存 `workspace_uuid` 与 `filesystem_uuid`，不保存 `workspace_id`、`filesystem_id` 或冗余的 filesystem external ID。`jobs.workspace_id` 是通用任务表在当前数据库中的路由缓存，不是 Filestore 清理任务的权威归属：worker 取得租约时用 payload UUID 重新关联 workspace 与 filesystem，得到当前库的 bigint ID 后修正该缓存；整 filesystem 清理进入事务后也再次按 UUID 解析并锁定当前记录。迁移会先验证每条历史 bigint 引用都能解析且归属一致，再改写 payload；发现孤立或错配引用时直接中止，避免恢复或合库后把任务指向另一条恰好复用了相同 identity 的记录。
 

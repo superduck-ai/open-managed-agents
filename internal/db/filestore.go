@@ -80,7 +80,8 @@ type ProvisionFilestoreFilesystemInput struct {
 }
 
 // SessionResourceFile 是由 Session Resource 与可选真实 File 组合出的资源文件。
-// 目录不关联 File；Input Resource 引用 Source File；Owned File 节点引用自身 File。
+// 目录不关联 File；Input Resource 引用 Source File；Owned File 与 Skill Archive
+// 都通过 file_uuid 引用承载各自快照的 File。
 type SessionResourceFile struct {
 	ID                       int64
 	UUID                     string
@@ -105,7 +106,6 @@ type SessionResourceFile struct {
 	S3ETag                   *string
 	S3VersionID              *string
 	ExpiresAt                *time.Time
-	SkillVersionUUID         *string
 	SourceFileUUID           *string
 	CreatedByAPIKeyUUID      *string
 	CreatedBySessionUUID     *string
@@ -134,7 +134,7 @@ type FilestoreFileBlob struct {
 }
 
 // SessionSkillArchiveResourceInput 描述一个已解析的不可变 skill ZIP。
-// Source 只写入通用 metadata；对象及其生命周期仍由 skill catalog 管理。
+// SkillVersionUUID 只用于写入时验证来源，不会持久化到 Session Resource 或 File。
 type SessionSkillArchiveResourceInput struct {
 	Source           string
 	SkillVersionUUID string

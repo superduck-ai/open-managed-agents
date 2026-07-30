@@ -691,7 +691,6 @@ func skillArchiveTestEntry(data []byte) db.SessionResourceFile {
 		SHA256:           serviceTestPointer(hex.EncodeToString(sum[:])),
 		S3Bucket:         serviceTestPointer("filestore-test"),
 		S3Key:            serviceTestPointer("skills/demo/1.zip"),
-		SkillVersionUUID: serviceTestPointer("88888888-8888-4888-8888-888888888888"),
 		CreatedAt:        serviceTestNow,
 		UpdatedAt:        serviceTestNow,
 	}

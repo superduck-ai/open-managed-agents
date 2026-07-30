@@ -16,8 +16,7 @@ const (
 		outcome_evaluations, created_at, updated_at, archived_at, deleted_at`
 	sessionResourceSQLXColumns = `id, cast(uuid as text) as uuid, external_id, organization_id, workspace_id,
 	session_id, session_external_id, resource_type, payload, secret_payload, path, parent_path,
-		cast(file_uuid as text) as file_uuid,
-		cast(skill_version_uuid as text) as skill_version_uuid, expires_at,
+		cast(file_uuid as text) as file_uuid, expires_at,
 		created_at, updated_at, deleted_at`
 	getSessionQuery = `
 		select ` + sessionSQLXColumns + `
@@ -287,7 +286,6 @@ type sessionResourceRow struct {
 	Path              *string    `db:"path"`
 	ParentPath        *string    `db:"parent_path"`
 	FileUUID          *string    `db:"file_uuid"`
-	SkillVersionUUID  *string    `db:"skill_version_uuid"`
 	ExpiresAt         *time.Time `db:"expires_at"`
 	CreatedAt         time.Time  `db:"created_at"`
 	UpdatedAt         time.Time  `db:"updated_at"`
@@ -707,7 +705,6 @@ func (r sessionResourceRow) resource() SessionResource {
 		Path:              r.Path,
 		ParentPath:        r.ParentPath,
 		FileUUID:          r.FileUUID,
-		SkillVersionUUID:  r.SkillVersionUUID,
 		ExpiresAt:         r.ExpiresAt,
 		CreatedAt:         r.CreatedAt,
 		UpdatedAt:         r.UpdatedAt,

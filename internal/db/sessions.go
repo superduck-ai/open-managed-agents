@@ -83,7 +83,6 @@ type SessionResource struct {
 	Path              *string
 	ParentPath        *string
 	FileUUID          *string
-	SkillVersionUUID  *string
 	ExpiresAt         *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time

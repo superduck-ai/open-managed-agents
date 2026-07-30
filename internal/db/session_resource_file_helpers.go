@@ -321,7 +321,6 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 			update session_resources
 			set resource_type = 'file', payload = null, secret_payload = null,
 				path = :entry_path, parent_path = :parent_path,
-				skill_version_uuid = null,
 				expires_at = :expires_at, updated_at = :now
 			where id = :resource_id and workspace_id = :workspace_id
 				and session_id = :session_id and deleted_at is null

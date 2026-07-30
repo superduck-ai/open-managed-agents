@@ -43,13 +43,13 @@ func TestSessionNamespaceUsesResourcesAndFiles(t *testing.T) {
 				and column_name = any($3::text[]))
 		from information_schema.columns
 		where table_schema = current_schema()
-	`, []string{"path", "parent_path", "file_uuid", "skill_version_uuid", "expires_at"},
+	`, []string{"path", "parent_path", "file_uuid", "expires_at"},
 		[]string{"detected_mime_type", "metadata", "authorization_metadata", "tags", "md5", "s3_etag", "s3_version_id"},
-		[]string{"attached", "cataloged", "namespace_role", "filesystem_uuid", "source_file_uuid", "session_file_external_id"},
+		[]string{"attached", "cataloged", "namespace_role", "filesystem_uuid", "source_file_uuid", "session_file_external_id", "skill_version_uuid", "skill_source", "skill_id", "skill_size_bytes", "skill_sha256", "skill_s3_bucket", "skill_s3_key"},
 	).Scan(&resourceColumns, &fileColumns, &forbiddenColumns); err != nil {
 		t.Fatalf("query unified namespace columns: %v", err)
 	}
-	if resourceColumns != 5 || fileColumns != 7 || forbiddenColumns != 0 {
+	if resourceColumns != 4 || fileColumns != 7 || forbiddenColumns != 0 {
 		t.Fatalf("unified columns = resources %d files %d forbidden %d", resourceColumns, fileColumns, forbiddenColumns)
 	}
 }
@@ -742,6 +742,15 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("project cleanup skill: %v", err)
 	}
+	var cleanupSkillFileUUID string
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select cast(file_uuid as text)
+		from session_resources
+		where workspace_id = $1 and session_id = $2
+			and path = '/skills/cleanup-skill' and deleted_at is null
+	`, workspaceID, filesystem.SessionID).Scan(&cleanupSkillFileUUID); err != nil {
+		t.Fatalf("load cleanup Skill File snapshot: %v", err)
+	}
 	var entryOrganizationUUID, entryWorkspaceUUID, entryFilesystemUUID string
 	var entryAPIKeyUUID, entrySessionUUID string
 	var entryCodeSessionUUID *string
@@ -845,6 +854,15 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 			activeSkillArchiveEntries,
 			cleanupObjects,
 		)
+	}
+	var cleanupSkillFileRetired bool
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select deleted_at is not null from files where uuid = $1
+	`, cleanupSkillFileUUID).Scan(&cleanupSkillFileRetired); err != nil {
+		t.Fatalf("load cleaned-up Skill File snapshot: %v", err)
+	}
+	if !cleanupSkillFileRetired {
+		t.Fatal("cleaned-up Skill File snapshot is still active")
 	}
 	if _, _, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
 		context.Background(),
@@ -954,6 +972,19 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	}
 	entry := entries[0]
 	replacedEntryID := entry.ID
+	var snapshotFileUUID string
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select cast(resource.file_uuid as text)
+		from session_resources resource
+		join files file
+			on file.uuid = resource.file_uuid
+			and file.workspace_id = resource.workspace_id
+		where resource.id = $1
+			and file.filename = 'demo.zip'
+			and file.deleted_at is null
+	`, replacedEntryID).Scan(&snapshotFileUUID); err != nil {
+		t.Fatalf("load Skill Archive File snapshot: %v", err)
+	}
 	var metadata struct {
 		SkillSource string `json:"skill_source"`
 	}
@@ -964,17 +995,19 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		entry.Path != "/skills/demo" ||
 		entry.ParentPath == nil ||
 		*entry.ParentPath != "/skills" ||
-		entry.SkillVersionUUID == nil ||
-		*entry.SkillVersionUUID != versionUUID ||
+		entry.SourceFileUUID != nil ||
 		entry.S3Key == nil ||
 		*entry.S3Key != "catalog/demo.zip" ||
 		metadata.SkillSource != "custom" {
 		t.Fatalf("Skill Archive Resource = %#v, metadata = %#v", entry, metadata)
 	}
 	if _, err := app.db.Pool.Exec(context.Background(), `
-		update skill_versions set deleted_at = now() where uuid = $1
-	`, versionUUID); err != nil {
-		t.Fatalf("soft delete referenced skill version: %v", err)
+		update skill_versions
+		set s3_key = 'catalog/changed.zip', size_bytes = 256,
+			sha256 = $2, deleted_at = now()
+		where uuid = $1
+	`, versionUUID, strings.Repeat("b", 64)); err != nil {
+		t.Fatalf("change and soft delete snapshotted skill version: %v", err)
 	}
 	entries, err = app.db.ListSessionSkillArchiveResources(
 		context.Background(),
@@ -1040,6 +1073,15 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	}
 	if retiredAt == nil {
 		t.Fatal("retired Skill Archive Resource deleted_at = nil")
+	}
+	var snapshotFileRetiredAt *time.Time
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select deleted_at from files where uuid = $1
+	`, snapshotFileUUID).Scan(&snapshotFileRetiredAt); err != nil {
+		t.Fatalf("load retired Skill Archive File snapshot: %v", err)
+	}
+	if snapshotFileRetiredAt == nil {
+		t.Fatal("retired Skill Archive File deleted_at = nil")
 	}
 	skillsRoot, err := app.db.GetSessionResourceFile(
 		context.Background(),

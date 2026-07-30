@@ -379,7 +379,6 @@ func (b *skillArchivePathBackend) fetchSkillArchive(
 
 func skillArchiveObject(entry db.SessionResourceFile) (string, string, string, int64, error) {
 	if entry.Kind != db.SessionResourceFileKindArchive ||
-		entry.SkillVersionUUID == nil ||
 		entry.S3Bucket == nil ||
 		entry.S3Key == nil ||
 		entry.SHA256 == nil ||

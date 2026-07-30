@@ -763,13 +763,12 @@ func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) (
 // replaceRuntimeSkillArchives 使用已解析的不可变 skill archive，完整替换 Managed Agent
 // Session 的 /skills Skill Archive Resources。
 //
-// runtimeSkills 必须已经包含具体的版本 UUID 和可信对象元数据；"latest" 会在调用本函数
-// 前解析为确定版本。本函数只保留将 zip 映射为 /skills/<directory> 所需的字段，不下载、
-// 复制或解压 archive。每个 zip 作为 kind=archive 的受管 entry 写入
-// /skills/<directory>，来源保存在通用 metadata 中。
+// runtimeSkills 必须已经包含具体 Version UUID 和可信对象元数据；"latest" 会在调用本函数
+// 前解析为确定内容。Version UUID 只用于写入时校验，持久化结果是一条 File 快照和引用它的
+// /skills/<directory> Resource，不下载、复制或解压 archive。
 //
-// DB 操作会校验来源、目录、版本 UUID、对象大小和 SHA-256。它在同一个事务中锁定 Session
-// filesystem 记录及其命名空间，确保固定根目录存在，然后软删除旧 entries 并插入新集合。
+// DB 操作会校验来源、Version UUID、目录、对象大小和 SHA-256。它在同一个事务中锁定 Session
+// filesystem 记录及其命名空间，确保固定根目录存在，然后软删除旧 Resource/File 并插入新集合。
 // 采用全量替换，是为了让已从 Agent snapshot 移除的 skill 同步消失，并避免读取方或并发的
 // 命名空间写入方看到只更新了一部分的视图；软删除则保留历史投影供审计。
 //

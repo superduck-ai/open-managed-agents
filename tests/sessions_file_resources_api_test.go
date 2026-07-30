@@ -1695,7 +1695,6 @@ func assertSessionFileReference(
 		payload.FileID != fileExternalID ||
 		entry.SourceFileUUID == nil ||
 		*entry.SourceFileUUID != file.UUID ||
-		entry.SkillVersionUUID != nil ||
 		entry.MD5 != nil ||
 		entry.ExpiresAt != nil ||
 		entry.SizeBytes == nil ||

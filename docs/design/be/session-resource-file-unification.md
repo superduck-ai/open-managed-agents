@@ -77,17 +77,16 @@ flowchart LR
     SES --> RES["Session Resource"]
     WS --> FILE["File"]
     RES -. "file_uuid" .-> FILE
-    RES -. "skill_version_uuid" .-> SKILL["Skill Version"]
 ```
 
-| Resource        | `payload` | `path`         | 引用                 | identity/metadata 所有者 | 容量/cleanup                       |
-| --------------- | --------- | -------------- | -------------------- | ------------------------ | ---------------------------------- |
-| Attached Input  | 非 NULL   | `/uploads/...` | Source `file_uuid`   | Source File              | 不重复计费、不清理 Source          |
-| Owned Output    | NULL      | `/outputs/...` | Owned `file_uuid`    | Owned File               | `filestore_bytes` + object cleanup |
-| 其他 Owned File | NULL      | 其他 namespace | Owned `file_uuid`    | Owned File               | `filestore_bytes` + object cleanup |
-| Directory       | NULL      | 非根 path      | 无                   | Resource                 | 无                                 |
-| Skill Archive   | NULL      | `/skills/...`  | `skill_version_uuid` | Skill Version            | 不计费、不清理 catalog object      |
-| 根 `/`          | —         | 虚拟           | filesystem           | filesystem               | 无持久化节点                       |
+| Resource        | `payload` | `path`         | 引用                  | identity/metadata 所有者 | 容量/cleanup                       |
+| --------------- | --------- | -------------- | --------------------- | ------------------------ | ---------------------------------- |
+| Attached Input  | 非 NULL   | `/uploads/...` | Source `file_uuid`    | Source File              | 不重复计费、不清理 Source          |
+| Owned Output    | NULL      | `/outputs/...` | Owned `file_uuid`     | Owned File               | `filestore_bytes` + object cleanup |
+| 其他 Owned File | NULL      | 其他 namespace | Owned `file_uuid`     | Owned File               | `filestore_bytes` + object cleanup |
+| Directory       | NULL      | 非根 path      | 无                    | Resource                 | 无                                 |
+| Skill Archive   | NULL      | `/skills/...`  | Snapshot `file_uuid`  | Snapshot File            | 不计费、不清理 catalog object      |
+| 根 `/`          | —         | 虚拟           | filesystem            | filesystem               | 无持久化节点                       |
 
 ### 必须保持的不变量
 
@@ -101,6 +100,8 @@ flowchart LR
 |   6 | Source 有活动引用时不能删除                            | workspace lock + reference query |
 |   7 | 所有跨表查询显式携带 tenant scope                      | 命名 SQL + 集成测试              |
 |   8 | 过期立即不可见，容量在 sweep 提交后释放                | 查询 predicate + TTL transaction |
+|   9 | Skill 快照读取不依赖 Catalog Version                   | Resource → Snapshot File         |
+|  10 | Skill File 不进入 Files Catalog 或 Owned File 清理     | Resource type + 固定根策略       |
 
 ## 三个 adapter，共用一份事实
 
@@ -213,11 +214,19 @@ flowchart LR
 | Output Entry + projection File | 补全原 File；新建内部 Resource           | Output UUID、`file_` 保留；`fse_` 失效 |
 | 普通 File Entry                | Entry UUID 成为 File UUID；新建 Resource | 新 `file_`、`sesrsc_`；`fse_` 失效     |
 | Directory/固定根               | Directory Resource                       | 新 `sesrsc_`；`fse_` 失效              |
-| Skill Archive                  | 引用具体 Skill Version 的 Resource       | 新 `sesrsc_`；不创建 File              |
+| Skill Archive                  | Resource + 独立 ZIP File 快照            | 新 `sesrsc_`、新 `file_`               |
 | 软删除 Entry 历史              | 不迁移                                   | 历史失效                               |
 | 根 `/`                         | filesystem 虚拟节点                      | 无持久化 identity                      |
 
 > `Down` 不可无损实现，仅 `select 1`；部署回退依赖数据库备份，不支持新旧二进制混跑。
+
+## Migration 00037
+
+`00037_snapshot_session_skills.sql` 先验证每条活动 Skill Archive 都能唯一解析到 custom 或
+built-in catalog version，再为每条可解析 Resource 创建独立 `files` 行，把 ZIP 的大小、
+SHA-256、bucket 与 key 固化为 File 快照，并回填通用 `file_uuid`；无法解析且已经退休的历史
+只保留 Resource 身份与路径，不参与读取。回填完成后删除 `skill_version_uuid`。该迁移不可
+无损回滚，因为 File 快照不能唯一反推原 catalog version。
 
 ## Reviewer checklist 与证据
 

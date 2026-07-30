@@ -20,7 +20,10 @@ func TestSessionSkillArchiveResourceQueriesUseSQLXNamedParameters(t *testing.T) 
 		"filesystem_uuid":              "00000000-0000-4000-8000-000000000043",
 		"source":                       "custom",
 		"skill_version_uuid":           "00000000-0000-4000-8000-000000000044",
+		"file_uuid":                    "00000000-0000-4000-8000-000000000048",
+		"file_external_id":             "file_011CZkZBJq5dWxk9fVLNcPht",
 		"entry_path":                   "/skills/demo",
+		"filename":                     "demo.zip",
 		"s3_bucket":                    "skills",
 		"s3_key":                       "skills/demo.zip",
 		"size_bytes":                   int64(1024),
@@ -37,6 +40,8 @@ func TestSessionSkillArchiveResourceQueriesUseSQLXNamedParameters(t *testing.T) 
 	}{
 		{"filesystem", sessionSkillArchiveResourceFilesystemQuery, 3},
 		{"retire", sessionSkillArchiveResourceRetireQuery, 4},
+		{"retire files", sessionSkillArchiveFileRetireQuery, 4},
+		{"insert file", sessionSkillArchiveFileInsertQuery, 11},
 		{"insert", sessionSkillArchiveResourceInsertQuery, 8},
 		{"list", sessionSkillArchiveResourceListQuery, 3},
 	}
@@ -114,6 +119,7 @@ func TestNormalizeSessionSkillArchiveResources(t *testing.T) {
 		}
 		if len(entries) != 1 ||
 			entries[0].Path != "/skills/demo" ||
+			entries[0].Filename != "demo.zip" ||
 			entries[0].SHA256 != strings.Repeat("a", 64) {
 			t.Fatalf("normalized entries = %#v", entries)
 		}

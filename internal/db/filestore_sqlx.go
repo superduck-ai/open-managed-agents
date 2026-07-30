@@ -65,7 +65,6 @@ type sessionResourceFileRow struct {
 	S3ETag                   *string    `db:"s3_etag"`
 	S3VersionID              *string    `db:"s3_version_id"`
 	ExpiresAt                *time.Time `db:"expires_at"`
-	SkillVersionUUID         *string    `db:"skill_version_uuid"`
 	SourceFileUUID           *string    `db:"source_file_uuid"`
 	CreatedByAPIKeyUUID      *string    `db:"created_by_api_key_uuid"`
 	CreatedBySessionUUID     *string    `db:"created_by_session_uuid"`
@@ -270,9 +269,7 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 		S3ETag:                row.S3ETag,
 		S3VersionID:           row.S3VersionID,
 		ExpiresAt:             row.ExpiresAt,
-		// SourceFileUUID 标识 Input Resource 引用的 Source File；SkillVersionUUID
-		// 标识动态 Skill Archive 的真实版本，二者都不复制对象事实。
-		SkillVersionUUID:         row.SkillVersionUUID,
+		// SourceFileUUID 只标识公开 Input Resource 引用的 Source File。
 		SourceFileUUID:           row.SourceFileUUID,
 		CreatedByAPIKeyUUID:      row.CreatedByAPIKeyUUID,
 		CreatedBySessionUUID:     row.CreatedBySessionUUID,

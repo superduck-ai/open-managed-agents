@@ -92,6 +92,11 @@ join skill_versions version
 	and version.workspace_id = resource.workspace_id
 where resource.resource_type = 'skill_archive'
 	and resource.file_uuid is not null
+	and not exists (
+		select 1
+		from files existing
+		where existing.uuid = resource.file_uuid
+	)
 union all
 select
 	resource.file_uuid,
@@ -129,6 +134,11 @@ where resource.resource_type = 'skill_archive'
 		from skill_versions custom_version
 		where custom_version.uuid = resource.skill_version_uuid
 			and custom_version.workspace_id = resource.workspace_id
+	)
+	and not exists (
+		select 1
+		from files existing
+		where existing.uuid = resource.file_uuid
 	);
 
 alter table session_resources

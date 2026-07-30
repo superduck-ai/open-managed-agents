@@ -264,7 +264,7 @@ sequenceDiagram
 ```text
 锁 Session
 → 锁 initializing Code Session
-→ 校验每个 queue item 的 Session ownership 和 user.message 类型
+→ 校验 queue item 均为 user.message（Session ownership 已由 List 保证）
 → 锁当前完整 queue
 → 将当前 queue 与事务外快照逐项比较
 → 按 queue.id 顺序写入全部 inbound

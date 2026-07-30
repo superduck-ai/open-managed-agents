@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/samber/lo"
 )
 
 type SessionEventDelivery string
@@ -61,12 +62,9 @@ func (d *DB) AppendSessionEventsForDelivery(
 	if session.ArchivedAt != nil {
 		return nil, "", ErrInvalidState
 	}
-	userMessageCount := 0
-	for _, event := range events {
-		if event.EventType == "user.message" {
-			userMessageCount++
-		}
-	}
+	userMessageCount := lo.CountBy(events, func(event SessionEvent) bool {
+		return event.EventType == "user.message"
+	})
 	startup := false
 	if userMessageCount > 0 {
 		startup, err = sessionUserMessageStartupWindowSQLX(ctx, tx, session)
@@ -291,10 +289,9 @@ func enqueueSessionEventsSQLXTx(
 	session Session,
 	events []SessionEvent,
 ) error {
-	for _, event := range events {
-		if event.EventType != "user.message" {
-			continue
-		}
+	for _, event := range lo.Filter(events, func(event SessionEvent, _ int) bool {
+		return event.EventType == "user.message"
+	}) {
 		if _, err := namedExecContext(ctx, tx, `
 			insert into session_event_queue (
 				organization_id, workspace_id, session_uuid, session_event_uuid

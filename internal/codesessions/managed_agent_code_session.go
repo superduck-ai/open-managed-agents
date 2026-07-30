@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -137,10 +139,12 @@ func (s *Service) activateManagedAgentCodeSession(
 		if err != nil {
 			return err
 		}
-		inputs := make([]db.AppendCodeSessionEventInput, 0, len(items))
-		for _, item := range items {
+		inputs, err := lo.MapErr(items, func(item db.SessionEventQueueItem, _ int) (db.AppendCodeSessionEventInput, error) {
 			if item.Event.EventType != "user.message" {
-				return errors.New("session event queue contains a non-user message")
+				return db.AppendCodeSessionEventInput{}, fmt.Errorf(
+					"%w: session event queue contains a non-user message",
+					db.ErrInvalidState,
+				)
 			}
 			payload, err := workerPayloadForPublicEvent(
 				codeSession.ExternalID,
@@ -148,13 +152,12 @@ func (s *Service) activateManagedAgentCodeSession(
 				item.Event.ProcessedAt,
 			)
 			if err != nil {
-				return err
+				return db.AppendCodeSessionEventInput{}, err
 			}
-			inbound, err := newInboundEventInput(codeSession.ExternalID, payload, "public-session")
-			if err != nil {
-				return err
-			}
-			inputs = append(inputs, inbound)
+			return newInboundEventInput(codeSession.ExternalID, payload, "public-session")
+		})
+		if err != nil {
+			return err
 		}
 		activated, err := s.db.ActivateManagedAgentCodeSessionWithQueue(
 			ctx,

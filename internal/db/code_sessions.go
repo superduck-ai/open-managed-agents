@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/samber/lo"
 )
 
 type CodeSession struct {
@@ -330,16 +331,12 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 	if err != nil {
 		return false, err
 	}
-	for _, item := range items {
-		if item.sessionUUID != session.UUID ||
-			item.Event.UUID != item.sessionEventUUID ||
-			item.Event.OrganizationID != session.OrganizationID ||
-			item.Event.WorkspaceID != session.WorkspaceID ||
-			item.Event.SessionID != session.ID ||
-			item.Event.SessionExternalID != session.ExternalID ||
-			item.Event.EventType != "user.message" {
-			return false, ErrInvalidState
-		}
+	// Ownership is enforced by ListSessionEventQueueItems; activation only
+	// re-checks event type and that the locked queue still matches the snapshot.
+	if !lo.EveryBy(items, func(item SessionEventQueueItem) bool {
+		return item.Event.EventType == "user.message"
+	}) {
+		return false, ErrInvalidState
 	}
 	queueRows, err := listSessionEventQueueIdentityRows(ctx, tx, session, true)
 	if err != nil {

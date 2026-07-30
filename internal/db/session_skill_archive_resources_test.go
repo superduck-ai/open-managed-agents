@@ -120,8 +120,8 @@ func TestNormalizeSessionSkillArchiveResources(t *testing.T) {
 
 func TestFilestoreArchiveResourceDoesNotOwnCatalogBytes(t *testing.T) {
 	sizeBytes := int64(1024)
-	resource := SessionNamespaceNode{
-		Kind:      SessionNamespaceNodeKindArchive,
+	resource := SessionResourceFile{
+		Kind:      SessionResourceFileKindArchive,
 		SizeBytes: &sizeBytes,
 	}
 	if got := resource.OwnedBytes(); got != 0 {

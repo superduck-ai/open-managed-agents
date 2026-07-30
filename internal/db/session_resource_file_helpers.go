@@ -61,11 +61,11 @@ func (d *DB) resolveFilestoreDirectoryForRead(ctx context.Context, workspaceID, 
 	if directoryPath == "/" {
 		return filesystem, nil
 	}
-	entry, err := getActiveSessionNamespaceNodeSQLX(ctx, d.sql, filesystem, directoryPath)
+	entry, err := getActiveSessionResourceFileSQLX(ctx, d.sql, filesystem, directoryPath)
 	if err != nil {
 		return FilestoreFilesystem{}, err
 	}
-	if entry.Kind != SessionNamespaceNodeKindDirectory {
+	if entry.Kind != SessionResourceFileKindDirectory {
 		return FilestoreFilesystem{}, ErrFilestoreNotDirectory
 	}
 	return filesystem, nil
@@ -75,42 +75,42 @@ func requireFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fi
 	if directoryPath == "/" {
 		return nil
 	}
-	entry, err := getActiveSessionNamespaceNodeForMutation(ctx, tx, filesystem, directoryPath)
+	entry, err := getActiveSessionResourceFileForMutation(ctx, tx, filesystem, directoryPath)
 	if errors.Is(err, ErrNotFound) {
 		return ErrFilestoreParentMissing
 	}
 	if err != nil {
 		return err
 	}
-	if entry.Kind != SessionNamespaceNodeKindDirectory {
+	if entry.Kind != SessionResourceFileKindDirectory {
 		return ErrFilestoreNotDirectory
 	}
 	return nil
 }
 
-func getSessionNamespaceNodeForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (SessionNamespaceNode, bool, error) {
-	entry, err := getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+func getSessionResourceFileForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, bool, error) {
+	entry, err := getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and path = :entry_path
 			and deleted_at is null
-	`, sessionNamespaceNodeMutationArguments(filesystem, entryPath))
+	`, sessionResourceFileMutationArguments(filesystem, entryPath))
 	if errors.Is(err, ErrNotFound) {
-		return SessionNamespaceNode{}, false, nil
+		return SessionResourceFile{}, false, nil
 	}
 	return entry, err == nil, err
 }
 
-func getActiveSessionNamespaceNodeForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (SessionNamespaceNode, error) {
-	return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+func getActiveSessionResourceFileForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, error) {
+	return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and path = :entry_path
 			and deleted_at is null and (expires_at is null or expires_at > now())
-	`, sessionNamespaceNodeMutationArguments(filesystem, entryPath))
+	`, sessionResourceFileMutationArguments(filesystem, entryPath))
 }
 
-func sessionNamespaceNodeMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
+func sessionResourceFileMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
 	return map[string]any{
 		"workspace_uuid":  filesystem.WorkspaceUUID,
 		"filesystem_uuid": filesystem.UUID,
@@ -179,22 +179,22 @@ func filestoreNow(value time.Time) time.Time {
 // 如果这个路径被一个未过期的非目录 entry 占着，就返回 ErrFilestorePathExists。
 // 如果这个路径被一个“已过期的文件 entry”占着，它会先挂清理任务、扣回 owned bytes，然后把这条旧 row 原地改写成目录。
 // 如果这个路径根本不存在，就插入一条新的 directory entry。
-func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (SessionNamespaceNode, error) {
-	existing, found, err := getSessionNamespaceNodeForMutation(ctx, tx, filesystem, directoryPath)
+func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (SessionResourceFile, error) {
+	existing, found, err := getSessionResourceFileForMutation(ctx, tx, filesystem, directoryPath)
 	if err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
 	if found {
-		if existing.Kind == SessionNamespaceNodeKindDirectory {
+		if existing.Kind == SessionResourceFileKindDirectory {
 			return existing, nil
 		}
-		if !sessionNamespaceNodeExpired(existing, now) {
-			return SessionNamespaceNode{}, ErrFilestorePathExists
+		if !sessionResourceFileExpired(existing, now) {
+			return SessionResourceFile{}, ErrFilestorePathExists
 		}
-		if _, _, err := enqueueOwnedSessionNamespaceNodeCleanupJobTx(ctx, tx, sessionNamespaceNodeCleanupScope{
+		if _, _, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
 			WorkspaceID: workspaceID, FilesystemID: filesystem.ID,
 		}, existing, "expired_path_replaced", now); err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
 		if _, err := namedExecContext(ctx, tx, `
 				update files file
@@ -213,7 +213,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 			"resource_id":  existing.ID,
 			"now":          now,
 		}); err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
 		if _, err := namedExecContext(ctx, tx, `
 			update session_resources
@@ -230,19 +230,19 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 			"parent_path":  filestoreParentPath(directoryPath),
 			"now":          now,
 		}); err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
-		directory, err := getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+		directory, err := getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
 			where id = :resource_id and deleted_at is null
 		`, map[string]any{"resource_id": existing.ID})
 		if err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
 		if releasedBytes := existing.OwnedBytes(); releasedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
 				ctx, tx, workspaceID, 0, -releasedBytes, 0,
 			); err != nil {
-				return SessionNamespaceNode{}, err
+				return SessionResourceFile{}, err
 			}
 		}
 		return directory, nil
@@ -271,9 +271,9 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		"now":          now,
 	})
 	if err := mapSessionNamespaceInsertError(err); err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
-	return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+	return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
 		where id = :resource_id and deleted_at is null
 	`, map[string]any{"resource_id": resourceID})
 }
@@ -292,7 +292,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	if err := requireFilestoreDirectoryTx(ctx, tx, filesystem, filestoreParentPath(input.Path)); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	existing, found, err := getSessionNamespaceNodeForMutation(ctx, tx, filesystem, input.Path)
+	existing, found, err := getSessionResourceFileForMutation(ctx, tx, filesystem, input.Path)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -302,12 +302,12 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 		return FilestoreMutationResult{}, err
 	}
 	var oldSize int64
-	if found && existing.Kind == SessionNamespaceNodeKindFile {
+	if found && existing.Kind == SessionResourceFileKindFile {
 		// 账本在 TTL 清理提交前仍统计到期文件；复用路径时必须以完整旧大小计算增量。
 		oldSize = existing.OwnedBytes()
 	}
-	if found && !sessionNamespaceNodeExpired(existing, quotaNow) {
-		if existing.Kind != SessionNamespaceNodeKindFile {
+	if found && !sessionResourceFileExpired(existing, quotaNow) {
+		if existing.Kind != SessionResourceFileKindFile {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
 		}
 		if existing.ReferencesSourceFile() {
@@ -325,8 +325,8 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	}
 
 	var cleanupJobs []FilestoreObjectCleanupJob
-	if found && existing.Kind == SessionNamespaceNodeKindFile && !sameFilestoreObject(existing, input.Blob) {
-		job, enqueued, err := enqueueOwnedSessionNamespaceNodeCleanupJobTx(ctx, tx, sessionNamespaceNodeCleanupScope{
+	if found && existing.Kind == SessionResourceFileKindFile && !sameFilestoreObject(existing, input.Blob) {
+		job, enqueued, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
 			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 		}, existing, "file_replaced", input.Now)
 		if err != nil {
@@ -349,7 +349,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	return FilestoreMutationResult{Node: entry, CleanupJobs: cleanupJobs}, nil
 }
 
-func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, existing SessionNamespaceNode, found bool, input putFilestoreFileTxInput) (SessionNamespaceNode, error) {
+func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, existing SessionResourceFile, found bool, input putFilestoreFileTxInput) (SessionResourceFile, error) {
 	arguments := filestoreFileWriteArguments(filesystem, input)
 	if found {
 		arguments["resource_id"] = existing.ID
@@ -371,7 +371,7 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 					and resource.session_id = :session_id
 			)
 		`, arguments); err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
 		if _, err := namedExecContext(ctx, tx, `
 			update session_resources
@@ -382,9 +382,9 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 			where id = :resource_id and workspace_id = :workspace_id
 				and session_id = :session_id and deleted_at is null
 		`, arguments); err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
-		return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+		return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
 			where id = :resource_id and deleted_at is null
 		`, arguments)
 	}
@@ -429,10 +429,10 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 		returning id
 	`, arguments)
 	if err := mapSessionNamespaceInsertError(err); err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
 	arguments["resource_id"] = resourceID
-	return getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+	return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
 		where id = :resource_id and deleted_at is null
 	`, arguments)
 }
@@ -478,7 +478,7 @@ func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilest
 	}
 }
 
-func filestoreBlobFromEntry(entry SessionNamespaceNode) FilestoreFileBlob {
+func filestoreBlobFromEntry(entry SessionResourceFile) FilestoreFileBlob {
 	return FilestoreFileBlob{
 		SizeBytes:             filestoreInt64(entry.SizeBytes),
 		MediaType:             filestoreString(entry.MediaType),
@@ -497,15 +497,15 @@ func filestoreBlobFromEntry(entry SessionNamespaceNode) FilestoreFileBlob {
 	}
 }
 
-func sessionNamespaceNodeExpired(entry SessionNamespaceNode, now time.Time) bool {
+func sessionResourceFileExpired(entry SessionResourceFile, now time.Time) bool {
 	return entry.ExpiresAt != nil && !entry.ExpiresAt.After(now)
 }
 
-func sameFilestoreObject(entry SessionNamespaceNode, blob FilestoreFileBlob) bool {
+func sameFilestoreObject(entry SessionResourceFile, blob FilestoreFileBlob) bool {
 	return filestoreString(entry.S3Bucket) == blob.S3Bucket && filestoreString(entry.S3Key) == blob.S3Key && filestoreString(entry.S3VersionID) == blob.S3VersionID
 }
 
-func retireSessionNamespaceNodeTx(
+func retireSessionResourceFileTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
 	workspaceID, resourceID int64,

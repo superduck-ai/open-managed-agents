@@ -38,7 +38,7 @@ func TestFilesystemCleanupProcessingQueriesUseSQLXNamedParameters(t *testing.T) 
 		wantArgCount int
 	}{
 		{"expired scopes", expiredFilestoreCleanupScopesQuery, 1},
-		{"expired nodes", expiredSessionNamespaceNodesQuery, 2},
+		{"expired nodes", expiredSessionResourceFilesQuery, 2},
 		{"leased job", leasedFilesystemCleanupJobQuery, 3},
 		{"workspace lock", filesystemCleanupWorkspaceLockQuery, 1},
 		{"filesystem lock", filesystemCleanupFilesystemLockQuery, 1},

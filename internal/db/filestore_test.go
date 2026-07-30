@@ -126,30 +126,30 @@ func TestFilestorePathHelpers(t *testing.T) {
 	})
 }
 
-func TestNormalizeSessionNamespaceNodesPageLimit(t *testing.T) {
+func TestNormalizeSessionResourceFilesPageLimit(t *testing.T) {
 	tests := []struct {
 		name  string
 		limit int
 		want  int
 	}{
-		{name: "defaults nonpositive limit", limit: 0, want: defaultSessionNamespaceNodesPageLimit},
-		{name: "caps excessive limit", limit: maxSessionNamespaceNodesPageLimit + 1, want: maxSessionNamespaceNodesPageLimit},
+		{name: "defaults nonpositive limit", limit: 0, want: defaultSessionResourceFilesPageLimit},
+		{name: "caps excessive limit", limit: maxSessionResourceFilesPageLimit + 1, want: maxSessionResourceFilesPageLimit},
 		{name: "preserves valid limit", limit: 25, want: 25},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := normalizeSessionNamespaceNodesPageLimit(test.limit); got != test.want {
-				t.Fatalf("normalizeSessionNamespaceNodesPageLimit(%d) = %d, want %d", test.limit, got, test.want)
+			if got := normalizeSessionResourceFilesPageLimit(test.limit); got != test.want {
+				t.Fatalf("normalizeSessionResourceFilesPageLimit(%d) = %d, want %d", test.limit, got, test.want)
 			}
 		})
 	}
 }
 
-func TestBuildSessionNamespaceNodesPageQuery(t *testing.T) {
+func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
 	filesystem := FilestoreFilesystem{WorkspaceUUID: "workspace-uuid", UUID: "filesystem-uuid"}
 
 	t.Run("lists direct children without cursor", func(t *testing.T) {
-		query, args := buildSessionNamespaceNodesPageQuery(filesystem, ListSessionNamespaceNodesPageParams{
+		query, args := buildSessionResourceFilesPageQuery(filesystem, ListSessionResourceFilesPageParams{
 			DirectoryPath: "/reports",
 			Limit:         25,
 		})
@@ -170,11 +170,11 @@ func TestBuildSessionNamespaceNodesPageQuery(t *testing.T) {
 	})
 
 	t.Run("lists recursive descendants after cursor", func(t *testing.T) {
-		query, args := buildSessionNamespaceNodesPageQuery(filesystem, ListSessionNamespaceNodesPageParams{
+		query, args := buildSessionResourceFilesPageQuery(filesystem, ListSessionResourceFilesPageParams{
 			DirectoryPath: "/reports",
 			Recursive:     true,
 			Limit:         25,
-			Cursor:        &SessionNamespaceNodePageCursor{Path: "/reports/a", ID: 10},
+			Cursor:        &SessionResourceFilePageCursor{Path: "/reports/a", ID: 10},
 		})
 		if !strings.Contains(query, "left(path, char_length(:directory_prefix)) = :directory_prefix") ||
 			!strings.Contains(query, "and (path, id) > (:cursor_path, :cursor_id)") ||
@@ -201,23 +201,23 @@ func TestBuildSessionNamespaceNodesPageQuery(t *testing.T) {
 	})
 }
 
-func TestSessionNamespaceNodeSQLXRowEntry(t *testing.T) {
+func TestSessionResourceFileSQLXRowEntry(t *testing.T) {
 	t.Run("rejects malformed tag JSON", func(t *testing.T) {
-		_, err := (sessionNamespaceNodeRow{TagsJSON: "not-json"}).entry()
+		_, err := (sessionResourceFileRow{TagsJSON: "not-json"}).entry()
 		if err == nil {
 			t.Fatal("entry() error = nil, want malformed tags error")
 		}
 	})
 
 	t.Run("maps database row to domain entry", func(t *testing.T) {
-		row := sessionNamespaceNodeRow{
+		row := sessionResourceFileRow{
 			ID:                    7,
 			UUID:                  "entry-uuid",
 			ExternalID:            "file_7",
 			OrganizationUUID:      "organization-uuid",
 			WorkspaceUUID:         "workspace-uuid",
 			FilesystemUUID:        "filesystem-uuid",
-			Kind:                  SessionNamespaceNodeKindFile,
+			Kind:                  SessionResourceFileKindFile,
 			Path:                  "/reports/july.txt",
 			Metadata:              []byte(`{"source":"test"}`),
 			AuthorizationMetadata: []byte(`{}`),
@@ -236,18 +236,18 @@ func TestSessionNamespaceNodeSQLXRowEntry(t *testing.T) {
 	})
 }
 
-func TestNewSessionNamespaceNodePage(t *testing.T) {
-	entries := []SessionNamespaceNode{{ID: 1}, {ID: 2}, {ID: 3}}
+func TestNewSessionResourceFilePage(t *testing.T) {
+	entries := []SessionResourceFile{{ID: 1}, {ID: 2}, {ID: 3}}
 
 	t.Run("trims lookahead entry", func(t *testing.T) {
-		page := newSessionNamespaceNodePage(entries, 2)
+		page := newSessionResourceFilePage(entries, 2)
 		if !page.HasMore || len(page.Entries) != 2 || page.Entries[1].ID != 2 {
 			t.Fatalf("page = %+v, want two entries with HasMore", page)
 		}
 	})
 
 	t.Run("keeps complete final page", func(t *testing.T) {
-		page := newSessionNamespaceNodePage(entries[:2], 2)
+		page := newSessionResourceFilePage(entries[:2], 2)
 		if page.HasMore || len(page.Entries) != 2 {
 			t.Fatalf("page = %+v, want complete final page", page)
 		}
@@ -258,7 +258,7 @@ func TestFilestoreObjectIdentityIncludesVersion(t *testing.T) {
 	bucket := "filestore"
 	key := "objects/file"
 	version := "version-1"
-	entry := SessionNamespaceNode{S3Bucket: &bucket, S3Key: &key, S3VersionID: &version}
+	entry := SessionResourceFile{S3Bucket: &bucket, S3Key: &key, S3VersionID: &version}
 
 	if !sameFilestoreObject(entry, FilestoreFileBlob{S3Bucket: bucket, S3Key: key, S3VersionID: version}) {
 		t.Fatal("same exact object version was not recognized")
@@ -281,7 +281,7 @@ func TestVirtualFilestoreRoot(t *testing.T) {
 	}
 
 	root := virtualFilestoreRoot(filesystem)
-	if root.ID != 0 || root.Path != "/" || root.ParentPath != nil || root.Kind != SessionNamespaceNodeKindDirectory {
+	if root.ID != 0 || root.Path != "/" || root.ParentPath != nil || root.Kind != SessionResourceFileKindDirectory {
 		t.Fatalf("virtual root = %#v", root)
 	}
 	if root.OrganizationUUID != filesystem.OrganizationUUID ||

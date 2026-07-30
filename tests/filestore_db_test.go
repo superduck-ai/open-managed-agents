@@ -45,7 +45,7 @@ func TestSessionNamespaceUsesResourcesAndFiles(t *testing.T) {
 		where table_schema = current_schema()
 	`, []string{"path", "parent_path", "file_uuid", "skill_version_uuid", "expires_at"},
 		[]string{"detected_mime_type", "metadata", "authorization_metadata", "tags", "md5", "s3_etag", "s3_version_id"},
-		[]string{"attached", "cataloged", "namespace_role", "filesystem_uuid", "referenced_file_uuid", "session_file_external_id"},
+		[]string{"attached", "cataloged", "namespace_role", "filesystem_uuid", "source_file_uuid", "session_file_external_id"},
 	).Scan(&resourceColumns, &fileColumns, &forbiddenColumns); err != nil {
 		t.Fatalf("query unified namespace columns: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	}
 }
 
-func TestListSessionNamespaceNodesPageWithSQLX(t *testing.T) {
+func TestListSessionResourceFilesPageWithSQLX(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-sqlx-list"))
 	t.Cleanup(app.close)
 
@@ -324,13 +324,13 @@ func TestListSessionNamespaceNodesPageWithSQLX(t *testing.T) {
 	}
 
 	t.Run("rejects a missing directory", func(t *testing.T) {
-		_, err := app.db.ListSessionNamespaceNodesPage(ctx, db.ListSessionNamespaceNodesPageParams{
+		_, err := app.db.ListSessionResourceFilesPage(ctx, db.ListSessionResourceFilesPageParams{
 			WorkspaceID:   workspaceID,
 			FilesystemID:  filesystem.ID,
 			DirectoryPath: "/missing",
 		})
 		if !errors.Is(err, db.ErrNotFound) {
-			t.Fatalf("ListSessionNamespaceNodesPage() error = %v, want ErrNotFound", err)
+			t.Fatalf("ListSessionResourceFilesPage() error = %v, want ErrNotFound", err)
 		}
 	})
 
@@ -345,22 +345,22 @@ func TestListSessionNamespaceNodesPageWithSQLX(t *testing.T) {
 	}
 
 	t.Run("maps rows and advances a keyset cursor", func(t *testing.T) {
-		directory, err := app.db.GetSessionNamespaceNode(ctx, workspaceID, filesystem.ID, "/reports")
+		directory, err := app.db.GetSessionResourceFile(ctx, workspaceID, filesystem.ID, "/reports")
 		if err != nil {
-			t.Fatalf("GetSessionNamespaceNode() error = %v", err)
+			t.Fatalf("GetSessionResourceFile() error = %v", err)
 		}
-		if directory.Kind != db.SessionNamespaceNodeKindDirectory || directory.Tags == nil {
-			t.Fatalf("GetSessionNamespaceNode() = %+v, want mapped directory", directory)
+		if directory.Kind != db.SessionResourceFileKindDirectory || directory.Tags == nil {
+			t.Fatalf("GetSessionResourceFile() = %+v, want mapped directory", directory)
 		}
 
-		firstPage, err := app.db.ListSessionNamespaceNodesPage(ctx, db.ListSessionNamespaceNodesPageParams{
+		firstPage, err := app.db.ListSessionResourceFilesPage(ctx, db.ListSessionResourceFilesPageParams{
 			WorkspaceID:   workspaceID,
 			FilesystemID:  filesystem.ID,
 			DirectoryPath: "/reports",
 			Limit:         1,
 		})
 		if err != nil {
-			t.Fatalf("first ListSessionNamespaceNodesPage() error = %v", err)
+			t.Fatalf("first ListSessionResourceFilesPage() error = %v", err)
 		}
 		if len(firstPage.Entries) != 1 || firstPage.Entries[0].Path != "/reports/july" || !firstPage.HasMore {
 			t.Fatalf("first page = %+v, want /reports/july with HasMore", firstPage)
@@ -370,15 +370,15 @@ func TestListSessionNamespaceNodesPageWithSQLX(t *testing.T) {
 		}
 
 		lastEntry := firstPage.Entries[0]
-		secondPage, err := app.db.ListSessionNamespaceNodesPage(ctx, db.ListSessionNamespaceNodesPageParams{
+		secondPage, err := app.db.ListSessionResourceFilesPage(ctx, db.ListSessionResourceFilesPageParams{
 			WorkspaceID:   workspaceID,
 			FilesystemID:  filesystem.ID,
 			DirectoryPath: "/reports",
 			Limit:         1,
-			Cursor:        &db.SessionNamespaceNodePageCursor{Path: lastEntry.Path, ID: lastEntry.ID},
+			Cursor:        &db.SessionResourceFilePageCursor{Path: lastEntry.Path, ID: lastEntry.ID},
 		})
 		if err != nil {
-			t.Fatalf("second ListSessionNamespaceNodesPage() error = %v", err)
+			t.Fatalf("second ListSessionResourceFilesPage() error = %v", err)
 		}
 		if len(secondPage.Entries) != 1 || secondPage.Entries[0].Path != "/reports/june" || secondPage.HasMore {
 			t.Fatalf("second page = %+v, want /reports/june without HasMore", secondPage)
@@ -386,7 +386,7 @@ func TestListSessionNamespaceNodesPageWithSQLX(t *testing.T) {
 	})
 }
 
-func TestSessionNamespaceNodeMutationSQLXBinding(t *testing.T) {
+func TestSessionResourceFileMutationSQLXBinding(t *testing.T) {
 	fixture := newWorkspaceStorageFixture(t)
 	blob := workspaceStorageBlob(12, nil)
 	blob.DetectedMimeType = "text/plain; charset=utf-8"
@@ -960,7 +960,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	if err := json.Unmarshal(entry.Metadata, &metadata); err != nil {
 		t.Fatalf("decode Skill Archive Resource metadata: %v", err)
 	}
-	if entry.Kind != db.SessionNamespaceNodeKindArchive ||
+	if entry.Kind != db.SessionResourceFileKindArchive ||
 		entry.Path != "/skills/demo" ||
 		entry.ParentPath == nil ||
 		*entry.ParentPath != "/skills" ||
@@ -988,7 +988,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		t.Fatalf("archive Resource lost object facts after catalog soft delete: %#v", entries)
 	}
 
-	page, err := app.db.ListSessionNamespaceNodesPage(context.Background(), db.ListSessionNamespaceNodesPageParams{
+	page, err := app.db.ListSessionResourceFilesPage(context.Background(), db.ListSessionResourceFilesPageParams{
 		WorkspaceID:   workspaceID,
 		FilesystemID:  filesystem.ID,
 		DirectoryPath: "/",
@@ -999,7 +999,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		t.Fatalf("list ordinary entries: %v", err)
 	}
 	for _, listedEntry := range page.Entries {
-		if listedEntry.Kind == db.SessionNamespaceNodeKindArchive {
+		if listedEntry.Kind == db.SessionResourceFileKindArchive {
 			t.Fatalf("ordinary entry listing exposed archive: %#v", listedEntry)
 		}
 	}
@@ -1041,7 +1041,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	if retiredAt == nil {
 		t.Fatal("retired Skill Archive Resource deleted_at = nil")
 	}
-	skillsRoot, err := app.db.GetSessionNamespaceNode(
+	skillsRoot, err := app.db.GetSessionResourceFile(
 		context.Background(),
 		workspaceID,
 		filesystem.ID,
@@ -1050,7 +1050,7 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load /skills root: %v", err)
 	}
-	if skillsRoot.Kind != db.SessionNamespaceNodeKindDirectory {
+	if skillsRoot.Kind != db.SessionResourceFileKindDirectory {
 		t.Fatalf("/skills kind = %q, want directory", skillsRoot.Kind)
 	}
 }

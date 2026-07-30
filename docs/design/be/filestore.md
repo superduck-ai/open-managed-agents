@@ -1,5 +1,8 @@
 # Filestore 后端设计
 
+> Session Resource/File 统一的最终裁决、迁移 identity 矩阵、事务不变量和 PR reviewer
+> 检查清单见 [Session Resource 与 File 统一持久化评审指南](./session-resource-file-unification.md)。
+
 ## 范围
 
 本实现提供 `rclone-filestore` 已确认调用的 10 个接口：
@@ -177,7 +180,7 @@ Session 与 Deployment File resource 的公开合同固定为：
 
 `source` 省略时由服务端补为 `/uploads`，显式传入 `null` 或其他值均拒绝。`mount_path` 使用绝对路径形式表达 `/uploads` namespace 中的路径，不是 Sandbox 根目录中的任意目标；示例的 Filestore 路径是 `/uploads/workspace/data.csv`，Sandbox 访问路径是 `/mnt/session/uploads/workspace/data.csv`。未传 `mount_path` 时使用 `/<file_id>`，对应 `/mnt/session/uploads/<file_id>`。
 
-Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一规范化合同。边界校验拒绝相对路径、根目录、点路径段、空路径段，并限制初始 Session 或 Deployment 最多 100 个 File Resource。数据库在一只 `sqlx.Tx` 内锁定活动 Session，统计容量后提交公开 payload、`/uploads` path 与 Source File UUID；两个并发请求不能把 99 个文件增加到 101 个。路径占用由同一 namespace lock、目录实体和活动路径唯一索引裁决：与其他 Input Resource 的重复或祖先/后代冲突映射为 `400`，被普通 namespace node 占用则映射为 `409`。rclone ready 后整个 `/uploads` namespace 已直接可见，不执行逐文件软链接。
+Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一规范化合同。边界校验拒绝相对路径、根目录、点路径段、空路径段，并限制初始 Session 或 Deployment 最多 100 个 File Resource。数据库在一只 `sqlx.Tx` 内锁定活动 Session，统计容量后提交公开 payload、`/uploads` path 与 Source File UUID；两个并发请求不能把 99 个文件增加到 101 个。路径占用由同一 namespace lock、目录实体和活动路径唯一索引裁决：与其他 Input Resource 的重复或祖先/后代冲突映射为 `400`，被普通 resource 占用则映射为 `409`。rclone ready 后整个 `/uploads` namespace 已直接可见，不执行逐文件软链接。
 
 运行中新增或删除 File Resource 直接改变同一 Session 的数据库 namespace；已经挂载的 Sandbox 在 rclone metadata cache 刷新后看到变化，`/uploads` 当前固定为 `1s`。FUSE mount 本身不变。API 成功响应表示 Resource 已提交，不需要等待下一次 Sandbox 启动。
 
@@ -249,7 +252,7 @@ flowchart LR
 
 ## 目录查询与键集分页
 
-目录枚举以 PostgreSQL 中的 `session_resources` 为事实来源，不调用 S3 `ListObjects`。S3 只保存文件字节，目录结构、软删除和 TTL 可见性由 Resource 决定；文件元数据通过 `file_uuid` join 真实 `files` 行。每个 namespace 节点同时保存完整 `path` 和直接父目录 `parent_path`：
+目录枚举以 PostgreSQL 中的 `session_resources` 为事实来源，不调用 S3 `ListObjects`。S3 只保存文件字节，目录结构、软删除和 TTL 可见性由 Resource 决定；文件元数据通过 `file_uuid` join 真实 `files` 行。每个资源文件同时保存完整 `path` 和直接父目录 `parent_path`：
 
 | `kind` | `path` | `parent_path` |
 |---|---|---|
@@ -263,7 +266,7 @@ flowchart LR
 
 1. service 根据 JWT Principal 中的 workspace 和 filesystem scope，将请求的 external ID 或 UUID 解析为内部 filesystem ID，并确认其与 token 绑定的 filesystem 一致。
 2. DB 先把内部 ID 解析为已校验的 filesystem，再解析到唯一 Session，以 `(workspace_id, session_id)` 查询 Resource，保证目录读取方法自身不依赖调用方隐式维持租户边界。
-3. 非根路径查询对应 namespace node，确认目标是当前可见目录。
+3. 非根路径查询对应 resource，确认目标是当前可见目录。
 4. 查询这一页目录节点，并将数据库行映射为 Filestore wire payload。
 
 ### 直接子节点查询
@@ -382,7 +385,7 @@ namespace 写入按 filesystem advisory lock 串行化；所有可能改变字�
 - File 的 MD5 使用小写十六进制；时间使用 UTC RFC 3339 Nano。
 - File 的 `workspaceTaggedId` 是上游协议对文件条目 external ID 的历史命名，不是 JWT 中的 `workspace_tagged_id`；内部 DTO 以 `EntryTaggedID` 明示这一差异。
 - `authorizationMetadata.downloadable` 是普通 proto3 bool：message 存在但字段省略时取 `false`；整个 `authorizationMetadata` 省略时沿用 Filestore 的默认可下载行为。
-- 所有协议错误使用扁平 `{code,message}`；namespace node 存在但对象丢失按内部一致性错误处理，不伪装成普通 path not-found。
+- 所有协议错误使用扁平 `{code,message}`；resource 存在但对象丢失按内部一致性错误处理，不伪装成普通 path not-found。
 
 ## 验收
 

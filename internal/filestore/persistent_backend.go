@@ -23,7 +23,7 @@ func (b *persistentPathBackend) listDirectory(
 	cursor directoryCursor,
 	limit int,
 ) (listDirectoryResponse, *apiError) {
-	params := db.ListSessionNamespaceNodesPageParams{
+	params := db.ListSessionResourceFilesPageParams{
 		WorkspaceID:   principal.WorkspaceID,
 		FilesystemID:  filesystem.ID,
 		DirectoryPath: request.Path,
@@ -32,9 +32,9 @@ func (b *persistentPathBackend) listDirectory(
 	}
 	if request.Cursor != "" {
 		// Path 是主排序键，ID 在路径相同的边界情形下提供稳定的决胜键。
-		params.Cursor = &db.SessionNamespaceNodePageCursor{Path: cursor.LastPath, ID: cursor.LastID}
+		params.Cursor = &db.SessionResourceFilePageCursor{Path: cursor.LastPath, ID: cursor.LastID}
 	}
-	page, err := b.db.ListSessionNamespaceNodesPage(ctx, params)
+	page, err := b.db.ListSessionResourceFilesPage(ctx, params)
 	if err != nil {
 		return listDirectoryResponse{}, mapDatabaseError("list directory", err)
 	}
@@ -70,11 +70,11 @@ func (b *persistentPathBackend) readFile(
 	filesystem db.FilestoreFilesystem,
 	request readFileRequest,
 ) (readFileResult, *apiError) {
-	entry, err := b.db.GetSessionNamespaceNode(ctx, principal.WorkspaceID, filesystem.ID, request.Path)
+	entry, err := b.db.GetSessionResourceFile(ctx, principal.WorkspaceID, filesystem.ID, request.Path)
 	if err != nil {
 		return readFileResult{}, mapDatabaseError("read file metadata", err)
 	}
-	if entry.Kind != db.SessionNamespaceNodeKindFile || entry.S3Key == nil || entry.SizeBytes == nil {
+	if entry.Kind != db.SessionResourceFileKindFile || entry.S3Key == nil || entry.SizeBytes == nil {
 		return readFileResult{}, failedPrecondition("path is not a file")
 	}
 	objectRange, responseSize, apiErr := resolveReadRange(request.Range, *entry.SizeBytes)
@@ -104,7 +104,7 @@ func (b *persistentPathBackend) readMetadata(
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
 ) (entryPayload, *apiError) {
-	entry, err := b.db.GetSessionNamespaceNode(ctx, principal.WorkspaceID, filesystem.ID, entryPath)
+	entry, err := b.db.GetSessionResourceFile(ctx, principal.WorkspaceID, filesystem.ID, entryPath)
 	if err != nil {
 		return entryPayload{}, mapDatabaseError("read metadata", err)
 	}

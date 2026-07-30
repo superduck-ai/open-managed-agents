@@ -39,7 +39,7 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 			t.Fatalf("ProvisionFilestoreFilesystem() = created %v, error %v; want active root file conflict", created, err)
 		}
 		if got := filestoreRootKinds(t, app, filesystem); !reflect.DeepEqual(got, map[string]string{
-			"/uploads": db.SessionNamespaceNodeKindFile,
+			"/uploads": db.SessionResourceFileKindFile,
 		}) {
 			t.Fatalf("roots after rejected provision = %v, want only the original /uploads file", got)
 		}
@@ -275,11 +275,11 @@ func assertFixedFilestoreRoots(t *testing.T, app *testApp, filesystem db.Filesto
 	t.Helper()
 	got := filestoreRootKinds(t, app, filesystem)
 	want := map[string]string{
-		"/outputs":      db.SessionNamespaceNodeKindDirectory,
-		"/skills":       db.SessionNamespaceNodeKindDirectory,
-		"/uploads":      db.SessionNamespaceNodeKindDirectory,
-		"/transcripts":  db.SessionNamespaceNodeKindDirectory,
-		"/tool_results": db.SessionNamespaceNodeKindDirectory,
+		"/outputs":      db.SessionResourceFileKindDirectory,
+		"/skills":       db.SessionResourceFileKindDirectory,
+		"/uploads":      db.SessionResourceFileKindDirectory,
+		"/transcripts":  db.SessionResourceFileKindDirectory,
+		"/tool_results": db.SessionResourceFileKindDirectory,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("fixed Filestore roots = %v, want %v", got, want)

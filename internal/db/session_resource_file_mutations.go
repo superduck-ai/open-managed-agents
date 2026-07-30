@@ -16,31 +16,31 @@ const moveFilestoreFileResultQuery = `
 `
 
 // MakeFilestoreDirectory 创建目录；MakeParents 为真时整条父链在同一事务内完成。
-func (d *DB) MakeFilestoreDirectory(ctx context.Context, input MakeFilestoreDirectoryInput) (SessionNamespaceNode, error) {
+func (d *DB) MakeFilestoreDirectory(ctx context.Context, input MakeFilestoreDirectoryInput) (SessionResourceFile, error) {
 	if err := validateFilestorePath(input.Path); err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
 	input.Now = filestoreNow(input.Now)
 	// 创建目录可能复用一个已过期的文件路径，因此也要先取得工作区用量锁。
 	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
 	if err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
 	defer tx.Rollback()
 
 	if input.Path == "/" {
 		if err := tx.Commit(); err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
 		return virtualFilestoreRoot(filesystem), nil
 	}
 	if !input.MakeParents {
 		if err := requireFilestoreDirectoryTx(ctx, tx, filesystem, filestoreParentPath(input.Path)); err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
 	}
 
-	var directory SessionNamespaceNode
+	var directory SessionResourceFile
 	paths := []string{input.Path}
 	if input.MakeParents {
 		paths = filestoreDirectoryChain(input.Path)
@@ -48,11 +48,11 @@ func (d *DB) MakeFilestoreDirectory(ctx context.Context, input MakeFilestoreDire
 	for _, directoryPath := range paths {
 		directory, err = ensureFilestoreDirectoryTx(ctx, tx, input.WorkspaceID, filesystem, directoryPath, input.Now)
 		if err != nil {
-			return SessionNamespaceNode{}, err
+			return SessionResourceFile{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
 	return directory, nil
 }
@@ -106,11 +106,11 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 	}
 	defer tx.Rollback()
 
-	source, err := getActiveSessionNamespaceNodeForMutation(ctx, tx, filesystem, input.SourcePath)
+	source, err := getActiveSessionResourceFileForMutation(ctx, tx, filesystem, input.SourcePath)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if source.Kind != SessionNamespaceNodeKindFile {
+	if source.Kind != SessionResourceFileKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
 	if source.ReferencesSourceFile() {
@@ -164,11 +164,11 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 	}
 	defer tx.Rollback()
 
-	source, err := getActiveSessionNamespaceNodeForMutation(ctx, tx, filesystem, input.SourcePath)
+	source, err := getActiveSessionResourceFileForMutation(ctx, tx, filesystem, input.SourcePath)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if source.Kind != SessionNamespaceNodeKindFile {
+	if source.Kind != SessionResourceFileKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
 	if source.ReferencesSourceFile() {
@@ -185,7 +185,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 	}
 
 	var cleanupJobs []FilestoreObjectCleanupJob
-	destination, found, err := getSessionNamespaceNodeForMutation(ctx, tx, filesystem, input.DestinationPath)
+	destination, found, err := getSessionResourceFileForMutation(ctx, tx, filesystem, input.DestinationPath)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -197,16 +197,16 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		if destination.ReferencesSourceFile() {
 			return FilestoreMutationResult{}, ErrPreconditionFailed
 		}
-		if !sessionNamespaceNodeExpired(destination, databaseNow) {
-			if destination.Kind != SessionNamespaceNodeKindFile {
+		if !sessionResourceFileExpired(destination, databaseNow) {
+			if destination.Kind != SessionResourceFileKindFile {
 				return FilestoreMutationResult{}, ErrFilestorePathExists
 			}
 			if !input.OverwriteExisting {
 				return FilestoreMutationResult{}, ErrFilestorePathExists
 			}
 		}
-		if destination.Kind == SessionNamespaceNodeKindFile {
-			job, enqueued, err := enqueueOwnedSessionNamespaceNodeCleanupJobTx(ctx, tx, sessionNamespaceNodeCleanupScope{
+		if destination.Kind == SessionResourceFileKindFile {
+			job, enqueued, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
 				WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 			}, destination, "move_overwrite", input.Now)
 			if err != nil {
@@ -216,13 +216,13 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 				cleanupJobs = append(cleanupJobs, job)
 			}
 		}
-		if err := retireSessionNamespaceNodeTx(
+		if err := retireSessionResourceFileTx(
 			ctx, tx, input.WorkspaceID, destination.ID, input.Now,
 		); err != nil {
 			return FilestoreMutationResult{}, err
 		}
 		removedBytes := destination.OwnedBytes()
-		if destination.Kind == SessionNamespaceNodeKindFile && removedBytes > 0 {
+		if destination.Kind == SessionResourceFileKindFile && removedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
 				ctx, tx, input.WorkspaceID, 0, -removedBytes, 0,
 			); err != nil {
@@ -247,12 +247,12 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 	}); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	resultArguments := sessionNamespaceNodeMutationArguments(filesystem, input.SourcePath)
+	resultArguments := sessionResourceFileMutationArguments(filesystem, input.SourcePath)
 	resultArguments["entry_id"] = source.ID
-	moved, err := getSessionNamespaceNodeSQLX(
+	moved, err := getSessionResourceFileSQLX(
 		ctx,
 		tx,
-		sessionNamespaceNodeSelectSQL()+moveFilestoreFileResultQuery,
+		sessionResourceFileSelectSQL()+moveFilestoreFileResultQuery,
 		resultArguments,
 	)
 	if err != nil {
@@ -283,11 +283,11 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	}
 	defer tx.Rollback()
 
-	source, err := getActiveSessionNamespaceNodeForMutation(ctx, tx, filesystem, input.SourcePath)
+	source, err := getActiveSessionResourceFileForMutation(ctx, tx, filesystem, input.SourcePath)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if source.Kind != SessionNamespaceNodeKindDirectory {
+	if source.Kind != SessionResourceFileKindDirectory {
 		return FilestoreMutationResult{}, ErrFilestoreNotDirectory
 	}
 	if input.SourcePath == input.DestinationPath {
@@ -369,7 +369,7 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 		return FilestoreMutationResult{}, err
 	}
 	cleanupJobs, retiredBytes, err := retireExpiredFilestoreSubtreeTx(
-		ctx, tx, sessionNamespaceNodeCleanupScope{
+		ctx, tx, sessionResourceFileCleanupScope{
 			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 		}, filesystem, input.DestinationPath, input.Now,
 	)
@@ -400,7 +400,7 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	`, moveArguments); err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	moved, err := getSessionNamespaceNodeSQLX(ctx, tx, sessionNamespaceNodeSelectSQL()+`
+	moved, err := getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and path = :destination_path
@@ -416,7 +416,7 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 }
 
 // RemoveFilestoreFile 软删除逻辑文件引用；仅为 Filestore 自有对象创建清理任务。
-func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveSessionNamespaceNodeInput) (FilestoreMutationResult, error) {
+func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveSessionResourceFileInput) (FilestoreMutationResult, error) {
 	if err := validateFilestorePath(input.Path); err != nil || input.Path == "/" {
 		if err != nil {
 			return FilestoreMutationResult{}, err
@@ -429,23 +429,23 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveSessionNamespa
 		return FilestoreMutationResult{}, err
 	}
 	defer tx.Rollback()
-	entry, err := getActiveSessionNamespaceNodeForMutation(ctx, tx, filesystem, input.Path)
+	entry, err := getActiveSessionResourceFileForMutation(ctx, tx, filesystem, input.Path)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if entry.Kind != SessionNamespaceNodeKindFile {
+	if entry.Kind != SessionResourceFileKindFile {
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
 	if entry.ReferencesSourceFile() {
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
-	job, enqueued, err := enqueueOwnedSessionNamespaceNodeCleanupJobTx(ctx, tx, sessionNamespaceNodeCleanupScope{
+	job, enqueued, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
 		WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 	}, entry, "remove_file", input.Now)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if err := retireSessionNamespaceNodeTx(ctx, tx, input.WorkspaceID, entry.ID, input.Now); err != nil {
+	if err := retireSessionResourceFileTx(ctx, tx, input.WorkspaceID, entry.ID, input.Now); err != nil {
 		return FilestoreMutationResult{}, err
 	}
 	if removedBytes := entry.OwnedBytes(); removedBytes > 0 {
@@ -479,11 +479,11 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 		return FilestoreMutationResult{}, err
 	}
 	defer tx.Rollback()
-	entry, err := getActiveSessionNamespaceNodeForMutation(ctx, tx, filesystem, input.Path)
+	entry, err := getActiveSessionResourceFileForMutation(ctx, tx, filesystem, input.Path)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if entry.Kind != SessionNamespaceNodeKindDirectory {
+	if entry.Kind != SessionResourceFileKindDirectory {
 		return FilestoreMutationResult{}, ErrFilestoreNotDirectory
 	}
 	var childCount int
@@ -522,7 +522,7 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	if containsInput {
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
-	cleanupJobs, removedBytes, err := enqueueFilestoreSubtreeCleanupJobsTx(ctx, tx, sessionNamespaceNodeCleanupScope{
+	cleanupJobs, removedBytes, err := enqueueFilestoreSubtreeCleanupJobsTx(ctx, tx, sessionResourceFileCleanupScope{
 		WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
 	}, filesystem, input.Path, input.Now)
 	if err != nil {

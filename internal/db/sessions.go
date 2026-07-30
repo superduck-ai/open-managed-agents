@@ -61,7 +61,7 @@ type SessionThread struct {
 
 const (
 	// SessionResourceTypeFile identifies a Files API object attached to a
-	// Session. It is distinct from SessionNamespaceNodeKindFile, which classifies
+	// Session. It is distinct from SessionResourceFileKindFile, which classifies
 	// filesystem nodes.
 	SessionResourceTypeFile = sessioncontract.FileResourceType
 	// MaxSessionFileResources is the write-time limit for active File resources

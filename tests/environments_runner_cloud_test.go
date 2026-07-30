@@ -805,7 +805,7 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 		t.Fatalf("list skill Skill Archive Resources: %v", err)
 	}
 	if len(archiveEntries) != 1 ||
-		archiveEntries[0].Kind != db.SessionNamespaceNodeKindArchive ||
+		archiveEntries[0].Kind != db.SessionResourceFileKindArchive ||
 		archiveEntries[0].Path != "/skills/runtime-skill" ||
 		string(archiveEntries[0].Metadata) != `{"skill_source": "custom"}` {
 		t.Fatalf("skill Skill Archive Resources = %#v", archiveEntries)
@@ -906,7 +906,7 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 		t.Fatalf("list Skill Archive Resources: %v", err)
 	}
 	if len(archiveEntries) != 1 ||
-		archiveEntries[0].Kind != db.SessionNamespaceNodeKindArchive ||
+		archiveEntries[0].Kind != db.SessionResourceFileKindArchive ||
 		archiveEntries[0].Path != "/skills/missing-resolver-skill" {
 		t.Fatalf("Skill Archive Resources = %#v", archiveEntries)
 	}

@@ -41,7 +41,7 @@ type filestoreTokenScopeRow struct {
 	WorkspaceCMEKEnabled   bool   `db:"workspace_cmek_enabled"`
 }
 
-type sessionNamespaceNodeRow struct {
+type sessionResourceFileRow struct {
 	ID                       int64      `db:"id"`
 	UUID                     string     `db:"uuid"`
 	ExternalID               string     `db:"external_id"`
@@ -66,7 +66,7 @@ type sessionNamespaceNodeRow struct {
 	S3VersionID              *string    `db:"s3_version_id"`
 	ExpiresAt                *time.Time `db:"expires_at"`
 	SkillVersionUUID         *string    `db:"skill_version_uuid"`
-	ReferencedFileUUID       *string    `db:"referenced_file_uuid"`
+	SourceFileUUID           *string    `db:"source_file_uuid"`
 	CreatedByAPIKeyUUID      *string    `db:"created_by_api_key_uuid"`
 	CreatedBySessionUUID     *string    `db:"created_by_session_uuid"`
 	CreatedByCodeSessionUUID *string    `db:"created_by_code_session_uuid"`
@@ -109,8 +109,8 @@ func getFilestoreTokenScopeSQLX(ctx context.Context, database sqlxNamedQueryer, 
 	return row.scope()
 }
 
-func getActiveSessionNamespaceNodeSQLX(ctx context.Context, database sqlxNamedQueryer, filesystem FilestoreFilesystem, entryPath string) (SessionNamespaceNode, error) {
-	return getSessionNamespaceNodeSQLX(ctx, database, sessionNamespaceNodeSelectSQL()+`
+func getActiveSessionResourceFileSQLX(ctx context.Context, database sqlxNamedQueryer, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, error) {
+	return getSessionResourceFileSQLX(ctx, database, sessionResourceFileSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and path = :entry_path
@@ -123,14 +123,14 @@ func getActiveSessionNamespaceNodeSQLX(ctx context.Context, database sqlxNamedQu
 	})
 }
 
-func getSessionNamespaceNodeSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (SessionNamespaceNode, error) {
-	var row sessionNamespaceNodeRow
+func getSessionResourceFileSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (SessionResourceFile, error) {
+	var row sessionResourceFileRow
 	err := namedGetContext(ctx, database, &row, query, arguments)
 	if errors.Is(err, sql.ErrNoRows) {
-		return SessionNamespaceNode{}, ErrNotFound
+		return SessionResourceFile{}, ErrNotFound
 	}
 	if err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
 	return row.entry()
 }
@@ -238,15 +238,15 @@ func (row filestoreTokenScopeRow) scope() (FilestoreTokenScope, error) {
 	}, nil
 }
 
-func (row sessionNamespaceNodeRow) entry() (SessionNamespaceNode, error) {
+func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 	var tags []string
 	if err := json.Unmarshal([]byte(row.TagsJSON), &tags); err != nil {
-		return SessionNamespaceNode{}, fmt.Errorf("decode filestore namespace node tags: %w", err)
+		return SessionResourceFile{}, fmt.Errorf("decode filestore resource tags: %w", err)
 	}
 	if tags == nil {
 		tags = []string{}
 	}
-	return SessionNamespaceNode{
+	return SessionResourceFile{
 		ID:                    row.ID,
 		UUID:                  row.UUID,
 		ExternalID:            row.ExternalID,
@@ -270,10 +270,10 @@ func (row sessionNamespaceNodeRow) entry() (SessionNamespaceNode, error) {
 		S3ETag:                row.S3ETag,
 		S3VersionID:           row.S3VersionID,
 		ExpiresAt:             row.ExpiresAt,
-		// ReferencedFileUUID 标识 Input Resource 引用的 Source File；SkillVersionUUID
+		// SourceFileUUID 标识 Input Resource 引用的 Source File；SkillVersionUUID
 		// 标识动态 Skill Archive 的真实版本，二者都不复制对象事实。
 		SkillVersionUUID:         row.SkillVersionUUID,
-		ReferencedFileUUID:       row.ReferencedFileUUID,
+		SourceFileUUID:           row.SourceFileUUID,
 		CreatedByAPIKeyUUID:      row.CreatedByAPIKeyUUID,
 		CreatedBySessionUUID:     row.CreatedBySessionUUID,
 		CreatedByCodeSessionUUID: row.CreatedByCodeSessionUUID,
@@ -283,8 +283,8 @@ func (row sessionNamespaceNodeRow) entry() (SessionNamespaceNode, error) {
 	}, nil
 }
 
-func sessionNamespaceNodesFromSQLXRows(rows []sessionNamespaceNodeRow) ([]SessionNamespaceNode, error) {
-	entries := make([]SessionNamespaceNode, 0, len(rows))
+func sessionResourceFilesFromSQLXRows(rows []sessionResourceFileRow) ([]SessionResourceFile, error) {
+	entries := make([]SessionResourceFile, 0, len(rows))
 	for _, row := range rows {
 		entry, err := row.entry()
 		if err != nil {

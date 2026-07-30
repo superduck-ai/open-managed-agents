@@ -134,7 +134,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 			t.Fatalf("remove malformed backing File: %v", err)
 		}
 
-		jobs, anomalies, err := fixture.app.db.ExpireSessionNamespaceNodes(context.Background(), 1000)
+		jobs, anomalies, err := fixture.app.db.ExpireSessionResourceFiles(context.Background(), 1000)
 		if err != nil {
 			t.Fatalf("expire malformed batch: %v", err)
 		}
@@ -183,7 +183,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		}
 		assertWorkspaceStorageBytes(t, fixture, 8)
 
-		if _, err := fixture.app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionNamespaceNodeInput{
+		if _, err := fixture.app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionResourceFileInput{
 			WorkspaceID:  fixture.workspaceID,
 			FilesystemID: fixture.filesystem.ID,
 			Path:         "/shared.txt",
@@ -267,10 +267,10 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 			t.Fatalf("put expired file: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 4)
-		if _, err := fixture.app.db.GetSessionNamespaceNode(context.Background(), fixture.workspaceID, fixture.filesystem.ID, "/expired.txt"); !errors.Is(err, db.ErrNotFound) {
+		if _, err := fixture.app.db.GetSessionResourceFile(context.Background(), fixture.workspaceID, fixture.filesystem.ID, "/expired.txt"); !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("read expired file error = %v, want ErrNotFound", err)
 		}
-		if _, _, err := fixture.app.db.ExpireSessionNamespaceNodes(context.Background(), 1000); err != nil {
+		if _, _, err := fixture.app.db.ExpireSessionResourceFiles(context.Background(), 1000); err != nil {
 			t.Fatalf("expire Filestore entries: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 0)

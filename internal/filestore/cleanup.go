@@ -31,7 +31,7 @@ type filestoreCleanupDatabase interface {
 	LeaseFilestoreObjectCleanupJobs(context.Context, string, int, int) ([]db.FilestoreObjectCleanupJob, error)
 	CompleteLeasedFilestoreObjectCleanupJob(context.Context, int64, string) error
 	FailLeasedFilestoreObjectCleanupJob(context.Context, int64, string, string, time.Duration, int) error
-	ExpireSessionNamespaceNodes(context.Context, int) ([]db.FilestoreObjectCleanupJob, []db.FilestoreCleanupAnomaly, error)
+	ExpireSessionResourceFiles(context.Context, int) ([]db.FilestoreObjectCleanupJob, []db.FilestoreCleanupAnomaly, error)
 }
 
 // CleanupWorker owns the filestore cleanup and TTL sweep loops.
@@ -213,9 +213,9 @@ func (w *CleanupWorker) RunCleanupOnce(ctx context.Context, workerID string) err
 	return errors.Join(errs...)
 }
 
-// RunTTLSweepOnce 将一批到期命名空间节点原子地标记为删除，并同时创建对应的对象清理任务。
+// RunTTLSweepOnce 将一批到期资源文件原子地标记为删除，并同时创建对应的对象清理任务。
 func (w *CleanupWorker) RunTTLSweepOnce(ctx context.Context) error {
-	_, anomalies, err := w.database.ExpireSessionNamespaceNodes(ctx, filestoreTTLSweepBatchSize)
+	_, anomalies, err := w.database.ExpireSessionResourceFiles(ctx, filestoreTTLSweepBatchSize)
 	w.logCleanupAnomalies(ctx, anomalies)
 	return err
 }

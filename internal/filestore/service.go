@@ -29,15 +29,15 @@ const (
 
 type filestoreDatabase interface {
 	GetFilestoreFilesystem(context.Context, int64, string) (db.FilestoreFilesystem, error)
-	GetSessionNamespaceNode(context.Context, int64, int64, string) (db.SessionNamespaceNode, error)
-	ListSessionNamespaceNodesPage(context.Context, db.ListSessionNamespaceNodesPageParams) (db.SessionNamespaceNodePage, error)
-	ListSessionSkillArchiveResources(context.Context, int64, int64) ([]db.SessionNamespaceNode, error)
-	MakeFilestoreDirectory(context.Context, db.MakeFilestoreDirectoryInput) (db.SessionNamespaceNode, error)
+	GetSessionResourceFile(context.Context, int64, int64, string) (db.SessionResourceFile, error)
+	ListSessionResourceFilesPage(context.Context, db.ListSessionResourceFilesPageParams) (db.SessionResourceFilePage, error)
+	ListSessionSkillArchiveResources(context.Context, int64, int64) ([]db.SessionResourceFile, error)
+	MakeFilestoreDirectory(context.Context, db.MakeFilestoreDirectoryInput) (db.SessionResourceFile, error)
 	PutFilestoreFile(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
 	CopyFilestoreFile(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)
 	MoveFilestoreFile(context.Context, db.MoveFilestoreFileInput) (db.FilestoreMutationResult, error)
 	MoveFilestoreDirectory(context.Context, db.MoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
-	RemoveFilestoreFile(context.Context, db.RemoveSessionNamespaceNodeInput) (db.FilestoreMutationResult, error)
+	RemoveFilestoreFile(context.Context, db.RemoveSessionResourceFileInput) (db.FilestoreMutationResult, error)
 	RemoveFilestoreDirectory(context.Context, db.RemoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
 	EnqueueFilestoreObjectCleanupJob(context.Context, db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error)
 	AttachFilestoreObjectCleanupJobVersion(context.Context, int64, string, string, string) error
@@ -256,14 +256,14 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	source, err := s.db.GetSessionNamespaceNode(ctx, principal.WorkspaceID, filesystem.ID, request.Source)
+	source, err := s.db.GetSessionResourceFile(ctx, principal.WorkspaceID, filesystem.ID, request.Source)
 	if err != nil {
 		return fileResponse{}, mapDatabaseError("read copy source", err)
 	}
-	if source.Kind != db.SessionNamespaceNodeKindFile || source.S3Key == nil {
+	if source.Kind != db.SessionResourceFileKindFile || source.S3Key == nil {
 		return fileResponse{}, failedPrecondition("source is not a file")
 	}
-	if source.ReferencedFileUUID != nil {
+	if source.SourceFileUUID != nil {
 		// 这里拒绝的是 Filestore 协议里的 copyFile：它表示“在对象存储端做
 		// 服务端复制（server-side copy），把一个由 Filestore 自己拥有的对象
 		// 复制成新对象，再把该副本绑定到目标路径”，而不是客户端先把源文件
@@ -403,7 +403,7 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
 		return apiErr
 	}
-	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveSessionNamespaceNodeInput{
+	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveSessionResourceFileInput{
 		WorkspaceID:  principal.WorkspaceID,
 		FilesystemID: filesystem.ID,
 		Path:         request.Path,
@@ -450,14 +450,14 @@ func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, fi
 
 func (s *Service) requireParentDirectory(ctx context.Context, workspaceID, filesystemID int64, entryPath string) *apiError {
 	parent := parentPath(entryPath)
-	entry, err := s.db.GetSessionNamespaceNode(ctx, workspaceID, filesystemID, parent)
+	entry, err := s.db.GetSessionResourceFile(ctx, workspaceID, filesystemID, parent)
 	if errors.Is(err, db.ErrNotFound) {
 		return failedPrecondition("parent directory does not exist")
 	}
 	if err != nil {
 		return mapDatabaseError("read parent directory", err)
 	}
-	if entry.Kind != db.SessionNamespaceNodeKindDirectory {
+	if entry.Kind != db.SessionResourceFileKindDirectory {
 		return failedPrecondition("parent path is not a directory")
 	}
 	return nil
@@ -664,13 +664,13 @@ func resolveReadRange(requestRange *readFileRange, fileSize int64) (*storage.Byt
 	return &storage.ByteRange{Offset: offset, Length: length}, length, nil
 }
 
-func payloadFromEntry(entry db.SessionNamespaceNode, filesystemExternalID string) (entryPayload, error) {
-	if entry.Kind == db.SessionNamespaceNodeKindDirectory {
+func payloadFromEntry(entry db.SessionResourceFile, filesystemExternalID string) (entryPayload, error) {
+	if entry.Kind == db.SessionResourceFileKindDirectory {
 		directory := directoryPayloadFromEntry(entry, filesystemExternalID)
 		return entryPayload{Directory: &directory}, nil
 	}
-	if entry.Kind != db.SessionNamespaceNodeKindFile {
-		return entryPayload{}, fmt.Errorf("unsupported filestore namespace node kind %q", entry.Kind)
+	if entry.Kind != db.SessionResourceFileKindFile {
+		return entryPayload{}, fmt.Errorf("unsupported filestore resource kind %q", entry.Kind)
 	}
 	file, err := filePayloadFromEntry(entry, filesystemExternalID)
 	if err != nil {
@@ -679,9 +679,9 @@ func payloadFromEntry(entry db.SessionNamespaceNode, filesystemExternalID string
 	return entryPayload{File: &file}, nil
 }
 
-func filePayloadFromEntry(entry db.SessionNamespaceNode, filesystemExternalID string) (filesystemFilePayload, error) {
-	if entry.Kind != db.SessionNamespaceNodeKindFile || entry.SizeBytes == nil {
-		return filesystemFilePayload{}, errors.New("filestore namespace node is not a complete file")
+func filePayloadFromEntry(entry db.SessionResourceFile, filesystemExternalID string) (filesystemFilePayload, error) {
+	if entry.Kind != db.SessionResourceFileKindFile || entry.SizeBytes == nil {
+		return filesystemFilePayload{}, errors.New("filestore resource is not a complete file")
 	}
 	metadata := map[string]any{}
 	if len(entry.Metadata) != 0 && string(entry.Metadata) != "null" {
@@ -708,7 +708,7 @@ func filePayloadFromEntry(entry db.SessionNamespaceNode, filesystemExternalID st
 	return filesystemFilePayload{File: payload, FilesystemID: filesystemExternalID, Path: entry.Path}, nil
 }
 
-func directoryPayloadFromEntry(entry db.SessionNamespaceNode, filesystemExternalID string) directoryPayload {
+func directoryPayloadFromEntry(entry db.SessionResourceFile, filesystemExternalID string) directoryPayload {
 	return directoryPayload{
 		FilesystemID: filesystemExternalID,
 		Path:         entry.Path,

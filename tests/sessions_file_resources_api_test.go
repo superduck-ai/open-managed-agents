@@ -428,7 +428,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load Session filesystem after resource delete: %v", err)
 		}
-		if _, err := app.db.GetSessionNamespaceNode(
+		if _, err := app.db.GetSessionResourceFile(
 			context.Background(),
 			session.WorkspaceID,
 			filesystem.ID,
@@ -436,7 +436,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		); !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("deleted file resource entry error = %v, want ErrNotFound", err)
 		}
-		parent, err := app.db.GetSessionNamespaceNode(
+		parent, err := app.db.GetSessionResourceFile(
 			context.Background(),
 			session.WorkspaceID,
 			filesystem.ID,
@@ -445,7 +445,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resource delete pruned the database-maintained parent directory: %v", err)
 		}
-		if parent.Kind != db.SessionNamespaceNodeKindDirectory {
+		if parent.Kind != db.SessionResourceFileKindDirectory {
 			t.Fatalf("resource parent kind = %q, want directory", parent.Kind)
 		}
 		if _, err := app.db.GetFile(context.Background(), session.WorkspaceID, file.ID); err != nil {
@@ -631,7 +631,7 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 				afterStorageBytes,
 			)
 		}
-		if _, err := app.db.GetSessionNamespaceNode(
+		if _, err := app.db.GetSessionResourceFile(
 			context.Background(),
 			sessionRecord.WorkspaceID,
 			filesystem.ID,
@@ -821,7 +821,7 @@ func TestSessionOutputCatalogWriteIsAtomic(t *testing.T) {
 	if err == nil {
 		t.Fatal("output write succeeded despite catalog constraint")
 	}
-	if _, err := app.db.GetSessionNamespaceNode(
+	if _, err := app.db.GetSessionResourceFile(
 		context.Background(),
 		record.WorkspaceID,
 		filesystem.ID,
@@ -1103,7 +1103,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		)
 	}
 
-	if _, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionNamespaceNodeInput{
+	if _, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionResourceFileInput{
 		WorkspaceID:  record.WorkspaceID,
 		FilesystemID: filesystem.ID,
 		Path:         "/outputs/reports/result.txt",
@@ -1179,7 +1179,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	`, expiringEntry.Node.ID); err != nil {
 		t.Fatalf("expire output entry before cleanup: %v", err)
 	}
-	if _, _, err := app.db.ExpireSessionNamespaceNodes(context.Background(), 1000); err != nil {
+	if _, _, err := app.db.ExpireSessionResourceFiles(context.Background(), 1000); err != nil {
 		t.Fatalf("expire output entry: %v", err)
 	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
@@ -1231,7 +1231,7 @@ func TestSessionInputResourceRejectsGenericFilestoreMutations(t *testing.T) {
 			return err
 		},
 		"remove input": func() error {
-			_, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionNamespaceNodeInput{
+			_, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionResourceFileInput{
 				WorkspaceID: record.WorkspaceID, FilesystemID: filesystem.ID,
 				Path: "/uploads/locked/input.txt",
 			})
@@ -1668,7 +1668,7 @@ func assertSessionFileReference(
 	if err != nil {
 		t.Fatalf("load Session filesystem: %v", err)
 	}
-	entry, err := app.db.GetSessionNamespaceNode(
+	entry, err := app.db.GetSessionResourceFile(
 		context.Background(),
 		session.WorkspaceID,
 		filesystem.ID,
@@ -1690,11 +1690,11 @@ func assertSessionFileReference(
 	if err != nil {
 		t.Fatalf("load Session file resource: %v", err)
 	}
-	if entry.Kind != db.SessionNamespaceNodeKindFile ||
+	if entry.Kind != db.SessionResourceFileKindFile ||
 		entry.UUID != resource.UUID ||
 		payload.FileID != fileExternalID ||
-		entry.ReferencedFileUUID == nil ||
-		*entry.ReferencedFileUUID != file.UUID ||
+		entry.SourceFileUUID == nil ||
+		*entry.SourceFileUUID != file.UUID ||
 		entry.SkillVersionUUID != nil ||
 		entry.MD5 != nil ||
 		entry.ExpiresAt != nil ||

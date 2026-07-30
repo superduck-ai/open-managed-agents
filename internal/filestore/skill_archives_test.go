@@ -639,22 +639,22 @@ func TestSkillArchiveViewListsMetadataAndReadsRanges(t *testing.T) {
 
 func skillArchiveTestService(
 	archiveBytes []byte,
-	archiveEntry db.SessionNamespaceNode,
+	archiveEntry db.SessionResourceFile,
 ) (*Service, *int) {
 	filesystem := serviceTestFilesystem()
 	openCount := 0
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, workspaceID, filesystemID int64, entryPath string) (db.SessionNamespaceNode, error) {
+		getEntryFn: func(_ context.Context, workspaceID, filesystemID int64, entryPath string) (db.SessionResourceFile, error) {
 			if workspaceID != serviceTestPrincipal().WorkspaceID ||
 				filesystemID != filesystem.ID ||
 				entryPath != skillNamespacePath {
-				return db.SessionNamespaceNode{}, db.ErrNotFound
+				return db.SessionResourceFile{}, db.ErrNotFound
 			}
 			return serviceTestDirectoryEntry(filesystem, 70, skillNamespacePath), nil
 		},
-		listSkillArchiveEntriesFn: func(context.Context, int64, int64) ([]db.SessionNamespaceNode, error) {
-			return []db.SessionNamespaceNode{archiveEntry}, nil
+		listSkillArchiveEntriesFn: func(context.Context, int64, int64) ([]db.SessionResourceFile, error) {
+			return []db.SessionResourceFile{archiveEntry}, nil
 		},
 	}
 	store := &fakeServiceBlobStore{
@@ -673,16 +673,16 @@ func skillArchiveTestService(
 	return newServiceUnderTest(filestoreTestConfig(1024, 4096, "filestore-test"), database, store), &openCount
 }
 
-func skillArchiveTestEntry(data []byte) db.SessionNamespaceNode {
+func skillArchiveTestEntry(data []byte) db.SessionResourceFile {
 	sum := sha256.Sum256(data)
-	return db.SessionNamespaceNode{
+	return db.SessionResourceFile{
 		ID:               71,
 		UUID:             "77777777-7777-4777-8777-777777777777",
 		ExternalID:       "sesrsc_test",
 		OrganizationUUID: serviceTestPrincipal().OrganizationUUID,
 		WorkspaceUUID:    serviceTestPrincipal().WorkspaceUUID,
 		FilesystemUUID:   serviceTestFilesystem().UUID,
-		Kind:             db.SessionNamespaceNodeKindArchive,
+		Kind:             db.SessionResourceFileKindArchive,
 		Path:             "/skills/demo",
 		ParentPath:       serviceTestPointer("/skills"),
 		SizeBytes:        serviceTestPointer(int64(len(data))),

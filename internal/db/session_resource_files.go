@@ -3,62 +3,62 @@ package db
 import "context"
 
 const (
-	defaultSessionNamespaceNodesPageLimit = 100
-	maxSessionNamespaceNodesPageLimit     = 1000
+	defaultSessionResourceFilesPageLimit = 100
+	maxSessionResourceFilesPageLimit     = 1000
 )
 
-// GetSessionNamespaceNode 在工作区与文件系统双重边界内读取一个有效节点。
+// GetSessionResourceFile 在工作区与文件系统双重边界内读取一个有效节点。
 // 根目录不落表，由文件系统记录即时投影为虚拟目录。
-func (d *DB) GetSessionNamespaceNode(ctx context.Context, workspaceID, filesystemID int64, entryPath string) (SessionNamespaceNode, error) {
+func (d *DB) GetSessionResourceFile(ctx context.Context, workspaceID, filesystemID int64, entryPath string) (SessionResourceFile, error) {
 	if err := validateFilestorePath(entryPath); err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
 	filesystem, err := getFilestoreFilesystemByIDSQLX(ctx, d.sql, workspaceID, filesystemID)
 	if err != nil {
-		return SessionNamespaceNode{}, err
+		return SessionResourceFile{}, err
 	}
 	if entryPath == "/" {
 		return virtualFilestoreRoot(filesystem), nil
 	}
-	return getActiveSessionNamespaceNodeSQLX(ctx, d.sql, filesystem, entryPath)
+	return getActiveSessionResourceFileSQLX(ctx, d.sql, filesystem, entryPath)
 }
 
-// ListSessionNamespaceNodesPage 以 (path, id) 为稳定排序键执行键集分页。
+// ListSessionResourceFilesPage 以 (path, id) 为稳定排序键执行键集分页。
 // 过期或软删除节点不会出现在结果中。
-func (d *DB) ListSessionNamespaceNodesPage(ctx context.Context, params ListSessionNamespaceNodesPageParams) (SessionNamespaceNodePage, error) {
+func (d *DB) ListSessionResourceFilesPage(ctx context.Context, params ListSessionResourceFilesPageParams) (SessionResourceFilePage, error) {
 	if err := validateFilestorePath(params.DirectoryPath); err != nil {
-		return SessionNamespaceNodePage{}, err
+		return SessionResourceFilePage{}, err
 	}
-	params.Limit = normalizeSessionNamespaceNodesPageLimit(params.Limit)
+	params.Limit = normalizeSessionResourceFilesPageLimit(params.Limit)
 	filesystem, err := d.resolveFilestoreDirectoryForRead(ctx, params.WorkspaceID, params.FilesystemID, params.DirectoryPath)
 	if err != nil {
-		return SessionNamespaceNodePage{}, err
+		return SessionResourceFilePage{}, err
 	}
-	query, args := buildSessionNamespaceNodesPageQuery(filesystem, params)
-	var rows []sessionNamespaceNodeRow
+	query, args := buildSessionResourceFilesPageQuery(filesystem, params)
+	var rows []sessionResourceFileRow
 	if err := namedSelectContext(ctx, d.sql, &rows, query, args); err != nil {
-		return SessionNamespaceNodePage{}, err
+		return SessionResourceFilePage{}, err
 	}
-	entries, err := sessionNamespaceNodesFromSQLXRows(rows)
+	entries, err := sessionResourceFilesFromSQLXRows(rows)
 	if err != nil {
-		return SessionNamespaceNodePage{}, err
+		return SessionResourceFilePage{}, err
 	}
-	return newSessionNamespaceNodePage(entries, params.Limit), nil
+	return newSessionResourceFilePage(entries, params.Limit), nil
 }
 
-func normalizeSessionNamespaceNodesPageLimit(limit int) int {
+func normalizeSessionResourceFilesPageLimit(limit int) int {
 	switch {
 	case limit <= 0:
-		return defaultSessionNamespaceNodesPageLimit
-	case limit > maxSessionNamespaceNodesPageLimit:
-		return maxSessionNamespaceNodesPageLimit
+		return defaultSessionResourceFilesPageLimit
+	case limit > maxSessionResourceFilesPageLimit:
+		return maxSessionResourceFilesPageLimit
 	default:
 		return limit
 	}
 }
 
-func buildSessionNamespaceNodesPageQuery(filesystem FilestoreFilesystem, params ListSessionNamespaceNodesPageParams) (string, map[string]any) {
-	query := sessionNamespaceNodeSelectSQL() + `
+func buildSessionResourceFilesPageQuery(filesystem FilestoreFilesystem, params ListSessionResourceFilesPageParams) (string, map[string]any) {
+	query := sessionResourceFileSelectSQL() + `
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
 			and kind <> 'archive'
@@ -95,8 +95,8 @@ func filestoreDirectoryPrefix(directoryPath string) string {
 	return directoryPath + "/"
 }
 
-func newSessionNamespaceNodePage(entries []SessionNamespaceNode, limit int) SessionNamespaceNodePage {
-	page := SessionNamespaceNodePage{Entries: entries, HasMore: len(entries) > limit}
+func newSessionResourceFilePage(entries []SessionResourceFile, limit int) SessionResourceFilePage {
+	page := SessionResourceFilePage{Entries: entries, HasMore: len(entries) > limit}
 	if page.HasMore {
 		page.Entries = entries[:limit]
 	}

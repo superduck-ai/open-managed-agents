@@ -21,13 +21,13 @@ func filestoreFilesystemColumns() string {
 		created_at, updated_at, deleted_at`
 }
 
-func sessionNamespaceNodeSelectSQL() string {
-	return `select ` + sessionNamespaceNodeColumns() + ` from (` + sessionNamespaceNodeSourceSQL() + `) namespace_nodes`
+func sessionResourceFileSelectSQL() string {
+	return `select ` + sessionResourceFileColumns() + ` from (` + sessionResourceFileSourceSQL() + `) session_resource_files`
 }
 
-// sessionNamespaceNodeSourceSQL 将统一后的 Resource + File 模型映射为 Filestore
-// 服务当前使用的节点 DTO。它不是数据库兼容视图，也不会形成第二套读模型。
-func sessionNamespaceNodeSourceSQL() string {
+// sessionResourceFileSourceSQL 将统一后的 Resource + File 模型映射为 Filestore
+// 服务当前使用的资源文件 DTO。它不是数据库兼容视图，也不会形成第二套读模型。
+func sessionResourceFileSourceSQL() string {
 	return `
 		select resource.id,
 			cast(resource.uuid as text) as uuid,
@@ -82,7 +82,7 @@ func sessionNamespaceNodeSourceSQL() string {
 			case when resource.payload is not null
 				then cast(resource.file_uuid as text)
 				else null
-			end as referenced_file_uuid,
+			end as source_file_uuid,
 			cast(api_key.uuid as text) as created_by_api_key_uuid,
 			cast(session.uuid as text) as created_by_session_uuid,
 			cast(filesystem.code_session_uuid as text) as created_by_code_session_uuid,
@@ -112,7 +112,7 @@ func sessionNamespaceNodeSourceSQL() string {
 	`
 }
 
-func sessionNamespaceNodeColumns() string {
+func sessionResourceFileColumns() string {
 	return `id, cast(uuid as text) as uuid, external_id,
 		cast(organization_uuid as text) as organization_uuid,
 		cast(workspace_uuid as text) as workspace_uuid,
@@ -121,22 +121,22 @@ func sessionNamespaceNodeColumns() string {
 		tags_json,
 		downloadable, md5, sha256, s3_bucket, s3_key, s3_etag, s3_version_id,
 		expires_at, cast(skill_version_uuid as text) as skill_version_uuid,
-		cast(referenced_file_uuid as text) as referenced_file_uuid,
+		cast(source_file_uuid as text) as source_file_uuid,
 		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
 		cast(created_by_session_uuid as text) as created_by_session_uuid,
 		cast(created_by_code_session_uuid as text) as created_by_code_session_uuid,
 		created_at, updated_at, deleted_at`
 }
 
-func virtualFilestoreRoot(filesystem FilestoreFilesystem) SessionNamespaceNode {
+func virtualFilestoreRoot(filesystem FilestoreFilesystem) SessionResourceFile {
 	// 根目录与文件系统同生共灭，虚拟投影可省去一条永远存在且不可删除的特殊 entries 记录。
-	return SessionNamespaceNode{
+	return SessionResourceFile{
 		UUID:                  filesystem.UUID,
 		ExternalID:            filesystem.ExternalID,
 		OrganizationUUID:      filesystem.OrganizationUUID,
 		WorkspaceUUID:         filesystem.WorkspaceUUID,
 		FilesystemUUID:        filesystem.UUID,
-		Kind:                  SessionNamespaceNodeKindDirectory,
+		Kind:                  SessionResourceFileKindDirectory,
 		Path:                  "/",
 		Metadata:              json.RawMessage(`{}`),
 		AuthorizationMetadata: json.RawMessage(`{}`),

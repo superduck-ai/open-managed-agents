@@ -59,7 +59,7 @@ var (
 		where session.id = :session_id and session.workspace_id = :workspace_id
 			and session.deleted_at is null
 	`
-	sessionSkillArchiveResourceListQuery = sessionNamespaceNodeSelectSQL() + `
+	sessionSkillArchiveResourceListQuery = sessionResourceFileSelectSQL() + `
 		where workspace_uuid = (select cast(uuid as text) from workspaces where id = :workspace_id)
 			and filesystem_uuid = (
 				select cast(uuid as text)
@@ -197,15 +197,15 @@ func (d *DB) ListSessionSkillArchiveResources(
 	ctx context.Context,
 	workspaceID int64,
 	filesystemID int64,
-) ([]SessionNamespaceNode, error) {
-	var rows []sessionNamespaceNodeRow
+) ([]SessionResourceFile, error) {
+	var rows []sessionResourceFileRow
 	if err := namedSelectContext(ctx, d.sql, &rows, sessionSkillArchiveResourceListQuery, map[string]any{
 		"workspace_id":  workspaceID,
 		"filesystem_id": filesystemID,
 	}); err != nil {
 		return nil, err
 	}
-	return sessionNamespaceNodesFromSQLXRows(rows)
+	return sessionResourceFilesFromSQLXRows(rows)
 }
 
 func normalizeSessionSkillArchiveResources(

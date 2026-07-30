@@ -173,7 +173,7 @@ func (b *skillArchivePathBackend) readMetadata(
 	if apiErr != nil {
 		return entryPayload{}, apiErr
 	}
-	return skillNodePayload(node, filesystem.ExternalID, []db.SessionNamespaceNode{archiveEntry}), nil
+	return skillNodePayload(node, filesystem.ExternalID, []db.SessionResourceFile{archiveEntry}), nil
 }
 
 func (b *skillArchivePathBackend) readFile(
@@ -225,10 +225,10 @@ func (b *skillArchivePathBackend) resolveSkillNode(
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
-) (db.SessionNamespaceNode, *loadedSkillArchive, skillArchiveNode, *apiError) {
+) (db.SessionResourceFile, *loadedSkillArchive, skillArchiveNode, *apiError) {
 	archiveEntries, err := b.db.ListSessionSkillArchiveResources(ctx, principal.WorkspaceID, filesystem.ID)
 	if err != nil {
-		return db.SessionNamespaceNode{}, nil, skillArchiveNode{}, mapDatabaseError("list Skill Archive Resources", err)
+		return db.SessionResourceFile{}, nil, skillArchiveNode{}, mapDatabaseError("list Skill Archive Resources", err)
 	}
 	for _, archiveEntry := range archiveEntries {
 		if entryPath != archiveEntry.Path && !strings.HasPrefix(entryPath, archiveEntry.Path+"/") {
@@ -236,20 +236,20 @@ func (b *skillArchivePathBackend) resolveSkillNode(
 		}
 		archive, apiErr := b.loadSkillArchive(ctx, archiveEntry)
 		if apiErr != nil {
-			return db.SessionNamespaceNode{}, nil, skillArchiveNode{}, apiErr
+			return db.SessionResourceFile{}, nil, skillArchiveNode{}, apiErr
 		}
 		node, ok := archive.nodes[entryPath]
 		if !ok {
-			return db.SessionNamespaceNode{}, nil, skillArchiveNode{}, notFound("resource does not exist")
+			return db.SessionResourceFile{}, nil, skillArchiveNode{}, notFound("resource does not exist")
 		}
 		return archiveEntry, archive, node, nil
 	}
-	return db.SessionNamespaceNode{}, nil, skillArchiveNode{}, notFound("resource does not exist")
+	return db.SessionResourceFile{}, nil, skillArchiveNode{}, notFound("resource does not exist")
 }
 
 func (b *skillArchivePathBackend) loadSkillArchive(
 	ctx context.Context,
-	archiveEntry db.SessionNamespaceNode,
+	archiveEntry db.SessionResourceFile,
 ) (*loadedSkillArchive, *apiError) {
 	if b.cache == nil {
 		return nil, internalError("load skill archive", errors.New("skill archive cache is unavailable"))
@@ -339,7 +339,7 @@ func skillArchiveRequestCanceled(cause error) *apiError {
 
 func (b *skillArchivePathBackend) fetchSkillArchive(
 	ctx context.Context,
-	archiveEntry db.SessionNamespaceNode,
+	archiveEntry db.SessionResourceFile,
 	bucket string,
 	objectKey string,
 	checksum string,
@@ -377,8 +377,8 @@ func (b *skillArchivePathBackend) fetchSkillArchive(
 	return archive, nil
 }
 
-func skillArchiveObject(entry db.SessionNamespaceNode) (string, string, string, int64, error) {
-	if entry.Kind != db.SessionNamespaceNodeKindArchive ||
+func skillArchiveObject(entry db.SessionResourceFile) (string, string, string, int64, error) {
+	if entry.Kind != db.SessionResourceFileKindArchive ||
 		entry.SkillVersionUUID == nil ||
 		entry.S3Bucket == nil ||
 		entry.S3Key == nil ||
@@ -390,7 +390,7 @@ func skillArchiveObject(entry db.SessionNamespaceNode) (string, string, string, 
 	return *entry.S3Bucket, *entry.S3Key, *entry.SHA256, *entry.SizeBytes, nil
 }
 
-func indexSkillArchive(archiveEntry db.SessionNamespaceNode, data []byte) (*loadedSkillArchive, error) {
+func indexSkillArchive(archiveEntry db.SessionResourceFile, data []byte) (*loadedSkillArchive, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, errors.New("skill archive is not a valid zip")
@@ -500,7 +500,7 @@ func addSkillDirectoryNode(nodes map[string]skillArchiveNode, directoryPath stri
 func skillNodePayload(
 	node skillArchiveNode,
 	filesystemExternalID string,
-	archiveEntries []db.SessionNamespaceNode,
+	archiveEntries []db.SessionResourceFile,
 ) entryPayload {
 	createdAt := time.Unix(0, 0).UTC()
 	for _, archiveEntry := range archiveEntries {

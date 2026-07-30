@@ -178,8 +178,7 @@ func filestoreNow(value time.Time) time.Time {
 }
 
 // 如果这个 directoryPath 已经存在，而且本来就是目录，就直接返回现有目录。
-// 如果这个路径被一个未过期的非目录 entry 占着，就返回 ErrFilestorePathExists。
-// 如果这个路径被一个“已过期的文件 entry”占着，它会先挂清理任务、扣回 owned bytes，然后把这条旧 row 原地改写成目录。
+// 如果这个路径被非目录 entry 占着，就返回 ErrFilestorePathExists。
 // 如果这个路径根本不存在，就插入一条新的 directory entry。
 func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (SessionResourceFile, error) {
 	existing, found, err := getSessionResourceFileForMutation(ctx, tx, filesystem, directoryPath)
@@ -190,64 +189,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		if existing.Kind == SessionResourceFileKindDirectory {
 			return existing, nil
 		}
-		if !sessionResourceFileExpired(existing, now) {
-			return SessionResourceFile{}, ErrFilestorePathExists
-		}
-		if _, _, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
-			WorkspaceID: workspaceID, FilesystemID: filesystem.ID,
-		}, existing, "expired_path_replaced", now); err != nil {
-			return SessionResourceFile{}, err
-		}
-		if _, err := namedExecContext(ctx, tx, `
-				update files file
-				set deleted_at = :now
-				where file.workspace_id = :workspace_id
-					and file.uuid = (
-					select resource.file_uuid from session_resources resource
-					where resource.id = :resource_id
-						and resource.workspace_id = :workspace_id
-						and resource.session_id = :session_id
-				)
-					and file.deleted_at is null
-			`, map[string]any{
-			"workspace_id": workspaceID,
-			"session_id":   filesystem.SessionID,
-			"resource_id":  existing.ID,
-			"now":          now,
-		}); err != nil {
-			return SessionResourceFile{}, err
-		}
-		if _, err := namedExecContext(ctx, tx, `
-			update session_resources
-			set resource_type = 'directory', payload = null, secret_payload = null,
-				parent_path = :parent_path, file_uuid = null,
-				skill_version_uuid = null,
-				expires_at = null, created_at = :now, updated_at = :now
-			where workspace_id = :workspace_id and session_id = :session_id
-				and id = :resource_id and deleted_at is null
-		`, map[string]any{
-			"workspace_id": workspaceID,
-			"session_id":   filesystem.SessionID,
-			"resource_id":  existing.ID,
-			"parent_path":  filestoreParentPath(directoryPath),
-			"now":          now,
-		}); err != nil {
-			return SessionResourceFile{}, err
-		}
-		directory, err := getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-			where id = :resource_id and deleted_at is null
-		`, map[string]any{"resource_id": existing.ID})
-		if err != nil {
-			return SessionResourceFile{}, err
-		}
-		if releasedBytes := existing.OwnedBytes(); releasedBytes > 0 {
-			if err := applyWorkspaceStorageDeltaSQLXTx(
-				ctx, tx, workspaceID, 0, -releasedBytes, 0,
-			); err != nil {
-				return SessionResourceFile{}, err
-			}
-		}
-		return directory, nil
+		return SessionResourceFile{}, ErrFilestorePathExists
 	}
 	resourceUUID, resourceExternalID, err := newSessionResourceIdentity()
 	if err != nil {
@@ -304,17 +246,11 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	var quotaNow time.Time
-	// 以数据库时钟判定过期，保证配额查询与当前事务看到同一时间基准。
-	if err := tx.GetContext(ctx, &quotaNow, `select now()`); err != nil {
-		return FilestoreMutationResult{}, err
-	}
 	var oldSize int64
 	if found && existing.Kind == SessionResourceFileKindFile {
-		// 账本在 TTL 清理提交前仍统计到期文件；复用路径时必须以完整旧大小计算增量。
 		oldSize = existing.OwnedBytes()
 	}
-	if found && !sessionResourceFileExpired(existing, quotaNow) {
+	if found {
 		if existing.Kind != SessionResourceFileKindFile {
 			return FilestoreMutationResult{}, ErrFilestorePathExists
 		}
@@ -534,10 +470,6 @@ func filestoreBlobFromEntry(entry SessionResourceFile) FilestoreFileBlob {
 		S3VersionID:           filestoreString(entry.S3VersionID),
 		ExpiresAt:             entry.ExpiresAt,
 	}
-}
-
-func sessionResourceFileExpired(entry SessionResourceFile, now time.Time) bool {
-	return entry.ExpiresAt != nil && !entry.ExpiresAt.After(now)
 }
 
 func sameFilestoreObject(entry SessionResourceFile, blob FilestoreFileBlob) bool {

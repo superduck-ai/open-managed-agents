@@ -370,7 +370,7 @@ Owned File 的覆盖、删除、递归删除和 TTL 过期在同一个数据库�
 
 两类 Filestore cleanup job 的持久化 payload 都只保存 `workspace_uuid` 与 `filesystem_uuid`，不保存 `workspace_id`、`filesystem_id` 或冗余的 filesystem external ID。`jobs.workspace_id` 是通用任务表在当前数据库中的路由缓存，不是 Filestore 清理任务的权威归属：worker 取得租约时用 payload UUID 重新关联 workspace 与 filesystem，得到当前库的 bigint ID 后修正该缓存；整 filesystem 清理进入事务后也再次按 UUID 解析并锁定当前记录。迁移会先验证每条历史 bigint 引用都能解析且归属一致，再改写 payload；发现孤立或错配引用时直接中止，避免恢复或合库后把任务指向另一条恰好复用了相同 identity 的记录。
 
-到达 `expires_at` 后，读路径立即隐藏 Owned File；其字节数在 TTL sweep 成功软删除 Resource 与 File 时释放。若历史异常导致活动 Resource 无法解析到完整的对象 bucket/key，清理事务会退休异常逻辑节点、继续处理同批健康节点，并从事实表重算受影响工作区账本；worker 通过结构化告警记录异常 Resource，不让毒数据永久阻塞 TTL 或 Session cleanup。
+现在文件不考虑 expire
 
 若进程在上传完成后、回填 VersionID 前退出，orphan guard 会以空 VersionID 进入清理。由于 blob key 每次写入都唯一，这不会误删其他 Resource 引用的对象。
 

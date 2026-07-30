@@ -276,7 +276,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		assertWorkspaceStorageBytes(t, fixture, 0)
 	})
 
-	t.Run("success namespace reuse releases expired destination bytes", func(t *testing.T) {
+	t.Run("failure expired file path remains reserved until ttl cleanup", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
 		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
@@ -291,11 +291,26 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 			WorkspaceID:  fixture.workspaceID,
 			FilesystemID: fixture.filesystem.ID,
 			Path:         "/directory",
+		}); !errors.Is(err, db.ErrFilestorePathExists) {
+			t.Fatalf("replace expired file with directory error = %v, want ErrFilestorePathExists", err)
+		}
+		assertWorkspaceStorageBytes(t, fixture, 4)
+		if _, _, err := fixture.app.db.ExpireSessionResourceFiles(context.Background(), 1000); err != nil {
+			t.Fatalf("expire Filestore entries: %v", err)
+		}
+		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
+			WorkspaceID:  fixture.workspaceID,
+			FilesystemID: fixture.filesystem.ID,
+			Path:         "/directory",
 		}); err != nil {
-			t.Fatalf("replace expired file with directory: %v", err)
+			t.Fatalf("make directory after ttl cleanup: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 0)
+	})
 
+	t.Run("success directory move releases expired destination bytes", func(t *testing.T) {
+		fixture := newWorkspaceStorageFixture(t)
+		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
 		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
 			WorkspaceID:  fixture.workspaceID,
 			FilesystemID: fixture.filesystem.ID,

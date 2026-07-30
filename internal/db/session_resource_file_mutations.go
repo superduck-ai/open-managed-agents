@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
-	"time"
 )
 
 const moveFilestoreFileResultQuery = `
@@ -21,7 +20,6 @@ func (d *DB) MakeFilestoreDirectory(ctx context.Context, input MakeFilestoreDire
 		return SessionResourceFile{}, err
 	}
 	input.Now = filestoreNow(input.Now)
-	// 创建目录可能复用一个已过期的文件路径，因此也要先取得工作区用量锁。
 	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
 	if err != nil {
 		return SessionResourceFile{}, err
@@ -189,32 +187,24 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	var databaseNow time.Time
-	if err := tx.GetContext(ctx, &databaseNow, `select now()`); err != nil {
-		return FilestoreMutationResult{}, err
-	}
 	if found {
 		if destination.ReferencesSourceFile() {
 			return FilestoreMutationResult{}, ErrPreconditionFailed
 		}
-		if !sessionResourceFileExpired(destination, databaseNow) {
-			if destination.Kind != SessionResourceFileKindFile {
-				return FilestoreMutationResult{}, ErrFilestorePathExists
-			}
-			if !input.OverwriteExisting {
-				return FilestoreMutationResult{}, ErrFilestorePathExists
-			}
+		if destination.Kind != SessionResourceFileKindFile {
+			return FilestoreMutationResult{}, ErrFilestorePathExists
 		}
-		if destination.Kind == SessionResourceFileKindFile {
-			job, enqueued, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
-				WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
-			}, destination, "move_overwrite", input.Now)
-			if err != nil {
-				return FilestoreMutationResult{}, err
-			}
-			if enqueued {
-				cleanupJobs = append(cleanupJobs, job)
-			}
+		if !input.OverwriteExisting {
+			return FilestoreMutationResult{}, ErrFilestorePathExists
+		}
+		job, enqueued, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
+			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
+		}, destination, "move_overwrite", input.Now)
+		if err != nil {
+			return FilestoreMutationResult{}, err
+		}
+		if enqueued {
+			cleanupJobs = append(cleanupJobs, job)
 		}
 		if err := retireSessionResourceFileTx(
 			ctx, tx, input.WorkspaceID, destination.ID, input.Now,
@@ -222,7 +212,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 			return FilestoreMutationResult{}, err
 		}
 		removedBytes := destination.OwnedBytes()
-		if destination.Kind == SessionResourceFileKindFile && removedBytes > 0 {
+		if removedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
 				ctx, tx, input.WorkspaceID, 0, -removedBytes, 0,
 			); err != nil {

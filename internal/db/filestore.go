@@ -83,36 +83,33 @@ type ProvisionFilestoreFilesystemInput struct {
 // 目录不关联 File；Input Resource 引用 Source File；Owned File 与 Skill Archive
 // 都通过 file_uuid 引用承载各自快照的 File。
 type SessionResourceFile struct {
-	ID                       int64
-	UUID                     string
-	ExternalID               string
-	OrganizationUUID         string
-	WorkspaceUUID            string
-	FilesystemUUID           string
-	Kind                     string
-	Path                     string
-	ParentPath               *string
-	SizeBytes                *int64
-	MediaType                *string
-	DetectedMimeType         *string
-	Metadata                 json.RawMessage
-	AuthorizationMetadata    json.RawMessage
-	Tags                     []string
-	Downloadable             bool
-	MD5                      *string
-	SHA256                   *string
-	S3Bucket                 *string
-	S3Key                    *string
-	S3ETag                   *string
-	S3VersionID              *string
-	ExpiresAt                *time.Time
-	SourceFileUUID           *string
-	CreatedByAPIKeyUUID      *string
-	CreatedBySessionUUID     *string
-	CreatedByCodeSessionUUID *string
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
-	DeletedAt                *time.Time
+	ID                    int64
+	UUID                  string
+	ExternalID            string
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	SessionUUID           string
+	Kind                  string
+	Path                  string
+	ParentPath            *string
+	SizeBytes             *int64
+	MediaType             *string
+	DetectedMimeType      *string
+	Metadata              json.RawMessage
+	AuthorizationMetadata json.RawMessage
+	Tags                  []string
+	Downloadable          bool
+	MD5                   *string
+	SHA256                *string
+	S3Bucket              *string
+	S3Key                 *string
+	S3ETag                *string
+	S3VersionID           *string
+	ExpiresAt             *time.Time
+	SourceFileUUID        *string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	DeletedAt             *time.Time
 }
 
 // FilestoreFileBlob 汇集写入文件节点所需的内容元数据与对象定位信息。

@@ -54,15 +54,16 @@ var (
 		where uuid = :filesystem_uuid and workspace_uuid = :workspace_uuid
 	`
 	filesystemCleanupEntriesQuery = sessionResourceFileSelectSQL() + `
-		where workspace_uuid = :workspace_uuid and filesystem_uuid = :filesystem_uuid
+		where workspace_uuid = :workspace_uuid and session_uuid = :session_uuid
 			and kind = 'file' and deleted_at is null
 		order by id
 		limit :limit
 	`
 	expiredSessionResourceFilesQuery = sessionResourceFileSelectSQL() + `
 		where kind = 'file' and deleted_at is null and expires_at <= now()
-			and filesystem_uuid in (
-				select cast(uuid as text) from filestore_filesystems
+			and (workspace_uuid, session_uuid) in (
+				select cast(workspace_uuid as text), cast(session_uuid as text)
+				from filestore_filesystems
 				where id = any(CAST(:filesystem_ids AS bigint[]))
 			)
 		order by expires_at, id
@@ -72,19 +73,20 @@ var (
 
 const (
 	expiredFilestoreCleanupScopesQuery = `
-		select distinct workspace.id AS workspace_id, filesystem.id AS filesystem_id,
-			CAST(filesystem.uuid AS text) AS filesystem_uuid
+		select distinct workspace.id AS workspace_id,
+			CAST(workspace.uuid AS text) AS workspace_uuid,
+			filesystem.id AS filesystem_id,
+			CAST(oldest_expired.session_uuid AS text) AS session_uuid
 		from (
-			select workspace_id, session_id, expires_at, id
+			select workspace_uuid, session_uuid, expires_at, id
 			from session_resources
 			where resource_type = 'file' and deleted_at is null and expires_at <= now()
 			order by expires_at, id
 			limit :limit
 		) oldest_expired
-		join workspaces workspace on workspace.id = oldest_expired.workspace_id
-		join sessions session on session.id = oldest_expired.session_id
+		join workspaces workspace on workspace.uuid = oldest_expired.workspace_uuid
 		join filestore_filesystems filesystem
-			on filesystem.session_uuid = session.uuid
+			on filesystem.session_uuid = oldest_expired.session_uuid
 			and filesystem.workspace_uuid = workspace.uuid
 			and filesystem.deleted_at is null
 	`
@@ -97,15 +99,16 @@ const (
 	filesystemCleanupFilesRemainQuery = `
 		select exists (
 			select 1 from session_resources
-			where workspace_id = :workspace_id
-				and session_id = :session_id
+			where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+				and session_uuid = CAST(:session_uuid AS uuid)
 				and resource_type = 'file' and deleted_at is null
 		)
 	`
 	retireFilesystemCleanupNamespaceEntriesQuery = `
 		update session_resources
 		set deleted_at = :retired_at, updated_at = :retired_at
-		where workspace_id = :workspace_id and session_id = :session_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+			and session_uuid = CAST(:session_uuid AS uuid)
 			and resource_type in ('directory', 'skill_archive') and deleted_at is null
 	`
 	retireFilesystemCleanupSkillFilesQuery = `
@@ -116,8 +119,10 @@ const (
 			and file.uuid in (
 				select resource.file_uuid
 				from session_resources resource
-				where resource.workspace_id = :workspace_id
-					and resource.session_id = :session_id
+				where resource.workspace_uuid = (
+					select uuid from workspaces where id = :workspace_id
+				)
+					and resource.session_uuid = CAST(:session_uuid AS uuid)
 					and resource.resource_type = 'skill_archive'
 					and resource.file_uuid is not null
 					and resource.deleted_at is null
@@ -155,7 +160,7 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 	}
 	workspaceIDSet := make(map[int64]struct{})
 	filesystemIDSet := make(map[int64]struct{})
-	cleanupScopeByFilesystemUUID := make(map[string]sessionResourceFileCleanupScope)
+	cleanupScopeByNamespace := make(map[sessionResourceFileNamespaceKey]sessionResourceFileCleanupScope)
 	var workspaceIDs []int64
 	var filesystemIDs []int64
 	for _, row := range scopeRows {
@@ -167,7 +172,10 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 			filesystemIDSet[row.FilesystemID] = struct{}{}
 			filesystemIDs = append(filesystemIDs, row.FilesystemID)
 		}
-		cleanupScopeByFilesystemUUID[row.FilesystemUUID] = sessionResourceFileCleanupScope{
+		cleanupScopeByNamespace[sessionResourceFileNamespaceKey{
+			WorkspaceUUID: row.WorkspaceUUID,
+			SessionUUID:   row.SessionUUID,
+		}] = sessionResourceFileCleanupScope{
 			WorkspaceID: row.WorkspaceID, FilesystemID: row.FilesystemID,
 		}
 	}
@@ -222,7 +230,10 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 		if entry.ReferencesSourceFile() {
 			continue
 		}
-		scope, found := cleanupScopeByFilesystemUUID[entry.FilesystemUUID]
+		scope, found := cleanupScopeByNamespace[sessionResourceFileNamespaceKey{
+			WorkspaceUUID: entry.WorkspaceUUID,
+			SessionUUID:   entry.SessionUUID,
+		}]
 		if !found {
 			return nil, nil, ErrNotFound
 		}
@@ -340,6 +351,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	if err != nil {
 		return false, nil, err
 	}
+	arguments["session_uuid"] = filesystem.SessionUUID
 	cleanupScope := sessionResourceFileCleanupScope{
 		WorkspaceID: job.WorkspaceID, FilesystemID: filesystem.ID,
 	}
@@ -356,7 +368,6 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 
 	now := time.Now().UTC()
 	arguments["retired_at"] = now
-	arguments["session_id"] = filesystem.SessionID
 	anomalies := make([]FilestoreCleanupAnomaly, 0)
 	var releasedBytes int64
 	for _, entry := range entries {
@@ -750,10 +761,16 @@ type sessionResourceFileCleanupScope struct {
 	FilesystemID int64
 }
 
+type sessionResourceFileNamespaceKey struct {
+	WorkspaceUUID string
+	SessionUUID   string
+}
+
 type expiredFilestoreCleanupScopeRow struct {
-	WorkspaceID    int64  `db:"workspace_id"`
-	FilesystemID   int64  `db:"filesystem_id"`
-	FilesystemUUID string `db:"filesystem_uuid"`
+	WorkspaceID   int64  `db:"workspace_id"`
+	WorkspaceUUID string `db:"workspace_uuid"`
+	FilesystemID  int64  `db:"filesystem_id"`
+	SessionUUID   string `db:"session_uuid"`
 }
 
 const filestoreCleanupAnomalyMissingObjectLocation = "missing_object_location"
@@ -815,7 +832,7 @@ func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scop
 	var rows []sessionResourceFileRow
 	err := namedSelectContext(ctx, tx, &rows, sessionResourceFileSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
-			and filesystem_uuid = :filesystem_uuid
+			and session_uuid = :session_uuid
 			and kind = 'file'
 			and deleted_at is null
 			and left(path, char_length(:root_path) + 1) = :root_path || '/'
@@ -857,7 +874,7 @@ func retireExpiredFilestoreSubtreeTx(
 	var rows []sessionResourceFileRow
 	err := namedSelectContext(ctx, tx, &rows, sessionResourceFileSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
-			and filesystem_uuid = :filesystem_uuid
+			and session_uuid = :session_uuid
 			and kind = 'file'
 			and deleted_at is null and expires_at <= now()
 			and (
@@ -896,9 +913,9 @@ func retireExpiredFilestoreSubtreeTx(
 
 func filestoreSubtreeArguments(filesystem FilestoreFilesystem, rootPath string) map[string]any {
 	return map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
-		"root_path":       rootPath,
+		"workspace_uuid": filesystem.WorkspaceUUID,
+		"session_uuid":   filesystem.SessionUUID,
+		"root_path":      rootPath,
 	}
 }
 

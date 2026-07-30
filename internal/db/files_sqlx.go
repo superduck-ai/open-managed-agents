@@ -30,7 +30,7 @@ const (
 	sessionCatalogResourceCTE = `catalog_resource as (
 		select distinct on (resource.file_uuid) resource.*
 		from session_resources resource
-		where resource.workspace_id = :workspace_id
+		where resource.workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and resource.session_external_id = :scope_id
 			and resource.resource_type = 'file'
 			and resource.deleted_at is null
@@ -46,15 +46,19 @@ const (
 	visibleFileSQLXPredicate = `
 		and (
 			not exists (
-				select 1 from session_resources owner
-				where owner.workspace_id = files.workspace_id
-					and owner.file_uuid = files.uuid
+			select 1 from session_resources owner
+				where owner.file_uuid = files.uuid
+					and owner.workspace_uuid = (
+						select uuid from workspaces where id = files.workspace_id
+					)
 					and owner.payload is null
 			)
 			or exists (
-				select 1 from session_resources owner
-				where owner.workspace_id = files.workspace_id
-					and owner.file_uuid = files.uuid
+			select 1 from session_resources owner
+				where owner.file_uuid = files.uuid
+					and owner.workspace_uuid = (
+						select uuid from workspaces where id = files.workspace_id
+					)
 					and owner.payload is null
 					and owner.deleted_at is null
 					and (owner.expires_at is null or owner.expires_at > now())
@@ -115,7 +119,9 @@ const (
 		select exists (
 			select 1
 			from session_resources resource
-			where resource.workspace_id = :workspace_id
+			where resource.workspace_uuid = (
+				select uuid from workspaces where id = :workspace_id
+			)
 				and resource.file_uuid = CAST(:file_uuid AS uuid)
 				and resource.deleted_at is null
 		)
@@ -385,7 +391,9 @@ func listFilesSQLXQuery(workspaceID int64, scopeID string) (string, map[string]a
 			from catalog_resource resource
 			join files file
 				on file.uuid = resource.file_uuid
-				and file.workspace_id = resource.workspace_id
+				and resource.workspace_uuid = (
+					select uuid from workspaces where id = file.workspace_id
+				)
 				and file.deleted_at is null
 			order by resource.created_at desc, resource.id desc
 		`, map[string]any{"workspace_id": workspaceID, "scope_id": scopeID}
@@ -494,7 +502,9 @@ func filePageCursorSQLXQuery(
 			from catalog_resource resource
 			join files file
 				on file.uuid = resource.file_uuid
-				and file.workspace_id = resource.workspace_id
+				and resource.workspace_uuid = (
+					select uuid from workspaces where id = file.workspace_id
+				)
 				and file.deleted_at is null
 			where file.external_id = :cursor_external_id
 		`, map[string]any{
@@ -583,7 +593,9 @@ func sessionCatalogFilesPageSQLXQuery(
 		from catalog_resource resource
 		join files file
 			on file.uuid = resource.file_uuid
-			and file.workspace_id = resource.workspace_id
+			and resource.workspace_uuid = (
+				select uuid from workspaces where id = file.workspace_id
+			)
 			and file.deleted_at is null
 		where true
 	`

@@ -24,7 +24,6 @@ func TestRuntimeResourceQueriesUseSQLXNamedParameters(t *testing.T) {
 	createArguments := map[string]any{
 		"resource_uuid":        resource.UUID,
 		"resource_external_id": resource.ExternalID,
-		"organization_id":      resource.OrganizationID,
 		"workspace_id":         resource.WorkspaceID,
 		"session_external_id":  resource.SessionExternalID,
 		"resource_type":        resource.ResourceType,
@@ -64,8 +63,6 @@ func TestRuntimeResourceQueriesUseSQLXNamedParameters(t *testing.T) {
 			want: []any{
 				resource.UUID,
 				resource.ExternalID,
-				resource.OrganizationID,
-				resource.WorkspaceID,
 				resource.SessionExternalID,
 				resource.ResourceType,
 				[]byte(resource.Payload),

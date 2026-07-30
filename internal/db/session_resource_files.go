@@ -60,15 +60,15 @@ func normalizeSessionResourceFilesPageLimit(limit int) int {
 func buildSessionResourceFilesPageQuery(filesystem FilestoreFilesystem, params ListSessionResourceFilesPageParams) (string, map[string]any) {
 	query := sessionResourceFileSelectSQL() + `
 		where workspace_uuid = :workspace_uuid
-			and filesystem_uuid = :filesystem_uuid
+			and session_uuid = :session_uuid
 			and kind <> 'archive'
 			and deleted_at is null
 			and (expires_at is null or expires_at > now())
 	`
 	args := map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
-		"fetch_limit":     params.Limit + 1,
+		"workspace_uuid": filesystem.WorkspaceUUID,
+		"session_uuid":   filesystem.SessionUUID,
+		"fetch_limit":    params.Limit + 1,
 	}
 	if params.Recursive {
 		// 在 Go 中补齐分隔符，确保 /foo 不会误包含 /foobar。

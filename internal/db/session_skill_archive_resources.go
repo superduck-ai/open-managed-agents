@@ -40,8 +40,8 @@ var (
 	sessionSkillArchiveResourceRetireQuery = `
 		update session_resources
 		set deleted_at = :now, updated_at = :now
-		where workspace_id = :workspace_id
-			and session_id = :session_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+			and session_uuid = CAST(:session_uuid AS uuid)
 			and resource_type = 'skill_archive'
 			and deleted_at is null
 	`
@@ -51,10 +51,12 @@ var (
 		where file.workspace_id = :workspace_id
 			and file.deleted_at is null
 			and file.uuid in (
-				select resource.file_uuid
+			select resource.file_uuid
 				from session_resources resource
-				where resource.workspace_id = :workspace_id
-					and resource.session_id = :session_id
+				where resource.workspace_uuid = (
+					select uuid from workspaces where id = :workspace_id
+				)
+					and resource.session_uuid = CAST(:session_uuid AS uuid)
 					and resource.resource_type = 'skill_archive'
 					and resource.file_uuid is not null
 					and resource.deleted_at is null
@@ -72,28 +74,31 @@ var (
 			CAST('{}' AS jsonb), CAST(ARRAY[] AS text[]), false,
 			:sha256, :s3_bucket, :s3_key, session.created_by_api_key_id, :now
 		from sessions session
-		where session.id = :session_id and session.workspace_id = :workspace_id
+		where session.uuid = CAST(:session_uuid AS uuid)
+			and session.workspace_id = :workspace_id
 			and session.deleted_at is null
 	`
 	sessionSkillArchiveResourceInsertQuery = `
 		insert into session_resources (
-			uuid, external_id, organization_id, workspace_id, session_id,
+			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
 			session_external_id, resource_type, payload, secret_payload,
 			path, parent_path, file_uuid, created_at, updated_at
 		)
 		select CAST(:resource_uuid AS uuid),
 			:resource_external_id,
-			session.organization_id, session.workspace_id, session.id,
+			(select uuid from organizations where id = session.organization_id),
+			(select uuid from workspaces where id = session.workspace_id), session.uuid,
 			session.external_id, 'skill_archive', null, null,
 			:entry_path, '/skills', CAST(:file_uuid AS uuid), :now, :now
 		from sessions session
-		where session.id = :session_id and session.workspace_id = :workspace_id
+		where session.uuid = CAST(:session_uuid AS uuid)
+			and session.workspace_id = :workspace_id
 			and session.deleted_at is null
 	`
 	sessionSkillArchiveResourceListQuery = sessionResourceFileSelectSQL() + `
 		where workspace_uuid = (select cast(uuid as text) from workspaces where id = :workspace_id)
-			and filesystem_uuid = (
-				select cast(uuid as text)
+			and session_uuid = (
+				select cast(session_uuid as text)
 				from filestore_filesystems
 				where id = :filesystem_id
 					and workspace_uuid = (
@@ -147,7 +152,7 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 	}
 	retireArguments := map[string]any{
 		"workspace_id": workspaceID,
-		"session_id":   filesystem.SessionID,
+		"session_uuid": filesystem.SessionUUID,
 		"now":          now,
 	}
 	if _, err := namedExecContext(ctx, tx, sessionSkillArchiveFileRetireQuery, retireArguments); err != nil {
@@ -175,7 +180,7 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 			"resource_uuid":        resourceUUID,
 			"resource_external_id": resourceExternalID,
 			"workspace_id":         workspaceID,
-			"session_id":           filesystem.SessionID,
+			"session_uuid":         filesystem.SessionUUID,
 			"entry_path":           entry.Path,
 			"filename":             entry.Filename,
 			"source":               entry.Source,

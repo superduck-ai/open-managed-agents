@@ -14,8 +14,11 @@ const (
 		created_by_api_key_id, environment_id, environment_external_id, agent_id, agent_external_id,
 		agent_version, agent_snapshot, deployment_id, title, metadata, vault_ids, status, usage, stats,
 		outcome_evaluations, created_at, updated_at, archived_at, deleted_at`
-	sessionResourceSQLXColumns = `id, cast(uuid as text) as uuid, external_id, organization_id, workspace_id,
-	session_id, session_external_id, resource_type, payload, secret_payload, path, parent_path,
+	sessionResourceSQLXColumns = `id, cast(uuid as text) as uuid, external_id,
+		(select session.organization_id from sessions session where session.uuid = session_resources.session_uuid) as organization_id,
+		(select session.workspace_id from sessions session where session.uuid = session_resources.session_uuid) as workspace_id,
+		(select session.id from sessions session where session.uuid = session_resources.session_uuid) as session_id,
+		session_external_id, resource_type, payload, secret_payload, path, parent_path,
 		cast(file_uuid as text) as file_uuid, expires_at,
 		created_at, updated_at, deleted_at`
 	getSessionQuery = `
@@ -114,7 +117,7 @@ const (
 	deleteSessionResourcesQuery = `
 		update session_resources
 		set deleted_at = coalesce(deleted_at, now()), updated_at = now()
-		where workspace_id = :workspace_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and session_external_id = :session_external_id
 			and payload is not null
 			and deleted_at is null
@@ -140,7 +143,7 @@ const (
 	listSessionResourcesQuery = `
 		select ` + sessionResourceSQLXColumns + `
 		from session_resources
-		where workspace_id = :workspace_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and session_external_id = :session_external_id
 			and payload is not null
 			and deleted_at is null
@@ -156,12 +159,14 @@ const (
 	`
 	createSessionResourceQuery = `
 		insert into session_resources (
-			uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
+			uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id,
 			resource_type, payload, secret_payload, created_at, updated_at
 		)
 		select
-			:resource_uuid, :resource_external_id, :organization_id, :workspace_id,
-			s.id, :session_external_id, :resource_type,
+			:resource_uuid, :resource_external_id,
+			(select uuid from organizations where id = s.organization_id),
+			(select uuid from workspaces where id = s.workspace_id),
+			s.uuid, :session_external_id, :resource_type,
 			CAST(:payload AS jsonb), CAST(:secret_payload AS jsonb), :created_at, :created_at
 		from sessions s
 		where s.workspace_id = :workspace_id
@@ -204,7 +209,7 @@ const (
 	getSessionResourceQuery = `
 		select ` + sessionResourceSQLXColumns + `
 		from session_resources
-		where workspace_id = :workspace_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
 			and payload is not null
@@ -215,7 +220,7 @@ const (
 		set payload = CAST(:payload AS jsonb),
 			secret_payload = CAST(:secret_payload AS jsonb),
 			updated_at = now()
-		where workspace_id = :workspace_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
 			and payload is not null
@@ -436,7 +441,6 @@ func createSessionResourceSQLX(
 	err := namedGetContext(ctx, database, &row, createSessionResourceQuery, map[string]any{
 		"resource_uuid":        resource.UUID,
 		"resource_external_id": resource.ExternalID,
-		"organization_id":      resource.OrganizationID,
 		"workspace_id":         resource.WorkspaceID,
 		"session_external_id":  resource.SessionExternalID,
 		"resource_type":        resource.ResourceType,

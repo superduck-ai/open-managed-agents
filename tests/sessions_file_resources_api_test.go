@@ -1476,7 +1476,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 		select
 			(select count(*)
 			 from session_resources
-			 where session_id = $1 and deleted_at is null),
+			 where session_uuid = $1 and deleted_at is null),
 			(select count(*)
 			 from jobs
 			 where type = 'filestore_object_cleanup'
@@ -1486,7 +1486,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 			coalesce(filestore_bytes, 0)
 		from workspace_storage_usage
 		where workspace_id = $3
-	`, filesystem.SessionID, filesystem.UUID, sessionRecord.WorkspaceID).Scan(
+	`, filesystem.SessionUUID, filesystem.UUID, sessionRecord.WorkspaceID).Scan(
 		&activeEntries,
 		&filestoreObjectJobs,
 		&filesBytesAfter,

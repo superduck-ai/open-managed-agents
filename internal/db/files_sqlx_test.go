@@ -8,13 +8,13 @@ import (
 )
 
 func TestVisibleFileHistoryPredicateHasMatchingIndex(t *testing.T) {
-	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00036_unify_session_resources_and_files.sql")
+	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00038_use_uuid_session_resource_tenant_references.sql")
 	if err != nil {
 		t.Fatalf("read session resource migration: %v", err)
 	}
 	want := `create index session_resources_owned_file_uuid_v1_idx
-	on session_resources (workspace_id, file_uuid)
-	where file_uuid is not null and payload is null;`
+	on session_resources (workspace_uuid, file_uuid)
+	where file_uuid is not null and payload is null and resource_type = 'file';`
 	if !strings.Contains(strings.ReplaceAll(string(migration), "\r\n", "\n"), want) {
 		t.Fatalf("migration lacks an index for historical Owned File lookups")
 	}

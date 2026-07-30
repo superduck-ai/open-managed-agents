@@ -23,7 +23,7 @@ func TestSessionFileResourceQueriesBindNamedArguments(t *testing.T) {
 			},
 			wantArgCount: 3,
 			wantClauses: []string{
-				"workspace_id = $1",
+				"workspace_uuid = (select uuid from workspaces where id = $1)",
 				"session_external_id = $2",
 				"resource_type = $3",
 				"payload is not null",
@@ -34,14 +34,14 @@ func TestSessionFileResourceQueriesBindNamedArguments(t *testing.T) {
 			query: findSessionFileMountConflictSQL,
 			arguments: map[string]any{
 				"workspace_uuid": "00000000-0000-0000-0000-000000000001",
-				"session_id":     int64(2),
+				"session_uuid":   "00000000-0000-0000-0000-000000000002",
 				"entry_path":     "/uploads/workspace/data.csv",
 			},
 			wantArgCount: 3,
 			wantClauses: []string{
 				"CAST($1 AS text)",
-				"uuid = CAST($2 AS uuid)",
-				"resource.session_id = $3",
+				"resource.workspace_uuid = CAST($2 AS uuid)",
+				"resource.session_uuid = CAST($3 AS uuid)",
 				"resource.path = candidate.path",
 				"left(resource.path, length(candidate.path) + 1)",
 				"left(candidate.path, length(resource.path) + 1)",

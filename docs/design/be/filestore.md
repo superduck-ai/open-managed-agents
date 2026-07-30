@@ -62,20 +62,20 @@ Filestore 只接受 `Authorization: Bearer` 中的专用 Filestore JWT。它使�
 
 Filestore JWT 包含以下注册 claims 与业务 claims：
 
-| Claim | 约束 |
-|---|---|
-| `iss` | 固定为 `open-managed-agents` |
-| `sub` | 非空的主体标识 |
-| `aud` | 必须包含 `filestore` |
-| `iat` / `exp` | 签发时间与到期时间必填；当前有效期固定为 1 小时 |
-| `org_uuid` | 必须匹配文件系统所属组织 |
-| `account_uuid` | 必须匹配同组织内未删除账号 |
-| `workspace_uuid` | 必须匹配未归档工作区 |
-| `workspace_tagged_id` / `resolved_workspace_tagged_id` | 当前未引入 workspace alias，两者均必须匹配 `workspace.external_id` |
-| `filesystem_id` | 绑定唯一 filesystem，请求中改用同工作区的其他 ID 也会被拒绝 |
-| `org_taints` | 规范化后必须与当前组织策略一致 |
-| `workspace_cmek_enabled` | 必须与当前 workspace CMEK 状态一致 |
-| `readonly` | 仅第二类 token 携带，且只允许为 `true`；禁止目录、文件的所有变更操作 |
+| Claim                                                  | 约束                                                                 |
+| ------------------------------------------------------ | -------------------------------------------------------------------- |
+| `iss`                                                  | 固定为 `open-managed-agents`                                         |
+| `sub`                                                  | 非空的主体标识                                                       |
+| `aud`                                                  | 必须包含 `filestore`                                                 |
+| `iat` / `exp`                                          | 签发时间与到期时间必填；当前有效期固定为 1 小时                      |
+| `org_uuid`                                             | 必须匹配文件系统所属组织                                             |
+| `account_uuid`                                         | 必须匹配同组织内未删除账号                                           |
+| `workspace_uuid`                                       | 必须匹配未归档工作区                                                 |
+| `workspace_tagged_id` / `resolved_workspace_tagged_id` | 当前未引入 workspace alias，两者均必须匹配 `workspace.external_id`   |
+| `filesystem_id`                                        | 绑定唯一 filesystem，请求中改用同工作区的其他 ID 也会被拒绝          |
+| `org_taints`                                           | 规范化后必须与当前组织策略一致                                       |
+| `workspace_cmek_enabled`                               | 必须与当前 workspace CMEK 状态一致                                   |
+| `readonly`                                             | 仅第二类 token 携带，且只允许为 `true`；禁止目录、文件的所有变更操作 |
 
 第一类读写 token 不序列化 `readonly`，并拥有其绑定 filesystem 的完整写权限；第二类 token 只能通过专用的 `IssueReadonly` 入口签发，避免出现语义含混的 `readonly:false`。Filestore 不再定义或执行路径前缀级写权限，Sandbox 中 `/uploads`、`/transcripts` 和 `/tool_results` 的只读约束由各自的 rclone 只读挂载与只读 token 保证。验证器除固定算法与 `kid` 外，还强制校验 issuer、audience、签发时间和到期时间；token 有效期内的每次请求仍会回查数据库范围和当前安全策略，因此 Session 生命周期、组织 taints 或 workspace CMEK 状态变化可立即撤销权限。
 
@@ -120,13 +120,13 @@ Cloud Session 的 Environment Runner 在创建 E2B Sandbox 前只读取 Session 
 
 filesystem 的数据库 namespace 在 Session/resource 写事务完成时已经就绪。Runner 不扫描、不清空、不调和 `/uploads` 子树，也不复制 Files 对象；它只读取当前 Session 的可信 filesystem scope、签发挂载 Token 并创建 Sandbox。Sandbox 创建后使用下面的固定 multimount 合同：
 
-| Source | Destination | 权限 | metadata cache |
-| --- | --- | --- | --- |
-| `/outputs` | `/mnt/user-data/outputs` | 读写 | 3600s |
-| `/uploads` | `/mnt/session/uploads` | 只读 | 1s |
-| `/transcripts` | `/mnt/transcripts` | 只读 | 10s |
-| `/tool_results` | `/mnt/user-data/tool_results` | 只读 | 3s |
-| `/skills` | `/root/.claude/skills` | 只读 | 60s |
+| Source          | Destination                   | 权限 | metadata cache |
+| --------------- | ----------------------------- | ---- | -------------- |
+| `/outputs`      | `/mnt/user-data/outputs`      | 读写 | 3600s          |
+| `/uploads`      | `/mnt/session/uploads`        | 只读 | 1s             |
+| `/transcripts`  | `/mnt/transcripts`            | 只读 | 10s            |
+| `/tool_results` | `/mnt/user-data/tool_results` | 只读 | 3s             |
+| `/skills`       | `/root/.claude/skills`        | 只读 | 60s            |
 
 五个挂载统一使用 `vfs_cache_mode=full`、`vfs_cache_max_size=1G`、`uid=999`、`gid=1000`、目录权限 `0755` 和文件权限 `0644`。`/outputs` 使用读写 Token，其余四个 source 共享只读 Token 并设置 `readonly=true`；两类 Token 都绑定当前 public Session 唯一 filesystem 的 external ID，`service_url` 直接取 `code_session.sandbox_api_base_url`。
 
@@ -209,6 +209,7 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 - `session_resources` 只使用 `path`、`parent_path`、`file_uuid` 与 `expires_at` 表达 File、Directory 和 Skill Archive 节点；Skill ZIP 的大小、SHA-256、bucket 与 key 与普通文件一样保存在 `files` 行中。
 - `files` 新增 detected MIME、metadata、authorization metadata、tags、MD5、ETag 与 Version ID，保存所有真实文件元数据和对象事实。
 - 不新增 `attached`、`cataloged`、`namespace_role`、`filesystem_uuid`、`files.source_file_uuid` 或 ownership 列。公开 Resource 由 `payload is not null` 判断，Catalog 角色由固定根路径判断。
+- Resource + File 通用投影直接读取 Resource 的 `organization_uuid/workspace_uuid/session_uuid`，不关联 `filestore_filesystems`。普通读写入口先解析一次活动 filesystem，再用其 `(workspace_uuid, session_uuid)` 查询 namespace；没有预解析上下文的 TTL 全局扫描使用专用查询恢复 cleanup scope。
 - schema 不创建 PostgreSQL 外键；workspace/session/file 的引用完整性和 Skill 快照的来源真实性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
 
 迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00036` 接入统一 Resource，再由 `00037` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
@@ -255,18 +256,18 @@ flowchart LR
 
 目录枚举以 PostgreSQL 中的 `session_resources` 为事实来源，不调用 S3 `ListObjects`。S3 只保存文件字节，目录结构、软删除和 TTL 可见性由 Resource 决定；文件元数据通过 `file_uuid` join 真实 `files` 行。每个资源文件同时保存完整 `path` 和直接父目录 `parent_path`：
 
-| `kind` | `path` | `parent_path` |
-|---|---|---|
-| directory | `/docs` | `/` |
-| file | `/docs/a.txt` | `/docs` |
-| directory | `/docs/archive` | `/docs` |
-| file | `/docs/archive/2025.pdf` | `/docs/archive` |
-| file | `/docs/b.txt` | `/docs` |
+| `kind`    | `path`                   | `parent_path`   |
+| --------- | ------------------------ | --------------- |
+| directory | `/docs`                  | `/`             |
+| file      | `/docs/a.txt`            | `/docs`         |
+| directory | `/docs/archive`          | `/docs`         |
+| file      | `/docs/archive/2025.pdf` | `/docs/archive` |
+| file      | `/docs/b.txt`            | `/docs`         |
 
 根目录 `/` 不写入 `session_resources`，而是由 filesystem 记录合成。除根目录外，开始枚举前会先确认目标路径存在、尚未过期且 `resource_type = 'directory'`。完整请求依次执行以下边界检查：
 
 1. service 根据 JWT Principal 中的 workspace 和 filesystem scope，将请求的 external ID 或 UUID 解析为内部 filesystem ID，并确认其与 token 绑定的 filesystem 一致。
-2. DB 先把内部 ID 解析为已校验的 filesystem，再解析到唯一 Session，以 `(workspace_id, session_id)` 查询 Resource，保证目录读取方法自身不依赖调用方隐式维持租户边界。
+2. DB 先把内部 ID 解析为已校验且未退役的 filesystem，再以该结果中的 `(workspace_uuid, session_uuid)` 查询 Resource。Resource 投影不再重复关联 filesystem，但目录读取方法仍在自身入口完成租户与 filesystem 生命周期校验。
 3. 非根路径查询对应 resource，确认目标是当前可见目录。
 4. 查询这一页目录节点，并将数据库行映射为 Filestore wire payload。
 
@@ -277,8 +278,8 @@ flowchart LR
 ```sql
 select ...
 from session_resources
-where workspace_id = $1
-  and session_id = $2
+where workspace_uuid = $1
+  and session_uuid = $2
   and deleted_at is null
   and (expires_at is null or expires_at > now())
   and parent_path = '/docs'
@@ -301,7 +302,7 @@ limit 3;
 
 这样数据库可以从上一页的排序位置继续扫描，不需要重复读取并丢弃前面所有结果，也不会因为 cursor 之前删除了一条记录而产生 `OFFSET` 位移。只有确有下一页时响应才携带 cursor；最后一页返回空 cursor，rclone 据此停止翻页。
 
-直接子节点查询由部分索引 `(workspace_id, session_id, parent_path, path, id) where deleted_at is null and path is not null` 支持。索引顺序同时覆盖租户范围、目录范围和分页排序，数据库扫描到 `limit + 1` 条后即可停止。
+直接子节点查询由部分索引 `(workspace_uuid, session_uuid, parent_path, path, id) where deleted_at is null and path is not null` 支持。索引顺序同时覆盖租户范围、目录范围和分页排序，数据库扫描到 `limit + 1` 条后即可停止。
 
 ### 递归查询
 

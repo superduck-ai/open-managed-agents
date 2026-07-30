@@ -14,7 +14,7 @@ const (
 	countSessionFileResourcesSQL = `
 		select count(*)
 		from session_resources
-		where workspace_id = :workspace_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and session_external_id = :session_external_id
 			and resource_type = :resource_type
 			and payload is not null
@@ -24,10 +24,8 @@ const (
 		select resource.path
 		from session_resources resource
 		cross join (values (CAST(:entry_path AS text))) as candidate(path)
-		where resource.workspace_id = (
-			select id from workspaces where uuid = CAST(:workspace_uuid AS uuid)
-		)
-			and resource.session_id = :session_id
+		where resource.workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and resource.session_uuid = CAST(:session_uuid AS uuid)
 			and resource.payload is not null
 			and resource.deleted_at is null
 			and (
@@ -176,8 +174,9 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 		set path = :entry_path, parent_path = :parent_path,
 			file_uuid = CAST(:file_uuid AS uuid),
 			updated_at = :updated_at
-		where id = :resource_id and workspace_id = :workspace_id
-			and session_id = :session_id and deleted_at is null
+		where id = :resource_id
+			and workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+			and session_uuid = CAST(:session_uuid AS uuid) and deleted_at is null
 		returning `+sessionResourceSQLXColumns+`
 	`, map[string]any{
 		"entry_path":   mount.Path,
@@ -186,7 +185,7 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 		"updated_at":   filestoreNow(resource.CreatedAt),
 		"resource_id":  resource.ID,
 		"workspace_id": session.WorkspaceID,
-		"session_id":   session.ID,
+		"session_uuid": session.UUID,
 	})
 	if isUniqueViolation(err) {
 		return SessionResource{}, ErrFilestorePathExists
@@ -209,7 +208,7 @@ func rejectSessionFileMountConflictTx(
 	var conflictingPath string
 	err := namedGetContext(ctx, tx, &conflictingPath, findSessionFileMountConflictSQL, map[string]any{
 		"workspace_uuid": filesystem.WorkspaceUUID,
-		"session_id":     filesystem.SessionID,
+		"session_uuid":   filesystem.SessionUUID,
 		"entry_path":     path,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -235,7 +234,7 @@ func getSessionResourceForMutationSQLX(
 	err := namedGetContext(ctx, tx, &row, `
 		select `+sessionResourceSQLXColumns+`
 		from session_resources
-		where workspace_id = :workspace_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
 			and payload is not null
@@ -278,7 +277,7 @@ func softDeleteSessionResourceSQLX(
 	result, err := namedExecContext(ctx, tx, `
 		update session_resources
 		set deleted_at = now(), updated_at = now()
-		where workspace_id = :workspace_id
+		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
 			and deleted_at is null

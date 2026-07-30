@@ -88,8 +88,8 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 
 		if _, err := app.db.Pool.Exec(context.Background(), `
 			delete from session_resources
-			where session_id = $1 and path = '/transcripts'
-		`, filesystem.SessionID); err != nil {
+			where session_uuid = $1 and path = '/transcripts'
+		`, filesystem.SessionUUID); err != nil {
 			t.Fatalf("delete fixed root for repair test: %v", err)
 		}
 		repaired, created, err := app.db.ProvisionFilestoreFilesystem(context.Background(), input)
@@ -291,11 +291,11 @@ func filestoreRootKinds(t *testing.T, app *testApp, filesystem db.FilestoreFiles
 	rows, err := app.db.Pool.Query(context.Background(), `
 		select path, case resource_type when 'skill_archive' then 'archive' else resource_type end
 		from session_resources
-		where session_id = $1
+		where session_uuid = $1
 			and parent_path = '/'
 			and deleted_at is null
 		order by path
-	`, filesystem.SessionID)
+	`, filesystem.SessionUUID)
 	if err != nil {
 		t.Fatalf("list fixed Filestore roots: %v", err)
 	}

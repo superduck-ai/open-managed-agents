@@ -26,15 +26,16 @@ func sessionResourceFileSelectSQL() string {
 }
 
 // sessionResourceFileSourceSQL 将统一后的 Resource + File 模型映射为 Filestore
-// 服务当前使用的资源文件 DTO。它不是数据库兼容视图，也不会形成第二套读模型。
+// 服务当前使用的资源文件 DTO。filesystem 身份与生命周期由调用入口
+// 或专用 cleanup 查询解析；该投影只负责 Resource + File，不形成第二套读模型。
 func sessionResourceFileSourceSQL() string {
 	return `
 		select resource.id,
 			cast(resource.uuid as text) as uuid,
 			resource.external_id,
-			cast(organization.uuid as text) as organization_uuid,
-			cast(workspace.uuid as text) as workspace_uuid,
-			cast(filesystem.uuid as text) as filesystem_uuid,
+			cast(resource.organization_uuid as text) as organization_uuid,
+			cast(resource.workspace_uuid as text) as workspace_uuid,
+			cast(resource.session_uuid as text) as session_uuid,
 			case resource.resource_type
 				when 'skill_archive' then 'archive'
 				else resource.resource_type
@@ -59,26 +60,12 @@ func sessionResourceFileSourceSQL() string {
 				then cast(resource.file_uuid as text)
 				else null
 			end as source_file_uuid,
-			cast(api_key.uuid as text) as created_by_api_key_uuid,
-			cast(session.uuid as text) as created_by_session_uuid,
-			cast(filesystem.code_session_uuid as text) as created_by_code_session_uuid,
 			resource.created_at,
 			resource.updated_at,
 			resource.deleted_at
 		from session_resources resource
-		join sessions session
-			on session.id = resource.session_id
-			and session.workspace_id = resource.workspace_id
-		join workspaces workspace on workspace.id = resource.workspace_id
-		join organizations organization on organization.id = resource.organization_id
-		join filestore_filesystems filesystem
-			on filesystem.session_uuid = session.uuid
-			and filesystem.workspace_uuid = workspace.uuid
-			and filesystem.deleted_at is null
 		left join files file
 			on file.uuid = resource.file_uuid
-			and file.workspace_id = resource.workspace_id
-		left join api_keys api_key on api_key.id = file.created_by_api_key_id
 		where resource.path is not null
 	`
 }
@@ -87,15 +74,12 @@ func sessionResourceFileColumns() string {
 	return `id, cast(uuid as text) as uuid, external_id,
 		cast(organization_uuid as text) as organization_uuid,
 		cast(workspace_uuid as text) as workspace_uuid,
-		cast(filesystem_uuid as text) as filesystem_uuid, kind, path, parent_path,
+		cast(session_uuid as text) as session_uuid, kind, path, parent_path,
 		size_bytes, media_type, detected_mime_type, metadata, authorization_metadata,
 		tags_json,
 		downloadable, md5, sha256, s3_bucket, s3_key, s3_etag, s3_version_id,
 		expires_at,
 		cast(source_file_uuid as text) as source_file_uuid,
-		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
-		cast(created_by_session_uuid as text) as created_by_session_uuid,
-		cast(created_by_code_session_uuid as text) as created_by_code_session_uuid,
 		created_at, updated_at, deleted_at`
 }
 
@@ -106,7 +90,7 @@ func virtualFilestoreRoot(filesystem FilestoreFilesystem) SessionResourceFile {
 		ExternalID:            filesystem.ExternalID,
 		OrganizationUUID:      filesystem.OrganizationUUID,
 		WorkspaceUUID:         filesystem.WorkspaceUUID,
-		FilesystemUUID:        filesystem.UUID,
+		SessionUUID:           filesystem.SessionUUID,
 		Kind:                  SessionResourceFileKindDirectory,
 		Path:                  "/",
 		Metadata:              json.RawMessage(`{}`),

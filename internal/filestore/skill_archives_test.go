@@ -681,7 +681,7 @@ func skillArchiveTestEntry(data []byte) db.SessionResourceFile {
 		ExternalID:       "sesrsc_test",
 		OrganizationUUID: serviceTestPrincipal().OrganizationUUID,
 		WorkspaceUUID:    serviceTestPrincipal().WorkspaceUUID,
-		FilesystemUUID:   serviceTestFilesystem().UUID,
+		SessionUUID:      serviceTestFilesystem().SessionUUID,
 		Kind:             db.SessionResourceFileKindArchive,
 		Path:             "/skills/demo",
 		ParentPath:       serviceTestPointer("/skills"),

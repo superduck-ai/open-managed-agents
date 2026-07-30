@@ -146,7 +146,7 @@ func TestNormalizeSessionResourceFilesPageLimit(t *testing.T) {
 }
 
 func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
-	filesystem := FilestoreFilesystem{WorkspaceUUID: "workspace-uuid", UUID: "filesystem-uuid"}
+	filesystem := FilestoreFilesystem{WorkspaceUUID: "workspace-uuid", SessionUUID: "session-uuid"}
 
 	t.Run("lists direct children without cursor", func(t *testing.T) {
 		query, args := buildSessionResourceFilesPageQuery(filesystem, ListSessionResourceFilesPageParams{
@@ -159,10 +159,10 @@ func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
 			t.Fatalf("direct-child query = %q", query)
 		}
 		wantArgs := map[string]any{
-			"workspace_uuid":  "workspace-uuid",
-			"filesystem_uuid": "filesystem-uuid",
-			"directory_path":  "/reports",
-			"fetch_limit":     26,
+			"workspace_uuid": "workspace-uuid",
+			"session_uuid":   "session-uuid",
+			"directory_path": "/reports",
+			"fetch_limit":    26,
 		}
 		if !reflect.DeepEqual(args, wantArgs) {
 			t.Fatalf("direct-child args = %#v, want %#v", args, wantArgs)
@@ -183,7 +183,7 @@ func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
 		}
 		wantArgs := map[string]any{
 			"workspace_uuid":   "workspace-uuid",
-			"filesystem_uuid":  "filesystem-uuid",
+			"session_uuid":     "session-uuid",
 			"directory_prefix": "/reports/",
 			"cursor_path":      "/reports/a",
 			"cursor_id":        int64(10),
@@ -216,7 +216,7 @@ func TestSessionResourceFileSQLXRowEntry(t *testing.T) {
 			ExternalID:            "file_7",
 			OrganizationUUID:      "organization-uuid",
 			WorkspaceUUID:         "workspace-uuid",
-			FilesystemUUID:        "filesystem-uuid",
+			SessionUUID:           "session-uuid",
 			Kind:                  SessionResourceFileKindFile,
 			Path:                  "/reports/july.txt",
 			Metadata:              []byte(`{"source":"test"}`),
@@ -285,7 +285,7 @@ func TestVirtualFilestoreRoot(t *testing.T) {
 		t.Fatalf("virtual root = %#v", root)
 	}
 	if root.OrganizationUUID != filesystem.OrganizationUUID ||
-		root.WorkspaceUUID != filesystem.WorkspaceUUID || root.FilesystemUUID != filesystem.UUID ||
+		root.WorkspaceUUID != filesystem.WorkspaceUUID || root.SessionUUID != filesystem.SessionUUID ||
 		root.ExternalID != filesystem.ExternalID {
 		t.Fatalf("virtual root scope = %#v, want filesystem %#v", root, filesystem)
 	}

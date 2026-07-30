@@ -3,13 +3,16 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 	"github.com/pressly/goose/v3"
 )
 
@@ -255,8 +258,84 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 37); err != nil {
 		t.Fatalf("migrate fixture database to 37: %v", err)
 	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set organization_id = 0
+		where path = '/skills/migration-skill'
+	`); err != nil {
+		t.Fatalf("break Session Resource tenant reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 38); err == nil {
+		t.Fatal("migration accepted an invalid Session Resource tenant chain")
+	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources resource
+		set organization_id = session.organization_id
+		from sessions session
+		where session.id = resource.session_id
+			and resource.path = '/skills/migration-skill'
+	`); err != nil {
+		t.Fatalf("restore Session Resource tenant reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 38); err != nil {
+		t.Fatalf("migrate Session Resource tenant references to UUID: %v", err)
+	}
 
 	assertUnifiedMigrationState(t, ctx, standardDB)
+	assertSessionResourceRuntimeWriteAfterUUIDMigration(t, ctx, standardDB)
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatalf("roll back Session Resource tenant UUID migration: %v", err)
+	}
+	var restoredWorkspaceID, restoredSessionID int64
+	if err := standardDB.QueryRowContext(ctx, `
+		select workspace_id, session_id
+		from session_resources
+		where external_id = 'sesrsc_runtime_after_uuid_migration'
+	`).Scan(&restoredWorkspaceID, &restoredSessionID); err != nil {
+		t.Fatalf("load restored Session Resource internal IDs: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("reapply Session Resource tenant UUID migration: %v", err)
+	}
+}
+
+func assertSessionResourceRuntimeWriteAfterUUIDMigration(
+	t *testing.T,
+	ctx context.Context,
+	database *sql.DB,
+) {
+	t.Helper()
+	var organizationID, workspaceID int64
+	if err := database.QueryRowContext(ctx, `
+		select organization_id, workspace_id
+		from sessions
+		where external_id = 'sesn_migration_184'
+	`).Scan(&organizationID, &workspaceID); err != nil {
+		t.Fatalf("load migrated Session tenant IDs: %v", err)
+	}
+	createdAt := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	created, err := createSessionResourceSQLX(ctx, sqlx.NewDb(database, "pgx"), SessionResource{
+		UUID:              "50000000-0000-0000-0000-000000000099",
+		ExternalID:        "sesrsc_runtime_after_uuid_migration",
+		OrganizationID:    organizationID,
+		WorkspaceID:       workspaceID,
+		SessionExternalID: "sesn_migration_184",
+		ResourceType:      "github_repository",
+		Payload:           json.RawMessage(`{"repository":"example/repository"}`),
+		CreatedAt:         createdAt,
+	})
+	if err != nil {
+		t.Fatalf("create Session Resource after UUID migration: %v", err)
+	}
+	if created.OrganizationID != organizationID || created.WorkspaceID != workspaceID {
+		t.Fatalf(
+			"created Session Resource tenant IDs = (%d, %d), want (%d, %d)",
+			created.OrganizationID,
+			created.WorkspaceID,
+			organizationID,
+			workspaceID,
+		)
+	}
 }
 
 func newMigrationTestProvider(t *testing.T, standardDB *sql.DB) *goose.Provider {
@@ -331,6 +410,38 @@ func assertUnifiedMigrationState(t *testing.T, ctx context.Context, database *sq
 		t.Fatal("skill_version_uuid still exists after migration")
 	}
 
+	var tenantUUIDs string
+	if err := database.QueryRowContext(ctx, `
+		select concat(
+			cast(organization_uuid as text), '/',
+			cast(workspace_uuid as text), '/',
+			cast(session_uuid as text)
+		)
+		from session_resources
+		where path = '/skills/migration-skill'
+	`).Scan(&tenantUUIDs); err != nil {
+		t.Fatalf("load migrated Session Resource tenant UUIDs: %v", err)
+	}
+	if tenantUUIDs != "10000000-0000-0000-0000-000000000001/20000000-0000-0000-0000-000000000001/40000000-0000-0000-0000-000000000001" {
+		t.Fatalf("migrated Session Resource tenant UUIDs = %q", tenantUUIDs)
+	}
+	for _, removedColumn := range []string{"organization_id", "workspace_id", "session_id"} {
+		var exists bool
+		if err := database.QueryRowContext(ctx, `
+			select exists (
+				select 1 from information_schema.columns
+				where table_schema = current_schema()
+					and table_name = 'session_resources'
+					and column_name = $1
+			)
+		`, removedColumn).Scan(&exists); err != nil {
+			t.Fatalf("check removed Session Resource column %s: %v", removedColumn, err)
+		}
+		if exists {
+			t.Fatalf("session_resources.%s still exists after migration", removedColumn)
+		}
+	}
+
 	var skillResourceUUID, skillFileUUID, skillSource, skillFilename, skillKey, skillChecksum string
 	var skillSize int64
 	if err := database.QueryRowContext(ctx, `
@@ -340,7 +451,9 @@ func assertUnifiedMigrationState(t *testing.T, ctx context.Context, database *sq
 		from session_resources resource
 		join files file
 			on file.uuid = resource.file_uuid
-			and file.workspace_id = resource.workspace_id
+		join workspaces workspace
+			on workspace.id = file.workspace_id
+			and workspace.uuid = resource.workspace_uuid
 		where resource.path = '/skills/migration-skill'
 	`).Scan(
 		&skillResourceUUID,

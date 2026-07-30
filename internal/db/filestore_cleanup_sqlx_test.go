@@ -28,7 +28,7 @@ func TestFilesystemCleanupProcessingQueriesUseSQLXNamedParameters(t *testing.T) 
 		"workspace_uuid":  "00000000-0000-0000-0000-000000000042",
 		"filesystem_uuid": "00000000-0000-0000-0000-000000000043",
 		"filesystem_ids":  []int64{43, 44},
-		"session_id":      int64(45),
+		"session_uuid":    "00000000-0000-0000-0000-000000000045",
 		"retired_at":      retiredAt,
 		"status":          "completed",
 	}

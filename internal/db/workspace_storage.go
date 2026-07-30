@@ -72,9 +72,11 @@ func reconcileWorkspaceStorageUsageSQLXTx(
 				where file.workspace_id = :workspace_id
 					and file.deleted_at is null
 					and not exists (
-						select 1
-						from session_resources resource
-						where resource.workspace_id = :workspace_id
+					select 1
+					from session_resources resource
+					where resource.workspace_uuid = (
+						select uuid from workspaces where id = :workspace_id
+					)
 							and resource.file_uuid = file.uuid
 							and resource.payload is null
 							and resource.deleted_at is null
@@ -85,7 +87,9 @@ func reconcileWorkspaceStorageUsageSQLXTx(
 				from files file
 				join session_resources resource
 					on resource.file_uuid = file.uuid
-					and resource.workspace_id = file.workspace_id
+					and resource.workspace_uuid = (
+						select uuid from workspaces where id = file.workspace_id
+					)
 					and resource.resource_type = 'file'
 					and resource.payload is null
 					and resource.deleted_at is null

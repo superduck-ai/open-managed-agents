@@ -16,7 +16,7 @@ func TestSessionSkillArchiveResourceQueriesUseSQLXNamedParameters(t *testing.T) 
 		"organization_uuid":            "00000000-0000-4000-8000-000000000041",
 		"workspace_uuid":               "00000000-0000-4000-8000-000000000042",
 		"filesystem_id":                int64(43),
-		"session_id":                   int64(44),
+		"session_uuid":                 "00000000-0000-4000-8000-000000000044",
 		"filesystem_uuid":              "00000000-0000-4000-8000-000000000043",
 		"source":                       "custom",
 		"skill_version_uuid":           "00000000-0000-4000-8000-000000000044",

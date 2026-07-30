@@ -145,8 +145,8 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		var activeFiles int
 		if err := fixture.app.db.Pool.QueryRow(context.Background(), `
 			select count(*) from session_resources
-			where workspace_id = $1 and resource_type = 'file' and deleted_at is null
-		`, fixture.workspaceID).Scan(&activeFiles); err != nil {
+			where workspace_uuid = $1 and resource_type = 'file' and deleted_at is null
+		`, fixture.filesystem.WorkspaceUUID).Scan(&activeFiles); err != nil {
 			t.Fatalf("count active files after malformed cleanup: %v", err)
 		}
 		if activeFiles != 0 {

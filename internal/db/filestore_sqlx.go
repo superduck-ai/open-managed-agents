@@ -42,36 +42,33 @@ type filestoreTokenScopeRow struct {
 }
 
 type sessionResourceFileRow struct {
-	ID                       int64      `db:"id"`
-	UUID                     string     `db:"uuid"`
-	ExternalID               string     `db:"external_id"`
-	OrganizationUUID         string     `db:"organization_uuid"`
-	WorkspaceUUID            string     `db:"workspace_uuid"`
-	FilesystemUUID           string     `db:"filesystem_uuid"`
-	Kind                     string     `db:"kind"`
-	Path                     string     `db:"path"`
-	ParentPath               *string    `db:"parent_path"`
-	SizeBytes                *int64     `db:"size_bytes"`
-	MediaType                *string    `db:"media_type"`
-	DetectedMimeType         *string    `db:"detected_mime_type"`
-	Metadata                 []byte     `db:"metadata"`
-	AuthorizationMetadata    []byte     `db:"authorization_metadata"`
-	TagsJSON                 string     `db:"tags_json"`
-	Downloadable             bool       `db:"downloadable"`
-	MD5                      *string    `db:"md5"`
-	SHA256                   *string    `db:"sha256"`
-	S3Bucket                 *string    `db:"s3_bucket"`
-	S3Key                    *string    `db:"s3_key"`
-	S3ETag                   *string    `db:"s3_etag"`
-	S3VersionID              *string    `db:"s3_version_id"`
-	ExpiresAt                *time.Time `db:"expires_at"`
-	SourceFileUUID           *string    `db:"source_file_uuid"`
-	CreatedByAPIKeyUUID      *string    `db:"created_by_api_key_uuid"`
-	CreatedBySessionUUID     *string    `db:"created_by_session_uuid"`
-	CreatedByCodeSessionUUID *string    `db:"created_by_code_session_uuid"`
-	CreatedAt                time.Time  `db:"created_at"`
-	UpdatedAt                time.Time  `db:"updated_at"`
-	DeletedAt                *time.Time `db:"deleted_at"`
+	ID                    int64      `db:"id"`
+	UUID                  string     `db:"uuid"`
+	ExternalID            string     `db:"external_id"`
+	OrganizationUUID      string     `db:"organization_uuid"`
+	WorkspaceUUID         string     `db:"workspace_uuid"`
+	SessionUUID           string     `db:"session_uuid"`
+	Kind                  string     `db:"kind"`
+	Path                  string     `db:"path"`
+	ParentPath            *string    `db:"parent_path"`
+	SizeBytes             *int64     `db:"size_bytes"`
+	MediaType             *string    `db:"media_type"`
+	DetectedMimeType      *string    `db:"detected_mime_type"`
+	Metadata              []byte     `db:"metadata"`
+	AuthorizationMetadata []byte     `db:"authorization_metadata"`
+	TagsJSON              string     `db:"tags_json"`
+	Downloadable          bool       `db:"downloadable"`
+	MD5                   *string    `db:"md5"`
+	SHA256                *string    `db:"sha256"`
+	S3Bucket              *string    `db:"s3_bucket"`
+	S3Key                 *string    `db:"s3_key"`
+	S3ETag                *string    `db:"s3_etag"`
+	S3VersionID           *string    `db:"s3_version_id"`
+	ExpiresAt             *time.Time `db:"expires_at"`
+	SourceFileUUID        *string    `db:"source_file_uuid"`
+	CreatedAt             time.Time  `db:"created_at"`
+	UpdatedAt             time.Time  `db:"updated_at"`
+	DeletedAt             *time.Time `db:"deleted_at"`
 }
 
 func getFilestoreFilesystemByIDSQLX(ctx context.Context, database sqlxNamedQueryer, workspaceID, filesystemID int64) (FilestoreFilesystem, error) {
@@ -111,14 +108,14 @@ func getFilestoreTokenScopeSQLX(ctx context.Context, database sqlxNamedQueryer, 
 func getActiveSessionResourceFileSQLX(ctx context.Context, database sqlxNamedQueryer, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, error) {
 	return getSessionResourceFileSQLX(ctx, database, sessionResourceFileSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
-			and filesystem_uuid = :filesystem_uuid
+			and session_uuid = :session_uuid
 			and path = :entry_path
 			and deleted_at is null
 			and (expires_at is null or expires_at > now())
 	`, map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
-		"entry_path":      entryPath,
+		"workspace_uuid": filesystem.WorkspaceUUID,
+		"session_uuid":   filesystem.SessionUUID,
+		"entry_path":     entryPath,
 	})
 }
 
@@ -251,7 +248,7 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 		ExternalID:            row.ExternalID,
 		OrganizationUUID:      row.OrganizationUUID,
 		WorkspaceUUID:         row.WorkspaceUUID,
-		FilesystemUUID:        row.FilesystemUUID,
+		SessionUUID:           row.SessionUUID,
 		Kind:                  row.Kind,
 		Path:                  row.Path,
 		ParentPath:            row.ParentPath,
@@ -270,13 +267,10 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 		S3VersionID:           row.S3VersionID,
 		ExpiresAt:             row.ExpiresAt,
 		// SourceFileUUID 只标识公开 Input Resource 引用的 Source File。
-		SourceFileUUID:           row.SourceFileUUID,
-		CreatedByAPIKeyUUID:      row.CreatedByAPIKeyUUID,
-		CreatedBySessionUUID:     row.CreatedBySessionUUID,
-		CreatedByCodeSessionUUID: row.CreatedByCodeSessionUUID,
-		CreatedAt:                row.CreatedAt,
-		UpdatedAt:                row.UpdatedAt,
-		DeletedAt:                row.DeletedAt,
+		SourceFileUUID: row.SourceFileUUID,
+		CreatedAt:      row.CreatedAt,
+		UpdatedAt:      row.UpdatedAt,
+		DeletedAt:      row.DeletedAt,
 	}, nil
 }
 

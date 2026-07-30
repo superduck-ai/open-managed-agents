@@ -16,7 +16,7 @@ func TestSessionNamespaceInsertErrorMapsMissingSession(t *testing.T) {
 func TestMoveFilestoreFileResultQueryCarriesNamespaceScope(t *testing.T) {
 	for _, predicate := range []string{
 		"workspace_uuid = :workspace_uuid",
-		"filesystem_uuid = :filesystem_uuid",
+		"session_uuid = :session_uuid",
 		"id = :entry_id",
 	} {
 		if !strings.Contains(moveFilestoreFileResultQuery, predicate) {
@@ -31,9 +31,28 @@ func TestFilestoreFilesystemRowRejectsMissingSession(t *testing.T) {
 	}
 }
 
-func TestSessionResourceFileSourceSQLFiltersDeletedFilesystems(t *testing.T) {
-	const predicate = "filesystem.deleted_at is null"
-	if !strings.Contains(sessionResourceFileSourceSQL(), predicate) {
-		t.Fatalf("namespace source query lacks %q", predicate)
+func TestSessionResourceFileSourceSQLReadsStableScopeWithoutOwnershipJoins(t *testing.T) {
+	query := sessionResourceFileSourceSQL()
+	for _, required := range []string{
+		"resource.organization_uuid",
+		"resource.workspace_uuid",
+		"resource.session_uuid",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("namespace source query lacks %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"join organizations",
+		"join workspaces",
+		"join sessions",
+		"join filestore_filesystems",
+		"resource.organization_id",
+		"resource.workspace_id",
+		"resource.session_id",
+	} {
+		if strings.Contains(query, forbidden) {
+			t.Fatalf("namespace source query retains %q", forbidden)
+		}
 	}
 }

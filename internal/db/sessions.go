@@ -381,7 +381,9 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	if params.MemoryStoreID != "" {
 		query += ` and exists (
 			select 1 from session_resources sr
-			where sr.workspace_id = s.workspace_id
+			where sr.workspace_uuid = (
+				select uuid from workspaces where id = s.workspace_id
+			)
 				and sr.session_external_id = s.external_id
 				and sr.deleted_at is null
 				and sr.resource_type = 'memory_store'

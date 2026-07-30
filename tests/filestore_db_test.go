@@ -243,11 +243,11 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	rows, err := app.db.Pool.Query(context.Background(), `
 		select path, resource_type, parent_path
 		from session_resources
-		where workspace_id = $1
-			and session_id = $2
+		where workspace_uuid = $1
+			and session_uuid = $2
 			and deleted_at is null
 		order by path
-	`, workspaceID, filesystem.SessionID)
+	`, workspaceUUID, filesystem.SessionUUID)
 	if err != nil {
 		t.Fatalf("list Session Filestore roots: %v", err)
 	}
@@ -746,27 +746,25 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select cast(file_uuid as text)
 		from session_resources
-		where workspace_id = $1 and session_id = $2
+		where workspace_uuid = $1 and session_uuid = $2
 			and path = '/skills/cleanup-skill' and deleted_at is null
-	`, workspaceID, filesystem.SessionID).Scan(&cleanupSkillFileUUID); err != nil {
+	`, workspaceUUID, filesystem.SessionUUID).Scan(&cleanupSkillFileUUID); err != nil {
 		t.Fatalf("load cleanup Skill File snapshot: %v", err)
 	}
 	var entryOrganizationUUID, entryWorkspaceUUID, entryFilesystemUUID string
 	var entryAPIKeyUUID, entrySessionUUID string
 	var entryCodeSessionUUID *string
 	if err := app.db.Pool.QueryRow(context.Background(), `
-		select organization.uuid::text, workspace.uuid::text, filesystem.uuid::text,
-			api_key.uuid::text, session.uuid::text, filesystem.code_session_uuid::text
+		select resource.organization_uuid::text, resource.workspace_uuid::text, filesystem.uuid::text,
+			api_key.uuid::text, resource.session_uuid::text, filesystem.code_session_uuid::text
 		from session_resources resource
-		join sessions session on session.id = resource.session_id
-		join organizations organization on organization.id = resource.organization_id
-		join workspaces workspace on workspace.id = resource.workspace_id
-		join filestore_filesystems filesystem on filesystem.session_uuid = session.uuid
+		join filestore_filesystems filesystem on filesystem.session_uuid = resource.session_uuid
+			and filesystem.workspace_uuid = resource.workspace_uuid
 		join files file on file.uuid = resource.file_uuid
 		join api_keys api_key on api_key.id = file.created_by_api_key_id
-		where resource.workspace_id = $1 and resource.session_id = $2
+		where resource.workspace_uuid = $1 and resource.session_uuid = $2
 			and resource.path = '/results/output.txt'
-	`, workspaceID, filesystem.SessionID).Scan(
+	`, workspaceUUID, filesystem.SessionUUID).Scan(
 		&entryOrganizationUUID, &entryWorkspaceUUID, &entryFilesystemUUID,
 		&entryAPIKeyUUID, &entrySessionUUID, &entryCodeSessionUUID,
 	); err != nil {
@@ -834,9 +832,9 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	var activeEntries, activeSkillArchiveEntries, cleanupObjects int
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select
-			(select count(*) from session_resources where session_id = $1 and deleted_at is null),
+			(select count(*) from session_resources where session_uuid = $1 and deleted_at is null),
 			(select count(*) from session_resources
-				where session_id = $1
+				where session_uuid = $1
 					and resource_type = 'skill_archive'
 					and deleted_at is null),
 			(select count(*) from jobs where type = 'filestore_object_cleanup'
@@ -844,7 +842,7 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 				and payload->>'workspace_uuid' = $3
 				and not (payload ? 'filesystem_id')
 				and payload->>'reason' = 'session_deleted')
-	`, filesystem.SessionID, filesystem.UUID, workspaceUUID).Scan(&activeEntries, &activeSkillArchiveEntries, &cleanupObjects); err != nil {
+	`, filesystem.SessionUUID, filesystem.UUID, workspaceUUID).Scan(&activeEntries, &activeSkillArchiveEntries, &cleanupObjects); err != nil {
 		t.Fatalf("load processed cleanup state: %v", err)
 	}
 	if activeEntries != 0 || activeSkillArchiveEntries != 0 || cleanupObjects != 1 {
@@ -978,7 +976,6 @@ func TestFilestoreSkillArchivesUseResources(t *testing.T) {
 		from session_resources resource
 		join files file
 			on file.uuid = resource.file_uuid
-			and file.workspace_id = resource.workspace_id
 		where resource.id = $1
 			and file.filename = 'demo.zip'
 			and file.deleted_at is null
@@ -1233,7 +1230,7 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 			argument  any
 		}{
 			{statement: `delete from jobs where workspace_id = $1`, argument: workspaceID},
-			{statement: `delete from session_resources where workspace_id = $1`, argument: workspaceID},
+			{statement: `delete from session_resources where workspace_uuid = $1`, argument: workspaceUUID},
 			{statement: `delete from filestore_filesystems where workspace_uuid = $1`, argument: workspaceUUID},
 			{statement: `delete from files where workspace_id = $1`, argument: workspaceID},
 			{statement: `delete from workspace_storage_usage where workspace_id = $1`, argument: workspaceID},

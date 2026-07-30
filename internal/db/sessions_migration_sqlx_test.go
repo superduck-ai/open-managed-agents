@@ -119,6 +119,16 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			wantArgCount: 2,
 		},
 		{
+			name:  "delete session event queue",
+			query: deleteSessionEventQueueQuery,
+			arguments: map[string]any{
+				"organization_id": int64(1),
+				"workspace_id":    int64(2),
+				"session_uuid":    "11111111-1111-4111-8111-111111111111",
+			},
+			wantArgCount: 3,
+		},
+		{
 			name:  "stop environment work",
 			query: stopDeletedSessionEnvironmentWorkQuery,
 			arguments: map[string]any{

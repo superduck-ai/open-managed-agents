@@ -43,30 +43,6 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 	return &Service{db: database, credentials: credentials, logger: logger}
 }
 
-func (s *Service) queueInitialPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage, now time.Time) error {
-	if len(payloads) == 0 {
-		return nil
-	}
-	workerPayloads := make([]json.RawMessage, 0, len(payloads))
-	for _, raw := range payloads {
-		object, err := decodeJSONObject(raw)
-		if err != nil {
-			s.logger.WarnContext(ctx, "skip initial code session event", "code_session_id", codeSession.ExternalID, "error", err)
-			continue
-		}
-		if !forwardPublicEventToWorker(stringField(object, "type")) {
-			continue
-		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, raw, now)
-		if err != nil {
-			s.logger.ErrorContext(ctx, "convert initial code session event", "code_session_id", codeSession.ExternalID, "error", err)
-			continue
-		}
-		workerPayloads = append(workerPayloads, payload)
-	}
-	return s.QueueRawPublicSessionEvents(ctx, codeSession, workerPayloads)
-}
-
 func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
 	if s == nil || len(events) == 0 {
 		return nil
@@ -77,6 +53,9 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 			return nil
 		}
 		return err
+	}
+	if codeSession.Status != "active" {
+		return nil
 	}
 	payloads := make([]json.RawMessage, 0, len(events))
 	for _, event := range events {
@@ -324,15 +303,23 @@ func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSessio
 }
 
 func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string, payload json.RawMessage, source string) (db.CodeSessionEvent, bool, error) {
-	meta, err := BuildEventMetadata(codeSessionID, "inbound", payload)
+	input, err := newInboundEventInput(codeSessionID, payload, source)
 	if err != nil {
 		return db.CodeSessionEvent{}, false, err
+	}
+	return s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, input)
+}
+
+func newInboundEventInput(codeSessionID string, payload json.RawMessage, source string) (db.AppendCodeSessionEventInput, error) {
+	meta, err := BuildEventMetadata(codeSessionID, "inbound", payload)
+	if err != nil {
+		return db.AppendCodeSessionEventInput{}, err
 	}
 	eventID, err := ids.New("csev_")
 	if err != nil {
-		return db.CodeSessionEvent{}, false, err
+		return db.AppendCodeSessionEventInput{}, err
 	}
-	return s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
+	return db.AppendCodeSessionEventInput{
 		ExternalID:     eventID,
 		EventType:      meta.EventType,
 		EventSubtype:   meta.EventSubtype,
@@ -344,7 +331,7 @@ func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string
 		DeliveryStatus: "queued",
 		Source:         strings.TrimSpace(source),
 		CreatedAt:      time.Now().UTC(),
-	})
+	}, nil
 }
 
 func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {

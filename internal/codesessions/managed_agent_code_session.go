@@ -23,7 +23,6 @@ type ManagedAgentCreateInput struct {
 	PermissionMode             string
 	DangerouslySkipPermissions bool
 	Config                     json.RawMessage
-	InitialEvents              []json.RawMessage
 }
 
 // ManagedAgentCreateResult 只在创建链路内短暂携带两份明文凭证，调用方应立即交给
@@ -66,7 +65,7 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 		WorkDir:               strings.TrimSpace(input.WorkDir),
 		PermissionMode:        strings.TrimSpace(input.PermissionMode),
 		Model:                 strings.TrimSpace(input.Model),
-		Status:                "active",
+		Status:                "initializing",
 		Metadata:              metadata,
 		// OAuth-compatible token 只落 SHA-256 hash；明文仅存在于当前返回值中。
 		OAuthAccessTokenHash: auth.HashAPIKey(oauthAccessToken),
@@ -99,7 +98,7 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err := s.queueInitialize(ctx, record, input.Config, now); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	if err := s.queueInitialPublicSessionEvents(ctx, record, input.InitialEvents, now); err != nil {
+	if err := s.activateManagedAgentCodeSession(ctx, input.Session, record); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
 	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(
@@ -124,6 +123,52 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 		OAuthAccessToken:    oauthAccessToken,
 		SessionIngressToken: sessionIngressToken,
 	}, nil
+}
+
+// activateManagedAgentCodeSession hands off only explicitly queued startup
+// messages, then activates while holding the same Session lock as send.
+func (s *Service) activateManagedAgentCodeSession(
+	ctx context.Context,
+	session db.Session,
+	codeSession db.CodeSession,
+) error {
+	for {
+		items, err := s.db.ListSessionEventQueueItems(ctx, session)
+		if err != nil {
+			return err
+		}
+		inputs := make([]db.AppendCodeSessionEventInput, 0, len(items))
+		for _, item := range items {
+			if item.Event.EventType != "user.message" {
+				return errors.New("session event queue contains a non-user message")
+			}
+			payload, err := workerPayloadForPublicEvent(
+				codeSession.ExternalID,
+				item.Event.Payload,
+				item.Event.ProcessedAt,
+			)
+			if err != nil {
+				return err
+			}
+			inbound, err := newInboundEventInput(codeSession.ExternalID, payload, "public-session")
+			if err != nil {
+				return err
+			}
+			inputs = append(inputs, inbound)
+		}
+		activated, err := s.db.ActivateManagedAgentCodeSessionWithQueue(
+			ctx,
+			codeSession,
+			items,
+			inputs,
+		)
+		if err != nil {
+			return err
+		}
+		if activated {
+			return nil
+		}
+	}
 }
 
 // TerminateManagedAgentCodeSession revokes a Code Session created for a

@@ -240,6 +240,79 @@ func TestDeploymentsAPI(t *testing.T) {
 		)
 	})
 
+	t.Run("success initial user messages enter startup queue in order", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployment-startup-queue-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployment-startup-queue-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		deployment := createDeployment(t, app, `{
+			"agent":`+quoteJSON(agent.ID)+`,
+			"environment_id":`+quoteJSON(env.ID)+`,
+			"name":"deployment startup queue",
+			"initial_events":[
+				{"type":"user.message","content":[{"type":"text","text":"deployment first"}]},
+				{"type":"system.message","content":[{"type":"text","text":"public only"}]},
+				{"type":"user.message","content":[{"type":"text","text":"deployment second"}]}
+			]
+		}`)
+		defer cleanupDeploymentRows(t, app, deployment.ID)
+		run := runDeployment(t, app, deployment.ID)
+		if run.SessionID == nil || *run.SessionID == "" {
+			t.Fatalf("deployment startup queue Session ID = nil: %+v", run)
+		}
+		defer deleteSession(t, app, *run.SessionID)
+
+		rows, err := app.db.Pool.Query(context.Background(), `
+			select e.payload #>> '{content,0,text}'
+			from session_event_queue q
+			join sessions s
+				on s.uuid = q.session_uuid
+				and s.workspace_id = q.workspace_id
+			join session_events e
+				on e.uuid = q.session_event_uuid
+				and e.workspace_id = q.workspace_id
+			where s.external_id = $1
+			order by q.id asc
+		`, *run.SessionID)
+		if err != nil {
+			t.Fatalf("list deployment startup queue: %v", err)
+		}
+		var queuedPrompts []string
+		for rows.Next() {
+			var prompt string
+			if err := rows.Scan(&prompt); err != nil {
+				rows.Close()
+				t.Fatalf("scan deployment startup queue: %v", err)
+			}
+			queuedPrompts = append(queuedPrompts, prompt)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("iterate deployment startup queue: %v", err)
+		}
+		rows.Close()
+		if len(queuedPrompts) != 2 ||
+			queuedPrompts[0] != "deployment first" ||
+			queuedPrompts[1] != "deployment second" {
+			t.Fatalf("deployment startup queue = %#v, want first then second", queuedPrompts)
+		}
+
+		codeSessionID := launchLocalCodeSession(t, app, *run.SessionID)
+		inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+		if err != nil {
+			t.Fatalf("list deployment startup inbound: %v", err)
+		}
+		if len(inbound) != 3 ||
+			inbound[0].EventSubtype != "initialize" ||
+			!strings.Contains(string(inbound[1].Payload), "deployment first") ||
+			!strings.Contains(string(inbound[2].Payload), "deployment second") {
+			t.Fatalf("deployment startup inbound = %#v, want initialize, first, second", inbound)
+		}
+		if remaining := sessionEventQueueEventIDs(t, app, *run.SessionID); len(remaining) != 0 {
+			t.Fatalf("deployment startup queue after activation = %#v, want empty", remaining)
+		}
+	})
+
 	t.Run("success lifecycle manual run session events and run filters", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-api-agent"}`)
 		defer cleanupAgentRows(t, app.db, agent.ID)

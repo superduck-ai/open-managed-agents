@@ -35,6 +35,8 @@ var (
 	ErrFileReferenceNotFound = errors.New("file reference not found")
 )
 
+var ErrSessionStartupMessageConflict = errors.New("session startup message conflict")
+
 type DB struct {
 	Pool *pgxpool.Pool
 	sql  *sqlx.DB

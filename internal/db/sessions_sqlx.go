@@ -124,6 +124,12 @@ const (
 			and session_external_id = :session_external_id
 			and deleted_at is null
 	`
+	deleteSessionEventQueueQuery = `
+		delete from session_event_queue
+		where organization_id = :organization_id
+			and workspace_id = :workspace_id
+			and session_uuid = CAST(:session_uuid AS uuid)
+	`
 	stopDeletedSessionEnvironmentWorkQuery = `
 		update environment_work
 		set state = case when state in ('stopped') then state else 'stopping' end,

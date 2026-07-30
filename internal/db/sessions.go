@@ -245,14 +245,6 @@ func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceID int64, extern
 	})
 }
 
-func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceID int64, externalID string, evaluations json.RawMessage) (Session, error) {
-	return getSessionSQLX(ctx, d.sql, setSessionOutcomeEvaluationsQuery, map[string]any{
-		"workspace_id":        workspaceID,
-		"session_external_id": externalID,
-		"outcome_evaluations": jsonArg(evaluations),
-	})
-}
-
 func (d *DB) SetSessionStatus(ctx context.Context, workspaceID int64, externalID, status string) error {
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, setSessionStatusQuery, map[string]any{
 		"workspace_id":        workspaceID,
@@ -330,6 +322,11 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 		return Session{}, err
 	}
 	if _, err := namedExecContext(ctx, tx, deleteSessionResourcesQuery, arguments); err != nil {
+		return Session{}, err
+	}
+	arguments["organization_id"] = session.OrganizationID
+	arguments["session_uuid"] = session.UUID
+	if _, err := namedExecContext(ctx, tx, deleteSessionEventQueueQuery, arguments); err != nil {
 		return Session{}, err
 	}
 	if _, err := namedExecContext(ctx, tx, deleteSessionEventsQuery, arguments); err != nil {

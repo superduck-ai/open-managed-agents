@@ -318,6 +318,91 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	}
 }
 
+// TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation 对应 #189：
+// Session 已可发消息，但 Code Session 在 Runner 后半段才创建。
+// 在 provider.Create 时发送（prepare 已完成、Code Session 尚不存在）：
+// 消息应进入 session_events，且 Runner 结束后也应出现在 code_session_inbound_events
+// （initialize 之后）。修复前该窗口内只有 session_events，inbound 往往只有 initialize。
+func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-startup-message-bucket"))
+	defer app.close()
+	cfg.CodeSession.SandboxAPIBaseURL = app.baseURL
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Startup Message Agent"}`)
+	defer archiveAgent(t, app, agent.ID)
+	env := createEnvironment(t, app, `{"name":"runner-startup-message-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	const prompt = "startup-window message must reach inbound"
+	ids := getDefaultDBIDs(t, app.db)
+	var acceptedEventID string
+	provider := &recordingRunnerProvider{
+		sandboxID: "sandbox-runner-startup-message",
+		beforeCreate: func() {
+			// 发送时 Code Session 尚不存在，无法走实时入队。
+			if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID); !errors.Is(err, db.ErrNotFound) {
+				t.Fatalf("code session at provider.Create = %v, want ErrNotFound", err)
+			}
+			sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":`+quoteJSON(prompt)+`}]}]}`, defaultTestKey)
+			if len(sent.Data) != 1 {
+				t.Fatalf("accepted events = %#v, want one", sent.Data)
+			}
+			acceptedEventID = sessionEventStringField(t, sent.Data[0], "id")
+			if queued := sessionEventQueueEventIDs(t, app, session.ID); !reflect.DeepEqual(queued, []string{acceptedEventID}) {
+				t.Fatalf("startup session event queue = %#v, want [%s]", queued, acceptedEventID)
+			}
+		},
+	}
+
+	processed, err := newManagedAgentRunner(t, app, provider, cfg).RunOnce(ctx, "runner-startup-message-test")
+	if err != nil || !processed {
+		t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
+	}
+
+	// 公共表应已接收该消息。
+	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	if !eventPageContains(publicEvents, acceptedEventID) {
+		t.Fatalf("session_events missing accepted event %q: %+v", acceptedEventID, publicEvents.Data)
+	}
+
+	// worker 入站队列也应包含同一条用户消息，而不能只有 initialize。
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("load Code Session after runner startup: %v", err)
+	}
+	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	if err != nil {
+		t.Fatalf("list queued inbound events: %v", err)
+	}
+	if len(queued) != 2 ||
+		queued[0].EventSubtype != "initialize" ||
+		queued[1].EventType != "user" {
+		t.Fatalf("inbound = %#v, want initialize then user (public accepted, inbound incomplete)", queued)
+	}
+	var payload struct {
+		UUID    string `json:"uuid"`
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(queued[1].Payload, &payload); err != nil {
+		t.Fatalf("decode queued user message: %v", err)
+	}
+	if payload.UUID != acceptedEventID || payload.Message.Content != prompt {
+		t.Fatalf("queued user = %#v, want uuid=%q content=%q", payload, acceptedEventID, prompt)
+	}
+	if remaining := sessionEventQueueEventIDs(t, app, session.ID); len(remaining) != 0 {
+		t.Fatalf("remaining startup session event queue = %#v, want empty", remaining)
+	}
+}
+
 func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {
 	t.Run("failure terminates sandbox before manager startup", func(t *testing.T) {
 		provider, processed, err := runPackageEnvironment(t, packageRunnerCase{commandErr: errors.New("gem install failed")})

@@ -685,6 +685,580 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 	}
 }
 
+func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-managed-agent-activation-cutover-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-managed-agent-activation-cutover-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-managed-agent-activation-cutover-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+
+	if _, err := app.db.Pool.Exec(ctx, `
+		update code_sessions
+		set status = 'initializing'
+		where external_id = $1
+	`, codeSessionID); err != nil {
+		t.Fatalf("set code session initializing: %v", err)
+	}
+
+	ids := getDefaultDBIDs(t, app.db)
+	sessionRecord, err := app.db.GetSession(ctx, ids.WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("load Session for activation: %v", err)
+	}
+	staleItems, err := app.db.ListSessionEventQueueItems(ctx, sessionRecord)
+	if err != nil {
+		t.Fatalf("list empty Session event queue: %v", err)
+	}
+	if len(staleItems) != 0 {
+		t.Fatalf("initial Session event queue = %#v, want empty", staleItems)
+	}
+	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load initializing code session: %v", err)
+	}
+
+	accepted := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"must be delivered before activation"}]}]}`, defaultTestKey)
+	if len(accepted.Data) != 1 {
+		t.Fatalf("accepted session events = %#v, want one", accepted.Data)
+	}
+	acceptedEventID := sessionEventStringField(t, accepted.Data[0], "id")
+
+	activated, err := app.db.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, staleItems, nil)
+	if err != nil {
+		t.Fatalf("reject stale activation queue snapshot: %v", err)
+	}
+	if activated {
+		t.Fatal("activation succeeded with a stale empty queue snapshot")
+	}
+	items, err := app.db.ListSessionEventQueueItems(ctx, sessionRecord)
+	if err != nil {
+		t.Fatalf("list Session event queue for activation: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("Session event queue items = %#v, want one", items)
+	}
+
+	activated, err = app.db.ActivateManagedAgentCodeSessionWithQueue(
+		ctx,
+		codeSession,
+		items,
+		[]db.AppendCodeSessionEventInput{{
+			ExternalID:     "csev_activation_" + strings.TrimPrefix(codeSessionID, "cse_"),
+			EventType:      "user",
+			EventSubtype:   "message",
+			Payload:        json.RawMessage(`{"type":"user","uuid":` + quoteJSON(acceptedEventID) + `,"message":{"role":"user","content":"must be delivered before activation"}}`),
+			PayloadHash:    "activation-queue-hash",
+			IdempotencyKey: "activation-queue:" + acceptedEventID,
+			DeliveryStatus: "queued",
+			Source:         "public-session",
+			CreatedAt:      time.Now().UTC(),
+		}},
+	)
+	if err != nil {
+		t.Fatalf("activate with queued session event: %v", err)
+	}
+	if !activated {
+		t.Fatal("activation did not commit the queued session event")
+	}
+	codeSession, err = app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("reload activated code session: %v", err)
+	}
+	if codeSession.Status != "active" {
+		t.Fatalf("status after activation = %q, want active", codeSession.Status)
+	}
+	if queued := sessionEventQueueEventIDs(t, app, session.ID); len(queued) != 0 {
+		t.Fatalf("Session event queue after activation = %#v, want empty", queued)
+	}
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list inbound after activation: %v", err)
+	}
+	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte(acceptedEventID)) {
+		t.Fatalf("inbound after activation = %#v, want initialize and accepted user message", inbound)
+	}
+}
+
+func TestManagedAgentActivationCutoverRoutesFollowingBatchRealtime(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-managed-agent-activation-realtime-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-managed-agent-activation-realtime-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-managed-agent-activation-realtime-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+
+	if _, err := app.db.Pool.Exec(ctx, `
+		update code_sessions
+		set status = 'initializing'
+		where external_id = $1
+	`, codeSessionID); err != nil {
+		t.Fatalf("set cutover code session initializing: %v", err)
+	}
+	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load cutover code session: %v", err)
+	}
+	activated, err := app.db.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, nil, nil)
+	if err != nil || !activated {
+		t.Fatalf("activate empty startup queue = (%t, %v), want success", activated, err)
+	}
+
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[
+		{"type":"user.message","content":[{"type":"text","text":"post-cutover batch one"}]},
+		{"type":"user.message","content":[{"type":"text","text":"post-cutover batch two"}]}
+	]}`, defaultTestKey)
+	if len(sent.Data) != 2 {
+		t.Fatalf("post-cutover events = %#v, want two", sent.Data)
+	}
+	if queued := sessionEventQueueEventIDs(t, app, session.ID); len(queued) != 0 {
+		t.Fatalf("post-cutover startup queue = %#v, want empty", queued)
+	}
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list post-cutover inbound: %v", err)
+	}
+	if len(inbound) != 3 ||
+		!bytes.Contains(inbound[1].Payload, []byte("post-cutover batch one")) ||
+		!bytes.Contains(inbound[2].Payload, []byte("post-cutover batch two")) {
+		t.Fatalf("post-cutover inbound = %#v, want realtime user batch", inbound)
+	}
+}
+
+func TestSessionEventQueueDeliveryRollsBackOnInboundFailure(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-queue-rollback-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-queue-rollback-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-event-queue-rollback-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	sessionResponse := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, sessionResponse.ID)
+	codeSessionID := launchLocalCodeSession(t, app, sessionResponse.ID)
+
+	if _, err := app.db.Pool.Exec(ctx, `
+		update code_sessions
+		set status = 'initializing'
+		where external_id = $1
+	`, codeSessionID); err != nil {
+		t.Fatalf("set rollback code session initializing: %v", err)
+	}
+	sendSessionEvents(t, app, sessionResponse.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"queue row must survive"}]}]}`, defaultTestKey)
+	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, sessionResponse.ID)
+	if err != nil {
+		t.Fatalf("load rollback Session: %v", err)
+	}
+	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load rollback Code Session: %v", err)
+	}
+	items, err := app.db.ListSessionEventQueueItems(ctx, session)
+	if err != nil {
+		t.Fatalf("load rollback queue items: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("rollback queue items = %#v, want one", items)
+	}
+	before, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("rollback inbound before delivery = (%#v, %v), want initialize", before, err)
+	}
+	activated, err := app.db.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, items, []db.AppendCodeSessionEventInput{{
+		ExternalID:     before[0].ExternalID,
+		EventType:      "user",
+		EventSubtype:   "message",
+		Payload:        json.RawMessage(`{"type":"user","uuid":"rollback-user"}`),
+		PayloadHash:    "rollback-hash",
+		IdempotencyKey: "rollback-idempotency",
+		DeliveryStatus: "queued",
+		Source:         "public-session",
+		CreatedAt:      time.Now().UTC(),
+	}})
+	if err == nil || activated {
+		t.Fatal("queue delivery with duplicate inbound external ID succeeded")
+	}
+	if queued := sessionEventQueueEventIDs(t, app, sessionResponse.ID); len(queued) != 1 {
+		t.Fatalf("queue after rolled-back inbound = %#v, want one row", queued)
+	}
+	after, listErr := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if listErr != nil || len(after) != 1 {
+		t.Fatalf("rollback inbound after delivery = (%#v, %v), want unchanged initialize", after, listErr)
+	}
+	reloaded, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("reload rollback Code Session: %v", err)
+	}
+	if reloaded.Status != "initializing" {
+		t.Fatalf("rollback Code Session status = %q, want initializing", reloaded.Status)
+	}
+}
+
+func TestSessionEventQueueRejectsCrossSessionEventReference(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-queue-ownership-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-queue-ownership-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-event-queue-ownership-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	sessionA := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, sessionA.ID)
+	sessionB := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, sessionB.ID)
+
+	eventA := sendSessionEvents(t, app, sessionA.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"session A"}]}]}`, defaultTestKey)
+	eventB := sendSessionEvents(t, app, sessionB.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"session B"}]}]}`, defaultTestKey)
+	eventAID := sessionEventStringField(t, eventA.Data[0], "id")
+	eventBID := sessionEventStringField(t, eventB.Data[0], "id")
+
+	if _, err := app.db.Pool.Exec(ctx, `
+		delete from session_event_queue
+		where session_event_uuid = (
+			select uuid from session_events where external_id = $1
+		)
+	`, eventBID); err != nil {
+		t.Fatalf("delete Session B queue row: %v", err)
+	}
+	if _, err := app.db.Pool.Exec(ctx, `
+		update session_event_queue
+		set session_event_uuid = (
+			select uuid from session_events where external_id = $1
+		)
+		where session_event_uuid = (
+			select uuid from session_events where external_id = $2
+		)
+	`, eventBID, eventAID); err != nil {
+		t.Fatalf("replace Session A queue event reference: %v", err)
+	}
+
+	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, sessionA.ID)
+	if err != nil {
+		t.Fatalf("load Session A: %v", err)
+	}
+	if _, err := app.db.ListSessionEventQueueItems(ctx, session); !errors.Is(err, db.ErrInvalidState) {
+		t.Fatalf("cross-Session queue lookup error = %v, want ErrInvalidState", err)
+	}
+}
+
+func TestSessionStartupRejectsSecondUserMessage(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-startup-message-conflict-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-startup-message-conflict-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-startup-message-conflict-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	first := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first startup message"}]}]}`, defaultTestKey)
+	if len(first.Data) != 1 {
+		t.Fatalf("first startup response = %#v, want one event", first.Data)
+	}
+	firstID := sessionEventStringField(t, first.Data[0], "id")
+
+	second := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"second startup message"}]}]}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, second, http.StatusConflict, "conflict_error")
+
+	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	if len(publicEvents.Data) != 1 || !eventPageContains(publicEvents, firstID) {
+		t.Fatalf("public events after conflict = %#v, want only %s", publicEvents.Data, firstID)
+	}
+	queuedEventIDs := sessionEventQueueEventIDs(t, app, session.ID)
+	if !reflect.DeepEqual(queuedEventIDs, []string{firstID}) {
+		t.Fatalf("startup queue event IDs = %#v, want [%s]", queuedEventIDs, firstID)
+	}
+
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list startup conflict inbound events: %v", err)
+	}
+	if len(inbound) != 2 ||
+		inbound[0].EventSubtype != "initialize" ||
+		!bytes.Contains(inbound[1].Payload, []byte("first startup message")) ||
+		bytes.Contains(inbound[1].Payload, []byte("second startup message")) {
+		t.Fatalf("inbound after startup conflict = %#v, want initialize and first message", inbound)
+	}
+	if remaining := sessionEventQueueEventIDs(t, app, session.ID); len(remaining) != 0 {
+		t.Fatalf("startup queue after activation = %#v, want empty", remaining)
+	}
+}
+
+func TestSessionStartupRejectedBatchHasNoSideEffects(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-startup-message-outcome-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-startup-message-outcome-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-startup-message-outcome-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[
+			{"type":"user.define_outcome","description":"must not persist","rubric":{"type":"text","text":"must pass"}},
+			{"type":"user.message","content":[{"type":"text","text":"reject the whole batch"}]}
+		]}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusConflict, "conflict_error")
+
+	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
+	if string(retrieved.OutcomeEvaluations) != "[]" {
+		t.Fatalf("outcomes after rejected startup batch = %s, want []", retrieved.OutcomeEvaluations)
+	}
+	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("startup outcome batch public events = %#v, want empty", events.Data)
+	}
+	if queued := sessionEventQueueEventIDs(t, app, session.ID); len(queued) != 0 {
+		t.Fatalf("startup outcome batch queue = %#v, want empty", queued)
+	}
+}
+
+func TestSessionTerminatedCodeSessionDoesNotReceiveRealtimeEvents(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-terminated-code-session-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-terminated-code-session-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-terminated-code-session-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+
+	if _, err := app.db.Pool.Exec(ctx, `
+		update code_sessions
+		set status = 'terminated'
+		where external_id = $1
+	`, codeSessionID); err != nil {
+		t.Fatalf("terminate Code Session: %v", err)
+	}
+	before, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list terminated Code Session inbound before send: %v", err)
+	}
+
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"must not reach terminated code session"}]}]}`, defaultTestKey)
+	if len(sent.Data) != 1 {
+		t.Fatalf("terminated Code Session public events = %#v, want one", sent.Data)
+	}
+	after, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list terminated Code Session inbound after send: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("terminated Code Session inbound count = %d, want unchanged %d", len(after), len(before))
+	}
+}
+
+func TestSessionStoppedBeforeCodeSessionKeepsExistingEventBehavior(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-stopped-before-code-session-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-stopped-before-code-session-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-stopped-before-code-session-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	result, err := app.db.Pool.Exec(ctx, `
+		update environment_work
+		set state = 'stopped', stopped_at = now(), updated_at = now()
+		where workspace_id = $1
+			and data->>'type' = 'session'
+			and data->>'id' = $2
+	`, getDefaultDBIDs(t, app.db).WorkspaceID, session.ID)
+	if err != nil {
+		t.Fatalf("stop Session environment work: %v", err)
+	}
+	if updated := result.RowsAffected(); updated != 1 {
+		t.Fatalf("stopped Session environment work rows = %d, want 1", updated)
+	}
+
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"existing stopped-session behavior"}]}]}`, defaultTestKey)
+	if len(sent.Data) != 1 {
+		t.Fatalf("stopped Session events = %#v, want one", sent.Data)
+	}
+	if queued := sessionEventQueueEventIDs(t, app, session.ID); len(queued) != 0 {
+		t.Fatalf("stopped Session startup queue = %#v, want empty", queued)
+	}
+}
+
+func TestSessionStartupSerializesConcurrentUserMessages(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-startup-message-concurrency-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-startup-message-concurrency-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-startup-message-concurrency-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	type sendResult struct {
+		status int
+		body   []byte
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan sendResult, 2)
+	for _, prompt := range []string{"concurrent startup message one", "concurrent startup message two"} {
+		request, err := http.NewRequest(
+			http.MethodPost,
+			app.baseURL+"/v1/sessions/"+session.ID+"/events?beta=true",
+			strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":`+quoteJSON(prompt)+`}]}]}`),
+		)
+		if err != nil {
+			t.Fatalf("create concurrent startup request: %v", err)
+		}
+		request.Header.Set("X-Api-Key", defaultTestKey)
+		request.Header.Set("anthropic-version", "2023-06-01")
+		request.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
+		request.Header.Set("Content-Type", "application/json")
+		go func() {
+			<-start
+			response, err := app.client.Do(request)
+			if err != nil {
+				results <- sendResult{err: err}
+				return
+			}
+			defer response.Body.Close()
+			body, readErr := io.ReadAll(response.Body)
+			results <- sendResult{status: response.StatusCode, body: body, err: readErr}
+		}()
+	}
+	close(start)
+
+	okCount := 0
+	conflictCount := 0
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("send concurrent startup message: %v", result.err)
+		}
+		switch result.status {
+		case http.StatusOK:
+			okCount++
+		case http.StatusConflict:
+			conflictCount++
+		default:
+			t.Fatalf("concurrent startup status = %d, want 200 or 409: %s", result.status, result.body)
+		}
+	}
+	if okCount != 1 || conflictCount != 1 {
+		t.Fatalf("concurrent startup results = %d success, %d conflict; want 1/1", okCount, conflictCount)
+	}
+	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	queuedEventIDs := sessionEventQueueEventIDs(t, app, session.ID)
+	if len(publicEvents.Data) != 1 || len(queuedEventIDs) != 1 {
+		t.Fatalf("concurrent startup persisted public/queue = %d/%d, want 1/1", len(publicEvents.Data), len(queuedEventIDs))
+	}
+	if eventID := sessionEventStringField(t, publicEvents.Data[0], "id"); eventID != queuedEventIDs[0] {
+		t.Fatalf("concurrent startup public event = %s, queue event = %s", eventID, queuedEventIDs[0])
+	}
+}
+
+func TestSessionStartupQueuesUserMessageIndependentOfEnvironmentType(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-startup-message-self-hosted-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-startup-message-self-hosted-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{
+		"name":"sessions-startup-message-self-hosted-env",
+		"config":{"type":"self_hosted"}
+	}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	sessionResponse := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, sessionResponse.ID)
+
+	const prompt = "startup delivery is a Session guarantee"
+	sent := sendSessionEvents(t, app, sessionResponse.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"`+prompt+`"}]}]}`, defaultTestKey)
+	if len(sent.Data) != 1 {
+		t.Fatalf("self-hosted startup response = %#v, want one event", sent.Data)
+	}
+	eventID := sessionEventStringField(t, sent.Data[0], "id")
+	if queued := sessionEventQueueEventIDs(t, app, sessionResponse.ID); !reflect.DeepEqual(queued, []string{eventID}) {
+		t.Fatalf("self-hosted startup queue = %#v, want [%s]", queued, eventID)
+	}
+
+	ids := getDefaultDBIDs(t, app.db)
+	session, err := app.db.GetSession(ctx, ids.WorkspaceID, sessionResponse.ID)
+	if err != nil {
+		t.Fatalf("load self-hosted Session: %v", err)
+	}
+	environment, err := app.db.GetEnvironment(ctx, ids.WorkspaceID, env.ID)
+	if err != nil {
+		t.Fatalf("load self-hosted Environment: %v", err)
+	}
+	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, env.ID, "session", sessionResponse.ID)
+	if err != nil {
+		t.Fatalf("load self-hosted Session work: %v", err)
+	}
+	created, err := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).CreateManagedAgentCodeSession(
+		ctx,
+		codesessions.ManagedAgentCreateInput{
+			Session:         session,
+			Environment:     environment,
+			EnvironmentWork: work,
+			Model:           "claude-opus-4-6",
+			WorkDir:         "/home/user",
+			Config:          json.RawMessage(`{"origin":"managed_agents_api","model":"claude-opus-4-6"}`),
+		},
+	)
+	if err != nil {
+		t.Fatalf("create self-hosted Code Session: %v", err)
+	}
+
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, created.CodeSessionID)
+	if err != nil {
+		t.Fatalf("list self-hosted startup inbound events: %v", err)
+	}
+	if len(inbound) != 2 ||
+		inbound[0].EventSubtype != "initialize" ||
+		inbound[1].EventType != "user" ||
+		!bytes.Contains(inbound[1].Payload, []byte(prompt)) {
+		t.Fatalf("self-hosted startup inbound = %#v, want initialize and accepted user message", inbound)
+	}
+	if queued := sessionEventQueueEventIDs(t, app, sessionResponse.ID); len(queued) != 0 {
+		t.Fatalf("self-hosted startup queue after activation = %#v, want empty", queued)
+	}
+}
+
 func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-claude-code-subagent-internal-bucket"))
 	defer app.close()
@@ -3277,6 +3851,7 @@ func TestSessionsSchemaHasNoForeignKeys(t *testing.T) {
 			and ns.oid = current_schema()::regnamespace
 			and cls.relname in (
 				'sessions', 'session_threads', 'session_events', 'session_resources',
+				'session_event_queue',
 				'code_sessions', 'code_session_inbound_events', 'code_session_outbound_events',
 				'code_session_internal_events'
 			)
@@ -3479,6 +4054,38 @@ func sessionEventStringField(t *testing.T, raw json.RawMessage, field string) st
 		t.Fatalf("session event %s = %#v, want non-empty string; raw=%s", field, payload[field], raw)
 	}
 	return value
+}
+
+func sessionEventQueueEventIDs(t *testing.T, app *testApp, sessionID string) []string {
+	t.Helper()
+	rows, err := app.db.Pool.Query(context.Background(), `
+		select e.external_id
+		from session_event_queue q
+		join sessions s
+			on s.uuid = q.session_uuid
+			and s.workspace_id = q.workspace_id
+		join session_events e
+			on e.uuid = q.session_event_uuid
+			and e.workspace_id = q.workspace_id
+		where s.external_id = $1
+		order by q.id asc
+	`, sessionID)
+	if err != nil {
+		t.Fatalf("list session event queue: %v", err)
+	}
+	defer rows.Close()
+	var eventIDs []string
+	for rows.Next() {
+		var eventID string
+		if err := rows.Scan(&eventID); err != nil {
+			t.Fatalf("scan session event queue: %v", err)
+		}
+		eventIDs = append(eventIDs, eventID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate session event queue: %v", err)
+	}
+	return eventIDs
 }
 
 func eventPageContains(events sessionEventPageAPIResponse, needle string) bool {

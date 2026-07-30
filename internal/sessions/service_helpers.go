@@ -1,7 +1,6 @@
 package sessions
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -223,21 +222,25 @@ func (h *Handler) resourceFromFields(
 	}, nil
 }
 
-func (h *Handler) normalizeInputEvent(ctx context.Context, session db.Session, raw json.RawMessage, now time.Time) (db.SessionEvent, bool, error) {
+func normalizeInputEvent(
+	session db.Session,
+	raw json.RawMessage,
+	now time.Time,
+) (db.SessionEvent, json.RawMessage, bool, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return db.SessionEvent{}, false, errors.New("event must be an object")
+		return db.SessionEvent{}, nil, false, errors.New("event must be an object")
 	}
 	eventType, _ := payload["type"].(string)
 	if !allowedPublicEventType(eventType) {
-		return db.SessionEvent{}, false, errors.New("event type is not accepted by this endpoint")
+		return db.SessionEvent{}, nil, false, errors.New("event type is not accepted by this endpoint")
 	}
 	if err := validatePublicInputEvent(eventType, payload); err != nil {
-		return db.SessionEvent{}, false, err
+		return db.SessionEvent{}, nil, false, err
 	}
 	eventID, err := ids.New("sevt_")
 	if err != nil {
-		return db.SessionEvent{}, false, err
+		return db.SessionEvent{}, nil, false, err
 	}
 	payload["id"] = eventID
 	payload["processed_at"] = now.Format(time.RFC3339)
@@ -253,7 +256,7 @@ func (h *Handler) normalizeInputEvent(ctx context.Context, session db.Session, r
 		if outcomeID == "" {
 			outcomeID, err = ids.New("outc_")
 			if err != nil {
-				return db.SessionEvent{}, false, err
+				return db.SessionEvent{}, nil, false, err
 			}
 			payload["outcome_id"] = outcomeID
 		}
@@ -262,21 +265,19 @@ func (h *Handler) normalizeInputEvent(ctx context.Context, session db.Session, r
 			maxIterations = int(rawMax)
 		}
 		if maxIterations > 20 {
-			return db.SessionEvent{}, false, errors.New("max_iterations must be at most 20")
+			return db.SessionEvent{}, nil, false, errors.New("max_iterations must be at most 20")
 		}
 		payload["max_iterations"] = maxIterations
 		outcomes, err := appendOutcomeEvaluation(session.OutcomeEvaluations, outcomeID, maxIterations, now)
 		if err != nil {
-			return db.SessionEvent{}, false, err
+			return db.SessionEvent{}, nil, false, err
 		}
-		if _, err := h.db.SetSessionOutcomeEvaluations(ctx, session.WorkspaceID, session.ExternalID, outcomes); err != nil {
-			return db.SessionEvent{}, false, err
-		}
+		session.OutcomeEvaluations = outcomes
 		outcomesChanged = true
 	}
 	payloadRaw, err := httpapi.MarshalRaw(payload)
 	if err != nil {
-		return db.SessionEvent{}, false, err
+		return db.SessionEvent{}, nil, false, err
 	}
 	return db.SessionEvent{
 		UUID:              uuid.NewString(),
@@ -290,7 +291,7 @@ func (h *Handler) normalizeInputEvent(ctx context.Context, session db.Session, r
 		Payload:           payloadRaw,
 		ProcessedAt:       now,
 		CreatedAt:         now,
-	}, outcomesChanged, nil
+	}, session.OutcomeEvaluations, outcomesChanged, nil
 }
 
 func allowedPublicEventType(eventType string) bool {

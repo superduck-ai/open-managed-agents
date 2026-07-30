@@ -8,6 +8,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 type CodeSession struct {
@@ -280,6 +282,138 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 		"oauth_access_token_hash": oauthAccessTokenHash,
 		"created_at":              now,
 	})
+}
+
+// ActivateManagedAgentCodeSessionWithQueue atomically transfers the complete
+// startup queue to inbound, clears the temporary responsibility, and activates
+// the Code Session while holding the same Session lock as event sends.
+func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
+	ctx context.Context,
+	codeSession CodeSession,
+	items []SessionEventQueueItem,
+	inputs []AppendCodeSessionEventInput,
+) (bool, error) {
+	if len(items) != len(inputs) {
+		return false, ErrInvalidState
+	}
+	tx, err := d.sql.BeginTxx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	session, err := getSessionSQLX(
+		ctx,
+		tx,
+		lockSessionForEventsQuery,
+		sessionLookupArguments(codeSession.WorkspaceID, codeSession.SessionExternalID),
+	)
+	if err != nil {
+		return false, err
+	}
+	current, err := getCodeSessionSQLX(ctx, tx, `
+		select `+codeSessionColumns()+`
+		from code_sessions
+		where organization_id = :organization_id
+			and workspace_id = :workspace_id
+			and external_id = :external_id
+			and session_id = :session_id
+			and status = 'initializing'
+			and deleted_at is null
+		for update
+	`, map[string]any{
+		"organization_id": codeSession.OrganizationID,
+		"workspace_id":    codeSession.WorkspaceID,
+		"external_id":     codeSession.ExternalID,
+		"session_id":      session.ID,
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, item := range items {
+		if item.sessionUUID != session.UUID ||
+			item.Event.UUID != item.sessionEventUUID ||
+			item.Event.OrganizationID != session.OrganizationID ||
+			item.Event.WorkspaceID != session.WorkspaceID ||
+			item.Event.SessionID != session.ID ||
+			item.Event.SessionExternalID != session.ExternalID ||
+			item.Event.EventType != "user.message" {
+			return false, ErrInvalidState
+		}
+	}
+	queueRows, err := listSessionEventQueueIdentityRows(ctx, tx, session, true)
+	if err != nil {
+		return false, err
+	}
+	if !sessionEventQueueItemsMatch(queueRows, items) {
+		return false, nil
+	}
+
+	for _, input := range inputs {
+		inserted, duplicate, err := d.appendCodeSessionEventSQLXTx(ctx, tx, current, "inbound", input)
+		if err != nil {
+			return false, err
+		}
+		if duplicate && inserted.CodeSessionExternalID != current.ExternalID {
+			return false, ErrInvalidState
+		}
+		if !duplicate {
+			current.LastInboundSequenceNum = inserted.SequenceNum
+		}
+	}
+	deletedResult, err := namedExecContext(ctx, tx, `
+		delete from session_event_queue
+		where organization_id = :organization_id
+			and workspace_id = :workspace_id
+			and session_uuid = CAST(:session_uuid AS uuid)
+	`, map[string]any{
+		"organization_id": session.OrganizationID,
+		"workspace_id":    session.WorkspaceID,
+		"session_uuid":    session.UUID,
+	})
+	if err != nil {
+		return false, err
+	}
+	deleted, err := deletedResult.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if deleted != int64(len(items)) {
+		return false, ErrPreconditionFailed
+	}
+
+	result, err := namedExecContext(ctx, tx, `
+		update code_sessions
+		set status = 'active', updated_at = :now
+		where organization_id = :organization_id
+			and workspace_id = :workspace_id
+			and id = :id
+			and external_id = :external_id
+			and session_id = :session_id
+			and status = 'initializing'
+			and deleted_at is null
+	`, map[string]any{
+		"organization_id": current.OrganizationID,
+		"workspace_id":    current.WorkspaceID,
+		"id":              current.ID,
+		"external_id":     current.ExternalID,
+		"session_id":      session.ID,
+		"now":             time.Now().UTC(),
+	})
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if updated != 1 {
+		return false, ErrInvalidState
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // codeSessionCredentialContextSelect 查询 code session 的鉴权身份信息。
@@ -826,13 +960,30 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 	if err != nil {
 		return CodeSessionEvent{}, false, err
 	}
+	event, duplicate, err := d.appendCodeSessionEventSQLXTx(ctx, tx, session, direction, input)
+	if err != nil {
+		return CodeSessionEvent{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CodeSessionEvent{}, false, err
+	}
+	return event, duplicate, nil
+}
+
+func (d *DB) appendCodeSessionEventSQLXTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	session CodeSession,
+	direction string,
+	input AppendCodeSessionEventInput,
+) (CodeSessionEvent, bool, error) {
 	if input.RequiredWorkerEpoch != nil && session.CurrentWorkerEpoch != *input.RequiredWorkerEpoch {
 		return CodeSessionEvent{}, false, ErrWorkerEpochMismatch
 	}
 	if input.IdempotencyKey != "" {
 		existing, err := d.getCodeSessionEventTx(ctx, tx, direction, session.WorkspaceID, input.IdempotencyKey)
 		if err == nil {
-			return existing, true, tx.Commit()
+			return existing, true, nil
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return CodeSessionEvent{}, false, err
@@ -854,7 +1005,10 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 		deliveryStatus = "queued"
 	}
 
-	var event CodeSessionEvent
+	var (
+		event CodeSessionEvent
+		err   error
+	)
 	eventArguments := map[string]any{
 		"external_id":              input.ExternalID,
 		"organization_id":          session.OrganizationID,
@@ -913,9 +1067,6 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 		"now":          now,
 		"id":           session.ID,
 	}); err != nil {
-		return CodeSessionEvent{}, false, err
-	}
-	if err := tx.Commit(); err != nil {
 		return CodeSessionEvent{}, false, err
 	}
 	return event, false, nil

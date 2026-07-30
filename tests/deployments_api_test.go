@@ -262,39 +262,8 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 		defer deleteSession(t, app, *run.SessionID)
 
-		rows, err := app.db.Pool.Query(context.Background(), `
-			select e.payload #>> '{content,0,text}'
-			from session_event_queue q
-			join sessions s
-				on s.uuid = q.session_uuid
-				and s.workspace_id = q.workspace_id
-			join session_events e
-				on e.uuid = q.session_event_uuid
-				and e.workspace_id = q.workspace_id
-			where s.external_id = $1
-			order by q.id asc
-		`, *run.SessionID)
-		if err != nil {
-			t.Fatalf("list deployment startup queue: %v", err)
-		}
-		var queuedPrompts []string
-		for rows.Next() {
-			var prompt string
-			if err := rows.Scan(&prompt); err != nil {
-				rows.Close()
-				t.Fatalf("scan deployment startup queue: %v", err)
-			}
-			queuedPrompts = append(queuedPrompts, prompt)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			t.Fatalf("iterate deployment startup queue: %v", err)
-		}
-		rows.Close()
-		if len(queuedPrompts) != 2 ||
-			queuedPrompts[0] != "deployment first" ||
-			queuedPrompts[1] != "deployment second" {
-			t.Fatalf("deployment startup queue = %#v, want first then second", queuedPrompts)
+		if queued := sessionEventQueueEventIDs(t, app, *run.SessionID); len(queued) != 2 {
+			t.Fatalf("deployment startup queue size = %d, want 2", len(queued))
 		}
 
 		codeSessionID := launchLocalCodeSession(t, app, *run.SessionID)

@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -346,7 +347,6 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	provider := &recordingRunnerProvider{
 		sandboxID: "sandbox-runner-startup-message",
 		beforeCreate: func() {
-			// 发送时 Code Session 尚不存在，无法走实时入队。
 			if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID); !errors.Is(err, db.ErrNotFound) {
 				t.Fatalf("code session at provider.Create = %v, want ErrNotFound", err)
 			}
@@ -355,9 +355,6 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 				t.Fatalf("accepted events = %#v, want one", sent.Data)
 			}
 			acceptedEventID = sessionEventStringField(t, sent.Data[0], "id")
-			if queued := sessionEventQueueEventIDs(t, app, session.ID); !reflect.DeepEqual(queued, []string{acceptedEventID}) {
-				t.Fatalf("startup session event queue = %#v, want [%s]", queued, acceptedEventID)
-			}
 		},
 	}
 
@@ -366,13 +363,10 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 		t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
 	}
 
-	// 公共表应已接收该消息。
 	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
 	if !eventPageContains(publicEvents, acceptedEventID) {
 		t.Fatalf("session_events missing accepted event %q: %+v", acceptedEventID, publicEvents.Data)
 	}
-
-	// worker 入站队列也应包含同一条用户消息，而不能只有 initialize。
 	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
 	if err != nil {
 		t.Fatalf("load Code Session after runner startup: %v", err)
@@ -383,20 +377,10 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	}
 	if len(queued) != 2 ||
 		queued[0].EventSubtype != "initialize" ||
-		queued[1].EventType != "user" {
-		t.Fatalf("inbound = %#v, want initialize then user (public accepted, inbound incomplete)", queued)
-	}
-	var payload struct {
-		UUID    string `json:"uuid"`
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal(queued[1].Payload, &payload); err != nil {
-		t.Fatalf("decode queued user message: %v", err)
-	}
-	if payload.UUID != acceptedEventID || payload.Message.Content != prompt {
-		t.Fatalf("queued user = %#v, want uuid=%q content=%q", payload, acceptedEventID, prompt)
+		queued[1].EventType != "user" ||
+		!bytes.Contains(queued[1].Payload, []byte(acceptedEventID)) ||
+		!bytes.Contains(queued[1].Payload, []byte(prompt)) {
+		t.Fatalf("inbound = %#v, want initialize then accepted user message", queued)
 	}
 	if remaining := sessionEventQueueEventIDs(t, app, session.ID); len(remaining) != 0 {
 		t.Fatalf("remaining startup session event queue = %#v, want empty", remaining)

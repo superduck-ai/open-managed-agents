@@ -9,21 +9,21 @@ import (
 func TestVaultQueriesUseSQLXNamedParameters(t *testing.T) {
 	now := time.Date(2026, time.July, 27, 11, 0, 0, 0, time.UTC)
 	vaultQuery, vaultArguments := listVaultsQuery(ListVaultsPageParams{
-		WorkspaceID: 42,
-		Limit:       20,
-		Cursor:      &VaultPageCursor{CreatedAt: now, ID: 7},
+		WorkspaceUUID: "00000000-0000-0000-0000-000000000042",
+		Limit:         20,
+		Cursor:        &VaultPageCursor{CreatedAt: now, UUID: "00000000-0000-0000-0000-000000000007"},
 	})
 	credentialQuery, credentialArguments := listVaultCredentialsQuery(ListVaultCredentialsPageParams{
-		WorkspaceID:     42,
+		WorkspaceUUID:   "00000000-0000-0000-0000-000000000042",
 		VaultExternalID: "vault_test",
 		Limit:           20,
-		Cursor:          &VaultCredentialPageCursor{CreatedAt: now, ID: 8},
+		Cursor:          &VaultCredentialPageCursor{CreatedAt: now, UUID: "00000000-0000-0000-0000-000000000008"},
 	})
 
 	t.Run("rejects a missing named argument", func(t *testing.T) {
 		incompleteArguments := make(map[string]any, len(credentialArguments)-1)
 		for name, value := range credentialArguments {
-			if name != "cursor_id" {
+			if name != "cursor_uuid" {
 				incompleteArguments[name] = value
 			}
 		}
@@ -46,8 +46,8 @@ func TestVaultQueriesUseSQLXNamedParameters(t *testing.T) {
 		},
 		{
 			name:         "get vault",
-			query:        vaultSelectSQL() + ` where workspace_id = :workspace_id and external_id = :external_id`,
-			arguments:    vaultLookupArguments(42, "vault_test"),
+			query:        vaultSelectSQL() + ` where workspace_uuid = :workspace_uuid and external_id = :external_id`,
+			arguments:    vaultLookupArguments("00000000-0000-0000-0000-000000000042", "vault_test"),
 			wantArgCount: 2,
 		},
 		{
@@ -58,8 +58,8 @@ func TestVaultQueriesUseSQLXNamedParameters(t *testing.T) {
 		},
 		{
 			name:         "get credential",
-			query:        vaultCredentialSelectSQL() + ` where workspace_id = :workspace_id and vault_external_id = :vault_external_id and external_id = :credential_external_id`,
-			arguments:    vaultCredentialLookupArguments(42, "vault_test", "cred_test"),
+			query:        vaultCredentialSelectSQL() + ` where workspace_uuid = :workspace_uuid and vault_external_id = :vault_external_id and external_id = :credential_external_id`,
+			arguments:    vaultCredentialLookupArguments("00000000-0000-0000-0000-000000000042", "vault_test", "cred_test"),
 			wantArgCount: 3,
 		},
 	}

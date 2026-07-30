@@ -66,12 +66,14 @@ func TestPlatformSessionIdentityRowMapping(t *testing.T) {
 		UserID:              3,
 		UserExternalID:      "user_test",
 		APIKeyID:            4,
+		APIKeyUUID:          "api-key-uuid",
 		APIKeyExternalID:    "api_key_test",
 	}
 
 	session := row.session()
 	if session.OrganizationID != row.OrganizationID ||
 		session.WorkspaceExternalID != row.WorkspaceExternalID ||
+		session.APIKeyUUID != row.APIKeyUUID ||
 		session.APIKeyExternalID != row.APIKeyExternalID {
 		t.Fatalf("session = %#v, want values from row %#v", session, row)
 	}

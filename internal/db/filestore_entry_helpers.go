@@ -179,7 +179,7 @@ func filestoreNow(value time.Time) time.Time {
 // 如果这个路径被一个未过期的非目录 entry 占着，就返回 ErrFilestorePathExists。
 // 如果这个路径被一个“已过期的文件 entry”占着，它会先挂清理任务、扣回 owned bytes，然后把这条旧 row 原地改写成目录。
 // 如果这个路径根本不存在，就插入一条新的 directory entry。
-func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID int64, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (FilestoreEntry, error) {
+func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (FilestoreEntry, error) {
 	existing, found, err := getFilestoreEntryForMutation(ctx, tx, filesystem, directoryPath)
 	if err != nil {
 		return FilestoreEntry{}, err
@@ -192,7 +192,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 			return FilestoreEntry{}, ErrFilestorePathExists
 		}
 		if _, _, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
-			WorkspaceID: workspaceID, FilesystemID: filesystem.ID,
+			WorkspaceUUID: filesystem.WorkspaceUUID, FilesystemID: filesystem.ID,
 		}, existing, "expired_path_replaced", now); err != nil {
 			return FilestoreEntry{}, err
 		}
@@ -230,7 +230,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, workspaceID in
 		}
 		if releasedBytes := existing.OwnedBytes(); releasedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
-				ctx, tx, workspaceID, 0, -releasedBytes, 0,
+				ctx, tx, filesystem.WorkspaceUUID, 0, -releasedBytes, 0,
 			); err != nil {
 				return FilestoreEntry{}, err
 			}
@@ -303,7 +303,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	}
 	storageDelta := input.Blob.SizeBytes - oldSize
 	if err := applyWorkspaceStorageDeltaSQLXTx(
-		ctx, tx, input.WorkspaceID, 0, storageDelta, input.WorkspaceStorageLimitBytes,
+		ctx, tx, filesystem.WorkspaceUUID, 0, storageDelta, input.WorkspaceStorageLimitBytes,
 	); err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -311,7 +311,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	var cleanupJobs []FilestoreObjectCleanupJob
 	if found && existing.Kind == FilestoreEntryKindFile && !sameFilestoreObject(existing, input.Blob) {
 		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
-			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
+			WorkspaceUUID: filesystem.WorkspaceUUID, FilesystemID: filesystem.ID,
 		}, existing, "file_replaced", input.Now)
 		if err != nil {
 			return FilestoreMutationResult{}, err
@@ -326,7 +326,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	}
 	if input.OrphanCleanupJobExternalID != "" {
 		// 只有桶、键、版本均与待落库对象吻合时才取消哨兵，防止错绑任务掩盖孤儿。
-		if err := cancelAttachedFilestoreObjectCleanupJobTx(ctx, tx, input.WorkspaceID, input.OrphanCleanupJobExternalID, input.Blob); err != nil {
+		if err := cancelAttachedFilestoreObjectCleanupJobTx(ctx, tx, filesystem.WorkspaceUUID, input.OrphanCleanupJobExternalID, input.Blob); err != nil {
 			return FilestoreMutationResult{}, err
 		}
 	}

@@ -406,6 +406,27 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
+	if session.APIKeyUUID == "" {
+		refreshed, refreshErr := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
+			SessionKey: sessionKey,
+			UserUUID:   session.UserExternalID,
+			OrgUUID:    session.OrganizationUUID,
+			ExpiresAt:  session.ExpiresAt,
+		})
+		if refreshErr != nil {
+			if errors.Is(refreshErr, db.ErrNotFound) || errors.Is(refreshErr, platform.ErrNotFound) {
+				return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session")
+			}
+			s.logger.ErrorContext(r.Context(), "refresh platform session UUID references", "error", refreshErr)
+			return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+		}
+		refreshed.ExternalID = session.ExternalID
+		if saveErr := s.platformStore.Save(r.Context(), sessionKey, refreshed); saveErr != nil {
+			s.logger.ErrorContext(r.Context(), "save refreshed platform session UUID references", "error", saveErr)
+			return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+		}
+		session = refreshed
+	}
 	principal := session.Principal()
 	principal, orgErr := s.applyPlatformOrganizationOverride(r, principal)
 	if orgErr != nil {

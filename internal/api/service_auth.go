@@ -73,6 +73,7 @@ func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (au
 	return auth.Principal{
 		CredentialType:      auth.CredentialTypeAPIKey,
 		APIKeyID:            key.ID,
+		APIKeyUUID:          key.UUID,
 		APIKeyExternalID:    key.ExternalID,
 		OrganizationID:      key.OrganizationID,
 		OrganizationUUID:    key.OrganizationUUID,
@@ -101,13 +102,11 @@ func (s *Server) authenticateEnvironmentCredential(r *http.Request, apiKey strin
 	if err == nil {
 		return auth.Principal{
 			CredentialType:        auth.CredentialTypeEnvironmentKey,
-			EnvironmentKeyID:      envKey.ID,
-			OrganizationID:        envKey.OrganizationID,
+			EnvironmentKeyUUID:    envKey.UUID,
 			OrganizationUUID:      envKey.OrganizationUUID,
-			WorkspaceID:           envKey.WorkspaceID,
 			WorkspaceUUID:         envKey.WorkspaceUUID,
 			WorkspaceExternalID:   envKey.WorkspaceExternalID,
-			EnvironmentID:         envKey.EnvironmentID,
+			EnvironmentUUID:       envKey.EnvironmentUUID,
 			EnvironmentExternalID: envKey.EnvironmentExternalID,
 		}, true, nil
 	}
@@ -186,16 +185,14 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 func principalFromCodeSessionCredential(codeSession db.CodeSessionCredentialContext, credentialType string) auth.Principal {
 	return auth.Principal{
 		CredentialType:          credentialType,
-		OrganizationID:          codeSession.OrganizationID,
 		OrganizationUUID:        codeSession.OrganizationUUID,
-		WorkspaceID:             codeSession.WorkspaceID,
 		WorkspaceUUID:           codeSession.WorkspaceUUID,
 		WorkspaceExternalID:     codeSession.WorkspaceExternalID,
-		CodeSessionID:           codeSession.CodeSessionID,
+		CodeSessionUUID:         codeSession.CodeSessionUUID,
 		CodeSessionExternalID:   codeSession.CodeSessionExternalID,
-		PublicSessionID:         codeSession.PublicSessionID,
+		PublicSessionUUID:       codeSession.PublicSessionUUID,
 		PublicSessionExternalID: codeSession.PublicSessionExternalID,
-		AgentID:                 codeSession.AgentID,
+		AgentUUID:               codeSession.AgentUUID,
 		AgentExternalID:         codeSession.AgentExternalID,
 		AgentVersion:            codeSession.AgentVersion,
 	}

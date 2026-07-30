@@ -192,7 +192,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 		return
 	}
 	events, hasMore, err := h.db.ListCodeSessionInternalEventsPage(r.Context(), db.ListCodeSessionInternalEventsPageParams{
-		WorkspaceID:           record.WorkspaceID,
+		WorkspaceUUID:         record.WorkspaceUUID,
 		CodeSessionExternalID: codeSessionID,
 		Subagents:             strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("subagents")), "true"),
 		AfterSequence:         cursor,

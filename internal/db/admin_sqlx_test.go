@@ -19,21 +19,27 @@ func TestAppendAdminCursorFilterBindsNamedParameters(t *testing.T) {
 		"ak.created_at",
 		"apikey_after",
 		"",
-		&AdminCursor{CreatedAt: cursorTime, ID: 99},
+		&AdminCursor{CreatedAt: cursorTime, UUID: "99999999-9999-4999-8999-999999999999"},
 	)
-	query += " order by ak.created_at desc, ak.id desc limit :limit"
+	query += " order by ak.created_at desc, ak.uuid desc limit :limit"
 
 	boundQuery, values, err := bindNamed(postgresRebinder{}, query, arguments)
 	if err != nil {
 		t.Fatalf("bindNamed() error = %v", err)
 	}
 	wantQuery := adminAPIKeySelectSQL() + ` where w.organization_uuid = CAST($1 AS uuid)` +
-		" and (ak.created_at < $2 or (ak.created_at = $3 and ak.id < $4))" +
-		" order by ak.created_at desc, ak.id desc limit $5"
+		" and (ak.created_at < $2 or (ak.created_at = $3 and ak.uuid < CAST($4 AS uuid)))" +
+		" order by ak.created_at desc, ak.uuid desc limit $5"
 	if boundQuery != wantQuery {
 		t.Fatalf("bindNamed() query = %q, want %q", boundQuery, wantQuery)
 	}
-	wantValues := []any{"22222222-2222-4222-8222-222222222222", cursorTime, cursorTime, int64(99), 11}
+	wantValues := []any{
+		"22222222-2222-4222-8222-222222222222",
+		cursorTime,
+		cursorTime,
+		"99999999-9999-4999-8999-999999999999",
+		11,
+	}
 	if !reflect.DeepEqual(values, wantValues) {
 		t.Fatalf("bindNamed() values = %#v, want %#v", values, wantValues)
 	}
@@ -43,25 +49,30 @@ func TestAppendAdminCursorFilterBuildsBeforeCondition(t *testing.T) {
 	cursorTime := time.Date(2026, time.July, 23, 11, 0, 0, 0, time.UTC)
 	arguments := map[string]any{}
 	query := appendCursorFilter(
-		"select id from users where organization_id = :organization_id",
+		"select uuid from users where organization_uuid = CAST(:organization_uuid AS uuid)",
 		arguments,
 		"added_at",
 		"",
 		"user_before",
-		&AdminCursor{CreatedAt: cursorTime, ID: 7},
+		&AdminCursor{CreatedAt: cursorTime, UUID: "77777777-7777-4777-8777-777777777777"},
 	)
-	arguments["organization_id"] = int64(9)
+	arguments["organization_uuid"] = "99999999-9999-4999-8999-999999999999"
 
 	boundQuery, values, err := bindNamed(postgresRebinder{}, query, arguments)
 	if err != nil {
 		t.Fatalf("bindNamed() error = %v", err)
 	}
-	wantQuery := "select id from users where organization_id = $1" +
-		" and (added_at > $2 or (added_at = $3 and id > $4))"
+	wantQuery := "select uuid from users where organization_uuid = CAST($1 AS uuid)" +
+		" and (added_at > $2 or (added_at = $3 and uuid > CAST($4 AS uuid)))"
 	if boundQuery != wantQuery {
 		t.Fatalf("bindNamed() query = %q, want %q", boundQuery, wantQuery)
 	}
-	wantValues := []any{int64(9), cursorTime, cursorTime, int64(7)}
+	wantValues := []any{
+		"99999999-9999-4999-8999-999999999999",
+		cursorTime,
+		cursorTime,
+		"77777777-7777-4777-8777-777777777777",
+	}
 	if !reflect.DeepEqual(values, wantValues) {
 		t.Fatalf("bindNamed() values = %#v, want %#v", values, wantValues)
 	}

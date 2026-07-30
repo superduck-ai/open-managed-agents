@@ -25,16 +25,14 @@ const listAdminRequestsSQL = `
 		u.role as requester_role,
 		CAST(null AS text) as requester_seat_tier
 	from admin_requests ar
-	left join organizations o
-	  on CAST(o.uuid AS text) = CAST(ar.org_uuid AS text)
 	left join users u
-	  on CAST(u.uuid AS text) = CAST(ar.requester_uuid AS text)
-	 and u.organization_id = o.id
+	  on u.uuid = ar.requester_uuid
+	 and u.organization_uuid = ar.org_uuid
 	 and u.deleted_at is null
 	where CAST(ar.org_uuid AS text) = :org_uuid
 	  and ar.request_type = :request_type
 	  and ar.status = :status
-	order by ar.created_at desc, ar.id desc
+	order by ar.created_at desc, ar.request_uuid desc
 	limit :limit
 `
 

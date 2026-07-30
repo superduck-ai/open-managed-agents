@@ -28,7 +28,7 @@ const (
 )
 
 type filestoreDatabase interface {
-	GetFilestoreFilesystem(context.Context, int64, string) (db.FilestoreFilesystem, error)
+	GetFilestoreFilesystem(context.Context, string, string) (db.FilestoreFilesystem, error)
 	GetFilestoreEntry(context.Context, int64, int64, string) (db.FilestoreEntry, error)
 	ListFilestoreEntriesPage(context.Context, db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error)
 	ListFilestoreSkillArchiveEntries(context.Context, int64, int64) ([]db.FilestoreEntry, error)
@@ -40,8 +40,8 @@ type filestoreDatabase interface {
 	RemoveFilestoreFile(context.Context, db.RemoveFilestoreEntryInput) (db.FilestoreMutationResult, error)
 	RemoveFilestoreDirectory(context.Context, db.RemoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
 	EnqueueFilestoreObjectCleanupJob(context.Context, db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error)
-	AttachFilestoreObjectCleanupJobVersion(context.Context, int64, string, string, string) error
-	CompleteFilestoreObjectCleanupJob(context.Context, int64) error
+	AttachFilestoreObjectCleanupJobVersion(context.Context, string, string, string, string) error
+	CompleteFilestoreObjectCleanupJob(context.Context, string) error
 }
 
 // Service 编排 Filestore 的鉴权上下文、元数据事务与对象存储操作。
@@ -438,7 +438,7 @@ func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, fi
 		(filesystemID != principal.FilesystemExternalID && !strings.EqualFold(filesystemID, principal.FilesystemUUID)) {
 		return db.FilestoreFilesystem{}, permissionDenied("Filestore token does not grant access to this filesystem")
 	}
-	filesystem, err := s.db.GetFilestoreFilesystem(ctx, principal.WorkspaceID, filesystemID)
+	filesystem, err := s.db.GetFilestoreFilesystem(ctx, principal.WorkspaceUUID, filesystemID)
 	if err != nil {
 		return db.FilestoreFilesystem{}, mapDatabaseError("resolve filesystem", err)
 	}
@@ -473,8 +473,8 @@ func (s *Service) enqueueOrphanCleanup(
 ) (db.FilestoreObjectCleanupJob, *apiError) {
 	// 先写哨兵、后写对象：任何后续失败都有一条持久化补偿路径。
 	job, err := s.db.EnqueueFilestoreObjectCleanupJob(ctx, db.EnqueueFilestoreObjectCleanupJobInput{
-		WorkspaceID:     principal.WorkspaceID,
-		FilesystemID:    filesystem.ID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
+		FilesystemUUID:  filesystem.UUID,
 		EntryExternalID: entryExternalID,
 		Bucket:          s.store.Name(),
 		Key:             key,
@@ -517,7 +517,7 @@ func (s *Service) stageFilestoreObject(
 		s.discardOrphan(ctx, cleanupJob, key, result.VersionID)
 		return stagedFilestoreObject{}, apiErr
 	}
-	if apiErr := s.attachOrphanVersion(ctx, principal.WorkspaceID, cleanupJob, result.ETag, result.VersionID); apiErr != nil {
+	if apiErr := s.attachOrphanVersion(ctx, principal.WorkspaceUUID, cleanupJob, result.ETag, result.VersionID); apiErr != nil {
 		s.discardOrphan(ctx, cleanupJob, key, result.VersionID)
 		return stagedFilestoreObject{}, apiErr
 	}
@@ -532,17 +532,17 @@ func (s *Service) discardOrphan(ctx context.Context, job db.FilestoreObjectClean
 	if err := s.store.Delete(cleanupCtx, key, deleteOptions); err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return
 	}
-	_ = s.db.CompleteFilestoreObjectCleanupJob(cleanupCtx, job.ID)
+	_ = s.db.CompleteFilestoreObjectCleanupJob(cleanupCtx, job.UUID)
 }
 
 func (s *Service) attachOrphanVersion(
 	ctx context.Context,
-	workspaceID int64,
+	workspaceUUID string,
 	job db.FilestoreObjectCleanupJob,
 	etag string,
 	versionID string,
 ) *apiError {
-	if err := s.db.AttachFilestoreObjectCleanupJobVersion(ctx, workspaceID, job.ExternalID, etag, versionID); err != nil {
+	if err := s.db.AttachFilestoreObjectCleanupJobVersion(ctx, workspaceUUID, job.ExternalID, etag, versionID); err != nil {
 		return internalError("record uploaded object version", err)
 	}
 	return nil

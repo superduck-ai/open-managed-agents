@@ -142,13 +142,13 @@ func insertFilestoreObjectCleanupJobSQLX(
 	var job FilestoreObjectCleanupJob
 	err := namedGetContext(ctx, database, &job, `
 		with inserted_job as (
-			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
-			select
+			insert into jobs (external_id, workspace_uuid, type, status, payload, run_after)
+			values (
 				concat('job_', replace(cast(gen_random_uuid() as text), '-', '')),
-				w.id, :job_type, 'pending',
+				CAST(:workspace_uuid AS uuid), :job_type, 'pending',
 				jsonb_build_object(
-					'workspace_uuid', cast(w.uuid as text),
-					'filesystem_uuid', cast(fs.uuid as text),
+					'workspace_uuid', cast(:workspace_uuid as text),
+					'filesystem_uuid', cast(:filesystem_uuid as text),
 					'entry_external_id', cast(:entry_external_id as text),
 					'bucket', cast(:bucket as text),
 					'key', cast(:key as text),
@@ -157,23 +157,18 @@ func insertFilestoreObjectCleanupJobSQLX(
 					'reason', cast(:reason as text)
 				),
 				:run_after
-			from workspaces w
-			join filestore_filesystems fs
-				on fs.id = :filesystem_id and fs.workspace_uuid = w.uuid
-			where w.id = :workspace_id
+			)
 			returning *
 		)
-		select `+filestoreCleanupJobColumns("j", "w", "fs")+`
+		select `+filestoreCleanupJobColumns("j", "fs")+`
 		from inserted_job j
-		join workspaces w
-			on cast(w.uuid as text) = j.payload->>'workspace_uuid'
 		join filestore_filesystems fs
 			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
-			and fs.workspace_uuid = w.uuid
+			and fs.workspace_uuid = j.workspace_uuid
 	`, map[string]any{
-		"workspace_id":      input.WorkspaceID,
+		"workspace_uuid":    input.WorkspaceUUID,
 		"job_type":          filestoreCleanupJobType,
-		"filesystem_id":     input.FilesystemID,
+		"filesystem_uuid":   input.FilesystemUUID,
 		"entry_external_id": input.EntryExternalID,
 		"bucket":            input.Bucket,
 		"key":               input.Key,

@@ -55,7 +55,7 @@ func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID strin
 	if err != nil {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
 	}
-	session, err := s.db.GetSession(ctx, codeSession.WorkspaceID, codeSession.SessionExternalID)
+	session, err := s.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 	if err != nil {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
 	}
@@ -255,7 +255,7 @@ func (s *Service) toolPermissionRequestForConfirmation(ctx context.Context, code
 	if err == nil || !errors.Is(err, db.ErrNotFound) {
 		return request, "", err
 	}
-	publicEvent, err := s.db.GetSessionEvent(ctx, codeSession.WorkspaceID, codeSession.SessionExternalID, toolUseID)
+	publicEvent, err := s.db.GetSessionEvent(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID, toolUseID)
 	if err != nil {
 		return db.CodeSessionEvent{}, "", err
 	}

@@ -10,30 +10,28 @@ import (
 )
 
 type MemoryStore struct {
-	ID                int64
-	UUID              string
-	ExternalID        string
-	OrganizationID    int64
-	WorkspaceID       int64
-	CreatedByAPIKeyID int64
-	Name              string
-	Description       string
-	Metadata          json.RawMessage
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	ArchivedAt        *time.Time
-	DeletedAt         *time.Time
+	UUID                string
+	ExternalID          string
+	OrganizationUUID    string
+	WorkspaceUUID       string
+	CreatedByAPIKeyUUID string
+	Name                string
+	Description         string
+	Metadata            json.RawMessage
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	ArchivedAt          *time.Time
+	DeletedAt           *time.Time
 }
 
 type Memory struct {
-	ID                       int64
 	UUID                     string
 	ExternalID               string
-	OrganizationID           int64
-	WorkspaceID              int64
-	MemoryStoreID            int64
+	OrganizationUUID         string
+	WorkspaceUUID            string
+	MemoryStoreUUID          string
 	MemoryStoreExternalID    string
-	CurrentVersionID         int64
+	CurrentVersionUUID       string
 	CurrentVersionExternalID string
 	Path                     string
 	ContentSizeBytes         int64
@@ -47,21 +45,20 @@ type Memory struct {
 
 type MemoryActor struct {
 	Type             string
-	APIKeyID         int64
+	APIKeyUUID       string
 	APIKeyExternalID string
 	SessionID        string
 	UserID           string
 }
 
 type MemoryVersion struct {
-	ID                    int64
 	UUID                  string
 	ExternalID            string
-	OrganizationID        int64
-	WorkspaceID           int64
-	MemoryStoreID         int64
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	MemoryStoreUUID       string
 	MemoryStoreExternalID string
-	MemoryID              int64
+	MemoryUUID            string
 	MemoryExternalID      string
 	Operation             string
 	Path                  *string
@@ -76,32 +73,32 @@ type MemoryVersion struct {
 }
 
 type ObjectRef struct {
-	WorkspaceID  int64
-	Bucket       string
-	Key          string
-	ResourceType string
-	ResourceID   string
+	WorkspaceUUID string
+	Bucket        string
+	Key           string
+	ResourceType  string
+	ResourceID    string
 }
 
 type MemoryStorePageCursor struct {
 	CreatedAt time.Time
-	ID        int64
+	UUID      string
 }
 
 type MemoryPageCursor struct {
 	Path      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	ID        int64
+	UUID      string
 }
 
 type MemoryVersionPageCursor struct {
 	CreatedAt time.Time
-	ID        int64
+	UUID      string
 }
 
 type ListMemoryStoresPageParams struct {
-	WorkspaceID     int64
+	WorkspaceUUID   string
 	Limit           int
 	Cursor          *MemoryStorePageCursor
 	IncludeArchived bool
@@ -110,7 +107,7 @@ type ListMemoryStoresPageParams struct {
 }
 
 type ListMemoriesPageParams struct {
-	WorkspaceID           int64
+	WorkspaceUUID         string
 	MemoryStoreExternalID string
 	Limit                 int
 	Cursor                *MemoryPageCursor
@@ -120,7 +117,7 @@ type ListMemoriesPageParams struct {
 }
 
 type ListMemoryVersionsPageParams struct {
-	WorkspaceID           int64
+	WorkspaceUUID         string
 	MemoryStoreExternalID string
 	Limit                 int
 	Cursor                *MemoryVersionPageCursor
@@ -133,7 +130,7 @@ type ListMemoryVersionsPageParams struct {
 }
 
 type UpdateMemoryInput struct {
-	WorkspaceID           int64
+	WorkspaceUUID         string
 	MemoryStoreExternalID string
 	MemoryExternalID      string
 	VersionUUID           string
@@ -151,7 +148,7 @@ type UpdateMemoryInput struct {
 }
 
 type DeleteMemoryInput struct {
-	WorkspaceID           int64
+	WorkspaceUUID         string
 	MemoryStoreExternalID string
 	MemoryExternalID      string
 	VersionUUID           string
@@ -178,31 +175,31 @@ func (e *MemoryPathConflictError) Error() string {
 func (d *DB) CreateMemoryStore(ctx context.Context, store MemoryStore) (MemoryStore, error) {
 	return getMemoryStoreSQLX(ctx, d.sql, `
 		insert into memory_stores (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
+			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
 			name, description, metadata, created_at, updated_at
 		)
 		values (
-			:uuid, :external_id, :organization_id, :workspace_id, :created_by_api_key_id,
+			:uuid, :external_id, :organization_uuid, :workspace_uuid, :created_by_api_key_uuid,
 			:name, :description, CAST(:metadata AS jsonb), :created_at, :created_at
 		)
 		returning `+memoryStoreColumns()+`
 	`, map[string]any{
-		"uuid":                  store.UUID,
-		"external_id":           store.ExternalID,
-		"organization_id":       store.OrganizationID,
-		"workspace_id":          store.WorkspaceID,
-		"created_by_api_key_id": store.CreatedByAPIKeyID,
-		"name":                  store.Name,
-		"description":           store.Description,
-		"metadata":              jsonArg(store.Metadata),
-		"created_at":            store.CreatedAt,
+		"uuid":                    store.UUID,
+		"external_id":             store.ExternalID,
+		"organization_uuid":       store.OrganizationUUID,
+		"workspace_uuid":          store.WorkspaceUUID,
+		"created_by_api_key_uuid": store.CreatedByAPIKeyUUID,
+		"name":                    store.Name,
+		"description":             store.Description,
+		"metadata":                jsonArg(store.Metadata),
+		"created_at":              store.CreatedAt,
 	})
 }
 
-func (d *DB) GetMemoryStore(ctx context.Context, workspaceID int64, externalID string) (MemoryStore, error) {
+func (d *DB) GetMemoryStore(ctx context.Context, workspaceUUID, externalID string) (MemoryStore, error) {
 	return getMemoryStoreSQLX(ctx, d.sql, memoryStoreSelectSQL()+`
-		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
-	`, map[string]any{"workspace_id": workspaceID, "external_id": externalID})
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
+	`, map[string]any{"workspace_uuid": workspaceUUID, "external_id": externalID})
 }
 
 func (d *DB) GetMemoryStoreByExternalID(ctx context.Context, externalID string) (MemoryStore, error) {
@@ -211,7 +208,7 @@ func (d *DB) GetMemoryStoreByExternalID(ctx context.Context, externalID string) 
 	`, map[string]any{"external_id": externalID})
 }
 
-func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceID int64, externalID string, next MemoryStore) (MemoryStore, error) {
+func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceUUID, externalID string, next MemoryStore) (MemoryStore, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return MemoryStore{}, err
@@ -219,9 +216,9 @@ func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceID int64, externalI
 	defer tx.Rollback()
 
 	current, err := getMemoryStoreSQLX(ctx, tx, memoryStoreSelectSQL()+`
-		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		for update
-	`, map[string]any{"workspace_id": workspaceID, "external_id": externalID})
+	`, map[string]any{"workspace_uuid": workspaceUUID, "external_id": externalID})
 	if err != nil {
 		return MemoryStore{}, err
 	}
@@ -234,15 +231,15 @@ func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceID int64, externalI
 			description = :description,
 			metadata = CAST(:metadata AS jsonb),
 			updated_at = :updated_at
-		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		returning `+memoryStoreColumns()+`
 	`, map[string]any{
-		"workspace_id": workspaceID,
-		"external_id":  externalID,
-		"name":         next.Name,
-		"description":  next.Description,
-		"metadata":     jsonArg(next.Metadata),
-		"updated_at":   next.UpdatedAt,
+		"workspace_uuid": workspaceUUID,
+		"external_id":    externalID,
+		"name":           next.Name,
+		"description":    next.Description,
+		"metadata":       jsonArg(next.Metadata),
+		"updated_at":     next.UpdatedAt,
 	})
 	if err != nil {
 		return MemoryStore{}, err
@@ -253,29 +250,29 @@ func (d *DB) UpdateMemoryStore(ctx context.Context, workspaceID int64, externalI
 	return updated, nil
 }
 
-func (d *DB) ArchiveMemoryStore(ctx context.Context, workspaceID int64, externalID string) (MemoryStore, error) {
+func (d *DB) ArchiveMemoryStore(ctx context.Context, workspaceUUID, externalID string) (MemoryStore, error) {
 	return getMemoryStoreSQLX(ctx, d.sql, `
 		update memory_stores
 		set archived_at = coalesce(archived_at, now()),
 			updated_at = now()
-		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		returning `+memoryStoreColumns()+`
-	`, map[string]any{"workspace_id": workspaceID, "external_id": externalID})
+	`, map[string]any{"workspace_uuid": workspaceUUID, "external_id": externalID})
 }
 
-func (d *DB) DeleteMemoryStore(ctx context.Context, workspaceID int64, externalID string) ([]ObjectRef, error) {
+func (d *DB) DeleteMemoryStore(ctx context.Context, workspaceUUID, externalID string) ([]ObjectRef, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	var storeID int64
-	arguments := map[string]any{"workspace_id": workspaceID, "external_id": externalID}
-	if err := namedGetContext(ctx, tx, &storeID, `
-		select id
+	var storeUUID string
+	arguments := map[string]any{"workspace_uuid": workspaceUUID, "external_id": externalID}
+	if err := namedGetContext(ctx, tx, &storeUUID, `
+		select CAST(uuid AS text)
 		from memory_stores
-		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		for update
 	`, arguments); errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -284,13 +281,13 @@ func (d *DB) DeleteMemoryStore(ctx context.Context, workspaceID int64, externalI
 	}
 
 	var refRows []objectRefRow
-	arguments["store_id"] = storeID
+	arguments["store_uuid"] = storeUUID
 	if err := namedSelectContext(ctx, tx, &refRows, `
-		select workspace_id, coalesce(s3_bucket, '') AS bucket,
+		select workspace_uuid, coalesce(s3_bucket, '') AS bucket,
 			coalesce(s3_key, '') AS key, external_id AS resource_id
 		from memory_versions
-		where workspace_id = :workspace_id
-			and memory_store_id = :store_id
+		where workspace_uuid = :workspace_uuid
+			and memory_store_uuid = :store_uuid
 			and s3_key is not null
 	`, arguments); err != nil {
 		return nil, err
@@ -298,29 +295,30 @@ func (d *DB) DeleteMemoryStore(ctx context.Context, workspaceID int64, externalI
 	refs := make([]ObjectRef, len(refRows))
 	for index := range refRows {
 		refs[index] = ObjectRef{
-			WorkspaceID:  refRows[index].WorkspaceID,
-			Bucket:       refRows[index].Bucket,
-			Key:          refRows[index].Key,
-			ResourceType: "memory_version",
-			ResourceID:   refRows[index].ResourceID,
+			WorkspaceUUID: refRows[index].WorkspaceUUID,
+			Bucket:        refRows[index].Bucket,
+			Key:           refRows[index].Key,
+			ResourceType:  "memory_version",
+			ResourceID:    refRows[index].ResourceID,
 		}
 	}
 
 	if _, err := namedExecContext(ctx, tx, `
 		delete from memory_versions
-		where workspace_id = :workspace_id and memory_store_id = :store_id
+		where workspace_uuid = :workspace_uuid and memory_store_uuid = :store_uuid
 	`, arguments); err != nil {
 		return nil, err
 	}
 	if _, err := namedExecContext(ctx, tx, `
 		delete from memories
-		where workspace_id = :workspace_id and memory_store_id = :store_id
+		where workspace_uuid = :workspace_uuid and memory_store_uuid = :store_uuid
 	`, arguments); err != nil {
 		return nil, err
 	}
 	if _, err := namedExecContext(ctx, tx, `
 		delete from memory_stores
-		where workspace_id = :workspace_id and id = :store_id
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and uuid = CAST(:store_uuid AS uuid)
 	`, arguments); err != nil {
 		return nil, err
 	}
@@ -335,9 +333,9 @@ func (d *DB) ListMemoryStoresPage(ctx context.Context, params ListMemoryStoresPa
 		params.Limit = 20
 	}
 	query := memoryStoreSelectSQL() + `
-		where workspace_id = :workspace_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and deleted_at is null
 	`
-	arguments := map[string]any{"workspace_id": params.WorkspaceID, "limit": params.Limit + 1}
+	arguments := map[string]any{"workspace_uuid": params.WorkspaceUUID, "limit": params.Limit + 1}
 	if !params.IncludeArchived {
 		query += " and archived_at is null"
 	}
@@ -350,11 +348,11 @@ func (d *DB) ListMemoryStoresPage(ctx context.Context, params ListMemoryStoresPa
 		arguments["created_at_lte"] = *params.CreatedAtLTE
 	}
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_id"] = params.Cursor.ID
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
-	query += " order by created_at desc, id desc limit :limit"
+	query += " order by created_at desc, uuid desc limit :limit"
 
 	stores, err := selectMemoryStoresSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
@@ -375,27 +373,27 @@ func (d *DB) CreateMemory(ctx context.Context, memory Memory, version MemoryVers
 	defer tx.Rollback()
 
 	store, err := getMemoryStoreSQLX(ctx, tx, memoryStoreSelectSQL()+`
-		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		for update
-	`, map[string]any{"workspace_id": memory.WorkspaceID, "external_id": memory.MemoryStoreExternalID})
+	`, map[string]any{"workspace_uuid": memory.WorkspaceUUID, "external_id": memory.MemoryStoreExternalID})
 	if err != nil {
 		return Memory{}, err
 	}
 	if store.ArchivedAt != nil {
 		return Memory{}, ErrInvalidState
 	}
-	if err := d.ensureMemoryPathAvailable(ctx, tx, store.ID, memory.Path, 0); err != nil {
+	if err := d.ensureMemoryPathAvailable(ctx, tx, store.UUID, memory.Path, ""); err != nil {
 		return Memory{}, err
 	}
 
 	created, err := getMemorySQLX(ctx, tx, `
 		insert into memories (
-			uuid, external_id, organization_id, workspace_id, memory_store_id,
+			uuid, external_id, organization_uuid, workspace_uuid, memory_store_uuid,
 			memory_store_external_id, current_version_external_id, path,
 			content_size_bytes, content_sha256, s3_bucket, s3_key, created_at, updated_at
 		)
 		values (
-			:uuid, :external_id, :organization_id, :workspace_id, :memory_store_id,
+			:uuid, :external_id, :organization_uuid, :workspace_uuid, :memory_store_uuid,
 			:memory_store_external_id, :current_version_external_id, :path,
 			:content_size_bytes, :content_sha256, :s3_bucket, :s3_key, :created_at, :created_at
 		)
@@ -403,9 +401,9 @@ func (d *DB) CreateMemory(ctx context.Context, memory Memory, version MemoryVers
 	`, map[string]any{
 		"uuid":                        memory.UUID,
 		"external_id":                 memory.ExternalID,
-		"organization_id":             store.OrganizationID,
-		"workspace_id":                store.WorkspaceID,
-		"memory_store_id":             store.ID,
+		"organization_uuid":           store.OrganizationUUID,
+		"workspace_uuid":              store.WorkspaceUUID,
+		"memory_store_uuid":           store.UUID,
 		"memory_store_external_id":    store.ExternalID,
 		"current_version_external_id": version.ExternalID,
 		"path":                        memory.Path,
@@ -416,17 +414,17 @@ func (d *DB) CreateMemory(ctx context.Context, memory Memory, version MemoryVers
 		"created_at":                  memory.CreatedAt,
 	})
 	if isUniqueViolation(err) {
-		return Memory{}, d.memoryPathConflict(ctx, tx, store.ID, memory.Path)
+		return Memory{}, d.memoryPathConflict(ctx, tx, store.UUID, memory.Path)
 	}
 	if err != nil {
 		return Memory{}, err
 	}
 
-	version.OrganizationID = store.OrganizationID
-	version.WorkspaceID = store.WorkspaceID
-	version.MemoryStoreID = store.ID
+	version.OrganizationUUID = store.OrganizationUUID
+	version.WorkspaceUUID = store.WorkspaceUUID
+	version.MemoryStoreUUID = store.UUID
 	version.MemoryStoreExternalID = store.ExternalID
-	version.MemoryID = created.ID
+	version.MemoryUUID = created.UUID
 	version.MemoryExternalID = created.ExternalID
 	insertedVersion, err := insertMemoryVersion(ctx, tx, version)
 	if err != nil {
@@ -434,14 +432,15 @@ func (d *DB) CreateMemory(ctx context.Context, memory Memory, version MemoryVers
 	}
 	updated, err := getMemorySQLX(ctx, tx, `
 		update memories
-		set current_version_id = :version_id,
+		set current_version_uuid = CAST(:version_uuid AS uuid),
 			current_version_external_id = :version_external_id
-		where workspace_id = :workspace_id and id = :memory_id
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and uuid = CAST(:memory_uuid AS uuid)
 		returning `+memoryColumns()+`
 	`, map[string]any{
-		"workspace_id":        store.WorkspaceID,
-		"memory_id":           created.ID,
-		"version_id":          insertedVersion.ID,
+		"workspace_uuid":      store.WorkspaceUUID,
+		"memory_uuid":         created.UUID,
+		"version_uuid":        insertedVersion.UUID,
 		"version_external_id": insertedVersion.ExternalID,
 	})
 	if err != nil {
@@ -453,14 +452,14 @@ func (d *DB) CreateMemory(ctx context.Context, memory Memory, version MemoryVers
 	return updated, nil
 }
 
-func (d *DB) GetMemory(ctx context.Context, workspaceID int64, memoryStoreExternalID, memoryExternalID string) (Memory, error) {
+func (d *DB) GetMemory(ctx context.Context, workspaceUUID, memoryStoreExternalID, memoryExternalID string) (Memory, error) {
 	return getMemorySQLX(ctx, d.sql, memorySelectSQL()+`
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 			and external_id = :memory_external_id
 			and deleted_at is null
 	`, map[string]any{
-		"workspace_id":             workspaceID,
+		"workspace_uuid":           workspaceUUID,
 		"memory_store_external_id": memoryStoreExternalID,
 		"memory_external_id":       memoryExternalID,
 	})
@@ -473,7 +472,7 @@ func (d *DB) UpdateMemory(ctx context.Context, input UpdateMemoryInput) (MemoryM
 	}
 	defer tx.Rollback()
 
-	current, storeArchived, err := d.getActiveMemoryForMutation(ctx, tx, input.WorkspaceID, input.MemoryStoreExternalID, input.MemoryExternalID)
+	current, storeArchived, err := d.getActiveMemoryForMutation(ctx, tx, input.WorkspaceUUID, input.MemoryStoreExternalID, input.MemoryExternalID)
 	if err != nil {
 		return MemoryMutationResult{}, err
 	}
@@ -514,7 +513,7 @@ func (d *DB) UpdateMemory(ctx context.Context, input UpdateMemoryInput) (MemoryM
 		return MemoryMutationResult{Memory: current}, nil
 	}
 	if targetPath != current.Path {
-		if err := d.ensureMemoryPathAvailable(ctx, tx, current.MemoryStoreID, targetPath, current.ID); err != nil {
+		if err := d.ensureMemoryPathAvailable(ctx, tx, current.MemoryStoreUUID, targetPath, current.UUID); err != nil {
 			return MemoryMutationResult{}, err
 		}
 	}
@@ -527,11 +526,11 @@ func (d *DB) UpdateMemory(ctx context.Context, input UpdateMemoryInput) (MemoryM
 	version, err := insertMemoryVersion(ctx, tx, MemoryVersion{
 		UUID:                  input.VersionUUID,
 		ExternalID:            input.VersionExternalID,
-		OrganizationID:        current.OrganizationID,
-		WorkspaceID:           current.WorkspaceID,
-		MemoryStoreID:         current.MemoryStoreID,
+		OrganizationUUID:      current.OrganizationUUID,
+		WorkspaceUUID:         current.WorkspaceUUID,
+		MemoryStoreUUID:       current.MemoryStoreUUID,
 		MemoryStoreExternalID: current.MemoryStoreExternalID,
-		MemoryID:              current.ID,
+		MemoryUUID:            current.UUID,
 		MemoryExternalID:      current.ExternalID,
 		Operation:             "modified",
 		Path:                  &pathValue,
@@ -547,7 +546,7 @@ func (d *DB) UpdateMemory(ctx context.Context, input UpdateMemoryInput) (MemoryM
 	}
 	updated, err := getMemorySQLX(ctx, tx, `
 		update memories
-		set current_version_id = :version_id,
+		set current_version_uuid = CAST(:version_uuid AS uuid),
 			current_version_external_id = :version_external_id,
 			path = :path,
 			content_size_bytes = :content_size_bytes,
@@ -555,16 +554,16 @@ func (d *DB) UpdateMemory(ctx context.Context, input UpdateMemoryInput) (MemoryM
 			s3_bucket = :s3_bucket,
 			s3_key = :s3_key,
 			updated_at = :updated_at
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 			and external_id = :memory_external_id
 			and deleted_at is null
 		returning `+memoryColumns()+`
 	`, map[string]any{
-		"workspace_id":             input.WorkspaceID,
+		"workspace_uuid":           input.WorkspaceUUID,
 		"memory_store_external_id": input.MemoryStoreExternalID,
 		"memory_external_id":       input.MemoryExternalID,
-		"version_id":               version.ID,
+		"version_uuid":             version.UUID,
 		"version_external_id":      version.ExternalID,
 		"path":                     targetPath,
 		"content_size_bytes":       targetSize,
@@ -574,7 +573,7 @@ func (d *DB) UpdateMemory(ctx context.Context, input UpdateMemoryInput) (MemoryM
 		"updated_at":               input.Now,
 	})
 	if isUniqueViolation(err) {
-		return MemoryMutationResult{}, d.memoryPathConflict(ctx, tx, current.MemoryStoreID, targetPath)
+		return MemoryMutationResult{}, d.memoryPathConflict(ctx, tx, current.MemoryStoreUUID, targetPath)
 	}
 	if err != nil {
 		return MemoryMutationResult{}, err
@@ -592,7 +591,7 @@ func (d *DB) DeleteMemory(ctx context.Context, input DeleteMemoryInput) error {
 	}
 	defer tx.Rollback()
 
-	current, storeArchived, err := d.getActiveMemoryForMutation(ctx, tx, input.WorkspaceID, input.MemoryStoreExternalID, input.MemoryExternalID)
+	current, storeArchived, err := d.getActiveMemoryForMutation(ctx, tx, input.WorkspaceUUID, input.MemoryStoreExternalID, input.MemoryExternalID)
 	if err != nil {
 		return err
 	}
@@ -607,11 +606,11 @@ func (d *DB) DeleteMemory(ctx context.Context, input DeleteMemoryInput) error {
 	version, err := insertMemoryVersion(ctx, tx, MemoryVersion{
 		UUID:                  input.VersionUUID,
 		ExternalID:            input.VersionExternalID,
-		OrganizationID:        current.OrganizationID,
-		WorkspaceID:           current.WorkspaceID,
-		MemoryStoreID:         current.MemoryStoreID,
+		OrganizationUUID:      current.OrganizationUUID,
+		WorkspaceUUID:         current.WorkspaceUUID,
+		MemoryStoreUUID:       current.MemoryStoreUUID,
 		MemoryStoreExternalID: current.MemoryStoreExternalID,
-		MemoryID:              current.ID,
+		MemoryUUID:            current.UUID,
 		MemoryExternalID:      current.ExternalID,
 		Operation:             "deleted",
 		Path:                  &pathValue,
@@ -623,19 +622,19 @@ func (d *DB) DeleteMemory(ctx context.Context, input DeleteMemoryInput) error {
 	}
 	rowsAffected, err := namedExecRowsAffected(ctx, tx, `
 		update memories
-		set current_version_id = :version_id,
+		set current_version_uuid = CAST(:version_uuid AS uuid),
 			current_version_external_id = :version_external_id,
 			updated_at = :updated_at,
 			deleted_at = :updated_at
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 			and external_id = :memory_external_id
 			and deleted_at is null
 	`, map[string]any{
-		"workspace_id":             input.WorkspaceID,
+		"workspace_uuid":           input.WorkspaceUUID,
 		"memory_store_external_id": input.MemoryStoreExternalID,
 		"memory_external_id":       input.MemoryExternalID,
-		"version_id":               version.ID,
+		"version_uuid":             version.UUID,
 		"version_external_id":      version.ExternalID,
 		"updated_at":               input.Now,
 	})
@@ -652,7 +651,7 @@ func (d *DB) ListMemoriesPage(ctx context.Context, params ListMemoriesPageParams
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	if err := d.ensureMemoryStoreExists(ctx, params.WorkspaceID, params.MemoryStoreExternalID); err != nil {
+	if err := d.ensureMemoryStoreExists(ctx, params.WorkspaceUUID, params.MemoryStoreExternalID); err != nil {
 		return nil, false, err
 	}
 	orderBy := params.OrderBy
@@ -665,12 +664,12 @@ func (d *DB) ListMemoriesPage(ctx context.Context, params ListMemoriesPageParams
 	}
 
 	query := memorySelectSQL() + `
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 			and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_id":             params.WorkspaceID,
+		"workspace_uuid":           params.WorkspaceUUID,
 		"memory_store_external_id": params.MemoryStoreExternalID,
 		"limit":                    params.Limit + 1,
 	}
@@ -679,32 +678,32 @@ func (d *DB) ListMemoriesPage(ctx context.Context, params ListMemoriesPageParams
 		arguments["path_prefix"] = params.PathPrefix
 	}
 	if params.Cursor != nil {
-		arguments["cursor_id"] = params.Cursor.ID
+		arguments["cursor_uuid"] = params.Cursor.UUID
 		switch orderBy {
 		case "path":
 			op := ">"
 			if order == "desc" {
 				op = "<"
 			}
-			query += fmt.Sprintf(" and (path %s :cursor_path or (path = :cursor_path and id %s :cursor_id))", op, op)
+			query += fmt.Sprintf(" and (path %s :cursor_path or (path = :cursor_path and uuid %s CAST(:cursor_uuid AS uuid)))", op, op)
 			arguments["cursor_path"] = params.Cursor.Path
 		case "created_at":
 			op := ">"
 			if order == "desc" {
 				op = "<"
 			}
-			query += fmt.Sprintf(" and (created_at %s :cursor_created_at or (created_at = :cursor_created_at and id %s :cursor_id))", op, op)
+			query += fmt.Sprintf(" and (created_at %s :cursor_created_at or (created_at = :cursor_created_at and uuid %s CAST(:cursor_uuid AS uuid)))", op, op)
 			arguments["cursor_created_at"] = params.Cursor.CreatedAt
 		case "updated_at":
 			op := ">"
 			if order == "desc" {
 				op = "<"
 			}
-			query += fmt.Sprintf(" and (updated_at %s :cursor_updated_at or (updated_at = :cursor_updated_at and id %s :cursor_id))", op, op)
+			query += fmt.Sprintf(" and (updated_at %s :cursor_updated_at or (updated_at = :cursor_updated_at and uuid %s CAST(:cursor_uuid AS uuid)))", op, op)
 			arguments["cursor_updated_at"] = params.Cursor.UpdatedAt
 		}
 	}
-	query += fmt.Sprintf(" order by %s %s, id %s limit :limit", orderBy, order, order)
+	query += fmt.Sprintf(" order by %s %s, uuid %s limit :limit", orderBy, order, order)
 
 	memories, err := selectMemoriesSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
@@ -718,33 +717,33 @@ func (d *DB) ListMemoriesPage(ctx context.Context, params ListMemoriesPageParams
 }
 
 func (d *DB) ListMemoriesForDepth(ctx context.Context, params ListMemoriesPageParams) ([]Memory, error) {
-	if err := d.ensureMemoryStoreExists(ctx, params.WorkspaceID, params.MemoryStoreExternalID); err != nil {
+	if err := d.ensureMemoryStoreExists(ctx, params.WorkspaceUUID, params.MemoryStoreExternalID); err != nil {
 		return nil, err
 	}
 	query := memorySelectSQL() + `
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 			and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_id":             params.WorkspaceID,
+		"workspace_uuid":           params.WorkspaceUUID,
 		"memory_store_external_id": params.MemoryStoreExternalID,
 	}
 	if params.PathPrefix != "" {
 		query += " and left(path, length(:path_prefix)) = :path_prefix"
 		arguments["path_prefix"] = params.PathPrefix
 	}
-	query += " order by path asc, id asc"
+	query += " order by path asc, uuid asc"
 	return selectMemoriesSQLX(ctx, d.sql, query, arguments)
 }
 
-func (d *DB) GetMemoryVersion(ctx context.Context, workspaceID int64, memoryStoreExternalID, versionExternalID string) (MemoryVersion, error) {
+func (d *DB) GetMemoryVersion(ctx context.Context, workspaceUUID, memoryStoreExternalID, versionExternalID string) (MemoryVersion, error) {
 	return getMemoryVersionSQLX(ctx, d.sql, memoryVersionSelectSQL()+`
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 			and external_id = :version_external_id
 	`, map[string]any{
-		"workspace_id":             workspaceID,
+		"workspace_uuid":           workspaceUUID,
 		"memory_store_external_id": memoryStoreExternalID,
 		"version_external_id":      versionExternalID,
 	})
@@ -754,15 +753,15 @@ func (d *DB) ListMemoryVersionsPage(ctx context.Context, params ListMemoryVersio
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}
-	if err := d.ensureMemoryStoreExists(ctx, params.WorkspaceID, params.MemoryStoreExternalID); err != nil {
+	if err := d.ensureMemoryStoreExists(ctx, params.WorkspaceUUID, params.MemoryStoreExternalID); err != nil {
 		return nil, false, err
 	}
 	query := memoryVersionSelectSQL() + `
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 	`
 	arguments := map[string]any{
-		"workspace_id":             params.WorkspaceID,
+		"workspace_uuid":           params.WorkspaceUUID,
 		"memory_store_external_id": params.MemoryStoreExternalID,
 		"limit":                    params.Limit + 1,
 	}
@@ -791,11 +790,11 @@ func (d *DB) ListMemoryVersionsPage(ctx context.Context, params ListMemoryVersio
 		arguments["created_at_lte"] = *params.CreatedAtLTE
 	}
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_id"] = params.Cursor.ID
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
-	query += " order by created_at desc, id desc limit :limit"
+	query += " order by created_at desc, uuid desc limit :limit"
 
 	versions, err := selectMemoryVersionsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
@@ -808,7 +807,7 @@ func (d *DB) ListMemoryVersionsPage(ctx context.Context, params ListMemoryVersio
 	return versions, hasMore, nil
 }
 
-func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceID int64, memoryStoreExternalID, versionExternalID string, actor MemoryActor, now time.Time) (MemoryVersion, *ObjectRef, error) {
+func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceUUID, memoryStoreExternalID, versionExternalID string, actor MemoryActor, now time.Time) (MemoryVersion, *ObjectRef, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return MemoryVersion{}, nil, err
@@ -816,12 +815,12 @@ func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceID int64, memoryS
 	defer tx.Rollback()
 
 	arguments := map[string]any{
-		"workspace_id":             workspaceID,
+		"workspace_uuid":           workspaceUUID,
 		"memory_store_external_id": memoryStoreExternalID,
 		"version_external_id":      versionExternalID,
 	}
 	version, err := getMemoryVersionSQLX(ctx, tx, memoryVersionSelectSQL()+`
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 			and external_id = :version_external_id
 		for update
@@ -831,13 +830,13 @@ func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceID int64, memoryS
 	}
 
 	var activeHead int
-	arguments["version_id"] = version.ID
+	arguments["version_uuid"] = version.UUID
 	if err := namedGetContext(ctx, tx, &activeHead, `
 		select CAST(count(*) AS integer)
 		from memories
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
-			and current_version_id = :version_id
+			and current_version_uuid = CAST(:version_uuid AS uuid)
 			and deleted_at is null
 	`, arguments); err != nil {
 		return MemoryVersion{}, nil, err
@@ -855,9 +854,9 @@ func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceID int64, memoryS
 	var ref *ObjectRef
 	if version.S3Key != nil && *version.S3Key != "" {
 		ref = &ObjectRef{
-			WorkspaceID:  version.WorkspaceID,
-			ResourceType: "memory_version",
-			ResourceID:   version.ExternalID,
+			WorkspaceUUID: version.WorkspaceUUID,
+			ResourceType:  "memory_version",
+			ResourceID:    version.ExternalID,
 		}
 		if version.S3Bucket != nil {
 			ref.Bucket = *version.S3Bucket
@@ -866,7 +865,7 @@ func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceID int64, memoryS
 	}
 	arguments["now"] = now
 	arguments["actor_type"] = actor.Type
-	arguments["api_key_id"] = nullableInt64(actor.APIKeyID)
+	arguments["api_key_uuid"] = nullableString(actor.APIKeyUUID)
 	arguments["api_key_external_id"] = nullableString(actor.APIKeyExternalID)
 	arguments["session_id"] = nullableString(actor.SessionID)
 	arguments["user_id"] = nullableString(actor.UserID)
@@ -879,11 +878,11 @@ func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceID int64, memoryS
 			s3_key = null,
 			redacted_at = :now,
 			redacted_by_actor_type = :actor_type,
-			redacted_by_api_key_id = :api_key_id,
+			redacted_by_api_key_uuid = CAST(:api_key_uuid AS uuid),
 			redacted_by_api_key_external_id = :api_key_external_id,
 			redacted_by_session_id = :session_id,
 			redacted_by_user_id = :user_id
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and memory_store_external_id = :memory_store_external_id
 			and external_id = :version_external_id
 		returning `+memoryVersionColumns()+`
@@ -897,26 +896,28 @@ func (d *DB) RedactMemoryVersion(ctx context.Context, workspaceID int64, memoryS
 	return updated, ref, nil
 }
 
-func (d *DB) getActiveMemoryForMutation(ctx context.Context, tx sqlxNamedQueryer, workspaceID int64, memoryStoreExternalID, memoryExternalID string) (Memory, bool, error) {
+func (d *DB) getActiveMemoryForMutation(ctx context.Context, tx sqlxNamedQueryer, workspaceUUID, memoryStoreExternalID, memoryExternalID string) (Memory, bool, error) {
 	var row activeMemoryRow
 	err := namedGetContext(ctx, tx, &row, `
-		select m.id, CAST(m.uuid AS text) AS uuid, m.external_id, m.organization_id, m.workspace_id,
-			m.memory_store_id, m.memory_store_external_id,
-			coalesce(m.current_version_id, 0) as current_version_id,
+		select CAST(m.uuid AS text) AS uuid, m.external_id,
+			CAST(m.organization_uuid AS text) AS organization_uuid,
+			CAST(m.workspace_uuid AS text) AS workspace_uuid,
+			CAST(m.memory_store_uuid AS text) AS memory_store_uuid, m.memory_store_external_id,
+			coalesce(CAST(m.current_version_uuid AS text), '') as current_version_uuid,
 			coalesce(m.current_version_external_id, '') as current_version_external_id,
 			m.path, m.content_size_bytes,
 			m.content_sha256, m.s3_bucket, m.s3_key, m.created_at, m.updated_at,
 			m.deleted_at, ms.archived_at AS archived_at
 		from memories m
-		join memory_stores ms on ms.id = m.memory_store_id
-		where m.workspace_id = :workspace_id
+		join memory_stores ms on ms.uuid = m.memory_store_uuid
+		where m.workspace_uuid = :workspace_uuid
 			and m.memory_store_external_id = :memory_store_external_id
 			and m.external_id = :memory_external_id
 			and m.deleted_at is null
 			and ms.deleted_at is null
 		for update of m, ms
 	`, map[string]any{
-		"workspace_id":             workspaceID,
+		"workspace_uuid":           workspaceUUID,
 		"memory_store_external_id": memoryStoreExternalID,
 		"memory_external_id":       memoryExternalID,
 	})
@@ -929,13 +930,13 @@ func (d *DB) getActiveMemoryForMutation(ctx context.Context, tx sqlxNamedQueryer
 	return row.memory(), row.ArchivedAt != nil, nil
 }
 
-func (d *DB) ensureMemoryStoreExists(ctx context.Context, workspaceID int64, memoryStoreExternalID string) error {
-	var id int64
-	if err := namedGetContext(ctx, d.sql, &id, `
-		select id
+func (d *DB) ensureMemoryStoreExists(ctx context.Context, workspaceUUID, memoryStoreExternalID string) error {
+	var storeUUID string
+	if err := namedGetContext(ctx, d.sql, &storeUUID, `
+		select CAST(uuid AS text)
 		from memory_stores
-		where workspace_id = :workspace_id and external_id = :external_id and deleted_at is null
-	`, map[string]any{"workspace_id": workspaceID, "external_id": memoryStoreExternalID}); errors.Is(err, sql.ErrNoRows) {
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
+	`, map[string]any{"workspace_uuid": workspaceUUID, "external_id": memoryStoreExternalID}); errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
@@ -943,16 +944,19 @@ func (d *DB) ensureMemoryStoreExists(ctx context.Context, workspaceID int64, mem
 	return nil
 }
 
-func (d *DB) ensureMemoryPathAvailable(ctx context.Context, tx sqlxNamedQueryer, storeID int64, path string, excludeMemoryID int64) error {
+func (d *DB) ensureMemoryPathAvailable(ctx context.Context, tx sqlxNamedQueryer, storeUUID, path, excludeMemoryUUID string) error {
 	var existingID string
 	if err := namedGetContext(ctx, tx, &existingID, `
 		select external_id
 		from memories
-		where memory_store_id = :store_id
+		where memory_store_uuid = :store_uuid
 			and path = :path
-			and id <> :exclude_memory_id
+			and (
+				nullif(:exclude_memory_uuid, '') is null
+				or uuid <> CAST(nullif(:exclude_memory_uuid, '') AS uuid)
+			)
 			and deleted_at is null
-	`, map[string]any{"store_id": storeID, "path": path, "exclude_memory_id": excludeMemoryID}); errors.Is(err, sql.ErrNoRows) {
+	`, map[string]any{"store_uuid": storeUUID, "path": path, "exclude_memory_uuid": excludeMemoryUUID}); errors.Is(err, sql.ErrNoRows) {
 		return nil
 	} else if err != nil {
 		return err
@@ -960,16 +964,16 @@ func (d *DB) ensureMemoryPathAvailable(ctx context.Context, tx sqlxNamedQueryer,
 	return &MemoryPathConflictError{ConflictingMemoryID: existingID, ConflictingPath: path}
 }
 
-func (d *DB) memoryPathConflict(ctx context.Context, database sqlxNamedQueryer, storeID int64, path string) error {
+func (d *DB) memoryPathConflict(ctx context.Context, database sqlxNamedQueryer, storeUUID, path string) error {
 	var existingID string
 	if err := namedGetContext(ctx, database, &existingID, `
 		select external_id
 		from memories
-		where memory_store_id = :store_id
+		where memory_store_uuid = :store_uuid
 			and path = :path
 			and deleted_at is null
 		limit 1
-	`, map[string]any{"store_id": storeID, "path": path}); err == nil {
+	`, map[string]any{"store_uuid": storeUUID, "path": path}); err == nil {
 		return &MemoryPathConflictError{ConflictingMemoryID: existingID, ConflictingPath: path}
 	}
 	return ErrDuplicate
@@ -977,36 +981,42 @@ func (d *DB) memoryPathConflict(ctx context.Context, database sqlxNamedQueryer, 
 
 const insertMemoryVersionQuery = `
 		insert into memory_versions (
-			uuid, external_id, organization_id, workspace_id, memory_store_id,
-			memory_store_external_id, memory_id, memory_external_id, operation, path,
+			uuid, external_id, organization_uuid, workspace_uuid, memory_store_uuid,
+			memory_store_external_id, memory_uuid, memory_external_id, operation, path,
 			content_size_bytes, content_sha256, s3_bucket, s3_key, created_by_actor_type,
-			created_by_api_key_id, created_by_api_key_external_id, created_by_session_id,
+			created_by_api_key_uuid, created_by_api_key_external_id, created_by_session_id,
 			created_by_user_id, created_at
 		)
 		values (
-			:uuid, :external_id, :organization_id, :workspace_id, :memory_store_id,
-			:memory_store_external_id, :memory_id, :memory_external_id, :operation, :path,
+			:uuid, :external_id, :organization_uuid, :workspace_uuid, :memory_store_uuid,
+			:memory_store_external_id, :memory_uuid, :memory_external_id, :operation, :path,
 			:content_size_bytes, :content_sha256, :s3_bucket, :s3_key, :created_by_actor_type,
-			:created_by_api_key_id, :created_by_api_key_external_id, :created_by_session_id,
+			:created_by_api_key_uuid, :created_by_api_key_external_id, :created_by_session_id,
 			:created_by_user_id, :created_at
 		)
-		returning ` + `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id,
-			memory_store_id, memory_store_external_id, memory_id, memory_external_id,
+		returning ` + `CAST(uuid AS text) AS uuid, external_id,
+			CAST(organization_uuid AS text) AS organization_uuid,
+			CAST(workspace_uuid AS text) AS workspace_uuid,
+			CAST(memory_store_uuid AS text) AS memory_store_uuid,
+			memory_store_external_id, CAST(memory_uuid AS text) AS memory_uuid, memory_external_id,
 			operation, path, content_size_bytes, content_sha256, s3_bucket, s3_key,
-			created_by_actor_type, created_by_api_key_id, created_by_api_key_external_id,
+			created_by_actor_type,
+			coalesce(CAST(created_by_api_key_uuid AS text), '') AS created_by_api_key_uuid,
+			created_by_api_key_external_id,
 			created_by_session_id, created_by_user_id, redacted_at, redacted_by_actor_type,
-			redacted_by_api_key_id, redacted_by_api_key_external_id, redacted_by_session_id,
+			coalesce(CAST(redacted_by_api_key_uuid AS text), '') AS redacted_by_api_key_uuid,
+			redacted_by_api_key_external_id, redacted_by_session_id,
 			redacted_by_user_id, created_at`
 
 func insertMemoryVersion(ctx context.Context, tx sqlxNamedQueryer, version MemoryVersion) (MemoryVersion, error) {
 	return getMemoryVersionSQLX(ctx, tx, insertMemoryVersionQuery, map[string]any{
 		"uuid":                           version.UUID,
 		"external_id":                    version.ExternalID,
-		"organization_id":                version.OrganizationID,
-		"workspace_id":                   version.WorkspaceID,
-		"memory_store_id":                version.MemoryStoreID,
+		"organization_uuid":              version.OrganizationUUID,
+		"workspace_uuid":                 version.WorkspaceUUID,
+		"memory_store_uuid":              version.MemoryStoreUUID,
 		"memory_store_external_id":       version.MemoryStoreExternalID,
-		"memory_id":                      version.MemoryID,
+		"memory_uuid":                    version.MemoryUUID,
 		"memory_external_id":             version.MemoryExternalID,
 		"operation":                      version.Operation,
 		"path":                           nullableStringPtr(version.Path),
@@ -1015,7 +1025,7 @@ func insertMemoryVersion(ctx context.Context, tx sqlxNamedQueryer, version Memor
 		"s3_bucket":                      nullableStringPtr(version.S3Bucket),
 		"s3_key":                         nullableStringPtr(version.S3Key),
 		"created_by_actor_type":          version.CreatedBy.Type,
-		"created_by_api_key_id":          nullableInt64(version.CreatedBy.APIKeyID),
+		"created_by_api_key_uuid":        nullableString(version.CreatedBy.APIKeyUUID),
 		"created_by_api_key_external_id": nullableString(version.CreatedBy.APIKeyExternalID),
 		"created_by_session_id":          nullableString(version.CreatedBy.SessionID),
 		"created_by_user_id":             nullableString(version.CreatedBy.UserID),
@@ -1024,8 +1034,11 @@ func insertMemoryVersion(ctx context.Context, tx sqlxNamedQueryer, version Memor
 }
 
 func memoryStoreColumns() string {
-	return `id, CAST(uuid AS text) as uuid, external_id, organization_id, workspace_id,
-		created_by_api_key_id, name, description, metadata, created_at, updated_at,
+	return `CAST(uuid AS text) as uuid, external_id,
+		CAST(organization_uuid AS text) AS organization_uuid,
+		CAST(workspace_uuid AS text) AS workspace_uuid,
+		CAST(created_by_api_key_uuid AS text) AS created_by_api_key_uuid,
+		name, description, metadata, created_at, updated_at,
 		archived_at, deleted_at`
 }
 
@@ -1034,9 +1047,11 @@ func memoryStoreSelectSQL() string {
 }
 
 func memoryColumns() string {
-	return `id, CAST(uuid AS text) as uuid, external_id, organization_id, workspace_id,
-		memory_store_id, memory_store_external_id,
-		coalesce(current_version_id, 0) as current_version_id,
+	return `CAST(uuid AS text) as uuid, external_id,
+		CAST(organization_uuid AS text) AS organization_uuid,
+		CAST(workspace_uuid AS text) AS workspace_uuid,
+		CAST(memory_store_uuid AS text) AS memory_store_uuid, memory_store_external_id,
+		coalesce(CAST(current_version_uuid AS text), '') as current_version_uuid,
 		coalesce(current_version_external_id, '') as current_version_external_id,
 		path, content_size_bytes, content_sha256, s3_bucket, s3_key,
 		created_at, updated_at, deleted_at`
@@ -1047,12 +1062,17 @@ func memorySelectSQL() string {
 }
 
 func memoryVersionColumns() string {
-	return `id, CAST(uuid AS text) as uuid, external_id, organization_id, workspace_id,
-		memory_store_id, memory_store_external_id, memory_id, memory_external_id,
+	return `CAST(uuid AS text) as uuid, external_id,
+		CAST(organization_uuid AS text) AS organization_uuid,
+		CAST(workspace_uuid AS text) AS workspace_uuid,
+		CAST(memory_store_uuid AS text) AS memory_store_uuid,
+		memory_store_external_id, CAST(memory_uuid AS text) AS memory_uuid, memory_external_id,
 		operation, path, content_size_bytes, content_sha256, s3_bucket, s3_key,
-		created_by_actor_type, created_by_api_key_id, created_by_api_key_external_id,
+		created_by_actor_type, coalesce(CAST(created_by_api_key_uuid AS text), '') AS created_by_api_key_uuid,
+		created_by_api_key_external_id,
 		created_by_session_id, created_by_user_id, redacted_at, redacted_by_actor_type,
-		redacted_by_api_key_id, redacted_by_api_key_external_id, redacted_by_session_id,
+		coalesce(CAST(redacted_by_api_key_uuid AS text), '') AS redacted_by_api_key_uuid,
+		redacted_by_api_key_external_id, redacted_by_session_id,
 		redacted_by_user_id, created_at`
 }
 
@@ -1072,13 +1092,6 @@ func nullableStringPtr(value *string) any {
 		return nil
 	}
 	return *value
-}
-
-func nullableInt64(value int64) any {
-	if value == 0 {
-		return nil
-	}
-	return value
 }
 
 func nullableInt64Ptr(value *int64) any {
@@ -1107,11 +1120,4 @@ func nullStringValue(value sql.NullString) string {
 		return ""
 	}
 	return value.String
-}
-
-func nullInt64Value(value sql.NullInt64) int64 {
-	if !value.Valid {
-		return 0
-	}
-	return value.Int64
 }

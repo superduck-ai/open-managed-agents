@@ -47,7 +47,7 @@ func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
 				"org_uuid": "org_test",
 				"user_id":  "user_test",
 			},
-			wantArgCount: 4,
+			wantArgCount: 5,
 		},
 	}
 

@@ -30,6 +30,7 @@ type Session struct {
 	UserID              int64      `json:"user_id"`
 	UserExternalID      string     `json:"user_external_id"`
 	APIKeyID            int64      `json:"api_key_id"`
+	APIKeyUUID          string     `json:"api_key_uuid"`
 	APIKeyExternalID    string     `json:"api_key_external_id"`
 	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 }
@@ -44,6 +45,7 @@ func (s Session) Principal() auth.Principal {
 	return auth.Principal{
 		CredentialType:            auth.CredentialTypePlatformSession,
 		APIKeyID:                  s.APIKeyID,
+		APIKeyUUID:                s.APIKeyUUID,
 		APIKeyExternalID:          s.APIKeyExternalID,
 		OrganizationID:            s.OrganizationID,
 		OrganizationUUID:          s.OrganizationUUID,

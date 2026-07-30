@@ -21,6 +21,7 @@ const (
 type Principal struct {
 	CredentialType            string
 	APIKeyID                  int64
+	APIKeyUUID                string
 	APIKeyExternalID          string
 	OrganizationID            int64
 	OrganizationUUID          string
@@ -28,18 +29,24 @@ type Principal struct {
 	WorkspaceUUID             string
 	WorkspaceExternalID       string
 	UserID                    int64
+	UserUUID                  string
 	UserExternalID            string
 	PlatformSessionExternalID string
 	EnvironmentKeyID          int64
+	EnvironmentKeyUUID        string
 	EnvironmentID             int64
+	EnvironmentUUID           string
 	EnvironmentExternalID     string
 	// code-session OAuth 鉴权会填充以下关联字段，供 Messages 请求审计使用；
 	// 实际授权仍由 active session 数据库查询决定，不能只信任这些上下文值。
 	CodeSessionID           int64
+	CodeSessionUUID         string
 	CodeSessionExternalID   string
 	PublicSessionID         int64
+	PublicSessionUUID       string
 	PublicSessionExternalID string
 	AgentID                 int64
+	AgentUUID               string
 	AgentExternalID         string
 	AgentVersion            int
 }

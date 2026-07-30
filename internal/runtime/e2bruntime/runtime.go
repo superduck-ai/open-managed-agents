@@ -92,7 +92,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 	}
 	resolved := Resolution{
 		Template:            template,
-		Metadata:            map[string]string{"environment_id": env.ExternalID, "workspace_id": fmt.Sprint(env.WorkspaceID)},
+		Metadata:            map[string]string{"environment_id": env.ExternalID, "workspace_id": env.WorkspaceUUID},
 		Envs:                map[string]string{"ANTHROPIC_ENVIRONMENT_ID": env.ExternalID},
 		Timeout:             p.cfg.SandboxTimeout,
 		AllowInternetAccess: true,

@@ -346,15 +346,16 @@ func (a *testApp) ensureDefaultPlatformUser(t *testing.T, email string) {
 	}
 	if _, err := a.db.Pool.Exec(context.Background(), `
 		with refs as (
-			select o.id as organization_id, w.id as workspace_id, w.external_id as workspace_external_id
+			select o.uuid as organization_uuid, w.uuid as workspace_uuid,
+				w.external_id as workspace_external_id
 			from organizations o
 			join workspaces w on w.organization_uuid = o.uuid and w.external_id = 'workspace_default'
 			limit 1
 		),
 		existing_user as (
-			select u.id, u.external_id
+			select u.uuid, u.external_id
 			from users u
-			join refs on refs.organization_id = u.organization_id
+			join refs on refs.organization_uuid = u.organization_uuid
 			where lower(u.email) = lower($1)
 			  and u.deleted_at is null
 			limit 1
@@ -363,44 +364,44 @@ func (a *testApp) ensureDefaultPlatformUser(t *testing.T, email string) {
 			select gen_random_uuid() as value
 		),
 		inserted_user as (
-			insert into users (uuid, external_id, organization_id, email, name, role)
+			insert into users (uuid, external_id, organization_uuid, email, name, role)
 			select new_user_uuid.value,
 				'user_' || left(replace(new_user_uuid.value::text, '-', ''), 24),
-				refs.organization_id,
+				refs.organization_uuid,
 				lower($1),
 				$2,
 				'admin'
 			from refs, new_user_uuid
 			where not exists (select 1 from existing_user)
-			returning id, external_id
+			returning uuid, external_id
 		),
 		active_user as (
-			select id, external_id from existing_user
+			select uuid, external_id from existing_user
 			union all
-			select id, external_id from inserted_user
+			select uuid, external_id from inserted_user
 			limit 1
 		),
 		new_member_uuid as (
 			select gen_random_uuid() as value
 		)
 		insert into workspace_members (
-			external_id, organization_id, workspace_id, workspace_external_id,
-			user_id, user_external_id, workspace_role
+			external_id, organization_uuid, workspace_uuid, workspace_external_id,
+			user_uuid, user_external_id, workspace_role
 		)
 		select
 			'wmem_' || left(replace(new_member_uuid.value::text, '-', ''), 24),
-			refs.organization_id,
-			refs.workspace_id,
+			refs.organization_uuid,
+			refs.workspace_uuid,
 			refs.workspace_external_id,
-			active_user.id,
+			active_user.uuid,
 			active_user.external_id,
 			'workspace_admin'
 		from refs, active_user, new_member_uuid
 		where not exists (
 			select 1
 			from workspace_members wm
-			where wm.workspace_id = refs.workspace_id
-			  and wm.user_id = active_user.id
+			where wm.workspace_uuid = refs.workspace_uuid
+			  and wm.user_uuid = active_user.uuid
 			  and wm.deleted_at is null
 		)
 	`, normalizedEmail, displayName); err != nil {

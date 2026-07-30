@@ -64,9 +64,80 @@ type adminReportPage struct {
 }
 
 type adminDefaultIDs struct {
-	OrganizationID int64
-	WorkspaceID    int64
-	UserID         int64
+	OrganizationID   int64
+	OrganizationUUID string
+	WorkspaceUUID    string
+	UserUUID         string
+}
+
+func TestAdminResourceReferencesUseUUID(t *testing.T) {
+	app := newTestApp(t, nil)
+	defer app.close()
+
+	expectedUUIDColumns := map[string][]string{
+		"users":                {"organization_uuid"},
+		"organization_invites": {"organization_uuid"},
+		"api_keys":             {"workspace_uuid", "created_by_user_uuid"},
+		"workspace_members":    {"organization_uuid", "workspace_uuid", "user_uuid"},
+		"external_keys":        {"organization_uuid"},
+	}
+	for table, columns := range expectedUUIDColumns {
+		for _, column := range columns {
+			var dataType string
+			if err := app.db.Pool.QueryRow(context.Background(), `
+				select data_type
+				from information_schema.columns
+				where table_schema = current_schema()
+					and table_name = $1
+					and column_name = $2
+			`, table, column).Scan(&dataType); err != nil {
+				t.Fatalf("load %s.%s type: %v", table, column, err)
+			}
+			if dataType != "uuid" {
+				t.Fatalf("%s.%s type = %q, want uuid", table, column, dataType)
+			}
+		}
+	}
+
+	legacyColumns := map[string][]string{
+		"users":                {"organization_id"},
+		"organization_invites": {"organization_id"},
+		"api_keys":             {"workspace_id", "created_by_user_id"},
+		"workspace_members":    {"organization_id", "workspace_id", "user_id"},
+		"external_keys":        {"organization_id"},
+	}
+	for table, columns := range legacyColumns {
+		for _, column := range columns {
+			var count int
+			if err := app.db.Pool.QueryRow(context.Background(), `
+				select count(*)
+				from information_schema.columns
+				where table_schema = current_schema()
+					and table_name = $1
+					and column_name = $2
+			`, table, column).Scan(&count); err != nil {
+				t.Fatalf("check legacy column %s.%s: %v", table, column, err)
+			}
+			if count != 0 {
+				t.Fatalf("legacy column %s.%s still exists", table, column)
+			}
+		}
+	}
+
+	var externalKeyIndexDefinition string
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select indexdef
+		from pg_indexes
+		where schemaname = current_schema()
+			and tablename = 'external_keys'
+			and indexname = 'external_keys_organization_created_v1_idx'
+	`).Scan(&externalKeyIndexDefinition); err != nil {
+		t.Fatalf("load external key pagination index: %v", err)
+	}
+	if !strings.Contains(externalKeyIndexDefinition, "created_at DESC, uuid DESC") ||
+		strings.Contains(externalKeyIndexDefinition, "created_at DESC, id DESC") {
+		t.Fatalf("external key pagination index = %q, want UUID tie-breaker", externalKeyIndexDefinition)
+	}
 }
 
 func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
@@ -618,9 +689,9 @@ func seedAdminUser(t *testing.T, database *db.DB, email, role string) string {
 	ids := getAdminDefaultIDs(t, database)
 	userID := "user_admin_" + uniqueAdminSuffix()
 	if _, err := database.Pool.Exec(context.Background(), `
-		insert into users (external_id, organization_id, email, name, role)
+		insert into users (external_id, organization_uuid, email, name, role)
 		values ($1, $2, $3, $4, $5)
-	`, userID, ids.OrganizationID, email, "Admin Test User", role); err != nil {
+	`, userID, ids.OrganizationUUID, email, "Admin Test User", role); err != nil {
 		t.Fatalf("seed admin user: %v", err)
 	}
 	return userID
@@ -631,9 +702,11 @@ func seedAdminAPIKey(t *testing.T, database *db.DB, suffix, rawKey string) (stri
 	ids := getAdminDefaultIDs(t, database)
 	apiKeyID := "api_key_admin_" + suffix
 	if _, err := database.Pool.Exec(context.Background(), `
-		insert into api_keys (external_id, workspace_id, key_hash, status, created_by_user_id, name, partial_key_hint)
+		insert into api_keys (
+			external_id, workspace_uuid, key_hash, status, created_by_user_uuid, name, partial_key_hint
+		)
 		values ($1, $2, $3, 'active', $4, $5, $6)
-	`, apiKeyID, ids.WorkspaceID, auth.HashAPIKey(rawKey), ids.UserID, "Admin status test", partialTestKeyHint(rawKey)); err != nil {
+	`, apiKeyID, ids.WorkspaceUUID, auth.HashAPIKey(rawKey), ids.UserUUID, "Admin status test", partialTestKeyHint(rawKey)); err != nil {
 		t.Fatalf("seed admin api key: %v", err)
 	}
 	return apiKeyID, rawKey
@@ -673,11 +746,11 @@ func getAdminDefaultIDs(t *testing.T, database *db.DB) adminDefaultIDs {
 	t.Helper()
 	var ids adminDefaultIDs
 	if err := database.Pool.QueryRow(context.Background(), `
-		select o.id, w.id, u.id
+		select o.id, o.uuid::text, w.uuid::text, u.uuid::text
 		from organizations o
 		join workspaces w on w.organization_uuid = o.uuid and w.external_id = 'workspace_default'
-		join users u on u.organization_id = o.id and u.external_id = 'user_default'
-	`).Scan(&ids.OrganizationID, &ids.WorkspaceID, &ids.UserID); err != nil {
+		join users u on u.organization_uuid = o.uuid and u.external_id = 'user_default'
+	`).Scan(&ids.OrganizationID, &ids.OrganizationUUID, &ids.WorkspaceUUID, &ids.UserUUID); err != nil {
 		t.Fatalf("load admin default ids: %v", err)
 	}
 	return ids

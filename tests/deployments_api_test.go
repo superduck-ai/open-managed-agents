@@ -223,7 +223,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 		defer deleteSession(t, app, *run.SessionID)
 
-		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceID, *run.SessionID)
+		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceUUID, *run.SessionID)
 		if err != nil {
 			t.Fatalf("list deployment run Session resources: %v", err)
 		}
@@ -318,8 +318,8 @@ func TestDeploymentsAPI(t *testing.T) {
 		if err := app.db.Pool.QueryRow(context.Background(), `
 			select count(*)
 			from filestore_filesystems fs
-			join workspaces w on w.uuid = fs.workspace_uuid
-			join sessions s on s.uuid = fs.session_uuid and s.workspace_id = w.id
+			join sessions s on s.uuid = fs.session_uuid
+				and s.workspace_uuid = fs.workspace_uuid
 			where s.external_id = $1 and fs.deleted_at is null
 		`, *run.SessionID).Scan(&filesystemCount); err != nil {
 			t.Fatalf("count deployment Session filesystem: %v", err)

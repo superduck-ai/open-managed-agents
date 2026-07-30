@@ -25,19 +25,15 @@ var (
 			update filestore_filesystems fs
 			set deleted_at = coalesce(fs.deleted_at, :retired_at),
 				updated_at = :retired_at
-			from workspaces w, organizations o
-			where w.id = :workspace_id
-				and o.id = :organization_id
-				and w.organization_uuid = o.uuid
-				and fs.workspace_uuid = w.uuid
-				and fs.organization_uuid = o.uuid
-				and fs.session_uuid = :session_uuid
+			where fs.workspace_uuid = CAST(:workspace_uuid AS uuid)
+				and fs.organization_uuid = CAST(:organization_uuid AS uuid)
+				and fs.session_uuid = CAST(:session_uuid AS uuid)
 				and fs.deleted_at is null
-			returning fs.id
+			returning fs.uuid
 		)
 		select ` + filestoreFilesystemColumns() + `
 		from filestore_filesystems
-		where id = (select id from retired)
+		where uuid = (select uuid from retired)
 	`
 	provisionFilestoreAdvisoryLockQuery = `
 		select pg_advisory_xact_lock(
@@ -54,16 +50,14 @@ var (
 		)
 	`
 	validateFilestoreSessionBindingQuery = `
-		select w.id as workspace_id
+		select CAST(s.workspace_uuid AS text) as workspace_uuid
 		from sessions s
-		join organizations o
-			on o.id = s.organization_id
 		join workspaces w
-			on w.id = s.workspace_id
-			and w.organization_uuid = o.uuid
+			on w.uuid = s.workspace_uuid
+			and w.organization_uuid = s.organization_uuid
 		where s.uuid = CAST(:session_uuid AS uuid)
-			and o.uuid = CAST(:organization_uuid AS uuid)
-			and w.uuid = CAST(:workspace_uuid AS uuid)
+			and s.organization_uuid = CAST(:organization_uuid AS uuid)
+			and s.workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and s.status <> 'terminated'
 			and s.archived_at is null
 			and s.deleted_at is null
@@ -74,9 +68,9 @@ var (
 					select 1
 					from code_sessions cs
 					where cs.uuid = CAST(:code_session_uuid AS uuid)
-						and cs.session_id = s.id
-						and cs.organization_id = s.organization_id
-						and cs.workspace_id = s.workspace_id
+						and cs.session_uuid = s.uuid
+						and cs.organization_uuid = s.organization_uuid
+						and cs.workspace_uuid = s.workspace_uuid
 						and cs.status = 'active'
 						and cs.deleted_at is null
 				)
@@ -87,14 +81,16 @@ var (
 					select 1
 					from api_keys ak
 					where ak.uuid = CAST(:created_by_api_key_uuid AS uuid)
-						and ak.workspace_id = s.workspace_id
+						and ak.workspace_uuid = w.uuid
 				)
 			)
 		limit 1
 		for update of s
 	`
 	provisionFilestoreWorkspaceLockQuery = `
-		select pg_advisory_xact_lock(:workspace_id)
+		select pg_advisory_xact_lock(
+			hashtextextended(CAST(:workspace_uuid AS text), 0)
+		)
 	`
 	provisionFilestoreByExternalIDQuery = `
 		where workspace_uuid = CAST(:workspace_uuid AS uuid)
@@ -133,12 +129,17 @@ var (
 		returning ` + filestoreFilesystemColumns() + `
 	`
 	provisionFilestoreNamespaceLockQuery = `
-		select pg_advisory_xact_lock(-CAST(:filesystem_id AS bigint))
+		select pg_advisory_xact_lock(
+			hashtextextended(
+				concat('filestore-filesystem', chr(58), CAST(:filesystem_uuid AS text)),
+				0
+			)
+		)
 	`
 )
 
 type filestoreSessionBindingRow struct {
-	WorkspaceID int64 `db:"workspace_id"`
+	WorkspaceUUID string `db:"workspace_uuid"`
 }
 
 const filestoreSessionTokenScopeQuery = `
@@ -157,23 +158,23 @@ const filestoreSessionTokenScopeQuery = `
 		(nullif(trim(w.external_key_id), '') is not null) as workspace_cmek_enabled
 	from sessions s
 	join organizations o
-		on o.id = s.organization_id
+		on o.uuid = s.organization_uuid
 	join workspaces w
-		on w.id = s.workspace_id
-		and w.organization_uuid = o.uuid
+		on w.uuid = s.workspace_uuid
+		and w.organization_uuid = s.organization_uuid
 	join api_keys ak
-		on ak.id = s.created_by_api_key_id
-		and ak.workspace_id = s.workspace_id
+		on ak.uuid = s.created_by_api_key_uuid
+		and ak.workspace_uuid = s.workspace_uuid
 	join users u
-		on u.id = ak.created_by_user_id
-		and u.organization_id = s.organization_id
+		on u.uuid = ak.created_by_user_uuid
+		and u.organization_uuid = o.uuid
 		and u.deleted_at is null
 	join filestore_filesystems fs
 		on fs.organization_uuid = o.uuid
 		and fs.workspace_uuid = w.uuid
 		and fs.session_uuid = s.uuid
 		and fs.deleted_at is null
-	where s.workspace_id = :workspace_id
+	where s.workspace_uuid = CAST(:workspace_uuid AS uuid)
 		and s.external_id = :session_external_id
 		and s.status <> 'terminated'
 		and s.archived_at is null
@@ -214,7 +215,7 @@ func (d *DB) ResolveFilestoreTokenScope(
 		join workspaces w
 			on w.organization_uuid = o.uuid
 		join users u
-			on u.organization_id = o.id
+			on u.organization_uuid = o.uuid
 			and u.deleted_at is null
 		join filestore_filesystems fs
 			on fs.organization_uuid = o.uuid
@@ -222,8 +223,8 @@ func (d *DB) ResolveFilestoreTokenScope(
 			and fs.deleted_at is null
 		join sessions s
 			on s.uuid = fs.session_uuid
-			and s.organization_id = o.id
-			and s.workspace_id = w.id
+			and s.organization_uuid = o.uuid
+			and s.workspace_uuid = w.uuid
 			and s.archived_at is null
 			and s.deleted_at is null
 			and s.status <> 'terminated'
@@ -338,7 +339,7 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	if err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-	arguments["workspace_id"] = binding.WorkspaceID
+	arguments["workspace_uuid"] = binding.WorkspaceUUID
 	if _, err := namedExecContext(ctx, tx, provisionFilestoreWorkspaceLockQuery, arguments); err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
@@ -353,7 +354,7 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 		if existing.OrganizationUUID != input.OrganizationUUID || existing.SessionUUID != input.SessionUUID {
 			return FilestoreFilesystem{}, false, ErrDuplicate
 		}
-		if err := ensureProvisionedFilestoreRootsTx(ctx, tx, binding.WorkspaceID, existing, input.Now); err != nil {
+		if err := ensureProvisionedFilestoreRootsTx(ctx, tx, existing, input.Now); err != nil {
 			return FilestoreFilesystem{}, false, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -388,7 +389,7 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	if err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-	if err := ensureProvisionedFilestoreRootsTx(ctx, tx, binding.WorkspaceID, filesystem, input.Now); err != nil {
+	if err := ensureProvisionedFilestoreRootsTx(ctx, tx, filesystem, input.Now); err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -413,16 +414,15 @@ func provisionFilestoreFilesystemArguments(input ProvisionFilestoreFilesystemInp
 func ensureProvisionedFilestoreRootsTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
-	workspaceID int64,
 	filesystem FilestoreFilesystem,
 	now time.Time,
 ) error {
 	if _, err := namedExecContext(ctx, tx, provisionFilestoreNamespaceLockQuery, map[string]any{
-		"filesystem_id": filesystem.ID,
+		"filesystem_uuid": filesystem.UUID,
 	}); err != nil {
 		return err
 	}
-	return ensureFilestoreFixedRootsTx(ctx, tx, workspaceID, filesystem, now)
+	return ensureFilestoreFixedRootsTx(ctx, tx, filesystem, now)
 }
 
 // ensureFilestoreFixedRootsTx 在指定 filesystem 的数据库命名空间中确保五个固定根目录存在。
@@ -446,7 +446,6 @@ func ensureProvisionedFilestoreRootsTx(
 func ensureFilestoreFixedRootsTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
-	workspaceID int64,
 	filesystem FilestoreFilesystem,
 	now time.Time,
 ) error {
@@ -455,7 +454,6 @@ func ensureFilestoreFixedRootsTx(
 		if _, err := ensureFilestoreDirectoryTx(
 			ctx,
 			tx,
-			workspaceID,
 			filesystem,
 			rootPath,
 			now,
@@ -467,9 +465,9 @@ func ensureFilestoreFixedRootsTx(
 }
 
 // GetFilestoreFilesystem 在工作区边界内按外部 ID 或 UUID 查找文件系统。
-func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceID int64, externalID string) (FilestoreFilesystem, error) {
+func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceUUID string, externalID string) (FilestoreFilesystem, error) {
 	return getFilestoreFilesystemSQLX(ctx, d.sql, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and (
 				external_id = :filesystem_id
 				or cast(uuid as text) = lower(:filesystem_id)
@@ -478,26 +476,26 @@ func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceID int64, exte
 		order by (external_id = :filesystem_id) desc
 		limit 1
 	`, map[string]any{
-		"workspace_id":  workspaceID,
-		"filesystem_id": externalID,
+		"workspace_uuid": workspaceUUID,
+		"filesystem_id":  externalID,
 	})
 }
 
 // GetFilestoreFilesystemBySession 返回 public session 唯一拥有的活动文件系统。
 // Code session 是可重建的执行实例，不参与文件系统归属判断。
-func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceID int64, sessionExternalID string) (FilestoreFilesystem, error) {
+func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceUUID string, sessionExternalID string) (FilestoreFilesystem, error) {
 	return getFilestoreFilesystemSQLX(ctx, d.sql, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and session_uuid = (
 				select uuid from sessions
-				where workspace_id = :workspace_id
+				where workspace_uuid = CAST(:workspace_uuid AS uuid)
 					and external_id = :session_external_id
 					and deleted_at is null
 			)
 			and deleted_at is null
 		limit 1
 	`, map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": sessionExternalID,
 	})
 }
@@ -523,13 +521,13 @@ func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceID in
 // 时返回 ErrNotFound；数据库查询失败或策略字段解析失败时返回对应错误。签发后的
 // token 仍会在每次 Filestore 请求中重新回查数据库，因此这里返回的是签发时快照，
 // 不是绕过后续鉴权的永久授权。
-func (d *DB) GetFilestoreTokenScopeForSessionIssue(ctx context.Context, workspaceID int64, sessionExternalID string) (FilestoreTokenScope, error) {
-	return getFilestoreTokenScopeSQLX(ctx, d.sql, filestoreSessionTokenScopeQuery, filestoreSessionTokenScopeArguments(workspaceID, sessionExternalID))
+func (d *DB) GetFilestoreTokenScopeForSessionIssue(ctx context.Context, workspaceUUID string, sessionExternalID string) (FilestoreTokenScope, error) {
+	return getFilestoreTokenScopeSQLX(ctx, d.sql, filestoreSessionTokenScopeQuery, filestoreSessionTokenScopeArguments(workspaceUUID, sessionExternalID))
 }
 
-func filestoreSessionTokenScopeArguments(workspaceID int64, sessionExternalID string) map[string]any {
+func filestoreSessionTokenScopeArguments(workspaceUUID string, sessionExternalID string) map[string]any {
 	return map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": strings.TrimSpace(sessionExternalID),
 	}
 }
@@ -539,10 +537,10 @@ func filestoreSessionTokenScopeArguments(workspaceID int64, sessionExternalID st
 func retireSessionFilesystemTx(ctx context.Context, tx *sqlx.Tx, session Session) error {
 	retiredAt := filestoreNow(session.UpdatedAt)
 	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, retireSessionFilesystemQuery, map[string]any{
-		"workspace_id":    session.WorkspaceID,
-		"organization_id": session.OrganizationID,
-		"session_uuid":    session.UUID,
-		"retired_at":      retiredAt,
+		"workspace_uuid":    session.WorkspaceUUID,
+		"organization_uuid": session.OrganizationUUID,
+		"session_uuid":      session.UUID,
+		"retired_at":        retiredAt,
 	})
 	if errors.Is(err, ErrNotFound) {
 		// 兼容自动建档上线前已经存在、但尚未回填 filesystem 的历史会话。
@@ -551,7 +549,7 @@ func retireSessionFilesystemTx(ctx context.Context, tx *sqlx.Tx, session Session
 	if err != nil {
 		return err
 	}
-	_, err = enqueueFilestoreFilesystemCleanupJobTx(ctx, tx, filesystem, session.WorkspaceID, retiredAt)
+	_, err = enqueueFilestoreFilesystemCleanupJobTx(ctx, tx, filesystem, session.WorkspaceUUID, retiredAt)
 	return err
 }
 

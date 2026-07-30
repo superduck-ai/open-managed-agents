@@ -93,8 +93,8 @@ func policyTestHandler(t *testing.T, policy networkpolicy.Policy, err error) *Ha
 	handler.loadPolicyContext = func(context.Context, upstreamProxyIdentity) (upstreamProxyPolicyContext, error) {
 		return upstreamProxyPolicyContext{
 			policy:                policy,
-			organizationID:        1,
-			workspaceID:           2,
+			organizationUUID:      "00000000-0000-0000-0000-000000000001",
+			workspaceUUID:         "00000000-0000-0000-0000-000000000002",
 			environmentExternalID: "env_test",
 		}, err
 	}

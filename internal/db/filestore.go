@@ -253,11 +253,10 @@ type FilestoreMutationResult struct {
 // UUID 是任务持久化的权威归属；bigint ID 仅在当前数据库租约任务时重新解析，
 // 不能用于跨库恢复、租户迁移或合库后的身份判断。
 type FilestoreObjectCleanupJob struct {
-	ID                   int64     `db:"id"`
+	UUID                 string    `db:"uuid"`
 	ExternalID           string    `db:"external_id"`
 	WorkspaceUUID        string    `db:"workspace_uuid"`
 	FilesystemUUID       string    `db:"filesystem_uuid"`
-	WorkspaceID          int64     `db:"workspace_id"`
 	FilesystemID         int64     `db:"filesystem_id"`
 	FilesystemExternalID string    `db:"filesystem_external_id"`
 	EntryExternalID      string    `db:"entry_external_id"`
@@ -274,11 +273,10 @@ type FilestoreObjectCleanupJob struct {
 // 它只负责退休元数据并投递对象任务，不在数据库事务中直接访问 S3。
 // UUID 是持久化引用，bigint ID 是 worker 在当前数据库中解析出的短期执行上下文。
 type FilestoreFilesystemCleanupJob struct {
-	ID                   int64     `db:"id"`
+	UUID                 string    `db:"uuid"`
 	ExternalID           string    `db:"external_id"`
 	WorkspaceUUID        string    `db:"workspace_uuid"`
 	FilesystemUUID       string    `db:"filesystem_uuid"`
-	WorkspaceID          int64     `db:"workspace_id"`
 	FilesystemID         int64     `db:"filesystem_id"`
 	FilesystemExternalID string    `db:"filesystem_external_id"`
 	Attempts             int       `db:"attempts"`
@@ -288,8 +286,8 @@ type FilestoreFilesystemCleanupJob struct {
 // EnqueueFilestoreObjectCleanupJobInput 描述对象清理任务的创建参数。
 // 当前库 ID 仅用于在插入时校验归属并解析 UUID，不会写入任务 payload。
 type EnqueueFilestoreObjectCleanupJobInput struct {
-	WorkspaceID     int64
-	FilesystemID    int64
+	WorkspaceUUID   string
+	FilesystemUUID  string
 	EntryExternalID string
 	Bucket          string
 	Key             string

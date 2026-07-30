@@ -11,9 +11,9 @@ func TestMCPOAuthFlowQueriesUseSQLXNamedParameters(t *testing.T) {
 	flow := MCPOAuthFlow{
 		UUID:                    "11111111-1111-4111-8111-111111111111",
 		ExternalID:              "mcpoauth_test",
-		OrganizationID:          1,
-		WorkspaceID:             2,
-		VaultID:                 3,
+		OrganizationUUID:        "00000000-0000-0000-0000-000000000001",
+		WorkspaceUUID:           "00000000-0000-0000-0000-000000000002",
+		VaultUUID:               "00000000-0000-0000-0000-000000000003",
 		VaultExternalID:         "vault_test",
 		MCPServerURL:            "https://mcp.example.test",
 		RedirectURL:             "https://app.example.test/callback",

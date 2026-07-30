@@ -166,7 +166,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, environmentID)
+	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		h.writeEnvironmentLoadError(w, r, err, environmentID)
 		return
@@ -219,12 +219,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
 		UUID:                  uuid.NewString(),
 		ExternalID:            deploymentID,
-		OrganizationID:        principal.OrganizationID,
-		WorkspaceID:           principal.WorkspaceID,
-		CreatedByAPIKeyID:     principal.APIKeyID,
-		EnvironmentID:         env.ID,
+		OrganizationUUID:      principal.OrganizationUUID,
+		WorkspaceUUID:         principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+		EnvironmentUUID:       env.UUID,
 		EnvironmentExternalID: env.ExternalID,
-		AgentID:               agent.record.ID,
+		AgentUUID:             agent.record.UUID,
 		AgentExternalID:       agent.record.ExternalID,
 		AgentVersion:          agent.record.CurrentVersion,
 		AgentSnapshot:         agent.snapshot,
@@ -288,7 +288,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListDeploymentsPage(r.Context(), db.ListDeploymentsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
@@ -325,7 +325,7 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(nil, "active", false))
 		return
 	}
-	record, err := h.db.GetDeployment(r.Context(), principal.WorkspaceID, deploymentID)
+	record, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
@@ -348,7 +348,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(fields, "active", false))
 		return
 	}
-	current, err := h.db.GetDeployment(r.Context(), principal.WorkspaceID, deploymentID)
+	current, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
@@ -364,7 +364,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 			writeBadRequest(w, r, err)
 			return
 		}
-		next.AgentID = agent.record.ID
+		next.AgentUUID = agent.record.UUID
 		next.AgentExternalID = agent.record.ExternalID
 		next.AgentVersion = agent.record.CurrentVersion
 		next.AgentSnapshot = agent.snapshot
@@ -375,7 +375,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 			writeBadRequest(w, r, err)
 			return
 		}
-		env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, environmentID)
+		env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 		if err != nil {
 			h.writeEnvironmentLoadError(w, r, err, environmentID)
 			return
@@ -384,7 +384,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 			writeBadRequest(w, r, errors.New("environment must not be archived"))
 			return
 		}
-		next.EnvironmentID = env.ID
+		next.EnvironmentUUID = env.UUID
 		next.EnvironmentExternalID = env.ExternalID
 	}
 	if raw, ok := fields["name"]; ok {
@@ -440,7 +440,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateDeployment(r.Context(), principal.WorkspaceID, deploymentID, next)
+	updated, err := h.db.UpdateDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, next)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
@@ -458,7 +458,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(nil, "active", true))
 		return
 	}
-	archived, err := h.db.ArchiveDeployment(r.Context(), principal.WorkspaceID, deploymentID)
+	archived, err := h.db.ArchiveDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
@@ -477,7 +477,7 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(nil, "paused", false))
 		return
 	}
-	paused, err := h.db.PauseDeployment(r.Context(), principal.WorkspaceID, deploymentID, reason)
+	paused, err := h.db.PauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
@@ -495,7 +495,7 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(nil, "active", false))
 		return
 	}
-	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceID, deploymentID)
+	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
@@ -513,7 +513,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeploymentRun(deploymentID, nil))
 		return
 	}
-	deployment, err := h.db.GetDeployment(r.Context(), principal.WorkspaceID, deploymentID)
+	deployment, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
@@ -555,15 +555,16 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 			Session: db.Session{
 				UUID:                  uuid.NewString(),
 				ExternalID:            sessionID,
-				OrganizationID:        principal.OrganizationID,
-				WorkspaceID:           principal.WorkspaceID,
-				CreatedByAPIKeyID:     principal.APIKeyID,
-				EnvironmentID:         deployment.EnvironmentID,
+				OrganizationUUID:      principal.OrganizationUUID,
+				WorkspaceUUID:         principal.WorkspaceUUID,
+				CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+				EnvironmentUUID:       deployment.EnvironmentUUID,
 				EnvironmentExternalID: deployment.EnvironmentExternalID,
-				AgentID:               deployment.AgentID,
+				AgentUUID:             deployment.AgentUUID,
 				AgentExternalID:       deployment.AgentExternalID,
 				AgentVersion:          deployment.AgentVersion,
 				AgentSnapshot:         deployment.AgentSnapshot,
+				DeploymentUUID:        &deployment.UUID,
 				DeploymentID:          &deploymentIDCopy,
 				Metadata:              httpapi.RawOr(deployment.Metadata, `{}`),
 				VaultIDs:              httpapi.RawOr(deployment.VaultIDs, `[]`),
@@ -575,24 +576,24 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 				UpdatedAt:             now,
 			},
 			Thread: db.SessionThread{
-				UUID:           uuid.NewString(),
-				ExternalID:     threadID,
-				OrganizationID: principal.OrganizationID,
-				WorkspaceID:    principal.WorkspaceID,
-				AgentSnapshot:  deployment.AgentSnapshot,
-				Status:         "idle",
-				Usage:          json.RawMessage(`{}`),
-				Stats:          json.RawMessage(`{}`),
-				CreatedAt:      now,
-				UpdatedAt:      now,
+				UUID:             uuid.NewString(),
+				ExternalID:       threadID,
+				OrganizationUUID: principal.OrganizationUUID,
+				WorkspaceUUID:    principal.WorkspaceUUID,
+				AgentSnapshot:    deployment.AgentSnapshot,
+				Status:           "idle",
+				Usage:            json.RawMessage(`{}`),
+				Stats:            json.RawMessage(`{}`),
+				CreatedAt:        now,
+				UpdatedAt:        now,
 			},
 			Resources: resources,
 			Work: db.EnvironmentWork{
 				UUID:                  uuid.NewString(),
 				ExternalID:            workID,
-				OrganizationID:        principal.OrganizationID,
-				WorkspaceID:           principal.WorkspaceID,
-				EnvironmentID:         deployment.EnvironmentID,
+				OrganizationUUID:      principal.OrganizationUUID,
+				WorkspaceUUID:         principal.WorkspaceUUID,
+				EnvironmentUUID:       deployment.EnvironmentUUID,
 				EnvironmentExternalID: deployment.EnvironmentExternalID,
 				Data:                  workData,
 				Metadata:              json.RawMessage(`{}`),
@@ -603,14 +604,14 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		},
 		Events: events,
 		Run: db.DeploymentRun{
-			UUID:              uuid.NewString(),
-			ExternalID:        runID,
-			OrganizationID:    principal.OrganizationID,
-			WorkspaceID:       principal.WorkspaceID,
-			CreatedByAPIKeyID: principal.APIKeyID,
-			TriggerType:       "manual",
-			TriggerContext:    triggerContext,
-			CreatedAt:         now,
+			UUID:                uuid.NewString(),
+			ExternalID:          runID,
+			OrganizationUUID:    principal.OrganizationUUID,
+			WorkspaceUUID:       principal.WorkspaceUUID,
+			CreatedByAPIKeyUUID: principal.APIKeyUUID,
+			TriggerType:         "manual",
+			TriggerContext:      triggerContext,
+			CreatedAt:           now,
 		},
 		Now: now,
 	})
@@ -652,7 +653,7 @@ func (h *Handler) enqueueWebhook(ctx context.Context, principal auth.Principal, 
 		return
 	}
 	h.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
-		WorkspaceID:         principal.WorkspaceID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceExternalID: principal.WorkspaceExternalID,
 		EventType:           eventType,
@@ -669,15 +670,15 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 	}
 	now := time.Now().UTC()
 	run, err := h.db.CreateDeploymentRunFailure(r.Context(), deployment, db.DeploymentRun{
-		UUID:              uuid.NewString(),
-		ExternalID:        runID,
-		OrganizationID:    principal.OrganizationID,
-		WorkspaceID:       principal.WorkspaceID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		Error:             runError,
-		TriggerType:       "manual",
-		TriggerContext:    json.RawMessage(`{"type":"manual"}`),
-		CreatedAt:         now,
+		UUID:                uuid.NewString(),
+		ExternalID:          runID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		Error:               runError,
+		TriggerType:         "manual",
+		TriggerContext:      json.RawMessage(`{"type":"manual"}`),
+		CreatedAt:           now,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "create deployment run failure", "error", err)
@@ -688,14 +689,14 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) validateRunReferences(r *http.Request, principal auth.Principal, deployment db.Deployment) json.RawMessage {
-	agent, err := h.db.GetAgent(r.Context(), principal.WorkspaceID, deployment.AgentExternalID)
+	agent, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, deployment.AgentExternalID)
 	if err != nil {
 		return runErrorForReference("agent", err, false)
 	}
 	if agent.ArchivedAt != nil {
 		return runErrorForReference("agent", nil, true)
 	}
-	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, deployment.EnvironmentExternalID)
+	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
 		return runErrorForReference("environment", err, false)
 	}
@@ -709,7 +710,7 @@ func (h *Handler) validateRunReferences(r *http.Request, principal auth.Principa
 		}
 	}
 	for _, vaultID := range vaultIDs {
-		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceID, vaultID)
+		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 		if err != nil {
 			return runErrorForReference("vault", err, false)
 		}
@@ -728,12 +729,12 @@ func (h *Handler) validateRunReferences(r *http.Request, principal auth.Principa
 		switch resourceType {
 		case "file":
 			fileID, _ := resource["file_id"].(string)
-			if _, err := h.db.GetFile(r.Context(), principal.WorkspaceID, fileID); err != nil {
+			if _, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID); err != nil {
 				return runErrorForReference("file", err, false)
 			}
 		case "memory_store":
 			storeID, _ := resource["memory_store_id"].(string)
-			store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, storeID)
+			store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 			if err != nil {
 				return runErrorForReference("memory_store", err, false)
 			}
@@ -755,7 +756,7 @@ func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, fixtureRun(h.cfg, h.cfg.SDKFixtures.DeploymentID, &h.cfg.SDKFixtures.SessionID))
 		return
 	}
-	run, err := h.db.GetDeploymentRun(r.Context(), principal.WorkspaceID, runID)
+	run, err := h.db.GetDeploymentRun(r.Context(), principal.WorkspaceUUID, runID)
 	if err != nil {
 		h.writeRunLoadError(w, r, err, runID)
 		return
@@ -809,7 +810,7 @@ func (h *RunsHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListDeploymentRunsPage(r.Context(), db.ListDeploymentRunsPageParams{
-		WorkspaceID:          principal.WorkspaceID,
+		WorkspaceUUID:        principal.WorkspaceUUID,
 		Limit:                limit,
 		Cursor:               cursor,
 		DeploymentExternalID: strings.TrimSpace(r.URL.Query().Get("deployment_id")),
@@ -869,9 +870,9 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	var agent db.Agent
 	var err error
 	if version > 0 {
-		agent, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceID, agentID, version)
+		agent, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, agentID, version)
 	} else {
-		agent, err = h.db.GetAgent(r.Context(), principal.WorkspaceID, agentID)
+		agent, err = h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -912,7 +913,7 @@ func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, r
 		if strings.TrimSpace(id) == "" {
 			return nil, errors.New("vault_ids must contain non-empty strings")
 		}
-		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceID, id)
+		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, id)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return nil, fmt.Errorf("vault not found: %s", id)
@@ -1664,55 +1665,59 @@ func parseOptionalBoolPointer(r *http.Request, name string) (*bool, error) {
 }
 
 func encodeDeploymentCursor(deployment db.Deployment) string {
-	return encodeCursor(deployment.CreatedAt, deployment.ID)
+	return encodeCursor(deployment.CreatedAt, deployment.UUID)
 }
 
 func encodeRunCursor(run db.DeploymentRun) string {
-	return encodeCursor(run.CreatedAt, run.ID)
+	return encodeCursor(run.CreatedAt, run.UUID)
 }
 
-func encodeCursor(createdAt time.Time, id int64) string {
-	data, _ := json.Marshal(map[string]any{"created_at": createdAt.UTC().Format(time.RFC3339Nano), "id": id})
+func encodeCursor(createdAt time.Time, recordUUID string) string {
+	data, _ := json.Marshal(map[string]any{"created_at": createdAt.UTC().Format(time.RFC3339Nano), "uuid": recordUUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
 func decodeDeploymentCursor(raw string) (*db.DeploymentPageCursor, error) {
-	createdAt, id, err := decodeCursor(raw)
+	createdAt, recordUUID, err := decodeCursor(raw)
 	if err != nil || createdAt == nil {
 		return nil, err
 	}
-	return &db.DeploymentPageCursor{CreatedAt: *createdAt, ID: id}, nil
+	return &db.DeploymentPageCursor{CreatedAt: *createdAt, UUID: recordUUID}, nil
 }
 
 func decodeRunCursor(raw string) (*db.DeploymentRunPageCursor, error) {
-	createdAt, id, err := decodeCursor(raw)
+	createdAt, recordUUID, err := decodeCursor(raw)
 	if err != nil || createdAt == nil {
 		return nil, err
 	}
-	return &db.DeploymentRunPageCursor{CreatedAt: *createdAt, ID: id}, nil
+	return &db.DeploymentRunPageCursor{CreatedAt: *createdAt, UUID: recordUUID}, nil
 }
 
-func decodeCursor(raw string) (*time.Time, int64, error) {
+func decodeCursor(raw string) (*time.Time, string, error) {
 	if strings.TrimSpace(raw) == "" {
-		return nil, 0, nil
+		return nil, "", nil
 	}
 	data, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
-		return nil, 0, errors.New("page cursor is invalid")
+		return nil, "", errors.New("page cursor is invalid")
 	}
 	var payload struct {
 		CreatedAt string `json:"created_at"`
-		ID        int64  `json:"id"`
+		UUID      string `json:"uuid"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil || payload.ID <= 0 || payload.CreatedAt == "" {
-		return nil, 0, errors.New("page cursor is invalid")
+	if err := json.Unmarshal(data, &payload); err != nil || payload.CreatedAt == "" {
+		return nil, "", errors.New("page cursor is invalid")
+	}
+	parsedUUID, err := uuid.Parse(payload.UUID)
+	if err != nil {
+		return nil, "", errors.New("page cursor is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)
 	if err != nil {
-		return nil, 0, errors.New("page cursor is invalid")
+		return nil, "", errors.New("page cursor is invalid")
 	}
 	createdAt = createdAt.UTC()
-	return &createdAt, payload.ID, nil
+	return &createdAt, parsedUUID.String(), nil
 }
 
 func writeBadRequest(w http.ResponseWriter, r *http.Request, err error) {

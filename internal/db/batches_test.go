@@ -9,11 +9,11 @@ import (
 func TestMessageBatchRequestInsertSQLBinding(t *testing.T) {
 	t.Run("rejects missing JSON parameter", func(t *testing.T) {
 		_, _, err := bindNamed(postgresRebinder{}, insertMessageBatchRequestSQL, map[string]any{
-			"external_id":      "msgbatchreq_test",
-			"workspace_id":     int64(2),
-			"message_batch_id": int64(3),
-			"request_index":    4,
-			"custom_id":        "custom-test",
+			"external_id":        "msgbatchreq_test",
+			"workspace_uuid":     "00000000-0000-0000-0000-000000000002",
+			"message_batch_uuid": "00000000-0000-0000-0000-000000000003",
+			"request_index":      4,
+			"custom_id":          "custom-test",
 		})
 		if err == nil {
 			t.Fatal("bindNamed() error = nil, want missing params error")
@@ -22,20 +22,20 @@ func TestMessageBatchRequestInsertSQLBinding(t *testing.T) {
 
 	t.Run("binds JSON cast with PostgreSQL placeholders", func(t *testing.T) {
 		query, arguments, err := bindNamed(postgresRebinder{}, insertMessageBatchRequestSQL, map[string]any{
-			"external_id":      "msgbatchreq_test",
-			"workspace_id":     int64(2),
-			"message_batch_id": int64(3),
-			"request_index":    4,
-			"custom_id":        "custom-test",
-			"params":           `{"model":"claude-test"}`,
+			"external_id":        "msgbatchreq_test",
+			"workspace_uuid":     "00000000-0000-0000-0000-000000000002",
+			"message_batch_uuid": "00000000-0000-0000-0000-000000000003",
+			"request_index":      4,
+			"custom_id":          "custom-test",
+			"params":             `{"model":"claude-test"}`,
 		})
 		if err != nil {
 			t.Fatalf("bindNamed() error = %v", err)
 		}
 		wantArguments := []any{
 			"msgbatchreq_test",
-			int64(2),
-			int64(3),
+			"00000000-0000-0000-0000-000000000002",
+			"00000000-0000-0000-0000-000000000003",
 			4,
 			"custom-test",
 			`{"model":"claude-test"}`,

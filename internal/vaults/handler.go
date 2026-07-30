@@ -180,15 +180,15 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateVault(r.Context(), db.Vault{
-		UUID:              uuid.NewString(),
-		ExternalID:        vaultID,
-		OrganizationID:    principal.OrganizationID,
-		WorkspaceID:       principal.WorkspaceID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		DisplayName:       displayName,
-		Metadata:          metadata,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		UUID:                uuid.NewString(),
+		ExternalID:          vaultID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		DisplayName:         displayName,
+		Metadata:            metadata,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "create vault", "error", err)
@@ -220,7 +220,7 @@ func (h *Handler) listVaults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListVaultsPage(r.Context(), db.ListVaultsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
@@ -248,7 +248,7 @@ func (h *Handler) retrieveVaultRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vaultID := chi.URLParam(r, "vault_id")
-	record, err := h.db.GetVault(r.Context(), principal.WorkspaceID, vaultID)
+	record, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
@@ -267,7 +267,7 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vaultID := chi.URLParam(r, "vault_id")
-	current, err := h.db.GetVault(r.Context(), principal.WorkspaceID, vaultID)
+	current, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
@@ -302,7 +302,7 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateVault(r.Context(), principal.WorkspaceID, vaultID, next)
+	updated, err := h.db.UpdateVault(r.Context(), principal.WorkspaceUUID, vaultID, next)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
@@ -321,8 +321,8 @@ func (h *Handler) archiveVaultRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vaultID := chi.URLParam(r, "vault_id")
-	credentials := h.loadVaultCredentialsForWebhook(r, principal.WorkspaceID, vaultID, false)
-	record, err := h.db.ArchiveVault(r.Context(), principal.WorkspaceID, vaultID)
+	credentials := h.loadVaultCredentialsForWebhook(r, principal.WorkspaceUUID, vaultID, false)
+	record, err := h.db.ArchiveVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
@@ -346,8 +346,8 @@ func (h *Handler) deleteVaultRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vaultID := chi.URLParam(r, "vault_id")
-	credentials := h.loadVaultCredentialsForWebhook(r, principal.WorkspaceID, vaultID, true)
-	if err := h.db.DeleteVault(r.Context(), principal.WorkspaceID, vaultID); err != nil {
+	credentials := h.loadVaultCredentialsForWebhook(r, principal.WorkspaceUUID, vaultID, true)
+	if err := h.db.DeleteVault(r.Context(), principal.WorkspaceUUID, vaultID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
@@ -370,7 +370,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	vaultID := chi.URLParam(r, "vault_id")
-	vault, err := h.db.GetVault(r.Context(), principal.WorkspaceID, vaultID)
+	vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
@@ -411,21 +411,21 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateVaultCredential(r.Context(), db.VaultCredential{
-		UUID:              uuid.NewString(),
-		ExternalID:        credentialID,
-		OrganizationID:    vault.OrganizationID,
-		WorkspaceID:       principal.WorkspaceID,
-		VaultID:           vault.ID,
-		VaultExternalID:   vault.ExternalID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		DisplayName:       displayName,
-		Metadata:          metadata,
-		AuthType:          authState.AuthType,
-		CredentialKey:     authState.Key,
-		Auth:              authState.PublicAuth,
-		SecretPayload:     authState.SecretPayload,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		UUID:                uuid.NewString(),
+		ExternalID:          credentialID,
+		OrganizationUUID:    vault.OrganizationUUID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		VaultUUID:           vault.UUID,
+		VaultExternalID:     vault.ExternalID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		DisplayName:         displayName,
+		Metadata:            metadata,
+		AuthType:            authState.AuthType,
+		CredentialKey:       authState.Key,
+		Auth:                authState.PublicAuth,
+		SecretPayload:       authState.SecretPayload,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicate) {
@@ -455,7 +455,7 @@ func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vaultID := chi.URLParam(r, "vault_id")
-	if _, err := h.db.GetVault(r.Context(), principal.WorkspaceID, vaultID); err != nil {
+	if _, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Vault not found: "+vaultID))
 			return
@@ -480,7 +480,7 @@ func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListVaultCredentialsPage(r.Context(), db.ListVaultCredentialsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		VaultExternalID: vaultID,
 		Limit:           limit,
 		Cursor:          cursor,
@@ -518,7 +518,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	}
 	vaultID := chi.URLParam(r, "vault_id")
 	credentialID := chi.URLParam(r, "credential_id")
-	current, err := h.db.GetVaultCredential(r.Context(), principal.WorkspaceID, vaultID, credentialID)
+	current, err := h.db.GetVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
@@ -562,7 +562,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		next.SecretPayload = authState.SecretPayload
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateVaultCredential(r.Context(), principal.WorkspaceID, vaultID, credentialID, next)
+	updated, err := h.db.UpdateVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID, next)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
@@ -582,7 +582,7 @@ func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request)
 	}
 	vaultID := chi.URLParam(r, "vault_id")
 	credentialID := chi.URLParam(r, "credential_id")
-	record, err := h.db.ArchiveVaultCredential(r.Context(), principal.WorkspaceID, vaultID, credentialID)
+	record, err := h.db.ArchiveVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
@@ -604,7 +604,7 @@ func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	}
 	vaultID := chi.URLParam(r, "vault_id")
 	credentialID := chi.URLParam(r, "credential_id")
-	if err := h.db.DeleteVaultCredential(r.Context(), principal.WorkspaceID, vaultID, credentialID); err != nil {
+	if err := h.db.DeleteVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
 			return
@@ -627,7 +627,7 @@ func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Prin
 		return
 	}
 	h.webhooks.Enqueue(r.Context(), webhooks.EnqueueInput{
-		WorkspaceID:         principal.WorkspaceID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceExternalID: principal.WorkspaceExternalID,
 		EventType:           eventType,
@@ -636,9 +636,9 @@ func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Prin
 	})
 }
 
-func (h *Handler) loadVaultCredentialsForWebhook(r *http.Request, workspaceID int64, vaultID string, includeArchived bool) []db.VaultCredential {
+func (h *Handler) loadVaultCredentialsForWebhook(r *http.Request, workspaceUUID, vaultID string, includeArchived bool) []db.VaultCredential {
 	records, _, err := h.db.ListVaultCredentialsPage(r.Context(), db.ListVaultCredentialsPageParams{
-		WorkspaceID:     workspaceID,
+		WorkspaceUUID:   workspaceUUID,
 		VaultExternalID: vaultID,
 		Limit:           1000,
 		IncludeArchived: includeArchived,
@@ -686,7 +686,7 @@ func (h *Handler) authorizeCredential(w http.ResponseWriter, r *http.Request, op
 	}
 	vaultID := chi.URLParam(r, "vault_id")
 	credentialID := chi.URLParam(r, "credential_id")
-	credential, err := h.db.GetVaultCredential(r.Context(), principal.WorkspaceID, vaultID, credentialID)
+	credential, err := h.db.GetVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
@@ -1419,7 +1419,7 @@ func parseOptionalBool(r *http.Request, name string) (bool, error) {
 }
 
 func encodeVaultCursor(vault db.Vault) string {
-	data, _ := json.Marshal(map[string]any{"created_at": formatTime(vault.CreatedAt), "id": vault.ID})
+	data, _ := json.Marshal(map[string]any{"created_at": formatTime(vault.CreatedAt), "uuid": vault.UUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -1433,20 +1433,20 @@ func decodeVaultCursor(raw string) (*db.VaultPageCursor, error) {
 	}
 	var payload struct {
 		CreatedAt string `json:"created_at"`
-		ID        int64  `json:"id"`
+		UUID      string `json:"uuid"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil || payload.ID <= 0 || payload.CreatedAt == "" {
+	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	return &db.VaultPageCursor{CreatedAt: createdAt.UTC(), ID: payload.ID}, nil
+	return &db.VaultPageCursor{CreatedAt: createdAt.UTC(), UUID: payload.UUID}, nil
 }
 
 func encodeCredentialCursor(credential db.VaultCredential) string {
-	data, _ := json.Marshal(map[string]any{"created_at": formatTime(credential.CreatedAt), "id": credential.ID})
+	data, _ := json.Marshal(map[string]any{"created_at": formatTime(credential.CreatedAt), "uuid": credential.UUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -1460,16 +1460,16 @@ func decodeCredentialCursor(raw string) (*db.VaultCredentialPageCursor, error) {
 	}
 	var payload struct {
 		CreatedAt string `json:"created_at"`
-		ID        int64  `json:"id"`
+		UUID      string `json:"uuid"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil || payload.ID <= 0 || payload.CreatedAt == "" {
+	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	return &db.VaultCredentialPageCursor{CreatedAt: createdAt.UTC(), ID: payload.ID}, nil
+	return &db.VaultCredentialPageCursor{CreatedAt: createdAt.UTC(), UUID: payload.UUID}, nil
 }
 
 func isJSONNull(raw json.RawMessage) bool {

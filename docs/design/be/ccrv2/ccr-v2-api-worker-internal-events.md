@@ -196,8 +196,8 @@ internal/db/migrations/00009_add_code_session_internal_events.sql
 | 字段 | 含义 |
 |---|---|
 | `external_id` | 对外返回的 `event_id` |
-| `organization_id` / `workspace_id` | scope 标识 |
-| `code_session_id` / `code_session_external_id` | code session 标识 |
+| `organization_uuid` / `workspace_uuid` | 稳定的 scope 标识 |
+| `code_session_uuid` / `code_session_external_id` | code session 稳定引用与协议标识 |
 | `sequence_num` | code session 内 internal event 顺序 |
 | `event_type` | 来自 `payload.type`，即 `user` / `assistant` / `attachment` / `system` |
 | `payload_uuid` | `payload.uuid` |
@@ -312,7 +312,7 @@ sequence_num > cursor
 读路径显式带入：
 
 ```go
-WorkspaceID
+WorkspaceUUID
 CodeSessionExternalID
 Subagents
 AfterSequence
@@ -322,8 +322,8 @@ Limit
 SQL 同时过滤：
 
 ```sql
-e.workspace_id = $1
-and e.code_session_external_id = $2
+e.workspace_uuid = CAST(:workspace_uuid AS uuid)
+and e.code_session_external_id = :code_session_external_id
 ```
 
 这样可以避免只按 external id 查询时误读其他 workspace 的数据，也让索引路径和迁移中的索引前缀一致。

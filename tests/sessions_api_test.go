@@ -214,7 +214,7 @@ func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
 	defer deleteSession(t, app, created.ID)
 
 	session := mustSessionRecord(t, app, created.ID)
-	resources, err := app.db.ListSessionResources(context.Background(), session.WorkspaceID, session.ExternalID)
+	resources, err := app.db.ListSessionResources(context.Background(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		t.Fatalf("list Session resources: %v", err)
 	}
@@ -258,7 +258,7 @@ func mustSessionRecord(t *testing.T, app *testApp, sessionExternalID string) db.
 	t.Helper()
 	session, err := app.db.GetSession(
 		context.Background(),
-		getDefaultDBIDs(t, app.db).WorkspaceID,
+		getDefaultDBIDs(t, app.db).WorkspaceUUID,
 		sessionExternalID,
 	)
 	if err != nil {
@@ -932,7 +932,7 @@ func TestSessionThreadsDefaultPageSupportsOfficialPollingAndLegacyPrimary(t *tes
 
 	if _, err := app.db.Pool.Exec(context.Background(), `
 		delete from session_threads
-		where session_external_id = $1 and parent_thread_id is null
+		where session_external_id = $1 and parent_thread_uuid is null
 	`, session.ID); err != nil {
 		t.Fatalf("delete primary thread: %v", err)
 	}
@@ -1139,7 +1139,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	sessionRecord := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		sessionRecord.WorkspaceID,
+		sessionRecord.WorkspaceUUID,
 		sessionRecord.ExternalID,
 	)
 	if err != nil {
@@ -1156,7 +1156,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("upload output fixture: %v", err)
 	}
 	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:  sessionRecord.WorkspaceID,
+		WorkspaceID:  getDefaultDBIDs(t, app.db).WorkspaceID,
 		FilesystemID: filesystem.ID,
 		Path:         "/outputs/worker-output.txt",
 		Blob: db.FilestoreFileBlob{
@@ -1289,7 +1289,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get api key: %v", err)
 	}
-	storedSession, err := app.db.GetSession(ctx, apiKey.WorkspaceID, session.ID)
+	storedSession, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("get stored session: %v", err)
 	}
@@ -1297,7 +1297,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	hiddenEventID := "sevt_legacy_env_manager_log_" + eventSuffix
 	visibleEventID := "sevt_visible_after_legacy_env_" + eventSuffix
 	now := time.Now().UTC()
-	if _, err := app.db.AppendSessionEvents(ctx, storedSession.WorkspaceID, storedSession.ExternalID, []db.SessionEvent{
+	if _, err := app.db.AppendSessionEvents(ctx, storedSession.WorkspaceUUID, storedSession.ExternalID, []db.SessionEvent{
 		{
 			UUID:        uuid.NewString(),
 			ExternalID:  hiddenEventID,
@@ -3736,8 +3736,8 @@ func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string,
 	}
 	credentialContext, err := app.db.GetCodeSessionCredentialContextForIssue(
 		ctx,
-		record.OrganizationID,
-		record.WorkspaceID,
+		record.OrganizationUUID,
+		record.WorkspaceUUID,
 		codeSessionID,
 	)
 	if err != nil {
@@ -4426,15 +4426,15 @@ func containsSession(sessions []sessionAPIResponse, id string) bool {
 
 func createEnvironmentKeyForTest(t *testing.T, app *testApp, envID, key string) string {
 	t.Helper()
-	record, err := app.db.GetEnvironment(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceID, envID)
+	record, err := app.db.GetEnvironment(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceUUID, envID)
 	if err != nil {
 		t.Fatalf("get environment for key: %v", err)
 	}
 	if err := app.db.CreateEnvironmentKey(context.Background(), db.EnvironmentKey{
 		ExternalID:            "envkey_" + strings.ReplaceAll(envID, "-", "_"),
-		OrganizationID:        record.OrganizationID,
-		WorkspaceID:           record.WorkspaceID,
-		EnvironmentID:         record.ID,
+		OrganizationUUID:      record.OrganizationUUID,
+		WorkspaceUUID:         record.WorkspaceUUID,
+		EnvironmentUUID:       record.UUID,
 		EnvironmentExternalID: record.ExternalID,
 	}, auth.HashAPIKey(key)); err != nil {
 		t.Fatalf("create environment key: %v", err)

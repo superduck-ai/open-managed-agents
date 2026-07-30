@@ -43,7 +43,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, environmentID)
+	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
@@ -104,12 +104,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		Session: db.Session{
 			UUID:                  uuid.NewString(),
 			ExternalID:            sessionID,
-			OrganizationID:        principal.OrganizationID,
-			WorkspaceID:           principal.WorkspaceID,
-			CreatedByAPIKeyID:     principal.APIKeyID,
-			EnvironmentID:         env.ID,
+			OrganizationUUID:      principal.OrganizationUUID,
+			WorkspaceUUID:         principal.WorkspaceUUID,
+			CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
-			AgentID:               agent.ID,
+			AgentUUID:             agent.UUID,
 			AgentExternalID:       agent.ExternalID,
 			AgentVersion:          agent.CurrentVersion,
 			AgentSnapshot:         snapshot,
@@ -124,24 +124,24 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt:             now,
 		},
 		Thread: db.SessionThread{
-			UUID:           uuid.NewString(),
-			ExternalID:     threadID,
-			OrganizationID: principal.OrganizationID,
-			WorkspaceID:    principal.WorkspaceID,
-			AgentSnapshot:  snapshot,
-			Status:         "idle",
-			Usage:          json.RawMessage(`{}`),
-			Stats:          json.RawMessage(`{}`),
-			CreatedAt:      now,
-			UpdatedAt:      now,
+			UUID:             uuid.NewString(),
+			ExternalID:       threadID,
+			OrganizationUUID: principal.OrganizationUUID,
+			WorkspaceUUID:    principal.WorkspaceUUID,
+			AgentSnapshot:    snapshot,
+			Status:           "idle",
+			Usage:            json.RawMessage(`{}`),
+			Stats:            json.RawMessage(`{}`),
+			CreatedAt:        now,
+			UpdatedAt:        now,
 		},
 		Resources: resourceInputs,
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewString(),
 			ExternalID:            workID,
-			OrganizationID:        principal.OrganizationID,
-			WorkspaceID:           principal.WorkspaceID,
-			EnvironmentID:         env.ID,
+			OrganizationUUID:      principal.OrganizationUUID,
+			WorkspaceUUID:         principal.WorkspaceUUID,
+			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
 			Data:                  workData,
 			Metadata:              json.RawMessage(`{}`),
@@ -228,7 +228,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListSessionsPage(r.Context(), db.ListSessionsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		Order:           order,
@@ -295,7 +295,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
 		return
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceID, sessionID)
+	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
@@ -336,7 +336,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateSession(r.Context(), principal.WorkspaceID, sessionID, next)
+	updated, err := h.db.UpdateSession(r.Context(), principal.WorkspaceUUID, sessionID, next)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
@@ -364,7 +364,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), true))
 		return
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceID, sessionID)
+	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
@@ -373,7 +373,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("running sessions cannot be archived"))
 		return
 	}
-	archived, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceID, sessionID)
+	archived, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
@@ -398,7 +398,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: sessionID, Type: "session_deleted"})
 		return
 	}
-	current, err := h.db.GetSession(r.Context(), principal.WorkspaceID, sessionID)
+	current, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
@@ -416,7 +416,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 			h.broadcast(deletedEvent)
 		}
 	}
-	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceID, sessionID)
+	deleted, err := h.db.DeleteSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
@@ -436,7 +436,7 @@ func (h *Handler) listThreadEventsRoute(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if _, err := h.db.GetSessionThread(r.Context(), workspaceIDFromRequest(r), sessionID, threadID); err != nil {
+	if _, err := h.db.GetSessionThread(r.Context(), workspaceUUIDFromRequest(r), sessionID, threadID); err != nil {
 		h.writeThreadLoadError(w, r, err, threadID)
 		return
 	}
@@ -452,7 +452,7 @@ func (h *Handler) backfillSubagentThreadEventsIfEmpty(ctx context.Context, sessi
 		return nil
 	}
 	existing, _, err := h.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceID:       session.WorkspaceID,
+		WorkspaceUUID:     session.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		ThreadExternalID:  threadID,
 		Limit:             1,
@@ -461,7 +461,7 @@ func (h *Handler) backfillSubagentThreadEventsIfEmpty(ctx context.Context, sessi
 	if err != nil || len(existing) > 0 {
 		return err
 	}
-	codeSession, err := h.db.GetCodeSessionBySessionExternalID(ctx, session.WorkspaceID, session.ExternalID)
+	codeSession, err := h.db.GetCodeSessionBySessionExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
 	if errors.Is(err, db.ErrNotFound) {
 		return nil
 	}
@@ -516,7 +516,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 		return
 	}
 	records, hasMore, err := h.db.ListSessionEventsPage(r.Context(), db.ListSessionEventsPageParams{
-		WorkspaceID:       workspaceIDFromRequest(r),
+		WorkspaceUUID:     workspaceUUIDFromRequest(r),
 		SessionExternalID: sessionID,
 		ThreadExternalID:  threadID,
 		PrimaryOnly:       threadID == "",
@@ -605,7 +605,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 		outcomesChanged = outcomesChanged || changed
 		events = append(events, event)
 	}
-	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceID, session.ExternalID, events)
+	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			writeBadRequest(w, r, errors.New("archived sessions do not accept new events"))
@@ -624,7 +624,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	if outcomesChanged {
 		h.enqueueWebhook(r.Context(), webhooks.EnqueueInput{
-			WorkspaceID:         session.WorkspaceID,
+			WorkspaceUUID:       session.WorkspaceUUID,
 			OrganizationUUID:    organizationUUIDFromRequest(r),
 			WorkspaceExternalID: workspaceExternalIDFromRequest(r),
 			EventType:           "session.outcome_evaluation_ended",
@@ -684,7 +684,7 @@ func (h *Handler) listResourcesRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceID, session.ExternalID)
+	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list session resources", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list resources"))
@@ -705,7 +705,7 @@ func (h *Handler) retrieveResourceRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureResource(time.Now().UTC()))
 		return
 	}
-	resource, err := h.db.GetSessionResource(r.Context(), session.WorkspaceID, session.ExternalID, resourceID)
+	resource, err := h.db.GetSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID)
 	if err != nil {
 		h.writeResourceLoadError(w, r, err, resourceID)
 		return
@@ -724,7 +724,7 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureResource(time.Now().UTC()))
 		return
 	}
-	current, err := h.db.GetSessionResource(r.Context(), session.WorkspaceID, session.ExternalID, resourceID)
+	current, err := h.db.GetSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID)
 	if err != nil {
 		h.writeResourceLoadError(w, r, err, resourceID)
 		return
@@ -744,7 +744,7 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, _ := httpapi.MarshalRaw(map[string]any{"authorization_token": token})
-	updated, err := h.db.UpdateSessionResource(r.Context(), session.WorkspaceID, session.ExternalID, resourceID, current.Payload, secret)
+	updated, err := h.db.UpdateSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID, current.Payload, secret)
 	if err != nil {
 		h.writeResourceLoadError(w, r, err, resourceID)
 		return
@@ -763,7 +763,7 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: resourceID, Type: "session_resource_deleted"})
 		return
 	}
-	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceID, session.ExternalID, resourceID); err != nil {
+	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			h.writeSessionLoadError(w, r, err, sessionID)
 			return
@@ -803,7 +803,7 @@ func (h *Handler) listThreadsRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListSessionThreadsPage(r.Context(), db.ListSessionThreadsPageParams{
-		WorkspaceID:       session.WorkspaceID,
+		WorkspaceUUID:     session.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		Limit:             limit,
 		Cursor:            cursor,
@@ -836,7 +836,7 @@ func (h *Handler) retrieveThreadRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureThread(time.Now().UTC(), false))
 		return
 	}
-	thread, err := h.db.GetSessionThread(r.Context(), session.WorkspaceID, session.ExternalID, threadID)
+	thread, err := h.db.GetSessionThread(r.Context(), session.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
 		h.writeThreadLoadError(w, r, err, threadID)
 		return
@@ -855,12 +855,12 @@ func (h *Handler) archiveThreadRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureThread(time.Now().UTC(), true))
 		return
 	}
-	session, err := h.db.GetSession(r.Context(), principal.WorkspaceID, sessionID)
+	session, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return
 	}
-	thread, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceID, session.ExternalID, threadID)
+	thread, err := h.db.ArchiveSessionThread(r.Context(), principal.WorkspaceUUID, session.ExternalID, threadID)
 	if err != nil {
 		h.writeThreadLoadError(w, r, err, threadID)
 		return

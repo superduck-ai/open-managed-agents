@@ -251,7 +251,7 @@ func TestResolveLimitedNetworkFailsClosedOnInvalidAllowedHost(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	_, err := provider.Resolve(db.Environment{
 		ExternalID:       "env_invalid_network",
-		WorkspaceID:      42,
+		WorkspaceUUID:    "00000000-0000-0000-0000-000000000042",
 		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["bad/path","api.example.com"]}}`),
 		ResolvedTemplate: "template_test",
 	}, nil)
@@ -264,7 +264,7 @@ func TestResolveLimitedNetworkFailsClosedOnMalformedMCPMetadata(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	_, err := provider.Resolve(db.Environment{
 		ExternalID:       "env_invalid_mcp_metadata",
-		WorkspaceID:      42,
+		WorkspaceUUID:    "00000000-0000-0000-0000-000000000042",
 		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}}`),
 		ResolvedTemplate: "template_test",
 	}, &db.EnvironmentWork{
@@ -279,8 +279,8 @@ func TestResolveLimitedNetworkFailsClosedOnMalformedMCPMetadata(t *testing.T) {
 func TestResolveLimitedNetworkCanonicalizesExplicitAllowedHosts(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	resolution, err := provider.Resolve(db.Environment{
-		ExternalID:  "env_canonical_network",
-		WorkspaceID: 42,
+		ExternalID:    "env_canonical_network",
+		WorkspaceUUID: "00000000-0000-0000-0000-000000000042",
 		Config: json.RawMessage(`{
 			"type":"cloud",
 			"networking":{
@@ -309,7 +309,7 @@ func TestResolveLimitedNetworkIncludesMCPHostsWhenAllowed(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	env := db.Environment{
 		ExternalID:       "env_test",
-		WorkspaceID:      42,
+		WorkspaceUUID:    "00000000-0000-0000-0000-000000000042",
 		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":true}}`),
 		ResolvedTemplate: "template_test",
 	}

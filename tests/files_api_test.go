@@ -278,7 +278,7 @@ func TestPlatformUploadB64FilesAPI(t *testing.T) {
 			t.Fatalf("preview asset = %+v, want 800x600 preview", uploaded.PreviewAsset)
 		}
 
-		record, err := app.db.GetFileByUUID(context.Background(), defaultIDs.WorkspaceID, uploaded.FileUUID)
+		record, err := app.db.GetFileByUUID(context.Background(), defaultIDs.WorkspaceUUID, uploaded.FileUUID)
 		if err != nil {
 			t.Fatalf("get uploaded file by uuid: %v", err)
 		}
@@ -342,7 +342,7 @@ func TestPlatformUploadB64FilesAPI(t *testing.T) {
 		var uploaded platformUploadResponse
 		decodeJSON(t, resp.Body, &uploaded)
 
-		record, err := app.db.GetFileByUUID(context.Background(), defaultIDs.WorkspaceID, uploaded.FileUUID)
+		record, err := app.db.GetFileByUUID(context.Background(), defaultIDs.WorkspaceUUID, uploaded.FileUUID)
 		if err != nil {
 			t.Fatalf("get gif file by uuid: %v", err)
 		}
@@ -870,7 +870,7 @@ func TestObjectCleanupJobAttemptsIncrementOnFailure(t *testing.T) {
 	ctx := context.Background()
 	defaultIDs := getDefaultDBIDs(t, app.db)
 	objectKey := "attempts-test/" + uuid.NewString()
-	if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceID, app.store.Name(), objectKey, "file_attempts_test"); err != nil {
+	if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceUUID, app.store.Name(), objectKey, "file_attempts_test"); err != nil {
 		t.Fatalf("enqueue cleanup job: %v", err)
 	}
 	defer app.db.Pool.Exec(ctx, `delete from jobs where payload->>'key' = $1`, objectKey)
@@ -893,14 +893,14 @@ func TestObjectCleanupJobAttemptsIncrementOnFailure(t *testing.T) {
 			break
 		}
 	}
-	if job.ID == 0 {
+	if job.UUID == "" {
 		t.Fatalf("leased jobs did not include %s: %+v", objectKey, jobs)
 	}
 	if job.Attempts != 0 {
 		t.Fatalf("leased attempts = %d, want 0 before first failure", job.Attempts)
 	}
 
-	if err := app.db.FailObjectCleanupJob(ctx, job.ID, job.Attempts, "delete failed", 0, 10); err != nil {
+	if err := app.db.FailObjectCleanupJob(ctx, job.UUID, job.Attempts, "delete failed", 0, 10); err != nil {
 		t.Fatalf("fail cleanup job: %v", err)
 	}
 	var status string
@@ -908,8 +908,8 @@ func TestObjectCleanupJobAttemptsIncrementOnFailure(t *testing.T) {
 	if err := app.db.Pool.QueryRow(ctx, `
 		select status, attempts
 		from jobs
-		where id = $1
-	`, job.ID).Scan(&status, &attempts); err != nil {
+		where uuid = $1
+	`, job.UUID).Scan(&status, &attempts); err != nil {
 		t.Fatalf("load cleanup job: %v", err)
 	}
 	if status != "retry" || attempts != 1 {
@@ -935,7 +935,7 @@ func TestObjectCleanupWorkerContinuesAfterJobFailure(t *testing.T) {
 		{bucket: successfulBucket, key: "cleanup-worker/succeed"},
 	}
 	for _, job := range jobs {
-		if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceID, job.bucket.Name(), job.key, "file_"+strings.ReplaceAll(job.key, "/", "_")); err != nil {
+		if err := app.db.EnqueueObjectCleanupJob(ctx, defaultIDs.WorkspaceUUID, job.bucket.Name(), job.key, "file_"+strings.ReplaceAll(job.key, "/", "_")); err != nil {
 			t.Fatalf("enqueue cleanup job %s: %v", job.key, err)
 		}
 		defer app.db.Pool.Exec(ctx, `delete from jobs where payload->>'key' = $1`, job.key)
@@ -1264,35 +1264,33 @@ func containsFile(files []metadataResponse, id string) bool {
 func seedWorkspaceKey(t *testing.T, database *db.DB, organizationName, workspaceID, keyID, apiKey string) {
 	t.Helper()
 	ctx := context.Background()
-	var organizationRowID int64
+	var organizationUUID string
 	if err := database.Pool.QueryRow(ctx, `
 		insert into organizations (name)
 		values ($1)
-		returning id
-	`, organizationName).Scan(&organizationRowID); err != nil {
+		returning uuid::text
+	`, organizationName).Scan(&organizationUUID); err != nil {
 		t.Fatalf("seed org: %v", err)
 	}
-	var workspaceRowID int64
+	var workspaceUUID string
 	if err := database.Pool.QueryRow(ctx, `
 		insert into workspaces (external_id, organization_uuid, name)
-		select $1, uuid, $1
-		from organizations
-		where id = $2
+		values ($1, $2, $1)
 		on conflict (external_id) do update set
 			organization_uuid = excluded.organization_uuid,
 			name = excluded.name
-		returning id
-	`, workspaceID, organizationRowID).Scan(&workspaceRowID); err != nil {
+		returning uuid::text
+	`, workspaceID, organizationUUID).Scan(&workspaceUUID); err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
 	if _, err := database.Pool.Exec(ctx, `
-		insert into api_keys (external_id, workspace_id, key_hash, status)
+		insert into api_keys (external_id, workspace_uuid, key_hash, status)
 		values ($1, $2, $3, 'active')
 		on conflict (external_id) do update set
-			workspace_id = excluded.workspace_id,
+			workspace_uuid = excluded.workspace_uuid,
 			key_hash = excluded.key_hash,
 			status = 'active'
-	`, keyID, workspaceRowID, auth.HashAPIKey(apiKey)); err != nil {
+	`, keyID, workspaceUUID, auth.HashAPIKey(apiKey)); err != nil {
 		t.Fatalf("seed api key: %v", err)
 	}
 }
@@ -1306,20 +1304,20 @@ func createMetadataOnlyFile(t *testing.T, app *testApp, scopeID string) string {
 	defaultIDs := getDefaultDBIDs(t, app.db)
 	scopeType := "session"
 	if err := app.db.CreateFile(context.Background(), db.FileRecord{
-		UUID:              uuid.NewString(),
-		ExternalID:        fileExternalID,
-		WorkspaceID:       defaultIDs.WorkspaceID,
-		Filename:          "scoped.txt",
-		MimeType:          "text/plain",
-		SizeBytes:         1,
-		SHA256:            "00",
-		S3Bucket:          app.store.Name(),
-		S3Key:             "metadata-only/" + fileExternalID,
-		Downloadable:      false,
-		ScopeType:         &scopeType,
-		ScopeID:           &scopeID,
-		CreatedByAPIKeyID: defaultIDs.APIKeyID,
-		CreatedAt:         time.Now().UTC(),
+		UUID:                uuid.NewString(),
+		ExternalID:          fileExternalID,
+		WorkspaceUUID:       defaultIDs.WorkspaceUUID,
+		Filename:            "scoped.txt",
+		MimeType:            "text/plain",
+		SizeBytes:           1,
+		SHA256:              "00",
+		S3Bucket:            app.store.Name(),
+		S3Key:               "metadata-only/" + fileExternalID,
+		Downloadable:        false,
+		ScopeType:           &scopeType,
+		ScopeID:             &scopeID,
+		CreatedByAPIKeyUUID: defaultIDs.APIKeyUUID,
+		CreatedAt:           time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("create metadata-only file: %v", err)
 	}
@@ -1340,18 +1338,18 @@ func createDownloadableFile(t *testing.T, app *testApp, filename, contentType st
 	}
 	sum := sha256.Sum256(content)
 	if err := app.db.CreateFile(context.Background(), db.FileRecord{
-		UUID:              fileUUID,
-		ExternalID:        fileExternalID,
-		WorkspaceID:       defaultIDs.WorkspaceID,
-		Filename:          filename,
-		MimeType:          contentType,
-		SizeBytes:         int64(len(content)),
-		SHA256:            fmt.Sprintf("%x", sum),
-		S3Bucket:          app.store.Name(),
-		S3Key:             objectKey,
-		Downloadable:      true,
-		CreatedByAPIKeyID: defaultIDs.APIKeyID,
-		CreatedAt:         time.Now().UTC(),
+		UUID:                fileUUID,
+		ExternalID:          fileExternalID,
+		WorkspaceUUID:       defaultIDs.WorkspaceUUID,
+		Filename:            filename,
+		MimeType:            contentType,
+		SizeBytes:           int64(len(content)),
+		SHA256:              fmt.Sprintf("%x", sum),
+		S3Bucket:            app.store.Name(),
+		S3Key:               objectKey,
+		Downloadable:        true,
+		CreatedByAPIKeyUUID: defaultIDs.APIKeyUUID,
+		CreatedAt:           time.Now().UTC(),
 	}); err != nil {
 		_ = app.store.Delete(context.Background(), objectKey, storage.DeleteOptions{})
 		t.Fatalf("create downloadable metadata: %v", err)
@@ -1361,15 +1359,15 @@ func createDownloadableFile(t *testing.T, app *testApp, filename, contentType st
 
 func softDeleteFile(t *testing.T, database *db.DB, fileID string) {
 	t.Helper()
-	var workspaceID int64
+	var workspaceUUID string
 	if err := database.Pool.QueryRow(context.Background(), `
-		select workspace_id from files where external_id = $1 and deleted_at is null
-	`, fileID).Scan(&workspaceID); errors.Is(err, pgx.ErrNoRows) {
+		select workspace_uuid::text from files where external_id = $1 and deleted_at is null
+	`, fileID).Scan(&workspaceUUID); errors.Is(err, pgx.ErrNoRows) {
 		return
 	} else if err != nil {
 		t.Fatalf("load file %s before soft delete: %v", fileID, err)
 	}
-	if err := database.SoftDeleteFile(context.Background(), workspaceID, fileID); err != nil {
+	if err := database.SoftDeleteFile(context.Background(), workspaceUUID, fileID); err != nil {
 		t.Fatalf("soft delete file %s: %v", fileID, err)
 	}
 }
@@ -1379,19 +1377,20 @@ type defaultDBIDs struct {
 	WorkspaceID      int64
 	WorkspaceUUID    string
 	APIKeyID         int64
+	APIKeyUUID       string
 }
 
 func getDefaultDBIDs(t *testing.T, database *db.DB) defaultDBIDs {
 	t.Helper()
 	var ids defaultDBIDs
 	if err := database.Pool.QueryRow(context.Background(), `
-		select o.uuid::text, w.id, w.uuid::text, ak.id
+		select o.uuid::text, w.id, w.uuid::text, ak.id, ak.uuid::text
 		from workspaces w
 		join organizations o on o.uuid = w.organization_uuid
-		join api_keys ak on ak.workspace_id = w.id
+		join api_keys ak on ak.workspace_uuid = w.uuid
 		where w.external_id = 'workspace_default'
 			and ak.external_id = 'api_key_default'
-	`).Scan(&ids.OrganizationUUID, &ids.WorkspaceID, &ids.WorkspaceUUID, &ids.APIKeyID); err != nil {
+	`).Scan(&ids.OrganizationUUID, &ids.WorkspaceID, &ids.WorkspaceUUID, &ids.APIKeyID, &ids.APIKeyUUID); err != nil {
 		t.Fatalf("load default db ids: %v", err)
 	}
 	return ids

@@ -58,7 +58,7 @@ func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, se
 	delete(payload, "owner_session_thread_id")
 	delete(payload, "_owner_session_thread_id")
 	if threadID == "" {
-		primary, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceID, session.ExternalID)
+		primary, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
 		if err != nil {
 			return db.SessionEvent{}, err
 		}
@@ -71,9 +71,9 @@ func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, se
 	return db.SessionEvent{
 		UUID:              uuid.NewString(),
 		ExternalID:        eventID,
-		OrganizationID:    session.OrganizationID,
-		WorkspaceID:       session.WorkspaceID,
-		SessionID:         session.ID,
+		OrganizationUUID:  session.OrganizationUUID,
+		WorkspaceUUID:     session.WorkspaceUUID,
+		SessionUUID:       session.UUID,
 		SessionExternalID: session.ExternalID,
 		ThreadExternalID:  &threadID,
 		EventType:         eventType,
@@ -147,9 +147,9 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 		events = append(events, db.SessionEvent{
 			UUID:              uuid.NewString(),
 			ExternalID:        spec.EventID,
-			OrganizationID:    session.OrganizationID,
-			WorkspaceID:       session.WorkspaceID,
-			SessionID:         session.ID,
+			OrganizationUUID:  session.OrganizationUUID,
+			WorkspaceUUID:     session.WorkspaceUUID,
+			SessionUUID:       session.UUID,
 			SessionExternalID: session.ExternalID,
 			ThreadExternalID:  spec.OwnerThreadID,
 			EventType:         eventType,
@@ -194,7 +194,7 @@ func (h *Handler) agentNameForSessionThread(ctx context.Context, session db.Sess
 	if threadID == "" {
 		return "", nil
 	}
-	thread, err := h.db.GetSessionThread(ctx, session.WorkspaceID, session.ExternalID, threadID)
+	thread, err := h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID)
 	if errors.Is(err, db.ErrNotFound) {
 		return "", nil
 	}
@@ -228,7 +228,7 @@ func (h *Handler) inferOwnerSessionThreadID(ctx context.Context, session db.Sess
 		return "", nil
 	}
 	events, _, err := h.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceID:       session.WorkspaceID,
+		WorkspaceUUID:     session.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		PrimaryOnly:       true,
 		Limit:             500,
@@ -308,7 +308,7 @@ func (h *Handler) sessionEventCopySpecs(ctx context.Context, session db.Session,
 		return []sessionEventCopySpec{newSessionEventCopySpec(eventID, payload, nil, false)}, nil
 	}
 	if threadID != "" {
-		if _, err := h.db.GetSessionThread(ctx, session.WorkspaceID, session.ExternalID, threadID); err == nil {
+		if _, err := h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID); err == nil {
 			ownerPayload := copySessionEventPayload(payload)
 			if sessionToolUseEventHasThreadScopedSessionThreadID(eventType) {
 				delete(ownerPayload, "session_thread_id")
@@ -384,7 +384,7 @@ func firstSessionPayloadString(payload map[string]any, fields ...string) string 
 }
 
 func (h *Handler) ensurePrimarySessionThread(ctx context.Context, session db.Session) (db.SessionThread, error) {
-	thread, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceID, session.ExternalID)
+	thread, err := h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err == nil {
 		return thread, nil
 	}
@@ -399,9 +399,9 @@ func (h *Handler) ensurePrimarySessionThread(ctx context.Context, session db.Ses
 	return h.db.CreateSessionThreadIfAbsent(ctx, db.SessionThread{
 		UUID:              uuid.NewString(),
 		ExternalID:        threadID,
-		OrganizationID:    session.OrganizationID,
-		WorkspaceID:       session.WorkspaceID,
-		SessionID:         session.ID,
+		OrganizationUUID:  session.OrganizationUUID,
+		WorkspaceUUID:     session.WorkspaceUUID,
+		SessionUUID:       session.UUID,
 		SessionExternalID: session.ExternalID,
 		AgentSnapshot:     session.AgentSnapshot,
 		Status:            threadStatusForSession(session.Status),
@@ -426,23 +426,23 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	if threadID == "" {
 		return nil
 	}
-	if _, err := h.db.GetSessionThread(ctx, session.WorkspaceID, session.ExternalID, threadID); err == nil {
+	if _, err := h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, threadID); err == nil {
 		return nil
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return err
 	}
-	var parentThreadID *int64
+	var parentThreadUUID *string
 	var parentThreadExternalID *string
 	parentExternalID := sessionPayloadString(payload, "parent_session_thread_id")
 	var parent db.SessionThread
 	var err error
 	if parentExternalID != "" {
-		parent, err = h.db.GetSessionThread(ctx, session.WorkspaceID, session.ExternalID, parentExternalID)
+		parent, err = h.db.GetSessionThread(ctx, session.WorkspaceUUID, session.ExternalID, parentExternalID)
 	} else {
-		parent, err = h.db.GetPrimarySessionThread(ctx, session.WorkspaceID, session.ExternalID)
+		parent, err = h.db.GetPrimarySessionThread(ctx, session.WorkspaceUUID, session.ExternalID)
 	}
 	if err == nil && parent.ExternalID != threadID {
-		parentThreadID = &parent.ID
+		parentThreadUUID = &parent.UUID
 		value := parent.ExternalID
 		parentThreadExternalID = &value
 	} else if err != nil && !errors.Is(err, db.ErrNotFound) {
@@ -458,11 +458,11 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	_, err = h.db.CreateSessionThreadIfAbsent(ctx, db.SessionThread{
 		UUID:                   uuid.NewString(),
 		ExternalID:             threadID,
-		OrganizationID:         session.OrganizationID,
-		WorkspaceID:            session.WorkspaceID,
-		SessionID:              session.ID,
+		OrganizationUUID:       session.OrganizationUUID,
+		WorkspaceUUID:          session.WorkspaceUUID,
+		SessionUUID:            session.UUID,
 		SessionExternalID:      session.ExternalID,
-		ParentThreadID:         parentThreadID,
+		ParentThreadUUID:       parentThreadUUID,
 		ParentThreadExternalID: parentThreadExternalID,
 		AgentSnapshot:          agentSnapshot,
 		Status:                 "idle",

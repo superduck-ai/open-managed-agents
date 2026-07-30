@@ -190,7 +190,7 @@ alter table code_session_inbound_events
   add column if not exists delivery_attempts integer not null default 0;
 
 create index if not exists code_session_inbound_events_payload_uuid_v1_idx
-  on code_session_inbound_events (code_session_id, payload_uuid, sequence_num asc)
+  on code_session_inbound_events (code_session_uuid, payload_uuid, sequence_num asc)
   where deleted_at is null and payload_uuid is not null;
 
 create index if not exists code_session_inbound_events_unprocessed_v1_idx
@@ -382,7 +382,6 @@ epoch-scoped stream 使用本地 `lastSentSequence` 从 cursor 开始推进，�
 ```sql
 select e.*
 from code_session_inbound_events e
-join code_sessions cs on cs.id = e.code_session_id
 where e.code_session_external_id = $1
   and e.sequence_num > $3
   and e.delivery_status <> 'processed'

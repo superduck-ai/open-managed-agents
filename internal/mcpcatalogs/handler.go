@@ -169,10 +169,10 @@ func (h *Handler) authorizedAgent(w http.ResponseWriter, r *http.Request) (auth.
 	var agent db.Agent
 	var err error
 	if version == 0 {
-		agent, err = h.database.GetAgent(r.Context(), principal.WorkspaceID, chi.URLParam(r, "agentId"))
+		agent, err = h.database.GetAgent(r.Context(), principal.WorkspaceUUID, chi.URLParam(r, "agentId"))
 		version = agent.CurrentVersion
 	} else {
-		agent, err = h.database.GetAgentVersion(r.Context(), principal.WorkspaceID, chi.URLParam(r, "agentId"), version)
+		agent, err = h.database.GetAgentVersion(r.Context(), principal.WorkspaceUUID, chi.URLParam(r, "agentId"), version)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -253,7 +253,7 @@ func isPlatformClaudeHost(requestHost string) bool {
 
 func principalCanSeeWorkspace(principal auth.Principal, value string) bool {
 	// "default" 只是控制台路由中“当前已认证 workspace”的别名，不代表全局默认 workspace；
-	// 后续 Agent 查询仍使用 principal.WorkspaceID 作为真实租户边界。
+	// 后续 Agent 查询使用 principal.WorkspaceUUID 作为真实租户边界。
 	value = strings.TrimSpace(value)
 	return value != "" && (value == "default" || value == strings.TrimSpace(principal.WorkspaceUUID) || value == strings.TrimSpace(principal.WorkspaceExternalID))
 }

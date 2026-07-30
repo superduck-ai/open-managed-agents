@@ -14,23 +14,22 @@ func TestConsoleMembersAPI(t *testing.T) {
 	cookies := app.platformLoginCookies(t, "console-members@example.com")
 
 	var orgUUID string
-	var orgID int64
 	var userUUID string
 	if err := app.db.Pool.QueryRow(context.Background(), `
-		select o.uuid::text, o.id
+		select o.uuid::text
 		from organizations o
 		join workspaces w on w.organization_uuid = o.uuid
 		where w.external_id = 'workspace_default'
-	`).Scan(&orgUUID, &orgID); err != nil {
+	`).Scan(&orgUUID); err != nil {
 		t.Fatalf("load default organization ids: %v", err)
 	}
 	suffix := uniqueAdminSuffix()
 	email := "console-member-" + suffix + "@example.com"
 	if err := app.db.Pool.QueryRow(context.Background(), `
-		insert into users (external_id, organization_id, email, name, role)
+		insert into users (external_id, organization_uuid, email, name, role)
 		values ($1, $2, $3, $4, 'admin')
 		returning uuid::text
-	`, "user_console_"+suffix, orgID, email, "Console Member").Scan(&userUUID); err != nil {
+	`, "user_console_"+suffix, orgUUID, email, "Console Member").Scan(&userUUID); err != nil {
 		t.Fatalf("seed console member: %v", err)
 	}
 	memberID := consoleTaggedUserID(userUUID)

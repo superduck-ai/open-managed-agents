@@ -60,13 +60,13 @@ func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, re
 	}
 	now := time.Now().UTC()
 	invite, err := s.db.CreateAdminInvite(ctx, db.AdminInvite{
-		ExternalID:     externalID,
-		OrganizationID: principal.OrganizationID,
-		Email:          email,
-		Role:           req.Role,
-		Status:         "pending",
-		InvitedAt:      now,
-		ExpiresAt:      now.Add(21 * 24 * time.Hour),
+		ExternalID:       externalID,
+		OrganizationUUID: principal.OrganizationUUID,
+		Email:            email,
+		Role:             req.Role,
+		Status:           "pending",
+		InvitedAt:        now,
+		ExpiresAt:        now.Add(21 * 24 * time.Hour),
 	})
 	if err != nil {
 		return inviteResponse{}, mapAdminDBError(err, "Could not create invite")
@@ -75,7 +75,7 @@ func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, re
 }
 
 func (s *Service) GetInvite(ctx context.Context, principal auth.Principal, inviteID string) (inviteResponse, error) {
-	invite, err := s.db.GetAdminInvite(ctx, principal.OrganizationID, inviteID)
+	invite, err := s.db.GetAdminInvite(ctx, principal.OrganizationUUID, inviteID)
 	if err != nil {
 		return inviteResponse{}, mapAdminDBError(err, "Invite not found")
 	}
@@ -84,10 +84,10 @@ func (s *Service) GetInvite(ctx context.Context, principal auth.Principal, invit
 
 func (s *Service) ListInvites(ctx context.Context, principal auth.Principal, afterID, beforeID string, limit int) (cursorPageResponse[inviteResponse], error) {
 	records, hasMore, err := s.db.ListAdminInvitesPage(ctx, db.ListAdminInvitesParams{
-		OrganizationID: principal.OrganizationID,
-		AfterID:        afterID,
-		BeforeID:       beforeID,
-		Limit:          limit,
+		OrganizationUUID: principal.OrganizationUUID,
+		AfterID:          afterID,
+		BeforeID:         beforeID,
+		Limit:            limit,
 	})
 	if err != nil {
 		return cursorPageResponse[inviteResponse]{}, err
@@ -100,14 +100,14 @@ func (s *Service) ListInvites(ctx context.Context, principal auth.Principal, aft
 }
 
 func (s *Service) DeleteInvite(ctx context.Context, principal auth.Principal, inviteID string) (map[string]string, error) {
-	if _, err := s.db.DeleteAdminInvite(ctx, principal.OrganizationID, inviteID); err != nil {
+	if _, err := s.db.DeleteAdminInvite(ctx, principal.OrganizationUUID, inviteID); err != nil {
 		return nil, mapAdminDBError(err, "Invite not found")
 	}
 	return map[string]string{"id": inviteID, "type": "invite_deleted"}, nil
 }
 
 func (s *Service) GetUser(ctx context.Context, principal auth.Principal, userID string) (userResponse, error) {
-	user, err := s.db.GetAdminUser(ctx, principal.OrganizationID, userID)
+	user, err := s.db.GetAdminUser(ctx, principal.OrganizationUUID, userID)
 	if err != nil {
 		return userResponse{}, mapAdminDBError(err, "User not found")
 	}
@@ -123,11 +123,11 @@ func (s *Service) ListUsers(ctx context.Context, principal auth.Principal, email
 		}
 	}
 	records, hasMore, err := s.db.ListAdminUsersPage(ctx, db.ListAdminUsersParams{
-		OrganizationID: principal.OrganizationID,
-		Email:          email,
-		AfterID:        afterID,
-		BeforeID:       beforeID,
-		Limit:          limit,
+		OrganizationUUID: principal.OrganizationUUID,
+		Email:            email,
+		AfterID:          afterID,
+		BeforeID:         beforeID,
+		Limit:            limit,
 	})
 	if err != nil {
 		return cursorPageResponse[userResponse]{}, err
@@ -143,7 +143,7 @@ func (s *Service) UpdateUser(ctx context.Context, principal auth.Principal, user
 	if err := validateOrganizationRole(req.Role, false); err != nil {
 		return userResponse{}, invalidRequest(err.Error())
 	}
-	user, err := s.db.UpdateAdminUserRole(ctx, principal.OrganizationID, userID, req.Role)
+	user, err := s.db.UpdateAdminUserRole(ctx, principal.OrganizationUUID, userID, req.Role)
 	if err != nil {
 		return userResponse{}, mapAdminDBError(err, "User not found")
 	}
@@ -151,7 +151,7 @@ func (s *Service) UpdateUser(ctx context.Context, principal auth.Principal, user
 }
 
 func (s *Service) DeleteUser(ctx context.Context, principal auth.Principal, userID string) (map[string]string, error) {
-	if _, err := s.db.DeleteAdminUser(ctx, principal.OrganizationID, userID); err != nil {
+	if _, err := s.db.DeleteAdminUser(ctx, principal.OrganizationUUID, userID); err != nil {
 		return nil, mapAdminDBError(err, "User not found")
 	}
 	return map[string]string{"id": userID, "type": "user_deleted"}, nil
@@ -178,7 +178,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 		return workspaceResponse{}, err
 	}
 	if req.ExternalKeyID != nil && strings.TrimSpace(*req.ExternalKeyID) != "" {
-		if _, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationID, strings.TrimSpace(*req.ExternalKeyID)); err != nil {
+		if _, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationUUID, strings.TrimSpace(*req.ExternalKeyID)); err != nil {
 			return workspaceResponse{}, mapAdminDBError(err, "External key not found")
 		}
 	}
@@ -281,7 +281,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 		if current.ExternalKeyID != nil && *current.ExternalKeyID != nextExternalKeyID {
 			return workspaceResponse{}, conflict("external_key_id is write-once")
 		}
-		if _, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationID, nextExternalKeyID); err != nil {
+		if _, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationUUID, nextExternalKeyID); err != nil {
 			return workspaceResponse{}, mapAdminDBError(err, "External key not found")
 		}
 		externalKeyID = &nextExternalKeyID
@@ -315,7 +315,7 @@ func (s *Service) CreateWorkspaceMember(ctx context.Context, principal auth.Prin
 	if err != nil {
 		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
-	user, err := s.db.GetAdminUser(ctx, principal.OrganizationID, req.UserID)
+	user, err := s.db.GetAdminUser(ctx, principal.OrganizationUUID, req.UserID)
 	if err != nil {
 		return workspaceMemberResponse{}, mapAdminDBError(err, "User not found")
 	}
@@ -325,10 +325,10 @@ func (s *Service) CreateWorkspaceMember(ctx context.Context, principal auth.Prin
 	}
 	member, err := s.db.CreateAdminWorkspaceMember(ctx, db.AdminWorkspaceMember{
 		ExternalID:          memberID,
-		OrganizationID:      principal.OrganizationID,
-		WorkspaceID:         workspace.ID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceUUID:       workspace.UUID,
 		WorkspaceExternalID: workspace.ExternalID,
-		UserID:              user.ID,
+		UserUUID:            user.UUID,
 		UserExternalID:      user.ExternalID,
 		WorkspaceRole:       req.WorkspaceRole,
 		CreatedAt:           time.Now().UTC(),
@@ -340,7 +340,7 @@ func (s *Service) CreateWorkspaceMember(ctx context.Context, principal auth.Prin
 }
 
 func (s *Service) GetWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string) (workspaceMemberResponse, error) {
-	member, err := s.db.GetAdminWorkspaceMember(ctx, principal.OrganizationID, workspaceID, userID)
+	member, err := s.db.GetAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID)
 	if err != nil {
 		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace member not found")
 	}
@@ -353,11 +353,11 @@ func (s *Service) ListWorkspaceMembers(ctx context.Context, principal auth.Princ
 		return cursorPageResponse[workspaceMemberResponse]{}, mapAdminDBError(err, "Workspace not found")
 	}
 	records, hasMore, err := s.db.ListAdminWorkspaceMembersPage(ctx, db.ListAdminMembersParams{
-		OrganizationID: principal.OrganizationID,
-		WorkspaceID:    workspace.ID,
-		AfterID:        afterID,
-		BeforeID:       beforeID,
-		Limit:          limit,
+		OrganizationUUID: principal.OrganizationUUID,
+		WorkspaceUUID:    workspace.UUID,
+		AfterID:          afterID,
+		BeforeID:         beforeID,
+		Limit:            limit,
 	})
 	if err != nil {
 		return cursorPageResponse[workspaceMemberResponse]{}, err
@@ -373,7 +373,7 @@ func (s *Service) UpdateWorkspaceMember(ctx context.Context, principal auth.Prin
 	if err := validateWorkspaceRole(req.WorkspaceRole, true); err != nil {
 		return workspaceMemberResponse{}, invalidRequest(err.Error())
 	}
-	member, err := s.db.UpdateAdminWorkspaceMember(ctx, principal.OrganizationID, workspaceID, userID, req.WorkspaceRole)
+	member, err := s.db.UpdateAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID, req.WorkspaceRole)
 	if err != nil {
 		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace member not found")
 	}
@@ -381,7 +381,7 @@ func (s *Service) UpdateWorkspaceMember(ctx context.Context, principal auth.Prin
 }
 
 func (s *Service) DeleteWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string) (map[string]string, error) {
-	member, err := s.db.DeleteAdminWorkspaceMember(ctx, principal.OrganizationID, workspaceID, userID)
+	member, err := s.db.DeleteAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID)
 	if err != nil {
 		return nil, mapAdminDBError(err, "Workspace member not found")
 	}
@@ -465,12 +465,12 @@ func (s *Service) CreateExternalKey(ctx context.Context, principal auth.Principa
 	}
 	now := time.Now().UTC()
 	key, err := s.db.CreateAdminExternalKey(ctx, db.AdminExternalKey{
-		ExternalID:     externalID,
-		OrganizationID: principal.OrganizationID,
-		DisplayName:    displayName,
-		Geo:            geo,
-		ProviderConfig: providerConfig,
-		CreatedAt:      now,
+		ExternalID:       externalID,
+		OrganizationUUID: principal.OrganizationUUID,
+		DisplayName:      displayName,
+		Geo:              geo,
+		ProviderConfig:   providerConfig,
+		CreatedAt:        now,
 	})
 	if err != nil {
 		return externalKeyResponse{}, mapAdminDBError(err, "Could not create external key")
@@ -479,10 +479,10 @@ func (s *Service) CreateExternalKey(ctx context.Context, principal auth.Principa
 }
 
 func (s *Service) ListExternalKeys(ctx context.Context, principal auth.Principal, limit, offset int) (tokenPageResponse[externalKeyResponse], error) {
-	records, hasMore, err := s.db.ListAdminExternalKeysPage(ctx, db.ListAdminOffsetParams{
-		OrganizationID: principal.OrganizationID,
-		Limit:          limit,
-		Offset:         offset,
+	records, hasMore, err := s.db.ListAdminExternalKeysPage(ctx, db.ListAdminExternalKeysParams{
+		OrganizationUUID: principal.OrganizationUUID,
+		Limit:            limit,
+		Offset:           offset,
 	})
 	if err != nil {
 		return tokenPageResponse[externalKeyResponse]{}, err
@@ -495,7 +495,7 @@ func (s *Service) ListExternalKeys(ctx context.Context, principal auth.Principal
 }
 
 func (s *Service) GetExternalKey(ctx context.Context, principal auth.Principal, externalKeyID string) (externalKeyResponse, error) {
-	key, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationID, externalKeyID)
+	key, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationUUID, externalKeyID)
 	if err != nil {
 		return externalKeyResponse{}, mapAdminDBError(err, "External key not found")
 	}
@@ -503,7 +503,7 @@ func (s *Service) GetExternalKey(ctx context.Context, principal auth.Principal, 
 }
 
 func (s *Service) UpdateExternalKey(ctx context.Context, principal auth.Principal, externalKeyID string, req updateExternalKeyRequest) (externalKeyResponse, error) {
-	current, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationID, externalKeyID)
+	current, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationUUID, externalKeyID)
 	if err != nil {
 		return externalKeyResponse{}, mapAdminDBError(err, "External key not found")
 	}
@@ -535,7 +535,7 @@ func (s *Service) UpdateExternalKey(ctx context.Context, principal auth.Principa
 		return externalKeyResponse{}, conflict("geo and provider_config cannot be changed while a workspace references this external key")
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := s.db.UpdateAdminExternalKey(ctx, principal.OrganizationID, externalKeyID, next)
+	updated, err := s.db.UpdateAdminExternalKey(ctx, principal.OrganizationUUID, externalKeyID, next)
 	if err != nil {
 		return externalKeyResponse{}, mapAdminDBError(err, "External key not found")
 	}
@@ -550,14 +550,14 @@ func (s *Service) DeleteExternalKey(ctx context.Context, principal auth.Principa
 	if refs > 0 {
 		return nil, conflict("external key is still referenced by a workspace")
 	}
-	if err := s.db.DeleteAdminExternalKey(ctx, principal.OrganizationID, externalKeyID); err != nil {
+	if err := s.db.DeleteAdminExternalKey(ctx, principal.OrganizationUUID, externalKeyID); err != nil {
 		return nil, mapAdminDBError(err, "External key not found")
 	}
 	return map[string]string{"id": externalKeyID, "type": "external_key_deleted"}, nil
 }
 
 func (s *Service) ValidateExternalKey(ctx context.Context, principal auth.Principal, externalKeyID string) (externalKeyValidationResponse, error) {
-	if _, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationID, externalKeyID); err != nil {
+	if _, err := s.db.GetAdminExternalKey(ctx, principal.OrganizationUUID, externalKeyID); err != nil {
 		return externalKeyValidationResponse{}, mapAdminDBError(err, "External key not found")
 	}
 	return externalKeyValidationResponse{Status: "success", Type: "external_key_validation"}, nil

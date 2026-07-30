@@ -73,7 +73,7 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 	for _, job := range jobs {
 		store, storeErr := w.client.ForBucket(job.Bucket)
 		if storeErr != nil {
-			if err := w.database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, storeErr.Error(), time.Hour, defaultMaxAttempts); err != nil {
+			if err := w.database.FailObjectCleanupJob(ctx, job.UUID, job.Attempts, storeErr.Error(), time.Hour, defaultMaxAttempts); err != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s failed: %w", job.ExternalID, err))
 			}
 			continue
@@ -81,12 +81,12 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 
 		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{}); err != nil {
 			delay := retryDelay(job.Attempts + 1)
-			if markErr := w.database.FailObjectCleanupJob(ctx, job.ID, job.Attempts, err.Error(), delay, defaultMaxAttempts); markErr != nil {
+			if markErr := w.database.FailObjectCleanupJob(ctx, job.UUID, job.Attempts, err.Error(), delay, defaultMaxAttempts); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s retry: %w", job.ExternalID, markErr))
 			}
 			continue
 		}
-		if err := w.database.CompleteObjectCleanupJob(ctx, job.ID); err != nil {
+		if err := w.database.CompleteObjectCleanupJob(ctx, job.UUID); err != nil {
 			errs = append(errs, fmt.Errorf("complete cleanup job %s: %w", job.ExternalID, err))
 		}
 	}

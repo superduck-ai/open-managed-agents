@@ -11,10 +11,9 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 	listQuery := `
 		select ` + consoleInviteColumns + `
 		from organization_invites i
-		join organizations o on o.id = i.organization_id
-		where CAST(o.uuid AS text) = :org_uuid
+		where i.organization_uuid = CAST(:org_uuid AS uuid)
 			and i.deleted_at is null
-		order by i.invited_at desc, i.id desc
+		order by i.invited_at desc, i.uuid desc
 		limit :limit
 	`
 	tests := []struct {

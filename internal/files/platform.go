@@ -39,10 +39,9 @@ const (
 )
 
 type platformOrganizationScope struct {
-	id            int64
-	routeUUID     string
-	workspaceID   int64
-	workspaceUUID string
+	organizationUUID string
+	routeUUID        string
+	workspaceUUID    string
 }
 
 type platformUploadB64Request struct {
@@ -148,18 +147,18 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 
 	sum := sha256.Sum256(content)
 	record := db.FileRecord{
-		UUID:              fileUUID,
-		ExternalID:        fileExternalID,
-		WorkspaceID:       scope.workspaceID,
-		Filename:          filename,
-		MimeType:          contentType,
-		SizeBytes:         int64(len(content)),
-		SHA256:            hex.EncodeToString(sum[:]),
-		S3Bucket:          h.store.Name(),
-		S3Key:             objectKey,
-		Downloadable:      false,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		CreatedAt:         time.Now().UTC(),
+		UUID:                fileUUID,
+		ExternalID:          fileExternalID,
+		WorkspaceUUID:       scope.workspaceUUID,
+		Filename:            filename,
+		MimeType:            contentType,
+		SizeBytes:           int64(len(content)),
+		SHA256:              hex.EncodeToString(sum[:]),
+		S3Bucket:            h.store.Name(),
+		S3Key:               objectKey,
+		Downloadable:        false,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		CreatedAt:           time.Now().UTC(),
 	}
 	if err := h.db.CreateFileIfWithinLimit(r.Context(), record, h.cfg.Storage.WorkspaceLimitBytes); err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), record)
@@ -218,7 +217,7 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	record, err := h.db.GetFileByUUIDInOrganization(r.Context(), scope.id, fileUUID)
+	record, err := h.db.GetFileByUUIDInOrganization(r.Context(), scope.organizationUUID, fileUUID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileUUID))
@@ -294,10 +293,9 @@ func (h *Handler) resolvePlatformOrganizationScope(r *http.Request, principal au
 		return platformOrganizationScope{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not found")
 	}
 	return platformOrganizationScope{
-		id:            principal.OrganizationID,
-		routeUUID:     orgID,
-		workspaceID:   principal.WorkspaceID,
-		workspaceUUID: principal.WorkspaceUUID,
+		organizationUUID: principal.OrganizationUUID,
+		routeUUID:        orgID,
+		workspaceUUID:    principal.WorkspaceUUID,
 	}, nil
 }
 

@@ -11,10 +11,10 @@ import (
 
 func TestWorkbenchRevisionQueryBindsNamedArguments(t *testing.T) {
 	query, arguments, err := bindNamed(postgresRebinder{}, upsertWorkbenchRevisionQuery, map[string]any{
-		"org_uuid":      "org_test",
-		"prompt_uuid":   "prompt_test",
-		"revision_uuid": "revision_test",
-		"payload":       `{"model":"test"}`,
+		"organization_uuid": "00000000-0000-0000-0000-000000000001",
+		"prompt_uuid":       "prompt_test",
+		"revision_uuid":     "revision_test",
+		"payload":           `{"model":"test"}`,
 	})
 	if err != nil {
 		t.Fatalf("bind named query: %v", err)
@@ -25,8 +25,8 @@ func TestWorkbenchRevisionQueryBindsNamedArguments(t *testing.T) {
 	if strings.Contains(query, "::") {
 		t.Fatalf("query contains PostgreSQL shorthand cast: %q", query)
 	}
-	if len(arguments) != 4 {
-		t.Fatalf("argument count = %d, want 4", len(arguments))
+	if len(arguments) != 6 {
+		t.Fatalf("argument count = %d, want 6", len(arguments))
 	}
 }
 

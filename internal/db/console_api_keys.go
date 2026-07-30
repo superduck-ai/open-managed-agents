@@ -20,6 +20,13 @@ func (d *DB) ListConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceID
 	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" {
 		return []platform.ConsoleAPIKey{}, nil
 	}
+	if workspaceID != nil {
+		resolvedWorkspaceUUID, _, err := d.resolveConsoleAPIKeyCoreRefs(ctx, d.sql, orgUUID, *workspaceID, nil)
+		if err != nil {
+			return nil, err
+		}
+		workspaceID = &resolvedWorkspaceUUID
+	}
 	query, arguments := listConsoleAPIKeysQuery(orgUUID, workspaceID)
 	keys, err := selectConsoleAPIKeysSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
@@ -36,14 +43,14 @@ func listConsoleAPIKeysQuery(orgUUID string, workspaceID *string) (string, map[s
 		select
 			` + consoleAPIKeySQLXColumns + `
 		from console_api_keys
-		where org_uuid = :org_uuid
+		where organization_uuid = CAST(:organization_uuid AS uuid)
 	`
-	arguments := map[string]any{"org_uuid": strings.TrimSpace(orgUUID)}
+	arguments := map[string]any{"organization_uuid": strings.TrimSpace(orgUUID)}
 	if workspaceID != nil {
-		query += ` and workspace_id = :workspace_id`
-		arguments["workspace_id"] = strings.TrimSpace(*workspaceID)
+		query += ` and workspace_uuid = CAST(:workspace_uuid AS uuid)`
+		arguments["workspace_uuid"] = strings.TrimSpace(*workspaceID)
 	}
-	query += ` order by created_at desc, id desc`
+	query += ` order by created_at desc, external_id desc`
 	return query, arguments
 }
 
@@ -63,6 +70,7 @@ func (d *DB) CreateConsoleAPIKey(ctx context.Context, input platform.CreateConso
 		keySuffix = keySuffix[len(keySuffix)-6:]
 	}
 	externalID := consolePrefixedID("apikey", 18)
+	coreAPIKeyUUID := uuid.NewString()
 	keyHash := auth.HashAPIKey(rawKey)
 
 	tx, err := d.sql.BeginTxx(ctx, nil)
@@ -71,7 +79,7 @@ func (d *DB) CreateConsoleAPIKey(ctx context.Context, input platform.CreateConso
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	coreWorkspaceID, coreUserID, err := d.resolveConsoleAPIKeyCoreRefs(ctx, tx, orgUUID, workspaceID, input.CreatedByUserUUID)
+	coreWorkspaceUUID, coreUserUUID, err := d.resolveConsoleAPIKeyCoreRefs(ctx, tx, orgUUID, workspaceID, input.CreatedByUserUUID)
 	if err != nil {
 		return platform.CreateConsoleAPIKeyResult{}, err
 	}
@@ -79,60 +87,68 @@ func (d *DB) CreateConsoleAPIKey(ctx context.Context, input platform.CreateConso
 	key, err := getConsoleAPIKeySQLX(ctx, tx, `
 		insert into console_api_keys (
 			external_id,
-			api_key_uuid,
-			org_uuid,
+			api_key_ref_uuid,
+			organization_uuid,
+			workspace_uuid,
 			workspace_id,
 			name,
 			key_prefix,
 			key_suffix,
 			key_hash,
 			status,
-			created_by_user_uuid,
+			created_by_user_ref_uuid,
 			expires_at
 		)
 		values (
-			:external_id, :external_id, :org_uuid, :workspace_id, :name,
+			:external_id, CAST(:api_key_ref_uuid AS uuid),
+			CAST(:organization_uuid AS uuid), CAST(:workspace_uuid AS uuid),
+			:workspace_id, :name,
 			:key_prefix, :key_suffix, :key_hash, 'active',
-			:created_by_user_uuid, :expires_at
+			CAST(:created_by_user_ref_uuid AS uuid), :expires_at
 		)
 		returning `+consoleAPIKeySQLXColumns+`
 	`, map[string]any{
-		"external_id":          externalID,
-		"org_uuid":             orgUUID,
-		"workspace_id":         workspaceID,
-		"name":                 strings.TrimSpace(input.Name),
-		"key_prefix":           keyPrefix,
-		"key_suffix":           keySuffix,
-		"key_hash":             keyHash,
-		"created_by_user_uuid": input.CreatedByUserUUID,
-		"expires_at":           input.ExpiresAt,
+		"external_id":              externalID,
+		"api_key_ref_uuid":         coreAPIKeyUUID,
+		"organization_uuid":        orgUUID,
+		"workspace_uuid":           coreWorkspaceUUID,
+		"workspace_id":             workspaceID,
+		"name":                     strings.TrimSpace(input.Name),
+		"key_prefix":               keyPrefix,
+		"key_suffix":               keySuffix,
+		"key_hash":                 keyHash,
+		"created_by_user_ref_uuid": coreUserUUID,
+		"expires_at":               input.ExpiresAt,
 	})
 	if err != nil {
 		return platform.CreateConsoleAPIKeyResult{}, err
 	}
 	if _, err := namedExecContext(ctx, tx, `
 		insert into api_keys (
+			uuid,
 			external_id,
-			workspace_id,
+			workspace_uuid,
 			key_hash,
 			status,
-			created_by_user_id,
+			created_by_user_uuid,
 			name,
 			partial_key_hint,
 			expires_at
 		)
 		values (
-			:external_id, :workspace_id, :key_hash, 'active', :created_by_user_id,
+			CAST(:uuid AS uuid), :external_id, CAST(:workspace_uuid AS uuid), :key_hash, 'active',
+			CAST(:created_by_user_uuid AS uuid),
 			:name, :partial_key_hint, :expires_at
 		)
 	`, map[string]any{
-		"external_id":        externalID,
-		"workspace_id":       coreWorkspaceID,
-		"key_hash":           keyHash,
-		"created_by_user_id": coreUserID,
-		"name":               strings.TrimSpace(input.Name),
-		"partial_key_hint":   partialAPIKeyHint(rawKey),
-		"expires_at":         input.ExpiresAt,
+		"uuid":                 coreAPIKeyUUID,
+		"external_id":          externalID,
+		"workspace_uuid":       coreWorkspaceUUID,
+		"key_hash":             keyHash,
+		"created_by_user_uuid": coreUserUUID,
+		"name":                 strings.TrimSpace(input.Name),
+		"partial_key_hint":     partialAPIKeyHint(rawKey),
+		"expires_at":           input.ExpiresAt,
 	}); err != nil {
 		return platform.CreateConsoleAPIKeyResult{}, err
 	}
@@ -164,6 +180,10 @@ func (d *DB) UpdateConsoleAPIKeyStatus(ctx context.Context, input platform.Updat
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	coreWorkspaceUUID, _, err := d.resolveConsoleAPIKeyCoreRefs(ctx, tx, orgUUID, workspaceID, nil)
+	if err != nil {
+		return platform.ConsoleAPIKey{}, err
+	}
 	key, err := getConsoleAPIKeySQLX(ctx, tx, `
 		update console_api_keys
 		set status = :status,
@@ -172,15 +192,15 @@ func (d *DB) UpdateConsoleAPIKeyStatus(ctx context.Context, input platform.Updat
 				else null
 			end,
 			updated_at = now()
-		where org_uuid = :org_uuid
-		  and workspace_id = :workspace_id
-		  and (external_id = :api_key_id or api_key_uuid = :api_key_id)
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+		  and workspace_uuid = CAST(:workspace_uuid AS uuid)
+		  and external_id = :api_key_id
 		returning `+consoleAPIKeySQLXColumns+`
 	`, map[string]any{
-		"org_uuid":     orgUUID,
-		"workspace_id": workspaceID,
-		"api_key_id":   apiKeyID,
-		"status":       status,
+		"organization_uuid": orgUUID,
+		"workspace_uuid":    coreWorkspaceUUID,
+		"api_key_id":        apiKeyID,
+		"status":            status,
 	})
 	if err != nil {
 		return platform.ConsoleAPIKey{}, err
@@ -206,56 +226,19 @@ func (d *DB) resolveConsoleAPIKeyCoreRefs(
 	orgUUID string,
 	workspaceID string,
 	userUUID *string,
-) (int64, *int64, error) {
-	var coreWorkspaceID int64
-	if workspaceID == "default" {
-		err := namedGetContext(ctx, database, &coreWorkspaceID, `
-			select w.id
-			from organizations o
-			join lateral (
-				select id
-				from workspaces
-				where organization_uuid = o.uuid
-				  and archived_at is null
-				order by
-					case
-						when external_id = 'workspace_default' then 0
-						when lower(name) = 'default' then 1
-						else 2
-					end,
-					created_at asc,
-					id asc
-				limit 1
-			) w on true
-			where CAST(o.uuid AS text) = :org_uuid
-			limit 1
-		`, map[string]any{"org_uuid": orgUUID})
-		if err != nil {
-			return 0, nil, mapNoRows(err)
-		}
-	} else {
-		err := namedGetContext(ctx, database, &coreWorkspaceID, `
-			select w.id
-			from workspaces w
-			join organizations o on o.uuid = w.organization_uuid
-			where CAST(o.uuid AS text) = :org_uuid
-			  and (w.external_id = :workspace_id or CAST(w.uuid AS text) = :workspace_id)
-			  and w.archived_at is null
-			limit 1
-		`, map[string]any{"org_uuid": orgUUID, "workspace_id": workspaceID})
-		if err != nil {
-			return 0, nil, mapNoRows(err)
-		}
+) (string, *string, error) {
+	coreWorkspaceUUID, err := resolveCompatibilityWorkspaceUUID(ctx, database, orgUUID, workspaceID)
+	if err != nil {
+		return "", nil, err
 	}
 
-	var coreUserID *int64
+	var coreUserUUID *string
 	if userUUID != nil && strings.TrimSpace(*userUUID) != "" {
-		var userID int64
-		err := namedGetContext(ctx, database, &userID, `
-			select u.id
+		var resolvedUserUUID string
+		err := namedGetContext(ctx, database, &resolvedUserUUID, `
+			select CAST(u.uuid AS text)
 			from users u
-			join organizations o on o.id = u.organization_id
-			where CAST(o.uuid AS text) = :org_uuid
+			where u.organization_uuid = CAST(:org_uuid AS uuid)
 			  and u.deleted_at is null
 			  and (
 				u.external_id = :user_uuid
@@ -265,29 +248,77 @@ func (d *DB) resolveConsoleAPIKeyCoreRefs(
 			limit 1
 		`, map[string]any{"org_uuid": orgUUID, "user_uuid": strings.TrimSpace(*userUUID)})
 		if err != nil && !errors.Is(mapNoRows(err), platform.ErrNotFound) {
-			return 0, nil, err
+			return "", nil, err
 		}
 		if err == nil {
-			coreUserID = &userID
+			coreUserUUID = &resolvedUserUUID
 		}
 	}
-	return coreWorkspaceID, coreUserID, nil
+	return coreWorkspaceUUID, coreUserUUID, nil
+}
+
+func resolveCompatibilityWorkspaceUUID(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	orgUUID string,
+	workspaceID string,
+) (string, error) {
+	var workspaceUUID string
+	query := `
+		select CAST(uuid AS text)
+		from workspaces
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and archived_at is null
+	`
+	arguments := map[string]any{
+		"organization_uuid": strings.TrimSpace(orgUUID),
+		"workspace_id":      strings.TrimSpace(workspaceID),
+	}
+	if strings.TrimSpace(workspaceID) == "default" {
+		query += `
+			order by
+				case
+					when external_id = 'workspace_default' then 0
+					when lower(name) = 'default' then 1
+					else 2
+				end,
+				created_at asc,
+				uuid asc
+			limit 1
+		`
+	} else {
+		query += `
+			and (external_id = :workspace_id or CAST(uuid AS text) = :workspace_id)
+			limit 1
+		`
+	}
+	if err := namedGetContext(ctx, database, &workspaceUUID, query, arguments); err != nil {
+		return "", mapNoRows(err)
+	}
+	return workspaceUUID, nil
 }
 
 func (d *DB) CountConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceID string) (int, error) {
 	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(workspaceID) == "" {
 		return 0, nil
 	}
+	coreWorkspaceUUID, _, err := d.resolveConsoleAPIKeyCoreRefs(ctx, d.sql, orgUUID, workspaceID, nil)
+	if err != nil {
+		if errors.Is(err, platform.ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
 	var count int
-	err := namedGetContext(ctx, d.sql, &count, `
+	err = namedGetContext(ctx, d.sql, &count, `
 		select count(*)
 		from console_api_keys
-		where org_uuid = :org_uuid
-		  and workspace_id = :workspace_id
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+		  and workspace_uuid = CAST(:workspace_uuid AS uuid)
 		  and archived_at is null
 	`, map[string]any{
-		"org_uuid":     strings.TrimSpace(orgUUID),
-		"workspace_id": strings.TrimSpace(workspaceID),
+		"organization_uuid": strings.TrimSpace(orgUUID),
+		"workspace_uuid":    coreWorkspaceUUID,
 	})
 	if isUndefinedTableError(err) {
 		return 0, nil
@@ -378,7 +409,7 @@ func listConsoleWorkspacesQuery(orgUUID string, includeArchived bool) (string, m
 	query := `
 		select
 			w.external_id AS uuid,
-			CAST(o.uuid AS text) AS org_uuid,
+			CAST(w.organization_uuid AS text) AS org_uuid,
 			w.name,
 			w.display_color AS display_color,
 			w.display_color AS color,
@@ -389,10 +420,9 @@ func listConsoleWorkspacesQuery(orgUUID string, includeArchived bool) (string, m
 			w.created_at,
 			w.updated_at
 		from workspaces w
-		join organizations o on o.uuid = w.organization_uuid
-		where CAST(o.uuid AS text) = :org_uuid
+		where w.organization_uuid = CAST(:org_uuid AS uuid)
 		` + archivedFilter + `
-		order by w.name asc, w.id asc
+		order by w.name asc, w.uuid asc
 	`
 	return query, map[string]any{"org_uuid": strings.TrimSpace(orgUUID)}
 }
@@ -422,8 +452,11 @@ func (r consoleWorkspaceRow) workspace() (platform.ConsoleWorkspace, error) {
 	}, nil
 }
 
-const consoleAPIKeySQLXColumns = `external_id AS id, org_uuid, workspace_id, name,
-	key_prefix, key_suffix, status, created_by_user_uuid, last_used_at, expires_at,
+const consoleAPIKeySQLXColumns = `external_id AS id,
+	CAST(organization_uuid AS text) AS org_uuid, workspace_id, name,
+	key_prefix, key_suffix, status,
+	CAST(created_by_user_ref_uuid AS text) AS created_by_user_uuid,
+	last_used_at, expires_at,
 	archived_at, created_at, updated_at`
 
 type consoleAPIKeyRow struct {

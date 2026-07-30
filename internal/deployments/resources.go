@@ -97,7 +97,7 @@ func (h *Handler) normalizeResources(
 //
 // 函数先读取必填的 type，只接受 file、github_repository 和 memory_store。它只把已知
 // 字段写入 payload，并补充各类型的默认值。GitHub authorization_token 会单独放入
-// secret，避免进入普通资源配置。File 和 Memory Store 引用都按 principal.WorkspaceID
+// secret，避免进入普通资源配置。File 和 Memory Store 引用都按 principal.WorkspaceUUID
 // 查询，防止 Deployment 引用其他 Workspace 的对象；已归档的 Memory Store 也会被拒绝。
 //
 // File resource 会固定为 source=/uploads，并生成经过校验的 FileSpec。当前函数只处理
@@ -134,7 +134,7 @@ func (h *Handler) normalizeResource(
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		if _, err := h.db.GetFile(r.Context(), principal.WorkspaceID, fileID); err != nil {
+		if _, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID); err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return normalizedDeploymentResource{}, fmt.Errorf("file not found: %s", fileID)
 			}
@@ -175,7 +175,7 @@ func (h *Handler) normalizeResource(
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, memoryStoreID)
+		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, memoryStoreID)
 		if err != nil {
 			return normalizedDeploymentResource{}, resourceReferenceError{
 				ResourceType: "memory_store",
@@ -283,15 +283,15 @@ func sessionResourcesFromDeployment(
 		}
 		resources = append(resources, db.CreateSessionResourceInput{
 			Resource: db.SessionResource{
-				UUID:           uuid.NewString(),
-				ExternalID:     resourceID,
-				OrganizationID: deployment.OrganizationID,
-				WorkspaceID:    deployment.WorkspaceID,
-				ResourceType:   resourceType,
-				Payload:        payloadRaw,
-				SecretPayload:  secretRaw,
-				CreatedAt:      now,
-				UpdatedAt:      now,
+				UUID:             uuid.NewString(),
+				ExternalID:       resourceID,
+				OrganizationUUID: deployment.OrganizationUUID,
+				WorkspaceUUID:    deployment.WorkspaceUUID,
+				ResourceType:     resourceType,
+				Payload:          payloadRaw,
+				SecretPayload:    secretRaw,
+				CreatedAt:        now,
+				UpdatedAt:        now,
 			},
 			FileMount: fileMount,
 		})

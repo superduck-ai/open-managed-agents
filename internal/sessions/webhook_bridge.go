@@ -11,11 +11,11 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 )
 
-func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspaceID int64, sessionID string, events []db.SessionEvent) {
+func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) {
 	if len(events) == 0 {
 		return
 	}
-	workspaceIDs, err := h.db.GetWorkspaceIdentifiers(ctx, workspaceID)
+	workspaceIDs, err := h.db.GetWorkspaceIdentifiers(ctx, workspaceUUID)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "load workspace identifiers for session webhook", "session_id", sessionID, "error", err)
 		return
@@ -32,7 +32,7 @@ func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspace
 			}
 			seen[key] = struct{}{}
 			h.enqueueWebhook(ctx, webhooks.EnqueueInput{
-				WorkspaceID:         workspaceID,
+				WorkspaceUUID:       workspaceUUID,
 				OrganizationUUID:    workspaceIDs.OrganizationUUID,
 				WorkspaceExternalID: workspaceIDs.WorkspaceExternalID,
 				EventType:           webhookEvent.EventType,
@@ -51,7 +51,7 @@ func (h *Handler) enqueueWebhook(ctx context.Context, input webhooks.EnqueueInpu
 
 func (h *Handler) enqueuePrincipalWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
 	h.enqueueWebhook(ctx, webhooks.EnqueueInput{
-		WorkspaceID:         principal.WorkspaceID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
 		OrganizationUUID:    principal.OrganizationUUID,
 		WorkspaceExternalID: principal.WorkspaceExternalID,
 		EventType:           eventType,

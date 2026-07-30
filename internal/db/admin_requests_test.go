@@ -77,7 +77,7 @@ func TestListAdminRequestsSQLXScansPostgreSQLRows(t *testing.T) {
 		create temporary table users (
 			id bigint generated always as identity,
 			uuid uuid not null,
-			organization_id bigint not null,
+			organization_uuid uuid not null,
 			email text,
 			name text,
 			role text,
@@ -112,10 +112,8 @@ func TestListAdminRequestsSQLXScansPostgreSQLRows(t *testing.T) {
 		t.Fatalf("seed temporary organization: %v", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		insert into users (uuid, organization_id, email, name, role)
-		select $2, id, 'requester@example.com', 'Requester', 'user'
-		from organizations
-		where uuid = $1
+		insert into users (uuid, organization_uuid, email, name, role)
+		values ($2, $1, 'requester@example.com', 'Requester', 'user')
 	`, orgUUID, requesterUUID); err != nil {
 		t.Fatalf("seed temporary user: %v", err)
 	}

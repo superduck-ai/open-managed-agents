@@ -120,11 +120,11 @@ func serviceTestFileEntryFromBlob(filesystem db.FilestoreFilesystem, externalID,
 	}
 }
 
-func serviceFilesystemLookup(filesystem db.FilestoreFilesystem) func(context.Context, int64, string) (db.FilestoreFilesystem, error) {
-	return func(_ context.Context, workspaceID int64, filesystemID string) (db.FilestoreFilesystem, error) {
+func serviceFilesystemLookup(filesystem db.FilestoreFilesystem) func(context.Context, string, string) (db.FilestoreFilesystem, error) {
+	return func(_ context.Context, workspaceUUID string, filesystemID string) (db.FilestoreFilesystem, error) {
 		matchesExternalID := filesystemID == filesystem.ExternalID
 		matchesUUID := strings.EqualFold(filesystemID, filesystem.UUID)
-		if workspaceID != serviceTestPrincipal().WorkspaceID || (!matchesExternalID && !matchesUUID) {
+		if workspaceUUID != serviceTestPrincipal().WorkspaceUUID || (!matchesExternalID && !matchesUUID) {
 			return db.FilestoreFilesystem{}, db.ErrNotFound
 		}
 		return filesystem, nil
@@ -170,7 +170,7 @@ func assertServiceAPIError(t *testing.T, apiErr *apiError, status int, code stri
 }
 
 type fakeServiceDatabase struct {
-	getFilesystemFn           func(context.Context, int64, string) (db.FilestoreFilesystem, error)
+	getFilesystemFn           func(context.Context, string, string) (db.FilestoreFilesystem, error)
 	getEntryFn                func(context.Context, int64, int64, string) (db.FilestoreEntry, error)
 	listEntriesFn             func(context.Context, db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error)
 	listSkillArchiveEntriesFn func(context.Context, int64, int64) ([]db.FilestoreEntry, error)
@@ -182,8 +182,8 @@ type fakeServiceDatabase struct {
 	removeFileFn              func(context.Context, db.RemoveFilestoreEntryInput) (db.FilestoreMutationResult, error)
 	removeDirectoryFn         func(context.Context, db.RemoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
 	enqueueCleanupFn          func(context.Context, db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error)
-	attachCleanupFn           func(context.Context, int64, string, string, string) error
-	completeCleanupFn         func(context.Context, int64) error
+	attachCleanupFn           func(context.Context, string, string, string, string) error
+	completeCleanupFn         func(context.Context, string) error
 }
 
 func (f *fakeServiceDatabase) ListFilestoreSkillArchiveEntries(ctx context.Context, workspaceID, filesystemID int64) ([]db.FilestoreEntry, error) {
@@ -193,11 +193,11 @@ func (f *fakeServiceDatabase) ListFilestoreSkillArchiveEntries(ctx context.Conte
 	return f.listSkillArchiveEntriesFn(ctx, workspaceID, filesystemID)
 }
 
-func (f *fakeServiceDatabase) GetFilestoreFilesystem(ctx context.Context, workspaceID int64, externalID string) (db.FilestoreFilesystem, error) {
+func (f *fakeServiceDatabase) GetFilestoreFilesystem(ctx context.Context, workspaceUUID string, externalID string) (db.FilestoreFilesystem, error) {
 	if f.getFilesystemFn == nil {
 		panic("unexpected GetFilestoreFilesystem call")
 	}
-	return f.getFilesystemFn(ctx, workspaceID, externalID)
+	return f.getFilesystemFn(ctx, workspaceUUID, externalID)
 }
 
 func (f *fakeServiceDatabase) GetFilestoreEntry(ctx context.Context, workspaceID, filesystemID int64, entryPath string) (db.FilestoreEntry, error) {
@@ -270,18 +270,18 @@ func (f *fakeServiceDatabase) EnqueueFilestoreObjectCleanupJob(ctx context.Conte
 	return f.enqueueCleanupFn(ctx, input)
 }
 
-func (f *fakeServiceDatabase) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspaceID int64, jobExternalID, etag, versionID string) error {
+func (f *fakeServiceDatabase) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspaceUUID string, jobExternalID, etag, versionID string) error {
 	if f.attachCleanupFn == nil {
 		panic("unexpected AttachFilestoreObjectCleanupJobVersion call")
 	}
-	return f.attachCleanupFn(ctx, workspaceID, jobExternalID, etag, versionID)
+	return f.attachCleanupFn(ctx, workspaceUUID, jobExternalID, etag, versionID)
 }
 
-func (f *fakeServiceDatabase) CompleteFilestoreObjectCleanupJob(ctx context.Context, jobID int64) error {
+func (f *fakeServiceDatabase) CompleteFilestoreObjectCleanupJob(ctx context.Context, jobUUID string) error {
 	if f.completeCleanupFn == nil {
 		panic("unexpected CompleteFilestoreObjectCleanupJob call")
 	}
-	return f.completeCleanupFn(ctx, jobID)
+	return f.completeCleanupFn(ctx, jobUUID)
 }
 
 type fakeServiceBlobStore struct {

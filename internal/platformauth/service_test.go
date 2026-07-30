@@ -112,17 +112,17 @@ func (tx *fakePlatformAuthTx) UpdateEmptyUserName(_ context.Context, userExterna
 
 func (tx *fakePlatformAuthTx) InsertOrganization(_ context.Context, input db.PlatformAuthOrganizationInput) (db.PlatformAuthOrganizationRef, error) {
 	tx.organizations = append(tx.organizations, input)
-	return db.PlatformAuthOrganizationRef{ID: 10, UUID: "created-org-uuid"}, nil
+	return db.PlatformAuthOrganizationRef{UUID: "created-org-uuid"}, nil
 }
 
 func (tx *fakePlatformAuthTx) InsertUser(_ context.Context, input db.PlatformAuthUserInput) (db.PlatformAuthUserRef, error) {
 	tx.users = append(tx.users, input)
-	return db.PlatformAuthUserRef{ID: 20}, nil
+	return db.PlatformAuthUserRef{UUID: input.UUID}, nil
 }
 
 func (tx *fakePlatformAuthTx) InsertWorkspace(_ context.Context, input db.PlatformAuthWorkspaceInput) (db.PlatformAuthWorkspaceRef, error) {
 	tx.workspaces = append(tx.workspaces, input)
-	return db.PlatformAuthWorkspaceRef{ID: 30}, nil
+	return db.PlatformAuthWorkspaceRef{UUID: input.UUID}, nil
 }
 
 func (tx *fakePlatformAuthTx) InsertWorkspaceMember(_ context.Context, input db.PlatformAuthWorkspaceMemberInput) error {

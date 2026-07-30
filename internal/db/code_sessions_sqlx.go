@@ -102,7 +102,6 @@ type codeSessionCredentialContextRow struct {
 	CodeSessionExternalID   string `db:"code_session_external_id"`
 	OrganizationID          int64  `db:"organization_id"`
 	OrganizationUUID        string `db:"organization_uuid"`
-	OrganizationExternalID  string `db:"organization_external_id"`
 	WorkspaceID             int64  `db:"workspace_id"`
 	WorkspaceUUID           string `db:"workspace_uuid"`
 	WorkspaceExternalID     string `db:"workspace_external_id"`
@@ -331,7 +330,6 @@ func (r codeSessionCredentialContextRow) context() CodeSessionCredentialContext 
 		CodeSessionExternalID:   r.CodeSessionExternalID,
 		OrganizationID:          r.OrganizationID,
 		OrganizationUUID:        r.OrganizationUUID,
-		OrganizationExternalID:  r.OrganizationExternalID,
 		WorkspaceID:             r.WorkspaceID,
 		WorkspaceUUID:           r.WorkspaceUUID,
 		WorkspaceExternalID:     r.WorkspaceExternalID,

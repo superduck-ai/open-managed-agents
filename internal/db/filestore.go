@@ -47,18 +47,17 @@ type FilestoreFilesystem struct {
 // FilestoreTokenScope 是 Filestore JWT 通过数据库回查后得到的完整授权边界。
 // UUID 与 external ID 同时保留，以便 API 层既能校验 claim，又能向下游传递内部主键。
 type FilestoreTokenScope struct {
-	OrganizationID         int64
-	OrganizationUUID       string
-	OrganizationExternalID string
-	WorkspaceID            int64
-	WorkspaceUUID          string
-	WorkspaceExternalID    string
-	AccountID              int64
-	AccountUUID            string
-	AccountExternalID      string
-	FilesystemID           int64
-	FilesystemUUID         string
-	FilesystemExternalID   string
+	OrganizationID       int64
+	OrganizationUUID     string
+	WorkspaceID          int64
+	WorkspaceUUID        string
+	WorkspaceExternalID  string
+	AccountID            int64
+	AccountUUID          string
+	AccountExternalID    string
+	FilesystemID         int64
+	FilesystemUUID       string
+	FilesystemExternalID string
 	// OrgTaints 是 organizations.settings 中的当前组织策略标签。
 	OrgTaints []string
 	// WorkspaceCMEKEnabled 由 workspace.external_key_id 是否非空推导，

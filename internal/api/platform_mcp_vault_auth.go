@@ -119,7 +119,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		return
 	}
 	orgUUID := strings.TrimSpace(chi.URLParam(r, "orgUuid"))
-	if orgUUID == "" || (orgUUID != principal.OrganizationUUID && orgUUID != principal.OrganizationExternalID) {
+	if orgUUID == "" || orgUUID != principal.OrganizationUUID {
 		writePlatformMCPVaultAuthError(w, http.StatusNotFound, platformMCPVaultAuthVerificationRequestFailed, "")
 		return
 	}
@@ -151,7 +151,7 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 	if workspaceID == "default" {
 		workspaceID = principal.WorkspaceExternalID
 	}
-	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationID, workspaceID)
+	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			writePlatformMCPVaultAuthError(w, http.StatusNotFound, platformMCPVaultAuthVerificationRequestFailed, "")

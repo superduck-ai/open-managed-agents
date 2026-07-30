@@ -28,7 +28,7 @@ var (
 			from workspaces w, organizations o
 			where w.id = :workspace_id
 				and o.id = :organization_id
-				and w.organization_id = o.id
+				and w.organization_uuid = o.uuid
 				and fs.workspace_uuid = w.uuid
 				and fs.organization_uuid = o.uuid
 				and fs.session_uuid = :session_uuid
@@ -56,11 +56,11 @@ var (
 	validateFilestoreSessionBindingQuery = `
 		select w.id as workspace_id
 		from sessions s
-		join workspaces w
-			on w.id = s.workspace_id
-			and w.organization_id = s.organization_id
 		join organizations o
 			on o.id = s.organization_id
+		join workspaces w
+			on w.id = s.workspace_id
+			and w.organization_uuid = o.uuid
 		where s.uuid = CAST(:session_uuid AS uuid)
 			and o.uuid = CAST(:organization_uuid AS uuid)
 			and w.uuid = CAST(:workspace_uuid AS uuid)
@@ -144,7 +144,6 @@ type filestoreSessionBindingRow struct {
 const filestoreSessionTokenScopeQuery = `
 	select o.id as organization_id,
 		cast(o.uuid as text) as organization_uuid,
-		o.external_id as organization_external_id,
 		w.id as workspace_id,
 		cast(w.uuid as text) as workspace_uuid,
 		w.external_id as workspace_external_id,
@@ -161,7 +160,7 @@ const filestoreSessionTokenScopeQuery = `
 		on o.id = s.organization_id
 	join workspaces w
 		on w.id = s.workspace_id
-		and w.organization_id = s.organization_id
+		and w.organization_uuid = o.uuid
 	join api_keys ak
 		on ak.id = s.created_by_api_key_id
 		and ak.workspace_id = s.workspace_id
@@ -200,7 +199,6 @@ func (d *DB) ResolveFilestoreTokenScope(
 	return getFilestoreTokenScopeSQLX(ctx, d.sql, `
 		select o.id as organization_id,
 			cast(o.uuid as text) as organization_uuid,
-			o.external_id as organization_external_id,
 			w.id as workspace_id,
 			cast(w.uuid as text) as workspace_uuid,
 			w.external_id as workspace_external_id,
@@ -214,7 +212,7 @@ func (d *DB) ResolveFilestoreTokenScope(
 			(nullif(trim(w.external_key_id), '') is not null) as workspace_cmek_enabled
 		from organizations o
 		join workspaces w
-			on w.organization_id = o.id
+			on w.organization_uuid = o.uuid
 		join users u
 			on u.organization_id = o.id
 			and u.deleted_at is null

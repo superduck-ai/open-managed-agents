@@ -32,12 +32,12 @@ func (h *Handler) enqueueWebhooksForSessionEvents(ctx context.Context, workspace
 			}
 			seen[key] = struct{}{}
 			h.enqueueWebhook(ctx, webhooks.EnqueueInput{
-				WorkspaceID:            workspaceID,
-				OrganizationExternalID: workspaceIDs.OrganizationExternalID,
-				WorkspaceExternalID:    workspaceIDs.WorkspaceExternalID,
-				EventType:              webhookEvent.EventType,
-				ResourceID:             sessionID,
-				Options:                webhooks.EventOptions{SessionThreadID: webhookEvent.ThreadID},
+				WorkspaceID:         workspaceID,
+				OrganizationUUID:    workspaceIDs.OrganizationUUID,
+				WorkspaceExternalID: workspaceIDs.WorkspaceExternalID,
+				EventType:           webhookEvent.EventType,
+				ResourceID:          sessionID,
+				Options:             webhooks.EventOptions{SessionThreadID: webhookEvent.ThreadID},
 			})
 		}
 	}
@@ -51,12 +51,12 @@ func (h *Handler) enqueueWebhook(ctx context.Context, input webhooks.EnqueueInpu
 
 func (h *Handler) enqueuePrincipalWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
 	h.enqueueWebhook(ctx, webhooks.EnqueueInput{
-		WorkspaceID:            principal.WorkspaceID,
-		OrganizationExternalID: principal.OrganizationExternalID,
-		WorkspaceExternalID:    principal.WorkspaceExternalID,
-		EventType:              eventType,
-		ResourceID:             resourceID,
-		Options:                webhooks.EventOptions{SessionThreadID: sessionThreadID},
+		WorkspaceID:         principal.WorkspaceID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceExternalID: principal.WorkspaceExternalID,
+		EventType:           eventType,
+		ResourceID:          resourceID,
+		Options:             webhooks.EventOptions{SessionThreadID: sessionThreadID},
 	})
 }
 

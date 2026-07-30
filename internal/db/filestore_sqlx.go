@@ -24,20 +24,19 @@ type filestoreFilesystemRow struct {
 }
 
 type filestoreTokenScopeRow struct {
-	OrganizationID         int64  `db:"organization_id"`
-	OrganizationUUID       string `db:"organization_uuid"`
-	OrganizationExternalID string `db:"organization_external_id"`
-	WorkspaceID            int64  `db:"workspace_id"`
-	WorkspaceUUID          string `db:"workspace_uuid"`
-	WorkspaceExternalID    string `db:"workspace_external_id"`
-	AccountID              int64  `db:"account_id"`
-	AccountUUID            string `db:"account_uuid"`
-	AccountExternalID      string `db:"account_external_id"`
-	FilesystemID           int64  `db:"filesystem_id"`
-	FilesystemUUID         string `db:"filesystem_uuid"`
-	FilesystemExternalID   string `db:"filesystem_external_id"`
-	OrgTaintsJSON          []byte `db:"org_taints_json"`
-	WorkspaceCMEKEnabled   bool   `db:"workspace_cmek_enabled"`
+	OrganizationID       int64  `db:"organization_id"`
+	OrganizationUUID     string `db:"organization_uuid"`
+	WorkspaceID          int64  `db:"workspace_id"`
+	WorkspaceUUID        string `db:"workspace_uuid"`
+	WorkspaceExternalID  string `db:"workspace_external_id"`
+	AccountID            int64  `db:"account_id"`
+	AccountUUID          string `db:"account_uuid"`
+	AccountExternalID    string `db:"account_external_id"`
+	FilesystemID         int64  `db:"filesystem_id"`
+	FilesystemUUID       string `db:"filesystem_uuid"`
+	FilesystemExternalID string `db:"filesystem_external_id"`
+	OrgTaintsJSON        []byte `db:"org_taints_json"`
+	WorkspaceCMEKEnabled bool   `db:"workspace_cmek_enabled"`
 }
 
 type filestoreEntryRow struct {
@@ -217,20 +216,19 @@ func (row filestoreTokenScopeRow) scope() (FilestoreTokenScope, error) {
 		orgTaints = []string{}
 	}
 	return FilestoreTokenScope{
-		OrganizationID:         row.OrganizationID,
-		OrganizationUUID:       row.OrganizationUUID,
-		OrganizationExternalID: row.OrganizationExternalID,
-		WorkspaceID:            row.WorkspaceID,
-		WorkspaceUUID:          row.WorkspaceUUID,
-		WorkspaceExternalID:    row.WorkspaceExternalID,
-		AccountID:              row.AccountID,
-		AccountUUID:            row.AccountUUID,
-		AccountExternalID:      row.AccountExternalID,
-		FilesystemID:           row.FilesystemID,
-		FilesystemUUID:         row.FilesystemUUID,
-		FilesystemExternalID:   row.FilesystemExternalID,
-		OrgTaints:              orgTaints,
-		WorkspaceCMEKEnabled:   row.WorkspaceCMEKEnabled,
+		OrganizationID:       row.OrganizationID,
+		OrganizationUUID:     row.OrganizationUUID,
+		WorkspaceID:          row.WorkspaceID,
+		WorkspaceUUID:        row.WorkspaceUUID,
+		WorkspaceExternalID:  row.WorkspaceExternalID,
+		AccountID:            row.AccountID,
+		AccountUUID:          row.AccountUUID,
+		AccountExternalID:    row.AccountExternalID,
+		FilesystemID:         row.FilesystemID,
+		FilesystemUUID:       row.FilesystemUUID,
+		FilesystemExternalID: row.FilesystemExternalID,
+		OrgTaints:            orgTaints,
+		WorkspaceCMEKEnabled: row.WorkspaceCMEKEnabled,
 	}, nil
 }
 

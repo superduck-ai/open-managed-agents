@@ -52,7 +52,7 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 		if !strings.HasPrefix(userID, "user_") || orgUUID != "created-org-uuid" {
 			t.Fatalf("context = (%q, %q), want created context", userID, orgUUID)
 		}
-		if len(tx.organizations) != 1 || tx.organizations[0].Name != "new user" || !strings.HasPrefix(tx.organizations[0].ExternalID, "org_") {
+		if len(tx.organizations) != 1 || tx.organizations[0].Name != "new user" {
 			t.Fatalf("organizations = %#v, want default organization", tx.organizations)
 		}
 		if len(tx.workspaces) != 1 || tx.workspaces[0].Name != "default" || !strings.HasPrefix(tx.workspaces[0].ExternalID, "wrkspc_") {

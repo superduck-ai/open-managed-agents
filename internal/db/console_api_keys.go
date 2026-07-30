@@ -215,7 +215,7 @@ func (d *DB) resolveConsoleAPIKeyCoreRefs(
 			join lateral (
 				select id
 				from workspaces
-				where organization_id = o.id
+				where organization_uuid = o.uuid
 				  and archived_at is null
 				order by
 					case
@@ -227,7 +227,7 @@ func (d *DB) resolveConsoleAPIKeyCoreRefs(
 					id asc
 				limit 1
 			) w on true
-			where CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid
+			where CAST(o.uuid AS text) = :org_uuid
 			limit 1
 		`, map[string]any{"org_uuid": orgUUID})
 		if err != nil {
@@ -237,8 +237,8 @@ func (d *DB) resolveConsoleAPIKeyCoreRefs(
 		err := namedGetContext(ctx, database, &coreWorkspaceID, `
 			select w.id
 			from workspaces w
-			join organizations o on o.id = w.organization_id
-			where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+			join organizations o on o.uuid = w.organization_uuid
+			where CAST(o.uuid AS text) = :org_uuid
 			  and (w.external_id = :workspace_id or CAST(w.uuid AS text) = :workspace_id)
 			  and w.archived_at is null
 			limit 1
@@ -255,7 +255,7 @@ func (d *DB) resolveConsoleAPIKeyCoreRefs(
 			select u.id
 			from users u
 			join organizations o on o.id = u.organization_id
-			where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+			where CAST(o.uuid AS text) = :org_uuid
 			  and u.deleted_at is null
 			  and (
 				u.external_id = :user_uuid
@@ -306,25 +306,25 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 	}
 	workspace, err := getConsoleWorkspaceSQLX(ctx, d.sql, `
 		with org as (
-			select id, CAST(uuid AS text) as org_uuid
+			select uuid, CAST(uuid AS text) as org_uuid
 			from organizations
-			where CAST(uuid AS text) = :org_uuid or external_id = :org_uuid
+			where CAST(uuid AS text) = :org_uuid
 			limit 1
 		)
 		insert into workspaces (
 			uuid,
 			external_id,
-			organization_id,
+			organization_uuid,
 			name,
 			compartment_id,
 			display_color,
 			data_residency,
 			tags
 		)
-		select :uuid, :external_id, org.id, :name, :external_id, :display_color,
+		select :uuid, :external_id, org.uuid, :name, :external_id, :display_color,
 			CAST(:data_residency AS jsonb), CAST('{}' AS jsonb)
 		from org
-		on conflict (organization_id, name) do update set
+		on conflict (organization_uuid, name) do update set
 			display_color = excluded.display_color,
 			data_residency = excluded.data_residency,
 			archived_at = null,
@@ -389,8 +389,8 @@ func listConsoleWorkspacesQuery(orgUUID string, includeArchived bool) (string, m
 			w.created_at,
 			w.updated_at
 		from workspaces w
-		join organizations o on o.id = w.organization_id
-		where (o.external_id = :org_uuid or CAST(o.uuid AS text) = :org_uuid)
+		join organizations o on o.uuid = w.organization_uuid
+		where CAST(o.uuid AS text) = :org_uuid
 		` + archivedFilter + `
 		order by w.name asc, w.id asc
 	`

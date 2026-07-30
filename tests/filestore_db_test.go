@@ -1126,15 +1126,17 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 		}
 	})
 	if err := app.db.Pool.QueryRow(ctx, `
-		insert into organizations (external_id, name)
-		values ($1, $2)
+		insert into organizations (name)
+		values ($1)
 		returning id, uuid::text
-	`, "org_filestore_lookup_"+suffix, "Filestore lookup "+suffix).Scan(&organizationID, &organizationUUID); err != nil {
+	`, "Filestore lookup "+suffix).Scan(&organizationID, &organizationUUID); err != nil {
 		t.Fatalf("insert lookup organization: %v", err)
 	}
 	if err := app.db.Pool.QueryRow(ctx, `
-		insert into workspaces (external_id, organization_id, name)
-		values ($1, $2, $3)
+		insert into workspaces (external_id, organization_uuid, name)
+		select $1, uuid, $3
+		from organizations
+		where id = $2
 		returning id, uuid::text
 	`, "wrkspc_filestore_lookup_"+suffix, organizationID, "Filestore lookup "+suffix).Scan(&workspaceID, &workspaceUUID); err != nil {
 		t.Fatalf("insert lookup workspace: %v", err)

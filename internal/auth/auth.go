@@ -24,7 +24,6 @@ type Principal struct {
 	APIKeyExternalID          string
 	OrganizationID            int64
 	OrganizationUUID          string
-	OrganizationExternalID    string
 	WorkspaceID               int64
 	WorkspaceUUID             string
 	WorkspaceExternalID       string

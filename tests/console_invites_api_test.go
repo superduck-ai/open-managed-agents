@@ -18,7 +18,8 @@ func TestConsoleInvitesAPI(t *testing.T) {
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select o.uuid::text, o.id
 		from organizations o
-		where o.external_id = 'org_default'
+		join workspaces w on w.organization_uuid = o.uuid
+		where w.external_id = 'workspace_default'
 	`).Scan(&orgUUID, &orgID); err != nil {
 		t.Fatalf("load default organization ids: %v", err)
 	}

@@ -1052,10 +1052,14 @@ func (a *testApp) close() {
 
 func (a *testApp) seedPlatformSession(t *testing.T, sessionKey string) {
 	t.Helper()
+	userExternalID, orgUUID, err := a.db.FindBootstrapUserContext(context.Background(), "")
+	if err != nil {
+		t.Fatalf("find bootstrap user context: %v", err)
+	}
 	session, err := a.db.ResolvePlatformSessionIdentity(context.Background(), platformsession.CreateInput{
 		SessionKey: sessionKey,
-		UserUUID:   a.cfg.Bootstrap.UserExternalID,
-		OrgUUID:    a.cfg.Bootstrap.OrganizationExternalID,
+		UserUUID:   userExternalID,
+		OrgUUID:    orgUUID,
 	})
 	if err != nil {
 		t.Fatalf("resolve platform session identity: %v", err)
@@ -1222,24 +1226,25 @@ func containsFile(files []metadataResponse, id string) bool {
 	return false
 }
 
-func seedWorkspaceKey(t *testing.T, database *db.DB, orgID, workspaceID, keyID, apiKey string) {
+func seedWorkspaceKey(t *testing.T, database *db.DB, organizationName, workspaceID, keyID, apiKey string) {
 	t.Helper()
 	ctx := context.Background()
 	var organizationRowID int64
 	if err := database.Pool.QueryRow(ctx, `
-		insert into organizations (external_id, name)
-		values ($1, $1)
-		on conflict (external_id) do update set name = excluded.name
+		insert into organizations (name)
+		values ($1)
 		returning id
-	`, orgID).Scan(&organizationRowID); err != nil {
+	`, organizationName).Scan(&organizationRowID); err != nil {
 		t.Fatalf("seed org: %v", err)
 	}
 	var workspaceRowID int64
 	if err := database.Pool.QueryRow(ctx, `
-		insert into workspaces (external_id, organization_id, name)
-		values ($1, $2, $1)
+		insert into workspaces (external_id, organization_uuid, name)
+		select $1, uuid, $1
+		from organizations
+		where id = $2
 		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
+			organization_uuid = excluded.organization_uuid,
 			name = excluded.name
 		returning id
 	`, workspaceID, organizationRowID).Scan(&workspaceRowID); err != nil {
@@ -1347,7 +1352,7 @@ func getDefaultDBIDs(t *testing.T, database *db.DB) defaultDBIDs {
 	if err := database.Pool.QueryRow(context.Background(), `
 		select o.uuid::text, w.id, w.uuid::text, ak.id
 		from workspaces w
-		join organizations o on o.id = w.organization_id
+		join organizations o on o.uuid = w.organization_uuid
 		join api_keys ak on ak.workspace_id = w.id
 		where w.external_id = 'workspace_default'
 			and ak.external_id = 'api_key_default'

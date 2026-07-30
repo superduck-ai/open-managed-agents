@@ -118,13 +118,12 @@ type WebhookConfig struct {
 }
 
 type BootstrapConfig struct {
-	SeedAPIKeys            []SeedAPIKey `yaml:"seed_api_keys"`
-	WorkspaceName          string       `yaml:"workspace_name"`
-	OrganizationName       string       `yaml:"organization_name"`
-	OrganizationExternalID string       `yaml:"organization_external_id"`
-	WorkspaceExternalID    string       `yaml:"workspace_external_id"`
-	UserExternalID         string       `yaml:"user_external_id"`
-	APIKeyExternalID       string       `yaml:"api_key_external_id"`
+	SeedAPIKeys         []SeedAPIKey `yaml:"seed_api_keys"`
+	WorkspaceName       string       `yaml:"workspace_name"`
+	OrganizationName    string       `yaml:"organization_name"`
+	WorkspaceExternalID string       `yaml:"workspace_external_id"`
+	UserExternalID      string       `yaml:"user_external_id"`
+	APIKeyExternalID    string       `yaml:"api_key_external_id"`
 }
 
 type SDKFixtureConfig struct {

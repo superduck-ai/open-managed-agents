@@ -9,16 +9,15 @@ type principalContextKey struct{}
 // 所有字段都来自专用 Filestore JWT 及其数据库范围回查；该类型不承载
 // workspace API key 或 code-session 凭证的兼容身份。
 type Principal struct {
-	Subject                string
-	OrganizationID         int64
-	OrganizationUUID       string
-	OrganizationExternalID string
-	WorkspaceID            int64
-	WorkspaceUUID          string
-	WorkspaceExternalID    string
-	AccountID              int64
-	AccountUUID            string
-	AccountExternalID      string
+	Subject             string
+	OrganizationID      int64
+	OrganizationUUID    string
+	WorkspaceID         int64
+	WorkspaceUUID       string
+	WorkspaceExternalID string
+	AccountID           int64
+	AccountUUID         string
+	AccountExternalID   string
 
 	FilesystemInternalID int64
 	FilesystemUUID       string

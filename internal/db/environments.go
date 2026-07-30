@@ -41,15 +41,15 @@ type ListEnvironmentsPageParams struct {
 }
 
 type EnvironmentKey struct {
-	ID                     int64
-	ExternalID             string
-	OrganizationID         int64
-	OrganizationExternalID string
-	WorkspaceID            int64
-	WorkspaceUUID          string
-	WorkspaceExternalID    string
-	EnvironmentID          int64
-	EnvironmentExternalID  string
+	ID                    int64
+	ExternalID            string
+	OrganizationID        int64
+	OrganizationUUID      string
+	WorkspaceID           int64
+	WorkspaceUUID         string
+	WorkspaceExternalID   string
+	EnvironmentID         int64
+	EnvironmentExternalID string
 }
 
 type EnvironmentWork struct {
@@ -299,7 +299,7 @@ func (d *DB) GetEnvironmentKey(ctx context.Context, keyHash string) (Environment
 			returning id, external_id, organization_id, workspace_id, environment_id, environment_external_id
 		)
 		select updated.id, updated.external_id, updated.organization_id,
-			organizations.external_id AS organization_external_id,
+			CAST(organizations.uuid AS text) AS organization_uuid,
 			updated.workspace_id, CAST(workspaces.uuid AS text) AS workspace_uuid,
 			workspaces.external_id AS workspace_external_id,
 			updated.environment_id, updated.environment_external_id
@@ -743,15 +743,15 @@ type environmentRow struct {
 }
 
 type environmentKeyRow struct {
-	ID                     int64  `db:"id"`
-	ExternalID             string `db:"external_id"`
-	OrganizationID         int64  `db:"organization_id"`
-	OrganizationExternalID string `db:"organization_external_id"`
-	WorkspaceID            int64  `db:"workspace_id"`
-	WorkspaceUUID          string `db:"workspace_uuid"`
-	WorkspaceExternalID    string `db:"workspace_external_id"`
-	EnvironmentID          int64  `db:"environment_id"`
-	EnvironmentExternalID  string `db:"environment_external_id"`
+	ID                    int64  `db:"id"`
+	ExternalID            string `db:"external_id"`
+	OrganizationID        int64  `db:"organization_id"`
+	OrganizationUUID      string `db:"organization_uuid"`
+	WorkspaceID           int64  `db:"workspace_id"`
+	WorkspaceUUID         string `db:"workspace_uuid"`
+	WorkspaceExternalID   string `db:"workspace_external_id"`
+	EnvironmentID         int64  `db:"environment_id"`
+	EnvironmentExternalID string `db:"environment_external_id"`
 }
 
 type environmentWorkStatsRow struct {
@@ -951,15 +951,15 @@ func (r environmentRow) environment() Environment {
 
 func (r environmentKeyRow) key() EnvironmentKey {
 	return EnvironmentKey{
-		ID:                     r.ID,
-		ExternalID:             r.ExternalID,
-		OrganizationID:         r.OrganizationID,
-		OrganizationExternalID: r.OrganizationExternalID,
-		WorkspaceID:            r.WorkspaceID,
-		WorkspaceUUID:          r.WorkspaceUUID,
-		WorkspaceExternalID:    r.WorkspaceExternalID,
-		EnvironmentID:          r.EnvironmentID,
-		EnvironmentExternalID:  r.EnvironmentExternalID,
+		ID:                    r.ID,
+		ExternalID:            r.ExternalID,
+		OrganizationID:        r.OrganizationID,
+		OrganizationUUID:      r.OrganizationUUID,
+		WorkspaceID:           r.WorkspaceID,
+		WorkspaceUUID:         r.WorkspaceUUID,
+		WorkspaceExternalID:   r.WorkspaceExternalID,
+		EnvironmentID:         r.EnvironmentID,
+		EnvironmentExternalID: r.EnvironmentExternalID,
 	}
 }
 

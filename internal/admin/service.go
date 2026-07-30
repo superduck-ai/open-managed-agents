@@ -36,11 +36,11 @@ func NewService(cfg config.Config, database *db.DB) *Service {
 }
 
 func (s *Service) GetCurrentOrganization(ctx context.Context, principal auth.Principal) (organizationResponse, error) {
-	org, err := s.db.GetAdminOrganization(ctx, principal.OrganizationID)
+	org, err := s.db.GetAdminOrganization(ctx, principal.OrganizationUUID)
 	if err != nil {
 		return organizationResponse{}, mapAdminDBError(err, "Organization not found")
 	}
-	return organizationResponse{ID: org.ExternalID, Name: org.Name, Type: "organization"}, nil
+	return organizationResponse{ID: org.UUID, Name: org.Name, Type: "organization"}, nil
 }
 
 func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, req createInviteRequest) (inviteResponse, error) {
@@ -185,16 +185,16 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 	}
 	now := time.Now().UTC()
 	record, err := s.db.CreateAdminWorkspace(ctx, db.AdminWorkspace{
-		UUID:           uuid.NewString(),
-		ExternalID:     workspaceID,
-		OrganizationID: principal.OrganizationID,
-		Name:           name,
-		CreatedAt:      now,
-		CompartmentID:  uuid.NewString(),
-		DisplayColor:   "#6C5BB9",
-		DataResidency:  residencyJSON,
-		ExternalKeyID:  normalizedOptionalString(req.ExternalKeyID),
-		Tags:           tagsJSON,
+		UUID:             uuid.NewString(),
+		ExternalID:       workspaceID,
+		OrganizationUUID: principal.OrganizationUUID,
+		Name:             name,
+		CreatedAt:        now,
+		CompartmentID:    uuid.NewString(),
+		DisplayColor:     "#6C5BB9",
+		DataResidency:    residencyJSON,
+		ExternalKeyID:    normalizedOptionalString(req.ExternalKeyID),
+		Tags:             tagsJSON,
 	})
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Could not create workspace")
@@ -203,7 +203,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 }
 
 func (s *Service) GetWorkspace(ctx context.Context, principal auth.Principal, workspaceID string) (workspaceResponse, error) {
-	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationID, workspaceID)
+	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
@@ -212,11 +212,11 @@ func (s *Service) GetWorkspace(ctx context.Context, principal auth.Principal, wo
 
 func (s *Service) ListWorkspaces(ctx context.Context, principal auth.Principal, includeArchived bool, afterID, beforeID string, limit int) (cursorPageResponse[workspaceResponse], error) {
 	records, hasMore, err := s.db.ListAdminWorkspacesPage(ctx, db.ListAdminWorkspacesParams{
-		OrganizationID:  principal.OrganizationID,
-		IncludeArchived: includeArchived,
-		AfterID:         afterID,
-		BeforeID:        beforeID,
-		Limit:           limit,
+		OrganizationUUID: principal.OrganizationUUID,
+		IncludeArchived:  includeArchived,
+		AfterID:          afterID,
+		BeforeID:         beforeID,
+		Limit:            limit,
 	})
 	if err != nil {
 		return cursorPageResponse[workspaceResponse]{}, err
@@ -229,7 +229,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, principal auth.Principal, 
 }
 
 func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal, workspaceID string, req updateWorkspaceRequest) (workspaceResponse, error) {
-	current, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationID, workspaceID)
+	current, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
@@ -283,7 +283,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 		}
 		externalKeyID = &nextExternalKeyID
 	}
-	updated, err := s.db.UpdateAdminWorkspace(ctx, principal.OrganizationID, workspaceID, db.AdminWorkspace{
+	updated, err := s.db.UpdateAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID, db.AdminWorkspace{
 		Name:          name,
 		DataResidency: residencyJSON,
 		ExternalKeyID: externalKeyID,
@@ -297,7 +297,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 }
 
 func (s *Service) ArchiveWorkspace(ctx context.Context, principal auth.Principal, workspaceID string) (workspaceResponse, error) {
-	workspace, err := s.db.ArchiveAdminWorkspace(ctx, principal.OrganizationID, workspaceID)
+	workspace, err := s.db.ArchiveAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
@@ -308,7 +308,7 @@ func (s *Service) CreateWorkspaceMember(ctx context.Context, principal auth.Prin
 	if err := validateWorkspaceRole(req.WorkspaceRole, false); err != nil {
 		return workspaceMemberResponse{}, invalidRequest(err.Error())
 	}
-	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationID, workspaceID)
+	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
@@ -345,7 +345,7 @@ func (s *Service) GetWorkspaceMember(ctx context.Context, principal auth.Princip
 }
 
 func (s *Service) ListWorkspaceMembers(ctx context.Context, principal auth.Principal, workspaceID, afterID, beforeID string, limit int) (cursorPageResponse[workspaceMemberResponse], error) {
-	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationID, workspaceID)
+	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		return cursorPageResponse[workspaceMemberResponse]{}, mapAdminDBError(err, "Workspace not found")
 	}
@@ -386,7 +386,7 @@ func (s *Service) DeleteWorkspaceMember(ctx context.Context, principal auth.Prin
 }
 
 func (s *Service) GetAPIKey(ctx context.Context, principal auth.Principal, apiKeyID string) (apiKeyResponse, error) {
-	key, err := s.db.GetAdminAPIKey(ctx, principal.OrganizationID, apiKeyID)
+	key, err := s.db.GetAdminAPIKey(ctx, principal.OrganizationUUID, apiKeyID)
 	if err != nil {
 		return apiKeyResponse{}, mapAdminDBError(err, "API key not found")
 	}
@@ -400,13 +400,13 @@ func (s *Service) ListAPIKeys(ctx context.Context, principal auth.Principal, wor
 		}
 	}
 	records, hasMore, err := s.db.ListAdminAPIKeysPage(ctx, db.ListAdminAPIKeysParams{
-		OrganizationID:  principal.OrganizationID,
-		WorkspaceID:     workspaceID,
-		CreatedByUserID: createdByUserID,
-		Status:          status,
-		AfterID:         afterID,
-		BeforeID:        beforeID,
-		Limit:           limit,
+		OrganizationUUID: principal.OrganizationUUID,
+		WorkspaceID:      workspaceID,
+		CreatedByUserID:  createdByUserID,
+		Status:           status,
+		AfterID:          afterID,
+		BeforeID:         beforeID,
+		Limit:            limit,
 	})
 	if err != nil {
 		return cursorPageResponse[apiKeyResponse]{}, err
@@ -433,7 +433,7 @@ func (s *Service) UpdateAPIKey(ctx context.Context, principal auth.Principal, ap
 			return apiKeyResponse{}, invalidRequest("name must be non-empty")
 		}
 	}
-	key, err := s.db.UpdateAdminAPIKey(ctx, principal.OrganizationID, apiKeyID, req.Name != nil, name, req.Status != nil, status)
+	key, err := s.db.UpdateAdminAPIKey(ctx, principal.OrganizationUUID, apiKeyID, req.Name != nil, name, req.Status != nil, status)
 	if err != nil {
 		return apiKeyResponse{}, mapAdminDBError(err, "API key not found")
 	}
@@ -524,7 +524,7 @@ func (s *Service) UpdateExternalKey(ctx context.Context, principal auth.Principa
 		}
 		next.ProviderConfig = normalized
 	}
-	refs, err := s.db.CountAdminExternalKeyWorkspaceRefs(ctx, principal.OrganizationID, externalKeyID)
+	refs, err := s.db.CountAdminExternalKeyWorkspaceRefs(ctx, principal.OrganizationUUID, externalKeyID)
 	if err != nil {
 		return externalKeyResponse{}, err
 	}
@@ -540,7 +540,7 @@ func (s *Service) UpdateExternalKey(ctx context.Context, principal auth.Principa
 }
 
 func (s *Service) DeleteExternalKey(ctx context.Context, principal auth.Principal, externalKeyID string) (map[string]string, error) {
-	refs, err := s.db.CountAdminExternalKeyWorkspaceRefs(ctx, principal.OrganizationID, externalKeyID)
+	refs, err := s.db.CountAdminExternalKeyWorkspaceRefs(ctx, principal.OrganizationUUID, externalKeyID)
 	if err != nil {
 		return nil, err
 	}

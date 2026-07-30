@@ -21,7 +21,7 @@ var insertSessionFilesystemSQLXQuery = `
 		from organizations o
 		join workspaces w
 			on w.id = :workspace_id
-			and w.organization_id = o.id
+			and w.organization_uuid = o.uuid
 		join api_keys ak
 			on ak.id = :created_by_api_key_id
 			and ak.workspace_id = w.id

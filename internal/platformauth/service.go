@@ -68,10 +68,6 @@ func (s *Service) ResolvePlatformSessionIdentity(ctx context.Context, input plat
 }
 
 func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStore, email string, defaultName string) (db.PlatformAuthUserContext, error) {
-	orgExternalID, err := ids.New("org_")
-	if err != nil {
-		return db.PlatformAuthUserContext{}, err
-	}
 	workspaceExternalID, err := ids.New("wrkspc_")
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err
@@ -86,8 +82,7 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 	}
 
 	org, err := tx.InsertOrganization(ctx, db.PlatformAuthOrganizationInput{
-		ExternalID: orgExternalID,
-		Name:       defaultPlatformOrganizationName(email),
+		Name: defaultPlatformOrganizationName(email),
 	})
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err

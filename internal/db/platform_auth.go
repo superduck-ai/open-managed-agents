@@ -16,8 +16,7 @@ type PlatformAuthUserContext struct {
 }
 
 type PlatformAuthOrganizationInput struct {
-	ExternalID string
-	Name       string
+	Name string
 }
 
 type PlatformAuthOrganizationRef struct {
@@ -89,7 +88,6 @@ const (
 	`
 	resolvePlatformSessionIdentityQuery = `
 		select o.id AS organization_id, CAST(o.uuid AS text) AS organization_uuid,
-			o.external_id AS organization_external_id,
 			w.id AS workspace_id, CAST(w.uuid AS text) AS workspace_uuid,
 			w.external_id AS workspace_external_id,
 			u.id AS user_id, u.external_id AS user_external_id,
@@ -99,7 +97,7 @@ const (
 		join lateral (
 			select id, uuid, external_id
 			from workspaces
-			where organization_id = o.id
+			where organization_uuid = o.uuid
 			  and archived_at is null
 			order by case when external_id = 'workspace_default' then 0 else 1 end,
 				created_at asc, id asc
@@ -115,7 +113,7 @@ const (
 				created_at asc, id asc
 			limit 1
 		) ak on true
-		where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+		where CAST(o.uuid AS text) = :org_uuid
 		  and u.deleted_at is null
 		  and (
 			u.external_id = :user_uuid
@@ -187,10 +185,10 @@ func (tx PlatformAuthTx) UpdateEmptyUserName(ctx context.Context, userExternalID
 func (tx PlatformAuthTx) InsertOrganization(ctx context.Context, input PlatformAuthOrganizationInput) (PlatformAuthOrganizationRef, error) {
 	var row platformAuthOrganizationRefRow
 	if err := namedGetContext(ctx, tx.tx, &row, `
-		insert into organizations (external_id, name)
-		values (:external_id, :name)
+		insert into organizations (name)
+		values (:name)
 		returning id, CAST(uuid AS text) AS uuid
-	`, map[string]any{"external_id": input.ExternalID, "name": input.Name}); err != nil {
+	`, map[string]any{"name": input.Name}); err != nil {
 		return PlatformAuthOrganizationRef{}, err
 	}
 	return PlatformAuthOrganizationRef{ID: row.ID, UUID: row.UUID}, nil
@@ -222,8 +220,10 @@ func (tx PlatformAuthTx) InsertUser(ctx context.Context, input PlatformAuthUserI
 func (tx PlatformAuthTx) InsertWorkspace(ctx context.Context, input PlatformAuthWorkspaceInput) (PlatformAuthWorkspaceRef, error) {
 	var out PlatformAuthWorkspaceRef
 	if err := namedGetContext(ctx, tx.tx, &out.ID, `
-		insert into workspaces (uuid, external_id, organization_id, name, compartment_id)
-		values (:uuid, :external_id, :organization_id, :name, :compartment_id)
+		insert into workspaces (uuid, external_id, organization_uuid, name, compartment_id)
+		select :uuid, :external_id, uuid, :name, :compartment_id
+		from organizations
+		where id = :organization_id
 		returning id
 	`, map[string]any{
 		"uuid":            input.UUID,
@@ -323,29 +323,27 @@ type platformAuthOrganizationRefRow struct {
 }
 
 type platformSessionIdentityRow struct {
-	OrganizationID         int64  `db:"organization_id"`
-	OrganizationUUID       string `db:"organization_uuid"`
-	OrganizationExternalID string `db:"organization_external_id"`
-	WorkspaceID            int64  `db:"workspace_id"`
-	WorkspaceUUID          string `db:"workspace_uuid"`
-	WorkspaceExternalID    string `db:"workspace_external_id"`
-	UserID                 int64  `db:"user_id"`
-	UserExternalID         string `db:"user_external_id"`
-	APIKeyID               int64  `db:"api_key_id"`
-	APIKeyExternalID       string `db:"api_key_external_id"`
+	OrganizationID      int64  `db:"organization_id"`
+	OrganizationUUID    string `db:"organization_uuid"`
+	WorkspaceID         int64  `db:"workspace_id"`
+	WorkspaceUUID       string `db:"workspace_uuid"`
+	WorkspaceExternalID string `db:"workspace_external_id"`
+	UserID              int64  `db:"user_id"`
+	UserExternalID      string `db:"user_external_id"`
+	APIKeyID            int64  `db:"api_key_id"`
+	APIKeyExternalID    string `db:"api_key_external_id"`
 }
 
 func (r platformSessionIdentityRow) session() platformsession.Session {
 	return platformsession.Session{
-		OrganizationID:         r.OrganizationID,
-		OrganizationUUID:       r.OrganizationUUID,
-		OrganizationExternalID: r.OrganizationExternalID,
-		WorkspaceID:            r.WorkspaceID,
-		WorkspaceUUID:          r.WorkspaceUUID,
-		WorkspaceExternalID:    r.WorkspaceExternalID,
-		UserID:                 r.UserID,
-		UserExternalID:         r.UserExternalID,
-		APIKeyID:               r.APIKeyID,
-		APIKeyExternalID:       r.APIKeyExternalID,
+		OrganizationID:      r.OrganizationID,
+		OrganizationUUID:    r.OrganizationUUID,
+		WorkspaceID:         r.WorkspaceID,
+		WorkspaceUUID:       r.WorkspaceUUID,
+		WorkspaceExternalID: r.WorkspaceExternalID,
+		UserID:              r.UserID,
+		UserExternalID:      r.UserExternalID,
+		APIKeyID:            r.APIKeyID,
+		APIKeyExternalID:    r.APIKeyExternalID,
 	}
 }

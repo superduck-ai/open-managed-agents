@@ -2,6 +2,7 @@ package db
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -9,11 +10,11 @@ import (
 func TestAppendAdminCursorFilterBindsNamedParameters(t *testing.T) {
 	cursorTime := time.Date(2026, time.July, 23, 10, 30, 0, 0, time.UTC)
 	arguments := map[string]any{
-		"organization_id": int64(42),
-		"limit":           11,
+		"organization_uuid": "22222222-2222-4222-8222-222222222222",
+		"limit":             11,
 	}
 	query := appendCursorFilter(
-		adminAPIKeySelectSQL()+` where w.organization_id = :organization_id`,
+		adminAPIKeySelectSQL()+` where w.organization_uuid = CAST(:organization_uuid AS uuid)`,
 		arguments,
 		"ak.created_at",
 		"apikey_after",
@@ -26,13 +27,13 @@ func TestAppendAdminCursorFilterBindsNamedParameters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bindNamed() error = %v", err)
 	}
-	wantQuery := adminAPIKeySelectSQL() + ` where w.organization_id = $1` +
+	wantQuery := adminAPIKeySelectSQL() + ` where w.organization_uuid = CAST($1 AS uuid)` +
 		" and (ak.created_at < $2 or (ak.created_at = $3 and ak.id < $4))" +
 		" order by ak.created_at desc, ak.id desc limit $5"
 	if boundQuery != wantQuery {
 		t.Fatalf("bindNamed() query = %q, want %q", boundQuery, wantQuery)
 	}
-	wantValues := []any{int64(42), cursorTime, cursorTime, int64(99), 11}
+	wantValues := []any{"22222222-2222-4222-8222-222222222222", cursorTime, cursorTime, int64(99), 11}
 	if !reflect.DeepEqual(values, wantValues) {
 		t.Fatalf("bindNamed() values = %#v, want %#v", values, wantValues)
 	}
@@ -63,5 +64,21 @@ func TestAppendAdminCursorFilterBuildsBeforeCondition(t *testing.T) {
 	wantValues := []any{int64(9), cursorTime, cursorTime, int64(7)}
 	if !reflect.DeepEqual(values, wantValues) {
 		t.Fatalf("bindNamed() values = %#v, want %#v", values, wantValues)
+	}
+}
+
+func TestGetAdminOrganizationQueryUsesUUID(t *testing.T) {
+	organizationUUID := "22222222-2222-4222-8222-222222222222"
+	query, arguments, err := bindNamed(postgresRebinder{}, getAdminOrganizationQuery, map[string]any{
+		"organization_uuid": organizationUUID,
+	})
+	if err != nil {
+		t.Fatalf("bindNamed() error = %v", err)
+	}
+	if len(arguments) != 1 || arguments[0] != organizationUUID {
+		t.Fatalf("bindNamed() arguments = %#v, want organization UUID", arguments)
+	}
+	if want := "where uuid = CAST($1 AS uuid)"; !strings.Contains(query, want) {
+		t.Fatalf("bound query = %q, want %q", query, want)
 	}
 }

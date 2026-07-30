@@ -233,7 +233,7 @@ func principalCanSeeOrganization(r *http.Request, principal auth.Principal, valu
 	if value == "" {
 		return false
 	}
-	if value == strings.TrimSpace(principal.OrganizationUUID) || value == strings.TrimSpace(principal.OrganizationExternalID) {
+	if value == strings.TrimSpace(principal.OrganizationUUID) {
 		return true
 	}
 	// platform.claude.com 的镜像 session 恢复后，path 仍携带官方 organization UUID，

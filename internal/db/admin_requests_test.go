@@ -72,8 +72,7 @@ func TestListAdminRequestsSQLXScansPostgreSQLRows(t *testing.T) {
 	if _, err := tx.ExecContext(ctx, `
 		create temporary table organizations (
 			id bigint generated always as identity,
-			uuid uuid not null,
-			external_id text not null
+			uuid uuid not null
 		) on commit drop;
 		create temporary table users (
 			id bigint generated always as identity,
@@ -107,8 +106,8 @@ func TestListAdminRequestsSQLXScansPostgreSQLRows(t *testing.T) {
 	)
 	createdAt := time.Date(2026, time.July, 23, 9, 30, 0, 0, time.UTC)
 	if _, err := tx.ExecContext(ctx, `
-		insert into organizations (uuid, external_id)
-		values ($1, 'org_external')
+		insert into organizations (uuid)
+		values ($1)
 	`, orgUUID); err != nil {
 		t.Fatalf("seed temporary organization: %v", err)
 	}

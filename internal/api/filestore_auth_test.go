@@ -385,7 +385,7 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 	t.Run("failure database workspace cmek change revokes existing token", func(t *testing.T) {
 		workspace, getErr := database.GetAdminWorkspace(
 			context.Background(),
-			fixture.organizationID,
+			fixture.tokenIdentity.OrgUUID,
 			fixture.tokenIdentity.WorkspaceTaggedID,
 		)
 		if getErr != nil {
@@ -396,7 +396,7 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 		next.UpdatedAt = time.Now().UTC()
 		if _, updateErr := database.UpdateAdminWorkspace(
 			context.Background(),
-			fixture.organizationID,
+			fixture.tokenIdentity.OrgUUID,
 			workspace.ExternalID,
 			next,
 		); updateErr != nil {
@@ -406,7 +406,7 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 			workspace.UpdatedAt = time.Now().UTC()
 			if _, restoreErr := database.UpdateAdminWorkspace(
 				context.Background(),
-				fixture.organizationID,
+				fixture.tokenIdentity.OrgUUID,
 				workspace.ExternalID,
 				workspace,
 			); restoreErr != nil {
@@ -453,8 +453,10 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 			t.Fatalf("load fixture organization: %v", err)
 		}
 		if err := database.Pool.QueryRow(context.Background(), `
-			insert into workspaces (uuid, external_id, organization_id, name)
-			values ($1, $2, $3, $4)
+			insert into workspaces (uuid, external_id, organization_uuid, name)
+			select $1, $2, uuid, $4
+			from organizations
+			where id = $3
 			returning id
 		`, otherWorkspaceUUID, otherWorkspaceExternalID, organizationID, "Filestore cross-workspace test").Scan(&otherWorkspaceID); err != nil {
 			t.Fatalf("insert other workspace: %v", err)
@@ -580,7 +582,6 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	organizationUUID := uuid.NewString()
-	organizationExternalID := "org_filestore_auth_" + suffix
 	workspaceUUID := uuid.NewString()
 	workspaceExternalID := "workspace_filestore_auth_" + suffix
 	accountUUID := uuid.NewString()
@@ -602,22 +603,24 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 		_, _ = database.Pool.Exec(ctx, `delete from api_keys where key_hash = $1`, auth.HashAPIKey(workspaceAPIKey))
 		_, _ = database.Pool.Exec(ctx, `delete from users where external_id = $1`, accountExternalID)
 		_, _ = database.Pool.Exec(ctx, `delete from workspaces where external_id = $1`, workspaceExternalID)
-		_, _ = database.Pool.Exec(ctx, `delete from organizations where external_id = $1`, organizationExternalID)
+		_, _ = database.Pool.Exec(ctx, `delete from organizations where uuid = $1`, organizationUUID)
 		database.Close()
 	})
 
 	var organizationID int64
 	if err := database.Pool.QueryRow(context.Background(), `
-		insert into organizations (uuid, external_id, name, settings)
-		values ($1, $2, $3, '{"org_taints":["restricted","compliance"]}'::jsonb)
+		insert into organizations (uuid, name, settings)
+		values ($1, $2, '{"org_taints":["restricted","compliance"]}'::jsonb)
 		returning id
-	`, organizationUUID, organizationExternalID, "Filestore auth test").Scan(&organizationID); err != nil {
+	`, organizationUUID, "Filestore auth test").Scan(&organizationID); err != nil {
 		t.Fatalf("insert filestore auth organization: %v", err)
 	}
 	var workspaceID int64
 	if err := database.Pool.QueryRow(context.Background(), `
-		insert into workspaces (uuid, external_id, organization_id, name, external_key_id)
-		values ($1, $2, $3, $4, 'key_filestore_auth')
+		insert into workspaces (uuid, external_id, organization_uuid, name, external_key_id)
+		select $1, $2, uuid, $4, 'key_filestore_auth'
+		from organizations
+		where id = $3
 		returning id
 	`, workspaceUUID, workspaceExternalID, organizationID, "Filestore auth test").Scan(&workspaceID); err != nil {
 		t.Fatalf("insert filestore auth workspace: %v", err)

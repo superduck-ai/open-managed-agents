@@ -15,12 +15,12 @@ import (
 // EnqueueInput contains event-specific values while Enqueuer owns the stable
 // database, configuration, and logger dependencies.
 type EnqueueInput struct {
-	WorkspaceID            int64
-	OrganizationExternalID string
-	WorkspaceExternalID    string
-	EventType              string
-	ResourceID             string
-	Options                EventOptions
+	WorkspaceID         int64
+	OrganizationUUID    string
+	WorkspaceExternalID string
+	EventType           string
+	ResourceID          string
+	Options             EventOptions
 }
 
 type enqueueStore interface {
@@ -65,7 +65,7 @@ func (e *Enqueuer) Enqueue(ctx context.Context, input EnqueueInput) {
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		Data: EventData{
 			ID:              input.ResourceID,
-			OrganizationID:  input.OrganizationExternalID,
+			OrganizationID:  input.OrganizationUUID,
 			Type:            input.EventType,
 			WorkspaceID:     input.WorkspaceExternalID,
 			SessionThreadID: input.Options.SessionThreadID,

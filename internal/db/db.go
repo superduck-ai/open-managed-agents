@@ -41,13 +41,13 @@ type DB struct {
 }
 
 type APIKey struct {
-	ID                     int64
-	ExternalID             string
-	OrganizationID         int64
-	OrganizationExternalID string
-	WorkspaceID            int64
-	WorkspaceUUID          string
-	WorkspaceExternalID    string
+	ID                  int64
+	ExternalID          string
+	OrganizationID      int64
+	OrganizationUUID    string
+	WorkspaceID         int64
+	WorkspaceUUID       string
+	WorkspaceExternalID string
 }
 
 type foreignKeyRow struct {
@@ -56,13 +56,13 @@ type foreignKeyRow struct {
 }
 
 type apiKeyRow struct {
-	ID                     int64  `db:"id"`
-	ExternalID             string `db:"external_id"`
-	OrganizationID         int64  `db:"organization_id"`
-	OrganizationExternalID string `db:"organization_external_id"`
-	WorkspaceID            int64  `db:"workspace_id"`
-	WorkspaceUUID          string `db:"workspace_uuid"`
-	WorkspaceExternalID    string `db:"workspace_external_id"`
+	ID                  int64  `db:"id"`
+	ExternalID          string `db:"external_id"`
+	OrganizationID      int64  `db:"organization_id"`
+	OrganizationUUID    string `db:"organization_uuid"`
+	WorkspaceID         int64  `db:"workspace_id"`
+	WorkspaceUUID       string `db:"workspace_uuid"`
+	WorkspaceExternalID string `db:"workspace_external_id"`
 }
 
 const (
@@ -81,16 +81,40 @@ const (
 	`
 	legacyTableExistsQuery = `select to_regclass(:table_name) is not null`
 	seedOrganizationQuery  = `
-		insert into organizations (external_id, name)
-		values (:external_id, :name)
-		on conflict (external_id) do update set name = excluded.name
-		returning id
+		with existing as (
+			select o.id
+			from organizations o
+			join workspaces w on w.organization_uuid = o.uuid
+			where w.external_id = :workspace_external_id
+			limit 1
+		),
+		updated as (
+			update organizations o
+			set name = :name,
+				updated_at = now()
+			from existing
+			where o.id = existing.id
+			returning o.id
+		),
+		inserted as (
+			insert into organizations (name)
+			select :name
+			where not exists (select 1 from existing)
+			returning id
+		)
+		select id from updated
+		union all
+		select id from inserted
+		limit 1
 	`
-	seedWorkspaceQuery = `
-		insert into workspaces (external_id, organization_id, name)
-		values (:external_id, :organization_id, :name)
+	seedOrganizationLockQuery = `select pg_advisory_xact_lock(704611533427849228)`
+	seedWorkspaceQuery        = `
+		insert into workspaces (external_id, organization_uuid, name)
+		select :external_id, uuid, :name
+		from organizations
+		where id = :organization_id
 		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
+			organization_uuid = excluded.organization_uuid,
 			name = excluded.name
 		returning id
 	`
@@ -142,12 +166,12 @@ const (
 	`
 	getAPIKeyQuery = `
 		select ak.id, ak.external_id,
-			o.id as organization_id, o.external_id as organization_external_id,
+			o.id as organization_id, CAST(o.uuid AS text) as organization_uuid,
 			w.id as workspace_id, CAST(w.uuid AS text) as workspace_uuid,
 			w.external_id as workspace_external_id
 		from api_keys ak
 		join workspaces w on w.id = ak.workspace_id
-		join organizations o on o.id = w.organization_id
+		join organizations o on o.uuid = w.organization_uuid
 		where ak.key_hash = :key_hash
 			and ak.status = 'active'
 			and (ak.expires_at is null or ak.expires_at > now())
@@ -475,10 +499,13 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 	}
 	defer tx.Rollback()
 
+	if _, err := tx.ExecContext(ctx, seedOrganizationLockQuery); err != nil {
+		return err
+	}
 	var organizationID int64
 	if err := namedGetContext(ctx, tx, &organizationID, seedOrganizationQuery, map[string]any{
-		"external_id": "org_default",
-		"name":        "default",
+		"workspace_external_id": "workspace_default",
+		"name":                  "default",
 	}); err != nil {
 		return err
 	}
@@ -542,13 +569,13 @@ func (d *DB) GetAPIKey(ctx context.Context, keyHash string) (APIKey, error) {
 
 func (r apiKeyRow) apiKey() APIKey {
 	return APIKey{
-		ID:                     r.ID,
-		ExternalID:             r.ExternalID,
-		OrganizationID:         r.OrganizationID,
-		OrganizationExternalID: r.OrganizationExternalID,
-		WorkspaceID:            r.WorkspaceID,
-		WorkspaceUUID:          r.WorkspaceUUID,
-		WorkspaceExternalID:    r.WorkspaceExternalID,
+		ID:                  r.ID,
+		ExternalID:          r.ExternalID,
+		OrganizationID:      r.OrganizationID,
+		OrganizationUUID:    r.OrganizationUUID,
+		WorkspaceID:         r.WorkspaceID,
+		WorkspaceUUID:       r.WorkspaceUUID,
+		WorkspaceExternalID: r.WorkspaceExternalID,
 	}
 }
 

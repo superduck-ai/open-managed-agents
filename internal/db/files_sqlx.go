@@ -34,7 +34,9 @@ const (
 			f.downloadable, f.scope_type, f.scope_id, f.created_by_api_key_id, f.created_at
 		from files f
 		join workspaces w on w.id = f.workspace_id
-		where w.organization_id = :organization_id
+		where w.organization_uuid = (
+				select uuid from organizations where id = :organization_id
+			)
 			and cast(f.uuid as text) = :file_uuid
 			and f.deleted_at is null
 	`

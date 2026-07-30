@@ -34,7 +34,7 @@ func TestConsoleAPIKeyQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:         "list workspaces",
 			query:        workspaceQuery,
 			arguments:    workspaceArguments,
-			wantArgCount: 2,
+			wantArgCount: 1,
 		},
 	}
 

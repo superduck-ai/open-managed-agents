@@ -70,7 +70,6 @@ type CodeSessionCredentialContext struct {
 	CodeSessionExternalID   string
 	OrganizationID          int64
 	OrganizationUUID        string
-	OrganizationExternalID  string
 	WorkspaceID             int64
 	WorkspaceUUID           string
 	WorkspaceExternalID     string
@@ -289,7 +288,6 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 const codeSessionCredentialContextSelect = `
 	select cs.id AS code_session_id, cs.external_id AS code_session_external_id,
 		cs.organization_id, CAST(o.uuid AS text) AS organization_uuid,
-		o.external_id AS organization_external_id,
 		cs.workspace_id, CAST(w.uuid AS text) AS workspace_uuid,
 		w.external_id AS workspace_external_id,
 		s.id AS public_session_id, s.external_id AS public_session_external_id,
@@ -297,7 +295,7 @@ const codeSessionCredentialContextSelect = `
 		coalesce(u.email, '') AS account_email
 	from code_sessions cs
 	join organizations o on o.id = cs.organization_id
-	join workspaces w on w.id = cs.workspace_id and w.organization_id = cs.organization_id
+	join workspaces w on w.id = cs.workspace_id and w.organization_uuid = o.uuid
 	join sessions s on s.id = cs.session_id
 		and s.workspace_id = cs.workspace_id
 		and s.organization_id = cs.organization_id
@@ -363,7 +361,7 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 			on o.id = cs.organization_id
 		join workspaces w
 			on w.id = cs.workspace_id
-			and w.organization_id = cs.organization_id
+			and w.organization_uuid = o.uuid
 		join environments e
 			on e.id = cs.environment_id
 			and e.external_id = cs.environment_external_id

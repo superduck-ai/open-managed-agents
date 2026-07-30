@@ -27,7 +27,6 @@ const listAdminRequestsSQL = `
 	from admin_requests ar
 	left join organizations o
 	  on CAST(o.uuid AS text) = CAST(ar.org_uuid AS text)
-	  or o.external_id = CAST(ar.org_uuid AS text)
 	left join users u
 	  on CAST(u.uuid AS text) = CAST(ar.requester_uuid AS text)
 	 and u.organization_id = o.id

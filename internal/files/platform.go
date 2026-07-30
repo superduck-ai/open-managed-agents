@@ -289,11 +289,8 @@ func (h *Handler) resolvePlatformOrganizationScope(r *http.Request, principal au
 	orgID := strings.TrimSpace(chi.URLParam(r, "orgUuid"))
 	if orgID == "" || orgID == "default" {
 		orgID = principal.OrganizationUUID
-		if orgID == "" {
-			orgID = principal.OrganizationExternalID
-		}
 	}
-	if orgID != principal.OrganizationUUID && orgID != principal.OrganizationExternalID {
+	if orgID != principal.OrganizationUUID {
 		return platformOrganizationScope{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not found")
 	}
 	return platformOrganizationScope{

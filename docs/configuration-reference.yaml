@@ -100,7 +100,6 @@ bootstrap:
       key: sk-ant-local-default
   workspace_name: default
   organization_name: default
-  organization_external_id: org_default
   workspace_external_id: workspace_default
   user_external_id: user_default
   api_key_external_id: api_key_default

@@ -11,10 +11,9 @@ import (
 )
 
 type AdminOrganization struct {
-	ID         int64     `db:"id"`
-	ExternalID string    `db:"external_id"`
-	Name       string    `db:"name"`
-	CreatedAt  time.Time `db:"created_at"`
+	UUID      string    `db:"uuid"`
+	Name      string    `db:"name"`
+	CreatedAt time.Time `db:"created_at"`
 }
 
 type AdminInvite struct {
@@ -39,19 +38,19 @@ type AdminUser struct {
 }
 
 type AdminWorkspace struct {
-	ID             int64           `db:"id"`
-	UUID           string          `db:"uuid"`
-	ExternalID     string          `db:"external_id"`
-	OrganizationID int64           `db:"organization_id"`
-	Name           string          `db:"name"`
-	CreatedAt      time.Time       `db:"created_at"`
-	UpdatedAt      time.Time       `db:"updated_at"`
-	ArchivedAt     *time.Time      `db:"archived_at"`
-	CompartmentID  string          `db:"compartment_id"`
-	DisplayColor   string          `db:"display_color"`
-	DataResidency  json.RawMessage `db:"data_residency"`
-	ExternalKeyID  *string         `db:"external_key_id"`
-	Tags           json.RawMessage `db:"tags"`
+	ID               int64           `db:"id"`
+	UUID             string          `db:"uuid"`
+	ExternalID       string          `db:"external_id"`
+	OrganizationUUID string          `db:"organization_uuid"`
+	Name             string          `db:"name"`
+	CreatedAt        time.Time       `db:"created_at"`
+	UpdatedAt        time.Time       `db:"updated_at"`
+	ArchivedAt       *time.Time      `db:"archived_at"`
+	CompartmentID    string          `db:"compartment_id"`
+	DisplayColor     string          `db:"display_color"`
+	DataResidency    json.RawMessage `db:"data_residency"`
+	ExternalKeyID    *string         `db:"external_key_id"`
+	Tags             json.RawMessage `db:"tags"`
 }
 
 type AdminWorkspaceMember struct {
@@ -70,7 +69,6 @@ type AdminWorkspaceMember struct {
 type AdminAPIKey struct {
 	ID                      int64      `db:"id"`
 	ExternalID              string     `db:"external_id"`
-	OrganizationID          int64      `db:"organization_id"`
 	WorkspaceID             int64      `db:"workspace_id"`
 	WorkspaceExternalID     string     `db:"workspace_external_id"`
 	CreatedByUserExternalID *string    `db:"created_by_user_external_id"`
@@ -142,11 +140,11 @@ type ListAdminUsersParams struct {
 }
 
 type ListAdminWorkspacesParams struct {
-	OrganizationID  int64
-	IncludeArchived bool
-	AfterID         string
-	BeforeID        string
-	Limit           int
+	OrganizationUUID string
+	IncludeArchived  bool
+	AfterID          string
+	BeforeID         string
+	Limit            int
 }
 
 type ListAdminMembersParams struct {
@@ -158,13 +156,13 @@ type ListAdminMembersParams struct {
 }
 
 type ListAdminAPIKeysParams struct {
-	OrganizationID  int64
-	WorkspaceID     string
-	CreatedByUserID string
-	Status          string
-	AfterID         string
-	BeforeID        string
-	Limit           int
+	OrganizationUUID string
+	WorkspaceID      string
+	CreatedByUserID  string
+	Status           string
+	AfterID          string
+	BeforeID         string
+	Limit            int
 }
 
 type ListAdminOffsetParams struct {
@@ -189,12 +187,24 @@ type ListAdminTunnelCertificatesParams struct {
 	Offset          int
 }
 
-func (d *DB) GetAdminOrganization(ctx context.Context, organizationID int64) (AdminOrganization, error) {
-	return getAdminRow[AdminOrganization](ctx, d.sql, `
-		select id, external_id, name, created_at
+const (
+	getAdminOrganizationQuery = `
+		select CAST(uuid AS text) as uuid, name, created_at
 		from organizations
-		where id = :organization_id
-	`, map[string]any{"organization_id": organizationID})
+		where uuid = CAST(:organization_uuid AS uuid)
+	`
+	countAdminExternalKeyWorkspaceRefsQuery = `
+		select count(*)
+		from workspaces
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and external_key_id = :external_id
+	`
+)
+
+func (d *DB) GetAdminOrganization(ctx context.Context, organizationUUID string) (AdminOrganization, error) {
+	return getAdminRow[AdminOrganization](ctx, d.sql, getAdminOrganizationQuery, map[string]any{
+		"organization_uuid": organizationUUID,
+	})
 }
 
 func (d *DB) CreateAdminInvite(ctx context.Context, invite AdminInvite) (AdminInvite, error) {
@@ -335,14 +345,15 @@ func (d *DB) DeleteAdminUser(ctx context.Context, organizationID int64, external
 func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace) (AdminWorkspace, error) {
 	created, err := getAdminRow[AdminWorkspace](ctx, d.sql, `
 		insert into workspaces (
-			uuid, external_id, organization_id, name, created_at, updated_at,
+			uuid, external_id, organization_uuid, name, created_at, updated_at,
 			compartment_id, display_color, data_residency, external_key_id, tags
 		)
 		values (
-			:uuid, :external_id, :organization_id, :name, :created_at, :created_at,
+			:uuid, :external_id, CAST(:organization_uuid AS uuid), :name, :created_at, :created_at,
 			:compartment_id, :display_color, CAST(:data_residency AS jsonb), :external_key_id, CAST(:tags AS jsonb)
 		)
-		returning id, CAST(uuid AS text) as uuid, external_id, organization_id, name, created_at, updated_at,
+		returning id, CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid, name, created_at, updated_at,
 			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
 	`, adminWorkspaceArguments(workspace))
 	if isUniqueViolation(err) {
@@ -351,11 +362,11 @@ func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace)
 	return created, err
 }
 
-func (d *DB) GetAdminWorkspace(ctx context.Context, organizationID int64, externalID string) (AdminWorkspace, error) {
+func (d *DB) GetAdminWorkspace(ctx context.Context, organizationUUID, externalID string) (AdminWorkspace, error) {
 	return getAdminRow[AdminWorkspace](ctx, d.sql, adminWorkspaceSelectSQL()+`
-		where organization_id = :organization_id
-			and (external_id = :external_id or CAST(uuid AS text) = :external_id)
-	`, map[string]any{"organization_id": organizationID, "external_id": externalID})
+		where w.organization_uuid = CAST(:organization_uuid AS uuid)
+			and (w.external_id = :external_id or CAST(w.uuid AS text) = :external_id)
+	`, map[string]any{"organization_uuid": organizationUUID, "external_id": externalID})
 }
 
 func (d *DB) ListAdminWorkspacesPage(ctx context.Context, params ListAdminWorkspacesParams) ([]AdminWorkspace, bool, error) {
@@ -364,8 +375,8 @@ func (d *DB) ListAdminWorkspacesPage(ctx context.Context, params ListAdminWorksp
 		ctx,
 		"workspaces",
 		"created_at",
-		"organization_id = :organization_id and external_id = :cursor_external_id",
-		map[string]any{"organization_id": params.OrganizationID, "cursor_external_id": cursorID},
+		"organization_uuid = CAST(:organization_uuid AS uuid) and external_id = :cursor_external_id",
+		map[string]any{"organization_uuid": params.OrganizationUUID, "cursor_external_id": cursorID},
 		cursorID,
 	)
 	if err != nil {
@@ -374,13 +385,13 @@ func (d *DB) ListAdminWorkspacesPage(ctx context.Context, params ListAdminWorksp
 	if (params.AfterID != "" || params.BeforeID != "") && !cursorOK {
 		return nil, false, nil
 	}
-	query := adminWorkspaceSelectSQL() + ` where organization_id = :organization_id`
-	args := map[string]any{"organization_id": params.OrganizationID, "limit": params.Limit + 1}
+	query := adminWorkspaceSelectSQL() + ` where w.organization_uuid = CAST(:organization_uuid AS uuid)`
+	args := map[string]any{"organization_uuid": params.OrganizationUUID, "limit": params.Limit + 1}
 	if !params.IncludeArchived {
-		query += " and archived_at is null"
+		query += " and w.archived_at is null"
 	}
-	query = appendCursorFilter(query, args, "created_at", params.AfterID, params.BeforeID, cursor)
-	query += " order by created_at desc, id desc limit :limit"
+	query = appendCursorFilter(query, args, "w.created_at", params.AfterID, params.BeforeID, cursor)
+	query += " order by w.created_at desc, w.id desc limit :limit"
 	workspaces, err := selectAdminRows[AdminWorkspace](ctx, d.sql, query, args)
 	if err != nil {
 		return nil, false, err
@@ -388,9 +399,9 @@ func (d *DB) ListAdminWorkspacesPage(ctx context.Context, params ListAdminWorksp
 	return trimAdminPage(workspaces, params.Limit), len(workspaces) > params.Limit, nil
 }
 
-func (d *DB) UpdateAdminWorkspace(ctx context.Context, organizationID int64, externalID string, next AdminWorkspace) (AdminWorkspace, error) {
+func (d *DB) UpdateAdminWorkspace(ctx context.Context, organizationUUID, externalID string, next AdminWorkspace) (AdminWorkspace, error) {
 	args := adminWorkspaceArguments(next)
-	args["organization_id"] = organizationID
+	args["organization_uuid"] = organizationUUID
 	args["external_id"] = externalID
 	updated, err := getAdminRow[AdminWorkspace](ctx, d.sql, `
 		update workspaces
@@ -399,8 +410,10 @@ func (d *DB) UpdateAdminWorkspace(ctx context.Context, organizationID int64, ext
 			external_key_id = :external_key_id,
 			tags = CAST(:tags AS jsonb),
 			updated_at = :updated_at
-		where organization_id = :organization_id and external_id = :external_id
-		returning id, CAST(uuid AS text) as uuid, external_id, organization_id, name, created_at, updated_at,
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and external_id = :external_id
+		returning id, CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid, name, created_at, updated_at,
 			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
 	`, args)
 	if isUniqueViolation(err) {
@@ -409,15 +422,17 @@ func (d *DB) UpdateAdminWorkspace(ctx context.Context, organizationID int64, ext
 	return updated, err
 }
 
-func (d *DB) ArchiveAdminWorkspace(ctx context.Context, organizationID int64, externalID string) (AdminWorkspace, error) {
+func (d *DB) ArchiveAdminWorkspace(ctx context.Context, organizationUUID, externalID string) (AdminWorkspace, error) {
 	return getAdminRow[AdminWorkspace](ctx, d.sql, `
 		update workspaces
 		set archived_at = coalesce(archived_at, now()),
 			updated_at = now()
-		where organization_id = :organization_id and external_id = :external_id
-		returning id, CAST(uuid AS text) as uuid, external_id, organization_id, name, created_at, updated_at,
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and external_id = :external_id
+		returning id, CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid, name, created_at, updated_at,
 			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
-	`, map[string]any{"organization_id": organizationID, "external_id": externalID})
+	`, map[string]any{"organization_uuid": organizationUUID, "external_id": externalID})
 }
 
 func (d *DB) CreateAdminWorkspaceMember(ctx context.Context, member AdminWorkspaceMember) (AdminWorkspaceMember, error) {
@@ -522,10 +537,11 @@ func (d *DB) DeleteAdminWorkspaceMember(ctx context.Context, organizationID int6
 	})
 }
 
-func (d *DB) GetAdminAPIKey(ctx context.Context, organizationID int64, externalID string) (AdminAPIKey, error) {
+func (d *DB) GetAdminAPIKey(ctx context.Context, organizationUUID, externalID string) (AdminAPIKey, error) {
 	return getAdminRow[AdminAPIKey](ctx, d.sql, adminAPIKeySelectSQL()+`
-		where w.organization_id = :organization_id and ak.external_id = :external_id
-	`, map[string]any{"organization_id": organizationID, "external_id": externalID})
+		where w.organization_uuid = CAST(:organization_uuid AS uuid)
+			and ak.external_id = :external_id
+	`, map[string]any{"organization_uuid": organizationUUID, "external_id": externalID})
 }
 
 func (d *DB) ListAdminAPIKeysPage(ctx context.Context, params ListAdminAPIKeysParams) ([]AdminAPIKey, bool, error) {
@@ -544,8 +560,8 @@ func (d *DB) ListAdminAPIKeysPage(ctx context.Context, params ListAdminAPIKeysPa
 	if (params.AfterID != "" || params.BeforeID != "") && !cursorOK {
 		return nil, false, nil
 	}
-	query := adminAPIKeySelectSQL() + ` where w.organization_id = :organization_id`
-	args := map[string]any{"organization_id": params.OrganizationID, "limit": params.Limit + 1}
+	query := adminAPIKeySelectSQL() + ` where w.organization_uuid = CAST(:organization_uuid AS uuid)`
+	args := map[string]any{"organization_uuid": params.OrganizationUUID, "limit": params.Limit + 1}
 	if params.WorkspaceID != "" {
 		query += " and w.external_id = :workspace_external_id"
 		args["workspace_external_id"] = params.WorkspaceID
@@ -567,7 +583,7 @@ func (d *DB) ListAdminAPIKeysPage(ctx context.Context, params ListAdminAPIKeysPa
 	return trimAdminPage(keys, params.Limit), len(keys) > params.Limit, nil
 }
 
-func (d *DB) UpdateAdminAPIKey(ctx context.Context, organizationID int64, externalID string, setName bool, name string, setStatus bool, status string) (AdminAPIKey, error) {
+func (d *DB) UpdateAdminAPIKey(ctx context.Context, organizationUUID, externalID string, setName bool, name string, setStatus bool, status string) (AdminAPIKey, error) {
 	return getAdminRow[AdminAPIKey](ctx, d.sql, `
 		with updated as (
 			update api_keys ak
@@ -576,12 +592,12 @@ func (d *DB) UpdateAdminAPIKey(ctx context.Context, organizationID int64, extern
 				updated_at = now()
 			from workspaces w
 			where ak.workspace_id = w.id
-				and w.organization_id = :organization_id
+				and w.organization_uuid = CAST(:organization_uuid AS uuid)
 				and ak.external_id = :external_id
 			returning ak.id, ak.external_id, ak.workspace_id, ak.created_by_user_id,
 				ak.name, ak.partial_key_hint, ak.status, ak.created_at, ak.updated_at, ak.expires_at
 		)
-		select ak.id, ak.external_id, w.organization_id, ak.workspace_id,
+		select ak.id, ak.external_id, ak.workspace_id,
 			w.external_id as workspace_external_id,
 			u.external_id as created_by_user_external_id,
 			ak.name, ak.partial_key_hint, ak.status, ak.created_at, ak.updated_at, ak.expires_at
@@ -589,12 +605,12 @@ func (d *DB) UpdateAdminAPIKey(ctx context.Context, organizationID int64, extern
 		join workspaces w on w.id = ak.workspace_id
 		left join users u on u.id = ak.created_by_user_id
 	`, map[string]any{
-		"organization_id": organizationID,
-		"external_id":     externalID,
-		"set_name":        setName,
-		"name":            name,
-		"set_status":      setStatus,
-		"status":          status,
+		"organization_uuid": organizationUUID,
+		"external_id":       externalID,
+		"set_name":          setName,
+		"name":              name,
+		"set_status":        setStatus,
+		"status":            status,
 	})
 }
 
@@ -668,13 +684,12 @@ func (d *DB) DeleteAdminExternalKey(ctx context.Context, organizationID int64, e
 	return nil
 }
 
-func (d *DB) CountAdminExternalKeyWorkspaceRefs(ctx context.Context, organizationID int64, externalID string) (int, error) {
+func (d *DB) CountAdminExternalKeyWorkspaceRefs(ctx context.Context, organizationUUID, externalID string) (int, error) {
 	var count int
-	err := namedGetContext(ctx, d.sql, &count, `
-		select count(*)
-		from workspaces
-		where organization_id = :organization_id and external_key_id = :external_id
-	`, map[string]any{"organization_id": organizationID, "external_id": externalID})
+	err := namedGetContext(ctx, d.sql, &count, countAdminExternalKeyWorkspaceRefsQuery, map[string]any{
+		"organization_uuid": organizationUUID,
+		"external_id":       externalID,
+	})
 	return count, err
 }
 
@@ -906,9 +921,11 @@ func adminUserSelectSQL() string {
 
 func adminWorkspaceSelectSQL() string {
 	return `
-		select id, CAST(uuid AS text) as uuid, external_id, organization_id, name, created_at, updated_at,
-			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
-		from workspaces
+		select w.id, CAST(w.uuid AS text) as uuid, w.external_id,
+			CAST(w.organization_uuid AS text) as organization_uuid, w.name,
+			w.created_at, w.updated_at, w.archived_at, w.compartment_id,
+			w.display_color, w.data_residency, w.external_key_id, w.tags
+		from workspaces w
 	`
 }
 
@@ -922,7 +939,7 @@ func adminWorkspaceMemberSelectSQL() string {
 
 func adminAPIKeySelectSQL() string {
 	return `
-		select ak.id, ak.external_id, w.organization_id, ak.workspace_id,
+		select ak.id, ak.external_id, ak.workspace_id,
 			w.external_id as workspace_external_id,
 			u.external_id as created_by_user_external_id,
 			ak.name, ak.partial_key_hint, ak.status, ak.created_at, ak.updated_at, ak.expires_at
@@ -994,17 +1011,17 @@ func adminInviteArguments(invite AdminInvite) map[string]any {
 
 func adminWorkspaceArguments(workspace AdminWorkspace) map[string]any {
 	return map[string]any{
-		"uuid":            workspace.UUID,
-		"external_id":     workspace.ExternalID,
-		"organization_id": workspace.OrganizationID,
-		"name":            workspace.Name,
-		"created_at":      workspace.CreatedAt,
-		"updated_at":      workspace.UpdatedAt,
-		"compartment_id":  workspace.CompartmentID,
-		"display_color":   workspace.DisplayColor,
-		"data_residency":  jsonArg(workspace.DataResidency),
-		"external_key_id": workspace.ExternalKeyID,
-		"tags":            jsonArg(workspace.Tags),
+		"uuid":              workspace.UUID,
+		"external_id":       workspace.ExternalID,
+		"organization_uuid": workspace.OrganizationUUID,
+		"name":              workspace.Name,
+		"created_at":        workspace.CreatedAt,
+		"updated_at":        workspace.UpdatedAt,
+		"compartment_id":    workspace.CompartmentID,
+		"display_color":     workspace.DisplayColor,
+		"data_residency":    jsonArg(workspace.DataResidency),
+		"external_key_id":   workspace.ExternalKeyID,
+		"tags":              jsonArg(workspace.Tags),
 	}
 }
 

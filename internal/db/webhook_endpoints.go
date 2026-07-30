@@ -29,10 +29,10 @@ const (
 	`
 	getWorkspaceIdentifiersQuery = `
 		select
-			o.external_id AS organization_external_id,
+			CAST(o.uuid AS text) AS organization_uuid,
 			w.external_id AS workspace_external_id
 		from workspaces w
-		join organizations o on o.id = w.organization_id
+		join organizations o on o.uuid = w.organization_uuid
 		where w.id = :workspace_id
 	`
 	createWebhookEndpointQuery = `
@@ -132,8 +132,8 @@ const (
 )
 
 type WorkspaceIdentifiers struct {
-	OrganizationExternalID string
-	WorkspaceExternalID    string
+	OrganizationUUID    string
+	WorkspaceExternalID string
 }
 
 type WebhookEndpoint struct {
@@ -157,8 +157,8 @@ type WebhookEndpoint struct {
 }
 
 type workspaceIdentifiersRow struct {
-	OrganizationExternalID string `db:"organization_external_id"`
-	WorkspaceExternalID    string `db:"workspace_external_id"`
+	OrganizationUUID    string `db:"organization_uuid"`
+	WorkspaceExternalID string `db:"workspace_external_id"`
 }
 
 type webhookEndpointRow struct {
@@ -189,8 +189,8 @@ func (d *DB) GetWorkspaceIdentifiers(ctx context.Context, workspaceID int64) (Wo
 		return WorkspaceIdentifiers{}, mapNoRows(err)
 	}
 	return WorkspaceIdentifiers{
-		OrganizationExternalID: row.OrganizationExternalID,
-		WorkspaceExternalID:    row.WorkspaceExternalID,
+		OrganizationUUID:    row.OrganizationUUID,
+		WorkspaceExternalID: row.WorkspaceExternalID,
 	}, nil
 }
 

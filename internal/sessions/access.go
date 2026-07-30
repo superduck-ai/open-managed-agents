@@ -74,9 +74,9 @@ func workspaceIDFromRequest(r *http.Request) int64 {
 	return principal.WorkspaceID
 }
 
-func organizationExternalIDFromRequest(r *http.Request) string {
+func organizationUUIDFromRequest(r *http.Request) string {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.OrganizationExternalID
+	return principal.OrganizationUUID
 }
 
 func workspaceExternalIDFromRequest(r *http.Request) string {

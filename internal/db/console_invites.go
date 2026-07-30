@@ -22,7 +22,7 @@ const (
 		with org as (
 			select id
 			from organizations
-			where CAST(uuid AS text) = :org_uuid or external_id = :org_uuid
+			where CAST(uuid AS text) = :org_uuid
 			limit 1
 		)
 		insert into organization_invites (
@@ -45,7 +45,7 @@ const (
 			expires_at = :expires_at
 		from organizations o
 		where i.organization_id = o.id
-			and (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+			and CAST(o.uuid AS text) = :org_uuid
 			and i.external_id = :invite_id
 			and i.deleted_at is null
 		returning ` + consoleInviteColumns + `
@@ -56,7 +56,7 @@ const (
 			deleted_at = coalesce(i.deleted_at, now())
 		from organizations o
 		where i.organization_id = o.id
-			and (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+			and CAST(o.uuid AS text) = :org_uuid
 			and i.external_id = :invite_id
 		returning ` + consoleInviteColumns + `
 	`
@@ -82,7 +82,7 @@ func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status stri
 		select ` + consoleInviteColumns + `
 		from organization_invites i
 		join organizations o on o.id = i.organization_id
-		where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+		where CAST(o.uuid AS text) = :org_uuid
 	`
 	switch strings.TrimSpace(strings.ToLower(status)) {
 	case "":

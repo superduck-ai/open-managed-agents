@@ -36,11 +36,11 @@ func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 	enqueuer := newEnqueuer(failingEnqueueStore{}, config.WebhookConfig{}, logger)
 
 	enqueuer.Enqueue(context.Background(), EnqueueInput{
-		WorkspaceID:            42,
-		OrganizationExternalID: "org_test",
-		WorkspaceExternalID:    "wrk_test",
-		EventType:              "session.created",
-		ResourceID:             "session_test",
+		WorkspaceID:         42,
+		OrganizationUUID:    "11111111-1111-4111-8111-111111111111",
+		WorkspaceExternalID: "wrk_test",
+		EventType:           "session.created",
+		ResourceID:          "session_test",
 	})
 
 	var record map[string]any

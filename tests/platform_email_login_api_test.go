@@ -108,7 +108,7 @@ func TestPlatformEmailLoginRoutes(t *testing.T) {
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select count(*)
 		from organizations o
-		join workspaces w on w.organization_id = o.id
+		join workspaces w on w.organization_uuid = o.uuid
 		where o.uuid::text = $1
 		  and lower(w.name) = 'default'
 		  and w.archived_at is null
@@ -348,8 +348,7 @@ func (a *testApp) ensureDefaultPlatformUser(t *testing.T, email string) {
 		with refs as (
 			select o.id as organization_id, w.id as workspace_id, w.external_id as workspace_external_id
 			from organizations o
-			join workspaces w on w.organization_id = o.id and w.external_id = 'workspace_default'
-			where o.external_id = 'org_default'
+			join workspaces w on w.organization_uuid = o.uuid and w.external_id = 'workspace_default'
 			limit 1
 		),
 		existing_user as (

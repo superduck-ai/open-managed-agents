@@ -19,7 +19,7 @@ const (
 			u.added_at
 		from users u
 		join organizations o on o.id = u.organization_id
-		where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+		where CAST(o.uuid AS text) = :org_uuid
 			and u.deleted_at is null
 		order by u.added_at asc, u.id asc
 		limit :limit
@@ -28,7 +28,7 @@ const (
 		with target_org as (
 			select id
 			from organizations
-			where CAST(uuid AS text) = :org_uuid or external_id = :org_uuid
+			where CAST(uuid AS text) = :org_uuid
 			limit 1
 		)
 		update users u
@@ -53,7 +53,7 @@ const (
 		with target_org as (
 			select id
 			from organizations
-			where CAST(uuid AS text) = :org_uuid or external_id = :org_uuid
+			where CAST(uuid AS text) = :org_uuid
 			limit 1
 		)
 		update users u
@@ -73,7 +73,7 @@ const (
 		set deleted_at = coalesce(wm.deleted_at, now()),
 			updated_at = now()
 		from organizations o, users u
-		where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+		where CAST(o.uuid AS text) = :org_uuid
 			and wm.organization_id = o.id
 			and u.organization_id = o.id
 			and wm.user_id = u.id

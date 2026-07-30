@@ -33,7 +33,7 @@ func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
 				"org_uuid":  "org_test",
 				"user_uuid": "user_test",
 			},
-			wantArgCount: 5,
+			wantArgCount: 4,
 		},
 	}
 
@@ -58,16 +58,15 @@ func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
 
 func TestPlatformSessionIdentityRowMapping(t *testing.T) {
 	row := platformSessionIdentityRow{
-		OrganizationID:         1,
-		OrganizationUUID:       "org-uuid",
-		OrganizationExternalID: "org_test",
-		WorkspaceID:            2,
-		WorkspaceUUID:          "workspace-uuid",
-		WorkspaceExternalID:    "workspace_test",
-		UserID:                 3,
-		UserExternalID:         "user_test",
-		APIKeyID:               4,
-		APIKeyExternalID:       "api_key_test",
+		OrganizationID:      1,
+		OrganizationUUID:    "org-uuid",
+		WorkspaceID:         2,
+		WorkspaceUUID:       "workspace-uuid",
+		WorkspaceExternalID: "workspace_test",
+		UserID:              3,
+		UserExternalID:      "user_test",
+		APIKeyID:            4,
+		APIKeyExternalID:    "api_key_test",
 	}
 
 	session := row.session()

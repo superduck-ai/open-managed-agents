@@ -181,11 +181,11 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	enqueuer := webhooks.NewEnqueuer(app.db, app.cfg.Webhook, nil)
 	enqueue := func(eventType, resourceID string) {
 		enqueuer.Enqueue(ctx, webhooks.EnqueueInput{
-			WorkspaceID:            apiKey.WorkspaceID,
-			OrganizationExternalID: apiKey.OrganizationExternalID,
-			WorkspaceExternalID:    apiKey.WorkspaceExternalID,
-			EventType:              eventType,
-			ResourceID:             resourceID,
+			WorkspaceID:         apiKey.WorkspaceID,
+			OrganizationUUID:    apiKey.OrganizationUUID,
+			WorkspaceExternalID: apiKey.WorkspaceExternalID,
+			EventType:           eventType,
+			ResourceID:          resourceID,
 		})
 	}
 	sessionID := "sesn_webhook_endpoint_delivery"
@@ -214,14 +214,19 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	var payload struct {
 		Type string `json:"type"`
 		Data struct {
-			ID   string `json:"id"`
-			Type string `json:"type"`
+			ID             string `json:"id"`
+			OrganizationID string `json:"organization_id"`
+			Type           string `json:"type"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(delivered.Body, &payload); err != nil {
 		t.Fatalf("unmarshal delivered webhook: %v", err)
 	}
-	if event.Type != "event" || payload.Type != "event" || payload.Data.Type != "session.status_idled" || payload.Data.ID != sessionID {
+	if event.Type != "event" ||
+		payload.Type != "event" ||
+		payload.Data.Type != "session.status_idled" ||
+		payload.Data.ID != sessionID ||
+		payload.Data.OrganizationID != apiKey.OrganizationUUID {
 		t.Fatalf("unexpected webhook event=%+v payload=%+v body=%s", event, payload, delivered.Body)
 	}
 

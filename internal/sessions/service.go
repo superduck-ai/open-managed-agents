@@ -624,11 +624,11 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	if outcomesChanged {
 		h.enqueueWebhook(r.Context(), webhooks.EnqueueInput{
-			WorkspaceID:            session.WorkspaceID,
-			OrganizationExternalID: organizationExternalIDFromRequest(r),
-			WorkspaceExternalID:    workspaceExternalIDFromRequest(r),
-			EventType:              "session.outcome_evaluation_ended",
-			ResourceID:             session.ExternalID,
+			WorkspaceID:         session.WorkspaceID,
+			OrganizationUUID:    organizationUUIDFromRequest(r),
+			WorkspaceExternalID: workspaceExternalIDFromRequest(r),
+			EventType:           "session.outcome_evaluation_ended",
+			ResourceID:          session.ExternalID,
 		})
 	}
 	data := make([]json.RawMessage, 0, len(created))

@@ -627,12 +627,12 @@ func (h *Handler) enqueueWebhookWithOptions(r *http.Request, principal auth.Prin
 		return
 	}
 	h.webhooks.Enqueue(r.Context(), webhooks.EnqueueInput{
-		WorkspaceID:            principal.WorkspaceID,
-		OrganizationExternalID: principal.OrganizationExternalID,
-		WorkspaceExternalID:    principal.WorkspaceExternalID,
-		EventType:              eventType,
-		ResourceID:             resourceID,
-		Options:                options,
+		WorkspaceID:         principal.WorkspaceID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceExternalID: principal.WorkspaceExternalID,
+		EventType:           eventType,
+		ResourceID:          resourceID,
+		Options:             options,
 	})
 }
 

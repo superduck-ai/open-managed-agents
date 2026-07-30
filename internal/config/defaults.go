@@ -50,12 +50,11 @@ func defaultConfig() Config {
 			MaxAttempts: 10,
 		},
 		Bootstrap: BootstrapConfig{
-			WorkspaceName:          "default",
-			OrganizationName:       "default",
-			OrganizationExternalID: "org_default",
-			WorkspaceExternalID:    "workspace_default",
-			UserExternalID:         "user_default",
-			APIKeyExternalID:       "api_key_default",
+			WorkspaceName:       "default",
+			OrganizationName:    "default",
+			WorkspaceExternalID: "workspace_default",
+			UserExternalID:      "user_default",
+			APIKeyExternalID:    "api_key_default",
 		},
 		SDKFixtures: SDKFixtureConfig{
 			FileID:            "file_id",

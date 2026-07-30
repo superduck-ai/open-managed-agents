@@ -652,12 +652,12 @@ func (h *Handler) enqueueWebhook(ctx context.Context, principal auth.Principal, 
 		return
 	}
 	h.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
-		WorkspaceID:            principal.WorkspaceID,
-		OrganizationExternalID: principal.OrganizationExternalID,
-		WorkspaceExternalID:    principal.WorkspaceExternalID,
-		EventType:              eventType,
-		ResourceID:             resourceID,
-		Options:                webhooks.EventOptions{SessionThreadID: sessionThreadID},
+		WorkspaceID:         principal.WorkspaceID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceExternalID: principal.WorkspaceExternalID,
+		EventType:           eventType,
+		ResourceID:          resourceID,
+		Options:             webhooks.EventOptions{SessionThreadID: sessionThreadID},
 	})
 }
 

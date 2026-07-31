@@ -21,9 +21,9 @@ func workspaceStorageBytesQuery(ctx context.Context, database *sqlx.DB, workspac
 		select coalesce((
 			select files_bytes + filestore_bytes
 			from workspace_storage_usage
-			where workspace_uuid = cast(:workspace_uuid as uuid)
+			where workspace_uuid = :workspace_uuid
 		), 0)
-	`, map[string]any{"workspace_uuid": workspaceUUID})
+	`, map[string]any{"workspace_uuid": dbUUID(workspaceUUID)})
 	return total, err
 }
 
@@ -41,7 +41,7 @@ func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceUUID s
 		return 0, err
 	}
 	defer tx.Rollback()
-	arguments := map[string]any{"workspace_uuid": workspaceUUID}
+	arguments := map[string]any{"workspace_uuid": dbUUID(workspaceUUID)}
 	if _, err := namedExecContext(ctx, tx, `
 		select pg_advisory_xact_lock(hashtextextended(cast(:workspace_uuid as text), 0))
 	`, arguments); err != nil {
@@ -62,19 +62,19 @@ func reconcileWorkspaceStorageUsageSQLXTx(
 	tx *sqlx.Tx,
 	workspaceUUID string,
 ) (workspaceStorageUsage, error) {
-	arguments := map[string]any{"workspace_uuid": workspaceUUID}
+	arguments := map[string]any{"workspace_uuid": dbUUID(workspaceUUID)}
 	var usage workspaceStorageUsage
 	if err := namedGetContext(ctx, tx, &usage, `
 		select
 			coalesce((
 				select sum(file.size_bytes)
 				from files file
-				where file.workspace_uuid = cast(:workspace_uuid as uuid)
+				where file.workspace_uuid = :workspace_uuid
 					and file.deleted_at is null
 					and not exists (
 					select 1
 					from session_resources resource
-					where resource.workspace_uuid = cast(:workspace_uuid as uuid)
+					where resource.workspace_uuid = :workspace_uuid
 							and resource.file_uuid = file.uuid
 							and resource.payload is null
 							and resource.deleted_at is null
@@ -85,11 +85,11 @@ func reconcileWorkspaceStorageUsageSQLXTx(
 				from files file
 				join session_resources resource
 					on resource.file_uuid = file.uuid
-					and resource.workspace_uuid = cast(:workspace_uuid as uuid)
+					and resource.workspace_uuid = :workspace_uuid
 					and resource.resource_type = 'file'
 					and resource.payload is null
 					and resource.deleted_at is null
-				where file.workspace_uuid = cast(:workspace_uuid as uuid) and file.deleted_at is null
+				where file.workspace_uuid = :workspace_uuid and file.deleted_at is null
 			), 0) as filestore_bytes
 	`, arguments); err != nil {
 		return workspaceStorageUsage{}, err
@@ -120,7 +120,7 @@ func applyWorkspaceStorageDeltaSQLXTx(
 	workspaceUUID string,
 	filesDelta, filestoreDelta, workspaceStorageLimitBytes int64,
 ) error {
-	arguments := map[string]any{"workspace_uuid": workspaceUUID}
+	arguments := map[string]any{"workspace_uuid": dbUUID(workspaceUUID)}
 	if _, err := namedExecContext(ctx, tx, `
 		insert into workspace_storage_usage (workspace_uuid)
 		values (:workspace_uuid)
@@ -133,7 +133,7 @@ func applyWorkspaceStorageDeltaSQLXTx(
 	if err := namedGetContext(ctx, tx, &usage, `
 		select files_bytes, filestore_bytes
 		from workspace_storage_usage
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 		for update
 	`, arguments); err != nil {
 		return err
@@ -155,7 +155,7 @@ func applyWorkspaceStorageDeltaSQLXTx(
 		set files_bytes = :files_bytes,
 			filestore_bytes = :filestore_bytes,
 			updated_at = now()
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 	`, arguments)
 	return err
 }

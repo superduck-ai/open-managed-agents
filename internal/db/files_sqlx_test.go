@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
@@ -22,7 +24,7 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 		CreatedByAPIKeyUUID: "00000000-0000-0000-0000-000000000009",
 		CreatedAt:           createdAt,
 	}
-	cursor := filePageCursorRow{UUID: "00000000-0000-0000-0000-000000000010", CreatedAt: createdAt}
+	cursor := filePageCursorRow{UUID: uuid.MustParse("00000000-0000-0000-0000-000000000010"), CreatedAt: createdAt}
 	afterParams := ListFilesPageParams{
 		WorkspaceUUID: "00000000-0000-0000-0000-000000000042",
 		ScopeID:       "scope_test",
@@ -51,14 +53,17 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 		arguments    map[string]any
 		wantArgCount int
 	}{
-		{"workspace lock", fileWorkspaceLockQuery, map[string]any{"workspace_uuid": file.WorkspaceUUID}, 1},
+		{"workspace lock", fileWorkspaceLockQuery, map[string]any{"workspace_uuid": dbUUID(file.WorkspaceUUID)}, 1},
 		{"insert file", insertFileQuery, fileRecordArguments(file), 14},
 		{"get file", getFileQuery, getFileArguments(file.WorkspaceUUID, file.ExternalID), 2},
 		{"get file by uuid", getFileByUUIDQuery, fileUUIDArguments(file.WorkspaceUUID, file.UUID), 2},
 		{
 			"get file by uuid in organization",
 			getFileByUUIDInOrganizationQuery,
-			map[string]any{"organization_uuid": "00000000-0000-0000-0000-000000000007", "file_uuid": file.UUID},
+			map[string]any{
+				"organization_uuid": dbUUID("00000000-0000-0000-0000-000000000007"),
+				"file_uuid":         dbUUID(file.UUID),
+			},
 			2,
 		},
 		{"list files", listQuery, listArguments, 2},
@@ -69,7 +74,10 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 		{
 			"active file reference",
 			activeFileReferenceQuery,
-			map[string]any{"workspace_uuid": file.WorkspaceUUID, "file_uuid": file.UUID},
+			map[string]any{
+				"workspace_uuid": dbUUID(file.WorkspaceUUID),
+				"file_uuid":      dbUUID(file.UUID),
+			},
 			4,
 		},
 		{"soft delete", softDeleteFileQuery, getFileArguments(file.WorkspaceUUID, file.ExternalID), 2},
@@ -77,13 +85,10 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 			"enqueue cleanup",
 			enqueueObjectCleanupResourceJobQuery,
 			map[string]any{
-				"workspace_uuid": file.WorkspaceUUID,
-				"bucket":         "files",
-				"object_key":     "file_test/data.csv",
-				"resource_type":  "file",
-				"resource_id":    file.ExternalID,
+				"workspace_uuid": dbUUID(file.WorkspaceUUID),
+				"payload":        []byte(`{"bucket":"files"}`),
 			},
-			7,
+			2,
 		},
 		{
 			"lease cleanup",
@@ -91,12 +96,17 @@ func TestFilesQueriesUseSQLXNamedParameters(t *testing.T) {
 			map[string]any{"limit": 10, "worker_id": "worker_test"},
 			2,
 		},
-		{"complete cleanup", completeObjectCleanupJobQuery, map[string]any{"job_uuid": "00000000-0000-0000-0000-000000000001"}, 1},
+		{
+			"complete cleanup",
+			completeObjectCleanupJobQuery,
+			map[string]any{"job_uuid": dbUUID("00000000-0000-0000-0000-000000000001")},
+			1,
+		},
 		{
 			"fail cleanup",
 			failObjectCleanupJobQuery,
 			map[string]any{
-				"job_uuid":  "00000000-0000-0000-0000-000000000001",
+				"job_uuid":  dbUUID("00000000-0000-0000-0000-000000000001"),
 				"status":    "retry",
 				"run_after": createdAt,
 				"attempts":  2,

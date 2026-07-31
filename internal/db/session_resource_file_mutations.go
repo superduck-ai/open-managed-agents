@@ -10,7 +10,7 @@ import (
 const moveFilestoreFileResultQuery = `
 	where workspace_uuid = :workspace_uuid
 		and session_uuid = :session_uuid
-		and id = :entry_id
+		and uuid = :resource_uuid
 		and deleted_at is null
 `
 
@@ -225,13 +225,13 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		update session_resources
 		set path = :destination_path, parent_path = :destination_parent_path,
 			updated_at = :now
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
-			and id = :entry_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
+			and uuid = :resource_uuid and deleted_at is null
 	`, map[string]any{
-		"workspace_uuid":          filesystem.WorkspaceUUID,
-		"session_uuid":            filesystem.SessionUUID,
-		"entry_id":                source.ID,
+		"workspace_uuid":          dbUUID(filesystem.WorkspaceUUID),
+		"session_uuid":            dbUUID(filesystem.SessionUUID),
+		"resource_uuid":           dbUUID(source.UUID),
 		"destination_path":        input.DestinationPath,
 		"destination_parent_path": filestoreParentPath(input.DestinationPath),
 		"now":                     input.Now,
@@ -239,7 +239,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		return FilestoreMutationResult{}, err
 	}
 	resultArguments := sessionResourceFileMutationArguments(filesystem, input.SourcePath)
-	resultArguments["entry_id"] = source.ID
+	resultArguments["resource_uuid"] = dbUUID(source.UUID)
 	moved, err := getSessionResourceFileSQLX(
 		ctx,
 		tx,
@@ -293,8 +293,8 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	var maxMovedPathBytes int
 	// 在批量更新前按字节预演最长目标路径，避免中途触发约束而留下难以解释的错误。
 	moveArguments := map[string]any{
-
-		"session_uuid":            filesystem.SessionUUID,
+		"workspace_uuid":          dbUUID(input.WorkspaceUUID),
+		"session_uuid":            dbUUID(filesystem.SessionUUID),
 		"source_path":             input.SourcePath,
 		"destination_path":        input.DestinationPath,
 		"destination_parent_path": filestoreParentPath(input.DestinationPath),
@@ -307,8 +307,8 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 				- octet_length(CAST(:source_path AS text))
 		), 0)
 		from session_resources
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
 			and deleted_at is null
 			and (
 				path = :source_path
@@ -324,8 +324,8 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	if err := namedGetContext(ctx, tx, &containsInput, `
 		select exists (
 			select 1 from session_resources
-			where workspace_uuid = CAST(:workspace_uuid AS uuid)
-				and session_uuid = CAST(:session_uuid AS uuid)
+			where workspace_uuid = :workspace_uuid
+				and session_uuid = :session_uuid
 				and deleted_at is null and payload is not null
 				and (
 					path = :source_path
@@ -342,8 +342,8 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	err = namedGetContext(ctx, tx, &conflictingID, `
 		select id
 		from session_resources
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
 			and deleted_at is null
 			and (expires_at is null or expires_at > now())
 			and (
@@ -380,8 +380,8 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 				else :destination_path || substring(parent_path from char_length(:source_path) + 1)
 			end,
 			updated_at = :now
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
 			and deleted_at is null
 			and (
 				path = :source_path
@@ -478,16 +478,15 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	}
 	var childCount int
 	entryArguments := map[string]any{
-
-		"workspace_uuid": filesystem.WorkspaceUUID,
-		"session_uuid":   filesystem.SessionUUID,
+		"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
+		"session_uuid":   dbUUID(filesystem.SessionUUID),
 		"entry_path":     input.Path,
 		"now":            input.Now,
 	}
 	if err := namedGetContext(ctx, tx, &childCount, `
 		select count(*) from session_resources
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
 			and parent_path = :entry_path
 			and deleted_at is null and (expires_at is null or expires_at > now())
 	`, entryArguments); err != nil {
@@ -500,8 +499,8 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	if err := namedGetContext(ctx, tx, &containsInput, `
 		select exists (
 			select 1 from session_resources
-			where workspace_uuid = CAST(:workspace_uuid AS uuid)
-				and session_uuid = CAST(:session_uuid AS uuid)
+			where workspace_uuid = :workspace_uuid
+				and session_uuid = :session_uuid
 				and deleted_at is null and payload is not null
 				and (
 					path = :entry_path
@@ -523,11 +522,11 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	if _, err := namedExecContext(ctx, tx, `
 		update files file
 		set deleted_at = coalesce(file.deleted_at, :now)
-		where file.workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where file.workspace_uuid = :workspace_uuid
 			and file.uuid in (
 				select resource.file_uuid from session_resources resource
-				where resource.workspace_uuid = CAST(:workspace_uuid AS uuid)
-					and resource.session_uuid = CAST(:session_uuid AS uuid)
+				where resource.workspace_uuid = :workspace_uuid
+					and resource.session_uuid = :session_uuid
 					and resource.deleted_at is null
 					and resource.payload is null
 					and resource.resource_type = 'file'
@@ -542,8 +541,8 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	if _, err := namedExecContext(ctx, tx, `
 		update session_resources
 		set deleted_at = :now, updated_at = :now
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
 			and deleted_at is null
 			and (
 				path = :entry_path

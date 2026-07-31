@@ -17,13 +17,13 @@ var insertSessionFilesystemSQLXQuery = `
 		)
 		select
 			:filesystem_external_id, w.organization_uuid, w.uuid,
-			CAST(:session_uuid AS uuid), null, ak.uuid, :created_at, :created_at
+			:session_uuid, null, ak.uuid, :created_at, :created_at
 		from workspaces w
 		join api_keys ak
-			on ak.uuid = CAST(:created_by_api_key_uuid AS uuid)
+			on ak.uuid = :created_by_api_key_uuid
 			and ak.workspace_uuid = w.uuid
-		where w.uuid = CAST(:workspace_uuid AS uuid)
-			and w.organization_uuid = CAST(:organization_uuid AS uuid)
+		where w.uuid = :workspace_uuid
+			and w.organization_uuid = :organization_uuid
 			and w.archived_at is null
 		on conflict on constraint filestore_filesystems_workspace_uuid_external_id_key do nothing
 		returning ` + filestoreFilesystemColumns() + `
@@ -34,7 +34,7 @@ const (
 		select exists (
 			select 1
 			from filestore_filesystems fs
-			where fs.workspace_uuid = CAST(:workspace_uuid AS uuid)
+			where fs.workspace_uuid = :workspace_uuid
 				and fs.external_id = :filesystem_external_id
 		)
 	`
@@ -88,10 +88,10 @@ func insertSessionFilesystemSQLXTx(
 func sessionFilesystemArguments(session Session, externalID string, createdAt time.Time) map[string]any {
 	return map[string]any{
 		"filesystem_external_id":  externalID,
-		"session_uuid":            session.UUID,
-		"organization_uuid":       session.OrganizationUUID,
-		"workspace_uuid":          session.WorkspaceUUID,
-		"created_by_api_key_uuid": session.CreatedByAPIKeyUUID,
+		"session_uuid":            dbUUID(session.UUID),
+		"organization_uuid":       dbUUID(session.OrganizationUUID),
+		"workspace_uuid":          dbUUID(session.WorkspaceUUID),
+		"created_by_api_key_uuid": dbUUID(session.CreatedByAPIKeyUUID),
 		"created_at":              createdAt,
 	}
 }

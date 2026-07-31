@@ -6,15 +6,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 )
 
 const listAdminRequestsSQL = `
 	select
-		CAST(ar.request_uuid AS text) as request_uuid,
-		CAST(ar.org_uuid AS text) as org_uuid,
+		ar.request_uuid,
+		ar.org_uuid,
 		ar.request_type,
-		CAST(ar.requester_uuid AS text) as requester_uuid,
+		ar.requester_uuid,
 		ar.requested_seat_tier,
 		ar.details,
 		ar.status,
@@ -29,7 +30,7 @@ const listAdminRequestsSQL = `
 	  on u.uuid = ar.requester_uuid
 	 and u.organization_uuid = ar.org_uuid
 	 and u.deleted_at is null
-	where CAST(ar.org_uuid AS text) = :org_uuid
+	where ar.org_uuid = :org_uuid
 	  and ar.request_type = :request_type
 	  and ar.status = :status
 	order by ar.created_at desc, ar.request_uuid desc
@@ -37,27 +38,27 @@ const listAdminRequestsSQL = `
 `
 
 type adminRequestRow struct {
-	UUID              string     `db:"request_uuid"`
-	OrgUUID           string     `db:"org_uuid"`
-	RequestType       string     `db:"request_type"`
-	RequesterUUID     *string    `db:"requester_uuid"`
-	RequestedSeatTier *string    `db:"requested_seat_tier"`
-	Details           []byte     `db:"details"`
-	Status            string     `db:"status"`
-	CreatedAt         time.Time  `db:"created_at"`
-	ResolvedAt        *time.Time `db:"resolved_at"`
-	RequesterEmail    *string    `db:"requester_email"`
-	RequesterName     *string    `db:"requester_name"`
-	RequesterRole     *string    `db:"requester_role"`
-	RequesterSeatTier *string    `db:"requester_seat_tier"`
+	UUID              uuid.UUID     `db:"request_uuid"`
+	OrgUUID           uuid.UUID     `db:"org_uuid"`
+	RequestType       string        `db:"request_type"`
+	RequesterUUID     uuid.NullUUID `db:"requester_uuid"`
+	RequestedSeatTier *string       `db:"requested_seat_tier"`
+	Details           []byte        `db:"details"`
+	Status            string        `db:"status"`
+	CreatedAt         time.Time     `db:"created_at"`
+	ResolvedAt        *time.Time    `db:"resolved_at"`
+	RequesterEmail    *string       `db:"requester_email"`
+	RequesterName     *string       `db:"requester_name"`
+	RequesterRole     *string       `db:"requester_role"`
+	RequesterSeatTier *string       `db:"requester_seat_tier"`
 }
 
 func (r adminRequestRow) toAdminRequest() (platform.AdminRequest, error) {
 	request := platform.AdminRequest{
-		UUID:              r.UUID,
-		OrgUUID:           r.OrgUUID,
+		UUID:              r.UUID.String(),
+		OrgUUID:           r.OrgUUID.String(),
 		RequestType:       r.RequestType,
-		RequesterUUID:     r.RequesterUUID,
+		RequesterUUID:     nullableUUIDString(r.RequesterUUID),
 		RequestedSeatTier: r.RequestedSeatTier,
 		Status:            r.Status,
 		CreatedAt:         r.CreatedAt,
@@ -87,7 +88,7 @@ func listAdminRequestsSQLX(
 ) ([]platform.AdminRequest, error) {
 	var rows []adminRequestRow
 	if err := namedSelectContext(ctx, database, &rows, listAdminRequestsSQL, map[string]any{
-		"org_uuid":     orgUUID,
+		"org_uuid":     dbUUID(orgUUID),
 		"request_type": requestType,
 		"status":       status,
 		"limit":        limit,

@@ -1716,7 +1716,7 @@ func defaultWorkspaceStorageBytes(t *testing.T, app *testApp) int64 {
 	if err != nil {
 		t.Fatalf("load default API key: %v", err)
 	}
-	storageBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), apiKey.WorkspaceUUID)
+	storageBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), apiKey.WorkspaceUUID.String())
 	if err != nil {
 		t.Fatalf("load default workspace storage usage: %v", err)
 	}

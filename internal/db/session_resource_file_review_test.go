@@ -17,7 +17,7 @@ func TestMoveFilestoreFileResultQueryCarriesNamespaceScope(t *testing.T) {
 	for _, predicate := range []string{
 		"workspace_uuid = :workspace_uuid",
 		"session_uuid = :session_uuid",
-		"id = :entry_id",
+		"uuid = :resource_uuid",
 	} {
 		if !strings.Contains(moveFilestoreFileResultQuery, predicate) {
 			t.Fatalf("move result query lacks %q: %s", predicate, moveFilestoreFileResultQuery)

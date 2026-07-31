@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestValidateFilestorePath(t *testing.T) {
@@ -146,7 +148,10 @@ func TestNormalizeSessionResourceFilesPageLimit(t *testing.T) {
 }
 
 func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
-	filesystem := FilestoreFilesystem{WorkspaceUUID: "workspace-uuid", SessionUUID: "session-uuid"}
+	filesystem := FilestoreFilesystem{
+		WorkspaceUUID: "00000000-0000-4000-8000-000000000001",
+		SessionUUID:   "00000000-0000-4000-8000-000000000002",
+	}
 
 	t.Run("lists direct children without cursor", func(t *testing.T) {
 		query, args := buildSessionResourceFilesPageQuery(filesystem, ListSessionResourceFilesPageParams{
@@ -159,8 +164,8 @@ func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
 			t.Fatalf("direct-child query = %q", query)
 		}
 		wantArgs := map[string]any{
-			"workspace_uuid": "workspace-uuid",
-			"session_uuid":   "session-uuid",
+			"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
+			"session_uuid":   dbUUID(filesystem.SessionUUID),
 			"directory_path": "/reports",
 			"fetch_limit":    26,
 		}
@@ -177,16 +182,16 @@ func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
 			Cursor:        &SessionResourceFilePageCursor{Path: "/reports/a", UUID: "00000000-0000-4000-8000-000000000010"},
 		})
 		if !strings.Contains(query, "left(path, char_length(:directory_prefix)) = :directory_prefix") ||
-			!strings.Contains(query, "and (path, uuid) > (:cursor_path, CAST(:cursor_uuid AS uuid))") ||
+			!strings.Contains(query, "and (path, uuid) > (:cursor_path, :cursor_uuid)") ||
 			!strings.Contains(query, "limit :fetch_limit") {
 			t.Fatalf("recursive query = %q", query)
 		}
 		wantArgs := map[string]any{
-			"workspace_uuid":   "workspace-uuid",
-			"session_uuid":     "session-uuid",
+			"workspace_uuid":   dbUUID(filesystem.WorkspaceUUID),
+			"session_uuid":     dbUUID(filesystem.SessionUUID),
 			"directory_prefix": "/reports/",
 			"cursor_path":      "/reports/a",
-			"cursor_uuid":      "00000000-0000-4000-8000-000000000010",
+			"cursor_uuid":      dbUUID("00000000-0000-4000-8000-000000000010"),
 			"fetch_limit":      26,
 		}
 		if !reflect.DeepEqual(args, wantArgs) {
@@ -212,11 +217,11 @@ func TestSessionResourceFileSQLXRowEntry(t *testing.T) {
 	t.Run("maps database row to domain entry", func(t *testing.T) {
 		row := sessionResourceFileRow{
 			ID:                    7,
-			UUID:                  "entry-uuid",
+			UUID:                  uuid.MustParse("00000000-0000-4000-8000-000000000001"),
 			ExternalID:            "file_7",
-			OrganizationUUID:      "organization-uuid",
-			WorkspaceUUID:         "workspace-uuid",
-			SessionUUID:           "session-uuid",
+			OrganizationUUID:      uuid.MustParse("00000000-0000-4000-8000-000000000002"),
+			WorkspaceUUID:         uuid.MustParse("00000000-0000-4000-8000-000000000003"),
+			SessionUUID:           uuid.MustParse("00000000-0000-4000-8000-000000000004"),
 			Kind:                  SessionResourceFileKindFile,
 			Path:                  "/reports/july.txt",
 			Metadata:              []byte(`{"source":"test"}`),

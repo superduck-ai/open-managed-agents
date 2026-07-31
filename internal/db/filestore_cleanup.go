@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -18,7 +19,7 @@ var (
 			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
 			values (
 				concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
-				CAST(:workspace_uuid AS uuid), :job_type, 'pending',
+				:workspace_uuid, :job_type, 'pending',
 				jsonb_build_object(
 					'workspace_uuid', CAST(:workspace_uuid AS text),
 					'filesystem_uuid', CAST(:filesystem_uuid AS text)
@@ -39,7 +40,7 @@ var (
 		join filestore_filesystems fs
 			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
 			and fs.workspace_uuid = j.workspace_uuid
-		where j.uuid = CAST(:job_uuid AS uuid) and j.type = :job_type and j.status = 'running'
+		where j.uuid = :job_uuid and j.type = :job_type and j.status = 'running'
 			and j.locked_by = :lease_token and j.locked_until >= now()
 		for update of j
 	`
@@ -55,32 +56,30 @@ var (
 	expiredSessionResourceFilesQuery = sessionResourceFileSelectSQL() + `
 		where kind = 'file' and deleted_at is null and expires_at <= now()
 			and (workspace_uuid, session_uuid) in (
-				select cast(workspace_uuid as text), cast(session_uuid as text)
+				select workspace_uuid, session_uuid
 				from filestore_filesystems
-				where uuid = any(CAST(:filesystem_uuids AS uuid[]))
+				where uuid = any(:filesystem_uuids)
 			)
-		order by expires_at, id
+		order by expires_at, uuid
 		limit :limit
 	`
 )
 
 const (
 	expiredFilestoreCleanupScopesQuery = `
-		select distinct workspace.id AS workspace_id,
-			CAST(workspace.uuid AS text) AS workspace_uuid,
-			filesystem.id AS filesystem_id,
-			CAST(oldest_expired.session_uuid AS text) AS session_uuid
+		select distinct oldest_expired.workspace_uuid,
+			filesystem.uuid AS filesystem_uuid,
+			oldest_expired.session_uuid
 		from (
-			select workspace_uuid, session_uuid, expires_at, id
+			select workspace_uuid, session_uuid, expires_at, uuid
 			from session_resources
 			where resource_type = 'file' and deleted_at is null and expires_at <= now()
-			order by expires_at, id
+			order by expires_at, uuid
 			limit :limit
 		) oldest_expired
-		join workspaces workspace on workspace.uuid = oldest_expired.workspace_uuid
 		join filestore_filesystems filesystem
 			on filesystem.session_uuid = oldest_expired.session_uuid
-			and filesystem.workspace_uuid = workspace.uuid
+			and filesystem.workspace_uuid = oldest_expired.workspace_uuid
 			and filesystem.deleted_at is null
 	`
 	filesystemCleanupWorkspaceLockQuery = `
@@ -92,30 +91,30 @@ const (
 	filesystemCleanupFilesRemainQuery = `
 		select exists (
 			select 1 from session_resources
-			where workspace_uuid = CAST(:workspace_uuid AS uuid)
-				and session_uuid = CAST(:session_uuid AS uuid)
+			where workspace_uuid = :workspace_uuid
+				and session_uuid = :session_uuid
 				and resource_type = 'file' and deleted_at is null
 		)
 	`
 	retireFilesystemCleanupNamespaceEntriesQuery = `
 		update session_resources
 		set deleted_at = :retired_at, updated_at = :retired_at
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
 			and resource_type in ('directory', 'skill_archive') and deleted_at is null
 	`
 	retireFilesystemCleanupSkillFilesQuery = `
 		update files file
 		set deleted_at = :retired_at
-		where file.workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where file.workspace_uuid = :workspace_uuid
 			and file.deleted_at is null
 			and file.uuid in (
 				select resource.file_uuid
 				from session_resources resource
 				where resource.workspace_uuid = (
-					CAST(:workspace_uuid AS uuid)
+					:workspace_uuid
 				)
-					and resource.session_uuid = CAST(:session_uuid AS uuid)
+					and resource.session_uuid = :session_uuid
 					and resource.resource_type = 'skill_archive'
 					and resource.file_uuid is not null
 					and resource.deleted_at is null
@@ -126,7 +125,7 @@ const (
 		set status = :status, locked_by = null, locked_until = null,
 			run_after = :retired_at, updated_at = :retired_at,
 			payload = payload - 'lease_attempts'
-		where uuid = CAST(:job_uuid AS uuid) and type = :job_type and status = 'running'
+		where uuid = :job_uuid and type = :job_type and status = 'running'
 			and locked_by = :lease_token
 	`
 )
@@ -157,19 +156,22 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 	var workspaceUUIDs []string
 	var filesystemUUIDs []string
 	for _, row := range scopeRows {
-		if _, found := workspaceUUIDSet[row.WorkspaceUUID]; !found {
-			workspaceUUIDSet[row.WorkspaceUUID] = struct{}{}
-			workspaceUUIDs = append(workspaceUUIDs, row.WorkspaceUUID)
+		workspaceUUID := row.WorkspaceUUID.String()
+		filesystemUUID := row.FilesystemUUID.String()
+		sessionUUID := row.SessionUUID.String()
+		if _, found := workspaceUUIDSet[workspaceUUID]; !found {
+			workspaceUUIDSet[workspaceUUID] = struct{}{}
+			workspaceUUIDs = append(workspaceUUIDs, workspaceUUID)
 		}
-		if _, found := filesystemUUIDSet[row.FilesystemUUID]; !found {
-			filesystemUUIDSet[row.FilesystemUUID] = struct{}{}
-			filesystemUUIDs = append(filesystemUUIDs, row.FilesystemUUID)
+		if _, found := filesystemUUIDSet[filesystemUUID]; !found {
+			filesystemUUIDSet[filesystemUUID] = struct{}{}
+			filesystemUUIDs = append(filesystemUUIDs, filesystemUUID)
 		}
 		cleanupScopeByNamespace[sessionResourceFileNamespaceKey{
-			WorkspaceUUID: row.WorkspaceUUID,
-			SessionUUID:   row.SessionUUID,
+			WorkspaceUUID: workspaceUUID,
+			SessionUUID:   sessionUUID,
 		}] = sessionResourceFileCleanupScope{
-			WorkspaceUUID: row.WorkspaceUUID, FilesystemUUID: row.FilesystemUUID,
+			WorkspaceUUID: workspaceUUID, FilesystemUUID: filesystemUUID,
 		}
 	}
 	if len(workspaceUUIDs) == 0 {
@@ -589,7 +591,7 @@ func (d *DB) CompleteFilestoreObjectCleanupJob(ctx context.Context, jobUUID stri
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
 		update jobs
 		set status = 'completed', locked_by = null, locked_until = null, updated_at = now()
-		where uuid = CAST(:job_uuid AS uuid) and type = :job_type and status in ('pending', 'retry')
+		where uuid = :job_uuid and type = :job_type and status in ('pending', 'retry')
 	`, map[string]any{
 		"job_uuid": jobUUID,
 		"job_type": filestoreCleanupJobType,
@@ -611,7 +613,7 @@ func (d *DB) CompleteLeasedFilestoreObjectCleanupJob(ctx context.Context, jobUUI
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
 		update jobs
 		set status = 'completed', locked_by = null, locked_until = null, updated_at = now()
-		where uuid = CAST(:job_uuid AS uuid) and type = :job_type and status = 'running'
+		where uuid = :job_uuid and type = :job_type and status = 'running'
 			and locked_by = :lease_token and locked_until >= now()
 	`, map[string]any{
 		"job_uuid":    jobUUID,
@@ -658,7 +660,7 @@ func (d *DB) failLeasedFilestoreCleanupJob(ctx context.Context, jobUUID string, 
 			updated_at = now(),
 			payload = (payload - 'lease_attempts')
 				|| jsonb_build_object('last_error', cast(:reason as text))
-		where uuid = CAST(:job_uuid AS uuid) and type = :job_type and status = 'running'
+		where uuid = :job_uuid and type = :job_type and status = 'running'
 			and locked_by = :lease_token and locked_until >= now()
 	`, map[string]any{
 		"job_uuid":     jobUUID,
@@ -754,9 +756,9 @@ type sessionResourceFileNamespaceKey struct {
 }
 
 type expiredFilestoreCleanupScopeRow struct {
-	WorkspaceUUID  string `db:"workspace_uuid"`
-	FilesystemUUID string `db:"filesystem_uuid"`
-	SessionUUID    string `db:"session_uuid"`
+	WorkspaceUUID  uuid.UUID `db:"workspace_uuid"`
+	FilesystemUUID uuid.UUID `db:"filesystem_uuid"`
+	SessionUUID    uuid.UUID `db:"session_uuid"`
 }
 
 const filestoreCleanupAnomalyMissingObjectLocation = "missing_object_location"

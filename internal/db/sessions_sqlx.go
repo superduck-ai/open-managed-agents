@@ -6,23 +6,24 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
 const (
-	sessionSQLXColumns = `cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
-		cast(environment_uuid as text) as environment_uuid, environment_external_id,
-		cast(agent_uuid as text) as agent_uuid, agent_external_id,
-		agent_version, agent_snapshot, cast(deployment_uuid as text) as deployment_uuid,
+	sessionSQLXColumns = `uuid, external_id,
+		organization_uuid,
+		workspace_uuid,
+		created_by_api_key_uuid,
+		environment_uuid, environment_external_id,
+		agent_uuid, agent_external_id,
+		agent_version, agent_snapshot, deployment_uuid,
 		deployment_external_id, title, metadata, vault_ids, status, usage, stats,
 		outcome_evaluations, created_at, updated_at, archived_at, deleted_at`
-	sessionResourceSQLXColumns = `cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(session_uuid as text) as session_uuid,
+	sessionResourceSQLXColumns = `uuid, external_id,
+		organization_uuid,
+		workspace_uuid,
+		session_uuid,
 		session_external_id, resource_type, payload, secret_payload,
 		created_at, updated_at, deleted_at`
 	getSessionQuery = `
@@ -187,7 +188,7 @@ const (
 			:session_uuid, :session_external_id, :organization_uuid, :workspace_uuid, :created_by_api_key_uuid,
 			:environment_uuid, :environment_external_id, :agent_uuid, :agent_external_id,
 			:agent_version, CAST(:agent_snapshot AS jsonb),
-			CAST(:deployment_uuid AS uuid), :deployment_external_id, :title,
+			:deployment_uuid, :deployment_external_id, :title,
 			CAST(:metadata AS jsonb), CAST(:vault_ids AS jsonb), :status,
 			CAST(:usage AS jsonb), CAST(:stats AS jsonb), CAST(:outcome_evaluations AS jsonb),
 			:created_at, :created_at
@@ -239,16 +240,16 @@ const (
 		)
 		returning ` + environmentWorkSQLXColumns + `
 	`
-	sessionThreadSQLXColumns = `cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(session_uuid as text) as session_uuid, session_external_id,
-		cast(parent_thread_uuid as text) as parent_thread_uuid, parent_thread_external_id,
+	sessionThreadSQLXColumns = `uuid, external_id,
+		organization_uuid,
+		workspace_uuid,
+		session_uuid, session_external_id,
+		parent_thread_uuid, parent_thread_external_id,
 		agent_snapshot, status, usage, stats, created_at, updated_at, archived_at, deleted_at`
-	environmentWorkSQLXColumns = `cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(environment_uuid as text) as environment_uuid,
+	environmentWorkSQLXColumns = `uuid, external_id,
+		organization_uuid,
+		workspace_uuid,
+		environment_uuid,
 		environment_external_id, data, metadata, secret, state,
 		claimed_by_worker_id, claim_expires_at, acknowledged_at, started_at, latest_heartbeat_at,
 		heartbeat_ttl_seconds, stop_requested_at, stopped_at, created_at, updated_at, deleted_at`
@@ -257,38 +258,38 @@ const (
 // 这些 *Row 结构体是 sessions 相关表的 sqlx 扫描边界；领域层拿到的仍是
 // Session / SessionResource 等业务模型，而不是直接暴露 JSONB 原始字段。
 type sessionRow struct {
-	UUID                  string     `db:"uuid"`
-	ExternalID            string     `db:"external_id"`
-	OrganizationUUID      string     `db:"organization_uuid"`
-	WorkspaceUUID         string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID   string     `db:"created_by_api_key_uuid"`
-	EnvironmentUUID       string     `db:"environment_uuid"`
-	EnvironmentExternalID string     `db:"environment_external_id"`
-	AgentUUID             string     `db:"agent_uuid"`
-	AgentExternalID       string     `db:"agent_external_id"`
-	AgentVersion          int        `db:"agent_version"`
-	AgentSnapshot         []byte     `db:"agent_snapshot"`
-	DeploymentUUID        *string    `db:"deployment_uuid"`
-	DeploymentID          *string    `db:"deployment_external_id"`
-	Title                 *string    `db:"title"`
-	Metadata              []byte     `db:"metadata"`
-	VaultIDs              []byte     `db:"vault_ids"`
-	Status                string     `db:"status"`
-	Usage                 []byte     `db:"usage"`
-	Stats                 []byte     `db:"stats"`
-	OutcomeEvaluations    []byte     `db:"outcome_evaluations"`
-	CreatedAt             time.Time  `db:"created_at"`
-	UpdatedAt             time.Time  `db:"updated_at"`
-	ArchivedAt            *time.Time `db:"archived_at"`
-	DeletedAt             *time.Time `db:"deleted_at"`
+	UUID                  uuid.UUID     `db:"uuid"`
+	ExternalID            string        `db:"external_id"`
+	OrganizationUUID      uuid.UUID     `db:"organization_uuid"`
+	WorkspaceUUID         uuid.UUID     `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID   uuid.UUID     `db:"created_by_api_key_uuid"`
+	EnvironmentUUID       uuid.UUID     `db:"environment_uuid"`
+	EnvironmentExternalID string        `db:"environment_external_id"`
+	AgentUUID             uuid.UUID     `db:"agent_uuid"`
+	AgentExternalID       string        `db:"agent_external_id"`
+	AgentVersion          int           `db:"agent_version"`
+	AgentSnapshot         []byte        `db:"agent_snapshot"`
+	DeploymentUUID        uuid.NullUUID `db:"deployment_uuid"`
+	DeploymentID          *string       `db:"deployment_external_id"`
+	Title                 *string       `db:"title"`
+	Metadata              []byte        `db:"metadata"`
+	VaultIDs              []byte        `db:"vault_ids"`
+	Status                string        `db:"status"`
+	Usage                 []byte        `db:"usage"`
+	Stats                 []byte        `db:"stats"`
+	OutcomeEvaluations    []byte        `db:"outcome_evaluations"`
+	CreatedAt             time.Time     `db:"created_at"`
+	UpdatedAt             time.Time     `db:"updated_at"`
+	ArchivedAt            *time.Time    `db:"archived_at"`
+	DeletedAt             *time.Time    `db:"deleted_at"`
 }
 
 type sessionResourceRow struct {
-	UUID              string     `db:"uuid"`
+	UUID              uuid.UUID  `db:"uuid"`
 	ExternalID        string     `db:"external_id"`
-	OrganizationUUID  string     `db:"organization_uuid"`
-	WorkspaceUUID     string     `db:"workspace_uuid"`
-	SessionUUID       string     `db:"session_uuid"`
+	OrganizationUUID  uuid.UUID  `db:"organization_uuid"`
+	WorkspaceUUID     uuid.UUID  `db:"workspace_uuid"`
+	SessionUUID       uuid.UUID  `db:"session_uuid"`
 	SessionExternalID string     `db:"session_external_id"`
 	ResourceType      string     `db:"resource_type"`
 	Payload           []byte     `db:"payload"`
@@ -299,30 +300,30 @@ type sessionResourceRow struct {
 }
 
 type sessionThreadRow struct {
-	UUID                   string     `db:"uuid"`
-	ExternalID             string     `db:"external_id"`
-	OrganizationUUID       string     `db:"organization_uuid"`
-	WorkspaceUUID          string     `db:"workspace_uuid"`
-	SessionUUID            string     `db:"session_uuid"`
-	SessionExternalID      string     `db:"session_external_id"`
-	ParentThreadUUID       *string    `db:"parent_thread_uuid"`
-	ParentThreadExternalID *string    `db:"parent_thread_external_id"`
-	AgentSnapshot          []byte     `db:"agent_snapshot"`
-	Status                 string     `db:"status"`
-	Usage                  []byte     `db:"usage"`
-	Stats                  []byte     `db:"stats"`
-	CreatedAt              time.Time  `db:"created_at"`
-	UpdatedAt              time.Time  `db:"updated_at"`
-	ArchivedAt             *time.Time `db:"archived_at"`
-	DeletedAt              *time.Time `db:"deleted_at"`
+	UUID                   uuid.UUID     `db:"uuid"`
+	ExternalID             string        `db:"external_id"`
+	OrganizationUUID       uuid.UUID     `db:"organization_uuid"`
+	WorkspaceUUID          uuid.UUID     `db:"workspace_uuid"`
+	SessionUUID            uuid.UUID     `db:"session_uuid"`
+	SessionExternalID      string        `db:"session_external_id"`
+	ParentThreadUUID       uuid.NullUUID `db:"parent_thread_uuid"`
+	ParentThreadExternalID *string       `db:"parent_thread_external_id"`
+	AgentSnapshot          []byte        `db:"agent_snapshot"`
+	Status                 string        `db:"status"`
+	Usage                  []byte        `db:"usage"`
+	Stats                  []byte        `db:"stats"`
+	CreatedAt              time.Time     `db:"created_at"`
+	UpdatedAt              time.Time     `db:"updated_at"`
+	ArchivedAt             *time.Time    `db:"archived_at"`
+	DeletedAt              *time.Time    `db:"deleted_at"`
 }
 
 type environmentWorkRow struct {
-	UUID                  string     `db:"uuid"`
+	UUID                  uuid.UUID  `db:"uuid"`
 	ExternalID            string     `db:"external_id"`
-	OrganizationUUID      string     `db:"organization_uuid"`
-	WorkspaceUUID         string     `db:"workspace_uuid"`
-	EnvironmentUUID       string     `db:"environment_uuid"`
+	OrganizationUUID      uuid.UUID  `db:"organization_uuid"`
+	WorkspaceUUID         uuid.UUID  `db:"workspace_uuid"`
+	EnvironmentUUID       uuid.UUID  `db:"environment_uuid"`
 	EnvironmentExternalID string     `db:"environment_external_id"`
 	Data                  []byte     `db:"data"`
 	Metadata              []byte     `db:"metadata"`
@@ -343,7 +344,7 @@ type environmentWorkRow struct {
 
 func sessionLookupArguments(workspaceUUID string, sessionExternalID string) map[string]any {
 	return map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": sessionExternalID,
 	}
 }
@@ -438,10 +439,10 @@ func createSessionResourceSQLX(
 ) (SessionResource, error) {
 	var row sessionResourceRow
 	err := namedGetContext(ctx, database, &row, createSessionResourceQuery, map[string]any{
-		"resource_uuid":        resource.UUID,
+		"resource_uuid":        dbUUID(resource.UUID),
 		"resource_external_id": resource.ExternalID,
-		"organization_uuid":    resource.OrganizationUUID,
-		"workspace_uuid":       resource.WorkspaceUUID,
+		"organization_uuid":    dbUUID(resource.OrganizationUUID),
+		"workspace_uuid":       dbUUID(resource.WorkspaceUUID),
 		"session_external_id":  resource.SessionExternalID,
 		"resource_type":        resource.ResourceType,
 		"payload":              jsonArg(resource.Payload),
@@ -584,18 +585,18 @@ func insertEnvironmentWorkSQLX(
 
 func createSessionArguments(session Session) map[string]any {
 	return map[string]any{
-		"session_uuid":            session.UUID,
+		"session_uuid":            dbUUID(session.UUID),
 		"session_external_id":     session.ExternalID,
-		"organization_uuid":       session.OrganizationUUID,
-		"workspace_uuid":          session.WorkspaceUUID,
-		"created_by_api_key_uuid": session.CreatedByAPIKeyUUID,
-		"environment_uuid":        session.EnvironmentUUID,
+		"organization_uuid":       dbUUID(session.OrganizationUUID),
+		"workspace_uuid":          dbUUID(session.WorkspaceUUID),
+		"created_by_api_key_uuid": dbUUID(session.CreatedByAPIKeyUUID),
+		"environment_uuid":        dbUUID(session.EnvironmentUUID),
 		"environment_external_id": session.EnvironmentExternalID,
-		"agent_uuid":              session.AgentUUID,
+		"agent_uuid":              dbUUID(session.AgentUUID),
 		"agent_external_id":       session.AgentExternalID,
 		"agent_version":           session.AgentVersion,
 		"agent_snapshot":          jsonArg(session.AgentSnapshot),
-		"deployment_uuid":         session.DeploymentUUID,
+		"deployment_uuid":         dbNullableUUID(session.DeploymentUUID),
 		"deployment_external_id":  session.DeploymentID,
 		"title":                   session.Title,
 		"metadata":                jsonArg(session.Metadata),
@@ -610,13 +611,13 @@ func createSessionArguments(session Session) map[string]any {
 
 func createSessionThreadArguments(thread SessionThread) map[string]any {
 	return map[string]any{
-		"thread_uuid":               thread.UUID,
+		"thread_uuid":               dbUUID(thread.UUID),
 		"thread_external_id":        thread.ExternalID,
-		"organization_uuid":         thread.OrganizationUUID,
-		"workspace_uuid":            thread.WorkspaceUUID,
-		"session_uuid":              thread.SessionUUID,
+		"organization_uuid":         dbUUID(thread.OrganizationUUID),
+		"workspace_uuid":            dbUUID(thread.WorkspaceUUID),
+		"session_uuid":              dbUUID(thread.SessionUUID),
 		"session_external_id":       thread.SessionExternalID,
-		"parent_thread_uuid":        thread.ParentThreadUUID,
+		"parent_thread_uuid":        dbNullableUUID(thread.ParentThreadUUID),
 		"parent_thread_external_id": thread.ParentThreadExternalID,
 		"agent_snapshot":            jsonArg(thread.AgentSnapshot),
 		"status":                    thread.Status,
@@ -628,11 +629,11 @@ func createSessionThreadArguments(thread SessionThread) map[string]any {
 
 func createEnvironmentWorkArguments(work EnvironmentWork) map[string]any {
 	return map[string]any{
-		"work_uuid":               work.UUID,
+		"work_uuid":               dbUUID(work.UUID),
 		"work_external_id":        work.ExternalID,
-		"organization_uuid":       work.OrganizationUUID,
-		"workspace_uuid":          work.WorkspaceUUID,
-		"environment_uuid":        work.EnvironmentUUID,
+		"organization_uuid":       dbUUID(work.OrganizationUUID),
+		"workspace_uuid":          dbUUID(work.WorkspaceUUID),
+		"environment_uuid":        dbUUID(work.EnvironmentUUID),
 		"environment_external_id": work.EnvironmentExternalID,
 		"data":                    jsonArg(work.Data),
 		"metadata":                jsonArg(work.Metadata),
@@ -644,18 +645,18 @@ func createEnvironmentWorkArguments(work EnvironmentWork) map[string]any {
 
 func (r sessionRow) session() Session {
 	return Session{
-		UUID:                  r.UUID,
+		UUID:                  r.UUID.String(),
 		ExternalID:            r.ExternalID,
-		OrganizationUUID:      r.OrganizationUUID,
-		WorkspaceUUID:         r.WorkspaceUUID,
-		CreatedByAPIKeyUUID:   r.CreatedByAPIKeyUUID,
-		EnvironmentUUID:       r.EnvironmentUUID,
+		OrganizationUUID:      r.OrganizationUUID.String(),
+		WorkspaceUUID:         r.WorkspaceUUID.String(),
+		CreatedByAPIKeyUUID:   r.CreatedByAPIKeyUUID.String(),
+		EnvironmentUUID:       r.EnvironmentUUID.String(),
 		EnvironmentExternalID: r.EnvironmentExternalID,
-		AgentUUID:             r.AgentUUID,
+		AgentUUID:             r.AgentUUID.String(),
 		AgentExternalID:       r.AgentExternalID,
 		AgentVersion:          r.AgentVersion,
 		AgentSnapshot:         copyRaw(r.AgentSnapshot),
-		DeploymentUUID:        r.DeploymentUUID,
+		DeploymentUUID:        nullableUUIDString(r.DeploymentUUID),
 		DeploymentID:          r.DeploymentID,
 		Title:                 r.Title,
 		Metadata:              copyRaw(r.Metadata),
@@ -673,13 +674,13 @@ func (r sessionRow) session() Session {
 
 func (r sessionThreadRow) thread() SessionThread {
 	return SessionThread{
-		UUID:                   r.UUID,
+		UUID:                   r.UUID.String(),
 		ExternalID:             r.ExternalID,
-		OrganizationUUID:       r.OrganizationUUID,
-		WorkspaceUUID:          r.WorkspaceUUID,
-		SessionUUID:            r.SessionUUID,
+		OrganizationUUID:       r.OrganizationUUID.String(),
+		WorkspaceUUID:          r.WorkspaceUUID.String(),
+		SessionUUID:            r.SessionUUID.String(),
 		SessionExternalID:      r.SessionExternalID,
-		ParentThreadUUID:       r.ParentThreadUUID,
+		ParentThreadUUID:       nullableUUIDString(r.ParentThreadUUID),
 		ParentThreadExternalID: r.ParentThreadExternalID,
 		AgentSnapshot:          copyRaw(r.AgentSnapshot),
 		Status:                 r.Status,
@@ -694,11 +695,11 @@ func (r sessionThreadRow) thread() SessionThread {
 
 func (r sessionResourceRow) resource() SessionResource {
 	return SessionResource{
-		UUID:              r.UUID,
+		UUID:              r.UUID.String(),
 		ExternalID:        r.ExternalID,
-		OrganizationUUID:  r.OrganizationUUID,
-		WorkspaceUUID:     r.WorkspaceUUID,
-		SessionUUID:       r.SessionUUID,
+		OrganizationUUID:  r.OrganizationUUID.String(),
+		WorkspaceUUID:     r.WorkspaceUUID.String(),
+		SessionUUID:       r.SessionUUID.String(),
 		SessionExternalID: r.SessionExternalID,
 		ResourceType:      r.ResourceType,
 		Payload:           copyRaw(r.Payload),
@@ -711,11 +712,11 @@ func (r sessionResourceRow) resource() SessionResource {
 
 func (r environmentWorkRow) work() EnvironmentWork {
 	return EnvironmentWork{
-		UUID:                  r.UUID,
+		UUID:                  r.UUID.String(),
 		ExternalID:            r.ExternalID,
-		OrganizationUUID:      r.OrganizationUUID,
-		WorkspaceUUID:         r.WorkspaceUUID,
-		EnvironmentUUID:       r.EnvironmentUUID,
+		OrganizationUUID:      r.OrganizationUUID.String(),
+		WorkspaceUUID:         r.WorkspaceUUID.String(),
+		EnvironmentUUID:       r.EnvironmentUUID.String(),
 		EnvironmentExternalID: r.EnvironmentExternalID,
 		Data:                  copyRaw(r.Data),
 		Metadata:              copyRaw(r.Metadata),

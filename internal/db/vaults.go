@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Vault struct {
@@ -90,14 +92,18 @@ func (d *DB) GetVault(ctx context.Context, workspaceUUID, externalID string) (Va
 func (d *DB) GetVaultByExternalIDOrUUID(ctx context.Context, workspaceUUID, identifier string) (Vault, error) {
 	return getVaultSQLX(ctx, d.sql, vaultSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
-			and (external_id = :identifier or CAST(uuid AS text) = :identifier)
+			and (external_id = :identifier or uuid = :vault_uuid)
 			and deleted_at is null
-	`, map[string]any{"workspace_uuid": workspaceUUID, "identifier": identifier})
+	`, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"identifier":     identifier,
+		"vault_uuid":     tryParseDBUUIDIdentifier(identifier),
+	})
 }
 
 func (d *DB) UpdateVault(ctx context.Context, workspaceUUID, externalID string, next Vault) (Vault, error) {
 	arguments := vaultArguments(next)
-	arguments["workspace_uuid"] = workspaceUUID
+	arguments["workspace_uuid"] = dbUUID(workspaceUUID)
 	arguments["external_id"] = externalID
 	return getVaultSQLX(ctx, d.sql, `
 		update vaults
@@ -132,7 +138,10 @@ func (d *DB) ArchiveVault(ctx context.Context, workspaceUUID, externalID string)
 			secret_payload = null,
 			updated_at = now()
 		where workspace_uuid = :workspace_uuid and vault_uuid = :vault_uuid and deleted_at is null
-	`, map[string]any{"workspace_uuid": workspaceUUID, "vault_uuid": vault.UUID}); err != nil {
+	`, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"vault_uuid":     dbUUID(vault.UUID),
+	}); err != nil {
 		return Vault{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -148,9 +157,9 @@ func (d *DB) DeleteVault(ctx context.Context, workspaceUUID, externalID string) 
 	}
 	defer tx.Rollback()
 
-	var vaultUUID string
+	var vaultUUID uuid.UUID
 	err = namedGetContext(ctx, tx, &vaultUUID, `
-		select CAST(uuid AS text)
+		select uuid
 		from vaults
 		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		for update
@@ -161,7 +170,10 @@ func (d *DB) DeleteVault(ctx context.Context, workspaceUUID, externalID string) 
 	if err != nil {
 		return err
 	}
-	arguments := map[string]any{"workspace_uuid": workspaceUUID, "vault_uuid": vaultUUID}
+	arguments := map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"vault_uuid":     vaultUUID,
+	}
 	if _, err := namedExecContext(ctx, tx, `
 		delete from vault_credentials
 		where workspace_uuid = :workspace_uuid and vault_uuid = :vault_uuid
@@ -170,7 +182,7 @@ func (d *DB) DeleteVault(ctx context.Context, workspaceUUID, externalID string) 
 	}
 	if _, err := namedExecContext(ctx, tx, `
 		delete from vaults
-		where workspace_uuid = :workspace_uuid and uuid = CAST(:vault_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid and uuid = :vault_uuid
 	`, arguments); err != nil {
 		return err
 	}
@@ -200,9 +212,9 @@ func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredenti
 	}
 	defer tx.Rollback()
 
-	var vaultUUID string
+	var vaultUUID uuid.UUID
 	err = namedGetContext(ctx, tx, &vaultUUID, `
-		select CAST(uuid AS text)
+		select uuid
 		from vaults
 		where workspace_uuid = :workspace_uuid
 			and external_id = :vault_external_id
@@ -210,7 +222,7 @@ func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredenti
 			and archived_at is null
 		for update
 	`, map[string]any{
-		"workspace_uuid":    credential.WorkspaceUUID,
+		"workspace_uuid":    dbUUID(credential.WorkspaceUUID),
 		"vault_external_id": credential.VaultExternalID,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -228,14 +240,17 @@ func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredenti
 			and vault_uuid = :vault_uuid
 			and deleted_at is null
 			and archived_at is null
-	`, map[string]any{"workspace_uuid": credential.WorkspaceUUID, "vault_uuid": vaultUUID}); err != nil {
+	`, map[string]any{
+		"workspace_uuid": dbUUID(credential.WorkspaceUUID),
+		"vault_uuid":     vaultUUID,
+	}); err != nil {
 		return VaultCredential{}, err
 	}
 	if activeCount >= 20 {
 		return VaultCredential{}, ErrLimitExceeded
 	}
 
-	credential.VaultUUID = vaultUUID
+	credential.VaultUUID = vaultUUID.String()
 	created, err := getVaultCredentialSQLX(ctx, tx, `
 		insert into vault_credentials (
 			uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
@@ -244,7 +259,7 @@ func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredenti
 		)
 		values (
 			:uuid, :external_id, :organization_uuid, :workspace_uuid, :vault_uuid,
-			:vault_external_id, CAST(nullif(:created_by_api_key_uuid, '') AS uuid), :display_name,
+			:vault_external_id, :created_by_api_key_uuid, :display_name,
 			CAST(:metadata AS jsonb), :auth_type, :credential_key,
 			CAST(:auth AS jsonb), CAST(:secret_payload AS jsonb),
 			:created_at, :created_at
@@ -274,7 +289,7 @@ func (d *DB) GetVaultCredential(ctx context.Context, workspaceUUID, vaultExterna
 
 func (d *DB) UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string, next VaultCredential) (VaultCredential, error) {
 	arguments := vaultCredentialArguments(next)
-	arguments["workspace_uuid"] = workspaceUUID
+	arguments["workspace_uuid"] = dbUUID(workspaceUUID)
 	arguments["vault_external_id"] = vaultExternalID
 	arguments["credential_external_id"] = credentialExternalID
 	return getVaultCredentialSQLX(ctx, d.sql, `
@@ -341,23 +356,23 @@ func (d *DB) ListVaultCredentialsPage(ctx context.Context, params ListVaultCrede
 }
 
 const (
-	vaultSQLXColumns = `CAST(uuid AS text) AS uuid, external_id, CAST(organization_uuid AS text) AS organization_uuid,
-		CAST(workspace_uuid AS text) AS workspace_uuid, CAST(created_by_api_key_uuid AS text) AS created_by_api_key_uuid, display_name, metadata, created_at,
+	vaultSQLXColumns = `uuid, external_id, organization_uuid,
+		workspace_uuid, created_by_api_key_uuid, display_name, metadata, created_at,
 		updated_at, archived_at, deleted_at`
-	vaultCredentialSQLXColumns = `CAST(uuid AS text) AS uuid, external_id,
-		CAST(organization_uuid AS text) AS organization_uuid, CAST(workspace_uuid AS text) AS workspace_uuid,
-		CAST(vault_uuid AS text) AS vault_uuid, vault_external_id,
-		coalesce(CAST(created_by_api_key_uuid AS text), '') AS created_by_api_key_uuid,
+	vaultCredentialSQLXColumns = `uuid, external_id,
+		organization_uuid, workspace_uuid,
+		vault_uuid, vault_external_id,
+		created_by_api_key_uuid,
 		display_name, metadata, auth_type, credential_key, auth, secret_payload,
 		created_at, updated_at, archived_at, deleted_at`
 )
 
 type vaultRow struct {
-	UUID                string     `db:"uuid"`
+	UUID                uuid.UUID  `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
-	OrganizationUUID    string     `db:"organization_uuid"`
-	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	OrganizationUUID    uuid.UUID  `db:"organization_uuid"`
+	WorkspaceUUID       uuid.UUID  `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID uuid.UUID  `db:"created_by_api_key_uuid"`
 	DisplayName         string     `db:"display_name"`
 	Metadata            []byte     `db:"metadata"`
 	CreatedAt           time.Time  `db:"created_at"`
@@ -367,23 +382,23 @@ type vaultRow struct {
 }
 
 type vaultCredentialRow struct {
-	UUID                string     `db:"uuid"`
-	ExternalID          string     `db:"external_id"`
-	OrganizationUUID    string     `db:"organization_uuid"`
-	WorkspaceUUID       string     `db:"workspace_uuid"`
-	VaultUUID           string     `db:"vault_uuid"`
-	VaultExternalID     string     `db:"vault_external_id"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
-	DisplayName         string     `db:"display_name"`
-	Metadata            []byte     `db:"metadata"`
-	AuthType            string     `db:"auth_type"`
-	CredentialKey       string     `db:"credential_key"`
-	Auth                []byte     `db:"auth"`
-	SecretPayload       []byte     `db:"secret_payload"`
-	CreatedAt           time.Time  `db:"created_at"`
-	UpdatedAt           time.Time  `db:"updated_at"`
-	ArchivedAt          *time.Time `db:"archived_at"`
-	DeletedAt           *time.Time `db:"deleted_at"`
+	UUID                uuid.UUID     `db:"uuid"`
+	ExternalID          string        `db:"external_id"`
+	OrganizationUUID    uuid.UUID     `db:"organization_uuid"`
+	WorkspaceUUID       uuid.UUID     `db:"workspace_uuid"`
+	VaultUUID           uuid.UUID     `db:"vault_uuid"`
+	VaultExternalID     string        `db:"vault_external_id"`
+	CreatedByAPIKeyUUID uuid.NullUUID `db:"created_by_api_key_uuid"`
+	DisplayName         string        `db:"display_name"`
+	Metadata            []byte        `db:"metadata"`
+	AuthType            string        `db:"auth_type"`
+	CredentialKey       string        `db:"credential_key"`
+	Auth                []byte        `db:"auth"`
+	SecretPayload       []byte        `db:"secret_payload"`
+	CreatedAt           time.Time     `db:"created_at"`
+	UpdatedAt           time.Time     `db:"updated_at"`
+	ArchivedAt          *time.Time    `db:"archived_at"`
+	DeletedAt           *time.Time    `db:"deleted_at"`
 }
 
 func vaultSelectSQL() string {
@@ -396,14 +411,17 @@ func vaultCredentialSelectSQL() string {
 
 func listVaultsQuery(params ListVaultsPageParams) (string, map[string]any) {
 	query := vaultSelectSQL() + ` where workspace_uuid = :workspace_uuid and deleted_at is null`
-	arguments := map[string]any{"workspace_uuid": params.WorkspaceUUID, "limit": params.Limit + 1}
+	arguments := map[string]any{
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
+		"limit":          params.Limit + 1,
+	}
 	if !params.IncludeArchived {
 		query += " and archived_at is null"
 	}
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < :cursor_uuid))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by created_at desc, uuid desc limit :limit"
 	return query, arguments
@@ -416,7 +434,7 @@ func listVaultCredentialsQuery(params ListVaultCredentialsPageParams) (string, m
 			and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_uuid":    params.WorkspaceUUID,
+		"workspace_uuid":    dbUUID(params.WorkspaceUUID),
 		"vault_external_id": params.VaultExternalID,
 		"limit":             params.Limit + 1,
 	}
@@ -424,9 +442,9 @@ func listVaultCredentialsQuery(params ListVaultCredentialsPageParams) (string, m
 		query += " and archived_at is null"
 	}
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < :cursor_uuid))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by created_at desc, uuid desc limit :limit"
 	return query, arguments
@@ -499,7 +517,10 @@ func selectVaultCredentialsSQLX(
 }
 
 func vaultLookupArguments(workspaceUUID, externalID string) map[string]any {
-	return map[string]any{"workspace_uuid": workspaceUUID, "external_id": externalID}
+	return map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"external_id":    externalID,
+	}
 }
 
 func vaultCredentialLookupArguments(
@@ -508,7 +529,7 @@ func vaultCredentialLookupArguments(
 	credentialExternalID string,
 ) map[string]any {
 	return map[string]any{
-		"workspace_uuid":         workspaceUUID,
+		"workspace_uuid":         dbUUID(workspaceUUID),
 		"vault_external_id":      vaultExternalID,
 		"credential_external_id": credentialExternalID,
 	}
@@ -516,11 +537,11 @@ func vaultCredentialLookupArguments(
 
 func vaultArguments(vault Vault) map[string]any {
 	return map[string]any{
-		"uuid":                    vault.UUID,
+		"uuid":                    dbUUID(vault.UUID),
 		"external_id":             vault.ExternalID,
-		"organization_uuid":       vault.OrganizationUUID,
-		"workspace_uuid":          vault.WorkspaceUUID,
-		"created_by_api_key_uuid": vault.CreatedByAPIKeyUUID,
+		"organization_uuid":       dbUUID(vault.OrganizationUUID),
+		"workspace_uuid":          dbUUID(vault.WorkspaceUUID),
+		"created_by_api_key_uuid": dbUUID(vault.CreatedByAPIKeyUUID),
 		"display_name":            vault.DisplayName,
 		"metadata":                jsonArg(vault.Metadata),
 		"created_at":              vault.CreatedAt,
@@ -530,13 +551,13 @@ func vaultArguments(vault Vault) map[string]any {
 
 func vaultCredentialArguments(credential VaultCredential) map[string]any {
 	return map[string]any{
-		"uuid":                    credential.UUID,
+		"uuid":                    dbUUID(credential.UUID),
 		"external_id":             credential.ExternalID,
-		"organization_uuid":       credential.OrganizationUUID,
-		"workspace_uuid":          credential.WorkspaceUUID,
-		"vault_uuid":              credential.VaultUUID,
+		"organization_uuid":       dbUUID(credential.OrganizationUUID),
+		"workspace_uuid":          dbUUID(credential.WorkspaceUUID),
+		"vault_uuid":              dbUUID(credential.VaultUUID),
 		"vault_external_id":       credential.VaultExternalID,
-		"created_by_api_key_uuid": credential.CreatedByAPIKeyUUID,
+		"created_by_api_key_uuid": dbNullableUUID(&credential.CreatedByAPIKeyUUID),
 		"display_name":            credential.DisplayName,
 		"metadata":                jsonArg(credential.Metadata),
 		"auth_type":               credential.AuthType,
@@ -550,11 +571,11 @@ func vaultCredentialArguments(credential VaultCredential) map[string]any {
 
 func (r vaultRow) vault() Vault {
 	return Vault{
-		UUID:                r.UUID,
+		UUID:                r.UUID.String(),
 		ExternalID:          r.ExternalID,
-		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceUUID:       r.WorkspaceUUID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		OrganizationUUID:    r.OrganizationUUID.String(),
+		WorkspaceUUID:       r.WorkspaceUUID.String(),
+		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID.String(),
 		DisplayName:         r.DisplayName,
 		Metadata:            copyRaw(r.Metadata),
 		CreatedAt:           r.CreatedAt,
@@ -566,13 +587,13 @@ func (r vaultRow) vault() Vault {
 
 func (r vaultCredentialRow) credential() VaultCredential {
 	return VaultCredential{
-		UUID:                r.UUID,
+		UUID:                r.UUID.String(),
 		ExternalID:          r.ExternalID,
-		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceUUID:       r.WorkspaceUUID,
-		VaultUUID:           r.VaultUUID,
+		OrganizationUUID:    r.OrganizationUUID.String(),
+		WorkspaceUUID:       r.WorkspaceUUID.String(),
+		VaultUUID:           r.VaultUUID.String(),
 		VaultExternalID:     r.VaultExternalID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: nullableUUIDValue(r.CreatedByAPIKeyUUID),
 		DisplayName:         r.DisplayName,
 		Metadata:            copyRaw(r.Metadata),
 		AuthType:            r.AuthType,

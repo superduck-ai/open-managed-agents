@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
+
+	"github.com/google/uuid"
 )
 
 func TestWorkbenchRevisionQueryBindsNamedArguments(t *testing.T) {
 	query, arguments, err := bindNamed(postgresRebinder{}, upsertWorkbenchRevisionQuery, map[string]any{
-		"organization_uuid": "00000000-0000-0000-0000-000000000001",
+		"organization_uuid": uuid.MustParse("00000000-0000-4000-8000-000000000001"),
 		"prompt_uuid":       "prompt_test",
 		"revision_uuid":     "revision_test",
 		"payload":           `{"model":"test"}`,
@@ -25,6 +27,9 @@ func TestWorkbenchRevisionQueryBindsNamedArguments(t *testing.T) {
 	if strings.Contains(query, "::") {
 		t.Fatalf("query contains PostgreSQL shorthand cast: %q", query)
 	}
+	if strings.Contains(query, " AS uuid)") {
+		t.Fatalf("query contains UUID cast ceremony: %q", query)
+	}
 	if len(arguments) != 6 {
 		t.Fatalf("argument count = %d, want 6", len(arguments))
 	}
@@ -32,9 +37,9 @@ func TestWorkbenchRevisionQueryBindsNamedArguments(t *testing.T) {
 
 func TestWorkbenchSQLXRowsMapDatabaseValues(t *testing.T) {
 	prompt := workbenchPromptRow{
-		OrgUUID:            "org_test",
+		OrgUUID:            uuid.MustParse("00000000-0000-4000-8000-000000000002"),
 		PromptUUID:         "prompt_test",
-		WorkspaceUUID:      "00000000-0000-4000-8000-000000000001",
+		WorkspaceUUID:      uuid.MustParse("00000000-0000-4000-8000-000000000001"),
 		WorkspaceDisplayID: "workspace_test",
 		LatestRevisionUUID: sql.NullString{String: "revision_test", Valid: true},
 	}.record()

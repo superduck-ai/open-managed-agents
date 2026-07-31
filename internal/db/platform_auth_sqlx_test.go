@@ -3,6 +3,8 @@ package db
 import (
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
@@ -10,7 +12,7 @@ func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
 		if _, _, err := bindNamed(postgresRebinder{}, resolvePlatformSessionIdentityQuery, map[string]any{
 			"org_uuid": "org_test",
 		}); err == nil {
-			t.Fatal("bindNamed() error = nil, want missing user_uuid error")
+			t.Fatal("bindNamed() error = nil, want missing user identity error")
 		}
 	})
 
@@ -31,6 +33,7 @@ func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
 			query: resolvePlatformSessionIdentityQuery,
 			arguments: map[string]any{
 				"org_uuid":  "org_test",
+				"user_id":   "user_test",
 				"user_uuid": "user_test",
 			},
 			wantArgCount: 4,
@@ -58,20 +61,20 @@ func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
 
 func TestPlatformSessionIdentityRowMapping(t *testing.T) {
 	row := platformSessionIdentityRow{
-		OrganizationUUID:    "org-uuid",
-		WorkspaceUUID:       "workspace-uuid",
+		OrganizationUUID:    uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		WorkspaceUUID:       uuid.MustParse("00000000-0000-0000-0000-000000000002"),
 		WorkspaceExternalID: "workspace_test",
-		UserUUID:            "user-uuid",
+		UserUUID:            uuid.MustParse("00000000-0000-0000-0000-000000000003"),
 		UserExternalID:      "user_test",
-		APIKeyUUID:          "api-key-uuid",
+		APIKeyUUID:          uuid.MustParse("00000000-0000-0000-0000-000000000004"),
 		APIKeyExternalID:    "api_key_test",
 	}
 
 	session := row.session()
-	if session.OrganizationUUID != row.OrganizationUUID ||
+	if session.OrganizationUUID != row.OrganizationUUID.String() ||
 		session.WorkspaceExternalID != row.WorkspaceExternalID ||
-		session.UserUUID != row.UserUUID ||
-		session.APIKeyUUID != row.APIKeyUUID ||
+		session.UserUUID != row.UserUUID.String() ||
+		session.APIKeyUUID != row.APIKeyUUID.String() ||
 		session.APIKeyExternalID != row.APIKeyExternalID {
 		t.Fatalf("session = %#v, want values from row %#v", session, row)
 	}

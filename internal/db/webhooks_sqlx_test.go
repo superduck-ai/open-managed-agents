@@ -19,21 +19,18 @@ func TestWebhookDeliveryQueriesUseSQLXNamedParameters(t *testing.T) {
 			query: enqueueWebhookDeliveryJobQuery,
 			arguments: map[string]any{
 				"workspace_uuid": "00000000-0000-0000-0000-000000000001",
-				"event_type":     "session.created",
-				"event":          []byte(`{"type":"session.created"}`),
+				"payload":        []byte(`{"event_type":"session.created","event":{"type":"session.created"}}`),
 			},
-			wantArgCount: 3,
+			wantArgCount: 2,
 		},
 		{
 			name:  "enqueue endpoint",
 			query: enqueueWebhookDeliveryJobForEndpointQuery,
 			arguments: map[string]any{
-				"workspace_uuid":        "00000000-0000-0000-0000-000000000001",
-				"event_type":            "session.created",
-				"event":                 []byte(`{"type":"session.created"}`),
-				"webhook_endpoint_uuid": "00000000-0000-0000-0000-000000000002",
+				"workspace_uuid": "00000000-0000-0000-0000-000000000001",
+				"payload":        []byte(`{"event_type":"session.created","event":{"type":"session.created"},"webhook_endpoint_uuid":"00000000-0000-0000-0000-000000000002"}`),
 			},
-			wantArgCount: 4,
+			wantArgCount: 2,
 		},
 		{
 			name:  "lease",

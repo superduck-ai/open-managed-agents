@@ -14,7 +14,7 @@ const (
 	countSessionFileResourcesSQL = `
 		select count(*)
 		from session_resources
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and resource_type = :resource_type
 			and payload is not null
@@ -24,8 +24,8 @@ const (
 		select resource.path
 		from session_resources resource
 		cross join (values (CAST(:entry_path AS text))) as candidate(path)
-		where resource.workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and resource.session_uuid = CAST(:session_uuid AS uuid)
+		where resource.workspace_uuid = :workspace_uuid
+			and resource.session_uuid = :session_uuid
 			and resource.payload is not null
 			and resource.deleted_at is null
 			and (
@@ -52,7 +52,7 @@ func enforceSessionFileResourceCapacityTx(
 	}
 	var activeFiles int
 	if err := namedGetContext(ctx, tx, &activeFiles, countSessionFileResourcesSQL, map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": sessionExternalID,
 		"resource_type":       SessionResourceTypeFile,
 	}); err != nil {
@@ -89,27 +89,25 @@ func lockSessionFilestoreMutationTx(
 	session Session,
 ) (FilestoreFilesystem, error) {
 	if _, err := namedExecContext(ctx, tx, fileWorkspaceLockQuery, map[string]any{
-		"workspace_uuid": session.WorkspaceUUID,
+		"workspace_uuid": dbUUID(session.WorkspaceUUID),
 	}); err != nil {
 		return FilestoreFilesystem{}, err
 	}
 	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = (
-			CAST(:workspace_uuid AS uuid)
-		)
+		where workspace_uuid = :workspace_uuid
 			and session_uuid = :session_uuid
 			and deleted_at is null
 		for update
 	`, map[string]any{
-		"workspace_uuid": session.WorkspaceUUID,
-		"session_uuid":   session.UUID,
+		"workspace_uuid": dbUUID(session.WorkspaceUUID),
+		"session_uuid":   dbUUID(session.UUID),
 	})
 	if err != nil {
 		return FilestoreFilesystem{}, err
 	}
-	if _, err := namedExecContext(ctx, tx, `
-		select pg_advisory_xact_lock(-CAST(:filesystem_uuid AS bigint))
-	`, map[string]any{"filesystem_id": filesystem.UUID}); err != nil {
+	if _, err := namedExecContext(ctx, tx, provisionFilestoreNamespaceLockQuery, map[string]any{
+		"filesystem_uuid": dbUUID(filesystem.UUID),
+	}); err != nil {
 		return FilestoreFilesystem{}, err
 	}
 	return filesystem, nil
@@ -145,7 +143,7 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	file, err := getFileRecordSQLX(ctx, tx, `
 		select `+fileSQLXColumns+`
 		from files
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
 			and external_id = :file_external_id
 			and deleted_at is null
 		for share
@@ -171,20 +169,20 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	err = namedGetContext(ctx, tx, &row, `
 		update session_resources
 		set path = :entry_path, parent_path = :parent_path,
-			file_uuid = CAST(:file_uuid AS uuid),
+			file_uuid = :file_uuid,
 			updated_at = :updated_at
-		where uuid = CAST(:resource_uuid AS uuid)
-			and workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid) and deleted_at is null
+		where uuid = :resource_uuid
+			and workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid and deleted_at is null
 		returning `+sessionResourceSQLXColumns+`
 	`, map[string]any{
 		"entry_path":     mount.Path,
 		"parent_path":    filestoreParentPath(mount.Path),
-		"file_uuid":      file.UUID,
+		"file_uuid":      dbUUID(file.UUID),
 		"updated_at":     filestoreNow(resource.CreatedAt),
-		"resource_uuid":  resource.UUID,
-		"workspace_uuid": session.WorkspaceUUID,
-		"session_uuid":   session.UUID,
+		"resource_uuid":  dbUUID(resource.UUID),
+		"workspace_uuid": dbUUID(session.WorkspaceUUID),
+		"session_uuid":   dbUUID(session.UUID),
 	})
 	if isUniqueViolation(err) {
 		return SessionResource{}, ErrFilestorePathExists
@@ -206,8 +204,8 @@ func rejectSessionFileMountConflictTx(
 	// return 400; ordinary occupied entries remain ErrFilestorePathExists/409.
 	var conflictingPath string
 	err := namedGetContext(ctx, tx, &conflictingPath, findSessionFileMountConflictSQL, map[string]any{
-		"workspace_uuid": filesystem.WorkspaceUUID,
-		"session_uuid":   filesystem.SessionUUID,
+		"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
+		"session_uuid":   dbUUID(filesystem.SessionUUID),
 		"entry_path":     path,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -233,14 +231,14 @@ func getSessionResourceForMutationSQLX(
 	err := namedGetContext(ctx, tx, &row, `
 		select `+sessionResourceSQLXColumns+`
 		from session_resources
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
 			and payload is not null
 			and deleted_at is null
 		for update
 	`, map[string]any{
-		"workspace_uuid":       workspaceUUID,
+		"workspace_uuid":       dbUUID(workspaceUUID),
 		"session_external_id":  sessionExternalID,
 		"resource_external_id": resourceExternalID,
 	})
@@ -276,12 +274,12 @@ func softDeleteSessionResourceSQLX(
 	result, err := namedExecContext(ctx, tx, `
 		update session_resources
 		set deleted_at = now(), updated_at = now()
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
 			and deleted_at is null
 	`, map[string]any{
-		"workspace_uuid":       workspaceUUID,
+		"workspace_uuid":       dbUUID(workspaceUUID),
 		"session_external_id":  sessionExternalID,
 		"resource_external_id": resourceExternalID,
 	})

@@ -29,25 +29,25 @@ func (d *DB) beginFilestoreNamespaceMutation(ctx context.Context, workspaceUUID,
 		}
 	}()
 	// 即使目录操作通常不改变容量，也可能替换到期文件；统一锁序比事后升级锁更安全。
-	if _, err := namedExecContext(ctx, tx, `
-		select pg_advisory_xact_lock(:workspace_uuid)
-	`, map[string]any{"workspace_uuid": workspaceUUID}); err != nil {
+	if _, err := namedExecContext(ctx, tx, fileWorkspaceLockQuery, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+	}); err != nil {
 		return nil, FilestoreFilesystem{}, err
 	}
 	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and id = :filesystem_uuid and deleted_at is null
+		where workspace_uuid = :workspace_uuid
+			and uuid = :filesystem_uuid and deleted_at is null
 		for update
 	`, map[string]any{
-		"filesystem_uuid": filesystemUUID,
+		"workspace_uuid":  dbUUID(workspaceUUID),
+		"filesystem_uuid": dbUUID(filesystemUUID),
 	})
 	if err != nil {
 		return nil, FilestoreFilesystem{}, err
 	}
-	// 文件系统锁使用负数键，与 Files API 已占用的正数工作区锁命名空间隔离。
-	if _, err := namedExecContext(ctx, tx, `
-		select pg_advisory_xact_lock(-CAST(:filesystem_uuid AS bigint))
-	`, map[string]any{"filesystem_uuid": filesystem.UUID}); err != nil {
+	if _, err := namedExecContext(ctx, tx, provisionFilestoreNamespaceLockQuery, map[string]any{
+		"filesystem_uuid": dbUUID(filesystem.UUID),
+	}); err != nil {
 		return nil, FilestoreFilesystem{}, err
 	}
 	rollback = false
@@ -113,8 +113,8 @@ func getActiveSessionResourceFileForMutation(ctx context.Context, tx *sqlx.Tx, f
 
 func sessionResourceFileMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
 	return map[string]any{
-		"workspace_uuid": filesystem.WorkspaceUUID,
-		"session_uuid":   filesystem.SessionUUID,
+		"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
+		"session_uuid":   dbUUID(filesystem.SessionUUID),
 		"entry_path":     entryPath,
 	}
 }
@@ -201,22 +201,22 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fil
 			session_external_id, resource_type, payload, secret_payload,
 			path, parent_path, created_at, updated_at
 		)
-		select CAST(:resource_uuid AS uuid),
+		select :resource_uuid,
 			:resource_external_id,
-			CAST(:organization_uuid AS uuid), CAST(:workspace_uuid AS uuid), session.uuid,
+			:organization_uuid, :workspace_uuid, session.uuid,
 			session.external_id, 'directory', null, null,
 			:entry_path, :parent_path, :now, :now
 		from sessions session
-		where session.uuid = CAST(:session_uuid AS uuid)
-			and session.workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where session.uuid = :session_uuid
+			and session.workspace_uuid = :workspace_uuid
 			and session.deleted_at is null
 		returning id
 	`, map[string]any{
-		"resource_uuid":        resourceUUID,
+		"resource_uuid":        dbUUID(resourceUUID),
 		"resource_external_id": resourceExternalID,
-		"organization_uuid":    filesystem.OrganizationUUID,
-		"workspace_uuid":       filesystem.WorkspaceUUID,
-		"session_uuid":         filesystem.SessionUUID,
+		"organization_uuid":    dbUUID(filesystem.OrganizationUUID),
+		"workspace_uuid":       dbUUID(filesystem.WorkspaceUUID),
+		"session_uuid":         dbUUID(filesystem.SessionUUID),
 		"entry_path":           directoryPath,
 		"parent_path":          filestoreParentPath(directoryPath),
 		"now":                  now,
@@ -225,8 +225,8 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fil
 		return SessionResourceFile{}, err
 	}
 	return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-		where uuid = CAST(:resource_uuid AS uuid) and deleted_at is null
-	`, map[string]any{"resource_uuid": resourceUUID})
+		where uuid = :resource_uuid and deleted_at is null
+	`, map[string]any{"resource_uuid": dbUUID(resourceUUID)})
 }
 
 type putFilestoreFileTxInput struct {
@@ -297,7 +297,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, existing SessionResourceFile, found bool, input putFilestoreFileTxInput) (SessionResourceFile, error) {
 	arguments := filestoreFileWriteArguments(filesystem, input)
 	if found {
-		arguments["resource_uuid"] = existing.ID
+		arguments["resource_uuid"] = dbUUID(existing.UUID)
 		if _, err := namedExecContext(ctx, tx, `
 			update files file
 			set filename = :filename, mime_type = :media_type,
@@ -308,12 +308,12 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				sha256 = :sha256, s3_bucket = :s3_bucket, s3_key = :s3_key,
 				s3_etag = :s3_etag, s3_version_id = :s3_version_id,
 				deleted_at = null
-			where file.workspace_uuid = CAST(:workspace_uuid AS uuid)
+			where file.workspace_uuid = :workspace_uuid
 				and file.uuid = (
 				select resource.file_uuid from session_resources resource
-				where resource.uuid = CAST(:resource_uuid AS uuid)
-					and resource.workspace_uuid = CAST(:workspace_uuid AS uuid)
-					and resource.session_uuid = CAST(:session_uuid AS uuid)
+				where resource.uuid = :resource_uuid
+					and resource.workspace_uuid = :workspace_uuid
+					and resource.session_uuid = :session_uuid
 			)
 		`, arguments); err != nil {
 			return SessionResourceFile{}, err
@@ -323,14 +323,14 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 			set resource_type = 'file', payload = null, secret_payload = null,
 				path = :entry_path, parent_path = :parent_path,
 				expires_at = :expires_at, updated_at = :now
-			where uuid = CAST(:resource_uuid AS uuid)
-				and workspace_uuid = CAST(:workspace_uuid AS uuid)
-				and session_uuid = CAST(:session_uuid AS uuid) and deleted_at is null
+			where uuid = :resource_uuid
+				and workspace_uuid = :workspace_uuid
+				and session_uuid = :session_uuid and deleted_at is null
 		`, arguments); err != nil {
 			return SessionResourceFile{}, err
 		}
 		return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-			where uuid = CAST(:resource_uuid AS uuid) and deleted_at is null
+			where uuid = :resource_uuid and deleted_at is null
 		`, arguments)
 	}
 	fileUUID, fileExternalID, err := newFileIdentity()
@@ -341,9 +341,9 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 	if err != nil {
 		return SessionResourceFile{}, err
 	}
-	arguments["file_uuid"] = fileUUID
+	arguments["file_uuid"] = dbUUID(fileUUID)
 	arguments["file_external_id"] = fileExternalID
-	arguments["resource_uuid"] = resourceUUID
+	arguments["resource_uuid"] = dbUUID(resourceUUID)
 	arguments["resource_external_id"] = resourceExternalID
 	var insertedID int64
 	err = namedGetContext(ctx, tx, &insertedID, `
@@ -355,7 +355,7 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				s3_etag, s3_version_id, scope_type, scope_id,
 				created_by_api_key_uuid, created_at
 			)
-			select CAST(:file_uuid AS uuid),
+			select :file_uuid,
 				:file_external_id,
 				:workspace_uuid, :filename, :media_type, :detected_mime_type,
 				:size_bytes, CAST(:metadata AS jsonb),
@@ -365,10 +365,10 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				coalesce(api_key.uuid, session.created_by_api_key_uuid), :now
 			from sessions session
 			left join api_keys api_key
-				on api_key.uuid = CAST(:created_by_api_key_uuid AS uuid)
-				and api_key.workspace_id = (select id from workspaces where uuid = session.workspace_uuid)
-			where session.uuid = CAST(:session_uuid AS uuid)
-				and session.workspace_uuid = CAST(:workspace_uuid AS uuid)
+				on api_key.uuid = :created_by_api_key_uuid
+				and api_key.workspace_uuid = session.workspace_uuid
+			where session.uuid = :session_uuid
+				and session.workspace_uuid = :workspace_uuid
 				and session.deleted_at is null
 			returning uuid
 		)
@@ -377,21 +377,21 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 			session_external_id, resource_type, payload, secret_payload,
 			path, parent_path, file_uuid, expires_at, created_at, updated_at
 		)
-		select CAST(:resource_uuid AS uuid),
+		select :resource_uuid,
 			:resource_external_id,
-			CAST(:organization_uuid AS uuid), CAST(:workspace_uuid AS uuid), session.uuid,
+			:organization_uuid, :workspace_uuid, session.uuid,
 			session.external_id, 'file', null, null, :entry_path, :parent_path,
 			inserted_file.uuid, :expires_at, :now, :now
 		from inserted_file
-		join sessions session on session.uuid = CAST(:session_uuid AS uuid)
+		join sessions session on session.uuid = :session_uuid
 		returning id
 	`, arguments)
 	if err := mapSessionNamespaceInsertError(err); err != nil {
 		return SessionResourceFile{}, err
 	}
-	arguments["resource_uuid"] = resourceUUID
+	arguments["resource_uuid"] = dbUUID(resourceUUID)
 	return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-		where uuid = CAST(:resource_uuid AS uuid) and deleted_at is null
+		where uuid = :resource_uuid and deleted_at is null
 	`, arguments)
 }
 
@@ -426,8 +426,8 @@ func newFileIdentity() (fileUUID, fileExternalID string, err error) {
 
 func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilestoreFileTxInput) map[string]any {
 	return map[string]any{
-		"organization_uuid":       filesystem.OrganizationUUID,
-		"workspace_uuid":          filesystem.WorkspaceUUID,
+		"organization_uuid":       dbUUID(filesystem.OrganizationUUID),
+		"workspace_uuid":          dbUUID(filesystem.WorkspaceUUID),
 		"entry_path":              input.Path,
 		"filename":                path.Base(input.Path),
 		"parent_path":             filestoreParentPath(input.Path),
@@ -445,8 +445,8 @@ func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilest
 		"s3_etag":                 filestoreNullableString(input.Blob.S3ETag),
 		"s3_version_id":           filestoreNullableString(input.Blob.S3VersionID),
 		"expires_at":              input.Blob.ExpiresAt,
-		"created_by_api_key_uuid": filesystem.CreatedByAPIKeyUUID,
-		"session_uuid":            filesystem.SessionUUID,
+		"created_by_api_key_uuid": dbNullableUUID(filesystem.CreatedByAPIKeyUUID),
+		"session_uuid":            dbUUID(filesystem.SessionUUID),
 
 		"now": input.Now,
 	}
@@ -485,29 +485,31 @@ func retireSessionResourceFileTx(
 	if _, err := namedExecContext(ctx, tx, `
 		update files file
 		set deleted_at = coalesce(file.deleted_at, :retired_at)
-		where file.workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where file.workspace_uuid = :workspace_uuid
 			and file.uuid = (
 				select resource.file_uuid
 				from session_resources resource
-				where resource.uuid = CAST(:resource_uuid AS uuid)
-					and resource.workspace_uuid = CAST(:workspace_uuid AS uuid)
+				where resource.uuid = :resource_uuid
+					and resource.workspace_uuid = :workspace_uuid
 					and resource.payload is null
 			)
 	`, map[string]any{
-		"resource_uuid": resourceUUID,
-		"retired_at":    retiredAt,
+		"resource_uuid":  dbUUID(resourceUUID),
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"retired_at":     retiredAt,
 	}); err != nil {
 		return err
 	}
 	_, err := namedExecContext(ctx, tx, `
 		update session_resources
 		set deleted_at = coalesce(deleted_at, :retired_at), updated_at = :retired_at
-		where uuid = CAST(:resource_uuid AS uuid)
-			and workspace_uuid = CAST(:workspace_uuid AS uuid)
+		where uuid = :resource_uuid
+			and workspace_uuid = :workspace_uuid
 			and deleted_at is null
 	`, map[string]any{
-		"resource_uuid": resourceUUID,
-		"retired_at":    retiredAt,
+		"resource_uuid":  dbUUID(resourceUUID),
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"retired_at":     retiredAt,
 	})
 	return err
 }

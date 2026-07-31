@@ -6,12 +6,14 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
 	builtinSkillColumns = `
 		id,
-		CAST(uuid AS text) AS uuid,
+		uuid,
 		external_id,
 		display_title,
 		latest_version,
@@ -21,7 +23,7 @@ const (
 	`
 	builtinSkillVersionColumns = `
 		id,
-		CAST(uuid AS text) AS uuid,
+		uuid,
 		external_id,
 		skill_id,
 		skill_external_id,
@@ -185,7 +187,7 @@ type ListBuiltinSkillVersionsPageParams struct {
 
 type builtinSkillRow struct {
 	ID            int64      `db:"id"`
-	UUID          string     `db:"uuid"`
+	UUID          uuid.UUID  `db:"uuid"`
 	ExternalID    string     `db:"external_id"`
 	DisplayTitle  string     `db:"display_title"`
 	LatestVersion *string    `db:"latest_version"`
@@ -196,7 +198,7 @@ type builtinSkillRow struct {
 
 type builtinSkillVersionRow struct {
 	ID              int64      `db:"id"`
-	UUID            string     `db:"uuid"`
+	UUID            uuid.UUID  `db:"uuid"`
 	ExternalID      string     `db:"external_id"`
 	SkillID         int64      `db:"skill_id"`
 	SkillExternalID string     `db:"skill_external_id"`
@@ -465,7 +467,7 @@ func selectBuiltinSkillVersionsSQLX(
 func (r builtinSkillRow) skill() BuiltinSkill {
 	return BuiltinSkill{
 		ID:            r.ID,
-		UUID:          r.UUID,
+		UUID:          r.UUID.String(),
 		ExternalID:    r.ExternalID,
 		DisplayTitle:  r.DisplayTitle,
 		LatestVersion: r.LatestVersion,
@@ -478,7 +480,7 @@ func (r builtinSkillRow) skill() BuiltinSkill {
 func (r builtinSkillVersionRow) skillVersion() BuiltinSkillVersion {
 	return BuiltinSkillVersion{
 		ID:              r.ID,
-		UUID:            r.UUID,
+		UUID:            r.UUID.String(),
 		ExternalID:      r.ExternalID,
 		SkillID:         r.SkillID,
 		SkillExternalID: r.SkillExternalID,

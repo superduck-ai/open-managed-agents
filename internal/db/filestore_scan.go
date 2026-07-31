@@ -10,12 +10,8 @@ func filestoreFilesystemSelectSQL() string {
 }
 
 func filestoreFilesystemColumns() string {
-	return `cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(session_uuid as text) as session_uuid,
-		cast(code_session_uuid as text) as code_session_uuid,
-		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
+	return `uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+		code_session_uuid, created_by_api_key_uuid,
 		created_at, updated_at, deleted_at`
 }
 
@@ -29,11 +25,11 @@ func sessionResourceFileSelectSQL() string {
 func sessionResourceFileSourceSQL() string {
 	return `
 		select resource.id,
-			cast(resource.uuid as text) as uuid,
+			resource.uuid,
 			resource.external_id,
-			cast(resource.organization_uuid as text) as organization_uuid,
-			cast(resource.workspace_uuid as text) as workspace_uuid,
-			cast(resource.session_uuid as text) as session_uuid,
+			resource.organization_uuid,
+			resource.workspace_uuid,
+			resource.session_uuid,
 			case resource.resource_type
 				when 'skill_archive' then 'archive'
 				else resource.resource_type
@@ -55,7 +51,7 @@ func sessionResourceFileSourceSQL() string {
 			file.s3_version_id,
 			resource.expires_at,
 			case when resource.payload is not null
-				then cast(resource.file_uuid as text)
+				then resource.file_uuid
 				else null
 			end as source_file_uuid,
 			resource.created_at,
@@ -69,15 +65,13 @@ func sessionResourceFileSourceSQL() string {
 }
 
 func sessionResourceFileColumns() string {
-	return `id, cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(session_uuid as text) as session_uuid, kind, path, parent_path,
+	return `id, uuid, external_id, organization_uuid, workspace_uuid,
+		session_uuid, kind, path, parent_path,
 		size_bytes, media_type, detected_mime_type, metadata, authorization_metadata,
 		tags_json,
 		downloadable, md5, sha256, s3_bucket, s3_key, s3_etag, s3_version_id,
 		expires_at,
-		cast(source_file_uuid as text) as source_file_uuid,
+		source_file_uuid,
 		created_at, updated_at, deleted_at`
 }
 

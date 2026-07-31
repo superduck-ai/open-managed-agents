@@ -8,16 +8,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 )
 
 type bootstrapUserContextRow struct {
-	UserExternalID string `db:"user_external_id"`
-	OrgUUID        string `db:"org_uuid"`
+	UserExternalID string    `db:"user_external_id"`
+	OrgUUID        uuid.UUID `db:"org_uuid"`
 }
 
 type bootstrapUserRow struct {
-	UUID          string    `db:"uuid"`
+	UUID          uuid.UUID `db:"uuid"`
 	ExternalID    string    `db:"external_id"`
 	Email         string    `db:"email"`
 	FullName      *string   `db:"full_name"`
@@ -28,15 +29,15 @@ type bootstrapUserRow struct {
 }
 
 type bootstrapOrganizationRow struct {
-	UUID                   string    `db:"uuid"`
-	Name                   string    `db:"name"`
-	Domain                 *string   `db:"domain"`
-	ParentOrganizationUUID *string   `db:"parent_organization_uuid"`
-	Settings               []byte    `db:"settings"`
-	CreatedAt              time.Time `db:"created_at"`
-	UpdatedAt              time.Time `db:"updated_at"`
-	Role                   string    `db:"role"`
-	AddedAt                time.Time `db:"added_at"`
+	UUID                   uuid.UUID     `db:"uuid"`
+	Name                   string        `db:"name"`
+	Domain                 *string       `db:"domain"`
+	ParentOrganizationUUID uuid.NullUUID `db:"parent_organization_uuid"`
+	Settings               []byte        `db:"settings"`
+	CreatedAt              time.Time     `db:"created_at"`
+	UpdatedAt              time.Time     `db:"updated_at"`
+	Role                   string        `db:"role"`
+	AddedAt                time.Time     `db:"added_at"`
 }
 
 func (d *DB) FindBootstrapUserContext(ctx context.Context, preferredOrgUUID string) (string, string, error) {
@@ -47,14 +48,14 @@ func (d *DB) FindBootstrapUserContext(ctx context.Context, preferredOrgUUID stri
 	query := `
 		select
 			u.external_id as user_external_id,
-			cast(u.organization_uuid as text) as org_uuid
+			u.organization_uuid as org_uuid
 		from users u
 		where u.deleted_at is null
 	`
 	arguments := map[string]any{}
 	if trimmedPreferredOrgUUID := strings.TrimSpace(preferredOrgUUID); trimmedPreferredOrgUUID != "" {
-		query += ` and u.organization_uuid = cast(:preferred_org_uuid as uuid)`
-		arguments["preferred_org_uuid"] = trimmedPreferredOrgUUID
+		query += ` and u.organization_uuid = :preferred_org_uuid`
+		arguments["preferred_org_uuid"] = dbUUID(trimmedPreferredOrgUUID)
 	}
 	query += `
 		order by case when u.external_id = 'user_default' then 0 else 1 end, u.added_at asc, u.uuid asc
@@ -68,7 +69,7 @@ func (d *DB) FindBootstrapUserContext(ctx context.Context, preferredOrgUUID stri
 		}
 		return "", "", mapNoRows(err)
 	}
-	return row.UserExternalID, row.OrgUUID, nil
+	return row.UserExternalID, row.OrgUUID.String(), nil
 }
 
 func (d *DB) GetBootstrapUser(ctx context.Context, userExternalID string) (*platform.UserRecord, error) {
@@ -79,7 +80,7 @@ func (d *DB) GetBootstrapUser(ctx context.Context, userExternalID string) (*plat
 	var row bootstrapUserRow
 	err := namedGetContext(ctx, d.sql, &row, `
 		select
-			cast(u.uuid as text) as uuid,
+			u.uuid,
 			u.external_id,
 			u.email,
 			nullif(u.name, '') as full_name,
@@ -91,12 +92,15 @@ func (d *DB) GetBootstrapUser(ctx context.Context, userExternalID string) (*plat
 		where u.deleted_at is null
 		  and (
 			u.external_id = :user_external_id
-			or cast(u.uuid as text) = :user_external_id
+			or u.uuid = :user_uuid
 			or 'user_' || left(replace(cast(u.uuid as text), '-', ''), 24) = :user_external_id
 		  )
 		order by u.added_at asc, u.uuid asc
 		limit 1
-	`, map[string]any{"user_external_id": strings.TrimSpace(userExternalID)})
+	`, map[string]any{
+		"user_external_id": strings.TrimSpace(userExternalID),
+		"user_uuid":        tryParseDBUUIDIdentifier(userExternalID),
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, platform.ErrNotFound
 	}
@@ -105,7 +109,7 @@ func (d *DB) GetBootstrapUser(ctx context.Context, userExternalID string) (*plat
 	}
 
 	user := &platform.UserRecord{
-		UUID:          row.UUID,
+		UUID:          row.UUID.String(),
 		ExternalID:    row.ExternalID,
 		Email:         row.Email,
 		FullName:      row.FullName,
@@ -163,19 +167,19 @@ func (d *DB) UpdatePlatformOrganization(ctx context.Context, orgUUID string, pat
 		set name = coalesce(CAST(:name AS text), name),
 		    settings = coalesce(CAST(:settings AS jsonb), settings),
 		    updated_at = current_timestamp
-		where cast(uuid as text) = :org_uuid
+		where uuid = :org_uuid
 		returning
-			cast(uuid as text) as uuid,
+			uuid,
 			name,
 			CAST(NULL AS text) as domain,
-			CAST(NULL AS text) as parent_organization_uuid,
+			CAST(NULL AS uuid) as parent_organization_uuid,
 			coalesce(settings, CAST('{}' AS jsonb)) as settings,
 			created_at,
 			updated_at,
 			'' as role,
 			created_at as added_at
 	`, map[string]any{
-		"org_uuid": strings.TrimSpace(orgUUID),
+		"org_uuid": dbUUID(orgUUID),
 		"name":     name,
 		"settings": settingsValue,
 	})
@@ -200,10 +204,10 @@ func (d *DB) ListBootstrapUserOrganizations(ctx context.Context, userExternalID 
 	rows := []bootstrapOrganizationRow{}
 	err := namedSelectContext(ctx, d.sql, &rows, `
 		select
-			cast(o.uuid as text) as uuid,
+			o.uuid,
 			o.name,
 			CAST(NULL AS text) as domain,
-			CAST(NULL AS text) as parent_organization_uuid,
+			CAST(NULL AS uuid) as parent_organization_uuid,
 			coalesce(o.settings, CAST('{}' AS jsonb)) as settings,
 			o.created_at,
 			o.updated_at,
@@ -214,16 +218,17 @@ func (d *DB) ListBootstrapUserOrganizations(ctx context.Context, userExternalID 
 		where u.deleted_at is null
 		  and (
 			u.external_id = :user_external_id
-			or cast(u.uuid as text) = :user_external_id
+			or u.uuid = :user_uuid
 			or 'user_' || left(replace(cast(u.uuid as text), '-', ''), 24) = :user_external_id
 		  )
 		order by
-			case when cast(o.uuid as text) = :preferred_org_uuid then 0 else 1 end,
+			case when o.uuid = :preferred_org_uuid then 0 else 1 end,
 			u.added_at asc,
 			u.uuid asc
 	`, map[string]any{
 		"user_external_id":   strings.TrimSpace(userExternalID),
-		"preferred_org_uuid": strings.TrimSpace(preferredOrgUUID),
+		"user_uuid":          tryParseDBUUIDIdentifier(userExternalID),
+		"preferred_org_uuid": tryParseDBUUIDIdentifier(preferredOrgUUID),
 	})
 	if err != nil {
 		return nil, err
@@ -248,9 +253,9 @@ func (d *DB) GetOrganizationProfile(ctx context.Context, orgUUID string) (platfo
 	err := namedGetContext(ctx, d.sql, &profileBytes, `
 		select coalesce(profile, CAST('{}' AS jsonb))
 		from organizations
-		where cast(uuid as text) = :org_uuid
+		where uuid = :org_uuid
 		limit 1
-	`, map[string]any{"org_uuid": strings.TrimSpace(orgUUID)})
+	`, map[string]any{"org_uuid": dbUUID(orgUUID)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return platform.OrganizationProfile{}, platform.ErrNotFound
 	}
@@ -273,10 +278,10 @@ func (d *DB) UpdateOrganizationProfile(ctx context.Context, orgUUID string, prof
 		update organizations
 		set profile = CAST(:profile AS jsonb),
 		    updated_at = current_timestamp
-		where cast(uuid as text) = :org_uuid
+		where uuid = :org_uuid
 		returning coalesce(profile, CAST('{}' AS jsonb))
 	`, map[string]any{
-		"org_uuid": strings.TrimSpace(orgUUID),
+		"org_uuid": dbUUID(orgUUID),
 		"profile":  string(profileBytes),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -292,19 +297,19 @@ func getBootstrapOrganizationRow(ctx context.Context, database sqlxNamedQueryer,
 	var row bootstrapOrganizationRow
 	err := namedGetContext(ctx, database, &row, `
 		select
-			cast(o.uuid as text) as uuid,
+			o.uuid,
 			o.name,
 			CAST(NULL AS text) as domain,
-			CAST(NULL AS text) as parent_organization_uuid,
+			CAST(NULL AS uuid) as parent_organization_uuid,
 			coalesce(o.settings, CAST('{}' AS jsonb)) as settings,
 			o.created_at,
 			o.updated_at,
 			'' as role,
 			o.created_at as added_at
 		from organizations o
-		where cast(o.uuid as text) = :org_uuid
+		where o.uuid = :org_uuid
 		limit 1
-	`, map[string]any{"org_uuid": orgUUID})
+	`, map[string]any{"org_uuid": dbUUID(orgUUID)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return bootstrapOrganizationRow{}, platform.ErrNotFound
 	}
@@ -320,10 +325,10 @@ func (row bootstrapOrganizationRow) organizationRecord() (*platform.Organization
 		return nil, err
 	}
 	return &platform.OrganizationRecord{
-		UUID:                   row.UUID,
+		UUID:                   row.UUID.String(),
 		Name:                   row.Name,
 		Domain:                 row.Domain,
-		ParentOrganizationUUID: row.ParentOrganizationUUID,
+		ParentOrganizationUUID: nullableUUIDString(row.ParentOrganizationUUID),
 		Settings:               settings,
 		CreatedAt:              row.CreatedAt,
 		UpdatedAt:              row.UpdatedAt,

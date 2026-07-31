@@ -303,7 +303,7 @@ func TestAdminAPI(t *testing.T) {
 		}
 		var org adminObject
 		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/me", nil, defaultTestKey, ""), &org)
-		if org.ID != apiKey.OrganizationUUID || org.Type != "organization" {
+		if org.ID != apiKey.OrganizationUUID.String() || org.Type != "organization" {
 			t.Fatalf("organization = %+v, want UUID %s organization", org, apiKey.OrganizationUUID)
 		}
 	})

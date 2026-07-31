@@ -117,7 +117,7 @@ func TestWebhooksAPI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load api key: %v", err)
 		}
-		storedWebhook, err := app.db.GetWebhookEndpoint(context.Background(), apiKey.WorkspaceUUID, created.ID)
+		storedWebhook, err := app.db.GetWebhookEndpoint(context.Background(), apiKey.WorkspaceUUID.String(), created.ID)
 		if err != nil {
 			t.Fatalf("load stored webhook: %v", err)
 		}
@@ -181,8 +181,8 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 	enqueuer := webhooks.NewEnqueuer(app.db, app.cfg.Webhook, nil)
 	enqueue := func(eventType, resourceID string) {
 		enqueuer.Enqueue(ctx, webhooks.EnqueueInput{
-			WorkspaceUUID:       apiKey.WorkspaceUUID,
-			OrganizationUUID:    apiKey.OrganizationUUID,
+			WorkspaceUUID:       apiKey.WorkspaceUUID.String(),
+			OrganizationUUID:    apiKey.OrganizationUUID.String(),
 			WorkspaceExternalID: apiKey.WorkspaceExternalID,
 			EventType:           eventType,
 			ResourceID:          resourceID,
@@ -226,7 +226,7 @@ func TestWebhookEndpointDelivery(t *testing.T) {
 		payload.Type != "event" ||
 		payload.Data.Type != "session.status_idled" ||
 		payload.Data.ID != sessionID ||
-		payload.Data.OrganizationID != apiKey.OrganizationUUID {
+		payload.Data.OrganizationID != apiKey.OrganizationUUID.String() {
 		t.Fatalf("unexpected webhook event=%+v payload=%+v body=%s", event, payload, delivered.Body)
 	}
 

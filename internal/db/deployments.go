@@ -205,7 +205,7 @@ func (d *DB) UpdateDeployment(ctx context.Context, workspaceUUID string, externa
 	defer tx.Rollback()
 
 	arguments := deploymentArguments(next)
-	arguments["workspace_uuid"] = workspaceUUID
+	arguments["workspace_uuid"] = dbUUID(workspaceUUID)
 	arguments["external_id"] = externalID
 	current, err := getDeploymentSQLX(ctx, tx, lockDeploymentForUpdateQuery, arguments)
 	if err != nil {
@@ -262,7 +262,7 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	defer tx.Rollback()
 
 	deployment, err := getDeploymentSQLX(ctx, tx, lockDeploymentForManualRunQuery, map[string]any{
-		"workspace_uuid":         input.Run.WorkspaceUUID,
+		"workspace_uuid":         dbUUID(input.Run.WorkspaceUUID),
 		"deployment_external_id": input.DeploymentExternalID,
 	})
 	if err != nil {
@@ -356,7 +356,7 @@ func listDeploymentsQuery(params ListDeploymentsPageParams) (string, map[string]
 		where workspace_uuid = :workspace_uuid and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_uuid": params.WorkspaceUUID,
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
 		"limit":          params.Limit + 1,
 	}
 	if !params.IncludeArchived {
@@ -379,9 +379,9 @@ func listDeploymentsQuery(params ListDeploymentsPageParams) (string, map[string]
 		arguments["created_at_lte"] = *params.CreatedAtLTE
 	}
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < :cursor_uuid))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by created_at desc, uuid desc limit :limit"
 	return query, arguments
@@ -394,7 +394,7 @@ func listDeploymentRunsQuery(params ListDeploymentRunsPageParams) (string, map[s
 		where workspace_uuid = :workspace_uuid and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_uuid": params.WorkspaceUUID,
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
 		"limit":          params.Limit + 1,
 	}
 	if params.DeploymentExternalID != "" {
@@ -414,9 +414,9 @@ func listDeploymentRunsQuery(params ListDeploymentRunsPageParams) (string, map[s
 	}
 	query, arguments = deploymentRunTimeFilters(query, arguments, params)
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < :cursor_uuid))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by created_at desc, uuid desc limit :limit"
 	return query, arguments
@@ -448,21 +448,21 @@ func deploymentRunTimeFilters(
 
 func deploymentLookupArguments(workspaceUUID string, externalID string) map[string]any {
 	return map[string]any{
-		"workspace_uuid": workspaceUUID,
+		"workspace_uuid": dbUUID(workspaceUUID),
 		"external_id":    externalID,
 	}
 }
 
 func deploymentArguments(deployment Deployment) map[string]any {
 	return map[string]any{
-		"uuid":                    deployment.UUID,
+		"uuid":                    dbUUID(deployment.UUID),
 		"external_id":             deployment.ExternalID,
-		"organization_uuid":       deployment.OrganizationUUID,
-		"workspace_uuid":          deployment.WorkspaceUUID,
-		"created_by_api_key_uuid": deployment.CreatedByAPIKeyUUID,
-		"environment_uuid":        deployment.EnvironmentUUID,
+		"organization_uuid":       dbUUID(deployment.OrganizationUUID),
+		"workspace_uuid":          dbUUID(deployment.WorkspaceUUID),
+		"created_by_api_key_uuid": dbUUID(deployment.CreatedByAPIKeyUUID),
+		"environment_uuid":        dbUUID(deployment.EnvironmentUUID),
 		"environment_external_id": deployment.EnvironmentExternalID,
-		"agent_uuid":              deployment.AgentUUID,
+		"agent_uuid":              dbUUID(deployment.AgentUUID),
 		"agent_external_id":       deployment.AgentExternalID,
 		"agent_version":           deployment.AgentVersion,
 		"agent_snapshot":          jsonArg(deployment.AgentSnapshot),

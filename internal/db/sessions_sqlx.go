@@ -126,13 +126,7 @@ const (
 	`
 	deleteSessionEventQueueQuery = `
 		delete from session_event_queue q
-		using organizations o, workspaces w
-		where q.organization_uuid = o.uuid
-			and q.workspace_uuid = w.uuid
-			and w.organization_id = o.id
-			and o.id = :organization_id
-			and w.id = :workspace_id
-			and q.session_uuid = CAST(:session_uuid AS uuid)
+		where q.session_uuid = CAST(:session_uuid AS uuid)
 	`
 	stopDeletedSessionEnvironmentWorkQuery = `
 		update environment_work

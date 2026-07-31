@@ -2,8 +2,8 @@
 create table session_event_queue (
 	id bigint generated always as identity,
 	uuid uuid not null default gen_random_uuid(),
-	organization_id bigint not null,
-	workspace_id bigint not null,
+	organization_uuid uuid not null,
+	workspace_uuid uuid not null,
 	session_uuid uuid not null,
 	session_event_uuid uuid not null,
 	created_at timestamptz not null default now(),
@@ -13,7 +13,7 @@ create table session_event_queue (
 );
 
 create index session_event_queue_session_order_v1_idx
-	on session_event_queue (organization_id, workspace_id, session_uuid, id asc);
+	on session_event_queue (organization_uuid, workspace_uuid, session_uuid, id asc);
 
 -- +goose Down
 drop table if exists session_event_queue;

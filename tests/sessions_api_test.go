@@ -3933,15 +3933,15 @@ func sessionEventQueueEventIDs(t *testing.T, app *testApp, sessionID string) []s
 			join organizations o on o.uuid = q.organization_uuid
 			join workspaces w
 				on w.uuid = q.workspace_uuid
-				and w.organization_id = o.id
+				and w.organization_uuid = o.uuid
 		join sessions s
 			on s.uuid = q.session_uuid
-			and s.organization_id = o.id
-				and s.workspace_id = w.id
+			and s.organization_uuid = o.uuid
+			and s.workspace_uuid = w.uuid
 		join session_events e
 			on e.uuid = q.session_event_uuid
-			and e.organization_id = o.id
-				and e.workspace_id = w.id
+			and e.organization_uuid = o.uuid
+			and e.workspace_uuid = w.uuid
 		where s.external_id = $1
 		order by q.id asc
 	`, sessionID)

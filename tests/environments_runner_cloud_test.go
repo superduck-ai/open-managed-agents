@@ -163,7 +163,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 					len(store.objects),
 				)
 			}
-			if _, lookupErr := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceID, session.ID); !errors.Is(lookupErr, db.ErrNotFound) {
+			if _, lookupErr := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceUUID, session.ID); !errors.Is(lookupErr, db.ErrNotFound) {
 				t.Fatalf("code session existed before sandbox creation: %v", lookupErr)
 			}
 		},
@@ -177,7 +177,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatal("runner did not process queued session work")
 	}
 
-	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceID, session.ID)
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("load local code session: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatalf("rclone config does not mount /uploads at the managed-agents root: %#v", rcloneConfig.Mounts)
 	}
 
-	stored, err := app.db.GetSession(ctx, apiKey.WorkspaceID, session.ID)
+	stored, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("load stored session: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	provider := &recordingRunnerProvider{
 		sandboxID: "sandbox-runner-startup-message",
 		beforeCreate: func() {
-			if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID); !errors.Is(err, db.ErrNotFound) {
+			if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceUUID, session.ID); !errors.Is(err, db.ErrNotFound) {
 				t.Fatalf("code session at provider.Create = %v, want ErrNotFound", err)
 			}
 			sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":`+quoteJSON(prompt)+`}]}]}`, defaultTestKey)
@@ -367,7 +367,7 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	if !eventPageContains(publicEvents, acceptedEventID) {
 		t.Fatalf("session_events missing accepted event %q: %+v", acceptedEventID, publicEvents.Data)
 	}
-	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("load Code Session after runner startup: %v", err)
 	}
@@ -532,14 +532,14 @@ func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *
 	t.Helper()
 	ids := getDefaultDBIDs(t, database)
 	works, _, err := database.ListEnvironmentWorkPage(ctx, db.ListEnvironmentWorkPageParams{
-		WorkspaceID:           ids.WorkspaceID,
+		WorkspaceUUID:         ids.WorkspaceUUID,
 		EnvironmentExternalID: environmentID,
 		Limit:                 10,
 	})
 	if err != nil || len(works) != 1 {
 		t.Fatalf("list environment work count/error = %d/%v, want one work", len(works), err)
 	}
-	if _, err := database.StopEnvironmentWork(ctx, ids.WorkspaceID, environmentID, works[0].ExternalID, force); err != nil {
+	if _, err := database.StopEnvironmentWork(ctx, ids.WorkspaceUUID, environmentID, works[0].ExternalID, force); err != nil {
 		t.Fatalf("request environment work stop: %v", err)
 	}
 }
@@ -608,7 +608,7 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 	processed, runErr := runner.RunOnce(runCtx, "runner-package-test")
 	inspectionCtx := context.Background()
 	ids := getDefaultDBIDs(t, app.db)
-	_, codeSessionErr := app.db.GetCodeSessionBySessionExternalID(inspectionCtx, ids.WorkspaceID, session.ID)
+	_, codeSessionErr := app.db.GetCodeSessionBySessionExternalID(inspectionCtx, ids.WorkspaceUUID, session.ID)
 	switch {
 	case codeSessionErr == nil:
 		provider.codeSessionCreated = true
@@ -617,13 +617,13 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 		t.Fatalf("look up package runner code session: %v", codeSessionErr)
 	}
 	works, _, workErr := app.db.ListEnvironmentWorkPage(inspectionCtx, db.ListEnvironmentWorkPageParams{
-		WorkspaceID: ids.WorkspaceID, EnvironmentExternalID: environment.ID, Limit: 10,
+		WorkspaceUUID: ids.WorkspaceUUID, EnvironmentExternalID: environment.ID, Limit: 10,
 	})
 	if workErr != nil || len(works) != 1 {
 		t.Fatalf("list package runner work count/error = %d/%v, want one work", len(works), workErr)
 	}
 	provider.workHasRuntimeMetadata = hasJSONKey(works[0].Metadata, "claude_code_session_id")
-	storedSession, sessionErr := app.db.GetSession(inspectionCtx, ids.WorkspaceID, session.ID)
+	storedSession, sessionErr := app.db.GetSession(inspectionCtx, ids.WorkspaceUUID, session.ID)
 	if sessionErr != nil {
 		t.Fatalf("load package runner session: %v", sessionErr)
 	}
@@ -631,10 +631,10 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 	if err := app.db.Pool.QueryRow(inspectionCtx, `
 		select state, last_error
 		from environment_sandboxes
-		where work_id = $1
-		order by id desc
+		where work_uuid = $1
+		order by uuid desc
 		limit 1
-	`, works[0].ID).Scan(&provider.sandboxState, &provider.sandboxError); err != nil {
+	`, works[0].UUID).Scan(&provider.sandboxState, &provider.sandboxError); err != nil {
 		t.Fatalf("load package runner sandbox: %v", err)
 	}
 	return provider, processed, runErr
@@ -671,7 +671,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 	ids := getDefaultDBIDs(t, app.db)
-	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
+	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceUUID, environment.ID, "session", session.ID)
 	if err != nil {
 		t.Fatalf("load queued environment work: %v", err)
 	}
@@ -701,7 +701,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 		t.Fatalf("killed sandboxes = %#v, want %#v", got, want)
 	}
 
-	stoppedWork, err := app.db.GetEnvironmentWork(ctx, ids.WorkspaceID, environment.ID, work.ExternalID)
+	stoppedWork, err := app.db.GetEnvironmentWork(ctx, ids.WorkspaceUUID, environment.ID, work.ExternalID)
 	if err != nil {
 		t.Fatalf("reload environment work: %v", err)
 	}
@@ -713,10 +713,10 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	if err := app.db.Pool.QueryRow(ctx, `
 		select state, last_error
 		from environment_sandboxes
-		where work_id = $1
-		order by id desc
+		where work_uuid = $1
+		order by uuid desc
 		limit 1
-	`, work.ID).Scan(&sandboxState, &sandboxError); err != nil {
+	`, work.UUID).Scan(&sandboxState, &sandboxError); err != nil {
 		t.Fatalf("load failed environment sandbox: %v", err)
 	}
 	if sandboxState != "failed" || sandboxError == nil || *sandboxError != "rclone-filestore readiness check failed" {
@@ -725,7 +725,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	if strings.Contains(*sandboxError, providerSecretMarker) {
 		t.Fatalf("sandbox last_error leaked provider secret marker: %q", *sandboxError)
 	}
-	if _, lookupErr := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID); !errors.Is(lookupErr, db.ErrNotFound) {
+	if _, lookupErr := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceUUID, session.ID); !errors.Is(lookupErr, db.ErrNotFound) {
 		t.Fatalf("code session lookup after rclone failure = %v, want ErrNotFound", lookupErr)
 	}
 }
@@ -777,14 +777,14 @@ func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) 
 		t.Fatalf("killed sandboxes = %#v, want %#v", got, want)
 	}
 
-	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID)
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("load compensated code session: %v", err)
 	}
 	if codeSession.Status != "terminated" || codeSession.ConnectionStatus != "disconnected" || codeSession.WorkerLeaseExpiresAt != nil {
 		t.Fatalf("compensated code session = %#v", codeSession)
 	}
-	storedSession, err := app.db.GetSession(ctx, ids.WorkspaceID, session.ID)
+	storedSession, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("load Session after manager failure: %v", err)
 	}
@@ -861,14 +861,14 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if len(provider.launches) != 1 {
 		t.Fatalf("sandbox launches = %#v, want one environment-manager background process", provider.launches)
 	}
-	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("get session filestore: %v", err)
 	}
 	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
 		ctx,
-		getDefaultDBIDs(t, app.db).WorkspaceID,
-		filesystem.ID,
+		getDefaultDBIDs(t, app.db).WorkspaceUUID,
+		filesystem.UUID,
 	)
 	if err != nil {
 		t.Fatalf("list skill archive entries: %v", err)
@@ -962,14 +962,14 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 	if len(provider.creates) != 1 || len(provider.launches) != 1 {
 		t.Fatalf("provider launch counts = creates:%d launches:%d, want one each", len(provider.creates), len(provider.launches))
 	}
-	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceID, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("get session filestore: %v", err)
 	}
 	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
 		ctx,
-		getDefaultDBIDs(t, app.db).WorkspaceID,
-		filesystem.ID,
+		getDefaultDBIDs(t, app.db).WorkspaceUUID,
+		filesystem.UUID,
 	)
 	if err != nil {
 		t.Fatalf("list archive entries: %v", err)
@@ -1108,11 +1108,11 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
 			ids := getDefaultDBIDs(t, app.db)
-			work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceID, environment.ID, "session", session.ID)
+			work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceUUID, environment.ID, "session", session.ID)
 			if err != nil {
 				t.Fatalf("load environment work: %v", err)
 			}
-			if _, err := app.db.UpdateEnvironmentWorkMetadata(ctx, ids.WorkspaceID, environment.ID, work.ExternalID,
+			if _, err := app.db.UpdateEnvironmentWorkMetadata(ctx, ids.WorkspaceUUID, environment.ID, work.ExternalID,
 				json.RawMessage(`{"mcp_allowed_hosts":["stale.example.com"]}`)); err != nil {
 				t.Fatalf("seed stale MCP metadata: %v", err)
 			}
@@ -1211,7 +1211,7 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 		t.Fatalf("provider should not create sandbox after resolve failure: creates=%#v commands=%#v launches=%#v", provider.creates, provider.commands, provider.launches)
 	}
 	ids := getDefaultDBIDs(t, app.db)
-	if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceID, session.ID); !errors.Is(err, db.ErrNotFound) {
+	if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceUUID, session.ID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("code session lookup error = %v, want ErrNotFound", err)
 	}
 }

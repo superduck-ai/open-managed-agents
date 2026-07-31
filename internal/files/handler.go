@@ -143,18 +143,18 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	record := db.FileRecord{
-		UUID:              fileUUID,
-		ExternalID:        fileExternalID,
-		WorkspaceID:       principal.WorkspaceID,
-		Filename:          filename,
-		MimeType:          contentType,
-		SizeBytes:         header.Size,
-		SHA256:            hex.EncodeToString(hash.Sum(nil)),
-		S3Bucket:          h.store.Name(),
-		S3Key:             objectKey,
-		Downloadable:      false,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		CreatedAt:         time.Now().UTC(),
+		UUID:                fileUUID,
+		ExternalID:          fileExternalID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		Filename:            filename,
+		MimeType:            contentType,
+		SizeBytes:           header.Size,
+		SHA256:              hex.EncodeToString(hash.Sum(nil)),
+		S3Bucket:            h.store.Name(),
+		S3Key:               objectKey,
+		Downloadable:        false,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		CreatedAt:           time.Now().UTC(),
 	}
 	if err := h.db.CreateFileIfWithinLimit(r.Context(), record, h.cfg.Storage.WorkspaceLimitBytes); err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), record)
@@ -186,11 +186,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	scopeID := r.URL.Query().Get("scope_id")
 
 	records, hasMore, err := h.db.ListFilesPage(r.Context(), db.ListFilesPageParams{
-		WorkspaceID: principal.WorkspaceID,
-		ScopeID:     scopeID,
-		AfterID:     afterID,
-		BeforeID:    beforeID,
-		Limit:       limit,
+		WorkspaceUUID: principal.WorkspaceUUID,
+		ScopeID:       scopeID,
+		AfterID:       afterID,
+		BeforeID:      beforeID,
+		Limit:         limit,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list files", "error", err)
@@ -224,7 +224,7 @@ func (h *Handler) downloadRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieveMetadata(w http.ResponseWriter, r *http.Request, fileID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.GetFile(r.Context(), principal.WorkspaceID, fileID)
+	record, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixture(principal, fileID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.officialSDKFixtureMetadata())
@@ -243,7 +243,7 @@ func (h *Handler) retrieveMetadata(w http.ResponseWriter, r *http.Request, fileI
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.GetFile(r.Context(), principal.WorkspaceID, fileID)
+	record, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixture(principal, fileID) {
 			httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": fileID, "type": "file_deleted"})
@@ -257,7 +257,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete file"))
 		return
 	}
-	if err := h.db.SoftDeleteFile(r.Context(), principal.WorkspaceID, fileID); err != nil {
+	if err := h.db.SoftDeleteFile(r.Context(), principal.WorkspaceUUID, fileID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
 			return
@@ -276,14 +276,14 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 	}
 	if err := h.store.Delete(r.Context(), record.S3Key, storage.DeleteOptions{}); err != nil {
 		h.logger.ErrorContext(r.Context(), "delete object after soft delete", "file_id", fileID, "error", err)
-		if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
+		if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceUUID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
 			h.logger.ErrorContext(r.Context(), "enqueue object cleanup", "file_id", fileID, "key", record.S3Key, "error", enqueueErr)
 		}
 	}
 	if thumbnailKey := platformThumbnailKey(record); thumbnailKey != "" {
 		if err := h.store.Delete(r.Context(), thumbnailKey, storage.DeleteOptions{}); err != nil {
 			h.logger.ErrorContext(r.Context(), "delete thumbnail object after soft delete", "file_id", fileID, "key", thumbnailKey, "error", err)
-			if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(r.Context(), record.WorkspaceID, record.S3Bucket, thumbnailKey, "file_variant", record.ExternalID); enqueueErr != nil {
+			if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(r.Context(), record.WorkspaceUUID, record.S3Bucket, thumbnailKey, "file_variant", record.ExternalID); enqueueErr != nil {
 				h.logger.ErrorContext(r.Context(), "enqueue thumbnail cleanup", "file_id", fileID, "key", thumbnailKey, "error", enqueueErr)
 			}
 		}
@@ -293,7 +293,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, fileID string) 
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.GetFile(r.Context(), principal.WorkspaceID, fileID)
+	record, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+fileID))
@@ -333,7 +333,7 @@ func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context,
 	defer cancel()
 	if err := h.store.Delete(cleanupCtx, record.S3Key, storage.DeleteOptions{}); err != nil {
 		h.logger.ErrorContext(ctx, "delete object after metadata failure", "file_id", record.ExternalID, "key", record.S3Key, "error", err)
-		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, record.WorkspaceID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
+		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, record.WorkspaceUUID, record.S3Bucket, record.S3Key, record.ExternalID); enqueueErr != nil {
 			h.logger.ErrorContext(ctx, "enqueue object cleanup after metadata failure", "file_id", record.ExternalID, "key", record.S3Key, "error", enqueueErr)
 		}
 	}

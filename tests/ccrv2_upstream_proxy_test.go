@@ -390,7 +390,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load code session scope: %v", err)
 		}
-		originalSession, err := app.db.GetSession(context.Background(), codeSession.WorkspaceID, session.ID)
+		originalSession, err := app.db.GetSession(context.Background(), codeSession.WorkspaceUUID, session.ID)
 		if err != nil {
 			t.Fatalf("load original session snapshot: %v", err)
 		}
@@ -548,8 +548,8 @@ func codeSessionIngressTokenWithScope(
 	}
 	credentialContext, err := app.db.GetCodeSessionCredentialContextForIssue(
 		context.Background(),
-		record.OrganizationID,
-		record.WorkspaceID,
+		record.OrganizationUUID,
+		record.WorkspaceUUID,
 		codeSessionID,
 	)
 	if err != nil {

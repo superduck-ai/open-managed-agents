@@ -143,8 +143,7 @@ func principalCanSeeOrg(principal auth.Principal, orgUUID string) bool {
 	if orgUUID == "" {
 		return false
 	}
-	return orgUUID == strings.TrimSpace(principal.OrganizationUUID) ||
-		orgUUID == strings.TrimSpace(principal.OrganizationExternalID)
+	return orgUUID == strings.TrimSpace(principal.OrganizationUUID)
 }
 
 func organizationNotFound(w http.ResponseWriter) {

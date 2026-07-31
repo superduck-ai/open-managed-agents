@@ -8,30 +8,28 @@ import (
 )
 
 type memoryStoreRow struct {
-	ID                int64      `db:"id"`
-	UUID              string     `db:"uuid"`
-	ExternalID        string     `db:"external_id"`
-	OrganizationID    int64      `db:"organization_id"`
-	WorkspaceID       int64      `db:"workspace_id"`
-	CreatedByAPIKeyID int64      `db:"created_by_api_key_id"`
-	Name              string     `db:"name"`
-	Description       string     `db:"description"`
-	Metadata          []byte     `db:"metadata"`
-	CreatedAt         time.Time  `db:"created_at"`
-	UpdatedAt         time.Time  `db:"updated_at"`
-	ArchivedAt        *time.Time `db:"archived_at"`
-	DeletedAt         *time.Time `db:"deleted_at"`
+	UUID                string     `db:"uuid"`
+	ExternalID          string     `db:"external_id"`
+	OrganizationUUID    string     `db:"organization_uuid"`
+	WorkspaceUUID       string     `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	Name                string     `db:"name"`
+	Description         string     `db:"description"`
+	Metadata            []byte     `db:"metadata"`
+	CreatedAt           time.Time  `db:"created_at"`
+	UpdatedAt           time.Time  `db:"updated_at"`
+	ArchivedAt          *time.Time `db:"archived_at"`
+	DeletedAt           *time.Time `db:"deleted_at"`
 }
 
 type memoryRow struct {
-	ID                       int64      `db:"id"`
 	UUID                     string     `db:"uuid"`
 	ExternalID               string     `db:"external_id"`
-	OrganizationID           int64      `db:"organization_id"`
-	WorkspaceID              int64      `db:"workspace_id"`
-	MemoryStoreID            int64      `db:"memory_store_id"`
+	OrganizationUUID         string     `db:"organization_uuid"`
+	WorkspaceUUID            string     `db:"workspace_uuid"`
+	MemoryStoreUUID          string     `db:"memory_store_uuid"`
 	MemoryStoreExternalID    string     `db:"memory_store_external_id"`
-	CurrentVersionID         int64      `db:"current_version_id"`
+	CurrentVersionUUID       string     `db:"current_version_uuid"`
 	CurrentVersionExternalID string     `db:"current_version_external_id"`
 	Path                     string     `db:"path"`
 	ContentSizeBytes         int64      `db:"content_size_bytes"`
@@ -49,14 +47,13 @@ type activeMemoryRow struct {
 }
 
 type memoryVersionRow struct {
-	ID                         int64          `db:"id"`
 	UUID                       string         `db:"uuid"`
 	ExternalID                 string         `db:"external_id"`
-	OrganizationID             int64          `db:"organization_id"`
-	WorkspaceID                int64          `db:"workspace_id"`
-	MemoryStoreID              int64          `db:"memory_store_id"`
+	OrganizationUUID           string         `db:"organization_uuid"`
+	WorkspaceUUID              string         `db:"workspace_uuid"`
+	MemoryStoreUUID            string         `db:"memory_store_uuid"`
 	MemoryStoreExternalID      string         `db:"memory_store_external_id"`
-	MemoryID                   int64          `db:"memory_id"`
+	MemoryUUID                 string         `db:"memory_uuid"`
 	MemoryExternalID           string         `db:"memory_external_id"`
 	Operation                  string         `db:"operation"`
 	Path                       sql.NullString `db:"path"`
@@ -65,13 +62,13 @@ type memoryVersionRow struct {
 	S3Bucket                   sql.NullString `db:"s3_bucket"`
 	S3Key                      sql.NullString `db:"s3_key"`
 	CreatedByActorType         string         `db:"created_by_actor_type"`
-	CreatedByAPIKeyID          sql.NullInt64  `db:"created_by_api_key_id"`
+	CreatedByAPIKeyUUID        sql.NullString `db:"created_by_api_key_uuid"`
 	CreatedByAPIKeyExternalID  sql.NullString `db:"created_by_api_key_external_id"`
 	CreatedBySessionID         sql.NullString `db:"created_by_session_id"`
 	CreatedByUserID            sql.NullString `db:"created_by_user_id"`
 	RedactedAt                 *time.Time     `db:"redacted_at"`
 	RedactedByActorType        sql.NullString `db:"redacted_by_actor_type"`
-	RedactedByAPIKeyID         sql.NullInt64  `db:"redacted_by_api_key_id"`
+	RedactedByAPIKeyUUID       sql.NullString `db:"redacted_by_api_key_uuid"`
 	RedactedByAPIKeyExternalID sql.NullString `db:"redacted_by_api_key_external_id"`
 	RedactedBySessionID        sql.NullString `db:"redacted_by_session_id"`
 	RedactedByUserID           sql.NullString `db:"redacted_by_user_id"`
@@ -79,10 +76,10 @@ type memoryVersionRow struct {
 }
 
 type objectRefRow struct {
-	WorkspaceID int64  `db:"workspace_id"`
-	Bucket      string `db:"bucket"`
-	Key         string `db:"key"`
-	ResourceID  string `db:"resource_id"`
+	WorkspaceUUID string `db:"workspace_uuid"`
+	Bucket        string `db:"bucket"`
+	Key           string `db:"key"`
+	ResourceID    string `db:"resource_id"`
 }
 
 func getMemoryStoreSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (MemoryStore, error) {
@@ -153,32 +150,30 @@ func selectMemoryVersionsSQLX(ctx context.Context, database sqlxNamedQueryer, qu
 
 func (r memoryStoreRow) store() MemoryStore {
 	return MemoryStore{
-		ID:                r.ID,
-		UUID:              r.UUID,
-		ExternalID:        r.ExternalID,
-		OrganizationID:    r.OrganizationID,
-		WorkspaceID:       r.WorkspaceID,
-		CreatedByAPIKeyID: r.CreatedByAPIKeyID,
-		Name:              r.Name,
-		Description:       r.Description,
-		Metadata:          copyRaw(r.Metadata),
-		CreatedAt:         r.CreatedAt,
-		UpdatedAt:         r.UpdatedAt,
-		ArchivedAt:        r.ArchivedAt,
-		DeletedAt:         r.DeletedAt,
+		UUID:                r.UUID,
+		ExternalID:          r.ExternalID,
+		OrganizationUUID:    r.OrganizationUUID,
+		WorkspaceUUID:       r.WorkspaceUUID,
+		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		Name:                r.Name,
+		Description:         r.Description,
+		Metadata:            copyRaw(r.Metadata),
+		CreatedAt:           r.CreatedAt,
+		UpdatedAt:           r.UpdatedAt,
+		ArchivedAt:          r.ArchivedAt,
+		DeletedAt:           r.DeletedAt,
 	}
 }
 
 func (r memoryRow) memory() Memory {
 	return Memory{
-		ID:                       r.ID,
 		UUID:                     r.UUID,
 		ExternalID:               r.ExternalID,
-		OrganizationID:           r.OrganizationID,
-		WorkspaceID:              r.WorkspaceID,
-		MemoryStoreID:            r.MemoryStoreID,
+		OrganizationUUID:         r.OrganizationUUID,
+		WorkspaceUUID:            r.WorkspaceUUID,
+		MemoryStoreUUID:          r.MemoryStoreUUID,
 		MemoryStoreExternalID:    r.MemoryStoreExternalID,
-		CurrentVersionID:         r.CurrentVersionID,
+		CurrentVersionUUID:       r.CurrentVersionUUID,
 		CurrentVersionExternalID: r.CurrentVersionExternalID,
 		Path:                     r.Path,
 		ContentSizeBytes:         r.ContentSizeBytes,
@@ -193,14 +188,13 @@ func (r memoryRow) memory() Memory {
 
 func (r memoryVersionRow) version() MemoryVersion {
 	version := MemoryVersion{
-		ID:                    r.ID,
 		UUID:                  r.UUID,
 		ExternalID:            r.ExternalID,
-		OrganizationID:        r.OrganizationID,
-		WorkspaceID:           r.WorkspaceID,
-		MemoryStoreID:         r.MemoryStoreID,
+		OrganizationUUID:      r.OrganizationUUID,
+		WorkspaceUUID:         r.WorkspaceUUID,
+		MemoryStoreUUID:       r.MemoryStoreUUID,
 		MemoryStoreExternalID: r.MemoryStoreExternalID,
-		MemoryID:              r.MemoryID,
+		MemoryUUID:            r.MemoryUUID,
 		MemoryExternalID:      r.MemoryExternalID,
 		Operation:             r.Operation,
 		Path:                  nullStringPtr(r.Path),
@@ -210,7 +204,7 @@ func (r memoryVersionRow) version() MemoryVersion {
 		S3Key:                 nullStringPtr(r.S3Key),
 		CreatedBy: MemoryActor{
 			Type:             r.CreatedByActorType,
-			APIKeyID:         nullInt64Value(r.CreatedByAPIKeyID),
+			APIKeyUUID:       nullStringValue(r.CreatedByAPIKeyUUID),
 			APIKeyExternalID: nullStringValue(r.CreatedByAPIKeyExternalID),
 			SessionID:        nullStringValue(r.CreatedBySessionID),
 			UserID:           nullStringValue(r.CreatedByUserID),
@@ -221,7 +215,7 @@ func (r memoryVersionRow) version() MemoryVersion {
 	if r.RedactedByActorType.Valid {
 		version.RedactedBy = &MemoryActor{
 			Type:             r.RedactedByActorType.String,
-			APIKeyID:         nullInt64Value(r.RedactedByAPIKeyID),
+			APIKeyUUID:       nullStringValue(r.RedactedByAPIKeyUUID),
 			APIKeyExternalID: nullStringValue(r.RedactedByAPIKeyExternalID),
 			SessionID:        nullStringValue(r.RedactedBySessionID),
 			UserID:           nullStringValue(r.RedactedByUserID),

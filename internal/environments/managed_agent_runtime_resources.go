@@ -95,8 +95,8 @@ func repositoryAttachedBefore(candidate, current db.SessionResource) bool {
 	if !candidate.CreatedAt.Equal(current.CreatedAt) {
 		return candidate.CreatedAt.Before(current.CreatedAt)
 	}
-	if candidate.ID != current.ID {
-		return candidate.ID < current.ID
+	if candidate.UUID != current.UUID {
+		return candidate.UUID < current.UUID
 	}
 	return candidate.ExternalID < current.ExternalID
 }

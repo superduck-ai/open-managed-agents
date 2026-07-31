@@ -286,7 +286,9 @@ func cleanupBatchRows(t *testing.T, database *db.DB, batchID string) {
 	}
 	if _, err := database.Pool.Exec(context.Background(), `
 		delete from message_batch_requests
-		where message_batch_id in (select id from message_batches where external_id = $1)
+		where message_batch_uuid in (
+			select uuid from message_batches where external_id = $1
+		)
 	`, batchID); err != nil {
 		t.Fatalf("cleanup batch requests: %v", err)
 	}

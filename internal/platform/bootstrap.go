@@ -16,7 +16,6 @@ type UserRecord struct {
 
 type OrganizationRecord struct {
 	UUID                   string
-	ExternalID             string
 	Name                   string
 	Domain                 *string
 	ParentOrganizationUUID *string

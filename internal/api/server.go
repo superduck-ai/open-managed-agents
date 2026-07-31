@@ -75,6 +75,7 @@ type ServerDeps struct {
 	Logger                 *slog.Logger
 	PlatformStore          platformsession.Store
 	CodeSessionCredentials *codesessions.SessionCredentials
+	SandboxTimeoutExtender codesessions.SandboxTimeoutExtender
 	FilestoreCredentials   *filestoreapi.TokenCredentials
 	FilestoreService       *filestoreapi.Service
 }
@@ -110,7 +111,7 @@ func NewServer(deps ServerDeps) *Server {
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
 		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, codeSessionLogger),
+		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger),
 		deployments:          deploymentsapi.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.Config, deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
@@ -405,10 +406,26 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
-	if strings.TrimSpace(session.OrganizationUUID) == "" && strings.TrimSpace(session.OrganizationExternalID) != "" {
-		if org, orgErr := s.db.GetPlatformOrganization(r.Context(), session.OrganizationExternalID); orgErr == nil && org != nil {
-			session.OrganizationUUID = org.UUID
+	if session.APIKeyUUID == "" || session.UserUUID == "" {
+		refreshed, refreshErr := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
+			SessionKey: sessionKey,
+			UserUUID:   session.UserExternalID,
+			OrgUUID:    session.OrganizationUUID,
+			ExpiresAt:  session.ExpiresAt,
+		})
+		if refreshErr != nil {
+			if errors.Is(refreshErr, db.ErrNotFound) || errors.Is(refreshErr, platform.ErrNotFound) {
+				return auth.Principal{}, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid session")
+			}
+			s.logger.ErrorContext(r.Context(), "refresh platform session UUID references", "error", refreshErr)
+			return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 		}
+		refreshed.ExternalID = session.ExternalID
+		if saveErr := s.platformStore.Save(r.Context(), sessionKey, refreshed); saveErr != nil {
+			s.logger.ErrorContext(r.Context(), "save refreshed platform session UUID references", "error", saveErr)
+			return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
+		}
+		session = refreshed
 	}
 	principal := session.Principal()
 	principal, orgErr := s.applyPlatformOrganizationOverride(r, principal)
@@ -419,7 +436,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 	if workspaceID == "" || workspaceID == "default" || workspaceID == principal.WorkspaceExternalID || workspaceID == principal.WorkspaceUUID {
 		return principal, nil
 	}
-	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationID, workspaceID)
+	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, workspaceID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not found")
@@ -430,7 +447,6 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 	if workspace.ArchivedAt != nil {
 		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace is archived")
 	}
-	principal.WorkspaceID = workspace.ID
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
 	return principal, nil
@@ -489,7 +505,7 @@ func (s *Server) recoverPlatformMirrorSession(r *http.Request) (auth.Principal, 
 
 func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
 	orgID := platformOrganizationOverrideID(r)
-	if orgID == "" || orgID == principal.OrganizationUUID || orgID == principal.OrganizationExternalID {
+	if orgID == "" || orgID == principal.OrganizationUUID {
 		return principal, nil
 	}
 	org, err := s.db.GetPlatformOrganization(r.Context(), orgID)
@@ -500,11 +516,10 @@ func (s *Server) applyPlatformOrganizationOverride(r *http.Request, principal au
 		s.logger.ErrorContext(r.Context(), "load platform organization override", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
-	if org.UUID != principal.OrganizationUUID && org.ExternalID != principal.OrganizationExternalID {
+	if org.UUID != principal.OrganizationUUID {
 		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Organization not allowed")
 	}
 	principal.OrganizationUUID = org.UUID
-	principal.OrganizationExternalID = org.ExternalID
 	return principal, nil
 }
 
@@ -513,12 +528,12 @@ func (s *Server) platformMirrorOrganizationAlias(r *http.Request, principal auth
 		return ""
 	}
 	orgID := platformAPIPathOrganizationID(r.URL.Path)
-	if orgID == "" || orgID == principal.OrganizationUUID || orgID == principal.OrganizationExternalID {
+	if orgID == "" || orgID == principal.OrganizationUUID {
 		return ""
 	}
 	org, err := s.db.GetPlatformOrganization(r.Context(), orgID)
 	if err == nil {
-		if org.UUID == principal.OrganizationUUID || org.ExternalID == principal.OrganizationExternalID {
+		if org.UUID == principal.OrganizationUUID {
 			return ""
 		}
 		return ""

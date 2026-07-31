@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -132,7 +133,7 @@ func (h *Handler) primaryOrphanToolUseIDsWithChildCopies(ctx context.Context, se
 	if strings.TrimSpace(threadID) != "" || len(records) == 0 {
 		return nil, nil
 	}
-	workspaceID := records[0].WorkspaceID
+	workspaceID := records[0].WorkspaceUUID
 	seen := make(map[string]struct{})
 	toolUseIDs := make([]string, 0)
 	for _, record := range records {
@@ -330,67 +331,67 @@ func parseRepeatedQuery(r *http.Request, names ...string) []string {
 }
 
 func encodeSessionCursor(session db.Session) string {
-	return encodeCursor(session.CreatedAt, session.ID)
+	return encodeCursor(session.CreatedAt, session.UUID)
 }
 
 func encodeEventCursor(event db.SessionEvent) string {
-	return encodeCursor(event.CreatedAt, event.ID)
+	return encodeCursor(event.CreatedAt, event.UUID)
 }
 
 func encodeThreadCursor(thread db.SessionThread) string {
-	return encodeCursor(thread.CreatedAt, thread.ID)
+	return encodeCursor(thread.CreatedAt, thread.UUID)
 }
 
-func encodeCursor(createdAt time.Time, id int64) string {
-	data, _ := json.Marshal(map[string]any{"created_at": createdAt.UTC().Format(time.RFC3339Nano), "id": id})
+func encodeCursor(createdAt time.Time, resourceUUID string) string {
+	data, _ := json.Marshal(map[string]any{"created_at": createdAt.UTC().Format(time.RFC3339Nano), "uuid": resourceUUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
 func decodeSessionCursor(raw string) (*db.SessionPageCursor, error) {
-	createdAt, id, err := decodeCursor(raw)
+	createdAt, resourceUUID, err := decodeCursor(raw)
 	if err != nil || createdAt == nil {
 		return nil, err
 	}
-	return &db.SessionPageCursor{CreatedAt: *createdAt, ID: id}, nil
+	return &db.SessionPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
 }
 
 func decodeEventCursor(raw string) (*db.SessionEventPageCursor, error) {
-	createdAt, id, err := decodeCursor(raw)
+	createdAt, resourceUUID, err := decodeCursor(raw)
 	if err != nil || createdAt == nil {
 		return nil, err
 	}
-	return &db.SessionEventPageCursor{CreatedAt: *createdAt, ID: id}, nil
+	return &db.SessionEventPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
 }
 
 func decodeThreadCursor(raw string) (*db.SessionThreadPageCursor, error) {
-	createdAt, id, err := decodeCursor(raw)
+	createdAt, resourceUUID, err := decodeCursor(raw)
 	if err != nil || createdAt == nil {
 		return nil, err
 	}
-	return &db.SessionThreadPageCursor{CreatedAt: *createdAt, ID: id}, nil
+	return &db.SessionThreadPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
 }
 
-func decodeCursor(raw string) (*time.Time, int64, error) {
+func decodeCursor(raw string) (*time.Time, string, error) {
 	if strings.TrimSpace(raw) == "" {
-		return nil, 0, nil
+		return nil, "", nil
 	}
 	data, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
-		return nil, 0, errors.New("page cursor is invalid")
+		return nil, "", errors.New("page cursor is invalid")
 	}
 	var payload struct {
 		CreatedAt string `json:"created_at"`
-		ID        int64  `json:"id"`
+		UUID      string `json:"uuid"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil || payload.ID <= 0 || payload.CreatedAt == "" {
-		return nil, 0, errors.New("page cursor is invalid")
+	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
+		return nil, "", errors.New("page cursor is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)
 	if err != nil {
-		return nil, 0, errors.New("page cursor is invalid")
+		return nil, "", errors.New("page cursor is invalid")
 	}
 	createdAt = createdAt.UTC()
-	return &createdAt, payload.ID, nil
+	return &createdAt, payload.UUID, nil
 }
 
 func writeBadRequest(w http.ResponseWriter, r *http.Request, err error) {

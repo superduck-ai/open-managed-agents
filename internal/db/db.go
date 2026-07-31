@@ -42,13 +42,11 @@ type DB struct {
 }
 
 type APIKey struct {
-	ID                     int64
-	ExternalID             string
-	OrganizationID         int64
-	OrganizationExternalID string
-	WorkspaceID            int64
-	WorkspaceUUID          string
-	WorkspaceExternalID    string
+	UUID                string
+	ExternalID          string
+	OrganizationUUID    string
+	WorkspaceUUID       string
+	WorkspaceExternalID string
 }
 
 type foreignKeyRow struct {
@@ -57,13 +55,11 @@ type foreignKeyRow struct {
 }
 
 type apiKeyRow struct {
-	ID                     int64  `db:"id"`
-	ExternalID             string `db:"external_id"`
-	OrganizationID         int64  `db:"organization_id"`
-	OrganizationExternalID string `db:"organization_external_id"`
-	WorkspaceID            int64  `db:"workspace_id"`
-	WorkspaceUUID          string `db:"workspace_uuid"`
-	WorkspaceExternalID    string `db:"workspace_external_id"`
+	UUID                string `db:"uuid"`
+	ExternalID          string `db:"external_id"`
+	OrganizationUUID    string `db:"organization_uuid"`
+	WorkspaceUUID       string `db:"workspace_uuid"`
+	WorkspaceExternalID string `db:"workspace_external_id"`
 }
 
 const (
@@ -82,73 +78,96 @@ const (
 	`
 	legacyTableExistsQuery = `select to_regclass(:table_name) is not null`
 	seedOrganizationQuery  = `
-		insert into organizations (external_id, name)
-		values (:external_id, :name)
-		on conflict (external_id) do update set name = excluded.name
-		returning id
+		with existing as (
+			select o.uuid
+			from organizations o
+			join workspaces w on w.organization_uuid = o.uuid
+			where w.external_id = :workspace_external_id
+			limit 1
+		),
+		updated as (
+			update organizations o
+			set name = :name,
+				updated_at = now()
+			from existing
+			where o.uuid = existing.uuid
+			returning o.uuid
+		),
+		inserted as (
+			insert into organizations (name)
+			select :name
+			where not exists (select 1 from existing)
+			returning uuid
+		)
+		select CAST(uuid AS text) from updated
+		union all
+		select CAST(uuid AS text) from inserted
+		limit 1
 	`
-	seedWorkspaceQuery = `
-		insert into workspaces (external_id, organization_id, name)
-		values (:external_id, :organization_id, :name)
+	seedOrganizationLockQuery = `select pg_advisory_xact_lock(704611533427849228)`
+	seedWorkspaceQuery        = `
+		insert into workspaces (external_id, organization_uuid, name)
+		values (:external_id, CAST(:organization_uuid AS uuid), :name)
 		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
+			organization_uuid = excluded.organization_uuid,
 			name = excluded.name
-		returning id
+		returning CAST(uuid AS text)
 	`
 	seedUserQuery = `
-		insert into users (external_id, organization_id, email, name, role)
-		values (:external_id, :organization_id, :email, :name, 'admin')
+		insert into users (external_id, organization_uuid, email, name, role)
+		values (:external_id, CAST(:organization_uuid AS uuid), :email, :name, 'admin')
 		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
+			organization_uuid = excluded.organization_uuid,
 			email = excluded.email,
 			name = excluded.name,
 			role = excluded.role,
 			deleted_at = null,
 			updated_at = now()
-		returning id
+		returning CAST(uuid AS text)
 	`
 	seedWorkspaceMemberQuery = `
 		insert into workspace_members (
-			external_id, organization_id, workspace_id, workspace_external_id,
-			user_id, user_external_id, workspace_role
+			external_id, organization_uuid, workspace_uuid, workspace_external_id,
+			user_uuid, user_external_id, workspace_role
 		)
 		values (
-			:external_id, :organization_id, :workspace_id, :workspace_external_id,
-			:user_id, :user_external_id, 'workspace_admin'
+			:external_id, CAST(:organization_uuid AS uuid), CAST(:workspace_uuid AS uuid),
+			:workspace_external_id, CAST(:user_uuid AS uuid), :user_external_id, 'workspace_admin'
 		)
 		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
-			workspace_id = excluded.workspace_id,
+			organization_uuid = excluded.organization_uuid,
+			workspace_uuid = excluded.workspace_uuid,
 			workspace_external_id = excluded.workspace_external_id,
-			user_id = excluded.user_id,
+			user_uuid = excluded.user_uuid,
 			user_external_id = excluded.user_external_id,
 			workspace_role = excluded.workspace_role,
 			deleted_at = null,
 			updated_at = now()
 	`
 	seedAPIKeyQuery = `
-		insert into api_keys (external_id, workspace_id, key_hash, status, created_by_user_id, name, partial_key_hint)
+		insert into api_keys (
+			external_id, workspace_uuid, key_hash, status, created_by_user_uuid, name, partial_key_hint
+		)
 		values (
-			:external_id, :workspace_id, :key_hash, 'active',
-			:created_by_user_id, :name, :partial_key_hint
+			:external_id, CAST(:workspace_uuid AS uuid), :key_hash, 'active',
+			CAST(:created_by_user_uuid AS uuid), :name, :partial_key_hint
 		)
 		on conflict (external_id) do update set
-			workspace_id = excluded.workspace_id,
+			workspace_uuid = excluded.workspace_uuid,
 			key_hash = excluded.key_hash,
 			status = 'active',
-			created_by_user_id = excluded.created_by_user_id,
+			created_by_user_uuid = excluded.created_by_user_uuid,
 			name = excluded.name,
 			partial_key_hint = excluded.partial_key_hint,
 			updated_at = now()
 	`
 	getAPIKeyQuery = `
-		select ak.id, ak.external_id,
-			o.id as organization_id, o.external_id as organization_external_id,
-			w.id as workspace_id, CAST(w.uuid AS text) as workspace_uuid,
+		select CAST(ak.uuid AS text) AS uuid, ak.external_id,
+			CAST(w.organization_uuid AS text) as organization_uuid,
+			CAST(w.uuid AS text) as workspace_uuid,
 			w.external_id as workspace_external_id
 		from api_keys ak
-		join workspaces w on w.id = ak.workspace_id
-		join organizations o on o.id = w.organization_id
+		join workspaces w on w.uuid = ak.workspace_uuid
 		where ak.key_hash = :key_hash
 			and ak.status = 'active'
 			and (ak.expires_at is null or ak.expires_at > now())
@@ -476,36 +495,39 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 	}
 	defer tx.Rollback()
 
-	var organizationID int64
-	if err := namedGetContext(ctx, tx, &organizationID, seedOrganizationQuery, map[string]any{
-		"external_id": "org_default",
-		"name":        "default",
+	if _, err := tx.ExecContext(ctx, seedOrganizationLockQuery); err != nil {
+		return err
+	}
+	var organizationUUID string
+	if err := namedGetContext(ctx, tx, &organizationUUID, seedOrganizationQuery, map[string]any{
+		"workspace_external_id": "workspace_default",
+		"name":                  "default",
 	}); err != nil {
 		return err
 	}
-	var workspaceID int64
-	if err := namedGetContext(ctx, tx, &workspaceID, seedWorkspaceQuery, map[string]any{
-		"external_id":     "workspace_default",
-		"organization_id": organizationID,
-		"name":            "default",
+	var workspaceUUID string
+	if err := namedGetContext(ctx, tx, &workspaceUUID, seedWorkspaceQuery, map[string]any{
+		"external_id":       "workspace_default",
+		"organization_uuid": organizationUUID,
+		"name":              "default",
 	}); err != nil {
 		return err
 	}
-	var userID int64
-	if err := namedGetContext(ctx, tx, &userID, seedUserQuery, map[string]any{
-		"external_id":     "user_default",
-		"organization_id": organizationID,
-		"email":           "admin@example.local",
-		"name":            "Local Admin",
+	var userUUID string
+	if err := namedGetContext(ctx, tx, &userUUID, seedUserQuery, map[string]any{
+		"external_id":       "user_default",
+		"organization_uuid": organizationUUID,
+		"email":             "admin@example.local",
+		"name":              "Local Admin",
 	}); err != nil {
 		return err
 	}
 	if _, err := namedExecContext(ctx, tx, seedWorkspaceMemberQuery, map[string]any{
 		"external_id":           "wmem_default",
-		"organization_id":       organizationID,
-		"workspace_id":          workspaceID,
+		"organization_uuid":     organizationUUID,
+		"workspace_uuid":        workspaceUUID,
 		"workspace_external_id": "workspace_default",
-		"user_id":               userID,
+		"user_uuid":             userUUID,
 		"user_external_id":      "user_default",
 	}); err != nil {
 		return err
@@ -516,12 +538,12 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 			return errors.New("seed api keys must include external_id and key")
 		}
 		if _, err := namedExecContext(ctx, tx, seedAPIKeyQuery, map[string]any{
-			"external_id":        key.ExternalID,
-			"workspace_id":       workspaceID,
-			"key_hash":           auth.HashAPIKey(key.Key),
-			"created_by_user_id": userID,
-			"name":               key.ExternalID,
-			"partial_key_hint":   partialAPIKeyHint(key.Key),
+			"external_id":          key.ExternalID,
+			"workspace_uuid":       workspaceUUID,
+			"key_hash":             auth.HashAPIKey(key.Key),
+			"created_by_user_uuid": userUUID,
+			"name":                 key.ExternalID,
+			"partial_key_hint":     partialAPIKeyHint(key.Key),
 		}); err != nil {
 			return err
 		}
@@ -543,13 +565,11 @@ func (d *DB) GetAPIKey(ctx context.Context, keyHash string) (APIKey, error) {
 
 func (r apiKeyRow) apiKey() APIKey {
 	return APIKey{
-		ID:                     r.ID,
-		ExternalID:             r.ExternalID,
-		OrganizationID:         r.OrganizationID,
-		OrganizationExternalID: r.OrganizationExternalID,
-		WorkspaceID:            r.WorkspaceID,
-		WorkspaceUUID:          r.WorkspaceUUID,
-		WorkspaceExternalID:    r.WorkspaceExternalID,
+		UUID:                r.UUID,
+		ExternalID:          r.ExternalID,
+		OrganizationUUID:    r.OrganizationUUID,
+		WorkspaceUUID:       r.WorkspaceUUID,
+		WorkspaceExternalID: r.WorkspaceExternalID,
 	}
 }
 

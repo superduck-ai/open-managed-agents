@@ -17,7 +17,7 @@ import (
 
 func (h *Handler) applySessionEventEffects(ctx context.Context, event db.SessionEvent) {
 	if event.EventType == "session.thread_created" {
-		session, err := h.db.GetSession(ctx, event.WorkspaceID, event.SessionExternalID)
+		session, err := h.db.GetSession(ctx, event.WorkspaceUUID, event.SessionExternalID)
 		if err != nil {
 			if !errors.Is(err, db.ErrNotFound) {
 				h.logger.ErrorContext(ctx, "load session for thread_created", "session_id", event.SessionExternalID, "error", err)
@@ -38,7 +38,7 @@ func (h *Handler) applySessionEventEffects(ctx context.Context, event db.Session
 		if threadID == nil {
 			return
 		}
-		session, err := h.db.GetSession(ctx, event.WorkspaceID, event.SessionExternalID)
+		session, err := h.db.GetSession(ctx, event.WorkspaceUUID, event.SessionExternalID)
 		if err == nil {
 			var payload map[string]any
 			_ = json.Unmarshal(event.Payload, &payload)
@@ -48,25 +48,25 @@ func (h *Handler) applySessionEventEffects(ctx context.Context, event db.Session
 		} else if !errors.Is(err, db.ErrNotFound) {
 			h.logger.ErrorContext(ctx, "load session for thread status", "session_id", event.SessionExternalID, "error", err)
 		}
-		if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceID, event.SessionExternalID, *threadID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+		if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, *threadID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
 			h.logger.ErrorContext(ctx, "update session thread status from event", "session_id", event.SessionExternalID, "thread_id", *threadID, "event_type", event.EventType, "error", err)
 			return
 		}
-		h.updateAggregatedSessionStatus(ctx, event.WorkspaceID, event.SessionExternalID)
+		h.updateAggregatedSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID)
 		return
 	}
 	status, ok := sessionStatusFromEventType(event.EventType)
 	if !ok {
 		return
 	}
-	if err := h.db.SetSessionStatus(ctx, event.WorkspaceID, event.SessionExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if err := h.db.SetSessionStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
 		h.logger.ErrorContext(ctx, "update session status from event", "session_id", event.SessionExternalID, "event_type", event.EventType, "error", err)
 	}
-	thread, err := h.db.GetPrimarySessionThread(ctx, event.WorkspaceID, event.SessionExternalID)
+	thread, err := h.db.GetPrimarySessionThread(ctx, event.WorkspaceUUID, event.SessionExternalID)
 	if err != nil {
 		return
 	}
-	if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceID, event.SessionExternalID, thread.ExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if err := h.db.SetSessionThreadStatus(ctx, event.WorkspaceUUID, event.SessionExternalID, thread.ExternalID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
 		h.logger.ErrorContext(ctx, "update primary session thread status from event", "session_id", event.SessionExternalID, "thread_id", thread.ExternalID, "event_type", event.EventType, "error", err)
 	}
 }
@@ -79,8 +79,8 @@ func threadStatusFromEventType(eventType string) (string, bool) {
 	return maevents.ThreadStatus(eventType)
 }
 
-func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceID int64, sessionID string) {
-	threads, err := h.db.ListSessionThreads(ctx, workspaceID, sessionID)
+func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceUUID string, sessionID string) {
+	threads, err := h.db.ListSessionThreads(ctx, workspaceUUID, sessionID)
 	if err != nil {
 		if !errors.Is(err, db.ErrNotFound) {
 			h.logger.ErrorContext(ctx, "list session threads for aggregate", "session_id", sessionID, "error", err)
@@ -95,7 +95,7 @@ func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceID
 		switch thread.Status {
 		case "running":
 			status = "running"
-			if err := h.db.SetSessionStatus(ctx, workspaceID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+			if err := h.db.SetSessionStatus(ctx, workspaceUUID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
 				h.logger.ErrorContext(ctx, "aggregate session status", "session_id", sessionID, "error", err)
 			}
 			return
@@ -109,7 +109,7 @@ func (h *Handler) updateAggregatedSessionStatus(ctx context.Context, workspaceID
 			}
 		}
 	}
-	if err := h.db.SetSessionStatus(ctx, workspaceID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if err := h.db.SetSessionStatus(ctx, workspaceUUID, sessionID, status); err != nil && !errors.Is(err, db.ErrNotFound) {
 		h.logger.ErrorContext(ctx, "aggregate session status", "session_id", sessionID, "error", err)
 	}
 }
@@ -135,9 +135,9 @@ func (h *Handler) sessionUpdatedEvent(session db.Session) (db.SessionEvent, erro
 	return db.SessionEvent{
 		UUID:              uuid.NewString(),
 		ExternalID:        eventID,
-		OrganizationID:    session.OrganizationID,
-		WorkspaceID:       session.WorkspaceID,
-		SessionID:         session.ID,
+		OrganizationUUID:  session.OrganizationUUID,
+		WorkspaceUUID:     session.WorkspaceUUID,
+		SessionUUID:       session.UUID,
 		SessionExternalID: session.ExternalID,
 		EventType:         "session.updated",
 		Payload:           payload,

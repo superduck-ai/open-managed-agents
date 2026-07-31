@@ -23,11 +23,11 @@ type normalizedFilestoreSkillArchiveEntry struct {
 
 var (
 	filestoreSkillArchiveEntryFilesystemQuery = filestoreFilesystemSelectSQL() + `
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and session_uuid = (
 				select uuid
 				from sessions
-				where workspace_id = :workspace_id
+				where workspace_uuid = CAST(:workspace_uuid AS uuid)
 					and external_id = :session_external_id
 					and deleted_at is null
 			)
@@ -99,20 +99,12 @@ var (
 		)
 	`
 	filestoreSkillArchiveEntryListQuery = filestoreEntrySelectSQL() + `
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
-			and filesystem_uuid = (
-				select uuid
-				from filestore_filesystems
-				where id = :filesystem_id
-					and workspace_uuid = (
-						select uuid from workspaces where id = :workspace_id
-					)
-					and deleted_at is null
-			)
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and filesystem_uuid = CAST(:filesystem_uuid AS uuid)
 			and kind = 'archive'
 			and managed_by = 'skill_archive'
 			and deleted_at is null
-		order by path, id
+		order by path, uuid
 	`
 )
 
@@ -120,7 +112,7 @@ var (
 // /skills archive entry 集合。调用前必须已把 "latest" 解析为具体版本。
 func (d *DB) ReplaceFilestoreSkillArchiveEntries(
 	ctx context.Context,
-	workspaceID int64,
+	workspaceUUID string,
 	sessionExternalID string,
 	inputs []FilestoreSkillArchiveEntryInput,
 ) error {
@@ -139,19 +131,19 @@ func (d *DB) ReplaceFilestoreSkillArchiveEntries(
 	defer tx.Rollback()
 
 	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, filestoreSkillArchiveEntryFilesystemQuery, map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": sessionExternalID,
 	})
 	if err != nil {
 		return err
 	}
 	if _, err := namedExecContext(ctx, tx, provisionFilestoreNamespaceLockQuery, map[string]any{
-		"filesystem_id": filesystem.ID,
+		"filesystem_uuid": filesystem.UUID,
 	}); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
-	if err := ensureFilestoreFixedRootsTx(ctx, tx, workspaceID, filesystem, now); err != nil {
+	if err := ensureFilestoreFixedRootsTx(ctx, tx, filesystem, now); err != nil {
 		return err
 	}
 	if _, err := namedExecContext(ctx, tx, filestoreSkillArchiveEntryRetireQuery, map[string]any{
@@ -189,13 +181,13 @@ func (d *DB) ReplaceFilestoreSkillArchiveEntries(
 // archive entry 集合，供只读 /skills 虚拟视图解析。
 func (d *DB) ListFilestoreSkillArchiveEntries(
 	ctx context.Context,
-	workspaceID int64,
-	filesystemID int64,
+	workspaceUUID string,
+	filesystemUUID string,
 ) ([]FilestoreEntry, error) {
 	var rows []filestoreEntryRow
 	if err := namedSelectContext(ctx, d.sql, &rows, filestoreSkillArchiveEntryListQuery, map[string]any{
-		"workspace_id":  workspaceID,
-		"filesystem_id": filesystemID,
+		"workspace_uuid":  workspaceUUID,
+		"filesystem_uuid": filesystemUUID,
 	}); err != nil {
 		return nil, err
 	}

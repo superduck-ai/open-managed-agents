@@ -9,7 +9,7 @@ import (
 func TestFilesystemCleanupProcessingQueriesUseSQLXNamedParameters(t *testing.T) {
 	t.Run("missing argument", func(t *testing.T) {
 		_, _, err := bindNamed(postgresRebinder{}, leasedFilesystemCleanupJobQuery, map[string]any{
-			"job_id":   int64(17),
+			"job_uuid": "00000000-0000-0000-0000-000000000017",
 			"job_type": filestoreFilesystemCleanupJobType,
 		})
 		if err == nil {
@@ -19,18 +19,16 @@ func TestFilesystemCleanupProcessingQueriesUseSQLXNamedParameters(t *testing.T) 
 
 	retiredAt := time.Date(2026, time.July, 23, 16, 0, 0, 0, time.UTC)
 	arguments := map[string]any{
-		"job_id":          int64(17),
-		"job_type":        filestoreFilesystemCleanupJobType,
-		"lease_token":     "filesystem-cleanup-worker",
-		"limit":           100,
-		"workspace_id":    int64(42),
-		"filesystem_id":   int64(43),
-		"workspace_uuid":  "00000000-0000-0000-0000-000000000042",
-		"filesystem_uuid": "00000000-0000-0000-0000-000000000043",
-		"filesystem_ids":  []int64{43, 44},
-		"entry_id":        int64(44),
-		"retired_at":      retiredAt,
-		"status":          "completed",
+		"job_uuid":         "00000000-0000-0000-0000-000000000017",
+		"job_type":         filestoreFilesystemCleanupJobType,
+		"lease_token":      "filesystem-cleanup-worker",
+		"limit":            100,
+		"workspace_uuid":   "00000000-0000-0000-0000-000000000042",
+		"filesystem_uuid":  "00000000-0000-0000-0000-000000000043",
+		"filesystem_uuids": []string{"00000000-0000-0000-0000-000000000043", "00000000-0000-0000-0000-000000000044"},
+		"entry_uuid":       "00000000-0000-0000-0000-000000000044",
+		"retired_at":       retiredAt,
+		"status":           "completed",
 	}
 	tests := []struct {
 		name         string

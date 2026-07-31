@@ -157,29 +157,29 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	displayTitle := firstNonEmpty(r.FormValue("display_title"), pkg.Name, pkg.Directory)
 	createdSkill, _, err := h.db.CreateSkillWithVersion(r.Context(), db.Skill{
-		UUID:              skillUUID,
-		ExternalID:        skillID,
-		WorkspaceID:       principal.WorkspaceID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		DisplayTitle:      &displayTitle,
-		CreatedAt:         now,
+		UUID:                skillUUID,
+		ExternalID:          skillID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		DisplayTitle:        &displayTitle,
+		CreatedAt:           now,
 	}, db.SkillVersion{
-		UUID:              versionUUID,
-		ExternalID:        versionID,
-		WorkspaceID:       principal.WorkspaceID,
-		Version:           versionValue,
-		Name:              pkg.Name,
-		Description:       pkg.Description,
-		Directory:         pkg.Directory,
-		S3Bucket:          h.store.Name(),
-		S3Key:             objectKey,
-		SizeBytes:         pkg.Size,
-		SHA256:            pkg.SHA256,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		CreatedAt:         now,
+		UUID:                versionUUID,
+		ExternalID:          versionID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		Version:             versionValue,
+		Name:                pkg.Name,
+		Description:         pkg.Description,
+		Directory:           pkg.Directory,
+		S3Bucket:            h.store.Name(),
+		S3Key:               objectKey,
+		SizeBytes:           pkg.Size,
+		SHA256:              pkg.SHA256,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		CreatedAt:           now,
 	})
 	if err != nil {
-		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceID, h.store.Name(), objectKey, versionID)
+		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		var displayTitleConflict *db.SkillDisplayTitleConflictError
 		if errors.As(err, &displayTitleConflict) {
 			httpapi.WriteError(w, r, httpapi.NewError(
@@ -232,9 +232,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		hasMore = more
 	case "custom":
 		records, more, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
-			WorkspaceID: principal.WorkspaceID,
-			Limit:       limit,
-			Offset:      offset,
+			WorkspaceUUID: principal.WorkspaceUUID,
+			Limit:         limit,
+			Offset:        offset,
 		})
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "list skills", "error", err)
@@ -283,9 +283,9 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 				// If builtin rows exactly fill this page at the boundary, probe
 				// custom rows so has_more still exposes the next custom page.
 				records, _, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
-					WorkspaceID: principal.WorkspaceID,
-					Limit:       1,
-					Offset:      0,
+					WorkspaceUUID: principal.WorkspaceUUID,
+					Limit:         1,
+					Offset:        0,
 				})
 				if err != nil {
 					return nil, false, err
@@ -298,9 +298,9 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 		// no custom rows have been consumed yet.
 		customLimit := limit - len(data)
 		records, customMore, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
-			WorkspaceID: principal.WorkspaceID,
-			Limit:       customLimit,
-			Offset:      0,
+			WorkspaceUUID: principal.WorkspaceUUID,
+			Limit:         customLimit,
+			Offset:        0,
 		})
 		if err != nil {
 			return nil, false, err
@@ -312,9 +312,9 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 	// Once the offset has passed all builtin rows, translate the combined
 	// offset into the custom-only feed.
 	records, hasMore, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
-		WorkspaceID: principal.WorkspaceID,
-		Limit:       limit,
-		Offset:      offset - builtinCount,
+		WorkspaceUUID: principal.WorkspaceUUID,
+		Limit:         limit,
+		Offset:        offset - builtinCount,
 	})
 	if err != nil {
 		return nil, false, err
@@ -347,7 +347,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, skillID strin
 		httpapi.WriteJSON(w, http.StatusOK, responseFromBuiltinSkill(skill))
 		return
 	}
-	record, err := h.db.GetSkill(r.Context(), principal.WorkspaceID, skillID)
+	record, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureSkillResponse(skillID, "display_title"))
@@ -386,7 +386,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string)
 		return
 	}
 
-	_, _, err := h.db.SoftDeleteSkill(r.Context(), principal.WorkspaceID, skillID)
+	_, _, err := h.db.SoftDeleteSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
 			httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": skillID, "type": "skill_deleted"})
@@ -432,7 +432,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		return
 	}
 
-	skill, err := h.db.GetSkill(r.Context(), principal.WorkspaceID, skillID)
+	skill, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion))
@@ -462,22 +462,22 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 	}
 
 	now := time.Now().UTC()
-	_, version, err := h.db.CreateSkillVersion(r.Context(), principal.WorkspaceID, skillID, db.SkillVersion{
-		UUID:              versionUUID,
-		ExternalID:        versionID,
-		Version:           versionValue,
-		Name:              pkg.Name,
-		Description:       pkg.Description,
-		Directory:         pkg.Directory,
-		S3Bucket:          h.store.Name(),
-		S3Key:             objectKey,
-		SizeBytes:         pkg.Size,
-		SHA256:            pkg.SHA256,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		CreatedAt:         now,
+	_, version, err := h.db.CreateSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, db.SkillVersion{
+		UUID:                versionUUID,
+		ExternalID:          versionID,
+		Version:             versionValue,
+		Name:                pkg.Name,
+		Description:         pkg.Description,
+		Directory:           pkg.Directory,
+		S3Bucket:            h.store.Name(),
+		S3Key:               objectKey,
+		SizeBytes:           pkg.Size,
+		SHA256:              pkg.SHA256,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		CreatedAt:           now,
 	})
 	if err != nil {
-		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceID, h.store.Name(), objectKey, versionID)
+		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
 			return
@@ -556,7 +556,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 		return
 	}
 	versions, hasMore, err := h.db.ListSkillVersionsPage(r.Context(), db.ListSkillVersionsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		SkillExternalID: skillID,
 		Limit:           limit,
 		Offset:          offset,
@@ -611,12 +611,12 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, skillI
 		return
 	}
 
-	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceID, skillID, version)
+	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
 	if err != nil {
 		h.writeResolveVersionError(w, r, skillID, version, err)
 		return
 	}
-	record, err := h.db.GetSkillVersion(r.Context(), principal.WorkspaceID, skillID, resolved)
+	record, err := h.db.GetSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, resolved)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
@@ -652,12 +652,12 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID,
 		return
 	}
 
-	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceID, skillID, version)
+	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
 	if err != nil {
 		h.writeResolveVersionError(w, r, skillID, version, err)
 		return
 	}
-	_, _, err = h.db.SoftDeleteSkillVersion(r.Context(), principal.WorkspaceID, skillID, resolved)
+	_, _, err = h.db.SoftDeleteSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, resolved)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
@@ -699,12 +699,12 @@ func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillI
 		return
 	}
 
-	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceID, skillID, version)
+	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
 	if err != nil {
 		h.writeResolveVersionError(w, r, skillID, version, err)
 		return
 	}
-	record, err := h.db.GetSkillVersion(r.Context(), principal.WorkspaceID, skillID, resolved)
+	record, err := h.db.GetSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, resolved)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
@@ -736,11 +736,11 @@ func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillI
 	}
 }
 
-func (h *Handler) resolveVersion(ctx context.Context, workspaceID int64, skillID, version string) (string, error) {
+func (h *Handler) resolveVersion(ctx context.Context, workspaceUUID string, skillID, version string) (string, error) {
 	if version != "latest" {
 		return version, nil
 	}
-	skill, err := h.db.GetSkill(ctx, workspaceID, skillID)
+	skill, err := h.db.GetSkill(ctx, workspaceUUID, skillID)
 	if err != nil {
 		return "", err
 	}
@@ -782,12 +782,12 @@ func (h *Handler) downloadFixtureSkill(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(data)
 }
 
-func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, workspaceID int64, bucket, key, externalID string) {
+func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, workspaceUUID string, bucket, key, externalID string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if err := h.store.Delete(cleanupCtx, key, storage.DeleteOptions{}); err != nil {
 		h.logger.ErrorContext(ctx, "delete skill object after metadata failure", "key", key, "error", err)
-		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, workspaceID, bucket, key, externalID); enqueueErr != nil {
+		if enqueueErr := h.db.EnqueueObjectCleanupJob(cleanupCtx, workspaceUUID, bucket, key, externalID); enqueueErr != nil {
 			h.logger.ErrorContext(ctx, "enqueue object cleanup", "key", key, "error", enqueueErr)
 		}
 	}

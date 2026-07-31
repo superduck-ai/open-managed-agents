@@ -365,7 +365,7 @@ sequenceDiagram
 
 删除 Session 时，同一短事务只软删除 filesystem 并投递一个 `filestore_filesystem_cleanup` 父任务，不遍历全部 entry，也不调用 S3。worker 每次最多退休 100 个文件 entry：Filestore 自有对象生成精确版本的 `filestore_object_cleanup` 子任务并扣减容量，借用 Files 对象的 entry 只退休数据库 row；仍有文件时父任务重新入队，文件全部退休后再批量软删除目录并完成父任务。对象删除由既有对象清理 worker 独立重试，因此 Session 删除延迟不随文件数量或对象存储响应时间增长。
 
-两类 Filestore cleanup job 的持久化 payload 都只保存 `workspace_uuid` 与 `filesystem_uuid`，不保存 `workspace_id`、`filesystem_id` 或冗余的 filesystem external ID。`jobs.workspace_id` 是通用任务表在当前数据库中的路由缓存，不是 Filestore 清理任务的权威归属：worker 取得租约时用 payload UUID 重新关联 workspace 与 filesystem，得到当前库的 bigint ID 后修正该缓存；整 filesystem 清理进入事务后也再次按 UUID 解析并锁定当前记录。迁移会先验证每条历史 bigint 引用都能解析且归属一致，再改写 payload；发现孤立或错配引用时直接中止，避免恢复或合库后把任务指向另一条恰好复用了相同 identity 的记录。
+两类 Filestore cleanup job 的持久化 payload 都只保存 `workspace_uuid` 与 `filesystem_uuid`，不保存 `workspace_id`、`filesystem_id` 或冗余的 filesystem external ID。`jobs.workspace_uuid` 也是稳定的 workspace 路由引用；worker 取得租约后直接按 payload UUID 关联并锁定 filesystem，不再把 workspace identity 当作缓存写回。整 filesystem 清理进入事务后会再次按 UUID 校验当前记录。迁移会先验证每条历史 bigint 引用都能解析且归属一致，再改写引用与 payload；发现孤立或错配引用时直接中止，避免恢复或合库后把任务指向另一条恰好复用了相同 identity 的记录。
 
 到达 `expires_at` 后，读路径立即隐藏文件；其字节数则在 TTL sweep 成功软删除该 entry 时释放。这个短暂的保守计费窗口由 sweep 周期限定，换来账本不依赖墙钟自行变化，并保证资源状态、清理任务和额度释放始终原子一致。
 

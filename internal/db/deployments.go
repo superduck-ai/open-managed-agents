@@ -9,15 +9,14 @@ import (
 )
 
 type Deployment struct {
-	ID                    int64
 	UUID                  string
 	ExternalID            string
-	OrganizationID        int64
-	WorkspaceID           int64
-	CreatedByAPIKeyID     int64
-	EnvironmentID         int64
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	CreatedByAPIKeyUUID   string
+	EnvironmentUUID       string
 	EnvironmentExternalID string
-	AgentID               int64
+	AgentUUID             string
 	AgentExternalID       string
 	AgentVersion          int
 	AgentSnapshot         json.RawMessage
@@ -39,15 +38,14 @@ type Deployment struct {
 }
 
 type DeploymentRun struct {
-	ID                   int64
 	UUID                 string
 	ExternalID           string
-	OrganizationID       int64
-	WorkspaceID          int64
-	CreatedByAPIKeyID    int64
-	DeploymentID         int64
+	OrganizationUUID     string
+	WorkspaceUUID        string
+	CreatedByAPIKeyUUID  string
+	DeploymentUUID       string
 	DeploymentExternalID string
-	AgentID              int64
+	AgentUUID            string
 	AgentExternalID      string
 	AgentVersion         int
 	AgentSnapshot        json.RawMessage
@@ -61,16 +59,16 @@ type DeploymentRun struct {
 
 type DeploymentPageCursor struct {
 	CreatedAt time.Time
-	ID        int64
+	UUID      string
 }
 
 type DeploymentRunPageCursor struct {
 	CreatedAt time.Time
-	ID        int64
+	UUID      string
 }
 
 type ListDeploymentsPageParams struct {
-	WorkspaceID     int64
+	WorkspaceUUID   string
 	Limit           int
 	Cursor          *DeploymentPageCursor
 	IncludeArchived bool
@@ -81,7 +79,7 @@ type ListDeploymentsPageParams struct {
 }
 
 type ListDeploymentRunsPageParams struct {
-	WorkspaceID          int64
+	WorkspaceUUID        string
 	Limit                int
 	Cursor               *DeploymentRunPageCursor
 	DeploymentExternalID string
@@ -104,15 +102,15 @@ type CreateManualDeploymentRunInput struct {
 const (
 	createDeploymentQuery = `
 		insert into deployments (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			environment_id, environment_external_id, agent_id, agent_external_id,
+			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+			environment_uuid, environment_external_id, agent_uuid, agent_external_id,
 			agent_version, agent_snapshot, name, description, metadata, initial_events,
 			resources, resource_secrets, vault_ids, schedule, last_run_at, status,
 			paused_reason, created_at, updated_at
 		)
 		values (
-			:uuid, :external_id, :organization_id, :workspace_id, :created_by_api_key_id,
-			:environment_id, :environment_external_id, :agent_id, :agent_external_id,
+			:uuid, :external_id, :organization_uuid, :workspace_uuid, :created_by_api_key_uuid,
+			:environment_uuid, :environment_external_id, :agent_uuid, :agent_external_id,
 			:agent_version, CAST(:agent_snapshot AS jsonb), :name, :description,
 			CAST(:metadata AS jsonb), CAST(:initial_events AS jsonb),
 			CAST(:resources AS jsonb), CAST(:resource_secrets AS jsonb),
@@ -124,16 +122,16 @@ const (
 	getDeploymentQuery = `
 		select ` + deploymentSQLXColumns + `
 		from deployments
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and external_id = :external_id
 			and deleted_at is null
 	`
 	lockDeploymentForUpdateQuery = getDeploymentQuery + ` for update`
 	updateDeploymentQuery        = `
 		update deployments
-		set environment_id = :environment_id,
+		set environment_uuid = :environment_uuid,
 			environment_external_id = :environment_external_id,
-			agent_id = :agent_id,
+			agent_uuid = :agent_uuid,
 			agent_external_id = :agent_external_id,
 			agent_version = :agent_version,
 			agent_snapshot = CAST(:agent_snapshot AS jsonb),
@@ -146,7 +144,7 @@ const (
 			vault_ids = CAST(:vault_ids AS jsonb),
 			schedule = CAST(:schedule AS jsonb),
 			updated_at = :updated_at
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and external_id = :external_id
 			and deleted_at is null
 		returning ` + deploymentSQLXColumns + `
@@ -155,7 +153,7 @@ const (
 		update deployments
 		set archived_at = coalesce(archived_at, now()),
 			updated_at = now()
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and external_id = :external_id
 			and deleted_at is null
 		returning ` + deploymentSQLXColumns + `
@@ -165,7 +163,7 @@ const (
 		set status = 'paused',
 			paused_reason = CAST(:paused_reason AS jsonb),
 			updated_at = now()
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and external_id = :external_id
 			and deleted_at is null
 			and archived_at is null
@@ -176,7 +174,7 @@ const (
 		set status = 'active',
 			paused_reason = null,
 			updated_at = now()
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and external_id = :external_id
 			and deleted_at is null
 			and archived_at is null
@@ -185,7 +183,7 @@ const (
 	getDeploymentRunQuery = `
 		select ` + deploymentRunSQLXColumns + `
 		from deployment_runs
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and external_id = :external_id
 			and deleted_at is null
 	`
@@ -195,11 +193,11 @@ func (d *DB) CreateDeployment(ctx context.Context, deployment Deployment) (Deplo
 	return getDeploymentSQLX(ctx, d.sql, createDeploymentQuery, deploymentArguments(deployment))
 }
 
-func (d *DB) GetDeployment(ctx context.Context, workspaceID int64, externalID string) (Deployment, error) {
-	return getDeploymentSQLX(ctx, d.sql, getDeploymentQuery, deploymentLookupArguments(workspaceID, externalID))
+func (d *DB) GetDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
+	return getDeploymentSQLX(ctx, d.sql, getDeploymentQuery, deploymentLookupArguments(workspaceUUID, externalID))
 }
 
-func (d *DB) UpdateDeployment(ctx context.Context, workspaceID int64, externalID string, next Deployment) (Deployment, error) {
+func (d *DB) UpdateDeployment(ctx context.Context, workspaceUUID string, externalID string, next Deployment) (Deployment, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return Deployment{}, err
@@ -207,7 +205,7 @@ func (d *DB) UpdateDeployment(ctx context.Context, workspaceID int64, externalID
 	defer tx.Rollback()
 
 	arguments := deploymentArguments(next)
-	arguments["workspace_id"] = workspaceID
+	arguments["workspace_uuid"] = workspaceUUID
 	arguments["external_id"] = externalID
 	current, err := getDeploymentSQLX(ctx, tx, lockDeploymentForUpdateQuery, arguments)
 	if err != nil {
@@ -226,18 +224,18 @@ func (d *DB) UpdateDeployment(ctx context.Context, workspaceID int64, externalID
 	return updated, nil
 }
 
-func (d *DB) ArchiveDeployment(ctx context.Context, workspaceID int64, externalID string) (Deployment, error) {
-	return getDeploymentSQLX(ctx, d.sql, archiveDeploymentQuery, deploymentLookupArguments(workspaceID, externalID))
+func (d *DB) ArchiveDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
+	return getDeploymentSQLX(ctx, d.sql, archiveDeploymentQuery, deploymentLookupArguments(workspaceUUID, externalID))
 }
 
-func (d *DB) PauseDeployment(ctx context.Context, workspaceID int64, externalID string, pausedReason json.RawMessage) (Deployment, error) {
-	arguments := deploymentLookupArguments(workspaceID, externalID)
+func (d *DB) PauseDeployment(ctx context.Context, workspaceUUID string, externalID string, pausedReason json.RawMessage) (Deployment, error) {
+	arguments := deploymentLookupArguments(workspaceUUID, externalID)
 	arguments["paused_reason"] = jsonArg(pausedReason)
 	return getDeploymentSQLX(ctx, d.sql, pauseDeploymentQuery, arguments)
 }
 
-func (d *DB) UnpauseDeployment(ctx context.Context, workspaceID int64, externalID string) (Deployment, error) {
-	return getDeploymentSQLX(ctx, d.sql, unpauseDeploymentQuery, deploymentLookupArguments(workspaceID, externalID))
+func (d *DB) UnpauseDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
+	return getDeploymentSQLX(ctx, d.sql, unpauseDeploymentQuery, deploymentLookupArguments(workspaceUUID, externalID))
 }
 
 func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPageParams) ([]Deployment, bool, error) {
@@ -264,7 +262,7 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	defer tx.Rollback()
 
 	deployment, err := getDeploymentSQLX(ctx, tx, lockDeploymentForManualRunQuery, map[string]any{
-		"workspace_id":           input.Run.WorkspaceID,
+		"workspace_uuid":         input.Run.WorkspaceUUID,
 		"deployment_external_id": input.DeploymentExternalID,
 	})
 	if err != nil {
@@ -293,9 +291,9 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	}
 
 	run := input.Run
-	run.DeploymentID = deployment.ID
+	run.DeploymentUUID = deployment.UUID
 	run.DeploymentExternalID = deployment.ExternalID
-	run.AgentID = deployment.AgentID
+	run.AgentUUID = deployment.AgentUUID
 	run.AgentExternalID = deployment.AgentExternalID
 	run.AgentVersion = deployment.AgentVersion
 	run.AgentSnapshot = deployment.AgentSnapshot
@@ -305,7 +303,7 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	if err := updateDeploymentLastRunSQLX(ctx, tx, deployment.WorkspaceID, deployment.ExternalID, input.Now); err != nil {
+	if err := updateDeploymentLastRunSQLX(ctx, tx, deployment.WorkspaceUUID, deployment.ExternalID, input.Now); err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -320,9 +318,9 @@ func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployme
 		return DeploymentRun{}, err
 	}
 	defer tx.Rollback()
-	run.DeploymentID = deployment.ID
+	run.DeploymentUUID = deployment.UUID
 	run.DeploymentExternalID = deployment.ExternalID
-	run.AgentID = deployment.AgentID
+	run.AgentUUID = deployment.AgentUUID
 	run.AgentExternalID = deployment.AgentExternalID
 	run.AgentVersion = deployment.AgentVersion
 	run.AgentSnapshot = deployment.AgentSnapshot
@@ -331,7 +329,7 @@ func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployme
 	if err != nil {
 		return DeploymentRun{}, err
 	}
-	if err := updateDeploymentLastRunSQLX(ctx, tx, deployment.WorkspaceID, deployment.ExternalID, run.CreatedAt); err != nil {
+	if err := updateDeploymentLastRunSQLX(ctx, tx, deployment.WorkspaceUUID, deployment.ExternalID, run.CreatedAt); err != nil {
 		return DeploymentRun{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -340,8 +338,8 @@ func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployme
 	return created, nil
 }
 
-func (d *DB) GetDeploymentRun(ctx context.Context, workspaceID int64, externalID string) (DeploymentRun, error) {
-	return getDeploymentRunSQLX(ctx, d.sql, getDeploymentRunQuery, deploymentLookupArguments(workspaceID, externalID))
+func (d *DB) GetDeploymentRun(ctx context.Context, workspaceUUID string, externalID string) (DeploymentRun, error) {
+	return getDeploymentRunSQLX(ctx, d.sql, getDeploymentRunQuery, deploymentLookupArguments(workspaceUUID, externalID))
 }
 
 func (d *DB) ListDeploymentRunsPage(ctx context.Context, params ListDeploymentRunsPageParams) ([]DeploymentRun, bool, error) {
@@ -364,11 +362,11 @@ func listDeploymentsQuery(params ListDeploymentsPageParams) (string, map[string]
 	query := `
 		select ` + deploymentSQLXColumns + `
 		from deployments
-		where workspace_id = :workspace_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_id": params.WorkspaceID,
-		"limit":        params.Limit + 1,
+		"workspace_uuid": params.WorkspaceUUID,
+		"limit":          params.Limit + 1,
 	}
 	if !params.IncludeArchived {
 		query += " and archived_at is null"
@@ -390,11 +388,11 @@ func listDeploymentsQuery(params ListDeploymentsPageParams) (string, map[string]
 		arguments["created_at_lte"] = *params.CreatedAtLTE
 	}
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_id"] = params.Cursor.ID
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
-	query += " order by created_at desc, id desc limit :limit"
+	query += " order by created_at desc, uuid desc limit :limit"
 	return query, arguments
 }
 
@@ -402,11 +400,11 @@ func listDeploymentRunsQuery(params ListDeploymentRunsPageParams) (string, map[s
 	query := `
 		select ` + deploymentRunSQLXColumns + `
 		from deployment_runs
-		where workspace_id = :workspace_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_id": params.WorkspaceID,
-		"limit":        params.Limit + 1,
+		"workspace_uuid": params.WorkspaceUUID,
+		"limit":          params.Limit + 1,
 	}
 	if params.DeploymentExternalID != "" {
 		query += " and deployment_external_id = :deployment_external_id"
@@ -425,11 +423,11 @@ func listDeploymentRunsQuery(params ListDeploymentRunsPageParams) (string, map[s
 	}
 	query, arguments = deploymentRunTimeFilters(query, arguments, params)
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and id < :cursor_id))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_id"] = params.Cursor.ID
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
-	query += " order by created_at desc, id desc limit :limit"
+	query += " order by created_at desc, uuid desc limit :limit"
 	return query, arguments
 }
 
@@ -457,10 +455,10 @@ func deploymentRunTimeFilters(
 	return query, arguments
 }
 
-func deploymentLookupArguments(workspaceID int64, externalID string) map[string]any {
+func deploymentLookupArguments(workspaceUUID string, externalID string) map[string]any {
 	return map[string]any{
-		"workspace_id": workspaceID,
-		"external_id":  externalID,
+		"workspace_uuid": workspaceUUID,
+		"external_id":    externalID,
 	}
 }
 
@@ -468,12 +466,12 @@ func deploymentArguments(deployment Deployment) map[string]any {
 	return map[string]any{
 		"uuid":                    deployment.UUID,
 		"external_id":             deployment.ExternalID,
-		"organization_id":         deployment.OrganizationID,
-		"workspace_id":            deployment.WorkspaceID,
-		"created_by_api_key_id":   deployment.CreatedByAPIKeyID,
-		"environment_id":          deployment.EnvironmentID,
+		"organization_uuid":       deployment.OrganizationUUID,
+		"workspace_uuid":          deployment.WorkspaceUUID,
+		"created_by_api_key_uuid": deployment.CreatedByAPIKeyUUID,
+		"environment_uuid":        deployment.EnvironmentUUID,
 		"environment_external_id": deployment.EnvironmentExternalID,
-		"agent_id":                deployment.AgentID,
+		"agent_uuid":              deployment.AgentUUID,
 		"agent_external_id":       deployment.AgentExternalID,
 		"agent_version":           deployment.AgentVersion,
 		"agent_snapshot":          jsonArg(deployment.AgentSnapshot),

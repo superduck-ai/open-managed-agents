@@ -14,10 +14,10 @@ func TestAgentPageQueryBindsNamedParameters(t *testing.T) {
 	createdAtLTE := createdAtGTE.Add(24 * time.Hour)
 	cursorCreatedAt := createdAtGTE.Add(12 * time.Hour)
 	query, arguments := agentPageQuery(agentPageFilter{
-		WorkspaceID:     42,
+		WorkspaceUUID:   "00000000-0000-0000-0000-000000000042",
 		Name:            "managed",
 		Limit:           5,
-		Cursor:          &AgentPageCursor{CreatedAt: cursorCreatedAt, ID: 17},
+		Cursor:          &AgentPageCursor{CreatedAt: cursorCreatedAt, UUID: "00000000-0000-0000-0000-000000000017"},
 		IncludeArchived: true,
 		CreatedAtGTE:    &createdAtGTE,
 		CreatedAtLTE:    &createdAtLTE,
@@ -31,13 +31,13 @@ func TestAgentPageQueryBindsNamedParameters(t *testing.T) {
 		t.Fatalf("bound query still contains named placeholders: %q", boundQuery)
 	}
 	wantValues := []any{
-		int64(42),
+		"00000000-0000-0000-0000-000000000042",
 		createdAtGTE,
 		createdAtLTE,
 		"managed",
 		cursorCreatedAt,
 		cursorCreatedAt,
-		int64(17),
+		"00000000-0000-0000-0000-000000000017",
 		6,
 	}
 	if !reflect.DeepEqual(values, wantValues) {
@@ -48,17 +48,17 @@ func TestAgentPageQueryBindsNamedParameters(t *testing.T) {
 func TestAgentMutationQueryBindsJSONArguments(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 23, 4, 5, 6, 0, time.UTC)
 	agent := Agent{
-		UUID:              "4b01277d-4904-43c6-8d6a-3d866637d540",
-		ExternalID:        "agent_sqlx",
-		WorkspaceID:       11,
-		CreatedByAPIKeyID: 12,
-		Name:              "SQLX agent",
-		Model:             json.RawMessage(`{"id":"claude-opus-4-6"}`),
-		MCPServers:        json.RawMessage(`[]`),
-		Metadata:          json.RawMessage(`{"source":"test"}`),
-		Skills:            json.RawMessage(`[]`),
-		Tools:             json.RawMessage(`[]`),
-		CreatedAt:         createdAt,
+		UUID:                "4b01277d-4904-43c6-8d6a-3d866637d540",
+		ExternalID:          "agent_sqlx",
+		WorkspaceUUID:       "00000000-0000-0000-0000-000000000011",
+		CreatedByAPIKeyUUID: "00000000-0000-0000-0000-000000000012",
+		Name:                "SQLX agent",
+		Model:               json.RawMessage(`{"id":"claude-opus-4-6"}`),
+		MCPServers:          json.RawMessage(`[]`),
+		Metadata:            json.RawMessage(`{"source":"test"}`),
+		Skills:              json.RawMessage(`[]`),
+		Tools:               json.RawMessage(`[]`),
+		CreatedAt:           createdAt,
 	}
 
 	boundQuery, values, err := bindNamed(postgresRebinder{}, createAgentSQL, agentArguments(agent))
@@ -84,8 +84,7 @@ func TestAgentMutationQueryBindsJSONArguments(t *testing.T) {
 
 func TestAgentRowConversionCopiesJSON(t *testing.T) {
 	row := agentRow{
-		ID:             7,
-		UUID:           "db-uuid",
+		UUID:           "00000000-0000-0000-0000-000000000007",
 		ExternalID:     "agent_row",
 		CurrentVersion: 2,
 		Name:           "row agent",
@@ -102,7 +101,7 @@ func TestAgentRowConversionCopiesJSON(t *testing.T) {
 	if string(agent.Model) != `{"id":"claude-opus-4-6"}` {
 		t.Fatalf("agent.Model = %s, want copied JSON", agent.Model)
 	}
-	if agent.ID != row.ID || agent.ExternalID != row.ExternalID || agent.CurrentVersion != row.CurrentVersion {
+	if agent.UUID != row.UUID || agent.ExternalID != row.ExternalID || agent.CurrentVersion != row.CurrentVersion {
 		t.Fatalf("agent identity fields = %+v, want values from row %+v", agent, row)
 	}
 }

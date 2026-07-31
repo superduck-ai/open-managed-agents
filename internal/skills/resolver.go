@@ -39,7 +39,7 @@ func NewRuntimeResolver(database *db.DB) *RuntimeResolver {
 	return &RuntimeResolver{db: database}
 }
 
-func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceID int64, snapshot json.RawMessage) ([]RuntimeSkill, error) {
+func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUID string, snapshot json.RawMessage) ([]RuntimeSkill, error) {
 	if r == nil {
 		return nil, nil
 	}
@@ -65,7 +65,7 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceID 
 		}
 		seenRefs[refKey] = struct{}{}
 
-		skill, err := r.resolveRef(ctx, workspaceID, ref)
+		skill, err := r.resolveRef(ctx, workspaceUUID, ref)
 		if err != nil {
 			return nil, err
 		}
@@ -111,12 +111,12 @@ func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
 	return refs, nil
 }
 
-func (r *RuntimeResolver) resolveRef(ctx context.Context, workspaceID int64, ref runtimeSkillRef) (RuntimeSkill, error) {
+func (r *RuntimeResolver) resolveRef(ctx context.Context, workspaceUUID string, ref runtimeSkillRef) (RuntimeSkill, error) {
 	switch ref.Type {
 	case "anthropic":
 		return r.resolveBuiltin(ctx, ref)
 	case "custom":
-		return r.resolveCustom(ctx, workspaceID, ref)
+		return r.resolveCustom(ctx, workspaceUUID, ref)
 	default:
 		return RuntimeSkill{}, fmt.Errorf("unsupported skill type %q", ref.Type)
 	}
@@ -152,16 +152,16 @@ func (r *RuntimeResolver) resolveBuiltin(ctx context.Context, ref runtimeSkillRe
 	}, nil
 }
 
-func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceID int64, ref runtimeSkillRef) (RuntimeSkill, error) {
+func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceUUID string, ref runtimeSkillRef) (RuntimeSkill, error) {
 	if r.db == nil {
 		return RuntimeSkill{}, errors.New("custom skill resolver is unavailable")
 	}
 	var record db.SkillVersion
 	var err error
 	if ref.Version == "latest" {
-		record, err = r.db.GetLatestSkillVersion(ctx, workspaceID, ref.SkillID)
+		record, err = r.db.GetLatestSkillVersion(ctx, workspaceUUID, ref.SkillID)
 	} else {
-		record, err = r.db.GetSkillVersion(ctx, workspaceID, ref.SkillID, ref.Version)
+		record, err = r.db.GetSkillVersion(ctx, workspaceUUID, ref.SkillID, ref.Version)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {

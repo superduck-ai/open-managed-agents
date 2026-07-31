@@ -13,18 +13,18 @@ import (
 )
 
 type Session struct {
-	ID                    int64
 	UUID                  string
 	ExternalID            string
-	OrganizationID        int64
-	WorkspaceID           int64
-	CreatedByAPIKeyID     int64
-	EnvironmentID         int64
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	CreatedByAPIKeyUUID   string
+	EnvironmentUUID       string
 	EnvironmentExternalID string
-	AgentID               int64
+	AgentUUID             string
 	AgentExternalID       string
 	AgentVersion          int
 	AgentSnapshot         json.RawMessage
+	DeploymentUUID        *string
 	DeploymentID          *string
 	Title                 *string
 	Metadata              json.RawMessage
@@ -40,14 +40,13 @@ type Session struct {
 }
 
 type SessionThread struct {
-	ID                     int64
 	UUID                   string
 	ExternalID             string
-	OrganizationID         int64
-	WorkspaceID            int64
-	SessionID              int64
+	OrganizationUUID       string
+	WorkspaceUUID          string
+	SessionUUID            string
 	SessionExternalID      string
-	ParentThreadID         *int64
+	ParentThreadUUID       *string
 	ParentThreadExternalID *string
 	AgentSnapshot          json.RawMessage
 	Status                 string
@@ -70,12 +69,11 @@ const (
 )
 
 type SessionResource struct {
-	ID                int64
 	UUID              string
 	ExternalID        string
-	OrganizationID    int64
-	WorkspaceID       int64
-	SessionID         int64
+	OrganizationUUID  string
+	WorkspaceUUID     string
+	SessionUUID       string
 	SessionExternalID string
 	ResourceType      string
 	Payload           json.RawMessage
@@ -86,14 +84,13 @@ type SessionResource struct {
 }
 
 type SessionEvent struct {
-	ID                int64
 	UUID              string
 	ExternalID        string
-	OrganizationID    int64
-	WorkspaceID       int64
-	SessionID         int64
+	OrganizationUUID  string
+	WorkspaceUUID     string
+	SessionUUID       string
 	SessionExternalID string
-	ThreadID          *int64
+	ThreadUUID        *string
 	ThreadExternalID  *string
 	EventType         string
 	Payload           json.RawMessage
@@ -104,21 +101,21 @@ type SessionEvent struct {
 
 type SessionPageCursor struct {
 	CreatedAt time.Time
-	ID        int64
+	UUID      string
 }
 
 type SessionEventPageCursor struct {
 	CreatedAt time.Time
-	ID        int64
+	UUID      string
 }
 
 type SessionThreadPageCursor struct {
 	CreatedAt time.Time
-	ID        int64
+	UUID      string
 }
 
 type ListSessionsPageParams struct {
-	WorkspaceID     int64
+	WorkspaceUUID   string
 	Limit           int
 	Cursor          *SessionPageCursor
 	Order           string
@@ -135,7 +132,7 @@ type ListSessionsPageParams struct {
 }
 
 type ListSessionEventsPageParams struct {
-	WorkspaceID       int64
+	WorkspaceUUID     string
 	SessionExternalID string
 	ThreadExternalID  string
 	PrimaryOnly       bool
@@ -150,7 +147,7 @@ type ListSessionEventsPageParams struct {
 }
 
 type ListSessionThreadsPageParams struct {
-	WorkspaceID       int64
+	WorkspaceUUID     string
 	SessionExternalID string
 	Limit             int
 	Cursor            *SessionThreadPageCursor
@@ -222,13 +219,13 @@ func (d *DB) CreateSession(ctx context.Context, input CreateSessionInput) (Sessi
 	return session, thread, resources, work, nil
 }
 
-func (d *DB) GetSession(ctx context.Context, workspaceID int64, externalID string) (Session, error) {
-	return getSessionSQLX(ctx, d.sql, getSessionQuery, sessionLookupArguments(workspaceID, externalID))
+func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
+	return getSessionSQLX(ctx, d.sql, getSessionQuery, sessionLookupArguments(workspaceUUID, externalID))
 }
 
-func (d *DB) UpdateSession(ctx context.Context, workspaceID int64, externalID string, next Session) (Session, error) {
+func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {
 	return getSessionSQLX(ctx, d.sql, updateSessionQuery, map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": externalID,
 		"agent_snapshot":      jsonArg(next.AgentSnapshot),
 		"title":               next.Title,
@@ -237,17 +234,25 @@ func (d *DB) UpdateSession(ctx context.Context, workspaceID int64, externalID st
 	})
 }
 
-func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceID int64, externalID string, patch json.RawMessage) (Session, error) {
+func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceUUID string, externalID string, patch json.RawMessage) (Session, error) {
 	return getSessionSQLX(ctx, d.sql, patchSessionMetadataQuery, map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": externalID,
 		"metadata_patch":      jsonArg(patch),
 	})
 }
 
-func (d *DB) SetSessionStatus(ctx context.Context, workspaceID int64, externalID, status string) error {
+func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceUUID string, externalID string, evaluations json.RawMessage) (Session, error) {
+	return getSessionSQLX(ctx, d.sql, setSessionOutcomeEvaluationsQuery, map[string]any{
+		"workspace_uuid":      workspaceUUID,
+		"session_external_id": externalID,
+		"outcome_evaluations": jsonArg(evaluations),
+	})
+}
+
+func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externalID, status string) error {
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, setSessionStatusQuery, map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": externalID,
 		"status":              status,
 	})
@@ -260,9 +265,9 @@ func (d *DB) SetSessionStatus(ctx context.Context, workspaceID int64, externalID
 	return nil
 }
 
-func (d *DB) SetSessionThreadStatus(ctx context.Context, workspaceID int64, sessionExternalID, threadExternalID, status string) error {
+func (d *DB) SetSessionThreadStatus(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID, status string) error {
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, setSessionThreadStatusQuery, map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": sessionExternalID,
 		"thread_external_id":  threadExternalID,
 		"status":              status,
@@ -289,21 +294,21 @@ func (d *DB) CreateSessionThreadIfAbsent(ctx context.Context, thread SessionThre
 	if !errors.Is(err, sql.ErrNoRows) {
 		return SessionThread{}, err
 	}
-	return d.GetSessionThread(ctx, thread.WorkspaceID, thread.SessionExternalID, thread.ExternalID)
+	return d.GetSessionThread(ctx, thread.WorkspaceUUID, thread.SessionExternalID, thread.ExternalID)
 }
 
-func (d *DB) ArchiveSession(ctx context.Context, workspaceID int64, externalID string) (Session, error) {
-	return getSessionSQLX(ctx, d.sql, archiveSessionQuery, sessionLookupArguments(workspaceID, externalID))
+func (d *DB) ArchiveSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
+	return getSessionSQLX(ctx, d.sql, archiveSessionQuery, sessionLookupArguments(workspaceUUID, externalID))
 }
 
-func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID string) (Session, error) {
+func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID string) (Session, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return Session{}, err
 	}
 	defer tx.Rollback()
 
-	arguments := sessionLookupArguments(workspaceID, externalID)
+	arguments := sessionLookupArguments(workspaceUUID, externalID)
 	session, err := getSessionSQLX(ctx, tx, deleteSessionQuery, arguments)
 	if err != nil {
 		return Session{}, err
@@ -312,9 +317,9 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceID int64, externalID st
 		return Session{}, err
 	}
 	if _, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionsByScopeSQL, map[string]any{
-		"workspace_id": session.WorkspaceID,
-		"scope_type":   sessionFileProjectionScope,
-		"scope_id":     session.ExternalID,
+		"workspace_uuid": session.WorkspaceUUID,
+		"scope_type":     sessionFileProjectionScope,
+		"scope_id":       session.ExternalID,
 	}); err != nil {
 		return Session{}, err
 	}
@@ -356,11 +361,11 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	query := `
 		select ` + sessionSQLXColumns + `
 		from sessions s
-		where s.workspace_id = :workspace_id and s.deleted_at is null
+		where s.workspace_uuid = :workspace_uuid and s.deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_id": params.WorkspaceID,
-		"limit":        params.Limit + 1,
+		"workspace_uuid": params.WorkspaceUUID,
+		"limit":          params.Limit + 1,
 	}
 	if !params.IncludeArchived {
 		query += " and s.archived_at is null"
@@ -374,13 +379,13 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 		arguments["agent_version"] = *params.AgentVersion
 	}
 	if params.DeploymentID != "" {
-		query += " and s.deployment_id = :deployment_id"
+		query += " and s.deployment_external_id = :deployment_id"
 		arguments["deployment_id"] = params.DeploymentID
 	}
 	if params.MemoryStoreID != "" {
 		query += ` and exists (
 			select 1 from session_resources sr
-			where sr.workspace_id = s.workspace_id
+			where sr.workspace_uuid = s.workspace_uuid
 				and sr.session_external_id = s.external_id
 				and sr.deleted_at is null
 				and sr.resource_type = 'memory_store'
@@ -413,11 +418,11 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	}
 	if params.Cursor != nil {
 		query += " and (s.created_at " + comparison + ` :cursor_created_at
-			or (s.created_at = :cursor_created_at and s.id ` + comparison + ` :cursor_id))`
+			or (s.created_at = :cursor_created_at and s.uuid ` + comparison + ` CAST(:cursor_uuid AS uuid)))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_id"] = params.Cursor.ID
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
-	query += " order by s.created_at " + order + ", s.id " + order + " limit :limit"
+	query += " order by s.created_at " + order + ", s.uuid " + order + " limit :limit"
 
 	sessions, err := listSessionsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
@@ -430,12 +435,12 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	return sessions, hasMore, nil
 }
 
-func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceID int64, sessionExternalID string) (SessionThread, error) {
-	return getSessionThreadSQLX(ctx, d.sql, primarySessionThreadQuery, sessionLookupArguments(workspaceID, sessionExternalID))
+func (d *DB) GetPrimarySessionThread(ctx context.Context, workspaceUUID string, sessionExternalID string) (SessionThread, error) {
+	return getSessionThreadSQLX(ctx, d.sql, primarySessionThreadQuery, sessionLookupArguments(workspaceUUID, sessionExternalID))
 }
 
-func (d *DB) GetSessionThread(ctx context.Context, workspaceID int64, sessionExternalID, threadExternalID string) (SessionThread, error) {
-	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+func (d *DB) GetSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, error) {
+	arguments := sessionLookupArguments(workspaceUUID, sessionExternalID)
 	arguments["thread_external_id"] = threadExternalID
 	return getSessionThreadSQLX(ctx, d.sql, sessionThreadByExternalIDQuery, arguments)
 }
@@ -447,19 +452,19 @@ func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThrea
 	query := `
 		select ` + sessionThreadSQLXColumns + `
 		from session_threads
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and deleted_at is null
 	`
-	arguments := sessionLookupArguments(params.WorkspaceID, params.SessionExternalID)
+	arguments := sessionLookupArguments(params.WorkspaceUUID, params.SessionExternalID)
 	arguments["limit"] = params.Limit + 1
 	if params.Cursor != nil {
 		query += ` and (created_at < :cursor_created_at
-			or (created_at = :cursor_created_at and id < :cursor_id))`
+			or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_id"] = params.Cursor.ID
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
-	query += " order by created_at desc, id desc limit :limit"
+	query += " order by created_at desc, uuid desc limit :limit"
 	threads, err := listSessionThreadsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
@@ -471,26 +476,26 @@ func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThrea
 	return threads, hasMore, nil
 }
 
-func (d *DB) ListSessionThreads(ctx context.Context, workspaceID int64, sessionExternalID string) ([]SessionThread, error) {
+func (d *DB) ListSessionThreads(ctx context.Context, workspaceUUID string, sessionExternalID string) ([]SessionThread, error) {
 	return listSessionThreadsSQLX(ctx, d.sql, `
 		select `+sessionThreadSQLXColumns+`
 		from session_threads
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and deleted_at is null
-		order by created_at asc, id asc
-	`, sessionLookupArguments(workspaceID, sessionExternalID))
+		order by created_at asc, uuid asc
+	`, sessionLookupArguments(workspaceUUID, sessionExternalID))
 }
 
-func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceID int64, sessionExternalID, threadExternalID string) (SessionThread, error) {
-	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID string) (SessionThread, error) {
+	arguments := sessionLookupArguments(workspaceUUID, sessionExternalID)
 	arguments["thread_external_id"] = threadExternalID
 	return getSessionThreadSQLX(ctx, d.sql, `
 		update session_threads
 		set archived_at = coalesce(archived_at, now()),
 			status = 'terminated',
 			updated_at = now()
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and external_id = :thread_external_id
 			and deleted_at is null
@@ -514,7 +519,7 @@ func (d *DB) CreateSessionResource(
 		ctx,
 		tx,
 		lockSessionForResourceMutationQuery,
-		sessionLookupArguments(resource.WorkspaceID, resource.SessionExternalID),
+		sessionLookupArguments(resource.WorkspaceUUID, resource.SessionExternalID),
 	)
 	if err != nil {
 		return SessionResource{}, err
@@ -522,14 +527,14 @@ func (d *DB) CreateSessionResource(
 	if session.ArchivedAt != nil {
 		return SessionResource{}, ErrInvalidState
 	}
-	if session.OrganizationID != resource.OrganizationID {
+	if session.OrganizationUUID != resource.OrganizationUUID {
 		return SessionResource{}, ErrPreconditionFailed
 	}
 	if resource.ResourceType == SessionResourceTypeFile {
 		if err := enforceSessionFileResourceCapacityTx(
 			ctx,
 			tx,
-			resource.WorkspaceID,
+			resource.WorkspaceUUID,
 			resource.SessionExternalID,
 			1,
 		); err != nil {
@@ -566,30 +571,30 @@ func (d *DB) CreateSessionResource(
 	return created, nil
 }
 
-func (d *DB) GetSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string) (SessionResource, error) {
-	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+func (d *DB) GetSessionResource(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string) (SessionResource, error) {
+	arguments := sessionLookupArguments(workspaceUUID, sessionExternalID)
 	arguments["resource_external_id"] = resourceExternalID
 	return getSessionResourceSQLX(ctx, d.sql, getSessionResourceQuery, arguments)
 }
 
-func (d *DB) ListSessionResources(ctx context.Context, workspaceID int64, sessionExternalID string) ([]SessionResource, error) {
+func (d *DB) ListSessionResources(ctx context.Context, workspaceUUID string, sessionExternalID string) ([]SessionResource, error) {
 	return listSessionResourcesSQLX(
 		ctx,
 		d.sql,
 		listSessionResourcesQuery,
-		sessionLookupArguments(workspaceID, sessionExternalID),
+		sessionLookupArguments(workspaceUUID, sessionExternalID),
 	)
 }
 
-func (d *DB) UpdateSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string, payload, secretPayload json.RawMessage) (SessionResource, error) {
-	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+func (d *DB) UpdateSessionResource(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string, payload, secretPayload json.RawMessage) (SessionResource, error) {
+	arguments := sessionLookupArguments(workspaceUUID, sessionExternalID)
 	arguments["resource_external_id"] = resourceExternalID
 	arguments["payload"] = jsonArg(payload)
 	arguments["secret_payload"] = jsonArg(secretPayload)
 	return getSessionResourceSQLX(ctx, d.sql, updateSessionResourceQuery, arguments)
 }
 
-func (d *DB) DeleteSessionResource(ctx context.Context, workspaceID int64, sessionExternalID, resourceExternalID string) error {
+func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, sessionExternalID, resourceExternalID string) error {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
@@ -600,7 +605,7 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceID int64, sessi
 		ctx,
 		tx,
 		lockSessionForResourceMutationQuery,
-		sessionLookupArguments(workspaceID, sessionExternalID),
+		sessionLookupArguments(workspaceUUID, sessionExternalID),
 	)
 	if err != nil {
 		return err
@@ -611,7 +616,7 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceID int64, sessi
 	resource, err := getSessionResourceForMutationSQLX(
 		ctx,
 		tx,
-		workspaceID,
+		workspaceUUID,
 		sessionExternalID,
 		resourceExternalID,
 	)
@@ -624,7 +629,7 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceID int64, sessi
 	if err := softDeleteSessionResourceSQLX(
 		ctx,
 		tx,
-		workspaceID,
+		workspaceUUID,
 		sessionExternalID,
 		resourceExternalID,
 	); err != nil {
@@ -633,14 +638,14 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceID int64, sessi
 	return tx.Commit()
 }
 
-func (d *DB) AppendSessionEvents(ctx context.Context, workspaceID int64, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
+func (d *DB) AppendSessionEvents(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	session, err := getSessionSQLX(ctx, tx, lockSessionForEventsQuery, sessionLookupArguments(workspaceID, sessionExternalID))
+	session, err := getSessionSQLX(ctx, tx, lockSessionForEventsQuery, sessionLookupArguments(workspaceUUID, sessionExternalID))
 	if err != nil {
 		return nil, err
 	}
@@ -657,14 +662,14 @@ func (d *DB) AppendSessionEvents(ctx context.Context, workspaceID int64, session
 	return created, nil
 }
 
-func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceID int64, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
+func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	session, err := getSessionSQLX(ctx, tx, lockSessionForEventsQuery, sessionLookupArguments(workspaceID, sessionExternalID))
+	session, err := getSessionSQLX(ctx, tx, lockSessionForEventsQuery, sessionLookupArguments(workspaceUUID, sessionExternalID))
 	if err != nil {
 		return nil, err
 	}
@@ -681,17 +686,17 @@ func (d *DB) AppendSessionEventsIfAbsent(ctx context.Context, workspaceID int64,
 	return created, nil
 }
 
-func (d *DB) GetSessionEvent(ctx context.Context, workspaceID int64, sessionExternalID string, eventExternalID string) (SessionEvent, error) {
+func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionExternalID string, eventExternalID string) (SessionEvent, error) {
 	eventExternalID = strings.TrimSpace(eventExternalID)
 	if eventExternalID == "" {
 		return SessionEvent{}, ErrNotFound
 	}
-	arguments := sessionLookupArguments(workspaceID, sessionExternalID)
+	arguments := sessionLookupArguments(workspaceUUID, sessionExternalID)
 	arguments["event_external_id"] = eventExternalID
 	return getSessionEventSQLX(ctx, d.sql, `
 		select `+sessionEventSQLXColumns+`
 		from session_events
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and external_id = :event_external_id
 			and deleted_at is null
@@ -713,11 +718,11 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 	query := `
 		select ` + sessionEventSQLXColumns + `
 		from session_events
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and deleted_at is null
 	`
-	arguments := sessionLookupArguments(params.WorkspaceID, params.SessionExternalID)
+	arguments := sessionLookupArguments(params.WorkspaceUUID, params.SessionExternalID)
 	arguments["limit"] = params.Limit + 1
 	if params.ThreadExternalID != "" {
 		query += " and thread_external_id = :thread_external_id"
@@ -726,11 +731,11 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 		query += ` and thread_external_id = (
 			select external_id
 			from session_threads
-			where workspace_id = :workspace_id
+			where workspace_uuid = :workspace_uuid
 				and session_external_id = :session_external_id
-				and parent_thread_id is null
+				and parent_thread_uuid is null
 				and deleted_at is null
-			order by created_at asc, id asc
+			order by created_at asc, uuid asc
 			limit 1
 		)`
 	}
@@ -756,11 +761,11 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 	}
 	if params.Cursor != nil {
 		query += " and (created_at " + comparison + ` :cursor_created_at
-			or (created_at = :cursor_created_at and id ` + comparison + ` :cursor_id))`
+			or (created_at = :cursor_created_at and uuid ` + comparison + ` CAST(:cursor_uuid AS uuid)))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_id"] = params.Cursor.ID
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
-	query += " order by created_at " + order + ", id " + order + " limit :limit"
+	query += " order by created_at " + order + ", uuid " + order + " limit :limit"
 	events, err := listSessionEventsSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
 		return nil, false, err
@@ -772,7 +777,7 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 	return events, hasMore, nil
 }
 
-func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceID int64, sessionExternalID string, toolUseIDs []string) (map[string]struct{}, error) {
+func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceUUID string, sessionExternalID string, toolUseIDs []string) (map[string]struct{}, error) {
 	if len(toolUseIDs) == 0 {
 		return map[string]struct{}{}, nil
 	}
@@ -786,14 +791,14 @@ func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceID int64, sess
 		) as tool_use_id
 		from session_events e
 		join session_threads t
-			on t.workspace_id = e.workspace_id
-			and t.session_external_id = e.session_external_id
-			and t.external_id = e.thread_external_id
+			on t.workspace_uuid = e.workspace_uuid
+			and t.session_uuid = e.session_uuid
+			and t.uuid = e.thread_uuid
 			and t.deleted_at is null
-		where e.workspace_id = :workspace_id
+		where e.workspace_uuid = :workspace_uuid
 			and e.session_external_id = :session_external_id
 			and e.deleted_at is null
-			and t.parent_thread_id is not null
+			and t.parent_thread_uuid is not null
 			and e.event_type = any(CAST(:event_types AS text[]))
 			and coalesce(
 				e.payload->>'tool_use_id',
@@ -802,7 +807,7 @@ func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceID int64, sess
 				e.payload->>'id'
 			) = any(CAST(:tool_use_ids AS text[]))
 	`, map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": sessionExternalID,
 		"event_types":         []string{"agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use"},
 		"tool_use_ids":        toolUseIDs,

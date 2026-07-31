@@ -142,22 +142,22 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateAgent(r.Context(), db.Agent{
-		UUID:              uuid.NewString(),
-		ExternalID:        agentID,
-		WorkspaceID:       principal.WorkspaceID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		CurrentVersion:    1,
-		Name:              state.Name,
-		Description:       state.Description,
-		System:            state.System,
-		Model:             state.Model,
-		MCPServers:        state.MCPServers,
-		Metadata:          state.Metadata,
-		Multiagent:        state.Multiagent,
-		Skills:            state.Skills,
-		Tools:             state.Tools,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		UUID:                uuid.NewString(),
+		ExternalID:          agentID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		CurrentVersion:      1,
+		Name:                state.Name,
+		Description:         state.Description,
+		System:              state.System,
+		Model:               state.Model,
+		MCPServers:          state.MCPServers,
+		Metadata:            state.Metadata,
+		Multiagent:          state.Multiagent,
+		Skills:              state.Skills,
+		Tools:               state.Tools,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}, versionID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "create agent", "error", err)
@@ -196,7 +196,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	records, hasMore, err := h.db.ListAgentsPage(r.Context(), db.ListAgentsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
@@ -239,7 +239,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	records, hasMore, err := h.db.SearchAgentsPage(r.Context(), db.SearchAgentsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		Name:            strings.TrimSpace(body.Name),
 		Limit:           searchLimit(body.Limit),
 		Cursor:          cursor,
@@ -269,14 +269,14 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID strin
 	var record db.Agent
 	var err error
 	if rawVersion == "" {
-		record, err = h.db.GetAgent(r.Context(), principal.WorkspaceID, agentID)
+		record, err = h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	} else {
 		version, parseErr := strconv.Atoi(rawVersion)
 		if parseErr != nil || version < 1 {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "version must be at least 1"))
 			return
 		}
-		record, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceID, agentID, version)
+		record, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, agentID, version)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureID(principal, agentID) {
@@ -320,7 +320,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	current, err := h.db.GetAgent(r.Context(), principal.WorkspaceID, agentID)
+	current, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
@@ -340,7 +340,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate agent version ID"))
 		return
 	}
-	updated, err := h.db.UpdateAgent(r.Context(), principal.WorkspaceID, agentID, expectedVersion, db.Agent{
+	updated, err := h.db.UpdateAgent(r.Context(), principal.WorkspaceUUID, agentID, expectedVersion, db.Agent{
 		Name:        nextState.Name,
 		Description: nextState.Description,
 		System:      nextState.System,
@@ -382,7 +382,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
 		return
 	}
-	record, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceID, agentID)
+	record, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
@@ -416,7 +416,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 		return
 	}
 	records, hasMore, err := h.db.ListAgentVersionsPage(r.Context(), db.ListAgentVersionsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		AgentExternalID: agentID,
 		Limit:           limit,
 		Cursor:          cursor,
@@ -651,7 +651,7 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 		return agentReference{ID: selfID, Type: "agent", Version: selfVersion}, false, nil
 	}
 	if version > 0 {
-		if _, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceID, id, version); err != nil {
+		if _, err := h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, id, version); err != nil {
 			if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureReference(principal, id) {
 				return agentReference{ID: id, Type: "agent", Version: version}, false, nil
 			}
@@ -659,7 +659,7 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 		}
 		return agentReference{ID: id, Type: "agent", Version: version}, false, nil
 	}
-	record, err := h.db.GetAgent(r.Context(), principal.WorkspaceID, id)
+	record, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, id)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureReference(principal, id) {
 			return agentReference{ID: id, Type: "agent", Version: 1}, false, nil
@@ -1167,7 +1167,7 @@ func parseOptionalBool(r *http.Request, name string) (bool, error) {
 func encodeAgentCursor(agent db.Agent) string {
 	data, _ := json.Marshal(map[string]any{
 		"created_at": agent.CreatedAt.UTC().Format(time.RFC3339Nano),
-		"id":         agent.ID,
+		"id":         agent.UUID,
 	})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
@@ -1182,21 +1182,21 @@ func decodeAgentCursor(raw string) (*db.AgentPageCursor, error) {
 	}
 	var cursor struct {
 		CreatedAt string `json:"created_at"`
-		ID        int64  `json:"id"`
+		ID        string `json:"id"`
 	}
-	if err := json.Unmarshal(data, &cursor); err != nil || cursor.ID <= 0 || cursor.CreatedAt == "" {
+	if err := json.Unmarshal(data, &cursor); err != nil || cursor.ID == "" || cursor.CreatedAt == "" {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt)
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	return &db.AgentPageCursor{CreatedAt: createdAt.UTC(), ID: cursor.ID}, nil
+	return &db.AgentPageCursor{CreatedAt: createdAt.UTC(), UUID: cursor.ID}, nil
 }
 
 func encodeVersionCursor(agent db.Agent) string {
 	data, _ := json.Marshal(map[string]any{
-		"id":      agent.ID,
+		"id":      agent.UUID,
 		"version": agent.CurrentVersion,
 	})
 	return base64.RawURLEncoding.EncodeToString(data)
@@ -1211,13 +1211,13 @@ func decodeVersionCursor(raw string) (*db.AgentVersionPageCursor, error) {
 		return nil, errors.New("page is invalid")
 	}
 	var cursor struct {
-		ID      int64 `json:"id"`
-		Version int   `json:"version"`
+		ID      string `json:"id"`
+		Version int    `json:"version"`
 	}
-	if err := json.Unmarshal(data, &cursor); err != nil || cursor.ID <= 0 || cursor.Version < 1 {
+	if err := json.Unmarshal(data, &cursor); err != nil || cursor.ID == "" || cursor.Version < 1 {
 		return nil, errors.New("page is invalid")
 	}
-	return &db.AgentVersionPageCursor{Version: cursor.Version, ID: cursor.ID}, nil
+	return &db.AgentVersionPageCursor{Version: cursor.Version, UUID: cursor.ID}, nil
 }
 
 func responsesFromAgents(records []db.Agent) []agentResponse {

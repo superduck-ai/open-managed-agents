@@ -85,7 +85,11 @@ func (h *workbenchHandler) handleListWorkbenchPrompts(w http.ResponseWriter, r *
 		seen[workbenchDefaultPromptID] = true
 	}
 	if store := h.store; store != nil {
-		records, err := store.ListWorkbenchPrompts(r.Context(), workbenchOrgUUID(r), workspaceID)
+		workspaceScope, err := h.resolveWorkspaceScope(r, workspaceID)
+		if workbenchWritePersistenceError(w, err) {
+			return
+		}
+		records, err := store.ListWorkbenchPrompts(r.Context(), workbenchOrgUUID(r), workspaceScope.UUID)
 		if workbenchWritePersistenceError(w, err) {
 			return
 		}
@@ -94,7 +98,7 @@ func (h *workbenchHandler) handleListWorkbenchPrompts(w http.ResponseWriter, r *
 			if promptID == "" || seen[promptID] || record.DeletedAt != nil {
 				continue
 			}
-			prompts = append(prompts, h.promptSummary(r, promptID, record.WorkspaceID, record.Name))
+			prompts = append(prompts, h.promptSummary(r, promptID, record.WorkspaceDisplayID, record.Name))
 			seen[promptID] = true
 		}
 	}
@@ -123,7 +127,11 @@ func (h *workbenchHandler) handleListWorkbenchWorkspacePrompts(w http.ResponseWr
 		}
 	}
 	if store := h.store; store != nil {
-		records, err := store.ListWorkbenchPrompts(r.Context(), workbenchOrgUUID(r), workspaceID)
+		workspaceScope, err := h.resolveWorkspaceScope(r, workspaceID)
+		if workbenchWritePersistenceError(w, err) {
+			return
+		}
+		records, err := store.ListWorkbenchPrompts(r.Context(), workbenchOrgUUID(r), workspaceScope.UUID)
 		if workbenchWritePersistenceError(w, err) {
 			return
 		}
@@ -132,7 +140,7 @@ func (h *workbenchHandler) handleListWorkbenchWorkspacePrompts(w http.ResponseWr
 			if promptID == "" || seen[promptID] || record.DeletedAt != nil {
 				continue
 			}
-			prompts = append(prompts, h.promptSummary(r, promptID, record.WorkspaceID, record.Name))
+			prompts = append(prompts, h.promptSummary(r, promptID, record.WorkspaceDisplayID, record.Name))
 			seen[promptID] = true
 		}
 	}
@@ -1827,8 +1835,8 @@ func (h *workbenchHandler) promptSummary(r *http.Request, promptID string, works
 	updatedAt := workbenchDefaultCreatedAt
 	isShared := workbenchPromptShared(r, promptID)
 	if record, ok := h.storedPromptRecord(r, promptID); ok {
-		if strings.TrimSpace(record.WorkspaceID) != "" {
-			workspaceID = record.WorkspaceID
+		if strings.TrimSpace(record.WorkspaceDisplayID) != "" {
+			workspaceID = record.WorkspaceDisplayID
 		}
 		if strings.TrimSpace(name) == "" {
 			name = record.Name
@@ -2069,6 +2077,17 @@ func workbenchOrgUUID(r *http.Request) string {
 	return strings.TrimSpace(chi.URLParam(r, "orgUuid"))
 }
 
+func (h *workbenchHandler) resolveWorkspaceScope(r *http.Request, reference string) (WorkspaceScope, error) {
+	if h.workspaces == nil {
+		return WorkspaceScope{}, ErrNotFound
+	}
+	workspaces, err := h.workspaces.ListConsoleWorkspaces(r.Context(), workbenchOrgUUID(r), false)
+	if err != nil {
+		return WorkspaceScope{}, err
+	}
+	return ResolveWorkspaceScope(reference, workspaces)
+}
+
 func (h *workbenchHandler) storedPromptRecord(r *http.Request, promptID string) (*WorkbenchPromptRecord, bool) {
 	store := h.store
 	if store == nil {
@@ -2088,10 +2107,9 @@ func (h *workbenchHandler) promptRecordForUpsert(r *http.Request, promptID strin
 		workspaceID = "default"
 	}
 	record := WorkbenchPromptRecord{
-		OrgUUID:     workbenchOrgUUID(r),
-		PromptUUID:  promptID,
-		WorkspaceID: workspaceID,
-		Name:        workbenchPromptName(r, promptID, ""),
+		OrgUUID:    workbenchOrgUUID(r),
+		PromptUUID: promptID,
+		Name:       workbenchPromptName(r, promptID, ""),
 	}
 	if workbenchPromptShared(r, promptID) {
 		record.IsSharedWithWorkspace = true
@@ -2105,15 +2123,20 @@ func (h *workbenchHandler) promptRecordForUpsert(r *http.Request, promptID strin
 		current, err := store.GetWorkbenchPrompt(r.Context(), record.OrgUUID, promptID)
 		if err == nil && current != nil {
 			record = *current
-			if strings.TrimSpace(record.WorkspaceID) == "" {
-				record.WorkspaceID = workspaceID
+			if strings.TrimSpace(record.WorkspaceUUID) != "" {
+				return record, nil
 			}
-			return record, nil
 		}
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return WorkbenchPromptRecord{}, err
 		}
 	}
+	workspaceScope, err := h.resolveWorkspaceScope(r, workspaceID)
+	if err != nil {
+		return WorkbenchPromptRecord{}, err
+	}
+	record.WorkspaceUUID = workspaceScope.UUID
+	record.WorkspaceDisplayID = workspaceScope.DisplayID
 	return record, nil
 }
 
@@ -2134,7 +2157,17 @@ func (h *workbenchHandler) promptDeleted(r *http.Request, promptID string) (bool
 func (h *workbenchHandler) deletePrompt(r *http.Request, promptID string) error {
 	promptID = strings.TrimSpace(promptID)
 	if store := h.store; store != nil {
-		if err := store.DeleteWorkbenchPromptState(r.Context(), workbenchOrgUUID(r), promptID); err != nil {
+		workspaceScope, err := h.resolveWorkspaceScope(r, "default")
+		if err != nil {
+			return err
+		}
+		if err := store.DeleteWorkbenchPromptState(
+			r.Context(),
+			workbenchOrgUUID(r),
+			promptID,
+			workspaceScope.UUID,
+			workspaceScope.DisplayID,
+		); err != nil {
 			return err
 		}
 	}
@@ -2163,7 +2196,12 @@ func (h *workbenchHandler) undeletePrompt(r *http.Request, promptID string, work
 		if err != nil {
 			return err
 		}
-		record.WorkspaceID = workspaceID
+		workspaceScope, err := h.resolveWorkspaceScope(r, workspaceID)
+		if err != nil {
+			return err
+		}
+		record.WorkspaceUUID = workspaceScope.UUID
+		record.WorkspaceDisplayID = workspaceScope.DisplayID
 		record.DeletedAt = nil
 		if _, err := store.UpsertWorkbenchPrompt(r.Context(), record); err != nil {
 			return err

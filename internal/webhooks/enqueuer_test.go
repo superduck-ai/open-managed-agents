@@ -14,19 +14,19 @@ import (
 
 type failingEnqueueStore struct{}
 
-func (failingEnqueueStore) HasWebhookEndpoints(context.Context, int64) (bool, error) {
+func (failingEnqueueStore) HasWebhookEndpoints(context.Context, string) (bool, error) {
 	return false, errors.New("load endpoints")
 }
 
-func (failingEnqueueStore) ListActiveWebhookEndpointsForEvent(context.Context, int64, string) ([]db.WebhookEndpoint, error) {
+func (failingEnqueueStore) ListActiveWebhookEndpointsForEvent(context.Context, string, string) ([]db.WebhookEndpoint, error) {
 	return nil, nil
 }
 
-func (failingEnqueueStore) EnqueueWebhookDeliveryJobForEndpoint(context.Context, int64, string, json.RawMessage, int64) error {
+func (failingEnqueueStore) EnqueueWebhookDeliveryJobForEndpoint(context.Context, string, string, json.RawMessage, string) error {
 	return nil
 }
 
-func (failingEnqueueStore) EnqueueWebhookDeliveryJob(context.Context, int64, string, json.RawMessage) error {
+func (failingEnqueueStore) EnqueueWebhookDeliveryJob(context.Context, string, string, json.RawMessage) error {
 	return nil
 }
 
@@ -36,11 +36,11 @@ func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 	enqueuer := newEnqueuer(failingEnqueueStore{}, config.WebhookConfig{}, logger)
 
 	enqueuer.Enqueue(context.Background(), EnqueueInput{
-		WorkspaceID:            42,
-		OrganizationExternalID: "org_test",
-		WorkspaceExternalID:    "wrk_test",
-		EventType:              "session.created",
-		ResourceID:             "session_test",
+		WorkspaceUUID:       "00000000-0000-0000-0000-000000000042",
+		OrganizationUUID:    "11111111-1111-4111-8111-111111111111",
+		WorkspaceExternalID: "wrk_test",
+		EventType:           "session.created",
+		ResourceID:          "session_test",
 	})
 
 	var record map[string]any
@@ -53,7 +53,7 @@ func TestEnqueuerUsesOwnedLogger(t *testing.T) {
 	if got := record["msg"]; got != "load webhook endpoint configuration" {
 		t.Fatalf("msg = %v, want load webhook endpoint configuration", got)
 	}
-	if got := record["workspace_id"]; got != float64(42) {
-		t.Fatalf("workspace_id = %v, want 42", got)
+	if got := record["workspace_uuid"]; got != "00000000-0000-0000-0000-000000000042" {
+		t.Fatalf("workspace_uuid = %v, want UUID", got)
 	}
 }

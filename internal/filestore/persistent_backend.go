@@ -24,15 +24,15 @@ func (b *persistentPathBackend) listDirectory(
 	limit int,
 ) (listDirectoryResponse, *apiError) {
 	params := db.ListFilestoreEntriesPageParams{
-		WorkspaceID:   principal.WorkspaceID,
-		FilesystemID:  filesystem.ID,
-		DirectoryPath: request.Path,
-		Recursive:     request.Recursive,
-		Limit:         limit,
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		DirectoryPath:  request.Path,
+		Recursive:      request.Recursive,
+		Limit:          limit,
 	}
 	if request.Cursor != "" {
-		// Path 是主排序键，ID 在路径相同的边界情形下提供稳定的决胜键。
-		params.Cursor = &db.FilestoreEntryPageCursor{Path: cursor.LastPath, ID: cursor.LastID}
+		// Path 是主排序键，UUID 在路径相同的边界情形下提供稳定的决胜键。
+		params.Cursor = &db.FilestoreEntryPageCursor{Path: cursor.LastPath, UUID: cursor.LastUUID}
 	}
 	page, err := b.db.ListFilestoreEntriesPage(ctx, params)
 	if err != nil {
@@ -55,7 +55,7 @@ func (b *persistentPathBackend) listDirectory(
 			Path:         request.Path,
 			Recursive:    request.Recursive,
 			LastPath:     last.Path,
-			LastID:       last.ID,
+			LastUUID:     last.UUID,
 		})
 		if err != nil {
 			return listDirectoryResponse{}, internalError("encode directory cursor", err)
@@ -70,7 +70,7 @@ func (b *persistentPathBackend) readFile(
 	filesystem db.FilestoreFilesystem,
 	request readFileRequest,
 ) (readFileResult, *apiError) {
-	entry, err := b.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, request.Path)
+	entry, err := b.db.GetFilestoreEntry(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Path)
 	if err != nil {
 		return readFileResult{}, mapDatabaseError("read file metadata", err)
 	}
@@ -104,7 +104,7 @@ func (b *persistentPathBackend) readMetadata(
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
 ) (entryPayload, *apiError) {
-	entry, err := b.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, entryPath)
+	entry, err := b.db.GetFilestoreEntry(ctx, principal.WorkspaceUUID, filesystem.UUID, entryPath)
 	if err != nil {
 		return entryPayload{}, mapDatabaseError("read metadata", err)
 	}

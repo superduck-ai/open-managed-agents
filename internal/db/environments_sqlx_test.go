@@ -9,21 +9,21 @@ import (
 func TestEnvironmentQueriesUseSQLXNamedParameters(t *testing.T) {
 	now := time.Date(2026, time.July, 27, 10, 0, 0, 0, time.UTC)
 	environmentQuery, environmentArguments := listEnvironmentsQuery(ListEnvironmentsPageParams{
-		WorkspaceID: 42,
-		Limit:       20,
-		Cursor:      &EnvironmentPageCursor{CreatedAt: now, ID: 7},
+		WorkspaceUUID: "00000000-0000-0000-0000-000000000042",
+		Limit:         20,
+		Cursor:        &EnvironmentPageCursor{CreatedAt: now, UUID: "00000000-0000-0000-0000-000000000007"},
 	})
 	workQuery, workArguments := listEnvironmentWorkQuery(ListEnvironmentWorkPageParams{
-		WorkspaceID:           42,
+		WorkspaceUUID:         "00000000-0000-0000-0000-000000000042",
 		EnvironmentExternalID: "env_test",
 		Limit:                 20,
-		Cursor:                &EnvironmentWorkPageCursor{CreatedAt: now, ID: 8},
+		Cursor:                &EnvironmentWorkPageCursor{CreatedAt: now, UUID: "00000000-0000-0000-0000-000000000008"},
 	})
 
 	t.Run("rejects a missing named argument", func(t *testing.T) {
 		incompleteArguments := make(map[string]any, len(environmentArguments)-1)
 		for name, value := range environmentArguments {
-			if name != "cursor_id" {
+			if name != "cursor_uuid" {
 				incompleteArguments[name] = value
 			}
 		}
@@ -46,8 +46,8 @@ func TestEnvironmentQueriesUseSQLXNamedParameters(t *testing.T) {
 		},
 		{
 			name:         "get environment",
-			query:        environmentSelectSQL() + ` where workspace_id = :workspace_id and external_id = :external_id`,
-			arguments:    environmentLookupArguments(42, "env_test"),
+			query:        environmentSelectSQL() + ` where workspace_uuid = :workspace_uuid and external_id = :external_id`,
+			arguments:    environmentLookupArguments("00000000-0000-0000-0000-000000000042", "env_test"),
 			wantArgCount: 2,
 		},
 		{
@@ -58,8 +58,8 @@ func TestEnvironmentQueriesUseSQLXNamedParameters(t *testing.T) {
 		},
 		{
 			name:         "get environment work",
-			query:        environmentWorkSelectSQL() + ` where workspace_id = :workspace_id and environment_external_id = :environment_external_id and external_id = :work_external_id`,
-			arguments:    environmentWorkLookupArguments(42, "env_test", "work_test"),
+			query:        environmentWorkSelectSQL() + ` where workspace_uuid = :workspace_uuid and environment_external_id = :environment_external_id and external_id = :work_external_id`,
+			arguments:    environmentWorkLookupArguments("00000000-0000-0000-0000-000000000042", "env_test", "work_test"),
 			wantArgCount: 3,
 		},
 	}

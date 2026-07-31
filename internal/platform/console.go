@@ -20,6 +20,7 @@ type AdminRequest struct {
 
 type ConsoleWorkspace struct {
 	UUID                  string
+	ExternalID            string
 	OrgUUID               string
 	Name                  string
 	DisplayColor          string
@@ -49,27 +50,29 @@ type CreateConsoleWorkspaceInput struct {
 }
 
 type ConsoleAPIKey struct {
-	ID                string
-	OrgUUID           string
-	WorkspaceID       string
-	Name              string
-	KeyPrefix         string
-	KeySuffix         string
-	Status            string
-	CreatedByUserUUID *string
-	LastUsedAt        *time.Time
-	ExpiresAt         *time.Time
-	ArchivedAt        *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                 string
+	OrgUUID            string
+	WorkspaceUUID      string
+	WorkspaceDisplayID string
+	Name               string
+	KeyPrefix          string
+	KeySuffix          string
+	Status             string
+	CreatedByUserUUID  *string
+	LastUsedAt         *time.Time
+	ExpiresAt          *time.Time
+	ArchivedAt         *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type CreateConsoleAPIKeyInput struct {
-	OrgUUID           string
-	WorkspaceID       string
-	Name              string
-	ExpiresAt         *time.Time
-	CreatedByUserUUID *string
+	OrgUUID            string
+	WorkspaceUUID      string
+	WorkspaceDisplayID string
+	Name               string
+	ExpiresAt          *time.Time
+	CreatedByUserUUID  *string
 }
 
 type CreateConsoleAPIKeyResult struct {
@@ -78,10 +81,10 @@ type CreateConsoleAPIKeyResult struct {
 }
 
 type UpdateConsoleAPIKeyStatusInput struct {
-	OrgUUID     string
-	WorkspaceID string
-	APIKeyID    string
-	Status      string
+	OrgUUID       string
+	WorkspaceUUID string
+	APIKeyID      string
+	Status        string
 }
 
 type ConsoleInvite struct {

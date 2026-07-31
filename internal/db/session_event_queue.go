@@ -39,7 +39,7 @@ type sessionEventQueueIdentityRow struct {
 // delivery responsibility in the same transaction.
 func (d *DB) AppendSessionEventsForDelivery(
 	ctx context.Context,
-	workspaceID int64,
+	workspaceUUID string,
 	sessionExternalID string,
 	events []SessionEvent,
 	outcomeEvaluations json.RawMessage,
@@ -54,7 +54,7 @@ func (d *DB) AppendSessionEventsForDelivery(
 		ctx,
 		tx,
 		lockSessionForEventsQuery,
-		sessionLookupArguments(workspaceID, sessionExternalID),
+		sessionLookupArguments(workspaceUUID, sessionExternalID),
 	)
 	if err != nil {
 		return nil, "", err
@@ -98,7 +98,7 @@ func (d *DB) AppendSessionEventsForDelivery(
 	}
 	if len(outcomeEvaluations) > 0 {
 		if _, err := getSessionSQLX(ctx, tx, setSessionOutcomeEvaluationsQuery, map[string]any{
-			"workspace_id":        session.WorkspaceID,
+			"workspace_uuid":      session.WorkspaceUUID,
 			"session_external_id": session.ExternalID,
 			"outcome_evaluations": jsonArg(outcomeEvaluations),
 		}); err != nil {
@@ -162,7 +162,9 @@ func listSessionEventQueueIdentityRows(
 		select q.id, CAST(q.session_uuid AS text) as session_uuid,
 			CAST(q.session_event_uuid AS text) as session_event_uuid
 		from session_event_queue q
-		where q.session_uuid = CAST(:session_uuid AS uuid)
+		where q.organization_uuid = CAST(:organization_uuid AS uuid)
+			and q.workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and q.session_uuid = CAST(:session_uuid AS uuid)
 		order by q.id asc
 	`
 	if lock {
@@ -170,7 +172,9 @@ func listSessionEventQueueIdentityRows(
 	}
 	var rows []sessionEventQueueIdentityRow
 	err := namedSelectContext(ctx, database, &rows, query, map[string]any{
-		"session_uuid": session.UUID,
+		"organization_uuid": session.OrganizationUUID,
+		"workspace_uuid":    session.WorkspaceUUID,
+		"session_uuid":      session.UUID,
 	})
 	if err != nil {
 		return nil, err
@@ -204,16 +208,16 @@ func shouldQueueUserMessageForStartupSQLX(
 	err := namedGetContext(ctx, database, &status, `
 		select status
 		from code_sessions
-		where organization_id = :organization_id
-			and workspace_id = :workspace_id
-			and session_id = :session_id
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and session_uuid = CAST(:session_uuid AS uuid)
 			and deleted_at is null
-		order by created_at desc, id desc
+		order by created_at desc, uuid desc
 		limit 1
 	`, map[string]any{
-		"organization_id": session.OrganizationID,
-		"workspace_id":    session.WorkspaceID,
-		"session_id":      session.ID,
+		"organization_uuid": session.OrganizationUUID,
+		"workspace_uuid":    session.WorkspaceUUID,
+		"session_uuid":      session.UUID,
 	})
 	if err == nil && status != "initializing" {
 		return false, nil
@@ -230,13 +234,13 @@ func shouldQueueUserMessageForStartupSQLX(
 			select 1
 			from environment_work ew
 			join environments e
-				on e.id = ew.environment_id
-				and e.organization_id = ew.organization_id
-				and e.workspace_id = ew.workspace_id
+				on e.uuid = ew.environment_uuid
+				and e.organization_uuid = ew.organization_uuid
+				and e.workspace_uuid = ew.workspace_uuid
 				and e.external_id = ew.environment_external_id
-			where ew.organization_id = :organization_id
-				and ew.workspace_id = :workspace_id
-				and ew.environment_id = :environment_id
+			where ew.organization_uuid = CAST(:organization_uuid AS uuid)
+				and ew.workspace_uuid = CAST(:workspace_uuid AS uuid)
+				and ew.environment_uuid = CAST(:environment_uuid AS uuid)
 				and ew.environment_external_id = :environment_external_id
 				and ew.data->>'type' = 'session'
 				and ew.data->>'id' = :session_external_id
@@ -245,9 +249,9 @@ func shouldQueueUserMessageForStartupSQLX(
 				and e.deleted_at is null
 		)
 	`, map[string]any{
-		"organization_id":         session.OrganizationID,
-		"workspace_id":            session.WorkspaceID,
-		"environment_id":          session.EnvironmentID,
+		"organization_uuid":       session.OrganizationUUID,
+		"workspace_uuid":          session.WorkspaceUUID,
+		"environment_uuid":        session.EnvironmentUUID,
 		"environment_external_id": session.EnvironmentExternalID,
 		"session_external_id":     session.ExternalID,
 	})
@@ -267,10 +271,14 @@ func sessionEventQueueExistsSQLX(
 		select exists (
 			select 1
 			from session_event_queue q
-			where q.session_uuid = CAST(:session_uuid AS uuid)
+			where q.organization_uuid = CAST(:organization_uuid AS uuid)
+				and q.workspace_uuid = CAST(:workspace_uuid AS uuid)
+				and q.session_uuid = CAST(:session_uuid AS uuid)
 		)
 	`, map[string]any{
-		"session_uuid": session.UUID,
+		"organization_uuid": session.OrganizationUUID,
+		"workspace_uuid":    session.WorkspaceUUID,
+		"session_uuid":      session.UUID,
 	})
 	return exists, err
 }
@@ -289,14 +297,15 @@ func enqueueSessionEventsSQLXTx(
 			insert into session_event_queue (
 				organization_uuid, workspace_uuid, session_uuid, session_event_uuid
 			)
-			select o.uuid, w.uuid,
-				CAST(:session_uuid AS uuid), CAST(:session_event_uuid AS uuid)
-			from organizations o
-			join workspaces w on w.organization_id = o.id
-			where o.id = :organization_id and w.id = :workspace_id
+			values (
+				CAST(:organization_uuid AS uuid),
+				CAST(:workspace_uuid AS uuid),
+				CAST(:session_uuid AS uuid),
+				CAST(:session_event_uuid AS uuid)
+			)
 		`, map[string]any{
-			"organization_id":    session.OrganizationID,
-			"workspace_id":       session.WorkspaceID,
+			"organization_uuid":  session.OrganizationUUID,
+			"workspace_uuid":     session.WorkspaceUUID,
 			"session_uuid":       session.UUID,
 			"session_event_uuid": event.UUID,
 		})

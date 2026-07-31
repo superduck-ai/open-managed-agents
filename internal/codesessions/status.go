@@ -15,17 +15,17 @@ func (s *Service) syncPublicSessionStatusFromWorker(ctx context.Context, record 
 	if !ok || strings.TrimSpace(record.SessionExternalID) == "" {
 		return nil
 	}
-	if err := s.db.SetSessionStatus(ctx, record.WorkspaceID, record.SessionExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if err := s.db.SetSessionStatus(ctx, record.WorkspaceUUID, record.SessionExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
 		return err
 	}
-	thread, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceID, record.SessionExternalID)
+	thread, err := s.db.GetPrimarySessionThread(ctx, record.WorkspaceUUID, record.SessionExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return nil
 		}
 		return err
 	}
-	if err := s.db.SetSessionThreadStatus(ctx, record.WorkspaceID, record.SessionExternalID, thread.ExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
+	if err := s.db.SetSessionThreadStatus(ctx, record.WorkspaceUUID, record.SessionExternalID, thread.ExternalID, publicStatus); err != nil && !errors.Is(err, db.ErrNotFound) {
 		return err
 	}
 	return nil

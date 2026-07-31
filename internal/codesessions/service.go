@@ -47,7 +47,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 	if s == nil || len(events) == 0 {
 		return nil
 	}
-	codeSession, err := s.db.GetCodeSessionBySessionExternalID(ctx, session.WorkspaceID, session.ExternalID)
+	codeSession, err := s.db.GetCodeSessionBySessionExternalID(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return nil
@@ -374,7 +374,7 @@ func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession
 	afterSequence := int64(0)
 	for {
 		events, hasMore, err := s.db.ListCodeSessionInternalEventsPage(ctx, db.ListCodeSessionInternalEventsPageParams{
-			WorkspaceID:           codeSession.WorkspaceID,
+			WorkspaceUUID:         codeSession.WorkspaceUUID,
 			CodeSessionExternalID: codeSession.ExternalID,
 			Subagents:             true,
 			AfterSequence:         afterSequence,
@@ -420,7 +420,7 @@ func (s *Service) PublishSubagentInternalEvents(ctx context.Context, codeSession
 
 func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
 	events, _, err := s.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceID:       codeSession.WorkspaceID,
+		WorkspaceUUID:     codeSession.WorkspaceUUID,
 		SessionExternalID: codeSession.SessionExternalID,
 		PrimaryOnly:       true,
 		Limit:             500,

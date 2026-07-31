@@ -29,7 +29,6 @@ type bootstrapUserRow struct {
 
 type bootstrapOrganizationRow struct {
 	UUID                   string    `db:"uuid"`
-	ExternalID             string    `db:"external_id"`
 	Name                   string    `db:"name"`
 	Domain                 *string   `db:"domain"`
 	ParentOrganizationUUID *string   `db:"parent_organization_uuid"`
@@ -48,18 +47,17 @@ func (d *DB) FindBootstrapUserContext(ctx context.Context, preferredOrgUUID stri
 	query := `
 		select
 			u.external_id as user_external_id,
-			cast(o.uuid as text) as org_uuid
+			cast(u.organization_uuid as text) as org_uuid
 		from users u
-		join organizations o on o.id = u.organization_id
 		where u.deleted_at is null
 	`
 	arguments := map[string]any{}
 	if trimmedPreferredOrgUUID := strings.TrimSpace(preferredOrgUUID); trimmedPreferredOrgUUID != "" {
-		query += ` and (cast(o.uuid as text) = :preferred_org_uuid or o.external_id = :preferred_org_uuid)`
+		query += ` and u.organization_uuid = cast(:preferred_org_uuid as uuid)`
 		arguments["preferred_org_uuid"] = trimmedPreferredOrgUUID
 	}
 	query += `
-		order by case when u.external_id = 'user_default' then 0 else 1 end, u.added_at asc, u.id asc
+		order by case when u.external_id = 'user_default' then 0 else 1 end, u.added_at asc, u.uuid asc
 		limit 1
 	`
 
@@ -96,7 +94,7 @@ func (d *DB) GetBootstrapUser(ctx context.Context, userExternalID string) (*plat
 			or cast(u.uuid as text) = :user_external_id
 			or 'user_' || left(replace(cast(u.uuid as text), '-', ''), 24) = :user_external_id
 		  )
-		order by u.added_at asc, u.id asc
+		order by u.added_at asc, u.uuid asc
 		limit 1
 	`, map[string]any{"user_external_id": strings.TrimSpace(userExternalID)})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -165,10 +163,9 @@ func (d *DB) UpdatePlatformOrganization(ctx context.Context, orgUUID string, pat
 		set name = coalesce(CAST(:name AS text), name),
 		    settings = coalesce(CAST(:settings AS jsonb), settings),
 		    updated_at = current_timestamp
-		where cast(uuid as text) = :org_uuid or external_id = :org_uuid
+		where cast(uuid as text) = :org_uuid
 		returning
 			cast(uuid as text) as uuid,
-			external_id,
 			name,
 			CAST(NULL AS text) as domain,
 			CAST(NULL AS text) as parent_organization_uuid,
@@ -204,7 +201,6 @@ func (d *DB) ListBootstrapUserOrganizations(ctx context.Context, userExternalID 
 	err := namedSelectContext(ctx, d.sql, &rows, `
 		select
 			cast(o.uuid as text) as uuid,
-			o.external_id,
 			o.name,
 			CAST(NULL AS text) as domain,
 			CAST(NULL AS text) as parent_organization_uuid,
@@ -214,7 +210,7 @@ func (d *DB) ListBootstrapUserOrganizations(ctx context.Context, userExternalID 
 			u.role,
 			u.added_at
 		from users u
-		join organizations o on o.id = u.organization_id
+		join organizations o on o.uuid = u.organization_uuid
 		where u.deleted_at is null
 		  and (
 			u.external_id = :user_external_id
@@ -222,9 +218,9 @@ func (d *DB) ListBootstrapUserOrganizations(ctx context.Context, userExternalID 
 			or 'user_' || left(replace(cast(u.uuid as text), '-', ''), 24) = :user_external_id
 		  )
 		order by
-			case when cast(o.uuid as text) = :preferred_org_uuid or o.external_id = :preferred_org_uuid then 0 else 1 end,
+			case when cast(o.uuid as text) = :preferred_org_uuid then 0 else 1 end,
 			u.added_at asc,
-			u.id asc
+			u.uuid asc
 	`, map[string]any{
 		"user_external_id":   strings.TrimSpace(userExternalID),
 		"preferred_org_uuid": strings.TrimSpace(preferredOrgUUID),
@@ -252,7 +248,7 @@ func (d *DB) GetOrganizationProfile(ctx context.Context, orgUUID string) (platfo
 	err := namedGetContext(ctx, d.sql, &profileBytes, `
 		select coalesce(profile, CAST('{}' AS jsonb))
 		from organizations
-		where cast(uuid as text) = :org_uuid or external_id = :org_uuid
+		where cast(uuid as text) = :org_uuid
 		limit 1
 	`, map[string]any{"org_uuid": strings.TrimSpace(orgUUID)})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -277,7 +273,7 @@ func (d *DB) UpdateOrganizationProfile(ctx context.Context, orgUUID string, prof
 		update organizations
 		set profile = CAST(:profile AS jsonb),
 		    updated_at = current_timestamp
-		where cast(uuid as text) = :org_uuid or external_id = :org_uuid
+		where cast(uuid as text) = :org_uuid
 		returning coalesce(profile, CAST('{}' AS jsonb))
 	`, map[string]any{
 		"org_uuid": strings.TrimSpace(orgUUID),
@@ -297,7 +293,6 @@ func getBootstrapOrganizationRow(ctx context.Context, database sqlxNamedQueryer,
 	err := namedGetContext(ctx, database, &row, `
 		select
 			cast(o.uuid as text) as uuid,
-			o.external_id,
 			o.name,
 			CAST(NULL AS text) as domain,
 			CAST(NULL AS text) as parent_organization_uuid,
@@ -307,7 +302,7 @@ func getBootstrapOrganizationRow(ctx context.Context, database sqlxNamedQueryer,
 			'' as role,
 			o.created_at as added_at
 		from organizations o
-		where cast(o.uuid as text) = :org_uuid or o.external_id = :org_uuid
+		where cast(o.uuid as text) = :org_uuid
 		limit 1
 	`, map[string]any{"org_uuid": orgUUID})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -326,7 +321,6 @@ func (row bootstrapOrganizationRow) organizationRecord() (*platform.Organization
 	}
 	return &platform.OrganizationRecord{
 		UUID:                   row.UUID,
-		ExternalID:             row.ExternalID,
 		Name:                   row.Name,
 		Domain:                 row.Domain,
 		ParentOrganizationUUID: row.ParentOrganizationUUID,

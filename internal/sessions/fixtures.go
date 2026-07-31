@@ -74,12 +74,11 @@ func normalizeFixtureEvent(raw json.RawMessage, now time.Time) (json.RawMessage,
 func (h *Handler) fixtureDBSession(principal auth.Principal) db.Session {
 	now := time.Now().UTC()
 	return db.Session{
-		ID:                    1,
 		UUID:                  uuid.NewString(),
 		ExternalID:            h.cfg.SDKFixtures.SessionID,
-		OrganizationID:        principal.OrganizationID,
-		WorkspaceID:           principal.WorkspaceID,
-		CreatedByAPIKeyID:     principal.APIKeyID,
+		OrganizationUUID:      principal.OrganizationUUID,
+		WorkspaceUUID:         principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID:   principal.APIKeyUUID,
 		EnvironmentExternalID: h.cfg.SDKFixtures.EnvironmentID,
 		AgentExternalID:       h.cfg.SDKFixtures.AgentID,
 		AgentVersion:          1,

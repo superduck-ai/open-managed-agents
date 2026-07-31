@@ -40,7 +40,7 @@ type ManagedAgentCreateResult struct {
 // CreateManagedAgentCodeSession 原子地建立 code-session 身份上下文，并为 sandbox
 // 分别签发 Messages OAuth-compatible token 与 worker session-ingress JWT。
 func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input ManagedAgentCreateInput) (ManagedAgentCreateResult, error) {
-	if input.EnvironmentWork.ID <= 0 {
+	if strings.TrimSpace(input.EnvironmentWork.UUID) == "" {
 		return ManagedAgentCreateResult{}, errors.New("managed agent environment work is required")
 	}
 	codeSessionID, err := ids.New("cse_")
@@ -58,11 +58,11 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	}
 	record, err := s.db.CreateCodeSession(ctx, db.CreateCodeSessionInput{
 		ExternalID:            codeSessionID,
-		OrganizationID:        input.Session.OrganizationID,
-		WorkspaceID:           input.Session.WorkspaceID,
-		SessionID:             input.Session.ID,
+		OrganizationUUID:      input.Session.OrganizationUUID,
+		WorkspaceUUID:         input.Session.WorkspaceUUID,
+		SessionUUID:           input.Session.UUID,
 		SessionExternalID:     input.Session.ExternalID,
-		EnvironmentID:         input.Environment.ID,
+		EnvironmentUUID:       input.Environment.UUID,
 		EnvironmentExternalID: input.Environment.ExternalID,
 		WorkDir:               strings.TrimSpace(input.WorkDir),
 		PermissionMode:        strings.TrimSpace(input.PermissionMode),
@@ -85,8 +85,8 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 		defer cancel()
 		if cleanupErr := s.db.TerminateManagedAgentCodeSession(
 			cleanupCtx,
-			input.Session.OrganizationID,
-			input.Session.WorkspaceID,
+			input.Session.OrganizationUUID,
+			input.Session.WorkspaceUUID,
 			record.ExternalID,
 		); cleanupErr != nil {
 			s.logger.ErrorContext(
@@ -105,8 +105,8 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	}
 	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(
 		ctx,
-		input.Session.OrganizationID,
-		input.Session.WorkspaceID,
+		input.Session.OrganizationUUID,
+		input.Session.WorkspaceUUID,
 		record.ExternalID,
 	)
 	if err != nil {
@@ -191,7 +191,7 @@ func (s *Service) listSessionEventsAscending(ctx context.Context, session db.Ses
 	var cursor *db.SessionEventPageCursor
 	for {
 		events, hasMore, err := s.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-			WorkspaceID:       session.WorkspaceID,
+			WorkspaceUUID:     session.WorkspaceUUID,
 			SessionExternalID: session.ExternalID,
 			Limit:             100,
 			Cursor:            cursor,
@@ -205,7 +205,7 @@ func (s *Service) listSessionEventsAscending(ctx context.Context, session db.Ses
 			return out, nil
 		}
 		last := events[len(events)-1]
-		cursor = &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+		cursor = &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}
 	}
 }
 
@@ -250,8 +250,8 @@ func (s *Service) TerminateManagedAgentCodeSession(
 	}
 	return s.db.TerminateManagedAgentCodeSession(
 		ctx,
-		session.OrganizationID,
-		session.WorkspaceID,
+		session.OrganizationUUID,
+		session.WorkspaceUUID,
 		strings.TrimSpace(codeSessionID),
 	)
 }

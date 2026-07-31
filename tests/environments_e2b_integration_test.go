@@ -100,18 +100,18 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	})
 	now := time.Now().UTC()
 	env, err := database.CreateEnvironment(ctx, db.Environment{
-		UUID:              uuid.NewString(),
-		ExternalID:        envID,
-		OrganizationID:    apiKey.OrganizationID,
-		WorkspaceID:       apiKey.WorkspaceID,
-		CreatedByAPIKeyID: apiKey.ID,
-		Name:              "e2b-integration-" + envID[len("env_"):len("env_")+8],
-		Description:       "Real E2B integration smoke test",
-		Config:            envConfig,
-		Metadata:          mustJSON(t, map[string]any{"source": "e2b_integration_test"}),
-		Provider:          "e2b",
-		ResolvedTemplate:  template,
-		CreatedAt:         now,
+		UUID:                uuid.NewString(),
+		ExternalID:          envID,
+		OrganizationUUID:    apiKey.OrganizationUUID,
+		WorkspaceUUID:       apiKey.WorkspaceUUID,
+		CreatedByAPIKeyUUID: apiKey.UUID,
+		Name:                "e2b-integration-" + envID[len("env_"):len("env_")+8],
+		Description:         "Real E2B integration smoke test",
+		Config:              envConfig,
+		Metadata:            mustJSON(t, map[string]any{"source": "e2b_integration_test"}),
+		Provider:            "e2b",
+		ResolvedTemplate:    template,
+		CreatedAt:           now,
 	})
 	if err != nil {
 		t.Fatalf("create environment: %v", err)
@@ -121,9 +121,9 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	work, err := database.CreateEnvironmentWork(ctx, db.EnvironmentWork{
 		UUID:                  uuid.NewString(),
 		ExternalID:            workID,
-		OrganizationID:        env.OrganizationID,
-		WorkspaceID:           env.WorkspaceID,
-		EnvironmentID:         env.ID,
+		OrganizationUUID:      env.OrganizationUUID,
+		WorkspaceUUID:         env.WorkspaceUUID,
+		EnvironmentUUID:       env.UUID,
 		EnvironmentExternalID: env.ExternalID,
 		Data:                  mustJSON(t, map[string]any{"task": "e2b integration smoke"}),
 		Metadata:              mustJSON(t, map[string]any{"source": "e2b_integration_test"}),
@@ -232,7 +232,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if stoppedSandboxState != "stopped" {
 		t.Fatalf("sandbox state after stop = %s, want stopped", stoppedSandboxState)
 	}
-	stoppedWork, err := database.GetEnvironmentWork(ctx, env.WorkspaceID, env.ExternalID, work.ExternalID)
+	stoppedWork, err := database.GetEnvironmentWork(ctx, env.WorkspaceUUID, env.ExternalID, work.ExternalID)
 	if err != nil {
 		t.Fatalf("load stopped work: %v", err)
 	}

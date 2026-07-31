@@ -201,16 +201,16 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateMemoryStore(r.Context(), db.MemoryStore{
-		UUID:              uuid.NewString(),
-		ExternalID:        storeID,
-		OrganizationID:    principal.OrganizationID,
-		WorkspaceID:       principal.WorkspaceID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		Name:              name,
-		Description:       description,
-		Metadata:          metadata,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		UUID:                uuid.NewString(),
+		ExternalID:          storeID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		Name:                name,
+		Description:         description,
+		Metadata:            metadata,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "create memory store", "error", err)
@@ -248,7 +248,7 @@ func (h *Handler) listStores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListMemoryStoresPage(r.Context(), db.ListMemoryStoresPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
@@ -287,7 +287,7 @@ func (h *Handler) retrieveStore(w http.ResponseWriter, r *http.Request, storeID 
 }
 
 func (h *Handler) memoryStoreForRead(ctx context.Context, principal auth.Principal, storeID string) (db.MemoryStore, error) {
-	record, err := h.db.GetMemoryStore(ctx, principal.WorkspaceID, storeID)
+	record, err := h.db.GetMemoryStore(ctx, principal.WorkspaceUUID, storeID)
 	if err == nil {
 		return record, nil
 	}
@@ -303,7 +303,7 @@ func (h *Handler) updateStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	current, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, storeID)
+	current, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -353,7 +353,7 @@ func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID st
 			return
 		}
 	}
-	updated, err := h.db.UpdateMemoryStore(r.Context(), principal.WorkspaceID, storeID, db.MemoryStore{
+	updated, err := h.db.UpdateMemoryStore(r.Context(), principal.WorkspaceUUID, storeID, db.MemoryStore{
 		Name:        name,
 		Description: description,
 		Metadata:    metadata,
@@ -376,7 +376,7 @@ func (h *Handler) archiveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) archiveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceID, storeID)
+	record, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -390,7 +390,7 @@ func (h *Handler) deleteStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	refs, err := h.db.DeleteMemoryStore(r.Context(), principal.WorkspaceID, storeID)
+	refs, err := h.db.DeleteMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -431,7 +431,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -453,13 +453,13 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		writeAPIError(w, r, "Could not store memory content")
 		return
 	}
-	ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Name(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
+	ref := db.ObjectRef{WorkspaceUUID: principal.WorkspaceUUID, Bucket: h.store.Name(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
 	now := time.Now().UTC()
 	record, err := h.db.CreateMemory(r.Context(), db.Memory{
 		UUID:                  memoryUUID,
 		ExternalID:            memoryID,
-		OrganizationID:        principal.OrganizationID,
-		WorkspaceID:           principal.WorkspaceID,
+		OrganizationUUID:      principal.OrganizationUUID,
+		WorkspaceUUID:         principal.WorkspaceUUID,
 		MemoryStoreExternalID: storeID,
 		Path:                  path,
 		ContentSizeBytes:      int64(len(contentBytes)),
@@ -537,7 +537,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 			h.writeStoreLoadError(w, r, err, storeID)
 			return
 		}
-		h.listMemoriesWithDepth(w, r, store.WorkspaceID, storeID, view, limit, order, pathPrefix, *depth)
+		h.listMemoriesWithDepth(w, r, store.WorkspaceUUID, storeID, view, limit, order, pathPrefix, *depth)
 		return
 	}
 	cursor, err := decodeMemoryCursor(r.URL.Query().Get("page"))
@@ -551,7 +551,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		return
 	}
 	records, hasMore, err := h.db.ListMemoriesPage(r.Context(), db.ListMemoriesPageParams{
-		WorkspaceID:           store.WorkspaceID,
+		WorkspaceUUID:         store.WorkspaceUUID,
 		MemoryStoreExternalID: storeID,
 		Limit:                 limit,
 		Cursor:                cursor,
@@ -581,9 +581,9 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 	httpapi.WriteJSON(w, http.StatusOK, memoryPageResponse{Data: data, NextPage: nextPage})
 }
 
-func (h *Handler) listMemoriesWithDepth(w http.ResponseWriter, r *http.Request, workspaceID int64, storeID, view string, limit int, order, pathPrefix string, depth int) {
+func (h *Handler) listMemoriesWithDepth(w http.ResponseWriter, r *http.Request, workspaceUUID, storeID, view string, limit int, order, pathPrefix string, depth int) {
 	records, err := h.db.ListMemoriesForDepth(r.Context(), db.ListMemoriesPageParams{
-		WorkspaceID:           workspaceID,
+		WorkspaceUUID:         workspaceUUID,
 		MemoryStoreExternalID: storeID,
 		PathPrefix:            pathPrefix,
 	})
@@ -654,7 +654,7 @@ func (h *Handler) retrieveMemory(w http.ResponseWriter, r *http.Request, storeID
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
-	record, err := h.db.GetMemory(r.Context(), store.WorkspaceID, storeID, memoryID)
+	record, err := h.db.GetMemory(r.Context(), store.WorkspaceUUID, storeID, memoryID)
 	if err != nil {
 		h.writeMemoryLoadError(w, r, err, storeID, memoryID)
 		return
@@ -699,7 +699,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceID, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -711,7 +711,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		record, err := h.db.GetMemory(r.Context(), principal.WorkspaceID, storeID, memoryID)
+		record, err := h.db.GetMemory(r.Context(), principal.WorkspaceUUID, storeID, memoryID)
 		if err != nil {
 			h.writeMemoryLoadError(w, r, err, storeID, memoryID)
 			return
@@ -769,9 +769,9 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			writeAPIError(w, r, "Could not store memory content")
 			return
 		}
-		ref := db.ObjectRef{WorkspaceID: principal.WorkspaceID, Bucket: h.store.Name(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
+		ref := db.ObjectRef{WorkspaceUUID: principal.WorkspaceUUID, Bucket: h.store.Name(), Key: objectKey, ResourceType: "memory_version", ResourceID: versionID}
 		result, err := h.db.UpdateMemory(r.Context(), db.UpdateMemoryInput{
-			WorkspaceID:           principal.WorkspaceID,
+			WorkspaceUUID:         principal.WorkspaceUUID,
 			MemoryStoreExternalID: storeID,
 			MemoryExternalID:      memoryID,
 			VersionUUID:           versionUUID,
@@ -838,7 +838,7 @@ func (h *Handler) deleteMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		return
 	}
 	if err := h.db.DeleteMemory(r.Context(), db.DeleteMemoryInput{
-		WorkspaceID:           principal.WorkspaceID,
+		WorkspaceUUID:         principal.WorkspaceUUID,
 		MemoryStoreExternalID: storeID,
 		MemoryExternalID:      memoryID,
 		VersionUUID:           uuid.NewString(),
@@ -898,7 +898,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, storeID s
 		return
 	}
 	records, hasMore, err := h.db.ListMemoryVersionsPage(r.Context(), db.ListMemoryVersionsPageParams{
-		WorkspaceID:           store.WorkspaceID,
+		WorkspaceUUID:         store.WorkspaceUUID,
 		MemoryStoreExternalID: storeID,
 		Limit:                 limit,
 		Cursor:                cursor,
@@ -947,7 +947,7 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, storeI
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
-	record, err := h.db.GetMemoryVersion(r.Context(), store.WorkspaceID, storeID, versionID)
+	record, err := h.db.GetMemoryVersion(r.Context(), store.WorkspaceUUID, storeID, versionID)
 	if err != nil {
 		h.writeVersionLoadError(w, r, err, storeID, versionID)
 		return
@@ -967,7 +967,7 @@ func (h *Handler) redactVersionRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID, versionID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceID, storeID, versionID, apiActor(principal), time.Now().UTC())
+	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceUUID, storeID, versionID, apiActor(principal), time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			writeBadRequest(w, r, errors.New("cannot redact the active memory version"))
@@ -1063,7 +1063,7 @@ func (h *Handler) deleteObjectOrEnqueue(ctx context.Context, ref db.ObjectRef) {
 	}
 	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{}); err != nil {
 		h.logger.ErrorContext(ctx, "delete memory object", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
-		if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(ctx, ref.WorkspaceID, ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID); enqueueErr != nil {
+		if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(ctx, ref.WorkspaceUUID, ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID); enqueueErr != nil {
 			h.logger.ErrorContext(ctx, "enqueue memory object cleanup", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", enqueueErr)
 		}
 	}
@@ -1139,7 +1139,7 @@ func optionalActor(actor *db.MemoryActor) *actorResponse {
 func apiActor(principal auth.Principal) db.MemoryActor {
 	return db.MemoryActor{
 		Type:             "api_actor",
-		APIKeyID:         principal.APIKeyID,
+		APIKeyUUID:       principal.APIKeyUUID,
 		APIKeyExternalID: principal.APIKeyExternalID,
 	}
 }
@@ -1542,7 +1542,7 @@ func parseOptionalBool(r *http.Request, name string) (bool, error) {
 }
 
 func encodeStoreCursor(store db.MemoryStore) string {
-	return encodeCursor(map[string]any{"created_at": store.CreatedAt.UTC().Format(time.RFC3339Nano), "id": store.ID})
+	return encodeCursor(map[string]any{"created_at": store.CreatedAt.UTC().Format(time.RFC3339Nano), "uuid": store.UUID})
 }
 
 func decodeStoreCursor(raw string) (*db.MemoryStorePageCursor, error) {
@@ -1550,16 +1550,16 @@ func decodeStoreCursor(raw string) (*db.MemoryStorePageCursor, error) {
 	if err != nil || payload == nil {
 		return nil, err
 	}
-	id, ok := payload["id"].(float64)
+	resourceUUID, ok := payload["uuid"].(string)
 	createdRaw, _ := payload["created_at"].(string)
-	if !ok || id <= 0 || createdRaw == "" {
+	if !ok || uuid.Validate(resourceUUID) != nil || createdRaw == "" {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, createdRaw)
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	return &db.MemoryStorePageCursor{CreatedAt: createdAt.UTC(), ID: int64(id)}, nil
+	return &db.MemoryStorePageCursor{CreatedAt: createdAt.UTC(), UUID: resourceUUID}, nil
 }
 
 func encodeMemoryCursor(memory db.Memory) string {
@@ -1567,7 +1567,7 @@ func encodeMemoryCursor(memory db.Memory) string {
 		"path":       memory.Path,
 		"created_at": memory.CreatedAt.UTC().Format(time.RFC3339Nano),
 		"updated_at": memory.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		"id":         memory.ID,
+		"uuid":       memory.UUID,
 	})
 }
 
@@ -1577,11 +1577,11 @@ func decodeMemoryCursor(raw string) (*db.MemoryPageCursor, error) {
 		return nil, err
 	}
 	path, _ := payload["path"].(string)
-	id, ok := payload["id"].(float64)
-	if !ok || id <= 0 {
+	resourceUUID, ok := payload["uuid"].(string)
+	if !ok || uuid.Validate(resourceUUID) != nil {
 		return nil, errors.New("page is invalid")
 	}
-	cursor := &db.MemoryPageCursor{Path: path, ID: int64(id)}
+	cursor := &db.MemoryPageCursor{Path: path, UUID: resourceUUID}
 	if createdRaw, _ := payload["created_at"].(string); createdRaw != "" {
 		createdAt, err := time.Parse(time.RFC3339Nano, createdRaw)
 		if err != nil {
@@ -1600,7 +1600,7 @@ func decodeMemoryCursor(raw string) (*db.MemoryPageCursor, error) {
 }
 
 func encodeVersionCursor(version db.MemoryVersion) string {
-	return encodeCursor(map[string]any{"created_at": version.CreatedAt.UTC().Format(time.RFC3339Nano), "id": version.ID})
+	return encodeCursor(map[string]any{"created_at": version.CreatedAt.UTC().Format(time.RFC3339Nano), "uuid": version.UUID})
 }
 
 func decodeVersionCursor(raw string) (*db.MemoryVersionPageCursor, error) {
@@ -1608,16 +1608,16 @@ func decodeVersionCursor(raw string) (*db.MemoryVersionPageCursor, error) {
 	if err != nil || payload == nil {
 		return nil, err
 	}
-	id, ok := payload["id"].(float64)
+	resourceUUID, ok := payload["uuid"].(string)
 	createdRaw, _ := payload["created_at"].(string)
-	if !ok || id <= 0 || createdRaw == "" {
+	if !ok || uuid.Validate(resourceUUID) != nil || createdRaw == "" {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, createdRaw)
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	return &db.MemoryVersionPageCursor{CreatedAt: createdAt.UTC(), ID: int64(id)}, nil
+	return &db.MemoryVersionPageCursor{CreatedAt: createdAt.UTC(), UUID: resourceUUID}, nil
 }
 
 func encodeDepthCursor(path string) string {

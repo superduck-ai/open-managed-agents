@@ -118,14 +118,14 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 	for _, job := range jobs {
 		target, skip, err := targetForJob(w.cfg, job)
 		if skip {
-			if err := w.database.CompleteWebhookDeliveryJob(ctx, job.ID); err != nil {
+			if err := w.database.CompleteWebhookDeliveryJob(ctx, job.UUID); err != nil {
 				errs = append(errs, fmt.Errorf("complete skipped webhook job %s: %w", job.ExternalID, err))
 			}
 			continue
 		}
 		if err != nil {
 			delay := retryDelay(job.Attempts + 1)
-			if markErr := w.database.FailWebhookDeliveryJob(ctx, job.ID, job.Attempts, err.Error(), delay, webhookMaxAttempts(w.cfg)); markErr != nil {
+			if markErr := w.database.FailWebhookDeliveryJob(ctx, job.UUID, job.Attempts, err.Error(), delay, webhookMaxAttempts(w.cfg)); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark invalid webhook job %s retry: %w", job.ExternalID, markErr))
 			}
 			w.recordEndpointFailure(ctx, job, err)
@@ -133,17 +133,17 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 		}
 		if err := deliver(ctx, client, target, job.Event); err != nil {
 			delay := retryDelay(job.Attempts + 1)
-			if markErr := w.database.FailWebhookDeliveryJob(ctx, job.ID, job.Attempts, err.Error(), delay, webhookMaxAttempts(w.cfg)); markErr != nil {
+			if markErr := w.database.FailWebhookDeliveryJob(ctx, job.UUID, job.Attempts, err.Error(), delay, webhookMaxAttempts(w.cfg)); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark webhook job %s retry: %w", job.ExternalID, markErr))
 			}
 			w.recordEndpointFailure(ctx, job, err)
 			continue
 		}
-		if err := w.database.CompleteWebhookDeliveryJob(ctx, job.ID); err != nil {
+		if err := w.database.CompleteWebhookDeliveryJob(ctx, job.UUID); err != nil {
 			errs = append(errs, fmt.Errorf("complete webhook job %s: %w", job.ExternalID, err))
 		}
-		if job.WebhookEndpointID != nil {
-			if err := w.database.RecordWebhookEndpointDeliverySuccess(ctx, *job.WebhookEndpointID); err != nil {
+		if job.WebhookEndpointUUID != nil {
+			if err := w.database.RecordWebhookEndpointDeliverySuccess(ctx, *job.WebhookEndpointUUID); err != nil {
 				errs = append(errs, fmt.Errorf("record webhook endpoint %s success: %w", job.WebhookEndpointExternalID, err))
 			}
 		}
@@ -152,7 +152,7 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 }
 
 func targetForJob(cfg config.WebhookConfig, job db.WebhookDeliveryJob) (deliveryTarget, bool, error) {
-	if job.WebhookEndpointID != nil {
+	if job.WebhookEndpointUUID != nil {
 		if job.WebhookEndpointStatus != "enabled" || job.WebhookEndpointURL == "" || job.WebhookEndpointSecret == "" {
 			return deliveryTarget{}, true, nil
 		}
@@ -175,7 +175,7 @@ func targetForJob(cfg config.WebhookConfig, job db.WebhookDeliveryJob) (delivery
 }
 
 func (w *Worker) recordEndpointFailure(ctx context.Context, job db.WebhookDeliveryJob, err error) {
-	if job.WebhookEndpointID == nil {
+	if job.WebhookEndpointUUID == nil {
 		return
 	}
 	disableAfter := autoDisableFailures
@@ -183,7 +183,7 @@ func (w *Worker) recordEndpointFailure(ctx context.Context, job db.WebhookDelive
 	if errors.As(err, &failure) && failure.immediateDisable {
 		disableAfter = 1
 	}
-	if recordErr := w.database.RecordWebhookEndpointDeliveryFailure(ctx, *job.WebhookEndpointID, err.Error(), disableAfter); recordErr != nil {
+	if recordErr := w.database.RecordWebhookEndpointDeliveryFailure(ctx, *job.WebhookEndpointUUID, err.Error(), disableAfter); recordErr != nil {
 		w.logger.ErrorContext(ctx, "record webhook endpoint failure", "endpoint_id", job.WebhookEndpointExternalID, "error", recordErr)
 	}
 }

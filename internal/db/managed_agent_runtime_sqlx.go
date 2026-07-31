@@ -11,8 +11,8 @@ const (
 		set metadata = coalesce(metadata, CAST('{}' AS jsonb))
 				|| CAST(:metadata_patch AS jsonb),
 			updated_at = now()
-		where organization_id = :organization_id
-			and workspace_id = :workspace_id
+		where organization_uuid = :organization_uuid
+			and workspace_uuid = :workspace_uuid
 			and external_id = :session_external_id
 			and deleted_at is null
 	`
@@ -21,9 +21,9 @@ const (
 		set metadata = coalesce(metadata, CAST('{}' AS jsonb))
 				|| CAST(:metadata_patch AS jsonb),
 			updated_at = now()
-		where organization_id = :organization_id
-			and workspace_id = :workspace_id
-			and environment_id = :environment_id
+		where organization_uuid = :organization_uuid
+			and workspace_uuid = :workspace_uuid
+			and environment_uuid = :environment_uuid
 			and environment_external_id = :environment_external_id
 			and external_id = :work_external_id
 			and deleted_at is null
@@ -35,8 +35,8 @@ const (
 			worker_lease_expires_at = null,
 			connection_status = 'disconnected',
 			updated_at = now()
-		where organization_id = :organization_id
-			and workspace_id = :workspace_id
+		where organization_uuid = :organization_uuid
+			and workspace_uuid = :workspace_uuid
 			and external_id = :code_session_external_id
 			and deleted_at is null
 	`
@@ -78,8 +78,8 @@ func (d *DB) BindManagedAgentRuntimeMetadata(
 	defer tx.Rollback()
 
 	sessionResult, err := namedExecContext(ctx, tx, bindManagedAgentSessionMetadataQuery, map[string]any{
-		"organization_id":     session.OrganizationID,
-		"workspace_id":        session.WorkspaceID,
+		"organization_uuid":   session.OrganizationUUID,
+		"workspace_uuid":      session.WorkspaceUUID,
 		"session_external_id": session.ExternalID,
 		"metadata_patch":      string(sessionPatch),
 	})
@@ -95,9 +95,9 @@ func (d *DB) BindManagedAgentRuntimeMetadata(
 	}
 
 	workResult, err := namedExecContext(ctx, tx, bindManagedAgentWorkMetadataQuery, map[string]any{
-		"organization_id":         work.OrganizationID,
-		"workspace_id":            work.WorkspaceID,
-		"environment_id":          work.EnvironmentID,
+		"organization_uuid":       work.OrganizationUUID,
+		"workspace_uuid":          work.WorkspaceUUID,
+		"environment_uuid":        work.EnvironmentUUID,
 		"environment_external_id": work.EnvironmentExternalID,
 		"work_external_id":        work.ExternalID,
 		"metadata_patch":          string(workPatch),
@@ -119,13 +119,13 @@ func (d *DB) BindManagedAgentRuntimeMetadata(
 // not complete. Repeating the operation is safe.
 func (d *DB) TerminateManagedAgentCodeSession(
 	ctx context.Context,
-	organizationID int64,
-	workspaceID int64,
+	organizationUUID string,
+	workspaceUUID string,
 	codeSessionExternalID string,
 ) error {
 	result, err := namedExecContext(ctx, d.sql, terminateManagedAgentCodeSessionQuery, map[string]any{
-		"organization_id":          organizationID,
-		"workspace_id":             workspaceID,
+		"organization_uuid":        organizationUUID,
+		"workspace_uuid":           workspaceUUID,
 		"code_session_external_id": codeSessionExternalID,
 	})
 	if err != nil {

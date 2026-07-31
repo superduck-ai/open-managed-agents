@@ -117,7 +117,7 @@ func (h *Handler) streamThreadEventsRoute(w http.ResponseWriter, r *http.Request
 	if _, ok := h.authorizeSession(w, r, sessionID, sessionAccessEventsRead); !ok {
 		return
 	}
-	if _, err := h.db.GetSessionThread(r.Context(), workspaceIDFromRequest(r), sessionID, threadID); err != nil {
+	if _, err := h.db.GetSessionThread(r.Context(), workspaceUUIDFromRequest(r), sessionID, threadID); err != nil {
 		h.writeThreadLoadError(w, r, err, threadID)
 		return
 	}

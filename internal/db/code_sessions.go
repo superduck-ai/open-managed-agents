@@ -14,14 +14,13 @@ import (
 )
 
 type CodeSession struct {
-	ID                          int64
 	UUID                        string
 	ExternalID                  string
-	OrganizationID              int64
-	WorkspaceID                 int64
-	SessionID                   int64
+	OrganizationUUID            string
+	WorkspaceUUID               string
+	SessionUUID                 string
 	SessionExternalID           string
-	EnvironmentID               int64
+	EnvironmentUUID             string
 	EnvironmentExternalID       string
 	WorkDir                     string
 	PermissionMode              string
@@ -51,11 +50,11 @@ type CodeSession struct {
 // CreateCodeSessionInput 同时写入 code session 与仅保存 hash 的 OAuth-compatible token。
 type CreateCodeSessionInput struct {
 	ExternalID            string
-	OrganizationID        int64
-	WorkspaceID           int64
-	SessionID             int64
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	SessionUUID           string
 	SessionExternalID     string
-	EnvironmentID         int64
+	EnvironmentUUID       string
 	EnvironmentExternalID string
 	WorkDir               string
 	PermissionMode        string
@@ -69,17 +68,14 @@ type CreateCodeSessionInput struct {
 // CodeSessionCredentialContext 是凭证校验所需的数据库投影，同时绑定 code session、
 // public session、agent、organization 与 workspace，避免只按 external ID 做全局授权。
 type CodeSessionCredentialContext struct {
-	CodeSessionID           int64
+	CodeSessionUUID         string
 	CodeSessionExternalID   string
-	OrganizationID          int64
 	OrganizationUUID        string
-	OrganizationExternalID  string
-	WorkspaceID             int64
 	WorkspaceUUID           string
 	WorkspaceExternalID     string
-	PublicSessionID         int64
+	PublicSessionUUID       string
 	PublicSessionExternalID string
-	AgentID                 int64
+	AgentUUID               string
 	AgentExternalID         string
 	AgentVersion            int
 	AccountEmail            string
@@ -89,8 +85,8 @@ type CodeSessionCredentialContext struct {
 // 数据库投影。查询必须同时绑定已验签 JWT 中的 organization/workspace UUID，
 // 并校验 Code Session 与 Environment、Session 的内部租户关系。
 type CodeSessionNetworkPolicyContext struct {
-	OrganizationID        int64
-	WorkspaceID           int64
+	OrganizationUUID      string
+	WorkspaceUUID         string
 	EnvironmentExternalID string
 	EnvironmentConfig     json.RawMessage
 	AgentSnapshot         json.RawMessage
@@ -113,12 +109,11 @@ func nullableWorkerTokenSessionID(value string) any {
 }
 
 type CodeSessionEvent struct {
-	ID                    int64
 	UUID                  string
 	ExternalID            string
-	OrganizationID        int64
-	WorkspaceID           int64
-	CodeSessionID         int64
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	CodeSessionUUID       string
 	CodeSessionExternalID string
 	SequenceNum           int64
 	EventType             string
@@ -145,12 +140,11 @@ type CodeSessionEvent struct {
 }
 
 type CodeSessionInternalEvent struct {
-	ID                    int64
 	UUID                  string
 	ExternalID            string
-	OrganizationID        int64
-	WorkspaceID           int64
-	CodeSessionID         int64
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	CodeSessionUUID       string
 	CodeSessionExternalID string
 	SequenceNum           int64
 	EventType             string
@@ -196,7 +190,7 @@ type AppendCodeSessionInternalEventInput struct {
 }
 
 type ListCodeSessionInternalEventsPageParams struct {
-	WorkspaceID           int64
+	WorkspaceUUID         string
 	CodeSessionExternalID string
 	Subagents             bool
 	AfterSequence         int64
@@ -256,24 +250,24 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 	oauthAccessTokenHash := nullableString(strings.TrimSpace(input.OAuthAccessTokenHash))
 	return getCodeSessionSQLX(ctx, d.sql, `
 		insert into code_sessions (
-			external_id, organization_id, workspace_id, session_id, session_external_id,
-			environment_id, environment_external_id, work_dir, permission_mode, model,
+			external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id,
+			environment_uuid, environment_external_id, work_dir, permission_mode, model,
 			status, metadata, oauth_access_token_hash, created_at, updated_at
 		)
 		values (
-			:external_id, :organization_id, :workspace_id, :session_id,
-			:session_external_id, :environment_id, :environment_external_id,
+			:external_id, :organization_uuid, :workspace_uuid, :session_uuid,
+			:session_external_id, :environment_uuid, :environment_external_id,
 			:work_dir, :permission_mode, :model, :status, CAST(:metadata AS jsonb),
 			:oauth_access_token_hash, :created_at, :created_at
 		)
 		returning `+codeSessionColumns()+`
 	`, map[string]any{
 		"external_id":             input.ExternalID,
-		"organization_id":         input.OrganizationID,
-		"workspace_id":            input.WorkspaceID,
-		"session_id":              input.SessionID,
+		"organization_uuid":       input.OrganizationUUID,
+		"workspace_uuid":          input.WorkspaceUUID,
+		"session_uuid":            input.SessionUUID,
 		"session_external_id":     input.SessionExternalID,
-		"environment_id":          input.EnvironmentID,
+		"environment_uuid":        input.EnvironmentUUID,
 		"environment_external_id": input.EnvironmentExternalID,
 		"work_dir":                input.WorkDir,
 		"permission_mode":         input.PermissionMode,
@@ -305,7 +299,7 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 		ctx,
 		tx,
 		lockSessionForEventsQuery,
-		sessionLookupArguments(codeSession.WorkspaceID, codeSession.SessionExternalID),
+		sessionLookupArguments(codeSession.WorkspaceUUID, codeSession.SessionExternalID),
 	)
 	if err != nil {
 		return false, err
@@ -313,18 +307,18 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 	current, err := getCodeSessionSQLX(ctx, tx, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where organization_id = :organization_id
-			and workspace_id = :workspace_id
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and external_id = :external_id
-			and session_id = :session_id
+			and session_uuid = CAST(:session_uuid AS uuid)
 			and status = 'initializing'
 			and deleted_at is null
 		for update
 	`, map[string]any{
-		"organization_id": codeSession.OrganizationID,
-		"workspace_id":    codeSession.WorkspaceID,
-		"external_id":     codeSession.ExternalID,
-		"session_id":      session.ID,
+		"organization_uuid": codeSession.OrganizationUUID,
+		"workspace_uuid":    codeSession.WorkspaceUUID,
+		"external_id":       codeSession.ExternalID,
+		"session_uuid":      session.UUID,
 	})
 	if err != nil {
 		return false, err
@@ -357,18 +351,14 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 		}
 	}
 	deletedResult, err := namedExecContext(ctx, tx, `
-		delete from session_event_queue q
-		using organizations o, workspaces w
-		where q.organization_uuid = o.uuid
-			and q.workspace_uuid = w.uuid
-			and w.organization_id = o.id
-			and o.id = :organization_id
-			and w.id = :workspace_id
-			and q.session_uuid = CAST(:session_uuid AS uuid)
+		delete from session_event_queue
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and session_uuid = CAST(:session_uuid AS uuid)
 	`, map[string]any{
-		"organization_id": session.OrganizationID,
-		"workspace_id":    session.WorkspaceID,
-		"session_uuid":    session.UUID,
+		"organization_uuid": session.OrganizationUUID,
+		"workspace_uuid":    session.WorkspaceUUID,
+		"session_uuid":      session.UUID,
 	})
 	if err != nil {
 		return false, err
@@ -384,20 +374,20 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 	result, err := namedExecContext(ctx, tx, `
 		update code_sessions
 		set status = 'active', updated_at = :now
-		where organization_id = :organization_id
-			and workspace_id = :workspace_id
-			and id = :id
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and uuid = CAST(:uuid AS uuid)
 			and external_id = :external_id
-			and session_id = :session_id
+			and session_uuid = CAST(:session_uuid AS uuid)
 			and status = 'initializing'
 			and deleted_at is null
 	`, map[string]any{
-		"organization_id": current.OrganizationID,
-		"workspace_id":    current.WorkspaceID,
-		"id":              current.ID,
-		"external_id":     current.ExternalID,
-		"session_id":      session.ID,
-		"now":             time.Now().UTC(),
+		"organization_uuid": current.OrganizationUUID,
+		"workspace_uuid":    current.WorkspaceUUID,
+		"uuid":              current.UUID,
+		"external_id":       current.ExternalID,
+		"session_uuid":      session.UUID,
+		"now":               time.Now().UTC(),
 	})
 	if err != nil {
 		return false, err
@@ -420,24 +410,23 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 // JOIN 中同时校验 organization、workspace 和 session 的归属，防止跨租户查询。
 // worker lease 不在这里校验：OAuth 鉴权要求有效 lease，首次签发 JWT 时还没有 lease。
 const codeSessionCredentialContextSelect = `
-	select cs.id AS code_session_id, cs.external_id AS code_session_external_id,
-		cs.organization_id, CAST(o.uuid AS text) AS organization_uuid,
-		o.external_id AS organization_external_id,
-		cs.workspace_id, CAST(w.uuid AS text) AS workspace_uuid,
+	select CAST(cs.uuid AS text) AS code_session_uuid, cs.external_id AS code_session_external_id,
+		CAST(cs.organization_uuid AS text) AS organization_uuid,
+		CAST(cs.workspace_uuid AS text) AS workspace_uuid,
 		w.external_id AS workspace_external_id,
-		s.id AS public_session_id, s.external_id AS public_session_external_id,
-		s.agent_id, s.agent_external_id, s.agent_version,
+		CAST(s.uuid AS text) AS public_session_uuid, s.external_id AS public_session_external_id,
+		CAST(s.agent_uuid AS text) AS agent_uuid, s.agent_external_id, s.agent_version,
 		coalesce(u.email, '') AS account_email
 	from code_sessions cs
-	join organizations o on o.id = cs.organization_id
-	join workspaces w on w.id = cs.workspace_id and w.organization_id = cs.organization_id
-	join sessions s on s.id = cs.session_id
-		and s.workspace_id = cs.workspace_id
-		and s.organization_id = cs.organization_id
+	join workspaces w on w.uuid = cs.workspace_uuid
+		and w.organization_uuid = cs.organization_uuid
+	join sessions s on s.uuid = cs.session_uuid
+		and s.workspace_uuid = cs.workspace_uuid
+		and s.organization_uuid = cs.organization_uuid
 		and s.deleted_at is null
-	left join api_keys ak on ak.id = s.created_by_api_key_id and ak.workspace_id = s.workspace_id
-	left join users u on u.id = ak.created_by_user_id
-		and u.organization_id = cs.organization_id
+	left join api_keys ak on ak.uuid = s.created_by_api_key_uuid and ak.workspace_uuid = w.uuid
+	left join users u on u.uuid = ak.created_by_user_uuid
+		and u.organization_uuid = cs.organization_uuid
 		and u.deleted_at is null
 `
 
@@ -456,8 +445,8 @@ const codeSessionByOAuthAccessTokenHashQuery = codeSessionCredentialContextSelec
 
 const codeSessionCredentialContextForIssueQuery = codeSessionCredentialContextSelect + `
 	where cs.external_id = :code_session_external_id
-		and cs.organization_id = :organization_id
-		and cs.workspace_id = :workspace_id
+		and cs.organization_uuid = :organization_uuid
+		and cs.workspace_uuid = :workspace_uuid
 ` + activeCodeSessionCredentialConditions
 
 // GetCodeSessionByOAuthAccessTokenHash 只返回 session 与 CCR worker lease 仍存活的凭证上下文。
@@ -469,17 +458,17 @@ func (d *DB) GetCodeSessionByOAuthAccessTokenHash(ctx context.Context, tokenHash
 }
 
 // GetCodeSessionCredentialContextForIssue 用于初始 session-ingress JWT 签发，并将查询绑定到预期租户。
-func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organizationID, workspaceID int64, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
+func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organizationUUID, workspaceUUID string, codeSessionExternalID string) (CodeSessionCredentialContext, error) {
 	return getCodeSessionCredentialContextSQLX(ctx, d.sql, codeSessionCredentialContextForIssueQuery, map[string]any{
 		"code_session_external_id": strings.TrimSpace(codeSessionExternalID),
-		"organization_id":          organizationID,
-		"workspace_id":             workspaceID,
+		"organization_uuid":        organizationUUID,
+		"workspace_uuid":           workspaceUUID,
 	})
 }
 
 // GetCodeSessionNetworkPolicyContext 从已验签的租户身份出发，一次性加载并校验
 // Code Session、Environment 与 Session 的策略关系。项目不使用数据库外键，因此
-// 每个 join 都显式约束 organization/workspace 与内部 ID；任一关系缺失都 fail closed。
+// 每个 join 都显式约束 organization/workspace 与稳定 UUID；任一关系缺失都 fail closed。
 func (d *DB) GetCodeSessionNetworkPolicyContext(
 	ctx context.Context,
 	codeSessionExternalID string,
@@ -488,32 +477,28 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 ) (CodeSessionNetworkPolicyContext, error) {
 	var row codeSessionNetworkPolicyContextRow
 	err := namedGetContext(ctx, d.sql, &row, `
-		select cs.organization_id, cs.workspace_id,
+		select CAST(cs.organization_uuid AS text) AS organization_uuid,
+			CAST(cs.workspace_uuid AS text) AS workspace_uuid,
 			e.external_id AS environment_external_id,
 			e.config AS environment_config, s.agent_snapshot
 		from code_sessions cs
-		join organizations o
-			on o.id = cs.organization_id
-		join workspaces w
-			on w.id = cs.workspace_id
-			and w.organization_id = cs.organization_id
 		join environments e
-			on e.id = cs.environment_id
+			on e.uuid = cs.environment_uuid
 			and e.external_id = cs.environment_external_id
-			and e.organization_id = cs.organization_id
-			and e.workspace_id = cs.workspace_id
+			and e.organization_uuid = cs.organization_uuid
+			and e.workspace_uuid = cs.workspace_uuid
 			and e.deleted_at is null
 		join sessions s
-			on s.id = cs.session_id
+			on s.uuid = cs.session_uuid
 			and s.external_id = cs.session_external_id
-			and s.organization_id = cs.organization_id
-			and s.workspace_id = cs.workspace_id
-			and s.environment_id = cs.environment_id
+			and s.organization_uuid = cs.organization_uuid
+			and s.workspace_uuid = cs.workspace_uuid
+			and s.environment_uuid = cs.environment_uuid
 			and s.environment_external_id = cs.environment_external_id
 			and s.deleted_at is null
 		where cs.external_id = :code_session_external_id
-			and CAST(o.uuid AS text) = :organization_uuid
-			and CAST(w.uuid AS text) = :workspace_uuid
+			and cs.organization_uuid = CAST(:organization_uuid AS uuid)
+			and cs.workspace_uuid = CAST(:workspace_uuid AS uuid)
 	`+activeCodeSessionCredentialConditions,
 		map[string]any{
 			"code_session_external_id": strings.TrimSpace(codeSessionExternalID),
@@ -527,8 +512,8 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 		return CodeSessionNetworkPolicyContext{}, err
 	}
 	return CodeSessionNetworkPolicyContext{
-		OrganizationID:        row.OrganizationID,
-		WorkspaceID:           row.WorkspaceID,
+		OrganizationUUID:      row.OrganizationUUID,
+		WorkspaceUUID:         row.WorkspaceUUID,
 		EnvironmentExternalID: row.EnvironmentExternalID,
 		EnvironmentConfig:     copyRaw(row.EnvironmentConfig),
 		AgentSnapshot:         copyRaw(row.AgentSnapshot),
@@ -543,16 +528,16 @@ func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession
 	`, map[string]any{"external_id": externalID})
 }
 
-func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceID int64, sessionExternalID string) (CodeSession, error) {
+func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceUUID string, sessionExternalID string) (CodeSession, error) {
 	return getCodeSessionSQLX(ctx, d.sql, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and deleted_at is null
-		order by created_at desc, id desc
+		order by created_at desc, uuid desc
 		limit 1
-	`, map[string]any{"workspace_id": workspaceID, "session_external_id": sessionExternalID})
+	`, map[string]any{"workspace_uuid": workspaceUUID, "session_external_id": sessionExternalID})
 }
 
 func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalID string, binding CodeSessionWorkerBinding, leaseTTL time.Duration) (int64, time.Time, error) {
@@ -596,7 +581,7 @@ func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalI
 			last_worker_connected_at = :now,
 			last_worker_activity_at = :now,
 			updated_at = :now
-		where id = :id
+		where uuid = CAST(:uuid AS uuid)
 		returning current_worker_epoch
 	`, map[string]any{
 		"epoch":                   nextEpoch,
@@ -604,7 +589,7 @@ func (d *DB) RegisterCodeSessionWorker(ctx context.Context, codeSessionExternalI
 		"now":                     now,
 		"worker_token_session_id": nullableWorkerTokenSessionID(binding.TokenSessionID),
 		"worker_binding":          jsonArg(json.RawMessage(bindingJSON)),
-		"id":                      session.ID,
+		"uuid":                    session.UUID,
 	}); err != nil {
 		return 0, time.Time{}, err
 	}
@@ -702,7 +687,7 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 
 	var leaseRow codeSessionWorkerLeaseRow
 	err = namedGetContext(ctx, tx, &leaseRow, `
-		select id, current_worker_epoch, worker_lease_expires_at
+		select CAST(uuid AS text) AS uuid, current_worker_epoch, worker_lease_expires_at
 		from code_sessions
 		where external_id = :external_id and deleted_at is null
 		for update
@@ -714,7 +699,7 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 		return time.Time{}, err
 	}
 
-	sessionID := leaseRow.ID
+	sessionUUID := leaseRow.UUID
 	currentEpoch := leaseRow.CurrentWorkerEpoch
 	lease := leaseRow.WorkerLeaseExpiresAt
 	var leaseExpiresAt *time.Time
@@ -757,9 +742,9 @@ func (d *DB) RecordCodeSessionWorkerHeartbeat(ctx context.Context, codeSessionEx
 			last_worker_activity_at = :now,
 			connection_status = 'connected',
 			updated_at = :now
-		where id = :id
+		where uuid = CAST(:uuid AS uuid)
 		returning worker_lease_expires_at
-	`, map[string]any{"now": now, "expires_at": expiresAt, "id": sessionID}); err != nil {
+	`, map[string]any{"now": now, "expires_at": expiresAt, "uuid": sessionUUID}); err != nil {
 		return time.Time{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -826,10 +811,10 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 			last_worker_connected_at = :now,
 			last_worker_activity_at = :now,
 			updated_at = :now
-		where id = :id
+		where uuid = CAST(:uuid AS uuid)
 		returning `+codeSessionColumns()+`
 	`, map[string]any{
-		"id":                      current.ID,
+		"uuid":                    current.UUID,
 		"worker_status":           workerStatus,
 		"requires_action_details": jsonArg(requiresActionDetails),
 		"external_metadata":       jsonArg(externalMetadata),
@@ -886,23 +871,23 @@ func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExt
 		}
 		event, err := getCodeSessionInternalEventSQLX(ctx, tx, `
 			insert into code_session_internal_events (
-				external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+				external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
 				sequence_num, event_type, payload_uuid, agent_id, is_compaction, payload,
 				payload_hash, idempotency_key, event_metadata, created_at, updated_at
 				)
 				values (
-					:external_id, :organization_id, :workspace_id, :code_session_id,
+					:external_id, :organization_uuid, :workspace_uuid, :code_session_uuid,
 					:code_session_external_id, :sequence_num, :event_type, :payload_uuid,
 					:agent_id, :is_compaction, CAST(:payload AS jsonb), :payload_hash,
 					:idempotency_key, CAST(:event_metadata AS jsonb), :created_at, :created_at
 				)
-				on conflict (workspace_id, idempotency_key) where deleted_at is null and idempotency_key <> '' do nothing
+				on conflict (workspace_uuid, idempotency_key) where deleted_at is null and idempotency_key <> '' do nothing
 				returning `+codeSessionInternalEventColumns()+`
 			`, map[string]any{
 			"external_id":              input.ExternalID,
-			"organization_id":          session.OrganizationID,
-			"workspace_id":             session.WorkspaceID,
-			"code_session_id":          session.ID,
+			"organization_uuid":        session.OrganizationUUID,
+			"workspace_uuid":           session.WorkspaceUUID,
+			"code_session_uuid":        session.UUID,
 			"code_session_external_id": session.ExternalID,
 			"sequence_num":             nextSequence,
 			"event_type":               input.EventType,
@@ -929,8 +914,8 @@ func (d *DB) AppendCodeSessionInternalEvents(ctx context.Context, codeSessionExt
 		if _, err := namedExecContext(ctx, tx, `
 			update code_sessions
 			set last_internal_sequence_num = :sequence_num, updated_at = :now
-			where id = :id
-		`, map[string]any{"sequence_num": sequence, "now": now, "id": session.ID}); err != nil {
+			where uuid = CAST(:uuid AS uuid)
+		`, map[string]any{"sequence_num": sequence, "now": now, "uuid": session.UUID}); err != nil {
 			return nil, err
 		}
 	}
@@ -980,7 +965,7 @@ func (d *DB) appendCodeSessionEventSQLXTx(
 		return CodeSessionEvent{}, false, ErrWorkerEpochMismatch
 	}
 	if input.IdempotencyKey != "" {
-		existing, err := d.getCodeSessionEventTx(ctx, tx, direction, session.WorkspaceID, input.IdempotencyKey)
+		existing, err := d.getCodeSessionEventTx(ctx, tx, direction, session.WorkspaceUUID, input.IdempotencyKey)
 		if err == nil {
 			return existing, true, nil
 		}
@@ -1010,9 +995,9 @@ func (d *DB) appendCodeSessionEventSQLXTx(
 	)
 	eventArguments := map[string]any{
 		"external_id":              input.ExternalID,
-		"organization_id":          session.OrganizationID,
-		"workspace_id":             session.WorkspaceID,
-		"code_session_id":          session.ID,
+		"organization_uuid":        session.OrganizationUUID,
+		"workspace_uuid":           session.WorkspaceUUID,
+		"code_session_uuid":        session.UUID,
 		"code_session_external_id": session.ExternalID,
 		"sequence_num":             sequence,
 		"event_type":               input.EventType,
@@ -1029,12 +1014,12 @@ func (d *DB) appendCodeSessionEventSQLXTx(
 		eventArguments["delivery_status"] = deliveryStatus
 		event, err = getCodeSessionEventSQLX(ctx, tx, `
 			insert into code_session_inbound_events (
-				external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+				external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
 				sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
 				payload_hash, idempotency_key, delivery_status, source, created_at, updated_at
 			)
 			values (
-				:external_id, :organization_id, :workspace_id, :code_session_id,
+				:external_id, :organization_uuid, :workspace_uuid, :code_session_uuid,
 				:code_session_external_id, :sequence_num, :event_type, :event_subtype,
 				:payload_uuid, :request_id, CAST(:payload AS jsonb), :payload_hash,
 				:idempotency_key, :delivery_status, :source, :created_at, :created_at
@@ -1045,12 +1030,12 @@ func (d *DB) appendCodeSessionEventSQLXTx(
 		eventArguments["ephemeral"] = input.Ephemeral
 		event, err = getCodeSessionEventSQLX(ctx, tx, `
 			insert into code_session_outbound_events (
-				external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+				external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
 				sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
 				payload_hash, idempotency_key, source, ephemeral, created_at, updated_at
 			)
 			values (
-				:external_id, :organization_id, :workspace_id, :code_session_id,
+				:external_id, :organization_uuid, :workspace_uuid, :code_session_uuid,
 				:code_session_external_id, :sequence_num, :event_type, :event_subtype,
 				:payload_uuid, :request_id, CAST(:payload AS jsonb), :payload_hash,
 				:idempotency_key, :source, :ephemeral, :created_at, :created_at
@@ -1061,30 +1046,30 @@ func (d *DB) appendCodeSessionEventSQLXTx(
 	if err != nil {
 		return CodeSessionEvent{}, false, err
 	}
-	if _, err := namedExecContext(ctx, tx, `update code_sessions set `+sequenceColumn+` = :sequence_num, updated_at = :now where id = :id`, map[string]any{
+	if _, err := namedExecContext(ctx, tx, `update code_sessions set `+sequenceColumn+` = :sequence_num, updated_at = :now where uuid = CAST(:uuid AS uuid)`, map[string]any{
 		"sequence_num": sequence,
 		"now":          now,
-		"id":           session.ID,
+		"uuid":         session.UUID,
 	}); err != nil {
 		return CodeSessionEvent{}, false, err
 	}
 	return event, false, nil
 }
 
-func (d *DB) getCodeSessionEventTx(ctx context.Context, tx sqlxNamedQueryer, direction string, workspaceID int64, idempotencyKey string) (CodeSessionEvent, error) {
-	arguments := map[string]any{"workspace_id": workspaceID, "idempotency_key": idempotencyKey}
+func (d *DB) getCodeSessionEventTx(ctx context.Context, tx sqlxNamedQueryer, direction string, workspaceUUID string, idempotencyKey string) (CodeSessionEvent, error) {
+	arguments := map[string]any{"workspace_uuid": workspaceUUID, "idempotency_key": idempotencyKey}
 	if direction == "outbound" {
 		return getCodeSessionEventSQLX(ctx, tx, `
 			select `+codeSessionOutboundEventColumns()+`
 			from code_session_outbound_events
-			where workspace_id = :workspace_id and idempotency_key = :idempotency_key and deleted_at is null
+			where workspace_uuid = :workspace_uuid and idempotency_key = :idempotency_key and deleted_at is null
 			limit 1
 		`, arguments)
 	}
 	return getCodeSessionEventSQLX(ctx, tx, `
 		select `+codeSessionInboundEventColumns()+`
 		from code_session_inbound_events
-		where workspace_id = :workspace_id and idempotency_key = :idempotency_key and deleted_at is null
+		where workspace_uuid = :workspace_uuid and idempotency_key = :idempotency_key and deleted_at is null
 		limit 1
 	`, arguments)
 }
@@ -1098,7 +1083,7 @@ func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListC
 		params.AfterSequence = 0
 	}
 	arguments := map[string]any{
-		"workspace_id":             params.WorkspaceID,
+		"workspace_uuid":           params.WorkspaceUUID,
 		"code_session_external_id": params.CodeSessionExternalID,
 		"after_sequence":           params.AfterSequence,
 		"limit":                    limit + 1,
@@ -1109,7 +1094,7 @@ func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListC
 			with boundaries as (
 				select distinct on (e.agent_id) e.agent_id, e.sequence_num
 				from code_session_internal_events e
-				where e.workspace_id = :workspace_id
+				where e.workspace_uuid = :workspace_uuid
 					and e.code_session_external_id = :code_session_external_id
 					and e.deleted_at is null
 					and e.agent_id is not null
@@ -1119,7 +1104,7 @@ func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListC
 			select ` + codeSessionInternalEventColumnsWithAlias("e") + `
 			from code_session_internal_events e
 			left join boundaries b on b.agent_id = e.agent_id
-			where e.workspace_id = :workspace_id
+			where e.workspace_uuid = :workspace_uuid
 				and e.code_session_external_id = :code_session_external_id
 				and e.deleted_at is null
 				and e.agent_id is not null
@@ -1132,7 +1117,7 @@ func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListC
 			with boundary as (
 				select e.sequence_num
 				from code_session_internal_events e
-				where e.workspace_id = :workspace_id
+				where e.workspace_uuid = :workspace_uuid
 					and e.code_session_external_id = :code_session_external_id
 					and e.deleted_at is null
 					and e.agent_id is null
@@ -1143,7 +1128,7 @@ func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListC
 			select ` + codeSessionInternalEventColumnsWithAlias("e") + `
 			from code_session_internal_events e
 			left join boundary b on true
-			where e.workspace_id = :workspace_id
+			where e.workspace_uuid = :workspace_uuid
 				and e.code_session_external_id = :code_session_external_id
 				and e.deleted_at is null
 				and e.agent_id is null
@@ -1181,7 +1166,7 @@ func (d *DB) ListQueuedCodeSessionInboundEventsForEpoch(ctx context.Context, cod
 	events, err := selectCodeSessionEventsSQLX(ctx, d.sql, `
 		select `+codeSessionInboundEventColumnsWithAlias("e")+`
 		from code_session_inbound_events e
-		join code_sessions cs on cs.id = e.code_session_id
+			join code_sessions cs on cs.uuid = e.code_session_uuid
 		where e.code_session_external_id = :external_id
 			and e.delivery_status = 'queued'
 			and e.deleted_at is null
@@ -1212,7 +1197,7 @@ func (d *DB) ListCodeSessionInboundEventsForWorkerStream(ctx context.Context, co
 	events, err := selectCodeSessionEventsSQLX(ctx, d.sql, `
 		select `+codeSessionInboundEventColumnsWithAlias("e")+`
 		from code_session_inbound_events e
-		join code_sessions cs on cs.id = e.code_session_id
+			join code_sessions cs on cs.uuid = e.code_session_uuid
 		where e.code_session_external_id = :external_id
 			and e.sequence_num > :after_sequence
 			and e.delivery_status <> 'processed'
@@ -1317,7 +1302,7 @@ func (d *DB) MarkCodeSessionInboundEventSentForEpoch(ctx context.Context, codeSe
 		where e.external_id = :event_external_id
 			and e.code_session_external_id = :code_session_external_id
 			and e.deleted_at is null
-			and cs.id = e.code_session_id
+			and cs.uuid = e.code_session_uuid
 			and cs.deleted_at is null
 			and cs.current_worker_epoch = :epoch
 			and cs.current_worker_epoch > 0
@@ -1371,7 +1356,7 @@ func (d *DB) ApplyCodeSessionWorkerDeliveryUpdates(ctx context.Context, codeSess
 			return CodeSessionWorkerDeliveryResult{}, ErrInvalidState
 		}
 
-		event, err := getCodeSessionInboundDeliveryEventTx(ctx, tx, session.ID, eventID)
+		event, err := getCodeSessionInboundDeliveryEventTx(ctx, tx, session.UUID, eventID)
 		if errors.Is(err, ErrNotFound) {
 			result.Ignored++
 			continue
@@ -1397,9 +1382,9 @@ func (d *DB) ApplyCodeSessionWorkerDeliveryUpdates(ctx context.Context, codeSess
 				delivery_worker_epoch = :epoch,
 				last_delivery_update_at = :now,
 				updated_at = :now
-			where id = :id and deleted_at is null
-		`, map[string]any{
-			"id":              event.ID,
+				where uuid = CAST(:uuid AS uuid) and deleted_at is null
+			`, map[string]any{
+			"uuid":            event.UUID,
 			"target_status":   targetStatus,
 			"mark_received":   rank >= codeSessionDeliveryStatusRank("received"),
 			"mark_processing": rank >= codeSessionDeliveryStatusRank("processing"),
@@ -1415,8 +1400,8 @@ func (d *DB) ApplyCodeSessionWorkerDeliveryUpdates(ctx context.Context, codeSess
 		if _, err := namedExecContext(ctx, tx, `
 			update code_sessions
 			set last_worker_activity_at = :now, updated_at = :now
-			where id = :id and deleted_at is null
-		`, map[string]any{"now": now, "id": session.ID}); err != nil {
+				where uuid = CAST(:uuid AS uuid) and deleted_at is null
+			`, map[string]any{"now": now, "uuid": session.UUID}); err != nil {
 			return CodeSessionWorkerDeliveryResult{}, err
 		}
 	}
@@ -1426,12 +1411,12 @@ func (d *DB) ApplyCodeSessionWorkerDeliveryUpdates(ctx context.Context, codeSess
 	return result, nil
 }
 
-func getCodeSessionInboundDeliveryEventTx(ctx context.Context, tx sqlxNamedQueryer, codeSessionID int64, eventID string) (CodeSessionEvent, error) {
-	arguments := map[string]any{"code_session_id": codeSessionID, "event_id": eventID}
+func getCodeSessionInboundDeliveryEventTx(ctx context.Context, tx sqlxNamedQueryer, codeSessionUUID string, eventID string) (CodeSessionEvent, error) {
+	arguments := map[string]any{"code_session_uuid": codeSessionUUID, "event_id": eventID}
 	event, err := getCodeSessionEventSQLX(ctx, tx, `
 		select `+codeSessionInboundEventColumns()+`
 		from code_session_inbound_events
-		where code_session_id = :code_session_id
+		where code_session_uuid = :code_session_uuid
 			and payload_uuid = :event_id
 			and deleted_at is null
 		order by sequence_num asc
@@ -1448,7 +1433,7 @@ func getCodeSessionInboundDeliveryEventTx(ctx context.Context, tx sqlxNamedQuery
 	return getCodeSessionEventSQLX(ctx, tx, `
 		select `+codeSessionInboundEventColumns()+`
 		from code_session_inbound_events
-		where code_session_id = :code_session_id
+		where code_session_uuid = :code_session_uuid
 			and external_id = :event_id
 			and deleted_at is null
 		limit 1
@@ -1623,8 +1608,12 @@ func (d *DB) codeSessionWorkerEpochUpdateError(ctx context.Context, codeSessionE
 }
 
 func codeSessionColumns() string {
-	return `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
-		environment_id, environment_external_id, work_dir, permission_mode, model, status, metadata,
+	return `CAST(uuid AS text) AS uuid, external_id,
+		CAST(organization_uuid AS text) AS organization_uuid,
+		CAST(workspace_uuid AS text) AS workspace_uuid,
+		CAST(session_uuid AS text) AS session_uuid, session_external_id,
+		CAST(environment_uuid AS text) AS environment_uuid,
+		environment_external_id, work_dir, permission_mode, model, status, metadata,
 		connection_status, last_inbound_sequence_num, last_outbound_sequence_num, last_internal_sequence_num,
 		last_worker_connected_at, last_worker_activity_at, current_worker_epoch, worker_lease_expires_at,
 		worker_registered_at, worker_last_heartbeat_at, worker_token_session_id, worker_binding,
@@ -1633,7 +1622,10 @@ func codeSessionColumns() string {
 }
 
 func codeSessionInboundEventColumns() string {
-	return `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+	return `CAST(uuid AS text) AS uuid, external_id,
+		CAST(organization_uuid AS text) AS organization_uuid,
+		CAST(workspace_uuid AS text) AS workspace_uuid,
+		CAST(code_session_uuid AS text) AS code_session_uuid, code_session_external_id,
 		sequence_num, event_type, event_subtype, payload_uuid, request_id, payload, payload_hash,
 		idempotency_key, delivery_status, source, sent_at, delivery_worker_epoch, received_at, processing_at,
 		processed_at, last_delivery_attempt_at, last_delivery_update_at, delivery_attempts,
@@ -1645,7 +1637,7 @@ func codeSessionInboundEventColumnsWithAlias(alias string) string {
 	if prefix != "" {
 		prefix += "."
 	}
-	return prefix + `id, CAST(` + prefix + `uuid AS text) AS uuid, ` + prefix + `external_id, ` + prefix + `organization_id, ` + prefix + `workspace_id, ` + prefix + `code_session_id, ` + prefix + `code_session_external_id,
+	return `CAST(` + prefix + `uuid AS text) AS uuid, ` + prefix + `external_id, CAST(` + prefix + `organization_uuid AS text) AS organization_uuid, CAST(` + prefix + `workspace_uuid AS text) AS workspace_uuid, CAST(` + prefix + `code_session_uuid AS text) AS code_session_uuid, ` + prefix + `code_session_external_id,
 		` + prefix + `sequence_num, ` + prefix + `event_type, ` + prefix + `event_subtype, ` + prefix + `payload_uuid, ` + prefix + `request_id, ` + prefix + `payload, ` + prefix + `payload_hash,
 		` + prefix + `idempotency_key, ` + prefix + `delivery_status, ` + prefix + `source, ` + prefix + `sent_at, ` + prefix + `delivery_worker_epoch, ` + prefix + `received_at, ` + prefix + `processing_at,
 		` + prefix + `processed_at, ` + prefix + `last_delivery_attempt_at, ` + prefix + `last_delivery_update_at, ` + prefix + `delivery_attempts,
@@ -1653,7 +1645,10 @@ func codeSessionInboundEventColumnsWithAlias(alias string) string {
 }
 
 func codeSessionOutboundEventColumns() string {
-	return `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+	return `CAST(uuid AS text) AS uuid, external_id,
+		CAST(organization_uuid AS text) AS organization_uuid,
+		CAST(workspace_uuid AS text) AS workspace_uuid,
+		CAST(code_session_uuid AS text) AS code_session_uuid, code_session_external_id,
 		sequence_num, event_type, event_subtype, payload_uuid, request_id, payload, payload_hash,
 		idempotency_key, CAST('' AS text) AS delivery_status, source, CAST(null AS timestamptz) AS sent_at,
 		CAST(null AS bigint) AS delivery_worker_epoch, CAST(null AS timestamptz) AS received_at, CAST(null AS timestamptz) AS processing_at,
@@ -1663,7 +1658,10 @@ func codeSessionOutboundEventColumns() string {
 }
 
 func codeSessionInternalEventColumns() string {
-	return `id, CAST(uuid AS text) AS uuid, external_id, organization_id, workspace_id, code_session_id, code_session_external_id,
+	return `CAST(uuid AS text) AS uuid, external_id,
+		CAST(organization_uuid AS text) AS organization_uuid,
+		CAST(workspace_uuid AS text) AS workspace_uuid,
+		CAST(code_session_uuid AS text) AS code_session_uuid, code_session_external_id,
 		sequence_num, event_type, payload_uuid, agent_id, is_compaction, payload, payload_hash,
 		idempotency_key, event_metadata, created_at, updated_at, deleted_at`
 }
@@ -1673,7 +1671,7 @@ func codeSessionInternalEventColumnsWithAlias(alias string) string {
 	if prefix != "" {
 		prefix += "."
 	}
-	return prefix + `id, CAST(` + prefix + `uuid AS text) AS uuid, ` + prefix + `external_id, ` + prefix + `organization_id, ` + prefix + `workspace_id, ` + prefix + `code_session_id, ` + prefix + `code_session_external_id,
+	return `CAST(` + prefix + `uuid AS text) AS uuid, ` + prefix + `external_id, CAST(` + prefix + `organization_uuid AS text) AS organization_uuid, CAST(` + prefix + `workspace_uuid AS text) AS workspace_uuid, CAST(` + prefix + `code_session_uuid AS text) AS code_session_uuid, ` + prefix + `code_session_external_id,
 		` + prefix + `sequence_num, ` + prefix + `event_type, ` + prefix + `payload_uuid, ` + prefix + `agent_id, ` + prefix + `is_compaction, ` + prefix + `payload, ` + prefix + `payload_hash,
 		` + prefix + `idempotency_key, ` + prefix + `event_metadata, ` + prefix + `created_at, ` + prefix + `updated_at, ` + prefix + `deleted_at`
 }

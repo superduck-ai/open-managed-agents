@@ -154,7 +154,7 @@ func TestBuildFilestoreEntriesPageQuery(t *testing.T) {
 			Limit:         25,
 		})
 		if !strings.Contains(query, "and parent_path = :directory_path") ||
-			strings.Contains(query, "(path, id) >") ||
+			strings.Contains(query, "(path, uuid) >") ||
 			!strings.Contains(query, "limit :fetch_limit") {
 			t.Fatalf("direct-child query = %q", query)
 		}
@@ -174,10 +174,10 @@ func TestBuildFilestoreEntriesPageQuery(t *testing.T) {
 			DirectoryPath: "/reports",
 			Recursive:     true,
 			Limit:         25,
-			Cursor:        &FilestoreEntryPageCursor{Path: "/reports/a", ID: 10},
+			Cursor:        &FilestoreEntryPageCursor{Path: "/reports/a", UUID: "00000000-0000-4000-8000-000000000010"},
 		})
 		if !strings.Contains(query, "left(path, char_length(:directory_prefix)) = :directory_prefix") ||
-			!strings.Contains(query, "and (path, id) > (:cursor_path, :cursor_id)") ||
+			!strings.Contains(query, "and (path, uuid) > (:cursor_path, CAST(:cursor_uuid AS uuid))") ||
 			!strings.Contains(query, "limit :fetch_limit") {
 			t.Fatalf("recursive query = %q", query)
 		}
@@ -186,7 +186,7 @@ func TestBuildFilestoreEntriesPageQuery(t *testing.T) {
 			"filesystem_uuid":  "filesystem-uuid",
 			"directory_prefix": "/reports/",
 			"cursor_path":      "/reports/a",
-			"cursor_id":        int64(10),
+			"cursor_uuid":      "00000000-0000-4000-8000-000000000010",
 			"fetch_limit":      26,
 		}
 		if !reflect.DeepEqual(args, wantArgs) {
@@ -211,7 +211,6 @@ func TestFilestoreEntrySQLXRowEntry(t *testing.T) {
 
 	t.Run("maps database row to domain entry", func(t *testing.T) {
 		row := filestoreEntryRow{
-			ID:                    7,
 			UUID:                  "entry-uuid",
 			ExternalID:            "file_7",
 			OrganizationUUID:      "organization-uuid",
@@ -227,7 +226,7 @@ func TestFilestoreEntrySQLXRowEntry(t *testing.T) {
 		if err != nil {
 			t.Fatalf("entry() error = %v", err)
 		}
-		if entry.ID != row.ID || entry.Path != row.Path || !reflect.DeepEqual(entry.Tags, []string{"report", "july"}) {
+		if entry.UUID != row.UUID || entry.Path != row.Path || !reflect.DeepEqual(entry.Tags, []string{"report", "july"}) {
 			t.Fatalf("entry() = %+v, want row identity and decoded tags", entry)
 		}
 		if string(entry.Metadata) != `{"source":"test"}` {
@@ -237,11 +236,11 @@ func TestFilestoreEntrySQLXRowEntry(t *testing.T) {
 }
 
 func TestNewFilestoreEntryPage(t *testing.T) {
-	entries := []FilestoreEntry{{ID: 1}, {ID: 2}, {ID: 3}}
+	entries := []FilestoreEntry{{UUID: "entry-1"}, {UUID: "entry-2"}, {UUID: "entry-3"}}
 
 	t.Run("trims lookahead entry", func(t *testing.T) {
 		page := newFilestoreEntryPage(entries, 2)
-		if !page.HasMore || len(page.Entries) != 2 || page.Entries[1].ID != 2 {
+		if !page.HasMore || len(page.Entries) != 2 || page.Entries[1].UUID != "entry-2" {
 			t.Fatalf("page = %+v, want two entries with HasMore", page)
 		}
 	})
@@ -271,7 +270,6 @@ func TestFilestoreObjectIdentityIncludesVersion(t *testing.T) {
 func TestVirtualFilestoreRoot(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 21, 1, 2, 3, 0, time.UTC)
 	filesystem := FilestoreFilesystem{
-		ID:               42,
 		UUID:             "00000000-0000-0000-0000-000000000042",
 		ExternalID:       "fs_test",
 		OrganizationUUID: "00000000-0000-4000-8000-000000000007",
@@ -281,7 +279,7 @@ func TestVirtualFilestoreRoot(t *testing.T) {
 	}
 
 	root := virtualFilestoreRoot(filesystem)
-	if root.ID != 0 || root.Path != "/" || root.ParentPath != nil || root.Kind != FilestoreEntryKindDirectory {
+	if root.UUID != filesystem.UUID || root.Path != "/" || root.ParentPath != nil || root.Kind != FilestoreEntryKindDirectory {
 		t.Fatalf("virtual root = %#v", root)
 	}
 	if root.OrganizationUUID != filesystem.OrganizationUUID ||

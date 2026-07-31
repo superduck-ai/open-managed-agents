@@ -33,7 +33,7 @@ func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
 				"org_uuid":  "org_test",
 				"user_uuid": "user_test",
 			},
-			wantArgCount: 5,
+			wantArgCount: 4,
 		},
 	}
 
@@ -58,21 +58,20 @@ func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
 
 func TestPlatformSessionIdentityRowMapping(t *testing.T) {
 	row := platformSessionIdentityRow{
-		OrganizationID:         1,
-		OrganizationUUID:       "org-uuid",
-		OrganizationExternalID: "org_test",
-		WorkspaceID:            2,
-		WorkspaceUUID:          "workspace-uuid",
-		WorkspaceExternalID:    "workspace_test",
-		UserID:                 3,
-		UserExternalID:         "user_test",
-		APIKeyID:               4,
-		APIKeyExternalID:       "api_key_test",
+		OrganizationUUID:    "org-uuid",
+		WorkspaceUUID:       "workspace-uuid",
+		WorkspaceExternalID: "workspace_test",
+		UserUUID:            "user-uuid",
+		UserExternalID:      "user_test",
+		APIKeyUUID:          "api-key-uuid",
+		APIKeyExternalID:    "api_key_test",
 	}
 
 	session := row.session()
-	if session.OrganizationID != row.OrganizationID ||
+	if session.OrganizationUUID != row.OrganizationUUID ||
 		session.WorkspaceExternalID != row.WorkspaceExternalID ||
+		session.UserUUID != row.UserUUID ||
+		session.APIKeyUUID != row.APIKeyUUID ||
 		session.APIKeyExternalID != row.APIKeyExternalID {
 		t.Fatalf("session = %#v, want values from row %#v", session, row)
 	}

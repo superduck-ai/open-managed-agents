@@ -187,16 +187,16 @@ func TestEnvironmentsAPI(t *testing.T) {
 			t.Fatalf("include_archived list missing environment: %+v", archivedPage.Data)
 		}
 
-		record, err := app.db.GetEnvironment(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceID, configured.ID)
+		record, err := app.db.GetEnvironment(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceUUID, configured.ID)
 		if err != nil {
 			t.Fatalf("get environment db record: %v", err)
 		}
 		envKey := "sk-ant-env-test"
 		if err := app.db.CreateEnvironmentKey(context.Background(), db.EnvironmentKey{
 			ExternalID:            "envkey_test",
-			OrganizationID:        record.OrganizationID,
-			WorkspaceID:           record.WorkspaceID,
-			EnvironmentID:         record.ID,
+			OrganizationUUID:      record.OrganizationUUID,
+			WorkspaceUUID:         record.WorkspaceUUID,
+			EnvironmentUUID:       record.UUID,
 			EnvironmentExternalID: record.ExternalID,
 		}, auth.HashAPIKey(envKey)); err != nil {
 			t.Fatalf("create environment key: %v", err)
@@ -523,9 +523,9 @@ func createEnvironmentWork(t *testing.T, app *testApp, env db.Environment) strin
 	if _, err := app.db.CreateEnvironmentWork(context.Background(), db.EnvironmentWork{
 		UUID:                  uuid.NewString(),
 		ExternalID:            workID,
-		OrganizationID:        env.OrganizationID,
-		WorkspaceID:           env.WorkspaceID,
-		EnvironmentID:         env.ID,
+		OrganizationUUID:      env.OrganizationUUID,
+		WorkspaceUUID:         env.WorkspaceUUID,
+		EnvironmentUUID:       env.UUID,
 		EnvironmentExternalID: env.ExternalID,
 		Data:                  json.RawMessage(`{"type":"session","id":"session_test"}`),
 		Metadata:              json.RawMessage(`{}`),

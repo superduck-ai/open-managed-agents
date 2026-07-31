@@ -645,15 +645,15 @@ func skillArchiveTestService(
 	openCount := 0
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, workspaceID, filesystemID int64, entryPath string) (db.FilestoreEntry, error) {
-			if workspaceID != serviceTestPrincipal().WorkspaceID ||
-				filesystemID != filesystem.ID ||
+		getEntryFn: func(_ context.Context, workspaceUUID, filesystemUUID, entryPath string) (db.FilestoreEntry, error) {
+			if workspaceUUID != serviceTestPrincipal().WorkspaceUUID ||
+				filesystemUUID != filesystem.UUID ||
 				entryPath != skillNamespacePath {
 				return db.FilestoreEntry{}, db.ErrNotFound
 			}
-			return serviceTestDirectoryEntry(filesystem, 70, skillNamespacePath), nil
+			return serviceTestDirectoryEntry(filesystem, skillNamespacePath), nil
 		},
-		listSkillArchiveEntriesFn: func(context.Context, int64, int64) ([]db.FilestoreEntry, error) {
+		listSkillArchiveEntriesFn: func(context.Context, string, string) ([]db.FilestoreEntry, error) {
 			return []db.FilestoreEntry{archiveEntry}, nil
 		},
 	}
@@ -676,7 +676,6 @@ func skillArchiveTestService(
 func skillArchiveTestEntry(data []byte) db.FilestoreEntry {
 	sum := sha256.Sum256(data)
 	return db.FilestoreEntry{
-		ID:                  71,
 		UUID:                "77777777-7777-4777-8777-777777777777",
 		ExternalID:          "fse_test",
 		OrganizationUUID:    serviceTestPrincipal().OrganizationUUID,

@@ -88,22 +88,24 @@ func TestFilestoreEntryReferenceColumnsUseUUID(t *testing.T) {
 func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-session-file-limit"))
 	t.Cleanup(app.close)
-	organizationID, workspaceID, _, _, apiKeyID, _, _, _, _, _ := seedFilestoreLookupScope(t, app)
-	input := filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID)
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID)
 
 	for index := range db.MaxSessionFileResources + 1 {
 		resourceID := fmt.Sprintf("sesrsc_file_limit_%03d", index)
 		input.Resources = append(input.Resources, db.CreateSessionResourceInput{
 			Resource: db.SessionResource{
-				UUID:           uuid.NewString(),
-				ExternalID:     resourceID,
-				OrganizationID: organizationID,
-				WorkspaceID:    workspaceID,
-				ResourceType:   db.SessionResourceTypeFile,
-				Payload:        json.RawMessage(`{}`),
-				SecretPayload:  json.RawMessage(`{}`),
-				CreatedAt:      input.Session.CreatedAt,
-				UpdatedAt:      input.Session.CreatedAt,
+				UUID:              uuid.NewString(),
+				ExternalID:        resourceID,
+				OrganizationUUID:  organizationUUID,
+				WorkspaceUUID:     workspaceUUID,
+				SessionUUID:       input.Session.UUID,
+				SessionExternalID: input.Session.ExternalID,
+				ResourceType:      db.SessionResourceTypeFile,
+				Payload:           json.RawMessage(`{}`),
+				SecretPayload:     json.RawMessage(`{}`),
+				CreatedAt:         input.Session.CreatedAt,
+				UpdatedAt:         input.Session.CreatedAt,
 			},
 			FileMount: &db.SessionFileMount{
 				ResourceExternalID: resourceID,
@@ -121,7 +123,7 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 
 	if _, err := app.db.GetSession(
 		context.Background(),
-		workspaceID,
+		workspaceUUID,
 		input.Session.ExternalID,
 	); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("GetSession() after rollback error = %v, want ErrNotFound", err)
@@ -131,8 +133,8 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 func TestCreateSessionRollsBackWhenFilesystemScopeIsInvalid(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-session-rollback"))
 	t.Cleanup(app.close)
-	organizationID, workspaceID, _, _, apiKeyID, _, _, _, _, _ := seedFilestoreLookupScope(t, app)
-	input := filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID+1_000_000)
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, _ := seedFilestoreLookupScope(t, app)
+	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, uuid.NewString())
 
 	if _, _, _, _, err := app.db.CreateSession(context.Background(), input); !errors.Is(err, db.ErrPreconditionFailed) {
 		t.Fatalf("CreateSession() error = %v, want ErrPreconditionFailed", err)
@@ -158,21 +160,18 @@ func TestCreateSessionRollsBackWhenFilesystemScopeIsInvalid(t *testing.T) {
 func TestCreateSessionRollsBackAfterFilesystemIDCollisions(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-session-collision-rollback"))
 	t.Cleanup(app.close)
-	organizationID, workspaceID, organizationUUID, workspaceUUID, apiKeyID, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	for _, value := range []byte{0, 1, 2} {
 		insertFilestoreCollisionOwner(
 			t,
 			app,
-			organizationID,
-			workspaceID,
 			organizationUUID,
 			workspaceUUID,
-			apiKeyID,
 			apiKeyUUID,
 			filestoreExternalIDForRandomByte(value),
 		)
 	}
-	input := filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID)
+	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID)
 	previousRandomReader := cryptorand.Reader
 	cryptorand.Reader = filestoreRandomReader(0, 1, 2)
 	t.Cleanup(func() {
@@ -199,19 +198,16 @@ func TestCreateSessionRollsBackAfterFilesystemIDCollisions(t *testing.T) {
 func TestCreateSessionRetriesFilesystemIDCollision(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-session-collision-retry"))
 	t.Cleanup(app.close)
-	organizationID, workspaceID, organizationUUID, workspaceUUID, apiKeyID, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	insertFilestoreCollisionOwner(
 		t,
 		app,
-		organizationID,
-		workspaceID,
 		organizationUUID,
 		workspaceUUID,
-		apiKeyID,
 		apiKeyUUID,
 		filestoreExternalIDForRandomByte(0),
 	)
-	input := filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID)
+	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID)
 	previousRandomReader := cryptorand.Reader
 	cryptorand.Reader = filestoreRandomReader(0, 1)
 	t.Cleanup(func() {
@@ -222,8 +218,8 @@ func TestCreateSessionRetriesFilesystemIDCollision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	cleanupFilestoreSession(t, app, workspaceID, created.ExternalID)
-	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceID, created.ExternalID)
+	cleanupFilestoreSession(t, app, workspaceUUID, created.ExternalID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceUUID, created.ExternalID)
 	if err != nil {
 		t.Fatalf("GetFilestoreFilesystemBySession() error = %v", err)
 	}
@@ -235,15 +231,15 @@ func TestCreateSessionRetriesFilesystemIDCollision(t *testing.T) {
 func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-session-create"))
 	t.Cleanup(app.close)
-	organizationID, workspaceID, organizationUUID, workspaceUUID, apiKeyID, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
-	input := filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID)
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID)
 
 	created, _, _, _, err := app.db.CreateSession(context.Background(), input)
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	cleanupFilestoreSession(t, app, workspaceID, created.ExternalID)
-	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceID, created.ExternalID)
+	cleanupFilestoreSession(t, app, workspaceUUID, created.ExternalID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceUUID, created.ExternalID)
 	if err != nil {
 		t.Fatalf("GetFilestoreFilesystemBySession() error = %v", err)
 	}
@@ -304,11 +300,11 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	for attempt := 1; attempt <= 2; attempt++ {
 		if _, err := app.db.CreateCodeSession(context.Background(), db.CreateCodeSessionInput{
 			ExternalID:            fmt.Sprintf("cse_filestore_retry_%d_%s", attempt, uuid.NewString()),
-			OrganizationID:        organizationID,
-			WorkspaceID:           workspaceID,
-			SessionID:             created.ID,
+			OrganizationUUID:      created.OrganizationUUID,
+			WorkspaceUUID:         created.WorkspaceUUID,
+			SessionUUID:           created.UUID,
 			SessionExternalID:     created.ExternalID,
-			EnvironmentID:         created.EnvironmentID,
+			EnvironmentUUID:       created.EnvironmentUUID,
 			EnvironmentExternalID: created.EnvironmentExternalID,
 			Status:                "active",
 			Metadata:              json.RawMessage(`{}`),
@@ -316,7 +312,7 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("create Code Session attempt %d: %v", attempt, err)
 		}
-		reused, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceID, created.ExternalID)
+		reused, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceUUID, created.ExternalID)
 		if err != nil {
 			t.Fatalf("load filesystem after Code Session attempt %d: %v", attempt, err)
 		}
@@ -343,22 +339,22 @@ func TestListFilestoreEntriesPageWithSQLX(t *testing.T) {
 	t.Cleanup(app.close)
 
 	ctx := context.Background()
-	organizationID, workspaceID, _, _, apiKeyID, _, _, _, _, _ := seedFilestoreLookupScope(t, app)
-	created, _, _, _, err := app.db.CreateSession(ctx, filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID))
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	created, _, _, _, err := app.db.CreateSession(ctx, filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID))
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	cleanupFilestoreSession(t, app, workspaceID, created.ExternalID)
-	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, workspaceID, created.ExternalID)
+	cleanupFilestoreSession(t, app, workspaceUUID, created.ExternalID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, workspaceUUID, created.ExternalID)
 	if err != nil {
 		t.Fatalf("GetFilestoreFilesystemBySession() error = %v", err)
 	}
 
 	t.Run("rejects a missing directory", func(t *testing.T) {
 		_, err := app.db.ListFilestoreEntriesPage(ctx, db.ListFilestoreEntriesPageParams{
-			WorkspaceID:   workspaceID,
-			FilesystemID:  filesystem.ID,
-			DirectoryPath: "/missing",
+			WorkspaceUUID:  workspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			DirectoryPath:  "/missing",
 		})
 		if !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("ListFilestoreEntriesPage() error = %v, want ErrNotFound", err)
@@ -367,16 +363,16 @@ func TestListFilestoreEntriesPageWithSQLX(t *testing.T) {
 
 	for _, directoryPath := range []string{"/reports", "/reports/june", "/reports/july"} {
 		if _, err := app.db.MakeFilestoreDirectory(ctx, db.MakeFilestoreDirectoryInput{
-			WorkspaceID:  workspaceID,
-			FilesystemID: filesystem.ID,
-			Path:         directoryPath,
+			WorkspaceUUID:  workspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			Path:           directoryPath,
 		}); err != nil {
 			t.Fatalf("MakeFilestoreDirectory(%q) error = %v", directoryPath, err)
 		}
 	}
 
 	t.Run("maps rows and advances a keyset cursor", func(t *testing.T) {
-		directory, err := app.db.GetFilestoreEntry(ctx, workspaceID, filesystem.ID, "/reports")
+		directory, err := app.db.GetFilestoreEntry(ctx, workspaceUUID, filesystem.UUID, "/reports")
 		if err != nil {
 			t.Fatalf("GetFilestoreEntry() error = %v", err)
 		}
@@ -385,10 +381,10 @@ func TestListFilestoreEntriesPageWithSQLX(t *testing.T) {
 		}
 
 		firstPage, err := app.db.ListFilestoreEntriesPage(ctx, db.ListFilestoreEntriesPageParams{
-			WorkspaceID:   workspaceID,
-			FilesystemID:  filesystem.ID,
-			DirectoryPath: "/reports",
-			Limit:         1,
+			WorkspaceUUID:  workspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			DirectoryPath:  "/reports",
+			Limit:          1,
 		})
 		if err != nil {
 			t.Fatalf("first ListFilestoreEntriesPage() error = %v", err)
@@ -402,11 +398,11 @@ func TestListFilestoreEntriesPageWithSQLX(t *testing.T) {
 
 		lastEntry := firstPage.Entries[0]
 		secondPage, err := app.db.ListFilestoreEntriesPage(ctx, db.ListFilestoreEntriesPageParams{
-			WorkspaceID:   workspaceID,
-			FilesystemID:  filesystem.ID,
-			DirectoryPath: "/reports",
-			Limit:         1,
-			Cursor:        &db.FilestoreEntryPageCursor{Path: lastEntry.Path, ID: lastEntry.ID},
+			WorkspaceUUID:  workspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			DirectoryPath:  "/reports",
+			Limit:          1,
+			Cursor:         &db.FilestoreEntryPageCursor{Path: lastEntry.Path, UUID: lastEntry.UUID},
 		})
 		if err != nil {
 			t.Fatalf("second ListFilestoreEntriesPage() error = %v", err)
@@ -429,10 +425,10 @@ func TestFilestoreEntryMutationSQLXBinding(t *testing.T) {
 	blob.S3VersionID = "version-sqlx-1"
 
 	created, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:  fixture.workspaceID,
-		FilesystemID: fixture.filesystem.ID,
-		Path:         "/sqlx.txt",
-		Blob:         blob,
+		WorkspaceUUID:  fixture.workspaceUUID,
+		FilesystemUUID: fixture.filesystem.UUID,
+		Path:           "/sqlx.txt",
+		Blob:           blob,
 	})
 	if err != nil {
 		t.Fatalf("PutFilestoreFile() error = %v", err)
@@ -452,8 +448,8 @@ func TestFilestoreEntryMutationSQLXBinding(t *testing.T) {
 	replacement.S3ETag = "etag-sqlx-2"
 	replacement.S3VersionID = "version-sqlx-2"
 	replaced, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:       fixture.workspaceID,
-		FilesystemID:      fixture.filesystem.ID,
+		WorkspaceUUID:     fixture.workspaceUUID,
+		FilesystemUUID:    fixture.filesystem.UUID,
 		Path:              "/sqlx.txt",
 		Blob:              replacement,
 		OverwriteExisting: true,
@@ -473,7 +469,7 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 	t.Cleanup(app.close)
 
 	ctx := context.Background()
-	_, workspaceID, organizationUUID, workspaceUUID, _, _, _, sessionUUID, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(ctx, db.ProvisionFilestoreFilesystemInput{
 		UUID:                uuid.NewString(),
 		ExternalID:          "claude_chat_expired_leases_" + uuid.NewString(),
@@ -486,8 +482,8 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 		t.Fatalf("ProvisionFilestoreFilesystem() = created %v, error %v", created, err)
 	}
 	job, err := app.db.EnqueueFilestoreObjectCleanupJob(ctx, db.EnqueueFilestoreObjectCleanupJobInput{
-		WorkspaceID:     workspaceID,
-		FilesystemID:    filesystem.ID,
+		WorkspaceUUID:   workspaceUUID,
+		FilesystemUUID:  filesystem.UUID,
 		EntryExternalID: "file_expired_leases",
 		Bucket:          "filestore-expired-leases",
 		Key:             "objects/expired-leases",
@@ -507,17 +503,17 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 		}
 		var found bool
 		for _, leasedJob := range leasedJobs {
-			if leasedJob.ID == job.ID {
+			if leasedJob.UUID == job.UUID {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Fatalf("lease attempt %d returned %+v, want job %d", attempt, leasedJobs, job.ID)
+			t.Fatalf("lease attempt %d returned %+v, want job %q", attempt, leasedJobs, job.UUID)
 		}
 		if _, err := app.db.Pool.Exec(ctx, `
-			update jobs set locked_until = now() - interval '1 minute' where id = $1
-		`, job.ID); err != nil {
+			update jobs set locked_until = now() - interval '1 minute' where uuid = $1
+		`, job.UUID); err != nil {
 			t.Fatalf("expire lease attempt %d: %v", attempt, err)
 		}
 	}
@@ -527,8 +523,8 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 		t.Fatalf("lease after retry cap: %v", err)
 	}
 	for _, leasedJob := range leasedJobs {
-		if leasedJob.ID == job.ID {
-			t.Fatalf("job %d was leased after %d expired leases", job.ID, maxLeaseAttempts)
+		if leasedJob.UUID == job.UUID {
+			t.Fatalf("job %q was leased after %d expired leases", job.UUID, maxLeaseAttempts)
 		}
 	}
 
@@ -536,8 +532,8 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 	var hasLeaseAttempts bool
 	if err := app.db.Pool.QueryRow(ctx, `
 		select status, coalesce(payload->>'last_error', ''), payload ? 'lease_attempts'
-		from jobs where id = $1
-	`, job.ID).Scan(&status, &lastError, &hasLeaseAttempts); err != nil {
+		from jobs where uuid = $1
+	`, job.UUID).Scan(&status, &lastError, &hasLeaseAttempts); err != nil {
 		t.Fatalf("load exhausted cleanup job: %v", err)
 	}
 	if status != "failed" || lastError == "" || hasLeaseAttempts {
@@ -555,7 +551,7 @@ func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
 	t.Cleanup(app.close)
 
 	ctx := context.Background()
-	_, workspaceID, organizationUUID, workspaceUUID, _, _, _, sessionUUID, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(ctx, db.ProvisionFilestoreFilesystemInput{
 		UUID:                uuid.NewString(),
 		ExternalID:          "claude_chat_sqlx_" + uuid.NewString(),
@@ -568,8 +564,8 @@ func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
 		t.Fatalf("ProvisionFilestoreFilesystem() = created %v, error %v", created, err)
 	}
 	job, err := app.db.EnqueueFilestoreObjectCleanupJob(ctx, db.EnqueueFilestoreObjectCleanupJobInput{
-		WorkspaceID:     workspaceID,
-		FilesystemID:    filesystem.ID,
+		WorkspaceUUID:   workspaceUUID,
+		FilesystemUUID:  filesystem.UUID,
 		EntryExternalID: "file_sqlx",
 		Bucket:          "filestore-sqlx-cleanup",
 		Key:             "objects/sqlx",
@@ -587,8 +583,8 @@ func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
 	if err := app.db.Pool.QueryRow(ctx, `
 		select payload->>'workspace_uuid', payload->>'filesystem_uuid',
 			payload ? 'workspace_id', payload ? 'filesystem_id', payload ? 'filesystem_external_id'
-		from jobs where id = $1
-	`, job.ID).Scan(
+		from jobs where uuid = $1
+	`, job.UUID).Scan(
 		&payloadWorkspaceUUID,
 		&payloadFilesystemUUID,
 		&hasWorkspaceID,
@@ -603,13 +599,9 @@ func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
 			payloadWorkspaceUUID, payloadFilesystemUUID,
 			hasWorkspaceID, hasFilesystemID, hasFilesystemExternalID)
 	}
-	_, staleWorkspaceID, _, _, _, _, _, _, _, _ := seedFilestoreLookupScope(t, app)
-	if _, err := app.db.Pool.Exec(ctx, `update jobs set workspace_id = $1 where id = $2`, staleWorkspaceID, job.ID); err != nil {
-		t.Fatalf("replace cleanup job workspace cache: %v", err)
-	}
 	if err := app.db.AttachFilestoreObjectCleanupJobVersion(
 		ctx,
-		workspaceID,
+		workspaceUUID,
 		job.ExternalID,
 		"etag-sqlx",
 		"version-sqlx",
@@ -624,37 +616,30 @@ func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
 	}
 	var leased db.FilestoreObjectCleanupJob
 	for _, candidate := range leasedJobs {
-		if candidate.ID == job.ID {
+		if candidate.UUID == job.UUID {
 			leased = candidate
 			break
 		}
 	}
-	if leased.ID == 0 {
-		t.Fatalf("leased jobs = %+v, want job %d", leasedJobs, job.ID)
+	if leased.UUID == "" {
+		t.Fatalf("leased jobs = %+v, want job %q", leasedJobs, job.UUID)
 	}
 	if leased.ETag != "etag-sqlx" || leased.VersionID != "version-sqlx" ||
-		leased.WorkspaceID != workspaceID || leased.WorkspaceUUID != workspaceUUID ||
-		leased.FilesystemID != filesystem.ID || leased.FilesystemUUID != filesystem.UUID ||
+		leased.WorkspaceUUID != workspaceUUID ||
+		leased.FilesystemUUID != filesystem.UUID ||
 		leased.Bucket != "filestore-sqlx-cleanup" {
 		t.Fatalf("leased job = %+v, want mapped payload fields", leased)
 	}
-	var repairedWorkspaceID int64
-	if err := app.db.Pool.QueryRow(ctx, `select workspace_id from jobs where id = $1`, job.ID).Scan(&repairedWorkspaceID); err != nil {
-		t.Fatalf("load repaired cleanup job workspace cache: %v", err)
-	}
-	if repairedWorkspaceID != workspaceID {
-		t.Fatalf("repaired cleanup job workspace_id = %d, want %d", repairedWorkspaceID, workspaceID)
-	}
 
 	t.Run("rejects a stale lease owner", func(t *testing.T) {
-		err := app.db.CompleteLeasedFilestoreObjectCleanupJob(ctx, leased.ID, "another-worker")
+		err := app.db.CompleteLeasedFilestoreObjectCleanupJob(ctx, leased.UUID, "another-worker")
 		if !errors.Is(err, db.ErrVersionConflict) {
 			t.Fatalf("CompleteLeasedFilestoreObjectCleanupJob() error = %v, want ErrVersionConflict", err)
 		}
 	})
 
 	t.Run("completes the current lease", func(t *testing.T) {
-		if err := app.db.CompleteLeasedFilestoreObjectCleanupJob(ctx, leased.ID, workerID); err != nil {
+		if err := app.db.CompleteLeasedFilestoreObjectCleanupJob(ctx, leased.UUID, workerID); err != nil {
 			t.Fatalf("CompleteLeasedFilestoreObjectCleanupJob() error = %v", err)
 		}
 	})
@@ -722,28 +707,28 @@ func TestConcurrentProvisionCreatesOneSessionFilesystem(t *testing.T) {
 func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-session-delete"))
 	t.Cleanup(app.close)
-	organizationID, workspaceID, organizationUUID, workspaceUUID, apiKeyID, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
-	input := filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID)
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	input := filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID)
 	created, _, _, _, err := app.db.CreateSession(context.Background(), input)
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceID, created.ExternalID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceUUID, created.ExternalID)
 	if err != nil {
 		t.Fatalf("load filesystem: %v", err)
 	}
 	if _, err := app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-		WorkspaceID: workspaceID, FilesystemID: filesystem.ID, Path: "/results",
+		WorkspaceUUID: workspaceUUID, FilesystemUUID: filesystem.UUID, Path: "/results",
 	}); err != nil {
 		t.Fatalf("make cleanup directory: %v", err)
 	}
 	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID: workspaceID, FilesystemID: filesystem.ID, Path: "/results/output.txt",
+		WorkspaceUUID: workspaceUUID, FilesystemUUID: filesystem.UUID, Path: "/results/output.txt",
 		Blob: workspaceStorageBlob(7, nil),
 	}); err != nil {
 		t.Fatalf("put cleanup file: %v", err)
 	}
-	if err := app.db.ReplaceFilestoreSkillArchiveEntries(context.Background(), workspaceID, created.ExternalID, []db.FilestoreSkillArchiveEntryInput{{
+	if err := app.db.ReplaceFilestoreSkillArchiveEntries(context.Background(), workspaceUUID, created.ExternalID, []db.FilestoreSkillArchiveEntryInput{{
 		Source:           "custom",
 		SkillVersionUUID: uuid.NewString(),
 		Directory:        "cleanup-skill",
@@ -777,10 +762,10 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 			entryAPIKeyUUID, entrySessionUUID, entryCodeSessionUUID)
 	}
 
-	if _, err := app.db.DeleteSession(context.Background(), workspaceID, created.ExternalID); err != nil {
+	if _, err := app.db.DeleteSession(context.Background(), workspaceUUID, created.ExternalID); err != nil {
 		t.Fatalf("DeleteSession() error = %v", err)
 	}
-	if _, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceID, created.ExternalID); !errors.Is(err, db.ErrNotFound) {
+	if _, err := app.db.GetFilestoreFilesystemBySession(context.Background(), workspaceUUID, created.ExternalID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("deleted session filesystem lookup error = %v, want ErrNotFound", err)
 	}
 	var parentJobs, objectJobs int
@@ -798,15 +783,13 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	if parentJobs != 1 || objectJobs != 0 {
 		t.Fatalf("cleanup jobs after Session delete = parent %d, object %d; want 1, 0", parentJobs, objectJobs)
 	}
-	_, staleWorkspaceID, _, _, _, _, _, _, _, _ := seedFilestoreLookupScope(t, app)
 	if _, err := app.db.Pool.Exec(context.Background(), `
 		update jobs
-		set workspace_id = $1,
-			run_after = '1900-01-01T00:00:00Z',
+		set run_after = '1900-01-01T00:00:00Z',
 			created_at = '1900-01-01T00:00:00Z'
 		where type = 'filestore_filesystem_cleanup'
-			and payload->>'filesystem_uuid' = $2
-	`, staleWorkspaceID, filesystem.UUID); err != nil {
+			and payload->>'filesystem_uuid' = $1
+	`, filesystem.UUID); err != nil {
 		t.Fatalf("prioritize filesystem cleanup: %v", err)
 	}
 
@@ -815,13 +798,11 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 		t.Fatalf("lease filesystem cleanup: %v", err)
 	}
 	if len(jobs) != 1 ||
-		jobs[0].WorkspaceID != workspaceID ||
 		jobs[0].WorkspaceUUID != workspaceUUID ||
-		jobs[0].FilesystemID != filesystem.ID ||
 		jobs[0].FilesystemUUID != filesystem.UUID {
-		t.Fatalf("leased filesystem cleanup jobs = %+v, want filesystem %d", jobs, filesystem.ID)
+		t.Fatalf("leased filesystem cleanup jobs = %+v, want filesystem %q", jobs, filesystem.UUID)
 	}
-	done, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(context.Background(), jobs[0].ID, "session-cleanup-worker", 100)
+	done, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(context.Background(), jobs[0].UUID, "session-cleanup-worker", 100)
 	if err != nil || !done {
 		t.Fatalf("process filesystem cleanup = done %v, error %v", done, err)
 	}
@@ -851,13 +832,13 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 	}
 	if _, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
 		context.Background(),
-		jobs[0].ID,
+		jobs[0].UUID,
 		"session-cleanup-worker",
 		100,
 	); !errors.Is(err, db.ErrVersionConflict) {
 		t.Fatalf("reprocess completed filesystem cleanup error = %v, want ErrVersionConflict", err)
 	}
-	storageBytes, err := app.db.WorkspaceStorageBytes(context.Background(), workspaceID)
+	storageBytes, err := app.db.WorkspaceStorageBytes(context.Background(), workspaceUUID)
 	if err != nil {
 		t.Fatalf("load storage usage: %v", err)
 	}
@@ -869,17 +850,17 @@ func TestDeleteSessionQueuesBoundedFilesystemCleanup(t *testing.T) {
 func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-archive-entry"))
 	t.Cleanup(app.close)
-	organizationID, workspaceID, _, _, apiKeyID, _, _, _, _, _ := seedFilestoreLookupScope(t, app)
+	_, _, organizationUUID, workspaceUUID, _, _, _, _, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	created, _, _, _, err := app.db.CreateSession(
 		context.Background(),
-		filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID),
+		filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID),
 	)
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		workspaceID,
+		workspaceUUID,
 		created.ExternalID,
 	)
 	if err != nil {
@@ -900,7 +881,7 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 	versionUUID := uuid.NewString()
 	err = app.db.ReplaceFilestoreSkillArchiveEntries(
 		context.Background(),
-		workspaceID,
+		workspaceUUID,
 		created.ExternalID,
 		[]db.FilestoreSkillArchiveEntryInput{{
 			Source:           "custom",
@@ -918,8 +899,8 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 
 	entries, err := app.db.ListFilestoreSkillArchiveEntries(
 		context.Background(),
-		workspaceID,
-		filesystem.ID,
+		workspaceUUID,
+		filesystem.UUID,
 	)
 	if err != nil {
 		t.Fatalf("list archive entries: %v", err)
@@ -928,7 +909,7 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 		t.Fatalf("archive entry count = %d, want 1", len(entries))
 	}
 	entry := entries[0]
-	replacedEntryID := entry.ID
+	replacedEntryUUID := entry.UUID
 	var metadata struct {
 		SkillSource string `json:"skill_source"`
 	}
@@ -950,11 +931,11 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 	}
 
 	page, err := app.db.ListFilestoreEntriesPage(context.Background(), db.ListFilestoreEntriesPageParams{
-		WorkspaceID:   workspaceID,
-		FilesystemID:  filesystem.ID,
-		DirectoryPath: "/",
-		Recursive:     true,
-		Limit:         100,
+		WorkspaceUUID:  workspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		DirectoryPath:  "/",
+		Recursive:      true,
+		Limit:          100,
 	})
 	if err != nil {
 		t.Fatalf("list ordinary entries: %v", err)
@@ -964,7 +945,7 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 			t.Fatalf("ordinary entry listing exposed archive: %#v", listedEntry)
 		}
 	}
-	storageBytes, err := app.db.WorkspaceStorageBytes(context.Background(), workspaceID)
+	storageBytes, err := app.db.WorkspaceStorageBytes(context.Background(), workspaceUUID)
 	if err != nil {
 		t.Fatalf("load workspace storage: %v", err)
 	}
@@ -974,7 +955,7 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 
 	if err := app.db.ReplaceFilestoreSkillArchiveEntries(
 		context.Background(),
-		workspaceID,
+		workspaceUUID,
 		created.ExternalID,
 		nil,
 	); err != nil {
@@ -982,8 +963,8 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 	}
 	entries, err = app.db.ListFilestoreSkillArchiveEntries(
 		context.Background(),
-		workspaceID,
-		filesystem.ID,
+		workspaceUUID,
+		filesystem.UUID,
 	)
 	if err != nil {
 		t.Fatalf("list cleared archive entries: %v", err)
@@ -995,8 +976,8 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select deleted_at
 		from filestore_entries
-		where id = $1
-	`, replacedEntryID).Scan(&retiredAt); err != nil {
+		where uuid = $1
+	`, replacedEntryUUID).Scan(&retiredAt); err != nil {
 		t.Fatalf("load retired archive entry: %v", err)
 	}
 	if retiredAt == nil {
@@ -1004,8 +985,8 @@ func TestFilestoreSkillArchivesUseUnifiedEntries(t *testing.T) {
 	}
 	skillsRoot, err := app.db.GetFilestoreEntry(
 		context.Background(),
-		workspaceID,
-		filesystem.ID,
+		workspaceUUID,
+		filesystem.UUID,
 		"/skills",
 	)
 	if err != nil {
@@ -1021,23 +1002,26 @@ func TestFilestoreFilesystemLookupPrefersExactExternalID(t *testing.T) {
 	t.Cleanup(app.close)
 
 	ctx := context.Background()
-	organizationID, workspaceID, organizationUUID, workspaceUUID, apiKeyID, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	firstUUID := uuid.NewString()
 	secondUUID := uuid.NewString()
 	firstExternalID := "fs_" + uuid.NewString()
 	secondExternalID := firstUUID
 	secondSessionUUID := uuid.NewString()
 	secondSessionExternalID := "session_filestore_lookup_second_" + uuid.NewString()
+	secondEnvironmentUUID := uuid.NewString()
+	secondAgentUUID := uuid.NewString()
 	now := time.Now().UTC()
 	if _, err := app.db.Pool.Exec(ctx, `
 		insert into sessions (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			environment_id, environment_external_id, agent_id, agent_external_id,
+			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+			environment_uuid, environment_external_id, agent_uuid, agent_external_id,
 			agent_version, agent_snapshot, status
 		)
-		values ($1, $2, $3, $4, $5, 1, $6, 1, $7, 1, '{}'::jsonb, 'idle')
-	`, secondSessionUUID, secondSessionExternalID, organizationID, workspaceID, apiKeyID,
-		"env_filestore_lookup_second", "agent_filestore_lookup_second"); err != nil {
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb, 'idle')
+	`, secondSessionUUID, secondSessionExternalID, organizationUUID, workspaceUUID, apiKeyUUID,
+		secondEnvironmentUUID, "env_filestore_lookup_second",
+		secondAgentUUID, "agent_filestore_lookup_second"); err != nil {
 		t.Fatalf("insert second lookup session: %v", err)
 	}
 
@@ -1077,10 +1061,10 @@ func TestFilestoreFilesystemLookupPrefersExactExternalID(t *testing.T) {
 		}
 	}
 
-	filesystem, err := app.db.GetFilestoreFilesystem(ctx, workspaceID, secondExternalID)
+	filesystem, err := app.db.GetFilestoreFilesystem(ctx, workspaceUUID, secondExternalID)
 	assertExternalID("workspace", filesystem, err)
 
-	filesystem, err = app.db.GetFilestoreFilesystemBySession(ctx, workspaceID, secondSessionExternalID)
+	filesystem, err = app.db.GetFilestoreFilesystemBySession(ctx, workspaceUUID, secondSessionExternalID)
 	assertExternalID("session", filesystem, err)
 
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(ctx, db.ProvisionFilestoreFilesystemInput{
@@ -1103,19 +1087,20 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 	ctx := context.Background()
 	suffix := uuid.NewString()
 	var organizationID, workspaceID, apiKeyID, sessionID, codeSessionID int64
-	var organizationUUID, workspaceUUID string
+	var organizationUUID, workspaceUUID, codeSessionUUID string
 	t.Cleanup(func() {
 		for _, cleanup := range []struct {
 			statement string
 			argument  any
 		}{
-			{statement: `delete from jobs where workspace_id = $1`, argument: workspaceID},
+			{statement: `delete from jobs where workspace_uuid = $1`, argument: workspaceUUID},
 			{statement: `delete from filestore_entries where workspace_uuid = $1`, argument: workspaceUUID},
 			{statement: `delete from filestore_filesystems where workspace_uuid = $1`, argument: workspaceUUID},
-			{statement: `delete from files where workspace_id = $1`, argument: workspaceID},
-			{statement: `delete from workspace_storage_usage where workspace_id = $1`, argument: workspaceID},
-			{statement: `delete from code_sessions where id = $1`, argument: codeSessionID},
-			{statement: `delete from sessions where workspace_id = $1`, argument: workspaceID},
+			{statement: `delete from files where workspace_uuid = $1`, argument: workspaceUUID},
+			{statement: `delete from workspace_storage_usage where workspace_uuid = $1`, argument: workspaceUUID},
+			{statement: `delete from environment_work where workspace_uuid = $1`, argument: workspaceUUID},
+			{statement: `delete from code_sessions where uuid = $1`, argument: codeSessionUUID},
+			{statement: `delete from sessions where workspace_uuid = $1`, argument: workspaceUUID},
 			{statement: `delete from api_keys where id = $1`, argument: apiKeyID},
 			{statement: `delete from workspaces where id = $1`, argument: workspaceID},
 			{statement: `delete from organizations where id = $1`, argument: organizationID},
@@ -1126,50 +1111,56 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 		}
 	})
 	if err := app.db.Pool.QueryRow(ctx, `
-		insert into organizations (external_id, name)
-		values ($1, $2)
+		insert into organizations (name)
+		values ($1)
 		returning id, uuid::text
-	`, "org_filestore_lookup_"+suffix, "Filestore lookup "+suffix).Scan(&organizationID, &organizationUUID); err != nil {
+	`, "Filestore lookup "+suffix).Scan(&organizationID, &organizationUUID); err != nil {
 		t.Fatalf("insert lookup organization: %v", err)
 	}
 	if err := app.db.Pool.QueryRow(ctx, `
-		insert into workspaces (external_id, organization_id, name)
-		values ($1, $2, $3)
+		insert into workspaces (external_id, organization_uuid, name)
+		select $1, uuid, $3
+		from organizations
+		where id = $2
 		returning id, uuid::text
 	`, "wrkspc_filestore_lookup_"+suffix, organizationID, "Filestore lookup "+suffix).Scan(&workspaceID, &workspaceUUID); err != nil {
 		t.Fatalf("insert lookup workspace: %v", err)
 	}
 	apiKeyUUID := uuid.NewString()
 	if err := app.db.Pool.QueryRow(ctx, `
-		insert into api_keys (uuid, external_id, workspace_id, key_hash, status)
+		insert into api_keys (uuid, external_id, workspace_uuid, key_hash, status)
 		values ($1, $2, $3, $4, 'active')
 		returning id
-	`, apiKeyUUID, "api_key_filestore_lookup_"+suffix, workspaceID, "hash_filestore_lookup_"+suffix).Scan(&apiKeyID); err != nil {
+	`, apiKeyUUID, "api_key_filestore_lookup_"+suffix, workspaceUUID, "hash_filestore_lookup_"+suffix).Scan(&apiKeyID); err != nil {
 		t.Fatalf("insert lookup API key: %v", err)
 	}
 	sessionUUID := uuid.NewString()
 	sessionExternalID := "session_filestore_lookup_" + suffix
+	environmentUUID := uuid.NewString()
+	agentUUID := uuid.NewString()
 	if err := app.db.Pool.QueryRow(ctx, `
 		insert into sessions (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			environment_id, environment_external_id, agent_id, agent_external_id,
+			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+			environment_uuid, environment_external_id, agent_uuid, agent_external_id,
 			agent_version, agent_snapshot, status
 		)
-		values ($1, $2, $3, $4, $5, 1, $6, 1, $7, 1, '{}'::jsonb, 'idle')
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb, 'idle')
 		returning id
-	`, sessionUUID, sessionExternalID, organizationID, workspaceID, apiKeyID, "env_filestore_lookup_"+suffix, "agent_filestore_lookup_"+suffix).Scan(&sessionID); err != nil {
+	`, sessionUUID, sessionExternalID, organizationUUID, workspaceUUID, apiKeyUUID,
+		environmentUUID, "env_filestore_lookup_"+suffix, agentUUID, "agent_filestore_lookup_"+suffix).Scan(&sessionID); err != nil {
 		t.Fatalf("insert lookup session: %v", err)
 	}
-	codeSessionUUID := uuid.NewString()
+	codeSessionUUID = uuid.NewString()
 	codeSessionExternalID := "codesession_filestore_lookup_" + suffix
 	if err := app.db.Pool.QueryRow(ctx, `
 		insert into code_sessions (
-			uuid, external_id, organization_id, workspace_id, session_id,
-			session_external_id, environment_id, environment_external_id, status
+			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+			session_external_id, environment_uuid, environment_external_id, status
 		)
-		values ($1, $2, $3, $4, $5, $6, 1, $7, 'active')
+		values ($1, $2, $3, $4, $5, $6, $7, $8, 'active')
 		returning id
-	`, codeSessionUUID, codeSessionExternalID, organizationID, workspaceID, sessionID, sessionExternalID, "env_filestore_lookup_"+suffix).Scan(&codeSessionID); err != nil {
+	`, codeSessionUUID, codeSessionExternalID, organizationUUID, workspaceUUID, sessionUUID,
+		sessionExternalID, environmentUUID, "env_filestore_lookup_"+suffix).Scan(&codeSessionID); err != nil {
 		t.Fatalf("insert lookup code session: %v", err)
 	}
 	return organizationID, workspaceID, organizationUUID, workspaceUUID, apiKeyID, sessionID, codeSessionID, sessionUUID, codeSessionUUID, apiKeyUUID
@@ -1178,11 +1169,8 @@ func seedFilestoreLookupScope(t *testing.T, app *testApp) (int64, int64, string,
 func insertFilestoreCollisionOwner(
 	t *testing.T,
 	app *testApp,
-	organizationID int64,
-	workspaceID int64,
 	organizationUUID string,
 	workspaceUUID string,
-	apiKeyID int64,
 	apiKeyUUID string,
 	filesystemExternalID string,
 ) {
@@ -1191,13 +1179,13 @@ func insertFilestoreCollisionOwner(
 	sessionUUID := uuid.NewString()
 	if _, err := app.db.Pool.Exec(context.Background(), `
 		insert into sessions (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			environment_id, environment_external_id, agent_id, agent_external_id,
+			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+			environment_uuid, environment_external_id, agent_uuid, agent_external_id,
 			agent_version, agent_snapshot, status
 		)
-		values ($1, $2, $3, $4, $5, 1, $6, 1, $7, 1, '{}'::jsonb, 'idle')
-	`, sessionUUID, "sesn_filestore_collision_"+suffix, organizationID, workspaceID, apiKeyID,
-		"env_filestore_collision_"+suffix, "agent_filestore_collision_"+suffix); err != nil {
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb, 'idle')
+	`, sessionUUID, "sesn_filestore_collision_"+suffix, organizationUUID, workspaceUUID, apiKeyUUID,
+		uuid.NewString(), "env_filestore_collision_"+suffix, uuid.NewString(), "agent_filestore_collision_"+suffix); err != nil {
 		t.Fatalf("insert collision owner Session: %v", err)
 	}
 	if _, err := app.db.Pool.Exec(context.Background(), `
@@ -1230,31 +1218,34 @@ func stringPointer(value string) *string {
 	return &value
 }
 
-func cleanupFilestoreSession(t *testing.T, app *testApp, workspaceID int64, sessionExternalID string) {
+func cleanupFilestoreSession(t *testing.T, app *testApp, workspaceUUID string, sessionExternalID string) {
 	t.Helper()
 	t.Cleanup(func() {
-		if _, err := app.db.DeleteSession(context.Background(), workspaceID, sessionExternalID); err != nil &&
+		if _, err := app.db.DeleteSession(context.Background(), workspaceUUID, sessionExternalID); err != nil &&
 			!errors.Is(err, db.ErrNotFound) {
 			t.Errorf("cleanup Filestore Session %s: %v", sessionExternalID, err)
 		}
 	})
 }
 
-func filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID int64) db.CreateSessionInput {
+func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID string) db.CreateSessionInput {
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	now := time.Now().UTC()
 	environmentExternalID := "env_filestore_session_" + suffix
+	environmentUUID := uuid.NewString()
+	agentUUID := uuid.NewString()
 	sessionExternalID := "sesn_filestore_session_" + suffix
+	sessionUUID := uuid.NewString()
 	return db.CreateSessionInput{
 		Session: db.Session{
-			UUID:                  uuid.NewString(),
+			UUID:                  sessionUUID,
 			ExternalID:            sessionExternalID,
-			OrganizationID:        organizationID,
-			WorkspaceID:           workspaceID,
-			CreatedByAPIKeyID:     apiKeyID,
-			EnvironmentID:         1,
+			OrganizationUUID:      organizationUUID,
+			WorkspaceUUID:         workspaceUUID,
+			CreatedByAPIKeyUUID:   apiKeyUUID,
+			EnvironmentUUID:       environmentUUID,
 			EnvironmentExternalID: environmentExternalID,
-			AgentID:               1,
+			AgentUUID:             agentUUID,
 			AgentExternalID:       "agent_filestore_session_" + suffix,
 			AgentVersion:          1,
 			AgentSnapshot:         json.RawMessage(`{}`),
@@ -1268,22 +1259,24 @@ func filestoreSessionCreateInput(organizationID, workspaceID, apiKeyID int64) db
 			UpdatedAt:             now,
 		},
 		Thread: db.SessionThread{
-			UUID:           uuid.NewString(),
-			ExternalID:     "sthr_filestore_session_" + suffix,
-			OrganizationID: organizationID,
-			WorkspaceID:    workspaceID,
-			AgentSnapshot:  json.RawMessage(`{}`),
-			Status:         "idle",
-			Usage:          json.RawMessage(`{}`),
-			Stats:          json.RawMessage(`{}`),
-			CreatedAt:      now,
+			UUID:              uuid.NewString(),
+			ExternalID:        "sthr_filestore_session_" + suffix,
+			OrganizationUUID:  organizationUUID,
+			WorkspaceUUID:     workspaceUUID,
+			SessionUUID:       sessionUUID,
+			SessionExternalID: sessionExternalID,
+			AgentSnapshot:     json.RawMessage(`{}`),
+			Status:            "idle",
+			Usage:             json.RawMessage(`{}`),
+			Stats:             json.RawMessage(`{}`),
+			CreatedAt:         now,
 		},
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewString(),
 			ExternalID:            "work_filestore_session_" + suffix,
-			OrganizationID:        organizationID,
-			WorkspaceID:           workspaceID,
-			EnvironmentID:         1,
+			OrganizationUUID:      organizationUUID,
+			WorkspaceUUID:         workspaceUUID,
+			EnvironmentUUID:       environmentUUID,
 			EnvironmentExternalID: environmentExternalID,
 			Data:                  json.RawMessage(`{"id":"` + sessionExternalID + `","type":"session"}`),
 			Metadata:              json.RawMessage(`{}`),

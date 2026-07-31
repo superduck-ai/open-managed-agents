@@ -8,34 +8,42 @@ import (
 )
 
 const (
-	deploymentSQLXColumns = `id, cast(uuid as text) as uuid, external_id, organization_id,
-		workspace_id, created_by_api_key_id, environment_id, environment_external_id,
-		agent_id, agent_external_id, agent_version, agent_snapshot, name, description,
+	deploymentSQLXColumns = `cast(uuid as text) as uuid, external_id,
+		cast(organization_uuid as text) as organization_uuid,
+		cast(workspace_uuid as text) as workspace_uuid,
+		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
+		cast(environment_uuid as text) as environment_uuid, environment_external_id,
+		cast(agent_uuid as text) as agent_uuid, agent_external_id,
+		agent_version, agent_snapshot, name, description,
 		metadata, initial_events, resources, resource_secrets, vault_ids, schedule,
 		last_run_at, status, paused_reason, created_at, updated_at, archived_at, deleted_at`
-	deploymentRunSQLXColumns = `id, cast(uuid as text) as uuid, external_id, organization_id,
-		workspace_id, created_by_api_key_id, deployment_id, deployment_external_id,
-		agent_id, agent_external_id, agent_version, agent_snapshot, session_external_id,
+	deploymentRunSQLXColumns = `cast(uuid as text) as uuid, external_id,
+		cast(organization_uuid as text) as organization_uuid,
+		cast(workspace_uuid as text) as workspace_uuid,
+		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
+		cast(deployment_uuid as text) as deployment_uuid, deployment_external_id,
+		cast(agent_uuid as text) as agent_uuid, agent_external_id,
+		agent_version, agent_snapshot, session_external_id,
 		error, trigger_type, trigger_context, created_at, deleted_at`
 	lockDeploymentForManualRunQuery = `
 		select ` + deploymentSQLXColumns + `
 		from deployments
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and external_id = :deployment_external_id
 			and deleted_at is null
 		for update
 	`
 	createDeploymentRunQuery = `
 		insert into deployment_runs (
-			uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
-			deployment_id, deployment_external_id, agent_id, agent_external_id,
+			uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+			deployment_uuid, deployment_external_id, agent_uuid, agent_external_id,
 			agent_version, agent_snapshot, session_external_id, error, trigger_type,
 			trigger_context, created_at
 		)
 		values (
-			:run_uuid, :run_external_id, :organization_id, :workspace_id,
-			:created_by_api_key_id, :deployment_id, :deployment_external_id,
-			:agent_id, :agent_external_id, :agent_version,
+			:run_uuid, :run_external_id, :organization_uuid, :workspace_uuid,
+			:created_by_api_key_uuid, :deployment_uuid, :deployment_external_id,
+			:agent_uuid, :agent_external_id, :agent_version,
 			CAST(:agent_snapshot AS jsonb), :session_external_id,
 			CAST(:run_error AS jsonb), :trigger_type,
 			CAST(:trigger_context AS jsonb), :created_at
@@ -46,7 +54,7 @@ const (
 		update deployments
 		set last_run_at = :last_run_at,
 			updated_at = :last_run_at
-		where workspace_id = :workspace_id
+		where workspace_uuid = :workspace_uuid
 			and external_id = :deployment_external_id
 	`
 )
@@ -54,15 +62,14 @@ const (
 // deploymentRow / deploymentRunRow 只承载 sqlx 扫描结果；与领域模型分离后，
 // 可以把 JSONB、nullable 字段和列别名约束收敛在 DB 边界内。
 type deploymentRow struct {
-	ID                    int64      `db:"id"`
 	UUID                  string     `db:"uuid"`
 	ExternalID            string     `db:"external_id"`
-	OrganizationID        int64      `db:"organization_id"`
-	WorkspaceID           int64      `db:"workspace_id"`
-	CreatedByAPIKeyID     int64      `db:"created_by_api_key_id"`
-	EnvironmentID         int64      `db:"environment_id"`
+	OrganizationUUID      string     `db:"organization_uuid"`
+	WorkspaceUUID         string     `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID   string     `db:"created_by_api_key_uuid"`
+	EnvironmentUUID       string     `db:"environment_uuid"`
 	EnvironmentExternalID string     `db:"environment_external_id"`
-	AgentID               int64      `db:"agent_id"`
+	AgentUUID             string     `db:"agent_uuid"`
 	AgentExternalID       string     `db:"agent_external_id"`
 	AgentVersion          int        `db:"agent_version"`
 	AgentSnapshot         []byte     `db:"agent_snapshot"`
@@ -84,15 +91,14 @@ type deploymentRow struct {
 }
 
 type deploymentRunRow struct {
-	ID                   int64      `db:"id"`
 	UUID                 string     `db:"uuid"`
 	ExternalID           string     `db:"external_id"`
-	OrganizationID       int64      `db:"organization_id"`
-	WorkspaceID          int64      `db:"workspace_id"`
-	CreatedByAPIKeyID    int64      `db:"created_by_api_key_id"`
-	DeploymentID         int64      `db:"deployment_id"`
+	OrganizationUUID     string     `db:"organization_uuid"`
+	WorkspaceUUID        string     `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID  string     `db:"created_by_api_key_uuid"`
+	DeploymentUUID       string     `db:"deployment_uuid"`
 	DeploymentExternalID string     `db:"deployment_external_id"`
-	AgentID              int64      `db:"agent_id"`
+	AgentUUID            string     `db:"agent_uuid"`
 	AgentExternalID      string     `db:"agent_external_id"`
 	AgentVersion         int        `db:"agent_version"`
 	AgentSnapshot        []byte     `db:"agent_snapshot"`
@@ -135,12 +141,12 @@ func insertDeploymentRunSQLX(
 func updateDeploymentLastRunSQLX(
 	ctx context.Context,
 	database sqlxNamedExecer,
-	workspaceID int64,
+	workspaceUUID string,
 	deploymentExternalID string,
 	lastRunAt time.Time,
 ) error {
 	result, err := namedExecContext(ctx, database, updateDeploymentLastRunQuery, map[string]any{
-		"workspace_id":           workspaceID,
+		"workspace_uuid":         workspaceUUID,
 		"deployment_external_id": deploymentExternalID,
 		"last_run_at":            lastRunAt,
 	})
@@ -159,36 +165,35 @@ func updateDeploymentLastRunSQLX(
 
 func deploymentRunArguments(run DeploymentRun) map[string]any {
 	return map[string]any{
-		"run_uuid":               run.UUID,
-		"run_external_id":        run.ExternalID,
-		"organization_id":        run.OrganizationID,
-		"workspace_id":           run.WorkspaceID,
-		"created_by_api_key_id":  run.CreatedByAPIKeyID,
-		"deployment_id":          run.DeploymentID,
-		"deployment_external_id": run.DeploymentExternalID,
-		"agent_id":               run.AgentID,
-		"agent_external_id":      run.AgentExternalID,
-		"agent_version":          run.AgentVersion,
-		"agent_snapshot":         jsonArg(run.AgentSnapshot),
-		"session_external_id":    run.SessionExternalID,
-		"run_error":              jsonArg(run.Error),
-		"trigger_type":           run.TriggerType,
-		"trigger_context":        jsonArg(run.TriggerContext),
-		"created_at":             run.CreatedAt,
+		"run_uuid":                run.UUID,
+		"run_external_id":         run.ExternalID,
+		"organization_uuid":       run.OrganizationUUID,
+		"workspace_uuid":          run.WorkspaceUUID,
+		"created_by_api_key_uuid": run.CreatedByAPIKeyUUID,
+		"deployment_uuid":         run.DeploymentUUID,
+		"deployment_external_id":  run.DeploymentExternalID,
+		"agent_uuid":              run.AgentUUID,
+		"agent_external_id":       run.AgentExternalID,
+		"agent_version":           run.AgentVersion,
+		"agent_snapshot":          jsonArg(run.AgentSnapshot),
+		"session_external_id":     run.SessionExternalID,
+		"run_error":               jsonArg(run.Error),
+		"trigger_type":            run.TriggerType,
+		"trigger_context":         jsonArg(run.TriggerContext),
+		"created_at":              run.CreatedAt,
 	}
 }
 
 func (r deploymentRow) deployment() Deployment {
 	return Deployment{
-		ID:                    r.ID,
 		UUID:                  r.UUID,
 		ExternalID:            r.ExternalID,
-		OrganizationID:        r.OrganizationID,
-		WorkspaceID:           r.WorkspaceID,
-		CreatedByAPIKeyID:     r.CreatedByAPIKeyID,
-		EnvironmentID:         r.EnvironmentID,
+		OrganizationUUID:      r.OrganizationUUID,
+		WorkspaceUUID:         r.WorkspaceUUID,
+		CreatedByAPIKeyUUID:   r.CreatedByAPIKeyUUID,
+		EnvironmentUUID:       r.EnvironmentUUID,
 		EnvironmentExternalID: r.EnvironmentExternalID,
-		AgentID:               r.AgentID,
+		AgentUUID:             r.AgentUUID,
 		AgentExternalID:       r.AgentExternalID,
 		AgentVersion:          r.AgentVersion,
 		AgentSnapshot:         copyRaw(r.AgentSnapshot),
@@ -212,15 +217,14 @@ func (r deploymentRow) deployment() Deployment {
 
 func (r deploymentRunRow) run() DeploymentRun {
 	return DeploymentRun{
-		ID:                   r.ID,
 		UUID:                 r.UUID,
 		ExternalID:           r.ExternalID,
-		OrganizationID:       r.OrganizationID,
-		WorkspaceID:          r.WorkspaceID,
-		CreatedByAPIKeyID:    r.CreatedByAPIKeyID,
-		DeploymentID:         r.DeploymentID,
+		OrganizationUUID:     r.OrganizationUUID,
+		WorkspaceUUID:        r.WorkspaceUUID,
+		CreatedByAPIKeyUUID:  r.CreatedByAPIKeyUUID,
+		DeploymentUUID:       r.DeploymentUUID,
 		DeploymentExternalID: r.DeploymentExternalID,
-		AgentID:              r.AgentID,
+		AgentUUID:            r.AgentUUID,
 		AgentExternalID:      r.AgentExternalID,
 		AgentVersion:         r.AgentVersion,
 		AgentSnapshot:        copyRaw(r.AgentSnapshot),

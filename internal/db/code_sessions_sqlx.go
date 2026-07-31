@@ -9,14 +9,13 @@ import (
 )
 
 type codeSessionRow struct {
-	ID                          int64      `db:"id"`
 	UUID                        string     `db:"uuid"`
 	ExternalID                  string     `db:"external_id"`
-	OrganizationID              int64      `db:"organization_id"`
-	WorkspaceID                 int64      `db:"workspace_id"`
-	SessionID                   int64      `db:"session_id"`
+	OrganizationUUID            string     `db:"organization_uuid"`
+	WorkspaceUUID               string     `db:"workspace_uuid"`
+	SessionUUID                 string     `db:"session_uuid"`
 	SessionExternalID           string     `db:"session_external_id"`
-	EnvironmentID               int64      `db:"environment_id"`
+	EnvironmentUUID             string     `db:"environment_uuid"`
 	EnvironmentExternalID       string     `db:"environment_external_id"`
 	WorkDir                     string     `db:"work_dir"`
 	PermissionMode              string     `db:"permission_mode"`
@@ -44,12 +43,11 @@ type codeSessionRow struct {
 }
 
 type codeSessionEventRow struct {
-	ID                    int64      `db:"id"`
 	UUID                  string     `db:"uuid"`
 	ExternalID            string     `db:"external_id"`
-	OrganizationID        int64      `db:"organization_id"`
-	WorkspaceID           int64      `db:"workspace_id"`
-	CodeSessionID         int64      `db:"code_session_id"`
+	OrganizationUUID      string     `db:"organization_uuid"`
+	WorkspaceUUID         string     `db:"workspace_uuid"`
+	CodeSessionUUID       string     `db:"code_session_uuid"`
 	CodeSessionExternalID string     `db:"code_session_external_id"`
 	SequenceNum           int64      `db:"sequence_num"`
 	EventType             string     `db:"event_type"`
@@ -76,12 +74,11 @@ type codeSessionEventRow struct {
 }
 
 type codeSessionInternalEventRow struct {
-	ID                    int64      `db:"id"`
 	UUID                  string     `db:"uuid"`
 	ExternalID            string     `db:"external_id"`
-	OrganizationID        int64      `db:"organization_id"`
-	WorkspaceID           int64      `db:"workspace_id"`
-	CodeSessionID         int64      `db:"code_session_id"`
+	OrganizationUUID      string     `db:"organization_uuid"`
+	WorkspaceUUID         string     `db:"workspace_uuid"`
+	CodeSessionUUID       string     `db:"code_session_uuid"`
 	CodeSessionExternalID string     `db:"code_session_external_id"`
 	SequenceNum           int64      `db:"sequence_num"`
 	EventType             string     `db:"event_type"`
@@ -98,32 +95,29 @@ type codeSessionInternalEventRow struct {
 }
 
 type codeSessionCredentialContextRow struct {
-	CodeSessionID           int64  `db:"code_session_id"`
+	CodeSessionUUID         string `db:"code_session_uuid"`
 	CodeSessionExternalID   string `db:"code_session_external_id"`
-	OrganizationID          int64  `db:"organization_id"`
 	OrganizationUUID        string `db:"organization_uuid"`
-	OrganizationExternalID  string `db:"organization_external_id"`
-	WorkspaceID             int64  `db:"workspace_id"`
 	WorkspaceUUID           string `db:"workspace_uuid"`
 	WorkspaceExternalID     string `db:"workspace_external_id"`
-	PublicSessionID         int64  `db:"public_session_id"`
+	PublicSessionUUID       string `db:"public_session_uuid"`
 	PublicSessionExternalID string `db:"public_session_external_id"`
-	AgentID                 int64  `db:"agent_id"`
+	AgentUUID               string `db:"agent_uuid"`
 	AgentExternalID         string `db:"agent_external_id"`
 	AgentVersion            int    `db:"agent_version"`
 	AccountEmail            string `db:"account_email"`
 }
 
 type codeSessionNetworkPolicyContextRow struct {
-	OrganizationID        int64  `db:"organization_id"`
-	WorkspaceID           int64  `db:"workspace_id"`
+	OrganizationUUID      string `db:"organization_uuid"`
+	WorkspaceUUID         string `db:"workspace_uuid"`
 	EnvironmentExternalID string `db:"environment_external_id"`
 	EnvironmentConfig     []byte `db:"environment_config"`
 	AgentSnapshot         []byte `db:"agent_snapshot"`
 }
 
 type codeSessionWorkerLeaseRow struct {
-	ID                   int64        `db:"id"`
+	UUID                 string       `db:"uuid"`
 	CurrentWorkerEpoch   int64        `db:"current_worker_epoch"`
 	WorkerLeaseExpiresAt sql.NullTime `db:"worker_lease_expires_at"`
 }
@@ -232,14 +226,13 @@ func (r codeSessionRow) session() CodeSession {
 		workerExternalMetadata = json.RawMessage(`{}`)
 	}
 	return CodeSession{
-		ID:                          r.ID,
 		UUID:                        r.UUID,
 		ExternalID:                  r.ExternalID,
-		OrganizationID:              r.OrganizationID,
-		WorkspaceID:                 r.WorkspaceID,
-		SessionID:                   r.SessionID,
+		OrganizationUUID:            r.OrganizationUUID,
+		WorkspaceUUID:               r.WorkspaceUUID,
+		SessionUUID:                 r.SessionUUID,
 		SessionExternalID:           r.SessionExternalID,
-		EnvironmentID:               r.EnvironmentID,
+		EnvironmentUUID:             r.EnvironmentUUID,
 		EnvironmentExternalID:       r.EnvironmentExternalID,
 		WorkDir:                     r.WorkDir,
 		PermissionMode:              r.PermissionMode,
@@ -269,12 +262,11 @@ func (r codeSessionRow) session() CodeSession {
 
 func (r codeSessionEventRow) event() CodeSessionEvent {
 	return CodeSessionEvent{
-		ID:                    r.ID,
 		UUID:                  r.UUID,
 		ExternalID:            r.ExternalID,
-		OrganizationID:        r.OrganizationID,
-		WorkspaceID:           r.WorkspaceID,
-		CodeSessionID:         r.CodeSessionID,
+		OrganizationUUID:      r.OrganizationUUID,
+		WorkspaceUUID:         r.WorkspaceUUID,
+		CodeSessionUUID:       r.CodeSessionUUID,
 		CodeSessionExternalID: r.CodeSessionExternalID,
 		SequenceNum:           r.SequenceNum,
 		EventType:             r.EventType,
@@ -303,12 +295,11 @@ func (r codeSessionEventRow) event() CodeSessionEvent {
 
 func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {
 	return CodeSessionInternalEvent{
-		ID:                    r.ID,
 		UUID:                  r.UUID,
 		ExternalID:            r.ExternalID,
-		OrganizationID:        r.OrganizationID,
-		WorkspaceID:           r.WorkspaceID,
-		CodeSessionID:         r.CodeSessionID,
+		OrganizationUUID:      r.OrganizationUUID,
+		WorkspaceUUID:         r.WorkspaceUUID,
+		CodeSessionUUID:       r.CodeSessionUUID,
 		CodeSessionExternalID: r.CodeSessionExternalID,
 		SequenceNum:           r.SequenceNum,
 		EventType:             r.EventType,
@@ -327,17 +318,14 @@ func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {
 
 func (r codeSessionCredentialContextRow) context() CodeSessionCredentialContext {
 	return CodeSessionCredentialContext{
-		CodeSessionID:           r.CodeSessionID,
+		CodeSessionUUID:         r.CodeSessionUUID,
 		CodeSessionExternalID:   r.CodeSessionExternalID,
-		OrganizationID:          r.OrganizationID,
 		OrganizationUUID:        r.OrganizationUUID,
-		OrganizationExternalID:  r.OrganizationExternalID,
-		WorkspaceID:             r.WorkspaceID,
 		WorkspaceUUID:           r.WorkspaceUUID,
 		WorkspaceExternalID:     r.WorkspaceExternalID,
-		PublicSessionID:         r.PublicSessionID,
+		PublicSessionUUID:       r.PublicSessionUUID,
 		PublicSessionExternalID: r.PublicSessionExternalID,
-		AgentID:                 r.AgentID,
+		AgentUUID:               r.AgentUUID,
 		AgentExternalID:         r.AgentExternalID,
 		AgentVersion:            r.AgentVersion,
 		AccountEmail:            r.AccountEmail,

@@ -29,9 +29,9 @@ const (
 
 type filestoreDatabase interface {
 	GetFilestoreFilesystem(context.Context, string, string) (db.FilestoreFilesystem, error)
-	GetFilestoreEntry(context.Context, int64, int64, string) (db.FilestoreEntry, error)
+	GetFilestoreEntry(context.Context, string, string, string) (db.FilestoreEntry, error)
 	ListFilestoreEntriesPage(context.Context, db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error)
-	ListFilestoreSkillArchiveEntries(context.Context, int64, int64) ([]db.FilestoreEntry, error)
+	ListFilestoreSkillArchiveEntries(context.Context, string, string) ([]db.FilestoreEntry, error)
 	MakeFilestoreDirectory(context.Context, db.MakeFilestoreDirectoryInput) (db.FilestoreEntry, error)
 	PutFilestoreFile(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
 	CopyFilestoreFile(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)
@@ -117,11 +117,11 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 		return directoryResponse{}, apiErr
 	}
 	entry, err := s.db.MakeFilestoreDirectory(ctx, db.MakeFilestoreDirectoryInput{
-		WorkspaceID:  principal.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         request.Path,
-		MakeParents:  request.MakeParents,
-		Now:          s.now().UTC(),
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           request.Path,
+		MakeParents:    request.MakeParents,
+		Now:            s.now().UTC(),
 	})
 	if err != nil {
 		return directoryResponse{}, mapDatabaseError("make directory", err)
@@ -142,11 +142,11 @@ func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, requ
 		return apiErr
 	}
 	_, err := s.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
-		WorkspaceID:  principal.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         request.Path,
-		Recursive:    request.Recursive,
-		Now:          s.now().UTC(),
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           request.Path,
+		Recursive:      request.Recursive,
+		Now:            s.now().UTC(),
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil
@@ -170,7 +170,7 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	if apiErr := s.paths.authorizeMutation(params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, params.Path); apiErr != nil {
+	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceUUID, filesystem.UUID, params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	now := s.now().UTC()
@@ -205,9 +205,9 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.PutFilestoreFile(ctx, db.PutFilestoreFileInput{
-		WorkspaceID:  principal.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         params.Path,
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           params.Path,
 		Blob: db.FilestoreFileBlob{
 			SizeBytes:             upload.Size,
 			MediaType:             mediaType,
@@ -256,7 +256,7 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	source, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceID, filesystem.ID, request.Source)
+	source, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Source)
 	if err != nil {
 		return fileResponse{}, mapDatabaseError("read copy source", err)
 	}
@@ -273,7 +273,7 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		// 不能在这个控制面接口里被隐式转换成新的 Filestore-owned file。
 		return fileResponse{}, failedPrecondition("borrowed file references cannot be copied")
 	}
-	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, request.Destination); apiErr != nil {
+	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	now := s.now().UTC()
@@ -291,8 +291,8 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.CopyFilestoreFile(ctx, db.CopyFilestoreFileInput{
-		WorkspaceID:                principal.WorkspaceID,
-		FilesystemID:               filesystem.ID,
+		WorkspaceUUID:              principal.WorkspaceUUID,
+		FilesystemUUID:             filesystem.UUID,
 		SourcePath:                 request.Source,
 		DestinationPath:            request.Destination,
 		ExpectedSourceS3Key:        *source.S3Key,
@@ -330,8 +330,8 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.MoveFilestoreFile(ctx, db.MoveFilestoreFileInput{
-		WorkspaceID:       principal.WorkspaceID,
-		FilesystemID:      filesystem.ID,
+		WorkspaceUUID:     principal.WorkspaceUUID,
+		FilesystemUUID:    filesystem.UUID,
 		SourcePath:        request.Source,
 		DestinationPath:   request.Destination,
 		OverwriteExisting: request.OverwriteExisting,
@@ -366,8 +366,8 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 		return directoryResponse{}, apiErr
 	}
 	result, err := s.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
-		WorkspaceID:     principal.WorkspaceID,
-		FilesystemID:    filesystem.ID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
+		FilesystemUUID:  filesystem.UUID,
 		SourcePath:      request.Source,
 		DestinationPath: request.Destination,
 		Now:             s.now().UTC(),
@@ -404,10 +404,10 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 		return apiErr
 	}
 	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveFilestoreEntryInput{
-		WorkspaceID:  principal.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         request.Path,
-		Now:          s.now().UTC(),
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           request.Path,
+		Now:            s.now().UTC(),
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil
@@ -429,12 +429,12 @@ func (s *Service) ReadMetadata(ctx context.Context, principal Principal, request
 }
 
 func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, filesystemID string) (db.FilestoreFilesystem, *apiError) {
-	if principal.WorkspaceID <= 0 {
+	if strings.TrimSpace(principal.WorkspaceUUID) == "" {
 		return db.FilestoreFilesystem{}, &apiError{Status: http.StatusUnauthorized, Code: "unauthenticated", Message: "Invalid principal"}
 	}
 	// 数据库回查已把 claim 解析成规范的 external ID 与 UUID。请求可任选其一，
 	// 但不能借此访问同工作区内的其他 filesystem。
-	if principal.FilesystemInternalID <= 0 ||
+	if strings.TrimSpace(principal.FilesystemUUID) == "" ||
 		(filesystemID != principal.FilesystemExternalID && !strings.EqualFold(filesystemID, principal.FilesystemUUID)) {
 		return db.FilestoreFilesystem{}, permissionDenied("Filestore token does not grant access to this filesystem")
 	}
@@ -442,15 +442,15 @@ func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, fi
 	if err != nil {
 		return db.FilestoreFilesystem{}, mapDatabaseError("resolve filesystem", err)
 	}
-	if filesystem.ID != principal.FilesystemInternalID {
+	if !strings.EqualFold(filesystem.UUID, principal.FilesystemUUID) {
 		return db.FilestoreFilesystem{}, permissionDenied("Filestore token does not grant access to this filesystem")
 	}
 	return filesystem, nil
 }
 
-func (s *Service) requireParentDirectory(ctx context.Context, workspaceID, filesystemID int64, entryPath string) *apiError {
+func (s *Service) requireParentDirectory(ctx context.Context, workspaceUUID, filesystemUUID, entryPath string) *apiError {
 	parent := parentPath(entryPath)
-	entry, err := s.db.GetFilestoreEntry(ctx, workspaceID, filesystemID, parent)
+	entry, err := s.db.GetFilestoreEntry(ctx, workspaceUUID, filesystemUUID, parent)
 	if errors.Is(err, db.ErrNotFound) {
 		return failedPrecondition("parent directory does not exist")
 	}

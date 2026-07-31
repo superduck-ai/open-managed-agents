@@ -88,23 +88,24 @@ func TestServiceFilestoreTokenBindsSingleFilesystem(t *testing.T) {
 
 	filesystem := serviceTestFilesystem()
 	for _, test := range []struct {
-		name       string
-		requestID  string
-		internalID int64
-		database   *fakeServiceDatabase
+		name      string
+		requestID string
+		database  *fakeServiceDatabase
 	}{
 		{
-			name:       "reject another filesystem identifier",
-			requestID:  "fs_other",
-			internalID: filesystem.ID,
-			database:   &fakeServiceDatabase{},
+			name:      "reject another filesystem identifier",
+			requestID: "fs_other",
+			database:  &fakeServiceDatabase{},
 		},
 		{
-			name:       "reject stale internal binding",
-			requestID:  filesystem.ExternalID,
-			internalID: filesystem.ID + 1,
+			name:      "reject mismatched resolved UUID",
+			requestID: filesystem.ExternalID,
 			database: &fakeServiceDatabase{
-				getFilesystemFn: serviceFilesystemLookup(filesystem),
+				getFilesystemFn: func(context.Context, string, string) (db.FilestoreFilesystem, error) {
+					other := filesystem
+					other.UUID = "66666666-6666-4666-8666-666666666666"
+					return other, nil
+				},
 			},
 		},
 	} {
@@ -114,7 +115,6 @@ func TestServiceFilestoreTokenBindsSingleFilesystem(t *testing.T) {
 			principal := serviceTestPrincipal()
 			principal.FilesystemUUID = filesystem.UUID
 			principal.FilesystemExternalID = filesystem.ExternalID
-			principal.FilesystemInternalID = test.internalID
 			service := newServiceUnderTest(config.Config{}, test.database, &fakeServiceBlobStore{})
 
 			_, apiErr := service.resolveFilesystem(context.Background(), principal, test.requestID)
@@ -126,7 +126,6 @@ func TestServiceFilestoreTokenBindsSingleFilesystem(t *testing.T) {
 	principal := serviceTestPrincipal()
 	principal.FilesystemUUID = filesystem.UUID
 	principal.FilesystemExternalID = filesystem.ExternalID
-	principal.FilesystemInternalID = filesystem.ID
 	service := newServiceUnderTest(config.Config{}, &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
 	}, &fakeServiceBlobStore{})
@@ -137,8 +136,8 @@ func TestServiceFilestoreTokenBindsSingleFilesystem(t *testing.T) {
 		if apiErr != nil {
 			t.Fatalf("resolveFilesystem(%q) error = %v", requestID, apiErr)
 		}
-		if got.ID != filesystem.ID {
-			t.Fatalf("resolveFilesystem(%q) = %#v, want ID %d", requestID, got, filesystem.ID)
+		if got.UUID != filesystem.UUID {
+			t.Fatalf("resolveFilesystem(%q) = %#v, want UUID %s", requestID, got, filesystem.UUID)
 		}
 	}
 }
@@ -150,7 +149,7 @@ func TestServiceListDirectoryRejectsInvalidLimitAndCursor(t *testing.T) {
 		FilesystemID: "fs_other",
 		Path:         "/reports",
 		LastPath:     "/reports/old",
-		LastID:       10,
+		LastUUID:     "00000000-0000-4000-8000-000000000010",
 	})
 	if err != nil {
 		t.Fatalf("encode mismatched cursor: %v", err)
@@ -197,7 +196,7 @@ func TestServiceReadFileRejectsInvalidRangesBeforeObjectLookup(t *testing.T) {
 				getFilesystemFn: func(context.Context, string, string) (db.FilestoreFilesystem, error) {
 					return filesystem, nil
 				},
-				getEntryFn: func(context.Context, int64, int64, string) (db.FilestoreEntry, error) {
+				getEntryFn: func(context.Context, string, string, string) (db.FilestoreEntry, error) {
 					return serviceTestFileEntry(filesystem, "/file.txt", []byte("12345")), nil
 				},
 			}
@@ -295,12 +294,12 @@ func TestServiceCopyFileDiscardsOrphanGuardWhenCopyFails(t *testing.T) {
 	var completedJobUUID string
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.FilestoreEntry, error) {
+		getEntryFn: func(_ context.Context, _, _ string, entryPath string) (db.FilestoreEntry, error) {
 			switch entryPath {
 			case "/source.txt":
 				return source, nil
 			case "/archive":
-				return serviceTestDirectoryEntry(filesystem, 30, "/archive"), nil
+				return serviceTestDirectoryEntry(filesystem, "/archive"), nil
 			default:
 				return db.FilestoreEntry{}, db.ErrNotFound
 			}
@@ -441,7 +440,7 @@ func TestServiceReadFileReturnsEmptyBodyWithoutObjectLookup(t *testing.T) {
 	filesystem := serviceTestFilesystem()
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(context.Context, int64, int64, string) (db.FilestoreEntry, error) {
+		getEntryFn: func(context.Context, string, string, string) (db.FilestoreEntry, error) {
 			return serviceTestFileEntry(filesystem, "/empty-range.txt", []byte("12345")), nil
 		},
 	}
@@ -474,14 +473,14 @@ func TestServiceListDirectoryUsesBoundCursorAndReturnsNextCursor(t *testing.T) {
 		Path:         "/reports",
 		Recursive:    true,
 		LastPath:     "/reports/a",
-		LastID:       10,
+		LastUUID:     "00000000-0000-4000-8000-000000000010",
 	})
 	if err != nil {
 		t.Fatalf("encode request cursor: %v", err)
 	}
 	entries := []db.FilestoreEntry{
-		serviceTestDirectoryEntry(filesystem, 11, "/reports/b"),
-		serviceTestDirectoryEntry(filesystem, 12, "/reports/c"),
+		serviceTestDirectoryEntry(filesystem, "/reports/b"),
+		serviceTestDirectoryEntry(filesystem, "/reports/c"),
 	}
 	var listInput db.ListFilestoreEntriesPageParams
 	database := &fakeServiceDatabase{
@@ -503,9 +502,9 @@ func TestServiceListDirectoryUsesBoundCursorAndReturnsNextCursor(t *testing.T) {
 	if apiErr != nil {
 		t.Fatalf("ListDirectory() error = %v", apiErr)
 	}
-	if listInput.WorkspaceID != serviceTestPrincipal().WorkspaceID || listInput.FilesystemID != filesystem.ID ||
+	if listInput.WorkspaceUUID != serviceTestPrincipal().WorkspaceUUID || listInput.FilesystemUUID != filesystem.UUID ||
 		listInput.DirectoryPath != "/reports" || !listInput.Recursive || listInput.Limit != 25 || listInput.Cursor == nil ||
-		listInput.Cursor.Path != "/reports/a" || listInput.Cursor.ID != 10 {
+		listInput.Cursor.Path != "/reports/a" || listInput.Cursor.UUID != "00000000-0000-4000-8000-000000000010" {
 		t.Fatalf("list input = %+v", listInput)
 	}
 	if len(response.Entries) != 2 || response.Entries[0].Directory == nil || response.Entries[1].Directory == nil {
@@ -515,7 +514,7 @@ func TestServiceListDirectoryUsesBoundCursorAndReturnsNextCursor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode response cursor: %v", err)
 	}
-	if next.LastPath != "/reports/c" || next.LastID != 12 {
+	if next.LastPath != "/reports/c" || next.LastUUID != entries[1].UUID {
 		t.Fatalf("next cursor = %+v", next)
 	}
 }
@@ -654,12 +653,12 @@ func TestServiceCopyFilePreservesMetadataAndUsesCopiedObjectIdentity(t *testing.
 	var attachedVersionID string
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.FilestoreEntry, error) {
+		getEntryFn: func(_ context.Context, _, _ string, entryPath string) (db.FilestoreEntry, error) {
 			switch entryPath {
 			case "/source.txt":
 				return source, nil
 			case "/archive":
-				return serviceTestDirectoryEntry(filesystem, 30, "/archive"), nil
+				return serviceTestDirectoryEntry(filesystem, "/archive"), nil
 			default:
 				return db.FilestoreEntry{}, db.ErrNotFound
 			}
@@ -748,7 +747,7 @@ func TestServiceCopyFileRejectsBorrowedSourceBeforeObjectCopy(t *testing.T) {
 	source.ManagedResourceUUID = serviceTestPointer("22222222-2222-4222-8222-222222222222")
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, _ int64, _ int64, entryPath string) (db.FilestoreEntry, error) {
+		getEntryFn: func(_ context.Context, _, _ string, entryPath string) (db.FilestoreEntry, error) {
 			if entryPath == source.Path {
 				return source, nil
 			}
@@ -808,7 +807,7 @@ func TestServiceMoveOperationsReturnDatabaseEntries(t *testing.T) {
 			getFilesystemFn: serviceFilesystemLookup(filesystem),
 			moveDirectoryFn: func(_ context.Context, input db.MoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error) {
 				moveInput = input
-				return db.FilestoreMutationResult{Entry: serviceTestDirectoryEntry(filesystem, 40, input.DestinationPath)}, nil
+				return db.FilestoreMutationResult{Entry: serviceTestDirectoryEntry(filesystem, input.DestinationPath)}, nil
 			},
 		}
 		service := newServiceUnderTest(config.Config{}, database, &fakeServiceBlobStore{})
@@ -893,7 +892,7 @@ func TestServiceReadFileUsesMetadataSizeWhenObjectSizeIsUnknown(t *testing.T) {
 	var openedRange *storage.ByteRange
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(context.Context, int64, int64, string) (db.FilestoreEntry, error) {
+		getEntryFn: func(context.Context, string, string, string) (db.FilestoreEntry, error) {
 			return entry, nil
 		},
 	}

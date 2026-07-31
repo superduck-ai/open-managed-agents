@@ -17,8 +17,8 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 	t.Run("rejects moving fixed roots", func(t *testing.T) {
 		for _, rootPath := range []string{"/outputs", "/skills", "/uploads", "/transcripts", "/tool_results"} {
 			_, err := fixture.app.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
-				WorkspaceID:     fixture.workspaceID,
-				FilesystemID:    fixture.filesystem.ID,
+				WorkspaceUUID:   fixture.workspaceUUID,
+				FilesystemUUID:  fixture.filesystem.UUID,
 				SourcePath:      rootPath,
 				DestinationPath: rootPath + "-renamed",
 			})
@@ -31,10 +31,10 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 	t.Run("rejects removing fixed roots", func(t *testing.T) {
 		for _, rootPath := range []string{"/outputs", "/skills", "/uploads", "/transcripts", "/tool_results"} {
 			_, err := fixture.app.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
-				WorkspaceID:  fixture.workspaceID,
-				FilesystemID: fixture.filesystem.ID,
-				Path:         rootPath,
-				Recursive:    true,
+				WorkspaceUUID:  fixture.workspaceUUID,
+				FilesystemUUID: fixture.filesystem.UUID,
+				Path:           rootPath,
+				Recursive:      true,
 			})
 			if !errors.Is(err, db.ErrFilestoreInvalidMove) {
 				t.Fatalf("RemoveFilestoreDirectory(%q) error = %v, want ErrFilestoreInvalidMove", rootPath, err)
@@ -44,8 +44,8 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 
 	t.Run("rejects covering a fixed destination root", func(t *testing.T) {
 		_, err := fixture.app.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
-			WorkspaceID:     fixture.workspaceID,
-			FilesystemID:    fixture.filesystem.ID,
+			WorkspaceUUID:   fixture.workspaceUUID,
+			FilesystemUUID:  fixture.filesystem.UUID,
 			SourcePath:      "/outside",
 			DestinationPath: "/uploads",
 		})
@@ -56,8 +56,8 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 
 	t.Run("rejects crossing fixed root namespaces", func(t *testing.T) {
 		_, err := fixture.app.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
-			WorkspaceID:     fixture.workspaceID,
-			FilesystemID:    fixture.filesystem.ID,
+			WorkspaceUUID:   fixture.workspaceUUID,
+			FilesystemUUID:  fixture.filesystem.UUID,
 			SourcePath:      "/outputs/cross-root",
 			DestinationPath: "/uploads/cross-root",
 		})
@@ -69,14 +69,14 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 	t.Run("rejects entering or leaving a fixed root namespace", func(t *testing.T) {
 		for _, move := range []db.MoveFilestoreDirectoryInput{
 			{
-				WorkspaceID:     fixture.workspaceID,
-				FilesystemID:    fixture.filesystem.ID,
+				WorkspaceUUID:   fixture.workspaceUUID,
+				FilesystemUUID:  fixture.filesystem.UUID,
 				SourcePath:      "/outside",
 				DestinationPath: "/tool_results/outside",
 			},
 			{
-				WorkspaceID:     fixture.workspaceID,
-				FilesystemID:    fixture.filesystem.ID,
+				WorkspaceUUID:   fixture.workspaceUUID,
+				FilesystemUUID:  fixture.filesystem.UUID,
 				SourcePath:      "/outputs/cross-root",
 				DestinationPath: "/cross-root",
 			},
@@ -95,8 +95,8 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 	t.Run("allows mutations within one fixed root", func(t *testing.T) {
 		makeFilestoreTestDirectory(t, fixture, "/outputs/drafts")
 		moved, err := fixture.app.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
-			WorkspaceID:     fixture.workspaceID,
-			FilesystemID:    fixture.filesystem.ID,
+			WorkspaceUUID:   fixture.workspaceUUID,
+			FilesystemUUID:  fixture.filesystem.UUID,
 			SourcePath:      "/outputs/drafts",
 			DestinationPath: "/outputs/published",
 		})
@@ -107,9 +107,9 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 			t.Fatalf("moved path = %q, want /outputs/published", moved.Entry.Path)
 		}
 		if _, err := fixture.app.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         moved.Entry.Path,
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           moved.Entry.Path,
 		}); err != nil {
 			t.Fatalf("RemoveFilestoreDirectory() error = %v", err)
 		}
@@ -119,9 +119,9 @@ func TestFilestoreFixedRootsRejectGenericDirectoryMutation(t *testing.T) {
 func makeFilestoreTestDirectory(t *testing.T, fixture workspaceStorageFixture, entryPath string) {
 	t.Helper()
 	if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-		WorkspaceID:  fixture.workspaceID,
-		FilesystemID: fixture.filesystem.ID,
-		Path:         entryPath,
+		WorkspaceUUID:  fixture.workspaceUUID,
+		FilesystemUUID: fixture.filesystem.UUID,
+		Path:           entryPath,
 	}); err != nil {
 		t.Fatalf("MakeFilestoreDirectory(%q) error = %v", entryPath, err)
 	}

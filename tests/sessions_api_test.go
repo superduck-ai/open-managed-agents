@@ -1156,9 +1156,9 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("upload output fixture: %v", err)
 	}
 	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:  getDefaultDBIDs(t, app.db).WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/worker-output.txt",
+		WorkspaceUUID:  sessionRecord.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/worker-output.txt",
 		Blob: db.FilestoreFileBlob{
 			SizeBytes:    int64(len(outputContent)),
 			MediaType:    "text/plain",

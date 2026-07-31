@@ -10,7 +10,7 @@ func filestoreFilesystemSelectSQL() string {
 }
 
 func filestoreFilesystemColumns() string {
-	return `id, cast(uuid as text) as uuid, external_id,
+	return `cast(uuid as text) as uuid, external_id,
 		cast(organization_uuid as text) as organization_uuid,
 		cast(workspace_uuid as text) as workspace_uuid,
 		cast(session_uuid as text) as session_uuid,
@@ -24,7 +24,7 @@ func filestoreEntrySelectSQL() string {
 }
 
 func filestoreEntryColumns() string {
-	return `id, cast(uuid as text) as uuid, external_id,
+	return `cast(uuid as text) as uuid, external_id,
 		cast(organization_uuid as text) as organization_uuid,
 		cast(workspace_uuid as text) as workspace_uuid,
 		cast(filesystem_uuid as text) as filesystem_uuid, kind, path, parent_path,

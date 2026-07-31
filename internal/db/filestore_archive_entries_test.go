@@ -9,11 +9,9 @@ import (
 
 func TestFilestoreSkillArchiveEntryQueriesUseSQLXNamedParameters(t *testing.T) {
 	arguments := map[string]any{
-		"workspace_id":                 int64(41),
 		"session_external_id":          "session_41",
 		"organization_uuid":            "00000000-0000-4000-8000-000000000041",
 		"workspace_uuid":               "00000000-0000-4000-8000-000000000042",
-		"filesystem_id":                int64(43),
 		"filesystem_uuid":              "00000000-0000-4000-8000-000000000043",
 		"source":                       "custom",
 		"skill_version_uuid":           "00000000-0000-4000-8000-000000000044",
@@ -35,7 +33,7 @@ func TestFilestoreSkillArchiveEntryQueriesUseSQLXNamedParameters(t *testing.T) {
 		{"filesystem", filestoreSkillArchiveEntryFilesystemQuery, 3},
 		{"retire", filestoreSkillArchiveEntryRetireQuery, 4},
 		{"insert", filestoreSkillArchiveEntryInsertQuery, 15},
-		{"list", filestoreSkillArchiveEntryListQuery, 3},
+		{"list", filestoreSkillArchiveEntryListQuery, 2},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

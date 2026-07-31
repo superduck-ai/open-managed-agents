@@ -121,11 +121,8 @@ func TestDatabaseQueriesUseSQLXNamedParameters(t *testing.T) {
 
 func TestAPIKeyRowMapsDatabaseColumns(t *testing.T) {
 	row := apiKeyRow{
-		ID:                  1,
 		ExternalID:          "sk_default",
-		OrganizationID:      2,
 		OrganizationUUID:    "22222222-2222-4222-8222-222222222222",
-		WorkspaceID:         3,
 		WorkspaceUUID:       "11111111-1111-4111-8111-111111111111",
 		WorkspaceExternalID: "workspace_default",
 	}

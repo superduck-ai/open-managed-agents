@@ -46,8 +46,6 @@ type filestoreAuthCredentials struct {
 type filestoreAuthFixture struct {
 	tokenIdentity         filestore.TokenIdentity
 	filesystemUUID        string
-	organizationID        int64
-	workspaceID           int64
 	sessionExternalID     string
 	ingressIdentity       codesessions.SessionCredentialIdentity
 	workspaceAPIKey       string
@@ -446,25 +444,16 @@ func TestFilestoreJWTAuthentication(t *testing.T) {
 		otherFilesystemUUID := uuid.NewString()
 		otherFilesystemExternalID := "fs_filestore_cross_" + suffix
 
-		var organizationID, otherWorkspaceID int64
-		if err := database.Pool.QueryRow(context.Background(), `
-			select id from organizations where uuid = $1
-		`, fixture.tokenIdentity.OrgUUID).Scan(&organizationID); err != nil {
-			t.Fatalf("load fixture organization: %v", err)
-		}
-		if err := database.Pool.QueryRow(context.Background(), `
+		if _, err := database.Pool.Exec(context.Background(), `
 			insert into workspaces (uuid, external_id, organization_uuid, name)
-			select $1, $2, uuid, $4
-			from organizations
-			where id = $3
-			returning id
-		`, otherWorkspaceUUID, otherWorkspaceExternalID, organizationID, "Filestore cross-workspace test").Scan(&otherWorkspaceID); err != nil {
+			values ($1, $2, $3, $4)
+		`, otherWorkspaceUUID, otherWorkspaceExternalID, fixture.tokenIdentity.OrgUUID, "Filestore cross-workspace test"); err != nil {
 			t.Fatalf("insert other workspace: %v", err)
 		}
 		defer func() {
 			_, _ = database.Pool.Exec(context.Background(), `delete from filestore_filesystems where uuid = $1`, otherFilesystemUUID)
 			_, _ = database.Pool.Exec(context.Background(), `delete from sessions where uuid = $1`, otherSessionUUID)
-			_, _ = database.Pool.Exec(context.Background(), `delete from workspaces where id = $1`, otherWorkspaceID)
+			_, _ = database.Pool.Exec(context.Background(), `delete from workspaces where uuid = $1`, otherWorkspaceUUID)
 		}()
 		if _, err := database.Pool.Exec(context.Background(), `
 			insert into sessions (
@@ -608,22 +597,16 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 		database.Close()
 	})
 
-	var organizationID int64
-	if err := database.Pool.QueryRow(context.Background(), `
+	if _, err := database.Pool.Exec(context.Background(), `
 		insert into organizations (uuid, name, settings)
 		values ($1, $2, '{"org_taints":["restricted","compliance"]}'::jsonb)
-		returning id
-	`, organizationUUID, "Filestore auth test").Scan(&organizationID); err != nil {
+	`, organizationUUID, "Filestore auth test"); err != nil {
 		t.Fatalf("insert filestore auth organization: %v", err)
 	}
-	var workspaceID int64
-	if err := database.Pool.QueryRow(context.Background(), `
+	if _, err := database.Pool.Exec(context.Background(), `
 		insert into workspaces (uuid, external_id, organization_uuid, name, external_key_id)
-		select $1, $2, uuid, $4, 'key_filestore_auth'
-		from organizations
-		where id = $3
-		returning id
-	`, workspaceUUID, workspaceExternalID, organizationID, "Filestore auth test").Scan(&workspaceID); err != nil {
+		values ($1, $2, $3, $4, 'key_filestore_auth')
+	`, workspaceUUID, workspaceExternalID, organizationUUID, "Filestore auth test"); err != nil {
 		t.Fatalf("insert filestore auth workspace: %v", err)
 	}
 	apiKeyUUID := uuid.NewString()
@@ -642,8 +625,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 	sessionUUID := uuid.NewString()
 	environmentUUID := uuid.NewString()
 	agentUUID := uuid.NewString()
-	var sessionID int64
-	if err := database.Pool.QueryRow(context.Background(), `
+	if _, err := database.Pool.Exec(context.Background(), `
 		insert into sessions (
 			uuid, external_id, organization_uuid, workspace_uuid,
 			created_by_api_key_uuid, environment_uuid, environment_external_id,
@@ -651,9 +633,8 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 			title, status
 		)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb, $10, 'running')
-		returning id
 	`, sessionUUID, publicSessionID, organizationUUID, workspaceUUID, apiKeyUUID,
-		environmentUUID, environmentID, agentUUID, agentID, "Filestore auth test").Scan(&sessionID); err != nil {
+		environmentUUID, environmentID, agentUUID, agentID, "Filestore auth test"); err != nil {
 		t.Fatalf("insert filestore auth session: %v", err)
 	}
 	codeSessionUUID := uuid.NewString()
@@ -682,8 +663,6 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 
 	return database, cfg, filestoreAuthFixture{
 		filesystemUUID:    filesystemUUID,
-		organizationID:    organizationID,
-		workspaceID:       workspaceID,
 		sessionExternalID: publicSessionID,
 		tokenIdentity: filestore.TokenIdentity{
 			Subject:                   accountExternalID,
@@ -811,10 +790,9 @@ func assertFilestoreTokenPrincipal(
 		principal.WorkspaceExternalID != identity.ResolvedWorkspaceTaggedID ||
 		principal.FilesystemUUID != filesystemUUID ||
 		principal.FilesystemExternalID != filesystemExternalID ||
-		principal.FilesystemInternalID <= 0 || principal.Readonly ||
+		principal.Readonly ||
 		!filestore.OrgTaintsEqual(principal.OrganizationTaints, identity.OrgTaints) ||
-		principal.WorkspaceCMEKEnabled != identity.WorkspaceCMEKEnabled ||
-		principal.OrganizationID <= 0 || principal.WorkspaceID <= 0 || principal.AccountID <= 0 {
+		principal.WorkspaceCMEKEnabled != identity.WorkspaceCMEKEnabled {
 		t.Fatalf("unexpected filestore principal: %#v", principal)
 	}
 }

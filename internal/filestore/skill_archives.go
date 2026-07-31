@@ -87,7 +87,7 @@ func (b *skillArchivePathBackend) listDirectory(
 	cursor directoryCursor,
 	limit int,
 ) (listDirectoryResponse, *apiError) {
-	archiveEntries, err := b.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceID, filesystem.ID)
+	archiveEntries, err := b.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceUUID, filesystem.UUID)
 	if err != nil {
 		return listDirectoryResponse{}, mapDatabaseError("list skill archive entries", err)
 	}
@@ -227,7 +227,7 @@ func (b *skillArchivePathBackend) resolveSkillNode(
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
 ) (db.FilestoreEntry, *loadedSkillArchive, skillArchiveNode, *apiError) {
-	archiveEntries, err := b.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceID, filesystem.ID)
+	archiveEntries, err := b.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceUUID, filesystem.UUID)
 	if err != nil {
 		return db.FilestoreEntry{}, nil, skillArchiveNode{}, mapDatabaseError("list skill archive entries", err)
 	}

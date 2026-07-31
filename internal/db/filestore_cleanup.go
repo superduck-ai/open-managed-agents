@@ -45,22 +45,20 @@ var (
 		for update of j
 	`
 	filesystemCleanupFilesystemQuery = filestoreFilesystemSelectSQL() + `
-		where uuid = :filesystem_uuid and workspace_uuid = :workspace_uuid
+		where uuid = CAST(:filesystem_uuid AS uuid)
+			and workspace_uuid = CAST(:workspace_uuid AS uuid)
 	`
 	filesystemCleanupEntriesQuery = filestoreEntrySelectSQL() + `
 		where workspace_uuid = :workspace_uuid and filesystem_uuid = :filesystem_uuid
 			and kind = 'file' and deleted_at is null
-		order by id
+		order by uuid
 		limit :limit
 		for update
 	`
 	expiredFilestoreEntriesQuery = filestoreEntrySelectSQL() + `
 		where kind = 'file' and deleted_at is null and expires_at <= now()
-			and filesystem_uuid in (
-				select uuid from filestore_filesystems
-				where id = any(CAST(:filesystem_ids AS bigint[]))
-			)
-		order by expires_at, id
+			and filesystem_uuid = any(CAST(:filesystem_uuids AS uuid[]))
+		order by expires_at, uuid
 		limit :limit
 		for update skip locked
 	`
@@ -69,29 +67,30 @@ var (
 const (
 	expiredFilestoreCleanupScopesQuery = `
 		select distinct CAST(oldest_expired.workspace_uuid AS text) AS workspace_uuid,
-			fs.id AS filesystem_id,
 			CAST(oldest_expired.filesystem_uuid AS text) AS filesystem_uuid
 		from (
-			select workspace_uuid, filesystem_uuid, expires_at, id
+			select workspace_uuid, filesystem_uuid, expires_at, uuid
 			from filestore_entries
 			where kind = 'file' and deleted_at is null and expires_at <= now()
-			order by expires_at, id
+			order by expires_at, uuid
 			limit :limit
 		) oldest_expired
-		join filestore_filesystems fs
-			on fs.uuid = oldest_expired.filesystem_uuid
-			and fs.workspace_uuid = oldest_expired.workspace_uuid
 	`
 	filesystemCleanupWorkspaceLockQuery = `
 		select pg_advisory_xact_lock(hashtextextended(CAST(:workspace_uuid AS text), 0))
 	`
 	filesystemCleanupFilesystemLockQuery = `
-		select pg_advisory_xact_lock(-CAST(:filesystem_id AS bigint))
+		select pg_advisory_xact_lock(
+			hashtextextended(
+				concat('filestore-filesystem', chr(58), CAST(:filesystem_uuid AS text)),
+				0
+			)
+		)
 	`
 	retireFilesystemCleanupEntryQuery = `
 		update filestore_entries
 		set deleted_at = :retired_at, updated_at = :retired_at
-		where id = :entry_id and deleted_at is null
+		where uuid = CAST(:entry_uuid AS uuid) and deleted_at is null
 	`
 	filesystemCleanupFilesRemainQuery = `
 		select exists (
@@ -139,21 +138,21 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 		return nil, err
 	}
 	workspaceUUIDSet := make(map[string]struct{})
-	filesystemIDSet := make(map[int64]struct{})
+	filesystemUUIDSet := make(map[string]struct{})
 	cleanupScopeByFilesystemUUID := make(map[string]filestoreEntryCleanupScope)
 	var workspaceUUIDs []string
-	var filesystemIDs []int64
+	var filesystemUUIDs []string
 	for _, row := range scopeRows {
 		if _, found := workspaceUUIDSet[row.WorkspaceUUID]; !found {
 			workspaceUUIDSet[row.WorkspaceUUID] = struct{}{}
 			workspaceUUIDs = append(workspaceUUIDs, row.WorkspaceUUID)
 		}
-		if _, found := filesystemIDSet[row.FilesystemID]; !found {
-			filesystemIDSet[row.FilesystemID] = struct{}{}
-			filesystemIDs = append(filesystemIDs, row.FilesystemID)
+		if _, found := filesystemUUIDSet[row.FilesystemUUID]; !found {
+			filesystemUUIDSet[row.FilesystemUUID] = struct{}{}
+			filesystemUUIDs = append(filesystemUUIDs, row.FilesystemUUID)
 		}
 		cleanupScopeByFilesystemUUID[row.FilesystemUUID] = filestoreEntryCleanupScope{
-			WorkspaceUUID: row.WorkspaceUUID, FilesystemID: row.FilesystemID,
+			WorkspaceUUID: row.WorkspaceUUID, FilesystemUUID: row.FilesystemUUID,
 		}
 	}
 	if len(workspaceUUIDs) == 0 {
@@ -163,10 +162,8 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 		return nil, nil
 	}
 	sort.Strings(workspaceUUIDs)
-	sort.Slice(filesystemIDs, func(i, j int) bool {
-		return filesystemIDs[i] < filesystemIDs[j]
-	})
-	// 所有容量变更都先锁工作区，再锁文件系统；批处理内部也按 ID 升序取得同类锁。
+	sort.Strings(filesystemUUIDs)
+	// 所有容量变更都先锁工作区，再锁文件系统；批处理内部按 UUID 升序取得同类锁。
 	for _, workspaceUUID := range workspaceUUIDs {
 		if _, err := namedExecContext(ctx, tx, filesystemCleanupWorkspaceLockQuery, map[string]any{
 			"workspace_uuid": workspaceUUID,
@@ -174,9 +171,9 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 			return nil, err
 		}
 	}
-	for _, filesystemID := range filesystemIDs {
-		if _, err := namedExecContext(ctx, tx, `select pg_advisory_xact_lock(-CAST(:filesystem_id AS bigint))`, map[string]any{
-			"filesystem_id": filesystemID,
+	for _, filesystemUUID := range filesystemUUIDs {
+		if _, err := namedExecContext(ctx, tx, filesystemCleanupFilesystemLockQuery, map[string]any{
+			"filesystem_uuid": filesystemUUID,
 		}); err != nil {
 			return nil, err
 		}
@@ -184,8 +181,8 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 
 	var entryRows []filestoreEntryRow
 	err = namedSelectContext(ctx, tx, &entryRows, expiredFilestoreEntriesQuery, map[string]any{
-		"filesystem_ids": filesystemIDs,
-		"limit":          limit,
+		"filesystem_uuids": filesystemUUIDs,
+		"limit":            limit,
 	})
 	if err != nil {
 		return nil, err
@@ -215,8 +212,8 @@ func (d *DB) ExpireFilestoreEntries(ctx context.Context, limit int) ([]Filestore
 		jobs = append(jobs, job)
 		if _, err := namedExecContext(ctx, tx, `
 			update filestore_entries set deleted_at = :now, updated_at = :now
-			where id = :entry_id and deleted_at is null
-		`, map[string]any{"entry_id": entry.ID, "now": now}); err != nil {
+			where uuid = CAST(:entry_uuid AS uuid) and deleted_at is null
+		`, map[string]any{"entry_uuid": entry.UUID, "now": now}); err != nil {
 			return nil, err
 		}
 		if err := softDeleteSessionFileProjectionByEntryTx(
@@ -304,7 +301,6 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 		}
 		return false, err
 	}
-	arguments["filesystem_id"] = job.FilesystemID
 	arguments["workspace_uuid"] = job.WorkspaceUUID
 	arguments["filesystem_uuid"] = job.FilesystemUUID
 	if _, err := namedExecContext(ctx, tx, filesystemCleanupWorkspaceLockQuery, arguments); err != nil {
@@ -319,7 +315,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 		return false, err
 	}
 	cleanupScope := filestoreEntryCleanupScope{
-		WorkspaceUUID: job.WorkspaceUUID, FilesystemID: filesystem.ID,
+		WorkspaceUUID: job.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 	}
 
 	var entryRows []filestoreEntryRow
@@ -348,7 +344,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 				return false, err
 			}
 		}
-		arguments["entry_id"] = entry.ID
+		arguments["entry_uuid"] = entry.UUID
 		if _, err := namedExecContext(ctx, tx, retireFilesystemCleanupEntryQuery, arguments); err != nil {
 			return false, err
 		}
@@ -708,13 +704,12 @@ func (d *DB) filestoreCleanupJobMutationMiss(ctx context.Context, workspaceUUID 
 }
 
 type filestoreEntryCleanupScope struct {
-	WorkspaceUUID string
-	FilesystemID  int64
+	WorkspaceUUID  string
+	FilesystemUUID string
 }
 
 type expiredFilestoreCleanupScopeRow struct {
 	WorkspaceUUID  string `db:"workspace_uuid"`
-	FilesystemID   int64  `db:"filesystem_id"`
 	FilesystemUUID string `db:"filesystem_uuid"`
 }
 
@@ -728,7 +723,7 @@ func enqueueFilestoreEntryCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope f
 	}
 	return insertFilestoreObjectCleanupJobSQLX(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
 		WorkspaceUUID:   scope.WorkspaceUUID,
-		FilesystemUUID:  entry.FilesystemUUID,
+		FilesystemUUID:  scope.FilesystemUUID,
 		EntryExternalID: entry.ExternalID,
 		Bucket:          *entry.S3Bucket,
 		Key:             *entry.S3Key,
@@ -763,7 +758,7 @@ func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scop
 			and kind = 'file'
 			and deleted_at is null
 			and left(path, char_length(:root_path) + 1) = :root_path || '/'
-		order by id
+		order by uuid
 		for update
 	`, filestoreSubtreeArguments(filesystem, rootPath))
 	if err != nil {
@@ -809,7 +804,7 @@ func retireExpiredFilestoreSubtreeTx(
 				path = :root_path
 				or left(path, char_length(:root_path) + 1) = :root_path || '/'
 			)
-		order by id
+		order by uuid
 		for update
 	`, filestoreSubtreeArguments(filesystem, rootPath))
 	if err != nil {
@@ -836,9 +831,9 @@ func retireExpiredFilestoreSubtreeTx(
 		if _, err := namedExecContext(ctx, tx, `
 			update filestore_entries
 			set deleted_at = :retired_at, updated_at = :retired_at
-			where id = :entry_id and deleted_at is null
+			where uuid = CAST(:entry_uuid AS uuid) and deleted_at is null
 		`, map[string]any{
-			"entry_id":   entry.ID,
+			"entry_uuid": entry.UUID,
 			"retired_at": retiredAt,
 		}); err != nil {
 			return nil, 0, err
@@ -887,7 +882,6 @@ func filestoreCleanupJobColumns(jobAlias, filesystemAlias string) string {
 	return fmt.Sprintf(`cast(%[1]s.uuid as text) as uuid, %[1]s.external_id as external_id,
 		cast(%[1]s.workspace_uuid as text) as workspace_uuid,
 		cast(%[2]s.uuid as text) as filesystem_uuid,
-		%[2]s.id as filesystem_id,
 		%[2]s.external_id as filesystem_external_id,
 		coalesce(%[1]s.payload->>'entry_external_id', '') as entry_external_id,
 		coalesce(%[1]s.payload->>'bucket', '') as bucket,
@@ -903,7 +897,6 @@ func filestoreFilesystemCleanupJobColumns(jobAlias, filesystemAlias string) stri
 	return fmt.Sprintf(`cast(%[1]s.uuid as text) as uuid, %[1]s.external_id as external_id,
 		cast(%[1]s.workspace_uuid as text) as workspace_uuid,
 		cast(%[2]s.uuid as text) as filesystem_uuid,
-		%[2]s.id as filesystem_id,
 		%[2]s.external_id as filesystem_external_id,
 		%[1]s.attempts as attempts, %[1]s.run_after as run_after`,
 		jobAlias, filesystemAlias)

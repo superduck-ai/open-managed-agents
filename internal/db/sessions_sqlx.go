@@ -501,7 +501,7 @@ func insertSessionSQLXTx(
 		if err != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 		}
-		if lockedFilesystem.ID != filesystem.ID {
+		if lockedFilesystem.UUID != filesystem.UUID {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, ErrPreconditionFailed
 		}
 		filesystem = lockedFilesystem

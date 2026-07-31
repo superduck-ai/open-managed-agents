@@ -10,7 +10,6 @@ import (
 )
 
 type filestoreFilesystemRow struct {
-	ID                  int64      `db:"id"`
 	UUID                string     `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
 	OrganizationUUID    string     `db:"organization_uuid"`
@@ -24,15 +23,11 @@ type filestoreFilesystemRow struct {
 }
 
 type filestoreTokenScopeRow struct {
-	OrganizationID       int64  `db:"organization_id"`
 	OrganizationUUID     string `db:"organization_uuid"`
-	WorkspaceID          int64  `db:"workspace_id"`
 	WorkspaceUUID        string `db:"workspace_uuid"`
 	WorkspaceExternalID  string `db:"workspace_external_id"`
-	AccountID            int64  `db:"account_id"`
 	AccountUUID          string `db:"account_uuid"`
 	AccountExternalID    string `db:"account_external_id"`
-	FilesystemID         int64  `db:"filesystem_id"`
 	FilesystemUUID       string `db:"filesystem_uuid"`
 	FilesystemExternalID string `db:"filesystem_external_id"`
 	OrgTaintsJSON        []byte `db:"org_taints_json"`
@@ -40,7 +35,6 @@ type filestoreTokenScopeRow struct {
 }
 
 type filestoreEntryRow struct {
-	ID                       int64      `db:"id"`
 	UUID                     string     `db:"uuid"`
 	ExternalID               string     `db:"external_id"`
 	OrganizationUUID         string     `db:"organization_uuid"`
@@ -74,13 +68,14 @@ type filestoreEntryRow struct {
 	DeletedAt                *time.Time `db:"deleted_at"`
 }
 
-func getFilestoreFilesystemByIDSQLX(ctx context.Context, database sqlxNamedQueryer, workspaceID, filesystemID int64) (FilestoreFilesystem, error) {
+func getFilestoreFilesystemByUUIDSQLX(ctx context.Context, database sqlxNamedQueryer, workspaceUUID, filesystemUUID string) (FilestoreFilesystem, error) {
 	return getFilestoreFilesystemSQLX(ctx, database, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
-			and id = :filesystem_id and deleted_at is null
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and uuid = CAST(:filesystem_uuid AS uuid)
+			and deleted_at is null
 	`, map[string]any{
-		"workspace_id":  workspaceID,
-		"filesystem_id": filesystemID,
+		"workspace_uuid":  workspaceUUID,
+		"filesystem_uuid": filesystemUUID,
 	})
 }
 
@@ -188,7 +183,6 @@ func insertFilestoreObjectCleanupJobSQLX(
 
 func (row filestoreFilesystemRow) filesystem() FilestoreFilesystem {
 	return FilestoreFilesystem{
-		ID:                  row.ID,
 		UUID:                row.UUID,
 		ExternalID:          row.ExternalID,
 		OrganizationUUID:    row.OrganizationUUID,
@@ -211,15 +205,11 @@ func (row filestoreTokenScopeRow) scope() (FilestoreTokenScope, error) {
 		orgTaints = []string{}
 	}
 	return FilestoreTokenScope{
-		OrganizationID:       row.OrganizationID,
 		OrganizationUUID:     row.OrganizationUUID,
-		WorkspaceID:          row.WorkspaceID,
 		WorkspaceUUID:        row.WorkspaceUUID,
 		WorkspaceExternalID:  row.WorkspaceExternalID,
-		AccountID:            row.AccountID,
 		AccountUUID:          row.AccountUUID,
 		AccountExternalID:    row.AccountExternalID,
-		FilesystemID:         row.FilesystemID,
 		FilesystemUUID:       row.FilesystemUUID,
 		FilesystemExternalID: row.FilesystemExternalID,
 		OrgTaints:            orgTaints,
@@ -236,7 +226,6 @@ func (row filestoreEntryRow) entry() (FilestoreEntry, error) {
 		tags = []string{}
 	}
 	return FilestoreEntry{
-		ID:                    row.ID,
 		UUID:                  row.UUID,
 		ExternalID:            row.ExternalID,
 		OrganizationUUID:      row.OrganizationUUID,

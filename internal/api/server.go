@@ -406,7 +406,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 		s.logger.ErrorContext(r.Context(), "authenticate platform session", "error", err)
 		return auth.Principal{}, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
-	if session.APIKeyUUID == "" {
+	if session.APIKeyUUID == "" || session.UserUUID == "" {
 		refreshed, refreshErr := s.db.ResolvePlatformSessionIdentity(r.Context(), platformsession.CreateInput{
 			SessionKey: sessionKey,
 			UserUUID:   session.UserExternalID,
@@ -447,7 +447,6 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 	if workspace.ArchivedAt != nil {
 		return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace is archived")
 	}
-	principal.WorkspaceID = workspace.ID
 	principal.WorkspaceUUID = workspace.UUID
 	principal.WorkspaceExternalID = workspace.ExternalID
 	return principal, nil

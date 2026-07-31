@@ -798,8 +798,8 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	}
 	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
 		ctx,
-		getDefaultDBIDs(t, app.db).WorkspaceID,
-		filesystem.ID,
+		getDefaultDBIDs(t, app.db).WorkspaceUUID,
+		filesystem.UUID,
 	)
 	if err != nil {
 		t.Fatalf("list skill archive entries: %v", err)
@@ -899,8 +899,8 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 	}
 	archiveEntries, err := app.db.ListFilestoreSkillArchiveEntries(
 		ctx,
-		getDefaultDBIDs(t, app.db).WorkspaceID,
-		filesystem.ID,
+		getDefaultDBIDs(t, app.db).WorkspaceUUID,
+		filesystem.UUID,
 	)
 	if err != nil {
 		t.Fatalf("list archive entries: %v", err)

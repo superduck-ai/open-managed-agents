@@ -31,7 +31,6 @@ var (
 // FilestoreFilesystem 是文件系统命名空间及其稳定租户、会话归属。
 // 组织、工作区与会话都使用 UUID 持久化，不能仅凭 ExternalID 全局查找。
 type FilestoreFilesystem struct {
-	ID                  int64
 	UUID                string
 	ExternalID          string
 	OrganizationUUID    string
@@ -45,17 +44,13 @@ type FilestoreFilesystem struct {
 }
 
 // FilestoreTokenScope 是 Filestore JWT 通过数据库回查后得到的完整授权边界。
-// UUID 与 external ID 同时保留，以便 API 层既能校验 claim，又能向下游传递内部主键。
+// UUID 与 external ID 同时保留，以便 API 层既能校验 claim，又能向下游传递稳定标识。
 type FilestoreTokenScope struct {
-	OrganizationID       int64
 	OrganizationUUID     string
-	WorkspaceID          int64
 	WorkspaceUUID        string
 	WorkspaceExternalID  string
-	AccountID            int64
 	AccountUUID          string
 	AccountExternalID    string
-	FilesystemID         int64
 	FilesystemUUID       string
 	FilesystemExternalID string
 	// OrgTaints 是 organizations.settings 中的当前组织策略标签。
@@ -81,7 +76,6 @@ type ProvisionFilestoreFilesystemInput struct {
 // 目录字段保持为空；文件与 archive 字段指向对象存储中的不可变对象版本。
 // Managed 字段标识借用其他资源对象、但投影到 Session 命名空间中的条目。
 type FilestoreEntry struct {
-	ID                       int64
 	UUID                     string
 	ExternalID               string
 	OrganizationUUID         string
@@ -145,10 +139,10 @@ type FilestoreSkillArchiveEntryInput struct {
 	SHA256           string
 }
 
-// FilestoreEntryPageCursor 保存键集分页的最后一个 (Path, ID) 排序键。
+// FilestoreEntryPageCursor 保存键集分页的最后一个 (Path, UUID) 排序键。
 type FilestoreEntryPageCursor struct {
 	Path string
-	ID   int64
+	UUID string
 }
 
 // FilestoreEntryPage 表示一页目录节点及其后续页状态。
@@ -159,27 +153,27 @@ type FilestoreEntryPage struct {
 
 // ListFilestoreEntriesPageParams 定义一次有界的目录枚举。
 type ListFilestoreEntriesPageParams struct {
-	WorkspaceID   int64
-	FilesystemID  int64
-	DirectoryPath string
-	Recursive     bool
-	Limit         int
-	Cursor        *FilestoreEntryPageCursor
+	WorkspaceUUID  string
+	FilesystemUUID string
+	DirectoryPath  string
+	Recursive      bool
+	Limit          int
+	Cursor         *FilestoreEntryPageCursor
 }
 
 // MakeFilestoreDirectoryInput 描述目录创建及可选的父目录补齐行为。
 type MakeFilestoreDirectoryInput struct {
-	WorkspaceID  int64
-	FilesystemID int64
-	Path         string
-	MakeParents  bool
-	Now          time.Time
+	WorkspaceUUID  string
+	FilesystemUUID string
+	Path           string
+	MakeParents    bool
+	Now            time.Time
 }
 
 // PutFilestoreFileInput 将已上传对象绑定到文件路径，并在同一事务中核算工作区配额。
 type PutFilestoreFileInput struct {
-	WorkspaceID                int64
-	FilesystemID               int64
+	WorkspaceUUID              string
+	FilesystemUUID             string
 	Path                       string
 	Blob                       FilestoreFileBlob
 	OverwriteExisting          bool
@@ -191,8 +185,8 @@ type PutFilestoreFileInput struct {
 // CopyFilestoreFileInput 将服务端复制所得的新对象绑定到目标路径。
 // ExpectedSource 字段用于确认复制期间源文件未被并发替换。
 type CopyFilestoreFileInput struct {
-	WorkspaceID                int64
-	FilesystemID               int64
+	WorkspaceUUID              string
+	FilesystemUUID             string
 	SourcePath                 string
 	DestinationPath            string
 	ExpectedSourceS3Key        string
@@ -209,8 +203,8 @@ type CopyFilestoreFileInput struct {
 
 // MoveFilestoreFileInput 描述文件路径移动；底层对象本身不迁移。
 type MoveFilestoreFileInput struct {
-	WorkspaceID       int64
-	FilesystemID      int64
+	WorkspaceUUID     string
+	FilesystemUUID    string
 	SourcePath        string
 	DestinationPath   string
 	OverwriteExisting bool
@@ -219,8 +213,8 @@ type MoveFilestoreFileInput struct {
 
 // MoveFilestoreDirectoryInput 描述目录及其整棵子树的原子改名。
 type MoveFilestoreDirectoryInput struct {
-	WorkspaceID     int64
-	FilesystemID    int64
+	WorkspaceUUID   string
+	FilesystemUUID  string
 	SourcePath      string
 	DestinationPath string
 	Now             time.Time
@@ -228,19 +222,19 @@ type MoveFilestoreDirectoryInput struct {
 
 // RemoveFilestoreEntryInput 描述单个文件的软删除。
 type RemoveFilestoreEntryInput struct {
-	WorkspaceID  int64
-	FilesystemID int64
-	Path         string
-	Now          time.Time
+	WorkspaceUUID  string
+	FilesystemUUID string
+	Path           string
+	Now            time.Time
 }
 
 // RemoveFilestoreDirectoryInput 描述目录软删除，Recursive 控制是否允许删除非空子树。
 type RemoveFilestoreDirectoryInput struct {
-	WorkspaceID  int64
-	FilesystemID int64
-	Path         string
-	Recursive    bool
-	Now          time.Time
+	WorkspaceUUID  string
+	FilesystemUUID string
+	Path           string
+	Recursive      bool
+	Now            time.Time
 }
 
 // FilestoreMutationResult 返回变更后的主条目及随事务创建的对象清理任务。
@@ -250,14 +244,12 @@ type FilestoreMutationResult struct {
 }
 
 // FilestoreObjectCleanupJob 描述一个可租约、可重试的对象版本删除任务。
-// UUID 是任务持久化的权威归属；bigint ID 仅在当前数据库租约任务时重新解析，
-// 不能用于跨库恢复、租户迁移或合库后的身份判断。
+// UUID 是任务持久化和执行时的权威归属。
 type FilestoreObjectCleanupJob struct {
 	UUID                 string    `db:"uuid"`
 	ExternalID           string    `db:"external_id"`
 	WorkspaceUUID        string    `db:"workspace_uuid"`
 	FilesystemUUID       string    `db:"filesystem_uuid"`
-	FilesystemID         int64     `db:"filesystem_id"`
 	FilesystemExternalID string    `db:"filesystem_external_id"`
 	EntryExternalID      string    `db:"entry_external_id"`
 	Bucket               string    `db:"bucket"`
@@ -271,20 +263,18 @@ type FilestoreObjectCleanupJob struct {
 
 // FilestoreFilesystemCleanupJob 将已删除 Session 的整个文件系统拆成有界批次回收。
 // 它只负责退休元数据并投递对象任务，不在数据库事务中直接访问 S3。
-// UUID 是持久化引用，bigint ID 是 worker 在当前数据库中解析出的短期执行上下文。
+// UUID 是持久化引用和 worker 执行时的租户边界。
 type FilestoreFilesystemCleanupJob struct {
 	UUID                 string    `db:"uuid"`
 	ExternalID           string    `db:"external_id"`
 	WorkspaceUUID        string    `db:"workspace_uuid"`
 	FilesystemUUID       string    `db:"filesystem_uuid"`
-	FilesystemID         int64     `db:"filesystem_id"`
 	FilesystemExternalID string    `db:"filesystem_external_id"`
 	Attempts             int       `db:"attempts"`
 	RunAfter             time.Time `db:"run_after"`
 }
 
 // EnqueueFilestoreObjectCleanupJobInput 描述对象清理任务的创建参数。
-// 当前库 ID 仅用于在插入时校验归属并解析 UUID，不会写入任务 payload。
 type EnqueueFilestoreObjectCleanupJobInput struct {
 	WorkspaceUUID   string
 	FilesystemUUID  string

@@ -38,7 +38,6 @@ type AdminUser struct {
 }
 
 type AdminWorkspace struct {
-	ID               int64           `db:"id"`
 	UUID             string          `db:"uuid"`
 	ExternalID       string          `db:"external_id"`
 	OrganizationUUID string          `db:"organization_uuid"`
@@ -93,10 +92,10 @@ type AdminExternalKey struct {
 }
 
 type AdminTunnel struct {
-	ID                  int64      `db:"id"`
+	UUID                string     `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
-	OrganizationID      int64      `db:"organization_id"`
-	WorkspaceID         *int64     `db:"workspace_id"`
+	OrganizationUUID    string     `db:"organization_uuid"`
+	WorkspaceUUID       *string    `db:"workspace_uuid"`
 	WorkspaceExternalID *string    `db:"workspace_external_id"`
 	DisplayName         *string    `db:"display_name"`
 	Domain              string     `db:"domain"`
@@ -108,10 +107,10 @@ type AdminTunnel struct {
 }
 
 type AdminTunnelCertificate struct {
-	ID               int64      `db:"id"`
+	UUID             string     `db:"uuid"`
 	ExternalID       string     `db:"external_id"`
-	OrganizationID   int64      `db:"organization_id"`
-	TunnelID         int64      `db:"tunnel_id"`
+	OrganizationUUID string     `db:"organization_uuid"`
+	TunnelUUID       string     `db:"tunnel_uuid"`
 	TunnelExternalID string     `db:"tunnel_external_id"`
 	CACertificatePEM string     `db:"ca_certificate_pem"`
 	Fingerprint      string     `db:"fingerprint"`
@@ -173,19 +172,19 @@ type ListAdminExternalKeysParams struct {
 }
 
 type ListAdminTunnelsParams struct {
-	OrganizationID  int64
-	WorkspaceID     string
-	IncludeArchived bool
-	Limit           int
-	Offset          int
+	OrganizationUUID string
+	WorkspaceID      string
+	IncludeArchived  bool
+	Limit            int
+	Offset           int
 }
 
 type ListAdminTunnelCertificatesParams struct {
-	OrganizationID  int64
-	TunnelID        int64
-	IncludeArchived bool
-	Limit           int
-	Offset          int
+	OrganizationUUID string
+	TunnelUUID       string
+	IncludeArchived  bool
+	Limit            int
+	Offset           int
 }
 
 const (
@@ -370,7 +369,7 @@ func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace)
 			:uuid, :external_id, CAST(:organization_uuid AS uuid), :name, :created_at, :created_at,
 			:compartment_id, :display_color, CAST(:data_residency AS jsonb), :external_key_id, CAST(:tags AS jsonb)
 		)
-		returning id, CAST(uuid AS text) as uuid, external_id,
+		returning CAST(uuid AS text) as uuid, external_id,
 			CAST(organization_uuid AS text) as organization_uuid, name, created_at, updated_at,
 			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
 	`, adminWorkspaceArguments(workspace))
@@ -430,7 +429,7 @@ func (d *DB) UpdateAdminWorkspace(ctx context.Context, organizationUUID, externa
 			updated_at = :updated_at
 		where organization_uuid = CAST(:organization_uuid AS uuid)
 			and external_id = :external_id
-		returning id, CAST(uuid AS text) as uuid, external_id,
+		returning CAST(uuid AS text) as uuid, external_id,
 			CAST(organization_uuid AS text) as organization_uuid, name, created_at, updated_at,
 			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
 	`, args)
@@ -447,7 +446,7 @@ func (d *DB) ArchiveAdminWorkspace(ctx context.Context, organizationUUID, extern
 			updated_at = now()
 		where organization_uuid = CAST(:organization_uuid AS uuid)
 			and external_id = :external_id
-		returning id, CAST(uuid AS text) as uuid, external_id,
+		returning CAST(uuid AS text) as uuid, external_id,
 			CAST(organization_uuid AS text) as organization_uuid, name, created_at, updated_at,
 			archived_at, compartment_id, display_color, data_residency, external_key_id, tags
 	`, map[string]any{"organization_uuid": organizationUUID, "external_id": externalID})
@@ -733,18 +732,18 @@ func (d *DB) CountAdminExternalKeyWorkspaceRefs(ctx context.Context, organizatio
 	return count, err
 }
 
-func (d *DB) GetAdminTunnel(ctx context.Context, organizationID int64, externalID string) (AdminTunnel, error) {
+func (d *DB) GetAdminTunnel(ctx context.Context, organizationUUID, externalID string) (AdminTunnel, error) {
 	return getAdminRow[AdminTunnel](ctx, d.sql, adminTunnelSelectSQL()+`
-		where organization_id = :organization_id and external_id = :external_id
-	`, map[string]any{"organization_id": organizationID, "external_id": externalID})
+		where organization_uuid = CAST(:organization_uuid AS uuid) and external_id = :external_id
+	`, map[string]any{"organization_uuid": organizationUUID, "external_id": externalID})
 }
 
 func (d *DB) ListAdminTunnelsPage(ctx context.Context, params ListAdminTunnelsParams) ([]AdminTunnel, bool, error) {
-	query := adminTunnelSelectSQL() + ` where organization_id = :organization_id`
+	query := adminTunnelSelectSQL() + ` where organization_uuid = CAST(:organization_uuid AS uuid)`
 	args := map[string]any{
-		"organization_id": params.OrganizationID,
-		"limit":           params.Limit + 1,
-		"offset":          params.Offset,
+		"organization_uuid": params.OrganizationUUID,
+		"limit":             params.Limit + 1,
+		"offset":            params.Offset,
 	}
 	if !params.IncludeArchived {
 		query += " and archived_at is null"
@@ -753,7 +752,7 @@ func (d *DB) ListAdminTunnelsPage(ctx context.Context, params ListAdminTunnelsPa
 		query += " and workspace_external_id = :workspace_external_id"
 		args["workspace_external_id"] = params.WorkspaceID
 	}
-	query += " order by created_at desc, id desc limit :limit offset :offset"
+	query += " order by created_at desc, uuid desc limit :limit offset :offset"
 	tunnels, err := selectAdminRows[AdminTunnel](ctx, d.sql, query, args)
 	if err != nil {
 		return nil, false, err
@@ -761,48 +760,54 @@ func (d *DB) ListAdminTunnelsPage(ctx context.Context, params ListAdminTunnelsPa
 	return trimAdminPage(tunnels, params.Limit), len(tunnels) > params.Limit, nil
 }
 
-func (d *DB) SetAdminTunnelToken(ctx context.Context, organizationID int64, externalID, tokenID, token string) (AdminTunnel, error) {
+func (d *DB) SetAdminTunnelToken(ctx context.Context, organizationUUID, externalID, tokenID, token string) (AdminTunnel, error) {
 	return getAdminRow[AdminTunnel](ctx, d.sql, `
 		update mcp_tunnels
 		set token_id = :token_id,
 			tunnel_token = :tunnel_token,
 			updated_at = now()
-		where organization_id = :organization_id and external_id = :external_id and archived_at is null
-		returning id, external_id, organization_id, workspace_id, workspace_external_id,
+		where organization_uuid = CAST(:organization_uuid AS uuid) and external_id = :external_id and archived_at is null
+		returning CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid,
+			CAST(workspace_uuid AS text) as workspace_uuid, workspace_external_id,
 			display_name, domain, token_id, tunnel_token, created_at, updated_at, archived_at
 	`, map[string]any{
-		"organization_id": organizationID,
-		"external_id":     externalID,
-		"token_id":        tokenID,
-		"tunnel_token":    token,
+		"organization_uuid": organizationUUID,
+		"external_id":       externalID,
+		"token_id":          tokenID,
+		"tunnel_token":      token,
 	})
 }
 
-func (d *DB) ArchiveAdminTunnel(ctx context.Context, organizationID int64, externalID string) (AdminTunnel, error) {
+func (d *DB) ArchiveAdminTunnel(ctx context.Context, organizationUUID, externalID string) (AdminTunnel, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return AdminTunnel{}, err
 	}
 	defer tx.Rollback()
-	args := map[string]any{"organization_id": organizationID, "external_id": externalID}
+	args := map[string]any{"organization_uuid": organizationUUID, "external_id": externalID}
 	tunnel, err := getAdminRow[AdminTunnel](ctx, tx, `
 		update mcp_tunnels
 		set archived_at = coalesce(archived_at, now()),
 			token_id = null,
 			tunnel_token = null,
 			updated_at = now()
-		where organization_id = :organization_id and external_id = :external_id
-		returning id, external_id, organization_id, workspace_id, workspace_external_id,
+		where organization_uuid = CAST(:organization_uuid AS uuid) and external_id = :external_id
+		returning CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid,
+			CAST(workspace_uuid AS text) as workspace_uuid, workspace_external_id,
 			display_name, domain, token_id, tunnel_token, created_at, updated_at, archived_at
 	`, args)
 	if err != nil {
 		return AdminTunnel{}, err
 	}
-	args["tunnel_id"] = tunnel.ID
+	args["tunnel_uuid"] = tunnel.UUID
 	if _, err := namedExecContext(ctx, tx, `
 		update mcp_tunnel_certificates
 		set archived_at = coalesce(archived_at, now())
-		where organization_id = :organization_id and tunnel_id = :tunnel_id and archived_at is null
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and tunnel_uuid = CAST(:tunnel_uuid AS uuid)
+			and archived_at is null
 	`, args); err != nil {
 		return AdminTunnel{}, err
 	}
@@ -815,14 +820,16 @@ func (d *DB) ArchiveAdminTunnel(ctx context.Context, organizationID int64, exter
 func (d *DB) CreateAdminTunnelCertificate(ctx context.Context, cert AdminTunnelCertificate) (AdminTunnelCertificate, error) {
 	created, err := getAdminRow[AdminTunnelCertificate](ctx, d.sql, `
 		insert into mcp_tunnel_certificates (
-			external_id, organization_id, tunnel_id, tunnel_external_id,
+			external_id, organization_uuid, tunnel_uuid, tunnel_external_id,
 			ca_certificate_pem, fingerprint, expires_at, created_at
 		)
 		values (
-			:external_id, :organization_id, :tunnel_id, :tunnel_external_id,
+			:external_id, CAST(:organization_uuid AS uuid), CAST(:tunnel_uuid AS uuid), :tunnel_external_id,
 			:ca_certificate_pem, :fingerprint, :expires_at, :created_at
 		)
-		returning id, external_id, organization_id, tunnel_id, tunnel_external_id,
+		returning CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid,
+			CAST(tunnel_uuid AS text) as tunnel_uuid, tunnel_external_id,
 			ca_certificate_pem, fingerprint, expires_at, created_at, archived_at
 	`, adminTunnelCertificateArguments(cert))
 	if isUniqueViolation(err) {
@@ -831,13 +838,13 @@ func (d *DB) CreateAdminTunnelCertificate(ctx context.Context, cert AdminTunnelC
 	return created, err
 }
 
-func (d *DB) GetAdminTunnelCertificate(ctx context.Context, organizationID int64, tunnelExternalID, certExternalID string) (AdminTunnelCertificate, error) {
+func (d *DB) GetAdminTunnelCertificate(ctx context.Context, organizationUUID, tunnelExternalID, certExternalID string) (AdminTunnelCertificate, error) {
 	return getAdminRow[AdminTunnelCertificate](ctx, d.sql, adminTunnelCertificateSelectSQL()+`
-		where organization_id = :organization_id
+		where organization_uuid = CAST(:organization_uuid AS uuid)
 			and tunnel_external_id = :tunnel_external_id
 			and external_id = :external_id
 	`, map[string]any{
-		"organization_id":    organizationID,
+		"organization_uuid":  organizationUUID,
 		"tunnel_external_id": tunnelExternalID,
 		"external_id":        certExternalID,
 	})
@@ -845,18 +852,19 @@ func (d *DB) GetAdminTunnelCertificate(ctx context.Context, organizationID int64
 
 func (d *DB) ListAdminTunnelCertificatesPage(ctx context.Context, params ListAdminTunnelCertificatesParams) ([]AdminTunnelCertificate, bool, error) {
 	query := adminTunnelCertificateSelectSQL() + `
-		where organization_id = :organization_id and tunnel_id = :tunnel_id
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and tunnel_uuid = CAST(:tunnel_uuid AS uuid)
 	`
 	args := map[string]any{
-		"organization_id": params.OrganizationID,
-		"tunnel_id":       params.TunnelID,
-		"limit":           params.Limit + 1,
-		"offset":          params.Offset,
+		"organization_uuid": params.OrganizationUUID,
+		"tunnel_uuid":       params.TunnelUUID,
+		"limit":             params.Limit + 1,
+		"offset":            params.Offset,
 	}
 	if !params.IncludeArchived {
 		query += " and archived_at is null"
 	}
-	query += " order by created_at desc, id desc limit :limit offset :offset"
+	query += " order by created_at desc, uuid desc limit :limit offset :offset"
 	certs, err := selectAdminRows[AdminTunnelCertificate](ctx, d.sql, query, args)
 	if err != nil {
 		return nil, false, err
@@ -864,29 +872,33 @@ func (d *DB) ListAdminTunnelCertificatesPage(ctx context.Context, params ListAdm
 	return trimAdminPage(certs, params.Limit), len(certs) > params.Limit, nil
 }
 
-func (d *DB) ArchiveAdminTunnelCertificate(ctx context.Context, organizationID int64, tunnelExternalID, certExternalID string) (AdminTunnelCertificate, error) {
+func (d *DB) ArchiveAdminTunnelCertificate(ctx context.Context, organizationUUID, tunnelExternalID, certExternalID string) (AdminTunnelCertificate, error) {
 	return getAdminRow[AdminTunnelCertificate](ctx, d.sql, `
 		update mcp_tunnel_certificates
 		set archived_at = coalesce(archived_at, now())
-		where organization_id = :organization_id
+		where organization_uuid = CAST(:organization_uuid AS uuid)
 			and tunnel_external_id = :tunnel_external_id
 			and external_id = :external_id
-		returning id, external_id, organization_id, tunnel_id, tunnel_external_id,
+		returning CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid,
+			CAST(tunnel_uuid AS text) as tunnel_uuid, tunnel_external_id,
 			ca_certificate_pem, fingerprint, expires_at, created_at, archived_at
 	`, map[string]any{
-		"organization_id":    organizationID,
+		"organization_uuid":  organizationUUID,
 		"tunnel_external_id": tunnelExternalID,
 		"external_id":        certExternalID,
 	})
 }
 
-func (d *DB) CountActiveAdminTunnelCertificates(ctx context.Context, organizationID, tunnelID int64) (int, error) {
+func (d *DB) CountActiveAdminTunnelCertificates(ctx context.Context, organizationUUID, tunnelUUID string) (int, error) {
 	var count int
 	err := namedGetContext(ctx, d.sql, &count, `
 		select count(*)
 		from mcp_tunnel_certificates
-		where organization_id = :organization_id and tunnel_id = :tunnel_id and archived_at is null
-	`, map[string]any{"organization_id": organizationID, "tunnel_id": tunnelID})
+		where organization_uuid = CAST(:organization_uuid AS uuid)
+			and tunnel_uuid = CAST(:tunnel_uuid AS uuid)
+			and archived_at is null
+	`, map[string]any{"organization_uuid": organizationUUID, "tunnel_uuid": tunnelUUID})
 	return count, err
 }
 
@@ -970,7 +982,7 @@ func adminUserSelectSQL() string {
 
 func adminWorkspaceSelectSQL() string {
 	return `
-		select w.id, CAST(w.uuid AS text) as uuid, w.external_id,
+		select CAST(w.uuid AS text) as uuid, w.external_id,
 			CAST(w.organization_uuid AS text) as organization_uuid, w.name,
 			w.created_at, w.updated_at, w.archived_at, w.compartment_id,
 			w.display_color, w.data_residency, w.external_key_id, w.tags
@@ -1014,7 +1026,9 @@ func adminExternalKeySelectSQL() string {
 
 func adminTunnelSelectSQL() string {
 	return `
-		select id, external_id, organization_id, workspace_id, workspace_external_id,
+		select CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid,
+			CAST(workspace_uuid AS text) as workspace_uuid, workspace_external_id,
 			display_name, domain, token_id, tunnel_token, created_at, updated_at, archived_at
 		from mcp_tunnels
 	`
@@ -1022,7 +1036,9 @@ func adminTunnelSelectSQL() string {
 
 func adminTunnelCertificateSelectSQL() string {
 	return `
-		select id, external_id, organization_id, tunnel_id, tunnel_external_id,
+		select CAST(uuid AS text) as uuid, external_id,
+			CAST(organization_uuid AS text) as organization_uuid,
+			CAST(tunnel_uuid AS text) as tunnel_uuid, tunnel_external_id,
 			ca_certificate_pem, fingerprint, expires_at, created_at, archived_at
 		from mcp_tunnel_certificates
 	`
@@ -1109,8 +1125,8 @@ func adminExternalKeyArguments(key AdminExternalKey) map[string]any {
 func adminTunnelCertificateArguments(cert AdminTunnelCertificate) map[string]any {
 	return map[string]any{
 		"external_id":        cert.ExternalID,
-		"organization_id":    cert.OrganizationID,
-		"tunnel_id":          cert.TunnelID,
+		"organization_uuid":  cert.OrganizationUUID,
+		"tunnel_uuid":        cert.TunnelUUID,
 		"tunnel_external_id": cert.TunnelExternalID,
 		"ca_certificate_pem": cert.CACertificatePEM,
 		"fingerprint":        cert.Fingerprint,

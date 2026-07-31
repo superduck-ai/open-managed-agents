@@ -15,7 +15,7 @@ HTTP 路由、Admin 响应、Platform session 和 webhook payload 中统一使�
 数据库内部 identity，但不会进入 Admin Organization 业务模型；Organization 查询直接按 UUID
 定位。
 
-跨表持久化引用应保存目标资源的 UUID。应用仍可在查询边界把 UUID 解析为当前数据库的 bigint identity，但不能把另一个表的 identity 作为需要跨数据库保持含义的权威引用。数据库不创建 PostgreSQL 外键，引用完整性由写入查询、migration 校验和集成测试维护。
+跨表持久化引用应保存目标资源的 UUID。应用业务层只传递 UUID；bigint identity 仅作为自增主键，或在确有必要时用于数据库内部排序，不用于锁键、行定位、鉴权 Principal、service 接口、API/事件 payload 或跨表持久化引用。数据库不创建 PostgreSQL 外键，引用完整性由写入查询、migration 校验和集成测试维护。
 
 UUID 引用按资源分批迁移。在某个下游表尚未迁移前，兼容路径可以在持久化边界解析其旧 bigint
 引用；已经完成迁移的表不得重新把 identity 暴露给 Admin/Console/Platform 业务模型，也不得
@@ -85,7 +85,7 @@ flowchart LR
 ## 下游资源的 UUID 引用
 
 迁移 `00041_use_uuid_resource_references.sql` 到
-`00044_use_uuid_compatibility_references.sql` 将剩余资源按依赖顺序迁移。所有目标表继续保留自己的
+`00045_use_uuid_tunnel_references.sql` 将剩余资源按依赖顺序迁移。所有目标表继续保留自己的
 `id bigint generated always as identity`，但跨表列、租户隔离、分页稳定键和应用模型都改用 UUID。
 迁移先通过旧 identity 关联目标表并回填 UUID；任何必填引用无法解析都会中止迁移，避免把孤立
 identity 静默带入新结构。PostgreSQL schema 仍不创建外键约束。
@@ -98,6 +98,7 @@ identity 静默带入新结构。PostgreSQL schema 仍不创建外键约束。
 | Code Session 与 runtime（`00043`） | `code_sessions`、三个 `code_session_*_events` 表、`environment_work`、`environment_worker_polls`、`environment_sandboxes` | organization、workspace、session、environment、code session、work 引用 |
 | 后台与统计（`00043`） | `jobs`、`workspace_storage_usage` | `workspace_uuid` |
 | Console 与 Workbench（`00044`） | `console_api_keys`、`workbench_prompts`、`workbench_prompt_revisions`、`workbench_prompt_kv`、`workbench_evaluations`、`workbench_generated_test_cases` | organization、workspace、API key、user、prompt、revision 引用 |
+| Admin Tunnel（`00045`） | `mcp_tunnels`、`mcp_tunnel_certificates` | organization、workspace、tunnel 引用 |
 
 例如 `skill_versions.skill_uuid`、`deployment_runs.deployment_uuid`、
 `session_events.session_uuid`、`code_session_outbound_events.code_session_uuid` 和
@@ -111,13 +112,13 @@ identity 静默带入新结构。PostgreSQL schema 仍不创建外键约束。
 
 ## 应用查询边界
 
-鉴权边界提供 organization identity 和 UUID，不再提供 organization external ID。其中 Organization Admin、Workspace Admin、Workspace API Key Admin 和 External Key 的 workspace 引用计数直接传递可信 `organization_uuid`，写入和租户过滤均使用：
+鉴权边界只提供资源 UUID 与协议所需 external ID，不再提供 organization/workspace/API key 等资源的 bigint identity。其中 Organization Admin、Workspace Admin、Workspace API Key Admin、External Key 和 Tunnel 直接传递可信 `organization_uuid`，写入和租户过滤均使用：
 
 ```sql
 workspaces.organization_uuid = CAST(:organization_uuid AS uuid)
 ```
 
-这些路径不需要返回 organization 的其他字段，因此不得仅为 bigint identity 与 UUID 互转而 JOIN `organizations`。普通 workspace API key 鉴权仍需解析 organization identity 和 UUID；该查询保留 JOIN，并把 UUID 提供给后续 Workspace 查询。
+这些路径不需要返回 organization 的其他字段，因此不得仅为 bigint identity 与 UUID 互转而 JOIN `organizations`。普通 workspace API key 鉴权直接从 Workspace 的 `organization_uuid` 建立租户范围，不再 JOIN Organization 读取 identity。
 
 Users、Invites、Workspace Members 和 External Keys 的组织隔离现在直接过滤各表的
 `organization_uuid`。API Keys 直接通过 `workspace_uuid` 关联 Workspace，通过
@@ -129,9 +130,18 @@ Users、Invites、Workspace Members 和 External Keys 的组织隔离现在直�
 目标资源存在、租户归属一致或确实需要读取目标字段的 JOIN/`INSERT ... SELECT` 继续保留；
 删除 JOIN 的判断依据是查询语义，而不是表中已经出现某个 UUID 列。
 
-Platform session 现在持久化 `api_key_uuid`。读取升级前保存在 Redis 中、尚未包含该字段的 session
-时，鉴权边界会按现有可信 API key 标识解析一次 UUID 并回写 session；后续业务调用不再依赖
-API key identity。
+Filestore 的授权 Principal、service 输入、后台清理任务和目录分页游标也只使用 UUID。数据库查询直接按
+`workspace_uuid` 与 `filesystem_uuid` 限定命名空间，不能把 Workspace identity 传入后再通过
+子查询反查 UUID；命名空间 advisory lock 使用带命名空间前缀的 UUID 稳定哈希，行更新也直接
+按 UUID 定位。目录分页以 `(path, uuid)` 作为键集排序。
+
+Admin Tunnel 使用 `mcp_tunnels.organization_uuid`、可空的 `workspace_uuid`，Certificate 使用
+`organization_uuid` 与 `tunnel_uuid`。Tunnel 与 Certificate 列表以自身 UUID 作为同时间戳下的
+稳定排序键，因此 Admin service 不再需要 `Principal.OrganizationID` 或 Tunnel identity。
+
+Platform session 现在持久化 `api_key_uuid` 和 `user_uuid`。读取升级前保存在 Redis 中、尚未包含
+任一字段的 session 时，鉴权边界会按现有可信用户标识解析一次 UUID 并回写 session；后续业务
+调用不再依赖 API key 或 user identity。
 
 Console 和 Platform 的组织路由只接受 UUID，不再用 `org_...` 或任意文本值回退查询。
 `GET /v1/organizations/me` 的 `id` 以及 webhook `data.organization_id` 都直接返回相同的
@@ -158,5 +168,8 @@ external ID 而替换已有 UUID。
 - 目标表的应用模型、过滤条件、父子关联与稳定排序不读取 bigint identity；
 - nullable UUID 引用保留原有可空语义，必填或已有非空引用无法映射时 migration 失败；
 - Platform session 持久化 API key UUID，并兼容升级前缺少该字段的已登录 session；
+- 鉴权 Principal 与 Filestore Principal 不携带 bigint identity；
+- Filestore 查询不再通过 Workspace identity 反查 UUID，目录分页使用 UUID；
+- MCP Tunnel 与 Certificate 的 organization、workspace 和 tunnel 引用均为 UUID；
 - schema 仍不包含 PostgreSQL 外键；
 - 全量 Go 测试、lint、死代码、重复代码和复杂度门禁通过。

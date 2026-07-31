@@ -86,25 +86,24 @@ const (
 		limit 1
 	`
 	resolvePlatformSessionIdentityQuery = `
-		select o.id AS organization_id, CAST(o.uuid AS text) AS organization_uuid,
-			w.id AS workspace_id, CAST(w.uuid AS text) AS workspace_uuid,
+		select CAST(u.organization_uuid AS text) AS organization_uuid,
+			CAST(w.uuid AS text) AS workspace_uuid,
 			w.external_id AS workspace_external_id,
-			u.id AS user_id, u.external_id AS user_external_id,
-			ak.id AS api_key_id, CAST(ak.uuid AS text) AS api_key_uuid,
+			CAST(u.uuid AS text) AS user_uuid, u.external_id AS user_external_id,
+			CAST(ak.uuid AS text) AS api_key_uuid,
 			ak.external_id AS api_key_external_id
-		from organizations o
-		join users u on u.organization_uuid = o.uuid
+		from users u
 		join lateral (
-			select id, uuid, external_id
+			select uuid, external_id
 			from workspaces
-			where organization_uuid = o.uuid
+			where organization_uuid = u.organization_uuid
 			  and archived_at is null
 			order by case when external_id = 'workspace_default' then 0 else 1 end,
 				created_at asc, uuid asc
 			limit 1
 		) w on true
 		join lateral (
-			select id, uuid, external_id
+			select uuid, external_id
 			from api_keys
 			where workspace_uuid = w.uuid
 			  and status = 'active'
@@ -113,7 +112,7 @@ const (
 				created_at asc, uuid asc
 			limit 1
 		) ak on true
-		where CAST(o.uuid AS text) = :org_uuid
+		where CAST(u.organization_uuid AS text) = :org_uuid
 		  and u.deleted_at is null
 		  and (
 			u.external_id = :user_uuid
@@ -329,28 +328,22 @@ type platformAuthOrganizationRefRow struct {
 }
 
 type platformSessionIdentityRow struct {
-	OrganizationID      int64  `db:"organization_id"`
 	OrganizationUUID    string `db:"organization_uuid"`
-	WorkspaceID         int64  `db:"workspace_id"`
 	WorkspaceUUID       string `db:"workspace_uuid"`
 	WorkspaceExternalID string `db:"workspace_external_id"`
-	UserID              int64  `db:"user_id"`
+	UserUUID            string `db:"user_uuid"`
 	UserExternalID      string `db:"user_external_id"`
-	APIKeyID            int64  `db:"api_key_id"`
 	APIKeyUUID          string `db:"api_key_uuid"`
 	APIKeyExternalID    string `db:"api_key_external_id"`
 }
 
 func (r platformSessionIdentityRow) session() platformsession.Session {
 	return platformsession.Session{
-		OrganizationID:      r.OrganizationID,
 		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceID:         r.WorkspaceID,
 		WorkspaceUUID:       r.WorkspaceUUID,
 		WorkspaceExternalID: r.WorkspaceExternalID,
-		UserID:              r.UserID,
+		UserUUID:            r.UserUUID,
 		UserExternalID:      r.UserExternalID,
-		APIKeyID:            r.APIKeyID,
 		APIKeyUUID:          r.APIKeyUUID,
 		APIKeyExternalID:    r.APIKeyExternalID,
 	}

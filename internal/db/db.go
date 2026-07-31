@@ -41,12 +41,9 @@ type DB struct {
 }
 
 type APIKey struct {
-	ID                  int64
 	UUID                string
 	ExternalID          string
-	OrganizationID      int64
 	OrganizationUUID    string
-	WorkspaceID         int64
 	WorkspaceUUID       string
 	WorkspaceExternalID string
 }
@@ -57,12 +54,9 @@ type foreignKeyRow struct {
 }
 
 type apiKeyRow struct {
-	ID                  int64  `db:"id"`
 	UUID                string `db:"uuid"`
 	ExternalID          string `db:"external_id"`
-	OrganizationID      int64  `db:"organization_id"`
 	OrganizationUUID    string `db:"organization_uuid"`
-	WorkspaceID         int64  `db:"workspace_id"`
 	WorkspaceUUID       string `db:"workspace_uuid"`
 	WorkspaceExternalID string `db:"workspace_external_id"`
 }
@@ -167,13 +161,12 @@ const (
 			updated_at = now()
 	`
 	getAPIKeyQuery = `
-		select ak.id, CAST(ak.uuid AS text) AS uuid, ak.external_id,
-			o.id as organization_id, CAST(o.uuid AS text) as organization_uuid,
-			w.id as workspace_id, CAST(w.uuid AS text) as workspace_uuid,
+		select CAST(ak.uuid AS text) AS uuid, ak.external_id,
+			CAST(w.organization_uuid AS text) as organization_uuid,
+			CAST(w.uuid AS text) as workspace_uuid,
 			w.external_id as workspace_external_id
 		from api_keys ak
 		join workspaces w on w.uuid = ak.workspace_uuid
-		join organizations o on o.uuid = w.organization_uuid
 		where ak.key_hash = :key_hash
 			and ak.status = 'active'
 			and (ak.expires_at is null or ak.expires_at > now())
@@ -571,12 +564,9 @@ func (d *DB) GetAPIKey(ctx context.Context, keyHash string) (APIKey, error) {
 
 func (r apiKeyRow) apiKey() APIKey {
 	return APIKey{
-		ID:                  r.ID,
 		UUID:                r.UUID,
 		ExternalID:          r.ExternalID,
-		OrganizationID:      r.OrganizationID,
 		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceID:         r.WorkspaceID,
 		WorkspaceUUID:       r.WorkspaceUUID,
 		WorkspaceExternalID: r.WorkspaceExternalID,
 	}

@@ -58,21 +58,19 @@ func TestPlatformAuthQueriesUseSQLXNamedParameters(t *testing.T) {
 
 func TestPlatformSessionIdentityRowMapping(t *testing.T) {
 	row := platformSessionIdentityRow{
-		OrganizationID:      1,
 		OrganizationUUID:    "org-uuid",
-		WorkspaceID:         2,
 		WorkspaceUUID:       "workspace-uuid",
 		WorkspaceExternalID: "workspace_test",
-		UserID:              3,
+		UserUUID:            "user-uuid",
 		UserExternalID:      "user_test",
-		APIKeyID:            4,
 		APIKeyUUID:          "api-key-uuid",
 		APIKeyExternalID:    "api_key_test",
 	}
 
 	session := row.session()
-	if session.OrganizationID != row.OrganizationID ||
+	if session.OrganizationUUID != row.OrganizationUUID ||
 		session.WorkspaceExternalID != row.WorkspaceExternalID ||
+		session.UserUUID != row.UserUUID ||
 		session.APIKeyUUID != row.APIKeyUUID ||
 		session.APIKeyExternalID != row.APIKeyExternalID {
 		t.Fatalf("session = %#v, want values from row %#v", session, row)

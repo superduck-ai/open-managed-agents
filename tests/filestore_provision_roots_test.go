@@ -16,7 +16,7 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 	t.Run("rejects an active file at a fixed root", func(t *testing.T) {
 		app := newTestAppWithStore(t, nil, newFakeStore("filestore-provision-root-file"))
 		t.Cleanup(app.close)
-		_, workspaceID, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
+		_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
 		input := newFilestoreProvisionInput(
 			organizationUUID,
 			workspaceUUID,
@@ -26,10 +26,10 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 		)
 		filesystem := insertFilestoreFilesystemWithoutRoots(t, app, input)
 		if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  workspaceID,
-			FilesystemID: filesystem.ID,
-			Path:         "/uploads",
-			Blob:         workspaceStorageBlob(1, nil),
+			WorkspaceUUID:  workspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			Path:           "/uploads",
+			Blob:           workspaceStorageBlob(1, nil),
 		}); err != nil {
 			t.Fatalf("PutFilestoreFile(/uploads) error = %v", err)
 		}
@@ -81,8 +81,8 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 		if err != nil || created {
 			t.Fatalf("first idempotent ProvisionFilestoreFilesystem() = created %v, error %v", created, err)
 		}
-		if filesystem.ID != inserted.ID {
-			t.Fatalf("reused filesystem ID = %d, want %d", filesystem.ID, inserted.ID)
+		if filesystem.UUID != inserted.UUID {
+			t.Fatalf("reused filesystem UUID = %q, want %q", filesystem.UUID, inserted.UUID)
 		}
 		assertFixedFilestoreRoots(t, app, filesystem)
 
@@ -96,8 +96,8 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 		if err != nil || created {
 			t.Fatalf("second idempotent ProvisionFilestoreFilesystem() = created %v, error %v", created, err)
 		}
-		if repaired.ID != filesystem.ID {
-			t.Fatalf("repaired filesystem ID = %d, want %d", repaired.ID, filesystem.ID)
+		if repaired.UUID != filesystem.UUID {
+			t.Fatalf("repaired filesystem UUID = %q, want %q", repaired.UUID, filesystem.UUID)
 		}
 		assertFixedFilestoreRoots(t, app, repaired)
 	})

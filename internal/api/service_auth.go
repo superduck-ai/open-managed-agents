@@ -72,12 +72,9 @@ func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (au
 	}
 	return auth.Principal{
 		CredentialType:      auth.CredentialTypeAPIKey,
-		APIKeyID:            key.ID,
 		APIKeyUUID:          key.UUID,
 		APIKeyExternalID:    key.ExternalID,
-		OrganizationID:      key.OrganizationID,
 		OrganizationUUID:    key.OrganizationUUID,
-		WorkspaceID:         key.WorkspaceID,
 		WorkspaceUUID:       key.WorkspaceUUID,
 		WorkspaceExternalID: key.WorkspaceExternalID,
 	}, true, nil
@@ -165,15 +162,11 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 	readonly := claims.Readonly != nil && *claims.Readonly
 	return filestoreapi.Principal{
 		Subject:              claims.Subject,
-		OrganizationID:       scope.OrganizationID,
 		OrganizationUUID:     scope.OrganizationUUID,
-		WorkspaceID:          scope.WorkspaceID,
 		WorkspaceUUID:        scope.WorkspaceUUID,
 		WorkspaceExternalID:  scope.WorkspaceExternalID,
-		AccountID:            scope.AccountID,
 		AccountUUID:          scope.AccountUUID,
 		AccountExternalID:    scope.AccountExternalID,
-		FilesystemInternalID: scope.FilesystemID,
 		FilesystemUUID:       scope.FilesystemUUID,
 		FilesystemExternalID: scope.FilesystemExternalID,
 		Readonly:             readonly,

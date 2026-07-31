@@ -180,8 +180,13 @@ func lockSessionFilestoreMutationTx(
 		return FilestoreFilesystem{}, err
 	}
 	if _, err := namedExecContext(ctx, tx, `
-		select pg_advisory_xact_lock(-CAST(:filesystem_id AS bigint))
-	`, map[string]any{"filesystem_id": filesystem.ID}); err != nil {
+		select pg_advisory_xact_lock(
+			hashtextextended(
+				concat('filestore-filesystem', chr(58), CAST(:filesystem_uuid AS text)),
+				0
+			)
+		)
+	`, map[string]any{"filesystem_uuid": filesystem.UUID}); err != nil {
 		return FilestoreFilesystem{}, err
 	}
 	return filesystem, nil

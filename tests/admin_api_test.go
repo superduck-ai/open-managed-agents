@@ -64,7 +64,6 @@ type adminReportPage struct {
 }
 
 type adminDefaultIDs struct {
-	OrganizationID   int64
 	OrganizationUUID string
 	WorkspaceUUID    string
 	UserUUID         string
@@ -557,6 +556,31 @@ func TestAdminAPI(t *testing.T) {
 			t.Fatalf("admin foreign key count = %d, want 0", foreignKeyCount)
 		}
 	})
+
+	t.Run("success tunnel references use UUID columns", func(t *testing.T) {
+		var uuidColumnCount, legacyColumnCount int
+		if err := app.db.Pool.QueryRow(context.Background(), `
+			select
+				count(*) filter (
+					where data_type = 'uuid'
+						and (
+							(table_name = 'mcp_tunnels' and column_name in ('organization_uuid', 'workspace_uuid'))
+							or (table_name = 'mcp_tunnel_certificates' and column_name in ('organization_uuid', 'tunnel_uuid'))
+						)
+				),
+				count(*) filter (
+					where column_name in ('organization_id', 'workspace_id', 'tunnel_id')
+				)
+			from information_schema.columns
+			where table_schema = current_schema()
+				and table_name in ('mcp_tunnels', 'mcp_tunnel_certificates')
+		`).Scan(&uuidColumnCount, &legacyColumnCount); err != nil {
+			t.Fatalf("inspect tunnel reference columns: %v", err)
+		}
+		if uuidColumnCount != 4 || legacyColumnCount != 0 {
+			t.Fatalf("tunnel reference columns = %d UUID and %d legacy, want 4 and 0", uuidColumnCount, legacyColumnCount)
+		}
+	})
 }
 
 func adminDo(t *testing.T, app *testApp, method, path string, body any, key, beta string) *http.Response {
@@ -715,28 +739,26 @@ func seedAdminAPIKey(t *testing.T, database *db.DB, suffix, rawKey string) (stri
 func seedAdminTunnel(t *testing.T, database *db.DB, tunnelID, domain string, workspaceExternalID *string) string {
 	t.Helper()
 	ids := getAdminDefaultIDs(t, database)
-	var workspaceID *int64
-	var workspaceIDText *string
+	var workspaceUUID *string
 	if workspaceExternalID != nil {
-		var loadedWorkspaceID int64
+		var loadedWorkspaceUUID string
 		if err := database.Pool.QueryRow(context.Background(), `
-			select id
+			select CAST(uuid AS text)
 			from workspaces
 			where external_id = $1
-				and organization_uuid = (select uuid from organizations where id = $2)
-		`, *workspaceExternalID, ids.OrganizationID).Scan(&loadedWorkspaceID); err != nil {
+				and organization_uuid = CAST($2 AS uuid)
+		`, *workspaceExternalID, ids.OrganizationUUID).Scan(&loadedWorkspaceUUID); err != nil {
 			t.Fatalf("load tunnel workspace: %v", err)
 		}
-		workspaceID = &loadedWorkspaceID
-		workspaceIDText = workspaceExternalID
+		workspaceUUID = &loadedWorkspaceUUID
 	}
 	displayName := "Tunnel " + tunnelID
 	if _, err := database.Pool.Exec(context.Background(), `
 		insert into mcp_tunnels (
-			external_id, organization_id, workspace_id, workspace_external_id, display_name, domain
+			external_id, organization_uuid, workspace_uuid, workspace_external_id, display_name, domain
 		)
 		values ($1, $2, $3, $4, $5, $6)
-	`, tunnelID, ids.OrganizationID, workspaceID, workspaceIDText, displayName, domain); err != nil {
+	`, tunnelID, ids.OrganizationUUID, workspaceUUID, workspaceExternalID, displayName, domain); err != nil {
 		t.Fatalf("seed admin tunnel: %v", err)
 	}
 	return tunnelID
@@ -746,11 +768,11 @@ func getAdminDefaultIDs(t *testing.T, database *db.DB) adminDefaultIDs {
 	t.Helper()
 	var ids adminDefaultIDs
 	if err := database.Pool.QueryRow(context.Background(), `
-		select o.id, o.uuid::text, w.uuid::text, u.uuid::text
-		from organizations o
-		join workspaces w on w.organization_uuid = o.uuid and w.external_id = 'workspace_default'
-		join users u on u.organization_uuid = o.uuid and u.external_id = 'user_default'
-	`).Scan(&ids.OrganizationID, &ids.OrganizationUUID, &ids.WorkspaceUUID, &ids.UserUUID); err != nil {
+		select CAST(w.organization_uuid AS text), CAST(w.uuid AS text), CAST(u.uuid AS text)
+		from workspaces w
+		join users u on u.organization_uuid = w.organization_uuid and u.external_id = 'user_default'
+		where w.external_id = 'workspace_default'
+	`).Scan(&ids.OrganizationUUID, &ids.WorkspaceUUID, &ids.UserUUID); err != nil {
 		t.Fatalf("load admin default ids: %v", err)
 	}
 	return ids

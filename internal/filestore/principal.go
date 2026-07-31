@@ -10,16 +10,12 @@ type principalContextKey struct{}
 // workspace API key 或 code-session 凭证的兼容身份。
 type Principal struct {
 	Subject             string
-	OrganizationID      int64
 	OrganizationUUID    string
-	WorkspaceID         int64
 	WorkspaceUUID       string
 	WorkspaceExternalID string
-	AccountID           int64
 	AccountUUID         string
 	AccountExternalID   string
 
-	FilesystemInternalID int64
 	FilesystemUUID       string
 	FilesystemExternalID string
 	Readonly             bool

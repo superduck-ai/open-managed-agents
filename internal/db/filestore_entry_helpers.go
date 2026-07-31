@@ -13,7 +13,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-func (d *DB) beginFilestoreNamespaceMutation(ctx context.Context, workspaceID, filesystemID int64) (*sqlx.Tx, FilestoreFilesystem, error) {
+func (d *DB) beginFilestoreNamespaceMutation(ctx context.Context, workspaceUUID, filesystemUUID string) (*sqlx.Tx, FilestoreFilesystem, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, FilestoreFilesystem{}, err
@@ -26,33 +26,38 @@ func (d *DB) beginFilestoreNamespaceMutation(ctx context.Context, workspaceID, f
 	}()
 	// 即使目录操作通常不改变容量，也可能替换到期文件；统一锁序比事后升级锁更安全。
 	if _, err := namedExecContext(ctx, tx, `
-		select pg_advisory_xact_lock(:workspace_id)
-	`, map[string]any{"workspace_id": workspaceID}); err != nil {
+		select pg_advisory_xact_lock(hashtextextended(CAST(:workspace_uuid AS text), 0))
+	`, map[string]any{"workspace_uuid": workspaceUUID}); err != nil {
 		return nil, FilestoreFilesystem{}, err
 	}
 	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
-			and id = :filesystem_id and deleted_at is null
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and uuid = CAST(:filesystem_uuid AS uuid)
+			and deleted_at is null
 		for update
 	`, map[string]any{
-		"workspace_id":  workspaceID,
-		"filesystem_id": filesystemID,
+		"workspace_uuid":  workspaceUUID,
+		"filesystem_uuid": filesystemUUID,
 	})
 	if err != nil {
 		return nil, FilestoreFilesystem{}, err
 	}
-	// 文件系统锁使用负数键，与 Files API 已占用的正数工作区锁命名空间隔离。
 	if _, err := namedExecContext(ctx, tx, `
-		select pg_advisory_xact_lock(-CAST(:filesystem_id AS bigint))
-	`, map[string]any{"filesystem_id": filesystem.ID}); err != nil {
+		select pg_advisory_xact_lock(
+			hashtextextended(
+				concat('filestore-filesystem', chr(58), CAST(:filesystem_uuid AS text)),
+				0
+			)
+		)
+	`, map[string]any{"filesystem_uuid": filesystem.UUID}); err != nil {
 		return nil, FilestoreFilesystem{}, err
 	}
 	rollback = false
 	return tx, filesystem, nil
 }
 
-func (d *DB) resolveFilestoreDirectoryForRead(ctx context.Context, workspaceID, filesystemID int64, directoryPath string) (FilestoreFilesystem, error) {
-	filesystem, err := getFilestoreFilesystemByIDSQLX(ctx, d.sql, workspaceID, filesystemID)
+func (d *DB) resolveFilestoreDirectoryForRead(ctx context.Context, workspaceUUID, filesystemUUID, directoryPath string) (FilestoreFilesystem, error) {
+	filesystem, err := getFilestoreFilesystemByUUIDSQLX(ctx, d.sql, workspaceUUID, filesystemUUID)
 	if err != nil {
 		return FilestoreFilesystem{}, err
 	}
@@ -192,7 +197,7 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fil
 			return FilestoreEntry{}, ErrFilestorePathExists
 		}
 		if _, _, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
-			WorkspaceUUID: filesystem.WorkspaceUUID, FilesystemID: filesystem.ID,
+			WorkspaceUUID: filesystem.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 		}, existing, "expired_path_replaced", now); err != nil {
 			return FilestoreEntry{}, err
 		}
@@ -212,13 +217,13 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fil
 				created_at = :now, updated_at = :now
 			where workspace_uuid = :workspace_uuid
 				and filesystem_uuid = :filesystem_uuid
-				and id = :entry_id
+				and uuid = CAST(:entry_uuid AS uuid)
 				and deleted_at is null
 			returning `+filestoreEntryColumns()+`
 		`, map[string]any{
 			"workspace_uuid":               filesystem.WorkspaceUUID,
 			"filesystem_uuid":              filesystem.UUID,
-			"entry_id":                     existing.ID,
+			"entry_uuid":                   existing.UUID,
 			"parent_path":                  filestoreParentPath(directoryPath),
 			"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
 			"created_by_session_uuid":      filesystem.SessionUUID,
@@ -266,7 +271,6 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fil
 }
 
 type putFilestoreFileTxInput struct {
-	WorkspaceID                int64
 	Path                       string
 	Blob                       FilestoreFileBlob
 	OverwriteExisting          bool
@@ -311,7 +315,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	var cleanupJobs []FilestoreObjectCleanupJob
 	if found && existing.Kind == FilestoreEntryKindFile && !sameFilestoreObject(existing, input.Blob) {
 		job, enqueued, err := enqueueOwnedFilestoreEntryCleanupJobTx(ctx, tx, filestoreEntryCleanupScope{
-			WorkspaceUUID: filesystem.WorkspaceUUID, FilesystemID: filesystem.ID,
+			WorkspaceUUID: filesystem.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 		}, existing, "file_replaced", input.Now)
 		if err != nil {
 			return FilestoreMutationResult{}, err
@@ -336,7 +340,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, existing FilestoreEntry, found bool, input putFilestoreFileTxInput) (FilestoreEntry, error) {
 	arguments := filestoreFileWriteArguments(filesystem, input)
 	if found {
-		arguments["entry_id"] = existing.ID
+		arguments["entry_uuid"] = existing.UUID
 		return getFilestoreEntrySQLX(ctx, tx, `
 			update filestore_entries
 			set kind = 'file', path = :entry_path, parent_path = :parent_path,
@@ -355,7 +359,7 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				created_at = :now, updated_at = :now
 			where workspace_uuid = :workspace_uuid
 				and filesystem_uuid = :filesystem_uuid
-				and id = :entry_id
+				and uuid = CAST(:entry_uuid AS uuid)
 				and deleted_at is null
 			returning `+filestoreEntryColumns()+`
 		`, arguments)

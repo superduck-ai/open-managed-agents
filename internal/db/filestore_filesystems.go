@@ -143,15 +143,11 @@ type filestoreSessionBindingRow struct {
 }
 
 const filestoreSessionTokenScopeQuery = `
-	select o.id as organization_id,
-		cast(o.uuid as text) as organization_uuid,
-		w.id as workspace_id,
+	select cast(o.uuid as text) as organization_uuid,
 		cast(w.uuid as text) as workspace_uuid,
 		w.external_id as workspace_external_id,
-		u.id as account_id,
 		cast(u.uuid as text) as account_uuid,
 		u.external_id as account_external_id,
-		fs.id as filesystem_id,
 		cast(fs.uuid as text) as filesystem_uuid,
 		fs.external_id as filesystem_external_id,
 		coalesce(o.settings->'org_taints', cast('[]' as jsonb)) as org_taints_json,
@@ -198,15 +194,11 @@ func (d *DB) ResolveFilestoreTokenScope(
 	// 查询末尾两列同时取回当前安全策略：组织 taints 来自 settings JSON，
 	// CMEK 状态则由工作区是否配置 external_key_id 推导，供鉴权层校验 JWT 快照。
 	return getFilestoreTokenScopeSQLX(ctx, d.sql, `
-		select o.id as organization_id,
-			cast(o.uuid as text) as organization_uuid,
-			w.id as workspace_id,
+		select cast(o.uuid as text) as organization_uuid,
 			cast(w.uuid as text) as workspace_uuid,
 			w.external_id as workspace_external_id,
-			u.id as account_id,
 			cast(u.uuid as text) as account_uuid,
 			u.external_id as account_external_id,
-			fs.id as filesystem_id,
 			cast(fs.uuid as text) as filesystem_uuid,
 			fs.external_id as filesystem_external_id,
 			coalesce(o.settings->'org_taints', cast('[]' as jsonb)) as org_taints_json,

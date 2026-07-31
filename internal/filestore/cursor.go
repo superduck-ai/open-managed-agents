@@ -16,7 +16,7 @@ type directoryCursor struct {
 	Path         string `json:"path"`
 	Recursive    bool   `json:"recursive"`
 	LastPath     string `json:"lastPath"`
-	LastID       int64  `json:"lastId"`
+	LastUUID     string `json:"lastUuid"`
 }
 
 func encodeDirectoryCursor(cursor directoryCursor) (string, error) {
@@ -41,7 +41,7 @@ func decodeDirectoryCursor(raw, filesystemID, directoryPath string, recursive bo
 		return directoryCursor{}, errors.New("cursor is invalid")
 	}
 	if cursor.Version != filestoreCursorVersion || cursor.FilesystemID != filesystemID ||
-		cursor.Path != directoryPath || cursor.Recursive != recursive || cursor.LastPath == "" || cursor.LastID <= 0 {
+		cursor.Path != directoryPath || cursor.Recursive != recursive || cursor.LastPath == "" || cursor.LastUUID == "" {
 		// 游标不是独立授权凭证；将查询条件纳入校验可阻止跨目录复用，也保证翻页排序连续。
 		return directoryCursor{}, errors.New("cursor does not match this listing")
 	}

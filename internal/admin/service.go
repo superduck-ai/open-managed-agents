@@ -595,7 +595,7 @@ func (s *Service) CostReport(query reportQuery) (reportResponse, error) {
 }
 
 func (s *Service) GetTunnel(ctx context.Context, principal auth.Principal, tunnelID string) (tunnelResponse, error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationID, tunnelID)
+	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
 	if err != nil {
 		return tunnelResponse{}, mapAdminDBError(err, "Tunnel not found")
 	}
@@ -604,11 +604,11 @@ func (s *Service) GetTunnel(ctx context.Context, principal auth.Principal, tunne
 
 func (s *Service) ListTunnels(ctx context.Context, principal auth.Principal, workspaceID string, includeArchived bool, limit, offset int) (tokenPageResponse[tunnelResponse], error) {
 	records, hasMore, err := s.db.ListAdminTunnelsPage(ctx, db.ListAdminTunnelsParams{
-		OrganizationID:  principal.OrganizationID,
-		WorkspaceID:     workspaceID,
-		IncludeArchived: includeArchived,
-		Limit:           limit,
-		Offset:          offset,
+		OrganizationUUID: principal.OrganizationUUID,
+		WorkspaceID:      workspaceID,
+		IncludeArchived:  includeArchived,
+		Limit:            limit,
+		Offset:           offset,
 	})
 	if err != nil {
 		return tokenPageResponse[tunnelResponse]{}, err
@@ -621,7 +621,7 @@ func (s *Service) ListTunnels(ctx context.Context, principal auth.Principal, wor
 }
 
 func (s *Service) RevealTunnelToken(ctx context.Context, principal auth.Principal, tunnelID string) (tunnelTokenResponse, error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationID, tunnelID)
+	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
 	if err != nil {
 		return tunnelTokenResponse{}, mapAdminDBError(err, "Tunnel not found")
 	}
@@ -635,7 +635,7 @@ func (s *Service) RevealTunnelToken(ctx context.Context, principal auth.Principa
 	if err != nil {
 		return tunnelTokenResponse{}, err
 	}
-	updated, err := s.db.SetAdminTunnelToken(ctx, principal.OrganizationID, tunnelID, tokenID, token)
+	updated, err := s.db.SetAdminTunnelToken(ctx, principal.OrganizationUUID, tunnelID, tokenID, token)
 	if err != nil {
 		return tunnelTokenResponse{}, mapAdminDBError(err, "Tunnel not found")
 	}
@@ -643,7 +643,7 @@ func (s *Service) RevealTunnelToken(ctx context.Context, principal auth.Principa
 }
 
 func (s *Service) RotateTunnelToken(ctx context.Context, principal auth.Principal, tunnelID string) (tunnelTokenResponse, error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationID, tunnelID)
+	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
 	if err != nil {
 		return tunnelTokenResponse{}, mapAdminDBError(err, "Tunnel not found")
 	}
@@ -654,7 +654,7 @@ func (s *Service) RotateTunnelToken(ctx context.Context, principal auth.Principa
 	if err != nil {
 		return tunnelTokenResponse{}, err
 	}
-	updated, err := s.db.SetAdminTunnelToken(ctx, principal.OrganizationID, tunnelID, tokenID, token)
+	updated, err := s.db.SetAdminTunnelToken(ctx, principal.OrganizationUUID, tunnelID, tokenID, token)
 	if err != nil {
 		return tunnelTokenResponse{}, mapAdminDBError(err, "Tunnel not found")
 	}
@@ -662,7 +662,7 @@ func (s *Service) RotateTunnelToken(ctx context.Context, principal auth.Principa
 }
 
 func (s *Service) ArchiveTunnel(ctx context.Context, principal auth.Principal, tunnelID string) (tunnelResponse, error) {
-	tunnel, err := s.db.ArchiveAdminTunnel(ctx, principal.OrganizationID, tunnelID)
+	tunnel, err := s.db.ArchiveAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
 	if err != nil {
 		return tunnelResponse{}, mapAdminDBError(err, "Tunnel not found")
 	}
@@ -670,14 +670,14 @@ func (s *Service) ArchiveTunnel(ctx context.Context, principal auth.Principal, t
 }
 
 func (s *Service) CreateTunnelCertificate(ctx context.Context, principal auth.Principal, tunnelID string, req createTunnelCertificateRequest) (tunnelCertificateResponse, error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationID, tunnelID)
+	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
 	if err != nil {
 		return tunnelCertificateResponse{}, mapAdminDBError(err, "Tunnel not found")
 	}
 	if tunnel.ArchivedAt != nil {
 		return tunnelCertificateResponse{}, conflict("Tunnel is archived")
 	}
-	count, err := s.db.CountActiveAdminTunnelCertificates(ctx, principal.OrganizationID, tunnel.ID)
+	count, err := s.db.CountActiveAdminTunnelCertificates(ctx, principal.OrganizationUUID, tunnel.UUID)
 	if err != nil {
 		return tunnelCertificateResponse{}, err
 	}
@@ -694,8 +694,8 @@ func (s *Service) CreateTunnelCertificate(ctx context.Context, principal auth.Pr
 	}
 	cert, err := s.db.CreateAdminTunnelCertificate(ctx, db.AdminTunnelCertificate{
 		ExternalID:       certID,
-		OrganizationID:   principal.OrganizationID,
-		TunnelID:         tunnel.ID,
+		OrganizationUUID: principal.OrganizationUUID,
+		TunnelUUID:       tunnel.UUID,
 		TunnelExternalID: tunnel.ExternalID,
 		CACertificatePEM: req.CACertificatePEM,
 		Fingerprint:      parsed.Fingerprint,
@@ -709,7 +709,7 @@ func (s *Service) CreateTunnelCertificate(ctx context.Context, principal auth.Pr
 }
 
 func (s *Service) GetTunnelCertificate(ctx context.Context, principal auth.Principal, tunnelID, certificateID string) (tunnelCertificateResponse, error) {
-	cert, err := s.db.GetAdminTunnelCertificate(ctx, principal.OrganizationID, tunnelID, certificateID)
+	cert, err := s.db.GetAdminTunnelCertificate(ctx, principal.OrganizationUUID, tunnelID, certificateID)
 	if err != nil {
 		return tunnelCertificateResponse{}, mapAdminDBError(err, "Tunnel certificate not found")
 	}
@@ -717,16 +717,16 @@ func (s *Service) GetTunnelCertificate(ctx context.Context, principal auth.Princ
 }
 
 func (s *Service) ListTunnelCertificates(ctx context.Context, principal auth.Principal, tunnelID string, includeArchived bool, limit, offset int) (tokenPageResponse[tunnelCertificateResponse], error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationID, tunnelID)
+	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
 	if err != nil {
 		return tokenPageResponse[tunnelCertificateResponse]{}, mapAdminDBError(err, "Tunnel not found")
 	}
 	records, hasMore, err := s.db.ListAdminTunnelCertificatesPage(ctx, db.ListAdminTunnelCertificatesParams{
-		OrganizationID:  principal.OrganizationID,
-		TunnelID:        tunnel.ID,
-		IncludeArchived: includeArchived,
-		Limit:           limit,
-		Offset:          offset,
+		OrganizationUUID: principal.OrganizationUUID,
+		TunnelUUID:       tunnel.UUID,
+		IncludeArchived:  includeArchived,
+		Limit:            limit,
+		Offset:           offset,
 	})
 	if err != nil {
 		return tokenPageResponse[tunnelCertificateResponse]{}, err
@@ -739,7 +739,7 @@ func (s *Service) ListTunnelCertificates(ctx context.Context, principal auth.Pri
 }
 
 func (s *Service) ArchiveTunnelCertificate(ctx context.Context, principal auth.Principal, tunnelID, certificateID string) (tunnelCertificateResponse, error) {
-	cert, err := s.db.ArchiveAdminTunnelCertificate(ctx, principal.OrganizationID, tunnelID, certificateID)
+	cert, err := s.db.ArchiveAdminTunnelCertificate(ctx, principal.OrganizationUUID, tunnelID, certificateID)
 	if err != nil {
 		return tunnelCertificateResponse{}, mapAdminDBError(err, "Tunnel certificate not found")
 	}

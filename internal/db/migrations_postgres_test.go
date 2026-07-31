@@ -53,6 +53,28 @@ const migrationBackfillFixtureSQL = `
 	join api_keys ak on ak.workspace_id = w.id
 	where skill.external_id = 'skill_migration_184';
 
+	insert into agents (
+		uuid, external_id, workspace_id, created_by_api_key_id, name, model
+	)
+	select
+		'33000000-0000-0000-0000-000000000001', 'agent_migration_184',
+		w.id, ak.id, 'Migration Agent', '{}'
+	from workspaces w
+	join api_keys ak on ak.workspace_id = w.id
+	where w.external_id = 'workspace_migration_184';
+
+	insert into environments (
+		uuid, external_id, organization_id, workspace_id,
+		created_by_api_key_id, name
+	)
+	select
+		'34000000-0000-0000-0000-000000000001', 'env_migration_184',
+		o.id, w.id, ak.id, 'Migration Environment'
+	from organizations o
+	join workspaces w on w.organization_id = o.id
+	join api_keys ak on ak.workspace_id = w.id
+	where w.external_id = 'workspace_migration_184';
+
 	insert into sessions (
 		uuid, external_id, organization_id, workspace_id, created_by_api_key_id,
 		environment_id, environment_external_id, agent_id, agent_external_id,
@@ -282,7 +304,6 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	}
 
 	assertUnifiedMigrationState(t, ctx, standardDB)
-	assertSessionResourceRuntimeWriteAfterUUIDMigration(t, ctx, standardDB)
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatalf("roll back Session Resource tenant UUID migration: %v", err)
 	}
@@ -290,13 +311,17 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	if err := standardDB.QueryRowContext(ctx, `
 		select workspace_id, session_id
 		from session_resources
-		where external_id = 'sesrsc_runtime_after_uuid_migration'
+		where external_id = 'sesrsc_input_migration_184'
 	`).Scan(&restoredWorkspaceID, &restoredSessionID); err != nil {
 		t.Fatalf("load restored Session Resource internal IDs: %v", err)
 	}
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("reapply Session Resource tenant UUID migration: %v", err)
 	}
+	if _, err := provider.UpTo(ctx, 45); err != nil {
+		t.Fatalf("migrate Session runtime tenant references to UUID: %v", err)
+	}
+	assertSessionResourceRuntimeWriteAfterUUIDMigration(t, ctx, standardDB)
 }
 
 func assertSessionResourceRuntimeWriteAfterUUIDMigration(

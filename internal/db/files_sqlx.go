@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,13 +18,54 @@ const (
 	fileSQLXColumns = `uuid, external_id, workspace_uuid, filename, mime_type,
 		size_bytes, sha256, s3_bucket, s3_key, downloadable, scope_type, scope_id,
 		created_by_api_key_uuid, created_at`
+	sessionCatalogFileSQLXColumns = `file.uuid, file.external_id,
+		file.workspace_uuid,
+		file.filename, file.mime_type, file.size_bytes, file.sha256, file.s3_bucket,
+		file.s3_key, file.downloadable, CAST('session' AS text) as scope_type,
+		resource.session_external_id as scope_id,
+		file.created_by_api_key_uuid,
+		file.created_at as created_at`
+	sessionCatalogResourceCTE = `catalog_resource as (
+		select distinct on (resource.file_uuid) resource.*
+		from session_resources resource
+		where resource.workspace_uuid = :workspace_uuid
+			and resource.session_external_id = :scope_id
+			and resource.resource_type = 'file'
+			and resource.deleted_at is null
+			and (resource.expires_at is null or resource.expires_at > now())
+			and (
+				(resource.payload is not null
+					and left(resource.path, char_length('/uploads/')) = '/uploads/')
+				or (resource.payload is null
+					and left(resource.path, char_length('/outputs/')) = '/outputs/')
+			)
+		order by resource.file_uuid, resource.created_at desc, resource.uuid desc
+	)`
+	visibleFileSQLXPredicate = `
+		and (
+			not exists (
+				select 1 from session_resources owner
+				where owner.file_uuid = files.uuid
+					and owner.workspace_uuid = files.workspace_uuid
+					and owner.payload is null
+			)
+			or exists (
+				select 1 from session_resources owner
+				where owner.file_uuid = files.uuid
+					and owner.workspace_uuid = files.workspace_uuid
+					and owner.payload is null
+					and owner.deleted_at is null
+					and (owner.expires_at is null or owner.expires_at > now())
+					and left(owner.path, char_length('/outputs/')) = '/outputs/'
+			)
+		)`
 	getFileQuery = `
 		select ` + fileSQLXColumns + `
 		from files
 		where workspace_uuid = :workspace_uuid
 			and external_id = :file_external_id
 			and deleted_at is null
-	`
+	` + visibleFileSQLXPredicate
 	getFileByUUIDQuery = `
 		select ` + fileSQLXColumns + `
 		from files
@@ -58,37 +100,24 @@ const (
 		select ` + fileSQLXColumns + `
 		from files
 		where workspace_uuid = :workspace_uuid
-			and external_id = :file_external_id
+			and uuid = :file_uuid
 			and deleted_at is null
 		for update
 	`
 	activeFileReferenceQuery = `
-		select
-			exists (
-				select 1
-				from filestore_entries entry
-				where entry.workspace_uuid = :workspace_uuid
-					-- 投影不拥有对象也不计入 files_bytes。即使 backing entry 已退休，
-					-- 仍需阻止普通 Files 删除路径把投影当作源文件扣减容量。
-					and entry.uuid = :file_uuid
-			)
-			or exists (
-				select 1
-				from filestore_entries entry
-				join filestore_filesystems filesystem
-					on filesystem.uuid = entry.filesystem_uuid
-					and filesystem.workspace_uuid = entry.workspace_uuid
-					and filesystem.deleted_at is null
-				where entry.workspace_uuid = :workspace_uuid
-					and entry.source_file_uuid = :file_uuid
-					and entry.deleted_at is null
-			)
+		select exists (
+			select 1
+			from session_resources resource
+			where resource.workspace_uuid = :workspace_uuid
+				and resource.file_uuid = :file_uuid
+				and resource.deleted_at is null
+		)
 	`
 	softDeleteFileQuery = `
 		update files
 		set deleted_at = now()
 		where workspace_uuid = :workspace_uuid
-			and external_id = :file_external_id
+			and uuid = :file_uuid
 			and deleted_at is null
 	`
 	enqueueObjectCleanupResourceJobQuery = `
@@ -318,12 +347,24 @@ func getFileRecordSQLX(
 }
 
 func listFilesSQLXQuery(workspaceUUID string, scopeID string) (string, map[string]any) {
+	if isSessionFilesScope(scopeID) {
+		return `
+			with ` + sessionCatalogResourceCTE + `
+			select ` + sessionCatalogFileSQLXColumns + `
+			from catalog_resource resource
+			join files file
+				on file.uuid = resource.file_uuid
+				and file.workspace_uuid = resource.workspace_uuid
+				and file.deleted_at is null
+			order by resource.created_at desc, resource.uuid desc
+		`, map[string]any{"workspace_uuid": dbUUID(workspaceUUID), "scope_id": scopeID}
+	}
 	query := `
 		select ` + fileSQLXColumns + `
 		from files
 		where workspace_uuid = :workspace_uuid
 			and deleted_at is null
-	`
+	` + visibleFileSQLXPredicate
 	arguments := map[string]any{"workspace_uuid": dbUUID(workspaceUUID)}
 	if scopeID != "" {
 		query += " and scope_id = :scope_id"
@@ -415,13 +456,29 @@ func filePageCursorSQLXQuery(
 	params ListFilesPageParams,
 	cursorExternalID string,
 ) (string, map[string]any) {
+	if isSessionFilesScope(params.ScopeID) {
+		return `
+			with ` + sessionCatalogResourceCTE + `
+			select resource.uuid, resource.created_at
+			from catalog_resource resource
+			join files file
+				on file.uuid = resource.file_uuid
+				and file.workspace_uuid = resource.workspace_uuid
+				and file.deleted_at is null
+			where file.external_id = :cursor_external_id
+		`, map[string]any{
+				"workspace_uuid":     dbUUID(params.WorkspaceUUID),
+				"scope_id":           params.ScopeID,
+				"cursor_external_id": cursorExternalID,
+			}
+	}
 	query := `
 		select uuid, created_at
 		from files
 		where workspace_uuid = :workspace_uuid
 			and external_id = :cursor_external_id
 			and deleted_at is null
-	`
+	` + visibleFileSQLXPredicate
 	arguments := map[string]any{
 		"workspace_uuid":     dbUUID(params.WorkspaceUUID),
 		"cursor_external_id": cursorExternalID,
@@ -437,12 +494,15 @@ func listFilesPageSQLXQuery(
 	params ListFilesPageParams,
 	cursor filePageCursorRow,
 ) (string, map[string]any) {
+	if isSessionFilesScope(params.ScopeID) {
+		return sessionCatalogFilesPageSQLXQuery(params, cursor)
+	}
 	query := `
 		select ` + fileSQLXColumns + `
 		from files
 		where workspace_uuid = :workspace_uuid
 			and deleted_at is null
-	`
+	` + visibleFileSQLXPredicate
 	arguments := map[string]any{
 		"workspace_uuid": dbUUID(params.WorkspaceUUID),
 		"limit":          params.Limit + 1,
@@ -478,6 +538,52 @@ func listFilesPageSQLXQuery(
 	return query, arguments
 }
 
+func isSessionFilesScope(scopeID string) bool {
+	return strings.HasPrefix(scopeID, "sesn_")
+}
+
+func sessionCatalogFilesPageSQLXQuery(
+	params ListFilesPageParams,
+	cursor filePageCursorRow,
+) (string, map[string]any) {
+	query := `
+		with ` + sessionCatalogResourceCTE + `
+		select ` + sessionCatalogFileSQLXColumns + `
+		from catalog_resource resource
+		join files file
+			on file.uuid = resource.file_uuid
+			and file.workspace_uuid = resource.workspace_uuid
+			and file.deleted_at is null
+		where true
+	`
+	arguments := map[string]any{
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
+		"scope_id":       params.ScopeID,
+		"limit":          params.Limit + 1,
+	}
+	if params.AfterID != "" {
+		query += ` and (
+			resource.created_at < :cursor_created_at
+			or (resource.created_at = :cursor_created_at and resource.uuid < :cursor_uuid)
+		)`
+		arguments["cursor_created_at"] = cursor.CreatedAt
+		arguments["cursor_uuid"] = dbUUID(cursor.UUID.String())
+	} else if params.BeforeID != "" {
+		query += ` and (
+			resource.created_at > :cursor_created_at
+			or (resource.created_at = :cursor_created_at and resource.uuid > :cursor_uuid)
+		)`
+		arguments["cursor_created_at"] = cursor.CreatedAt
+		arguments["cursor_uuid"] = dbUUID(cursor.UUID.String())
+	}
+	if params.BeforeID != "" {
+		query += " order by resource.created_at asc, resource.uuid asc limit :limit"
+	} else {
+		query += " order by resource.created_at desc, resource.uuid desc limit :limit"
+	}
+	return query, arguments
+}
+
 func softDeleteFileSQLX(
 	ctx context.Context,
 	database *sqlx.DB,
@@ -494,11 +600,15 @@ func softDeleteFileSQLX(
 	if _, err := namedExecContext(ctx, tx, fileWorkspaceLockQuery, arguments); err != nil {
 		return err
 	}
+	resolved, err := getFileRecordSQLX(ctx, tx, getFileQuery, arguments)
+	if err != nil {
+		return err
+	}
+	arguments["file_uuid"] = dbUUID(resolved.UUID)
 	file, err := getFileRecordSQLX(ctx, tx, softDeleteFileRecordQuery, arguments)
 	if err != nil {
 		return err
 	}
-	arguments["file_uuid"] = dbUUID(file.UUID)
 	var referenced bool
 	if err := namedGetContext(ctx, tx, &referenced, activeFileReferenceQuery, arguments); err != nil {
 		return err

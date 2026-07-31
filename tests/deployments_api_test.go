@@ -316,7 +316,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			select count(*)
 			from filestore_filesystems fs
 			join workspaces w on w.uuid = fs.workspace_uuid
-			join sessions s on s.uuid = fs.session_uuid and s.workspace_id = w.id
+				join sessions s on s.uuid = fs.session_uuid and s.workspace_uuid = w.uuid
 			where s.external_id = $1 and fs.deleted_at is null
 		`, *run.SessionID).Scan(&filesystemCount); err != nil {
 			t.Fatalf("count deployment Session filesystem: %v", err)

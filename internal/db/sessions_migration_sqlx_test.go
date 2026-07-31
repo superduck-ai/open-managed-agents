@@ -8,6 +8,14 @@ import (
 
 func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 	now := time.Date(2026, time.July, 27, 16, 0, 0, 0, time.UTC)
+	for name, query := range map[string]string{
+		"get resource":    getSessionResourceQuery,
+		"update resource": updateSessionResourceQuery,
+	} {
+		if !strings.Contains(query, "payload is not null") {
+			t.Fatalf("%s query exposes internal Session namespace resources: %q", name, query)
+		}
+	}
 	threadArguments := createSessionThreadArguments(SessionThread{
 		UUID:              "11111111-1111-4111-8111-111111111111",
 		ExternalID:        "sesthr_test",

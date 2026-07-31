@@ -376,7 +376,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if _, err := app.db.Pool.Exec(context.Background(), `
 				update workspace_storage_usage
 			set filestore_bytes = 123
-			where workspace_id = $1
+			where workspace_uuid = $1
 		`, sessionRecord.WorkspaceUUID); err != nil {
 			t.Fatalf("introduce storage ledger drift: %v", err)
 		}
@@ -990,6 +990,16 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	outputFileID := files[0].ExternalID
 	outputFileCreatedAt := files[0].CreatedAt
 	outputResourceCreatedAt := entry.Node.CreatedAt
+	hiddenResource := app.do(
+		t,
+		http.MethodGet,
+		"/v1/sessions/"+session.ID+"/resources/"+entry.Node.ExternalID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	assertError(t, hiddenResource, http.StatusNotFound, "not_found_error")
 	if allFiles := listFiles(t, app, ""); !containsFile(allFiles.Data, outputFileID) {
 		t.Fatalf("unscoped Files list does not contain active Output %q: %+v", outputFileID, allFiles.Data)
 	}
@@ -1057,6 +1067,16 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		"",
 	)
 	assertError(t, hiddenMetadata, http.StatusNotFound, "not_found_error")
+	hiddenDelete := app.do(
+		t,
+		http.MethodDelete,
+		"/v1/files/"+outputFileID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+		"",
+	)
+	assertError(t, hiddenDelete, http.StatusNotFound, "not_found_error")
 
 	if _, err := app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
 		WorkspaceUUID:   record.WorkspaceUUID,
@@ -1423,7 +1443,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select files_bytes, filestore_bytes
 		from workspace_storage_usage
-		where workspace_id = $1
+		where workspace_uuid = $1
 	`, sessionRecord.WorkspaceUUID).Scan(&filesBytesBefore, &filestoreBytesBefore); err != nil {
 		t.Fatalf("load storage usage before Session retirement: %v", err)
 	}
@@ -1485,7 +1505,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 			coalesce(files_bytes, 0),
 			coalesce(filestore_bytes, 0)
 		from workspace_storage_usage
-		where workspace_uuid = $2
+		where workspace_uuid = $3
 	`, filesystem.SessionUUID, filesystem.UUID, sessionRecord.WorkspaceUUID).Scan(
 		&activeEntries,
 		&filestoreObjectJobs,

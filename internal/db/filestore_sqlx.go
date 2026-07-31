@@ -153,15 +153,15 @@ func insertFilestoreObjectCleanupJobSQLX(
 			)
 			returning *
 		)
-		select `+filestoreFilesystemCleanupJobColumns("j", "fs")+`
+		select `+filestoreCleanupJobColumns("j", "fs")+`
 		from inserted_job j
 		join filestore_filesystems fs
 			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
 			and fs.workspace_uuid = j.workspace_uuid
 	`, map[string]any{
-		"workspace_uuid":    input.WorkspaceUUID,
+		"workspace_uuid":    dbUUID(input.WorkspaceUUID),
 		"job_type":          filestoreCleanupJobType,
-		"filesystem_uuid":   input.FilesystemUUID,
+		"filesystem_uuid":   dbUUID(input.FilesystemUUID),
 		"entry_external_id": input.EntryExternalID,
 		"bucket":            input.Bucket,
 		"key":               input.Key,

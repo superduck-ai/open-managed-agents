@@ -124,6 +124,7 @@ const (
 		set deleted_at = coalesce(deleted_at, now()), updated_at = now()
 		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
+			and payload is not null
 			and deleted_at is null
 	`
 	deleteSessionEventsQuery = `
@@ -149,6 +150,7 @@ const (
 		from session_resources
 		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
+			and payload is not null
 			and deleted_at is null
 		order by created_at desc, uuid desc
 	`
@@ -215,6 +217,7 @@ const (
 		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
+			and payload is not null
 			and deleted_at is null
 	`
 	updateSessionResourceQuery = `
@@ -225,6 +228,7 @@ const (
 		where workspace_uuid = :workspace_uuid
 			and session_external_id = :session_external_id
 			and external_id = :resource_external_id
+			and payload is not null
 			and deleted_at is null
 		returning ` + sessionResourceSQLXColumns + `
 	`

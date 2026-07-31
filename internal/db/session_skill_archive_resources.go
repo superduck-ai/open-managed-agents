@@ -66,13 +66,13 @@ var (
 		insert into files (
 			uuid, external_id, workspace_uuid, filename, mime_type, detected_mime_type,
 			size_bytes, metadata, authorization_metadata, tags, downloadable,
-			sha256, s3_bucket, s3_key, created_by_api_key_id, created_at
+			sha256, s3_bucket, s3_key, created_by_api_key_uuid, created_at
 		)
 		select :file_uuid, :file_external_id, session.workspace_uuid,
 			:filename, 'application/zip', 'application/zip', :size_bytes,
 			jsonb_build_object('skill_source', CAST(:source AS text)),
 			CAST('{}' AS jsonb), CAST(ARRAY[] AS text[]), false,
-			:sha256, :s3_bucket, :s3_key, session.created_by_api_key_id, :now
+			:sha256, :s3_bucket, :s3_key, session.created_by_api_key_uuid, :now
 		from sessions session
 		where session.uuid = :session_uuid
 			and session.workspace_uuid = :workspace_uuid

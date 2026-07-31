@@ -16,7 +16,7 @@ import (
 var (
 	enqueueFilestoreFilesystemCleanupJobQuery = `
 		with inserted_job as (
-			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
+			insert into jobs (external_id, workspace_uuid, type, status, payload, run_after)
 			values (
 				concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
 				:workspace_uuid, :job_type, 'pending',
@@ -45,12 +45,14 @@ var (
 		for update of j
 	`
 	filesystemCleanupFilesystemQuery = filestoreFilesystemSelectSQL() + `
-		where uuid = :filesystem_uuid and workspace_uuid = :workspace_uuid
+		where uuid = :filesystem_uuid
+			and workspace_uuid = :workspace_uuid
 	`
 	filesystemCleanupEntriesQuery = sessionResourceFileSelectSQL() + `
-		where workspace_uuid = :workspace_uuid and session_uuid = :session_uuid
+		where workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
 			and kind = 'file' and deleted_at is null
-		order by id
+		order by uuid
 		limit :limit
 	`
 	expiredSessionResourceFilesQuery = sessionResourceFileSelectSQL() + `
@@ -188,13 +190,15 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 	})
 	// 所有容量变更都先锁工作区，再锁文件系统；批处理内部也按 ID 升序取得同类锁。
 	for _, workspaceUUID := range workspaceUUIDs {
-		if _, err := namedExecContext(ctx, tx, `select pg_advisory_xact_lock(hashtextextended(CAST(:workspace_uuid AS text), 0))`, map[string]any{"workspace_uuid": workspaceUUID}); err != nil {
+		if _, err := namedExecContext(ctx, tx, filesystemCleanupWorkspaceLockQuery, map[string]any{
+			"workspace_uuid": dbUUID(workspaceUUID),
+		}); err != nil {
 			return nil, nil, err
 		}
 	}
 	for _, filesystemUUID := range filesystemUUIDs {
 		if _, err := namedExecContext(ctx, tx, `select pg_advisory_xact_lock(hashtextextended(concat('filestore-filesystem', chr(58), CAST(:filesystem_uuid AS text)), 0))`, map[string]any{
-			"filesystem_uuid": filesystemUUID,
+			"filesystem_uuid": dbUUID(filesystemUUID),
 		}); err != nil {
 			return nil, nil, err
 		}
@@ -316,7 +320,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	defer tx.Rollback()
 
 	arguments := map[string]any{
-		"job_uuid":    jobUUID,
+		"job_uuid":    dbUUID(jobUUID),
 		"job_type":    filestoreFilesystemCleanupJobType,
 		"lease_token": leaseToken,
 		"limit":       limit,
@@ -329,10 +333,8 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 		}
 		return false, nil, err
 	}
-	arguments["workspace_uuid"] = job.WorkspaceUUID
-	arguments["filesystem_uuid"] = job.FilesystemUUID
-	arguments["workspace_uuid"] = job.WorkspaceUUID
-	arguments["filesystem_uuid"] = job.FilesystemUUID
+	arguments["workspace_uuid"] = dbUUID(job.WorkspaceUUID)
+	arguments["filesystem_uuid"] = dbUUID(job.FilesystemUUID)
 	if _, err := namedExecContext(ctx, tx, filesystemCleanupWorkspaceLockQuery, arguments); err != nil {
 		return false, nil, err
 	}
@@ -344,7 +346,7 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	if err != nil {
 		return false, nil, err
 	}
-	arguments["session_uuid"] = filesystem.SessionUUID
+	arguments["session_uuid"] = dbUUID(filesystem.SessionUUID)
 	cleanupScope := sessionResourceFileCleanupScope{
 		WorkspaceUUID: job.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 	}
@@ -467,12 +469,12 @@ func (d *DB) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspa
 		where external_id = :job_external_id
 			and type = :job_type
 			and status in ('pending', 'retry')
-			-- jobs.workspace_id 只是当前库的路由缓存；授权范围始终按稳定 UUID 判断。
 			and payload->>'workspace_uuid' = (
 				:workspace_uuid
 			)
 	`, map[string]any{
 		"job_external_id": jobExternalID,
+		"workspace_uuid":  workspaceUUID,
 		"etag":            etag,
 		"version_id":      versionID,
 		"job_type":        filestoreCleanupJobType,
@@ -496,7 +498,7 @@ func (d *DB) LeaseFilestoreObjectCleanupJobs(ctx context.Context, workerID strin
 		workerID,
 		limit,
 		maxLeaseAttempts,
-		filestoreFilesystemCleanupJobColumns("j", "fs"),
+		filestoreCleanupJobColumns("j", "fs"),
 	)
 	if err != nil {
 		return nil, err
@@ -513,7 +515,7 @@ func (d *DB) leaseFilestoreCleanupJobs(ctx context.Context, destination any, job
 	}
 	return namedSelectContext(ctx, d.sql, destination, `
 		with exhausted_candidates as (
-			select j.id
+			select j.uuid
 			from jobs j
 			where j.type = :job_type
 				and j.run_after <= now()
@@ -522,7 +524,7 @@ func (d *DB) leaseFilestoreCleanupJobs(ctx context.Context, destination any, job
 					or (j.status = 'running' and j.locked_until < now())
 				)
 				and coalesce(cast(j.payload->>'lease_attempts' as integer), 0) >= :max_lease_attempts
-			order by j.run_after, j.created_at, j.id
+			order by j.run_after, j.created_at, j.uuid
 			limit :limit
 			for update of j skip locked
 		),
@@ -535,26 +537,27 @@ func (d *DB) leaseFilestoreCleanupJobs(ctx context.Context, destination any, job
 				payload = (j.payload - 'lease_attempts')
 					|| jsonb_build_object('last_error', 'cleanup lease repeatedly expired before acknowledgement')
 			from exhausted_candidates candidate
-			where j.id = candidate.id
-			returning j.id
+			where j.uuid = candidate.uuid
+			returning j.uuid
 		),
 		next_jobs as (
-			select j.id, w.id as workspace_id
+			select j.uuid, j.workspace_uuid
 			from jobs j
-			join workspaces w
-				on cast(w.uuid as text) = j.payload->>'workspace_uuid'
 			join filestore_filesystems fs
 				on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
-				and fs.workspace_uuid = w.uuid
+				and fs.workspace_uuid = j.workspace_uuid
 			where j.type = :job_type
 				and j.run_after <= now()
 				and coalesce(cast(j.payload->>'lease_attempts' as integer), 0) < :max_lease_attempts
-				and not exists (select 1 from exhausted_jobs exhausted where exhausted.id = j.id)
+				and not exists (
+					select 1 from exhausted_jobs exhausted
+					where exhausted.uuid = j.uuid
+				)
 				and (
 					j.status in ('pending', 'retry')
 					or (j.status = 'running' and j.locked_until < now())
 				)
-			order by j.run_after, j.created_at, j.id
+			order by j.run_after, j.created_at, j.uuid
 			limit :limit
 			for update of j skip locked
 		),
@@ -562,22 +565,20 @@ func (d *DB) leaseFilestoreCleanupJobs(ctx context.Context, destination any, job
 			update jobs j
 			set status = 'running', locked_by = :worker_id,
 				locked_until = now() + interval '1 minute', updated_at = now(),
-				workspace_id = next_jobs.workspace_id,
+				workspace_uuid = next_jobs.workspace_uuid,
 				payload = j.payload || jsonb_build_object(
 					'lease_attempts',
 					coalesce(cast(j.payload->>'lease_attempts' as integer), 0) + 1
 				)
 			from next_jobs
-			where j.id = next_jobs.id
+			where j.uuid = next_jobs.uuid
 			returning j.*
 		)
 		select `+columns+`
 		from leased_jobs j
-		join workspaces w
-			on cast(w.uuid as text) = j.payload->>'workspace_uuid'
 		join filestore_filesystems fs
 			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
-			and fs.workspace_uuid = w.uuid
+			and fs.workspace_uuid = j.workspace_uuid
 	`, map[string]any{
 		"job_type":           jobType,
 		"limit":              limit,
@@ -593,7 +594,7 @@ func (d *DB) CompleteFilestoreObjectCleanupJob(ctx context.Context, jobUUID stri
 		set status = 'completed', locked_by = null, locked_until = null, updated_at = now()
 		where uuid = :job_uuid and type = :job_type and status in ('pending', 'retry')
 	`, map[string]any{
-		"job_uuid": jobUUID,
+		"job_uuid": dbUUID(jobUUID),
 		"job_type": filestoreCleanupJobType,
 	})
 	if err != nil {
@@ -616,7 +617,7 @@ func (d *DB) CompleteLeasedFilestoreObjectCleanupJob(ctx context.Context, jobUUI
 		where uuid = :job_uuid and type = :job_type and status = 'running'
 			and locked_by = :lease_token and locked_until >= now()
 	`, map[string]any{
-		"job_uuid":    jobUUID,
+		"job_uuid":    dbUUID(jobUUID),
 		"job_type":    filestoreCleanupJobType,
 		"lease_token": leaseToken,
 	})
@@ -663,7 +664,7 @@ func (d *DB) failLeasedFilestoreCleanupJob(ctx context.Context, jobUUID string, 
 		where uuid = :job_uuid and type = :job_type and status = 'running'
 			and locked_by = :lease_token and locked_until >= now()
 	`, map[string]any{
-		"job_uuid":     jobUUID,
+		"job_uuid":     dbUUID(jobUUID),
 		"reason":       reason,
 		"run_after":    runAfter,
 		"max_attempts": maxAttempts,
@@ -688,7 +689,8 @@ func enqueueFilestoreFilesystemCleanupJobTx(
 ) (FilestoreFilesystemCleanupJob, error) {
 	var job FilestoreFilesystemCleanupJob
 	err := namedGetContext(ctx, tx, &job, enqueueFilestoreFilesystemCleanupJobQuery, map[string]any{
-		"filesystem_uuid": filesystem.UUID,
+		"workspace_uuid":  dbUUID(workspaceUUID),
+		"filesystem_uuid": dbUUID(filesystem.UUID),
 		"job_type":        filestoreFilesystemCleanupJobType,
 		"run_after":       runAfter,
 	})
@@ -711,6 +713,7 @@ func (d *DB) CancelFilestoreObjectCleanupJob(ctx context.Context, workspaceUUID 
 			)
 	`, map[string]any{
 		"job_external_id": jobExternalID,
+		"workspace_uuid":  workspaceUUID,
 		"job_type":        filestoreCleanupJobType,
 	})
 	if err != nil {
@@ -734,6 +737,7 @@ func (d *DB) filestoreCleanupJobMutationMiss(ctx context.Context, workspaceUUID 
 			)
 	`, map[string]any{
 		"job_external_id": jobExternalID,
+		"workspace_uuid":  workspaceUUID,
 		"job_type":        filestoreCleanupJobType,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -901,8 +905,8 @@ func retireExpiredFilestoreSubtreeTx(
 
 func filestoreSubtreeArguments(filesystem FilestoreFilesystem, rootPath string) map[string]any {
 	return map[string]any{
-		"workspace_uuid": filesystem.WorkspaceUUID,
-		"session_uuid":   filesystem.SessionUUID,
+		"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
+		"session_uuid":   dbUUID(filesystem.SessionUUID),
 		"root_path":      rootPath,
 	}
 }
@@ -922,6 +926,7 @@ func cancelAttachedFilestoreObjectCleanupJobTx(ctx context.Context, tx *sqlx.Tx,
 			and coalesce(payload->>'version_id', '') = :version_id
 	`, map[string]any{
 		"job_external_id": jobExternalID,
+		"workspace_uuid":  workspaceUUID,
 		"job_type":        filestoreCleanupJobType,
 		"bucket":          blob.S3Bucket,
 		"key":             blob.S3Key,
@@ -936,7 +941,7 @@ func cancelAttachedFilestoreObjectCleanupJobTx(ctx context.Context, tx *sqlx.Tx,
 	return nil
 }
 
-func filestoreFilesystemCleanupJobColumns(jobAlias, filesystemAlias string) string {
+func filestoreCleanupJobColumns(jobAlias, filesystemAlias string) string {
 	return fmt.Sprintf(`cast(%[1]s.uuid as text) as uuid, %[1]s.external_id as external_id,
 		cast(%[1]s.workspace_uuid as text) as workspace_uuid,
 		cast(%[2]s.uuid as text) as filesystem_uuid,
@@ -947,6 +952,15 @@ func filestoreFilesystemCleanupJobColumns(jobAlias, filesystemAlias string) stri
 		coalesce(%[1]s.payload->>'etag', '') as etag,
 		coalesce(%[1]s.payload->>'version_id', '') as version_id,
 		coalesce(%[1]s.payload->>'reason', '') as reason,
+		%[1]s.attempts as attempts, %[1]s.run_after as run_after`,
+		jobAlias, filesystemAlias)
+}
+
+func filestoreFilesystemCleanupJobColumns(jobAlias, filesystemAlias string) string {
+	return fmt.Sprintf(`cast(%[1]s.uuid as text) as uuid, %[1]s.external_id as external_id,
+		cast(%[1]s.workspace_uuid as text) as workspace_uuid,
+		cast(%[2]s.uuid as text) as filesystem_uuid,
+		%[2]s.external_id as filesystem_external_id,
 		%[1]s.attempts as attempts, %[1]s.run_after as run_after`,
 		jobAlias, filesystemAlias)
 }

@@ -22,7 +22,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 		start := make(chan struct{})
 		errs := make(chan error, 2)
-		file := workspaceStorageFile(fixture.workspaceUUID, fileSize)
+		file := workspaceStorageFile(fixture.workspaceUUID, fixture.apiKeyUUID, fileSize)
 		go func() {
 			<-start
 			errs <- fixture.app.db.CreateFileIfWithinLimit(context.Background(), file, limit)
@@ -60,12 +60,12 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 	t.Run("failure limited file creation checks quota before duplicate insert", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
-		file := workspaceStorageFile(fixture.workspaceUUID, 3)
+		file := workspaceStorageFile(fixture.workspaceUUID, fixture.apiKeyUUID, 3)
 		if err := fixture.app.db.CreateFile(context.Background(), file); err != nil {
 			t.Fatalf("create initial file: %v", err)
 		}
 
-		duplicate := workspaceStorageFile(fixture.workspaceUUID, 7)
+		duplicate := workspaceStorageFile(fixture.workspaceUUID, fixture.apiKeyUUID, 7)
 		duplicate.ExternalID = file.ExternalID
 		err := fixture.app.db.CreateFileIfWithinLimit(context.Background(), duplicate, 5)
 		if !errors.Is(err, db.ErrStorageLimitExceeded) {
@@ -76,12 +76,12 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 	t.Run("failure resource write rollback also rolls back reserved bytes", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
-		file := workspaceStorageFile(fixture.workspaceUUID, 3)
+		file := workspaceStorageFile(fixture.workspaceUUID, fixture.apiKeyUUID, 3)
 		if err := fixture.app.db.CreateFile(context.Background(), file); err != nil {
 			t.Fatalf("create initial file: %v", err)
 		}
 
-		duplicate := workspaceStorageFile(fixture.workspaceUUID, 7)
+		duplicate := workspaceStorageFile(fixture.workspaceUUID, fixture.apiKeyUUID, 7)
 		duplicate.ExternalID = file.ExternalID
 		if err := fixture.app.db.CreateFileIfWithinLimit(context.Background(), duplicate, 100); err == nil {
 			t.Fatal("duplicate file create error = nil")
@@ -156,7 +156,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 	t.Run("success files and filestore maintain one transactional total", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
-		file := workspaceStorageFile(fixture.workspaceUUID, 6)
+		file := workspaceStorageFile(fixture.workspaceUUID, fixture.apiKeyUUID, 6)
 		if err := fixture.app.db.CreateFileIfWithinLimit(context.Background(), file, 10); err != nil {
 			t.Fatalf("create Files API file: %v", err)
 		}
@@ -339,7 +339,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 	t.Run("success reconciliation repairs an out of band drift", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
-		file := workspaceStorageFile(fixture.workspaceUUID, 9)
+		file := workspaceStorageFile(fixture.workspaceUUID, fixture.apiKeyUUID, 9)
 		if err := fixture.app.db.CreateFile(context.Background(), file); err != nil {
 			t.Fatalf("create file: %v", err)
 		}
@@ -354,7 +354,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		if _, err := fixture.app.db.Pool.Exec(context.Background(), `
 			update workspace_storage_usage
 			set files_bytes = 1, filestore_bytes = 1
-			where workspace_id = $1
+			where workspace_uuid = $1
 		`, fixture.workspaceUUID); err != nil {
 			t.Fatalf("inject usage drift: %v", err)
 		}
@@ -374,6 +374,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 type workspaceStorageFixture struct {
 	app           *testApp
 	workspaceUUID string
+	apiKeyUUID    string
 	filesystem    db.FilestoreFilesystem
 }
 
@@ -398,10 +399,15 @@ func newWorkspaceStorageFixture(t *testing.T) workspaceStorageFixture {
 	if !created {
 		t.Fatal("provision Filestore filesystem created = false")
 	}
-	return workspaceStorageFixture{app: app, workspaceUUID: workspaceUUID, filesystem: filesystem}
+	return workspaceStorageFixture{
+		app:           app,
+		workspaceUUID: workspaceUUID,
+		apiKeyUUID:    apiKeyUUID,
+		filesystem:    filesystem,
+	}
 }
 
-func workspaceStorageFile(workspaceUUID string, sizeBytes int64) db.FileRecord {
+func workspaceStorageFile(workspaceUUID, apiKeyUUID string, sizeBytes int64) db.FileRecord {
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	return db.FileRecord{
 		UUID:                uuid.NewString(),
@@ -414,7 +420,7 @@ func workspaceStorageFile(workspaceUUID string, sizeBytes int64) db.FileRecord {
 		S3Bucket:            "workspace-storage",
 		S3Key:               "objects/" + suffix,
 		Downloadable:        true,
-		CreatedByAPIKeyUUID: uuid.NewString(),
+		CreatedByAPIKeyUUID: apiKeyUUID,
 		CreatedAt:           time.Now().UTC(),
 	}
 }

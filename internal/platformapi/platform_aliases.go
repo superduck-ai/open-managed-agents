@@ -12,6 +12,7 @@ type OrganizationUpdatePatch = platform.OrganizationUpdatePatch
 type AdminRequest = platform.AdminRequest
 
 type ConsoleWorkspace = platform.ConsoleWorkspace
+type WorkspaceScope = platform.WorkspaceScope
 type ConsoleWorkspaceDataResidency = platform.ConsoleWorkspaceDataResidency
 type CreateConsoleWorkspaceInput = platform.CreateConsoleWorkspaceInput
 type ConsoleAPIKey = platform.ConsoleAPIKey
@@ -30,3 +31,5 @@ type WorkbenchPromptRecord = platform.WorkbenchPromptRecord
 type WorkbenchRevisionRecord = platform.WorkbenchRevisionRecord
 type WorkbenchKVRecord = platform.WorkbenchKVRecord
 type WorkbenchEvaluationRecord = platform.WorkbenchEvaluationRecord
+
+var ResolveWorkspaceScope = platform.ResolveWorkspaceScope

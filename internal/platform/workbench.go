@@ -5,7 +5,8 @@ import "time"
 type WorkbenchPromptRecord struct {
 	OrgUUID               string
 	PromptUUID            string
-	WorkspaceID           string
+	WorkspaceUUID         string
+	WorkspaceDisplayID    string
 	Name                  string
 	IsSharedWithWorkspace bool
 	LatestRevisionUUID    *string

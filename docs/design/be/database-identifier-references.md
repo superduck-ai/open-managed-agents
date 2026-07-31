@@ -85,7 +85,7 @@ flowchart LR
 ## 下游资源的 UUID 引用
 
 迁移 `00041_use_uuid_resource_references.sql` 到
-`00045_use_uuid_tunnel_references.sql` 将剩余资源按依赖顺序迁移。所有目标表继续保留自己的
+`00046_name_compatibility_workspace_display_ids.sql` 将剩余资源按依赖顺序迁移。所有目标表继续保留自己的
 `id bigint generated always as identity`，但跨表列、租户隔离、分页稳定键和应用模型都改用 UUID。
 迁移先通过旧 identity 关联目标表并回填 UUID；任何必填引用无法解析都会中止迁移，避免把孤立
 identity 静默带入新结构。PostgreSQL schema 仍不创建外键约束。
@@ -99,6 +99,7 @@ identity 静默带入新结构。PostgreSQL schema 仍不创建外键约束。
 | 后台与统计（`00043`） | `jobs`、`workspace_storage_usage` | `workspace_uuid` |
 | Console 与 Workbench（`00044`） | `console_api_keys`、`workbench_prompts`、`workbench_prompt_revisions`、`workbench_prompt_kv`、`workbench_evaluations`、`workbench_generated_test_cases` | organization、workspace、API key、user、prompt、revision 引用 |
 | Admin Tunnel（`00045`） | `mcp_tunnels`、`mcp_tunnel_certificates` | organization、workspace、tunnel 引用 |
+| Console/Workbench 兼容展示（`00046`） | `console_api_keys`、`workbench_prompts` | 将非权威文本列明确命名为 `workspace_display_id`；资源定位仍只使用 `workspace_uuid` |
 
 例如 `skill_versions.skill_uuid`、`deployment_runs.deployment_uuid`、
 `session_events.session_uuid`、`code_session_outbound_events.code_session_uuid` 和
@@ -149,6 +150,18 @@ organization UUID。默认 seed 不再依赖 `org_default`：升级已有数据�
 `workspace_default.organization_uuid` 找回原组织；全新数据库才创建组织，因此不会因为删除
 external ID 而替换已有 UUID。
 
+Console 与 Workbench 的 workspace 路由仍需兼容协议 external ID 和 `default` 别名。适配层先加载
+当前组织的有效 Workspace，并一次性解析为 `WorkspaceScope{UUID, DisplayID}`：UUID 是进入业务
+方法和持久化查询的唯一 workspace 身份，DisplayID 只用于保持协议响应。`default` 的选择优先级
+依次为 `workspace_default` external ID、名称为 `default` 的 Workspace、最早创建的 Workspace。
+该策略位于共享的 Platform 兼容解析器，不得埋入 Console API Key 或 Workbench 的 DB 写路径。
+
+迁移 `00046_name_compatibility_workspace_display_ids.sql` 将 `console_api_keys.workspace_id` 和
+`workbench_prompts.workspace_id` 重命名为 `workspace_display_id`，明确它们只是反规范化的协议
+展示快照。Console API Key 和 Workbench 的 list/create/update/delete 均直接传递并过滤
+`workspace_uuid`；`workspace_display_id` 可以返回给协议调用方，但不得参与资源定位、租户隔离或
+父子关联。
+
 ## 验收
 
 - `workspaces` 不再包含 `organization_id`；
@@ -171,5 +184,7 @@ external ID 而替换已有 UUID。
 - 鉴权 Principal 与 Filestore Principal 不携带 bigint identity；
 - Filestore 查询不再通过 Workspace identity 反查 UUID，目录分页使用 UUID；
 - MCP Tunnel 与 Certificate 的 organization、workspace 和 tunnel 引用均为 UUID；
+- Console/Workbench 在 API 适配层只解析一次 workspace external ID/`default`，DB 写路径只接收 `workspace_uuid`；
+- `workspace_display_id` 只作为协议展示快照，不参与 Console API Key 或 Workbench 查询；
 - schema 仍不包含 PostgreSQL 外键；
 - 全量 Go 测试、lint、死代码、重复代码和复杂度门禁通过。

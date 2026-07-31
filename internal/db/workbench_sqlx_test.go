@@ -34,7 +34,8 @@ func TestWorkbenchSQLXRowsMapDatabaseValues(t *testing.T) {
 	prompt := workbenchPromptRow{
 		OrgUUID:            "org_test",
 		PromptUUID:         "prompt_test",
-		WorkspaceID:        "workspace_test",
+		WorkspaceUUID:      "00000000-0000-4000-8000-000000000001",
+		WorkspaceDisplayID: "workspace_test",
 		LatestRevisionUUID: sql.NullString{String: "revision_test", Valid: true},
 	}.record()
 	if prompt.LatestRevisionUUID == nil || *prompt.LatestRevisionUUID != "revision_test" {

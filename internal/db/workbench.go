@@ -14,7 +14,8 @@ import (
 type workbenchPromptRow struct {
 	OrgUUID               string         `db:"organization_uuid"`
 	PromptUUID            string         `db:"prompt_uuid"`
-	WorkspaceID           string         `db:"workspace_id"`
+	WorkspaceUUID         string         `db:"workspace_uuid"`
+	WorkspaceDisplayID    string         `db:"workspace_display_id"`
 	Name                  string         `db:"name"`
 	IsSharedWithWorkspace bool           `db:"is_shared_with_workspace"`
 	LatestRevisionUUID    sql.NullString `db:"latest_revision_uuid"`
@@ -84,7 +85,8 @@ func (d *DB) GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID 
 	var row workbenchPromptRow
 	err := namedGetContext(ctx, d.sql, &row, `
 		SELECT CAST(organization_uuid AS text) AS organization_uuid, prompt_uuid,
-		       workspace_id, name, is_shared_with_workspace, latest_revision_uuid,
+		       CAST(workspace_uuid AS text) AS workspace_uuid, workspace_display_id,
+		       name, is_shared_with_workspace, latest_revision_uuid,
 		       deleted_at, created_at, updated_at
 		FROM workbench_prompts
 		WHERE organization_uuid = CAST(:organization_uuid AS uuid)
@@ -98,29 +100,25 @@ func (d *DB) GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID 
 	return &record, nil
 }
 
-func (d *DB) ListWorkbenchPrompts(ctx context.Context, orgUUID string, workspaceID string) ([]platform.WorkbenchPromptRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" {
+func (d *DB) ListWorkbenchPrompts(ctx context.Context, orgUUID string, workspaceUUID string) ([]platform.WorkbenchPromptRecord, error) {
+	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(workspaceUUID) == "" {
 		return nil, nil
 	}
-	workspaceID = strings.TrimSpace(workspaceID)
-	if workspaceID == "" {
-		workspaceID = "default"
-	}
-	workspaceUUID, err := resolveCompatibilityWorkspaceUUID(ctx, d.sql, orgUUID, workspaceID)
-	if err != nil {
-		return nil, err
-	}
 	var rows []workbenchPromptRow
-	err = namedSelectContext(ctx, d.sql, &rows, `
+	err := namedSelectContext(ctx, d.sql, &rows, `
 		SELECT CAST(organization_uuid AS text) AS organization_uuid, prompt_uuid,
-		       workspace_id, name, is_shared_with_workspace, latest_revision_uuid,
+		       CAST(workspace_uuid AS text) AS workspace_uuid, workspace_display_id,
+		       name, is_shared_with_workspace, latest_revision_uuid,
 		       deleted_at, created_at, updated_at
 		FROM workbench_prompts
 		WHERE organization_uuid = CAST(:organization_uuid AS uuid)
 		  AND workspace_uuid = CAST(:workspace_uuid AS uuid)
 		  AND deleted_at IS NULL
 		ORDER BY updated_at DESC, uuid DESC
-	`, map[string]any{"organization_uuid": strings.TrimSpace(orgUUID), "workspace_uuid": workspaceUUID})
+	`, map[string]any{
+		"organization_uuid": strings.TrimSpace(orgUUID),
+		"workspace_uuid":    strings.TrimSpace(workspaceUUID),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -137,13 +135,13 @@ func (d *DB) UpsertWorkbenchPrompt(ctx context.Context, record platform.Workbenc
 	}
 	record.OrgUUID = strings.TrimSpace(record.OrgUUID)
 	record.PromptUUID = strings.TrimSpace(record.PromptUUID)
-	record.WorkspaceID = strings.TrimSpace(record.WorkspaceID)
-	if record.WorkspaceID == "" {
-		record.WorkspaceID = "default"
+	record.WorkspaceUUID = strings.TrimSpace(record.WorkspaceUUID)
+	record.WorkspaceDisplayID = strings.TrimSpace(record.WorkspaceDisplayID)
+	if record.WorkspaceUUID == "" {
+		return platform.WorkbenchPromptRecord{}, platform.ErrNotFound
 	}
-	workspaceUUID, err := resolveCompatibilityWorkspaceUUID(ctx, d.sql, record.OrgUUID, record.WorkspaceID)
-	if err != nil {
-		return platform.WorkbenchPromptRecord{}, err
+	if record.WorkspaceDisplayID == "" {
+		record.WorkspaceDisplayID = record.WorkspaceUUID
 	}
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = time.Now().UTC()
@@ -160,32 +158,34 @@ func (d *DB) UpsertWorkbenchPrompt(ctx context.Context, record platform.Workbenc
 		deletedAt = record.DeletedAt.UTC()
 	}
 	var row workbenchPromptRow
-	err = namedGetContext(ctx, d.sql, &row, `
+	err := namedGetContext(ctx, d.sql, &row, `
 		INSERT INTO workbench_prompts (
-			organization_uuid, prompt_uuid, workspace_uuid, workspace_id, name, is_shared_with_workspace,
+			organization_uuid, prompt_uuid, workspace_uuid, workspace_display_id,
+			name, is_shared_with_workspace,
 			latest_revision_uuid, deleted_at, created_at, updated_at
 		)
 		VALUES (
 			CAST(:organization_uuid AS uuid), :prompt_uuid, CAST(:workspace_uuid AS uuid),
-			:workspace_id, :name, :is_shared_with_workspace,
+			:workspace_display_id, :name, :is_shared_with_workspace,
 			:latest_revision_uuid, :deleted_at, :created_at, CURRENT_TIMESTAMP
 		)
 		ON CONFLICT (organization_uuid, prompt_uuid) DO UPDATE
 		SET workspace_uuid = EXCLUDED.workspace_uuid,
-		    workspace_id = EXCLUDED.workspace_id,
+		    workspace_display_id = EXCLUDED.workspace_display_id,
 		    name = EXCLUDED.name,
 		    is_shared_with_workspace = EXCLUDED.is_shared_with_workspace,
 		    latest_revision_uuid = EXCLUDED.latest_revision_uuid,
 		    deleted_at = EXCLUDED.deleted_at,
 		    updated_at = CURRENT_TIMESTAMP
 		RETURNING CAST(organization_uuid AS text) AS organization_uuid, prompt_uuid,
-		          workspace_id, name, is_shared_with_workspace, latest_revision_uuid,
+		          CAST(workspace_uuid AS text) AS workspace_uuid, workspace_display_id,
+		          name, is_shared_with_workspace, latest_revision_uuid,
 		          deleted_at, created_at, updated_at
 	`, map[string]any{
 		"organization_uuid":        record.OrgUUID,
 		"prompt_uuid":              record.PromptUUID,
-		"workspace_uuid":           workspaceUUID,
-		"workspace_id":             record.WorkspaceID,
+		"workspace_uuid":           record.WorkspaceUUID,
+		"workspace_display_id":     record.WorkspaceDisplayID,
 		"name":                     record.Name,
 		"is_shared_with_workspace": record.IsSharedWithWorkspace,
 		"latest_revision_uuid":     latestRevisionUUID,
@@ -198,8 +198,17 @@ func (d *DB) UpsertWorkbenchPrompt(ctx context.Context, record platform.Workbenc
 	return row.record(), nil
 }
 
-func (d *DB) DeleteWorkbenchPromptState(ctx context.Context, orgUUID string, promptUUID string) error {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" {
+func (d *DB) DeleteWorkbenchPromptState(
+	ctx context.Context,
+	orgUUID string,
+	promptUUID string,
+	workspaceUUID string,
+	workspaceDisplayID string,
+) error {
+	if d == nil || d.sql == nil ||
+		strings.TrimSpace(orgUUID) == "" ||
+		strings.TrimSpace(promptUUID) == "" ||
+		strings.TrimSpace(workspaceUUID) == "" {
 		return nil
 	}
 	tx, err := d.sql.BeginTxx(ctx, nil)
@@ -208,24 +217,24 @@ func (d *DB) DeleteWorkbenchPromptState(ctx context.Context, orgUUID string, pro
 	}
 	defer tx.Rollback()
 
-	workspaceUUID, err := resolveCompatibilityWorkspaceUUID(ctx, tx, orgUUID, "default")
-	if err != nil {
-		return err
-	}
 	arguments := map[string]any{
 		"organization_uuid": orgUUID,
-		"workspace_uuid":    workspaceUUID,
-		"prompt_uuid":       promptUUID,
+		"workspace_uuid":    strings.TrimSpace(workspaceUUID),
+		"workspace_display_id": firstNonEmpty(
+			strings.TrimSpace(workspaceDisplayID),
+			strings.TrimSpace(workspaceUUID),
+		),
+		"prompt_uuid": promptUUID,
 	}
 	var promptRefUUID string
 	if err := namedGetContext(ctx, tx, &promptRefUUID, `
 		INSERT INTO workbench_prompts (
-			organization_uuid, prompt_uuid, workspace_uuid, workspace_id,
+			organization_uuid, prompt_uuid, workspace_uuid, workspace_display_id,
 			name, deleted_at, created_at, updated_at
 		)
 		VALUES (
 			CAST(:organization_uuid AS uuid), :prompt_uuid, CAST(:workspace_uuid AS uuid),
-			'default', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+			:workspace_display_id, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 		)
 		ON CONFLICT (organization_uuid, prompt_uuid) DO UPDATE
 		SET name = '',
@@ -605,7 +614,8 @@ func (r workbenchPromptRow) record() platform.WorkbenchPromptRecord {
 	record := platform.WorkbenchPromptRecord{
 		OrgUUID:               r.OrgUUID,
 		PromptUUID:            r.PromptUUID,
-		WorkspaceID:           r.WorkspaceID,
+		WorkspaceUUID:         r.WorkspaceUUID,
+		WorkspaceDisplayID:    r.WorkspaceDisplayID,
 		Name:                  r.Name,
 		IsSharedWithWorkspace: r.IsSharedWithWorkspace,
 		CreatedAt:             r.CreatedAt,

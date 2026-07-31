@@ -396,20 +396,20 @@ func (s *Service) GetAPIKey(ctx context.Context, principal auth.Principal, apiKe
 	return s.apiKeyFromRecord(key), nil
 }
 
-func (s *Service) ListAPIKeys(ctx context.Context, principal auth.Principal, workspaceID, createdByUserID, status, afterID, beforeID string, limit int) (cursorPageResponse[apiKeyResponse], error) {
+func (s *Service) ListAPIKeys(ctx context.Context, principal auth.Principal, workspaceExternalID, createdByUserExternalID, status, afterID, beforeID string, limit int) (cursorPageResponse[apiKeyResponse], error) {
 	if status != "" {
 		if err := validateAPIKeyStatus(status, true); err != nil {
 			return cursorPageResponse[apiKeyResponse]{}, invalidRequest(err.Error())
 		}
 	}
 	records, hasMore, err := s.db.ListAdminAPIKeysPage(ctx, db.ListAdminAPIKeysParams{
-		OrganizationUUID: principal.OrganizationUUID,
-		WorkspaceID:      workspaceID,
-		CreatedByUserID:  createdByUserID,
-		Status:           status,
-		AfterID:          afterID,
-		BeforeID:         beforeID,
-		Limit:            limit,
+		OrganizationUUID:        principal.OrganizationUUID,
+		WorkspaceExternalID:     workspaceExternalID,
+		CreatedByUserExternalID: createdByUserExternalID,
+		Status:                  status,
+		AfterID:                 afterID,
+		BeforeID:                beforeID,
+		Limit:                   limit,
 	})
 	if err != nil {
 		return cursorPageResponse[apiKeyResponse]{}, err
@@ -602,13 +602,13 @@ func (s *Service) GetTunnel(ctx context.Context, principal auth.Principal, tunne
 	return s.tunnelFromRecord(tunnel), nil
 }
 
-func (s *Service) ListTunnels(ctx context.Context, principal auth.Principal, workspaceID string, includeArchived bool, limit, offset int) (tokenPageResponse[tunnelResponse], error) {
+func (s *Service) ListTunnels(ctx context.Context, principal auth.Principal, workspaceExternalID string, includeArchived bool, limit, offset int) (tokenPageResponse[tunnelResponse], error) {
 	records, hasMore, err := s.db.ListAdminTunnelsPage(ctx, db.ListAdminTunnelsParams{
-		OrganizationUUID: principal.OrganizationUUID,
-		WorkspaceID:      workspaceID,
-		IncludeArchived:  includeArchived,
-		Limit:            limit,
-		Offset:           offset,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceExternalID: workspaceExternalID,
+		IncludeArchived:     includeArchived,
+		Limit:               limit,
+		Offset:              offset,
 	})
 	if err != nil {
 		return tokenPageResponse[tunnelResponse]{}, err

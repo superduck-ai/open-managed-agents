@@ -156,13 +156,13 @@ type ListAdminMembersParams struct {
 }
 
 type ListAdminAPIKeysParams struct {
-	OrganizationUUID string
-	WorkspaceID      string
-	CreatedByUserID  string
-	Status           string
-	AfterID          string
-	BeforeID         string
-	Limit            int
+	OrganizationUUID        string
+	WorkspaceExternalID     string
+	CreatedByUserExternalID string
+	Status                  string
+	AfterID                 string
+	BeforeID                string
+	Limit                   int
 }
 
 type ListAdminExternalKeysParams struct {
@@ -172,11 +172,11 @@ type ListAdminExternalKeysParams struct {
 }
 
 type ListAdminTunnelsParams struct {
-	OrganizationUUID string
-	WorkspaceID      string
-	IncludeArchived  bool
-	Limit            int
-	Offset           int
+	OrganizationUUID    string
+	WorkspaceExternalID string
+	IncludeArchived     bool
+	Limit               int
+	Offset              int
 }
 
 type ListAdminTunnelCertificatesParams struct {
@@ -591,13 +591,13 @@ func (d *DB) ListAdminAPIKeysPage(ctx context.Context, params ListAdminAPIKeysPa
 	}
 	query := adminAPIKeySelectSQL() + ` where w.organization_uuid = CAST(:organization_uuid AS uuid)`
 	args := map[string]any{"organization_uuid": params.OrganizationUUID, "limit": params.Limit + 1}
-	if params.WorkspaceID != "" {
+	if params.WorkspaceExternalID != "" {
 		query += " and w.external_id = :workspace_external_id"
-		args["workspace_external_id"] = params.WorkspaceID
+		args["workspace_external_id"] = params.WorkspaceExternalID
 	}
-	if params.CreatedByUserID != "" {
+	if params.CreatedByUserExternalID != "" {
 		query += " and u.external_id = :created_by_user_external_id"
-		args["created_by_user_external_id"] = params.CreatedByUserID
+		args["created_by_user_external_id"] = params.CreatedByUserExternalID
 	}
 	if params.Status != "" {
 		query += " and ak.status = :status"
@@ -748,9 +748,9 @@ func (d *DB) ListAdminTunnelsPage(ctx context.Context, params ListAdminTunnelsPa
 	if !params.IncludeArchived {
 		query += " and archived_at is null"
 	}
-	if params.WorkspaceID != "" {
+	if params.WorkspaceExternalID != "" {
 		query += " and workspace_external_id = :workspace_external_id"
-		args["workspace_external_id"] = params.WorkspaceID
+		args["workspace_external_id"] = params.WorkspaceExternalID
 	}
 	query += " order by created_at desc, uuid desc limit :limit offset :offset"
 	tunnels, err := selectAdminRows[AdminTunnel](ctx, d.sql, query, args)

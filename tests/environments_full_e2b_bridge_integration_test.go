@@ -160,7 +160,7 @@ func TestE2BManagedAgentBridgeEnvironmentManagerIntegration(t *testing.T) {
 	}
 	sandboxRecord, err := app.db.GetActiveEnvironmentSandboxForWork(
 		ctx,
-		getDefaultDBIDs(t, app.db).WorkspaceUUID,
+		getDefaultDBIDs(t, app.db).WorkspaceID,
 		environment.ID,
 		workID,
 	)

@@ -719,29 +719,29 @@ func (d *DB) GetRenewableEnvironmentSandboxForCodeSession(ctx context.Context, c
 	return getEnvironmentSandboxSQLX(ctx, d.sql, `
 		select `+environmentSandboxSQLXColumns+`
 		from environment_sandboxes
-		where uuid = (
-			select sandbox.uuid
+		where id = (
+			select sandbox.id
 			from code_sessions code_session
 			join environment_work work
-				on work.organization_uuid = code_session.organization_uuid
-				and work.workspace_uuid = code_session.workspace_uuid
-				and work.environment_uuid = code_session.environment_uuid
+				on work.organization_id = code_session.organization_id
+				and work.workspace_id = code_session.workspace_id
+				and work.environment_id = code_session.environment_id
 				and work.environment_external_id = code_session.environment_external_id
 				and work.data->>'type' = 'session'
 				and work.data->>'id' = code_session.session_external_id
 				and work.deleted_at is null
 			join environment_sandboxes sandbox
-				on sandbox.organization_uuid = code_session.organization_uuid
-				and sandbox.workspace_uuid = code_session.workspace_uuid
-				and sandbox.environment_uuid = code_session.environment_uuid
-				and sandbox.work_uuid = work.uuid
+				on sandbox.organization_id = code_session.organization_id
+				and sandbox.workspace_id = code_session.workspace_id
+				and sandbox.environment_id = code_session.environment_id
+				and sandbox.work_id = work.id
 				and sandbox.provider_sandbox_id is not null
 				and sandbox.state = 'running'
 			where code_session.external_id = :code_session_external_id
 				and code_session.status = 'active'
 				and code_session.worker_status = 'running'
 				and code_session.deleted_at is null
-			order by sandbox.created_at desc, sandbox.uuid desc
+			order by sandbox.created_at desc, sandbox.id desc
 			limit 1
 		)
 	`, map[string]any{"code_session_external_id": codeSessionExternalID})

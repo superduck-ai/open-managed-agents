@@ -62,7 +62,7 @@ func (r *Runner) prepareRcloneFilestoreLaunch(
 	if serviceURL == "" {
 		return rcloneFilestoreLaunch{}, errors.New("code_session.sandbox_api_base_url is required for managed-agent filestore")
 	}
-	scope, err := r.db.GetFilestoreTokenScopeForSessionIssue(ctx, session.WorkspaceID, session.ExternalID)
+	scope, err := r.db.GetFilestoreTokenScopeForSessionIssue(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return rcloneFilestoreLaunch{}, fmt.Errorf("resolve managed-agent filestore identity: %w", err)
 	}

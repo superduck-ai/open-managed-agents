@@ -46,12 +46,12 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 	run := DeploymentRun{
 		UUID:                 "11111111-1111-4111-8111-111111111111",
 		ExternalID:           "drun_test",
-		OrganizationID:       1,
-		WorkspaceID:          2,
-		CreatedByAPIKeyID:    3,
-		DeploymentID:         4,
+		OrganizationUUID:     "00000000-0000-0000-0000-000000000001",
+		WorkspaceUUID:        "00000000-0000-0000-0000-000000000002",
+		CreatedByAPIKeyUUID:  "00000000-0000-0000-0000-000000000003",
+		DeploymentUUID:       "00000000-0000-0000-0000-000000000004",
 		DeploymentExternalID: "dep_test",
-		AgentID:              5,
+		AgentUUID:            "00000000-0000-0000-0000-000000000005",
 		AgentExternalID:      "agent_test",
 		AgentVersion:         1,
 		AgentSnapshot:        []byte(`{"model":"test"}`),
@@ -62,12 +62,12 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 	deployment := Deployment{
 		UUID:                  "33333333-3333-4333-8333-333333333333",
 		ExternalID:            run.DeploymentExternalID,
-		OrganizationID:        run.OrganizationID,
-		WorkspaceID:           run.WorkspaceID,
-		CreatedByAPIKeyID:     run.CreatedByAPIKeyID,
-		EnvironmentID:         8,
+		OrganizationUUID:      run.OrganizationUUID,
+		WorkspaceUUID:         run.WorkspaceUUID,
+		CreatedByAPIKeyUUID:   run.CreatedByAPIKeyUUID,
+		EnvironmentUUID:       "00000000-0000-0000-0000-000000000008",
 		EnvironmentExternalID: "env_test",
-		AgentID:               run.AgentID,
+		AgentUUID:             run.AgentUUID,
 		AgentExternalID:       run.AgentExternalID,
 		AgentVersion:          run.AgentVersion,
 		AgentSnapshot:         run.AgentSnapshot,
@@ -85,31 +85,31 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 	event := SessionEvent{
 		UUID:              "22222222-2222-4222-8222-222222222222",
 		ExternalID:        "sesevt_test",
-		OrganizationID:    1,
-		WorkspaceID:       2,
-		SessionID:         6,
+		OrganizationUUID:  "00000000-0000-0000-0000-000000000001",
+		WorkspaceUUID:     "00000000-0000-0000-0000-000000000002",
+		SessionUUID:       "00000000-0000-0000-0000-000000000006",
 		SessionExternalID: "sesn_test",
 		EventType:         "user.message",
 		Payload:           []byte(`{"type":"user.message"}`),
 		ProcessedAt:       now,
 		CreatedAt:         now,
 	}
-	threadID := int64(7)
+	threadUUID := "00000000-0000-0000-0000-000000000007"
 	threadExternalID := "sesthr_test"
-	event.ThreadID = &threadID
+	event.ThreadUUID = &threadUUID
 	event.ThreadExternalID = &threadExternalID
 	hasError := true
 	deploymentListQuery, deploymentListArguments := listDeploymentsQuery(ListDeploymentsPageParams{
-		WorkspaceID:     deployment.WorkspaceID,
+		WorkspaceUUID:   deployment.WorkspaceUUID,
 		Limit:           20,
 		AgentExternalID: deployment.AgentExternalID,
 		Status:          deployment.Status,
 		CreatedAtGTE:    &now,
 		CreatedAtLTE:    &now,
-		Cursor:          &DeploymentPageCursor{CreatedAt: now, ID: 9},
+		Cursor:          &DeploymentPageCursor{CreatedAt: now, UUID: "00000000-0000-0000-0000-000000000009"},
 	})
 	deploymentRunListQuery, deploymentRunListArguments := listDeploymentRunsQuery(ListDeploymentRunsPageParams{
-		WorkspaceID:          run.WorkspaceID,
+		WorkspaceUUID:        run.WorkspaceUUID,
 		Limit:                20,
 		DeploymentExternalID: run.DeploymentExternalID,
 		TriggerType:          run.TriggerType,
@@ -118,7 +118,7 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 		CreatedAtGTE:         &now,
 		CreatedAtLT:          &now,
 		CreatedAtLTE:         &now,
-		Cursor:               &DeploymentRunPageCursor{CreatedAt: now, ID: 10},
+		Cursor:               &DeploymentRunPageCursor{CreatedAt: now, UUID: "00000000-0000-0000-0000-000000000010"},
 	})
 
 	tests := []struct {
@@ -136,13 +136,13 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 		{
 			name:         "get deployment",
 			query:        getDeploymentQuery,
-			arguments:    deploymentLookupArguments(deployment.WorkspaceID, deployment.ExternalID),
+			arguments:    deploymentLookupArguments(deployment.WorkspaceUUID, deployment.ExternalID),
 			wantArgCount: 2,
 		},
 		{
 			name:         "lock deployment for update",
 			query:        lockDeploymentForUpdateQuery,
-			arguments:    deploymentLookupArguments(deployment.WorkspaceID, deployment.ExternalID),
+			arguments:    deploymentLookupArguments(deployment.WorkspaceUUID, deployment.ExternalID),
 			wantArgCount: 2,
 		},
 		{
@@ -154,23 +154,23 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 		{
 			name:         "archive deployment",
 			query:        archiveDeploymentQuery,
-			arguments:    deploymentLookupArguments(deployment.WorkspaceID, deployment.ExternalID),
+			arguments:    deploymentLookupArguments(deployment.WorkspaceUUID, deployment.ExternalID),
 			wantArgCount: 2,
 		},
 		{
 			name:  "pause deployment",
 			query: pauseDeploymentQuery,
 			arguments: map[string]any{
-				"workspace_id":  deployment.WorkspaceID,
-				"external_id":   deployment.ExternalID,
-				"paused_reason": []byte(`{"reason":"test"}`),
+				"workspace_uuid": deployment.WorkspaceUUID,
+				"external_id":    deployment.ExternalID,
+				"paused_reason":  []byte(`{"reason":"test"}`),
 			},
 			wantArgCount: 3,
 		},
 		{
 			name:         "unpause deployment",
 			query:        unpauseDeploymentQuery,
-			arguments:    deploymentLookupArguments(deployment.WorkspaceID, deployment.ExternalID),
+			arguments:    deploymentLookupArguments(deployment.WorkspaceUUID, deployment.ExternalID),
 			wantArgCount: 2,
 		},
 		{
@@ -182,7 +182,7 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 		{
 			name:         "get deployment run",
 			query:        getDeploymentRunQuery,
-			arguments:    deploymentLookupArguments(run.WorkspaceID, run.ExternalID),
+			arguments:    deploymentLookupArguments(run.WorkspaceUUID, run.ExternalID),
 			wantArgCount: 2,
 		},
 		{
@@ -195,7 +195,7 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "lock deployment",
 			query: lockDeploymentForManualRunQuery,
 			arguments: map[string]any{
-				"workspace_id":           run.WorkspaceID,
+				"workspace_uuid":         run.WorkspaceUUID,
 				"deployment_external_id": run.DeploymentExternalID,
 			},
 			wantArgCount: 2,
@@ -210,7 +210,7 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "update deployment timestamp",
 			query: updateDeploymentLastRunQuery,
 			arguments: map[string]any{
-				"workspace_id":           run.WorkspaceID,
+				"workspace_uuid":         run.WorkspaceUUID,
 				"deployment_external_id": run.DeploymentExternalID,
 				"last_run_at":            now,
 			},
@@ -220,7 +220,7 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "lock session for events",
 			query: lockSessionForEventsQuery,
 			arguments: map[string]any{
-				"workspace_id":        event.WorkspaceID,
+				"workspace_uuid":      event.WorkspaceUUID,
 				"session_external_id": event.SessionExternalID,
 			},
 			wantArgCount: 2,
@@ -229,7 +229,7 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "find primary thread",
 			query: primarySessionThreadQuery,
 			arguments: map[string]any{
-				"workspace_id":        event.WorkspaceID,
+				"workspace_uuid":      event.WorkspaceUUID,
 				"session_external_id": event.SessionExternalID,
 			},
 			wantArgCount: 2,
@@ -238,7 +238,7 @@ func TestDeploymentRunQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "find explicit thread",
 			query: sessionThreadByExternalIDQuery,
 			arguments: map[string]any{
-				"workspace_id":        event.WorkspaceID,
+				"workspace_uuid":      event.WorkspaceUUID,
 				"session_external_id": event.SessionExternalID,
 				"thread_external_id":  threadExternalID,
 			},
@@ -283,7 +283,7 @@ func TestUpdateDeploymentLastRunSQLX(t *testing.T) {
 		wantErr := errors.New("boom")
 		database := &stubNamedExecer{err: wantErr}
 
-		err := updateDeploymentLastRunSQLX(context.Background(), database, 42, "dep_test", now)
+		err := updateDeploymentLastRunSQLX(context.Background(), database, "00000000-0000-0000-0000-000000000042", "dep_test", now)
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("updateDeploymentLastRunSQLX() error = %v, want %v", err, wantErr)
 		}
@@ -292,7 +292,7 @@ func TestUpdateDeploymentLastRunSQLX(t *testing.T) {
 	t.Run("returns not found when zero rows were updated", func(t *testing.T) {
 		database := &stubNamedExecer{result: stubSQLResult{rowsAffected: 0}}
 
-		err := updateDeploymentLastRunSQLX(context.Background(), database, 42, "dep_missing", now)
+		err := updateDeploymentLastRunSQLX(context.Background(), database, "00000000-0000-0000-0000-000000000042", "dep_missing", now)
 		if !errors.Is(err, ErrNotFound) {
 			t.Fatalf("updateDeploymentLastRunSQLX() error = %v, want ErrNotFound", err)
 		}
@@ -301,7 +301,7 @@ func TestUpdateDeploymentLastRunSQLX(t *testing.T) {
 	t.Run("succeeds when at least one row was updated", func(t *testing.T) {
 		database := &stubNamedExecer{result: stubSQLResult{rowsAffected: 1}}
 
-		if err := updateDeploymentLastRunSQLX(context.Background(), database, 42, "dep_test", now); err != nil {
+		if err := updateDeploymentLastRunSQLX(context.Background(), database, "00000000-0000-0000-0000-000000000042", "dep_test", now); err != nil {
 			t.Fatalf("updateDeploymentLastRunSQLX() error = %v, want nil", err)
 		}
 		if strings.Contains(database.query, ":") {

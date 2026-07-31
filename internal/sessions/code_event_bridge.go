@@ -13,7 +13,7 @@ import (
 )
 
 func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, events []db.SessionEvent) {
-	created, err := h.db.AppendSessionEvents(r.Context(), workspaceIDFromRequest(r), sessionID, events)
+	created, err := h.db.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
 		return
@@ -27,7 +27,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 	if h == nil || len(payloads) == 0 {
 		return nil
 	}
-	session, err := h.db.GetSession(ctx, codeSession.WorkspaceID, codeSession.SessionExternalID)
+	session, err := h.db.GetSession(ctx, codeSession.WorkspaceUUID, codeSession.SessionExternalID)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		}
 		return events[i].ExternalID < events[j].ExternalID
 	})
-	created, err := h.db.AppendSessionEventsIfAbsent(ctx, session.WorkspaceID, session.ExternalID, events)
+	created, err := h.db.AppendSessionEventsIfAbsent(ctx, session.WorkspaceUUID, session.ExternalID, events)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			return nil
@@ -73,6 +73,6 @@ func (h *Handler) PublishCodeSessionEvents(ctx context.Context, codeSession db.C
 		h.applySessionEventEffects(ctx, event)
 		h.broadcast(event)
 	}
-	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceID, session.ExternalID, created)
+	h.enqueueWebhooksForSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, created)
 	return nil
 }

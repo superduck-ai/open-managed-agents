@@ -19,7 +19,7 @@ func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
 				"org_uuid": "org_test",
 				"limit":    100,
 			},
-			wantArgCount: 3,
+			wantArgCount: 2,
 		},
 		{
 			name:  "update role",
@@ -29,7 +29,7 @@ func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
 				"user_id":  "user_test",
 				"role":     "developer",
 			},
-			wantArgCount: 6,
+			wantArgCount: 5,
 		},
 		{
 			name:  "remove user",
@@ -38,7 +38,7 @@ func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
 				"org_uuid": "org_test",
 				"user_id":  "user_test",
 			},
-			wantArgCount: 5,
+			wantArgCount: 4,
 		},
 		{
 			name:  "remove workspace memberships",

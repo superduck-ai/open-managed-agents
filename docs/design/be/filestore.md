@@ -370,7 +370,7 @@ Owned File 的覆盖、删除、递归删除和 TTL 过期在同一个数据库�
 
 删除 Session 时，短事务立即退休公开 Resources 与 filesystem，并投递一个 `filestore_filesystem_cleanup` 父任务，不遍历全部 Owned File，也不调用 S3。worker 每次最多退休 100 个 Owned File Resource：生成精确版本 cleanup 子任务并扣减容量；全部 Owned File 退休后再软删除内部目录、Skill Archive Resources 及其 File 快照。Skill File 只借用 catalog 对象，不生成对象清理；Input Resource 已在 Session 删除事务中退休，也不生成对象清理。
 
-两类 Filestore cleanup job 的持久化 payload 都只保存 `workspace_uuid` 与 `filesystem_uuid`，不保存 `workspace_id`、`filesystem_id` 或冗余的 filesystem external ID。`jobs.workspace_id` 是通用任务表在当前数据库中的路由缓存，不是 Filestore 清理任务的权威归属：worker 取得租约时用 payload UUID 重新关联 workspace 与 filesystem，得到当前库的 bigint ID 后修正该缓存；整 filesystem 清理进入事务后也再次按 UUID 解析并锁定当前记录。迁移会先验证每条历史 bigint 引用都能解析且归属一致，再改写 payload；发现孤立或错配引用时直接中止，避免恢复或合库后把任务指向另一条恰好复用了相同 identity 的记录。
+两类 Filestore cleanup job 的持久化 payload 都只保存 `workspace_uuid` 与 `filesystem_uuid`，不保存 `workspace_id`、`filesystem_id` 或冗余的 filesystem external ID。`jobs.workspace_uuid` 也是稳定的 workspace 路由引用；worker 取得租约后直接按 payload UUID 关联并锁定 filesystem，不再把 workspace identity 当作缓存写回。整 filesystem 清理进入事务后会再次按 UUID 校验当前记录。迁移会先验证每条历史 bigint 引用都能解析且归属一致，再改写引用与 payload；发现孤立或错配引用时直接中止，避免恢复或合库后把任务指向另一条恰好复用了相同 identity 的记录。
 
 现在文件不考虑 expire
 

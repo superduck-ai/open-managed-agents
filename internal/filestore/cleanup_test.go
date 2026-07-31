@@ -18,7 +18,7 @@ func TestCleanupWorkerRunCleanupOnceSchedulesBucketResolutionFailureRetry(t *tes
 
 	bucketErr := errors.New("bucket name is invalid")
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{{
-		ID:         1,
+		UUID:       "job-1",
 		ExternalID: "cleanup-1",
 		Bucket:     "invalid-bucket",
 		Key:        "objects/a",
@@ -41,7 +41,7 @@ func TestCleanupWorkerRunCleanupOnceSchedulesBucketResolutionFailureRetry(t *tes
 		t.Fatalf("failures = %+v", database.failures)
 	}
 	failure := database.failures[0]
-	if failure.jobID != 1 || failure.workerID != "worker-1" || failure.delay != time.Hour || failure.maxAttempts != filestoreCleanupMaxAttempts {
+	if failure.jobUUID != "job-1" || failure.workerID != "worker-1" || failure.delay != time.Hour || failure.maxAttempts != filestoreCleanupMaxAttempts {
 		t.Fatalf("failure = %+v", failure)
 	}
 	if failure.reason != bucketErr.Error() {
@@ -53,7 +53,7 @@ func TestCleanupWorkerRunCleanupOnceSchedulesDeleteFailureRetry(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{{
-		ID:         2,
+		UUID:       "job-2",
 		ExternalID: "cleanup-2",
 		Bucket:     "configured-bucket",
 		Key:        "objects/b",
@@ -76,7 +76,7 @@ func TestCleanupWorkerRunCleanupOnceSchedulesDeleteFailureRetry(t *testing.T) {
 		t.Fatalf("failures = %+v", database.failures)
 	}
 	failure := database.failures[0]
-	if failure.jobID != 2 || failure.workerID != "worker-2" || failure.reason != deleteErr.Error() {
+	if failure.jobUUID != "job-2" || failure.workerID != "worker-2" || failure.reason != deleteErr.Error() {
 		t.Fatalf("failure = %+v", failure)
 	}
 	if failure.delay != 9*time.Minute || failure.maxAttempts != filestoreCleanupMaxAttempts {
@@ -91,7 +91,7 @@ func TestCleanupWorkerRunCleanupOnceCompletesMissingObject(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{{
-		ID:         3,
+		UUID:       "job-3",
 		ExternalID: "cleanup-3",
 		Bucket:     "configured-bucket",
 		Key:        "objects/missing",
@@ -105,7 +105,7 @@ func TestCleanupWorkerRunCleanupOnceCompletesMissingObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunCleanupOnce() error = %v", err)
 	}
-	if len(database.completed) != 1 || database.completed[0] != 3 {
+	if len(database.completed) != 1 || database.completed[0] != "job-3" {
 		t.Fatalf("completed jobs = %v", database.completed)
 	}
 	if len(database.completedWorkerIDs) != 1 || database.completedWorkerIDs[0] != "worker-3" {
@@ -130,8 +130,8 @@ func TestCleanupWorkerRunCleanupOnceDeletesObjectsFromMultipleBuckets(t *testing
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{
-		{ID: 10, ExternalID: "cleanup-10", Bucket: "first-bucket", Key: "objects/first", VersionID: "version-10"},
-		{ID: 11, ExternalID: "cleanup-11", Bucket: "second-bucket", Key: "objects/second"},
+		{UUID: "job-10", ExternalID: "cleanup-10", Bucket: "first-bucket", Key: "objects/first", VersionID: "version-10"},
+		{UUID: "job-11", ExternalID: "cleanup-11", Bucket: "second-bucket", Key: "objects/second"},
 	}}
 	firstStore := &fakeCleanupBlobStore{bucket: "first-bucket"}
 	secondStore := &fakeCleanupBlobStore{bucket: "second-bucket"}
@@ -158,7 +158,7 @@ func TestCleanupWorkerRunCleanupOnceDeletesObjectsFromMultipleBuckets(t *testing
 		!secondStore.deleteCalls[0].allVersions {
 		t.Fatalf("second bucket Delete calls = %+v", secondStore.deleteCalls)
 	}
-	if len(database.completed) != 2 || database.completed[0] != 10 || database.completed[1] != 11 {
+	if len(database.completed) != 2 || database.completed[0] != "job-10" || database.completed[1] != "job-11" {
 		t.Fatalf("completed jobs = %v", database.completed)
 	}
 	if len(database.failures) != 0 {
@@ -174,8 +174,8 @@ func TestCleanupWorkerRunCleanupOnceReturnsStateTransitionErrors(t *testing.T) {
 	bucketErr := errors.New("bucket resolution failed")
 	database := &fakeFilestoreCleanupDatabase{
 		jobs: []db.FilestoreObjectCleanupJob{
-			{ID: 4, ExternalID: "cleanup-4", Bucket: "configured-bucket", Key: "objects/complete"},
-			{ID: 5, ExternalID: "cleanup-5", Bucket: "invalid-bucket", Key: "objects/fail"},
+			{UUID: "job-4", ExternalID: "cleanup-4", Bucket: "configured-bucket", Key: "objects/complete"},
+			{UUID: "job-5", ExternalID: "cleanup-5", Bucket: "invalid-bucket", Key: "objects/fail"},
 		},
 		completeError: completeErr,
 		failError:     failErr,
@@ -216,8 +216,8 @@ func TestCleanupWorkerRunCleanupOnceStopsOnCanceledDelete(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{jobs: []db.FilestoreObjectCleanupJob{
-		{ID: 6, ExternalID: "cleanup-6", Bucket: "configured-bucket", Key: "objects/canceled"},
-		{ID: 7, ExternalID: "cleanup-7", Bucket: "configured-bucket", Key: "objects/not-reached"},
+		{UUID: "job-6", ExternalID: "cleanup-6", Bucket: "configured-bucket", Key: "objects/canceled"},
+		{UUID: "job-7", ExternalID: "cleanup-7", Bucket: "configured-bucket", Key: "objects/not-reached"},
 	}}
 	store := &fakeCleanupBlobStore{deleteError: context.Canceled}
 
@@ -256,8 +256,8 @@ func TestCleanupWorkerRunTTLSweepOnceLogsMetadataAnomalies(t *testing.T) {
 	t.Parallel()
 
 	database := &fakeFilestoreCleanupDatabase{expireAnomalies: []db.FilestoreCleanupAnomaly{{
-		WorkspaceID:     42,
-		FilesystemID:    43,
+		WorkspaceUUID:   "00000000-0000-4000-8000-000000000042",
+		FilesystemUUID:  "00000000-0000-4000-8000-000000000043",
 		EntryExternalID: "sesrsc_malformed",
 		Reason:          "missing_object_location",
 	}}}
@@ -270,8 +270,8 @@ func TestCleanupWorkerRunTTLSweepOnceLogsMetadataAnomalies(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"msg":"filestore cleanup metadata anomaly"`,
-		`"workspace_id":42`,
-		`"filesystem_id":43`,
+		`"workspace_id":"00000000-0000-4000-8000-000000000042"`,
+		`"filesystem_id":"00000000-0000-4000-8000-000000000043"`,
 		`"entry_external_id":"sesrsc_malformed"`,
 		`"reason":"missing_object_location"`,
 	} {
@@ -301,7 +301,7 @@ func TestCleanupWorkerRunFilesystemCleanupOnceSchedulesProcessFailureRetry(t *te
 	processErr := errors.New("database unavailable")
 	database := &fakeFilestoreCleanupDatabase{
 		filesystemJobs: []db.FilestoreFilesystemCleanupJob{{
-			ID:         8,
+			UUID:       "job-8",
 			ExternalID: "filesystem-cleanup-8",
 			Attempts:   1,
 		}},
@@ -317,7 +317,7 @@ func TestCleanupWorkerRunFilesystemCleanupOnceSchedulesProcessFailureRetry(t *te
 		t.Fatalf("filesystem failures = %+v", database.filesystemFailures)
 	}
 	failure := database.filesystemFailures[0]
-	if failure.jobID != 8 || failure.workerID != "worker-8" || failure.reason != processErr.Error() {
+	if failure.jobUUID != "job-8" || failure.workerID != "worker-8" || failure.reason != processErr.Error() {
 		t.Fatalf("filesystem failure = %+v", failure)
 	}
 	if failure.delay != 4*time.Minute || failure.maxAttempts != filestoreCleanupMaxAttempts {
@@ -328,7 +328,7 @@ func TestCleanupWorkerRunFilesystemCleanupOnceSchedulesProcessFailureRetry(t *te
 func TestCleanupWorkerRunFilesystemCleanupOnceUsesBoundedBatch(t *testing.T) {
 	t.Parallel()
 
-	database := &fakeFilestoreCleanupDatabase{filesystemJobs: []db.FilestoreFilesystemCleanupJob{{ID: 9}}}
+	database := &fakeFilestoreCleanupDatabase{filesystemJobs: []db.FilestoreFilesystemCleanupJob{{UUID: "job-9"}}}
 
 	worker := NewCleanupWorker(database, nil, nil)
 	if err := worker.RunFilesystemCleanupOnce(context.Background(), "worker-9"); err != nil {
@@ -344,7 +344,7 @@ func TestCleanupWorkerRunFilesystemCleanupOnceUsesBoundedBatch(t *testing.T) {
 			database.filesystemMaxAttempts,
 		)
 	}
-	if len(database.filesystemProcessed) != 1 || database.filesystemProcessed[0] != 9 {
+	if len(database.filesystemProcessed) != 1 || database.filesystemProcessed[0] != "job-9" {
 		t.Fatalf("processed filesystem jobs = %v", database.filesystemProcessed)
 	}
 	if database.filesystemProcessLimit != filestoreFilesystemCleanupBatchSize {
@@ -408,7 +408,7 @@ func (c *fakeCleanupStorageClient) ForBucket(bucket string) (storage.ObjectStore
 }
 
 type cleanupFailure struct {
-	jobID       int64
+	jobUUID     string
 	workerID    string
 	reason      string
 	delay       time.Duration
@@ -421,7 +421,7 @@ type fakeFilestoreCleanupDatabase struct {
 	leasedWorkerID           string
 	leasedLimit              int
 	leasedMaxAttempts        int
-	completed                []int64
+	completed                []string
 	completedWorkerIDs       []string
 	completeError            error
 	failures                 []cleanupFailure
@@ -434,7 +434,7 @@ type fakeFilestoreCleanupDatabase struct {
 	filesystemLeasedWorkerID string
 	filesystemLeasedLimit    int
 	filesystemMaxAttempts    int
-	filesystemProcessed      []int64
+	filesystemProcessed      []string
 	filesystemProcessLimit   int
 	filesystemProcessError   error
 	filesystemAnomalies      []db.FilestoreCleanupAnomaly
@@ -456,25 +456,25 @@ func (d *fakeFilestoreCleanupDatabase) LeaseFilestoreFilesystemCleanupJobs(
 
 func (d *fakeFilestoreCleanupDatabase) ProcessLeasedFilestoreFilesystemCleanupJob(
 	_ context.Context,
-	jobID int64,
+	jobUUID string,
 	_ string,
 	limit int,
 ) (bool, []db.FilestoreCleanupAnomaly, error) {
-	d.filesystemProcessed = append(d.filesystemProcessed, jobID)
+	d.filesystemProcessed = append(d.filesystemProcessed, jobUUID)
 	d.filesystemProcessLimit = limit
 	return d.filesystemProcessError == nil, d.filesystemAnomalies, d.filesystemProcessError
 }
 
 func (d *fakeFilestoreCleanupDatabase) FailLeasedFilestoreFilesystemCleanupJob(
 	_ context.Context,
-	jobID int64,
+	jobUUID string,
 	workerID string,
 	reason string,
 	retryDelay time.Duration,
 	maxAttempts int,
 ) error {
 	d.filesystemFailures = append(d.filesystemFailures, cleanupFailure{
-		jobID:       jobID,
+		jobUUID:     jobUUID,
 		workerID:    workerID,
 		reason:      reason,
 		delay:       retryDelay,
@@ -495,22 +495,22 @@ func (d *fakeFilestoreCleanupDatabase) LeaseFilestoreObjectCleanupJobs(
 	return d.jobs, d.leaseError
 }
 
-func (d *fakeFilestoreCleanupDatabase) CompleteLeasedFilestoreObjectCleanupJob(_ context.Context, jobID int64, workerID string) error {
-	d.completed = append(d.completed, jobID)
+func (d *fakeFilestoreCleanupDatabase) CompleteLeasedFilestoreObjectCleanupJob(_ context.Context, jobUUID string, workerID string) error {
+	d.completed = append(d.completed, jobUUID)
 	d.completedWorkerIDs = append(d.completedWorkerIDs, workerID)
 	return d.completeError
 }
 
 func (d *fakeFilestoreCleanupDatabase) FailLeasedFilestoreObjectCleanupJob(
 	_ context.Context,
-	jobID int64,
+	jobUUID string,
 	workerID string,
 	reason string,
 	retryDelay time.Duration,
 	maxAttempts int,
 ) error {
 	d.failures = append(d.failures, cleanupFailure{
-		jobID:       jobID,
+		jobUUID:     jobUUID,
 		workerID:    workerID,
 		reason:      reason,
 		delay:       retryDelay,

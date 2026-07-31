@@ -20,7 +20,7 @@ func (d *DB) MakeFilestoreDirectory(ctx context.Context, input MakeFilestoreDire
 		return SessionResourceFile{}, err
 	}
 	input.Now = filestoreNow(input.Now)
-	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
+	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceUUID, input.FilesystemUUID)
 	if err != nil {
 		return SessionResourceFile{}, err
 	}
@@ -44,7 +44,7 @@ func (d *DB) MakeFilestoreDirectory(ctx context.Context, input MakeFilestoreDire
 		paths = filestoreDirectoryChain(input.Path)
 	}
 	for _, directoryPath := range paths {
-		directory, err = ensureFilestoreDirectoryTx(ctx, tx, input.WorkspaceID, filesystem, directoryPath, input.Now)
+		directory, err = ensureFilestoreDirectoryTx(ctx, tx, filesystem, directoryPath, input.Now)
 		if err != nil {
 			return SessionResourceFile{}, err
 		}
@@ -62,14 +62,14 @@ func (d *DB) PutFilestoreFile(ctx context.Context, input PutFilestoreFileInput) 
 		return FilestoreMutationResult{}, err
 	}
 	input.Now = filestoreNow(input.Now)
-	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
+	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceUUID, input.FilesystemUUID)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
 	defer tx.Rollback()
 
 	result, err := putFilestoreFileTx(ctx, tx, filesystem, putFilestoreFileTxInput{
-		WorkspaceID:                input.WorkspaceID,
+		WorkspaceUUID:              input.WorkspaceUUID,
 		Path:                       input.Path,
 		Blob:                       input.Blob,
 		OverwriteExisting:          input.OverwriteExisting,
@@ -98,7 +98,7 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
 	input.Now = filestoreNow(input.Now)
-	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
+	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceUUID, input.FilesystemUUID)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -130,7 +130,7 @@ func (d *DB) CopyFilestoreFile(ctx context.Context, input CopyFilestoreFileInput
 	blob.S3ETag = input.DestinationS3ETag
 	blob.S3VersionID = input.DestinationS3VersionID
 	result, err := putFilestoreFileTx(ctx, tx, filesystem, putFilestoreFileTxInput{
-		WorkspaceID:                input.WorkspaceID,
+		WorkspaceUUID:              input.WorkspaceUUID,
 		Path:                       input.DestinationPath,
 		Blob:                       blob,
 		OverwriteExisting:          input.OverwriteExisting,
@@ -156,7 +156,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
 	input.Now = filestoreNow(input.Now)
-	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
+	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceUUID, input.FilesystemUUID)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -198,7 +198,7 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 			return FilestoreMutationResult{}, ErrFilestorePathExists
 		}
 		job, enqueued, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
-			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
+			WorkspaceUUID: input.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 		}, destination, "move_overwrite", input.Now)
 		if err != nil {
 			return FilestoreMutationResult{}, err
@@ -207,14 +207,14 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 			cleanupJobs = append(cleanupJobs, job)
 		}
 		if err := retireSessionResourceFileTx(
-			ctx, tx, input.WorkspaceID, destination.ID, input.Now,
+			ctx, tx, input.WorkspaceUUID, destination.UUID, input.Now,
 		); err != nil {
 			return FilestoreMutationResult{}, err
 		}
 		removedBytes := destination.OwnedBytes()
 		if removedBytes > 0 {
 			if err := applyWorkspaceStorageDeltaSQLXTx(
-				ctx, tx, input.WorkspaceID, 0, -removedBytes, 0,
+				ctx, tx, input.WorkspaceUUID, 0, -removedBytes, 0,
 			); err != nil {
 				return FilestoreMutationResult{}, err
 			}
@@ -268,7 +268,7 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 		return FilestoreMutationResult{}, err
 	}
 	input.Now = filestoreNow(input.Now)
-	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
+	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceUUID, input.FilesystemUUID)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -293,9 +293,8 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	var maxMovedPathBytes int
 	// 在批量更新前按字节预演最长目标路径，避免中途触发约束而留下难以解释的错误。
 	moveArguments := map[string]any{
-		"workspace_id":            input.WorkspaceID,
+
 		"session_uuid":            filesystem.SessionUUID,
-		"workspace_uuid":          filesystem.WorkspaceUUID,
 		"source_path":             input.SourcePath,
 		"destination_path":        input.DestinationPath,
 		"destination_parent_path": filestoreParentPath(input.DestinationPath),
@@ -361,14 +360,14 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	}
 	cleanupJobs, retiredBytes, err := retireExpiredFilestoreSubtreeTx(
 		ctx, tx, sessionResourceFileCleanupScope{
-			WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
+			WorkspaceUUID: input.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 		}, filesystem, input.DestinationPath, input.Now,
 	)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
 	if retiredBytes > 0 {
-		if err := applyWorkspaceStorageDeltaSQLXTx(ctx, tx, input.WorkspaceID, 0, -retiredBytes, 0); err != nil {
+		if err := applyWorkspaceStorageDeltaSQLXTx(ctx, tx, input.WorkspaceUUID, 0, -retiredBytes, 0); err != nil {
 			return FilestoreMutationResult{}, err
 		}
 	}
@@ -415,7 +414,7 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveSessionResourc
 		return FilestoreMutationResult{}, ErrFilestoreNotFile
 	}
 	input.Now = filestoreNow(input.Now)
-	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
+	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceUUID, input.FilesystemUUID)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -431,17 +430,17 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveSessionResourc
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
 	job, enqueued, err := enqueueOwnedSessionResourceFileCleanupJobTx(ctx, tx, sessionResourceFileCleanupScope{
-		WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
+		WorkspaceUUID: input.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 	}, entry, "remove_file", input.Now)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
-	if err := retireSessionResourceFileTx(ctx, tx, input.WorkspaceID, entry.ID, input.Now); err != nil {
+	if err := retireSessionResourceFileTx(ctx, tx, input.WorkspaceUUID, entry.UUID, input.Now); err != nil {
 		return FilestoreMutationResult{}, err
 	}
 	if removedBytes := entry.OwnedBytes(); removedBytes > 0 {
 		if err := applyWorkspaceStorageDeltaSQLXTx(
-			ctx, tx, input.WorkspaceID, 0, -removedBytes, 0,
+			ctx, tx, input.WorkspaceUUID, 0, -removedBytes, 0,
 		); err != nil {
 			return FilestoreMutationResult{}, err
 		}
@@ -465,7 +464,7 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 		return FilestoreMutationResult{}, err
 	}
 	input.Now = filestoreNow(input.Now)
-	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceID, input.FilesystemID)
+	tx, filesystem, err := d.beginFilestoreNamespaceMutation(ctx, input.WorkspaceUUID, input.FilesystemUUID)
 	if err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -479,7 +478,7 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	}
 	var childCount int
 	entryArguments := map[string]any{
-		"workspace_id":   input.WorkspaceID,
+
 		"workspace_uuid": filesystem.WorkspaceUUID,
 		"session_uuid":   filesystem.SessionUUID,
 		"entry_path":     input.Path,
@@ -516,7 +515,7 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
 	cleanupJobs, removedBytes, err := enqueueFilestoreSubtreeCleanupJobsTx(ctx, tx, sessionResourceFileCleanupScope{
-		WorkspaceID: input.WorkspaceID, FilesystemID: filesystem.ID,
+		WorkspaceUUID: input.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 	}, filesystem, input.Path, input.Now)
 	if err != nil {
 		return FilestoreMutationResult{}, err
@@ -524,7 +523,7 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	if _, err := namedExecContext(ctx, tx, `
 		update files file
 		set deleted_at = coalesce(file.deleted_at, :now)
-		where file.workspace_id = :workspace_id
+		where file.workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and file.uuid in (
 				select resource.file_uuid from session_resources resource
 				where resource.workspace_uuid = CAST(:workspace_uuid AS uuid)
@@ -554,7 +553,7 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 		return FilestoreMutationResult{}, err
 	}
 	if removedBytes > 0 {
-		if err := applyWorkspaceStorageDeltaSQLXTx(ctx, tx, input.WorkspaceID, 0, -removedBytes, 0); err != nil {
+		if err := applyWorkspaceStorageDeltaSQLXTx(ctx, tx, input.WorkspaceUUID, 0, -removedBytes, 0); err != nil {
 			return FilestoreMutationResult{}, err
 		}
 	}

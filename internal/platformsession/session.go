@@ -21,18 +21,15 @@ type CreateInput struct {
 }
 
 type Session struct {
-	ExternalID             string     `json:"external_id"`
-	OrganizationID         int64      `json:"organization_id"`
-	OrganizationUUID       string     `json:"organization_uuid"`
-	OrganizationExternalID string     `json:"organization_external_id"`
-	WorkspaceID            int64      `json:"workspace_id"`
-	WorkspaceUUID          string     `json:"workspace_uuid"`
-	WorkspaceExternalID    string     `json:"workspace_external_id"`
-	UserID                 int64      `json:"user_id"`
-	UserExternalID         string     `json:"user_external_id"`
-	APIKeyID               int64      `json:"api_key_id"`
-	APIKeyExternalID       string     `json:"api_key_external_id"`
-	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+	ExternalID          string     `json:"external_id"`
+	OrganizationUUID    string     `json:"organization_uuid"`
+	WorkspaceUUID       string     `json:"workspace_uuid"`
+	WorkspaceExternalID string     `json:"workspace_external_id"`
+	UserUUID            string     `json:"user_uuid"`
+	UserExternalID      string     `json:"user_external_id"`
+	APIKeyUUID          string     `json:"api_key_uuid"`
+	APIKeyExternalID    string     `json:"api_key_external_id"`
+	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
 }
 
 type Store interface {
@@ -44,15 +41,12 @@ type Store interface {
 func (s Session) Principal() auth.Principal {
 	return auth.Principal{
 		CredentialType:            auth.CredentialTypePlatformSession,
-		APIKeyID:                  s.APIKeyID,
+		APIKeyUUID:                s.APIKeyUUID,
 		APIKeyExternalID:          s.APIKeyExternalID,
-		OrganizationID:            s.OrganizationID,
 		OrganizationUUID:          s.OrganizationUUID,
-		OrganizationExternalID:    s.OrganizationExternalID,
-		WorkspaceID:               s.WorkspaceID,
 		WorkspaceUUID:             s.WorkspaceUUID,
 		WorkspaceExternalID:       s.WorkspaceExternalID,
-		UserID:                    s.UserID,
+		UserUUID:                  s.UserUUID,
 		UserExternalID:            s.UserExternalID,
 		PlatformSessionExternalID: s.ExternalID,
 	}

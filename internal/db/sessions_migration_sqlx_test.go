@@ -11,9 +11,9 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 	threadArguments := createSessionThreadArguments(SessionThread{
 		UUID:              "11111111-1111-4111-8111-111111111111",
 		ExternalID:        "sesthr_test",
-		OrganizationID:    1,
-		WorkspaceID:       2,
-		SessionID:         3,
+		OrganizationUUID:  "00000000-0000-0000-0000-000000000001",
+		WorkspaceUUID:     "00000000-0000-0000-0000-000000000002",
+		SessionUUID:       "00000000-0000-0000-0000-000000000003",
 		SessionExternalID: "sesn_test",
 		AgentSnapshot:     []byte(`{"model":"test"}`),
 		Status:            "idle",
@@ -32,7 +32,7 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "update session",
 			query: updateSessionQuery,
 			arguments: map[string]any{
-				"workspace_id":        int64(2),
+				"workspace_uuid":      "00000000-0000-0000-0000-000000000002",
 				"session_external_id": "sesn_test",
 				"agent_snapshot":      []byte(`{}`),
 				"title":               "title",
@@ -45,7 +45,7 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "patch metadata",
 			query: patchSessionMetadataQuery,
 			arguments: map[string]any{
-				"workspace_id":        int64(2),
+				"workspace_uuid":      "00000000-0000-0000-0000-000000000002",
 				"session_external_id": "sesn_test",
 				"metadata_patch":      []byte(`{}`),
 			},
@@ -55,7 +55,7 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "set evaluations",
 			query: setSessionOutcomeEvaluationsQuery,
 			arguments: map[string]any{
-				"workspace_id":        int64(2),
+				"workspace_uuid":      "00000000-0000-0000-0000-000000000002",
 				"session_external_id": "sesn_test",
 				"outcome_evaluations": []byte(`[]`),
 			},
@@ -65,7 +65,7 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "set session status",
 			query: setSessionStatusQuery,
 			arguments: map[string]any{
-				"workspace_id":        int64(2),
+				"workspace_uuid":      "00000000-0000-0000-0000-000000000002",
 				"session_external_id": "sesn_test",
 				"status":              "idle",
 			},
@@ -75,7 +75,7 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "set thread status",
 			query: setSessionThreadStatusQuery,
 			arguments: map[string]any{
-				"workspace_id":        int64(2),
+				"workspace_uuid":      "00000000-0000-0000-0000-000000000002",
 				"session_external_id": "sesn_test",
 				"thread_external_id":  "sesthr_test",
 				"status":              "idle",
@@ -91,38 +91,38 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 		{
 			name:         "archive session",
 			query:        archiveSessionQuery,
-			arguments:    sessionLookupArguments(2, "sesn_test"),
+			arguments:    sessionLookupArguments("00000000-0000-0000-0000-000000000002", "sesn_test"),
 			wantArgCount: 2,
 		},
 		{
 			name:         "delete session",
 			query:        deleteSessionQuery,
-			arguments:    sessionLookupArguments(2, "sesn_test"),
+			arguments:    sessionLookupArguments("00000000-0000-0000-0000-000000000002", "sesn_test"),
 			wantArgCount: 2,
 		},
 		{
 			name:         "delete session threads",
 			query:        deleteSessionThreadsQuery,
-			arguments:    sessionLookupArguments(2, "sesn_test"),
+			arguments:    sessionLookupArguments("00000000-0000-0000-0000-000000000002", "sesn_test"),
 			wantArgCount: 2,
 		},
 		{
 			name:         "delete session resources",
 			query:        deleteSessionResourcesQuery,
-			arguments:    sessionLookupArguments(2, "sesn_test"),
+			arguments:    sessionLookupArguments("00000000-0000-0000-0000-000000000002", "sesn_test"),
 			wantArgCount: 2,
 		},
 		{
 			name:         "delete session events",
 			query:        deleteSessionEventsQuery,
-			arguments:    sessionLookupArguments(2, "sesn_test"),
+			arguments:    sessionLookupArguments("00000000-0000-0000-0000-000000000002", "sesn_test"),
 			wantArgCount: 2,
 		},
 		{
 			name:  "stop environment work",
 			query: stopDeletedSessionEnvironmentWorkQuery,
 			arguments: map[string]any{
-				"workspace_id":            int64(2),
+				"workspace_uuid":          "00000000-0000-0000-0000-000000000002",
 				"session_external_id":     "sesn_test",
 				"environment_external_id": "env_test",
 			},
@@ -132,7 +132,7 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "get resource",
 			query: getSessionResourceQuery,
 			arguments: map[string]any{
-				"workspace_id":         int64(2),
+				"workspace_uuid":       "00000000-0000-0000-0000-000000000002",
 				"session_external_id":  "sesn_test",
 				"resource_external_id": "sesres_test",
 			},
@@ -142,7 +142,7 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "update resource",
 			query: updateSessionResourceQuery,
 			arguments: map[string]any{
-				"workspace_id":         int64(2),
+				"workspace_uuid":       "00000000-0000-0000-0000-000000000002",
 				"session_external_id":  "sesn_test",
 				"resource_external_id": "sesres_test",
 				"payload":              []byte(`{}`),
@@ -154,10 +154,10 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "retire filesystem",
 			query: retireSessionFilesystemQuery,
 			arguments: map[string]any{
-				"workspace_id":    int64(2),
-				"organization_id": int64(1),
-				"session_uuid":    "22222222-2222-4222-8222-222222222222",
-				"retired_at":      now,
+				"workspace_uuid":    "00000000-0000-0000-0000-000000000002",
+				"organization_uuid": "00000000-0000-0000-0000-000000000001",
+				"session_uuid":      "22222222-2222-4222-8222-222222222222",
+				"retired_at":        now,
 			},
 			wantArgCount: 5,
 		},
@@ -165,12 +165,12 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			name:  "enqueue filesystem cleanup",
 			query: enqueueFilestoreFilesystemCleanupJobQuery,
 			arguments: map[string]any{
-				"workspace_id":  int64(2),
-				"filesystem_id": int64(4),
-				"job_type":      filestoreFilesystemCleanupJobType,
-				"run_after":     now,
+				"workspace_uuid":  "00000000-0000-0000-0000-000000000002",
+				"filesystem_uuid": "00000000-0000-0000-0000-000000000004",
+				"job_type":        filestoreFilesystemCleanupJobType,
+				"run_after":       now,
 			},
-			wantArgCount: 4,
+			wantArgCount: 5,
 		},
 	}
 

@@ -168,19 +168,19 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateWebhookEndpoint(r.Context(), db.WebhookEndpoint{
-		UUID:              uuid.NewString(),
-		ExternalID:        webhookID,
-		OrganizationID:    principal.OrganizationID,
-		WorkspaceID:       principal.WorkspaceID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		URL:               endpointURL,
-		Name:              name,
-		Description:       description,
-		EnabledEvents:     enabledEvents,
-		SigningSecret:     signingSecret,
-		Status:            "enabled",
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		UUID:                uuid.NewString(),
+		ExternalID:          webhookID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		URL:                 endpointURL,
+		Name:                name,
+		Description:         description,
+		EnabledEvents:       enabledEvents,
+		SigningSecret:       signingSecret,
+		Status:              "enabled",
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	})
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create webhook"))
@@ -195,7 +195,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
 		return
 	}
-	records, err := h.db.ListWebhookEndpoints(r.Context(), principal.WorkspaceID)
+	records, err := h.db.ListWebhookEndpoints(r.Context(), principal.WorkspaceUUID)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list webhooks"))
 		return
@@ -214,7 +214,7 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
-	record, err := h.db.GetWebhookEndpoint(r.Context(), principal.WorkspaceID, webhookID)
+	record, err := h.db.GetWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
@@ -233,7 +233,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
-	current, err := h.db.GetWebhookEndpoint(r.Context(), principal.WorkspaceID, webhookID)
+	current, err := h.db.GetWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
@@ -301,7 +301,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateWebhookEndpoint(r.Context(), principal.WorkspaceID, webhookID, next)
+	updated, err := h.db.UpdateWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID, next)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
@@ -329,7 +329,7 @@ func (h *Handler) regenerateSigningSecretRoute(w http.ResponseWriter, r *http.Re
 		return
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
-	if err := h.db.RegenerateWebhookEndpointSigningSecret(r.Context(), principal.WorkspaceID, webhookID, signingSecret, time.Now().UTC()); err != nil {
+	if err := h.db.RegenerateWebhookEndpointSigningSecret(r.Context(), principal.WorkspaceUUID, webhookID, signingSecret, time.Now().UTC()); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
 			return
@@ -347,7 +347,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhookID := chi.URLParam(r, "webhook_id")
-	if err := h.db.DeleteWebhookEndpoint(r.Context(), principal.WorkspaceID, webhookID); err != nil {
+	if err := h.db.DeleteWebhookEndpoint(r.Context(), principal.WorkspaceUUID, webhookID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Webhook not found: "+webhookID))
 			return

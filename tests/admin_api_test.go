@@ -64,9 +64,170 @@ type adminReportPage struct {
 }
 
 type adminDefaultIDs struct {
-	OrganizationID int64
-	WorkspaceID    int64
-	UserID         int64
+	OrganizationUUID string
+	WorkspaceUUID    string
+	UserUUID         string
+}
+
+func TestAdminResourceReferencesUseUUID(t *testing.T) {
+	app := newTestApp(t, nil)
+	defer app.close()
+
+	expectedUUIDColumns := map[string][]string{
+		"users":                {"organization_uuid"},
+		"organization_invites": {"organization_uuid"},
+		"api_keys":             {"workspace_uuid", "created_by_user_uuid"},
+		"workspace_members":    {"organization_uuid", "workspace_uuid", "user_uuid"},
+		"external_keys":        {"organization_uuid"},
+	}
+	for table, columns := range expectedUUIDColumns {
+		for _, column := range columns {
+			var dataType string
+			if err := app.db.Pool.QueryRow(context.Background(), `
+				select data_type
+				from information_schema.columns
+				where table_schema = current_schema()
+					and table_name = $1
+					and column_name = $2
+			`, table, column).Scan(&dataType); err != nil {
+				t.Fatalf("load %s.%s type: %v", table, column, err)
+			}
+			if dataType != "uuid" {
+				t.Fatalf("%s.%s type = %q, want uuid", table, column, dataType)
+			}
+		}
+	}
+
+	legacyColumns := map[string][]string{
+		"users":                {"organization_id"},
+		"organization_invites": {"organization_id"},
+		"api_keys":             {"workspace_id", "created_by_user_id"},
+		"workspace_members":    {"organization_id", "workspace_id", "user_id"},
+		"external_keys":        {"organization_id"},
+	}
+	for table, columns := range legacyColumns {
+		for _, column := range columns {
+			var count int
+			if err := app.db.Pool.QueryRow(context.Background(), `
+				select count(*)
+				from information_schema.columns
+				where table_schema = current_schema()
+					and table_name = $1
+					and column_name = $2
+			`, table, column).Scan(&count); err != nil {
+				t.Fatalf("check legacy column %s.%s: %v", table, column, err)
+			}
+			if count != 0 {
+				t.Fatalf("legacy column %s.%s still exists", table, column)
+			}
+		}
+	}
+
+	var externalKeyIndexDefinition string
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select indexdef
+		from pg_indexes
+		where schemaname = current_schema()
+			and tablename = 'external_keys'
+			and indexname = 'external_keys_organization_created_v1_idx'
+	`).Scan(&externalKeyIndexDefinition); err != nil {
+		t.Fatalf("load external key pagination index: %v", err)
+	}
+	if !strings.Contains(externalKeyIndexDefinition, "created_at DESC, uuid DESC") ||
+		strings.Contains(externalKeyIndexDefinition, "created_at DESC, id DESC") {
+		t.Fatalf("external key pagination index = %q, want UUID tie-breaker", externalKeyIndexDefinition)
+	}
+}
+
+func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
+	app := newTestApp(t, nil)
+	defer app.close()
+
+	var legacyColumnCount int
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select count(*)
+		from information_schema.columns
+		where table_schema = current_schema()
+			and table_name = 'workspaces'
+			and column_name = 'organization_id'
+	`).Scan(&legacyColumnCount); err != nil {
+		t.Fatalf("query legacy workspace organization column: %v", err)
+	}
+	if legacyColumnCount != 0 {
+		t.Fatalf("workspace organization_id column count = %d, want 0", legacyColumnCount)
+	}
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select count(*)
+		from information_schema.columns
+		where table_schema = current_schema()
+			and table_name = 'organizations'
+			and column_name = 'external_id'
+	`).Scan(&legacyColumnCount); err != nil {
+		t.Fatalf("query legacy organization external ID column: %v", err)
+	}
+	if legacyColumnCount != 0 {
+		t.Fatalf("organization external_id column count = %d, want 0", legacyColumnCount)
+	}
+	var dataType string
+	var ordinalPosition int
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select data_type, ordinal_position
+		from information_schema.columns
+		where table_schema = current_schema()
+			and table_name = 'workspaces'
+			and column_name = 'organization_uuid'
+	`).Scan(&dataType, &ordinalPosition); err != nil {
+		t.Fatalf("query workspace organization UUID column: %v", err)
+	}
+	if dataType != "uuid" || ordinalPosition != 4 {
+		t.Fatalf("workspace organization_uuid = type %s ordinal %d, want uuid at 4", dataType, ordinalPosition)
+	}
+
+	var referenceMatches bool
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select w.organization_uuid = o.uuid
+		from workspaces w
+		join organizations o on o.uuid = w.organization_uuid
+		where w.external_id = 'workspace_default'
+	`).Scan(&referenceMatches); err != nil {
+		t.Fatalf("query default workspace organization UUID: %v", err)
+	}
+	if !referenceMatches {
+		t.Fatal("default workspace organization_uuid does not match organization uuid")
+	}
+
+	var originalOrganizationUUID string
+	var organizationCount int
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select o.uuid::text, (select count(*) from organizations)
+		from organizations o
+		join workspaces w on w.organization_uuid = o.uuid
+		where w.external_id = 'workspace_default'
+	`).Scan(&originalOrganizationUUID, &organizationCount); err != nil {
+		t.Fatalf("load organization state before repeated seed: %v", err)
+	}
+	if err := app.db.Seed(context.Background(), app.cfg.Bootstrap.SeedAPIKeys); err != nil {
+		t.Fatalf("repeat default seed: %v", err)
+	}
+	var seededOrganizationUUID string
+	var seededOrganizationCount int
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select o.uuid::text, (select count(*) from organizations)
+		from organizations o
+		join workspaces w on w.organization_uuid = o.uuid
+		where w.external_id = 'workspace_default'
+	`).Scan(&seededOrganizationUUID, &seededOrganizationCount); err != nil {
+		t.Fatalf("load organization state after repeated seed: %v", err)
+	}
+	if seededOrganizationUUID != originalOrganizationUUID || seededOrganizationCount != organizationCount {
+		t.Fatalf(
+			"repeated seed changed organization state: UUID %s -> %s, count %d -> %d",
+			originalOrganizationUUID,
+			seededOrganizationUUID,
+			organizationCount,
+			seededOrganizationCount,
+		)
+	}
 }
 
 func TestAdminAPI(t *testing.T) {
@@ -136,10 +297,14 @@ func TestAdminAPI(t *testing.T) {
 	})
 
 	t.Run("success organization me", func(t *testing.T) {
+		apiKey, err := app.db.GetAPIKey(context.Background(), auth.HashAPIKey(defaultTestKey))
+		if err != nil {
+			t.Fatalf("load default API key: %v", err)
+		}
 		var org adminObject
 		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/me", nil, defaultTestKey, ""), &org)
-		if org.ID != "org_default" || org.Type != "organization" {
-			t.Fatalf("organization = %+v, want org_default organization", org)
+		if org.ID != apiKey.OrganizationUUID || org.Type != "organization" {
+			t.Fatalf("organization = %+v, want UUID %s organization", org, apiKey.OrganizationUUID)
 		}
 	})
 
@@ -391,6 +556,31 @@ func TestAdminAPI(t *testing.T) {
 			t.Fatalf("admin foreign key count = %d, want 0", foreignKeyCount)
 		}
 	})
+
+	t.Run("success tunnel references use UUID columns", func(t *testing.T) {
+		var uuidColumnCount, legacyColumnCount int
+		if err := app.db.Pool.QueryRow(context.Background(), `
+			select
+				count(*) filter (
+					where data_type = 'uuid'
+						and (
+							(table_name = 'mcp_tunnels' and column_name in ('organization_uuid', 'workspace_uuid'))
+							or (table_name = 'mcp_tunnel_certificates' and column_name in ('organization_uuid', 'tunnel_uuid'))
+						)
+				),
+				count(*) filter (
+					where column_name in ('organization_id', 'workspace_id', 'tunnel_id')
+				)
+			from information_schema.columns
+			where table_schema = current_schema()
+				and table_name in ('mcp_tunnels', 'mcp_tunnel_certificates')
+		`).Scan(&uuidColumnCount, &legacyColumnCount); err != nil {
+			t.Fatalf("inspect tunnel reference columns: %v", err)
+		}
+		if uuidColumnCount != 4 || legacyColumnCount != 0 {
+			t.Fatalf("tunnel reference columns = %d UUID and %d legacy, want 4 and 0", uuidColumnCount, legacyColumnCount)
+		}
+	})
 }
 
 func adminDo(t *testing.T, app *testApp, method, path string, body any, key, beta string) *http.Response {
@@ -523,9 +713,9 @@ func seedAdminUser(t *testing.T, database *db.DB, email, role string) string {
 	ids := getAdminDefaultIDs(t, database)
 	userID := "user_admin_" + uniqueAdminSuffix()
 	if _, err := database.Pool.Exec(context.Background(), `
-		insert into users (external_id, organization_id, email, name, role)
+		insert into users (external_id, organization_uuid, email, name, role)
 		values ($1, $2, $3, $4, $5)
-	`, userID, ids.OrganizationID, email, "Admin Test User", role); err != nil {
+	`, userID, ids.OrganizationUUID, email, "Admin Test User", role); err != nil {
 		t.Fatalf("seed admin user: %v", err)
 	}
 	return userID
@@ -536,9 +726,11 @@ func seedAdminAPIKey(t *testing.T, database *db.DB, suffix, rawKey string) (stri
 	ids := getAdminDefaultIDs(t, database)
 	apiKeyID := "api_key_admin_" + suffix
 	if _, err := database.Pool.Exec(context.Background(), `
-		insert into api_keys (external_id, workspace_id, key_hash, status, created_by_user_id, name, partial_key_hint)
+		insert into api_keys (
+			external_id, workspace_uuid, key_hash, status, created_by_user_uuid, name, partial_key_hint
+		)
 		values ($1, $2, $3, 'active', $4, $5, $6)
-	`, apiKeyID, ids.WorkspaceID, auth.HashAPIKey(rawKey), ids.UserID, "Admin status test", partialTestKeyHint(rawKey)); err != nil {
+	`, apiKeyID, ids.WorkspaceUUID, auth.HashAPIKey(rawKey), ids.UserUUID, "Admin status test", partialTestKeyHint(rawKey)); err != nil {
 		t.Fatalf("seed admin api key: %v", err)
 	}
 	return apiKeyID, rawKey
@@ -547,27 +739,26 @@ func seedAdminAPIKey(t *testing.T, database *db.DB, suffix, rawKey string) (stri
 func seedAdminTunnel(t *testing.T, database *db.DB, tunnelID, domain string, workspaceExternalID *string) string {
 	t.Helper()
 	ids := getAdminDefaultIDs(t, database)
-	var workspaceID *int64
-	var workspaceIDText *string
+	var workspaceUUID *string
 	if workspaceExternalID != nil {
-		var loadedWorkspaceID int64
+		var loadedWorkspaceUUID string
 		if err := database.Pool.QueryRow(context.Background(), `
-			select id
+			select CAST(uuid AS text)
 			from workspaces
-			where external_id = $1 and organization_id = $2
-		`, *workspaceExternalID, ids.OrganizationID).Scan(&loadedWorkspaceID); err != nil {
+			where external_id = $1
+				and organization_uuid = CAST($2 AS uuid)
+		`, *workspaceExternalID, ids.OrganizationUUID).Scan(&loadedWorkspaceUUID); err != nil {
 			t.Fatalf("load tunnel workspace: %v", err)
 		}
-		workspaceID = &loadedWorkspaceID
-		workspaceIDText = workspaceExternalID
+		workspaceUUID = &loadedWorkspaceUUID
 	}
 	displayName := "Tunnel " + tunnelID
 	if _, err := database.Pool.Exec(context.Background(), `
 		insert into mcp_tunnels (
-			external_id, organization_id, workspace_id, workspace_external_id, display_name, domain
+			external_id, organization_uuid, workspace_uuid, workspace_external_id, display_name, domain
 		)
 		values ($1, $2, $3, $4, $5, $6)
-	`, tunnelID, ids.OrganizationID, workspaceID, workspaceIDText, displayName, domain); err != nil {
+	`, tunnelID, ids.OrganizationUUID, workspaceUUID, workspaceExternalID, displayName, domain); err != nil {
 		t.Fatalf("seed admin tunnel: %v", err)
 	}
 	return tunnelID
@@ -577,12 +768,11 @@ func getAdminDefaultIDs(t *testing.T, database *db.DB) adminDefaultIDs {
 	t.Helper()
 	var ids adminDefaultIDs
 	if err := database.Pool.QueryRow(context.Background(), `
-		select o.id, w.id, u.id
-		from organizations o
-		join workspaces w on w.organization_id = o.id and w.external_id = 'workspace_default'
-		join users u on u.organization_id = o.id and u.external_id = 'user_default'
-		where o.external_id = 'org_default'
-	`).Scan(&ids.OrganizationID, &ids.WorkspaceID, &ids.UserID); err != nil {
+		select CAST(w.organization_uuid AS text), CAST(w.uuid AS text), CAST(u.uuid AS text)
+		from workspaces w
+		join users u on u.organization_uuid = w.organization_uuid and u.external_id = 'user_default'
+		where w.external_id = 'workspace_default'
+	`).Scan(&ids.OrganizationUUID, &ids.WorkspaceUUID, &ids.UserUUID); err != nil {
 		t.Fatalf("load admin default ids: %v", err)
 	}
 	return ids

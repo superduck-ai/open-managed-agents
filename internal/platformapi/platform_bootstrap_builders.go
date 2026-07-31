@@ -8,7 +8,7 @@ func buildAccount(user UserRecord, orgs []UserOrganizationRecord, preferredOrgUU
 	memberships := make([]Membership, 0, len(orgs))
 	selectedOrgUUID := orgs[0].UUID
 	for _, org := range orgs {
-		if org.UUID == preferredOrgUUID || org.ExternalID == preferredOrgUUID {
+		if org.UUID == preferredOrgUUID {
 			selectedOrgUUID = org.UUID
 		}
 		createdAt := isoTime(org.AddedAt)

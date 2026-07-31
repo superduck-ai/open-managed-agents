@@ -214,7 +214,7 @@ func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
 	defer deleteSession(t, app, created.ID)
 
 	session := mustSessionRecord(t, app, created.ID)
-	resources, err := app.db.ListSessionResources(context.Background(), session.WorkspaceID, session.ExternalID)
+	resources, err := app.db.ListSessionResources(context.Background(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		t.Fatalf("list Session resources: %v", err)
 	}
@@ -258,7 +258,7 @@ func mustSessionRecord(t *testing.T, app *testApp, sessionExternalID string) db.
 	t.Helper()
 	session, err := app.db.GetSession(
 		context.Background(),
-		getDefaultDBIDs(t, app.db).WorkspaceID,
+		getDefaultDBIDs(t, app.db).WorkspaceUUID,
 		sessionExternalID,
 	)
 	if err != nil {
@@ -932,7 +932,7 @@ func TestSessionThreadsDefaultPageSupportsOfficialPollingAndLegacyPrimary(t *tes
 
 	if _, err := app.db.Pool.Exec(context.Background(), `
 		delete from session_threads
-		where session_external_id = $1 and parent_thread_id is null
+		where session_external_id = $1 and parent_thread_uuid is null
 	`, session.ID); err != nil {
 		t.Fatalf("delete primary thread: %v", err)
 	}
@@ -1139,7 +1139,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	sessionRecord := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		sessionRecord.WorkspaceID,
+		sessionRecord.WorkspaceUUID,
 		sessionRecord.ExternalID,
 	)
 	if err != nil {
@@ -1156,9 +1156,9 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 		t.Fatalf("upload output fixture: %v", err)
 	}
 	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:  sessionRecord.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/worker-output.txt",
+		WorkspaceUUID:  sessionRecord.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/worker-output.txt",
 		Blob: db.FilestoreFileBlob{
 			SizeBytes:    int64(len(outputContent)),
 			MediaType:    "text/plain",
@@ -1289,7 +1289,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get api key: %v", err)
 	}
-	storedSession, err := app.db.GetSession(ctx, apiKey.WorkspaceID, session.ID)
+	storedSession, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("get stored session: %v", err)
 	}
@@ -1297,7 +1297,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	hiddenEventID := "sevt_legacy_env_manager_log_" + eventSuffix
 	visibleEventID := "sevt_visible_after_legacy_env_" + eventSuffix
 	now := time.Now().UTC()
-	if _, err := app.db.AppendSessionEvents(ctx, storedSession.WorkspaceID, storedSession.ExternalID, []db.SessionEvent{
+	if _, err := app.db.AppendSessionEvents(ctx, storedSession.WorkspaceUUID, storedSession.ExternalID, []db.SessionEvent{
 		{
 			UUID:        uuid.NewString(),
 			ExternalID:  hiddenEventID,
@@ -2597,6 +2597,64 @@ func TestCodeSessionWorkerHeartbeatRejectsInvalidRequests(t *testing.T) {
 	assertError(t, resp, http.StatusUnauthorized, "authentication_error")
 }
 
+func TestCodeSessionWorkerHeartbeatReportsSandboxTimeoutFailure(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-heartbeat-timeout-failure-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-heartbeat-timeout-failure-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-worker-heartbeat-timeout-failure-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"running"}`)
+	app.sandboxTimeouts.setError(errors.New("provider unavailable"))
+
+	resp := doCodeSessionWorkerRequest(t, app, codeSessionID, "heartbeat", workerHeartbeatBody(codeSessionID, workerEpoch))
+	assertError(t, resp, http.StatusServiceUnavailable, "api_error")
+	calls := app.sandboxTimeouts.snapshotCalls()
+	if len(calls) != 1 {
+		t.Fatalf("sandbox timeout calls = %d, want 1", len(calls))
+	}
+}
+
+func TestCodeSessionWorkerHeartbeatSkipsSandboxTimeoutWhenNotRunning(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-heartbeat-idle-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-heartbeat-idle-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-worker-heartbeat-idle-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	workerEpoch := registerCodeSessionWorker(t, app, codeSessionID)
+
+	beforeIdle, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("load before idle heartbeat: %v", err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	idleExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, workerEpoch)
+	if beforeIdle.WorkerLeaseExpiresAt == nil || !idleExpiresAt.After(*beforeIdle.WorkerLeaseExpiresAt) {
+		t.Fatalf("idle heartbeat lease expiry = %s, want after %v", idleExpiresAt, beforeIdle.WorkerLeaseExpiresAt)
+	}
+	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 0 {
+		t.Fatalf("idle heartbeat sandbox timeout calls = %d, want 0", len(calls))
+	}
+
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"worker_status":"requires_action"}`)
+	time.Sleep(5 * time.Millisecond)
+	requiresActionExpiresAt := assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, workerEpoch)
+	if !requiresActionExpiresAt.After(idleExpiresAt) {
+		t.Fatalf("requires-action heartbeat lease expiry = %s, want after %s", requiresActionExpiresAt, idleExpiresAt)
+	}
+	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 0 {
+		t.Fatalf("requires-action heartbeat sandbox timeout calls = %d, want 0", len(calls))
+	}
+}
+
 func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-heartbeat-lease-bucket"))
 	defer app.close()
@@ -2609,6 +2667,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 
 	epoch1 := registerCodeSessionWorker(t, app, codeSessionID)
+	putCodeSessionWorkerState(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch1)+`,"worker_status":"running"}`)
 	before, err := app.db.GetCodeSession(context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load before heartbeat: %v", err)
@@ -2625,6 +2684,22 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	numberExpiresAt := assertCodeSessionWorkerHeartbeatBody(t, app, codeSessionID, `{"session_id":`+quoteJSON(codeSessionID)+`,"worker_epoch":`+epoch1+`}`)
 	if !numberExpiresAt.After(stringExpiresAt) {
 		t.Fatalf("number heartbeat lease expiry = %s, want after %s", numberExpiresAt, stringExpiresAt)
+	}
+	timeoutCalls := app.sandboxTimeouts.snapshotCalls()
+	if len(timeoutCalls) != 2 {
+		t.Fatalf("sandbox timeout calls = %d, want 2", len(timeoutCalls))
+	}
+	sandbox, err := app.db.GetRenewableEnvironmentSandboxForCodeSession(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("load active sandbox for code session: %v", err)
+	}
+	if sandbox.ProviderSandboxID == nil {
+		t.Fatal("active sandbox provider id = nil")
+	}
+	for _, call := range timeoutCalls {
+		if call.sandboxID != *sandbox.ProviderSandboxID || call.timeout != app.cfg.E2B.SandboxTimeout {
+			t.Fatalf("sandbox timeout call = %+v, want sandbox %q timeout %s", call, *sandbox.ProviderSandboxID, app.cfg.E2B.SandboxTimeout)
+		}
 	}
 	after, err := app.db.GetCodeSession(context.Background(), codeSessionID)
 	if err != nil {
@@ -2643,6 +2718,9 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	}
 	resp := doCodeSessionWorkerRequest(t, app, codeSessionID, "heartbeat", workerHeartbeatBody(codeSessionID, "999"))
 	assertError(t, resp, http.StatusConflict, "conflict_error")
+	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 2 {
+		t.Fatalf("future epoch sandbox timeout calls = %d, want 2", len(calls))
+	}
 	afterFutureMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after future mismatch heartbeat: %v", err)
@@ -2659,6 +2737,9 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	}
 	resp = doCodeSessionWorkerRequest(t, app, codeSessionID, "heartbeat", workerHeartbeatBody(codeSessionID, epoch1))
 	assertError(t, resp, http.StatusConflict, "conflict_error")
+	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 2 {
+		t.Fatalf("stale epoch sandbox timeout calls = %d, want 2", len(calls))
+	}
 	afterMismatch, err := app.db.GetCodeSession(context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after mismatch heartbeat: %v", err)
@@ -2673,6 +2754,9 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 		t.Fatalf("load grace lease record: %v", err)
 	}
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch2)
+	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 3 {
+		t.Fatalf("grace heartbeat sandbox timeout calls = %d, want 3", len(calls))
+	}
 	graceAfter, err := app.db.GetCodeSession(context.Background(), codeSessionID)
 	if err != nil {
 		t.Fatalf("load after grace heartbeat: %v", err)
@@ -2693,6 +2777,9 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	}
 	resp = doCodeSessionWorkerRequest(t, app, codeSessionID, "heartbeat", workerHeartbeatBody(codeSessionID, epoch2))
 	assertError(t, resp, http.StatusGone, "session_expired")
+	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 3 {
+		t.Fatalf("expired heartbeat sandbox timeout calls = %d, want 3", len(calls))
+	}
 	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", epoch2, "application/x-protobuf", nil)
 	assertError(t, resp, http.StatusGone, "session_expired")
 	afterExpiredHeartbeat, err := app.db.GetCodeSession(context.Background(), codeSessionID)
@@ -3656,8 +3743,8 @@ func codeSessionIngressTokenNoFatal(app *testApp, codeSessionID string) (string,
 	}
 	credentialContext, err := app.db.GetCodeSessionCredentialContextForIssue(
 		ctx,
-		record.OrganizationID,
-		record.WorkspaceID,
+		record.OrganizationUUID,
+		record.WorkspaceUUID,
 		codeSessionID,
 	)
 	if err != nil {
@@ -4346,15 +4433,15 @@ func containsSession(sessions []sessionAPIResponse, id string) bool {
 
 func createEnvironmentKeyForTest(t *testing.T, app *testApp, envID, key string) string {
 	t.Helper()
-	record, err := app.db.GetEnvironment(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceID, envID)
+	record, err := app.db.GetEnvironment(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceUUID, envID)
 	if err != nil {
 		t.Fatalf("get environment for key: %v", err)
 	}
 	if err := app.db.CreateEnvironmentKey(context.Background(), db.EnvironmentKey{
 		ExternalID:            "envkey_" + strings.ReplaceAll(envID, "-", "_"),
-		OrganizationID:        record.OrganizationID,
-		WorkspaceID:           record.WorkspaceID,
-		EnvironmentID:         record.ID,
+		OrganizationUUID:      record.OrganizationUUID,
+		WorkspaceUUID:         record.WorkspaceUUID,
+		EnvironmentUUID:       record.UUID,
 		EnvironmentExternalID: record.ExternalID,
 	}, auth.HashAPIKey(key)); err != nil {
 		t.Fatalf("create environment key: %v", err)

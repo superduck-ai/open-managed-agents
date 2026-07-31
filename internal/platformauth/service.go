@@ -68,10 +68,6 @@ func (s *Service) ResolvePlatformSessionIdentity(ctx context.Context, input plat
 }
 
 func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStore, email string, defaultName string) (db.PlatformAuthUserContext, error) {
-	orgExternalID, err := ids.New("org_")
-	if err != nil {
-		return db.PlatformAuthUserContext{}, err
-	}
 	workspaceExternalID, err := ids.New("wrkspc_")
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err
@@ -86,8 +82,7 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 	}
 
 	org, err := tx.InsertOrganization(ctx, db.PlatformAuthOrganizationInput{
-		ExternalID: orgExternalID,
-		Name:       defaultPlatformOrganizationName(email),
+		Name: defaultPlatformOrganizationName(email),
 	})
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err
@@ -96,33 +91,33 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 	userUUID := uuid.NewString()
 	userExternalID := taggedExternalUserID(userUUID)
 	user, err := tx.InsertUser(ctx, db.PlatformAuthUserInput{
-		UUID:           userUUID,
-		ExternalID:     userExternalID,
-		OrganizationID: org.ID,
-		Email:          email,
-		Name:           defaultName,
-		Role:           "admin",
+		UUID:             userUUID,
+		ExternalID:       userExternalID,
+		OrganizationUUID: org.UUID,
+		Email:            email,
+		Name:             defaultName,
+		Role:             "admin",
 	})
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err
 	}
 
 	workspace, err := tx.InsertWorkspace(ctx, db.PlatformAuthWorkspaceInput{
-		UUID:           uuid.NewString(),
-		ExternalID:     workspaceExternalID,
-		OrganizationID: org.ID,
-		Name:           "default",
-		CompartmentID:  uuid.NewString(),
+		UUID:             uuid.NewString(),
+		ExternalID:       workspaceExternalID,
+		OrganizationUUID: org.UUID,
+		Name:             "default",
+		CompartmentID:    uuid.NewString(),
 	})
 	if err != nil {
 		return db.PlatformAuthUserContext{}, err
 	}
 	if err := tx.InsertWorkspaceMember(ctx, db.PlatformAuthWorkspaceMemberInput{
 		ExternalID:          memberExternalID,
-		OrganizationID:      org.ID,
-		WorkspaceID:         workspace.ID,
+		OrganizationUUID:    org.UUID,
+		WorkspaceUUID:       workspace.UUID,
 		WorkspaceExternalID: workspaceExternalID,
-		UserID:              user.ID,
+		UserUUID:            user.UUID,
 		UserExternalID:      userExternalID,
 		WorkspaceRole:       "workspace_admin",
 	}); err != nil {
@@ -131,13 +126,13 @@ func createDefaultUserOrganization(ctx context.Context, tx db.PlatformAuthTxStor
 
 	rawKey := "sk-ant-api03-" + randomToken(32)
 	if err := tx.InsertAPIKey(ctx, db.PlatformAuthAPIKeyInput{
-		ExternalID:      apiKeyExternalID,
-		WorkspaceID:     workspace.ID,
-		KeyHash:         auth.HashAPIKey(rawKey),
-		Status:          "active",
-		CreatedByUserID: user.ID,
-		Name:            "default",
-		PartialKeyHint:  partialAPIKeyHint(rawKey),
+		ExternalID:        apiKeyExternalID,
+		WorkspaceUUID:     workspace.UUID,
+		KeyHash:           auth.HashAPIKey(rawKey),
+		Status:            "active",
+		CreatedByUserUUID: user.UUID,
+		Name:              "default",
+		PartialKeyHint:    partialAPIKeyHint(rawKey),
 	}); err != nil {
 		return db.PlatformAuthUserContext{}, err
 	}

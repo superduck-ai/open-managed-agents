@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync"
@@ -35,6 +38,52 @@ func TestConnectionOptsFromConfigMapsAllFields(t *testing.T) {
 	wantTimeoutMs := int(cfg.RequestTimeout / time.Millisecond)
 	if got.RequestTimeoutMs == nil || *got.RequestTimeoutMs != wantTimeoutMs {
 		t.Fatalf("ConnectionOptsFromConfig().RequestTimeoutMs = %v, want %d", got.RequestTimeoutMs, wantTimeoutMs)
+	}
+}
+
+func TestSetTimeoutUsesConfiguredConnectTimeoutAndRequestedRenewal(t *testing.T) {
+	var paths []string
+	var timeouts []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		var body struct {
+			Timeout int `json:"timeout"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode %s request: %v", r.URL.Path, err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		timeouts = append(timeouts, body.Timeout)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/sandboxes/sbx_timeout/connect" {
+			_, _ = fmt.Fprint(w, `{"sandboxID":"sbx_timeout","envdURL":"http://127.0.0.1:1"}`)
+			return
+		}
+		if r.URL.Path == "/sandboxes/sbx_timeout/timeout" {
+			_, _ = fmt.Fprint(w, `{}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	provider := NewProvider(config.E2BConfig{
+		APIKey:         "e2b_0000000000000000000000000000000000000000",
+		APIURL:         server.URL,
+		SandboxURL:     server.URL,
+		RequestTimeout: time.Second,
+		SandboxTimeout: 7 * time.Minute,
+	})
+	if err := provider.SetTimeout(context.Background(), "sbx_timeout", 3*time.Minute); err != nil {
+		t.Fatalf("SetTimeout() error = %v", err)
+	}
+	wantPaths := []string{"/sandboxes/sbx_timeout/connect", "/sandboxes/sbx_timeout/timeout"}
+	if !reflect.DeepEqual(paths, wantPaths) {
+		t.Fatalf("request paths = %#v, want %#v", paths, wantPaths)
+	}
+	if want := []int{420, 180}; !reflect.DeepEqual(timeouts, want) {
+		t.Fatalf("request timeouts = %#v, want %#v", timeouts, want)
 	}
 }
 
@@ -202,7 +251,7 @@ func TestResolveLimitedNetworkFailsClosedOnInvalidAllowedHost(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	_, err := provider.Resolve(db.Environment{
 		ExternalID:       "env_invalid_network",
-		WorkspaceID:      42,
+		WorkspaceUUID:    "00000000-0000-0000-0000-000000000042",
 		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["bad/path","api.example.com"]}}`),
 		ResolvedTemplate: "template_test",
 	}, nil)
@@ -215,7 +264,7 @@ func TestResolveLimitedNetworkFailsClosedOnMalformedMCPMetadata(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	_, err := provider.Resolve(db.Environment{
 		ExternalID:       "env_invalid_mcp_metadata",
-		WorkspaceID:      42,
+		WorkspaceUUID:    "00000000-0000-0000-0000-000000000042",
 		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}}`),
 		ResolvedTemplate: "template_test",
 	}, &db.EnvironmentWork{
@@ -230,8 +279,8 @@ func TestResolveLimitedNetworkFailsClosedOnMalformedMCPMetadata(t *testing.T) {
 func TestResolveLimitedNetworkCanonicalizesExplicitAllowedHosts(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	resolution, err := provider.Resolve(db.Environment{
-		ExternalID:  "env_canonical_network",
-		WorkspaceID: 42,
+		ExternalID:    "env_canonical_network",
+		WorkspaceUUID: "00000000-0000-0000-0000-000000000042",
 		Config: json.RawMessage(`{
 			"type":"cloud",
 			"networking":{
@@ -260,7 +309,7 @@ func TestResolveLimitedNetworkIncludesMCPHostsWhenAllowed(t *testing.T) {
 	provider := NewProvider(config.E2BConfig{})
 	env := db.Environment{
 		ExternalID:       "env_test",
-		WorkspaceID:      42,
+		WorkspaceUUID:    "00000000-0000-0000-0000-000000000042",
 		Config:           json.RawMessage(`{"type":"cloud","networking":{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":true}}`),
 		ResolvedTemplate: "template_test",
 	}

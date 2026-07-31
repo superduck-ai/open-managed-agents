@@ -175,16 +175,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		anthropicVersion = "2023-06-01"
 	}
 	record := db.MessageBatch{
-		UUID:              uuid.NewString(),
-		ExternalID:        externalID,
-		WorkspaceID:       principal.WorkspaceID,
-		WorkspaceUUID:     principal.WorkspaceUUID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		APIVariant:        apiVariant,
-		AnthropicVersion:  anthropicVersion,
-		BetaHeaders:       betaHeaders,
-		CreatedAt:         now,
-		ExpiresAt:         now.Add(24 * time.Hour),
+		UUID:                uuid.NewString(),
+		ExternalID:          externalID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		APIVariant:          apiVariant,
+		AnthropicVersion:    anthropicVersion,
+		BetaHeaders:         betaHeaders,
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(24 * time.Hour),
 	}
 	reqs := make([]db.NewBatchRequest, 0, len(body.Requests))
 	for i, item := range body.Requests {
@@ -194,11 +193,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 			return
 		}
 		reqs = append(reqs, db.NewBatchRequest{
-			ExternalID:   reqID,
-			WorkspaceID:  principal.WorkspaceID,
-			RequestIndex: i,
-			CustomID:     item.CustomID,
-			Params:       item.Params,
+			ExternalID:    reqID,
+			WorkspaceUUID: principal.WorkspaceUUID,
+			RequestIndex:  i,
+			CustomID:      item.CustomID,
+			Params:        item.Params,
 		})
 	}
 	created, err := h.db.CreateMessageBatch(r.Context(), record, reqs)
@@ -291,10 +290,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListMessageBatchesPage(r.Context(), db.ListMessageBatchesPageParams{
-		WorkspaceID: principal.WorkspaceID,
-		AfterID:     r.URL.Query().Get("after_id"),
-		BeforeID:    r.URL.Query().Get("before_id"),
-		Limit:       limit,
+		WorkspaceUUID: principal.WorkspaceUUID,
+		AfterID:       r.URL.Query().Get("after_id"),
+		BeforeID:      r.URL.Query().Get("before_id"),
+		Limit:         limit,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list message batches", "error", err)
@@ -331,7 +330,7 @@ func (h *Handler) resultsRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, batchID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceID, batchID)
+	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureID(principal, batchID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, batchID, "ended"))
@@ -354,7 +353,7 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, batchID string)
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, batchID, "canceling"))
 		return
 	}
-	record, err := h.db.CancelMessageBatch(r.Context(), principal.WorkspaceID, batchID)
+	record, err := h.db.CancelMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
@@ -365,7 +364,7 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, batchID string)
 		return
 	}
 	if record.ProcessingStatus == "canceling" {
-		if err := h.db.EnqueueMessageBatchJob(r.Context(), record.WorkspaceID, record.ID, record.ExternalID); err != nil {
+		if err := h.db.EnqueueMessageBatchJob(r.Context(), record.WorkspaceUUID, record.UUID, record.ExternalID); err != nil {
 			h.logger.ErrorContext(r.Context(), "enqueue cancel message batch job", "batch_id", record.ExternalID, "error", err)
 		}
 	}
@@ -378,7 +377,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string)
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": batchID, "type": "message_batch_deleted"})
 		return
 	}
-	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceID, batchID)
+	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))
@@ -388,7 +387,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete message batch"))
 		return
 	}
-	if err := h.db.SoftDeleteMessageBatch(r.Context(), principal.WorkspaceID, batchID); err != nil {
+	if err := h.db.SoftDeleteMessageBatch(r.Context(), principal.WorkspaceUUID, batchID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "invalid_request_error", "Message batch must be ended before deletion"))
 			return
@@ -404,7 +403,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string)
 	if record.ResultsS3Key != nil {
 		if err := h.store.Delete(r.Context(), *record.ResultsS3Key, storage.DeleteOptions{}); err != nil {
 			h.logger.ErrorContext(r.Context(), "delete message batch results after soft delete", "batch_id", batchID, "key", *record.ResultsS3Key, "error", err)
-			if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceID, valueOrEmpty(record.ResultsS3Bucket), *record.ResultsS3Key, record.ExternalID); enqueueErr != nil {
+			if enqueueErr := h.db.EnqueueObjectCleanupJob(r.Context(), record.WorkspaceUUID, valueOrEmpty(record.ResultsS3Bucket), *record.ResultsS3Key, record.ExternalID); enqueueErr != nil {
 				h.logger.ErrorContext(r.Context(), "enqueue batch results cleanup", "batch_id", batchID, "key", *record.ResultsS3Key, "error", enqueueErr)
 			}
 		}
@@ -420,7 +419,7 @@ func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string
 		_, _ = w.Write([]byte(`{"custom_id":"req_1","result":{"type":"succeeded","message":null}}` + "\n"))
 		return
 	}
-	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceID, batchID)
+	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Message batch not found: "+batchID))

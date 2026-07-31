@@ -25,11 +25,11 @@ type normalizedSessionSkillArchiveResource struct {
 
 var (
 	sessionSkillArchiveResourceFilesystemQuery = filestoreFilesystemSelectSQL() + `
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and session_uuid = (
 				select uuid
 				from sessions
-				where workspace_id = :workspace_id
+				where workspace_uuid = CAST(:workspace_uuid AS uuid)
 					and external_id = :session_external_id
 					and deleted_at is null
 			)
@@ -40,7 +40,7 @@ var (
 	sessionSkillArchiveResourceRetireQuery = `
 		update session_resources
 		set deleted_at = :now, updated_at = :now
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and session_uuid = CAST(:session_uuid AS uuid)
 			and resource_type = 'skill_archive'
 			and deleted_at is null
@@ -48,13 +48,13 @@ var (
 	sessionSkillArchiveFileRetireQuery = `
 		update files file
 		set deleted_at = :now
-		where file.workspace_id = :workspace_id
+		where file.workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and file.deleted_at is null
 			and file.uuid in (
 			select resource.file_uuid
 				from session_resources resource
 				where resource.workspace_uuid = (
-					select uuid from workspaces where id = :workspace_id
+					CAST(:workspace_uuid AS uuid)
 				)
 					and resource.session_uuid = CAST(:session_uuid AS uuid)
 					and resource.resource_type = 'skill_archive'
@@ -64,18 +64,18 @@ var (
 	`
 	sessionSkillArchiveFileInsertQuery = `
 		insert into files (
-			uuid, external_id, workspace_id, filename, mime_type, detected_mime_type,
+			uuid, external_id, workspace_uuid, filename, mime_type, detected_mime_type,
 			size_bytes, metadata, authorization_metadata, tags, downloadable,
 			sha256, s3_bucket, s3_key, created_by_api_key_id, created_at
 		)
-		select CAST(:file_uuid AS uuid), :file_external_id, session.workspace_id,
+		select CAST(:file_uuid AS uuid), :file_external_id, session.workspace_uuid,
 			:filename, 'application/zip', 'application/zip', :size_bytes,
 			jsonb_build_object('skill_source', CAST(:source AS text)),
 			CAST('{}' AS jsonb), CAST(ARRAY[] AS text[]), false,
 			:sha256, :s3_bucket, :s3_key, session.created_by_api_key_id, :now
 		from sessions session
 		where session.uuid = CAST(:session_uuid AS uuid)
-			and session.workspace_id = :workspace_id
+			and session.workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and session.deleted_at is null
 	`
 	sessionSkillArchiveResourceInsertQuery = `
@@ -86,23 +86,23 @@ var (
 		)
 		select CAST(:resource_uuid AS uuid),
 			:resource_external_id,
-			(select uuid from organizations where id = session.organization_id),
-			(select uuid from workspaces where id = session.workspace_id), session.uuid,
+			session.organization_uuid,
+			session.workspace_uuid, session.uuid,
 			session.external_id, 'skill_archive', null, null,
 			:entry_path, '/skills', CAST(:file_uuid AS uuid), :now, :now
 		from sessions session
 		where session.uuid = CAST(:session_uuid AS uuid)
-			and session.workspace_id = :workspace_id
+			and session.workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and session.deleted_at is null
 	`
 	sessionSkillArchiveResourceListQuery = sessionResourceFileSelectSQL() + `
-		where workspace_uuid = (select cast(uuid as text) from workspaces where id = :workspace_id)
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
 			and session_uuid = (
-				select cast(session_uuid as text)
+				select session_uuid
 				from filestore_filesystems
-				where id = :filesystem_id
+				where uuid = CAST(:filesystem_uuid AS uuid)
 					and workspace_uuid = (
-						select uuid from workspaces where id = :workspace_id
+						CAST(:workspace_uuid AS uuid)
 					)
 					and deleted_at is null
 			)
@@ -116,7 +116,7 @@ var (
 // /skills Skill Archive Resource 集合。每个 Skill Archive 由一条 File 快照承载。
 func (d *DB) ReplaceSessionSkillArchiveResources(
 	ctx context.Context,
-	workspaceID int64,
+	workspaceUUID string,
 	sessionExternalID string,
 	inputs []SessionSkillArchiveResourceInput,
 ) error {
@@ -135,25 +135,25 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 	defer tx.Rollback()
 
 	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, sessionSkillArchiveResourceFilesystemQuery, map[string]any{
-		"workspace_id":        workspaceID,
+		"workspace_uuid":      workspaceUUID,
 		"session_external_id": sessionExternalID,
 	})
 	if err != nil {
 		return fmt.Errorf("load Session filesystem for skill archives: %w", err)
 	}
 	if _, err := namedExecContext(ctx, tx, provisionFilestoreNamespaceLockQuery, map[string]any{
-		"filesystem_id": filesystem.ID,
+		"filesystem_id": filesystem.UUID,
 	}); err != nil {
 		return fmt.Errorf("lock Session filesystem for skill archives: %w", err)
 	}
 	now := time.Now().UTC()
-	if err := ensureFilestoreFixedRootsTx(ctx, tx, workspaceID, filesystem, now); err != nil {
+	if err := ensureFilestoreFixedRootsTx(ctx, tx, filesystem, now); err != nil {
 		return fmt.Errorf("ensure Filestore roots for skill archives: %w", err)
 	}
 	retireArguments := map[string]any{
-		"workspace_id": workspaceID,
-		"session_uuid": filesystem.SessionUUID,
-		"now":          now,
+		"workspace_uuid": workspaceUUID,
+		"session_uuid":   filesystem.SessionUUID,
+		"now":            now,
 	}
 	if _, err := namedExecContext(ctx, tx, sessionSkillArchiveFileRetireQuery, retireArguments); err != nil {
 		return fmt.Errorf("retire Session skill archive Files: %w", err)
@@ -163,7 +163,7 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 	}
 
 	for _, entry := range entries {
-		if err := validateFilestoreSkillArchiveVersionTx(ctx, tx, workspaceID, entry); err != nil {
+		if err := validateFilestoreSkillArchiveVersionTx(ctx, tx, workspaceUUID, entry); err != nil {
 			return err
 		}
 		fileUUID, fileExternalID, err := newFileIdentity()
@@ -179,7 +179,7 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 			"file_external_id":     fileExternalID,
 			"resource_uuid":        resourceUUID,
 			"resource_external_id": resourceExternalID,
-			"workspace_id":         workspaceID,
+			"workspace_uuid":       workspaceUUID,
 			"session_uuid":         filesystem.SessionUUID,
 			"entry_path":           entry.Path,
 			"filename":             entry.Filename,
@@ -203,7 +203,7 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 func validateFilestoreSkillArchiveVersionTx(
 	ctx context.Context,
 	tx *sqlx.Tx,
-	workspaceID int64,
+	workspaceUUID string,
 	entry normalizedSessionSkillArchiveResource,
 ) error {
 	var valid bool
@@ -211,7 +211,7 @@ func validateFilestoreSkillArchiveVersionTx(
 		select case CAST(:source AS text)
 			when 'custom' then exists (
 				select 1 from skill_versions version
-				where version.workspace_id = :workspace_id
+				where version.workspace_uuid = :workspace_uuid
 					and version.uuid = CAST(:version_uuid AS uuid)
 					and version.directory = :directory
 					and version.s3_bucket = :s3_bucket
@@ -233,14 +233,14 @@ func validateFilestoreSkillArchiveVersionTx(
 			else false
 		end
 	`, map[string]any{
-		"source":       entry.Source,
-		"workspace_id": workspaceID,
-		"version_uuid": entry.SkillVersionUUID,
-		"directory":    strings.TrimPrefix(entry.Path, "/skills/"),
-		"s3_bucket":    entry.S3Bucket,
-		"s3_key":       entry.S3Key,
-		"size_bytes":   entry.SizeBytes,
-		"sha256":       entry.SHA256,
+		"source":         entry.Source,
+		"workspace_uuid": workspaceUUID,
+		"version_uuid":   entry.SkillVersionUUID,
+		"directory":      strings.TrimPrefix(entry.Path, "/skills/"),
+		"s3_bucket":      entry.S3Bucket,
+		"s3_key":         entry.S3Key,
+		"size_bytes":     entry.SizeBytes,
+		"sha256":         entry.SHA256,
 	})
 	if err != nil {
 		return fmt.Errorf("validate Session skill archive %s: %w", entry.SkillVersionUUID, err)
@@ -255,13 +255,13 @@ func validateFilestoreSkillArchiveVersionTx(
 // Skill Archive Resource 集合，供只读 /skills 虚拟视图解析。
 func (d *DB) ListSessionSkillArchiveResources(
 	ctx context.Context,
-	workspaceID int64,
-	filesystemID int64,
+	workspaceUUID string,
+	filesystemUUID string,
 ) ([]SessionResourceFile, error) {
 	var rows []sessionResourceFileRow
 	if err := namedSelectContext(ctx, d.sql, &rows, sessionSkillArchiveResourceListQuery, map[string]any{
-		"workspace_id":  workspaceID,
-		"filesystem_id": filesystemID,
+		"workspace_uuid":  workspaceUUID,
+		"filesystem_uuid": filesystemUUID,
 	}); err != nil {
 		return nil, err
 	}

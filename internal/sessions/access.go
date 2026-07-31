@@ -26,7 +26,7 @@ func (h *Handler) authorizeSession(w http.ResponseWriter, r *http.Request, sessi
 	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
 		return h.fixtureDBSession(principal), true
 	}
-	session, err := h.db.GetSession(r.Context(), principal.WorkspaceID, sessionID)
+	session, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		h.writeSessionLoadError(w, r, err, sessionID)
 		return db.Session{}, false
@@ -69,14 +69,14 @@ func isSessionManagerCredential(principal auth.Principal) bool {
 		principal.CredentialType == auth.CredentialTypePlatformSession
 }
 
-func workspaceIDFromRequest(r *http.Request) int64 {
+func workspaceUUIDFromRequest(r *http.Request) string {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.WorkspaceID
+	return principal.WorkspaceUUID
 }
 
-func organizationExternalIDFromRequest(r *http.Request) string {
+func organizationUUIDFromRequest(r *http.Request) string {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.OrganizationExternalID
+	return principal.OrganizationUUID
 }
 
 func workspaceExternalIDFromRequest(r *http.Request) string {

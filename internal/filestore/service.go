@@ -28,10 +28,10 @@ const (
 )
 
 type filestoreDatabase interface {
-	GetFilestoreFilesystem(context.Context, int64, string) (db.FilestoreFilesystem, error)
-	GetSessionResourceFile(context.Context, int64, int64, string) (db.SessionResourceFile, error)
+	GetFilestoreFilesystem(context.Context, string, string) (db.FilestoreFilesystem, error)
+	GetSessionResourceFile(context.Context, string, string, string) (db.SessionResourceFile, error)
 	ListSessionResourceFilesPage(context.Context, db.ListSessionResourceFilesPageParams) (db.SessionResourceFilePage, error)
-	ListSessionSkillArchiveResources(context.Context, int64, int64) ([]db.SessionResourceFile, error)
+	ListSessionSkillArchiveResources(context.Context, string, string) ([]db.SessionResourceFile, error)
 	MakeFilestoreDirectory(context.Context, db.MakeFilestoreDirectoryInput) (db.SessionResourceFile, error)
 	PutFilestoreFile(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
 	CopyFilestoreFile(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)
@@ -40,8 +40,8 @@ type filestoreDatabase interface {
 	RemoveFilestoreFile(context.Context, db.RemoveSessionResourceFileInput) (db.FilestoreMutationResult, error)
 	RemoveFilestoreDirectory(context.Context, db.RemoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
 	EnqueueFilestoreObjectCleanupJob(context.Context, db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error)
-	AttachFilestoreObjectCleanupJobVersion(context.Context, int64, string, string, string) error
-	CompleteFilestoreObjectCleanupJob(context.Context, int64) error
+	AttachFilestoreObjectCleanupJobVersion(context.Context, string, string, string, string) error
+	CompleteFilestoreObjectCleanupJob(context.Context, string) error
 }
 
 // Service 编排 Filestore 的鉴权上下文、元数据事务与对象存储操作。
@@ -117,11 +117,11 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 		return directoryResponse{}, apiErr
 	}
 	entry, err := s.db.MakeFilestoreDirectory(ctx, db.MakeFilestoreDirectoryInput{
-		WorkspaceID:  principal.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         request.Path,
-		MakeParents:  request.MakeParents,
-		Now:          s.now().UTC(),
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           request.Path,
+		MakeParents:    request.MakeParents,
+		Now:            s.now().UTC(),
 	})
 	if err != nil {
 		return directoryResponse{}, mapDatabaseError("make directory", err)
@@ -142,11 +142,11 @@ func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, requ
 		return apiErr
 	}
 	_, err := s.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
-		WorkspaceID:  principal.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         request.Path,
-		Recursive:    request.Recursive,
-		Now:          s.now().UTC(),
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           request.Path,
+		Recursive:      request.Recursive,
+		Now:            s.now().UTC(),
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil
@@ -170,7 +170,7 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	if apiErr := s.paths.authorizeMutation(params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, params.Path); apiErr != nil {
+	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceUUID, filesystem.UUID, params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	now := s.now().UTC()
@@ -205,9 +205,9 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.PutFilestoreFile(ctx, db.PutFilestoreFileInput{
-		WorkspaceID:  principal.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         params.Path,
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           params.Path,
 		Blob: db.FilestoreFileBlob{
 			SizeBytes:             upload.Size,
 			MediaType:             mediaType,
@@ -256,7 +256,7 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	source, err := s.db.GetSessionResourceFile(ctx, principal.WorkspaceID, filesystem.ID, request.Source)
+	source, err := s.db.GetSessionResourceFile(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Source)
 	if err != nil {
 		return fileResponse{}, mapDatabaseError("read copy source", err)
 	}
@@ -273,7 +273,7 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		// 不能在这个控制面接口里被隐式转换成新的 Filestore-owned file。
 		return fileResponse{}, failedPrecondition("attached input files cannot be copied")
 	}
-	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceID, filesystem.ID, request.Destination); apiErr != nil {
+	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
 	now := s.now().UTC()
@@ -291,8 +291,8 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.CopyFilestoreFile(ctx, db.CopyFilestoreFileInput{
-		WorkspaceID:                principal.WorkspaceID,
-		FilesystemID:               filesystem.ID,
+		WorkspaceUUID:              principal.WorkspaceUUID,
+		FilesystemUUID:             filesystem.UUID,
 		SourcePath:                 request.Source,
 		DestinationPath:            request.Destination,
 		ExpectedSourceS3Key:        *source.S3Key,
@@ -330,8 +330,8 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 		return fileResponse{}, apiErr
 	}
 	result, err := s.db.MoveFilestoreFile(ctx, db.MoveFilestoreFileInput{
-		WorkspaceID:       principal.WorkspaceID,
-		FilesystemID:      filesystem.ID,
+		WorkspaceUUID:     principal.WorkspaceUUID,
+		FilesystemUUID:    filesystem.UUID,
 		SourcePath:        request.Source,
 		DestinationPath:   request.Destination,
 		OverwriteExisting: request.OverwriteExisting,
@@ -366,8 +366,8 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 		return directoryResponse{}, apiErr
 	}
 	result, err := s.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
-		WorkspaceID:     principal.WorkspaceID,
-		FilesystemID:    filesystem.ID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
+		FilesystemUUID:  filesystem.UUID,
 		SourcePath:      request.Source,
 		DestinationPath: request.Destination,
 		Now:             s.now().UTC(),
@@ -404,10 +404,10 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 		return apiErr
 	}
 	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveSessionResourceFileInput{
-		WorkspaceID:  principal.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         request.Path,
-		Now:          s.now().UTC(),
+		WorkspaceUUID:  principal.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           request.Path,
+		Now:            s.now().UTC(),
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil
@@ -429,28 +429,28 @@ func (s *Service) ReadMetadata(ctx context.Context, principal Principal, request
 }
 
 func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, filesystemID string) (db.FilestoreFilesystem, *apiError) {
-	if principal.WorkspaceID <= 0 {
+	if principal.WorkspaceUUID == "" {
 		return db.FilestoreFilesystem{}, &apiError{Status: http.StatusUnauthorized, Code: "unauthenticated", Message: "Invalid principal"}
 	}
 	// 数据库回查已把 claim 解析成规范的 external ID 与 UUID。请求可任选其一，
 	// 但不能借此访问同工作区内的其他 filesystem。
-	if principal.FilesystemInternalID <= 0 ||
+	if principal.FilesystemUUID == "" ||
 		(filesystemID != principal.FilesystemExternalID && !strings.EqualFold(filesystemID, principal.FilesystemUUID)) {
 		return db.FilestoreFilesystem{}, permissionDenied("Filestore token does not grant access to this filesystem")
 	}
-	filesystem, err := s.db.GetFilestoreFilesystem(ctx, principal.WorkspaceID, filesystemID)
+	filesystem, err := s.db.GetFilestoreFilesystem(ctx, principal.WorkspaceUUID, filesystemID)
 	if err != nil {
 		return db.FilestoreFilesystem{}, mapDatabaseError("resolve filesystem", err)
 	}
-	if filesystem.ID != principal.FilesystemInternalID {
+	if filesystem.UUID != principal.FilesystemUUID {
 		return db.FilestoreFilesystem{}, permissionDenied("Filestore token does not grant access to this filesystem")
 	}
 	return filesystem, nil
 }
 
-func (s *Service) requireParentDirectory(ctx context.Context, workspaceID, filesystemID int64, entryPath string) *apiError {
+func (s *Service) requireParentDirectory(ctx context.Context, workspaceUUID, filesystemUUID string, entryPath string) *apiError {
 	parent := parentPath(entryPath)
-	entry, err := s.db.GetSessionResourceFile(ctx, workspaceID, filesystemID, parent)
+	entry, err := s.db.GetSessionResourceFile(ctx, workspaceUUID, filesystemUUID, parent)
 	if errors.Is(err, db.ErrNotFound) {
 		return failedPrecondition("parent directory does not exist")
 	}
@@ -473,8 +473,8 @@ func (s *Service) enqueueOrphanCleanup(
 ) (db.FilestoreObjectCleanupJob, *apiError) {
 	// 先写哨兵、后写对象：任何后续失败都有一条持久化补偿路径。
 	job, err := s.db.EnqueueFilestoreObjectCleanupJob(ctx, db.EnqueueFilestoreObjectCleanupJobInput{
-		WorkspaceID:     principal.WorkspaceID,
-		FilesystemID:    filesystem.ID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
+		FilesystemUUID:  filesystem.UUID,
 		EntryExternalID: entryExternalID,
 		Bucket:          s.store.Name(),
 		Key:             key,
@@ -517,7 +517,7 @@ func (s *Service) stageFilestoreObject(
 		s.discardOrphan(ctx, cleanupJob, key, result.VersionID)
 		return stagedFilestoreObject{}, apiErr
 	}
-	if apiErr := s.attachOrphanVersion(ctx, principal.WorkspaceID, cleanupJob, result.ETag, result.VersionID); apiErr != nil {
+	if apiErr := s.attachOrphanVersion(ctx, principal.WorkspaceUUID, cleanupJob, result.ETag, result.VersionID); apiErr != nil {
 		s.discardOrphan(ctx, cleanupJob, key, result.VersionID)
 		return stagedFilestoreObject{}, apiErr
 	}
@@ -532,17 +532,17 @@ func (s *Service) discardOrphan(ctx context.Context, job db.FilestoreObjectClean
 	if err := s.store.Delete(cleanupCtx, key, deleteOptions); err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return
 	}
-	_ = s.db.CompleteFilestoreObjectCleanupJob(cleanupCtx, job.ID)
+	_ = s.db.CompleteFilestoreObjectCleanupJob(cleanupCtx, job.UUID)
 }
 
 func (s *Service) attachOrphanVersion(
 	ctx context.Context,
-	workspaceID int64,
+	workspaceUUID string,
 	job db.FilestoreObjectCleanupJob,
 	etag string,
 	versionID string,
 ) *apiError {
-	if err := s.db.AttachFilestoreObjectCleanupJobVersion(ctx, workspaceID, job.ExternalID, etag, versionID); err != nil {
+	if err := s.db.AttachFilestoreObjectCleanupJobVersion(ctx, workspaceUUID, job.ExternalID, etag, versionID); err != nil {
 		return internalError("record uploaded object version", err)
 	}
 	return nil

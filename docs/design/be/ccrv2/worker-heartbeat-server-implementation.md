@@ -2,19 +2,24 @@
 
 ## 概述
 
-`POST /v1/code/sessions/{id}/worker/heartbeat` 已实现为“当前 worker epoch 的租约续期”接口。强一致状态来源是 PostgreSQL 的 `code_sessions` 行；本接口不引入 Redis、不新增 `session_heartbeats` 表，也不通过后台清理任务驱动活性判断。
+`POST /v1/code/sessions/{id}/worker/heartbeat` 已实现为“当前 worker epoch 的租约续期”接口，并只为 `worker_status=running` 的 Code Session 续期对应 E2B Sandbox。worker 强一致状态来源是 PostgreSQL 的 `code_sessions` 行；本接口不引入 Redis、不新增 `session_heartbeats` 表，也不通过后台清理任务驱动活性判断。Provider Sandbox 是外部资源，数据库 worker 续租成功且 worker 正在运行时通过 E2B `SetTimeout` 续期。
 
 核心目标：
 
 - 只允许当前 `current_worker_epoch` 的 worker 续约。
 - 使用固定 `60s` TTL 和固定 `10s` grace 处理边界延迟。
 - 在 epoch 冲突或租约超过 grace 后拒绝心跳，并且不更新任何 session 状态。
+- 只有通过当前 epoch 与 lease 校验、且 `worker_status=running` 的 heartbeat 才能续期对应的 E2B Sandbox。
+- E2B 续期时长复用 `e2b.sandbox_timeout`，不维护另一套 Sandbox TTL 配置。
+- `idle` 和 `requires_action` heartbeat 仍续 worker lease，但不续 E2B Sandbox，避免常驻 CCRv2 heartbeat 让空闲 Sandbox 永不过期。
 - 使用 OMA 签发的 Ed25519 session-ingress JWT，并将签名 `session_id` 与请求路径绑定；session 与 lease 状态由 heartbeat 数据库状态机判断。
 
 相关实现文件：
 
 - `internal/codesessions/ingress.go`
 - `internal/db/code_sessions.go`
+- `internal/db/environments.go`
+- `internal/runtime/e2bruntime/runtime.go`
 - `internal/db/db.go`
 - `tests/sessions_api_test.go`
 
@@ -66,6 +71,7 @@ Content-Type: application/json
 | `worker_epoch` 不等于当前 epoch | `409` | `conflict_error` | 无 |
 | 当前 epoch 租约超过 grace | `410` | `session_expired` | 无 |
 | DB 或系统异常 | `500` | `api_error` | 无 |
+| running worker 已关联活动 Sandbox，但续期依赖缺失或 E2B `SetTimeout` 失败 | `503` | `api_error` | worker lease 已续期，Sandbox 续期失败 |
 
 ## 鉴权
 
@@ -81,20 +87,22 @@ handler 的调用顺序为：
 
 1. 先完成 ingress 鉴权。
 2. 再解析 heartbeat body。
-3. 最后进入 DB 租约续期逻辑。
+3. 进入 DB worker 租约续期逻辑。
+4. DB 续期成功后，仅为 running worker 解析活动 Sandbox 并调用 E2B `SetTimeout`。
 
 ## 数据模型
 
-心跳状态直接使用 `code_sessions` 现有列：
+worker 心跳状态直接使用 `code_sessions` 现有列：
 
 - `current_worker_epoch`
 - `worker_lease_expires_at`
 - `worker_last_heartbeat_at`
+- `worker_status`
 - `last_worker_activity_at`
 - `connection_status`
 - `updated_at`
 
-不新增 migration。worker 是否已注册由以下条件判断：
+不新增 migration。Code Session 通过受信任的 Session Work 数据关联 `environment_work`，再通过 `work_id` 定位 `environment_sandboxes` 中最新的 `running` Sandbox；查询同时约束 organization、workspace 和 environment，且要求 Code Session 的 `worker_status=running`、`provider_sandbox_id` 非空。未关联活动 Sandbox 的独立 Code Session，以及 `idle`/`requires_action` Code Session，只续 worker lease，不调用 Provider。worker 是否已注册由以下条件判断：
 
 - `current_worker_epoch > 0`
 - `worker_lease_expires_at is not null`
@@ -110,7 +118,9 @@ handler 的调用顺序为：
 3. 调用 `decodeCodeSessionWorkerHeartbeatBody` 严格解析 body。
 4. 调用 `RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, epoch, 60s, 10s)`。
 5. 根据 DB sentinel error 映射 HTTP 响应。
-6. 成功时返回 `ok` 和新的 `worker_lease_expires_at`。
+6. DB 续租成功后调用 `GetRenewableEnvironmentSandboxForCodeSession`；只有 running worker 能返回 Sandbox。
+7. running worker 使用 `e2b.sandbox_timeout` 调用 Provider `SetTimeout`。
+8. `idle`、`requires_action` 或未关联活动 Sandbox 时直接返回 worker 续租结果；running worker 已关联 Sandbox 时，两层续租均成功才返回 `ok` 和新的 `worker_lease_expires_at`，续期依赖缺失或 Provider 续期失败时返回 `503`。
 
 body 解析与 `PUT /worker`、events、diagnostics 等路径分开，避免复用旧的 `ValidateCodeSessionWorkerEpoch` 路径把“未注册 worker”“租约过期”和“epoch mismatch”混在一起。
 
@@ -195,6 +205,10 @@ heartbeat 使用 `SELECT ... FOR UPDATE` 锁定目标 `code_sessions` 行，因�
 - heartbeat 先提交时，只会续当前 epoch 的租约；后续 register 仍会 bump 到下一 epoch。
 - 多个当前 epoch heartbeat 并发时按行锁顺序依次续约，最终租约以最后提交的 heartbeat 为准。
 
+E2B 网络调用不在 PostgreSQL 事务中执行，避免远端延迟占用 `code_sessions` 行锁。worker lease 先提交，再按提交后的 worker 状态解析可续期 Sandbox，因此 running worker 遇到 Provider 临时失败时接口返回 `503`，但已经观测到的 worker heartbeat 仍保留；客户端下一次 heartbeat 会重新尝试 `SetTimeout`。`SetTimeout` 是幂等的相对 TTL 更新，并发成功调用以 E2B 最后处理的请求为准。
+
+E2B SDK 的 `Connect` 也会携带 timeout。Provider 所有 connect 操作显式使用 `e2b.sandbox_timeout`，避免 SDK 默认值覆盖项目配置；running heartbeat 随后显式调用 `SetTimeout`，把 Sandbox 生命周期从本次请求重新延长相同配置时长。worker 切换到 `idle` 或 `requires_action` 后，后续 heartbeat 不再连接 Provider；如果没有其他 Provider 操作，Sandbox 会在最后一次 running 续期后的 `e2b.sandbox_timeout` 内自然过期。`last_worker_activity_at` 会被 heartbeat 自身刷新，不能作为 Sandbox idle 计时来源。
+
 ## 日志
 
 epoch mismatch 和 lease expired 会记录结构化文本日志，字段包括：
@@ -229,6 +243,10 @@ epoch mismatch 和 lease expired 会记录结构化文本日志，字段包括�
 - session 不存在返回 `404 not_found_error`。
 - 旧 epoch 和未知未来 epoch 返回 `409 conflict_error`，并断言租约和 activity 字段不变。
 - 当前 epoch 未过期 heartbeat 返回 `200` 并续到 `now + 60s`。
+- running heartbeat 使用对应 `provider_sandbox_id` 和 `e2b.sandbox_timeout` 调用 Sandbox 续期。
+- idle 和 requires-action heartbeat 续 worker lease，但不调用 Sandbox 续期。
+- running heartbeat 的 E2B Sandbox 续期失败返回 `503`。
+- 旧 epoch、未来 epoch 和超过 grace 的 heartbeat 不调用 Sandbox 续期。
 - 刚过期但在 `10s` grace 内 heartbeat 返回 `200`。
 - 超过 grace 返回 `410 session_expired`，并断言状态不更新。
 - 过期 heartbeat 不 bump epoch，下一次 register 继续递增到下一 epoch。
@@ -258,6 +276,7 @@ go test ./... -count=1
 - nonce 防重放。
 - 真实 JWT 签名验证。
 - 独立后台任务清理 heartbeat 状态。
+- Sandbox 续期合并、节流或异步后台续期。
 - 跨区域一致性协议。
 
 这些能力需要独立认证、限流或部署设计。当前接口的强一致边界是单行 PostgreSQL 事务。

@@ -645,15 +645,15 @@ func skillArchiveTestService(
 	openCount := 0
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
-		getEntryFn: func(_ context.Context, workspaceID, filesystemID int64, entryPath string) (db.SessionResourceFile, error) {
-			if workspaceID != serviceTestPrincipal().WorkspaceID ||
-				filesystemID != filesystem.ID ||
+		getEntryFn: func(_ context.Context, workspaceUUID, filesystemUUID string, entryPath string) (db.SessionResourceFile, error) {
+			if workspaceUUID != serviceTestPrincipal().WorkspaceUUID ||
+				filesystemUUID != filesystem.UUID ||
 				entryPath != skillNamespacePath {
 				return db.SessionResourceFile{}, db.ErrNotFound
 			}
 			return serviceTestDirectoryEntry(filesystem, 70, skillNamespacePath), nil
 		},
-		listSkillArchiveEntriesFn: func(context.Context, int64, int64) ([]db.SessionResourceFile, error) {
+		listSkillArchiveEntriesFn: func(context.Context, string, string) ([]db.SessionResourceFile, error) {
 			return []db.SessionResourceFile{archiveEntry}, nil
 		},
 	}

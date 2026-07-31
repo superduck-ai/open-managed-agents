@@ -70,12 +70,12 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 func TestManagedAgentWorkDirSkipsInvalidRepositoryCandidates(t *testing.T) {
 	resources := []db.SessionResource{
 		{
-			ID:           1,
+			UUID:         "00000000-0000-0000-0000-000000000001",
 			ResourceType: "github_repository",
 			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":`),
 		},
 		{
-			ID:           2,
+			UUID:         "00000000-0000-0000-0000-000000000002",
 			ResourceType: "github_repository",
 			Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"  "}`),
 		},
@@ -85,7 +85,7 @@ func TestManagedAgentWorkDirSkipsInvalidRepositoryCandidates(t *testing.T) {
 	}
 
 	resources = append(resources, db.SessionResource{
-		ID:           3,
+		UUID:         "00000000-0000-0000-0000-000000000003",
 		ResourceType: "github_repository",
 		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/valid"}`),
 	})
@@ -96,17 +96,17 @@ func TestManagedAgentWorkDirSkipsInvalidRepositoryCandidates(t *testing.T) {
 
 func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T) {
 	repository := db.SessionResource{
-		ID:           2,
+		UUID:         "00000000-0000-0000-0000-000000000002",
 		ResourceType: "github_repository",
 		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":" /workspace/repository "}`),
 	}
 	file := db.SessionResource{
-		ID:           1,
+		UUID:         "00000000-0000-0000-0000-000000000001",
 		ResourceType: "file",
 		Payload:      json.RawMessage(`{"type":"file","mount_path":"/workspace/data.csv"}`),
 	}
 	memoryStore := db.SessionResource{
-		ID:           3,
+		UUID:         "00000000-0000-0000-0000-000000000003",
 		ResourceType: "memory_store",
 		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/workspace/memory"}`),
 	}
@@ -125,14 +125,14 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
 	first := db.SessionResource{
-		ID:           10,
+		UUID:         "00000000-0000-0000-0000-000000000010",
 		ExternalID:   "sesrsc_first",
 		ResourceType: "github_repository",
 		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/first"}`),
 		CreatedAt:    createdAt,
 	}
 	later := db.SessionResource{
-		ID:           11,
+		UUID:         "00000000-0000-0000-0000-000000000011",
 		ExternalID:   "sesrsc_later",
 		ResourceType: "github_repository",
 		Payload:      json.RawMessage(`{"type":"github_repository","mount_path":"/workspace/later"}`),
@@ -142,10 +142,10 @@ func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
 	sameTimeLater.CreatedAt = createdAt
 
 	for name, resources := range map[string][]db.SessionResource{
-		"reverse list order":      {later, first},
-		"forward list order":      {first, later},
-		"same timestamp uses id":  {sameTimeLater, first},
-		"same timestamp reversed": {first, sameTimeLater},
+		"reverse list order":       {later, first},
+		"forward list order":       {first, later},
+		"same timestamp uses uuid": {sameTimeLater, first},
+		"same timestamp reversed":  {first, sameTimeLater},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if workDir := resolveManagedAgentRuntimeResources(resources).workDir; workDir != "/workspace/first" {

@@ -305,20 +305,20 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 	database *sql.DB,
 ) {
 	t.Helper()
-	var organizationID, workspaceID int64
+	var organizationUUID, workspaceUUID string
 	if err := database.QueryRowContext(ctx, `
-		select organization_id, workspace_id
+		select organization_uuid, workspace_uuid
 		from sessions
 		where external_id = 'sesn_migration_184'
-	`).Scan(&organizationID, &workspaceID); err != nil {
+	`).Scan(&organizationUUID, &workspaceUUID); err != nil {
 		t.Fatalf("load migrated Session tenant IDs: %v", err)
 	}
 	createdAt := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
 	created, err := createSessionResourceSQLX(ctx, sqlx.NewDb(database, "pgx"), SessionResource{
 		UUID:              "50000000-0000-0000-0000-000000000099",
 		ExternalID:        "sesrsc_runtime_after_uuid_migration",
-		OrganizationID:    organizationID,
-		WorkspaceID:       workspaceID,
+		OrganizationUUID:  organizationUUID,
+		WorkspaceUUID:     workspaceUUID,
 		SessionExternalID: "sesn_migration_184",
 		ResourceType:      "github_repository",
 		Payload:           json.RawMessage(`{"repository":"example/repository"}`),
@@ -327,13 +327,13 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 	if err != nil {
 		t.Fatalf("create Session Resource after UUID migration: %v", err)
 	}
-	if created.OrganizationID != organizationID || created.WorkspaceID != workspaceID {
+	if created.OrganizationUUID != organizationUUID || created.WorkspaceUUID != workspaceUUID {
 		t.Fatalf(
-			"created Session Resource tenant IDs = (%d, %d), want (%d, %d)",
-			created.OrganizationID,
-			created.WorkspaceID,
-			organizationID,
-			workspaceID,
+			"created Session Resource tenant UUIDs = (%s, %s), want (%s, %s)",
+			created.OrganizationUUID,
+			created.WorkspaceUUID,
+			organizationUUID,
+			workspaceUUID,
 		)
 	}
 }

@@ -52,7 +52,7 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 		if !strings.HasPrefix(userID, "user_") || orgUUID != "created-org-uuid" {
 			t.Fatalf("context = (%q, %q), want created context", userID, orgUUID)
 		}
-		if len(tx.organizations) != 1 || tx.organizations[0].Name != "new user" || !strings.HasPrefix(tx.organizations[0].ExternalID, "org_") {
+		if len(tx.organizations) != 1 || tx.organizations[0].Name != "new user" {
 			t.Fatalf("organizations = %#v, want default organization", tx.organizations)
 		}
 		if len(tx.workspaces) != 1 || tx.workspaces[0].Name != "default" || !strings.HasPrefix(tx.workspaces[0].ExternalID, "wrkspc_") {
@@ -112,17 +112,17 @@ func (tx *fakePlatformAuthTx) UpdateEmptyUserName(_ context.Context, userExterna
 
 func (tx *fakePlatformAuthTx) InsertOrganization(_ context.Context, input db.PlatformAuthOrganizationInput) (db.PlatformAuthOrganizationRef, error) {
 	tx.organizations = append(tx.organizations, input)
-	return db.PlatformAuthOrganizationRef{ID: 10, UUID: "created-org-uuid"}, nil
+	return db.PlatformAuthOrganizationRef{UUID: "created-org-uuid"}, nil
 }
 
 func (tx *fakePlatformAuthTx) InsertUser(_ context.Context, input db.PlatformAuthUserInput) (db.PlatformAuthUserRef, error) {
 	tx.users = append(tx.users, input)
-	return db.PlatformAuthUserRef{ID: 20}, nil
+	return db.PlatformAuthUserRef{UUID: input.UUID}, nil
 }
 
 func (tx *fakePlatformAuthTx) InsertWorkspace(_ context.Context, input db.PlatformAuthWorkspaceInput) (db.PlatformAuthWorkspaceRef, error) {
 	tx.workspaces = append(tx.workspaces, input)
-	return db.PlatformAuthWorkspaceRef{ID: 30}, nil
+	return db.PlatformAuthWorkspaceRef{UUID: input.UUID}, nil
 }
 
 func (tx *fakePlatformAuthTx) InsertWorkspaceMember(_ context.Context, input db.PlatformAuthWorkspaceMemberInput) error {

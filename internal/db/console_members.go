@@ -18,24 +18,16 @@ const (
 			u.role,
 			u.added_at
 		from users u
-		join organizations o on o.id = u.organization_id
-		where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+		where u.organization_uuid = CAST(:org_uuid AS uuid)
 			and u.deleted_at is null
-		order by u.added_at asc, u.id asc
+		order by u.added_at asc, u.uuid asc
 		limit :limit
 	`
 	updateOrgUserRoleQuery = `
-		with target_org as (
-			select id
-			from organizations
-			where CAST(uuid AS text) = :org_uuid or external_id = :org_uuid
-			limit 1
-		)
 		update users u
 		set role = :role,
 			updated_at = now()
-		from target_org o
-		where u.organization_id = o.id
+		where u.organization_uuid = CAST(:org_uuid AS uuid)
 			and u.deleted_at is null
 			and (
 				CAST(u.uuid AS text) = :user_id
@@ -50,17 +42,10 @@ const (
 			u.added_at
 	`
 	removeOrgUserQuery = `
-		with target_org as (
-			select id
-			from organizations
-			where CAST(uuid AS text) = :org_uuid or external_id = :org_uuid
-			limit 1
-		)
 		update users u
 		set deleted_at = coalesce(u.deleted_at, now()),
 			updated_at = now()
-		from target_org o
-		where u.organization_id = o.id
+		where u.organization_uuid = CAST(:org_uuid AS uuid)
 			and u.deleted_at is null
 			and (
 				CAST(u.uuid AS text) = :user_id
@@ -69,20 +54,24 @@ const (
 			)
 	`
 	removeOrgUserWorkspaceMembershipsQuery = `
+		with target_user as (
+			select uuid
+			from users
+			where organization_uuid = CAST(:org_uuid AS uuid)
+				and (
+					CAST(uuid AS text) = :user_id
+					or external_id = :user_id
+					or 'user_' || left(replace(CAST(uuid AS text), '-', ''), 24) = :user_id
+				)
+			limit 1
+		)
 		update workspace_members wm
 		set deleted_at = coalesce(wm.deleted_at, now()),
 			updated_at = now()
-		from organizations o, users u
-		where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
-			and wm.organization_id = o.id
-			and u.organization_id = o.id
-			and wm.user_id = u.id
+		from target_user u
+		where wm.organization_uuid = CAST(:org_uuid AS uuid)
+			and wm.user_uuid = u.uuid
 			and wm.deleted_at is null
-			and (
-				CAST(u.uuid AS text) = :user_id
-				or u.external_id = :user_id
-				or 'user_' || left(replace(CAST(u.uuid AS text), '-', ''), 24) = :user_id
-			)
 	`
 )
 

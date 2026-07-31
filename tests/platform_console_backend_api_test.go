@@ -1029,30 +1029,32 @@ func loadDefaultOrganizationUUID(t *testing.T, app *testApp) string {
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		select o.uuid::text
 		from organizations o
-		where o.external_id = 'org_default'
+		join workspaces w on w.organization_uuid = o.uuid
+		where w.external_id = 'workspace_default'
 	`).Scan(&orgUUID); err != nil {
 		t.Fatalf("load default organization uuid: %v", err)
 	}
 	return orgUUID
 }
 
-func seedConsoleDefaultWorkspace(t *testing.T, app *testApp, orgExternalID string, workspaceExternalID string) string {
+func seedConsoleDefaultWorkspace(t *testing.T, app *testApp, organizationName string, workspaceExternalID string) string {
 	t.Helper()
 	var organizationID int64
 	var orgUUID string
 	if err := app.db.Pool.QueryRow(context.Background(), `
-		insert into organizations (external_id, name)
-		values ($1, $1)
-		on conflict (external_id) do update set name = excluded.name
+		insert into organizations (name)
+		values ($1)
 		returning id, uuid::text
-	`, orgExternalID).Scan(&organizationID, &orgUUID); err != nil {
+	`, organizationName).Scan(&organizationID, &orgUUID); err != nil {
 		t.Fatalf("seed console org: %v", err)
 	}
 	if _, err := app.db.Pool.Exec(context.Background(), `
-		insert into workspaces (external_id, organization_id, name)
-		values ($1, $2, 'default')
+		insert into workspaces (external_id, organization_uuid, name)
+		select $1, uuid, 'default'
+		from organizations
+		where id = $2
 		on conflict (external_id) do update set
-			organization_id = excluded.organization_id,
+			organization_uuid = excluded.organization_uuid,
 			name = excluded.name,
 			archived_at = null,
 			updated_at = now()

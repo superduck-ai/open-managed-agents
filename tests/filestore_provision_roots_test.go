@@ -16,7 +16,7 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 	t.Run("rejects an active file at a fixed root", func(t *testing.T) {
 		app := newTestAppWithStore(t, nil, newFakeStore("filestore-provision-root-file"))
 		t.Cleanup(app.close)
-		_, workspaceID, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
+		_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
 		input := newFilestoreProvisionInput(
 			organizationUUID,
 			workspaceUUID,
@@ -24,12 +24,12 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 			codeSessionUUID,
 			apiKeyUUID,
 		)
-		filesystem := insertFilestoreFilesystemWithoutRoots(t, app, workspaceID, input)
+		filesystem := insertFilestoreFilesystemWithoutRoots(t, app, input)
 		if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  workspaceID,
-			FilesystemID: filesystem.ID,
-			Path:         "/uploads",
-			Blob:         workspaceStorageBlob(1, nil),
+			WorkspaceUUID:  workspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			Path:           "/uploads",
+			Blob:           workspaceStorageBlob(1, nil),
 		}); err != nil {
 			t.Fatalf("PutFilestoreFile(/uploads) error = %v", err)
 		}
@@ -67,7 +67,7 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 	t.Run("repairs missing roots on an existing filesystem", func(t *testing.T) {
 		app := newTestAppWithStore(t, nil, newFakeStore("filestore-provision-repair-roots"))
 		t.Cleanup(app.close)
-		_, workspaceID, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
+		_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
 		input := newFilestoreProvisionInput(
 			organizationUUID,
 			workspaceUUID,
@@ -75,14 +75,14 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 			codeSessionUUID,
 			apiKeyUUID,
 		)
-		inserted := insertFilestoreFilesystemWithoutRoots(t, app, workspaceID, input)
+		inserted := insertFilestoreFilesystemWithoutRoots(t, app, input)
 
 		filesystem, created, err := app.db.ProvisionFilestoreFilesystem(context.Background(), input)
 		if err != nil || created {
 			t.Fatalf("first idempotent ProvisionFilestoreFilesystem() = created %v, error %v", created, err)
 		}
-		if filesystem.ID != inserted.ID {
-			t.Fatalf("reused filesystem ID = %d, want %d", filesystem.ID, inserted.ID)
+		if filesystem.UUID != inserted.UUID {
+			t.Fatalf("reused filesystem UUID = %q, want %q", filesystem.UUID, inserted.UUID)
 		}
 		assertFixedFilestoreRoots(t, app, filesystem)
 
@@ -96,8 +96,8 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 		if err != nil || created {
 			t.Fatalf("second idempotent ProvisionFilestoreFilesystem() = created %v, error %v", created, err)
 		}
-		if repaired.ID != filesystem.ID {
-			t.Fatalf("repaired filesystem ID = %d, want %d", repaired.ID, filesystem.ID)
+		if repaired.UUID != filesystem.UUID {
+			t.Fatalf("repaired filesystem UUID = %q, want %q", repaired.UUID, filesystem.UUID)
 		}
 		assertFixedFilestoreRoots(t, app, repaired)
 	})
@@ -106,7 +106,7 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 func TestProvisionFilestoreFilesystemSerializesWithSessionDeletion(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("filestore-provision-delete-race"))
 	t.Cleanup(app.close)
-	_, workspaceID, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	input := newFilestoreProvisionInput(
 		organizationUUID,
 		workspaceUUID,
@@ -130,7 +130,7 @@ func TestProvisionFilestoreFilesystemSerializesWithSessionDeletion(t *testing.T)
 	t.Cleanup(func() {
 		_ = blocker.Rollback(context.Background())
 	})
-	if _, err := blocker.Exec(ctx, `select pg_advisory_xact_lock($1)`, workspaceID); err != nil {
+	if _, err := blocker.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1, 0))`, workspaceUUID); err != nil {
 		t.Fatalf("lock workspace: %v", err)
 	}
 
@@ -148,7 +148,7 @@ func TestProvisionFilestoreFilesystemSerializesWithSessionDeletion(t *testing.T)
 
 	deleted := make(chan error, 1)
 	go func() {
-		_, deleteErr := app.db.DeleteSession(ctx, workspaceID, sessionExternalID)
+		_, deleteErr := app.db.DeleteSession(ctx, workspaceUUID, sessionExternalID)
 		deleted <- deleteErr
 	}()
 	select {
@@ -250,7 +250,6 @@ func newFilestoreProvisionInput(
 func insertFilestoreFilesystemWithoutRoots(
 	t *testing.T,
 	app *testApp,
-	workspaceID int64,
 	input db.ProvisionFilestoreFilesystemInput,
 ) db.FilestoreFilesystem {
 	t.Helper()
@@ -264,7 +263,7 @@ func insertFilestoreFilesystemWithoutRoots(
 		input.SessionUUID, input.CodeSessionUUID, input.CreatedByAPIKeyUUID, input.Now); err != nil {
 		t.Fatalf("insert filesystem without roots: %v", err)
 	}
-	filesystem, err := app.db.GetFilestoreFilesystem(context.Background(), workspaceID, input.ExternalID)
+	filesystem, err := app.db.GetFilestoreFilesystem(context.Background(), input.WorkspaceUUID, input.ExternalID)
 	if err != nil {
 		t.Fatalf("GetFilestoreFilesystem() error = %v", err)
 	}

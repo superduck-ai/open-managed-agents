@@ -35,10 +35,10 @@ func TestHandlerEnforcesReadonlyFilestoreToken(t *testing.T) {
 	t.Parallel()
 
 	readonlyPrincipal := Principal{
-		OrganizationID: 11,
-		WorkspaceID:    22,
-		AccountID:      33,
-		Readonly:       true,
+		OrganizationUUID: "11111111-1111-4111-8111-111111111111",
+		WorkspaceUUID:    "22222222-2222-4222-8222-222222222222",
+		AccountUUID:      "33333333-3333-4333-8333-333333333333",
+		Readonly:         true,
 	}
 	for _, path := range []string{
 		"/makeDirectory",
@@ -312,13 +312,18 @@ func TestHandlerPassesCreateFileMultipartParamsAndStream(t *testing.T) {
 	if got := string(service.createBody); got != "streamed file contents" {
 		t.Fatalf("file body = %q", got)
 	}
-	if service.createPrincipal.WorkspaceID != 22 || service.createPrincipal.OrganizationID != 11 {
+	if service.createPrincipal.WorkspaceUUID != "22222222-2222-4222-8222-222222222222" ||
+		service.createPrincipal.OrganizationUUID != "11111111-1111-4111-8111-111111111111" {
 		t.Fatalf("principal = %+v", service.createPrincipal)
 	}
 }
 
 func newAuthenticatedHandlerRequest(method, target string, body io.Reader) *http.Request {
-	principal := Principal{OrganizationID: 11, WorkspaceID: 22, AccountID: 33}
+	principal := Principal{
+		OrganizationUUID: "11111111-1111-4111-8111-111111111111",
+		WorkspaceUUID:    "22222222-2222-4222-8222-222222222222",
+		AccountUUID:      "33333333-3333-4333-8333-333333333333",
+	}
 	return newHandlerRequestWithPrincipal(method, target, body, principal)
 }
 

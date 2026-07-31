@@ -10,9 +10,7 @@ func filestoreFilesystemSelectSQL() string {
 }
 
 func filestoreFilesystemColumns() string {
-	return `id,
-		coalesce((select s.id from sessions s where s.uuid = filestore_filesystems.session_uuid), 0) as session_id,
-		cast(uuid as text) as uuid, external_id,
+	return `cast(uuid as text) as uuid, external_id,
 		cast(organization_uuid as text) as organization_uuid,
 		cast(workspace_uuid as text) as workspace_uuid,
 		cast(session_uuid as text) as session_uuid,

@@ -26,11 +26,11 @@ const (
 
 type filestoreCleanupDatabase interface {
 	LeaseFilestoreFilesystemCleanupJobs(context.Context, string, int, int) ([]db.FilestoreFilesystemCleanupJob, error)
-	ProcessLeasedFilestoreFilesystemCleanupJob(context.Context, int64, string, int) (bool, []db.FilestoreCleanupAnomaly, error)
-	FailLeasedFilestoreFilesystemCleanupJob(context.Context, int64, string, string, time.Duration, int) error
+	ProcessLeasedFilestoreFilesystemCleanupJob(context.Context, string, string, int) (bool, []db.FilestoreCleanupAnomaly, error)
+	FailLeasedFilestoreFilesystemCleanupJob(context.Context, string, string, string, time.Duration, int) error
 	LeaseFilestoreObjectCleanupJobs(context.Context, string, int, int) ([]db.FilestoreObjectCleanupJob, error)
-	CompleteLeasedFilestoreObjectCleanupJob(context.Context, int64, string) error
-	FailLeasedFilestoreObjectCleanupJob(context.Context, int64, string, string, time.Duration, int) error
+	CompleteLeasedFilestoreObjectCleanupJob(context.Context, string, string) error
+	FailLeasedFilestoreObjectCleanupJob(context.Context, string, string, string, time.Duration, int) error
 	ExpireSessionResourceFiles(context.Context, int) ([]db.FilestoreObjectCleanupJob, []db.FilestoreCleanupAnomaly, error)
 }
 
@@ -127,7 +127,7 @@ func (w *CleanupWorker) RunFilesystemCleanupOnce(ctx context.Context, workerID s
 		}
 		_, anomalies, processErr := w.database.ProcessLeasedFilestoreFilesystemCleanupJob(
 			ctx,
-			job.ID,
+			job.UUID,
 			workerID,
 			filestoreFilesystemCleanupBatchSize,
 		)
@@ -141,7 +141,7 @@ func (w *CleanupWorker) RunFilesystemCleanupOnce(ctx context.Context, workerID s
 		}
 		if err := w.database.FailLeasedFilestoreFilesystemCleanupJob(
 			ctx,
-			job.ID,
+			job.UUID,
 			workerID,
 			processErr.Error(),
 			filestoreCleanupRetryDelay(job.Attempts+1),
@@ -172,7 +172,7 @@ func (w *CleanupWorker) RunCleanupOnce(ctx context.Context, workerID string) err
 		if storeErr != nil {
 			if err := w.database.FailLeasedFilestoreObjectCleanupJob(
 				ctx,
-				job.ID,
+				job.UUID,
 				workerID,
 				storeErr.Error(),
 				time.Hour,
@@ -196,7 +196,7 @@ func (w *CleanupWorker) RunCleanupOnce(ctx context.Context, workerID string) err
 			delay := filestoreCleanupRetryDelay(job.Attempts + 1)
 			if err := w.database.FailLeasedFilestoreObjectCleanupJob(
 				ctx,
-				job.ID,
+				job.UUID,
 				workerID,
 				deleteErr.Error(),
 				delay,
@@ -206,7 +206,7 @@ func (w *CleanupWorker) RunCleanupOnce(ctx context.Context, workerID string) err
 			}
 			continue
 		}
-		if err := w.database.CompleteLeasedFilestoreObjectCleanupJob(ctx, job.ID, workerID); err != nil {
+		if err := w.database.CompleteLeasedFilestoreObjectCleanupJob(ctx, job.UUID, workerID); err != nil {
 			errs = append(errs, fmt.Errorf("complete cleanup job %s: %w", job.ExternalID, err))
 		}
 	}
@@ -225,8 +225,8 @@ func (w *CleanupWorker) logCleanupAnomalies(ctx context.Context, anomalies []db.
 		w.logger.WarnContext(
 			ctx,
 			"filestore cleanup metadata anomaly",
-			"workspace_id", anomaly.WorkspaceID,
-			"filesystem_id", anomaly.FilesystemID,
+			"workspace_id", anomaly.WorkspaceUUID,
+			"filesystem_id", anomaly.FilesystemUUID,
 			"entry_external_id", anomaly.EntryExternalID,
 			"reason", anomaly.Reason,
 		)

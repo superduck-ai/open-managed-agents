@@ -22,7 +22,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 		start := make(chan struct{})
 		errs := make(chan error, 2)
-		file := workspaceStorageFile(fixture.workspaceID, fileSize)
+		file := workspaceStorageFile(fixture.workspaceUUID, fileSize)
 		go func() {
 			<-start
 			errs <- fixture.app.db.CreateFileIfWithinLimit(context.Background(), file, limit)
@@ -30,8 +30,8 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		go func() {
 			<-start
 			_, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-				WorkspaceID:                fixture.workspaceID,
-				FilesystemID:               fixture.filesystem.ID,
+				WorkspaceUUID:              fixture.workspaceUUID,
+				FilesystemUUID:             fixture.filesystem.UUID,
 				Path:                       "/concurrent.txt",
 				Blob:                       workspaceStorageBlob(fileSize, nil),
 				WorkspaceStorageLimitBytes: limit,
@@ -60,12 +60,12 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 	t.Run("failure limited file creation checks quota before duplicate insert", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
-		file := workspaceStorageFile(fixture.workspaceID, 3)
+		file := workspaceStorageFile(fixture.workspaceUUID, 3)
 		if err := fixture.app.db.CreateFile(context.Background(), file); err != nil {
 			t.Fatalf("create initial file: %v", err)
 		}
 
-		duplicate := workspaceStorageFile(fixture.workspaceID, 7)
+		duplicate := workspaceStorageFile(fixture.workspaceUUID, 7)
 		duplicate.ExternalID = file.ExternalID
 		err := fixture.app.db.CreateFileIfWithinLimit(context.Background(), duplicate, 5)
 		if !errors.Is(err, db.ErrStorageLimitExceeded) {
@@ -76,12 +76,12 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 	t.Run("failure resource write rollback also rolls back reserved bytes", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
-		file := workspaceStorageFile(fixture.workspaceID, 3)
+		file := workspaceStorageFile(fixture.workspaceUUID, 3)
 		if err := fixture.app.db.CreateFile(context.Background(), file); err != nil {
 			t.Fatalf("create initial file: %v", err)
 		}
 
-		duplicate := workspaceStorageFile(fixture.workspaceID, 7)
+		duplicate := workspaceStorageFile(fixture.workspaceUUID, 7)
 		duplicate.ExternalID = file.ExternalID
 		if err := fixture.app.db.CreateFileIfWithinLimit(context.Background(), duplicate, 100); err == nil {
 			t.Fatal("duplicate file create error = nil")
@@ -93,10 +93,10 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 
 		_, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/missing/file.txt",
-			Blob:         workspaceStorageBlob(3, nil),
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/missing/file.txt",
+			Blob:           workspaceStorageBlob(3, nil),
 		})
 
 		if !errors.Is(err, db.ErrFilestoreParentMissing) {
@@ -109,19 +109,19 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
 		malformed, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/malformed.txt",
-			Blob:         workspaceStorageBlob(4, &expiresAt),
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/malformed.txt",
+			Blob:           workspaceStorageBlob(4, &expiresAt),
 		})
 		if err != nil {
 			t.Fatalf("put malformed candidate: %v", err)
 		}
 		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/healthy.txt",
-			Blob:         workspaceStorageBlob(3, &expiresAt),
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/healthy.txt",
+			Blob:           workspaceStorageBlob(3, &expiresAt),
 		}); err != nil {
 			t.Fatalf("put healthy expired file: %v", err)
 		}
@@ -156,13 +156,13 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 	t.Run("success files and filestore maintain one transactional total", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
-		file := workspaceStorageFile(fixture.workspaceID, 6)
+		file := workspaceStorageFile(fixture.workspaceUUID, 6)
 		if err := fixture.app.db.CreateFileIfWithinLimit(context.Background(), file, 10); err != nil {
 			t.Fatalf("create Files API file: %v", err)
 		}
 		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:                fixture.workspaceID,
-			FilesystemID:               fixture.filesystem.ID,
+			WorkspaceUUID:              fixture.workspaceUUID,
+			FilesystemUUID:             fixture.filesystem.UUID,
 			Path:                       "/shared.txt",
 			Blob:                       workspaceStorageBlob(4, nil),
 			WorkspaceStorageLimitBytes: 10,
@@ -172,8 +172,8 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		assertWorkspaceStorageBytes(t, fixture, 10)
 
 		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:                fixture.workspaceID,
-			FilesystemID:               fixture.filesystem.ID,
+			WorkspaceUUID:              fixture.workspaceUUID,
+			FilesystemUUID:             fixture.filesystem.UUID,
 			Path:                       "/shared.txt",
 			Blob:                       workspaceStorageBlob(2, nil),
 			OverwriteExisting:          true,
@@ -184,14 +184,14 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		assertWorkspaceStorageBytes(t, fixture, 8)
 
 		if _, err := fixture.app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionResourceFileInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/shared.txt",
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/shared.txt",
 		}); err != nil {
 			t.Fatalf("remove Filestore file: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 6)
-		if err := fixture.app.db.SoftDeleteFile(context.Background(), fixture.workspaceID, file.ExternalID); err != nil {
+		if err := fixture.app.db.SoftDeleteFile(context.Background(), fixture.workspaceUUID, file.ExternalID); err != nil {
 			t.Fatalf("delete Files API file: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 0)
@@ -207,17 +207,17 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 			{path: "/destination.txt", size: 5},
 		} {
 			if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-				WorkspaceID:  fixture.workspaceID,
-				FilesystemID: fixture.filesystem.ID,
-				Path:         input.path,
-				Blob:         workspaceStorageBlob(input.size, nil),
+				WorkspaceUUID:  fixture.workspaceUUID,
+				FilesystemUUID: fixture.filesystem.UUID,
+				Path:           input.path,
+				Blob:           workspaceStorageBlob(input.size, nil),
 			}); err != nil {
 				t.Fatalf("put %s: %v", input.path, err)
 			}
 		}
 		if _, err := fixture.app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
-			WorkspaceID:       fixture.workspaceID,
-			FilesystemID:      fixture.filesystem.ID,
+			WorkspaceUUID:     fixture.workspaceUUID,
+			FilesystemUUID:    fixture.filesystem.UUID,
 			SourcePath:        "/source.txt",
 			DestinationPath:   "/destination.txt",
 			OverwriteExisting: true,
@@ -227,28 +227,28 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		assertWorkspaceStorageBytes(t, fixture, 3)
 
 		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/tree",
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/tree",
 		}); err != nil {
 			t.Fatalf("make directory: %v", err)
 		}
 		for _, path := range []string{"/tree/a.txt", "/tree/b.txt"} {
 			if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-				WorkspaceID:  fixture.workspaceID,
-				FilesystemID: fixture.filesystem.ID,
-				Path:         path,
-				Blob:         workspaceStorageBlob(2, nil),
+				WorkspaceUUID:  fixture.workspaceUUID,
+				FilesystemUUID: fixture.filesystem.UUID,
+				Path:           path,
+				Blob:           workspaceStorageBlob(2, nil),
 			}); err != nil {
 				t.Fatalf("put %s: %v", path, err)
 			}
 		}
 		assertWorkspaceStorageBytes(t, fixture, 7)
 		if _, err := fixture.app.db.RemoveFilestoreDirectory(context.Background(), db.RemoveFilestoreDirectoryInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/tree",
-			Recursive:    true,
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/tree",
+			Recursive:      true,
 		}); err != nil {
 			t.Fatalf("remove directory recursively: %v", err)
 		}
@@ -259,15 +259,15 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
 		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/expired.txt",
-			Blob:         workspaceStorageBlob(4, &expiresAt),
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/expired.txt",
+			Blob:           workspaceStorageBlob(4, &expiresAt),
 		}); err != nil {
 			t.Fatalf("put expired file: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 4)
-		if _, err := fixture.app.db.GetSessionResourceFile(context.Background(), fixture.workspaceID, fixture.filesystem.ID, "/expired.txt"); !errors.Is(err, db.ErrNotFound) {
+		if _, err := fixture.app.db.GetSessionResourceFile(context.Background(), fixture.workspaceUUID, fixture.filesystem.UUID, "/expired.txt"); !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("read expired file error = %v, want ErrNotFound", err)
 		}
 		if _, _, err := fixture.app.db.ExpireSessionResourceFiles(context.Background(), 1000); err != nil {
@@ -280,17 +280,17 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
 		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/directory",
-			Blob:         workspaceStorageBlob(4, &expiresAt),
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/directory",
+			Blob:           workspaceStorageBlob(4, &expiresAt),
 		}); err != nil {
 			t.Fatalf("put expired directory destination: %v", err)
 		}
 		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/directory",
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/directory",
 		}); !errors.Is(err, db.ErrFilestorePathExists) {
 			t.Fatalf("replace expired file with directory error = %v, want ErrFilestorePathExists", err)
 		}
@@ -299,9 +299,9 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 			t.Fatalf("expire Filestore entries: %v", err)
 		}
 		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/directory",
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/directory",
 		}); err != nil {
 			t.Fatalf("make directory after ttl cleanup: %v", err)
 		}
@@ -312,23 +312,23 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
 		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/source",
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/source",
 		}); err != nil {
 			t.Fatalf("make source directory: %v", err)
 		}
 		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/destination",
-			Blob:         workspaceStorageBlob(5, &expiresAt),
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/destination",
+			Blob:           workspaceStorageBlob(5, &expiresAt),
 		}); err != nil {
 			t.Fatalf("put expired move destination: %v", err)
 		}
 		if _, err := fixture.app.db.MoveFilestoreDirectory(context.Background(), db.MoveFilestoreDirectoryInput{
-			WorkspaceID:     fixture.workspaceID,
-			FilesystemID:    fixture.filesystem.ID,
+			WorkspaceUUID:   fixture.workspaceUUID,
+			FilesystemUUID:  fixture.filesystem.UUID,
 			SourcePath:      "/source",
 			DestinationPath: "/destination",
 		}); err != nil {
@@ -339,15 +339,15 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 
 	t.Run("success reconciliation repairs an out of band drift", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
-		file := workspaceStorageFile(fixture.workspaceID, 9)
+		file := workspaceStorageFile(fixture.workspaceUUID, 9)
 		if err := fixture.app.db.CreateFile(context.Background(), file); err != nil {
 			t.Fatalf("create file: %v", err)
 		}
 		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  fixture.workspaceID,
-			FilesystemID: fixture.filesystem.ID,
-			Path:         "/reconcile.bin",
-			Blob:         workspaceStorageBlob(4, nil),
+			WorkspaceUUID:  fixture.workspaceUUID,
+			FilesystemUUID: fixture.filesystem.UUID,
+			Path:           "/reconcile.bin",
+			Blob:           workspaceStorageBlob(4, nil),
 		}); err != nil {
 			t.Fatalf("create Filestore file: %v", err)
 		}
@@ -355,12 +355,12 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 			update workspace_storage_usage
 			set files_bytes = 1, filestore_bytes = 1
 			where workspace_id = $1
-		`, fixture.workspaceID); err != nil {
+		`, fixture.workspaceUUID); err != nil {
 			t.Fatalf("inject usage drift: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 2)
 
-		total, err := fixture.app.db.ReconcileWorkspaceStorageUsage(context.Background(), fixture.workspaceID)
+		total, err := fixture.app.db.ReconcileWorkspaceStorageUsage(context.Background(), fixture.workspaceUUID)
 		if err != nil {
 			t.Fatalf("reconcile workspace storage usage: %v", err)
 		}
@@ -372,16 +372,16 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 }
 
 type workspaceStorageFixture struct {
-	app         *testApp
-	workspaceID int64
-	filesystem  db.FilestoreFilesystem
+	app           *testApp
+	workspaceUUID string
+	filesystem    db.FilestoreFilesystem
 }
 
 func newWorkspaceStorageFixture(t *testing.T) workspaceStorageFixture {
 	t.Helper()
 	app := newTestAppWithStore(t, nil, newFakeStore("workspace-storage-"+uuid.NewString()))
 	t.Cleanup(app.close)
-	_, workspaceID, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
+	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, codeSessionUUID, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(context.Background(), db.ProvisionFilestoreFilesystemInput{
 		UUID:                uuid.NewString(),
 		ExternalID:          "fs_storage_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
@@ -398,24 +398,24 @@ func newWorkspaceStorageFixture(t *testing.T) workspaceStorageFixture {
 	if !created {
 		t.Fatal("provision Filestore filesystem created = false")
 	}
-	return workspaceStorageFixture{app: app, workspaceID: workspaceID, filesystem: filesystem}
+	return workspaceStorageFixture{app: app, workspaceUUID: workspaceUUID, filesystem: filesystem}
 }
 
-func workspaceStorageFile(workspaceID, sizeBytes int64) db.FileRecord {
+func workspaceStorageFile(workspaceUUID string, sizeBytes int64) db.FileRecord {
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	return db.FileRecord{
-		UUID:              uuid.NewString(),
-		ExternalID:        "file_storage_" + suffix,
-		WorkspaceID:       workspaceID,
-		Filename:          "storage.txt",
-		MimeType:          "text/plain",
-		SizeBytes:         sizeBytes,
-		SHA256:            strings.Repeat("a", 64),
-		S3Bucket:          "workspace-storage",
-		S3Key:             "objects/" + suffix,
-		Downloadable:      true,
-		CreatedByAPIKeyID: 1,
-		CreatedAt:         time.Now().UTC(),
+		UUID:                uuid.NewString(),
+		ExternalID:          "file_storage_" + suffix,
+		WorkspaceUUID:       workspaceUUID,
+		Filename:            "storage.txt",
+		MimeType:            "text/plain",
+		SizeBytes:           sizeBytes,
+		SHA256:              strings.Repeat("a", 64),
+		S3Bucket:            "workspace-storage",
+		S3Key:               "objects/" + suffix,
+		Downloadable:        true,
+		CreatedByAPIKeyUUID: uuid.NewString(),
+		CreatedAt:           time.Now().UTC(),
 	}
 }
 
@@ -434,7 +434,7 @@ func workspaceStorageBlob(sizeBytes int64, expiresAt *time.Time) db.FilestoreFil
 
 func assertWorkspaceStorageBytes(t *testing.T, fixture workspaceStorageFixture, want int64) {
 	t.Helper()
-	got, err := fixture.app.db.WorkspaceStorageBytes(context.Background(), fixture.workspaceID)
+	got, err := fixture.app.db.WorkspaceStorageBytes(context.Background(), fixture.workspaceUUID)
 	if err != nil {
 		t.Fatalf("read workspace storage bytes: %v", err)
 	}

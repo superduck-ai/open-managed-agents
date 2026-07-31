@@ -13,10 +13,10 @@ import (
 const defaultConsoleWorkspaceID = "default"
 
 type consoleAPIKeyStore interface {
-	ListConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceID *string) ([]ConsoleAPIKey, error)
+	ListConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceUUID *string) ([]ConsoleAPIKey, error)
 	CreateConsoleAPIKey(ctx context.Context, input CreateConsoleAPIKeyInput) (CreateConsoleAPIKeyResult, error)
 	UpdateConsoleAPIKeyStatus(ctx context.Context, input UpdateConsoleAPIKeyStatusInput) (ConsoleAPIKey, error)
-	CountConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceID string) (int, error)
+	CountConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceUUID string) (int, error)
 }
 
 type consoleWorkspaceLister interface {
@@ -160,7 +160,7 @@ func handleListConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFunc
 		if !ok {
 			return
 		}
-		workspaceID, ok := consoleWorkspaceIDFromRequest(w, r, workspaceLister, orgUUID)
+		workspaceScope, ok := consoleWorkspaceScopeFromRequest(w, r, workspaceLister, orgUUID)
 		if !ok {
 			return
 		}
@@ -168,7 +168,7 @@ func handleListConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFunc
 			internalError(w, "failed to list api keys")
 			return
 		}
-		keys, err := apiKeyStore.ListConsoleAPIKeys(r.Context(), orgUUID, &workspaceID)
+		keys, err := apiKeyStore.ListConsoleAPIKeys(r.Context(), orgUUID, &workspaceScope.UUID)
 		if err != nil {
 			internalError(w, "failed to list api keys")
 			return
@@ -185,7 +185,7 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 		if !ok {
 			return
 		}
-		workspaceID, ok := consoleWorkspaceIDFromRequest(w, r, workspaceLister, orgUUID)
+		workspaceScope, ok := consoleWorkspaceScopeFromRequest(w, r, workspaceLister, orgUUID)
 		if !ok {
 			return
 		}
@@ -230,11 +230,12 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 			createdByUserUUID = &auth.Account.UUID
 		}
 		result, err := apiKeyStore.CreateConsoleAPIKey(r.Context(), CreateConsoleAPIKeyInput{
-			OrgUUID:           orgUUID,
-			WorkspaceID:       workspaceID,
-			Name:              name,
-			ExpiresAt:         expiresAt,
-			CreatedByUserUUID: createdByUserUUID,
+			OrgUUID:            orgUUID,
+			WorkspaceUUID:      workspaceScope.UUID,
+			WorkspaceDisplayID: workspaceScope.DisplayID,
+			Name:               name,
+			ExpiresAt:          expiresAt,
+			CreatedByUserUUID:  createdByUserUUID,
 		})
 		if err != nil {
 			internalError(w, "failed to create api key")
@@ -254,7 +255,7 @@ func handleUpdateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 		if !ok {
 			return
 		}
-		workspaceID, ok := consoleWorkspaceIDFromRequest(w, r, workspaceLister, orgUUID)
+		workspaceScope, ok := consoleWorkspaceScopeFromRequest(w, r, workspaceLister, orgUUID)
 		if !ok {
 			return
 		}
@@ -287,10 +288,10 @@ func handleUpdateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 			return
 		}
 		key, err := apiKeyStore.UpdateConsoleAPIKeyStatus(r.Context(), UpdateConsoleAPIKeyStatusInput{
-			OrgUUID:     orgUUID,
-			WorkspaceID: workspaceID,
-			APIKeyID:    apiKeyID,
-			Status:      status,
+			OrgUUID:       orgUUID,
+			WorkspaceUUID: workspaceScope.UUID,
+			APIKeyID:      apiKeyID,
+			Status:        status,
 		})
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
@@ -318,7 +319,7 @@ func handleCountConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFun
 		if !ok {
 			return
 		}
-		workspaceID, ok := consoleWorkspaceIDFromRequest(w, r, workspaceLister, orgUUID)
+		workspaceScope, ok := consoleWorkspaceScopeFromRequest(w, r, workspaceLister, orgUUID)
 		if !ok {
 			return
 		}
@@ -326,7 +327,7 @@ func handleCountConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFun
 			internalError(w, "failed to count api keys")
 			return
 		}
-		count, err := apiKeyStore.CountConsoleAPIKeys(r.Context(), orgUUID, workspaceID)
+		count, err := apiKeyStore.CountConsoleAPIKeys(r.Context(), orgUUID, workspaceScope.UUID)
 		if err != nil {
 			internalError(w, "failed to count api keys")
 			return
@@ -335,30 +336,35 @@ func handleCountConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFun
 	}
 }
 
-func consoleWorkspaceIDFromRequest(w http.ResponseWriter, r *http.Request, lister consoleWorkspaceLister, orgUUID string) (string, bool) {
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspaceId"))
-	if workspaceID == "" {
+func consoleWorkspaceScopeFromRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	lister consoleWorkspaceLister,
+	orgUUID string,
+) (WorkspaceScope, bool) {
+	workspaceReference := strings.TrimSpace(chi.URLParam(r, "workspaceId"))
+	if workspaceReference == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "invalid_request",
 			"message": "workspace_id is required",
 		})
-		return "", false
+		return WorkspaceScope{}, false
 	}
-	if workspaceID == defaultConsoleWorkspaceID || lister == nil {
-		return workspaceID, true
+	if lister == nil {
+		internalError(w, "failed to load workspaces")
+		return WorkspaceScope{}, false
 	}
-	workspaces, err := lister.ListConsoleWorkspaces(r.Context(), orgUUID, true)
+	workspaces, err := lister.ListConsoleWorkspaces(r.Context(), orgUUID, false)
 	if err != nil {
 		internalError(w, "failed to load workspaces")
-		return "", false
+		return WorkspaceScope{}, false
 	}
-	for _, workspace := range workspaces {
-		if workspace.UUID == workspaceID {
-			return workspaceID, true
-		}
+	scope, err := ResolveWorkspaceScope(workspaceReference, workspaces)
+	if err == nil {
+		return scope, true
 	}
 	writeJSON(w, http.StatusNotFound, map[string]any{"error": "workspace not found"})
-	return "", false
+	return WorkspaceScope{}, false
 }
 
 func parseConsoleAPIKeyExpiresAt(raw *string) (*time.Time, error) {
@@ -429,8 +435,8 @@ func formatConsoleAPIKey(key ConsoleAPIKey) map[string]any {
 			"type": "user",
 		}
 	}
-	var workspaceID any = key.WorkspaceID
-	if key.WorkspaceID == defaultConsoleWorkspaceID {
+	var workspaceID any = key.WorkspaceDisplayID
+	if key.WorkspaceDisplayID == defaultConsoleWorkspaceID {
 		workspaceID = nil
 	}
 	return map[string]any{
@@ -473,7 +479,7 @@ func formatConsoleWorkspace(workspace ConsoleWorkspace) map[string]any {
 		color = displayColor
 	}
 	return map[string]any{
-		"id":                       workspace.UUID,
+		"id":                       workspace.ExternalID,
 		"type":                     "workspace",
 		"name":                     workspace.Name,
 		"display_color":            displayColor,
@@ -484,7 +490,7 @@ func formatConsoleWorkspace(workspace ConsoleWorkspace) map[string]any {
 		"external_mapping":         externalMapping,
 		"data_residency":           formatConsoleWorkspaceDataResidency(workspace),
 		"external_key_id":          optionalStringValue(workspace.ExternalKeyID),
-		"compartment_id":           workspace.UUID,
+		"compartment_id":           workspace.ExternalID,
 		"inference_data_retention": false,
 		"archived_at":              optionalTimeString(workspace.ArchivedAt),
 	}

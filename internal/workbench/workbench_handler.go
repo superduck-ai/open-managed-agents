@@ -12,9 +12,15 @@ import (
 
 type workbenchPersistenceStore interface {
 	GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID string) (*WorkbenchPromptRecord, error)
-	ListWorkbenchPrompts(ctx context.Context, orgUUID string, workspaceID string) ([]WorkbenchPromptRecord, error)
+	ListWorkbenchPrompts(ctx context.Context, orgUUID string, workspaceUUID string) ([]WorkbenchPromptRecord, error)
 	UpsertWorkbenchPrompt(ctx context.Context, record WorkbenchPromptRecord) (WorkbenchPromptRecord, error)
-	DeleteWorkbenchPromptState(ctx context.Context, orgUUID string, promptUUID string) error
+	DeleteWorkbenchPromptState(
+		ctx context.Context,
+		orgUUID string,
+		promptUUID string,
+		workspaceUUID string,
+		workspaceDisplayID string,
+	) error
 	GetWorkbenchRevision(ctx context.Context, orgUUID string, promptUUID string, revisionUUID string) (*WorkbenchRevisionRecord, error)
 	UpsertWorkbenchRevision(ctx context.Context, record WorkbenchRevisionRecord) error
 	ListWorkbenchEvaluationRevisionIDs(ctx context.Context, orgUUID string) ([]string, error)
@@ -29,17 +35,23 @@ type workbenchPersistenceStore interface {
 	TakeWorkbenchGeneratedTestCase(ctx context.Context, orgUUID string, requested map[string]any) (map[string]any, bool, error)
 }
 
+type workbenchWorkspaceLister interface {
+	ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeArchived bool) ([]ConsoleWorkspace, error)
+}
+
 type workbenchHandler struct {
-	store    workbenchPersistenceStore
-	upstream config.AnthropicUpstreamConfig
-	logger   *slog.Logger
+	store      workbenchPersistenceStore
+	workspaces workbenchWorkspaceLister
+	upstream   config.AnthropicUpstreamConfig
+	logger     *slog.Logger
 }
 
 func newWorkbenchHandler(store OrganizationStore, upstream config.AnthropicUpstreamConfig, logger *slog.Logger) *workbenchHandler {
 	return &workbenchHandler{
-		store:    workbenchPersistenceFromStore(store),
-		upstream: upstream,
-		logger:   logging.LoggerOrDefault(logger),
+		store:      workbenchPersistenceFromStore(store),
+		workspaces: workbenchWorkspaceListerFromStore(store),
+		upstream:   upstream,
+		logger:     logging.LoggerOrDefault(logger),
 	}
 }
 
@@ -83,4 +95,9 @@ func (h *workbenchHandler) registerRoutes(r chi.Router) {
 func workbenchPersistenceFromStore(store OrganizationStore) workbenchPersistenceStore {
 	persistence, _ := store.(workbenchPersistenceStore)
 	return persistence
+}
+
+func workbenchWorkspaceListerFromStore(store OrganizationStore) workbenchWorkspaceLister {
+	lister, _ := store.(workbenchWorkspaceLister)
+	return lister
 }

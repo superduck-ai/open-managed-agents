@@ -10,8 +10,6 @@ import (
 )
 
 type filestoreFilesystemRow struct {
-	ID                  int64      `db:"id"`
-	SessionID           int64      `db:"session_id"`
 	UUID                string     `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
 	OrganizationUUID    string     `db:"organization_uuid"`
@@ -25,20 +23,15 @@ type filestoreFilesystemRow struct {
 }
 
 type filestoreTokenScopeRow struct {
-	OrganizationID         int64  `db:"organization_id"`
-	OrganizationUUID       string `db:"organization_uuid"`
-	OrganizationExternalID string `db:"organization_external_id"`
-	WorkspaceID            int64  `db:"workspace_id"`
-	WorkspaceUUID          string `db:"workspace_uuid"`
-	WorkspaceExternalID    string `db:"workspace_external_id"`
-	AccountID              int64  `db:"account_id"`
-	AccountUUID            string `db:"account_uuid"`
-	AccountExternalID      string `db:"account_external_id"`
-	FilesystemID           int64  `db:"filesystem_id"`
-	FilesystemUUID         string `db:"filesystem_uuid"`
-	FilesystemExternalID   string `db:"filesystem_external_id"`
-	OrgTaintsJSON          []byte `db:"org_taints_json"`
-	WorkspaceCMEKEnabled   bool   `db:"workspace_cmek_enabled"`
+	OrganizationUUID     string `db:"organization_uuid"`
+	WorkspaceUUID        string `db:"workspace_uuid"`
+	WorkspaceExternalID  string `db:"workspace_external_id"`
+	AccountUUID          string `db:"account_uuid"`
+	AccountExternalID    string `db:"account_external_id"`
+	FilesystemUUID       string `db:"filesystem_uuid"`
+	FilesystemExternalID string `db:"filesystem_external_id"`
+	OrgTaintsJSON        []byte `db:"org_taints_json"`
+	WorkspaceCMEKEnabled bool   `db:"workspace_cmek_enabled"`
 }
 
 type sessionResourceFileRow struct {
@@ -71,13 +64,14 @@ type sessionResourceFileRow struct {
 	DeletedAt             *time.Time `db:"deleted_at"`
 }
 
-func getFilestoreFilesystemByIDSQLX(ctx context.Context, database sqlxNamedQueryer, workspaceID, filesystemID int64) (FilestoreFilesystem, error) {
+func getFilestoreFilesystemByUUIDSQLX(ctx context.Context, database sqlxNamedQueryer, workspaceUUID, filesystemUUID string) (FilestoreFilesystem, error) {
 	return getFilestoreFilesystemSQLX(ctx, database, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = (select uuid from workspaces where id = :workspace_id)
-			and id = :filesystem_id and deleted_at is null
+		where workspace_uuid = CAST(:workspace_uuid AS uuid)
+			and uuid = CAST(:filesystem_uuid AS uuid)
+			and deleted_at is null
 	`, map[string]any{
-		"workspace_id":  workspaceID,
-		"filesystem_id": filesystemID,
+		"workspace_uuid":  workspaceUUID,
+		"filesystem_uuid": filesystemUUID,
 	})
 }
 
@@ -139,13 +133,13 @@ func insertFilestoreObjectCleanupJobSQLX(
 	var job FilestoreObjectCleanupJob
 	err := namedGetContext(ctx, database, &job, `
 		with inserted_job as (
-			insert into jobs (external_id, workspace_id, type, status, payload, run_after)
-			select
+			insert into jobs (external_id, workspace_uuid, type, status, payload, run_after)
+			values (
 				concat('job_', replace(cast(gen_random_uuid() as text), '-', '')),
-				w.id, :job_type, 'pending',
+				CAST(:workspace_uuid AS uuid), :job_type, 'pending',
 				jsonb_build_object(
-					'workspace_uuid', cast(w.uuid as text),
-					'filesystem_uuid', cast(fs.uuid as text),
+					'workspace_uuid', cast(:workspace_uuid as text),
+					'filesystem_uuid', cast(:filesystem_uuid as text),
 					'entry_external_id', cast(:entry_external_id as text),
 					'bucket', cast(:bucket as text),
 					'key', cast(:key as text),
@@ -154,23 +148,18 @@ func insertFilestoreObjectCleanupJobSQLX(
 					'reason', cast(:reason as text)
 				),
 				:run_after
-			from workspaces w
-			join filestore_filesystems fs
-				on fs.id = :filesystem_id and fs.workspace_uuid = w.uuid
-			where w.id = :workspace_id
+			)
 			returning *
 		)
-		select `+filestoreCleanupJobColumns("j", "w", "fs")+`
+		select `+filestoreFilesystemCleanupJobColumns("j", "fs")+`
 		from inserted_job j
-		join workspaces w
-			on cast(w.uuid as text) = j.payload->>'workspace_uuid'
 		join filestore_filesystems fs
 			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
-			and fs.workspace_uuid = w.uuid
+			and fs.workspace_uuid = j.workspace_uuid
 	`, map[string]any{
-		"workspace_id":      input.WorkspaceID,
+		"workspace_uuid":    input.WorkspaceUUID,
 		"job_type":          filestoreCleanupJobType,
-		"filesystem_id":     input.FilesystemID,
+		"filesystem_uuid":   input.FilesystemUUID,
 		"entry_external_id": input.EntryExternalID,
 		"bucket":            input.Bucket,
 		"key":               input.Key,
@@ -189,12 +178,10 @@ func insertFilestoreObjectCleanupJobSQLX(
 }
 
 func (row filestoreFilesystemRow) filesystem() (FilestoreFilesystem, error) {
-	if row.SessionID == 0 {
+	if row.SessionUUID == "" {
 		return FilestoreFilesystem{}, ErrNotFound
 	}
 	return FilestoreFilesystem{
-		ID:                  row.ID,
-		SessionID:           row.SessionID,
 		UUID:                row.UUID,
 		ExternalID:          row.ExternalID,
 		OrganizationUUID:    row.OrganizationUUID,
@@ -217,20 +204,15 @@ func (row filestoreTokenScopeRow) scope() (FilestoreTokenScope, error) {
 		orgTaints = []string{}
 	}
 	return FilestoreTokenScope{
-		OrganizationID:         row.OrganizationID,
-		OrganizationUUID:       row.OrganizationUUID,
-		OrganizationExternalID: row.OrganizationExternalID,
-		WorkspaceID:            row.WorkspaceID,
-		WorkspaceUUID:          row.WorkspaceUUID,
-		WorkspaceExternalID:    row.WorkspaceExternalID,
-		AccountID:              row.AccountID,
-		AccountUUID:            row.AccountUUID,
-		AccountExternalID:      row.AccountExternalID,
-		FilesystemID:           row.FilesystemID,
-		FilesystemUUID:         row.FilesystemUUID,
-		FilesystemExternalID:   row.FilesystemExternalID,
-		OrgTaints:              orgTaints,
-		WorkspaceCMEKEnabled:   row.WorkspaceCMEKEnabled,
+		OrganizationUUID:     row.OrganizationUUID,
+		WorkspaceUUID:        row.WorkspaceUUID,
+		WorkspaceExternalID:  row.WorkspaceExternalID,
+		AccountUUID:          row.AccountUUID,
+		AccountExternalID:    row.AccountExternalID,
+		FilesystemUUID:       row.FilesystemUUID,
+		FilesystemExternalID: row.FilesystemExternalID,
+		OrgTaints:            orgTaints,
+		WorkspaceCMEKEnabled: row.WorkspaceCMEKEnabled,
 	}, nil
 }
 

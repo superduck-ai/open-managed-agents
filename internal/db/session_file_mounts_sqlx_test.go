@@ -17,13 +17,13 @@ func TestSessionFileResourceQueriesBindNamedArguments(t *testing.T) {
 			name:  "active file count",
 			query: countSessionFileResourcesSQL,
 			arguments: map[string]any{
-				"workspace_id":        int64(42),
+				"workspace_uuid":      "00000000-0000-4000-8000-000000000042",
 				"session_external_id": "session_test",
 				"resource_type":       SessionResourceTypeFile,
 			},
 			wantArgCount: 3,
 			wantClauses: []string{
-				"workspace_uuid = (select uuid from workspaces where id = $1)",
+				"workspace_uuid = CAST($1 AS uuid)",
 				"session_external_id = $2",
 				"resource_type = $3",
 				"payload is not null",

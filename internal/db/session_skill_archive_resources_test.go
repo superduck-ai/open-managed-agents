@@ -9,13 +9,11 @@ import (
 
 func TestSessionSkillArchiveResourceQueriesUseSQLXNamedParameters(t *testing.T) {
 	arguments := map[string]any{
-		"workspace_id":                 int64(41),
 		"resource_uuid":                "00000000-0000-4000-8000-000000000047",
 		"resource_external_id":         "sesrsc_011CZkZBJq5dWxk9fVLNcPht",
 		"session_external_id":          "session_41",
 		"organization_uuid":            "00000000-0000-4000-8000-000000000041",
 		"workspace_uuid":               "00000000-0000-4000-8000-000000000042",
-		"filesystem_id":                int64(43),
 		"session_uuid":                 "00000000-0000-4000-8000-000000000044",
 		"filesystem_uuid":              "00000000-0000-4000-8000-000000000043",
 		"source":                       "custom",

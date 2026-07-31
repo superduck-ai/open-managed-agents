@@ -52,9 +52,9 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	var agent db.Agent
 	var err error
 	if version > 0 {
-		agent, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceID, agentID, version)
+		agent, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, agentID, version)
 	} else {
-		agent, err = h.db.GetAgent(r.Context(), principal.WorkspaceID, agentID)
+		agent, err = h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -84,7 +84,7 @@ func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, r
 		if strings.TrimSpace(id) == "" {
 			return nil, errors.New("vault_ids must contain non-empty strings")
 		}
-		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceID, id)
+		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, id)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return nil, fmt.Errorf("vault not found: %s", id)
@@ -114,9 +114,9 @@ func (h *Handler) resourcesFromCreate(
 	}
 	resources := make([]normalizedSessionResource, 0, len(items))
 	session := db.Session{
-		ExternalID:     sessionID,
-		OrganizationID: principal.OrganizationID,
-		WorkspaceID:    principal.WorkspaceID,
+		ExternalID:       sessionID,
+		OrganizationUUID: principal.OrganizationUUID,
+		WorkspaceUUID:    principal.WorkspaceUUID,
 	}
 	for _, fields := range items {
 		resource, err := h.resourceFromFields(r, session, fields, now)
@@ -154,7 +154,7 @@ func (h *Handler) resourceFromFields(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		_, err = h.db.GetFile(r.Context(), session.WorkspaceID, fileID)
+		_, err = h.db.GetFile(r.Context(), session.WorkspaceUUID, fileID)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return normalizedSessionResource{}, db.ErrFileReferenceNotFound
@@ -186,7 +186,7 @@ func (h *Handler) resourceFromFields(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		store, err := h.db.GetMemoryStore(r.Context(), session.WorkspaceID, memoryStoreID)
+		store, err := h.db.GetMemoryStore(r.Context(), session.WorkspaceUUID, memoryStoreID)
 		if err != nil {
 			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: err}
 		}
@@ -210,8 +210,8 @@ func (h *Handler) resourceFromFields(
 		resource: db.SessionResource{
 			UUID:              uuid.NewString(),
 			ExternalID:        resourceID,
-			OrganizationID:    session.OrganizationID,
-			WorkspaceID:       session.WorkspaceID,
+			OrganizationUUID:  session.OrganizationUUID,
+			WorkspaceUUID:     session.WorkspaceUUID,
 			SessionExternalID: session.ExternalID,
 			ResourceType:      resourceType,
 			Payload:           payloadRaw,
@@ -269,7 +269,7 @@ func (h *Handler) normalizeInputEvent(ctx context.Context, session db.Session, r
 		if err != nil {
 			return db.SessionEvent{}, false, err
 		}
-		if _, err := h.db.SetSessionOutcomeEvaluations(ctx, session.WorkspaceID, session.ExternalID, outcomes); err != nil {
+		if _, err := h.db.SetSessionOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, outcomes); err != nil {
 			return db.SessionEvent{}, false, err
 		}
 		outcomesChanged = true
@@ -281,9 +281,9 @@ func (h *Handler) normalizeInputEvent(ctx context.Context, session db.Session, r
 	return db.SessionEvent{
 		UUID:              uuid.NewString(),
 		ExternalID:        eventID,
-		OrganizationID:    session.OrganizationID,
-		WorkspaceID:       session.WorkspaceID,
-		SessionID:         session.ID,
+		OrganizationUUID:  session.OrganizationUUID,
+		WorkspaceUUID:     session.WorkspaceUUID,
+		SessionUUID:       session.UUID,
 		SessionExternalID: session.ExternalID,
 		ThreadExternalID:  threadExternalID,
 		EventType:         eventType,
@@ -428,7 +428,7 @@ func appendOutcomeEvaluation(raw json.RawMessage, outcomeID string, maxIteration
 }
 
 func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sessionResponse, error) {
-	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceID, session.ExternalID)
+	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return sessionResponse{}, err
 	}

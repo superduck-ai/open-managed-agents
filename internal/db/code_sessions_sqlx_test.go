@@ -23,8 +23,8 @@ func TestCodeSessionQueriesBindNamedArguments(t *testing.T) {
 			query: codeSessionCredentialContextForIssueQuery,
 			arguments: map[string]any{
 				"code_session_external_id": "codeses_test",
-				"organization_id":          int64(1),
-				"workspace_id":             int64(2),
+				"organization_uuid":        "00000000-0000-0000-0000-000000000001",
+				"workspace_uuid":           "00000000-0000-0000-0000-000000000002",
 			},
 			wantArgCount: 3,
 		},

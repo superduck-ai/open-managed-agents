@@ -11,8 +11,8 @@ import (
 // Policy 供纯策略模块决策，其余字段只用于服务端审计日志。
 type upstreamProxyPolicyContext struct {
 	policy                networkpolicy.Policy
-	organizationID        int64
-	workspaceID           int64
+	organizationUUID      string
+	workspaceUUID         string
 	environmentExternalID string
 }
 
@@ -43,8 +43,8 @@ func (h *Handler) loadUpstreamProxyPolicyContext(ctx context.Context, identity u
 		return upstreamProxyPolicyContext{}, err
 	}
 	return upstreamProxyPolicyContext{
-		organizationID:        record.OrganizationID,
-		workspaceID:           record.WorkspaceID,
+		organizationUUID:      record.OrganizationUUID,
+		workspaceUUID:         record.WorkspaceUUID,
 		environmentExternalID: record.EnvironmentExternalID,
 		policy:                policy,
 	}, nil
@@ -71,8 +71,8 @@ func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity ups
 		return false
 	}
 	attrs = append(attrs,
-		"organization_id", policyContext.organizationID,
-		"workspace_id", policyContext.workspaceID,
+		"organization_uuid", policyContext.organizationUUID,
+		"workspace_uuid", policyContext.workspaceUUID,
 		"environment_id", policyContext.environmentExternalID,
 	)
 	decision := policyContext.policy.AuthorizeHTTPS(target)

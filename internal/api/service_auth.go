@@ -71,14 +71,12 @@ func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (au
 		return auth.Principal{}, false, httpapi.NewError(http.StatusInternalServerError, "api_error", "Authentication failed")
 	}
 	return auth.Principal{
-		CredentialType:         auth.CredentialTypeAPIKey,
-		APIKeyID:               key.ID,
-		APIKeyExternalID:       key.ExternalID,
-		OrganizationID:         key.OrganizationID,
-		OrganizationExternalID: key.OrganizationExternalID,
-		WorkspaceID:            key.WorkspaceID,
-		WorkspaceUUID:          key.WorkspaceUUID,
-		WorkspaceExternalID:    key.WorkspaceExternalID,
+		CredentialType:      auth.CredentialTypeAPIKey,
+		APIKeyUUID:          key.UUID,
+		APIKeyExternalID:    key.ExternalID,
+		OrganizationUUID:    key.OrganizationUUID,
+		WorkspaceUUID:       key.WorkspaceUUID,
+		WorkspaceExternalID: key.WorkspaceExternalID,
 	}, true, nil
 }
 
@@ -100,15 +98,13 @@ func (s *Server) authenticateEnvironmentCredential(r *http.Request, apiKey strin
 	envKey, err := s.db.GetEnvironmentKey(r.Context(), auth.HashAPIKey(apiKey))
 	if err == nil {
 		return auth.Principal{
-			CredentialType:         auth.CredentialTypeEnvironmentKey,
-			EnvironmentKeyID:       envKey.ID,
-			OrganizationID:         envKey.OrganizationID,
-			OrganizationExternalID: envKey.OrganizationExternalID,
-			WorkspaceID:            envKey.WorkspaceID,
-			WorkspaceUUID:          envKey.WorkspaceUUID,
-			WorkspaceExternalID:    envKey.WorkspaceExternalID,
-			EnvironmentID:          envKey.EnvironmentID,
-			EnvironmentExternalID:  envKey.EnvironmentExternalID,
+			CredentialType:        auth.CredentialTypeEnvironmentKey,
+			EnvironmentKeyUUID:    envKey.UUID,
+			OrganizationUUID:      envKey.OrganizationUUID,
+			WorkspaceUUID:         envKey.WorkspaceUUID,
+			WorkspaceExternalID:   envKey.WorkspaceExternalID,
+			EnvironmentUUID:       envKey.EnvironmentUUID,
+			EnvironmentExternalID: envKey.EnvironmentExternalID,
 		}, true, nil
 	}
 	if errors.Is(err, db.ErrNotFound) {
@@ -165,39 +161,31 @@ func (s *Server) authenticateFilestoreToken(r *http.Request, rawToken string) (f
 	}
 	readonly := claims.Readonly != nil && *claims.Readonly
 	return filestoreapi.Principal{
-		Subject:                claims.Subject,
-		OrganizationID:         scope.OrganizationID,
-		OrganizationUUID:       scope.OrganizationUUID,
-		OrganizationExternalID: scope.OrganizationExternalID,
-		WorkspaceID:            scope.WorkspaceID,
-		WorkspaceUUID:          scope.WorkspaceUUID,
-		WorkspaceExternalID:    scope.WorkspaceExternalID,
-		AccountID:              scope.AccountID,
-		AccountUUID:            scope.AccountUUID,
-		AccountExternalID:      scope.AccountExternalID,
-		FilesystemInternalID:   scope.FilesystemID,
-		FilesystemUUID:         scope.FilesystemUUID,
-		FilesystemExternalID:   scope.FilesystemExternalID,
-		Readonly:               readonly,
-		OrganizationTaints:     append([]string(nil), claims.OrgTaints...),
-		WorkspaceCMEKEnabled:   claims.WorkspaceCMEKEnabled,
+		Subject:              claims.Subject,
+		OrganizationUUID:     scope.OrganizationUUID,
+		WorkspaceUUID:        scope.WorkspaceUUID,
+		WorkspaceExternalID:  scope.WorkspaceExternalID,
+		AccountUUID:          scope.AccountUUID,
+		AccountExternalID:    scope.AccountExternalID,
+		FilesystemUUID:       scope.FilesystemUUID,
+		FilesystemExternalID: scope.FilesystemExternalID,
+		Readonly:             readonly,
+		OrganizationTaints:   append([]string(nil), claims.OrgTaints...),
+		WorkspaceCMEKEnabled: claims.WorkspaceCMEKEnabled,
 	}, nil
 }
 
 func principalFromCodeSessionCredential(codeSession db.CodeSessionCredentialContext, credentialType string) auth.Principal {
 	return auth.Principal{
 		CredentialType:          credentialType,
-		OrganizationID:          codeSession.OrganizationID,
 		OrganizationUUID:        codeSession.OrganizationUUID,
-		OrganizationExternalID:  codeSession.OrganizationExternalID,
-		WorkspaceID:             codeSession.WorkspaceID,
 		WorkspaceUUID:           codeSession.WorkspaceUUID,
 		WorkspaceExternalID:     codeSession.WorkspaceExternalID,
-		CodeSessionID:           codeSession.CodeSessionID,
+		CodeSessionUUID:         codeSession.CodeSessionUUID,
 		CodeSessionExternalID:   codeSession.CodeSessionExternalID,
-		PublicSessionID:         codeSession.PublicSessionID,
+		PublicSessionUUID:       codeSession.PublicSessionUUID,
 		PublicSessionExternalID: codeSession.PublicSessionExternalID,
-		AgentID:                 codeSession.AgentID,
+		AgentUUID:               codeSession.AgentUUID,
 		AgentExternalID:         codeSession.AgentExternalID,
 		AgentVersion:            codeSession.AgentVersion,
 	}

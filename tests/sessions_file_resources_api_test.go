@@ -32,7 +32,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		session := mustSessionRecord(t, app, sessionExternalID)
 		resources, err := app.db.ListSessionResources(
 			context.Background(),
-			session.WorkspaceID,
+			session.WorkspaceUUID,
 			session.ExternalID,
 		)
 		if err != nil {
@@ -79,25 +79,25 @@ func TestSessionFileResourceContract(t *testing.T) {
 		session := mustSessionRecord(t, app, created.ID)
 		filesystem, err := app.db.GetFilestoreFilesystemBySession(
 			context.Background(),
-			session.WorkspaceID,
+			session.WorkspaceUUID,
 			session.ExternalID,
 		)
 		if err != nil {
 			t.Fatalf("load Session filesystem: %v", err)
 		}
 		if _, err := app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-			WorkspaceID:  session.WorkspaceID,
-			FilesystemID: filesystem.ID,
-			Path:         "/uploads/workspace",
-			MakeParents:  true,
+			WorkspaceUUID:  session.WorkspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			Path:           "/uploads/workspace",
+			MakeParents:    true,
 		}); err != nil {
 			t.Fatalf("create occupied path parent: %v", err)
 		}
 		if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  session.WorkspaceID,
-			FilesystemID: filesystem.ID,
-			Path:         "/uploads/workspace/occupied.txt",
-			Blob:         workspaceStorageBlob(0, nil),
+			WorkspaceUUID:  session.WorkspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			Path:           "/uploads/workspace/occupied.txt",
+			Blob:           workspaceStorageBlob(0, nil),
 		}); err != nil {
 			t.Fatalf("create occupied Filestore path: %v", err)
 		}
@@ -164,7 +164,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 				session := mustSessionRecord(t, app, created.ID)
 				resources, err := app.db.ListSessionResources(
 					context.Background(),
-					session.WorkspaceID,
+					session.WorkspaceUUID,
 					session.ExternalID,
 				)
 				if err != nil {
@@ -247,7 +247,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		session := mustSessionRecord(t, app, created.ID)
 		filesystem, err := app.db.GetFilestoreFilesystemBySession(
 			context.Background(),
-			session.WorkspaceID,
+			session.WorkspaceUUID,
 			session.ExternalID,
 		)
 		if err != nil {
@@ -255,10 +255,10 @@ func TestSessionFileResourceContract(t *testing.T) {
 		}
 		for index := 0; index < db.MaxSessionFileResources; index++ {
 			if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-				WorkspaceID:  session.WorkspaceID,
-				FilesystemID: filesystem.ID,
-				Path:         "/outputs/generated-" + strconv.Itoa(index) + ".txt",
-				Blob:         workspaceStorageBlob(0, nil),
+				WorkspaceUUID:  session.WorkspaceUUID,
+				FilesystemUUID: filesystem.UUID,
+				Path:           "/outputs/generated-" + strconv.Itoa(index) + ".txt",
+				Blob:           workspaceStorageBlob(0, nil),
 			}); err != nil {
 				t.Fatalf("create internal Output %d: %v", index, err)
 			}
@@ -377,12 +377,12 @@ func TestSessionFileResourceContract(t *testing.T) {
 				update workspace_storage_usage
 			set filestore_bytes = 123
 			where workspace_id = $1
-		`, sessionRecord.WorkspaceID); err != nil {
+		`, sessionRecord.WorkspaceUUID); err != nil {
 			t.Fatalf("introduce storage ledger drift: %v", err)
 		}
 		reconciledBytes, err := app.db.ReconcileWorkspaceStorageUsage(
 			context.Background(),
-			sessionRecord.WorkspaceID,
+			sessionRecord.WorkspaceUUID,
 		)
 		if err != nil {
 			t.Fatalf("reconcile workspace storage usage: %v", err)
@@ -422,7 +422,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		session := sessionRecord
 		filesystem, err := app.db.GetFilestoreFilesystemBySession(
 			context.Background(),
-			session.WorkspaceID,
+			session.WorkspaceUUID,
 			session.ExternalID,
 		)
 		if err != nil {
@@ -430,16 +430,16 @@ func TestSessionFileResourceContract(t *testing.T) {
 		}
 		if _, err := app.db.GetSessionResourceFile(
 			context.Background(),
-			session.WorkspaceID,
-			filesystem.ID,
+			session.WorkspaceUUID,
+			filesystem.UUID,
 			"/uploads/workspace/data.csv",
 		); !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("deleted file resource entry error = %v, want ErrNotFound", err)
 		}
 		parent, err := app.db.GetSessionResourceFile(
 			context.Background(),
-			session.WorkspaceID,
-			filesystem.ID,
+			session.WorkspaceUUID,
+			filesystem.UUID,
 			"/uploads/workspace",
 		)
 		if err != nil {
@@ -448,7 +448,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if parent.Kind != db.SessionResourceFileKindDirectory {
 			t.Fatalf("resource parent kind = %q, want directory", parent.Kind)
 		}
-		if _, err := app.db.GetFile(context.Background(), session.WorkspaceID, file.ID); err != nil {
+		if _, err := app.db.GetFile(context.Background(), session.WorkspaceUUID, file.ID); err != nil {
 			t.Fatalf("source File was changed by resource delete: %v", err)
 		}
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
@@ -581,7 +581,7 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 	sessionRecord := mustSessionRecord(t, app, session.ID)
 	fileRecord, err := app.db.GetFile(
 		context.Background(),
-		sessionRecord.WorkspaceID,
+		sessionRecord.WorkspaceUUID,
 		file.ID,
 	)
 	if err != nil {
@@ -591,7 +591,7 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 	t.Run("failure Input Resource cannot be copied as Filestore-owned data", func(t *testing.T) {
 		filesystem, err := app.db.GetFilestoreFilesystemBySession(
 			context.Background(),
-			sessionRecord.WorkspaceID,
+			sessionRecord.WorkspaceUUID,
 			sessionRecord.ExternalID,
 		)
 		if err != nil {
@@ -599,15 +599,15 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 		}
 		beforeStorageBytes, err := app.db.GetWorkspaceStorageBytes(
 			context.Background(),
-			sessionRecord.WorkspaceID,
+			sessionRecord.WorkspaceUUID,
 		)
 		if err != nil {
 			t.Fatalf("load storage ledger before rejected copy: %v", err)
 		}
 
 		_, err = app.db.CopyFilestoreFile(context.Background(), db.CopyFilestoreFileInput{
-			WorkspaceID:         sessionRecord.WorkspaceID,
-			FilesystemID:        filesystem.ID,
+			WorkspaceUUID:       sessionRecord.WorkspaceUUID,
+			FilesystemUUID:      filesystem.UUID,
 			SourcePath:          "/uploads/workspace/protected.txt",
 			DestinationPath:     "/outputs/copied.txt",
 			DestinationS3Bucket: "input-resource-copy-must-not-commit",
@@ -619,7 +619,7 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 
 		afterStorageBytes, err := app.db.GetWorkspaceStorageBytes(
 			context.Background(),
-			sessionRecord.WorkspaceID,
+			sessionRecord.WorkspaceUUID,
 		)
 		if err != nil {
 			t.Fatalf("load storage ledger after rejected copy: %v", err)
@@ -633,8 +633,8 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 		}
 		if _, err := app.db.GetSessionResourceFile(
 			context.Background(),
-			sessionRecord.WorkspaceID,
-			filesystem.ID,
+			sessionRecord.WorkspaceUUID,
+			filesystem.UUID,
 			"/outputs/copied.txt",
 		); !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("rejected copy destination error = %v, want ErrNotFound", err)
@@ -653,7 +653,7 @@ func TestSessionFileResourceProtectsSourceFile(t *testing.T) {
 	assertError(t, rejected, http.StatusConflict, "conflict_error")
 	if _, err := app.db.GetFile(
 		context.Background(),
-		sessionRecord.WorkspaceID,
+		sessionRecord.WorkspaceUUID,
 		file.ID,
 	); err != nil {
 		t.Fatalf("rejected delete changed source File: %v", err)
@@ -784,13 +784,13 @@ func TestSessionOutputCatalogWriteIsAtomic(t *testing.T) {
 	record := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		record.WorkspaceID,
+		record.WorkspaceUUID,
 		record.ExternalID,
 	)
 	if err != nil {
 		t.Fatalf("load Session filesystem: %v", err)
 	}
-	beforeBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	beforeBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceUUID)
 	if err != nil {
 		t.Fatalf("load storage before failed output write: %v", err)
 	}
@@ -813,23 +813,23 @@ func TestSessionOutputCatalogWriteIsAtomic(t *testing.T) {
 	}()
 
 	_, err = app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/failed.txt",
-		Blob:         workspaceStorageBlob(7, nil),
+		WorkspaceUUID:  record.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/failed.txt",
+		Blob:           workspaceStorageBlob(7, nil),
 	})
 	if err == nil {
 		t.Fatal("output write succeeded despite catalog constraint")
 	}
 	if _, err := app.db.GetSessionResourceFile(
 		context.Background(),
-		record.WorkspaceID,
-		filesystem.ID,
+		record.WorkspaceUUID,
+		filesystem.UUID,
 		"/outputs/failed.txt",
 	); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("output entry after failed catalog = %v, want ErrNotFound", err)
 	}
-	afterBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	afterBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceUUID)
 	if err != nil {
 		t.Fatalf("load storage after failed output write: %v", err)
 	}
@@ -854,17 +854,17 @@ func TestSessionOutputCatalogMaterializesMultipleFiles(t *testing.T) {
 	record := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		record.WorkspaceID,
+		record.WorkspaceUUID,
 		record.ExternalID,
 	)
 	if err != nil {
 		t.Fatalf("load Session filesystem: %v", err)
 	}
 	if _, err := app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/reports",
-		MakeParents:  true,
+		WorkspaceUUID:  record.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/reports",
+		MakeParents:    true,
 	}); err != nil {
 		t.Fatalf("create output directory: %v", err)
 	}
@@ -879,10 +879,10 @@ func TestSessionOutputCatalogMaterializesMultipleFiles(t *testing.T) {
 		blob := workspaceStorageBlob(output.size, nil)
 		blob.Downloadable = true
 		if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceID:  record.WorkspaceID,
-			FilesystemID: filesystem.ID,
-			Path:         output.path,
-			Blob:         blob,
+			WorkspaceUUID:  record.WorkspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			Path:           output.path,
+			Blob:           blob,
 		}); err != nil {
 			t.Fatalf("create output entry %s: %v", output.path, err)
 		}
@@ -912,10 +912,10 @@ func TestSessionOutputCatalogMaterializesMultipleFiles(t *testing.T) {
 		}
 	}
 	if _, err := app.db.RemoveFilestoreDirectory(context.Background(), db.RemoveFilestoreDirectoryInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/reports",
-		Recursive:    true,
+		WorkspaceUUID:  record.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/reports",
+		Recursive:      true,
 	}); err != nil {
 		t.Fatalf("remove output directory: %v", err)
 	}
@@ -938,37 +938,37 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	record := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		record.WorkspaceID,
+		record.WorkspaceUUID,
 		record.ExternalID,
 	)
 	if err != nil {
 		t.Fatalf("load Session filesystem: %v", err)
 	}
 	if _, err := app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/reports",
-		MakeParents:  true,
+		WorkspaceUUID:  record.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/reports",
+		MakeParents:    true,
 	}); err != nil {
 		t.Fatalf("create output directory: %v", err)
 	}
 
 	firstBlob := workspaceStorageBlob(7, nil)
 	firstBlob.Downloadable = true
-	beforeWriteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	beforeWriteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceUUID)
 	if err != nil {
 		t.Fatalf("load storage before output write: %v", err)
 	}
 	entry, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/reports/result.txt",
-		Blob:         firstBlob,
+		WorkspaceUUID:  record.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/reports/result.txt",
+		Blob:           firstBlob,
 	})
 	if err != nil {
 		t.Fatalf("create output entry: %v", err)
 	}
-	afterWriteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	afterWriteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceUUID)
 	if err != nil {
 		t.Fatalf("load storage after output write: %v", err)
 	}
@@ -979,7 +979,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 			beforeWriteBytes+firstBlob.SizeBytes,
 		)
 	}
-	files, err := app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err := app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list output catalog files: %v", err)
 	}
@@ -994,7 +994,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		t.Fatalf("unscoped Files list does not contain active Output %q: %+v", outputFileID, allFiles.Data)
 	}
 
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list output catalog again: %v", err)
 	}
@@ -1005,8 +1005,8 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	replacement := workspaceStorageBlob(9, nil)
 	replacement.Downloadable = true
 	replaced, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:       record.WorkspaceID,
-		FilesystemID:      filesystem.ID,
+		WorkspaceUUID:     record.WorkspaceUUID,
+		FilesystemUUID:    filesystem.UUID,
 		Path:              "/outputs/reports/result.txt",
 		Blob:              replacement,
 		OverwriteExisting: true,
@@ -1020,7 +1020,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	if !replaced.Node.CreatedAt.Equal(outputResourceCreatedAt) {
 		t.Fatalf("overwritten Resource created_at = %s, want stable %s", replaced.Node.CreatedAt, outputResourceCreatedAt)
 	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list overwritten output catalog: %v", err)
 	}
@@ -1030,14 +1030,14 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	}
 
 	if _, err := app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
-		WorkspaceID:     record.WorkspaceID,
-		FilesystemID:    filesystem.ID,
+		WorkspaceUUID:   record.WorkspaceUUID,
+		FilesystemUUID:  filesystem.UUID,
 		SourcePath:      "/outputs/reports/result.txt",
 		DestinationPath: "/transcripts/result.txt",
 	}); err != nil {
 		t.Fatalf("move output outside public roots: %v", err)
 	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list catalog files after output move: %v", err)
 	}
@@ -1059,14 +1059,14 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	assertError(t, hiddenMetadata, http.StatusNotFound, "not_found_error")
 
 	if _, err := app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
-		WorkspaceID:     record.WorkspaceID,
-		FilesystemID:    filesystem.ID,
+		WorkspaceUUID:   record.WorkspaceUUID,
+		FilesystemUUID:  filesystem.UUID,
 		SourcePath:      "/transcripts/result.txt",
 		DestinationPath: "/outputs/reports/result.txt",
 	}); err != nil {
 		t.Fatalf("move output back into public root: %v", err)
 	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list catalog files after output return: %v", err)
 	}
@@ -1077,7 +1077,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		t.Fatalf("unscoped Files list did not restore Output %q: %+v", outputFileID, allFiles.Data)
 	}
 
-	beforeRejectedDeleteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	beforeRejectedDeleteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceUUID)
 	if err != nil {
 		t.Fatalf("load storage before rejected catalog delete: %v", err)
 	}
@@ -1091,7 +1091,7 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 		"",
 	)
 	assertError(t, deleteCatalogFile, http.StatusConflict, "conflict_error")
-	afterRejectedDeleteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	afterRejectedDeleteBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceUUID)
 	if err != nil {
 		t.Fatalf("load storage after rejected catalog delete: %v", err)
 	}
@@ -1104,13 +1104,13 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	}
 
 	if _, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionResourceFileInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/reports/result.txt",
+		WorkspaceUUID:  record.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/reports/result.txt",
 	}); err != nil {
 		t.Fatalf("remove output entry: %v", err)
 	}
-	afterRemovalBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceID)
+	afterRemovalBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), record.WorkspaceUUID)
 	if err != nil {
 		t.Fatalf("load storage after output removal: %v", err)
 	}
@@ -1123,12 +1123,12 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	}
 	if _, err := app.db.GetFile(
 		context.Background(),
-		record.WorkspaceID,
+		record.WorkspaceUUID,
 		outputFileID,
 	); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("output catalog after removal = %v, want ErrNotFound", err)
 	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list removed output catalog: %v", err)
 	}
@@ -1139,14 +1139,14 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	alreadyExpiredAt := time.Unix(0, 0).UTC()
 	alreadyExpiredBlob := workspaceStorageBlob(2, &alreadyExpiredAt)
 	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/reports/already-expired.txt",
-		Blob:         alreadyExpiredBlob,
+		WorkspaceUUID:  record.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/reports/already-expired.txt",
+		Blob:           alreadyExpiredBlob,
 	}); err != nil {
 		t.Fatalf("create already expired output entry: %v", err)
 	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list output catalog files after already expired write: %v", err)
 	}
@@ -1157,15 +1157,15 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	expiresAt := time.Now().UTC().Add(time.Hour)
 	expiringBlob := workspaceStorageBlob(3, &expiresAt)
 	expiringEntry, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceID:  record.WorkspaceID,
-		FilesystemID: filesystem.ID,
-		Path:         "/outputs/reports/expired.txt",
-		Blob:         expiringBlob,
+		WorkspaceUUID:  record.WorkspaceUUID,
+		FilesystemUUID: filesystem.UUID,
+		Path:           "/outputs/reports/expired.txt",
+		Blob:           expiringBlob,
 	})
 	if err != nil {
 		t.Fatalf("create expiring output entry: %v", err)
 	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list expired output catalog before cleanup: %v", err)
 	}
@@ -1175,14 +1175,14 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	if _, err := app.db.Pool.Exec(context.Background(), `
 		update session_resources
 		set expires_at = to_timestamp(0)
-		where id = $1
-	`, expiringEntry.Node.ID); err != nil {
+		where uuid = $1
+	`, expiringEntry.Node.UUID); err != nil {
 		t.Fatalf("expire output entry before cleanup: %v", err)
 	}
 	if _, _, err := app.db.ExpireSessionResourceFiles(context.Background(), 1000); err != nil {
 		t.Fatalf("expire output entry: %v", err)
 	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceID, record.ExternalID)
+	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
 		t.Fatalf("list output catalog files after expiry: %v", err)
 	}
@@ -1210,7 +1210,7 @@ func TestSessionInputResourceRejectsGenericFilestoreMutations(t *testing.T) {
 	defer deleteSession(t, app, session.ID)
 	record := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
-		context.Background(), record.WorkspaceID, record.ExternalID,
+		context.Background(), record.WorkspaceUUID, record.ExternalID,
 	)
 	if err != nil {
 		t.Fatalf("load Session filesystem: %v", err)
@@ -1218,35 +1218,35 @@ func TestSessionInputResourceRejectsGenericFilestoreMutations(t *testing.T) {
 	for name, mutate := range map[string]func() error{
 		"move input": func() error {
 			_, err := app.db.MoveFilestoreFile(context.Background(), db.MoveFilestoreFileInput{
-				WorkspaceID: record.WorkspaceID, FilesystemID: filesystem.ID,
+				WorkspaceUUID: record.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 				SourcePath: "/uploads/locked/input.txt", DestinationPath: "/uploads/locked/moved.txt",
 			})
 			return err
 		},
 		"move parent": func() error {
 			_, err := app.db.MoveFilestoreDirectory(context.Background(), db.MoveFilestoreDirectoryInput{
-				WorkspaceID: record.WorkspaceID, FilesystemID: filesystem.ID,
+				WorkspaceUUID: record.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 				SourcePath: "/uploads/locked", DestinationPath: "/uploads/moved",
 			})
 			return err
 		},
 		"remove input": func() error {
 			_, err := app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionResourceFileInput{
-				WorkspaceID: record.WorkspaceID, FilesystemID: filesystem.ID,
+				WorkspaceUUID: record.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 				Path: "/uploads/locked/input.txt",
 			})
 			return err
 		},
 		"remove parent": func() error {
 			_, err := app.db.RemoveFilestoreDirectory(context.Background(), db.RemoveFilestoreDirectoryInput{
-				WorkspaceID: record.WorkspaceID, FilesystemID: filesystem.ID,
+				WorkspaceUUID: record.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 				Path: "/uploads/locked", Recursive: true,
 			})
 			return err
 		},
 		"overwrite input": func() error {
 			_, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-				WorkspaceID: record.WorkspaceID, FilesystemID: filesystem.ID,
+				WorkspaceUUID: record.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 				Path: "/uploads/locked/input.txt", Blob: workspaceStorageBlob(9, nil),
 				OverwriteExisting: true,
 			})
@@ -1262,7 +1262,7 @@ func TestSessionInputResourceRejectsGenericFilestoreMutations(t *testing.T) {
 	if got := defaultWorkspaceStorageBytes(t, app); got != beforeStorageBytes {
 		t.Fatalf("storage after rejected mutations = %d, want %d", got, beforeStorageBytes)
 	}
-	if _, err := app.db.GetFile(context.Background(), record.WorkspaceID, file.ID); err != nil {
+	if _, err := app.db.GetFile(context.Background(), record.WorkspaceUUID, file.ID); err != nil {
 		t.Fatalf("rejected mutations changed source File: %v", err)
 	}
 }
@@ -1338,7 +1338,7 @@ func TestSessionFileResourceBindSerializesWithSourceDelete(t *testing.T) {
 	bind := outcomes["bind"]
 	deleted := outcomes["delete"]
 	sessionRecord := mustSessionRecord(t, app, session.ID)
-	resources, err := app.db.ListSessionResources(context.Background(), sessionRecord.WorkspaceID, session.ID)
+	resources, err := app.db.ListSessionResources(context.Background(), sessionRecord.WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("list resources after concurrent mutation: %v", err)
 	}
@@ -1348,14 +1348,14 @@ func TestSessionFileResourceBindSerializesWithSourceDelete(t *testing.T) {
 		if len(resources) != 1 {
 			t.Fatalf("successful bind persisted resources = %d, want 1", len(resources))
 		}
-		if _, err := app.db.GetFile(context.Background(), sessionRecord.WorkspaceID, file.ID); err != nil {
+		if _, err := app.db.GetFile(context.Background(), sessionRecord.WorkspaceUUID, file.ID); err != nil {
 			t.Fatalf("source file missing after bind won race: %v", err)
 		}
 	case bind.status == http.StatusNotFound && deleted.status == http.StatusOK:
 		if len(resources) != 0 {
 			t.Fatalf("rejected bind persisted resources = %d, want 0", len(resources))
 		}
-		if _, err := app.db.GetFile(context.Background(), sessionRecord.WorkspaceID, file.ID); !errors.Is(err, db.ErrNotFound) {
+		if _, err := app.db.GetFile(context.Background(), sessionRecord.WorkspaceUUID, file.ID); !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("source file lookup after delete won race = %v, want ErrNotFound", err)
 		}
 	default:
@@ -1405,7 +1405,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 	sessionRecord := mustSessionRecord(t, app, session.ID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		sessionRecord.WorkspaceID,
+		sessionRecord.WorkspaceUUID,
 		session.ID,
 	)
 	if err != nil {
@@ -1413,7 +1413,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 	}
 	fileRecord, err := app.db.GetFile(
 		context.Background(),
-		sessionRecord.WorkspaceID,
+		sessionRecord.WorkspaceUUID,
 		file.ID,
 	)
 	if err != nil {
@@ -1424,7 +1424,7 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 		select files_bytes, filestore_bytes
 		from workspace_storage_usage
 		where workspace_id = $1
-	`, sessionRecord.WorkspaceID).Scan(&filesBytesBefore, &filestoreBytesBefore); err != nil {
+	`, sessionRecord.WorkspaceUUID).Scan(&filesBytesBefore, &filestoreBytesBefore); err != nil {
 		t.Fatalf("load storage usage before Session retirement: %v", err)
 	}
 
@@ -1432,13 +1432,13 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 	sessionDeleted = true
 	if _, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		sessionRecord.WorkspaceID,
+		sessionRecord.WorkspaceUUID,
 		session.ID,
 	); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("retired Session filesystem lookup error = %v, want ErrNotFound", err)
 	}
 
-	var cleanupJobID int64
+	var cleanupJobUUID string
 	if err := app.db.Pool.QueryRow(context.Background(), `
 		update jobs
 		set status = 'running',
@@ -1453,13 +1453,13 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 			order by id desc
 			limit 1
 		)
-		returning id
-	`, filesystem.UUID).Scan(&cleanupJobID); err != nil {
+		returning cast(uuid as text)
+	`, filesystem.UUID).Scan(&cleanupJobUUID); err != nil {
 		t.Fatalf("lease Session filesystem cleanup: %v", err)
 	}
 	done, _, err := app.db.ProcessLeasedFilestoreFilesystemCleanupJob(
 		context.Background(),
-		cleanupJobID,
+		cleanupJobUUID,
 		"input-resource-reference-retirement-test",
 		100,
 	)
@@ -1485,8 +1485,8 @@ func TestSessionFileReferenceRetiresWithoutOwningSourceObject(t *testing.T) {
 			coalesce(files_bytes, 0),
 			coalesce(filestore_bytes, 0)
 		from workspace_storage_usage
-		where workspace_id = $3
-	`, filesystem.SessionUUID, filesystem.UUID, sessionRecord.WorkspaceID).Scan(
+		where workspace_uuid = $2
+	`, filesystem.SessionUUID, filesystem.UUID, sessionRecord.WorkspaceUUID).Scan(
 		&activeEntries,
 		&filestoreObjectJobs,
 		&filesBytesAfter,
@@ -1619,7 +1619,7 @@ func TestCreateSessionResourceFileLimitIsAtomic(t *testing.T) {
 	}
 
 	session := mustSessionRecord(t, app, created.ID)
-	persisted, err := app.db.ListSessionResources(context.Background(), session.WorkspaceID, session.ExternalID)
+	persisted, err := app.db.ListSessionResources(context.Background(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		t.Fatalf("list resources after concurrent add: %v", err)
 	}
@@ -1662,7 +1662,7 @@ func assertSessionFileReference(
 	session := mustSessionRecord(t, app, sessionExternalID)
 	filesystem, err := app.db.GetFilestoreFilesystemBySession(
 		context.Background(),
-		session.WorkspaceID,
+		session.WorkspaceUUID,
 		session.ExternalID,
 	)
 	if err != nil {
@@ -1670,20 +1670,20 @@ func assertSessionFileReference(
 	}
 	entry, err := app.db.GetSessionResourceFile(
 		context.Background(),
-		session.WorkspaceID,
-		filesystem.ID,
+		session.WorkspaceUUID,
+		filesystem.UUID,
 		entryPath,
 	)
 	if err != nil {
 		t.Fatalf("load Session file reference %q: %v", entryPath, err)
 	}
-	file, err := app.db.GetFile(context.Background(), session.WorkspaceID, fileExternalID)
+	file, err := app.db.GetFile(context.Background(), session.WorkspaceUUID, fileExternalID)
 	if err != nil {
 		t.Fatalf("load source File: %v", err)
 	}
 	resource, err := app.db.GetSessionResource(
 		context.Background(),
-		session.WorkspaceID,
+		session.WorkspaceUUID,
 		session.ExternalID,
 		payload.ID,
 	)
@@ -1716,7 +1716,7 @@ func defaultWorkspaceStorageBytes(t *testing.T, app *testApp) int64 {
 	if err != nil {
 		t.Fatalf("load default API key: %v", err)
 	}
-	storageBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), apiKey.WorkspaceID)
+	storageBytes, err := app.db.GetWorkspaceStorageBytes(context.Background(), apiKey.WorkspaceUUID)
 	if err != nil {
 		t.Fatalf("load default workspace storage usage: %v", err)
 	}

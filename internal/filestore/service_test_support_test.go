@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -34,11 +35,8 @@ func filestoreTestConfig(maxFileBytes, workspaceLimitBytes int64, bucket string)
 
 func serviceTestPrincipal() Principal {
 	return Principal{
-		OrganizationID:       11,
 		OrganizationUUID:     "11111111-1111-4111-8111-111111111111",
-		WorkspaceID:          22,
 		WorkspaceUUID:        "22222222-2222-4222-8222-222222222222",
-		FilesystemInternalID: 55,
 		FilesystemUUID:       "55555555-5555-4555-8555-555555555555",
 		FilesystemExternalID: "fs_test",
 	}
@@ -46,7 +44,6 @@ func serviceTestPrincipal() Principal {
 
 func serviceTestFilesystem() db.FilestoreFilesystem {
 	return db.FilestoreFilesystem{
-		ID:               55,
 		UUID:             "55555555-5555-4555-8555-555555555555",
 		ExternalID:       "fs_test",
 		OrganizationUUID: serviceTestPrincipal().OrganizationUUID,
@@ -60,7 +57,7 @@ func serviceTestFilesystem() db.FilestoreFilesystem {
 func serviceTestDirectoryEntry(filesystem db.FilestoreFilesystem, id int64, entryPath string) db.SessionResourceFile {
 	return db.SessionResourceFile{
 		ID:               id,
-		UUID:             uuid.NewString(),
+		UUID:             fmt.Sprintf("00000000-0000-4000-8000-%012d", id),
 		ExternalID:       "dir_test",
 		OrganizationUUID: serviceTestPrincipal().OrganizationUUID,
 		WorkspaceUUID:    serviceTestPrincipal().WorkspaceUUID,
@@ -120,20 +117,20 @@ func serviceTestFileEntryFromBlob(filesystem db.FilestoreFilesystem, externalID,
 	}
 }
 
-func serviceFilesystemLookup(filesystem db.FilestoreFilesystem) func(context.Context, int64, string) (db.FilestoreFilesystem, error) {
-	return func(_ context.Context, workspaceID int64, filesystemID string) (db.FilestoreFilesystem, error) {
+func serviceFilesystemLookup(filesystem db.FilestoreFilesystem) func(context.Context, string, string) (db.FilestoreFilesystem, error) {
+	return func(_ context.Context, workspaceUUID, filesystemID string) (db.FilestoreFilesystem, error) {
 		matchesExternalID := filesystemID == filesystem.ExternalID
 		matchesUUID := strings.EqualFold(filesystemID, filesystem.UUID)
-		if workspaceID != serviceTestPrincipal().WorkspaceID || (!matchesExternalID && !matchesUUID) {
+		if workspaceUUID != serviceTestPrincipal().WorkspaceUUID || (!matchesExternalID && !matchesUUID) {
 			return db.FilestoreFilesystem{}, db.ErrNotFound
 		}
 		return filesystem, nil
 	}
 }
 
-func serviceParentDirectoryLookup(filesystem db.FilestoreFilesystem) func(context.Context, int64, int64, string) (db.SessionResourceFile, error) {
-	return func(_ context.Context, workspaceID, filesystemID int64, entryPath string) (db.SessionResourceFile, error) {
-		if workspaceID != serviceTestPrincipal().WorkspaceID || filesystemID != filesystem.ID || entryPath != "/" {
+func serviceParentDirectoryLookup(filesystem db.FilestoreFilesystem) func(context.Context, string, string, string) (db.SessionResourceFile, error) {
+	return func(_ context.Context, workspaceUUID, filesystemID string, entryPath string) (db.SessionResourceFile, error) {
+		if workspaceUUID != serviceTestPrincipal().WorkspaceUUID || filesystemID != filesystem.UUID || entryPath != "/" {
 			return db.SessionResourceFile{}, db.ErrNotFound
 		}
 		return serviceTestDirectoryEntry(filesystem, 1, "/"), nil
@@ -170,10 +167,10 @@ func assertServiceAPIError(t *testing.T, apiErr *apiError, status int, code stri
 }
 
 type fakeServiceDatabase struct {
-	getFilesystemFn           func(context.Context, int64, string) (db.FilestoreFilesystem, error)
-	getEntryFn                func(context.Context, int64, int64, string) (db.SessionResourceFile, error)
+	getFilesystemFn           func(context.Context, string, string) (db.FilestoreFilesystem, error)
+	getEntryFn                func(context.Context, string, string, string) (db.SessionResourceFile, error)
 	listEntriesFn             func(context.Context, db.ListSessionResourceFilesPageParams) (db.SessionResourceFilePage, error)
-	listSkillArchiveEntriesFn func(context.Context, int64, int64) ([]db.SessionResourceFile, error)
+	listSkillArchiveEntriesFn func(context.Context, string, string) ([]db.SessionResourceFile, error)
 	makeDirectoryFn           func(context.Context, db.MakeFilestoreDirectoryInput) (db.SessionResourceFile, error)
 	putFileFn                 func(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
 	copyFileFn                func(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)
@@ -182,29 +179,29 @@ type fakeServiceDatabase struct {
 	removeFileFn              func(context.Context, db.RemoveSessionResourceFileInput) (db.FilestoreMutationResult, error)
 	removeDirectoryFn         func(context.Context, db.RemoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
 	enqueueCleanupFn          func(context.Context, db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error)
-	attachCleanupFn           func(context.Context, int64, string, string, string) error
-	completeCleanupFn         func(context.Context, int64) error
+	attachCleanupFn           func(context.Context, string, string, string, string) error
+	completeCleanupFn         func(context.Context, string) error
 }
 
-func (f *fakeServiceDatabase) ListSessionSkillArchiveResources(ctx context.Context, workspaceID, filesystemID int64) ([]db.SessionResourceFile, error) {
+func (f *fakeServiceDatabase) ListSessionSkillArchiveResources(ctx context.Context, workspaceUUID, filesystemUUID string) ([]db.SessionResourceFile, error) {
 	if f.listSkillArchiveEntriesFn == nil {
 		panic("unexpected ListSessionSkillArchiveResources call")
 	}
-	return f.listSkillArchiveEntriesFn(ctx, workspaceID, filesystemID)
+	return f.listSkillArchiveEntriesFn(ctx, workspaceUUID, filesystemUUID)
 }
 
-func (f *fakeServiceDatabase) GetFilestoreFilesystem(ctx context.Context, workspaceID int64, externalID string) (db.FilestoreFilesystem, error) {
+func (f *fakeServiceDatabase) GetFilestoreFilesystem(ctx context.Context, workspaceUUID string, externalID string) (db.FilestoreFilesystem, error) {
 	if f.getFilesystemFn == nil {
 		panic("unexpected GetFilestoreFilesystem call")
 	}
-	return f.getFilesystemFn(ctx, workspaceID, externalID)
+	return f.getFilesystemFn(ctx, workspaceUUID, externalID)
 }
 
-func (f *fakeServiceDatabase) GetSessionResourceFile(ctx context.Context, workspaceID, filesystemID int64, entryPath string) (db.SessionResourceFile, error) {
+func (f *fakeServiceDatabase) GetSessionResourceFile(ctx context.Context, workspaceUUID, filesystemUUID string, entryPath string) (db.SessionResourceFile, error) {
 	if f.getEntryFn == nil {
 		panic("unexpected GetSessionResourceFile call")
 	}
-	return f.getEntryFn(ctx, workspaceID, filesystemID, entryPath)
+	return f.getEntryFn(ctx, workspaceUUID, filesystemUUID, entryPath)
 }
 
 func (f *fakeServiceDatabase) ListSessionResourceFilesPage(ctx context.Context, input db.ListSessionResourceFilesPageParams) (db.SessionResourceFilePage, error) {
@@ -270,18 +267,18 @@ func (f *fakeServiceDatabase) EnqueueFilestoreObjectCleanupJob(ctx context.Conte
 	return f.enqueueCleanupFn(ctx, input)
 }
 
-func (f *fakeServiceDatabase) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspaceID int64, jobExternalID, etag, versionID string) error {
+func (f *fakeServiceDatabase) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspaceUUID string, jobExternalID, etag, versionID string) error {
 	if f.attachCleanupFn == nil {
 		panic("unexpected AttachFilestoreObjectCleanupJobVersion call")
 	}
-	return f.attachCleanupFn(ctx, workspaceID, jobExternalID, etag, versionID)
+	return f.attachCleanupFn(ctx, workspaceUUID, jobExternalID, etag, versionID)
 }
 
-func (f *fakeServiceDatabase) CompleteFilestoreObjectCleanupJob(ctx context.Context, jobID int64) error {
+func (f *fakeServiceDatabase) CompleteFilestoreObjectCleanupJob(ctx context.Context, jobUUID string) error {
 	if f.completeCleanupFn == nil {
 		panic("unexpected CompleteFilestoreObjectCleanupJob call")
 	}
-	return f.completeCleanupFn(ctx, jobID)
+	return f.completeCleanupFn(ctx, jobUUID)
 }
 
 type fakeServiceBlobStore struct {

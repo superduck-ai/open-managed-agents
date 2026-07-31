@@ -177,19 +177,19 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateEnvironment(r.Context(), db.Environment{
-		UUID:              uuid.NewString(),
-		ExternalID:        envID,
-		OrganizationID:    principal.OrganizationID,
-		WorkspaceID:       principal.WorkspaceID,
-		CreatedByAPIKeyID: principal.APIKeyID,
-		Name:              name,
-		Description:       description,
-		Config:            configRaw,
-		Metadata:          metadata,
-		Scope:             scope,
-		Provider:          "e2b",
-		ResolvedTemplate:  h.resolvedTemplate(configRaw),
-		CreatedAt:         now,
+		UUID:                uuid.NewString(),
+		ExternalID:          envID,
+		OrganizationUUID:    principal.OrganizationUUID,
+		WorkspaceUUID:       principal.WorkspaceUUID,
+		CreatedByAPIKeyUUID: principal.APIKeyUUID,
+		Name:                name,
+		Description:         description,
+		Config:              configRaw,
+		Metadata:            metadata,
+		Scope:               scope,
+		Provider:            "e2b",
+		ResolvedTemplate:    h.resolvedTemplate(configRaw),
+		CreatedAt:           now,
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicate) {
@@ -228,7 +228,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListEnvironmentsPage(r.Context(), db.ListEnvironmentsPageParams{
-		WorkspaceID:     principal.WorkspaceID,
+		WorkspaceUUID:   principal.WorkspaceUUID,
 		Limit:           limit,
 		Cursor:          cursor,
 		IncludeArchived: includeArchived,
@@ -263,7 +263,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, environmentID
 	if !ok {
 		return
 	}
-	record, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, environmentID)
+	record, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, false))
@@ -293,7 +293,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, false))
 		return
 	}
-	current, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, environmentID)
+	current, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
@@ -346,7 +346,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 		next.ResolvedTemplate = h.resolvedTemplate(next.Config)
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateEnvironment(r.Context(), principal.WorkspaceID, environmentID, next)
+	updated, err := h.db.UpdateEnvironment(r.Context(), principal.WorkspaceUUID, environmentID, next)
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicate) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Environment name already exists"))
@@ -376,7 +376,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID 
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, true))
 		return
 	}
-	record, err := h.db.ArchiveEnvironment(r.Context(), principal.WorkspaceID, environmentID)
+	record, err := h.db.ArchiveEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
@@ -399,7 +399,7 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: environmentID, Type: "environment_deleted"})
 		return
 	}
-	if err := h.db.DeleteEnvironment(r.Context(), principal.WorkspaceID, environmentID); err != nil {
+	if err := h.db.DeleteEnvironment(r.Context(), principal.WorkspaceUUID, environmentID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Environment has active work"))
 			return
@@ -435,7 +435,7 @@ func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records, hasMore, err := h.db.ListEnvironmentWorkPage(r.Context(), db.ListEnvironmentWorkPageParams{
-		WorkspaceID:           env.WorkspaceID,
+		WorkspaceUUID:         env.WorkspaceUUID,
 		EnvironmentExternalID: env.ExternalID,
 		Limit:                 limit,
 		Cursor:                cursor,
@@ -467,7 +467,7 @@ func (h *Handler) retrieveWorkRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "queued"))
 		return
 	}
-	record, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workID)
+	record, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
@@ -495,7 +495,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	current, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workID)
+	current, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
@@ -513,7 +513,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	updated, err := h.db.UpdateEnvironmentWorkMetadata(r.Context(), env.WorkspaceID, env.ExternalID, workID, metadata)
+	updated, err := h.db.UpdateEnvironmentWorkMetadata(r.Context(), env.WorkspaceUUID, env.ExternalID, workID, metadata)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "update environment work", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment work"))
@@ -544,7 +544,7 @@ func (h *Handler) pollWorkRoute(w http.ResponseWriter, r *http.Request) {
 	workerID := strings.TrimSpace(r.Header.Get("Anthropic-Worker-ID"))
 	deadline := time.Now().Add(blockFor)
 	for {
-		work, err := h.db.PollEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workerID, claimFor)
+		work, err := h.db.PollEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workerID, claimFor)
 		if err != nil {
 			h.logger.ErrorContext(r.Context(), "poll environment work", "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not poll environment work"))
@@ -575,7 +575,7 @@ func (h *Handler) workStatsRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, workStatsResponse{Type: "work_queue_stats"})
 		return
 	}
-	stats, err := h.db.EnvironmentWorkStats(r.Context(), env.WorkspaceID, env.ExternalID)
+	stats, err := h.db.EnvironmentWorkStats(r.Context(), env.WorkspaceUUID, env.ExternalID)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "environment work stats", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment work stats"))
@@ -594,7 +594,7 @@ func (h *Handler) ackWorkRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "starting"))
 		return
 	}
-	record, err := h.db.AckEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workID)
+	record, err := h.db.AckEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
@@ -629,7 +629,7 @@ func (h *Handler) heartbeatWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expected := strings.TrimSpace(r.URL.Query().Get("expected_last_heartbeat"))
-	result, err := h.db.HeartbeatEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workID, expected, ttl, formatTime)
+	result, err := h.db.HeartbeatEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID, expected, ttl, formatTime)
 	if err != nil {
 		if errors.Is(err, db.ErrPreconditionFailed) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusPreconditionFailed, "invalid_request_error", "Heartbeat precondition failed"))
@@ -674,7 +674,7 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "stopped"))
 		return
 	}
-	current, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workID)
+	current, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
@@ -691,7 +691,7 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	record, err := h.db.StopEnvironmentWork(r.Context(), env.WorkspaceID, env.ExternalID, workID, force)
+	record, err := h.db.StopEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID, force)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
@@ -705,7 +705,7 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, work db.EnvironmentWork) error {
-	sandbox, err := h.db.GetActiveEnvironmentSandboxForWork(ctx, env.WorkspaceID, env.ExternalID, work.ExternalID)
+	sandbox, err := h.db.GetActiveEnvironmentSandboxForWork(ctx, env.WorkspaceUUID, env.ExternalID, work.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return nil
@@ -716,16 +716,16 @@ func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, wo
 		return nil
 	}
 	providerSandboxID := *sandbox.ProviderSandboxID
-	if err := h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
+	if err := h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceUUID, sandbox.ExternalID, "stopping", &providerSandboxID, nil, nil); err != nil {
 		return err
 	}
 	if err := e2bruntime.NewProvider(h.cfg.E2B).Kill(ctx, providerSandboxID); err != nil {
 		message := err.Error()
-		_ = h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "failed", &providerSandboxID, &message, nil)
+		_ = h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceUUID, sandbox.ExternalID, "failed", &providerSandboxID, &message, nil)
 		return err
 	}
 	stoppedAt := time.Now().UTC()
-	return h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceID, sandbox.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt)
+	return h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceUUID, sandbox.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt)
 }
 
 func (h *Handler) authorizeWork(w http.ResponseWriter, r *http.Request) (db.Environment, bool) {
@@ -739,13 +739,13 @@ func (h *Handler) authorizeWork(w http.ResponseWriter, r *http.Request) (db.Envi
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
 		return db.Environment{}, false
 	}
-	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceID, environmentID)
+	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
 			return db.Environment{
 				ExternalID:       environmentID,
-				OrganizationID:   principal.OrganizationID,
-				WorkspaceID:      principal.WorkspaceID,
+				OrganizationUUID: principal.OrganizationUUID,
+				WorkspaceUUID:    principal.WorkspaceUUID,
 				Name:             "python-data-analysis",
 				Description:      "Fixture environment",
 				Config:           defaultCloudConfig(),
@@ -1409,7 +1409,7 @@ func parseReclaimMS(r *http.Request) (time.Duration, error) {
 }
 
 func encodeEnvironmentCursor(env db.Environment) string {
-	data, _ := json.Marshal(map[string]any{"created_at": formatTime(env.CreatedAt), "id": env.ID})
+	data, _ := json.Marshal(map[string]any{"created_at": formatTime(env.CreatedAt), "uuid": env.UUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -1423,20 +1423,24 @@ func decodeEnvironmentCursor(raw string) (*db.EnvironmentPageCursor, error) {
 	}
 	var payload struct {
 		CreatedAt string `json:"created_at"`
-		ID        int64  `json:"id"`
+		UUID      string `json:"uuid"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil || payload.ID <= 0 {
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, errors.New("page is invalid")
+	}
+	parsedUUID, err := uuid.Parse(payload.UUID)
+	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	return &db.EnvironmentPageCursor{CreatedAt: createdAt, ID: payload.ID}, nil
+	return &db.EnvironmentPageCursor{CreatedAt: createdAt, UUID: parsedUUID.String()}, nil
 }
 
 func encodeWorkCursor(work db.EnvironmentWork) string {
-	data, _ := json.Marshal(map[string]any{"created_at": formatTime(work.CreatedAt), "id": work.ID})
+	data, _ := json.Marshal(map[string]any{"created_at": formatTime(work.CreatedAt), "uuid": work.UUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -1450,16 +1454,20 @@ func decodeWorkCursor(raw string) (*db.EnvironmentWorkPageCursor, error) {
 	}
 	var payload struct {
 		CreatedAt string `json:"created_at"`
-		ID        int64  `json:"id"`
+		UUID      string `json:"uuid"`
 	}
-	if err := json.Unmarshal(data, &payload); err != nil || payload.ID <= 0 {
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, errors.New("page is invalid")
+	}
+	parsedUUID, err := uuid.Parse(payload.UUID)
+	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339Nano, payload.CreatedAt)
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	return &db.EnvironmentWorkPageCursor{CreatedAt: createdAt, ID: payload.ID}, nil
+	return &db.EnvironmentWorkPageCursor{CreatedAt: createdAt, UUID: parsedUUID.String()}, nil
 }
 
 func isJSONNull(raw json.RawMessage) bool {

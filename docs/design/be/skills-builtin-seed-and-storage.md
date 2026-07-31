@@ -101,7 +101,10 @@ Builtin retrieve、versions 和 content/download 都从 DB metadata 定位 S3-co
 
 Custom create 是纯创建语义，不会把同名 skill 自动合并成新版本。`display_title` 是当前 workspace 内 custom skill 的业务唯一键：
 
-- migration `00011_unique_skill_display_title.sql` 在 `skills(workspace_id, display_title)` 上创建 active-row partial unique index。
+- migration `00011_unique_skill_display_title.sql` 最初在 `skills(workspace_id, display_title)` 上创建
+  active-row partial unique index；`00041_use_uuid_resource_references.sql` 将该索引和查询边界迁移为
+  `skills(workspace_uuid, display_title)`，并将 `skill_versions.skill_id` 改为
+  `skill_versions.skill_uuid`。
 - migration 假设已有 active `display_title` 数据在 workspace 内唯一；若存在重复数据，索引创建会失败并暴露需要人工清理的数据问题。
 - migration `00012_require_skill_display_title.sql` 把 `skills.display_title` 改为 `NOT NULL`，避免未来写入路径绕过业务唯一键。
 - 唯一索引用 `CREATE UNIQUE INDEX CONCURRENTLY` 创建，降低迁移期间对 `skills` 表写入的锁影响。

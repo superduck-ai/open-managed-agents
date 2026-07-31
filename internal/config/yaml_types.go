@@ -77,13 +77,12 @@ type yamlWebhookConfig struct {
 }
 
 type yamlBootstrapConfig struct {
-	SeedAPIKeys            optional[[]SeedAPIKey] `yaml:"seed_api_keys"`
-	WorkspaceName          string                 `yaml:"workspace_name"`
-	OrganizationName       string                 `yaml:"organization_name"`
-	OrganizationExternalID string                 `yaml:"organization_external_id"`
-	WorkspaceExternalID    string                 `yaml:"workspace_external_id"`
-	UserExternalID         string                 `yaml:"user_external_id"`
-	APIKeyExternalID       string                 `yaml:"api_key_external_id"`
+	SeedAPIKeys         optional[[]SeedAPIKey] `yaml:"seed_api_keys"`
+	WorkspaceName       string                 `yaml:"workspace_name"`
+	OrganizationName    string                 `yaml:"organization_name"`
+	WorkspaceExternalID string                 `yaml:"workspace_external_id"`
+	UserExternalID      string                 `yaml:"user_external_id"`
+	APIKeyExternalID    string                 `yaml:"api_key_external_id"`
 }
 
 func newYAMLConfig() yamlConfig {
@@ -116,12 +115,11 @@ func newYAMLConfig() yamlConfig {
 			AllowInsecure: defaults.Webhook.AllowInsecure,
 		},
 		Bootstrap: yamlBootstrapConfig{
-			WorkspaceName:          defaults.Bootstrap.WorkspaceName,
-			OrganizationName:       defaults.Bootstrap.OrganizationName,
-			OrganizationExternalID: defaults.Bootstrap.OrganizationExternalID,
-			WorkspaceExternalID:    defaults.Bootstrap.WorkspaceExternalID,
-			UserExternalID:         defaults.Bootstrap.UserExternalID,
-			APIKeyExternalID:       defaults.Bootstrap.APIKeyExternalID,
+			WorkspaceName:       defaults.Bootstrap.WorkspaceName,
+			OrganizationName:    defaults.Bootstrap.OrganizationName,
+			WorkspaceExternalID: defaults.Bootstrap.WorkspaceExternalID,
+			UserExternalID:      defaults.Bootstrap.UserExternalID,
+			APIKeyExternalID:    defaults.Bootstrap.APIKeyExternalID,
 		},
 		SDKFixtures: defaults.SDKFixtures,
 	}
@@ -156,12 +154,11 @@ func (input yamlConfig) resolve() Config {
 			AllowInsecure: input.Webhook.AllowInsecure,
 		},
 		Bootstrap: BootstrapConfig{
-			WorkspaceName:          input.Bootstrap.WorkspaceName,
-			OrganizationName:       input.Bootstrap.OrganizationName,
-			OrganizationExternalID: input.Bootstrap.OrganizationExternalID,
-			WorkspaceExternalID:    input.Bootstrap.WorkspaceExternalID,
-			UserExternalID:         input.Bootstrap.UserExternalID,
-			APIKeyExternalID:       input.Bootstrap.APIKeyExternalID,
+			WorkspaceName:       input.Bootstrap.WorkspaceName,
+			OrganizationName:    input.Bootstrap.OrganizationName,
+			WorkspaceExternalID: input.Bootstrap.WorkspaceExternalID,
+			UserExternalID:      input.Bootstrap.UserExternalID,
+			APIKeyExternalID:    input.Bootstrap.APIKeyExternalID,
 		},
 		SDKFixtures: input.SDKFixtures,
 	}

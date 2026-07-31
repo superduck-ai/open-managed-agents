@@ -50,7 +50,7 @@ func TestRuntimeResolverResolvesCustomLatestVersion(t *testing.T) {
 		t.Fatalf("marshal snapshot: %v", err)
 	}
 
-	resolved, err := resolver.ResolveAgentSnapshot(ctx, ids.WorkspaceID, snapshot)
+	resolved, err := resolver.ResolveAgentSnapshot(ctx, ids.WorkspaceUUID, snapshot)
 	if err != nil {
 		t.Fatalf("resolve latest custom skill: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestRuntimeResolverResolvesCustomLatestVersion(t *testing.T) {
 		t.Fatalf("delete second version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 	}
 
-	resolved, err = resolver.ResolveAgentSnapshot(ctx, ids.WorkspaceID, snapshot)
+	resolved, err = resolver.ResolveAgentSnapshot(ctx, ids.WorkspaceUUID, snapshot)
 	if err != nil {
 		t.Fatalf("resolve latest custom skill after delete: %v", err)
 	}

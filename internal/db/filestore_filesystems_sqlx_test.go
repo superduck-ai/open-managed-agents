@@ -19,9 +19,6 @@ func TestProvisionFilestoreFilesystemQueriesUseSQLXNamedParameters(t *testing.T)
 		CreatedByAPIKeyUUID: &apiKeyUUID,
 		Now:                 time.Date(2026, time.July, 23, 17, 0, 0, 0, time.UTC),
 	})
-	arguments["workspace_id"] = int64(42)
-	arguments["filesystem_id"] = int64(99)
-
 	tests := []struct {
 		name         string
 		query        string

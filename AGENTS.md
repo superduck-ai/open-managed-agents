@@ -136,11 +136,13 @@
 ## PostgreSQL Schema 规则
 
 - 不要创建 PostgreSQL 外键约束。
-- 核心表仍保留 `organization_id`、`workspace_id`、`created_by_api_key_id` 这类 bigint 引用列；完整性由应用写入、迁移代码、seed 代码和 E2E 测试保证。
+- 跨表引用统一使用目标资源的 `uuid`，例如 `organization_uuid`、`workspace_uuid`、`created_by_api_key_uuid`；完整性由应用写入、迁移代码、seed 代码和 E2E 测试保证。
 - 每张核心业务表都使用：
   - `id bigint generated always as identity` 作为数据库内部主键。
   - `uuid uuid default gen_random_uuid()` 作为稳定的业务标识符。
   - `external_id text` 作为兼容 Anthropic API 的 ID，例如 `file_...`。
+- `int`/`bigint` 类型的 `id` 只允许承担自增 identity，或确有必要的数据库内部排序；其他场景不得使用，也不得进入鉴权 Principal、业务模型、service 接口、API/事件 payload、锁键、行定位条件或跨表持久化引用。业务层的资源身份、租户范围和父子关联统一使用 UUID。
+- 已有 UUID 引用列时，查询应直接按 UUID 过滤或关联。禁止仅为 identity 与 UUID 互转而增加 JOIN 或子查询；只有校验目标存在、验证租户归属或确实读取目标表字段时才保留 JOIN，并应尽可能减少不必要的 JOIN。
 - 之后所有 DB schema 变更都必须通过 `internal/db/migrations` 中的 goose migration 管理。
 - 每次变更新增一个带编号的 migration 文件，例如 `00002_add_xxx.sql`；不要修改已应用的 migration，也不要把新的 schema 变更追加到 `internal/db/schema.go`。
 - `Migrate()` 在应用完 goose migrations 后，必须删除当前 schema 中发现的所有外键约束。

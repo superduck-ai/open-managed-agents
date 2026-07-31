@@ -89,12 +89,12 @@ func stubUnrestrictedPolicyContext(t *testing.T, handler *Handler) {
 
 func policyTestHandler(t *testing.T, policy networkpolicy.Policy, err error) *Handler {
 	t.Helper()
-	handler := NewHandler(config.Config{}, newTestService(t, nil), nil)
+	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
 	handler.loadPolicyContext = func(context.Context, upstreamProxyIdentity) (upstreamProxyPolicyContext, error) {
 		return upstreamProxyPolicyContext{
 			policy:                policy,
-			organizationID:        1,
-			workspaceID:           2,
+			organizationUUID:      "00000000-0000-0000-0000-000000000001",
+			workspaceUUID:         "00000000-0000-0000-0000-000000000002",
 			environmentExternalID: "env_test",
 		}, err
 	}

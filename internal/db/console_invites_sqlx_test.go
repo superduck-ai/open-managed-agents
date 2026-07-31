@@ -11,10 +11,9 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 	listQuery := `
 		select ` + consoleInviteColumns + `
 		from organization_invites i
-		join organizations o on o.id = i.organization_id
-		where (CAST(o.uuid AS text) = :org_uuid or o.external_id = :org_uuid)
+		where i.organization_uuid = CAST(:org_uuid AS uuid)
 			and i.deleted_at is null
-		order by i.invited_at desc, i.id desc
+		order by i.invited_at desc, i.uuid desc
 		limit :limit
 	`
 	tests := []struct {
@@ -30,7 +29,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 				"org_uuid": "org_test",
 				"limit":    100,
 			},
-			wantArgCount: 3,
+			wantArgCount: 2,
 		},
 		{
 			name:  "create",
@@ -43,7 +42,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 				"invited_at":  now,
 				"expires_at":  now.Add(21 * 24 * time.Hour),
 			},
-			wantArgCount: 7,
+			wantArgCount: 6,
 		},
 		{
 			name:  "resend",
@@ -54,7 +53,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 				"invited_at": now,
 				"expires_at": now.Add(21 * 24 * time.Hour),
 			},
-			wantArgCount: 5,
+			wantArgCount: 4,
 		},
 		{
 			name:  "delete",
@@ -63,7 +62,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 				"org_uuid":  "org_test",
 				"invite_id": "invite_test",
 			},
-			wantArgCount: 3,
+			wantArgCount: 2,
 		},
 	}
 

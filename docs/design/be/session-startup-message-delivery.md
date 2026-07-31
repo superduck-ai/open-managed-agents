@@ -136,14 +136,16 @@ sequenceDiagram
 `session_event_queue` 是临时责任表，不是 payload 副本。它只保存：
 
 - queue 自身顺序 `id`；
+- `organization_uuid`；
+- `workspace_uuid`；
 - `session_uuid`；
 - `session_event_uuid`；
-- organization/workspace 作用域；
 - 创建时间。
 
 表中没有 payload、delivery status、重试次数或 delivered history。事件内容始终从
 `session_events` 读取，避免形成第二份事件事实源。`session_event_uuid` 唯一，防止同一公开
-事件重复获得两条 queue 责任。
+事件重复获得两条 queue 责任。organization、workspace、Session 和 event 均使用稳定 UUID
+引用，避免租户迁移、部分导入或跨库合并时 identity 重映射导致 queue row 失去归属。
 
 读取 queue 引用时必须同时匹配 organization、workspace、Session ID、Session external ID
 和 event UUID。queue 如果指向其他 Session 的事件，创建流程直接失败，不得写 inbound、删

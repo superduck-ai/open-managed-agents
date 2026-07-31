@@ -167,16 +167,18 @@ func listSessionEventQueueIdentityRows(
 	lock bool,
 ) ([]sessionEventQueueIdentityRow, error) {
 	query := `
-		select id, CAST(session_uuid AS text) as session_uuid,
-			CAST(session_event_uuid AS text) as session_event_uuid
-		from session_event_queue
-		where organization_id = :organization_id
-			and workspace_id = :workspace_id
-			and session_uuid = CAST(:session_uuid AS uuid)
-		order by id asc
+		select q.id, CAST(q.session_uuid AS text) as session_uuid,
+			CAST(q.session_event_uuid AS text) as session_event_uuid
+		from session_event_queue q
+		join organizations o on o.uuid = q.organization_uuid
+		join workspaces w on w.uuid = q.workspace_uuid and w.organization_id = o.id
+		where o.id = :organization_id
+			and w.id = :workspace_id
+			and q.session_uuid = CAST(:session_uuid AS uuid)
+		order by q.id asc
 	`
 	if lock {
-		query += ` for update`
+		query += ` for update of q`
 	}
 	var rows []sessionEventQueueIdentityRow
 	err := namedSelectContext(ctx, database, &rows, query, map[string]any{
@@ -279,10 +281,12 @@ func sessionEventQueueExistsSQLX(
 	err := namedGetContext(ctx, database, &exists, `
 		select exists (
 			select 1
-			from session_event_queue
-			where organization_id = :organization_id
-				and workspace_id = :workspace_id
-				and session_uuid = CAST(:session_uuid AS uuid)
+			from session_event_queue q
+			join organizations o on o.uuid = q.organization_uuid
+			join workspaces w on w.uuid = q.workspace_uuid and w.organization_id = o.id
+			where o.id = :organization_id
+				and w.id = :workspace_id
+				and q.session_uuid = CAST(:session_uuid AS uuid)
 		)
 	`, map[string]any{
 		"organization_id": session.OrganizationID,
@@ -301,21 +305,30 @@ func enqueueSessionEventsSQLXTx(
 	for _, event := range lo.Filter(events, func(event SessionEvent, _ int) bool {
 		return event.EventType == "user.message"
 	}) {
-		if _, err := namedExecContext(ctx, tx, `
+		result, err := namedExecContext(ctx, tx, `
 			insert into session_event_queue (
-				organization_id, workspace_id, session_uuid, session_event_uuid
+				organization_uuid, workspace_uuid, session_uuid, session_event_uuid
 			)
-			values (
-				:organization_id, :workspace_id,
+			select o.uuid, w.uuid,
 				CAST(:session_uuid AS uuid), CAST(:session_event_uuid AS uuid)
-			)
+			from organizations o
+			join workspaces w on w.organization_id = o.id
+			where o.id = :organization_id and w.id = :workspace_id
 		`, map[string]any{
 			"organization_id":    session.OrganizationID,
 			"workspace_id":       session.WorkspaceID,
 			"session_uuid":       session.UUID,
 			"session_event_uuid": event.UUID,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
+		}
+		inserted, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if inserted != 1 {
+			return ErrInvalidState
 		}
 	}
 	return nil

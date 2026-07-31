@@ -3843,12 +3843,18 @@ func sessionEventQueueEventIDs(t *testing.T, app *testApp, sessionID string) []s
 	rows, err := app.db.Pool.Query(context.Background(), `
 		select e.external_id
 		from session_event_queue q
+			join organizations o on o.uuid = q.organization_uuid
+			join workspaces w
+				on w.uuid = q.workspace_uuid
+				and w.organization_id = o.id
 		join sessions s
 			on s.uuid = q.session_uuid
-			and s.workspace_id = q.workspace_id
+			and s.organization_id = o.id
+				and s.workspace_id = w.id
 		join session_events e
 			on e.uuid = q.session_event_uuid
-			and e.workspace_id = q.workspace_id
+			and e.organization_id = o.id
+				and e.workspace_id = w.id
 		where s.external_id = $1
 		order by q.id asc
 	`, sessionID)

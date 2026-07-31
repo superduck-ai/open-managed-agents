@@ -359,10 +359,14 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 		}
 	}
 	deletedResult, err := namedExecContext(ctx, tx, `
-		delete from session_event_queue
-		where organization_id = :organization_id
-			and workspace_id = :workspace_id
-			and session_uuid = CAST(:session_uuid AS uuid)
+		delete from session_event_queue q
+		using organizations o, workspaces w
+		where q.organization_uuid = o.uuid
+			and q.workspace_uuid = w.uuid
+			and w.organization_id = o.id
+			and o.id = :organization_id
+			and w.id = :workspace_id
+			and q.session_uuid = CAST(:session_uuid AS uuid)
 	`, map[string]any{
 		"organization_id": session.OrganizationID,
 		"workspace_id":    session.WorkspaceID,

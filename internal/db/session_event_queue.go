@@ -126,18 +126,10 @@ func (d *DB) ListSessionEventQueueItems(
 		event, err := getSessionEventSQLX(ctx, d.sql, `
 			select `+sessionEventSQLXColumns+`
 			from session_events
-			where organization_id = :organization_id
-				and workspace_id = :workspace_id
-				and uuid = CAST(:session_event_uuid AS uuid)
-				and session_id = :session_id
-				and session_external_id = :session_external_id
+			where uuid = CAST(:session_event_uuid AS uuid)
 				and deleted_at is null
 		`, map[string]any{
-			"organization_id":     session.OrganizationID,
-			"workspace_id":        session.WorkspaceID,
-			"session_event_uuid":  row.SessionEventUUID,
-			"session_id":          session.ID,
-			"session_external_id": session.ExternalID,
+			"session_event_uuid": row.SessionEventUUID,
 		})
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf(

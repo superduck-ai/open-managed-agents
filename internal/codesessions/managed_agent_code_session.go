@@ -127,8 +127,12 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	}, nil
 }
 
-// activateManagedAgentCodeSession hands off only explicitly queued startup
-// messages, then activates while holding the same Session lock as send.
+// activateManagedAgentCodeSession merges public session history with the
+// startup queue into inbound, then activates under the same Session lock as send.
+//
+// Order: historical forwardable session_events (excluding UUIDs still in the
+// queue) first, then queue items in FIFO order. Queue remains the sole source of
+// startup-window responsibility and cutover matching.
 func (s *Service) activateManagedAgentCodeSession(
 	ctx context.Context,
 	session db.Session,
@@ -139,26 +143,34 @@ func (s *Service) activateManagedAgentCodeSession(
 		if err != nil {
 			return err
 		}
-		inputs, err := lo.MapErr(items, func(item db.SessionEventQueueItem, _ int) (db.AppendCodeSessionEventInput, error) {
+		history, err := s.listSessionEventsAscending(ctx, session)
+		if err != nil {
+			return err
+		}
+		queuedUUIDs := lo.SliceToMap(items, func(item db.SessionEventQueueItem) (string, struct{}) {
+			return item.Event.UUID, struct{}{}
+		})
+		historyOnly := lo.Filter(history, func(event db.SessionEvent, _ int) bool {
+			_, queued := queuedUUIDs[event.UUID]
+			return !queued
+		})
+		historyInputs, err := s.inboundInputsFromPublicSessionEvents(codeSession.ExternalID, historyOnly)
+		if err != nil {
+			return err
+		}
+		queueInputs, err := lo.MapErr(items, func(item db.SessionEventQueueItem, _ int) (db.AppendCodeSessionEventInput, error) {
 			if item.Event.EventType != "user.message" {
 				return db.AppendCodeSessionEventInput{}, fmt.Errorf(
 					"%w: session event queue contains a non-user message",
 					db.ErrInvalidState,
 				)
 			}
-			payload, err := workerPayloadForPublicEvent(
-				codeSession.ExternalID,
-				item.Event.Payload,
-				item.Event.ProcessedAt,
-			)
-			if err != nil {
-				return db.AppendCodeSessionEventInput{}, err
-			}
-			return newInboundEventInput(codeSession.ExternalID, payload, "public-session")
+			return s.inboundInputFromPublicSessionEvent(codeSession.ExternalID, item.Event)
 		})
 		if err != nil {
 			return err
 		}
+		inputs := append(historyInputs, queueInputs...)
 		activated, err := s.db.ActivateManagedAgentCodeSessionWithQueue(
 			ctx,
 			codeSession,
@@ -172,6 +184,58 @@ func (s *Service) activateManagedAgentCodeSession(
 			return nil
 		}
 	}
+}
+
+func (s *Service) listSessionEventsAscending(ctx context.Context, session db.Session) ([]db.SessionEvent, error) {
+	var out []db.SessionEvent
+	var cursor *db.SessionEventPageCursor
+	for {
+		events, hasMore, err := s.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+			WorkspaceID:       session.WorkspaceID,
+			SessionExternalID: session.ExternalID,
+			Limit:             100,
+			Cursor:            cursor,
+			Order:             "asc",
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, events...)
+		if !hasMore || len(events) == 0 {
+			return out, nil
+		}
+		last := events[len(events)-1]
+		cursor = &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+}
+
+func (s *Service) inboundInputsFromPublicSessionEvents(
+	codeSessionID string,
+	events []db.SessionEvent,
+) ([]db.AppendCodeSessionEventInput, error) {
+	inputs := make([]db.AppendCodeSessionEventInput, 0, len(events))
+	for _, event := range events {
+		if !forwardPublicEventToWorker(event.EventType) {
+			continue
+		}
+		input, err := s.inboundInputFromPublicSessionEvent(codeSessionID, event)
+		if err != nil {
+			return nil, err
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs, nil
+}
+
+func (s *Service) inboundInputFromPublicSessionEvent(
+	codeSessionID string,
+	event db.SessionEvent,
+) (db.AppendCodeSessionEventInput, error) {
+	payload, err := workerPayloadForPublicEvent(codeSessionID, event.Payload, event.ProcessedAt)
+	if err != nil {
+		return db.AppendCodeSessionEventInput{}, err
+	}
+	return newInboundEventInput(codeSessionID, payload, "public-session")
 }
 
 // TerminateManagedAgentCodeSession revokes a Code Session created for a

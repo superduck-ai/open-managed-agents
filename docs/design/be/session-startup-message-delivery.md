@@ -26,18 +26,19 @@ Code Session 激活事务中与 queue 清理一起原子写入 inbound，保证 
 
 - 不增加 `starting` 等公开 Session 状态，客户端仍看到现有 `idle`；
 - 不阻止客户端在 Session 创建后调用 Send Events；
-- 不扫描完整 `session_events`，不维护 watermark；
+- 不在 Send Events 路径扫描或重放历史；历史注入仅发生在 Code Session 激活；
+- 不维护跨激活的 watermark / 通用 outbox；
 - 不在 worker register 或 heartbeat 中补投；
-- 不把 queue 扩展成永久投递历史或通用 outbox；
+- 不把 queue 扩展成永久投递历史；
 - 不改变 active 路径的事件转换、tool confirmation 和 batch 范围。
 
 ## 修改前后差异
 
 | 关注点 | 修改前 | 修改后 |
 | --- | --- | --- |
-| 启动期事件来源 | Runner prepare 时读取一次 `InitialEvents` 快照 | Send Events 提交时记录明确的 queue 引用 |
+| 启动期增量来源 | Runner prepare 时读取一次含历史的 `InitialEvents` 快照 | Send 启动窗写入 queue；激活时再合并历史 `session_events` |
 | prepare 后到达的消息 | 不在旧快照中 | 与 `session_events` 同事务进入 queue |
-| Code Session 创建 | 使用 prepare 阶段快照写 inbound | 只读取 `session_event_queue` 指向的事件 |
+| Code Session 创建 | 使用 prepare 阶段快照写 inbound | 激活时：历史 `session_events` + queue → inbound |
 | 消息责任 | API 200 后没有跨启动流程的持久化责任 | queue row 持有到最终激活事务提交 |
 | 激活条件 | 快照处理完成后继续启动 | inbound、清空 queue、切 `active` 一次提交 |
 | active 后发送 | 实时投递当前 batch | 保持不变 |
@@ -249,17 +250,24 @@ sequenceDiagram
 
 1. 创建状态为 `initializing` 的 Code Session；
 2. 写入 sequence 1 的 `initialize` inbound；
-3. 调用 `activateManagedAgentCodeSession` 完成 queue 交接；
+3. 调用 `activateManagedAgentCodeSession`：合并历史 `session_events` 与 queue 后激活；
 4. 激活成功后才继续签发并返回 runtime 启动信息；
 5. 中途失败时，现有 defer cleanup 将未完成的 Code Session terminate。
 
-### 阶段一：读取并转换快照
+### 阶段一：读取历史与 queue 并转换
 
-`ListSessionEventQueueItems` 按 queue `id` 升序读取完整列表，并根据每个
-`session_event_uuid` 加载属于当前 Session 的正式事件。Service 在事务外将这些公开事件转换
-成 Code Session inbound inputs。
+Service 在事务外：
+
+1. `ListSessionEventQueueItems` 读取完整 queue（FIFO）及所属公开事件；
+2. 分页 `ListSessionEventsPage`（升序）读取当前 Session 的公开事件历史；
+3. 将可转发历史事件转为 inbound inputs，**排除**仍出现在 queue 中的 event UUID
+   （避免与 queue 交接重复）；
+4. 再按 queue 顺序转换 queue 中的 `user.message`；
+5. 最终 inbound 顺序为：历史（去 queue 重复）→ queue FIFO。
 
 转换放在事务外，避免在持有 Session 和 Code Session 行锁时执行 JSON/envelope 处理。
+queue 仍是启动空窗责任与 cutover 匹配的唯一来源；历史注入对齐旧
+`InitialEvents` 全量扫描，保证再起 Code Session 时能带上已有多轮对话。
 
 ### 阶段二：一个事务完成全部交接
 
@@ -270,19 +278,20 @@ sequenceDiagram
 → 锁 initializing Code Session
 → 校验 queue item 均为 user.message（Session ownership 已由 List 保证）
 → 锁当前完整 queue
-→ 将当前 queue 与事务外快照逐项比较
-→ 按 queue.id 顺序写入全部 inbound
+→ 将当前 queue 与事务外 queue 快照逐项比较
+→ 按 inputs 顺序写入全部 inbound（历史 + queue）
 → 删除当前 Session 的全部 queue rows
 → Code Session initializing → active
 → commit
 ```
 
+`items` 仅用于 queue 快照匹配与清空；`inputs` 可长于 `items`。
 快照比较包括 row 数量、queue ID、Session UUID、event UUID 和顺序。如果读取快照以后新消息
 进入 queue，最终事务会发现列表不一致，返回 `activated=false`，且不做任何写入；Service
-重新读取、转换并重试。
+重新读取历史与 queue、转换并重试。
 
 inbound 插入复用现有 idempotency key。事务内每写一条新 inbound 都推进当前 Code Session
-的 sequence，保证多条 Deployment initial messages 保持 FIFO 顺序。
+的 sequence，保证历史与 Deployment initial messages 保持稳定顺序。
 
 ## 激活 cutover 的并发语义
 

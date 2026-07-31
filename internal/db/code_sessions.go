@@ -285,18 +285,16 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 	})
 }
 
-// ActivateManagedAgentCodeSessionWithQueue atomically transfers the complete
-// startup queue to inbound, clears the temporary responsibility, and activates
-// the Code Session while holding the same Session lock as event sends.
+// ActivateManagedAgentCodeSessionWithQueue writes inbound inputs (typically
+// historical public events plus startup-queue messages), clears the matched
+// startup queue snapshot, and activates the Code Session under the Session lock.
+// items is only the queue snapshot used for match/clear; inputs may be longer.
 func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 	ctx context.Context,
 	codeSession CodeSession,
 	items []SessionEventQueueItem,
 	inputs []AppendCodeSessionEventInput,
 ) (bool, error) {
-	if len(items) != len(inputs) {
-		return false, ErrInvalidState
-	}
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return false, err

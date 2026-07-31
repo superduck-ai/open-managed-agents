@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type MessageBatch struct {
@@ -79,11 +81,16 @@ type MessageBatchJob struct {
 	Attempts               int
 }
 
+type messageBatchJobPayload struct {
+	MessageBatchUUID       string `json:"message_batch_uuid"`
+	MessageBatchExternalID string `json:"message_batch_external_id"`
+}
+
 type messageBatchRow struct {
-	UUID                string     `db:"uuid"`
+	UUID                uuid.UUID  `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
-	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	WorkspaceUUID       uuid.UUID  `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID uuid.UUID  `db:"created_by_api_key_uuid"`
 	APIVariant          string     `db:"api_variant"`
 	AnthropicVersion    string     `db:"anthropic_version"`
 	BetaHeadersJSON     []byte     `db:"beta_headers"`
@@ -109,9 +116,9 @@ type messageBatchRow struct {
 }
 
 type messageBatchRequestRow struct {
-	UUID              string     `db:"uuid"`
-	WorkspaceUUID     string     `db:"workspace_uuid"`
-	MessageBatchUUID  string     `db:"message_batch_uuid"`
+	UUID              uuid.UUID  `db:"uuid"`
+	WorkspaceUUID     uuid.UUID  `db:"workspace_uuid"`
+	MessageBatchUUID  uuid.UUID  `db:"message_batch_uuid"`
 	RequestIndex      int        `db:"request_index"`
 	ExternalID        string     `db:"external_id"`
 	CustomID          string     `db:"custom_id"`
@@ -127,12 +134,12 @@ type messageBatchRequestRow struct {
 }
 
 type messageBatchJobRow struct {
-	UUID                   string `db:"uuid"`
-	ExternalID             string `db:"external_id"`
-	WorkspaceUUID          string `db:"workspace_uuid"`
-	MessageBatchUUID       string `db:"message_batch_uuid"`
-	MessageBatchExternalID string `db:"message_batch_external_id"`
-	Attempts               int    `db:"attempts"`
+	UUID                   uuid.UUID `db:"uuid"`
+	ExternalID             string    `db:"external_id"`
+	WorkspaceUUID          uuid.UUID `db:"workspace_uuid"`
+	MessageBatchUUID       string    `db:"message_batch_uuid"`
+	MessageBatchExternalID string    `db:"message_batch_external_id"`
+	Attempts               int       `db:"attempts"`
 }
 
 func (d *DB) CreateMessageBatch(ctx context.Context, b MessageBatch, reqs []NewBatchRequest) (MessageBatch, error) {
@@ -150,7 +157,7 @@ func (d *DB) CreateMessageBatch(ctx context.Context, b MessageBatch, reqs []NewB
 	}()
 
 	var created struct {
-		UUID      string    `db:"uuid"`
+		UUID      uuid.UUID `db:"uuid"`
 		CreatedAt time.Time `db:"created_at"`
 		UpdatedAt time.Time `db:"updated_at"`
 	}
@@ -165,12 +172,12 @@ func (d *DB) CreateMessageBatch(ctx context.Context, b MessageBatch, reqs []NewB
 			:anthropic_version, CAST(:beta_headers AS jsonb), :request_count,
 			:request_count, :created_at, :expires_at
 		)
-		returning CAST(uuid AS text) AS uuid, created_at, updated_at
+		returning uuid, created_at, updated_at
 	`, map[string]any{
-		"uuid":                    b.UUID,
+		"uuid":                    dbUUID(b.UUID),
 		"external_id":             b.ExternalID,
-		"workspace_uuid":          b.WorkspaceUUID,
-		"created_by_api_key_uuid": b.CreatedByAPIKeyUUID,
+		"workspace_uuid":          dbUUID(b.WorkspaceUUID),
+		"created_by_api_key_uuid": dbUUID(b.CreatedByAPIKeyUUID),
 		"api_variant":             b.APIVariant,
 		"anthropic_version":       b.AnthropicVersion,
 		"beta_headers":            string(betaHeaders),
@@ -181,7 +188,7 @@ func (d *DB) CreateMessageBatch(ctx context.Context, b MessageBatch, reqs []NewB
 	if err != nil {
 		return MessageBatch{}, err
 	}
-	b.UUID = created.UUID
+	b.UUID = created.UUID.String()
 	b.CreatedAt = created.CreatedAt
 	b.UpdatedAt = created.UpdatedAt
 	b.RequestCount = len(reqs)
@@ -194,10 +201,14 @@ func (d *DB) CreateMessageBatch(ctx context.Context, b MessageBatch, reqs []NewB
 	}
 	defer requestStatement.Close()
 	for _, req := range reqs {
+		requestWorkspaceUUID, err := parseDBUUID("workspace_uuid", req.WorkspaceUUID)
+		if err != nil {
+			return MessageBatch{}, err
+		}
 		if _, err := requestStatement.ExecContext(ctx, map[string]any{
 			"external_id":        req.ExternalID,
-			"workspace_uuid":     req.WorkspaceUUID,
-			"message_batch_uuid": b.UUID,
+			"workspace_uuid":     requestWorkspaceUUID,
+			"message_batch_uuid": created.UUID,
 			"request_index":      req.RequestIndex,
 			"custom_id":          req.CustomID,
 			"params":             string(req.Params),
@@ -206,6 +217,13 @@ func (d *DB) CreateMessageBatch(ctx context.Context, b MessageBatch, reqs []NewB
 		}
 	}
 
+	jobPayload, err := json.Marshal(messageBatchJobPayload{
+		MessageBatchUUID:       b.UUID,
+		MessageBatchExternalID: b.ExternalID,
+	})
+	if err != nil {
+		return MessageBatch{}, err
+	}
 	if _, err := namedExecContext(ctx, tx, `
 		insert into jobs (external_id, workspace_uuid, type, status, payload)
 		values (
@@ -213,15 +231,11 @@ func (d *DB) CreateMessageBatch(ctx context.Context, b MessageBatch, reqs []NewB
 			:workspace_uuid,
 			'message_batch_process',
 			'pending',
-			jsonb_build_object(
-				'message_batch_uuid', CAST(:message_batch_uuid AS text),
-				'message_batch_external_id', CAST(:message_batch_external_id AS text)
-			)
+			CAST(:payload AS jsonb)
 		)
 	`, map[string]any{
-		"workspace_uuid":            b.WorkspaceUUID,
-		"message_batch_uuid":        b.UUID,
-		"message_batch_external_id": b.ExternalID,
+		"workspace_uuid": dbUUID(b.WorkspaceUUID),
+		"payload":        jobPayload,
 	}); err != nil {
 		return MessageBatch{}, err
 	}
@@ -238,7 +252,7 @@ func (d *DB) GetMessageBatch(ctx context.Context, workspaceUUID, externalID stri
 			and mb.external_id = :external_id
 			and mb.deleted_at is null
 	`, map[string]any{
-		"workspace_uuid": workspaceUUID,
+		"workspace_uuid": dbUUID(workspaceUUID),
 		"external_id":    externalID,
 	})
 }
@@ -246,7 +260,7 @@ func (d *DB) GetMessageBatch(ctx context.Context, workspaceUUID, externalID stri
 func (d *DB) GetMessageBatchByUUID(ctx context.Context, batchUUID string) (MessageBatch, error) {
 	return getMessageBatchSQLX(ctx, d.sql, messageBatchSelectSQL()+`
 		where mb.uuid = :batch_uuid
-	`, map[string]any{"batch_uuid": batchUUID})
+	`, map[string]any{"batch_uuid": dbUUID(batchUUID)})
 }
 
 func (d *DB) ListMessageBatchesPage(ctx context.Context, params ListMessageBatchesPageParams) ([]MessageBatch, bool, error) {
@@ -258,7 +272,7 @@ func (d *DB) ListMessageBatchesPage(ctx context.Context, params ListMessageBatch
 	}
 
 	var cursor struct {
-		UUID      string    `db:"uuid"`
+		UUID      uuid.UUID `db:"uuid"`
 		CreatedAt time.Time `db:"created_at"`
 	}
 	if params.AfterID != "" || params.BeforeID != "" {
@@ -267,13 +281,13 @@ func (d *DB) ListMessageBatchesPage(ctx context.Context, params ListMessageBatch
 			cursorExternalID = params.BeforeID
 		}
 		err := namedGetContext(ctx, d.sql, &cursor, `
-			select CAST(uuid AS text) AS uuid, created_at
+			select uuid, created_at
 			from message_batches
 			where workspace_uuid = :workspace_uuid
 				and external_id = :external_id
 				and deleted_at is null
 		`, map[string]any{
-			"workspace_uuid": params.WorkspaceUUID,
+			"workspace_uuid": dbUUID(params.WorkspaceUUID),
 			"external_id":    cursorExternalID,
 		})
 		if errors.Is(err, sql.ErrNoRows) {
@@ -288,7 +302,7 @@ func (d *DB) ListMessageBatchesPage(ctx context.Context, params ListMessageBatch
 		where mb.workspace_uuid = :workspace_uuid and mb.deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_uuid": params.WorkspaceUUID,
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
 		"limit":          params.Limit + 1,
 	}
 	if params.AfterID != "" {
@@ -325,7 +339,7 @@ func (d *DB) ListMessageBatchesPage(ctx context.Context, params ListMessageBatch
 
 func (d *DB) CancelMessageBatch(ctx context.Context, workspaceUUID, externalID string) (MessageBatch, error) {
 	arguments := map[string]any{
-		"workspace_uuid": workspaceUUID,
+		"workspace_uuid": dbUUID(workspaceUUID),
 		"external_id":    externalID,
 	}
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
@@ -362,7 +376,7 @@ func (d *DB) CancelMessageBatch(ctx context.Context, workspaceUUID, externalID s
 
 func (d *DB) SoftDeleteMessageBatch(ctx context.Context, workspaceUUID, externalID string) error {
 	arguments := map[string]any{
-		"workspace_uuid": workspaceUUID,
+		"workspace_uuid": dbUUID(workspaceUUID),
 		"external_id":    externalID,
 	}
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
@@ -414,7 +428,7 @@ func (d *DB) FinalizeMessageBatch(ctx context.Context, batchUUID string, process
 			updated_at = now()
 		where uuid = :batch_uuid and processing_status in ('in_progress', 'canceling')
 	`, map[string]any{
-		"batch_uuid":         batchUUID,
+		"batch_uuid":         dbUUID(batchUUID),
 		"ended_at":           endedAt,
 		"processing_count":   processing,
 		"succeeded_count":    succeeded,
@@ -444,7 +458,7 @@ func (d *DB) FinalizePendingRequests(ctx context.Context, batchUUID, finalStatus
 			updated_at = now()
 		where message_batch_uuid = :message_batch_uuid and status = 'queued'
 	`, map[string]any{
-		"message_batch_uuid": batchUUID,
+		"message_batch_uuid": dbUUID(batchUUID),
 		"final_status":       finalStatus,
 		"result":             string(result),
 	})
@@ -462,7 +476,7 @@ func (d *DB) MarkStaleInFlightRequestsErrored(ctx context.Context, batchUUID str
 			and status = 'in_flight'
 			and started_at < :before
 	`, map[string]any{
-		"message_batch_uuid": batchUUID,
+		"message_batch_uuid": dbUUID(batchUUID),
 		"before":             before,
 		"result":             string(result),
 	})
@@ -485,7 +499,7 @@ func (d *DB) CountRequestsByStatus(ctx context.Context, batchUUID string) (proce
 			CAST(count(*) filter (where status = 'expired') AS int) AS expired
 		from message_batch_requests
 		where message_batch_uuid = :message_batch_uuid
-	`, map[string]any{"message_batch_uuid": batchUUID})
+	`, map[string]any{"message_batch_uuid": dbUUID(batchUUID)})
 	processing = counts.Processing
 	succeeded = counts.Succeeded
 	errored = counts.Errored
@@ -519,7 +533,7 @@ func (d *DB) GetMessageBatchRequestByIndex(ctx context.Context, batchUUID string
 	return getMessageBatchRequestSQLX(ctx, d.sql, messageBatchRequestSelectSQL()+`
 		where message_batch_uuid = :message_batch_uuid and request_index = :request_index
 	`, map[string]any{
-		"message_batch_uuid": batchUUID,
+		"message_batch_uuid": dbUUID(batchUUID),
 		"request_index":      index,
 	})
 }
@@ -529,7 +543,7 @@ func (d *DB) ListMessageBatchRequestsOrdered(ctx context.Context, batchUUID stri
 	err := namedSelectContext(ctx, d.sql, &rows, messageBatchRequestSelectSQL()+`
 		where message_batch_uuid = :message_batch_uuid
 		order by request_index
-	`, map[string]any{"message_batch_uuid": batchUUID})
+	`, map[string]any{"message_batch_uuid": dbUUID(batchUUID)})
 	if err != nil {
 		return nil, err
 	}
@@ -549,7 +563,7 @@ func (d *DB) ClaimMessageBatchRequest(ctx context.Context, requestUUID, workerID
 			updated_at = now()
 		where uuid = :request_uuid and status = 'queued'
 	`, map[string]any{
-		"request_uuid": requestUUID,
+		"request_uuid": dbUUID(requestUUID),
 		"worker_id":    workerID,
 		"started_at":   startedAt,
 	})
@@ -569,7 +583,7 @@ func (d *DB) CompleteMessageBatchRequest(ctx context.Context, requestUUID, statu
 			updated_at = now()
 		where uuid = :request_uuid and status = 'in_flight'
 	`, map[string]any{
-		"request_uuid":        requestUUID,
+		"request_uuid":        dbUUID(requestUUID),
 		"status":              status,
 		"result":              string(result),
 		"upstream_request_id": upstreamRequestID,
@@ -582,22 +596,25 @@ func (d *DB) CompleteMessageBatchRequest(ctx context.Context, requestUUID, statu
 }
 
 func (d *DB) EnqueueMessageBatchJob(ctx context.Context, workspaceUUID, batchUUID, batchExternalID string) error {
-	_, err := namedExecContext(ctx, d.sql, `
+	payload, err := json.Marshal(messageBatchJobPayload{
+		MessageBatchUUID:       batchUUID,
+		MessageBatchExternalID: batchExternalID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = namedExecContext(ctx, d.sql, `
 		insert into jobs (external_id, workspace_uuid, type, status, payload)
 		values (
 			concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
 			:workspace_uuid,
 			'message_batch_process',
 			'pending',
-			jsonb_build_object(
-				'message_batch_uuid', CAST(:message_batch_uuid AS text),
-				'message_batch_external_id', CAST(:message_batch_external_id AS text)
-			)
+			CAST(:payload AS jsonb)
 		)
 	`, map[string]any{
-		"workspace_uuid":            workspaceUUID,
-		"message_batch_uuid":        batchUUID,
-		"message_batch_external_id": batchExternalID,
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"payload":        payload,
 	})
 	return err
 }
@@ -646,8 +663,8 @@ const leaseMessageBatchJobsSQL = `
 			updated_at = now()
 		from next_jobs
 		where j.uuid = next_jobs.uuid
-		returning CAST(j.uuid AS text) AS uuid, j.external_id,
-			CAST(j.workspace_uuid AS text) AS workspace_uuid,
+		returning j.uuid, j.external_id,
+			j.workspace_uuid,
 			j.payload->>'message_batch_uuid' AS message_batch_uuid,
 			coalesce(j.payload->>'message_batch_external_id', '') AS message_batch_external_id,
 			j.attempts
@@ -666,7 +683,7 @@ func (d *DB) ExtendMessageBatchJobLease(ctx context.Context, jobUUID, workerID s
 			and status = 'running'
 			and locked_by = :worker_id
 	`, map[string]any{
-		"job_uuid":           jobUUID,
+		"job_uuid":           dbUUID(jobUUID),
 		"worker_id":          workerID,
 		"lease_microseconds": leaseDuration.Microseconds(),
 	})
@@ -687,7 +704,7 @@ func (d *DB) CompleteMessageBatchJob(ctx context.Context, jobUUID string) error 
 			locked_until = null,
 			updated_at = now()
 		where uuid = :job_uuid and type = 'message_batch_process'
-	`, map[string]any{"job_uuid": jobUUID})
+	`, map[string]any{"job_uuid": dbUUID(jobUUID)})
 	return err
 }
 
@@ -709,7 +726,7 @@ func (d *DB) FailMessageBatchJob(ctx context.Context, jobUUID string, attempts i
 			payload = payload || jsonb_build_object('last_error', CAST(:reason AS text))
 		where uuid = :job_uuid and type = 'message_batch_process'
 	`, map[string]any{
-		"job_uuid":  jobUUID,
+		"job_uuid":  dbUUID(jobUUID),
 		"status":    status,
 		"run_after": runAfter,
 		"reason":    reason,
@@ -720,9 +737,9 @@ func (d *DB) FailMessageBatchJob(ctx context.Context, jobUUID string, attempts i
 
 func messageBatchSelectSQL() string {
 	return `
-		select CAST(mb.uuid AS text) AS uuid, mb.external_id,
-			CAST(mb.workspace_uuid AS text) AS workspace_uuid,
-			CAST(mb.created_by_api_key_uuid AS text) AS created_by_api_key_uuid,
+		select mb.uuid, mb.external_id,
+			mb.workspace_uuid,
+			mb.created_by_api_key_uuid,
 			mb.api_variant, mb.anthropic_version, mb.beta_headers, mb.processing_status,
 			mb.request_count, mb.processing_count, mb.succeeded_count, mb.errored_count,
 			mb.canceled_count, mb.expired_count, mb.results_s3_bucket, mb.results_s3_key,
@@ -765,10 +782,10 @@ func (row messageBatchRow) batch() (MessageBatch, error) {
 		}
 	}
 	return MessageBatch{
-		UUID:                row.UUID,
+		UUID:                row.UUID.String(),
 		ExternalID:          row.ExternalID,
-		WorkspaceUUID:       row.WorkspaceUUID,
-		CreatedByAPIKeyUUID: row.CreatedByAPIKeyUUID,
+		WorkspaceUUID:       row.WorkspaceUUID.String(),
+		CreatedByAPIKeyUUID: row.CreatedByAPIKeyUUID.String(),
 		APIVariant:          row.APIVariant,
 		AnthropicVersion:    row.AnthropicVersion,
 		BetaHeaders:         betaHeaders,
@@ -806,9 +823,9 @@ const insertMessageBatchRequestSQL = `
 
 func messageBatchRequestSelectSQL() string {
 	return `
-		select CAST(uuid AS text) AS uuid,
-			CAST(workspace_uuid AS text) AS workspace_uuid,
-			CAST(message_batch_uuid AS text) AS message_batch_uuid,
+		select uuid,
+			workspace_uuid,
+			message_batch_uuid,
 			request_index, external_id, custom_id,
 			params, status, result, upstream_request_id, started_at, completed_at,
 			in_flight_worker_id, created_at, updated_at
@@ -830,9 +847,9 @@ func getMessageBatchRequestSQLX(ctx context.Context, database sqlxNamedQueryer, 
 
 func (row messageBatchRequestRow) request() MessageBatchRequest {
 	return MessageBatchRequest{
-		UUID:              row.UUID,
-		WorkspaceUUID:     row.WorkspaceUUID,
-		MessageBatchUUID:  row.MessageBatchUUID,
+		UUID:              row.UUID.String(),
+		WorkspaceUUID:     row.WorkspaceUUID.String(),
+		MessageBatchUUID:  row.MessageBatchUUID.String(),
 		RequestIndex:      row.RequestIndex,
 		ExternalID:        row.ExternalID,
 		CustomID:          row.CustomID,
@@ -850,9 +867,9 @@ func (row messageBatchRequestRow) request() MessageBatchRequest {
 
 func (row messageBatchJobRow) job() MessageBatchJob {
 	return MessageBatchJob{
-		UUID:                   row.UUID,
+		UUID:                   row.UUID.String(),
 		ExternalID:             row.ExternalID,
-		WorkspaceUUID:          row.WorkspaceUUID,
+		WorkspaceUUID:          row.WorkspaceUUID.String(),
 		MessageBatchUUID:       row.MessageBatchUUID,
 		MessageBatchExternalID: row.MessageBatchExternalID,
 		Attempts:               row.Attempts,

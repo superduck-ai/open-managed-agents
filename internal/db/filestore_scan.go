@@ -10,12 +10,12 @@ func filestoreFilesystemSelectSQL() string {
 }
 
 func filestoreFilesystemColumns() string {
-	return `cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(session_uuid as text) as session_uuid,
-		cast(code_session_uuid as text) as code_session_uuid,
-		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
+	return `uuid, external_id,
+		organization_uuid,
+		workspace_uuid,
+		session_uuid,
+		code_session_uuid,
+		created_by_api_key_uuid,
 		created_at, updated_at, deleted_at`
 }
 
@@ -24,18 +24,18 @@ func filestoreEntrySelectSQL() string {
 }
 
 func filestoreEntryColumns() string {
-	return `cast(uuid as text) as uuid, external_id,
-		cast(organization_uuid as text) as organization_uuid,
-		cast(workspace_uuid as text) as workspace_uuid,
-		cast(filesystem_uuid as text) as filesystem_uuid, kind, path, parent_path,
+	return `uuid, external_id,
+		organization_uuid,
+		workspace_uuid,
+		filesystem_uuid, kind, path, parent_path,
 		size_bytes, media_type, detected_mime_type, metadata, authorization_metadata,
 		cast(coalesce(to_jsonb(tags), cast('[]' as jsonb)) as text) as tags_json,
 		downloadable, md5, sha256, s3_bucket, s3_key, s3_etag, s3_version_id,
-		expires_at, managed_by, cast(managed_resource_uuid as text) as managed_resource_uuid,
-		cast(source_file_uuid as text) as source_file_uuid,
-		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid,
-		cast(created_by_session_uuid as text) as created_by_session_uuid,
-		cast(created_by_code_session_uuid as text) as created_by_code_session_uuid,
+		expires_at, managed_by, managed_resource_uuid,
+		source_file_uuid,
+		created_by_api_key_uuid,
+		created_by_session_uuid,
+		created_by_code_session_uuid,
 		created_at, updated_at, deleted_at`
 }
 

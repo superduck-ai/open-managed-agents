@@ -163,7 +163,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 					len(store.objects),
 				)
 			}
-			if _, lookupErr := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceUUID, session.ID); !errors.Is(lookupErr, db.ErrNotFound) {
+			if _, lookupErr := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceUUID.String(), session.ID); !errors.Is(lookupErr, db.ErrNotFound) {
 				t.Fatalf("code session existed before sandbox creation: %v", lookupErr)
 			}
 		},
@@ -177,7 +177,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatal("runner did not process queued session work")
 	}
 
-	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceUUID, session.ID)
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, apiKey.WorkspaceUUID.String(), session.ID)
 	if err != nil {
 		t.Fatalf("load local code session: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 		t.Fatalf("rclone config does not mount /uploads at the managed-agents root: %#v", rcloneConfig.Mounts)
 	}
 
-	stored, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID, session.ID)
+	stored, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
 	if err != nil {
 		t.Fatalf("load stored session: %v", err)
 	}

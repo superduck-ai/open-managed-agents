@@ -4,15 +4,17 @@ import (
 	"testing"
 )
 
-func TestBootstrapQueriesUseNamedParametersAndCasts(t *testing.T) {
+func TestBootstrapQueriesUseNamedTypedUUIDParameters(t *testing.T) {
 	query, arguments, err := bindNamed(postgresRebinder{}, `
 		select
-		cast(o.uuid as text) as uuid,
+		o.uuid,
 		coalesce(o.settings, CAST('{}' AS jsonb)) as settings
 	from organizations o
-	where o.uuid = CAST(:org_uuid AS uuid)
+	where o.uuid = :org_uuid
 	limit 1
-`, map[string]any{"org_uuid": "00000000-0000-0000-0000-000000000001"})
+`, map[string]any{
+		"org_uuid": dbUUID("00000000-0000-0000-0000-000000000001"),
+	})
 	if err != nil {
 		t.Fatalf("bindNamed() error = %v", err)
 	}
@@ -21,10 +23,10 @@ func TestBootstrapQueriesUseNamedParametersAndCasts(t *testing.T) {
 	}
 	wantQuery := `
 		select
-		cast(o.uuid as text) as uuid,
+		o.uuid,
 		coalesce(o.settings, CAST('{}' AS jsonb)) as settings
 	from organizations o
-	where o.uuid = CAST($1 AS uuid)
+	where o.uuid = $1
 	limit 1
 `
 	if query != wantQuery {

@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
@@ -42,10 +43,10 @@ type DB struct {
 }
 
 type APIKey struct {
-	UUID                string
+	UUID                uuid.UUID
 	ExternalID          string
-	OrganizationUUID    string
-	WorkspaceUUID       string
+	OrganizationUUID    uuid.UUID
+	WorkspaceUUID       uuid.UUID
 	WorkspaceExternalID string
 }
 
@@ -55,11 +56,11 @@ type foreignKeyRow struct {
 }
 
 type apiKeyRow struct {
-	UUID                string `db:"uuid"`
-	ExternalID          string `db:"external_id"`
-	OrganizationUUID    string `db:"organization_uuid"`
-	WorkspaceUUID       string `db:"workspace_uuid"`
-	WorkspaceExternalID string `db:"workspace_external_id"`
+	UUID                uuid.UUID `db:"uuid"`
+	ExternalID          string    `db:"external_id"`
+	OrganizationUUID    uuid.UUID `db:"organization_uuid"`
+	WorkspaceUUID       uuid.UUID `db:"workspace_uuid"`
+	WorkspaceExternalID string    `db:"workspace_external_id"`
 }
 
 const (
@@ -99,23 +100,23 @@ const (
 			where not exists (select 1 from existing)
 			returning uuid
 		)
-		select CAST(uuid AS text) from updated
+		select uuid from updated
 		union all
-		select CAST(uuid AS text) from inserted
+		select uuid from inserted
 		limit 1
 	`
 	seedOrganizationLockQuery = `select pg_advisory_xact_lock(704611533427849228)`
 	seedWorkspaceQuery        = `
 		insert into workspaces (external_id, organization_uuid, name)
-		values (:external_id, CAST(:organization_uuid AS uuid), :name)
+		values (:external_id, :organization_uuid, :name)
 		on conflict (external_id) do update set
 			organization_uuid = excluded.organization_uuid,
 			name = excluded.name
-		returning CAST(uuid AS text)
+		returning uuid
 	`
 	seedUserQuery = `
 		insert into users (external_id, organization_uuid, email, name, role)
-		values (:external_id, CAST(:organization_uuid AS uuid), :email, :name, 'admin')
+		values (:external_id, :organization_uuid, :email, :name, 'admin')
 		on conflict (external_id) do update set
 			organization_uuid = excluded.organization_uuid,
 			email = excluded.email,
@@ -123,7 +124,7 @@ const (
 			role = excluded.role,
 			deleted_at = null,
 			updated_at = now()
-		returning CAST(uuid AS text)
+		returning uuid
 	`
 	seedWorkspaceMemberQuery = `
 		insert into workspace_members (
@@ -131,8 +132,8 @@ const (
 			user_uuid, user_external_id, workspace_role
 		)
 		values (
-			:external_id, CAST(:organization_uuid AS uuid), CAST(:workspace_uuid AS uuid),
-			:workspace_external_id, CAST(:user_uuid AS uuid), :user_external_id, 'workspace_admin'
+			:external_id, :organization_uuid, :workspace_uuid,
+			:workspace_external_id, :user_uuid, :user_external_id, 'workspace_admin'
 		)
 		on conflict (external_id) do update set
 			organization_uuid = excluded.organization_uuid,
@@ -149,8 +150,8 @@ const (
 			external_id, workspace_uuid, key_hash, status, created_by_user_uuid, name, partial_key_hint
 		)
 		values (
-			:external_id, CAST(:workspace_uuid AS uuid), :key_hash, 'active',
-			CAST(:created_by_user_uuid AS uuid), :name, :partial_key_hint
+			:external_id, :workspace_uuid, :key_hash, 'active',
+			:created_by_user_uuid, :name, :partial_key_hint
 		)
 		on conflict (external_id) do update set
 			workspace_uuid = excluded.workspace_uuid,
@@ -162,9 +163,9 @@ const (
 			updated_at = now()
 	`
 	getAPIKeyQuery = `
-		select CAST(ak.uuid AS text) AS uuid, ak.external_id,
-			CAST(w.organization_uuid AS text) as organization_uuid,
-			CAST(w.uuid AS text) as workspace_uuid,
+		select ak.uuid, ak.external_id,
+			w.organization_uuid,
+			w.uuid as workspace_uuid,
 			w.external_id as workspace_external_id
 		from api_keys ak
 		join workspaces w on w.uuid = ak.workspace_uuid
@@ -498,14 +499,14 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 	if _, err := tx.ExecContext(ctx, seedOrganizationLockQuery); err != nil {
 		return err
 	}
-	var organizationUUID string
+	var organizationUUID uuid.UUID
 	if err := namedGetContext(ctx, tx, &organizationUUID, seedOrganizationQuery, map[string]any{
 		"workspace_external_id": "workspace_default",
 		"name":                  "default",
 	}); err != nil {
 		return err
 	}
-	var workspaceUUID string
+	var workspaceUUID uuid.UUID
 	if err := namedGetContext(ctx, tx, &workspaceUUID, seedWorkspaceQuery, map[string]any{
 		"external_id":       "workspace_default",
 		"organization_uuid": organizationUUID,
@@ -513,7 +514,7 @@ func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
 	}); err != nil {
 		return err
 	}
-	var userUUID string
+	var userUUID uuid.UUID
 	if err := namedGetContext(ctx, tx, &userUUID, seedUserQuery, map[string]any{
 		"external_id":       "user_default",
 		"organization_uuid": organizationUUID,

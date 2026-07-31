@@ -98,7 +98,7 @@ func TestSessionFileProjectionQueriesBindNamedArguments(t *testing.T) {
 				"created_at":              time.Unix(1, 0).UTC(),
 			},
 			wantClauses: []string{
-				"CAST($1 AS uuid)",
+				"values (\n\t\t\t$1,",
 				"on conflict (uuid) do update",
 				"deleted_at = null",
 			},
@@ -114,7 +114,7 @@ func TestSessionFileProjectionQueriesBindNamedArguments(t *testing.T) {
 			},
 			wantClauses: []string{
 				"workspace_uuid = $1",
-				"uuid = CAST($2 AS uuid)",
+				"uuid = $2",
 				"scope_type = $3",
 				"scope_id = $4",
 			},
@@ -144,7 +144,7 @@ func TestSessionFileProjectionQueriesBindNamedArguments(t *testing.T) {
 			wantClauses: []string{
 				"projection.workspace_uuid = $1",
 				"projection.scope_type = $2",
-				"projection.uuid = CAST($3 AS uuid)",
+				"projection.uuid = $3",
 			},
 		},
 		{

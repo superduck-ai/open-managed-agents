@@ -71,7 +71,7 @@ type PlatformAuthAPIKeyInput struct {
 const (
 	findPlatformAuthUserContextQuery = `
 		select u.external_id AS user_external_id,
-			CAST(u.organization_uuid AS text) AS org_uuid
+			u.organization_uuid AS org_uuid
 		from users u
 		where lower(u.email) = lower(:email)
 		  and u.deleted_at is null
@@ -86,11 +86,11 @@ const (
 		limit 1
 	`
 	resolvePlatformSessionIdentityQuery = `
-		select CAST(u.organization_uuid AS text) AS organization_uuid,
-			CAST(w.uuid AS text) AS workspace_uuid,
+		select u.organization_uuid AS organization_uuid,
+			w.uuid AS workspace_uuid,
 			w.external_id AS workspace_external_id,
-			CAST(u.uuid AS text) AS user_uuid, u.external_id AS user_external_id,
-			CAST(ak.uuid AS text) AS api_key_uuid,
+			u.uuid AS user_uuid, u.external_id AS user_external_id,
+			ak.uuid AS api_key_uuid,
 			ak.external_id AS api_key_external_id
 		from users u
 		join lateral (
@@ -112,12 +112,12 @@ const (
 				created_at asc, uuid asc
 			limit 1
 		) ak on true
-		where CAST(u.organization_uuid AS text) = :org_uuid
+		where u.organization_uuid = :org_uuid
 		  and u.deleted_at is null
 		  and (
-			u.external_id = :user_uuid
-			or CAST(u.uuid AS text) = :user_uuid
-			or 'user_' || left(replace(CAST(u.uuid AS text), '-', ''), 24) = :user_uuid
+			u.external_id = :user_id
+			or u.uuid = :user_uuid
+			or 'user_' || left(replace(CAST(u.uuid AS text), '-', ''), 24) = :user_id
 		  )
 		limit 1
 	`
@@ -164,7 +164,7 @@ func (tx PlatformAuthTx) FindUserContextByEmail(ctx context.Context, email strin
 	if err != nil {
 		return PlatformAuthUserContext{}, mapNoRows(err)
 	}
-	return PlatformAuthUserContext{UserExternalID: row.UserExternalID, OrgUUID: row.OrgUUID}, nil
+	return PlatformAuthUserContext{UserExternalID: row.UserExternalID, OrgUUID: row.OrgUUID.String()}, nil
 }
 
 func (tx PlatformAuthTx) UpdateEmptyUserName(ctx context.Context, userExternalID string, defaultName string) error {
@@ -186,58 +186,58 @@ func (tx PlatformAuthTx) InsertOrganization(ctx context.Context, input PlatformA
 	if err := namedGetContext(ctx, tx.tx, &row, `
 		insert into organizations (name)
 		values (:name)
-		returning CAST(uuid AS text) AS uuid
+		returning uuid
 	`, map[string]any{"name": input.Name}); err != nil {
 		return PlatformAuthOrganizationRef{}, err
 	}
-	return PlatformAuthOrganizationRef{UUID: row.UUID}, nil
+	return PlatformAuthOrganizationRef{UUID: row.UUID.String()}, nil
 }
 
 func (tx PlatformAuthTx) InsertUser(ctx context.Context, input PlatformAuthUserInput) (PlatformAuthUserRef, error) {
-	var out PlatformAuthUserRef
+	var out uuid.UUID
 	role := strings.TrimSpace(input.Role)
 	if role == "" {
 		role = "admin"
 	}
-	if err := namedGetContext(ctx, tx.tx, &out.UUID, `
+	if err := namedGetContext(ctx, tx.tx, &out, `
 		insert into users (uuid, external_id, organization_uuid, email, name, role)
 		values (
-			CAST(:uuid AS uuid), :external_id, CAST(:organization_uuid AS uuid),
+			:uuid, :external_id, :organization_uuid,
 			:email, :name, :role
 		)
-		returning CAST(uuid AS text)
+		returning uuid
 	`, map[string]any{
-		"uuid":              input.UUID,
+		"uuid":              dbUUID(input.UUID),
 		"external_id":       input.ExternalID,
-		"organization_uuid": input.OrganizationUUID,
+		"organization_uuid": dbUUID(input.OrganizationUUID),
 		"email":             input.Email,
 		"name":              input.Name,
 		"role":              role,
 	}); err != nil {
 		return PlatformAuthUserRef{}, err
 	}
-	return out, nil
+	return PlatformAuthUserRef{UUID: out.String()}, nil
 }
 
 func (tx PlatformAuthTx) InsertWorkspace(ctx context.Context, input PlatformAuthWorkspaceInput) (PlatformAuthWorkspaceRef, error) {
-	var out PlatformAuthWorkspaceRef
-	if err := namedGetContext(ctx, tx.tx, &out.UUID, `
+	var out uuid.UUID
+	if err := namedGetContext(ctx, tx.tx, &out, `
 		insert into workspaces (uuid, external_id, organization_uuid, name, compartment_id)
 		values (
-			CAST(:uuid AS uuid), :external_id, CAST(:organization_uuid AS uuid),
+			:uuid, :external_id, :organization_uuid,
 			:name, :compartment_id
 		)
-		returning CAST(uuid AS text)
+		returning uuid
 	`, map[string]any{
-		"uuid":              input.UUID,
+		"uuid":              dbUUID(input.UUID),
 		"external_id":       input.ExternalID,
-		"organization_uuid": input.OrganizationUUID,
+		"organization_uuid": dbUUID(input.OrganizationUUID),
 		"name":              input.Name,
 		"compartment_id":    input.CompartmentID,
 	}); err != nil {
 		return PlatformAuthWorkspaceRef{}, err
 	}
-	return out, nil
+	return PlatformAuthWorkspaceRef{UUID: out.String()}, nil
 }
 
 func (tx PlatformAuthTx) InsertWorkspaceMember(ctx context.Context, input PlatformAuthWorkspaceMemberInput) error {
@@ -251,15 +251,15 @@ func (tx PlatformAuthTx) InsertWorkspaceMember(ctx context.Context, input Platfo
 			user_uuid, user_external_id, workspace_role
 		)
 		values (
-			:external_id, CAST(:organization_uuid AS uuid), CAST(:workspace_uuid AS uuid),
-			:workspace_external_id, CAST(:user_uuid AS uuid), :user_external_id, :workspace_role
+			:external_id, :organization_uuid, :workspace_uuid,
+			:workspace_external_id, :user_uuid, :user_external_id, :workspace_role
 		)
 	`, map[string]any{
 		"external_id":           input.ExternalID,
-		"organization_uuid":     input.OrganizationUUID,
-		"workspace_uuid":        input.WorkspaceUUID,
+		"organization_uuid":     dbUUID(input.OrganizationUUID),
+		"workspace_uuid":        dbUUID(input.WorkspaceUUID),
 		"workspace_external_id": input.WorkspaceExternalID,
-		"user_uuid":             input.UserUUID,
+		"user_uuid":             dbUUID(input.UserUUID),
 		"user_external_id":      input.UserExternalID,
 		"workspace_role":        workspaceRole,
 	})
@@ -280,16 +280,16 @@ func (tx PlatformAuthTx) InsertAPIKey(ctx context.Context, input PlatformAuthAPI
 			external_id, workspace_uuid, key_hash, status, created_by_user_uuid, name, partial_key_hint
 		)
 		values (
-			:external_id, CAST(:workspace_uuid AS uuid), :key_hash, :status,
-			CAST(:created_by_user_uuid AS uuid),
+			:external_id, :workspace_uuid, :key_hash, :status,
+			:created_by_user_uuid,
 			:name, :partial_key_hint
 		)
 	`, map[string]any{
 		"external_id":          input.ExternalID,
-		"workspace_uuid":       input.WorkspaceUUID,
+		"workspace_uuid":       dbUUID(input.WorkspaceUUID),
 		"key_hash":             input.KeyHash,
 		"status":               status,
-		"created_by_user_uuid": input.CreatedByUserUUID,
+		"created_by_user_uuid": dbUUID(input.CreatedByUserUUID),
 		"name":                 name,
 		"partial_key_hint":     input.PartialKeyHint,
 	})
@@ -305,9 +305,15 @@ func (d *DB) ResolvePlatformSessionIdentity(ctx context.Context, input platforms
 	}
 
 	var row platformSessionIdentityRow
+	userID := strings.TrimSpace(input.UserUUID)
+	var userUUID any
+	if parsed, err := uuid.Parse(userID); err == nil && parsed != uuid.Nil {
+		userUUID = parsed
+	}
 	if err := namedGetContext(ctx, d.sql, &row, resolvePlatformSessionIdentityQuery, map[string]any{
-		"org_uuid":  strings.TrimSpace(input.OrgUUID),
-		"user_uuid": strings.TrimSpace(input.UserUUID),
+		"org_uuid":  dbUUID(strings.TrimSpace(input.OrgUUID)),
+		"user_id":   userID,
+		"user_uuid": userUUID,
 	}); err != nil {
 		return platformsession.Session{}, mapNoRows(err)
 	}
@@ -319,32 +325,32 @@ func (d *DB) ResolvePlatformSessionIdentity(ctx context.Context, input platforms
 }
 
 type platformAuthUserContextRow struct {
-	UserExternalID string `db:"user_external_id"`
-	OrgUUID        string `db:"org_uuid"`
+	UserExternalID string    `db:"user_external_id"`
+	OrgUUID        uuid.UUID `db:"org_uuid"`
 }
 
 type platformAuthOrganizationRefRow struct {
-	UUID string `db:"uuid"`
+	UUID uuid.UUID `db:"uuid"`
 }
 
 type platformSessionIdentityRow struct {
-	OrganizationUUID    string `db:"organization_uuid"`
-	WorkspaceUUID       string `db:"workspace_uuid"`
-	WorkspaceExternalID string `db:"workspace_external_id"`
-	UserUUID            string `db:"user_uuid"`
-	UserExternalID      string `db:"user_external_id"`
-	APIKeyUUID          string `db:"api_key_uuid"`
-	APIKeyExternalID    string `db:"api_key_external_id"`
+	OrganizationUUID    uuid.UUID `db:"organization_uuid"`
+	WorkspaceUUID       uuid.UUID `db:"workspace_uuid"`
+	WorkspaceExternalID string    `db:"workspace_external_id"`
+	UserUUID            uuid.UUID `db:"user_uuid"`
+	UserExternalID      string    `db:"user_external_id"`
+	APIKeyUUID          uuid.UUID `db:"api_key_uuid"`
+	APIKeyExternalID    string    `db:"api_key_external_id"`
 }
 
 func (r platformSessionIdentityRow) session() platformsession.Session {
 	return platformsession.Session{
-		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceUUID:       r.WorkspaceUUID,
+		OrganizationUUID:    r.OrganizationUUID.String(),
+		WorkspaceUUID:       r.WorkspaceUUID.String(),
 		WorkspaceExternalID: r.WorkspaceExternalID,
-		UserUUID:            r.UserUUID,
+		UserUUID:            r.UserUUID.String(),
 		UserExternalID:      r.UserExternalID,
-		APIKeyUUID:          r.APIKeyUUID,
+		APIKeyUUID:          r.APIKeyUUID.String(),
 		APIKeyExternalID:    r.APIKeyExternalID,
 	}
 }

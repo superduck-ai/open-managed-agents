@@ -35,15 +35,24 @@ func NewService(cfg config.Config, database *db.DB) *Service {
 	return &Service{cfg: cfg, db: database}
 }
 
+func principalOrganizationUUID(principal auth.Principal) (uuid.UUID, error) {
+	organizationUUID, err := uuid.Parse(strings.TrimSpace(principal.OrganizationUUID))
+	if err != nil || organizationUUID == uuid.Nil {
+		return uuid.Nil, db.ErrNotFound
+	}
+	return organizationUUID, nil
+}
+
 func (s *Service) GetCurrentOrganization(ctx context.Context, principal auth.Principal) (organizationResponse, error) {
-	if strings.TrimSpace(principal.OrganizationUUID) == "" {
+	organizationUUID, err := principalOrganizationUUID(principal)
+	if err != nil {
 		return organizationResponse{}, mapAdminDBError(db.ErrNotFound, "Organization not found")
 	}
-	org, err := s.db.GetAdminOrganization(ctx, principal.OrganizationUUID)
+	org, err := s.db.GetAdminOrganization(ctx, organizationUUID)
 	if err != nil {
 		return organizationResponse{}, mapAdminDBError(err, "Organization not found")
 	}
-	return organizationResponse{ID: org.UUID, Name: org.Name, Type: "organization"}, nil
+	return organizationResponse{ID: org.UUID.String(), Name: org.Name, Type: "organization"}, nil
 }
 
 func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, req createInviteRequest) (inviteResponse, error) {
@@ -59,9 +68,13 @@ func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, re
 		return inviteResponse{}, err
 	}
 	now := time.Now().UTC()
+	organizationUUID, err := principalOrganizationUUID(principal)
+	if err != nil {
+		return inviteResponse{}, mapAdminDBError(db.ErrNotFound, "Organization not found")
+	}
 	invite, err := s.db.CreateAdminInvite(ctx, db.AdminInvite{
 		ExternalID:       externalID,
-		OrganizationUUID: principal.OrganizationUUID,
+		OrganizationUUID: organizationUUID,
 		Email:            email,
 		Role:             req.Role,
 		Status:           "pending",
@@ -187,10 +200,14 @@ func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal,
 		return workspaceResponse{}, err
 	}
 	now := time.Now().UTC()
+	organizationUUID, err := principalOrganizationUUID(principal)
+	if err != nil {
+		return workspaceResponse{}, mapAdminDBError(db.ErrNotFound, "Organization not found")
+	}
 	record, err := s.db.CreateAdminWorkspace(ctx, db.AdminWorkspace{
-		UUID:             uuid.NewString(),
+		UUID:             uuid.New(),
 		ExternalID:       workspaceID,
-		OrganizationUUID: principal.OrganizationUUID,
+		OrganizationUUID: organizationUUID,
 		Name:             name,
 		CreatedAt:        now,
 		CompartmentID:    uuid.NewString(),
@@ -325,7 +342,7 @@ func (s *Service) CreateWorkspaceMember(ctx context.Context, principal auth.Prin
 	}
 	member, err := s.db.CreateAdminWorkspaceMember(ctx, db.AdminWorkspaceMember{
 		ExternalID:          memberID,
-		OrganizationUUID:    principal.OrganizationUUID,
+		OrganizationUUID:    workspace.OrganizationUUID,
 		WorkspaceUUID:       workspace.UUID,
 		WorkspaceExternalID: workspace.ExternalID,
 		UserUUID:            user.UUID,
@@ -354,7 +371,7 @@ func (s *Service) ListWorkspaceMembers(ctx context.Context, principal auth.Princ
 	}
 	records, hasMore, err := s.db.ListAdminWorkspaceMembersPage(ctx, db.ListAdminMembersParams{
 		OrganizationUUID: principal.OrganizationUUID,
-		WorkspaceUUID:    workspace.UUID,
+		WorkspaceUUID:    workspace.UUID.String(),
 		AfterID:          afterID,
 		BeforeID:         beforeID,
 		Limit:            limit,
@@ -464,9 +481,13 @@ func (s *Service) CreateExternalKey(ctx context.Context, principal auth.Principa
 		return externalKeyResponse{}, err
 	}
 	now := time.Now().UTC()
+	organizationUUID, err := principalOrganizationUUID(principal)
+	if err != nil {
+		return externalKeyResponse{}, mapAdminDBError(db.ErrNotFound, "Organization not found")
+	}
 	key, err := s.db.CreateAdminExternalKey(ctx, db.AdminExternalKey{
 		ExternalID:       externalID,
-		OrganizationUUID: principal.OrganizationUUID,
+		OrganizationUUID: organizationUUID,
 		DisplayName:      displayName,
 		Geo:              geo,
 		ProviderConfig:   providerConfig,
@@ -677,7 +698,7 @@ func (s *Service) CreateTunnelCertificate(ctx context.Context, principal auth.Pr
 	if tunnel.ArchivedAt != nil {
 		return tunnelCertificateResponse{}, conflict("Tunnel is archived")
 	}
-	count, err := s.db.CountActiveAdminTunnelCertificates(ctx, principal.OrganizationUUID, tunnel.UUID)
+	count, err := s.db.CountActiveAdminTunnelCertificates(ctx, principal.OrganizationUUID, tunnel.UUID.String())
 	if err != nil {
 		return tunnelCertificateResponse{}, err
 	}
@@ -694,7 +715,7 @@ func (s *Service) CreateTunnelCertificate(ctx context.Context, principal auth.Pr
 	}
 	cert, err := s.db.CreateAdminTunnelCertificate(ctx, db.AdminTunnelCertificate{
 		ExternalID:       certID,
-		OrganizationUUID: principal.OrganizationUUID,
+		OrganizationUUID: tunnel.OrganizationUUID,
 		TunnelUUID:       tunnel.UUID,
 		TunnelExternalID: tunnel.ExternalID,
 		CACertificatePEM: req.CACertificatePEM,
@@ -723,7 +744,7 @@ func (s *Service) ListTunnelCertificates(ctx context.Context, principal auth.Pri
 	}
 	records, hasMore, err := s.db.ListAdminTunnelCertificatesPage(ctx, db.ListAdminTunnelCertificatesParams{
 		OrganizationUUID: principal.OrganizationUUID,
-		TunnelUUID:       tunnel.UUID,
+		TunnelUUID:       tunnel.UUID.String(),
 		IncludeArchived:  includeArchived,
 		Limit:            limit,
 		Offset:           offset,

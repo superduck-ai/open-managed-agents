@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // MakeFilestoreDirectory 创建目录；MakeParents 为真时整条父链在同一事务内完成。
@@ -226,12 +228,12 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 			set deleted_at = :now, updated_at = :now
 				where workspace_uuid = :workspace_uuid
 					and filesystem_uuid = :filesystem_uuid
-					and uuid = CAST(:entry_uuid AS uuid)
+					and uuid = :entry_uuid
 					and deleted_at is null
 		`, map[string]any{
-			"workspace_uuid":  filesystem.WorkspaceUUID,
-			"filesystem_uuid": filesystem.UUID,
-			"entry_uuid":      destination.UUID,
+			"workspace_uuid":  dbUUID(filesystem.WorkspaceUUID),
+			"filesystem_uuid": dbUUID(filesystem.UUID),
+			"entry_uuid":      dbUUID(destination.UUID),
 			"now":             input.Now,
 		}); err != nil {
 			return FilestoreMutationResult{}, err
@@ -260,13 +262,13 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 			updated_at = :now
 			where workspace_uuid = :workspace_uuid
 				and filesystem_uuid = :filesystem_uuid
-				and uuid = CAST(:entry_uuid AS uuid)
+				and uuid = :entry_uuid
 				and deleted_at is null
 		returning `+filestoreEntryColumns()+`
 	`, map[string]any{
-		"workspace_uuid":          filesystem.WorkspaceUUID,
-		"filesystem_uuid":         filesystem.UUID,
-		"entry_uuid":              source.UUID,
+		"workspace_uuid":          dbUUID(filesystem.WorkspaceUUID),
+		"filesystem_uuid":         dbUUID(filesystem.UUID),
+		"entry_uuid":              dbUUID(source.UUID),
 		"destination_path":        input.DestinationPath,
 		"destination_parent_path": filestoreParentPath(input.DestinationPath),
 		"now":                     input.Now,
@@ -323,8 +325,8 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	var maxMovedPathBytes int
 	// 在批量更新前按字节预演最长目标路径，避免中途触发约束而留下难以解释的错误。
 	moveArguments := map[string]any{
-		"workspace_uuid":          filesystem.WorkspaceUUID,
-		"filesystem_uuid":         filesystem.UUID,
+		"workspace_uuid":          dbUUID(filesystem.WorkspaceUUID),
+		"filesystem_uuid":         dbUUID(filesystem.UUID),
 		"source_path":             input.SourcePath,
 		"destination_path":        input.DestinationPath,
 		"destination_parent_path": filestoreParentPath(input.DestinationPath),
@@ -350,9 +352,9 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 	if maxMovedPathBytes > filestoreMaxPathBytes {
 		return FilestoreMutationResult{}, ErrPreconditionFailed
 	}
-	var conflictingUUID string
+	var conflictingUUID uuid.UUID
 	err = namedGetContext(ctx, tx, &conflictingUUID, `
-		select CAST(uuid AS text)
+		select uuid
 		from filestore_entries
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
@@ -458,12 +460,12 @@ func (d *DB) RemoveFilestoreFile(ctx context.Context, input RemoveFilestoreEntry
 		set deleted_at = :now, updated_at = :now
 		where workspace_uuid = :workspace_uuid
 			and filesystem_uuid = :filesystem_uuid
-			and uuid = CAST(:entry_uuid AS uuid)
+			and uuid = :entry_uuid
 			and deleted_at is null
 	`, map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
-		"entry_uuid":      entry.UUID,
+		"workspace_uuid":  dbUUID(filesystem.WorkspaceUUID),
+		"filesystem_uuid": dbUUID(filesystem.UUID),
+		"entry_uuid":      dbUUID(entry.UUID),
 		"now":             input.Now,
 	}); err != nil {
 		return FilestoreMutationResult{}, err
@@ -513,8 +515,8 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 	}
 	var childCount int
 	entryArguments := map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
+		"workspace_uuid":  dbUUID(filesystem.WorkspaceUUID),
+		"filesystem_uuid": dbUUID(filesystem.UUID),
 		"entry_path":      input.Path,
 		"now":             input.Now,
 	}

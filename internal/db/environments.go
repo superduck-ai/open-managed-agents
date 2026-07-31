@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Environment struct {
@@ -147,7 +149,7 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 
 func (d *DB) UpdateEnvironment(ctx context.Context, workspaceUUID string, externalID string, next Environment) (Environment, error) {
 	arguments := environmentArguments(next)
-	arguments["workspace_uuid"] = workspaceUUID
+	arguments["workspace_uuid"] = dbUUID(workspaceUUID)
 	arguments["external_id"] = externalID
 	updated, err := getEnvironmentSQLX(ctx, d.sql, `
 		update environments
@@ -184,9 +186,9 @@ func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, extern
 	}
 	defer tx.Rollback()
 
-	var environmentUUID string
+	var environmentUUID uuid.UUID
 	err = namedGetContext(ctx, tx, &environmentUUID, `
-		select CAST(uuid AS text)
+		select uuid
 		from environments
 		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		for update
@@ -206,7 +208,10 @@ func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, extern
 			and environment_uuid = :environment_uuid
 			and deleted_at is null
 			and state <> 'stopped'
-	`, map[string]any{"workspace_uuid": workspaceUUID, "environment_uuid": environmentUUID}); err != nil {
+	`, map[string]any{
+		"workspace_uuid":   dbUUID(workspaceUUID),
+		"environment_uuid": environmentUUID,
+	}); err != nil {
 		return err
 	}
 	if activeWork > 0 {
@@ -217,9 +222,12 @@ func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, extern
 		set deleted_at = coalesce(deleted_at, now()),
 			updated_at = now()
 		where workspace_uuid = :workspace_uuid
-			and uuid = CAST(:environment_uuid AS uuid)
+			and uuid = :environment_uuid
 			and deleted_at is null
-	`, map[string]any{"workspace_uuid": workspaceUUID, "environment_uuid": environmentUUID}); err != nil {
+	`, map[string]any{
+		"workspace_uuid":   dbUUID(workspaceUUID),
+		"environment_uuid": environmentUUID,
+	}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -245,14 +253,17 @@ func listEnvironmentsQuery(params ListEnvironmentsPageParams) (string, map[strin
 	query := environmentSelectSQL() + `
 		where workspace_uuid = :workspace_uuid and deleted_at is null
 	`
-	arguments := map[string]any{"workspace_uuid": params.WorkspaceUUID, "limit": params.Limit + 1}
+	arguments := map[string]any{
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
+		"limit":          params.Limit + 1,
+	}
 	if !params.IncludeArchived {
 		query += " and archived_at is null"
 	}
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < :cursor_uuid))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by created_at desc, uuid desc limit :limit"
 	return query, arguments
@@ -277,9 +288,9 @@ func (d *DB) CreateEnvironmentKey(ctx context.Context, key EnvironmentKey, keyHa
 			status = 'active'
 	`, map[string]any{
 		"external_id":             key.ExternalID,
-		"organization_uuid":       key.OrganizationUUID,
-		"workspace_uuid":          key.WorkspaceUUID,
-		"environment_uuid":        key.EnvironmentUUID,
+		"organization_uuid":       dbUUID(key.OrganizationUUID),
+		"workspace_uuid":          dbUUID(key.WorkspaceUUID),
+		"environment_uuid":        dbUUID(key.EnvironmentUUID),
 		"environment_external_id": key.EnvironmentExternalID,
 		"key_hash":                keyHash,
 	})
@@ -295,11 +306,11 @@ func (d *DB) GetEnvironmentKey(ctx context.Context, keyHash string) (Environment
 			where key_hash = :key_hash and status = 'active'
 			returning uuid, external_id, organization_uuid, workspace_uuid, environment_uuid, environment_external_id
 		)
-		select CAST(updated.uuid AS text) AS uuid, updated.external_id,
-			CAST(updated.organization_uuid AS text) AS organization_uuid,
-			CAST(updated.workspace_uuid AS text) AS workspace_uuid,
+		select updated.uuid, updated.external_id,
+			updated.organization_uuid,
+			updated.workspace_uuid,
 			workspaces.external_id AS workspace_external_id,
-			CAST(updated.environment_uuid AS text) AS environment_uuid,
+			updated.environment_uuid,
 			updated.environment_external_id
 		from updated
 		join workspaces on workspaces.uuid = updated.workspace_uuid
@@ -337,7 +348,7 @@ func (d *DB) GetLatestEnvironmentWorkByData(ctx context.Context, workspaceUUID s
 		order by created_at desc, uuid desc
 		limit 1
 	`, map[string]any{
-		"workspace_uuid":          workspaceUUID,
+		"workspace_uuid":          dbUUID(workspaceUUID),
 		"environment_external_id": environmentExternalID,
 		"data_type":               dataType,
 		"data_id":                 dataID,
@@ -367,14 +378,14 @@ func listEnvironmentWorkQuery(params ListEnvironmentWorkPageParams) (string, map
 			and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_uuid":          params.WorkspaceUUID,
+		"workspace_uuid":          dbUUID(params.WorkspaceUUID),
 		"environment_external_id": params.EnvironmentExternalID,
 		"limit":                   params.Limit + 1,
 	}
 	if params.Cursor != nil {
-		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))"
+		query += " and (created_at < :cursor_created_at or (created_at = :cursor_created_at and uuid < :cursor_uuid))"
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by created_at desc, uuid desc limit :limit"
 	return query, arguments
@@ -402,7 +413,7 @@ func (d *DB) PollEnvironmentWork(ctx context.Context, workspaceUUID string, envi
 				and deleted_at is null
 			on conflict (environment_uuid, worker_id) do update set last_poll_at = excluded.last_poll_at
 		`, map[string]any{
-			"workspace_uuid":          workspaceUUID,
+			"workspace_uuid":          dbUUID(workspaceUUID),
 			"environment_external_id": environmentExternalID,
 			"worker_id":               workerID,
 		}); err != nil {
@@ -429,7 +440,7 @@ func (d *DB) PollEnvironmentWork(ctx context.Context, workspaceUUID string, envi
 		)
 		returning `+environmentWorkSQLXColumns+`
 	`, map[string]any{
-		"workspace_uuid":          workspaceUUID,
+		"workspace_uuid":          dbUUID(workspaceUUID),
 		"environment_external_id": environmentExternalID,
 		"worker_id":               nullableWorkerID(workerID),
 		"claim_expires_at":        time.Now().UTC().Add(claimFor),
@@ -494,9 +505,12 @@ func (d *DB) PollNextEnvironmentWorkForRunner(ctx context.Context, workerID stri
 func (d *DB) GetEnvironmentByUUID(ctx context.Context, workspaceUUID, environmentUUID string) (Environment, error) {
 	return getEnvironmentSQLX(ctx, d.sql, environmentSelectSQL()+`
 		where workspace_uuid = :workspace_uuid
-			and uuid = CAST(:environment_uuid AS uuid)
+			and uuid = :environment_uuid
 			and deleted_at is null
-	`, map[string]any{"workspace_uuid": workspaceUUID, "environment_uuid": environmentUUID})
+	`, map[string]any{
+		"workspace_uuid":   dbUUID(workspaceUUID),
+		"environment_uuid": dbUUID(environmentUUID),
+	})
 }
 
 func (d *DB) AckEnvironmentWork(ctx context.Context, workspaceUUID string, environmentExternalID, workExternalID string) (EnvironmentWork, error) {
@@ -573,7 +587,7 @@ func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceUUID string,
 	if nextState == "queued" || nextState == "starting" {
 		nextState = "active"
 	}
-	arguments["work_uuid"] = current.UUID
+	arguments["work_uuid"] = dbUUID(current.UUID)
 	arguments["state"] = nextState
 	arguments["ttl_seconds"] = ttlSeconds
 	updated, err := getEnvironmentWorkSQLX(ctx, tx, `
@@ -582,7 +596,7 @@ func (d *DB) HeartbeatEnvironmentWork(ctx context.Context, workspaceUUID string,
 			latest_heartbeat_at = now(),
 			heartbeat_ttl_seconds = :ttl_seconds,
 			updated_at = now()
-		where uuid = CAST(:work_uuid AS uuid)
+		where uuid = :work_uuid
 			and workspace_uuid = :workspace_uuid
 			and environment_external_id = :environment_external_id
 		returning `+environmentWorkSQLXColumns+`
@@ -643,7 +657,7 @@ func (d *DB) EnvironmentWorkStats(ctx context.Context, workspaceUUID string, env
 			and environment_external_id = :environment_external_id
 			and deleted_at is null
 	`, map[string]any{
-		"workspace_uuid":          workspaceUUID,
+		"workspace_uuid":          dbUUID(workspaceUUID),
 		"environment_external_id": environmentExternalID,
 	})
 	if err != nil {
@@ -687,7 +701,7 @@ func (d *DB) UpdateEnvironmentSandboxState(ctx context.Context, workspaceUUID st
 			updated_at = now()
 		where workspace_uuid = :workspace_uuid and external_id = :external_id
 	`, map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"external_id":         externalID,
 		"state":               state,
 		"provider_sandbox_id": providerSandboxID,
@@ -719,56 +733,56 @@ func (d *DB) GetRenewableEnvironmentSandboxForCodeSession(ctx context.Context, c
 	return getEnvironmentSandboxSQLX(ctx, d.sql, `
 		select `+environmentSandboxSQLXColumns+`
 		from environment_sandboxes
-		where id = (
-			select sandbox.id
+		where uuid = (
+			select sandbox.uuid
 			from code_sessions code_session
 			join environment_work work
-				on work.organization_id = code_session.organization_id
-				and work.workspace_id = code_session.workspace_id
-				and work.environment_id = code_session.environment_id
+				on work.organization_uuid = code_session.organization_uuid
+				and work.workspace_uuid = code_session.workspace_uuid
+				and work.environment_uuid = code_session.environment_uuid
 				and work.environment_external_id = code_session.environment_external_id
 				and work.data->>'type' = 'session'
 				and work.data->>'id' = code_session.session_external_id
 				and work.deleted_at is null
 			join environment_sandboxes sandbox
-				on sandbox.organization_id = code_session.organization_id
-				and sandbox.workspace_id = code_session.workspace_id
-				and sandbox.environment_id = code_session.environment_id
-				and sandbox.work_id = work.id
+				on sandbox.organization_uuid = code_session.organization_uuid
+				and sandbox.workspace_uuid = code_session.workspace_uuid
+				and sandbox.environment_uuid = code_session.environment_uuid
+				and sandbox.work_uuid = work.uuid
 				and sandbox.provider_sandbox_id is not null
 				and sandbox.state = 'running'
 			where code_session.external_id = :code_session_external_id
 				and code_session.status = 'active'
 				and code_session.worker_status = 'running'
 				and code_session.deleted_at is null
-			order by sandbox.created_at desc, sandbox.id desc
+			order by sandbox.created_at desc, sandbox.uuid desc
 			limit 1
 		)
 	`, map[string]any{"code_session_external_id": codeSessionExternalID})
 }
 
 const (
-	environmentSQLXColumns = `CAST(uuid AS text) AS uuid, external_id,
-		CAST(organization_uuid AS text) AS organization_uuid,
-		CAST(workspace_uuid AS text) AS workspace_uuid,
-		CAST(created_by_api_key_uuid AS text) AS created_by_api_key_uuid,
+	environmentSQLXColumns = `uuid, external_id,
+		organization_uuid,
+		workspace_uuid,
+		created_by_api_key_uuid,
 		name, description, config, metadata, scope,
 		provider, resolved_template, created_at, updated_at, archived_at, deleted_at`
-	environmentSandboxSQLXColumns = `CAST(uuid AS text) AS uuid, external_id,
-		CAST(organization_uuid AS text) AS organization_uuid,
-		CAST(workspace_uuid AS text) AS workspace_uuid,
-		CAST(environment_uuid AS text) AS environment_uuid,
-		environment_external_id, CAST(work_uuid AS text) AS work_uuid,
+	environmentSandboxSQLXColumns = `uuid, external_id,
+		organization_uuid,
+		workspace_uuid,
+		environment_uuid,
+		environment_external_id, work_uuid,
 		work_external_id, provider, template, provider_sandbox_id, state, metadata,
 		last_error, created_at, updated_at, stopped_at`
 )
 
 type environmentRow struct {
-	UUID                string     `db:"uuid"`
+	UUID                uuid.UUID  `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
-	OrganizationUUID    string     `db:"organization_uuid"`
-	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	OrganizationUUID    uuid.UUID  `db:"organization_uuid"`
+	WorkspaceUUID       uuid.UUID  `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID uuid.UUID  `db:"created_by_api_key_uuid"`
 	Name                string     `db:"name"`
 	Description         string     `db:"description"`
 	Config              []byte     `db:"config"`
@@ -783,13 +797,13 @@ type environmentRow struct {
 }
 
 type environmentKeyRow struct {
-	UUID                  string `db:"uuid"`
-	ExternalID            string `db:"external_id"`
-	OrganizationUUID      string `db:"organization_uuid"`
-	WorkspaceUUID         string `db:"workspace_uuid"`
-	WorkspaceExternalID   string `db:"workspace_external_id"`
-	EnvironmentUUID       string `db:"environment_uuid"`
-	EnvironmentExternalID string `db:"environment_external_id"`
+	UUID                  uuid.UUID `db:"uuid"`
+	ExternalID            string    `db:"external_id"`
+	OrganizationUUID      uuid.UUID `db:"organization_uuid"`
+	WorkspaceUUID         uuid.UUID `db:"workspace_uuid"`
+	WorkspaceExternalID   string    `db:"workspace_external_id"`
+	EnvironmentUUID       uuid.UUID `db:"environment_uuid"`
+	EnvironmentExternalID string    `db:"environment_external_id"`
 }
 
 type environmentWorkStatsRow struct {
@@ -800,23 +814,23 @@ type environmentWorkStatsRow struct {
 }
 
 type environmentSandboxRow struct {
-	UUID                  string     `db:"uuid"`
-	ExternalID            string     `db:"external_id"`
-	OrganizationUUID      string     `db:"organization_uuid"`
-	WorkspaceUUID         string     `db:"workspace_uuid"`
-	EnvironmentUUID       string     `db:"environment_uuid"`
-	EnvironmentExternalID string     `db:"environment_external_id"`
-	WorkUUID              *string    `db:"work_uuid"`
-	WorkExternalID        *string    `db:"work_external_id"`
-	Provider              string     `db:"provider"`
-	Template              string     `db:"template"`
-	ProviderSandboxID     *string    `db:"provider_sandbox_id"`
-	State                 string     `db:"state"`
-	Metadata              []byte     `db:"metadata"`
-	LastError             *string    `db:"last_error"`
-	CreatedAt             time.Time  `db:"created_at"`
-	UpdatedAt             time.Time  `db:"updated_at"`
-	StoppedAt             *time.Time `db:"stopped_at"`
+	UUID                  uuid.UUID     `db:"uuid"`
+	ExternalID            string        `db:"external_id"`
+	OrganizationUUID      uuid.UUID     `db:"organization_uuid"`
+	WorkspaceUUID         uuid.UUID     `db:"workspace_uuid"`
+	EnvironmentUUID       uuid.UUID     `db:"environment_uuid"`
+	EnvironmentExternalID string        `db:"environment_external_id"`
+	WorkUUID              uuid.NullUUID `db:"work_uuid"`
+	WorkExternalID        *string       `db:"work_external_id"`
+	Provider              string        `db:"provider"`
+	Template              string        `db:"template"`
+	ProviderSandboxID     *string       `db:"provider_sandbox_id"`
+	State                 string        `db:"state"`
+	Metadata              []byte        `db:"metadata"`
+	LastError             *string       `db:"last_error"`
+	CreatedAt             time.Time     `db:"created_at"`
+	UpdatedAt             time.Time     `db:"updated_at"`
+	StoppedAt             *time.Time    `db:"stopped_at"`
 }
 
 func environmentSelectSQL() string {
@@ -910,7 +924,10 @@ func getEnvironmentSandboxSQLX(
 }
 
 func environmentLookupArguments(workspaceUUID string, externalID string) map[string]any {
-	return map[string]any{"workspace_uuid": workspaceUUID, "external_id": externalID}
+	return map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"external_id":    externalID,
+	}
 }
 
 func environmentWorkLookupArguments(
@@ -919,7 +936,7 @@ func environmentWorkLookupArguments(
 	workExternalID string,
 ) map[string]any {
 	return map[string]any{
-		"workspace_uuid":          workspaceUUID,
+		"workspace_uuid":          dbUUID(workspaceUUID),
 		"environment_external_id": environmentExternalID,
 		"work_external_id":        workExternalID,
 	}
@@ -927,11 +944,11 @@ func environmentWorkLookupArguments(
 
 func environmentArguments(env Environment) map[string]any {
 	return map[string]any{
-		"uuid":                    env.UUID,
+		"uuid":                    dbUUID(env.UUID),
 		"external_id":             env.ExternalID,
-		"organization_uuid":       env.OrganizationUUID,
-		"workspace_uuid":          env.WorkspaceUUID,
-		"created_by_api_key_uuid": env.CreatedByAPIKeyUUID,
+		"organization_uuid":       dbUUID(env.OrganizationUUID),
+		"workspace_uuid":          dbUUID(env.WorkspaceUUID),
+		"created_by_api_key_uuid": dbUUID(env.CreatedByAPIKeyUUID),
 		"name":                    env.Name,
 		"description":             env.Description,
 		"config":                  jsonArg(env.Config),
@@ -946,13 +963,13 @@ func environmentArguments(env Environment) map[string]any {
 
 func environmentSandboxArguments(sandbox EnvironmentSandbox) map[string]any {
 	return map[string]any{
-		"uuid":                    sandbox.UUID,
+		"uuid":                    dbUUID(sandbox.UUID),
 		"external_id":             sandbox.ExternalID,
-		"organization_uuid":       sandbox.OrganizationUUID,
-		"workspace_uuid":          sandbox.WorkspaceUUID,
-		"environment_uuid":        sandbox.EnvironmentUUID,
+		"organization_uuid":       dbUUID(sandbox.OrganizationUUID),
+		"workspace_uuid":          dbUUID(sandbox.WorkspaceUUID),
+		"environment_uuid":        dbUUID(sandbox.EnvironmentUUID),
 		"environment_external_id": sandbox.EnvironmentExternalID,
-		"work_uuid":               sandbox.WorkUUID,
+		"work_uuid":               dbNullableUUID(sandbox.WorkUUID),
 		"work_external_id":        sandbox.WorkExternalID,
 		"provider":                sandbox.Provider,
 		"template":                sandbox.Template,
@@ -966,11 +983,11 @@ func environmentSandboxArguments(sandbox EnvironmentSandbox) map[string]any {
 
 func (r environmentRow) environment() Environment {
 	return Environment{
-		UUID:                r.UUID,
+		UUID:                r.UUID.String(),
 		ExternalID:          r.ExternalID,
-		OrganizationUUID:    r.OrganizationUUID,
-		WorkspaceUUID:       r.WorkspaceUUID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		OrganizationUUID:    r.OrganizationUUID.String(),
+		WorkspaceUUID:       r.WorkspaceUUID.String(),
+		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID.String(),
 		Name:                r.Name,
 		Description:         r.Description,
 		Config:              copyRaw(r.Config),
@@ -987,25 +1004,25 @@ func (r environmentRow) environment() Environment {
 
 func (r environmentKeyRow) key() EnvironmentKey {
 	return EnvironmentKey{
-		UUID:                  r.UUID,
+		UUID:                  r.UUID.String(),
 		ExternalID:            r.ExternalID,
-		OrganizationUUID:      r.OrganizationUUID,
-		WorkspaceUUID:         r.WorkspaceUUID,
+		OrganizationUUID:      r.OrganizationUUID.String(),
+		WorkspaceUUID:         r.WorkspaceUUID.String(),
 		WorkspaceExternalID:   r.WorkspaceExternalID,
-		EnvironmentUUID:       r.EnvironmentUUID,
+		EnvironmentUUID:       r.EnvironmentUUID.String(),
 		EnvironmentExternalID: r.EnvironmentExternalID,
 	}
 }
 
 func (r environmentSandboxRow) sandbox() EnvironmentSandbox {
 	return EnvironmentSandbox{
-		UUID:                  r.UUID,
+		UUID:                  r.UUID.String(),
 		ExternalID:            r.ExternalID,
-		OrganizationUUID:      r.OrganizationUUID,
-		WorkspaceUUID:         r.WorkspaceUUID,
-		EnvironmentUUID:       r.EnvironmentUUID,
+		OrganizationUUID:      r.OrganizationUUID.String(),
+		WorkspaceUUID:         r.WorkspaceUUID.String(),
+		EnvironmentUUID:       r.EnvironmentUUID.String(),
 		EnvironmentExternalID: r.EnvironmentExternalID,
-		WorkUUID:              r.WorkUUID,
+		WorkUUID:              nullableUUIDString(r.WorkUUID),
 		WorkExternalID:        r.WorkExternalID,
 		Provider:              r.Provider,
 		Template:              r.Template,

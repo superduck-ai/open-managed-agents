@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 )
 
@@ -56,7 +57,7 @@ const (
 	`
 	mcpToolCatalogColumns = `
 		id,
-		CAST(uuid AS text) AS uuid,
+		uuid,
 		external_id,
 		transport_type,
 		endpoint_url,
@@ -68,7 +69,7 @@ const (
 
 type mcpToolCatalogRow struct {
 	ID            int64     `db:"id"`
-	UUID          string    `db:"uuid"`
+	UUID          uuid.UUID `db:"uuid"`
 	ExternalID    string    `db:"external_id"`
 	TransportType string    `db:"transport_type"`
 	EndpointURL   string    `db:"endpoint_url"`
@@ -144,7 +145,7 @@ func (r mcpToolCatalogRow) catalog() (MCPToolCatalog, error) {
 	}
 	return MCPToolCatalog{
 		ID:            r.ID,
-		UUID:          r.UUID,
+		UUID:          r.UUID.String(),
 		ExternalID:    r.ExternalID,
 		TransportType: r.TransportType,
 		EndpointURL:   r.EndpointURL,

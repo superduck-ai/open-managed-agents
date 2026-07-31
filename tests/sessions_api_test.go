@@ -1645,7 +1645,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get api key: %v", err)
 	}
-	storedSession, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID, session.ID)
+	storedSession, err := app.db.GetSession(ctx, apiKey.WorkspaceUUID.String(), session.ID)
 	if err != nil {
 		t.Fatalf("get stored session: %v", err)
 	}

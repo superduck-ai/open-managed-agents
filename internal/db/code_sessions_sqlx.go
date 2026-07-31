@@ -6,16 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type codeSessionRow struct {
-	UUID                        string     `db:"uuid"`
+	UUID                        uuid.UUID  `db:"uuid"`
 	ExternalID                  string     `db:"external_id"`
-	OrganizationUUID            string     `db:"organization_uuid"`
-	WorkspaceUUID               string     `db:"workspace_uuid"`
-	SessionUUID                 string     `db:"session_uuid"`
+	OrganizationUUID            uuid.UUID  `db:"organization_uuid"`
+	WorkspaceUUID               uuid.UUID  `db:"workspace_uuid"`
+	SessionUUID                 uuid.UUID  `db:"session_uuid"`
 	SessionExternalID           string     `db:"session_external_id"`
-	EnvironmentUUID             string     `db:"environment_uuid"`
+	EnvironmentUUID             uuid.UUID  `db:"environment_uuid"`
 	EnvironmentExternalID       string     `db:"environment_external_id"`
 	WorkDir                     string     `db:"work_dir"`
 	PermissionMode              string     `db:"permission_mode"`
@@ -43,11 +45,11 @@ type codeSessionRow struct {
 }
 
 type codeSessionEventRow struct {
-	UUID                  string     `db:"uuid"`
+	UUID                  uuid.UUID  `db:"uuid"`
 	ExternalID            string     `db:"external_id"`
-	OrganizationUUID      string     `db:"organization_uuid"`
-	WorkspaceUUID         string     `db:"workspace_uuid"`
-	CodeSessionUUID       string     `db:"code_session_uuid"`
+	OrganizationUUID      uuid.UUID  `db:"organization_uuid"`
+	WorkspaceUUID         uuid.UUID  `db:"workspace_uuid"`
+	CodeSessionUUID       uuid.UUID  `db:"code_session_uuid"`
 	CodeSessionExternalID string     `db:"code_session_external_id"`
 	SequenceNum           int64      `db:"sequence_num"`
 	EventType             string     `db:"event_type"`
@@ -74,11 +76,11 @@ type codeSessionEventRow struct {
 }
 
 type codeSessionInternalEventRow struct {
-	UUID                  string     `db:"uuid"`
+	UUID                  uuid.UUID  `db:"uuid"`
 	ExternalID            string     `db:"external_id"`
-	OrganizationUUID      string     `db:"organization_uuid"`
-	WorkspaceUUID         string     `db:"workspace_uuid"`
-	CodeSessionUUID       string     `db:"code_session_uuid"`
+	OrganizationUUID      uuid.UUID  `db:"organization_uuid"`
+	WorkspaceUUID         uuid.UUID  `db:"workspace_uuid"`
+	CodeSessionUUID       uuid.UUID  `db:"code_session_uuid"`
 	CodeSessionExternalID string     `db:"code_session_external_id"`
 	SequenceNum           int64      `db:"sequence_num"`
 	EventType             string     `db:"event_type"`
@@ -95,29 +97,29 @@ type codeSessionInternalEventRow struct {
 }
 
 type codeSessionCredentialContextRow struct {
-	CodeSessionUUID         string `db:"code_session_uuid"`
-	CodeSessionExternalID   string `db:"code_session_external_id"`
-	OrganizationUUID        string `db:"organization_uuid"`
-	WorkspaceUUID           string `db:"workspace_uuid"`
-	WorkspaceExternalID     string `db:"workspace_external_id"`
-	PublicSessionUUID       string `db:"public_session_uuid"`
-	PublicSessionExternalID string `db:"public_session_external_id"`
-	AgentUUID               string `db:"agent_uuid"`
-	AgentExternalID         string `db:"agent_external_id"`
-	AgentVersion            int    `db:"agent_version"`
-	AccountEmail            string `db:"account_email"`
+	CodeSessionUUID         uuid.UUID `db:"code_session_uuid"`
+	CodeSessionExternalID   string    `db:"code_session_external_id"`
+	OrganizationUUID        uuid.UUID `db:"organization_uuid"`
+	WorkspaceUUID           uuid.UUID `db:"workspace_uuid"`
+	WorkspaceExternalID     string    `db:"workspace_external_id"`
+	PublicSessionUUID       uuid.UUID `db:"public_session_uuid"`
+	PublicSessionExternalID string    `db:"public_session_external_id"`
+	AgentUUID               uuid.UUID `db:"agent_uuid"`
+	AgentExternalID         string    `db:"agent_external_id"`
+	AgentVersion            int       `db:"agent_version"`
+	AccountEmail            string    `db:"account_email"`
 }
 
 type codeSessionNetworkPolicyContextRow struct {
-	OrganizationUUID      string `db:"organization_uuid"`
-	WorkspaceUUID         string `db:"workspace_uuid"`
-	EnvironmentExternalID string `db:"environment_external_id"`
-	EnvironmentConfig     []byte `db:"environment_config"`
-	AgentSnapshot         []byte `db:"agent_snapshot"`
+	OrganizationUUID      uuid.UUID `db:"organization_uuid"`
+	WorkspaceUUID         uuid.UUID `db:"workspace_uuid"`
+	EnvironmentExternalID string    `db:"environment_external_id"`
+	EnvironmentConfig     []byte    `db:"environment_config"`
+	AgentSnapshot         []byte    `db:"agent_snapshot"`
 }
 
 type codeSessionWorkerLeaseRow struct {
-	UUID                 string       `db:"uuid"`
+	UUID                 uuid.UUID    `db:"uuid"`
 	CurrentWorkerEpoch   int64        `db:"current_worker_epoch"`
 	WorkerLeaseExpiresAt sql.NullTime `db:"worker_lease_expires_at"`
 }
@@ -226,13 +228,13 @@ func (r codeSessionRow) session() CodeSession {
 		workerExternalMetadata = json.RawMessage(`{}`)
 	}
 	return CodeSession{
-		UUID:                        r.UUID,
+		UUID:                        r.UUID.String(),
 		ExternalID:                  r.ExternalID,
-		OrganizationUUID:            r.OrganizationUUID,
-		WorkspaceUUID:               r.WorkspaceUUID,
-		SessionUUID:                 r.SessionUUID,
+		OrganizationUUID:            r.OrganizationUUID.String(),
+		WorkspaceUUID:               r.WorkspaceUUID.String(),
+		SessionUUID:                 r.SessionUUID.String(),
 		SessionExternalID:           r.SessionExternalID,
-		EnvironmentUUID:             r.EnvironmentUUID,
+		EnvironmentUUID:             r.EnvironmentUUID.String(),
 		EnvironmentExternalID:       r.EnvironmentExternalID,
 		WorkDir:                     r.WorkDir,
 		PermissionMode:              r.PermissionMode,
@@ -262,11 +264,11 @@ func (r codeSessionRow) session() CodeSession {
 
 func (r codeSessionEventRow) event() CodeSessionEvent {
 	return CodeSessionEvent{
-		UUID:                  r.UUID,
+		UUID:                  r.UUID.String(),
 		ExternalID:            r.ExternalID,
-		OrganizationUUID:      r.OrganizationUUID,
-		WorkspaceUUID:         r.WorkspaceUUID,
-		CodeSessionUUID:       r.CodeSessionUUID,
+		OrganizationUUID:      r.OrganizationUUID.String(),
+		WorkspaceUUID:         r.WorkspaceUUID.String(),
+		CodeSessionUUID:       r.CodeSessionUUID.String(),
 		CodeSessionExternalID: r.CodeSessionExternalID,
 		SequenceNum:           r.SequenceNum,
 		EventType:             r.EventType,
@@ -295,11 +297,11 @@ func (r codeSessionEventRow) event() CodeSessionEvent {
 
 func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {
 	return CodeSessionInternalEvent{
-		UUID:                  r.UUID,
+		UUID:                  r.UUID.String(),
 		ExternalID:            r.ExternalID,
-		OrganizationUUID:      r.OrganizationUUID,
-		WorkspaceUUID:         r.WorkspaceUUID,
-		CodeSessionUUID:       r.CodeSessionUUID,
+		OrganizationUUID:      r.OrganizationUUID.String(),
+		WorkspaceUUID:         r.WorkspaceUUID.String(),
+		CodeSessionUUID:       r.CodeSessionUUID.String(),
 		CodeSessionExternalID: r.CodeSessionExternalID,
 		SequenceNum:           r.SequenceNum,
 		EventType:             r.EventType,
@@ -318,14 +320,14 @@ func (r codeSessionInternalEventRow) event() CodeSessionInternalEvent {
 
 func (r codeSessionCredentialContextRow) context() CodeSessionCredentialContext {
 	return CodeSessionCredentialContext{
-		CodeSessionUUID:         r.CodeSessionUUID,
+		CodeSessionUUID:         r.CodeSessionUUID.String(),
 		CodeSessionExternalID:   r.CodeSessionExternalID,
-		OrganizationUUID:        r.OrganizationUUID,
-		WorkspaceUUID:           r.WorkspaceUUID,
+		OrganizationUUID:        r.OrganizationUUID.String(),
+		WorkspaceUUID:           r.WorkspaceUUID.String(),
 		WorkspaceExternalID:     r.WorkspaceExternalID,
-		PublicSessionUUID:       r.PublicSessionUUID,
+		PublicSessionUUID:       r.PublicSessionUUID.String(),
 		PublicSessionExternalID: r.PublicSessionExternalID,
-		AgentUUID:               r.AgentUUID,
+		AgentUUID:               r.AgentUUID.String(),
 		AgentExternalID:         r.AgentExternalID,
 		AgentVersion:            r.AgentVersion,
 		AccountEmail:            r.AccountEmail,

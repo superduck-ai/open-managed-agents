@@ -27,17 +27,17 @@ func (d *DB) beginFilestoreNamespaceMutation(ctx context.Context, workspaceUUID,
 	// 即使目录操作通常不改变容量，也可能替换到期文件；统一锁序比事后升级锁更安全。
 	if _, err := namedExecContext(ctx, tx, `
 		select pg_advisory_xact_lock(hashtextextended(CAST(:workspace_uuid AS text), 0))
-	`, map[string]any{"workspace_uuid": workspaceUUID}); err != nil {
+	`, map[string]any{"workspace_uuid": dbUUID(workspaceUUID)}); err != nil {
 		return nil, FilestoreFilesystem{}, err
 	}
 	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and uuid = CAST(:filesystem_uuid AS uuid)
+		where workspace_uuid = :workspace_uuid
+			and uuid = :filesystem_uuid
 			and deleted_at is null
 		for update
 	`, map[string]any{
-		"workspace_uuid":  workspaceUUID,
-		"filesystem_uuid": filesystemUUID,
+		"workspace_uuid":  dbUUID(workspaceUUID),
+		"filesystem_uuid": dbUUID(filesystemUUID),
 	})
 	if err != nil {
 		return nil, FilestoreFilesystem{}, err
@@ -49,7 +49,7 @@ func (d *DB) beginFilestoreNamespaceMutation(ctx context.Context, workspaceUUID,
 				0
 			)
 		)
-	`, map[string]any{"filesystem_uuid": filesystem.UUID}); err != nil {
+	`, map[string]any{"filesystem_uuid": dbUUID(filesystem.UUID)}); err != nil {
 		return nil, FilestoreFilesystem{}, err
 	}
 	rollback = false
@@ -117,8 +117,8 @@ func getActiveFilestoreEntryForMutation(ctx context.Context, tx *sqlx.Tx, filesy
 
 func filestoreEntryMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
 	return map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
+		"workspace_uuid":  dbUUID(filesystem.WorkspaceUUID),
+		"filesystem_uuid": dbUUID(filesystem.UUID),
 		"entry_path":      entryPath,
 	}
 }
@@ -217,17 +217,17 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fil
 				created_at = :now, updated_at = :now
 			where workspace_uuid = :workspace_uuid
 				and filesystem_uuid = :filesystem_uuid
-				and uuid = CAST(:entry_uuid AS uuid)
+				and uuid = :entry_uuid
 				and deleted_at is null
 			returning `+filestoreEntryColumns()+`
 		`, map[string]any{
-			"workspace_uuid":               filesystem.WorkspaceUUID,
-			"filesystem_uuid":              filesystem.UUID,
-			"entry_uuid":                   existing.UUID,
+			"workspace_uuid":               dbUUID(filesystem.WorkspaceUUID),
+			"filesystem_uuid":              dbUUID(filesystem.UUID),
+			"entry_uuid":                   dbUUID(existing.UUID),
 			"parent_path":                  filestoreParentPath(directoryPath),
-			"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
-			"created_by_session_uuid":      filesystem.SessionUUID,
-			"created_by_code_session_uuid": filesystem.CodeSessionUUID,
+			"created_by_api_key_uuid":      dbNullableUUID(filesystem.CreatedByAPIKeyUUID),
+			"created_by_session_uuid":      dbUUID(filesystem.SessionUUID),
+			"created_by_code_session_uuid": dbNullableUUID(filesystem.CodeSessionUUID),
 			"now":                          now,
 		})
 		if err != nil {
@@ -258,14 +258,14 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fil
 		)
 		returning `+filestoreEntryColumns()+`
 	`, map[string]any{
-		"organization_uuid":            filesystem.OrganizationUUID,
-		"workspace_uuid":               filesystem.WorkspaceUUID,
-		"filesystem_uuid":              filesystem.UUID,
+		"organization_uuid":            dbUUID(filesystem.OrganizationUUID),
+		"workspace_uuid":               dbUUID(filesystem.WorkspaceUUID),
+		"filesystem_uuid":              dbUUID(filesystem.UUID),
 		"entry_path":                   directoryPath,
 		"parent_path":                  filestoreParentPath(directoryPath),
-		"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
-		"created_by_session_uuid":      filesystem.SessionUUID,
-		"created_by_code_session_uuid": filesystem.CodeSessionUUID,
+		"created_by_api_key_uuid":      dbNullableUUID(filesystem.CreatedByAPIKeyUUID),
+		"created_by_session_uuid":      dbUUID(filesystem.SessionUUID),
+		"created_by_code_session_uuid": dbNullableUUID(filesystem.CodeSessionUUID),
 		"now":                          now,
 	})
 }
@@ -340,7 +340,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, existing FilestoreEntry, found bool, input putFilestoreFileTxInput) (FilestoreEntry, error) {
 	arguments := filestoreFileWriteArguments(filesystem, input)
 	if found {
-		arguments["entry_uuid"] = existing.UUID
+		arguments["entry_uuid"] = dbUUID(existing.UUID)
 		return getFilestoreEntrySQLX(ctx, tx, `
 			update filestore_entries
 			set kind = 'file', path = :entry_path, parent_path = :parent_path,
@@ -359,7 +359,7 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 				created_at = :now, updated_at = :now
 			where workspace_uuid = :workspace_uuid
 				and filesystem_uuid = :filesystem_uuid
-				and uuid = CAST(:entry_uuid AS uuid)
+				and uuid = :entry_uuid
 				and deleted_at is null
 			returning `+filestoreEntryColumns()+`
 		`, arguments)
@@ -389,9 +389,9 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 
 func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilestoreFileTxInput) map[string]any {
 	return map[string]any{
-		"organization_uuid":            filesystem.OrganizationUUID,
-		"workspace_uuid":               filesystem.WorkspaceUUID,
-		"filesystem_uuid":              filesystem.UUID,
+		"organization_uuid":            dbUUID(filesystem.OrganizationUUID),
+		"workspace_uuid":               dbUUID(filesystem.WorkspaceUUID),
+		"filesystem_uuid":              dbUUID(filesystem.UUID),
 		"entry_path":                   input.Path,
 		"parent_path":                  filestoreParentPath(input.Path),
 		"size_bytes":                   input.Blob.SizeBytes,
@@ -408,9 +408,9 @@ func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilest
 		"s3_etag":                      filestoreNullableString(input.Blob.S3ETag),
 		"s3_version_id":                filestoreNullableString(input.Blob.S3VersionID),
 		"expires_at":                   input.Blob.ExpiresAt,
-		"created_by_api_key_uuid":      filesystem.CreatedByAPIKeyUUID,
-		"created_by_session_uuid":      filesystem.SessionUUID,
-		"created_by_code_session_uuid": filesystem.CodeSessionUUID,
+		"created_by_api_key_uuid":      dbNullableUUID(filesystem.CreatedByAPIKeyUUID),
+		"created_by_session_uuid":      dbUUID(filesystem.SessionUUID),
+		"created_by_code_session_uuid": dbNullableUUID(filesystem.CodeSessionUUID),
 		"now":                          input.Now,
 	}
 }

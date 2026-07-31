@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const skillDisplayTitleUniqueIndex = "skills_workspace_display_title_active_key"
@@ -42,10 +44,10 @@ type SkillVersion struct {
 }
 
 type skillRow struct {
-	UUID                string     `db:"uuid"`
+	UUID                uuid.UUID  `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
-	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	WorkspaceUUID       uuid.UUID  `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID uuid.UUID  `db:"created_by_api_key_uuid"`
 	DisplayTitle        *string    `db:"display_title"`
 	LatestVersion       *string    `db:"latest_version"`
 	Source              string     `db:"source"`
@@ -55,10 +57,10 @@ type skillRow struct {
 }
 
 type skillVersionRow struct {
-	UUID                string     `db:"uuid"`
+	UUID                uuid.UUID  `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
-	WorkspaceUUID       string     `db:"workspace_uuid"`
-	SkillUUID           string     `db:"skill_uuid"`
+	WorkspaceUUID       uuid.UUID  `db:"workspace_uuid"`
+	SkillUUID           uuid.UUID  `db:"skill_uuid"`
 	SkillExternalID     string     `db:"skill_external_id"`
 	Version             string     `db:"version"`
 	Name                string     `db:"name"`
@@ -68,7 +70,7 @@ type skillVersionRow struct {
 	S3Key               string     `db:"s3_key"`
 	SizeBytes           int64      `db:"size_bytes"`
 	SHA256              string     `db:"sha256"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID uuid.UUID  `db:"created_by_api_key_uuid"`
 	CreatedAt           time.Time  `db:"created_at"`
 	DeletedAt           *time.Time `db:"deleted_at"`
 }
@@ -109,11 +111,14 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 	err = namedGetContext(ctx, tx, &existingID, `
 		select external_id
 		from skills
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 			and display_title = :display_title
 			and deleted_at is null
-		limit 1
-	`, map[string]any{"workspace_uuid": skill.WorkspaceUUID, "display_title": *skill.DisplayTitle})
+			limit 1
+	`, map[string]any{
+		"workspace_uuid": dbUUID(skill.WorkspaceUUID),
+		"display_title":  *skill.DisplayTitle,
+	})
 	if err == nil {
 		return Skill{}, SkillVersion{}, &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
 	}
@@ -132,10 +137,10 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 		)
 		returning `+skillColumns()+`
 	`, map[string]any{
-		"uuid":                    skill.UUID,
+		"uuid":                    dbUUID(skill.UUID),
 		"external_id":             skill.ExternalID,
-		"workspace_uuid":          skill.WorkspaceUUID,
-		"created_by_api_key_uuid": skill.CreatedByAPIKeyUUID,
+		"workspace_uuid":          dbUUID(skill.WorkspaceUUID),
+		"created_by_api_key_uuid": dbUUID(skill.CreatedByAPIKeyUUID),
 		"display_title":           skill.DisplayTitle,
 		"latest_version":          version.Version,
 		"created_at":              skill.CreatedAt,
@@ -167,9 +172,12 @@ func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skill
 	defer tx.Rollback()
 
 	skill, err := getSkillSQLX(ctx, tx, skillSelectSQL()+`
-		where workspace_uuid = cast(:workspace_uuid as uuid) and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		for update
-	`, map[string]any{"workspace_uuid": workspaceUUID, "external_id": skillExternalID})
+	`, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"external_id":    skillExternalID,
+	})
 	if err != nil {
 		return Skill{}, SkillVersion{}, err
 	}
@@ -188,10 +196,10 @@ func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skill
 		update skills
 		set latest_version = :latest_version,
 			updated_at = :updated_at
-		where workspace_uuid = cast(:workspace_uuid as uuid) and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		returning `+skillColumns()+`
 	`, map[string]any{
-		"workspace_uuid": workspaceUUID,
+		"workspace_uuid": dbUUID(workspaceUUID),
 		"external_id":    skillExternalID,
 		"latest_version": createdVersion.Version,
 		"updated_at":     createdVersion.CreatedAt,
@@ -207,8 +215,11 @@ func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skill
 
 func (d *DB) GetSkill(ctx context.Context, workspaceUUID string, externalID string) (Skill, error) {
 	return getSkillSQLX(ctx, d.sql, skillSelectSQL()+`
-		where workspace_uuid = cast(:workspace_uuid as uuid) and external_id = :external_id and deleted_at is null
-	`, map[string]any{"workspace_uuid": workspaceUUID, "external_id": externalID})
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
+	`, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"external_id":    externalID,
+	})
 }
 
 func (d *DB) ListSkillsPage(ctx context.Context, params ListSkillsPageParams) ([]Skill, bool, error) {
@@ -219,11 +230,11 @@ func (d *DB) ListSkillsPage(ctx context.Context, params ListSkillsPageParams) ([
 		params.Offset = 0
 	}
 	skills, err := selectSkillsSQLX(ctx, d.sql, skillSelectSQL()+`
-		where workspace_uuid = cast(:workspace_uuid as uuid) and deleted_at is null
+		where workspace_uuid = :workspace_uuid and deleted_at is null
 		order by created_at desc, uuid desc
 		limit :limit offset :offset
 	`, map[string]any{
-		"workspace_uuid": params.WorkspaceUUID,
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
 		"limit":          params.Limit + 1,
 		"offset":         params.Offset,
 	})
@@ -239,12 +250,12 @@ func (d *DB) ListSkillsPage(ctx context.Context, params ListSkillsPageParams) ([
 
 func (d *DB) GetSkillVersion(ctx context.Context, workspaceUUID string, skillExternalID, version string) (SkillVersion, error) {
 	return getSkillVersionSQLX(ctx, d.sql, skillVersionSelectSQL()+`
-			where workspace_uuid = cast(:workspace_uuid as uuid)
+			where workspace_uuid = :workspace_uuid
 				and skill_external_id = :skill_external_id
 				and version = :version
 				and deleted_at is null
 		`, map[string]any{
-		"workspace_uuid":    workspaceUUID,
+		"workspace_uuid":    dbUUID(workspaceUUID),
 		"skill_external_id": skillExternalID,
 		"version":           version,
 	})
@@ -252,22 +263,25 @@ func (d *DB) GetSkillVersion(ctx context.Context, workspaceUUID string, skillExt
 
 func (d *DB) GetLatestSkillVersion(ctx context.Context, workspaceUUID string, skillExternalID string) (SkillVersion, error) {
 	return getSkillVersionSQLX(ctx, d.sql, `
-			select CAST(sv.uuid AS text) AS uuid, sv.external_id,
-				CAST(sv.workspace_uuid AS text) AS workspace_uuid, CAST(sv.skill_uuid AS text) AS skill_uuid,
+			select sv.uuid, sv.external_id,
+				sv.workspace_uuid, sv.skill_uuid,
 				sv.skill_external_id,
 				sv.version, sv.name, sv.description, sv.directory, sv.s3_bucket, sv.s3_key, sv.size_bytes, sv.sha256,
-				CAST(sv.created_by_api_key_uuid AS text) AS created_by_api_key_uuid, sv.created_at, sv.deleted_at
+				sv.created_by_api_key_uuid, sv.created_at, sv.deleted_at
 			from skills s
 			join skill_versions sv
 				on sv.skill_uuid = s.uuid
 				and sv.version = s.latest_version
 				and sv.deleted_at is null
-			where s.workspace_uuid = cast(:workspace_uuid as uuid)
+			where s.workspace_uuid = :workspace_uuid
 				and s.external_id = :skill_external_id
 				and s.deleted_at is null
 				and s.latest_version is not null
 				and s.latest_version <> ''
-		`, map[string]any{"workspace_uuid": workspaceUUID, "skill_external_id": skillExternalID})
+		`, map[string]any{
+		"workspace_uuid":    dbUUID(workspaceUUID),
+		"skill_external_id": skillExternalID,
+	})
 }
 
 func (d *DB) ListSkillVersionsPage(ctx context.Context, params ListSkillVersionsPageParams) ([]SkillVersion, bool, error) {
@@ -277,13 +291,13 @@ func (d *DB) ListSkillVersionsPage(ctx context.Context, params ListSkillVersions
 	if params.Offset < 0 {
 		params.Offset = 0
 	}
-	var skillUUID string
+	var skillUUID uuid.UUID
 	if err := namedGetContext(ctx, d.sql, &skillUUID, `
-		select cast(uuid as text)
+		select uuid
 		from skills
-		where workspace_uuid = cast(:workspace_uuid as uuid) and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 	`, map[string]any{
-		"workspace_uuid": params.WorkspaceUUID,
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
 		"external_id":    params.SkillExternalID,
 	}); errors.Is(err, sql.ErrNoRows) {
 		return nil, false, ErrNotFound
@@ -292,7 +306,7 @@ func (d *DB) ListSkillVersionsPage(ctx context.Context, params ListSkillVersions
 	}
 
 	versions, err := selectSkillVersionsSQLX(ctx, d.sql, skillVersionSelectSQL()+`
-		where skill_uuid = cast(:skill_uuid as uuid) and deleted_at is null
+		where skill_uuid = :skill_uuid and deleted_at is null
 		order by created_at desc, uuid desc
 		limit :limit offset :offset
 	`, map[string]any{"skill_uuid": skillUUID, "limit": params.Limit + 1, "offset": params.Offset})
@@ -314,17 +328,20 @@ func (d *DB) SoftDeleteSkill(ctx context.Context, workspaceUUID string, external
 	defer tx.Rollback()
 
 	skill, err := getSkillSQLX(ctx, tx, skillSelectSQL()+`
-		where workspace_uuid = cast(:workspace_uuid as uuid) and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		for update
-	`, map[string]any{"workspace_uuid": workspaceUUID, "external_id": externalID})
+	`, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"external_id":    externalID,
+	})
 	if err != nil {
 		return Skill{}, nil, err
 	}
 
 	versions, err := selectSkillVersionsSQLX(ctx, tx, skillVersionSelectSQL()+`
-		where skill_uuid = cast(:skill_uuid as uuid) and deleted_at is null
+		where skill_uuid = :skill_uuid and deleted_at is null
 		order by created_at desc, uuid desc
-	`, map[string]any{"skill_uuid": skill.UUID})
+	`, map[string]any{"skill_uuid": dbUUID(skill.UUID)})
 	if err != nil {
 		return Skill{}, nil, err
 	}
@@ -332,17 +349,17 @@ func (d *DB) SoftDeleteSkill(ctx context.Context, workspaceUUID string, external
 	if _, err := namedExecContext(ctx, tx, `
 		update skill_versions
 		set deleted_at = now()
-		where skill_uuid = cast(:skill_uuid as uuid) and deleted_at is null
-	`, map[string]any{"skill_uuid": skill.UUID}); err != nil {
+		where skill_uuid = :skill_uuid and deleted_at is null
+	`, map[string]any{"skill_uuid": dbUUID(skill.UUID)}); err != nil {
 		return Skill{}, nil, err
 	}
 	deletedSkill, err := getSkillSQLX(ctx, tx, `
 		update skills
 		set deleted_at = now(),
 			updated_at = now()
-		where uuid = cast(:skill_uuid as uuid) and deleted_at is null
+		where uuid = :skill_uuid and deleted_at is null
 		returning `+skillColumns()+`
-	`, map[string]any{"skill_uuid": skill.UUID})
+	`, map[string]any{"skill_uuid": dbUUID(skill.UUID)})
 	if err != nil {
 		return Skill{}, nil, err
 	}
@@ -360,9 +377,12 @@ func (d *DB) SoftDeleteSkillVersion(ctx context.Context, workspaceUUID string, s
 	defer tx.Rollback()
 
 	skill, err := getSkillSQLX(ctx, tx, skillSelectSQL()+`
-		where workspace_uuid = cast(:workspace_uuid as uuid) and external_id = :external_id and deleted_at is null
+		where workspace_uuid = :workspace_uuid and external_id = :external_id and deleted_at is null
 		for update
-	`, map[string]any{"workspace_uuid": workspaceUUID, "external_id": skillExternalID})
+	`, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"external_id":    skillExternalID,
+	})
 	if err != nil {
 		return SkillVersion{}, nil, err
 	}
@@ -370,9 +390,9 @@ func (d *DB) SoftDeleteSkillVersion(ctx context.Context, workspaceUUID string, s
 	deletedVersion, err := getSkillVersionSQLX(ctx, tx, `
 		update skill_versions
 		set deleted_at = now()
-		where skill_uuid = cast(:skill_uuid as uuid) and version = :version and deleted_at is null
+		where skill_uuid = :skill_uuid and version = :version and deleted_at is null
 		returning `+skillVersionColumns()+`
-	`, map[string]any{"skill_uuid": skill.UUID, "version": version})
+	`, map[string]any{"skill_uuid": dbUUID(skill.UUID), "version": version})
 	if err != nil {
 		return SkillVersion{}, nil, err
 	}
@@ -382,10 +402,10 @@ func (d *DB) SoftDeleteSkillVersion(ctx context.Context, workspaceUUID string, s
 	err = namedGetContext(ctx, tx, &latest, `
 		select version
 		from skill_versions
-		where skill_uuid = cast(:skill_uuid as uuid) and deleted_at is null
+		where skill_uuid = :skill_uuid and deleted_at is null
 		order by created_at desc, uuid desc
 		limit 1
-	`, map[string]any{"skill_uuid": skill.UUID})
+	`, map[string]any{"skill_uuid": dbUUID(skill.UUID)})
 	if errors.Is(err, sql.ErrNoRows) {
 		latestVersion = nil
 	} else if err != nil {
@@ -398,8 +418,11 @@ func (d *DB) SoftDeleteSkillVersion(ctx context.Context, workspaceUUID string, s
 		update skills
 		set latest_version = :latest_version,
 			updated_at = now()
-		where uuid = cast(:skill_uuid as uuid)
-	`, map[string]any{"skill_uuid": skill.UUID, "latest_version": latestVersion}); err != nil {
+		where uuid = :skill_uuid
+	`, map[string]any{
+		"skill_uuid":     dbUUID(skill.UUID),
+		"latest_version": latestVersion,
+	}); err != nil {
 		return SkillVersion{}, nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -419,17 +442,17 @@ const insertSkillVersionQuery = `
 			:name, :description, :directory, :s3_bucket, :s3_key, :size_bytes, :sha256,
 			:created_by_api_key_uuid, :created_at
 		)
-		returning ` + `CAST(uuid AS text) AS uuid, external_id,
-			CAST(workspace_uuid AS text) AS workspace_uuid, CAST(skill_uuid AS text) AS skill_uuid, skill_external_id,
+		returning ` + `uuid, external_id,
+			workspace_uuid, skill_uuid, skill_external_id,
 			version, name, description, directory, s3_bucket, s3_key, size_bytes, sha256,
-			CAST(created_by_api_key_uuid AS text) AS created_by_api_key_uuid, created_at, deleted_at`
+			created_by_api_key_uuid, created_at, deleted_at`
 
 func insertSkillVersion(ctx context.Context, database sqlxNamedQueryer, version SkillVersion) (SkillVersion, error) {
 	return getSkillVersionSQLX(ctx, database, insertSkillVersionQuery, map[string]any{
-		"uuid":                    version.UUID,
+		"uuid":                    dbUUID(version.UUID),
 		"external_id":             version.ExternalID,
-		"workspace_uuid":          version.WorkspaceUUID,
-		"skill_uuid":              version.SkillUUID,
+		"workspace_uuid":          dbUUID(version.WorkspaceUUID),
+		"skill_uuid":              dbUUID(version.SkillUUID),
 		"skill_external_id":       version.SkillExternalID,
 		"version":                 version.Version,
 		"name":                    version.Name,
@@ -439,7 +462,7 @@ func insertSkillVersion(ctx context.Context, database sqlxNamedQueryer, version 
 		"s3_key":                  version.S3Key,
 		"size_bytes":              version.SizeBytes,
 		"sha256":                  version.SHA256,
-		"created_by_api_key_uuid": version.CreatedByAPIKeyUUID,
+		"created_by_api_key_uuid": dbUUID(version.CreatedByAPIKeyUUID),
 		"created_at":              version.CreatedAt,
 	})
 }
@@ -453,16 +476,16 @@ func skillVersionSelectSQL() string {
 }
 
 func skillColumns() string {
-	return `CAST(uuid AS text) AS uuid, external_id, CAST(workspace_uuid AS text) AS workspace_uuid,
-		CAST(created_by_api_key_uuid AS text) AS created_by_api_key_uuid,
+	return `uuid, external_id, workspace_uuid,
+		created_by_api_key_uuid,
 		display_title, latest_version, source, created_at, updated_at, deleted_at`
 }
 
 func skillVersionColumns() string {
-	return `CAST(uuid AS text) AS uuid, external_id, CAST(workspace_uuid AS text) AS workspace_uuid,
-		CAST(skill_uuid AS text) AS skill_uuid, skill_external_id,
+	return `uuid, external_id, workspace_uuid,
+		skill_uuid, skill_external_id,
 		version, name, description, directory, s3_bucket, s3_key, size_bytes, sha256,
-		CAST(created_by_api_key_uuid AS text) AS created_by_api_key_uuid, created_at, deleted_at`
+		created_by_api_key_uuid, created_at, deleted_at`
 }
 
 func getSkillSQLX(ctx context.Context, database sqlxNamedQueryer, query string, arguments map[string]any) (Skill, error) {
@@ -511,10 +534,10 @@ func selectSkillVersionsSQLX(ctx context.Context, database sqlxNamedQueryer, que
 
 func (r skillRow) skill() Skill {
 	return Skill{
-		UUID:                r.UUID,
+		UUID:                r.UUID.String(),
 		ExternalID:          r.ExternalID,
-		WorkspaceUUID:       r.WorkspaceUUID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID:       r.WorkspaceUUID.String(),
+		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID.String(),
 		DisplayTitle:        r.DisplayTitle,
 		LatestVersion:       r.LatestVersion,
 		Source:              r.Source,
@@ -526,10 +549,10 @@ func (r skillRow) skill() Skill {
 
 func (r skillVersionRow) version() SkillVersion {
 	return SkillVersion{
-		UUID:                r.UUID,
+		UUID:                r.UUID.String(),
 		ExternalID:          r.ExternalID,
-		WorkspaceUUID:       r.WorkspaceUUID,
-		SkillUUID:           r.SkillUUID,
+		WorkspaceUUID:       r.WorkspaceUUID.String(),
+		SkillUUID:           r.SkillUUID.String(),
 		SkillExternalID:     r.SkillExternalID,
 		Version:             r.Version,
 		Name:                r.Name,
@@ -539,7 +562,7 @@ func (r skillVersionRow) version() SkillVersion {
 		S3Key:               r.S3Key,
 		SizeBytes:           r.SizeBytes,
 		SHA256:              r.SHA256,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID.String(),
 		CreatedAt:           r.CreatedAt,
 		DeletedAt:           r.DeletedAt,
 	}

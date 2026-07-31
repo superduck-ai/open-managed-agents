@@ -71,8 +71,8 @@ func (d *DB) GetFileByUUIDInOrganization(ctx context.Context, organizationUUID s
 		d.sql,
 		getFileByUUIDInOrganizationQuery,
 		map[string]any{
-			"organization_uuid": organizationUUID,
-			"file_uuid":         fileUUID,
+			"organization_uuid": dbUUID(organizationUUID),
+			"file_uuid":         dbUUID(fileUUID),
 		},
 	)
 }

@@ -175,6 +175,7 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			arguments: map[string]any{
 				"workspace_uuid":  "00000000-0000-0000-0000-000000000002",
 				"filesystem_uuid": "00000000-0000-0000-0000-000000000004",
+				"payload":         []byte(`{"filesystem_uuid":"00000000-0000-0000-0000-000000000004"}`),
 				"job_type":        filestoreFilesystemCleanupJobType,
 				"run_after":       now,
 			},

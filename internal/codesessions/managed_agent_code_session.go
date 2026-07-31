@@ -171,7 +171,7 @@ func (s *Service) activateManagedAgentCodeSession(
 			return err
 		}
 		inputs := append(historyInputs, queueInputs...)
-		activated, err := s.db.ActivateManagedAgentCodeSessionWithQueue(
+		activated, err := s.ActivateManagedAgentCodeSessionWithQueue(
 			ctx,
 			codeSession,
 			items,
@@ -184,6 +184,77 @@ func (s *Service) activateManagedAgentCodeSession(
 			return nil
 		}
 	}
+}
+
+// ActivateManagedAgentCodeSessionWithQueue atomically writes startup inputs,
+// clears the matched queue snapshot, and activates the Code Session. The
+// service owns the cross-resource ordering; each transaction method owns only
+// its resource SQL.
+func (s *Service) ActivateManagedAgentCodeSessionWithQueue(
+	ctx context.Context,
+	codeSession db.CodeSession,
+	items []db.SessionEventQueueItem,
+	inputs []db.AppendCodeSessionEventInput,
+) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, db.ErrNotFound
+	}
+	activated := false
+	err := s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
+		session, err := tx.LockSessionForEvents(
+			ctx,
+			codeSession.WorkspaceUUID,
+			codeSession.SessionExternalID,
+		)
+		if err != nil {
+			return err
+		}
+		current, err := tx.LockInitializingCodeSession(ctx, codeSession.UUID)
+		if err != nil {
+			return err
+		}
+		if !lo.EveryBy(items, func(item db.SessionEventQueueItem) bool {
+			return item.Event.EventType == "user.message"
+		}) {
+			return db.ErrInvalidState
+		}
+		matches, err := tx.SessionEventQueueMatches(ctx, session, items)
+		if err != nil || !matches {
+			return err
+		}
+		for _, input := range inputs {
+			inserted, duplicate, err := tx.AppendCodeSessionInboundEvent(ctx, current, input)
+			if err != nil {
+				return err
+			}
+			if duplicate && inserted.CodeSessionExternalID != current.ExternalID {
+				return db.ErrInvalidState
+			}
+			if !duplicate {
+				current.LastInboundSequenceNum = inserted.SequenceNum
+			}
+		}
+		deleted, err := tx.DeleteSessionEventQueue(ctx, session.UUID)
+		if err != nil {
+			return err
+		}
+		if deleted != int64(len(items)) {
+			return db.ErrPreconditionFailed
+		}
+		updated, err := tx.ActivateCodeSession(ctx, current.UUID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return db.ErrInvalidState
+		}
+		activated = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return activated, nil
 }
 
 func (s *Service) listSessionEventsAscending(ctx context.Context, session db.Session) ([]db.SessionEvent, error) {

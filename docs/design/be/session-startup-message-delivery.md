@@ -195,7 +195,7 @@ normalization 阶段写库。
 2. 拒绝 archived Session；
 3. batch 包含 `user.message` 时判断启动窗口；
 4. 启动窗口只允许 batch 恰好包含一条 `user.message`；
-5. queue 已有任何 row 时返回 `ErrSessionStartupMessageConflict`；
+5. queue 已有任何 row 时返回 `SessionStartupMessageConflictError`；
 6. 写入 `session_events`；
 7. 启动窗口内再写入对应 queue row；
 8. 有 outcome 变化时在同一事务更新；
@@ -272,7 +272,9 @@ queue 仍是启动空窗责任与 cutover 匹配的唯一来源；历史注入�
 
 ### 阶段二：一个事务完成全部交接
 
-`ActivateManagedAgentCodeSessionWithQueue` 固定执行：
+`Service.ActivateManagedAgentCodeSessionWithQueue` 通过
+`DB.WithManagedAgentActivationTx` 定义事务边界并固定执行以下顺序；DB 的事务对象只暴露
+Session、queue 和 Code Session 各自的 SQL 操作，不编排跨资源业务流程：
 
 ```text
 锁 Session
@@ -398,7 +400,7 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | queue 写入 | `enqueueSessionEventsSQLXTx` |
 | queue 快照及 ownership 加载 | `DB.ListSessionEventQueueItems` |
 | Code Session 创建和消费循环 | `Service.CreateManagedAgentCodeSession`、`activateManagedAgentCodeSession` |
-| 完整 queue 原子交接与激活 | `DB.ActivateManagedAgentCodeSessionWithQueue` |
+| 完整 queue 原子交接与激活 | `Service.ActivateManagedAgentCodeSessionWithQueue`、`DB.WithManagedAgentActivationTx` |
 | Deployment initial events 入队 | `DB.CreateManualDeploymentRun` |
 | active 当前 batch 投递 | `Service.QueuePublicSessionEvents` |
 

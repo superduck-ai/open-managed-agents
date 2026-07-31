@@ -135,7 +135,7 @@ const (
 	`
 	deleteSessionEventQueueQuery = `
 		delete from session_event_queue q
-		where q.session_uuid = CAST(:session_uuid AS uuid)
+		where q.session_uuid = :session_uuid
 	`
 	stopDeletedSessionEnvironmentWorkQuery = `
 		update environment_work
@@ -351,6 +351,19 @@ func sessionLookupArguments(workspaceUUID string, sessionExternalID string) map[
 		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": sessionExternalID,
 	}
+}
+
+func (tx ManagedAgentActivationTx) LockSessionForEvents(
+	ctx context.Context,
+	workspaceUUID string,
+	sessionExternalID string,
+) (Session, error) {
+	return getSessionSQLX(
+		ctx,
+		tx.tx,
+		lockSessionForEventsQuery,
+		sessionLookupArguments(workspaceUUID, sessionExternalID),
+	)
 }
 
 func getSessionSQLX(

@@ -722,6 +722,7 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	if err != nil {
 		t.Fatalf("load initializing code session: %v", err)
 	}
+	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
 
 	accepted := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"must be delivered before activation"}]}]}`, defaultTestKey)
 	if len(accepted.Data) != 1 {
@@ -729,7 +730,7 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	}
 	acceptedEventID := sessionEventStringField(t, accepted.Data[0], "id")
 
-	activated, err := app.db.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, staleItems, nil)
+	activated, err := codeSessionService.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, staleItems, nil)
 	if err != nil {
 		t.Fatalf("reject stale activation queue snapshot: %v", err)
 	}
@@ -744,7 +745,7 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 		t.Fatalf("Session event queue items = %#v, want one", items)
 	}
 
-	activated, err = app.db.ActivateManagedAgentCodeSessionWithQueue(
+	activated, err = codeSessionService.ActivateManagedAgentCodeSessionWithQueue(
 		ctx,
 		codeSession,
 		items,
@@ -835,6 +836,7 @@ func TestSessionEventQueueDeliveryRollsBackOnInboundFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load rollback Code Session: %v", err)
 	}
+	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
 	items, err := app.db.ListSessionEventQueueItems(ctx, session)
 	if err != nil {
 		t.Fatalf("load rollback queue items: %v", err)
@@ -846,7 +848,7 @@ func TestSessionEventQueueDeliveryRollsBackOnInboundFailure(t *testing.T) {
 	if err != nil || len(before) != 1 {
 		t.Fatalf("rollback inbound before delivery = (%#v, %v), want initialize", before, err)
 	}
-	activated, err := app.db.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, items, []db.AppendCodeSessionEventInput{{
+	activated, err := codeSessionService.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, items, []db.AppendCodeSessionEventInput{{
 		ExternalID:     before[0].ExternalID,
 		EventType:      "user",
 		EventSubtype:   "message",

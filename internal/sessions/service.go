@@ -620,10 +620,6 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 		events,
 		outcomeEvaluations,
 	)
-	if errors.Is(err, db.ErrSessionStartupMessageConflict) {
-		writeStartupMessageConflict(w, r)
-		return
-	}
 	if err != nil {
 		h.writeSendEventsPersistenceError(w, r, err, sessionID)
 		return
@@ -658,7 +654,13 @@ func (h *Handler) writeSendEventsPersistenceError(
 	err error,
 	sessionID string,
 ) {
-	if errors.Is(err, db.ErrInvalidState) {
+	var startupConflict *db.SessionStartupMessageConflictError
+	if errors.As(err, &startupConflict) {
+		writeStartupMessageConflict(w, r)
+		return
+	}
+	var archived *db.SessionArchivedError
+	if errors.As(err, &archived) {
 		writeBadRequest(w, r, errors.New("archived sessions do not accept new events"))
 		return
 	}

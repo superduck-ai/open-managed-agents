@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/samber/lo"
 )
 
 type CodeSession struct {
@@ -279,112 +278,49 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 	})
 }
 
-// ActivateManagedAgentCodeSessionWithQueue writes inbound inputs (typically
-// historical public events plus startup-queue messages), clears the matched
-// startup queue snapshot, and activates the Code Session under the Session lock.
-// items is only the queue snapshot used for match/clear; inputs may be longer.
-func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
+func (tx ManagedAgentActivationTx) LockInitializingCodeSession(
 	ctx context.Context,
-	codeSession CodeSession,
-	items []SessionEventQueueItem,
-	inputs []AppendCodeSessionEventInput,
-) (bool, error) {
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-
-	session, err := getSessionSQLX(
-		ctx,
-		tx,
-		lockSessionForEventsQuery,
-		sessionLookupArguments(codeSession.WorkspaceUUID, codeSession.SessionExternalID),
-	)
-	if err != nil {
-		return false, err
-	}
-	current, err := getCodeSessionSQLX(ctx, tx, `
+	codeSessionUUID string,
+) (CodeSession, error) {
+	return getCodeSessionSQLX(ctx, tx.tx, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where uuid = CAST(:uuid AS uuid)
+		where uuid = :uuid
 			and status = 'initializing'
 			and deleted_at is null
 		for update
 	`, map[string]any{
-		"uuid": codeSession.UUID,
+		"uuid": dbUUID(codeSessionUUID),
 	})
-	if err != nil {
-		return false, err
-	}
-	// Ownership is enforced by ListSessionEventQueueItems; activation only
-	// re-checks event type and that the locked queue still matches the snapshot.
-	if !lo.EveryBy(items, func(item SessionEventQueueItem) bool {
-		return item.Event.EventType == "user.message"
-	}) {
-		return false, ErrInvalidState
-	}
-	queueRows, err := listSessionEventQueueIdentityRows(ctx, tx, session, true)
-	if err != nil {
-		return false, err
-	}
-	if !sessionEventQueueItemsMatch(queueRows, items) {
-		return false, nil
-	}
+}
 
-	for _, input := range inputs {
-		inserted, duplicate, err := d.appendCodeSessionEventSQLXTx(ctx, tx, current, "inbound", input)
-		if err != nil {
-			return false, err
-		}
-		if duplicate && inserted.CodeSessionExternalID != current.ExternalID {
-			return false, ErrInvalidState
-		}
-		if !duplicate {
-			current.LastInboundSequenceNum = inserted.SequenceNum
-		}
-	}
-	deletedResult, err := namedExecContext(ctx, tx, `
-		delete from session_event_queue
-		where session_uuid = CAST(:session_uuid AS uuid)
-	`, map[string]any{
-		"session_uuid": session.UUID,
-	})
-	if err != nil {
-		return false, err
-	}
-	deleted, err := deletedResult.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if deleted != int64(len(items)) {
-		return false, ErrPreconditionFailed
-	}
+func (tx ManagedAgentActivationTx) AppendCodeSessionInboundEvent(
+	ctx context.Context,
+	codeSession CodeSession,
+	input AppendCodeSessionEventInput,
+) (CodeSessionEvent, bool, error) {
+	return tx.database.appendCodeSessionEventSQLXTx(ctx, tx.tx, codeSession, "inbound", input)
+}
 
-	result, err := namedExecContext(ctx, tx, `
+func (tx ManagedAgentActivationTx) ActivateCodeSession(
+	ctx context.Context,
+	codeSessionUUID string,
+	now time.Time,
+) (bool, error) {
+	updated, err := namedExecRowsAffected(ctx, tx.tx, `
 		update code_sessions
 		set status = 'active', updated_at = :now
-		where uuid = CAST(:uuid AS uuid)
+		where uuid = :uuid
 			and status = 'initializing'
 			and deleted_at is null
 	`, map[string]any{
-		"uuid": current.UUID,
-		"now":  time.Now().UTC(),
+		"uuid": dbUUID(codeSessionUUID),
+		"now":  now,
 	})
 	if err != nil {
 		return false, err
 	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if updated != 1 {
-		return false, ErrInvalidState
-	}
-	if err := tx.Commit(); err != nil {
-		return false, err
-	}
-	return true, nil
+	return updated == 1, nil
 }
 
 // codeSessionCredentialContextSelect 查询 code session 的鉴权身份信息。

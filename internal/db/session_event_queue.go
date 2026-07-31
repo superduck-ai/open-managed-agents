@@ -170,11 +170,7 @@ func listSessionEventQueueIdentityRows(
 		select q.id, CAST(q.session_uuid AS text) as session_uuid,
 			CAST(q.session_event_uuid AS text) as session_event_uuid
 		from session_event_queue q
-		join organizations o on o.uuid = q.organization_uuid
-		join workspaces w on w.uuid = q.workspace_uuid and w.organization_id = o.id
-		where o.id = :organization_id
-			and w.id = :workspace_id
-			and q.session_uuid = CAST(:session_uuid AS uuid)
+		where q.session_uuid = CAST(:session_uuid AS uuid)
 		order by q.id asc
 	`
 	if lock {
@@ -182,9 +178,7 @@ func listSessionEventQueueIdentityRows(
 	}
 	var rows []sessionEventQueueIdentityRow
 	err := namedSelectContext(ctx, database, &rows, query, map[string]any{
-		"organization_id": session.OrganizationID,
-		"workspace_id":    session.WorkspaceID,
-		"session_uuid":    session.UUID,
+		"session_uuid": session.UUID,
 	})
 	if err != nil {
 		return nil, err
@@ -295,6 +289,7 @@ func enqueueSessionEventsSQLXTx(
 	session Session,
 	events []SessionEvent,
 ) error {
+	// todo batch
 	for _, event := range lo.Filter(events, func(event SessionEvent, _ int) bool {
 		return event.EventType == "user.message"
 	}) {

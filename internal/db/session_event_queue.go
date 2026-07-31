@@ -257,7 +257,6 @@ func shouldQueueUserMessageForStartupSQLX(
 				and ew.state in ('queued', 'starting', 'active')
 				and ew.deleted_at is null
 				and e.deleted_at is null
-				and e.config->>'type' = 'cloud'
 		)
 	`, map[string]any{
 		"organization_id":         session.OrganizationID,
@@ -282,16 +281,10 @@ func sessionEventQueueExistsSQLX(
 		select exists (
 			select 1
 			from session_event_queue q
-			join organizations o on o.uuid = q.organization_uuid
-			join workspaces w on w.uuid = q.workspace_uuid and w.organization_id = o.id
-			where o.id = :organization_id
-				and w.id = :workspace_id
-				and q.session_uuid = CAST(:session_uuid AS uuid)
+			where q.session_uuid = CAST(:session_uuid AS uuid)
 		)
 	`, map[string]any{
-		"organization_id": session.OrganizationID,
-		"workspace_id":    session.WorkspaceID,
-		"session_uuid":    session.UUID,
+		"session_uuid": session.UUID,
 	})
 	return exists, err
 }

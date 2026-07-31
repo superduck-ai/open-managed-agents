@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestRuntimeResourceQueriesUseSQLXNamedParameters(t *testing.T) {
@@ -43,19 +45,19 @@ func TestRuntimeResourceQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:      "get file",
 			query:     getFileQuery,
 			arguments: getFileArguments(resource.WorkspaceUUID, "file_test"),
-			want:      []any{resource.WorkspaceUUID, "file_test"},
+			want:      []any{uuid.MustParse(resource.WorkspaceUUID), "file_test"},
 		},
 		{
 			name:      "get session",
 			query:     getSessionQuery,
 			arguments: sessionLookupArguments(resource.WorkspaceUUID, "session_test"),
-			want:      []any{resource.WorkspaceUUID, "session_test"},
+			want:      []any{uuid.MustParse(resource.WorkspaceUUID), "session_test"},
 		},
 		{
 			name:      "list session resources",
 			query:     listSessionResourcesQuery,
 			arguments: sessionLookupArguments(resource.WorkspaceUUID, "session_test"),
-			want:      []any{resource.WorkspaceUUID, "session_test"},
+			want:      []any{uuid.MustParse(resource.WorkspaceUUID), "session_test"},
 		},
 		{
 			name:      "create session resource",

@@ -225,7 +225,7 @@ func (d *DB) GetSession(ctx context.Context, workspaceUUID string, externalID st
 
 func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID string, next Session) (Session, error) {
 	return getSessionSQLX(ctx, d.sql, updateSessionQuery, map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": externalID,
 		"agent_snapshot":      jsonArg(next.AgentSnapshot),
 		"title":               next.Title,
@@ -236,7 +236,7 @@ func (d *DB) UpdateSession(ctx context.Context, workspaceUUID string, externalID
 
 func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceUUID string, externalID string, patch json.RawMessage) (Session, error) {
 	return getSessionSQLX(ctx, d.sql, patchSessionMetadataQuery, map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": externalID,
 		"metadata_patch":      jsonArg(patch),
 	})
@@ -244,7 +244,7 @@ func (d *DB) PatchSessionMetadata(ctx context.Context, workspaceUUID string, ext
 
 func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceUUID string, externalID string, evaluations json.RawMessage) (Session, error) {
 	return getSessionSQLX(ctx, d.sql, setSessionOutcomeEvaluationsQuery, map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": externalID,
 		"outcome_evaluations": jsonArg(evaluations),
 	})
@@ -252,7 +252,7 @@ func (d *DB) SetSessionOutcomeEvaluations(ctx context.Context, workspaceUUID str
 
 func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externalID, status string) error {
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, setSessionStatusQuery, map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": externalID,
 		"status":              status,
 	})
@@ -267,7 +267,7 @@ func (d *DB) SetSessionStatus(ctx context.Context, workspaceUUID string, externa
 
 func (d *DB) SetSessionThreadStatus(ctx context.Context, workspaceUUID string, sessionExternalID, threadExternalID, status string) error {
 	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, setSessionThreadStatusQuery, map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": sessionExternalID,
 		"thread_external_id":  threadExternalID,
 		"status":              status,
@@ -317,7 +317,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 		return Session{}, err
 	}
 	if _, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionsByScopeSQL, map[string]any{
-		"workspace_uuid": session.WorkspaceUUID,
+		"workspace_uuid": dbUUID(session.WorkspaceUUID),
 		"scope_type":     sessionFileProjectionScope,
 		"scope_id":       session.ExternalID,
 	}); err != nil {
@@ -360,7 +360,7 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 		where s.workspace_uuid = :workspace_uuid and s.deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_uuid": params.WorkspaceUUID,
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
 		"limit":          params.Limit + 1,
 	}
 	if !params.IncludeArchived {
@@ -414,9 +414,9 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 	}
 	if params.Cursor != nil {
 		query += " and (s.created_at " + comparison + ` :cursor_created_at
-			or (s.created_at = :cursor_created_at and s.uuid ` + comparison + ` CAST(:cursor_uuid AS uuid)))`
+			or (s.created_at = :cursor_created_at and s.uuid ` + comparison + ` :cursor_uuid))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by s.created_at " + order + ", s.uuid " + order + " limit :limit"
 
@@ -456,9 +456,9 @@ func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThrea
 	arguments["limit"] = params.Limit + 1
 	if params.Cursor != nil {
 		query += ` and (created_at < :cursor_created_at
-			or (created_at = :cursor_created_at and uuid < CAST(:cursor_uuid AS uuid)))`
+			or (created_at = :cursor_created_at and uuid < :cursor_uuid))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by created_at desc, uuid desc limit :limit"
 	threads, err := listSessionThreadsSQLX(ctx, d.sql, query, arguments)
@@ -757,9 +757,9 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 	}
 	if params.Cursor != nil {
 		query += " and (created_at " + comparison + ` :cursor_created_at
-			or (created_at = :cursor_created_at and uuid ` + comparison + ` CAST(:cursor_uuid AS uuid)))`
+			or (created_at = :cursor_created_at and uuid ` + comparison + ` :cursor_uuid))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = params.Cursor.UUID
+		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	query += " order by created_at " + order + ", uuid " + order + " limit :limit"
 	events, err := listSessionEventsSQLX(ctx, d.sql, query, arguments)
@@ -803,7 +803,7 @@ func (d *DB) ChildSessionToolUseIDs(ctx context.Context, workspaceUUID string, s
 				e.payload->>'id'
 			) = any(CAST(:tool_use_ids AS text[]))
 	`, map[string]any{
-		"workspace_uuid":      workspaceUUID,
+		"workspace_uuid":      dbUUID(workspaceUUID),
 		"session_external_id": sessionExternalID,
 		"event_types":         []string{"agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use"},
 		"tool_use_ids":        toolUseIDs,

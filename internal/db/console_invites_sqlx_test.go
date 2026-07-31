@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
@@ -11,7 +13,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 	listQuery := `
 		select ` + consoleInviteColumns + `
 		from organization_invites i
-		where i.organization_uuid = CAST(:org_uuid AS uuid)
+		where i.organization_uuid = :org_uuid
 			and i.deleted_at is null
 		order by i.invited_at desc, i.uuid desc
 		limit :limit
@@ -26,7 +28,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "list",
 			query: listQuery,
 			arguments: map[string]any{
-				"org_uuid": "org_test",
+				"org_uuid": uuid.MustParse("11111111-1111-4111-8111-111111111111"),
 				"limit":    100,
 			},
 			wantArgCount: 2,
@@ -35,7 +37,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "create",
 			query: createConsoleInviteQuery,
 			arguments: map[string]any{
-				"org_uuid":    "org_test",
+				"org_uuid":    uuid.MustParse("11111111-1111-4111-8111-111111111111"),
 				"external_id": "invite_test",
 				"email":       "invite@example.test",
 				"role":        "developer",
@@ -48,7 +50,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "resend",
 			query: resendConsoleInviteQuery,
 			arguments: map[string]any{
-				"org_uuid":   "org_test",
+				"org_uuid":   uuid.MustParse("11111111-1111-4111-8111-111111111111"),
 				"invite_id":  "invite_test",
 				"invited_at": now,
 				"expires_at": now.Add(21 * 24 * time.Hour),
@@ -59,7 +61,7 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "delete",
 			query: deleteConsoleInviteQuery,
 			arguments: map[string]any{
-				"org_uuid":  "org_test",
+				"org_uuid":  uuid.MustParse("11111111-1111-4111-8111-111111111111"),
 				"invite_id": "invite_test",
 			},
 			wantArgCount: 2,
@@ -77,6 +79,9 @@ func TestConsoleInviteQueriesUseSQLXNamedParameters(t *testing.T) {
 			}
 			if strings.Contains(query, ":") {
 				t.Fatalf("bound query still contains a named parameter: %s", query)
+			}
+			if strings.Contains(query, "CAST($1 AS uuid)") {
+				t.Fatalf("bound query contains UUID parameter cast: %s", query)
 			}
 		})
 	}

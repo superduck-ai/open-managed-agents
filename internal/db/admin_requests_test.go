@@ -40,7 +40,7 @@ func TestListAdminRequestsQueryUsesNamedPostgreSQLArguments(t *testing.T) {
 		t.Fatalf("bindNamed() query contains PostgreSQL shorthand cast: %q", query)
 	}
 	for _, clause := range []string{
-		"where CAST(ar.org_uuid AS text) = $1",
+		"where ar.org_uuid = $1",
 		"and ar.request_type = $2",
 		"and ar.status = $3",
 		"limit $4",

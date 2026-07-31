@@ -18,7 +18,11 @@ type sqlxNamedExecer interface {
 }
 
 func bindNamed(database interface{ Rebind(string) string }, query string, arguments map[string]any) (string, []any, error) {
-	boundQuery, values, err := sqlx.Named(query, arguments)
+	typedArguments, err := typedDBUUIDArguments(arguments)
+	if err != nil {
+		return "", nil, err
+	}
+	boundQuery, values, err := sqlx.Named(query, typedArguments)
 	if err != nil {
 		return "", nil, err
 	}

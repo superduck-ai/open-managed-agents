@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestAgentPageQueryBindsNamedParameters(t *testing.T) {
@@ -31,17 +33,20 @@ func TestAgentPageQueryBindsNamedParameters(t *testing.T) {
 		t.Fatalf("bound query still contains named placeholders: %q", boundQuery)
 	}
 	wantValues := []any{
-		"00000000-0000-0000-0000-000000000042",
+		uuid.MustParse("00000000-0000-0000-0000-000000000042"),
 		createdAtGTE,
 		createdAtLTE,
 		"managed",
 		cursorCreatedAt,
 		cursorCreatedAt,
-		"00000000-0000-0000-0000-000000000017",
+		uuid.MustParse("00000000-0000-0000-0000-000000000017"),
 		6,
 	}
 	if !reflect.DeepEqual(values, wantValues) {
 		t.Fatalf("bindNamed() values = %#v, want %#v", values, wantValues)
+	}
+	if strings.Contains(boundQuery, " AS uuid)") {
+		t.Fatalf("bound query contains UUID cast ceremony: %q", boundQuery)
 	}
 }
 
@@ -84,7 +89,7 @@ func TestAgentMutationQueryBindsJSONArguments(t *testing.T) {
 
 func TestAgentRowConversionCopiesJSON(t *testing.T) {
 	row := agentRow{
-		UUID:           "00000000-0000-0000-0000-000000000007",
+		UUID:           uuid.MustParse("00000000-0000-0000-0000-000000000007"),
 		ExternalID:     "agent_row",
 		CurrentVersion: 2,
 		Name:           "row agent",
@@ -101,7 +106,7 @@ func TestAgentRowConversionCopiesJSON(t *testing.T) {
 	if string(agent.Model) != `{"id":"claude-opus-4-6"}` {
 		t.Fatalf("agent.Model = %s, want copied JSON", agent.Model)
 	}
-	if agent.UUID != row.UUID || agent.ExternalID != row.ExternalID || agent.CurrentVersion != row.CurrentVersion {
+	if agent.UUID != row.UUID.String() || agent.ExternalID != row.ExternalID || agent.CurrentVersion != row.CurrentVersion {
 		t.Fatalf("agent identity fields = %+v, want values from row %+v", agent, row)
 	}
 }

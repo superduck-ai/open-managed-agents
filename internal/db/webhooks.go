@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -15,10 +17,7 @@ const (
 			:workspace_uuid,
 			'webhook_delivery',
 			'pending',
-			jsonb_build_object(
-				'event_type', CAST(:event_type AS text),
-				'event', CAST(:event AS jsonb)
-			)
+			CAST(:payload AS jsonb)
 		)
 	`
 	enqueueWebhookDeliveryJobForEndpointQuery = `
@@ -28,11 +27,7 @@ const (
 			:workspace_uuid,
 			'webhook_delivery',
 			'pending',
-			jsonb_build_object(
-				'event_type', CAST(:event_type AS text),
-				'event', CAST(:event AS jsonb),
-				'webhook_endpoint_uuid', CAST(:webhook_endpoint_uuid AS text)
-			)
+			CAST(:payload AS jsonb)
 		)
 	`
 	leaseWebhookDeliveryJobsQuery = `
@@ -60,13 +55,13 @@ const (
 			returning j.uuid, j.external_id, j.workspace_uuid, j.payload, j.attempts
 		)
 		select
-			CAST(u.uuid AS text) AS uuid,
+			u.uuid,
 			u.external_id,
-			CAST(u.workspace_uuid AS text) AS workspace_uuid,
+			u.workspace_uuid,
 			coalesce(u.payload->>'event_type', '') AS event_type,
 			coalesce(u.payload->'event', CAST('{}' AS jsonb)) AS event,
 			u.attempts,
-			CAST(we.uuid AS text) AS webhook_endpoint_uuid,
+			we.uuid AS webhook_endpoint_uuid,
 			we.external_id AS webhook_endpoint_external_id,
 			we.url AS webhook_endpoint_url,
 			we.signing_secret AS webhook_endpoint_secret,
@@ -82,7 +77,7 @@ const (
 			locked_by = null,
 			locked_until = null,
 			updated_at = now()
-		where uuid = CAST(:job_uuid AS uuid) and type = 'webhook_delivery'
+		where uuid = :job_uuid and type = 'webhook_delivery'
 	`
 	failWebhookDeliveryJobQuery = `
 		update jobs
@@ -93,7 +88,7 @@ const (
 			updated_at = now(),
 			attempts = :attempts,
 			payload = payload || jsonb_build_object('last_error', CAST(:reason AS text))
-		where uuid = CAST(:job_uuid AS uuid) and type = 'webhook_delivery'
+		where uuid = :job_uuid and type = 'webhook_delivery'
 	`
 )
 
@@ -111,14 +106,20 @@ type WebhookDeliveryJob struct {
 	WebhookEndpointStatus     string
 }
 
+type webhookDeliveryJobPayload struct {
+	EventType           string          `json:"event_type"`
+	Event               json.RawMessage `json:"event"`
+	WebhookEndpointUUID string          `json:"webhook_endpoint_uuid,omitempty"`
+}
+
 type webhookDeliveryJobRow struct {
-	UUID                      string         `db:"uuid"`
+	UUID                      uuid.UUID      `db:"uuid"`
 	ExternalID                string         `db:"external_id"`
-	WorkspaceUUID             string         `db:"workspace_uuid"`
+	WorkspaceUUID             uuid.UUID      `db:"workspace_uuid"`
 	EventType                 string         `db:"event_type"`
 	Event                     []byte         `db:"event"`
 	Attempts                  int            `db:"attempts"`
-	WebhookEndpointUUID       sql.NullString `db:"webhook_endpoint_uuid"`
+	WebhookEndpointUUID       uuid.NullUUID  `db:"webhook_endpoint_uuid"`
 	WebhookEndpointExternalID sql.NullString `db:"webhook_endpoint_external_id"`
 	WebhookEndpointURL        sql.NullString `db:"webhook_endpoint_url"`
 	WebhookEndpointSecret     sql.NullString `db:"webhook_endpoint_secret"`
@@ -126,20 +127,33 @@ type webhookDeliveryJobRow struct {
 }
 
 func (d *DB) EnqueueWebhookDeliveryJob(ctx context.Context, workspaceUUID, eventType string, event json.RawMessage) error {
-	_, err := namedExecContext(ctx, d.sql, enqueueWebhookDeliveryJobQuery, map[string]any{
-		"workspace_uuid": workspaceUUID,
-		"event_type":     eventType,
-		"event":          jsonArg(event),
+	payload, err := json.Marshal(webhookDeliveryJobPayload{EventType: eventType, Event: event})
+	if err != nil {
+		return err
+	}
+	_, err = namedExecContext(ctx, d.sql, enqueueWebhookDeliveryJobQuery, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"payload":        payload,
 	})
 	return err
 }
 
 func (d *DB) EnqueueWebhookDeliveryJobForEndpoint(ctx context.Context, workspaceUUID, eventType string, event json.RawMessage, endpointUUID string) error {
-	_, err := namedExecContext(ctx, d.sql, enqueueWebhookDeliveryJobForEndpointQuery, map[string]any{
-		"workspace_uuid":        workspaceUUID,
-		"event_type":            eventType,
-		"event":                 jsonArg(event),
-		"webhook_endpoint_uuid": endpointUUID,
+	parsedEndpointUUID, err := parseDBUUID("webhook_endpoint_uuid", endpointUUID)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(webhookDeliveryJobPayload{
+		EventType:           eventType,
+		Event:               event,
+		WebhookEndpointUUID: parsedEndpointUUID.String(),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = namedExecContext(ctx, d.sql, enqueueWebhookDeliveryJobForEndpointQuery, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"payload":        payload,
 	})
 	return err
 }
@@ -169,7 +183,7 @@ func (d *DB) LeaseWebhookDeliveryJobs(ctx context.Context, workerID string, limi
 
 func (d *DB) CompleteWebhookDeliveryJob(ctx context.Context, jobUUID string) error {
 	_, err := namedExecContext(ctx, d.sql, completeWebhookDeliveryJobQuery, map[string]any{
-		"job_uuid": jobUUID,
+		"job_uuid": dbUUID(jobUUID),
 	})
 	return err
 }
@@ -182,7 +196,7 @@ func (d *DB) FailWebhookDeliveryJob(ctx context.Context, jobUUID string, attempt
 	}
 	runAfter := time.Now().UTC().Add(retryDelay)
 	_, err := namedExecContext(ctx, d.sql, failWebhookDeliveryJobQuery, map[string]any{
-		"job_uuid":  jobUUID,
+		"job_uuid":  dbUUID(jobUUID),
 		"status":    status,
 		"run_after": runAfter,
 		"attempts":  nextAttempts,
@@ -193,9 +207,9 @@ func (d *DB) FailWebhookDeliveryJob(ctx context.Context, jobUUID string, attempt
 
 func (r webhookDeliveryJobRow) job() WebhookDeliveryJob {
 	job := WebhookDeliveryJob{
-		UUID:                      r.UUID,
+		UUID:                      r.UUID.String(),
 		ExternalID:                r.ExternalID,
-		WorkspaceUUID:             r.WorkspaceUUID,
+		WorkspaceUUID:             r.WorkspaceUUID.String(),
 		EventType:                 r.EventType,
 		Event:                     copyRaw(r.Event),
 		Attempts:                  r.Attempts,
@@ -205,7 +219,7 @@ func (r webhookDeliveryJobRow) job() WebhookDeliveryJob {
 		WebhookEndpointStatus:     r.WebhookEndpointStatus.String,
 	}
 	if r.WebhookEndpointUUID.Valid {
-		endpointUUID := r.WebhookEndpointUUID.String
+		endpointUUID := r.WebhookEndpointUUID.UUID.String()
 		job.WebhookEndpointUUID = &endpointUUID
 	}
 	return job

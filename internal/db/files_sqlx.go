@@ -3,40 +3,43 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
 const (
-	fileSQLXColumns = `cast(uuid as text) as uuid, external_id, cast(workspace_uuid as text) as workspace_uuid, filename, mime_type,
+	fileSQLXColumns = `uuid, external_id, workspace_uuid, filename, mime_type,
 		size_bytes, sha256, s3_bucket, s3_key, downloadable, scope_type, scope_id,
-		cast(created_by_api_key_uuid as text) as created_by_api_key_uuid, created_at`
+		created_by_api_key_uuid, created_at`
 	getFileQuery = `
 		select ` + fileSQLXColumns + `
 		from files
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 			and external_id = :file_external_id
 			and deleted_at is null
 	`
 	getFileByUUIDQuery = `
 		select ` + fileSQLXColumns + `
 		from files
-		where workspace_uuid = cast(:workspace_uuid as uuid)
-			and cast(uuid as text) = :file_uuid
+		where workspace_uuid = :workspace_uuid
+			and uuid = :file_uuid
 			and deleted_at is null
 	`
 	getFileByUUIDInOrganizationQuery = `
-		select cast(f.uuid as text) as uuid, f.external_id, cast(f.workspace_uuid as text) as workspace_uuid,
+		select f.uuid, f.external_id, f.workspace_uuid,
 			f.filename, f.mime_type, f.size_bytes, f.sha256, f.s3_bucket, f.s3_key,
 			f.downloadable, f.scope_type, f.scope_id,
-			cast(f.created_by_api_key_uuid as text) as created_by_api_key_uuid, f.created_at
+			f.created_by_api_key_uuid, f.created_at
 		from files f
 		join workspaces w on w.uuid = f.workspace_uuid
-		where w.organization_uuid = cast(:organization_uuid as uuid)
-			and cast(f.uuid as text) = :file_uuid
+		where w.organization_uuid = :organization_uuid
+			and f.uuid = :file_uuid
 			and f.deleted_at is null
 	`
 	insertFileQuery = `
@@ -54,7 +57,7 @@ const (
 	softDeleteFileRecordQuery = `
 		select ` + fileSQLXColumns + `
 		from files
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 			and external_id = :file_external_id
 			and deleted_at is null
 		for update
@@ -64,10 +67,10 @@ const (
 			exists (
 				select 1
 				from filestore_entries entry
-				where entry.workspace_uuid = cast(:workspace_uuid as uuid)
+				where entry.workspace_uuid = :workspace_uuid
 					-- 投影不拥有对象也不计入 files_bytes。即使 backing entry 已退休，
 					-- 仍需阻止普通 Files 删除路径把投影当作源文件扣减容量。
-					and entry.uuid = CAST(:file_uuid AS uuid)
+					and entry.uuid = :file_uuid
 			)
 			or exists (
 				select 1
@@ -76,15 +79,15 @@ const (
 					on filesystem.uuid = entry.filesystem_uuid
 					and filesystem.workspace_uuid = entry.workspace_uuid
 					and filesystem.deleted_at is null
-				where entry.workspace_uuid = cast(:workspace_uuid as uuid)
-					and entry.source_file_uuid = CAST(:file_uuid AS uuid)
+				where entry.workspace_uuid = :workspace_uuid
+					and entry.source_file_uuid = :file_uuid
 					and entry.deleted_at is null
 			)
 	`
 	softDeleteFileQuery = `
 		update files
 		set deleted_at = now()
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 			and external_id = :file_external_id
 			and deleted_at is null
 	`
@@ -95,17 +98,7 @@ const (
 			:workspace_uuid,
 			'object_cleanup',
 			'pending',
-			jsonb_build_object(
-				'bucket', CAST(:bucket AS text),
-				'key', CAST(:object_key AS text),
-				'file_id', case
-					when CAST(:resource_type AS text) = 'file'
-					then CAST(:resource_id AS text)
-					else ''
-				end,
-				'resource_type', CAST(:resource_type AS text),
-				'resource_id', CAST(:resource_id AS text)
-			)
+			CAST(:payload AS jsonb)
 		)
 	`
 	leaseObjectCleanupJobsQuery = `
@@ -129,8 +122,8 @@ const (
 			updated_at = now()
 		from next_jobs
 		where j.uuid = next_jobs.uuid
-		returning cast(j.uuid as text) as uuid, j.external_id,
-			cast(j.workspace_uuid as text) as workspace_uuid,
+		returning j.uuid, j.external_id,
+			j.workspace_uuid,
 			coalesce(j.payload->>'bucket', '') as bucket,
 			coalesce(j.payload->>'key', '') as object_key,
 			coalesce(j.payload->>'file_id', '') as file_external_id,
@@ -142,7 +135,7 @@ const (
 			locked_by = null,
 			locked_until = null,
 			updated_at = now()
-		where uuid = cast(:job_uuid as uuid) and type = 'object_cleanup'
+		where uuid = :job_uuid and type = 'object_cleanup'
 	`
 	failObjectCleanupJobQuery = `
 		update jobs
@@ -156,16 +149,16 @@ const (
 				'last_error',
 				CAST(:reason AS text)
 			)
-		where uuid = cast(:job_uuid as uuid) and type = 'object_cleanup'
+		where uuid = :job_uuid and type = 'object_cleanup'
 	`
 )
 
 // fileRecordRow / objectCleanupJobRow 用于承接 sqlx 的结构化扫描结果，避免把
 // 数据库存储细节直接泄漏到上层文件服务。
 type fileRecordRow struct {
-	UUID                string    `db:"uuid"`
+	UUID                uuid.UUID `db:"uuid"`
 	ExternalID          string    `db:"external_id"`
-	WorkspaceUUID       string    `db:"workspace_uuid"`
+	WorkspaceUUID       uuid.UUID `db:"workspace_uuid"`
 	Filename            string    `db:"filename"`
 	MimeType            string    `db:"mime_type"`
 	SizeBytes           int64     `db:"size_bytes"`
@@ -175,44 +168,44 @@ type fileRecordRow struct {
 	Downloadable        bool      `db:"downloadable"`
 	ScopeType           *string   `db:"scope_type"`
 	ScopeID             *string   `db:"scope_id"`
-	CreatedByAPIKeyUUID string    `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID uuid.UUID `db:"created_by_api_key_uuid"`
 	CreatedAt           time.Time `db:"created_at"`
 }
 
 type filePageCursorRow struct {
-	UUID      string    `db:"uuid"`
+	UUID      uuid.UUID `db:"uuid"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
 type objectCleanupJobRow struct {
-	UUID           string `db:"uuid"`
-	ExternalID     string `db:"external_id"`
-	WorkspaceUUID  string `db:"workspace_uuid"`
-	Bucket         string `db:"bucket"`
-	Key            string `db:"object_key"`
-	FileExternalID string `db:"file_external_id"`
-	Attempts       int    `db:"attempts"`
+	UUID           uuid.UUID `db:"uuid"`
+	ExternalID     string    `db:"external_id"`
+	WorkspaceUUID  uuid.UUID `db:"workspace_uuid"`
+	Bucket         string    `db:"bucket"`
+	Key            string    `db:"object_key"`
+	FileExternalID string    `db:"file_external_id"`
+	Attempts       int       `db:"attempts"`
 }
 
 func getFileArguments(workspaceUUID string, fileExternalID string) map[string]any {
 	return map[string]any{
-		"workspace_uuid":   workspaceUUID,
+		"workspace_uuid":   dbUUID(workspaceUUID),
 		"file_external_id": fileExternalID,
 	}
 }
 
 func fileUUIDArguments(workspaceUUID string, fileUUID string) map[string]any {
 	return map[string]any{
-		"workspace_uuid": workspaceUUID,
-		"file_uuid":      fileUUID,
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"file_uuid":      dbUUID(fileUUID),
 	}
 }
 
 func fileRecordArguments(file FileRecord) map[string]any {
 	return map[string]any{
-		"file_uuid":               file.UUID,
+		"file_uuid":               dbUUID(file.UUID),
 		"file_external_id":        file.ExternalID,
-		"workspace_uuid":          file.WorkspaceUUID,
+		"workspace_uuid":          dbUUID(file.WorkspaceUUID),
 		"filename":                file.Filename,
 		"mime_type":               file.MimeType,
 		"size_bytes":              file.SizeBytes,
@@ -222,7 +215,7 @@ func fileRecordArguments(file FileRecord) map[string]any {
 		"downloadable":            file.Downloadable,
 		"scope_type":              file.ScopeType,
 		"scope_id":                file.ScopeID,
-		"created_by_api_key_uuid": file.CreatedByAPIKeyUUID,
+		"created_by_api_key_uuid": dbUUID(file.CreatedByAPIKeyUUID),
 		"created_at":              file.CreatedAt,
 	}
 }
@@ -295,7 +288,7 @@ func beginFileCreateSQLXTx(ctx context.Context, database *sqlx.DB, workspaceUUID
 		ctx,
 		tx,
 		fileWorkspaceLockQuery,
-		map[string]any{"workspace_uuid": workspaceUUID},
+		map[string]any{"workspace_uuid": dbUUID(workspaceUUID)},
 	); err != nil {
 		_ = tx.Rollback()
 		return nil, err
@@ -328,10 +321,10 @@ func listFilesSQLXQuery(workspaceUUID string, scopeID string) (string, map[strin
 	query := `
 		select ` + fileSQLXColumns + `
 		from files
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 			and deleted_at is null
 	`
-	arguments := map[string]any{"workspace_uuid": workspaceUUID}
+	arguments := map[string]any{"workspace_uuid": dbUUID(workspaceUUID)}
 	if scopeID != "" {
 		query += " and scope_id = :scope_id"
 		arguments["scope_id"] = scopeID
@@ -423,14 +416,14 @@ func filePageCursorSQLXQuery(
 	cursorExternalID string,
 ) (string, map[string]any) {
 	query := `
-		select cast(uuid as text) as uuid, created_at
+		select uuid, created_at
 		from files
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 			and external_id = :cursor_external_id
 			and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_uuid":     params.WorkspaceUUID,
+		"workspace_uuid":     dbUUID(params.WorkspaceUUID),
 		"cursor_external_id": cursorExternalID,
 	}
 	if params.ScopeID != "" {
@@ -447,11 +440,11 @@ func listFilesPageSQLXQuery(
 	query := `
 		select ` + fileSQLXColumns + `
 		from files
-		where workspace_uuid = cast(:workspace_uuid as uuid)
+		where workspace_uuid = :workspace_uuid
 			and deleted_at is null
 	`
 	arguments := map[string]any{
-		"workspace_uuid": params.WorkspaceUUID,
+		"workspace_uuid": dbUUID(params.WorkspaceUUID),
 		"limit":          params.Limit + 1,
 	}
 	if params.ScopeID != "" {
@@ -462,7 +455,7 @@ func listFilesPageSQLXQuery(
 		query += `
 			and (
 				created_at < :cursor_created_at
-				or (created_at = :cursor_created_at and uuid < cast(:cursor_uuid as uuid))
+				or (created_at = :cursor_created_at and uuid < :cursor_uuid)
 			)
 		`
 		arguments["cursor_created_at"] = cursor.CreatedAt
@@ -471,7 +464,7 @@ func listFilesPageSQLXQuery(
 		query += `
 			and (
 				created_at > :cursor_created_at
-				or (created_at = :cursor_created_at and uuid > cast(:cursor_uuid as uuid))
+				or (created_at = :cursor_created_at and uuid > :cursor_uuid)
 			)
 		`
 		arguments["cursor_created_at"] = cursor.CreatedAt
@@ -505,7 +498,7 @@ func softDeleteFileSQLX(
 	if err != nil {
 		return err
 	}
-	arguments["file_uuid"] = file.UUID
+	arguments["file_uuid"] = dbUUID(file.UUID)
 	var referenced bool
 	if err := namedGetContext(ctx, tx, &referenced, activeFileReferenceQuery, arguments); err != nil {
 		return err
@@ -528,12 +521,23 @@ func enqueueObjectCleanupResourceJobSQLX(
 	workspaceUUID string,
 	bucket, objectKey, resourceType, resourceID string,
 ) error {
-	_, err := namedExecContext(ctx, database, enqueueObjectCleanupResourceJobQuery, map[string]any{
-		"workspace_uuid": workspaceUUID,
-		"bucket":         bucket,
-		"object_key":     objectKey,
-		"resource_type":  resourceType,
-		"resource_id":    resourceID,
+	fileExternalID := ""
+	if resourceType == "file" {
+		fileExternalID = resourceID
+	}
+	payload, err := json.Marshal(map[string]string{
+		"bucket":        bucket,
+		"key":           objectKey,
+		"file_id":       fileExternalID,
+		"resource_type": resourceType,
+		"resource_id":   resourceID,
+	})
+	if err != nil {
+		return fmt.Errorf("encode object cleanup job payload: %w", err)
+	}
+	_, err = namedExecContext(ctx, database, enqueueObjectCleanupResourceJobQuery, map[string]any{
+		"workspace_uuid": dbUUID(workspaceUUID),
+		"payload":        payload,
 	})
 	return err
 }
@@ -573,7 +577,7 @@ func completeObjectCleanupJobSQLX(
 		ctx,
 		database,
 		completeObjectCleanupJobQuery,
-		map[string]any{"job_uuid": jobUUID},
+		map[string]any{"job_uuid": dbUUID(jobUUID)},
 	)
 	return err
 }
@@ -593,7 +597,7 @@ func failObjectCleanupJobSQLX(
 		status = "failed"
 	}
 	_, err := namedExecContext(ctx, database, failObjectCleanupJobQuery, map[string]any{
-		"job_uuid":  jobUUID,
+		"job_uuid":  dbUUID(jobUUID),
 		"status":    status,
 		"run_after": time.Now().UTC().Add(retryDelay),
 		"attempts":  nextAttempts,
@@ -604,9 +608,9 @@ func failObjectCleanupJobSQLX(
 
 func (r fileRecordRow) record() FileRecord {
 	return FileRecord{
-		UUID:                r.UUID,
+		UUID:                r.UUID.String(),
 		ExternalID:          r.ExternalID,
-		WorkspaceUUID:       r.WorkspaceUUID,
+		WorkspaceUUID:       r.WorkspaceUUID.String(),
 		Filename:            r.Filename,
 		MimeType:            r.MimeType,
 		SizeBytes:           r.SizeBytes,
@@ -616,16 +620,16 @@ func (r fileRecordRow) record() FileRecord {
 		Downloadable:        r.Downloadable,
 		ScopeType:           r.ScopeType,
 		ScopeID:             r.ScopeID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID.String(),
 		CreatedAt:           r.CreatedAt,
 	}
 }
 
 func (r objectCleanupJobRow) job() ObjectCleanupJob {
 	return ObjectCleanupJob{
-		UUID:           r.UUID,
+		UUID:           r.UUID.String(),
 		ExternalID:     r.ExternalID,
-		WorkspaceUUID:  r.WorkspaceUUID,
+		WorkspaceUUID:  r.WorkspaceUUID.String(),
 		Bucket:         r.Bucket,
 		Key:            r.Key,
 		FileExternalID: r.FileExternalID,

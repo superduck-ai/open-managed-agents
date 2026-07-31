@@ -72,10 +72,10 @@ func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (au
 	}
 	return auth.Principal{
 		CredentialType:      auth.CredentialTypeAPIKey,
-		APIKeyUUID:          key.UUID,
+		APIKeyUUID:          key.UUID.String(),
 		APIKeyExternalID:    key.ExternalID,
-		OrganizationUUID:    key.OrganizationUUID,
-		WorkspaceUUID:       key.WorkspaceUUID,
+		OrganizationUUID:    key.OrganizationUUID.String(),
+		WorkspaceUUID:       key.WorkspaceUUID.String(),
 		WorkspaceExternalID: key.WorkspaceExternalID,
 	}, true, nil
 }

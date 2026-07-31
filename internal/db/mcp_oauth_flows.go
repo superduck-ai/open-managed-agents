@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -17,7 +19,7 @@ const (
 		)
 		values (
 			:uuid, :external_id, :organization_uuid, :workspace_uuid, :vault_uuid, :vault_external_id,
-			CAST(nullif(:user_uuid, '') AS uuid), nullif(:user_external_id, ''),
+			:user_uuid, nullif(:user_external_id, ''),
 			nullif(:platform_session_external_id, ''), :mcp_server_url,
 			:redirect_url, :display_name, :source, :authorization_endpoint, :token_endpoint,
 			nullif(:registration_endpoint, ''), nullif(:issuer, ''), :resource,
@@ -53,13 +55,13 @@ const (
 		where external_id = :external_id and status = 'pending'
 	`
 	mcpOAuthFlowReturnColumns = `
-		CAST(uuid AS text) AS uuid,
+		uuid,
 		external_id,
-		CAST(organization_uuid AS text) AS organization_uuid,
-		CAST(workspace_uuid AS text) AS workspace_uuid,
-		CAST(vault_uuid AS text) AS vault_uuid,
+		organization_uuid,
+		workspace_uuid,
+		vault_uuid,
 		vault_external_id,
-		coalesce(CAST(user_uuid AS text), '') AS user_uuid,
+		user_uuid,
 		coalesce(user_external_id, '') AS user_external_id,
 		coalesce(platform_session_external_id, '') AS platform_session_external_id,
 		mcp_server_url,
@@ -122,37 +124,37 @@ type MCPOAuthFlow struct {
 }
 
 type mcpOAuthFlowRow struct {
-	UUID                      string     `db:"uuid"`
-	ExternalID                string     `db:"external_id"`
-	OrganizationUUID          string     `db:"organization_uuid"`
-	WorkspaceUUID             string     `db:"workspace_uuid"`
-	VaultUUID                 string     `db:"vault_uuid"`
-	VaultExternalID           string     `db:"vault_external_id"`
-	UserUUID                  string     `db:"user_uuid"`
-	UserExternalID            string     `db:"user_external_id"`
-	PlatformSessionExternalID string     `db:"platform_session_external_id"`
-	MCPServerURL              string     `db:"mcp_server_url"`
-	RedirectURL               string     `db:"redirect_url"`
-	DisplayName               string     `db:"display_name"`
-	Source                    string     `db:"source"`
-	AuthorizationEndpoint     string     `db:"authorization_endpoint"`
-	TokenEndpoint             string     `db:"token_endpoint"`
-	RegistrationEndpoint      string     `db:"registration_endpoint"`
-	Issuer                    string     `db:"issuer"`
-	Resource                  string     `db:"resource"`
-	Scope                     string     `db:"scope"`
-	ClientID                  string     `db:"client_id"`
-	ClientSecret              string     `db:"client_secret"`
-	TokenEndpointAuthMethod   string     `db:"token_endpoint_auth_method"`
-	CodeVerifier              string     `db:"code_verifier"`
-	CodeChallengeMethod       string     `db:"code_challenge_method"`
-	Status                    string     `db:"status"`
-	CredentialExternalID      string     `db:"credential_external_id"`
-	ErrorCode                 string     `db:"error_code"`
-	CreatedAt                 time.Time  `db:"created_at"`
-	UpdatedAt                 time.Time  `db:"updated_at"`
-	ExpiresAt                 time.Time  `db:"expires_at"`
-	CompletedAt               *time.Time `db:"completed_at"`
+	UUID                      uuid.UUID     `db:"uuid"`
+	ExternalID                string        `db:"external_id"`
+	OrganizationUUID          uuid.UUID     `db:"organization_uuid"`
+	WorkspaceUUID             uuid.UUID     `db:"workspace_uuid"`
+	VaultUUID                 uuid.UUID     `db:"vault_uuid"`
+	VaultExternalID           string        `db:"vault_external_id"`
+	UserUUID                  uuid.NullUUID `db:"user_uuid"`
+	UserExternalID            string        `db:"user_external_id"`
+	PlatformSessionExternalID string        `db:"platform_session_external_id"`
+	MCPServerURL              string        `db:"mcp_server_url"`
+	RedirectURL               string        `db:"redirect_url"`
+	DisplayName               string        `db:"display_name"`
+	Source                    string        `db:"source"`
+	AuthorizationEndpoint     string        `db:"authorization_endpoint"`
+	TokenEndpoint             string        `db:"token_endpoint"`
+	RegistrationEndpoint      string        `db:"registration_endpoint"`
+	Issuer                    string        `db:"issuer"`
+	Resource                  string        `db:"resource"`
+	Scope                     string        `db:"scope"`
+	ClientID                  string        `db:"client_id"`
+	ClientSecret              string        `db:"client_secret"`
+	TokenEndpointAuthMethod   string        `db:"token_endpoint_auth_method"`
+	CodeVerifier              string        `db:"code_verifier"`
+	CodeChallengeMethod       string        `db:"code_challenge_method"`
+	Status                    string        `db:"status"`
+	CredentialExternalID      string        `db:"credential_external_id"`
+	ErrorCode                 string        `db:"error_code"`
+	CreatedAt                 time.Time     `db:"created_at"`
+	UpdatedAt                 time.Time     `db:"updated_at"`
+	ExpiresAt                 time.Time     `db:"expires_at"`
+	CompletedAt               *time.Time    `db:"completed_at"`
 }
 
 func (d *DB) CreateMCPOAuthFlow(ctx context.Context, flow MCPOAuthFlow) (MCPOAuthFlow, error) {
@@ -210,13 +212,13 @@ func getMCPOAuthFlowSQLX(
 
 func mcpOAuthFlowArguments(flow MCPOAuthFlow) map[string]any {
 	return map[string]any{
-		"uuid":                         flow.UUID,
+		"uuid":                         dbUUID(flow.UUID),
 		"external_id":                  flow.ExternalID,
-		"organization_uuid":            flow.OrganizationUUID,
-		"workspace_uuid":               flow.WorkspaceUUID,
-		"vault_uuid":                   flow.VaultUUID,
+		"organization_uuid":            dbUUID(flow.OrganizationUUID),
+		"workspace_uuid":               dbUUID(flow.WorkspaceUUID),
+		"vault_uuid":                   dbUUID(flow.VaultUUID),
 		"vault_external_id":            flow.VaultExternalID,
-		"user_uuid":                    flow.UserUUID,
+		"user_uuid":                    dbNullableUUID(&flow.UserUUID),
 		"user_external_id":             flow.UserExternalID,
 		"platform_session_external_id": flow.PlatformSessionExternalID,
 		"mcp_server_url":               flow.MCPServerURL,
@@ -242,13 +244,13 @@ func mcpOAuthFlowArguments(flow MCPOAuthFlow) map[string]any {
 
 func (r mcpOAuthFlowRow) flow() MCPOAuthFlow {
 	return MCPOAuthFlow{
-		UUID:                      r.UUID,
+		UUID:                      r.UUID.String(),
 		ExternalID:                r.ExternalID,
-		OrganizationUUID:          r.OrganizationUUID,
-		WorkspaceUUID:             r.WorkspaceUUID,
-		VaultUUID:                 r.VaultUUID,
+		OrganizationUUID:          r.OrganizationUUID.String(),
+		WorkspaceUUID:             r.WorkspaceUUID.String(),
+		VaultUUID:                 r.VaultUUID.String(),
 		VaultExternalID:           r.VaultExternalID,
-		UserUUID:                  r.UserUUID,
+		UserUUID:                  nullableUUIDValue(r.UserUUID),
 		UserExternalID:            r.UserExternalID,
 		PlatformSessionExternalID: r.PlatformSessionExternalID,
 		MCPServerURL:              r.MCPServerURL,

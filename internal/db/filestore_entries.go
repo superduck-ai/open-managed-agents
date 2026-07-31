@@ -66,8 +66,8 @@ func buildFilestoreEntriesPageQuery(filesystem FilestoreFilesystem, params ListF
 			and (expires_at is null or expires_at > now())
 	`
 	args := map[string]any{
-		"workspace_uuid":  filesystem.WorkspaceUUID,
-		"filesystem_uuid": filesystem.UUID,
+		"workspace_uuid":  dbUUID(filesystem.WorkspaceUUID),
+		"filesystem_uuid": dbUUID(filesystem.UUID),
 		"fetch_limit":     params.Limit + 1,
 	}
 	if params.Recursive {
@@ -79,9 +79,9 @@ func buildFilestoreEntriesPageQuery(filesystem FilestoreFilesystem, params ListF
 		args["directory_path"] = params.DirectoryPath
 	}
 	if params.Cursor != nil {
-		query += " and (path, uuid) > (:cursor_path, CAST(:cursor_uuid AS uuid))"
+		query += " and (path, uuid) > (:cursor_path, :cursor_uuid)"
 		args["cursor_path"] = params.Cursor.Path
-		args["cursor_uuid"] = params.Cursor.UUID
+		args["cursor_uuid"] = dbUUID(params.Cursor.UUID)
 	}
 	// 多取一条只用于判定 HasMore；返回页仍严格遵守请求的 Limit。
 	query += " order by path asc, uuid asc limit :fetch_limit"

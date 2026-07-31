@@ -56,26 +56,29 @@ func TestMemoryColumnListsSupportStructScan(t *testing.T) {
 		{
 			name:    "memory store",
 			columns: memoryStoreColumns(),
-			want:    []string{"CAST(uuid AS text) as uuid", "metadata", "archived_at"},
+			want:    []string{"uuid", "metadata", "archived_at"},
 		},
 		{
 			name:    "memory",
 			columns: memoryColumns(),
 			want: []string{
-				"coalesce(CAST(current_version_uuid AS text), '') as current_version_uuid",
+				"current_version_uuid",
 				"coalesce(current_version_external_id, '') as current_version_external_id",
 			},
 		},
 		{
 			name:    "memory version",
 			columns: memoryVersionColumns(),
-			want:    []string{"CAST(uuid AS text) as uuid", "redacted_by_actor_type", "created_at"},
+			want:    []string{"uuid", "redacted_by_actor_type", "created_at"},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if strings.Contains(test.columns, "::") {
 				t.Fatalf("columns contain PostgreSQL shorthand cast: %q", test.columns)
+			}
+			if strings.Contains(strings.ToLower(test.columns), "cast(") {
+				t.Fatalf("typed UUID columns contain SQL casts: %q", test.columns)
 			}
 			for _, fragment := range test.want {
 				if !strings.Contains(test.columns, fragment) {

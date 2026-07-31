@@ -3,6 +3,8 @@ package db
 import (
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestDatabaseQueriesUseSQLXNamedParameters(t *testing.T) {
@@ -122,8 +124,8 @@ func TestDatabaseQueriesUseSQLXNamedParameters(t *testing.T) {
 func TestAPIKeyRowMapsDatabaseColumns(t *testing.T) {
 	row := apiKeyRow{
 		ExternalID:          "sk_default",
-		OrganizationUUID:    "22222222-2222-4222-8222-222222222222",
-		WorkspaceUUID:       "11111111-1111-4111-8111-111111111111",
+		OrganizationUUID:    uuid.MustParse("22222222-2222-4222-8222-222222222222"),
+		WorkspaceUUID:       uuid.MustParse("11111111-1111-4111-8111-111111111111"),
 		WorkspaceExternalID: "workspace_default",
 	}
 

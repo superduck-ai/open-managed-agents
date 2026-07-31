@@ -303,8 +303,8 @@ func createMessagesCodeSessionCredential(t *testing.T, app *testApp, model strin
 	now := time.Now().UTC()
 	_, err = app.db.CreateCodeSession(context.Background(), db.CreateCodeSessionInput{
 		ExternalID:            codeSessionID,
-		OrganizationUUID:      apiKey.OrganizationUUID,
-		WorkspaceUUID:         apiKey.WorkspaceUUID,
+		OrganizationUUID:      apiKey.OrganizationUUID.String(),
+		WorkspaceUUID:         apiKey.WorkspaceUUID.String(),
 		SessionUUID:           sessionUUID,
 		SessionExternalID:     sessionExternalID,
 		EnvironmentUUID:       environmentUUID,
@@ -323,8 +323,8 @@ func createMessagesCodeSessionCredential(t *testing.T, app *testApp, model strin
 		Token:             token,
 		CodeSessionID:     codeSessionID,
 		PublicSessionUUID: sessionUUID,
-		OrganizationUUID:  apiKey.OrganizationUUID,
-		WorkspaceUUID:     apiKey.WorkspaceUUID,
+		OrganizationUUID:  apiKey.OrganizationUUID.String(),
+		WorkspaceUUID:     apiKey.WorkspaceUUID.String(),
 	}
 }
 

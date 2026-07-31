@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestValidateFilestorePath(t *testing.T) {
@@ -159,8 +161,8 @@ func TestBuildFilestoreEntriesPageQuery(t *testing.T) {
 			t.Fatalf("direct-child query = %q", query)
 		}
 		wantArgs := map[string]any{
-			"workspace_uuid":  "workspace-uuid",
-			"filesystem_uuid": "filesystem-uuid",
+			"workspace_uuid":  dbUUID("workspace-uuid"),
+			"filesystem_uuid": dbUUID("filesystem-uuid"),
 			"directory_path":  "/reports",
 			"fetch_limit":     26,
 		}
@@ -177,16 +179,16 @@ func TestBuildFilestoreEntriesPageQuery(t *testing.T) {
 			Cursor:        &FilestoreEntryPageCursor{Path: "/reports/a", UUID: "00000000-0000-4000-8000-000000000010"},
 		})
 		if !strings.Contains(query, "left(path, char_length(:directory_prefix)) = :directory_prefix") ||
-			!strings.Contains(query, "and (path, uuid) > (:cursor_path, CAST(:cursor_uuid AS uuid))") ||
+			!strings.Contains(query, "and (path, uuid) > (:cursor_path, :cursor_uuid)") ||
 			!strings.Contains(query, "limit :fetch_limit") {
 			t.Fatalf("recursive query = %q", query)
 		}
 		wantArgs := map[string]any{
-			"workspace_uuid":   "workspace-uuid",
-			"filesystem_uuid":  "filesystem-uuid",
+			"workspace_uuid":   dbUUID("workspace-uuid"),
+			"filesystem_uuid":  dbUUID("filesystem-uuid"),
 			"directory_prefix": "/reports/",
 			"cursor_path":      "/reports/a",
-			"cursor_uuid":      "00000000-0000-4000-8000-000000000010",
+			"cursor_uuid":      dbUUID("00000000-0000-4000-8000-000000000010"),
 			"fetch_limit":      26,
 		}
 		if !reflect.DeepEqual(args, wantArgs) {
@@ -211,11 +213,11 @@ func TestFilestoreEntrySQLXRowEntry(t *testing.T) {
 
 	t.Run("maps database row to domain entry", func(t *testing.T) {
 		row := filestoreEntryRow{
-			UUID:                  "entry-uuid",
+			UUID:                  uuid.MustParse("00000000-0000-4000-8000-000000000001"),
 			ExternalID:            "file_7",
-			OrganizationUUID:      "organization-uuid",
-			WorkspaceUUID:         "workspace-uuid",
-			FilesystemUUID:        "filesystem-uuid",
+			OrganizationUUID:      uuid.MustParse("00000000-0000-4000-8000-000000000002"),
+			WorkspaceUUID:         uuid.MustParse("00000000-0000-4000-8000-000000000003"),
+			FilesystemUUID:        uuid.MustParse("00000000-0000-4000-8000-000000000004"),
 			Kind:                  FilestoreEntryKindFile,
 			Path:                  "/reports/july.txt",
 			Metadata:              []byte(`{"source":"test"}`),
@@ -226,7 +228,7 @@ func TestFilestoreEntrySQLXRowEntry(t *testing.T) {
 		if err != nil {
 			t.Fatalf("entry() error = %v", err)
 		}
-		if entry.UUID != row.UUID || entry.Path != row.Path || !reflect.DeepEqual(entry.Tags, []string{"report", "july"}) {
+		if entry.UUID != row.UUID.String() || entry.Path != row.Path || !reflect.DeepEqual(entry.Tags, []string{"report", "july"}) {
 			t.Fatalf("entry() = %+v, want row identity and decoded tags", entry)
 		}
 		if string(entry.Metadata) != `{"source":"test"}` {

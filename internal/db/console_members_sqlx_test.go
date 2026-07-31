@@ -3,6 +3,8 @@ package db
 import (
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
@@ -16,7 +18,7 @@ func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "list",
 			query: listOrgUsersQuery,
 			arguments: map[string]any{
-				"org_uuid": "org_test",
+				"org_uuid": uuid.MustParse("11111111-1111-4111-8111-111111111111"),
 				"limit":    100,
 			},
 			wantArgCount: 2,
@@ -25,9 +27,10 @@ func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "update role",
 			query: updateOrgUserRoleQuery,
 			arguments: map[string]any{
-				"org_uuid": "org_test",
-				"user_id":  "user_test",
-				"role":     "developer",
+				"org_uuid":  uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+				"user_id":   "user_test",
+				"user_uuid": tryParseDBUUIDIdentifier("user_test"),
+				"role":      "developer",
 			},
 			wantArgCount: 5,
 		},
@@ -35,8 +38,9 @@ func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "remove user",
 			query: removeOrgUserQuery,
 			arguments: map[string]any{
-				"org_uuid": "org_test",
-				"user_id":  "user_test",
+				"org_uuid":  uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+				"user_id":   "user_test",
+				"user_uuid": tryParseDBUUIDIdentifier("user_test"),
 			},
 			wantArgCount: 4,
 		},
@@ -44,8 +48,9 @@ func TestConsoleMemberQueriesUseSQLXNamedParameters(t *testing.T) {
 			name:  "remove workspace memberships",
 			query: removeOrgUserWorkspaceMembershipsQuery,
 			arguments: map[string]any{
-				"org_uuid": "org_test",
-				"user_id":  "user_test",
+				"org_uuid":  uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+				"user_id":   "user_test",
+				"user_uuid": tryParseDBUUIDIdentifier("user_test"),
 			},
 			wantArgCount: 5,
 		},

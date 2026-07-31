@@ -148,9 +148,10 @@ sequenceDiagram
 事件重复获得两条 queue 责任。organization、workspace、Session 和 event 均使用稳定 UUID
 引用，避免租户迁移、部分导入或跨库合并时 identity 重映射导致 queue row 失去归属。
 
-读取 queue 引用时必须同时匹配 organization、workspace、Session ID、Session external ID
-和 event UUID。queue 如果指向其他 Session 的事件，创建流程直接失败，不得写 inbound、删
-queue 或激活 Code Session。
+queue 行按 `session_uuid` 归属当前 Session；读取 event 时按 `session_event_uuid`
+定位 `session_events`。queue 引用的事件不存在或无法归属时，创建流程直接失败，不得写
+inbound、删 queue 或激活 Code Session。写入时仍落 `organization_uuid` /
+`workspace_uuid`，作为稳定租户字段，但不作为查询必要条件。
 
 ## 启动窗口判定
 
@@ -158,13 +159,13 @@ queue 或激活 Code Session。
 
 `shouldQueueUserMessageForStartupSQLX` 的规则是：
 
-1. 查询该 Session 最新且未删除的 Code Session；
+1. 查询该 Session 最新且未删除的 Code Session（按 `session_uuid`）；
 2. 如果 Code Session 存在且状态不是 `initializing`，不进入 startup queue；
 3. 如果 Code Session 不存在或仍为 `initializing`，检查对应 Environment Work；
-4. work data 必须指向当前 Session，且状态为 `queued`、`starting` 或 `active`；
-5. Environment 必须是 cloud（`config.type = cloud`），与 Runner 只对 cloud 创建
-   managed Code Session 并激活 queue 的路径一致；`self_hosted` 等非 cloud 环境不进
-   startup queue，避免无人 drain 时首条消息挂死、后续消息 409；
+4. work 必须落在当前 Session 的 `workspace_uuid` / `environment_uuid` 上，data 指向
+   当前 Session，且状态为 `queued`、`starting` 或 `active`；
+5. **不按 Environment 类型过滤**（例如不区分 `cloud` / `self_hosted`）。是否入队只取决于
+   Code Session 是否尚未 active，以及是否仍有指向该 Session 的在途 environment work；
 6. work 已停止或最新 Code Session 是其他状态时，保持既有事件行为。
 
 这个判断必须在 Send 事务锁住 Session 行之后执行，不能在 API 层提前查询。发送和激活只有
@@ -418,4 +419,4 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | Send 事务先于激活获得 Session 锁 | 消息进入 queue，激活发现变化后重试 |
 | Code Session 已 active | 不写 startup queue，只实时投当前 batch |
 | Code Session 非 active | 不实时写 inbound |
-| Environment 为 self_hosted 等非 cloud | 不进 startup queue；消息走既有 realtime/no-op 路径，不 409 |
+| Environment 类型为 self_hosted 等 | 与 cloud 相同：只要 CS 未 active 且存在指向该 Session 的在途 work，即可能进 startup queue；**不**因 environment type 跳过 queue |

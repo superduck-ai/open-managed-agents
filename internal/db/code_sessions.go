@@ -307,18 +307,12 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 	current, err := getCodeSessionSQLX(ctx, tx, `
 		select `+codeSessionColumns()+`
 		from code_sessions
-		where organization_uuid = CAST(:organization_uuid AS uuid)
-			and workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and external_id = :external_id
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where uuid = CAST(:uuid AS uuid)
 			and status = 'initializing'
 			and deleted_at is null
 		for update
 	`, map[string]any{
-		"organization_uuid": codeSession.OrganizationUUID,
-		"workspace_uuid":    codeSession.WorkspaceUUID,
-		"external_id":       codeSession.ExternalID,
-		"session_uuid":      session.UUID,
+		"uuid": codeSession.UUID,
 	})
 	if err != nil {
 		return false, err
@@ -352,13 +346,9 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 	}
 	deletedResult, err := namedExecContext(ctx, tx, `
 		delete from session_event_queue
-		where organization_uuid = CAST(:organization_uuid AS uuid)
-			and workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where session_uuid = CAST(:session_uuid AS uuid)
 	`, map[string]any{
-		"organization_uuid": session.OrganizationUUID,
-		"workspace_uuid":    session.WorkspaceUUID,
-		"session_uuid":      session.UUID,
+		"session_uuid": session.UUID,
 	})
 	if err != nil {
 		return false, err
@@ -374,20 +364,12 @@ func (d *DB) ActivateManagedAgentCodeSessionWithQueue(
 	result, err := namedExecContext(ctx, tx, `
 		update code_sessions
 		set status = 'active', updated_at = :now
-		where organization_uuid = CAST(:organization_uuid AS uuid)
-			and workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and uuid = CAST(:uuid AS uuid)
-			and external_id = :external_id
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where uuid = CAST(:uuid AS uuid)
 			and status = 'initializing'
 			and deleted_at is null
 	`, map[string]any{
-		"organization_uuid": current.OrganizationUUID,
-		"workspace_uuid":    current.WorkspaceUUID,
-		"uuid":              current.UUID,
-		"external_id":       current.ExternalID,
-		"session_uuid":      session.UUID,
-		"now":               time.Now().UTC(),
+		"uuid": current.UUID,
+		"now":  time.Now().UTC(),
 	})
 	if err != nil {
 		return false, err

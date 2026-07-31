@@ -158,13 +158,13 @@ func listSessionEventQueueIdentityRows(
 	session Session,
 	lock bool,
 ) ([]sessionEventQueueIdentityRow, error) {
+	// session_uuid uniquely identifies the public Session; tenant columns are
+	// written on insert but are not required as query predicates.
 	query := `
 		select q.id, CAST(q.session_uuid AS text) as session_uuid,
 			CAST(q.session_event_uuid AS text) as session_event_uuid
 		from session_event_queue q
-		where q.organization_uuid = CAST(:organization_uuid AS uuid)
-			and q.workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and q.session_uuid = CAST(:session_uuid AS uuid)
+		where q.session_uuid = CAST(:session_uuid AS uuid)
 		order by q.id asc
 	`
 	if lock {
@@ -172,9 +172,7 @@ func listSessionEventQueueIdentityRows(
 	}
 	var rows []sessionEventQueueIdentityRow
 	err := namedSelectContext(ctx, database, &rows, query, map[string]any{
-		"organization_uuid": session.OrganizationUUID,
-		"workspace_uuid":    session.WorkspaceUUID,
-		"session_uuid":      session.UUID,
+		"session_uuid": session.UUID,
 	})
 	if err != nil {
 		return nil, err
@@ -199,6 +197,11 @@ func sessionEventQueueItemsMatch(
 	return true
 }
 
+// shouldQueueUserMessageForStartupSQLX reports whether a user.message should
+// enter the startup queue. Environment type (for example cloud vs self_hosted)
+// is intentionally not part of this decision: queueing depends only on whether
+// the Session still has no active Code Session and still has session-scoped
+// environment work in flight.
 func shouldQueueUserMessageForStartupSQLX(
 	ctx context.Context,
 	database sqlxNamedQueryer,
@@ -208,16 +211,12 @@ func shouldQueueUserMessageForStartupSQLX(
 	err := namedGetContext(ctx, database, &status, `
 		select status
 		from code_sessions
-		where organization_uuid = CAST(:organization_uuid AS uuid)
-			and workspace_uuid = CAST(:workspace_uuid AS uuid)
-			and session_uuid = CAST(:session_uuid AS uuid)
+		where session_uuid = CAST(:session_uuid AS uuid)
 			and deleted_at is null
 		order by created_at desc, uuid desc
 		limit 1
 	`, map[string]any{
-		"organization_uuid": session.OrganizationUUID,
-		"workspace_uuid":    session.WorkspaceUUID,
-		"session_uuid":      session.UUID,
+		"session_uuid": session.UUID,
 	})
 	if err == nil && status != "initializing" {
 		return false, nil
@@ -226,34 +225,22 @@ func shouldQueueUserMessageForStartupSQLX(
 		return false, err
 	}
 
-	// Only cloud environments run managed Code Session activation that drains
-	// the queue (see Runner.prepareManagedAgentLaunch / cloudEnvironment).
 	var startupWorkExists bool
 	err = namedGetContext(ctx, database, &startupWorkExists, `
 		select exists (
 			select 1
 			from environment_work ew
-			join environments e
-				on e.uuid = ew.environment_uuid
-				and e.organization_uuid = ew.organization_uuid
-				and e.workspace_uuid = ew.workspace_uuid
-				and e.external_id = ew.environment_external_id
-			where ew.organization_uuid = CAST(:organization_uuid AS uuid)
-				and ew.workspace_uuid = CAST(:workspace_uuid AS uuid)
+			where ew.workspace_uuid = CAST(:workspace_uuid AS uuid)
 				and ew.environment_uuid = CAST(:environment_uuid AS uuid)
-				and ew.environment_external_id = :environment_external_id
 				and ew.data->>'type' = 'session'
 				and ew.data->>'id' = :session_external_id
 				and ew.state in ('queued', 'starting', 'active')
 				and ew.deleted_at is null
-				and e.deleted_at is null
 		)
 	`, map[string]any{
-		"organization_uuid":       session.OrganizationUUID,
-		"workspace_uuid":          session.WorkspaceUUID,
-		"environment_uuid":        session.EnvironmentUUID,
-		"environment_external_id": session.EnvironmentExternalID,
-		"session_external_id":     session.ExternalID,
+		"workspace_uuid":      session.WorkspaceUUID,
+		"environment_uuid":    session.EnvironmentUUID,
+		"session_external_id": session.ExternalID,
 	})
 	if err != nil {
 		return false, err
@@ -271,14 +258,10 @@ func sessionEventQueueExistsSQLX(
 		select exists (
 			select 1
 			from session_event_queue q
-			where q.organization_uuid = CAST(:organization_uuid AS uuid)
-				and q.workspace_uuid = CAST(:workspace_uuid AS uuid)
-				and q.session_uuid = CAST(:session_uuid AS uuid)
+			where q.session_uuid = CAST(:session_uuid AS uuid)
 		)
 	`, map[string]any{
-		"organization_uuid": session.OrganizationUUID,
-		"workspace_uuid":    session.WorkspaceUUID,
-		"session_uuid":      session.UUID,
+		"session_uuid": session.UUID,
 	})
 	return exists, err
 }

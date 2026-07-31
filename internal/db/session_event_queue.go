@@ -65,14 +65,14 @@ func (d *DB) AppendSessionEventsForDelivery(
 	userMessageCount := lo.CountBy(events, func(event SessionEvent) bool {
 		return event.EventType == "user.message"
 	})
-	startup := false
+	shouldQueueForStartup := false
 	if userMessageCount > 0 {
-		startup, err = sessionUserMessageStartupWindowSQLX(ctx, tx, session)
+		shouldQueueForStartup, err = shouldQueueUserMessageForStartupSQLX(ctx, tx, session)
 		if err != nil {
 			return nil, "", err
 		}
 	}
-	if startup {
+	if shouldQueueForStartup {
 		if len(events) != 1 || userMessageCount != 1 {
 			return nil, "", ErrSessionStartupMessageConflict
 		}
@@ -90,7 +90,7 @@ func (d *DB) AppendSessionEventsForDelivery(
 		return nil, "", err
 	}
 	delivery := SessionEventDeliveryRealtime
-	if startup {
+	if shouldQueueForStartup {
 		if err := enqueueSessionEventsSQLXTx(ctx, tx, session, created); err != nil {
 			return nil, "", err
 		}
@@ -209,7 +209,7 @@ func sessionEventQueueItemsMatch(
 	return true
 }
 
-func sessionUserMessageStartupWindowSQLX(
+func shouldQueueUserMessageForStartupSQLX(
 	ctx context.Context,
 	database sqlxNamedQueryer,
 	session Session,

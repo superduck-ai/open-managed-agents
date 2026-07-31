@@ -156,7 +156,7 @@ queue 或激活 Code Session。
 
 启动窗口是后端事务内的判断，不是新的公开状态。
 
-`sessionUserMessageStartupWindowSQLX` 的规则是：
+`shouldQueueUserMessageForStartupSQLX` 的规则是：
 
 1. 查询该 Session 最新且未删除的 Code Session；
 2. 如果 Code Session 存在且状态不是 `initializing`，不进入 startup queue；
@@ -393,7 +393,7 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | Runner prepare 不再读取事件快照 | `Runner.prepareManagedAgentLaunch` |
 | API 标准化事件与 outcome | `Handler.sendEventsRoute`、`normalizeInputEvent` |
 | Send 事务和 startup/realtime 分流 | `DB.AppendSessionEventsForDelivery` |
-| 启动窗口判断 | `sessionUserMessageStartupWindowSQLX` |
+| 启动窗口判断 | `shouldQueueUserMessageForStartupSQLX` |
 | queue 写入 | `enqueueSessionEventsSQLXTx` |
 | queue 快照及 ownership 加载 | `DB.ListSessionEventQueueItems` |
 | Code Session 创建和消费循环 | `Service.CreateManagedAgentCodeSession`、`activateManagedAgentCodeSession` |

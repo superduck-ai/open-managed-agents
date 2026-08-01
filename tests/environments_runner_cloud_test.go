@@ -343,7 +343,7 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 
 	const prompt = "startup-window message must reach inbound"
 	ids := getDefaultDBIDs(t, app.db)
-	var acceptedEventID string
+	var acceptedEventID, interruptEventID string
 	provider := &recordingRunnerProvider{
 		sandboxID: "sandbox-runner-startup-message",
 		beforeCreate: func() {
@@ -355,6 +355,11 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 				t.Fatalf("accepted events = %#v, want one", sent.Data)
 			}
 			acceptedEventID = sessionEventStringField(t, sent.Data[0], "id")
+			interrupt := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
+			if len(interrupt.Data) != 1 {
+				t.Fatalf("accepted interrupt = %#v, want one", interrupt.Data)
+			}
+			interruptEventID = sessionEventStringField(t, interrupt.Data[0], "id")
 		},
 	}
 
@@ -375,12 +380,13 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	if err != nil {
 		t.Fatalf("list queued inbound events: %v", err)
 	}
-	if len(queued) != 2 ||
+	if len(queued) != 3 ||
 		queued[0].EventSubtype != "initialize" ||
 		queued[1].EventType != "user" ||
 		!bytes.Contains(queued[1].Payload, []byte(acceptedEventID)) ||
-		!bytes.Contains(queued[1].Payload, []byte(prompt)) {
-		t.Fatalf("inbound = %#v, want initialize then accepted user message", queued)
+		!bytes.Contains(queued[1].Payload, []byte(prompt)) ||
+		!bytes.Contains(queued[2].Payload, []byte(interruptEventID)) {
+		t.Fatalf("inbound = %#v, want initialize, accepted user message, interrupt", queued)
 	}
 	if remaining := sessionEventQueueEventIDs(t, app, session.ID); len(remaining) != 0 {
 		t.Fatalf("remaining startup session event queue = %#v, want empty", remaining)

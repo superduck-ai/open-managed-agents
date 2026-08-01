@@ -9,8 +9,7 @@ import (
 // ManagedAgentActivationTx exposes the resource-scoped SQL operations used by
 // the code-session service to atomically hand off startup events.
 type ManagedAgentActivationTx struct {
-	database *DB
-	tx       *sqlx.Tx
+	tx *sqlx.Tx
 }
 
 // WithManagedAgentActivationTx owns the database transaction lifecycle while
@@ -25,7 +24,7 @@ func (d *DB) WithManagedAgentActivationTx(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := fn(ManagedAgentActivationTx{database: d, tx: tx}); err != nil {
+	if err := fn(ManagedAgentActivationTx{tx: tx}); err != nil {
 		return err
 	}
 	return tx.Commit()

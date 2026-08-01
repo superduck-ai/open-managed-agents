@@ -706,18 +706,6 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 		t.Fatalf("set code session initializing: %v", err)
 	}
 
-	ids := getDefaultDBIDs(t, app.db)
-	sessionRecord, err := app.db.GetSession(ctx, ids.WorkspaceUUID, session.ID)
-	if err != nil {
-		t.Fatalf("load Session for activation: %v", err)
-	}
-	staleItems, err := app.db.ListSessionEventQueueItems(ctx, sessionRecord)
-	if err != nil {
-		t.Fatalf("list empty Session event queue: %v", err)
-	}
-	if len(staleItems) != 0 {
-		t.Fatalf("initial Session event queue = %#v, want empty", staleItems)
-	}
 	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("load initializing code session: %v", err)
@@ -730,42 +718,8 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	}
 	acceptedEventID := sessionEventStringField(t, accepted.Data[0], "id")
 
-	committed, err := codeSessionService.CommitManagedAgentCodeSessionActivation(ctx, codeSession, staleItems, nil)
-	if err != nil {
-		t.Fatalf("reject stale activation queue snapshot: %v", err)
-	}
-	if committed {
-		t.Fatal("activation succeeded with a stale empty queue snapshot")
-	}
-	queueItems, err := app.db.ListSessionEventQueueItems(ctx, sessionRecord)
-	if err != nil {
-		t.Fatalf("list Session event queue for activation: %v", err)
-	}
-	if len(queueItems) != 1 {
-		t.Fatalf("Session event queue items = %#v, want one", queueItems)
-	}
-
-	committed, err = codeSessionService.CommitManagedAgentCodeSessionActivation(
-		ctx,
-		codeSession,
-		queueItems,
-		[]db.AppendCodeSessionEventInput{{
-			ExternalID:     "csev_activation_" + strings.TrimPrefix(codeSessionID, "cse_"),
-			EventType:      "user",
-			EventSubtype:   "message",
-			Payload:        json.RawMessage(`{"type":"user","uuid":` + quoteJSON(acceptedEventID) + `,"message":{"role":"user","content":"must be delivered before activation"}}`),
-			PayloadHash:    "activation-queue-hash",
-			IdempotencyKey: "activation-queue:" + acceptedEventID,
-			DeliveryStatus: "queued",
-			Source:         "public-session",
-			CreatedAt:      time.Now().UTC(),
-		}},
-	)
-	if err != nil {
+	if err := codeSessionService.CommitManagedAgentCodeSessionActivation(ctx, codeSession); err != nil {
 		t.Fatalf("activate with queued session event: %v", err)
-	}
-	if !committed {
-		t.Fatal("activation did not commit the queued session event")
 	}
 	codeSession, err = app.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
@@ -807,7 +761,72 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	}
 }
 
-func TestSessionEventQueueDeliveryRollsBackOnInboundFailure(t *testing.T) {
+func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-managed-agent-large-history-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-managed-agent-large-history-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-managed-agent-large-history-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	sessionResponse := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, sessionResponse.ID)
+	codeSessionID := launchLocalCodeSession(t, app, sessionResponse.ID)
+	if _, err := app.db.Pool.Exec(ctx, `update code_sessions set status = 'initializing' where external_id = $1`, codeSessionID); err != nil {
+		t.Fatalf("set Code Session initializing: %v", err)
+	}
+
+	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.db).WorkspaceUUID, sessionResponse.ID)
+	if err != nil {
+		t.Fatalf("load Session: %v", err)
+	}
+	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load Code Session: %v", err)
+	}
+	const eventCount = 501
+	createdAt := time.Now().UTC()
+	uuidPrefix := uuid.New()
+	eventIDs := make([]string, 0, eventCount)
+	events := make([]db.SessionEvent, 0, eventCount)
+	for i := range eventCount {
+		eventID := fmt.Sprintf("sevt_large_history_%03d_%s", i, strings.TrimPrefix(codeSessionID, "cse_"))
+		eventUUID := uuidPrefix
+		eventUUID[14] = byte((eventCount - i) >> 8)
+		eventUUID[15] = byte(eventCount - i)
+		eventIDs = append(eventIDs, eventID)
+		events = append(events, db.SessionEvent{
+			UUID:        eventUUID.String(),
+			ExternalID:  eventID,
+			EventType:   "user.interrupt",
+			Payload:     json.RawMessage(`{"type":"user.interrupt","id":` + quoteJSON(eventID) + `}`),
+			ProcessedAt: createdAt,
+			CreatedAt:   createdAt,
+		})
+	}
+	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, events); err != nil {
+		t.Fatalf("append large history: %v", err)
+	}
+	if err := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).CommitManagedAgentCodeSessionActivation(ctx, codeSession); err != nil {
+		t.Fatalf("activate Code Session: %v", err)
+	}
+
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list inbound: %v", err)
+	}
+	if len(inbound) != eventCount+1 {
+		t.Fatalf("inbound count = %d, want %d", len(inbound), eventCount+1)
+	}
+	for i, eventID := range eventIDs {
+		if !bytes.Contains(inbound[i+1].Payload, []byte(eventID)) {
+			t.Fatalf("inbound %d is out of order: %s", i, inbound[i+1].Payload)
+		}
+	}
+}
+
+func TestSessionEventQueueDeliveryRollsBackOnHistoryConversionFailure(t *testing.T) {
 	ctx := context.Background()
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-queue-rollback-bucket"))
 	defer app.close()
@@ -836,31 +855,24 @@ func TestSessionEventQueueDeliveryRollsBackOnInboundFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load rollback Code Session: %v", err)
 	}
+	invalidAt := time.Now().UTC().Add(time.Second)
+	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{{
+		UUID:        uuid.NewString(),
+		ExternalID:  "sevt_activation_invalid_" + strings.TrimPrefix(codeSessionID, "cse_"),
+		EventType:   "user.interrupt",
+		Payload:     json.RawMessage(`[]`),
+		ProcessedAt: invalidAt,
+		CreatedAt:   invalidAt,
+	}}); err != nil {
+		t.Fatalf("append invalid forwardable history event: %v", err)
+	}
 	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	queueItems, err := app.db.ListSessionEventQueueItems(ctx, session)
-	if err != nil {
-		t.Fatalf("load rollback queue items: %v", err)
-	}
-	if len(queueItems) != 1 {
-		t.Fatalf("rollback queue items = %#v, want one", queueItems)
-	}
 	before, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
 	if err != nil || len(before) != 1 {
 		t.Fatalf("rollback inbound before delivery = (%#v, %v), want initialize", before, err)
 	}
-	committed, err := codeSessionService.CommitManagedAgentCodeSessionActivation(ctx, codeSession, queueItems, []db.AppendCodeSessionEventInput{{
-		ExternalID:     before[0].ExternalID,
-		EventType:      "user",
-		EventSubtype:   "message",
-		Payload:        json.RawMessage(`{"type":"user","uuid":"rollback-user"}`),
-		PayloadHash:    "rollback-hash",
-		IdempotencyKey: "rollback-idempotency",
-		DeliveryStatus: "queued",
-		Source:         "public-session",
-		CreatedAt:      time.Now().UTC(),
-	}})
-	if err == nil || committed {
-		t.Fatal("queue delivery with duplicate inbound external ID succeeded")
+	if err := codeSessionService.CommitManagedAgentCodeSessionActivation(ctx, codeSession); err == nil {
+		t.Fatal("activation with invalid forwardable history succeeded")
 	}
 	if queued := sessionEventQueueEventIDs(t, app, sessionResponse.ID); len(queued) != 1 {
 		t.Fatalf("queue after rolled-back inbound = %#v, want one row", queued)

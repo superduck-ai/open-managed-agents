@@ -38,9 +38,9 @@ Code Session 激活事务中与 queue 清理一起原子写入 inbound，保证 
 | --- | --- | --- |
 | 启动期增量来源 | Runner prepare 时读取一次含历史的 `InitialEvents` 快照 | Send 启动窗写入 queue；激活时再合并历史 `session_events` |
 | prepare 后到达的消息 | 不在旧快照中 | 与 `session_events` 同事务进入 queue |
-| Code Session 创建 | 使用 prepare 阶段快照写 inbound | 激活时：历史 `session_events` + queue → inbound |
+| Code Session 创建 | 使用 prepare 阶段快照写 inbound | 锁定 Session 后读取完整 queue 与历史并原子激活 |
 | 消息责任 | API 200 后没有跨启动流程的持久化责任 | queue row 持有到最终激活事务提交 |
-| 激活条件 | 快照处理完成后继续启动 | inbound、清空 queue、切 `active` 一次提交 |
+| 激活条件 | 快照处理完成后继续启动 | 锁内读取 history、写 inbound、清空 queue、切 `active` 一次提交 |
 | active 后发送 | 实时投递当前 batch | 保持不变 |
 
 变化的核心不是“创建 Code Session 时扫描更多历史”，而是把投递责任前移到接收消息的事务：
@@ -104,20 +104,16 @@ sequenceDiagram
 
     Runner->>CS: INSERT status=initializing
     Runner->>Inbound: INSERT initialize (sequence=1)
-    Runner->>Queue: 读取完整 queue 快照（FIFO）
-    Queue-->>Runner: queue items
-    Runner->>Events: 按 Session ownership 加载 event payloads
-    Runner->>Runner: 转换为 inbound inputs
-
     rect rgb(238, 247, 255)
         Note over Session,CS: 最终激活事务
         Runner->>Session: SELECT FOR UPDATE
         Runner->>CS: SELECT initializing FOR UPDATE
         Runner->>Queue: SELECT full queue FOR UPDATE
-        Runner->>Runner: 与事务外快照逐项比较
-        loop queue.id 顺序
-            Runner->>Inbound: INSERT inbound
+        Runner->>Events: SELECT complete history ORDER BY created_at, id
+        loop stable history order
+            Runner->>Runner: 过滤并转换可转发事件
         end
+        Runner->>Inbound: 分块批量 INSERT inbound
         Runner->>Queue: DELETE all rows
         Runner->>CS: UPDATE initializing → active
         Runner->>Runner: COMMIT
@@ -251,29 +247,12 @@ sequenceDiagram
 
 1. 创建状态为 `initializing` 的 Code Session；
 2. 写入 sequence 1 的 `initialize` inbound；
-3. 调用 `activateManagedAgentCodeSession`：合并历史 `session_events` 与 queue 后激活；
+3. 调用 `CommitManagedAgentCodeSessionActivation`，在最终激活事务内读取 queue 与完整
+   `session_events`，按稳定顺序构造 inbound 并激活；
 4. 激活成功后才继续签发并返回 runtime 启动信息；
 5. 中途失败时，现有 defer cleanup 将未完成的 Code Session terminate。
 
-### 阶段一：读取历史与 queue 并转换
-
-`activateManagedAgentCodeSession` 在事务外：
-
-1. `ListSessionEventQueueItems` 读取完整 queue（FIFO）及所属公开事件，得到
-   `queueItems`（`[]SessionEventQueueItem`）；
-2. `listAllSessionEvents` 分页读取当前 Session 的全部公开事件历史（升序）；
-3. 从历史中排除仍出现在 queue 中的 event UUID，再经 `convertSessionEventsToInbound`
-   转为 `historyInbound`（只保留可转发类型，避免与 queue 交接重复）；
-4. 再按 queue 顺序对 `queueItems` 中的 `user.message` 调用
-   `convertSessionEventToInbound`，得到 `queueInbound`；
-5. `inboundInputs = historyInbound + queueInbound`，顺序为：历史（去 queue 重复）→
-   queue FIFO。
-
-转换放在事务外，避免在持有 Session 和 Code Session 行锁时执行 JSON/envelope 处理。
-queue 仍是启动空窗责任与 cutover 匹配的唯一来源；历史注入对齐旧
-`InitialEvents` 全量扫描，保证再起 Code Session 时能带上已有多轮对话。
-
-### 阶段二：一个事务完成全部交接
+### 一个事务完成读取、交接与激活
 
 `Service.CommitManagedAgentCodeSessionActivation` 通过
 `DB.WithManagedAgentActivationTx` 定义事务边界并固定执行以下顺序；DB 的事务对象只暴露
@@ -282,22 +261,28 @@ Session、queue 和 Code Session 各自的 SQL 操作，不编排跨资源业务
 ```text
 锁 Session
 → 锁 initializing Code Session
-→ 校验 queueItems 均为 user.message（Session ownership 已由 List 保证）
-→ 锁当前完整 queue（QueueMatches）
-→ 将当前 queue 与事务外 queueItems 快照逐项比较
-→ 按 inboundInputs 顺序写入全部 inbound（历史 + queue）
+→ 读取并锁定完整 queue，校验均为 user.message 且属于当前 Session
+→ 读取当前 Session 的完整公开历史（created_at asc, id asc）
+→ 按该稳定顺序过滤、转换可转发 inbound
+→ 批量检查幂等键、分配连续 sequence，并按固定大小分块 INSERT
+→ 一次更新 Code Session 的 last inbound sequence
 → 删除当前 Session 的全部 queue rows
 → Code Session initializing → active
 → commit
 ```
 
-`queueItems` 仅用于 queue 快照匹配与清空；`inboundInputs` 可长于 `queueItems`。
-快照比较包括 row 数量、queue ID、Session UUID、event UUID 和顺序。如果读取快照以后新消息
-进入 queue，最终事务会发现列表不一致，返回 `committed=false`，且不做任何写入；Service
-重新读取历史与 queue、转换并重试。
+queue 只承担首条启动 `user.message` 的临时投递责任；queue 中的消息已经属于公开历史，
+不会再单独追加。激活先取得 Send Events 使用的同一条 Session 行锁，再读取 queue 与历史，
+因此不需要事务外快照、UUID match 或重试循环。
 
-inbound 插入复用现有 idempotency key。事务内每写一条新 inbound 都推进当前 Code Session
-的 sequence，保证历史与 Deployment initial messages 保持稳定顺序。
+`created_at` 保持既有历史时间语义；同一 batch 共用时间戳时，以仅限数据库内部排序的 identity
+`id` 保持原始写入顺序。这样 Deployment initial messages、同 batch 消息以及
+`user.message → user.interrupt` 都使用同一个稳定顺序来源。
+
+inbound 插入复用现有 idempotency key。事务内先批量加载已存在的幂等键，只为新事件按
+history 输入顺序分配连续 sequence；随后每 500 条执行一次批量 INSERT，并在全部写入成功后
+只更新一次 Code Session 的 last inbound sequence。这样既保持历史与 Deployment initial
+messages 的稳定顺序，也避免持有 Session 锁时逐事件执行查询、插入和 sequence 更新。
 
 ## 激活 cutover 的并发语义
 
@@ -309,6 +294,7 @@ sequenceDiagram
     participant Send as Send transaction
     participant Activate as Activation transaction
     participant Session as sessions row
+    participant Events as session_events
     participant Queue as session_event_queue
     participant CS as code_sessions
     participant Inbound as code_session_inbound_events
@@ -316,18 +302,20 @@ sequenceDiagram
     alt Send 先获得 Session 锁
         Send->>Session: SELECT FOR UPDATE
         Activate->>Session: 等待
-        Send->>Queue: INSERT event reference
+        Send->>Events: INSERT public event
+        Send->>Queue: user.message 时 INSERT reference
         Send->>Send: COMMIT
         Activate->>Session: 获得锁
-        Activate->>Queue: 快照不一致
-        Activate-->>Activate: rollback and retry
-        Activate->>Inbound: 交接包含新消息的完整 queue
+        Activate->>Queue: 读取并锁定当前完整 queue
+        Activate->>Events: 读取包含已提交事件的完整历史
+        Activate->>Inbound: 按稳定历史顺序交接
         Activate->>Queue: DELETE all
         Activate->>CS: UPDATE active + COMMIT
     else Activate 先获得 Session 锁
         Activate->>Session: SELECT FOR UPDATE
         Send->>Session: 等待
-        Activate->>Queue: 锁定并确认完整 queue
+        Activate->>Queue: 读取并锁定完整 queue
+        Activate->>Events: 读取当前完整历史
         Activate->>Inbound: INSERT all startup inputs
         Activate->>Queue: DELETE all
         Activate->>CS: UPDATE active + COMMIT
@@ -350,7 +338,7 @@ Deployment 创建 Session 时，Session、initial events、queue 和 Deployment 
 4. 非 `user.message` 保留为公开事件，但不进入这个窄 queue；
 5. 任一步失败都回滚整个 Deployment 创建事务。
 
-Code Session 激活事务一次性交接完整 queue，因此 inbound 顺序为：
+Code Session 激活事务按稳定历史顺序一次性交接可转发事件，因此 inbound 顺序为：
 
 ```text
 initialize
@@ -385,7 +373,6 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | event、queue 或 outcome 写入失败 | Send 事务整体回滚 |
 | queue event 不属于当前 Session | 创建失败；不写 inbound、不删 queue、不激活 |
 | 事件转换失败 | 创建失败；queue 保留 |
-| 快照与锁定后的完整 queue 不一致 | 激活事务无写入，重新读取并重试 |
 | 任一 inbound 写入或 sequence 更新失败 | 激活事务整体回滚，queue 保留，状态仍为 `initializing` |
 | active 更新没有恰好影响一行 | 激活事务回滚 |
 | Code Session 创建流程失败 | 现有 cleanup terminate 未完成的 Code Session |
@@ -400,9 +387,10 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | Send 事务和 startup/realtime 分流 | `DB.AppendSessionEventsForDelivery` |
 | 启动窗口判断 | `shouldQueueForStartup` |
 | queue 写入 | `enqueueSessionEventsTx` |
-| queue 快照及 ownership 加载 | `DB.ListSessionEventQueueItems` |
-| Code Session 创建和消费循环 | `Service.CreateManagedAgentCodeSession`、`activateManagedAgentCodeSession` |
-| 完整 queue 原子交接与激活 | `Service.CommitManagedAgentCodeSessionActivation`、`DB.WithManagedAgentActivationTx` |
+| queue 事务内加载及 ownership / type 校验（不决定 inbound 序） | `ManagedAgentActivationTx.ListSessionEventQueueItems` |
+| 激活历史的稳定顺序读取 | `ManagedAgentActivationTx.ListSessionEventsForActivation` |
+| 激活 inbound 分块批量写入 | `ManagedAgentActivationTx.AppendCodeSessionInboundEvents` |
+| queue、history、inbound 与 active 原子交接 | `Service.CommitManagedAgentCodeSessionActivation`、`DB.WithManagedAgentActivationTx` |
 | Deployment initial events 入队 | `DB.CreateManualDeploymentRun` |
 | active 当前 batch 投递 | `Service.QueuePublicSessionEvents` |
 
@@ -415,12 +403,14 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | 两条普通启动消息并发 | Session 行锁串行化；一个 200，一个 409 |
 | 启动期多事件 batch 包含 `user.message` | 整体 409，无部分副作用 |
 | 被拒绝 batch 包含 `user.define_outcome` | outcome 不变化 |
-| queue 快照后新消息进入 | 第一次激活不写入并重试，最终完整交接 |
+| 激活等待 Session 锁时新消息先提交 | 激活取得锁后读取最新 queue 与历史并完整交接 |
+| 激活取得 Session 锁后收到 `user.interrupt` | Send 等待激活提交，随后看到 active 并走 realtime |
+| 启动期依次收到 `user.message`、`user.interrupt` | inbound 保持 message → interrupt 顺序 |
 | queue 引用另一个 Session 的 event | 拒绝激活，queue 保留 |
-| 第二条 inbound 写入失败 | 第一条 inbound 也回滚，queue 全部保留，Code Session 仍 initializing |
+| 已写一条 inbound 后，后续事件转换失败 | 已写 inbound 回滚，queue 全部保留，Code Session 仍 initializing |
 | Deployment 包含多条 initial user messages | `initialize` 后按输入顺序写入全部消息 |
 | 激活事务先于 Send 获得 Session 锁 | 激活原子提交，后续消息走 realtime |
-| Send 事务先于激活获得 Session 锁 | 消息进入 queue，激活发现变化后重试 |
+| Send 事务先于激活获得 Session 锁 | 消息先提交，激活随后读取最新 queue 与历史 |
 | Code Session 已 active | 不写 startup queue，只实时投当前 batch |
 | Code Session 非 active | 不实时写 inbound |
 | Environment 类型为 self_hosted 等 | 与 cloud 相同：只要 CS 未 active 且存在指向该 Session 的在途 work，即可能进 startup queue；**不**因 environment type 跳过 queue |

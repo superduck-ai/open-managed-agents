@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
-	"github.com/samber/lo"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -100,7 +98,7 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err := s.queueInitialize(ctx, record, input.Config, now); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	if err := s.activateManagedAgentCodeSession(ctx, input.Session, record); err != nil {
+	if err := s.CommitManagedAgentCodeSessionActivation(ctx, record); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
 	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(
@@ -127,81 +125,17 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	}, nil
 }
 
-// activateManagedAgentCodeSession loads the startup queue and public session
-// history outside the activation transaction, converts them to inbound inputs,
-// then commits activation under the same Session row lock used by Send Events.
-//
-// Inbound order after initialize: forwardable session history excluding events
-// still referenced by the startup queue, then queue items in FIFO order. The
-// queue snapshot is the only cutover signal: if it changes before commit, the
-// loop reloads and retries.
-func (s *Service) activateManagedAgentCodeSession(
-	ctx context.Context,
-	session db.Session,
-	codeSession db.CodeSession,
-) error {
-	for {
-		queueItems, err := s.db.ListSessionEventQueueItems(ctx, session)
-		if err != nil {
-			return err
-		}
-		sessionEvents, err := s.listAllSessionEvents(ctx, session)
-		if err != nil {
-			return err
-		}
-		queuedEventUUIDs := lo.SliceToMap(queueItems, func(item db.SessionEventQueueItem) (string, struct{}) {
-			return item.Event.UUID, struct{}{}
-		})
-		sessionEventsOutsideQueue := lo.Filter(sessionEvents, func(event db.SessionEvent, _ int) bool {
-			_, queued := queuedEventUUIDs[event.UUID]
-			return !queued
-		})
-		historyInbound, err := s.convertSessionEventsToInbound(codeSession.ExternalID, sessionEventsOutsideQueue)
-		if err != nil {
-			return err
-		}
-		queueInbound, err := lo.MapErr(queueItems, func(item db.SessionEventQueueItem, _ int) (db.AppendCodeSessionEventInput, error) {
-			if item.Event.EventType != "user.message" {
-				return db.AppendCodeSessionEventInput{}, fmt.Errorf(
-					"%w: session event queue contains a non-user message",
-					db.ErrInvalidState,
-				)
-			}
-			return s.convertSessionEventToInbound(codeSession.ExternalID, item.Event)
-		})
-		if err != nil {
-			return err
-		}
-		inboundInputs := append(historyInbound, queueInbound...)
-		committed, err := s.CommitManagedAgentCodeSessionActivation(
-			ctx,
-			codeSession,
-			queueItems,
-			inboundInputs,
-		)
-		if err != nil {
-			return err
-		}
-		if committed {
-			return nil
-		}
-	}
-}
-
-// CommitManagedAgentCodeSessionActivation writes inbound inputs, clears the
-// matched startup queue snapshot, and marks the Code Session active in one
-// transaction. It returns committed=false when the locked queue no longer
-// matches queueItems so the caller can reload and retry without partial writes.
+// CommitManagedAgentCodeSessionActivation locks the owning Session, loads the
+// startup queue and complete public history, writes forwardable events in
+// stable order, clears the queue, and activates the Code Session atomically.
 func (s *Service) CommitManagedAgentCodeSessionActivation(
 	ctx context.Context,
 	codeSession db.CodeSession,
-	queueItems []db.SessionEventQueueItem,
-	inboundInputs []db.AppendCodeSessionEventInput,
-) (committed bool, err error) {
+) error {
 	if s == nil || s.db == nil {
-		return false, db.ErrNotFound
+		return db.ErrNotFound
 	}
-	err = s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
+	return s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
 		session, err := tx.LockSessionForEvents(
 			ctx,
 			codeSession.WorkspaceUUID,
@@ -210,93 +144,52 @@ func (s *Service) CommitManagedAgentCodeSessionActivation(
 		if err != nil {
 			return err
 		}
-		codeSession, err := tx.LockInitializingCodeSession(ctx, codeSession.UUID)
+		lockedCodeSession, err := tx.LockInitializingCodeSession(ctx, codeSession.UUID)
 		if err != nil {
 			return err
 		}
-		if !lo.EveryBy(queueItems, func(item db.SessionEventQueueItem) bool {
-			return item.Event.EventType == "user.message"
-		}) {
-			return db.ErrInvalidState
-		}
-		queueMatches, err := tx.QueueMatches(ctx, session, queueItems)
-		if err != nil || !queueMatches {
+		// Queue rows are only a startup-delivery responsibility check. Inbound
+		// payloads and order come from locked public history below; after that
+		// succeeds the queue is cleared as the handoff completes.
+		queuedEvents, err := tx.ListSessionEventQueueItems(ctx, session)
+		if err != nil {
 			return err
 		}
-		for _, inbound := range inboundInputs {
-			inserted, duplicate, err := tx.AppendCodeSessionInboundEvent(ctx, codeSession, inbound)
+		for _, event := range queuedEvents {
+			if event.EventType != "user.message" {
+				return db.ErrInvalidState
+			}
+		}
+		sessionEvents, err := tx.ListSessionEventsForActivation(ctx, session)
+		if err != nil {
+			return err
+		}
+		inboundInputs := make([]db.AppendCodeSessionEventInput, 0, len(sessionEvents))
+		for _, event := range sessionEvents {
+			if !forwardPublicEventToWorker(event.EventType) {
+				continue
+			}
+			inbound, err := s.convertSessionEventToInbound(lockedCodeSession.ExternalID, event)
 			if err != nil {
 				return err
 			}
-			if duplicate && inserted.CodeSessionExternalID != codeSession.ExternalID {
-				return db.ErrInvalidState
-			}
-			if !duplicate {
-				codeSession.LastInboundSequenceNum = inserted.SequenceNum
-			}
+			inboundInputs = append(inboundInputs, inbound)
+		}
+		if err := tx.AppendCodeSessionInboundEvents(ctx, lockedCodeSession, inboundInputs); err != nil {
+			return err
 		}
 		if err := tx.DeleteSessionEventQueue(ctx, session.UUID); err != nil {
 			return err
 		}
-		statusUpdated, err := tx.ActivateCodeSession(ctx, codeSession.UUID, time.Now().UTC())
+		statusUpdated, err := tx.ActivateCodeSession(ctx, lockedCodeSession.UUID, time.Now().UTC())
 		if err != nil {
 			return err
 		}
 		if !statusUpdated {
 			return db.ErrInvalidState
 		}
-		committed = true
 		return nil
 	})
-	if err != nil {
-		return false, err
-	}
-	return committed, nil
-}
-
-// listAllSessionEvents returns every non-deleted public session event in
-// ascending creation order by paging through ListSessionEventsPage.
-func (s *Service) listAllSessionEvents(ctx context.Context, session db.Session) ([]db.SessionEvent, error) {
-	var all []db.SessionEvent
-	var cursor *db.SessionEventPageCursor
-	for {
-		page, hasMore, err := s.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-			WorkspaceUUID:     session.WorkspaceUUID,
-			SessionExternalID: session.ExternalID,
-			Limit:             100,
-			Cursor:            cursor,
-			Order:             "asc",
-		})
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, page...)
-		if !hasMore || len(page) == 0 {
-			return all, nil
-		}
-		last := page[len(page)-1]
-		cursor = &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}
-	}
-}
-
-// convertSessionEventsToInbound keeps forwardable session events and converts
-// each into an inbound write input for the given Code Session.
-func (s *Service) convertSessionEventsToInbound(
-	codeSessionID string,
-	events []db.SessionEvent,
-) ([]db.AppendCodeSessionEventInput, error) {
-	inboundInputs := make([]db.AppendCodeSessionEventInput, 0, len(events))
-	for _, event := range events {
-		if !forwardPublicEventToWorker(event.EventType) {
-			continue
-		}
-		inbound, err := s.convertSessionEventToInbound(codeSessionID, event)
-		if err != nil {
-			return nil, err
-		}
-		inboundInputs = append(inboundInputs, inbound)
-	}
-	return inboundInputs, nil
 }
 
 // convertSessionEventToInbound maps one public session event payload into a

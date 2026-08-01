@@ -19,18 +19,8 @@ const (
 	SessionEventDeliveryStartupQueued SessionEventDelivery = "startup_queued"
 )
 
-// SessionEventQueueItem couples one temporary queue identity with its owned
-// public Session event.
-type SessionEventQueueItem struct {
-	id               int64
-	sessionUUID      uuid.UUID
-	sessionEventUUID uuid.UUID
-	Event            SessionEvent
-}
-
 type sessionEventQueueIdentityRow struct {
 	ID               int64     `db:"id"`
-	SessionUUID      uuid.UUID `db:"session_uuid"`
 	SessionEventUUID uuid.UUID `db:"session_event_uuid"`
 }
 
@@ -119,13 +109,24 @@ func (d *DB) AppendSessionEventsForDelivery(
 	return created, delivery, nil
 }
 
-// ListSessionEventQueueItems returns the current startup queue in FIFO order
-// and rejects references that do not belong to the supplied Session.
-func (d *DB) ListSessionEventQueueItems(
+// ListSessionEventQueueItems returns and locks the public events currently
+// referenced by the startup queue for the Session already locked by the
+// activation transaction. Callers use this only to validate ownership and
+// event type before clearing the queue; inbound content and order come from
+// ListSessionEventsForActivation.
+func (tx ManagedAgentActivationTx) ListSessionEventQueueItems(
 	ctx context.Context,
 	session Session,
-) ([]SessionEventQueueItem, error) {
-	identityRows, err := listSessionEventQueueIdentityRows(ctx, d.sql, session, false)
+) ([]SessionEvent, error) {
+	return listSessionEventQueueItems(ctx, tx.tx, session)
+}
+
+func listSessionEventQueueItems(
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	session Session,
+) ([]SessionEvent, error) {
+	identityRows, err := listSessionEventQueueIdentityRows(ctx, database, session)
 	if err != nil {
 		return nil, err
 	}
@@ -133,12 +134,12 @@ func (d *DB) ListSessionEventQueueItems(
 		return nil, nil
 	}
 
-	eventsByUUID, err := sessionEventsByUUIDs(ctx, d.sql, session, identityRows)
+	eventsByUUID, err := sessionEventsByUUIDs(ctx, database, session, identityRows)
 	if err != nil {
 		return nil, err
 	}
 
-	queueItems := make([]SessionEventQueueItem, 0, len(identityRows))
+	events := make([]SessionEvent, 0, len(identityRows))
 	for _, row := range identityRows {
 		event, ok := eventsByUUID[row.SessionEventUUID.String()]
 		if !ok {
@@ -149,14 +150,31 @@ func (d *DB) ListSessionEventQueueItems(
 				session.ExternalID,
 			)
 		}
-		queueItems = append(queueItems, SessionEventQueueItem{
-			id:               row.ID,
-			sessionUUID:      row.SessionUUID,
-			sessionEventUUID: row.SessionEventUUID,
-			Event:            event,
-		})
+		events = append(events, event)
 	}
-	return queueItems, nil
+	return events, nil
+}
+
+// ListSessionEventsForActivation returns complete public history in stable
+// creation order. The database identity is used only to preserve insertion
+// order when a batch shares one created_at timestamp.
+func (tx ManagedAgentActivationTx) ListSessionEventsForActivation(
+	ctx context.Context,
+	session Session,
+) ([]SessionEvent, error) {
+	return listSessionEventsSQLX(ctx, tx.tx, `
+		select `+sessionEventSQLXColumns+`
+		from session_events
+		where organization_uuid = :organization_uuid
+			and workspace_uuid = :workspace_uuid
+			and session_uuid = :session_uuid
+			and deleted_at is null
+		order by created_at asc, id asc
+	`, map[string]any{
+		"organization_uuid": dbUUID(session.OrganizationUUID),
+		"workspace_uuid":    dbUUID(session.WorkspaceUUID),
+		"session_uuid":      dbUUID(session.UUID),
+	})
 }
 
 func sessionEventsByUUIDs(
@@ -193,19 +211,16 @@ func listSessionEventQueueIdentityRows(
 	ctx context.Context,
 	database sqlxNamedQueryer,
 	session Session,
-	lock bool,
 ) ([]sessionEventQueueIdentityRow, error) {
 	// session_uuid uniquely identifies the public Session; tenant columns are
 	// written on insert but are not required as query predicates.
 	query := `
-		select q.id, q.session_uuid, q.session_event_uuid
+		select q.id, q.session_event_uuid
 		from session_event_queue q
 		where q.session_uuid = :session_uuid
 		order by q.id asc
+		for update of q
 	`
-	if lock {
-		query += ` for update of q`
-	}
 	var rows []sessionEventQueueIdentityRow
 	err := namedSelectContext(ctx, database, &rows, query, map[string]any{
 		"session_uuid": dbUUID(session.UUID),
@@ -214,37 +229,6 @@ func listSessionEventQueueIdentityRows(
 		return nil, err
 	}
 	return rows, nil
-}
-
-func queueItemsMatch(
-	rows []sessionEventQueueIdentityRow,
-	queueItems []SessionEventQueueItem,
-) bool {
-	if len(rows) != len(queueItems) {
-		return false
-	}
-	for i := range rows {
-		if rows[i].ID != queueItems[i].id ||
-			rows[i].SessionUUID != queueItems[i].sessionUUID ||
-			rows[i].SessionEventUUID != queueItems[i].sessionEventUUID {
-			return false
-		}
-	}
-	return true
-}
-
-// QueueMatches reports whether the locked startup queue still matches the
-// caller's queueItems snapshot (count, order, and identity fields).
-func (tx ManagedAgentActivationTx) QueueMatches(
-	ctx context.Context,
-	session Session,
-	queueItems []SessionEventQueueItem,
-) (bool, error) {
-	rows, err := listSessionEventQueueIdentityRows(ctx, tx.tx, session, true)
-	if err != nil {
-		return false, err
-	}
-	return queueItemsMatch(rows, queueItems), nil
 }
 
 func (tx ManagedAgentActivationTx) DeleteSessionEventQueue(

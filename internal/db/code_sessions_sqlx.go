@@ -75,6 +75,30 @@ type codeSessionEventRow struct {
 	DeletedAt             *time.Time `db:"deleted_at"`
 }
 
+type codeSessionInboundEventIdentityRow struct {
+	CodeSessionExternalID string `db:"code_session_external_id"`
+	IdempotencyKey        string `db:"idempotency_key"`
+}
+
+type codeSessionInboundEventInsertRow struct {
+	ExternalID            string    `db:"external_id"`
+	OrganizationUUID      uuid.UUID `db:"organization_uuid"`
+	WorkspaceUUID         uuid.UUID `db:"workspace_uuid"`
+	CodeSessionUUID       uuid.UUID `db:"code_session_uuid"`
+	CodeSessionExternalID string    `db:"code_session_external_id"`
+	SequenceNum           int64     `db:"sequence_num"`
+	EventType             string    `db:"event_type"`
+	EventSubtype          string    `db:"event_subtype"`
+	PayloadUUID           *string   `db:"payload_uuid"`
+	RequestID             *string   `db:"request_id"`
+	Payload               []byte    `db:"payload"`
+	PayloadHash           string    `db:"payload_hash"`
+	IdempotencyKey        string    `db:"idempotency_key"`
+	DeliveryStatus        string    `db:"delivery_status"`
+	Source                string    `db:"source"`
+	CreatedAt             time.Time `db:"created_at"`
+}
+
 type codeSessionInternalEventRow struct {
 	UUID                  uuid.UUID  `db:"uuid"`
 	ExternalID            string     `db:"external_id"`

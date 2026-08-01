@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -20,10 +21,7 @@ var (
 			values (
 				concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
 				:workspace_uuid, :job_type, 'pending',
-				jsonb_build_object(
-					'workspace_uuid', CAST(:workspace_uuid AS text),
-					'filesystem_uuid', CAST(:filesystem_uuid AS text)
-				),
+				CAST(:payload AS jsonb),
 				:run_after
 			)
 			returning *
@@ -31,14 +29,14 @@ var (
 		select ` + filestoreFilesystemCleanupJobColumns("j", "fs") + `
 		from inserted_job j
 		join filestore_filesystems fs
-			on CAST(fs.uuid AS text) = j.payload->>'filesystem_uuid'
+			on fs.uuid = :filesystem_uuid
 			and fs.workspace_uuid = j.workspace_uuid
 	`
 	leasedFilesystemCleanupJobQuery = `
 		select ` + filestoreFilesystemCleanupJobColumns("j", "fs") + `
 		from jobs j
 		join filestore_filesystems fs
-			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
+			on j.payload->'filesystem_uuid' = to_jsonb(fs.uuid)
 			and fs.workspace_uuid = j.workspace_uuid
 		where j.uuid = :job_uuid and j.type = :job_type and j.status = 'running'
 			and j.locked_by = :lease_token and j.locked_until >= now()
@@ -278,10 +276,10 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 
 // LeaseFilestoreFilesystemCleanupJobs 租约一批待拆分的整文件系统清理任务。
 func (d *DB) LeaseFilestoreFilesystemCleanupJobs(ctx context.Context, workerID string, limit, maxLeaseAttempts int) ([]FilestoreFilesystemCleanupJob, error) {
-	var jobs []FilestoreFilesystemCleanupJob
+	var rows []filestoreFilesystemCleanupJobRow
 	err := d.leaseFilestoreCleanupJobs(
 		ctx,
-		&jobs,
+		&rows,
 		filestoreFilesystemCleanupJobType,
 		workerID,
 		limit,
@@ -290,6 +288,10 @@ func (d *DB) LeaseFilestoreFilesystemCleanupJobs(ctx context.Context, workerID s
 	)
 	if err != nil {
 		return nil, err
+	}
+	var jobs []FilestoreFilesystemCleanupJob
+	for _, row := range rows {
+		jobs = append(jobs, row.job())
 	}
 	return jobs, nil
 }
@@ -325,14 +327,15 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 		"lease_token": leaseToken,
 		"limit":       limit,
 	}
-	var job FilestoreFilesystemCleanupJob
-	err = namedGetContext(ctx, tx, &job, leasedFilesystemCleanupJobQuery, arguments)
+	var jobRow filestoreFilesystemCleanupJobRow
+	err = namedGetContext(ctx, tx, &jobRow, leasedFilesystemCleanupJobQuery, arguments)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil, ErrVersionConflict
 		}
 		return false, nil, err
 	}
+	job := jobRow.job()
 	arguments["workspace_uuid"] = dbUUID(job.WorkspaceUUID)
 	arguments["filesystem_uuid"] = dbUUID(job.FilesystemUUID)
 	if _, err := namedExecContext(ctx, tx, filesystemCleanupWorkspaceLockQuery, arguments); err != nil {
@@ -490,10 +493,10 @@ func (d *DB) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspa
 
 // LeaseFilestoreObjectCleanupJobs 以 SKIP LOCKED 租约一批到期任务，允许多个 worker 并行消费。
 func (d *DB) LeaseFilestoreObjectCleanupJobs(ctx context.Context, workerID string, limit, maxLeaseAttempts int) ([]FilestoreObjectCleanupJob, error) {
-	var jobs []FilestoreObjectCleanupJob
+	var rows []filestoreObjectCleanupJobRow
 	err := d.leaseFilestoreCleanupJobs(
 		ctx,
-		&jobs,
+		&rows,
 		filestoreCleanupJobType,
 		workerID,
 		limit,
@@ -502,6 +505,10 @@ func (d *DB) LeaseFilestoreObjectCleanupJobs(ctx context.Context, workerID strin
 	)
 	if err != nil {
 		return nil, err
+	}
+	var jobs []FilestoreObjectCleanupJob
+	for _, row := range rows {
+		jobs = append(jobs, row.job())
 	}
 	return jobs, nil
 }
@@ -544,7 +551,7 @@ func (d *DB) leaseFilestoreCleanupJobs(ctx context.Context, destination any, job
 			select j.uuid, j.workspace_uuid
 			from jobs j
 			join filestore_filesystems fs
-				on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
+				on j.payload->'filesystem_uuid' = to_jsonb(fs.uuid)
 				and fs.workspace_uuid = j.workspace_uuid
 			where j.type = :job_type
 				and j.run_after <= now()
@@ -577,7 +584,7 @@ func (d *DB) leaseFilestoreCleanupJobs(ctx context.Context, destination any, job
 		select `+columns+`
 		from leased_jobs j
 		join filestore_filesystems fs
-			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
+			on j.payload->'filesystem_uuid' = to_jsonb(fs.uuid)
 			and fs.workspace_uuid = j.workspace_uuid
 	`, map[string]any{
 		"job_type":           jobType,
@@ -687,17 +694,28 @@ func enqueueFilestoreFilesystemCleanupJobTx(
 	workspaceUUID string,
 	runAfter time.Time,
 ) (FilestoreFilesystemCleanupJob, error) {
-	var job FilestoreFilesystemCleanupJob
-	err := namedGetContext(ctx, tx, &job, enqueueFilestoreFilesystemCleanupJobQuery, map[string]any{
+	payload, err := json.Marshal(map[string]string{
+		"workspace_uuid":  workspaceUUID,
+		"filesystem_uuid": filesystem.UUID,
+	})
+	if err != nil {
+		return FilestoreFilesystemCleanupJob{}, fmt.Errorf("encode Filestore filesystem cleanup job payload: %w", err)
+	}
+	var row filestoreFilesystemCleanupJobRow
+	err = namedGetContext(ctx, tx, &row, enqueueFilestoreFilesystemCleanupJobQuery, map[string]any{
 		"workspace_uuid":  dbUUID(workspaceUUID),
 		"filesystem_uuid": dbUUID(filesystem.UUID),
+		"payload":         payload,
 		"job_type":        filestoreFilesystemCleanupJobType,
 		"run_after":       runAfter,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return FilestoreFilesystemCleanupJob{}, ErrNotFound
 	}
-	return job, err
+	if err != nil {
+		return FilestoreFilesystemCleanupJob{}, err
+	}
+	return row.job(), nil
 }
 
 // CancelFilestoreObjectCleanupJob 取消尚未被 worker 执行的清理任务。
@@ -763,6 +781,62 @@ type expiredFilestoreCleanupScopeRow struct {
 	WorkspaceUUID  uuid.UUID `db:"workspace_uuid"`
 	FilesystemUUID uuid.UUID `db:"filesystem_uuid"`
 	SessionUUID    uuid.UUID `db:"session_uuid"`
+}
+
+type filestoreObjectCleanupJobRow struct {
+	UUID                 uuid.UUID `db:"uuid"`
+	ExternalID           string    `db:"external_id"`
+	WorkspaceUUID        uuid.UUID `db:"workspace_uuid"`
+	FilesystemUUID       uuid.UUID `db:"filesystem_uuid"`
+	FilesystemExternalID string    `db:"filesystem_external_id"`
+	EntryExternalID      string    `db:"entry_external_id"`
+	Bucket               string    `db:"bucket"`
+	Key                  string    `db:"key"`
+	ETag                 string    `db:"etag"`
+	VersionID            string    `db:"version_id"`
+	Reason               string    `db:"reason"`
+	Attempts             int       `db:"attempts"`
+	RunAfter             time.Time `db:"run_after"`
+}
+
+type filestoreFilesystemCleanupJobRow struct {
+	UUID                 uuid.UUID `db:"uuid"`
+	ExternalID           string    `db:"external_id"`
+	WorkspaceUUID        uuid.UUID `db:"workspace_uuid"`
+	FilesystemUUID       uuid.UUID `db:"filesystem_uuid"`
+	FilesystemExternalID string    `db:"filesystem_external_id"`
+	Attempts             int       `db:"attempts"`
+	RunAfter             time.Time `db:"run_after"`
+}
+
+func (row filestoreObjectCleanupJobRow) job() FilestoreObjectCleanupJob {
+	return FilestoreObjectCleanupJob{
+		UUID:                 row.UUID.String(),
+		ExternalID:           row.ExternalID,
+		WorkspaceUUID:        row.WorkspaceUUID.String(),
+		FilesystemUUID:       row.FilesystemUUID.String(),
+		FilesystemExternalID: row.FilesystemExternalID,
+		EntryExternalID:      row.EntryExternalID,
+		Bucket:               row.Bucket,
+		Key:                  row.Key,
+		ETag:                 row.ETag,
+		VersionID:            row.VersionID,
+		Reason:               row.Reason,
+		Attempts:             row.Attempts,
+		RunAfter:             row.RunAfter,
+	}
+}
+
+func (row filestoreFilesystemCleanupJobRow) job() FilestoreFilesystemCleanupJob {
+	return FilestoreFilesystemCleanupJob{
+		UUID:                 row.UUID.String(),
+		ExternalID:           row.ExternalID,
+		WorkspaceUUID:        row.WorkspaceUUID.String(),
+		FilesystemUUID:       row.FilesystemUUID.String(),
+		FilesystemExternalID: row.FilesystemExternalID,
+		Attempts:             row.Attempts,
+		RunAfter:             row.RunAfter,
+	}
 }
 
 const filestoreCleanupAnomalyMissingObjectLocation = "missing_object_location"
@@ -942,9 +1016,9 @@ func cancelAttachedFilestoreObjectCleanupJobTx(ctx context.Context, tx *sqlx.Tx,
 }
 
 func filestoreCleanupJobColumns(jobAlias, filesystemAlias string) string {
-	return fmt.Sprintf(`cast(%[1]s.uuid as text) as uuid, %[1]s.external_id as external_id,
-		cast(%[1]s.workspace_uuid as text) as workspace_uuid,
-		cast(%[2]s.uuid as text) as filesystem_uuid,
+	return fmt.Sprintf(`%[1]s.uuid as uuid, %[1]s.external_id as external_id,
+		%[1]s.workspace_uuid as workspace_uuid,
+		%[2]s.uuid as filesystem_uuid,
 		%[2]s.external_id as filesystem_external_id,
 		coalesce(%[1]s.payload->>'entry_external_id', '') as entry_external_id,
 		coalesce(%[1]s.payload->>'bucket', '') as bucket,
@@ -957,9 +1031,9 @@ func filestoreCleanupJobColumns(jobAlias, filesystemAlias string) string {
 }
 
 func filestoreFilesystemCleanupJobColumns(jobAlias, filesystemAlias string) string {
-	return fmt.Sprintf(`cast(%[1]s.uuid as text) as uuid, %[1]s.external_id as external_id,
-		cast(%[1]s.workspace_uuid as text) as workspace_uuid,
-		cast(%[2]s.uuid as text) as filesystem_uuid,
+	return fmt.Sprintf(`%[1]s.uuid as uuid, %[1]s.external_id as external_id,
+		%[1]s.workspace_uuid as workspace_uuid,
+		%[2]s.uuid as filesystem_uuid,
 		%[2]s.external_id as filesystem_external_id,
 		%[1]s.attempts as attempts, %[1]s.run_after as run_after`,
 		jobAlias, filesystemAlias)

@@ -132,23 +132,27 @@ func insertFilestoreObjectCleanupJobSQLX(
 	database sqlxNamedQueryer,
 	input EnqueueFilestoreObjectCleanupJobInput,
 ) (FilestoreObjectCleanupJob, error) {
-	var job FilestoreObjectCleanupJob
-	err := namedGetContext(ctx, database, &job, `
+	payload, err := json.Marshal(map[string]string{
+		"workspace_uuid":    input.WorkspaceUUID,
+		"filesystem_uuid":   input.FilesystemUUID,
+		"entry_external_id": input.EntryExternalID,
+		"bucket":            input.Bucket,
+		"key":               input.Key,
+		"etag":              input.ETag,
+		"version_id":        input.VersionID,
+		"reason":            input.Reason,
+	})
+	if err != nil {
+		return FilestoreObjectCleanupJob{}, fmt.Errorf("encode Filestore cleanup job payload: %w", err)
+	}
+	var row filestoreObjectCleanupJobRow
+	err = namedGetContext(ctx, database, &row, `
 		with inserted_job as (
 			insert into jobs (external_id, workspace_uuid, type, status, payload, run_after)
 			values (
 				concat('job_', replace(cast(gen_random_uuid() as text), '-', '')),
 				:workspace_uuid, :job_type, 'pending',
-				jsonb_build_object(
-					'workspace_uuid', cast(:workspace_uuid as text),
-					'filesystem_uuid', cast(:filesystem_uuid as text),
-					'entry_external_id', cast(:entry_external_id as text),
-					'bucket', cast(:bucket as text),
-					'key', cast(:key as text),
-					'etag', cast(:etag as text),
-					'version_id', cast(:version_id as text),
-					'reason', cast(:reason as text)
-				),
+				cast(:payload as jsonb),
 				:run_after
 			)
 			returning *
@@ -156,19 +160,14 @@ func insertFilestoreObjectCleanupJobSQLX(
 		select `+filestoreCleanupJobColumns("j", "fs")+`
 		from inserted_job j
 		join filestore_filesystems fs
-			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
+			on fs.uuid = :filesystem_uuid
 			and fs.workspace_uuid = j.workspace_uuid
 	`, map[string]any{
-		"workspace_uuid":    dbUUID(input.WorkspaceUUID),
-		"job_type":          filestoreCleanupJobType,
-		"filesystem_uuid":   dbUUID(input.FilesystemUUID),
-		"entry_external_id": input.EntryExternalID,
-		"bucket":            input.Bucket,
-		"key":               input.Key,
-		"etag":              input.ETag,
-		"version_id":        input.VersionID,
-		"reason":            input.Reason,
-		"run_after":         input.RunAfter,
+		"workspace_uuid":  dbUUID(input.WorkspaceUUID),
+		"job_type":        filestoreCleanupJobType,
+		"filesystem_uuid": dbUUID(input.FilesystemUUID),
+		"payload":         payload,
+		"run_after":       input.RunAfter,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
@@ -176,7 +175,7 @@ func insertFilestoreObjectCleanupJobSQLX(
 	if err != nil {
 		return FilestoreObjectCleanupJob{}, err
 	}
-	return job, nil
+	return row.job(), nil
 }
 
 func (row filestoreFilesystemRow) filesystem() (FilestoreFilesystem, error) {

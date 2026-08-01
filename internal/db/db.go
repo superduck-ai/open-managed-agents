@@ -21,19 +21,21 @@ import (
 )
 
 var (
-	ErrNotFound              = platform.ErrNotFound
-	ErrInvalidState          = errors.New("invalid state")
-	ErrPreconditionFailed    = errors.New("precondition failed")
-	ErrDuplicate             = errors.New("duplicate")
-	ErrVersionConflict       = errors.New("version conflict")
-	ErrWorkerEpochMismatch   = errors.New("worker epoch mismatch")
-	ErrWorkerNotRegistered   = errors.New("worker not registered")
-	ErrWorkerLeaseExpired    = errors.New("worker lease expired")
-	ErrStorageLimitExceeded  = errors.New("storage limit exceeded")
-	ErrStorageUsageUnderflow = errors.New("storage usage underflow")
-	ErrLimitExceeded         = errors.New("limit exceeded")
-	ErrFileInUse             = errors.New("file is in use")
-	ErrFileReferenceNotFound = errors.New("file reference not found")
+	ErrNotFound                      = platform.ErrNotFound
+	ErrInvalidState                  = errors.New("invalid state")
+	ErrPreconditionFailed            = errors.New("precondition failed")
+	ErrDuplicate                     = errors.New("duplicate")
+	ErrVersionConflict               = errors.New("version conflict")
+	ErrWorkerEpochMismatch           = errors.New("worker epoch mismatch")
+	ErrWorkerNotRegistered           = errors.New("worker not registered")
+	ErrWorkerLeaseExpired            = errors.New("worker lease expired")
+	ErrStorageLimitExceeded          = errors.New("storage limit exceeded")
+	ErrStorageUsageUnderflow         = errors.New("storage usage underflow")
+	ErrLimitExceeded                 = errors.New("limit exceeded")
+	ErrFileInUse                     = errors.New("file is in use")
+	ErrFileReferenceNotFound         = errors.New("file reference not found")
+	ErrSessionArchived               = errors.New("session is archived")
+	ErrSessionStartupMessageConflict = errors.New("session startup message conflict")
 )
 
 type DB struct {

@@ -157,7 +157,7 @@ inbound、删 queue 或激活 Code Session。写入时仍落 `organization_uuid`
 
 启动窗口是后端事务内的判断，不是新的公开状态。
 
-`shouldQueueUserMessageForStartupSQLX` 的规则是：
+`shouldQueueForStartup` 的规则是：
 
 1. 查询该 Session 最新且未删除的 Code Session（按 `session_uuid`）；
 2. 如果 Code Session 存在且状态不是 `initializing`，不进入 startup queue；
@@ -195,7 +195,7 @@ normalization 阶段写库。
 2. 拒绝 archived Session；
 3. batch 包含 `user.message` 时判断启动窗口；
 4. 启动窗口只允许 batch 恰好包含一条 `user.message`；
-5. queue 已有任何 row 时返回 `SessionStartupMessageConflictError`；
+5. queue 已有任何 row 时返回 `ErrSessionStartupMessageConflict`；
 6. 写入 `session_events`；
 7. 启动窗口内再写入对应 queue row；
 8. 有 outcome 变化时在同一事务更新；
@@ -257,14 +257,17 @@ sequenceDiagram
 
 ### 阶段一：读取历史与 queue 并转换
 
-Service 在事务外：
+`activateManagedAgentCodeSession` 在事务外：
 
-1. `ListSessionEventQueueItems` 读取完整 queue（FIFO）及所属公开事件；
-2. 分页 `ListSessionEventsPage`（升序）读取当前 Session 的公开事件历史；
-3. 将可转发历史事件转为 inbound inputs，**排除**仍出现在 queue 中的 event UUID
-   （避免与 queue 交接重复）；
-4. 再按 queue 顺序转换 queue 中的 `user.message`；
-5. 最终 inbound 顺序为：历史（去 queue 重复）→ queue FIFO。
+1. `ListSessionEventQueueItems` 读取完整 queue（FIFO）及所属公开事件，得到
+   `queueItems`（`[]SessionEventQueueItem`）；
+2. `listAllSessionEvents` 分页读取当前 Session 的全部公开事件历史（升序）；
+3. 从历史中排除仍出现在 queue 中的 event UUID，再经 `convertSessionEventsToInbound`
+   转为 `historyInbound`（只保留可转发类型，避免与 queue 交接重复）；
+4. 再按 queue 顺序对 `queueItems` 中的 `user.message` 调用
+   `convertSessionEventToInbound`，得到 `queueInbound`；
+5. `inboundInputs = historyInbound + queueInbound`，顺序为：历史（去 queue 重复）→
+   queue FIFO。
 
 转换放在事务外，避免在持有 Session 和 Code Session 行锁时执行 JSON/envelope 处理。
 queue 仍是启动空窗责任与 cutover 匹配的唯一来源；历史注入对齐旧
@@ -272,25 +275,25 @@ queue 仍是启动空窗责任与 cutover 匹配的唯一来源；历史注入�
 
 ### 阶段二：一个事务完成全部交接
 
-`Service.ActivateManagedAgentCodeSessionWithQueue` 通过
+`Service.CommitManagedAgentCodeSessionActivation` 通过
 `DB.WithManagedAgentActivationTx` 定义事务边界并固定执行以下顺序；DB 的事务对象只暴露
 Session、queue 和 Code Session 各自的 SQL 操作，不编排跨资源业务流程：
 
 ```text
 锁 Session
 → 锁 initializing Code Session
-→ 校验 queue item 均为 user.message（Session ownership 已由 List 保证）
-→ 锁当前完整 queue
-→ 将当前 queue 与事务外 queue 快照逐项比较
-→ 按 inputs 顺序写入全部 inbound（历史 + queue）
+→ 校验 queueItems 均为 user.message（Session ownership 已由 List 保证）
+→ 锁当前完整 queue（QueueMatches）
+→ 将当前 queue 与事务外 queueItems 快照逐项比较
+→ 按 inboundInputs 顺序写入全部 inbound（历史 + queue）
 → 删除当前 Session 的全部 queue rows
 → Code Session initializing → active
 → commit
 ```
 
-`items` 仅用于 queue 快照匹配与清空；`inputs` 可长于 `items`。
+`queueItems` 仅用于 queue 快照匹配与清空；`inboundInputs` 可长于 `queueItems`。
 快照比较包括 row 数量、queue ID、Session UUID、event UUID 和顺序。如果读取快照以后新消息
-进入 queue，最终事务会发现列表不一致，返回 `activated=false`，且不做任何写入；Service
+进入 queue，最终事务会发现列表不一致，返回 `committed=false`，且不做任何写入；Service
 重新读取历史与 queue、转换并重试。
 
 inbound 插入复用现有 idempotency key。事务内每写一条新 inbound 都推进当前 Code Session
@@ -384,7 +387,6 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | 事件转换失败 | 创建失败；queue 保留 |
 | 快照与锁定后的完整 queue 不一致 | 激活事务无写入，重新读取并重试 |
 | 任一 inbound 写入或 sequence 更新失败 | 激活事务整体回滚，queue 保留，状态仍为 `initializing` |
-| queue 删除数量不等于快照数量 | 激活事务回滚并返回 precondition error |
 | active 更新没有恰好影响一行 | 激活事务回滚 |
 | Code Session 创建流程失败 | 现有 cleanup terminate 未完成的 Code Session |
 | active 后实时投递失败 | 保持既有行为；公开事件已提交，本设计不增加通用 outbox |
@@ -396,11 +398,11 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | Runner prepare 不再读取事件快照 | `Runner.prepareManagedAgentLaunch` |
 | API 标准化事件与 outcome | `Handler.sendEventsRoute`、`normalizeInputEvent` |
 | Send 事务和 startup/realtime 分流 | `DB.AppendSessionEventsForDelivery` |
-| 启动窗口判断 | `shouldQueueUserMessageForStartupSQLX` |
-| queue 写入 | `enqueueSessionEventsSQLXTx` |
+| 启动窗口判断 | `shouldQueueForStartup` |
+| queue 写入 | `enqueueSessionEventsTx` |
 | queue 快照及 ownership 加载 | `DB.ListSessionEventQueueItems` |
 | Code Session 创建和消费循环 | `Service.CreateManagedAgentCodeSession`、`activateManagedAgentCodeSession` |
-| 完整 queue 原子交接与激活 | `Service.ActivateManagedAgentCodeSessionWithQueue`、`DB.WithManagedAgentActivationTx` |
+| 完整 queue 原子交接与激活 | `Service.CommitManagedAgentCodeSessionActivation`、`DB.WithManagedAgentActivationTx` |
 | Deployment initial events 入队 | `DB.CreateManualDeploymentRun` |
 | active 当前 batch 投递 | `Service.QueuePublicSessionEvents` |
 

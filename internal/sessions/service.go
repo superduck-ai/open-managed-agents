@@ -621,7 +621,19 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 		outcomeEvaluations,
 	)
 	if err != nil {
-		h.writeSendEventsPersistenceError(w, r, err, sessionID)
+		if errors.Is(err, db.ErrSessionStartupMessageConflict) {
+			httpapi.WriteError(w, r, httpapi.NewError(
+				http.StatusConflict,
+				"conflict_error",
+				"Only one user message can be accepted while the session starts",
+			))
+			return
+		}
+		if errors.Is(err, db.ErrSessionArchived) {
+			writeBadRequest(w, r, errors.New("archived sessions do not accept new events"))
+			return
+		}
+		h.writeSessionLoadError(w, r, err, sessionID)
 		return
 	}
 	for _, event := range created {
@@ -646,33 +658,6 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 		data = append(data, sessionEventPayload(event))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: data})
-}
-
-func (h *Handler) writeSendEventsPersistenceError(
-	w http.ResponseWriter,
-	r *http.Request,
-	err error,
-	sessionID string,
-) {
-	var startupConflict *db.SessionStartupMessageConflictError
-	if errors.As(err, &startupConflict) {
-		writeStartupMessageConflict(w, r)
-		return
-	}
-	var archived *db.SessionArchivedError
-	if errors.As(err, &archived) {
-		writeBadRequest(w, r, errors.New("archived sessions do not accept new events"))
-		return
-	}
-	h.writeSessionLoadError(w, r, err, sessionID)
-}
-
-func writeStartupMessageConflict(w http.ResponseWriter, r *http.Request) {
-	httpapi.WriteError(w, r, httpapi.NewError(
-		http.StatusConflict,
-		"conflict_error",
-		"Only one user message can be accepted while the session starts",
-	))
 }
 
 func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) {

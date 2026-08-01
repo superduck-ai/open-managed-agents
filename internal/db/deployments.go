@@ -280,12 +280,12 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	shouldQueueForStartup, err := shouldQueueUserMessageForStartupSQLX(ctx, tx, session)
+	shouldEnqueue, err := shouldQueueForStartup(ctx, tx, session)
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	if shouldQueueForStartup {
-		if err := enqueueSessionEventsSQLXTx(ctx, tx, session, events); err != nil {
+	if shouldEnqueue {
+		if err := enqueueSessionEventsTx(ctx, tx, session, events); err != nil {
 			return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 		}
 	}

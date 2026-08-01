@@ -730,25 +730,25 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	}
 	acceptedEventID := sessionEventStringField(t, accepted.Data[0], "id")
 
-	activated, err := codeSessionService.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, staleItems, nil)
+	committed, err := codeSessionService.CommitManagedAgentCodeSessionActivation(ctx, codeSession, staleItems, nil)
 	if err != nil {
 		t.Fatalf("reject stale activation queue snapshot: %v", err)
 	}
-	if activated {
+	if committed {
 		t.Fatal("activation succeeded with a stale empty queue snapshot")
 	}
-	items, err := app.db.ListSessionEventQueueItems(ctx, sessionRecord)
+	queueItems, err := app.db.ListSessionEventQueueItems(ctx, sessionRecord)
 	if err != nil {
 		t.Fatalf("list Session event queue for activation: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("Session event queue items = %#v, want one", items)
+	if len(queueItems) != 1 {
+		t.Fatalf("Session event queue items = %#v, want one", queueItems)
 	}
 
-	activated, err = codeSessionService.ActivateManagedAgentCodeSessionWithQueue(
+	committed, err = codeSessionService.CommitManagedAgentCodeSessionActivation(
 		ctx,
 		codeSession,
-		items,
+		queueItems,
 		[]db.AppendCodeSessionEventInput{{
 			ExternalID:     "csev_activation_" + strings.TrimPrefix(codeSessionID, "cse_"),
 			EventType:      "user",
@@ -764,7 +764,7 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	if err != nil {
 		t.Fatalf("activate with queued session event: %v", err)
 	}
-	if !activated {
+	if !committed {
 		t.Fatal("activation did not commit the queued session event")
 	}
 	codeSession, err = app.db.GetCodeSession(ctx, codeSessionID)
@@ -837,18 +837,18 @@ func TestSessionEventQueueDeliveryRollsBackOnInboundFailure(t *testing.T) {
 		t.Fatalf("load rollback Code Session: %v", err)
 	}
 	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
-	items, err := app.db.ListSessionEventQueueItems(ctx, session)
+	queueItems, err := app.db.ListSessionEventQueueItems(ctx, session)
 	if err != nil {
 		t.Fatalf("load rollback queue items: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("rollback queue items = %#v, want one", items)
+	if len(queueItems) != 1 {
+		t.Fatalf("rollback queue items = %#v, want one", queueItems)
 	}
 	before, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
 	if err != nil || len(before) != 1 {
 		t.Fatalf("rollback inbound before delivery = (%#v, %v), want initialize", before, err)
 	}
-	activated, err := codeSessionService.ActivateManagedAgentCodeSessionWithQueue(ctx, codeSession, items, []db.AppendCodeSessionEventInput{{
+	committed, err := codeSessionService.CommitManagedAgentCodeSessionActivation(ctx, codeSession, queueItems, []db.AppendCodeSessionEventInput{{
 		ExternalID:     before[0].ExternalID,
 		EventType:      "user",
 		EventSubtype:   "message",
@@ -859,7 +859,7 @@ func TestSessionEventQueueDeliveryRollsBackOnInboundFailure(t *testing.T) {
 		Source:         "public-session",
 		CreatedAt:      time.Now().UTC(),
 	}})
-	if err == nil || activated {
+	if err == nil || committed {
 		t.Fatal("queue delivery with duplicate inbound external ID succeeded")
 	}
 	if queued := sessionEventQueueEventIDs(t, app, sessionResponse.ID); len(queued) != 1 {

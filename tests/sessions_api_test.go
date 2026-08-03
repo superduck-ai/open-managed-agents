@@ -718,7 +718,7 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	}
 	acceptedEventID := sessionEventStringField(t, accepted.Data[0], "id")
 
-	if err := codeSessionService.CommitManagedAgentCodeSessionActivation(ctx, codeSession); err != nil {
+	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
 		t.Fatalf("activate with queued session event: %v", err)
 	}
 	codeSession, err = app.db.GetCodeSession(ctx, codeSessionID)
@@ -808,7 +808,7 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, events); err != nil {
 		t.Fatalf("append large history: %v", err)
 	}
-	if err := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).CommitManagedAgentCodeSessionActivation(ctx, codeSession); err != nil {
+	if err := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
 		t.Fatalf("activate Code Session: %v", err)
 	}
 
@@ -871,7 +871,7 @@ func TestSessionEventQueueDeliveryRollsBackOnHistoryConversionFailure(t *testing
 	if err != nil || len(before) != 1 {
 		t.Fatalf("rollback inbound before delivery = (%#v, %v), want initialize", before, err)
 	}
-	if err := codeSessionService.CommitManagedAgentCodeSessionActivation(ctx, codeSession); err == nil {
+	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err == nil {
 		t.Fatal("activation with invalid forwardable history succeeded")
 	}
 	if queued := sessionEventQueueEventIDs(t, app, sessionResponse.ID); len(queued) != 1 {
@@ -2602,6 +2602,78 @@ func TestCodeSessionWorkerEventAppendChecksEpochInsideTransaction(t *testing.T) 
 	})
 	if err != nil {
 		t.Fatalf("current epoch append: %v", err)
+	}
+}
+
+func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-event-append-sequences-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-code-event-append-sequences-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-code-event-append-sequences-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	ctx := context.Background()
+
+	before, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load Code Session before append: %v", err)
+	}
+	suffix := strings.TrimPrefix(codeSessionID, "cse_")
+	inboundInput := db.AppendCodeSessionEventInput{
+		ExternalID:     "csev_inbound_sequence_" + suffix,
+		EventType:      "user",
+		Payload:        json.RawMessage(`{"type":"user"}`),
+		PayloadHash:    "inbound-sequence",
+		IdempotencyKey: "inbound-sequence:" + suffix,
+		Source:         "test",
+	}
+	inbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, inboundInput)
+	if err != nil || duplicate {
+		t.Fatalf("append inbound event = (%+v, duplicate=%v, err=%v)", inbound, duplicate, err)
+	}
+	if inbound.SequenceNum != before.LastInboundSequenceNum+1 {
+		t.Fatalf("inbound sequence = %d, want %d", inbound.SequenceNum, before.LastInboundSequenceNum+1)
+	}
+	duplicateInbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, inboundInput)
+	if err != nil || !duplicate || duplicateInbound.UUID != inbound.UUID {
+		t.Fatalf("duplicate inbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateInbound, duplicate, err, inbound.UUID)
+	}
+
+	outboundInput := db.AppendCodeSessionEventInput{
+		ExternalID:     "csev_outbound_sequence_" + suffix,
+		EventType:      "assistant",
+		Payload:        json.RawMessage(`{"type":"assistant"}`),
+		PayloadHash:    "outbound-sequence",
+		IdempotencyKey: "outbound-sequence:" + suffix,
+		Source:         "test",
+	}
+	outbound, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, outboundInput)
+	if err != nil || duplicate {
+		t.Fatalf("append outbound event = (%+v, duplicate=%v, err=%v)", outbound, duplicate, err)
+	}
+	if outbound.SequenceNum != before.LastOutboundSequenceNum+1 {
+		t.Fatalf("outbound sequence = %d, want %d", outbound.SequenceNum, before.LastOutboundSequenceNum+1)
+	}
+	duplicateOutbound, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, outboundInput)
+	if err != nil || !duplicate || duplicateOutbound.UUID != outbound.UUID {
+		t.Fatalf("duplicate outbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateOutbound, duplicate, err, outbound.UUID)
+	}
+
+	after, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load Code Session after append: %v", err)
+	}
+	if after.LastInboundSequenceNum != inbound.SequenceNum || after.LastOutboundSequenceNum != outbound.SequenceNum {
+		t.Fatalf(
+			"stored sequences = inbound %d/outbound %d, want inbound %d/outbound %d",
+			after.LastInboundSequenceNum,
+			after.LastOutboundSequenceNum,
+			inbound.SequenceNum,
+			outbound.SequenceNum,
+		)
 	}
 }
 

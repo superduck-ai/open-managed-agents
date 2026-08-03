@@ -98,7 +98,7 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	if err := s.queueInitialize(ctx, record, input.Config, now); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
-	if err := s.CommitManagedAgentCodeSessionActivation(ctx, record); err != nil {
+	if err := s.ActivateManagedAgentCodeSession(ctx, record); err != nil {
 		return ManagedAgentCreateResult{}, err
 	}
 	credentialContext, err := s.db.GetCodeSessionCredentialContextForIssue(
@@ -125,10 +125,10 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	}, nil
 }
 
-// CommitManagedAgentCodeSessionActivation locks the owning Session, loads the
+// ActivateManagedAgentCodeSession locks the owning Session, loads the
 // startup queue and complete public history, writes forwardable events in
 // stable order, clears the queue, and activates the Code Session atomically.
-func (s *Service) CommitManagedAgentCodeSessionActivation(
+func (s *Service) ActivateManagedAgentCodeSession(
 	ctx context.Context,
 	codeSession db.CodeSession,
 ) error {

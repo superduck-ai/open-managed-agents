@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="CodeSessionOutboundEventMapper">
+    <sql id="eventColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        code_session_uuid,
+        code_session_external_id,
+        sequence_num,
+        event_type,
+        event_subtype,
+        payload_uuid,
+        request_id,
+        payload,
+        payload_hash,
+        idempotency_key,
+        CAST('' AS text) AS delivery_status,
+        source,
+        CAST(null AS timestamptz) AS sent_at,
+        CAST(null AS bigint) AS delivery_worker_epoch,
+        CAST(null AS timestamptz) AS received_at,
+        CAST(null AS timestamptz) AS processing_at,
+        CAST(null AS timestamptz) AS processed_at,
+        CAST(null AS timestamptz) AS last_delivery_attempt_at,
+        CAST(null AS timestamptz) AS last_delivery_update_at,
+        CAST(0 AS integer) AS delivery_attempts,
+        ephemeral,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <select id="GetCodeSessionOutboundEventByIdempotencyKey"
+            resultType="codeSessionEventRow"
+            result="optional">
+        SELECT
+        <include refid="eventColumns"/>
+        FROM code_session_outbound_events
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND idempotency_key = #{idempotencyKey}
+          AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <insert id="InsertCodeSessionOutboundEvent"
+            result="returning"
+            resultType="codeSessionEventRow">
+        INSERT INTO code_session_outbound_events (
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            code_session_uuid,
+            code_session_external_id,
+            sequence_num,
+            event_type,
+            event_subtype,
+            payload_uuid,
+            request_id,
+            payload,
+            payload_hash,
+            idempotency_key,
+            source,
+            ephemeral,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{row.ExternalID},
+            #{row.OrganizationUUID},
+            #{row.WorkspaceUUID},
+            #{row.CodeSessionUUID},
+            #{row.CodeSessionExternalID},
+            #{row.SequenceNum},
+            #{row.EventType},
+            #{row.EventSubtype},
+            #{row.PayloadUUID},
+            #{row.RequestID},
+            CAST(#{row.Payload} AS jsonb),
+            #{row.PayloadHash},
+            #{row.IdempotencyKey},
+            #{row.Source},
+            #{row.Ephemeral},
+            #{row.CreatedAt},
+            #{row.CreatedAt}
+        )
+        RETURNING
+        <include refid="eventColumns"/>
+    </insert>
+</mapper>

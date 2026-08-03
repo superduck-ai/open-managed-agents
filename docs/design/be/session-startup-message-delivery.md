@@ -259,14 +259,14 @@ sequenceDiagram
 
 1. 创建状态为 `initializing` 的 Code Session；
 2. 写入 sequence 1 的 `initialize` inbound；
-3. 调用 `CommitManagedAgentCodeSessionActivation`，在最终激活事务内读取 queue 与完整
+3. 调用 `ActivateManagedAgentCodeSession`，在最终激活事务内读取 queue 与完整
    `session_events`，按稳定顺序构造 inbound 并激活；
 4. 激活成功后才继续签发并返回 runtime 启动信息；
 5. 中途失败时，现有 defer cleanup 将未完成的 Code Session terminate。
 
 ### 一个事务完成读取、交接与激活
 
-`Service.CommitManagedAgentCodeSessionActivation` 通过
+`Service.ActivateManagedAgentCodeSession` 通过
 `DB.WithManagedAgentActivationTx` 定义事务边界并固定执行以下顺序；DB 的事务对象只暴露
 Session、queue 和 Code Session 各自的 SQL 操作，不编排跨资源业务流程：
 
@@ -403,7 +403,7 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | queue 事务内加载及 ownership / type 校验（不决定 inbound 序） | `ManagedAgentActivationTx.ListSessionEventQueueItems` |
 | 激活历史的稳定顺序读取 | `ManagedAgentActivationTx.ListSessionEventsForActivation` |
 | 激活 inbound 分块批量写入 | `ManagedAgentActivationTx.AppendCodeSessionInboundEvents` |
-| queue、history、inbound 与 active 原子交接 | `Service.CommitManagedAgentCodeSessionActivation`、`DB.WithManagedAgentActivationTx` |
+| queue、history、inbound 与 active 原子交接 | `Service.ActivateManagedAgentCodeSession`、`DB.WithManagedAgentActivationTx` |
 | Deployment initial events 入队 | `DB.CreateManualDeploymentRun` |
 | active 当前 batch 投递 | `Service.QueuePublicSessionEvents` |
 

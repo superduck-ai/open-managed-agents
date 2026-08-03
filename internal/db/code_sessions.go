@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/samber/lo"
+	"github.com/superduck-ai/yourbatis"
 )
 
 type CodeSession struct {
@@ -1015,152 +1015,122 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 	if input.RequiredWorkerEpoch != nil && *input.RequiredWorkerEpoch <= 0 {
 		return CodeSessionEvent{}, false, ErrWorkerEpochMismatch
 	}
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return CodeSessionEvent{}, false, err
-	}
-	defer tx.Rollback()
+	var event CodeSessionEvent
+	var duplicate bool
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		codeSessionMapper := NewCodeSessionMapper(executor)
+		inboundMapper := NewCodeSessionInboundEventMapper(executor)
+		outboundMapper := NewCodeSessionOutboundEventMapper(executor)
 
-	session, err := getCodeSessionSQLX(ctx, tx, `
-		select `+codeSessionColumns()+`
-		from code_sessions
-		where external_id = :external_id and deleted_at is null
-		for update
-	`, map[string]any{"external_id": codeSessionExternalID})
+		session, found, err := codeSessionMapper.LockCodeSessionByExternalID(ctx, codeSessionExternalID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return ErrNotFound
+		}
+		if input.RequiredWorkerEpoch != nil && session.CurrentWorkerEpoch != *input.RequiredWorkerEpoch {
+			return ErrWorkerEpochMismatch
+		}
+		if input.IdempotencyKey != "" {
+			var existing codeSessionEventRow
+			if direction == "outbound" {
+				existing, found, err = outboundMapper.GetCodeSessionOutboundEventByIdempotencyKey(
+					ctx, session.WorkspaceUUID, input.IdempotencyKey,
+				)
+			} else {
+				existing, found, err = inboundMapper.GetCodeSessionInboundEventByIdempotencyKey(
+					ctx, session.WorkspaceUUID, input.IdempotencyKey,
+				)
+			}
+			if err != nil {
+				return err
+			}
+			if found {
+				event = existing.event()
+				duplicate = true
+				return nil
+			}
+		}
+
+		now := input.CreatedAt
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+		if direction == "outbound" {
+			sequence := session.LastOutboundSequenceNum + 1
+			inserted, err := outboundMapper.InsertCodeSessionOutboundEvent(ctx, codeSessionOutboundEventInsertRow{
+				ExternalID:            input.ExternalID,
+				OrganizationUUID:      session.OrganizationUUID,
+				WorkspaceUUID:         session.WorkspaceUUID,
+				CodeSessionUUID:       session.UUID,
+				CodeSessionExternalID: session.ExternalID,
+				SequenceNum:           sequence,
+				EventType:             input.EventType,
+				EventSubtype:          input.EventSubtype,
+				PayloadUUID:           input.PayloadUUID,
+				RequestID:             input.RequestID,
+				Payload:               input.Payload,
+				PayloadHash:           input.PayloadHash,
+				IdempotencyKey:        input.IdempotencyKey,
+				Source:                input.Source,
+				Ephemeral:             input.Ephemeral,
+				CreatedAt:             now,
+			})
+			if err != nil {
+				return err
+			}
+			updated, err := codeSessionMapper.UpdateCodeSessionOutboundSequence(ctx, session.UUID, sequence, now)
+			if err != nil {
+				return err
+			}
+			if updated != 1 {
+				return ErrInvalidState
+			}
+			event = inserted.event()
+			return nil
+		}
+
+		deliveryStatus := input.DeliveryStatus
+		if deliveryStatus == "" {
+			deliveryStatus = "queued"
+		}
+		sequence := session.LastInboundSequenceNum + 1
+		inserted, err := inboundMapper.InsertCodeSessionInboundEvent(ctx, codeSessionInboundEventInsertRow{
+			ExternalID:            input.ExternalID,
+			OrganizationUUID:      session.OrganizationUUID,
+			WorkspaceUUID:         session.WorkspaceUUID,
+			CodeSessionUUID:       session.UUID,
+			CodeSessionExternalID: session.ExternalID,
+			SequenceNum:           sequence,
+			EventType:             input.EventType,
+			EventSubtype:          input.EventSubtype,
+			PayloadUUID:           input.PayloadUUID,
+			RequestID:             input.RequestID,
+			Payload:               input.Payload,
+			PayloadHash:           input.PayloadHash,
+			IdempotencyKey:        input.IdempotencyKey,
+			DeliveryStatus:        deliveryStatus,
+			Source:                input.Source,
+			CreatedAt:             now,
+		})
+		if err != nil {
+			return err
+		}
+		updated, err := codeSessionMapper.UpdateCodeSessionInboundSequence(ctx, session.UUID, sequence, now)
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return ErrInvalidState
+		}
+		event = inserted.event()
+		return nil
+	})
 	if err != nil {
-		return CodeSessionEvent{}, false, err
-	}
-	event, duplicate, err := d.appendCodeSessionEventSQLXTx(ctx, tx, session, direction, input)
-	if err != nil {
-		return CodeSessionEvent{}, false, err
-	}
-	if err := tx.Commit(); err != nil {
 		return CodeSessionEvent{}, false, err
 	}
 	return event, duplicate, nil
-}
-
-func (d *DB) appendCodeSessionEventSQLXTx(
-	ctx context.Context,
-	tx *sqlx.Tx,
-	session CodeSession,
-	direction string,
-	input AppendCodeSessionEventInput,
-) (CodeSessionEvent, bool, error) {
-	if input.RequiredWorkerEpoch != nil && session.CurrentWorkerEpoch != *input.RequiredWorkerEpoch {
-		return CodeSessionEvent{}, false, ErrWorkerEpochMismatch
-	}
-	if input.IdempotencyKey != "" {
-		existing, err := d.getCodeSessionEventTx(ctx, tx, direction, session.WorkspaceUUID, input.IdempotencyKey)
-		if err == nil {
-			return existing, true, nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return CodeSessionEvent{}, false, err
-		}
-	}
-
-	now := input.CreatedAt
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	sequence := session.LastInboundSequenceNum + 1
-	sequenceColumn := "last_inbound_sequence_num"
-	if direction == "outbound" {
-		sequence = session.LastOutboundSequenceNum + 1
-		sequenceColumn = "last_outbound_sequence_num"
-	}
-	deliveryStatus := input.DeliveryStatus
-	if deliveryStatus == "" && direction == "inbound" {
-		deliveryStatus = "queued"
-	}
-
-	var (
-		event CodeSessionEvent
-		err   error
-	)
-	eventArguments := map[string]any{
-		"external_id":              input.ExternalID,
-		"organization_uuid":        dbUUID(session.OrganizationUUID),
-		"workspace_uuid":           dbUUID(session.WorkspaceUUID),
-		"code_session_uuid":        dbUUID(session.UUID),
-		"code_session_external_id": session.ExternalID,
-		"sequence_num":             sequence,
-		"event_type":               input.EventType,
-		"event_subtype":            input.EventSubtype,
-		"payload_uuid":             input.PayloadUUID,
-		"request_id":               input.RequestID,
-		"payload":                  jsonArg(input.Payload),
-		"payload_hash":             input.PayloadHash,
-		"idempotency_key":          input.IdempotencyKey,
-		"source":                   input.Source,
-		"created_at":               now,
-	}
-	if direction == "inbound" {
-		eventArguments["delivery_status"] = deliveryStatus
-		event, err = getCodeSessionEventSQLX(ctx, tx, `
-			insert into code_session_inbound_events (
-				external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
-				sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
-				payload_hash, idempotency_key, delivery_status, source, created_at, updated_at
-			)
-			values (
-				:external_id, :organization_uuid, :workspace_uuid, :code_session_uuid,
-				:code_session_external_id, :sequence_num, :event_type, :event_subtype,
-				:payload_uuid, :request_id, CAST(:payload AS jsonb), :payload_hash,
-				:idempotency_key, :delivery_status, :source, :created_at, :created_at
-			)
-			returning `+codeSessionInboundEventColumns()+`
-		`, eventArguments)
-	} else {
-		eventArguments["ephemeral"] = input.Ephemeral
-		event, err = getCodeSessionEventSQLX(ctx, tx, `
-			insert into code_session_outbound_events (
-				external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
-				sequence_num, event_type, event_subtype, payload_uuid, request_id, payload,
-				payload_hash, idempotency_key, source, ephemeral, created_at, updated_at
-			)
-			values (
-				:external_id, :organization_uuid, :workspace_uuid, :code_session_uuid,
-				:code_session_external_id, :sequence_num, :event_type, :event_subtype,
-				:payload_uuid, :request_id, CAST(:payload AS jsonb), :payload_hash,
-				:idempotency_key, :source, :ephemeral, :created_at, :created_at
-			)
-			returning `+codeSessionOutboundEventColumns()+`
-		`, eventArguments)
-	}
-	if err != nil {
-		return CodeSessionEvent{}, false, err
-	}
-	if _, err := namedExecContext(ctx, tx, `update code_sessions set `+sequenceColumn+` = :sequence_num, updated_at = :now where uuid = :uuid`, map[string]any{
-		"sequence_num": sequence,
-		"now":          now,
-		"uuid":         dbUUID(session.UUID),
-	}); err != nil {
-		return CodeSessionEvent{}, false, err
-	}
-	return event, false, nil
-}
-
-func (d *DB) getCodeSessionEventTx(ctx context.Context, tx sqlxNamedQueryer, direction string, workspaceUUID string, idempotencyKey string) (CodeSessionEvent, error) {
-	arguments := map[string]any{
-		"workspace_uuid":  dbUUID(workspaceUUID),
-		"idempotency_key": idempotencyKey,
-	}
-	if direction == "outbound" {
-		return getCodeSessionEventSQLX(ctx, tx, `
-			select `+codeSessionOutboundEventColumns()+`
-			from code_session_outbound_events
-			where workspace_uuid = :workspace_uuid and idempotency_key = :idempotency_key and deleted_at is null
-			limit 1
-		`, arguments)
-	}
-	return getCodeSessionEventSQLX(ctx, tx, `
-		select `+codeSessionInboundEventColumns()+`
-		from code_session_inbound_events
-		where workspace_uuid = :workspace_uuid and idempotency_key = :idempotency_key and deleted_at is null
-		limit 1
-	`, arguments)
 }
 
 func (d *DB) ListCodeSessionInternalEventsPage(ctx context.Context, params ListCodeSessionInternalEventsPageParams) ([]CodeSessionInternalEvent, bool, error) {

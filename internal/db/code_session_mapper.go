@@ -11,12 +11,24 @@ import (
 
 // CodeSessionMapper contains queries whose primary table is code_sessions.
 type CodeSessionMapper interface {
+	LockCodeSessionByExternalID(
+		ctx context.Context,
+		codeSessionExternalID string,
+	) (codeSessionRow, bool, error)
+
 	LockInitializingCodeSession(
 		ctx context.Context,
 		codeSessionUUID uuid.UUID,
 	) (codeSessionRow, bool, error)
 
 	UpdateCodeSessionInboundSequence(
+		ctx context.Context,
+		codeSessionUUID uuid.UUID,
+		sequenceNum int64,
+		now time.Time,
+	) (int64, error)
+
+	UpdateCodeSessionOutboundSequence(
 		ctx context.Context,
 		codeSessionUUID uuid.UUID,
 		sequenceNum int64,

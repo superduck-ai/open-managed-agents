@@ -164,6 +164,14 @@ update code_sessions sequence_num
 commit()
 ```
 
+该事务由共享的 `yourbatis.DB.Transaction` 创建；回调中的同一个事务 `Executor`
+同时构造 `CodeSessionMapper`、`CodeSessionInboundEventMapper` 和
+`CodeSessionOutboundEventMapper`。`CodeSessionMapper.LockCodeSessionByExternalID`
+负责日常 append 的行锁，不附加 `initializing` 状态限制；启动激活仍使用独立的
+`LockInitializingCodeSession`。方向对应的 event mapper 在锁内完成幂等单条查询和
+`INSERT ... RETURNING`，随后由 `CodeSessionMapper` 更新对应方向的 sequence。
+激活使用的 inbound 批量 insert 保持独立，不经过单条 append。
+
 这样线性化语义才成立：
 
 - 如果旧 worker 先拿到锁并写完，再发生 register，则这次写入发生在抢占之前，可以接受。

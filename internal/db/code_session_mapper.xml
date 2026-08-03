@@ -38,6 +38,15 @@
         deleted_at
     </sql>
 
+    <select id="LockCodeSessionByExternalID" resultType="codeSessionRow" result="optional">
+        SELECT
+        <include refid="columns"/>
+        FROM code_sessions
+        WHERE external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
     <select id="LockInitializingCodeSession" resultType="codeSessionRow">
         SELECT
         <include refid="columns"/>
@@ -51,6 +60,13 @@
     <update id="UpdateCodeSessionInboundSequence" result="rows">
         UPDATE code_sessions
         SET last_inbound_sequence_num = #{sequenceNum},
+            updated_at = #{now}
+        WHERE uuid = #{codeSessionUUID}
+    </update>
+
+    <update id="UpdateCodeSessionOutboundSequence" result="rows">
+        UPDATE code_sessions
+        SET last_outbound_sequence_num = #{sequenceNum},
             updated_at = #{now}
         WHERE uuid = #{codeSessionUUID}
     </update>

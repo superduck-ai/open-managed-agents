@@ -4,6 +4,93 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
 <mapper namespace="CodeSessionInboundEventMapper">
+    <sql id="eventColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        code_session_uuid,
+        code_session_external_id,
+        sequence_num,
+        event_type,
+        event_subtype,
+        payload_uuid,
+        request_id,
+        payload,
+        payload_hash,
+        idempotency_key,
+        delivery_status,
+        source,
+        sent_at,
+        delivery_worker_epoch,
+        received_at,
+        processing_at,
+        processed_at,
+        last_delivery_attempt_at,
+        last_delivery_update_at,
+        delivery_attempts,
+        false AS ephemeral,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <select id="GetCodeSessionInboundEventByIdempotencyKey"
+            resultType="codeSessionEventRow"
+            result="optional">
+        SELECT
+        <include refid="eventColumns"/>
+        FROM code_session_inbound_events
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND idempotency_key = #{idempotencyKey}
+          AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <insert id="InsertCodeSessionInboundEvent"
+            result="returning"
+            resultType="codeSessionEventRow">
+        INSERT INTO code_session_inbound_events (
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            code_session_uuid,
+            code_session_external_id,
+            sequence_num,
+            event_type,
+            event_subtype,
+            payload_uuid,
+            request_id,
+            payload,
+            payload_hash,
+            idempotency_key,
+            delivery_status,
+            source,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{row.ExternalID},
+            #{row.OrganizationUUID},
+            #{row.WorkspaceUUID},
+            #{row.CodeSessionUUID},
+            #{row.CodeSessionExternalID},
+            #{row.SequenceNum},
+            #{row.EventType},
+            #{row.EventSubtype},
+            #{row.PayloadUUID},
+            #{row.RequestID},
+            CAST(#{row.Payload} AS jsonb),
+            #{row.PayloadHash},
+            #{row.IdempotencyKey},
+            #{row.DeliveryStatus},
+            #{row.Source},
+            #{row.CreatedAt},
+            #{row.CreatedAt}
+        )
+        RETURNING
+        <include refid="eventColumns"/>
+    </insert>
+
     <select id="ListExistingActivationInboundEvents"
             resultType="codeSessionInboundEventIdentityRow">
         SELECT

@@ -6,6 +6,10 @@ default:
 help:
   @just --list
 
+# Generate ignored Go sources required by builds, tests, and static analysis.
+generate:
+  go generate ./...
+
 # Create the gitignored Docker Compose runtime config without overwriting an existing secret-bearing file.
 init-compose-config:
   @compose_template="deploy/docker-compose/oma-server.yaml"; compose_local="deploy/docker-compose/oma-server.local.yaml"; \
@@ -17,11 +21,11 @@ init-compose-config:
     fi
 
 # Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
-server:
+server: generate
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
 # Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
-restart-server:
+restart-server: generate
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web
@@ -36,14 +40,14 @@ restart-web:
 
 # Restart weather MCP server in foreground. Override with: PORT=39091 WEATHER_MCP_PATH=/custom just weather-mcp
 
-test:
+test: generate
   go test ./... -count=1
 
 # Run the repository's configured Go static-analysis and formatting checks.
-lint:
+lint: generate
   golangci-lint run --config .golangci.yml ./...
 
-dead-code:
+dead-code: generate
   ./scripts/go-dead-code.sh
 
 duplicates:
@@ -65,7 +69,7 @@ generate-upstream-proxy-ca-key output:
 test-generate-upstream-proxy-ca-key:
   ./scripts/tests/generate-upstream-proxy-ca-key_test.sh
 
-go-complexity:
+go-complexity: generate
   ./scripts/go-complexity.sh
 
 web-build:
@@ -98,5 +102,5 @@ hooks-install:
   ./scripts/pre-commit.sh install --install-hooks
 
 # Run every configured pre-commit check against all tracked files.
-hooks-run:
+hooks-run: generate
   ./scripts/pre-commit.sh run --all-files

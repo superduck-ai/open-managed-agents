@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '**/*.go'
+      - 'internal/db/*_mapper.xml'
       - '.golangci-complexity.yml'
       - 'go.mod'
       - 'go.sum'
@@ -15,6 +16,7 @@ on:
       - main
     paths:
       - '**/*.go'
+      - 'internal/db/*_mapper.xml'
       - '.golangci-complexity.yml'
       - 'go.mod'
       - 'go.sum'
@@ -43,6 +45,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Generate Go sources
+        run: go generate ./...
 
       - name: Check Go complexity
         uses: golangci/golangci-lint-action@v9

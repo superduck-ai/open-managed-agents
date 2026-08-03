@@ -25,6 +25,7 @@ temp/
 # Go build/test artifacts
 /bin/
 /open-managed-agents
+*.gen.go
 *.test
 *.out
 *.prof

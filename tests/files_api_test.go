@@ -782,7 +782,7 @@ func TestDatabaseMigrationDropsForeignKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	database, err := db.Open(ctx, cfg)
+	database, err := db.Open(ctx, cfg, nil)
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
@@ -836,7 +836,7 @@ func TestDatabaseMigrationRecordsGooseBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	database, err := db.Open(ctx, cfg)
+	database, err := db.Open(ctx, cfg, nil)
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
@@ -1028,7 +1028,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 	if override != nil {
 		cfg = *override
 	}
-	database, err := db.Open(ctx, cfg)
+	database, err := db.Open(ctx, cfg, logger.With("component", "database"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}

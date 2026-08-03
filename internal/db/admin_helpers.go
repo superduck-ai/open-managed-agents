@@ -1,0 +1,118 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type pagePosition struct {
+	CreatedAt time.Time `db:"created_at"`
+	UUID      uuid.UUID `db:"uuid"`
+}
+
+func (d *DB) adminCursor(
+	ctx context.Context,
+	table, timeColumn, where string,
+	arguments map[string]any,
+	externalID string,
+) (*pagePosition, bool, error) {
+	if externalID == "" {
+		return nil, false, nil
+	}
+	query := fmt.Sprintf(
+		"select uuid, %s as created_at from %s where %s",
+		timeColumn,
+		table,
+		where,
+	)
+	var cursor pagePosition
+	if err := namedGetContext(ctx, d.sql, &cursor, query, arguments); errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, err
+	}
+	return &cursor, true, nil
+}
+
+func appendCursorFilter(
+	query string,
+	arguments map[string]any,
+	column, afterID, beforeID string,
+	cursor *pagePosition,
+) string {
+	if afterID == "" && beforeID == "" {
+		return query
+	}
+	if cursor == nil {
+		return query
+	}
+	uuidColumn := "uuid"
+	if dot := strings.LastIndex(column, "."); dot > 0 {
+		uuidColumn = column[:dot] + ".uuid"
+	}
+	if afterID != "" {
+		query += fmt.Sprintf(
+			" and (%s < :cursor_created_at or (%s = :cursor_created_at and %s < :cursor_uuid))",
+			column,
+			column,
+			uuidColumn,
+		)
+	} else {
+		query += fmt.Sprintf(
+			" and (%s > :cursor_created_at or (%s = :cursor_created_at and %s > :cursor_uuid))",
+			column,
+			column,
+			uuidColumn,
+		)
+	}
+	arguments["cursor_created_at"] = cursor.CreatedAt
+	arguments["cursor_uuid"] = cursor.UUID
+	return query
+}
+
+func getAdminRow[T any](
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) (T, error) {
+	var row T
+	err := namedGetContext(ctx, database, &row, query, arguments)
+	if errors.Is(err, sql.ErrNoRows) {
+		return row, ErrNotFound
+	}
+	return row, err
+}
+
+func selectAdminRows[T any](
+	ctx context.Context,
+	database sqlxNamedQueryer,
+	query string,
+	arguments map[string]any,
+) ([]T, error) {
+	var rows []T
+	err := namedSelectContext(ctx, database, &rows, query, arguments)
+	return rows, err
+}
+
+func trimAdminPage[T any](items []T, limit int) []T {
+	if limit > 0 && len(items) > limit {
+		return items[:limit]
+	}
+	return items
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}

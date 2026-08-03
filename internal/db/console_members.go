@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
@@ -86,25 +85,18 @@ type consoleMemberRow struct {
 }
 
 func (d *DB) ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]platform.OrgUser, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" {
+	if d == nil || d.sql == nil || orgUUID == "" {
 		return []platform.OrgUser{}, nil
 	}
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
-	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
-	if err != nil {
-		return []platform.OrgUser{}, nil
-	}
 	var rows []consoleMemberRow
-	err = namedSelectContext(ctx, d.sql, &rows, listOrgUsersQuery, map[string]any{
-		"org_uuid": typedOrgUUID,
+	err := namedSelectContext(ctx, d.sql, &rows, listOrgUsersQuery, map[string]any{
+		"org_uuid": orgUUID,
 		"limit":    limit,
 	})
 	if err != nil {
-		if isUndefinedTableError(err) {
-			return []platform.OrgUser{}, nil
-		}
 		return nil, err
 	}
 
@@ -116,16 +108,12 @@ func (d *DB) ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]pla
 }
 
 func (d *DB) UpdateOrgUserRole(ctx context.Context, orgUUID string, userID string, role string) (*platform.OrgUser, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(userID) == "" {
-		return nil, nil
-	}
-	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
-	if err != nil {
+	if d == nil || d.sql == nil || orgUUID == "" || userID == "" {
 		return nil, nil
 	}
 	user, err := getConsoleMemberSQLX(ctx, d.sql, updateOrgUserRoleQuery, map[string]any{
-		"org_uuid":  typedOrgUUID,
-		"user_id":   strings.TrimSpace(userID),
+		"org_uuid":  orgUUID,
+		"user_id":   userID,
 		"user_uuid": tryParseDBUUIDIdentifier(userID),
 		"role":      role,
 	})
@@ -139,11 +127,7 @@ func (d *DB) UpdateOrgUserRole(ctx context.Context, orgUUID string, userID strin
 }
 
 func (d *DB) RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (bool, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(userID) == "" {
-		return false, nil
-	}
-	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
-	if err != nil {
+	if d == nil || d.sql == nil || orgUUID == "" || userID == "" {
 		return false, nil
 	}
 	tx, err := d.sql.BeginTxx(ctx, nil)
@@ -153,15 +137,12 @@ func (d *DB) RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (
 	defer func() { _ = tx.Rollback() }()
 
 	arguments := map[string]any{
-		"org_uuid":  typedOrgUUID,
-		"user_id":   strings.TrimSpace(userID),
+		"org_uuid":  orgUUID,
+		"user_id":   userID,
 		"user_uuid": tryParseDBUUIDIdentifier(userID),
 	}
 	rowsAffected, err := namedExecRowsAffected(ctx, tx, removeOrgUserQuery, arguments)
 	if err != nil {
-		if isUndefinedTableError(err) {
-			return false, nil
-		}
 		return false, err
 	}
 	if rowsAffected == 0 {

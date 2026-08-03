@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -224,10 +226,12 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 			})
 			return
 		}
-		auth := authFromContext(r.Context())
 		var createdByUserUUID *string
-		if auth != nil {
-			createdByUserUUID = &auth.Account.UUID
+		if principal, found := auth.PrincipalFromContext(r.Context()); found {
+			userUUID := strings.TrimSpace(principal.UserUUID)
+			if userUUID != "" {
+				createdByUserUUID = &userUUID
+			}
 		}
 		result, err := apiKeyStore.CreateConsoleAPIKey(r.Context(), CreateConsoleAPIKeyInput{
 			OrgUUID:            orgUUID,

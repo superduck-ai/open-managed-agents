@@ -88,6 +88,10 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 		t.Fatalf("Console workspaces = %+v, want at least one typed UUID row", consoleWorkspaces)
 	}
 
+	consoleAPIKeyCountBeforeCreate, err := app.db.CountConsoleAPIKeys(ctx, ids.OrganizationUUID, ids.WorkspaceUUID)
+	if err != nil {
+		t.Fatalf("count Console API keys before create: %v", err)
+	}
 	createdKey, err := app.db.CreateConsoleAPIKey(ctx, platform.CreateConsoleAPIKeyInput{
 		OrgUUID:            ids.OrganizationUUID,
 		WorkspaceUUID:      ids.WorkspaceUUID,
@@ -99,6 +103,64 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	}
 	if createdKey.APIKey.CreatedByUserUUID != nil || createdKey.APIKey.WorkspaceUUID != ids.WorkspaceUUID {
 		t.Fatalf("created Console API key = %+v, want null creator and workspace %s", createdKey.APIKey, ids.WorkspaceUUID)
+	}
+	defer func() {
+		if _, cleanupErr := app.db.Pool.Exec(
+			context.Background(),
+			"delete from console_api_keys where external_id = $1",
+			createdKey.APIKey.ID,
+		); cleanupErr != nil {
+			t.Errorf("delete Console API key fixture: %v", cleanupErr)
+		}
+		if _, cleanupErr := app.db.Pool.Exec(
+			context.Background(),
+			"delete from api_keys where external_id = $1",
+			createdKey.APIKey.ID,
+		); cleanupErr != nil {
+			t.Errorf("delete core API key fixture: %v", cleanupErr)
+		}
+	}()
+
+	consoleAPIKeys, err := app.db.ListConsoleAPIKeys(ctx, ids.OrganizationUUID, &ids.WorkspaceUUID)
+	if err != nil {
+		t.Fatalf("list Console API keys after create: %v", err)
+	}
+	if !containsConsoleAPIKey(consoleAPIKeys, createdKey.APIKey.ID, "active") {
+		t.Fatalf("Console API key list does not contain active key %q: %+v", createdKey.APIKey.ID, consoleAPIKeys)
+	}
+	consoleAPIKeyCountAfterCreate, err := app.db.CountConsoleAPIKeys(ctx, ids.OrganizationUUID, ids.WorkspaceUUID)
+	if err != nil {
+		t.Fatalf("count Console API keys after create: %v", err)
+	}
+	if consoleAPIKeyCountAfterCreate != consoleAPIKeyCountBeforeCreate+1 {
+		t.Fatalf(
+			"Console API key count after create = %d, want %d",
+			consoleAPIKeyCountAfterCreate,
+			consoleAPIKeyCountBeforeCreate+1,
+		)
+	}
+	archivedKey, err := app.db.UpdateConsoleAPIKeyStatus(ctx, platform.UpdateConsoleAPIKeyStatusInput{
+		OrgUUID:       ids.OrganizationUUID,
+		WorkspaceUUID: ids.WorkspaceUUID,
+		APIKeyID:      createdKey.APIKey.ID,
+		Status:        "archived",
+	})
+	if err != nil {
+		t.Fatalf("archive Console API key: %v", err)
+	}
+	if archivedKey.Status != "archived" || archivedKey.ArchivedAt == nil {
+		t.Fatalf("archived Console API key = %+v", archivedKey)
+	}
+	consoleAPIKeyCountAfterArchive, err := app.db.CountConsoleAPIKeys(ctx, ids.OrganizationUUID, ids.WorkspaceUUID)
+	if err != nil {
+		t.Fatalf("count Console API keys after archive: %v", err)
+	}
+	if consoleAPIKeyCountAfterArchive != consoleAPIKeyCountBeforeCreate {
+		t.Fatalf(
+			"Console API key count after archive = %d, want %d",
+			consoleAPIKeyCountAfterArchive,
+			consoleAPIKeyCountBeforeCreate,
+		)
 	}
 
 	promptID := "prompt_typed_uuid_" + uuid.NewString()
@@ -132,6 +194,15 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	if prompt.OrgUUID != ids.OrganizationUUID || prompt.WorkspaceUUID != ids.WorkspaceUUID {
 		t.Fatalf("Workbench prompt UUIDs = (%s, %s), want (%s, %s)", prompt.OrgUUID, prompt.WorkspaceUUID, ids.OrganizationUUID, ids.WorkspaceUUID)
 	}
+}
+
+func containsConsoleAPIKey(keys []platform.ConsoleAPIKey, keyID string, status string) bool {
+	for _, key := range keys {
+		if key.ID == keyID && key.Status == status {
+			return true
+		}
+	}
+	return false
 }
 
 // TestTypedUUIDResourceFamiliesPostgres exercises each resource family changed

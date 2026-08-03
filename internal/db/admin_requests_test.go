@@ -57,7 +57,7 @@ func TestListAdminRequestsSQLXScansPostgreSQLRows(t *testing.T) {
 	if err != nil {
 		t.Skipf("PostgreSQL integration test requires config: %v", err)
 	}
-	database, err := Open(ctx, cfg)
+	database, err := Open(ctx, cfg, nil)
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}

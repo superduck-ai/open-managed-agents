@@ -14,20 +14,21 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(logging.NewConsoleHandler(os.Stderr, slog.LevelInfo)))
+	logger := slog.New(logging.NewConsoleHandler(os.Stderr, slog.LevelInfo))
+	slog.SetDefault(logger)
 
 	if len(os.Args) != 2 || os.Args[1] != "up" {
 		fmt.Fprintf(os.Stderr, "usage: %s up\n", os.Args[0])
 		os.Exit(2)
 	}
 
-	if err := run(); err != nil {
-		slog.Error("database migration failed", "error", err)
+	if err := run(logger); err != nil {
+		logger.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -36,7 +37,7 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	database, err := db.Open(ctx, cfg)
+	database, err := db.Open(ctx, cfg, logger.With("component", "database"))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -45,6 +46,6 @@ func run() error {
 	if err := database.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
-	slog.Info("database migrations applied")
+	logger.Info("database migrations applied")
 	return nil
 }

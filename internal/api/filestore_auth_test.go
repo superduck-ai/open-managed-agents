@@ -561,7 +561,7 @@ func newFilestoreAuthDatabaseFixture(t *testing.T) (*db.DB, config.Config, files
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	database, err := db.Open(context.Background(), cfg)
+	database, err := db.Open(context.Background(), cfg, nil)
 	if err != nil {
 		t.Fatalf("open filestore auth database: %v", err)
 	}

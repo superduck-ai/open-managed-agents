@@ -126,9 +126,6 @@ func (d *DB) ListAdminRequests(ctx context.Context, orgUUID string, requestType 
 		limit,
 	)
 	if err != nil {
-		if isUndefinedTableError(err) {
-			return []platform.AdminRequest{}, nil
-		}
 		return nil, err
 	}
 	return requests, nil

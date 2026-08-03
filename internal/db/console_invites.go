@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -64,22 +63,18 @@ type consoleInviteRow struct {
 }
 
 func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status string, limit int) ([]platform.ConsoleInvite, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" {
+	if d == nil || d.sql == nil || orgUUID == "" {
 		return []platform.ConsoleInvite{}, nil
 	}
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
-	}
-	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
-	if err != nil {
-		return []platform.ConsoleInvite{}, nil
 	}
 	query := `
 		select ` + consoleInviteColumns + `
 		from organization_invites i
 		where i.organization_uuid = :org_uuid
 	`
-	switch strings.TrimSpace(strings.ToLower(status)) {
+	switch status {
 	case "":
 		query += ` and i.deleted_at is null`
 	case "pending":
@@ -96,14 +91,11 @@ func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status stri
 	query += ` order by i.invited_at desc, i.uuid desc limit :limit`
 
 	var rows []consoleInviteRow
-	err = namedSelectContext(ctx, d.sql, &rows, query, map[string]any{
-		"org_uuid": typedOrgUUID,
+	err := namedSelectContext(ctx, d.sql, &rows, query, map[string]any{
+		"org_uuid": orgUUID,
 		"limit":    limit,
 	})
 	if err != nil {
-		if isUndefinedTableError(err) {
-			return []platform.ConsoleInvite{}, nil
-		}
 		return nil, err
 	}
 
@@ -115,24 +107,19 @@ func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status stri
 }
 
 func (d *DB) CreateConsoleInvite(ctx context.Context, input platform.CreateConsoleInviteInput) (platform.ConsoleInvite, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(input.OrgUUID) == "" ||
-		strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.Role) == "" {
+	if d == nil || d.sql == nil || input.OrgUUID == "" || input.Email == "" || input.Role == "" {
 		return platform.ConsoleInvite{}, platform.ErrNotFound
 	}
 	externalID, err := ids.New("invite_")
 	if err != nil {
 		return platform.ConsoleInvite{}, err
 	}
-	orgUUID, err := parseDBUUID("organization_uuid", input.OrgUUID)
-	if err != nil {
-		return platform.ConsoleInvite{}, platform.ErrNotFound
-	}
 	now := time.Now().UTC()
 	invite, err := getConsoleInviteSQLX(ctx, d.sql, createConsoleInviteQuery, map[string]any{
-		"org_uuid":    orgUUID,
+		"org_uuid":    input.OrgUUID,
 		"external_id": externalID,
-		"email":       strings.TrimSpace(input.Email),
-		"role":        strings.TrimSpace(input.Role),
+		"email":       input.Email,
+		"role":        input.Role,
 		"invited_at":  now,
 		"expires_at":  now.Add(21 * 24 * time.Hour),
 	})
@@ -143,33 +130,25 @@ func (d *DB) CreateConsoleInvite(ctx context.Context, input platform.CreateConso
 }
 
 func (d *DB) ResendConsoleInvite(ctx context.Context, orgUUID string, inviteID string) (platform.ConsoleInvite, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(inviteID) == "" {
-		return platform.ConsoleInvite{}, platform.ErrNotFound
-	}
-	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
-	if err != nil {
+	if d == nil || d.sql == nil || orgUUID == "" || inviteID == "" {
 		return platform.ConsoleInvite{}, platform.ErrNotFound
 	}
 	now := time.Now().UTC()
 	return getConsoleInviteSQLX(ctx, d.sql, resendConsoleInviteQuery, map[string]any{
-		"org_uuid":   typedOrgUUID,
-		"invite_id":  strings.TrimSpace(inviteID),
+		"org_uuid":   orgUUID,
+		"invite_id":  inviteID,
 		"invited_at": now,
 		"expires_at": now.Add(21 * 24 * time.Hour),
 	})
 }
 
 func (d *DB) DeleteConsoleInvite(ctx context.Context, orgUUID string, inviteID string) (platform.ConsoleInvite, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(inviteID) == "" {
-		return platform.ConsoleInvite{}, platform.ErrNotFound
-	}
-	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
-	if err != nil {
+	if d == nil || d.sql == nil || orgUUID == "" || inviteID == "" {
 		return platform.ConsoleInvite{}, platform.ErrNotFound
 	}
 	return getConsoleInviteSQLX(ctx, d.sql, deleteConsoleInviteQuery, map[string]any{
-		"org_uuid":  typedOrgUUID,
-		"invite_id": strings.TrimSpace(inviteID),
+		"org_uuid":  orgUUID,
+		"invite_id": inviteID,
 	})
 }
 

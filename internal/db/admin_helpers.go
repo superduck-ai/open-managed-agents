@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type AdminCursor struct {
+type pagePosition struct {
 	CreatedAt time.Time `db:"created_at"`
 	UUID      uuid.UUID `db:"uuid"`
 }
@@ -21,7 +21,7 @@ func (d *DB) adminCursor(
 	table, timeColumn, where string,
 	arguments map[string]any,
 	externalID string,
-) (*AdminCursor, bool, error) {
+) (*pagePosition, bool, error) {
 	if externalID == "" {
 		return nil, false, nil
 	}
@@ -31,7 +31,7 @@ func (d *DB) adminCursor(
 		table,
 		where,
 	)
-	var cursor AdminCursor
+	var cursor pagePosition
 	if err := namedGetContext(ctx, d.sql, &cursor, query, arguments); errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	} else if err != nil {
@@ -44,7 +44,7 @@ func appendCursorFilter(
 	query string,
 	arguments map[string]any,
 	column, afterID, beforeID string,
-	cursor *AdminCursor,
+	cursor *pagePosition,
 ) string {
 	if afterID == "" && beforeID == "" {
 		return query

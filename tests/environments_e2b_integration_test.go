@@ -53,7 +53,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		cfg.E2B.SandboxTimeout = time.Minute
 	}
 
-	database, err := db.Open(ctx, cfg)
+	database, err := db.Open(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}

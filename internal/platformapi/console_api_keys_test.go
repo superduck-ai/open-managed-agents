@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -50,11 +51,51 @@ func TestListConsoleWorkspaceAPIKeysResolvesExternalIDOnceAtBoundary(t *testing.
 	}
 }
 
+func TestCreateConsoleWorkspaceAPIKeyUsesPrincipalUserUUID(t *testing.T) {
+	const (
+		organizationUUID = "00000000-0000-4000-8000-000000000002"
+		workspaceUUID    = "00000000-0000-4000-8000-000000000001"
+		userUUID         = "00000000-0000-4000-8000-000000000003"
+	)
+	store := &consoleAPIKeyScopeStore{
+		workspaces: []ConsoleWorkspace{{
+			UUID:       workspaceUUID,
+			ExternalID: "workspace_test",
+		}},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/organizations/"+organizationUUID+"/workspaces/workspace_test/api_keys",
+		strings.NewReader(`{"name":"test key"}`),
+	)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("orgUuid", organizationUUID)
+	routeContext.URLParams.Add("workspaceId", "workspace_test")
+	requestContext := context.WithValue(request.Context(), chi.RouteCtxKey, routeContext)
+	requestContext = auth.WithPrincipal(requestContext, auth.Principal{
+		OrganizationUUID: organizationUUID,
+		UserUUID:         userUUID,
+		UserExternalID:   "user_external",
+	})
+	recorder := httptest.NewRecorder()
+
+	handleCreateConsoleWorkspaceAPIKey(store).ServeHTTP(recorder, request.WithContext(requestContext))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if store.createInput == nil || store.createInput.CreatedByUserUUID == nil ||
+		*store.createInput.CreatedByUserUUID != userUUID {
+		t.Fatalf("created-by UUID = %#v, want internal user UUID %q", store.createInput, userUUID)
+	}
+}
+
 type consoleAPIKeyScopeStore struct {
 	workspaces         []ConsoleWorkspace
 	workspaceListCalls int
 	apiKeyListCalls    int
 	workspaceUUID      *string
+	createInput        *CreateConsoleAPIKeyInput
 }
 
 func (s *consoleAPIKeyScopeStore) ListConsoleWorkspaces(
@@ -77,9 +118,10 @@ func (s *consoleAPIKeyScopeStore) ListConsoleAPIKeys(
 }
 
 func (s *consoleAPIKeyScopeStore) CreateConsoleAPIKey(
-	context.Context,
-	CreateConsoleAPIKeyInput,
+	_ context.Context,
+	input CreateConsoleAPIKeyInput,
 ) (CreateConsoleAPIKeyResult, error) {
+	s.createInput = &input
 	return CreateConsoleAPIKeyResult{}, nil
 }
 

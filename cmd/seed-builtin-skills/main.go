@@ -25,7 +25,7 @@ func main() {
 	prune := flag.Bool("prune", false, "Soft-delete builtin skills not present in --dir")
 	flag.Parse()
 
-	if err := run(*dir, *versionsPath, *prune, logger.With("component", "builtin_skill_seed")); err != nil {
+	if err := run(*dir, *versionsPath, *prune, logger); err != nil {
 		logger.Error("seed builtin skills failed", "error", err)
 		os.Exit(1)
 	}
@@ -39,7 +39,7 @@ func run(dir string, versionsPath string, prune bool, logger *slog.Logger) error
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	database, err := db.Open(ctx, cfg)
+	database, err := db.Open(ctx, cfg, logger.With("component", "database"))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -63,7 +63,7 @@ func run(dir string, versionsPath string, prune bool, logger *slog.Logger) error
 		Dir:          dir,
 		VersionsPath: versionsPath,
 		Prune:        prune,
-	}, logger)
+	}, logger.With("component", "builtin_skill_seed"))
 	if err != nil {
 		return fmt.Errorf("seed builtin skills: %w", err)
 	}

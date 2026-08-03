@@ -59,7 +59,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 	}
 	payloads := make([]json.RawMessage, 0, len(events))
 	for _, event := range events {
-		if !forwardPublicEventToWorker(event.EventType) {
+		if !shouldForwardPublicEventToWorker(event.EventType) {
 			continue
 		}
 		if event.EventType == "user.tool_confirmation" {
@@ -195,7 +195,7 @@ func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, codeSess
 				return err
 			}
 		}
-		if event.Ephemeral || !publicWorkerOutputEvent(event.EventType) {
+		if event.Ephemeral || !isPublicWorkerOutputEvent(event.EventType) {
 			continue
 		}
 		publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, event, publicObject)
@@ -261,7 +261,7 @@ func (s *Service) appendWorkerEvent(ctx context.Context, codeSessionID string, r
 	if meta.EventType == "control_request" && meta.EventSubtype == "can_use_tool" {
 		return s.handleToolPermissionRequest(ctx, codeSessionID, object, meta)
 	}
-	if hiddenWorkerEvent(meta.EventType) {
+	if isHiddenWorkerEvent(meta.EventType) {
 		return nil
 	}
 	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, event, object)
@@ -447,7 +447,7 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 	return threadByAgent, nil
 }
 
-func forwardPublicEventToWorker(eventType string) bool {
+func shouldForwardPublicEventToWorker(eventType string) bool {
 	switch eventType {
 	case "user.message", "user.interrupt", "user.tool_confirmation", "user.tool_result", "user.custom_tool_result":
 		return true
@@ -456,7 +456,7 @@ func forwardPublicEventToWorker(eventType string) bool {
 	}
 }
 
-func hiddenWorkerEvent(eventType string) bool {
+func isHiddenWorkerEvent(eventType string) bool {
 	switch eventType {
 	case "control_request", "control_response", "control_cancel_request":
 		return true
@@ -465,7 +465,7 @@ func hiddenWorkerEvent(eventType string) bool {
 	}
 }
 
-func publicWorkerOutputEvent(eventType string) bool {
+func isPublicWorkerOutputEvent(eventType string) bool {
 	return maevents.IsWorkerOutputEvent(eventType) || maevents.IsStreamDelta(eventType)
 }
 

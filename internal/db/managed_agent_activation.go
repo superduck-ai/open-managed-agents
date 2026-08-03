@@ -3,13 +3,17 @@ package db
 import (
 	"context"
 
-	"github.com/jmoiron/sqlx"
+	"github.com/superduck-ai/yourbatis"
 )
 
 // ManagedAgentActivationTx exposes the resource-scoped SQL operations used by
 // the code-session service to atomically hand off startup events.
 type ManagedAgentActivationTx struct {
-	tx *sqlx.Tx
+	codeSessionMapper             CodeSessionMapper
+	codeSessionInboundEventMapper CodeSessionInboundEventMapper
+	sessionMapper                 SessionMapper
+	sessionEventMapper            SessionEventMapper
+	sessionEventQueueMapper       SessionEventQueueMapper
 }
 
 // WithManagedAgentActivationTx owns the database transaction lifecycle while
@@ -18,14 +22,13 @@ func (d *DB) WithManagedAgentActivationTx(
 	ctx context.Context,
 	fn func(ManagedAgentActivationTx) error,
 ) error {
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := fn(ManagedAgentActivationTx{tx: tx}); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		return fn(ManagedAgentActivationTx{
+			codeSessionMapper:             NewCodeSessionMapper(executor),
+			codeSessionInboundEventMapper: NewCodeSessionInboundEventMapper(executor),
+			sessionMapper:                 NewSessionMapper(executor),
+			sessionEventMapper:            NewSessionEventMapper(executor),
+			sessionEventQueueMapper:       NewSessionEventQueueMapper(executor),
+		})
+	})
 }

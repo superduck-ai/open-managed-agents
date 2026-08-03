@@ -2,14 +2,13 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/samber/lo"
+	"github.com/superduck-ai/yourbatis"
 )
 
 type SessionEventDelivery string
@@ -31,6 +30,28 @@ type sessionEventQueueInsertRow struct {
 	SessionEventUUID uuid.UUID `db:"session_event_uuid"`
 }
 
+type sessionUUIDs struct {
+	OrganizationUUID uuid.UUID
+	WorkspaceUUID    uuid.UUID
+	SessionUUID      uuid.UUID
+	EnvironmentUUID  uuid.UUID
+}
+
+type sessionEventInsertRow struct {
+	UUID              uuid.UUID `db:"uuid"`
+	ExternalID        string    `db:"external_id"`
+	OrganizationUUID  uuid.UUID `db:"organization_uuid"`
+	WorkspaceUUID     uuid.UUID `db:"workspace_uuid"`
+	SessionUUID       uuid.UUID `db:"session_uuid"`
+	SessionExternalID string    `db:"session_external_id"`
+	ThreadUUID        uuid.UUID `db:"thread_uuid"`
+	ThreadExternalID  string    `db:"thread_external_id"`
+	EventType         string    `db:"event_type"`
+	Payload           []byte    `db:"payload"`
+	ProcessedAt       time.Time `db:"processed_at"`
+	CreatedAt         time.Time `db:"created_at"`
+}
+
 // AppendSessionEventsForDelivery keeps the existing delivery path outside the
 // managed-agent startup window. During startup it accepts exactly one
 // user.message with an empty queue and records the public event and temporary
@@ -42,71 +63,188 @@ func (d *DB) AppendSessionEventsForDelivery(
 	events []SessionEvent,
 	outcomeEvaluations json.RawMessage,
 ) ([]SessionEvent, SessionEventDelivery, error) {
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	defer tx.Rollback()
-
-	session, err := getSessionSQLX(
-		ctx,
-		tx,
-		lockSessionForEventsQuery,
-		sessionLookupArguments(workspaceUUID, sessionExternalID),
-	)
-	if err != nil {
-		return nil, "", err
-	}
-	if session.ArchivedAt != nil {
-		return nil, "", ErrSessionArchived
-	}
-	userMessageCount := lo.CountBy(events, func(event SessionEvent) bool {
-		return event.EventType == "user.message"
-	})
-	shouldEnqueue := false
-	if userMessageCount > 0 {
-		shouldEnqueue, err = shouldQueueForStartup(ctx, tx, session)
-		if err != nil {
-			return nil, "", err
-		}
-	}
-	if shouldEnqueue {
-		if len(events) != 1 || userMessageCount != 1 {
-			return nil, "", ErrSessionStartupMessageConflict
-		}
-		hasQueuedEvents, err := sessionEventQueueExists(ctx, tx, session)
-		if err != nil {
-			return nil, "", err
-		}
-		if hasQueuedEvents {
-			return nil, "", ErrSessionStartupMessageConflict
-		}
-	}
-
-	created, err := insertSessionEventsSQLXTx(ctx, tx, session, events, false)
-	if err != nil {
-		return nil, "", err
-	}
+	var created []SessionEvent
 	delivery := SessionEventDeliveryRealtime
-	if shouldEnqueue {
-		if err := enqueueSessionEventsTx(ctx, tx, session, created); err != nil {
-			return nil, "", err
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		sessionMapper := NewSessionMapper(executor)
+		sessionThreadMapper := NewSessionThreadMapper(executor)
+		sessionEventMapper := NewSessionEventMapper(executor)
+		sessionEventQueueMapper := NewSessionEventQueueMapper(executor)
+		codeSessionMapper := NewCodeSessionMapper(executor)
+		environmentWorkMapper := NewEnvironmentWorkMapper(executor)
+		parsedWorkspaceUUID, err := parseDBUUID("workspace_uuid", workspaceUUID)
+		if err != nil {
+			return err
 		}
-		delivery = SessionEventDeliveryStartupQueued
-	}
-	if len(outcomeEvaluations) > 0 {
-		if _, err := getSessionSQLX(ctx, tx, setSessionOutcomeEvaluationsQuery, map[string]any{
-			"workspace_uuid":      dbUUID(session.WorkspaceUUID),
-			"session_external_id": session.ExternalID,
-			"outcome_evaluations": jsonArg(outcomeEvaluations),
-		}); err != nil {
-			return nil, "", err
+		sessionRow, found, err := sessionMapper.LockSessionForEvents(
+			ctx,
+			parsedWorkspaceUUID,
+			sessionExternalID,
+		)
+		if err != nil {
+			return err
 		}
-	}
-	if err := tx.Commit(); err != nil {
+		if !found {
+			return ErrNotFound
+		}
+		session := sessionRow.session()
+		if session.ArchivedAt != nil {
+			return ErrSessionArchived
+		}
+		userMessageCount := lo.CountBy(events, func(event SessionEvent) bool {
+			return event.EventType == "user.message"
+		})
+		shouldEnqueue := false
+		if userMessageCount > 0 {
+			shouldEnqueue, err = shouldQueueForStartup(
+				ctx,
+				codeSessionMapper,
+				environmentWorkMapper,
+				session,
+			)
+			if err != nil {
+				return err
+			}
+		}
+		if shouldEnqueue {
+			if len(events) != 1 || userMessageCount != 1 {
+				return ErrSessionStartupMessageConflict
+			}
+			sessionUUID, err := parseDBUUID("session_uuid", session.UUID)
+			if err != nil {
+				return err
+			}
+			hasQueuedEvents, err := sessionEventQueueMapper.SessionEventQueueExists(ctx, sessionUUID)
+			if err != nil {
+				return err
+			}
+			if hasQueuedEvents {
+				return ErrSessionStartupMessageConflict
+			}
+		}
+
+		created, err = insertSessionEventsWithMappers(
+			ctx,
+			sessionThreadMapper,
+			sessionEventMapper,
+			session,
+			events,
+		)
+		if err != nil {
+			return err
+		}
+		if shouldEnqueue {
+			if err := enqueueSessionEventsTx(
+				ctx,
+				sessionEventQueueMapper,
+				session,
+				created,
+			); err != nil {
+				return err
+			}
+			delivery = SessionEventDeliveryStartupQueued
+		}
+		if len(outcomeEvaluations) > 0 {
+			updated, err := sessionMapper.SetSessionOutcomeEvaluations(
+				ctx,
+				parsedWorkspaceUUID,
+				session.ExternalID,
+				outcomeEvaluations,
+			)
+			if err != nil {
+				return err
+			}
+			if updated == 0 {
+				return ErrNotFound
+			}
+			if updated != 1 {
+				return ErrInvalidState
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, "", err
 	}
 	return created, delivery, nil
+}
+
+func insertSessionEventsWithMappers(
+	ctx context.Context,
+	sessionThreadMapper SessionThreadMapper,
+	sessionEventMapper SessionEventMapper,
+	session Session,
+	events []SessionEvent,
+) ([]SessionEvent, error) {
+	parsedUUIDs, err := parseSessionUUIDs(session)
+	if err != nil {
+		return nil, err
+	}
+	primaryRow, found, err := sessionThreadMapper.GetPrimarySessionThread(
+		ctx,
+		parsedUUIDs.WorkspaceUUID,
+		session.ExternalID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	primary := primaryRow.thread()
+
+	created := make([]SessionEvent, 0, len(events))
+	for _, input := range events {
+		event := input
+		event.OrganizationUUID = session.OrganizationUUID
+		event.WorkspaceUUID = session.WorkspaceUUID
+		event.SessionUUID = session.UUID
+		event.SessionExternalID = session.ExternalID
+
+		thread := primary
+		if event.ThreadExternalID != nil {
+			threadRow, found, err := sessionThreadMapper.GetSessionThreadByExternalID(
+				ctx,
+				parsedUUIDs.WorkspaceUUID,
+				session.ExternalID,
+				*event.ThreadExternalID,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, ErrNotFound
+			}
+			thread = threadRow.thread()
+		}
+		threadUUID, err := parseDBUUID("thread_uuid", thread.UUID)
+		if err != nil {
+			return nil, err
+		}
+		eventUUID, err := parseDBUUID("event_uuid", event.UUID)
+		if err != nil {
+			return nil, err
+		}
+		row, err := sessionEventMapper.InsertSessionEvent(ctx, sessionEventInsertRow{
+			UUID:              eventUUID,
+			ExternalID:        event.ExternalID,
+			OrganizationUUID:  parsedUUIDs.OrganizationUUID,
+			WorkspaceUUID:     parsedUUIDs.WorkspaceUUID,
+			SessionUUID:       parsedUUIDs.SessionUUID,
+			SessionExternalID: session.ExternalID,
+			ThreadUUID:        threadUUID,
+			ThreadExternalID:  thread.ExternalID,
+			EventType:         event.EventType,
+			Payload:           []byte(event.Payload),
+			ProcessedAt:       event.ProcessedAt,
+			CreatedAt:         event.CreatedAt,
+		})
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, row.event())
+	}
+	return created, nil
 }
 
 // ListSessionEventQueueItems returns and locks the public events currently
@@ -118,15 +256,25 @@ func (tx ManagedAgentActivationTx) ListSessionEventQueueItems(
 	ctx context.Context,
 	session Session,
 ) ([]SessionEvent, error) {
-	return listSessionEventQueueItems(ctx, tx.tx, session)
+	return listSessionEventQueueItems(
+		ctx,
+		tx.sessionEventQueueMapper,
+		tx.sessionEventMapper,
+		session,
+	)
 }
 
 func listSessionEventQueueItems(
 	ctx context.Context,
-	database sqlxNamedQueryer,
+	sessionEventQueueMapper SessionEventQueueMapper,
+	sessionEventMapper SessionEventMapper,
 	session Session,
 ) ([]SessionEvent, error) {
-	identityRows, err := listSessionEventQueueIdentityRows(ctx, database, session)
+	sessionUUID, err := parseDBUUID("session_uuid", session.UUID)
+	if err != nil {
+		return nil, err
+	}
+	identityRows, err := sessionEventQueueMapper.ListSessionEventQueueIdentities(ctx, sessionUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +282,7 @@ func listSessionEventQueueItems(
 		return nil, nil
 	}
 
-	eventsByUUID, err := sessionEventsByUUIDs(ctx, database, session, identityRows)
+	eventsByUUID, err := sessionEventsByUUIDs(ctx, sessionEventMapper, session, identityRows)
 	if err != nil {
 		return nil, err
 	}
@@ -162,44 +310,48 @@ func (tx ManagedAgentActivationTx) ListSessionEventsForActivation(
 	ctx context.Context,
 	session Session,
 ) ([]SessionEvent, error) {
-	return listSessionEventsSQLX(ctx, tx.tx, `
-		select `+sessionEventSQLXColumns+`
-		from session_events
-		where organization_uuid = :organization_uuid
-			and workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and deleted_at is null
-		order by created_at asc, id asc
-	`, map[string]any{
-		"organization_uuid": dbUUID(session.OrganizationUUID),
-		"workspace_uuid":    dbUUID(session.WorkspaceUUID),
-		"session_uuid":      dbUUID(session.UUID),
-	})
+	parsedUUIDs, err := parseSessionUUIDs(session)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.sessionEventMapper.ListSessionEventsForActivation(
+		ctx,
+		parsedUUIDs.OrganizationUUID,
+		parsedUUIDs.WorkspaceUUID,
+		parsedUUIDs.SessionUUID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return lo.Map(rows, func(row sessionEventRow, _ int) SessionEvent {
+		return row.event()
+	}), nil
 }
 
 func sessionEventsByUUIDs(
 	ctx context.Context,
-	database sqlxNamedQueryer,
+	sessionEventMapper SessionEventMapper,
 	session Session,
 	identityRows []sessionEventQueueIdentityRow,
 ) (map[string]SessionEvent, error) {
-	eventUUIDs := make([]string, len(identityRows))
-	for i, row := range identityRows {
-		eventUUIDs[i] = row.SessionEventUUID.String()
-	}
-	events, err := listSessionEventsSQLX(ctx, database, `
-		select `+sessionEventSQLXColumns+`
-		from session_events
-		where uuid = any(:session_event_uuids)
-			and session_uuid = :session_uuid
-			and deleted_at is null
-	`, map[string]any{
-		"session_event_uuids": eventUUIDs,
-		"session_uuid":        dbUUID(session.UUID),
+	eventUUIDs := lo.Map(identityRows, func(row sessionEventQueueIdentityRow, _ int) uuid.UUID {
+		return row.SessionEventUUID
 	})
+	sessionUUID, err := parseDBUUID("session_uuid", session.UUID)
 	if err != nil {
 		return nil, err
 	}
+	rows, err := sessionEventMapper.ListSessionEventsByUUIDs(
+		ctx,
+		sessionUUID,
+		eventUUIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	events := lo.Map(rows, func(row sessionEventRow, _ int) SessionEvent {
+		return row.event()
+	})
 	byUUID := make(map[string]SessionEvent, len(events))
 	for _, event := range events {
 		byUUID[event.UUID] = event
@@ -207,37 +359,15 @@ func sessionEventsByUUIDs(
 	return byUUID, nil
 }
 
-func listSessionEventQueueIdentityRows(
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	session Session,
-) ([]sessionEventQueueIdentityRow, error) {
-	// session_uuid uniquely identifies the public Session; tenant columns are
-	// written on insert but are not required as query predicates.
-	query := `
-		select q.id, q.session_event_uuid
-		from session_event_queue q
-		where q.session_uuid = :session_uuid
-		order by q.id asc
-		for update of q
-	`
-	var rows []sessionEventQueueIdentityRow
-	err := namedSelectContext(ctx, database, &rows, query, map[string]any{
-		"session_uuid": dbUUID(session.UUID),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
 func (tx ManagedAgentActivationTx) DeleteSessionEventQueue(
 	ctx context.Context,
 	sessionUUID string,
 ) error {
-	_, err := namedExecRowsAffected(ctx, tx.tx, deleteSessionEventQueueQuery, map[string]any{
-		"session_uuid": dbUUID(sessionUUID),
-	})
+	parsedUUID, err := parseDBUUID("session_uuid", sessionUUID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.sessionEventQueueMapper.DeleteSessionEventQueue(ctx, parsedUUID)
 	return err
 }
 
@@ -247,83 +377,36 @@ func (tx ManagedAgentActivationTx) DeleteSessionEventQueue(
 // has session-scoped environment work in flight.
 func shouldQueueForStartup(
 	ctx context.Context,
-	database sqlxNamedQueryer,
+	codeSessionMapper CodeSessionMapper,
+	environmentWorkMapper EnvironmentWorkMapper,
 	session Session,
 ) (bool, error) {
-	var status string
-	err := namedGetContext(ctx, database, &status, `
-		select status
-		from code_sessions
-		where session_uuid = :session_uuid
-			and deleted_at is null
-		order by created_at desc, uuid desc
-		limit 1
-	`, map[string]any{
-		"session_uuid": dbUUID(session.UUID),
-	})
-	if err == nil && status != "initializing" {
-		return false, nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, err
-	}
-
-	var startupWorkExists bool
-	err = namedGetContext(ctx, database, &startupWorkExists, `
-		select exists (
-			select 1
-			from environment_work ew
-			where ew.workspace_uuid = :workspace_uuid
-				and ew.environment_uuid = :environment_uuid
-				and ew.data->>'type' = 'session'
-				and ew.data->>'id' = :session_external_id
-				and ew.state in ('queued', 'starting', 'active')
-				and ew.deleted_at is null
-		)
-	`, map[string]any{
-		"workspace_uuid":      dbUUID(session.WorkspaceUUID),
-		"environment_uuid":    dbUUID(session.EnvironmentUUID),
-		"session_external_id": session.ExternalID,
-	})
+	parsedUUIDs, err := parseSessionUUIDs(session)
 	if err != nil {
 		return false, err
 	}
-	return startupWorkExists, nil
-}
-
-func sessionEventQueueExists(
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	session Session,
-) (bool, error) {
-	var exists bool
-	err := namedGetContext(ctx, database, &exists, `
-		select exists (
-			select 1
-			from session_event_queue q
-			where q.session_uuid = :session_uuid
-		)
-	`, map[string]any{
-		"session_uuid": dbUUID(session.UUID),
-	})
-	return exists, err
+	status, found, err := codeSessionMapper.GetLatestCodeSessionStatus(ctx, parsedUUIDs.SessionUUID)
+	if err != nil {
+		return false, err
+	}
+	if found && status != "initializing" {
+		return false, nil
+	}
+	return environmentWorkMapper.StartupEnvironmentWorkExists(
+		ctx,
+		parsedUUIDs.WorkspaceUUID,
+		parsedUUIDs.EnvironmentUUID,
+		session.ExternalID,
+	)
 }
 
 func enqueueSessionEventsTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	sessionEventQueueMapper SessionEventQueueMapper,
 	session Session,
 	events []SessionEvent,
 ) error {
-	organizationUUID, err := parseDBUUID("organization_uuid", session.OrganizationUUID)
-	if err != nil {
-		return err
-	}
-	workspaceUUID, err := parseDBUUID("workspace_uuid", session.WorkspaceUUID)
-	if err != nil {
-		return err
-	}
-	sessionUUID, err := parseDBUUID("session_uuid", session.UUID)
+	parsedUUIDs, err := parseSessionUUIDs(session)
 	if err != nil {
 		return err
 	}
@@ -338,9 +421,9 @@ func enqueueSessionEventsTx(
 			return err
 		}
 		rows = append(rows, sessionEventQueueInsertRow{
-			OrganizationUUID: organizationUUID,
-			WorkspaceUUID:    workspaceUUID,
-			SessionUUID:      sessionUUID,
+			OrganizationUUID: parsedUUIDs.OrganizationUUID,
+			WorkspaceUUID:    parsedUUIDs.WorkspaceUUID,
+			SessionUUID:      parsedUUIDs.SessionUUID,
 			SessionEventUUID: eventUUID,
 		})
 	}
@@ -348,16 +431,31 @@ func enqueueSessionEventsTx(
 		return nil
 	}
 
-	_, err = tx.NamedExecContext(ctx, `
-		insert into session_event_queue (
-			organization_uuid, workspace_uuid, session_uuid, session_event_uuid
-		)
-		values (
-			:organization_uuid,
-			:workspace_uuid,
-			:session_uuid,
-			:session_event_uuid
-		)
-	`, rows)
+	_, err = sessionEventQueueMapper.EnqueueSessionEvents(ctx, rows)
 	return err
+}
+
+func parseSessionUUIDs(session Session) (sessionUUIDs, error) {
+	organizationUUID, err := parseDBUUID("organization_uuid", session.OrganizationUUID)
+	if err != nil {
+		return sessionUUIDs{}, err
+	}
+	workspaceUUID, err := parseDBUUID("workspace_uuid", session.WorkspaceUUID)
+	if err != nil {
+		return sessionUUIDs{}, err
+	}
+	sessionUUID, err := parseDBUUID("session_uuid", session.UUID)
+	if err != nil {
+		return sessionUUIDs{}, err
+	}
+	environmentUUID, err := parseDBUUID("environment_uuid", session.EnvironmentUUID)
+	if err != nil {
+		return sessionUUIDs{}, err
+	}
+	return sessionUUIDs{
+		OrganizationUUID: organizationUUID,
+		WorkspaceUUID:    workspaceUUID,
+		SessionUUID:      sessionUUID,
+		EnvironmentUUID:  environmentUUID,
+	}, nil
 }

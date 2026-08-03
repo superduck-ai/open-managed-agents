@@ -329,8 +329,7 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 	if _, err := namedExecContext(ctx, tx, deleteSessionResourcesQuery, arguments); err != nil {
 		return Session{}, err
 	}
-	arguments["session_uuid"] = dbUUID(session.UUID)
-	if _, err := namedExecContext(ctx, tx, deleteSessionEventQueueQuery, arguments); err != nil {
+	if err := deleteSessionEventQueueSQLX(ctx, tx, session.UUID); err != nil {
 		return Session{}, err
 	}
 	if _, err := namedExecContext(ctx, tx, deleteSessionEventsQuery, arguments); err != nil {

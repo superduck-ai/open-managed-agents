@@ -133,10 +133,6 @@ const (
 			and session_external_id = :session_external_id
 			and deleted_at is null
 	`
-	deleteSessionEventQueueQuery = `
-		delete from session_event_queue q
-		where q.session_uuid = :session_uuid
-	`
 	stopDeletedSessionEnvironmentWorkQuery = `
 		update environment_work
 		set state = case when state in ('stopped') then state else 'stopping' end,
@@ -358,12 +354,22 @@ func (tx ManagedAgentActivationTx) LockSessionForEvents(
 	workspaceUUID string,
 	sessionExternalID string,
 ) (Session, error) {
-	return getSessionSQLX(
+	parsedWorkspaceUUID, err := parseDBUUID("workspace_uuid", workspaceUUID)
+	if err != nil {
+		return Session{}, err
+	}
+	row, found, err := tx.sessionMapper.LockSessionForEvents(
 		ctx,
-		tx.tx,
-		lockSessionForEventsQuery,
-		sessionLookupArguments(workspaceUUID, sessionExternalID),
+		parsedWorkspaceUUID,
+		sessionExternalID,
 	)
+	if err != nil {
+		return Session{}, err
+	}
+	if !found {
+		return Session{}, ErrNotFound
+	}
+	return row.session(), nil
 }
 
 func getSessionSQLX(

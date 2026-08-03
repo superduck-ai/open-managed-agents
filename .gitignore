@@ -69,3 +69,4 @@ logs/
 CLAUDE.local.md
 AGENTS.override.md
 .worktrees/
+*.gen.go

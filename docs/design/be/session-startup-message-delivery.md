@@ -197,6 +197,18 @@ normalization 阶段写库。
 8. 有 outcome 变化时在同一事务更新；
 9. commit 后返回 `startup_queued` 或 `realtime`。
 
+Send 和最终激活路径的锁查询、窗口判断、queue 读写、历史读取、inbound 批量写入和状态更新，
+按主表分别声明在 `SessionMapper`、`SessionThreadMapper`、`SessionEventMapper`、
+`SessionEventQueueMapper`、`CodeSessionMapper`、`CodeSessionInboundEventMapper` 和
+`EnvironmentWorkMapper` 的 MyBatis XML 中，并由 yourbatis 生成静态 Go builder 与 scanner。
+单个 Mapper 不混合多个表的查询；跨表事务由 DB 组装层使用同一个事务 `Executor` 构造所需 Mapper。
+DB 组装层从 sqlx 使用的同一个 `*sql.DB` 创建共享 `yourbatis.DB`，不会建立第二个连接池。
+Send 和最终激活通过 `yourbatis.DB.Transaction` 开启事务，并用回调提供的事务 `Executor`
+构造 Mapper；不再把 `sqlx.Tx` 包装成自定义 yourbatis Executor。Deployment 创建和 Session 删除
+仍包含尚未迁移的 sqlx 事务链，其 queue 操作继续使用同一个 sqlx transaction，避免一次业务事务
+跨两个句柄。仓库提交生成文件；yourbatis 版本由 `go.mod` 固定，需要重新生成时运行
+`go generate ./internal/db`。
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -385,8 +397,9 @@ Session、仍为 `initializing`、已经 `terminated` 或其他非 active 状态
 | Runner prepare 不再读取事件快照 | `Runner.prepareManagedAgentLaunch` |
 | API 标准化事件与 outcome | `Handler.sendEventsRoute`、`normalizeInputEvent` |
 | Send 事务和 startup/realtime 分流 | `DB.AppendSessionEventsForDelivery` |
-| 启动窗口判断 | `shouldQueueForStartup` |
-| queue 写入 | `enqueueSessionEventsTx` |
+| 启动交接 SQL 声明与生成实现 | 按主表拆分的 `*Mapper`、对应 `*_mapper.xml` |
+| 启动窗口判断 | `shouldQueueForStartup`、`shouldQueueForStartupSQLX` |
+| queue 写入 | `enqueueSessionEventsTx`、`enqueueSessionEventsSQLXTx` |
 | queue 事务内加载及 ownership / type 校验（不决定 inbound 序） | `ManagedAgentActivationTx.ListSessionEventQueueItems` |
 | 激活历史的稳定顺序读取 | `ManagedAgentActivationTx.ListSessionEventsForActivation` |
 | 激活 inbound 分块批量写入 | `ManagedAgentActivationTx.AppendCodeSessionInboundEvents` |

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="SessionEventQueueMapper">
+    <select id="ListSessionEventQueueIdentities"
+            resultType="sessionEventQueueIdentityRow">
+        SELECT
+            id,
+            session_event_uuid
+        FROM session_event_queue
+        WHERE session_uuid = #{sessionUUID}
+        ORDER BY id ASC
+        FOR UPDATE
+    </select>
+
+    <delete id="DeleteSessionEventQueue" result="rows">
+        DELETE FROM session_event_queue
+        WHERE session_uuid = #{sessionUUID}
+    </delete>
+
+    <select id="SessionEventQueueExists" result="scalar">
+        SELECT EXISTS (
+            SELECT 1
+            FROM session_event_queue
+            WHERE session_uuid = #{sessionUUID}
+        )
+    </select>
+
+    <insert id="EnqueueSessionEvents" result="rows">
+        INSERT INTO session_event_queue (
+            organization_uuid,
+            workspace_uuid,
+            session_uuid,
+            session_event_uuid
+        ) VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (
+                #{row.OrganizationUUID},
+                #{row.WorkspaceUUID},
+                #{row.SessionUUID},
+                #{row.SessionEventUUID}
+            )
+        </foreach>
+    </insert>
+</mapper>

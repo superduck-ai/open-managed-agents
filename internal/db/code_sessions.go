@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/samber/lo"
 )
 
 type CodeSession struct {
@@ -282,16 +283,18 @@ func (tx ManagedAgentActivationTx) LockInitializingCodeSession(
 	ctx context.Context,
 	codeSessionUUID string,
 ) (CodeSession, error) {
-	return getCodeSessionSQLX(ctx, tx.tx, `
-		select `+codeSessionColumns()+`
-		from code_sessions
-		where uuid = :uuid
-			and status = 'initializing'
-			and deleted_at is null
-		for update
-	`, map[string]any{
-		"uuid": dbUUID(codeSessionUUID),
-	})
+	parsedUUID, err := parseDBUUID("code_session_uuid", codeSessionUUID)
+	if err != nil {
+		return CodeSession{}, err
+	}
+	row, found, err := tx.codeSessionMapper.LockInitializingCodeSession(ctx, parsedUUID)
+	if err != nil {
+		return CodeSession{}, err
+	}
+	if !found {
+		return CodeSession{}, ErrNotFound
+	}
+	return row.session(), nil
 }
 
 const managedAgentActivationInboundBatchSize = 500
@@ -304,7 +307,12 @@ func (tx ManagedAgentActivationTx) AppendCodeSessionInboundEvents(
 	if len(inputs) == 0 {
 		return nil
 	}
-	existing, err := listExistingActivationInboundEvents(ctx, tx.tx, codeSession, inputs)
+	existing, err := listExistingActivationInboundEvents(
+		ctx,
+		tx.codeSessionInboundEventMapper,
+		codeSession,
+		inputs,
+	)
 	if err != nil {
 		return err
 	}
@@ -317,24 +325,10 @@ func (tx ManagedAgentActivationTx) AppendCodeSessionInboundEvents(
 	}
 	for start := 0; start < len(rows); start += managedAgentActivationInboundBatchSize {
 		end := min(start+managedAgentActivationInboundBatchSize, len(rows))
-		result, err := tx.tx.NamedExecContext(ctx, `
-			insert into code_session_inbound_events (
-				external_id, organization_uuid, workspace_uuid, code_session_uuid,
-				code_session_external_id, sequence_num, event_type, event_subtype,
-				payload_uuid, request_id, payload, payload_hash, idempotency_key,
-				delivery_status, source, created_at, updated_at
-			)
-			values (
-				:external_id, :organization_uuid, :workspace_uuid, :code_session_uuid,
-				:code_session_external_id, :sequence_num, :event_type, :event_subtype,
-				:payload_uuid, :request_id, CAST(:payload AS jsonb), :payload_hash,
-				:idempotency_key, :delivery_status, :source, :created_at, :created_at
-			)
-		`, rows[start:end])
-		if err != nil {
-			return err
-		}
-		inserted, err := result.RowsAffected()
+		inserted, err := tx.codeSessionInboundEventMapper.InsertCodeSessionInboundEvents(
+			ctx,
+			rows[start:end],
+		)
 		if err != nil {
 			return err
 		}
@@ -342,15 +336,16 @@ func (tx ManagedAgentActivationTx) AppendCodeSessionInboundEvents(
 			return ErrInvalidState
 		}
 	}
-	updated, err := namedExecRowsAffected(ctx, tx.tx, `
-		update code_sessions
-		set last_inbound_sequence_num = :sequence_num, updated_at = :now
-		where uuid = :uuid
-	`, map[string]any{
-		"sequence_num": lastSequence,
-		"now":          time.Now().UTC(),
-		"uuid":         dbUUID(codeSession.UUID),
-	})
+	codeSessionUUID, err := parseDBUUID("code_session_uuid", codeSession.UUID)
+	if err != nil {
+		return err
+	}
+	updated, err := tx.codeSessionMapper.UpdateCodeSessionInboundSequence(
+		ctx,
+		codeSessionUUID,
+		lastSequence,
+		time.Now().UTC(),
+	)
 	if err != nil {
 		return err
 	}
@@ -362,39 +357,35 @@ func (tx ManagedAgentActivationTx) AppendCodeSessionInboundEvents(
 
 func listExistingActivationInboundEvents(
 	ctx context.Context,
-	database sqlxNamedQueryer,
+	codeSessionInboundEventMapper CodeSessionInboundEventMapper,
 	codeSession CodeSession,
 	inputs []AppendCodeSessionEventInput,
 ) (map[string]struct{}, error) {
-	idempotencyKeys := make([]string, 0, len(inputs))
-	seen := make(map[string]struct{}, len(inputs))
-	for _, input := range inputs {
-		if input.IdempotencyKey == "" {
-			continue
-		}
-		if _, ok := seen[input.IdempotencyKey]; ok {
-			continue
-		}
-		seen[input.IdempotencyKey] = struct{}{}
-		idempotencyKeys = append(idempotencyKeys, input.IdempotencyKey)
-	}
+	idempotencyKeys := lo.Uniq(lo.FilterMap(
+		inputs,
+		func(input AppendCodeSessionEventInput, _ int) (string, bool) {
+			return input.IdempotencyKey, input.IdempotencyKey != ""
+		},
+	))
 	if len(idempotencyKeys) == 0 {
 		return map[string]struct{}{}, nil
 	}
 
-	var rows []codeSessionInboundEventIdentityRow
-	if err := namedSelectContext(ctx, database, &rows, `
-		select code_session_external_id, idempotency_key
-		from code_session_inbound_events
-		where organization_uuid = :organization_uuid
-			and workspace_uuid = :workspace_uuid
-			and idempotency_key = any(:idempotency_keys)
-			and deleted_at is null
-	`, map[string]any{
-		"organization_uuid": dbUUID(codeSession.OrganizationUUID),
-		"workspace_uuid":    dbUUID(codeSession.WorkspaceUUID),
-		"idempotency_keys":  idempotencyKeys,
-	}); err != nil {
+	organizationUUID, err := parseDBUUID("organization_uuid", codeSession.OrganizationUUID)
+	if err != nil {
+		return nil, err
+	}
+	workspaceUUID, err := parseDBUUID("workspace_uuid", codeSession.WorkspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := codeSessionInboundEventMapper.ListExistingActivationInboundEvents(
+		ctx,
+		organizationUUID,
+		workspaceUUID,
+		idempotencyKeys,
+	)
+	if err != nil {
 		return nil, err
 	}
 	existing := make(map[string]struct{}, len(rows))
@@ -478,16 +469,11 @@ func (tx ManagedAgentActivationTx) ActivateCodeSession(
 	codeSessionUUID string,
 	now time.Time,
 ) (bool, error) {
-	updated, err := namedExecRowsAffected(ctx, tx.tx, `
-		update code_sessions
-		set status = 'active', updated_at = :now
-		where uuid = :uuid
-			and status = 'initializing'
-			and deleted_at is null
-	`, map[string]any{
-		"uuid": dbUUID(codeSessionUUID),
-		"now":  now,
-	})
+	parsedUUID, err := parseDBUUID("code_session_uuid", codeSessionUUID)
+	if err != nil {
+		return false, err
+	}
+	updated, err := tx.codeSessionMapper.ActivateCodeSession(ctx, parsedUUID, now)
 	if err != nil {
 		return false, err
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
+	"github.com/superduck-ai/yourbatis"
 )
 
 var (
@@ -39,8 +40,9 @@ var (
 )
 
 type DB struct {
-	Pool *pgxpool.Pool
-	sql  *sqlx.DB
+	Pool     *pgxpool.Pool
+	sql      *sqlx.DB
+	mapperDB *yourbatis.DB
 }
 
 type APIKey struct {
@@ -194,9 +196,11 @@ func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 }
 
 func newDB(pool *pgxpool.Pool) *DB {
+	database := newSQLXDB(pool)
 	return &DB{
-		Pool: pool,
-		sql:  newSQLXDB(pool),
+		Pool:     pool,
+		sql:      database,
+		mapperDB: yourbatis.NewDB(database.DB, yourbatis.DialectPostgres),
 	}
 }
 

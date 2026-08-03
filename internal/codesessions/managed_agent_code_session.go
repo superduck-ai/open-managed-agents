@@ -136,7 +136,8 @@ func (s *Service) CommitManagedAgentCodeSessionActivation(
 		return db.ErrNotFound
 	}
 	return s.db.WithManagedAgentActivationTx(ctx, func(tx db.ManagedAgentActivationTx) error {
-		session, err := tx.LockSessionForEvents(
+		// lock session by session external id
+		lockedSession, err := tx.LockSessionForEvents(
 			ctx,
 			codeSession.WorkspaceUUID,
 			codeSession.SessionExternalID,
@@ -144,6 +145,7 @@ func (s *Service) CommitManagedAgentCodeSessionActivation(
 		if err != nil {
 			return err
 		}
+		// lock code_session by code session id
 		lockedCodeSession, err := tx.LockInitializingCodeSession(ctx, codeSession.UUID)
 		if err != nil {
 			return err
@@ -151,7 +153,7 @@ func (s *Service) CommitManagedAgentCodeSessionActivation(
 		// Queue rows are only a startup-delivery responsibility check. Inbound
 		// payloads and order come from locked public history below; after that
 		// succeeds the queue is cleared as the handoff completes.
-		queuedEvents, err := tx.ListSessionEventQueueItems(ctx, session)
+		queuedEvents, err := tx.ListSessionEventQueueItems(ctx, lockedSession)
 		if err != nil {
 			return err
 		}
@@ -160,13 +162,13 @@ func (s *Service) CommitManagedAgentCodeSessionActivation(
 				return db.ErrInvalidState
 			}
 		}
-		sessionEvents, err := tx.ListSessionEventsForActivation(ctx, session)
+		sessionEvents, err := tx.ListSessionEventsForActivation(ctx, lockedSession)
 		if err != nil {
 			return err
 		}
 		inboundInputs := make([]db.AppendCodeSessionEventInput, 0, len(sessionEvents))
 		for _, event := range sessionEvents {
-			if !forwardPublicEventToWorker(event.EventType) {
+			if !shouldForwardPublicEventToWorker(event.EventType) {
 				continue
 			}
 			inbound, err := s.convertSessionEventToInbound(lockedCodeSession.ExternalID, event)
@@ -178,7 +180,7 @@ func (s *Service) CommitManagedAgentCodeSessionActivation(
 		if err := tx.AppendCodeSessionInboundEvents(ctx, lockedCodeSession, inboundInputs); err != nil {
 			return err
 		}
-		if err := tx.DeleteSessionEventQueue(ctx, session.UUID); err != nil {
+		if err := tx.DeleteSessionEventQueue(ctx, lockedSession.UUID); err != nil {
 			return err
 		}
 		statusUpdated, err := tx.ActivateCodeSession(ctx, lockedCodeSession.UUID, time.Now().UTC())

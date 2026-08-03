@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="SessionMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        environment_uuid,
+        environment_external_id,
+        agent_uuid,
+        agent_external_id,
+        agent_version,
+        agent_snapshot,
+        deployment_uuid,
+        deployment_external_id,
+        title,
+        metadata,
+        vault_ids,
+        status,
+        usage,
+        stats,
+        outcome_evaluations,
+        created_at,
+        updated_at,
+        archived_at,
+        deleted_at
+    </sql>
+
+    <select id="LockSessionForEvents" resultType="sessionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="SetSessionOutcomeEvaluations" result="rows">
+        UPDATE sessions
+        SET outcome_evaluations = CAST(#{outcomeEvaluations} AS jsonb),
+        updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+    </update>
+</mapper>

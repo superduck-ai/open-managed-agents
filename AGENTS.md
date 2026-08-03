@@ -153,9 +153,10 @@
 ## 测试要求
 
 - 测试组织顺序应先写失败场景，再写成功场景。
+- `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `go generate ./...`。仓库标准 `just` 命令会自动完成生成。
 - 修改 `web/` 下的文件后，运行 `just web-format-check`，确保 Prettier 格式门禁通过。
 - 修改 Go 代码后，运行 `just lint`；该命令使用仓库根目录的 `.golangci.yml` 执行与 CI 相同的静态分析和格式检查。
-- 修改 schema 或 handler 后，运行 `go test ./... -count=1`。
+- 修改 schema 或 handler 后，运行 `just test`（等价于先生成 Go 源码，再运行 `go test ./... -count=1`）。
 - 做真实 E2E 时，先将测试配置的 `server.addr` 设为 `127.0.0.1:18080` 并用 `CONFIG_FILE=/path/to/test-config.yaml go run .` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
 - 自定义 SDK E2E 覆盖：
   - Go：`go test ./tests -run TestGoSDKFilesE2E -count=1 -v`

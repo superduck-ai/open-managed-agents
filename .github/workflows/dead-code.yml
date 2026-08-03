@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '**/*.go'
+      - 'internal/db/*_mapper.xml'
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
@@ -14,6 +15,7 @@ on:
       - main
     paths:
       - '**/*.go'
+      - 'internal/db/*_mapper.xml'
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
@@ -41,6 +43,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Generate Go sources
+        run: go generate ./...
 
       - name: Detect unreachable Go declarations
         uses: golangci/golangci-lint-action@v9

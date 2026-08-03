@@ -206,8 +206,9 @@ DB 组装层从 sqlx 使用的同一个 `*sql.DB` 创建共享 `yourbatis.DB`，
 Send 和最终激活通过 `yourbatis.DB.Transaction` 开启事务，并用回调提供的事务 `Executor`
 构造 Mapper；不再把 `sqlx.Tx` 包装成自定义 yourbatis Executor。Deployment 创建和 Session 删除
 仍包含尚未迁移的 sqlx 事务链，其 queue 操作继续使用同一个 sqlx transaction，避免一次业务事务
-跨两个句柄。仓库提交生成文件；yourbatis 版本由 `go.mod` 固定，需要重新生成时运行
-`go generate ./internal/db`。
+跨两个句柄。仓库不提交生成文件；yourbatis 版本由 `go.mod` 固定，`scripts/generate-go.sh`
+统一运行 `go generate ./internal/db`，并由本地门禁、CI、开发启动和 Docker 构建在使用 Go package
+之前调用。
 
 ```mermaid
 sequenceDiagram

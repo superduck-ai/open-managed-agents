@@ -26,17 +26,17 @@ repos:
         types: [go]
 
       - id: golangci-lint
-        name: Lint packages containing staged Go files
+        name: Lint packages containing staged Go inputs
         entry: scripts/pre-commit-go-lint.sh
         language: script
-        types: [go]
+        files: ^(?:.*\.go|internal/db/.*\.xml|go\.(?:mod|sum)|scripts/generate-go\.sh)$
         require_serial: true
 
       - id: go-dead-code
         name: Detect unreachable Go declarations
         entry: scripts/go-dead-code.sh
         language: script
-        files: ^(?:.*\.go|\.golangci-dead-code\.yml|go\.(?:mod|sum)|scripts/go-dead-code\.sh)$
+        files: ^(?:.*\.go|internal/db/.*\.xml|\.golangci-dead-code\.yml|go\.(?:mod|sum)|scripts/(?:generate-go|go-dead-code)\.sh)$
         pass_filenames: false
         require_serial: true
 
@@ -44,7 +44,7 @@ repos:
         name: Enforce Go cyclomatic complexity
         entry: scripts/go-complexity.sh
         language: script
-        files: ^(?:.*\.go|\.golangci-complexity\.yml|go\.(?:mod|sum)|scripts/go-complexity\.sh)$
+        files: ^(?:.*\.go|internal/db/.*\.xml|\.golangci-complexity\.yml|go\.(?:mod|sum)|scripts/(?:generate-go|go-complexity)\.sh)$
         pass_filenames: false
         require_serial: true
 

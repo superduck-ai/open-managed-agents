@@ -4,9 +4,11 @@ on:
   pull_request:
     paths:
       - '**/*.go'
+      - 'internal/db/*.xml'
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
+      - 'scripts/generate-go.sh'
       - 'scripts/go-dead-code.sh'
       - '.github/workflows/dead-code.yml'
   push:
@@ -14,9 +16,11 @@ on:
       - main
     paths:
       - '**/*.go'
+      - 'internal/db/*.xml'
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
+      - 'scripts/generate-go.sh'
       - 'scripts/go-dead-code.sh'
       - '.github/workflows/dead-code.yml'
 
@@ -41,6 +45,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Generate Go sources
+        run: ./scripts/generate-go.sh
 
       - name: Detect unreachable Go declarations
         uses: golangci/golangci-lint-action@v9

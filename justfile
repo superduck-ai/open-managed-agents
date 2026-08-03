@@ -36,11 +36,14 @@ restart-web:
 
 # Restart weather MCP server in foreground. Override with: PORT=39091 WEATHER_MCP_PATH=/custom just weather-mcp
 
-test:
+generate-go:
+  ./scripts/generate-go.sh
+
+test: generate-go
   go test ./... -count=1
 
 # Run the repository's configured Go static-analysis and formatting checks.
-lint:
+lint: generate-go
   golangci-lint run --config .golangci.yml ./...
 
 dead-code:

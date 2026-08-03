@@ -28,6 +28,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Generate Go sources
+        run: ./scripts/generate-go.sh
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

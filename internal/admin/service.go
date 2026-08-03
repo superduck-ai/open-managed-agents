@@ -414,6 +414,9 @@ func (s *Service) GetAPIKey(ctx context.Context, principal auth.Principal, apiKe
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context, principal auth.Principal, workspaceExternalID, createdByUserExternalID, status, afterID, beforeID string, limit int) (cursorPageResponse[apiKeyResponse], error) {
+	if afterID != "" && beforeID != "" {
+		return cursorPageResponse[apiKeyResponse]{}, invalidRequest("after_id and before_id cannot be used together")
+	}
 	if status != "" {
 		if err := validateAPIKeyStatus(status, true); err != nil {
 			return cursorPageResponse[apiKeyResponse]{}, invalidRequest(err.Error())
@@ -453,7 +456,10 @@ func (s *Service) UpdateAPIKey(ctx context.Context, principal auth.Principal, ap
 			return apiKeyResponse{}, invalidRequest("name must be non-empty")
 		}
 	}
-	key, err := s.db.UpdateAdminAPIKey(ctx, principal.OrganizationUUID, apiKeyID, req.Name != nil, name, req.Status != nil, status)
+	if err := s.db.UpdateAdminAPIKey(ctx, principal.OrganizationUUID, apiKeyID, req.Name != nil, name, req.Status != nil, status); err != nil {
+		return apiKeyResponse{}, mapAdminDBError(err, "API key not found")
+	}
+	key, err := s.db.GetAdminAPIKey(ctx, principal.OrganizationUUID, apiKeyID)
 	if err != nil {
 		return apiKeyResponse{}, mapAdminDBError(err, "API key not found")
 	}

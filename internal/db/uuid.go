@@ -53,17 +53,6 @@ func parseDBUUID(name, value string) (uuid.UUID, error) {
 	return parsed, nil
 }
 
-func parseDBNullableUUID(name string, value *string) (uuid.NullUUID, error) {
-	if value == nil || strings.TrimSpace(*value) == "" {
-		return uuid.NullUUID{}, nil
-	}
-	parsed, err := parseDBUUID(name, *value)
-	if err != nil {
-		return uuid.NullUUID{}, err
-	}
-	return uuid.NullUUID{UUID: parsed, Valid: true}, nil
-}
-
 func typedDBUUIDArguments(arguments map[string]any) (map[string]any, error) {
 	var typed map[string]any
 	for name, value := range arguments {

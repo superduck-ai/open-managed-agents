@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminAPIKeyMapper">
+    <sql id="adminAPIKeyColumns">
+        ak.uuid,
+        ak.external_id,
+        ak.workspace_uuid,
+        w.external_id AS workspace_external_id,
+        ak.created_by_user_uuid,
+        u.external_id AS created_by_user_external_id,
+        ak.name,
+        ak.partial_key_hint,
+        ak.status,
+        ak.created_at,
+        ak.updated_at,
+        ak.expires_at
+    </sql>
+
+    <select id="FindByExternalID" resultType="AdminAPIKey">
+        SELECT
+        <include refid="adminAPIKeyColumns"/>
+        FROM api_keys ak
+        JOIN workspaces w ON w.uuid = ak.workspace_uuid
+        LEFT JOIN users u ON u.uuid = ak.created_by_user_uuid
+        WHERE w.organization_uuid = #{organizationUUID}
+        AND ak.external_id = #{externalID}
+    </select>
+
+    <select id="FindPageAnchorByExternalID" resultType="adminAPIKeyPageAnchor">
+        SELECT ak.created_at, ak.uuid
+        FROM api_keys ak
+        JOIN workspaces w ON w.uuid = ak.workspace_uuid
+        WHERE w.organization_uuid = #{organizationUUID}
+        AND ak.external_id = #{externalID}
+    </select>
+
+    <select id="ListPage" resultType="AdminAPIKey">
+        SELECT
+        <include refid="adminAPIKeyColumns"/>
+        FROM api_keys ak
+        JOIN workspaces w ON w.uuid = ak.workspace_uuid
+        LEFT JOIN users u ON u.uuid = ak.created_by_user_uuid
+        <where>
+            w.organization_uuid = #{organizationUUID}
+            <if test="workspaceExternalID != ''">
+                AND w.external_id = #{workspaceExternalID}
+            </if>
+            <if test="createdByUserExternalID != ''">
+                AND u.external_id = #{createdByUserExternalID}
+            </if>
+            <if test="status != ''">
+                AND ak.status = #{status}
+            </if>
+            <if test="anchor != nil">
+                <choose>
+                    <when test="before">
+                        AND (ak.created_at, ak.uuid) &gt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </when>
+                    <otherwise>
+                        AND (ak.created_at, ak.uuid) &lt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </otherwise>
+                </choose>
+            </if>
+        </where>
+        <choose>
+            <when test="before">
+                ORDER BY ak.created_at ASC, ak.uuid ASC
+            </when>
+            <otherwise>
+                ORDER BY ak.created_at DESC, ak.uuid DESC
+            </otherwise>
+        </choose>
+        LIMIT #{limit}
+    </select>
+
+    <insert id="Insert" result="exec">
+        INSERT INTO api_keys (
+            uuid,
+            external_id,
+            workspace_uuid,
+            key_hash,
+            status,
+            created_by_user_uuid,
+            name,
+            partial_key_hint,
+            expires_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.WorkspaceUUID},
+            #{params.KeyHash,sensitive=true},
+            'active',
+            #{params.CreatedByUserUUID},
+            #{params.Name},
+            #{params.PartialKeyHint},
+            #{params.ExpiresAt}
+        )
+    </insert>
+
+    <update id="UpdateByExternalID" result="rows">
+        UPDATE api_keys ak
+        <set>
+            <if test="setName">
+                name = #{name},
+            </if>
+            <if test="setStatus">
+                status = #{status},
+            </if>
+            updated_at = NOW()
+        </set>
+        FROM workspaces w
+        WHERE ak.workspace_uuid = w.uuid
+        AND w.organization_uuid = #{organizationUUID}
+        AND ak.external_id = #{externalID}
+    </update>
+
+    <update id="UpdateStatusByUUID" result="rows">
+        UPDATE api_keys
+        SET status = #{status},
+            updated_at = NOW()
+        WHERE uuid = #{apiKeyUUID}
+    </update>
+</mapper>

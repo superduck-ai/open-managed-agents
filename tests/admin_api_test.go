@@ -246,6 +246,13 @@ func TestAdminAPI(t *testing.T) {
 		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
 	})
 
+	t.Run("failure update missing api key", func(t *testing.T) {
+		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/api_keys/api_key_missing_"+suffix, map[string]any{
+			"name": "missing-" + suffix,
+		}, defaultTestKey, "")
+		assertError(t, resp, http.StatusNotFound, "not_found_error")
+	})
+
 	t.Run("failure invite cannot grant admin", func(t *testing.T) {
 		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/invites", map[string]any{
 			"email": "admin-invite-" + suffix + "@example.com",
@@ -268,6 +275,19 @@ func TestAdminAPI(t *testing.T) {
 		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/api_keys/api_key_default", map[string]any{
 			"status": "paused",
 		}, defaultTestKey, "")
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("failure api key list rejects conflicting cursors", func(t *testing.T) {
+		resp := adminDo(
+			t,
+			app,
+			http.MethodGet,
+			"/v1/organizations/api_keys?after_id=api_key_after&before_id=api_key_before",
+			nil,
+			defaultTestKey,
+			"",
+		)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
@@ -461,6 +481,56 @@ func TestAdminAPI(t *testing.T) {
 
 		resp := adminDo(t, app, http.MethodGet, "/v1/organizations/me", nil, rawKey, "")
 		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
+	})
+
+	t.Run("success api key before cursor returns nearest previous page", func(t *testing.T) {
+		creatorID := seedAdminUser(t, app.db, "before-key-creator-"+suffix+"@example.com", "developer")
+		oldestID, _ := seedAdminAPIKey(t, app.db, "before-oldest-"+suffix, "sk-ant-admin-before-oldest-"+suffix)
+		olderMiddleID, _ := seedAdminAPIKey(t, app.db, "before-older-middle-"+suffix, "sk-ant-admin-before-older-middle-"+suffix)
+		newerMiddleID, _ := seedAdminAPIKey(t, app.db, "before-newer-middle-"+suffix, "sk-ant-admin-before-newer-middle-"+suffix)
+		newestID, _ := seedAdminAPIKey(t, app.db, "before-newest-"+suffix, "sk-ant-admin-before-newest-"+suffix)
+		if _, err := app.db.Pool.Exec(context.Background(), `
+			update api_keys ak
+			set created_by_user_uuid = u.uuid
+			from users u
+			where u.external_id = $1
+				and ak.external_id in ($2, $3, $4, $5)
+		`, creatorID, oldestID, olderMiddleID, newerMiddleID, newestID); err != nil {
+			t.Fatalf("assign API key creator: %v", err)
+		}
+		forceAPIKeyTimes(t, app.db, oldestID, olderMiddleID, newerMiddleID, newestID)
+
+		var middlePage adminCursorPage
+		adminDecodeOK(t, adminDo(
+			t,
+			app,
+			http.MethodGet,
+			"/v1/organizations/api_keys?limit=2&created_by_user_id="+creatorID+"&before_id="+oldestID,
+			nil,
+			defaultTestKey,
+			"",
+		), &middlePage)
+		if len(middlePage.Data) != 2 ||
+			middlePage.Data[0].ID != newerMiddleID ||
+			middlePage.Data[1].ID != olderMiddleID ||
+			!middlePage.HasMore ||
+			middlePage.FirstID == nil {
+			t.Fatalf("middle before page = %+v, want nearest keys %s and %s", middlePage, newerMiddleID, olderMiddleID)
+		}
+
+		var newestPage adminCursorPage
+		adminDecodeOK(t, adminDo(
+			t,
+			app,
+			http.MethodGet,
+			"/v1/organizations/api_keys?limit=2&created_by_user_id="+creatorID+"&before_id="+*middlePage.FirstID,
+			nil,
+			defaultTestKey,
+			"",
+		), &newestPage)
+		if len(newestPage.Data) != 1 || newestPage.Data[0].ID != newestID || newestPage.HasMore {
+			t.Fatalf("newest before page = %+v, want key %s", newestPage, newestID)
+		}
 	})
 
 	t.Run("success reports and default rate limits are empty", func(t *testing.T) {
@@ -687,24 +757,19 @@ func forceInviteTimes(t *testing.T, database *db.DB, olderID, newerID string) {
 	}
 }
 
-func forceAPIKeyTimes(t *testing.T, database *db.DB, olderID, newerID string) {
+func forceAPIKeyTimes(t *testing.T, database *db.DB, apiKeyIDs ...string) {
 	t.Helper()
 	base := time.Now().UTC().Add(100 * 365 * 24 * time.Hour)
-	if _, err := database.Pool.Exec(context.Background(), `
-		update api_keys
-		set created_at = case external_id
-			when $1 then $3::timestamptz
-			when $2 then $4::timestamptz
-			else created_at
-		end,
-		updated_at = case external_id
-			when $1 then $3::timestamptz
-			when $2 then $4::timestamptz
-			else updated_at
-		end
-		where external_id in ($1, $2)
-	`, olderID, newerID, base, base.Add(time.Second)); err != nil {
-		t.Fatalf("force api key times: %v", err)
+	for index, apiKeyID := range apiKeyIDs {
+		createdAt := base.Add(time.Duration(index) * time.Second)
+		if _, err := database.Pool.Exec(context.Background(), `
+			update api_keys
+			set created_at = $2::timestamptz,
+				updated_at = $2::timestamptz
+			where external_id = $1
+		`, apiKeyID, createdAt); err != nil {
+			t.Fatalf("force api key %q time: %v", apiKeyID, err)
+		}
 	}
 }
 

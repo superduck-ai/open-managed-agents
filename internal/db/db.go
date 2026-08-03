@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os/user"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 
 	"github.com/google/uuid"
@@ -178,10 +180,10 @@ const (
 	`
 )
 
-func Open(ctx context.Context, cfg config.Config) (*DB, error) {
+func Open(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
 	pool, err := openPool(ctx, cfg.Database.URL)
 	if err == nil {
-		return newDB(pool), nil
+		return newDB(pool, logger), nil
 	}
 
 	if bootstrapErr := EnsureDatabase(ctx, cfg.Database.URL); bootstrapErr != nil {
@@ -192,15 +194,23 @@ func Open(ctx context.Context, cfg config.Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect database after bootstrap: %w", err)
 	}
-	return newDB(pool), nil
+	return newDB(pool, logger), nil
 }
 
-func newDB(pool *pgxpool.Pool) *DB {
-	database := newSQLXDB(pool)
+func newDB(pool *pgxpool.Pool, logger *slog.Logger) *DB {
+	sqlDB := newSQLXDB(pool)
+	mapperDB := yourbatis.NewDB(
+		sqlDB.DB,
+		yourbatis.DialectPostgres,
+		yourbatis.WithDatabaseID("postgres"),
+		yourbatis.WithLogger(yourbatis.SlogLogger{
+			Logger: logging.LoggerOrDefault(logger),
+		}),
+	)
 	return &DB{
 		Pool:     pool,
-		sql:      database,
-		mapperDB: yourbatis.NewDB(database.DB, yourbatis.DialectPostgres),
+		sql:      sqlDB,
+		mapperDB: mapperDB,
 	}
 }
 

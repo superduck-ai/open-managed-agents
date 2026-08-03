@@ -46,7 +46,7 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	database, err := db.Open(ctx, cfg)
+	database, err := db.Open(ctx, cfg, logger.With("component", "database"))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

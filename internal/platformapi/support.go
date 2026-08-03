@@ -1,7 +1,6 @@
 package platformapi
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -42,18 +41,6 @@ var chatModelFallbacks = map[string]string{
 
 type OrganizationStore interface{}
 
-type workbenchAuthContext struct {
-	Account workbenchAccount
-}
-
-type workbenchAccount struct {
-	TaggedID     string
-	UUID         string
-	EmailAddress string
-	FullName     *string
-	DisplayName  *string
-}
-
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	httpapi.WriteJSON(w, status, body)
 }
@@ -82,26 +69,6 @@ func readRequiredJSON[T any](r *http.Request, disallowUnknownFields bool) (T, er
 		return zero, err
 	}
 	return value, nil
-}
-
-func authFromContext(ctx context.Context) *workbenchAuthContext {
-	principal, ok := auth.PrincipalFromContext(ctx)
-	if !ok {
-		return nil
-	}
-	accountID := firstNonEmpty(principal.UserExternalID, principal.APIKeyExternalID, principal.PlatformSessionExternalID)
-	displayName := accountID
-	if displayName == "" {
-		displayName = "local"
-	}
-	return &workbenchAuthContext{
-		Account: workbenchAccount{
-			TaggedID:     accountID,
-			UUID:         accountID,
-			EmailAddress: accountID,
-			DisplayName:  &displayName,
-		},
-	}
 }
 
 func visibleOrgUUID(w http.ResponseWriter, r *http.Request) (string, bool) {

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ConsoleAPIKeyMapper">
+    <resultMap id="consoleAPIKeyResult" type="consoleAPIKeyRow">
+        <id column="id" property="ID"/>
+        <result column="workspace_api_key_uuid" property="WorkspaceAPIKeyUUID"/>
+        <result column="org_uuid" property="OrgUUID"/>
+        <result column="workspace_uuid" property="WorkspaceUUID"/>
+        <result column="workspace_display_id" property="WorkspaceDisplayID"/>
+        <result column="name" property="Name"/>
+        <result column="key_prefix" property="KeyPrefix"/>
+        <result column="key_suffix" property="KeySuffix"/>
+        <result column="status" property="Status"/>
+        <result column="created_by_user_uuid" property="CreatedByUserUUID"/>
+        <result column="last_used_at" property="LastUsedAt"/>
+        <result column="expires_at" property="ExpiresAt"/>
+        <result column="archived_at" property="ArchivedAt"/>
+        <result column="created_at" property="CreatedAt"/>
+        <result column="updated_at" property="UpdatedAt"/>
+    </resultMap>
+
+    <sql id="consoleAPIKeyColumns">
+        external_id AS id,
+        api_key_ref_uuid AS workspace_api_key_uuid,
+        organization_uuid AS org_uuid,
+        workspace_uuid,
+        workspace_display_id,
+        name,
+        key_prefix,
+        key_suffix,
+        status,
+        created_by_user_ref_uuid AS created_by_user_uuid,
+        last_used_at,
+        expires_at,
+        archived_at,
+        created_at,
+        updated_at
+    </sql>
+
+    <select id="List" resultMap="consoleAPIKeyResult">
+        SELECT
+        <include refid="consoleAPIKeyColumns"/>
+        FROM console_api_keys
+        WHERE organization_uuid = #{organizationUUID}
+        <if test="workspaceUUID != ''">
+            AND workspace_uuid = #{workspaceUUID}
+        </if>
+        ORDER BY created_at DESC, external_id DESC
+    </select>
+
+    <select id="CountUnarchived" result="scalar">
+        SELECT COUNT(*)
+        FROM console_api_keys
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND archived_at IS NULL
+    </select>
+
+    <select id="CreatorExists" result="scalar">
+        SELECT EXISTS (
+            SELECT 1
+            FROM users u
+            WHERE u.organization_uuid = #{organizationUUID}
+            AND u.uuid = #{userUUID}
+            AND u.deleted_at IS NULL
+        )
+    </select>
+
+    <insert id="Insert" result="returning" resultMap="consoleAPIKeyResult">
+        INSERT INTO console_api_keys (
+            external_id,
+            api_key_ref_uuid,
+            organization_uuid,
+            workspace_uuid,
+            workspace_display_id,
+            name,
+            key_prefix,
+            key_suffix,
+            key_hash,
+            status,
+            created_by_user_ref_uuid,
+            expires_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.APIKeyUUID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.WorkspaceDisplayID},
+            #{params.Name},
+            #{params.KeyPrefix,sensitive=true},
+            #{params.KeySuffix,sensitive=true},
+            #{params.KeyHash,sensitive=true},
+            'active',
+            #{params.CreatedByUserUUID},
+            #{params.ExpiresAt}
+        )
+        RETURNING
+        <include refid="consoleAPIKeyColumns"/>
+    </insert>
+
+    <update id="UpdateStatus" result="returning" resultMap="consoleAPIKeyResult">
+        UPDATE console_api_keys
+        SET status = #{params.Status},
+            archived_at = CASE
+                WHEN #{params.Status} = 'archived' THEN COALESCE(archived_at, NOW())
+                ELSE NULL
+            END,
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        RETURNING
+        <include refid="consoleAPIKeyColumns"/>
+    </update>
+</mapper>

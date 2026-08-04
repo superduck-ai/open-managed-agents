@@ -30,6 +30,69 @@ type mapperTestExecutor struct {
 	execCallCount  int
 }
 
+type mapperBuilderContract struct {
+	statement         yourbatis.Statement
+	bound             yourbatis.BoundSQL
+	wantID            string
+	wantKind          yourbatis.StatementKind
+	wantArgumentNames []string
+	wantSQLFragments  []string
+}
+
+type mapperExecutionErrorContract struct {
+	statementID string
+	kind        yourbatis.StatementKind
+	query       bool
+	call        func(yourbatis.Executor) error
+}
+
+func assertMapperBuilderContract(t *testing.T, contract mapperBuilderContract) {
+	t.Helper()
+	if contract.statement.ID != contract.wantID || contract.statement.Kind != contract.wantKind {
+		t.Fatalf(
+			"mapper statement = %+v, want ID %q and kind %q",
+			contract.statement,
+			contract.wantID,
+			contract.wantKind,
+		)
+	}
+	if contract.statement.Source == "" {
+		t.Fatal("mapper statement source is empty")
+	}
+	argumentNames := make([]string, 0, len(contract.bound.Args))
+	for _, argument := range contract.bound.Args {
+		argumentNames = append(argumentNames, argument.Name)
+		if argument.Sensitive {
+			t.Fatalf("mapper argument %q is unexpectedly marked sensitive", argument.Name)
+		}
+	}
+	if !reflect.DeepEqual(argumentNames, contract.wantArgumentNames) {
+		t.Fatalf("mapper argument names = %#v, want %#v", argumentNames, contract.wantArgumentNames)
+	}
+	if strings.Contains(contract.bound.SQL, "#{") || strings.Contains(contract.bound.SQL, "::") {
+		t.Fatalf("mapper SQL retains unsupported placeholder or cast syntax: %q", contract.bound.SQL)
+	}
+	for _, fragment := range contract.wantSQLFragments {
+		if !strings.Contains(contract.bound.SQL, fragment) {
+			t.Fatalf("mapper SQL = %q, want fragment %q", contract.bound.SQL, fragment)
+		}
+	}
+}
+
+func assertMapperExecutionError(t *testing.T, contract mapperExecutionErrorContract) {
+	t.Helper()
+	executionErr := errors.New("mapper execution failed")
+	response := mapperTestResponse{execErr: executionErr}
+	if contract.query {
+		response = mapperTestResponse{queryErr: executionErr}
+	}
+	executor := newMapperTestExecutor(t, response)
+	if err := contract.call(executor); !errors.Is(err, executionErr) {
+		t.Fatalf("mapper error = %v, want %v", err, executionErr)
+	}
+	assertMapperTestExecution(t, executor, contract.statementID, contract.kind, executor.bound.Values())
+}
+
 func newMapperTestExecutor(t *testing.T, response mapperTestResponse) *mapperTestExecutor {
 	t.Helper()
 	database := sql.OpenDB(mapperTestConnector{response: response})

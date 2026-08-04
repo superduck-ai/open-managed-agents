@@ -68,10 +68,10 @@ begin
 					on session.uuid = filesystem.session_uuid
 					and session.deleted_at is null
 				join workspaces workspace
-					on workspace.id = session.workspace_id
+					on workspace.uuid = session.workspace_uuid
 					and workspace.uuid = entry.workspace_uuid
 				join organizations organization
-					on organization.id = session.organization_id
+					on organization.uuid = session.organization_uuid
 					and organization.uuid = entry.organization_uuid
 				where filesystem.uuid = entry.filesystem_uuid
 					and filesystem.workspace_uuid = entry.workspace_uuid
@@ -99,14 +99,14 @@ begin
 						and session.deleted_at is null
 					join session_resources resource
 						on resource.uuid = entry.managed_resource_uuid
-						and resource.organization_id = session.organization_id
-						and resource.workspace_id = session.workspace_id
-						and resource.session_id = session.id
+						and resource.organization_uuid = session.organization_uuid
+						and resource.workspace_uuid = session.workspace_uuid
+						and resource.session_uuid = session.uuid
 						and resource.resource_type = 'file'
 						and resource.deleted_at is null
 					join files source
 						on source.uuid = entry.source_file_uuid
-						and source.workspace_id = session.workspace_id
+						and source.workspace_uuid = session.workspace_uuid
 						and source.deleted_at is null
 					where filesystem.uuid = entry.filesystem_uuid
 						and filesystem.workspace_uuid = entry.workspace_uuid
@@ -138,21 +138,21 @@ where resource.uuid = entry.managed_resource_uuid
 	and exists (
 		select 1 from files source
 		where source.uuid = entry.source_file_uuid
-			and source.workspace_id = resource.workspace_id
+			and source.workspace_uuid = resource.workspace_uuid
 			and source.deleted_at is null
 	);
 
 -- 所有非 Input 文件都转换为真实 File。已有 Output projection 通过 UUID 冲突原地补齐。
 insert into files (
-	uuid, external_id, workspace_id, filename, mime_type, detected_mime_type,
+	uuid, external_id, workspace_uuid, filename, mime_type, detected_mime_type,
 	size_bytes, metadata, authorization_metadata, tags, downloadable, md5, sha256,
 	s3_bucket, s3_key, s3_etag, s3_version_id, scope_type, scope_id,
-	created_by_api_key_id, created_at
+	created_by_api_key_uuid, created_at
 )
 select
 	entry.uuid,
 	concat('file_', replace(cast(gen_random_uuid() as text), '-', '')),
-	session.workspace_id,
+	session.workspace_uuid,
 	regexp_replace(entry.path, '^.*/', ''),
 	coalesce(nullif(entry.media_type, ''), 'application/octet-stream'),
 	entry.detected_mime_type,
@@ -172,7 +172,7 @@ select
 		when left(entry.path, char_length('/outputs/')) = '/outputs/' then session.external_id
 		else null
 	end,
-	coalesce(api_key.id, session.created_by_api_key_id),
+	coalesce(api_key.uuid, session.created_by_api_key_uuid),
 	entry.created_at
 from filestore_entries entry
 join filestore_filesystems filesystem
@@ -184,7 +184,7 @@ join sessions session
 	and session.deleted_at is null
 left join api_keys api_key
 	on api_key.uuid = entry.created_by_api_key_uuid
-	and api_key.workspace_id = session.workspace_id
+	and api_key.workspace_uuid = session.workspace_uuid
 where entry.kind = 'file'
 	and entry.deleted_at is null
 	and not (
@@ -208,22 +208,22 @@ set filename = excluded.filename,
 	s3_version_id = excluded.s3_version_id,
 	scope_type = excluded.scope_type,
 	scope_id = excluded.scope_id,
-	created_by_api_key_id = excluded.created_by_api_key_id,
+	created_by_api_key_uuid = excluded.created_by_api_key_uuid,
 	created_at = excluded.created_at,
 	deleted_at = null;
 
 -- Input 已经合并进现有 Resource；其余活动 namespace 节点创建新的 sesrsc_ Resource。
 insert into session_resources (
-	uuid, external_id, organization_id, workspace_id, session_id, session_external_id,
+	uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id,
 	resource_type, payload, secret_payload, path, parent_path, file_uuid,
 	skill_version_uuid, expires_at, created_at, updated_at
 )
 select
 	gen_random_uuid(),
 	concat('sesrsc_', replace(cast(gen_random_uuid() as text), '-', '')),
-	session.organization_id,
-	session.workspace_id,
-	session.id,
+	session.organization_uuid,
+	session.workspace_uuid,
+	session.uuid,
 	session.external_id,
 	case entry.kind
 		when 'archive' then 'skill_archive'
@@ -263,27 +263,27 @@ where projection.uuid = entry.uuid
 	and entry.source_file_uuid is not null;
 
 create unique index session_resources_session_path_active_v1_key
-	on session_resources (workspace_id, session_id, path)
+	on session_resources (workspace_uuid, session_uuid, path)
 	where deleted_at is null and path is not null;
 
 create index session_resources_session_parent_path_active_v1_idx
-	on session_resources (workspace_id, session_id, parent_path, path, id)
+	on session_resources (workspace_uuid, session_uuid, parent_path, path, id)
 	where deleted_at is null and path is not null;
 
 create index session_resources_file_uuid_active_v1_idx
-	on session_resources (workspace_id, file_uuid)
+	on session_resources (workspace_uuid, file_uuid)
 	where deleted_at is null and file_uuid is not null;
 
 create index session_resources_owned_file_uuid_v1_idx
-	on session_resources (workspace_id, file_uuid)
+	on session_resources (workspace_uuid, file_uuid)
 	where file_uuid is not null and payload is null;
 
 create index session_resources_public_created_v1_idx
-	on session_resources (workspace_id, session_id, created_at desc, id desc)
+	on session_resources (workspace_uuid, session_uuid, created_at desc, id desc)
 	where deleted_at is null and payload is not null;
 
 create index session_resources_catalog_created_v1_idx
-	on session_resources (workspace_id, session_id, created_at desc, id desc)
+	on session_resources (workspace_uuid, session_uuid, created_at desc, id desc)
 	where deleted_at is null and resource_type = 'file' and path is not null;
 
 create index session_resources_expires_v1_idx
@@ -291,7 +291,7 @@ create index session_resources_expires_v1_idx
 	where deleted_at is null and expires_at is not null;
 
 create unique index session_resources_skill_version_active_v1_key
-	on session_resources (workspace_id, session_id, skill_version_uuid)
+	on session_resources (workspace_uuid, session_uuid, skill_version_uuid)
 	where deleted_at is null and skill_version_uuid is not null;
 
 alter table session_resources

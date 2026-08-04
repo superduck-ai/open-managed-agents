@@ -1351,17 +1351,20 @@ func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID str
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	now := time.Now().UTC()
 	environmentExternalID := "env_filestore_session_" + suffix
+	environmentUUID := uuid.NewString()
+	agentUUID := uuid.NewString()
 	sessionExternalID := "sesn_filestore_session_" + suffix
+	sessionUUID := uuid.NewString()
 	return db.CreateSessionInput{
 		Session: db.Session{
-			UUID:                  uuid.NewString(),
+			UUID:                  sessionUUID,
 			ExternalID:            sessionExternalID,
 			OrganizationUUID:      organizationUUID,
 			WorkspaceUUID:         workspaceUUID,
 			CreatedByAPIKeyUUID:   apiKeyUUID,
-			EnvironmentUUID:       uuid.NewString(),
+			EnvironmentUUID:       environmentUUID,
 			EnvironmentExternalID: environmentExternalID,
-			AgentUUID:             uuid.NewString(),
+			AgentUUID:             agentUUID,
 			AgentExternalID:       "agent_filestore_session_" + suffix,
 			AgentVersion:          1,
 			AgentSnapshot:         json.RawMessage(`{}`),
@@ -1375,22 +1378,24 @@ func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID str
 			UpdatedAt:             now,
 		},
 		Thread: db.SessionThread{
-			UUID:             uuid.NewString(),
-			ExternalID:       "sthr_filestore_session_" + suffix,
-			OrganizationUUID: organizationUUID,
-			WorkspaceUUID:    workspaceUUID,
-			AgentSnapshot:    json.RawMessage(`{}`),
-			Status:           "idle",
-			Usage:            json.RawMessage(`{}`),
-			Stats:            json.RawMessage(`{}`),
-			CreatedAt:        now,
+			UUID:              uuid.NewString(),
+			ExternalID:        "sthr_filestore_session_" + suffix,
+			OrganizationUUID:  organizationUUID,
+			WorkspaceUUID:     workspaceUUID,
+			SessionUUID:       sessionUUID,
+			SessionExternalID: sessionExternalID,
+			AgentSnapshot:     json.RawMessage(`{}`),
+			Status:            "idle",
+			Usage:             json.RawMessage(`{}`),
+			Stats:             json.RawMessage(`{}`),
+			CreatedAt:         now,
 		},
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewString(),
 			ExternalID:            "work_filestore_session_" + suffix,
 			OrganizationUUID:      organizationUUID,
 			WorkspaceUUID:         workspaceUUID,
-			EnvironmentUUID:       uuid.NewString(),
+			EnvironmentUUID:       environmentUUID,
 			EnvironmentExternalID: environmentExternalID,
 			Data:                  json.RawMessage(`{"id":"` + sessionExternalID + `","type":"session"}`),
 			Metadata:              json.RawMessage(`{}`),

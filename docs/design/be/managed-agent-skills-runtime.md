@@ -19,7 +19,7 @@ Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
    在当前 workspace 内从 `skills` / `skill_versions` 解析版本。
 3. `latest` 在启动时解析为具体 active version row。后续 catalog 的 latest 变化不会改变
    已启动 Session 的视图。
-4. 在一只 `sqlx.Tx` 中锁定 Session filesystem 和 namespace，确保 `/skills` 固定根存在，
+4. 在一只 `sqlx.Tx` 中通过生成的 Session Resource/File Mapper 锁定 filesystem 和 namespace，确保 `/skills` 固定根存在，
    并原子替换该 Session 中 `resource_type=skill_archive` 的内部 Resource 集合。
    替换时旧的 Resource 与 File 快照统一写入 `deleted_at`；每个新 Resource 通过 `file_uuid`
    指向一条固化解析结果的 ZIP File。
@@ -133,8 +133,8 @@ archive，也不会触发对象回收。
 - `/mnt/skills`、`/workspace/skills` 解压目录，以及 Claude skill discovery 软链；
 - Environment Manager 的 managed-agent skill 解压职责。
 
-迁移 `00036_unify_session_resources_and_files.sql` 把活动的旧 Archive 节点转换为
-`resource_type='skill_archive'` 的内部 Resource。迁移 `00037_snapshot_session_skills.sql`
+迁移 `00047_unify_session_resources_and_files.sql` 把活动的旧 Archive 节点转换为
+`resource_type='skill_archive'` 的内部 Resource。迁移 `00048_snapshot_session_skills.sql`
 随后从 catalog version 创建 ZIP File 快照、回填 Resource 的通用 `file_uuid`，并删除 Skill
 Version UUID。Resource + File 成为 Session 内唯一的 Skill 快照事实；schema 不创建
 PostgreSQL 外键。

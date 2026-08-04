@@ -158,29 +158,6 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 			},
 			wantArgCount: 5,
 		},
-		{
-			name:  "retire filesystem",
-			query: retireSessionFilesystemQuery,
-			arguments: map[string]any{
-				"workspace_uuid":    "00000000-0000-0000-0000-000000000002",
-				"organization_uuid": "00000000-0000-0000-0000-000000000001",
-				"session_uuid":      "22222222-2222-4222-8222-222222222222",
-				"retired_at":        now,
-			},
-			wantArgCount: 5,
-		},
-		{
-			name:  "enqueue filesystem cleanup",
-			query: enqueueFilestoreFilesystemCleanupJobQuery,
-			arguments: map[string]any{
-				"workspace_uuid":  "00000000-0000-0000-0000-000000000002",
-				"filesystem_uuid": "00000000-0000-0000-0000-000000000004",
-				"payload":         []byte(`{"filesystem_uuid":"00000000-0000-0000-0000-000000000004"}`),
-				"job_type":        filestoreFilesystemCleanupJobType,
-				"run_after":       now,
-			},
-			wantArgCount: 5,
-		},
 	}
 
 	for _, test := range tests {

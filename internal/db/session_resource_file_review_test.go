@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/yourbatis"
 )
 
 func TestSessionNamespaceInsertErrorMapsMissingSession(t *testing.T) {
@@ -14,13 +16,17 @@ func TestSessionNamespaceInsertErrorMapsMissingSession(t *testing.T) {
 }
 
 func TestMoveFilestoreFileResultQueryCarriesNamespaceScope(t *testing.T) {
+	bound := buildSessionResourceFileMapperGetResourceFileForMoveResult(
+		yourbatis.DialectPostgres,
+		sessionResourceIdentityParams{},
+	)
 	for _, predicate := range []string{
-		"workspace_uuid = :workspace_uuid",
-		"session_uuid = :session_uuid",
-		"uuid = :resource_uuid",
+		"workspace_uuid = $1",
+		"session_uuid = $2",
+		"uuid = $3",
 	} {
-		if !strings.Contains(moveFilestoreFileResultQuery, predicate) {
-			t.Fatalf("move result query lacks %q: %s", predicate, moveFilestoreFileResultQuery)
+		if !strings.Contains(bound.SQL, predicate) {
+			t.Fatalf("move result query lacks %q: %s", predicate, bound.SQL)
 		}
 	}
 }
@@ -31,8 +37,11 @@ func TestFilestoreFilesystemRowRejectsMissingSession(t *testing.T) {
 	}
 }
 
-func TestSessionResourceFileSourceSQLReadsStableScopeWithoutOwnershipJoins(t *testing.T) {
-	query := sessionResourceFileSourceSQL()
+func TestSessionResourceFileMapperReadsStableScopeWithoutOwnershipJoins(t *testing.T) {
+	query := buildFilestoreCleanupMapperListFilesystemFiles(
+		yourbatis.DialectPostgres,
+		filestoreFilesystemBatchMapperParams{},
+	).SQL
 	for _, required := range []string{
 		"resource.organization_uuid",
 		"resource.workspace_uuid",

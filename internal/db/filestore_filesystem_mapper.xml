@@ -1,0 +1,328 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="FilestoreFilesystemMapper">
+    <sql id="filesystemColumns">
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        code_session_uuid, created_by_api_key_uuid, created_at, updated_at, deleted_at
+    </sql>
+
+    <sql id="tokenScopeColumns">
+        o.uuid AS organization_uuid,
+        w.uuid AS workspace_uuid,
+        w.external_id AS workspace_external_id,
+        u.uuid AS account_uuid,
+        u.external_id AS account_external_id,
+        fs.uuid AS filesystem_uuid,
+        fs.external_id AS filesystem_external_id,
+        COALESCE(o.settings-&gt;'org_taints', CAST('[]' AS jsonb)) AS org_taints_json,
+        (NULLIF(trim(w.external_key_id), '') IS NOT NULL) AS workspace_cmek_enabled
+    </sql>
+
+    <update id="LockProvision" result="exec">
+        SELECT pg_advisory_xact_lock(
+        hashtextextended(
+        concat(
+        'filestore-provision',
+        chr(58),
+        CAST(#{workspaceUUID} AS text),
+        chr(58),
+        CAST(#{filesystemExternalID} AS text)
+        ),
+        0
+        )
+        )
+    </update>
+
+    <select id="ValidateSessionBinding" result="optional" resultType="filestoreSessionBindingRow">
+        SELECT s.workspace_uuid
+        FROM sessions s
+        JOIN workspaces w
+        ON w.uuid = s.workspace_uuid
+        AND w.organization_uuid = s.organization_uuid
+        WHERE s.uuid = #{params.SessionUUID}
+        AND s.organization_uuid = #{params.OrganizationUUID}
+        AND s.workspace_uuid = #{params.WorkspaceUUID}
+        AND s.status &lt;&gt; 'terminated'
+        AND s.archived_at IS NULL
+        AND s.deleted_at IS NULL
+        AND w.archived_at IS NULL
+        AND (
+        NOT #{params.HasCodeSession}
+        OR EXISTS (
+        SELECT 1
+        FROM code_sessions cs
+        WHERE cs.uuid = #{params.CodeSessionUUID}
+        AND cs.session_uuid = s.uuid
+        AND cs.organization_uuid = s.organization_uuid
+        AND cs.workspace_uuid = s.workspace_uuid
+        AND cs.status = 'active'
+        AND cs.deleted_at IS NULL
+        )
+        )
+        AND (
+        NOT #{params.HasCreatedByAPIKey}
+        OR EXISTS (
+        SELECT 1
+        FROM api_keys ak
+        WHERE ak.uuid = #{params.CreatedByAPIKeyUUID}
+        AND ak.workspace_uuid = w.uuid
+        )
+        )
+        LIMIT 1
+        FOR UPDATE OF s
+    </select>
+
+    <update id="LockWorkspace" result="exec">
+        SELECT pg_advisory_xact_lock(
+        hashtextextended(CAST(#{workspaceUUID} AS text), 0)
+        )
+    </update>
+
+    <select id="FindProvisionedByIdentifier" result="optional" resultType="filestoreFilesystemRow">
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND (
+        external_id = #{filesystemExternalID}
+        <if test="filesystemUUID.Valid == true">
+            OR uuid = #{filesystemUUID}
+        </if>
+        )
+        AND deleted_at IS NULL
+        ORDER BY (external_id = #{filesystemExternalID}) DESC
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <select id="FindProvisionedBySession" result="optional" resultType="filestoreFilesystemRow">
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_uuid = #{sessionUUID}
+        AND deleted_at IS NULL
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <insert id="InsertProvisioned" result="returning" resultType="filestoreFilesystemRow">
+        INSERT INTO filestore_filesystems (
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        code_session_uuid, created_by_api_key_uuid, created_at, updated_at
+        )
+        VALUES (
+        COALESCE(#{params.FilesystemUUID}, gen_random_uuid()),
+        #{params.FilesystemExternalID},
+        #{params.OrganizationUUID},
+        #{params.WorkspaceUUID},
+        #{params.SessionUUID},
+        #{params.CodeSessionUUID},
+        #{params.CreatedByAPIKeyUUID},
+        #{params.Now},
+        #{params.Now}
+        )
+        RETURNING
+        <include refid="filesystemColumns"/>
+    </insert>
+
+    <select id="FindTokenScope" result="optional" resultType="filestoreTokenScopeRow">
+        SELECT
+        <include refid="tokenScopeColumns"/>
+        FROM organizations o
+        JOIN workspaces w
+        ON w.organization_uuid = o.uuid
+        JOIN users u
+        ON u.organization_uuid = o.uuid
+        AND u.deleted_at IS NULL
+        JOIN filestore_filesystems fs
+        ON fs.organization_uuid = o.uuid
+        AND fs.workspace_uuid = w.uuid
+        AND fs.deleted_at IS NULL
+        JOIN sessions s
+        ON s.uuid = fs.session_uuid
+        AND s.organization_uuid = o.uuid
+        AND s.workspace_uuid = w.uuid
+        AND s.archived_at IS NULL
+        AND s.deleted_at IS NULL
+        AND s.status &lt;&gt; 'terminated'
+        WHERE o.uuid = #{organizationUUID}
+        AND u.uuid = #{accountUUID}
+        AND w.uuid = #{workspaceUUID}
+        AND w.external_id = #{workspaceTaggedID}
+        AND w.external_id = #{resolvedWorkspaceTaggedID}
+        AND (
+        fs.external_id = #{filesystemID}
+        <if test="filesystemUUID.Valid == true">
+            OR fs.uuid = #{filesystemUUID}
+        </if>
+        )
+        AND w.archived_at IS NULL
+        ORDER BY (fs.external_id = #{filesystemID}) DESC
+        LIMIT 1
+    </select>
+
+    <select id="FindSessionTokenScope" result="optional" resultType="filestoreTokenScopeRow">
+        SELECT
+        <include refid="tokenScopeColumns"/>
+        FROM sessions s
+        JOIN organizations o
+        ON o.uuid = s.organization_uuid
+        JOIN workspaces w
+        ON w.uuid = s.workspace_uuid
+        AND w.organization_uuid = s.organization_uuid
+        JOIN api_keys ak
+        ON ak.uuid = s.created_by_api_key_uuid
+        AND ak.workspace_uuid = s.workspace_uuid
+        JOIN users u
+        ON u.uuid = ak.created_by_user_uuid
+        AND u.organization_uuid = o.uuid
+        AND u.deleted_at IS NULL
+        JOIN filestore_filesystems fs
+        ON fs.organization_uuid = o.uuid
+        AND fs.workspace_uuid = w.uuid
+        AND fs.session_uuid = s.uuid
+        AND fs.deleted_at IS NULL
+        WHERE s.workspace_uuid = #{workspaceUUID}
+        AND s.external_id = #{sessionExternalID}
+        AND s.status &lt;&gt; 'terminated'
+        AND s.archived_at IS NULL
+        AND s.deleted_at IS NULL
+        AND w.archived_at IS NULL
+        LIMIT 1
+    </select>
+
+    <select id="FindFilesystemByIdentifier" result="optional" resultType="filestoreFilesystemRow">
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND (
+        external_id = #{filesystemID}
+        <if test="filesystemUUID.Valid == true">
+            OR uuid = #{filesystemUUID}
+        </if>
+        )
+        AND deleted_at IS NULL
+        ORDER BY (external_id = #{filesystemID}) DESC
+        LIMIT 1
+    </select>
+
+    <select id="FindFilesystemBySessionExternalID" result="optional" resultType="filestoreFilesystemRow">
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_uuid = (
+        SELECT uuid
+        FROM sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+        )
+        AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <update id="LockFilesystem" result="exec">
+        SELECT pg_advisory_xact_lock(
+        hashtextextended(concat('filestore-filesystem', chr(58), CAST(#{filesystemUUID} AS text)), 0)
+        )
+    </update>
+
+    <select id="FindFilesystemByUUID" result="optional" resultType="filestoreFilesystemRow">
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{filesystemUUID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindFilesystemForMutation" result="optional" resultType="filestoreFilesystemRow">
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{filesystemUUID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="FindSessionFilesystemForMutation" result="optional" resultType="filestoreFilesystemRow">
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_uuid = #{sessionUUID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="FindSessionFilesystemByExternalID" result="optional" resultType="filestoreFilesystemRow">
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_uuid = (
+        SELECT uuid
+        FROM sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+        )
+        AND deleted_at IS NULL
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <select id="RetireSessionFilesystem" result="optional" resultType="filestoreFilesystemRow">
+        WITH retired AS (
+        UPDATE filestore_filesystems fs
+        SET deleted_at = COALESCE(fs.deleted_at, #{retiredAt}),
+        updated_at = #{retiredAt}
+        WHERE fs.workspace_uuid = #{workspaceUUID}
+        AND fs.organization_uuid = #{organizationUUID}
+        AND fs.session_uuid = #{sessionUUID}
+        AND fs.deleted_at IS NULL
+        RETURNING fs.uuid
+        )
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM filestore_filesystems
+        WHERE uuid = (SELECT uuid FROM retired)
+    </select>
+
+    <select id="InsertSessionFilesystem" result="optional" resultType="filestoreFilesystemRow">
+        WITH inserted_filesystem AS (
+            INSERT INTO filestore_filesystems (
+            external_id, organization_uuid, workspace_uuid, session_uuid,
+            code_session_uuid, created_by_api_key_uuid, created_at, updated_at
+            )
+            SELECT
+            #{params.FilesystemExternalID}, w.organization_uuid, w.uuid,
+            #{params.SessionUUID}, NULL, ak.uuid, #{params.CreatedAt}, #{params.CreatedAt}
+            FROM workspaces w
+            JOIN api_keys ak
+            ON ak.uuid = #{params.CreatedByAPIKeyUUID}
+            AND ak.workspace_uuid = w.uuid
+            WHERE w.uuid = #{params.WorkspaceUUID}
+            AND w.organization_uuid = #{params.OrganizationUUID}
+            AND w.archived_at IS NULL
+            ON CONFLICT ON CONSTRAINT filestore_filesystems_workspace_uuid_external_id_key DO NOTHING
+            RETURNING uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+                code_session_uuid, created_by_api_key_uuid, created_at, updated_at, deleted_at
+        )
+        SELECT
+        <include refid="filesystemColumns"/>
+        FROM inserted_filesystem
+    </select>
+
+    <select id="SessionFilesystemExternalIDExists" resultType="bool">
+        SELECT EXISTS (
+        SELECT 1
+        FROM filestore_filesystems fs
+        WHERE fs.workspace_uuid = #{workspaceUUID}
+        AND fs.external_id = #{filesystemExternalID}
+        )
+    </select>
+</mapper>

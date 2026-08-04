@@ -4,132 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
-)
-
-var (
-	enqueueFilestoreFilesystemCleanupJobQuery = `
-		with inserted_job as (
-			insert into jobs (external_id, workspace_uuid, type, status, payload, run_after)
-			values (
-				concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
-				:workspace_uuid, :job_type, 'pending',
-				jsonb_build_object(
-					'workspace_uuid', CAST(:workspace_uuid AS text),
-					'filesystem_uuid', CAST(:filesystem_uuid AS text)
-				),
-				:run_after
-			)
-			returning *
-		)
-		select ` + filestoreFilesystemCleanupJobColumns("j", "fs") + `
-		from inserted_job j
-		join filestore_filesystems fs
-			on CAST(fs.uuid AS text) = j.payload->>'filesystem_uuid'
-			and fs.workspace_uuid = j.workspace_uuid
-	`
-	leasedFilesystemCleanupJobQuery = `
-		select ` + filestoreFilesystemCleanupJobColumns("j", "fs") + `
-		from jobs j
-		join filestore_filesystems fs
-			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
-			and fs.workspace_uuid = j.workspace_uuid
-		where j.uuid = :job_uuid and j.type = :job_type and j.status = 'running'
-			and j.locked_by = :lease_token and j.locked_until >= now()
-		for update of j
-	`
-	filesystemCleanupFilesystemQuery = filestoreFilesystemSelectSQL() + `
-		where uuid = :filesystem_uuid
-			and workspace_uuid = :workspace_uuid
-	`
-	filesystemCleanupEntriesQuery = sessionResourceFileSelectSQL() + `
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and kind = 'file' and deleted_at is null
-		order by uuid
-		limit :limit
-	`
-	expiredSessionResourceFilesQuery = sessionResourceFileSelectSQL() + `
-		where kind = 'file' and deleted_at is null and expires_at <= now()
-			and (workspace_uuid, session_uuid) in (
-				select workspace_uuid, session_uuid
-				from filestore_filesystems
-				where uuid = any(:filesystem_uuids)
-			)
-		order by expires_at, uuid
-		limit :limit
-	`
-)
-
-const (
-	expiredFilestoreCleanupScopesQuery = `
-		select distinct oldest_expired.workspace_uuid,
-			filesystem.uuid AS filesystem_uuid,
-			oldest_expired.session_uuid
-		from (
-			select workspace_uuid, session_uuid, expires_at, uuid
-			from session_resources
-			where resource_type = 'file' and deleted_at is null and expires_at <= now()
-			order by expires_at, uuid
-			limit :limit
-		) oldest_expired
-		join filestore_filesystems filesystem
-			on filesystem.session_uuid = oldest_expired.session_uuid
-			and filesystem.workspace_uuid = oldest_expired.workspace_uuid
-			and filesystem.deleted_at is null
-	`
-	filesystemCleanupWorkspaceLockQuery = `
-		select pg_advisory_xact_lock(hashtextextended(CAST(:workspace_uuid AS text), 0))
-	`
-	filesystemCleanupFilesystemLockQuery = `
-		select pg_advisory_xact_lock(hashtextextended(concat('filestore-filesystem', chr(58), CAST(:filesystem_uuid AS text)), 0))
-	`
-	filesystemCleanupFilesRemainQuery = `
-		select exists (
-			select 1 from session_resources
-			where workspace_uuid = :workspace_uuid
-				and session_uuid = :session_uuid
-				and resource_type = 'file' and deleted_at is null
-		)
-	`
-	retireFilesystemCleanupNamespaceEntriesQuery = `
-		update session_resources
-		set deleted_at = :retired_at, updated_at = :retired_at
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and resource_type in ('directory', 'skill_archive') and deleted_at is null
-	`
-	retireFilesystemCleanupSkillFilesQuery = `
-		update files file
-		set deleted_at = :retired_at
-		where file.workspace_uuid = :workspace_uuid
-			and file.deleted_at is null
-			and file.uuid in (
-				select resource.file_uuid
-				from session_resources resource
-				where resource.workspace_uuid = (
-					:workspace_uuid
-				)
-					and resource.session_uuid = :session_uuid
-					and resource.resource_type = 'skill_archive'
-					and resource.file_uuid is not null
-					and resource.deleted_at is null
-			)
-	`
-	completeFilesystemCleanupBatchQuery = `
-		update jobs
-		set status = :status, locked_by = null, locked_until = null,
-			run_after = :retired_at, updated_at = :retired_at,
-			payload = payload - 'lease_attempts'
-		where uuid = :job_uuid and type = :job_type and status = 'running'
-			and locked_by = :lease_token
-	`
+	"github.com/superduck-ai/yourbatis"
 )
 
 // ExpireSessionResourceFiles 原子软删除一批到期文件，并为每个失去引用的精确对象版本创建清理任务。
@@ -141,14 +21,26 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 	if limit > 1000 {
 		limit = 1000
 	}
-	tx, err := d.sql.BeginTxx(ctx, nil)
+	var jobs []FilestoreObjectCleanupJob
+	var anomalies []FilestoreCleanupAnomaly
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		var transactionErr error
+		jobs, anomalies, transactionErr = expireSessionResourceFilesTx(ctx, executor, limit)
+		return transactionErr
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	defer tx.Rollback()
+	return jobs, anomalies, nil
+}
 
-	var scopeRows []expiredFilestoreCleanupScopeRow
-	err = namedSelectContext(ctx, tx, &scopeRows, expiredFilestoreCleanupScopesQuery, map[string]any{"limit": limit})
+func expireSessionResourceFilesTx(
+	ctx context.Context,
+	tx yourbatis.Executor,
+	limit int,
+) ([]FilestoreObjectCleanupJob, []FilestoreCleanupAnomaly, error) {
+	cleanupMapper := NewFilestoreCleanupMapper(tx)
+	scopeRows, err := cleanupMapper.ListExpiredScopes(ctx, limit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -177,9 +69,6 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 		}
 	}
 	if len(workspaceUUIDs) == 0 {
-		if err := tx.Commit(); err != nil {
-			return nil, nil, err
-		}
 		return nil, nil, nil
 	}
 	sort.Slice(workspaceUUIDs, func(i, j int) bool {
@@ -189,30 +78,27 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 		return filesystemUUIDs[i] < filesystemUUIDs[j]
 	})
 	// 所有容量变更都先锁工作区，再锁文件系统；批处理内部也按 ID 升序取得同类锁。
+	storageMapper := NewWorkspaceStorageUsageMapper(tx)
 	for _, workspaceUUID := range workspaceUUIDs {
-		if _, err := namedExecContext(ctx, tx, filesystemCleanupWorkspaceLockQuery, map[string]any{
-			"workspace_uuid": dbUUID(workspaceUUID),
-		}); err != nil {
+		if err := storageMapper.LockWorkspace(ctx, workspaceUUID); err != nil {
 			return nil, nil, err
 		}
 	}
+	filesystemMapper := NewFilestoreFilesystemMapper(tx)
 	for _, filesystemUUID := range filesystemUUIDs {
-		if _, err := namedExecContext(ctx, tx, `select pg_advisory_xact_lock(hashtextextended(concat('filestore-filesystem', chr(58), CAST(:filesystem_uuid AS text)), 0))`, map[string]any{
-			"filesystem_uuid": dbUUID(filesystemUUID),
-		}); err != nil {
+		if err := filesystemMapper.LockFilesystem(ctx, filesystemUUID); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	var entryRows []sessionResourceFileRow
-	err = namedSelectContext(ctx, tx, &entryRows, expiredSessionResourceFilesQuery, map[string]any{
-		"filesystem_uuids": filesystemUUIDs,
-		"limit":            limit,
+	entryRows, err := cleanupMapper.ListExpiredFiles(ctx, filestoreExpiredFilesMapperParams{
+		FilesystemUUIDs: filesystemUUIDs,
+		Limit:           limit,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	entries, err := sessionResourceFilesFromSQLXRows(entryRows)
+	entries, err := sessionResourceFilesFromMapperRows(entryRows)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -257,7 +143,7 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 	}
 	for _, workspaceUUID := range workspaceUUIDs {
 		if _, malformed := anomalyWorkspaces[workspaceUUID]; malformed {
-			if _, err := reconcileWorkspaceStorageUsageSQLXTx(ctx, tx, workspaceUUID); err != nil {
+			if _, err := reconcileWorkspaceStorageUsageTx(ctx, tx, workspaceUUID); err != nil {
 				return nil, nil, err
 			}
 			continue
@@ -266,32 +152,26 @@ func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]Files
 		if releasedBytes == 0 {
 			continue
 		}
-		if err := applyWorkspaceStorageDeltaSQLXTx(ctx, tx, workspaceUUID, 0, -releasedBytes, 0); err != nil {
+		if err := applyWorkspaceStorageDeltaTx(ctx, tx, workspaceUUID, 0, -releasedBytes, 0); err != nil {
 			return nil, nil, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, nil, err
 	}
 	return jobs, anomalies, nil
 }
 
 // LeaseFilestoreFilesystemCleanupJobs 租约一批待拆分的整文件系统清理任务。
 func (d *DB) LeaseFilestoreFilesystemCleanupJobs(ctx context.Context, workerID string, limit, maxLeaseAttempts int) ([]FilestoreFilesystemCleanupJob, error) {
-	var jobs []FilestoreFilesystemCleanupJob
-	err := d.leaseFilestoreCleanupJobs(
-		ctx,
-		&jobs,
+	params := normalizeFilestoreCleanupJobLeaseParams(
 		filestoreFilesystemCleanupJobType,
 		workerID,
 		limit,
 		maxLeaseAttempts,
-		filestoreFilesystemCleanupJobColumns("j", "fs"),
 	)
+	rows, err := NewFilestoreCleanupMapper(d.mapperDB).LeaseFilesystemJobs(ctx, params)
 	if err != nil {
 		return nil, err
 	}
-	return jobs, nil
+	return filestoreFilesystemCleanupJobsFromMapperRows(rows), nil
 }
 
 // ProcessLeasedFilestoreFilesystemCleanupJob 在一个短事务中退休有限数量的文件条目，
@@ -312,99 +192,118 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	if limit > 1000 {
 		limit = 1000
 	}
-
-	tx, err := d.sql.BeginTxx(ctx, nil)
+	var completed bool
+	var anomalies []FilestoreCleanupAnomaly
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		var transactionErr error
+		completed, anomalies, transactionErr = processLeasedFilestoreFilesystemCleanupJobTx(
+			ctx,
+			executor,
+			jobUUID,
+			leaseToken,
+			limit,
+		)
+		return transactionErr
+	})
 	if err != nil {
 		return false, nil, err
 	}
-	defer tx.Rollback()
+	return completed, anomalies, nil
+}
 
-	arguments := map[string]any{
-		"job_uuid":    dbUUID(jobUUID),
-		"job_type":    filestoreFilesystemCleanupJobType,
-		"lease_token": leaseToken,
-		"limit":       limit,
+func processLeasedFilestoreFilesystemCleanupJobTx(
+	ctx context.Context,
+	tx yourbatis.Executor,
+	jobUUID string,
+	leaseToken string,
+	limit int,
+) (bool, []FilestoreCleanupAnomaly, error) {
+	cleanupMapper := NewFilestoreCleanupMapper(tx)
+	leaseIdentity := filestoreCleanupJobLeaseIdentity{
+		JobUUID:    jobUUID,
+		JobType:    filestoreFilesystemCleanupJobType,
+		LeaseToken: leaseToken,
 	}
-	var job FilestoreFilesystemCleanupJob
-	err = namedGetContext(ctx, tx, &job, leasedFilesystemCleanupJobQuery, arguments)
+	jobRow, err := cleanupMapper.GetLeasedFilesystemJob(ctx, leaseIdentity)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil, ErrVersionConflict
 		}
 		return false, nil, err
 	}
-	arguments["workspace_uuid"] = dbUUID(job.WorkspaceUUID)
-	arguments["filesystem_uuid"] = dbUUID(job.FilesystemUUID)
-	if _, err := namedExecContext(ctx, tx, filesystemCleanupWorkspaceLockQuery, arguments); err != nil {
+	job := jobRow.job()
+	if err := NewWorkspaceStorageUsageMapper(tx).LockWorkspace(ctx, job.WorkspaceUUID); err != nil {
 		return false, nil, err
 	}
-	if _, err := namedExecContext(ctx, tx, filesystemCleanupFilesystemLockQuery, arguments); err != nil {
+	if err := NewFilestoreFilesystemMapper(tx).LockFilesystem(ctx, job.FilesystemUUID); err != nil {
 		return false, nil, err
 	}
 
-	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, filesystemCleanupFilesystemQuery, arguments)
+	filesystemRow, err := cleanupMapper.GetFilesystemForCleanup(
+		ctx,
+		job.WorkspaceUUID,
+		job.FilesystemUUID,
+	)
 	if err != nil {
 		return false, nil, err
 	}
-	arguments["session_uuid"] = dbUUID(filesystem.SessionUUID)
+	filesystem, err := filesystemRow.filesystem()
+	if err != nil {
+		return false, nil, err
+	}
 	cleanupScope := sessionResourceFileCleanupScope{
 		WorkspaceUUID: job.WorkspaceUUID, FilesystemUUID: filesystem.UUID,
 	}
 
-	var entryRows []sessionResourceFileRow
-	err = namedSelectContext(ctx, tx, &entryRows, filesystemCleanupEntriesQuery, arguments)
+	batchParams := filestoreFilesystemBatchMapperParams{
+		JobUUID:        jobUUID,
+		JobType:        filestoreFilesystemCleanupJobType,
+		LeaseToken:     leaseToken,
+		WorkspaceUUID:  job.WorkspaceUUID,
+		FilesystemUUID: job.FilesystemUUID,
+		SessionUUID:    filesystem.SessionUUID,
+		Limit:          limit,
+	}
+	entryRows, err := cleanupMapper.ListFilesystemFiles(ctx, batchParams)
 	if err != nil {
 		return false, nil, err
 	}
-	entries, err := sessionResourceFilesFromSQLXRows(entryRows)
+	entries, err := sessionResourceFilesFromMapperRows(entryRows)
 	if err != nil {
 		return false, nil, err
 	}
 
 	now := time.Now().UTC()
-	arguments["retired_at"] = now
-	anomalies := make([]FilestoreCleanupAnomaly, 0)
-	var releasedBytes int64
-	for _, entry := range entries {
-		if !entry.ReferencesSourceFile() {
-			if anomaly, malformed := sessionResourceFileCleanupAnomaly(cleanupScope, entry); malformed {
-				anomalies = append(anomalies, anomaly)
-			} else {
-				if _, err := enqueueSessionResourceFileCleanupJobTx(ctx, tx, cleanupScope, entry, "session_deleted", now); err != nil {
-					return false, nil, err
-				}
-				releasedBytes, err = addWorkspaceStorageDelta(
-					releasedBytes,
-					filestoreInt64(entry.SizeBytes),
-				)
-				if err != nil {
-					return false, nil, err
-				}
-			}
-		}
-		if err := retireSessionResourceFileTx(ctx, tx, job.WorkspaceUUID, entry.UUID, now); err != nil {
-			return false, nil, err
-		}
+	batchParams.RetiredAt = now
+	anomalies, releasedBytes, err := processFilesystemCleanupEntries(
+		ctx, tx, cleanupScope, job.WorkspaceUUID, entries, now,
+	)
+	if err != nil {
+		return false, nil, err
 	}
 	if len(anomalies) > 0 {
-		if _, err := reconcileWorkspaceStorageUsageSQLXTx(ctx, tx, job.WorkspaceUUID); err != nil {
+		if _, err := reconcileWorkspaceStorageUsageTx(ctx, tx, job.WorkspaceUUID); err != nil {
 			return false, nil, err
 		}
 	} else if releasedBytes > 0 {
-		if err := applyWorkspaceStorageDeltaSQLXTx(ctx, tx, job.WorkspaceUUID, 0, -releasedBytes, 0); err != nil {
+		if err := applyWorkspaceStorageDeltaTx(ctx, tx, job.WorkspaceUUID, 0, -releasedBytes, 0); err != nil {
 			return false, nil, err
 		}
 	}
 
-	var filesRemain bool
-	if err := namedGetContext(ctx, tx, &filesRemain, filesystemCleanupFilesRemainQuery, arguments); err != nil {
+	filesRemain, err := cleanupMapper.FilesystemFilesRemain(
+		ctx,
+		batchParams.WorkspaceUUID,
+		batchParams.SessionUUID,
+	)
+	if err != nil {
 		return false, nil, err
 	}
 	if !filesRemain {
-		if _, err := namedExecContext(ctx, tx, retireFilesystemCleanupSkillFilesQuery, arguments); err != nil {
+		if err := cleanupMapper.RetireSkillFiles(ctx, batchParams); err != nil {
 			return false, nil, err
 		}
-		if _, err := namedExecContext(ctx, tx, retireFilesystemCleanupNamespaceEntriesQuery, arguments); err != nil {
+		if err := cleanupMapper.RetireNamespace(ctx, batchParams); err != nil {
 			return false, nil, err
 		}
 	}
@@ -413,18 +312,52 @@ func (d *DB) ProcessLeasedFilestoreFilesystemCleanupJob(
 	if !filesRemain {
 		status = "completed"
 	}
-	arguments["status"] = status
-	rowsAffected, err := namedExecRowsAffected(ctx, tx, completeFilesystemCleanupBatchQuery, arguments)
+	batchParams.Status = status
+	rowsAffected, err := cleanupMapper.CompleteFilesystemBatch(ctx, batchParams)
 	if err != nil {
 		return false, nil, err
 	}
 	if rowsAffected == 0 {
 		return false, nil, ErrVersionConflict
 	}
-	if err := tx.Commit(); err != nil {
-		return false, nil, err
-	}
 	return !filesRemain, anomalies, nil
+}
+
+func processFilesystemCleanupEntries(
+	ctx context.Context,
+	tx yourbatis.Executor,
+	cleanupScope sessionResourceFileCleanupScope,
+	workspaceUUID string,
+	entries []SessionResourceFile,
+	retiredAt time.Time,
+) ([]FilestoreCleanupAnomaly, int64, error) {
+	anomalies := make([]FilestoreCleanupAnomaly, 0)
+	var releasedBytes int64
+	for _, entry := range entries {
+		if !entry.ReferencesSourceFile() {
+			if anomaly, malformed := sessionResourceFileCleanupAnomaly(cleanupScope, entry); malformed {
+				anomalies = append(anomalies, anomaly)
+			} else {
+				if _, err := enqueueSessionResourceFileCleanupJobTx(
+					ctx, tx, cleanupScope, entry, "session_deleted", retiredAt,
+				); err != nil {
+					return nil, 0, err
+				}
+				var err error
+				releasedBytes, err = addWorkspaceStorageDelta(
+					releasedBytes,
+					filestoreInt64(entry.SizeBytes),
+				)
+				if err != nil {
+					return nil, 0, err
+				}
+			}
+		}
+		if err := retireSessionResourceFileTx(ctx, tx, workspaceUUID, entry.UUID, retiredAt); err != nil {
+			return nil, 0, err
+		}
+	}
+	return anomalies, releasedBytes, nil
 }
 
 // FailLeasedFilestoreFilesystemCleanupJob 记录整文件系统清理失败并按统一退避策略重试。
@@ -449,7 +382,36 @@ func (d *DB) EnqueueFilestoreObjectCleanupJob(ctx context.Context, input Enqueue
 	if input.RunAfter.IsZero() {
 		input.RunAfter = time.Now().UTC()
 	}
-	return insertFilestoreObjectCleanupJobSQLX(ctx, d.sql, input)
+	return insertFilestoreObjectCleanupJob(ctx, d.mapperDB, input)
+}
+
+func insertFilestoreObjectCleanupJob(
+	ctx context.Context,
+	database yourbatis.Executor,
+	input EnqueueFilestoreObjectCleanupJobInput,
+) (FilestoreObjectCleanupJob, error) {
+	jobRow, err := NewFilestoreCleanupMapper(database).InsertObjectJob(
+		ctx,
+		filestoreCleanupJobInsertParams{
+			WorkspaceUUID:   input.WorkspaceUUID,
+			JobType:         filestoreCleanupJobType,
+			FilesystemUUID:  input.FilesystemUUID,
+			EntryExternalID: input.EntryExternalID,
+			Bucket:          input.Bucket,
+			Key:             input.Key,
+			ETag:            input.ETag,
+			VersionID:       input.VersionID,
+			Reason:          input.Reason,
+			RunAfter:        input.RunAfter,
+		},
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
+	}
+	if err != nil {
+		return FilestoreObjectCleanupJob{}, err
+	}
+	return jobRow.job(), nil
 }
 
 // AttachFilestoreObjectCleanupJobVersion 在文件元数据提交前记录刚上传对象的精确版本。
@@ -459,26 +421,16 @@ func (d *DB) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspa
 	if workspaceUUID == "" || jobExternalID == "" {
 		return ErrPreconditionFailed
 	}
-	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
-		update jobs
-		set payload = payload || jsonb_build_object(
-				'etag', cast(:etag as text),
-				'version_id', cast(:version_id as text)
-			),
-			updated_at = now()
-		where external_id = :job_external_id
-			and type = :job_type
-			and status in ('pending', 'retry')
-			and payload->>'workspace_uuid' = (
-				:workspace_uuid
-			)
-	`, map[string]any{
-		"job_external_id": jobExternalID,
-		"workspace_uuid":  workspaceUUID,
-		"etag":            etag,
-		"version_id":      versionID,
-		"job_type":        filestoreCleanupJobType,
-	})
+	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).AttachObjectVersion(
+		ctx,
+		filestoreCleanupJobMutationParams{
+			JobExternalID: jobExternalID,
+			WorkspaceUUID: workspaceUUID,
+			ETag:          etag,
+			VersionID:     versionID,
+			JobType:       filestoreCleanupJobType,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -490,113 +442,48 @@ func (d *DB) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspa
 
 // LeaseFilestoreObjectCleanupJobs 以 SKIP LOCKED 租约一批到期任务，允许多个 worker 并行消费。
 func (d *DB) LeaseFilestoreObjectCleanupJobs(ctx context.Context, workerID string, limit, maxLeaseAttempts int) ([]FilestoreObjectCleanupJob, error) {
-	var jobs []FilestoreObjectCleanupJob
-	err := d.leaseFilestoreCleanupJobs(
-		ctx,
-		&jobs,
+	params := normalizeFilestoreCleanupJobLeaseParams(
 		filestoreCleanupJobType,
 		workerID,
 		limit,
 		maxLeaseAttempts,
-		filestoreCleanupJobColumns("j", "fs"),
 	)
+	rows, err := NewFilestoreCleanupMapper(d.mapperDB).LeaseObjectJobs(ctx, params)
 	if err != nil {
 		return nil, err
 	}
-	return jobs, nil
+	return filestoreObjectCleanupJobsFromMapperRows(rows), nil
 }
 
-func (d *DB) leaseFilestoreCleanupJobs(ctx context.Context, destination any, jobType, workerID string, limit, maxLeaseAttempts int, columns string) error {
+func normalizeFilestoreCleanupJobLeaseParams(
+	jobType string,
+	workerID string,
+	limit int,
+	maxLeaseAttempts int,
+) filestoreCleanupJobLeaseParams {
 	if limit <= 0 {
 		limit = 10
 	}
 	if maxLeaseAttempts <= 0 {
 		maxLeaseAttempts = 10
 	}
-	return namedSelectContext(ctx, d.sql, destination, `
-		with exhausted_candidates as (
-			select j.uuid
-			from jobs j
-			where j.type = :job_type
-				and j.run_after <= now()
-				and (
-					j.status in ('pending', 'retry')
-					or (j.status = 'running' and j.locked_until < now())
-				)
-				and coalesce(cast(j.payload->>'lease_attempts' as integer), 0) >= :max_lease_attempts
-			order by j.run_after, j.created_at, j.uuid
-			limit :limit
-			for update of j skip locked
-		),
-		exhausted_jobs as (
-			update jobs j
-			set status = 'failed',
-				locked_by = null,
-				locked_until = null,
-				updated_at = now(),
-				payload = (j.payload - 'lease_attempts')
-					|| jsonb_build_object('last_error', 'cleanup lease repeatedly expired before acknowledgement')
-			from exhausted_candidates candidate
-			where j.uuid = candidate.uuid
-			returning j.uuid
-		),
-		next_jobs as (
-			select j.uuid, j.workspace_uuid
-			from jobs j
-			join filestore_filesystems fs
-				on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
-				and fs.workspace_uuid = j.workspace_uuid
-			where j.type = :job_type
-				and j.run_after <= now()
-				and coalesce(cast(j.payload->>'lease_attempts' as integer), 0) < :max_lease_attempts
-				and not exists (
-					select 1 from exhausted_jobs exhausted
-					where exhausted.uuid = j.uuid
-				)
-				and (
-					j.status in ('pending', 'retry')
-					or (j.status = 'running' and j.locked_until < now())
-				)
-			order by j.run_after, j.created_at, j.uuid
-			limit :limit
-			for update of j skip locked
-		),
-		leased_jobs as (
-			update jobs j
-			set status = 'running', locked_by = :worker_id,
-				locked_until = now() + interval '1 minute', updated_at = now(),
-				workspace_uuid = next_jobs.workspace_uuid,
-				payload = j.payload || jsonb_build_object(
-					'lease_attempts',
-					coalesce(cast(j.payload->>'lease_attempts' as integer), 0) + 1
-				)
-			from next_jobs
-			where j.uuid = next_jobs.uuid
-			returning j.*
-		)
-		select `+columns+`
-		from leased_jobs j
-		join filestore_filesystems fs
-			on cast(fs.uuid as text) = j.payload->>'filesystem_uuid'
-			and fs.workspace_uuid = j.workspace_uuid
-	`, map[string]any{
-		"job_type":           jobType,
-		"limit":              limit,
-		"worker_id":          workerID,
-		"max_lease_attempts": maxLeaseAttempts,
-	})
+	return filestoreCleanupJobLeaseParams{
+		JobType:          jobType,
+		WorkerID:         workerID,
+		Limit:            limit,
+		MaxLeaseAttempts: maxLeaseAttempts,
+	}
 }
 
 // CompleteFilestoreObjectCleanupJob 完成一条尚未出租的任务，供请求内即时补偿使用。
 func (d *DB) CompleteFilestoreObjectCleanupJob(ctx context.Context, jobUUID string) error {
-	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
-		update jobs
-		set status = 'completed', locked_by = null, locked_until = null, updated_at = now()
-		where uuid = :job_uuid and type = :job_type and status in ('pending', 'retry')
-	`, map[string]any{
-		"job_uuid": dbUUID(jobUUID),
-		"job_type": filestoreCleanupJobType,
-	})
+	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).CompletePendingObjectJob(
+		ctx,
+		filestoreCleanupJobMutationParams{
+			JobUUID: jobUUID,
+			JobType: filestoreCleanupJobType,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -611,16 +498,14 @@ func (d *DB) CompleteLeasedFilestoreObjectCleanupJob(ctx context.Context, jobUUI
 	if strings.TrimSpace(leaseToken) == "" {
 		return ErrPreconditionFailed
 	}
-	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
-		update jobs
-		set status = 'completed', locked_by = null, locked_until = null, updated_at = now()
-		where uuid = :job_uuid and type = :job_type and status = 'running'
-			and locked_by = :lease_token and locked_until >= now()
-	`, map[string]any{
-		"job_uuid":    dbUUID(jobUUID),
-		"job_type":    filestoreCleanupJobType,
-		"lease_token": leaseToken,
-	})
+	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).CompleteLeasedObjectJob(
+		ctx,
+		filestoreCleanupJobMutationParams{
+			JobUUID:    jobUUID,
+			JobType:    filestoreCleanupJobType,
+			LeaseToken: leaseToken,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -651,26 +536,17 @@ func (d *DB) failLeasedFilestoreCleanupJob(ctx context.Context, jobUUID string, 
 		maxAttempts = 10
 	}
 	runAfter := time.Now().UTC().Add(retryDelay)
-	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
-		update jobs
-		set status = case when attempts + 1 >= :max_attempts then 'failed' else 'retry' end,
-			attempts = attempts + 1,
-			locked_by = null,
-			locked_until = null,
-			run_after = :run_after,
-			updated_at = now(),
-			payload = (payload - 'lease_attempts')
-				|| jsonb_build_object('last_error', cast(:reason as text))
-		where uuid = :job_uuid and type = :job_type and status = 'running'
-			and locked_by = :lease_token and locked_until >= now()
-	`, map[string]any{
-		"job_uuid":     dbUUID(jobUUID),
-		"reason":       reason,
-		"run_after":    runAfter,
-		"max_attempts": maxAttempts,
-		"job_type":     jobType,
-		"lease_token":  leaseToken,
-	})
+	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).FailLeasedJob(
+		ctx,
+		filestoreCleanupJobMutationParams{
+			JobUUID:     jobUUID,
+			Reason:      reason,
+			RunAfter:    runAfter,
+			MaxAttempts: maxAttempts,
+			JobType:     jobType,
+			LeaseToken:  leaseToken,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -682,40 +558,36 @@ func (d *DB) failLeasedFilestoreCleanupJob(ctx context.Context, jobUUID string, 
 
 func enqueueFilestoreFilesystemCleanupJobTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	tx yourbatis.Executor,
 	filesystem FilestoreFilesystem,
 	workspaceUUID string,
 	runAfter time.Time,
 ) (FilestoreFilesystemCleanupJob, error) {
-	var job FilestoreFilesystemCleanupJob
-	err := namedGetContext(ctx, tx, &job, enqueueFilestoreFilesystemCleanupJobQuery, map[string]any{
-		"workspace_uuid":  dbUUID(workspaceUUID),
-		"filesystem_uuid": dbUUID(filesystem.UUID),
-		"job_type":        filestoreFilesystemCleanupJobType,
-		"run_after":       runAfter,
-	})
+	jobRow, err := NewFilestoreCleanupMapper(tx).InsertFilesystemJob(
+		ctx,
+		filestoreCleanupJobInsertParams{
+			WorkspaceUUID:  workspaceUUID,
+			FilesystemUUID: filesystem.UUID,
+			JobType:        filestoreFilesystemCleanupJobType,
+			RunAfter:       runAfter,
+		},
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return FilestoreFilesystemCleanupJob{}, ErrNotFound
 	}
-	return job, err
+	return jobRow.job(), err
 }
 
 // CancelFilestoreObjectCleanupJob 取消尚未被 worker 执行的清理任务。
 func (d *DB) CancelFilestoreObjectCleanupJob(ctx context.Context, workspaceUUID string, jobExternalID string) error {
-	rowsAffected, err := namedExecRowsAffected(ctx, d.sql, `
-		update jobs
-		set status = 'canceled', locked_by = null, locked_until = null, updated_at = now()
-		where external_id = :job_external_id
-			and type = :job_type
-			and status in ('pending', 'retry')
-			and payload->>'workspace_uuid' = (
-				:workspace_uuid
-			)
-	`, map[string]any{
-		"job_external_id": jobExternalID,
-		"workspace_uuid":  workspaceUUID,
-		"job_type":        filestoreCleanupJobType,
-	})
+	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).CancelPendingObjectJob(
+		ctx,
+		filestoreCleanupJobMutationParams{
+			JobExternalID: jobExternalID,
+			WorkspaceUUID: workspaceUUID,
+			JobType:       filestoreCleanupJobType,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -726,20 +598,14 @@ func (d *DB) CancelFilestoreObjectCleanupJob(ctx context.Context, workspaceUUID 
 }
 
 func (d *DB) filestoreCleanupJobMutationMiss(ctx context.Context, workspaceUUID string, jobExternalID string) error {
-	var status string
-	err := namedGetContext(ctx, d.sql, &status, `
-		select status
-		from jobs
-		where external_id = :job_external_id
-			and type = :job_type
-			and payload->>'workspace_uuid' = (
-				:workspace_uuid
-			)
-	`, map[string]any{
-		"job_external_id": jobExternalID,
-		"workspace_uuid":  workspaceUUID,
-		"job_type":        filestoreCleanupJobType,
-	})
+	_, err := NewFilestoreCleanupMapper(d.mapperDB).GetObjectJobStatus(
+		ctx,
+		filestoreCleanupJobMutationParams{
+			JobExternalID: jobExternalID,
+			WorkspaceUUID: workspaceUUID,
+			JobType:       filestoreCleanupJobType,
+		},
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -784,14 +650,14 @@ func sessionResourceFileCleanupAnomaly(
 	}, true
 }
 
-func enqueueSessionResourceFileCleanupJobTx(ctx context.Context, tx *sqlx.Tx, scope sessionResourceFileCleanupScope, entry SessionResourceFile, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
+func enqueueSessionResourceFileCleanupJobTx(ctx context.Context, tx yourbatis.Executor, scope sessionResourceFileCleanupScope, entry SessionResourceFile, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
 	// 该辅助函数也用于退役整个 filesystem。Owned File 必须进入对象清理；
 	// Input Resource 只引用 Files API 对象，不能登记对象删除。
 	if entry.Kind != SessionResourceFileKindFile || entry.S3Bucket == nil ||
 		entry.S3Key == nil || entry.ReferencesSourceFile() {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
 	}
-	return insertFilestoreObjectCleanupJobSQLX(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
+	return insertFilestoreObjectCleanupJob(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
 		WorkspaceUUID:   scope.WorkspaceUUID,
 		FilesystemUUID:  scope.FilesystemUUID,
 		EntryExternalID: entry.ExternalID,
@@ -806,7 +672,7 @@ func enqueueSessionResourceFileCleanupJobTx(ctx context.Context, tx *sqlx.Tx, sc
 
 func enqueueOwnedSessionResourceFileCleanupJobTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	tx yourbatis.Executor,
 	scope sessionResourceFileCleanupScope,
 	entry SessionResourceFile,
 	reason string,
@@ -819,21 +685,16 @@ func enqueueOwnedSessionResourceFileCleanupJobTx(
 	return job, err == nil, err
 }
 
-func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scope sessionResourceFileCleanupScope, filesystem FilestoreFilesystem, rootPath string, runAfter time.Time) ([]FilestoreObjectCleanupJob, int64, error) {
+func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx yourbatis.Executor, scope sessionResourceFileCleanupScope, filesystem FilestoreFilesystem, rootPath string, runAfter time.Time) ([]FilestoreObjectCleanupJob, int64, error) {
 	// rootPath 本身是目录，文件只可能出现在严格后代中；分隔符比较避免同前缀误选。
-	var rows []sessionResourceFileRow
-	err := namedSelectContext(ctx, tx, &rows, sessionResourceFileSelectSQL()+`
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and kind = 'file'
-			and deleted_at is null
-			and left(path, char_length(:root_path) + 1) = :root_path || '/'
-		order by id
-	`, filestoreSubtreeArguments(filesystem, rootPath))
+	rows, err := NewFilestoreCleanupMapper(tx).ListSubtreeFiles(
+		ctx,
+		filestoreSubtreeMapperParameters(filesystem, rootPath),
+	)
 	if err != nil {
 		return nil, 0, err
 	}
-	entries, err := sessionResourceFilesFromSQLXRows(rows)
+	entries, err := sessionResourceFilesFromMapperRows(rows)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -857,28 +718,20 @@ func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx *sqlx.Tx, scop
 
 func retireExpiredFilestoreSubtreeTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	tx yourbatis.Executor,
 	scope sessionResourceFileCleanupScope,
 	filesystem FilestoreFilesystem,
 	rootPath string,
 	retiredAt time.Time,
 ) ([]FilestoreObjectCleanupJob, int64, error) {
-	var rows []sessionResourceFileRow
-	err := namedSelectContext(ctx, tx, &rows, sessionResourceFileSelectSQL()+`
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and kind = 'file'
-			and deleted_at is null and expires_at <= now()
-			and (
-				path = :root_path
-				or left(path, char_length(:root_path) + 1) = :root_path || '/'
-			)
-		order by id
-	`, filestoreSubtreeArguments(filesystem, rootPath))
+	rows, err := NewFilestoreCleanupMapper(tx).ListExpiredSubtreeFiles(
+		ctx,
+		filestoreSubtreeMapperParameters(filesystem, rootPath),
+	)
 	if err != nil {
 		return nil, 0, err
 	}
-	entries, err := sessionResourceFilesFromSQLXRows(rows)
+	entries, err := sessionResourceFilesFromMapperRows(rows)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -903,35 +756,27 @@ func retireExpiredFilestoreSubtreeTx(
 	return jobs, retiredBytes, nil
 }
 
-func filestoreSubtreeArguments(filesystem FilestoreFilesystem, rootPath string) map[string]any {
-	return map[string]any{
-		"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
-		"session_uuid":   dbUUID(filesystem.SessionUUID),
-		"root_path":      rootPath,
+func filestoreSubtreeMapperParameters(filesystem FilestoreFilesystem, rootPath string) filestoreSubtreeMapperParams {
+	return filestoreSubtreeMapperParams{
+		WorkspaceUUID: filesystem.WorkspaceUUID,
+		SessionUUID:   filesystem.SessionUUID,
+		RootPath:      rootPath,
 	}
 }
 
-func cancelAttachedFilestoreObjectCleanupJobTx(ctx context.Context, tx *sqlx.Tx, workspaceUUID string, jobExternalID string, blob FilestoreFileBlob) error {
+func cancelAttachedFilestoreObjectCleanupJobTx(ctx context.Context, tx yourbatis.Executor, workspaceUUID string, jobExternalID string, blob FilestoreFileBlob) error {
 	// 将哨兵取消与文件条目提交置于同一事务；任一失败都会保留可重试的清理路径。
-	rowsAffected, err := namedExecRowsAffected(ctx, tx, `
-		update jobs
-		set status = 'canceled', locked_by = null, locked_until = null, updated_at = now()
-		where external_id = :job_external_id and type = :job_type
-			and status in ('pending', 'retry')
-			and payload->>'workspace_uuid' = (
-				:workspace_uuid
-			)
-			and payload->>'bucket' = :bucket
-			and payload->>'key' = :key
-			and coalesce(payload->>'version_id', '') = :version_id
-	`, map[string]any{
-		"job_external_id": jobExternalID,
-		"workspace_uuid":  workspaceUUID,
-		"job_type":        filestoreCleanupJobType,
-		"bucket":          blob.S3Bucket,
-		"key":             blob.S3Key,
-		"version_id":      blob.S3VersionID,
-	})
+	rowsAffected, err := NewFilestoreCleanupMapper(tx).CancelAttachedObjectJob(
+		ctx,
+		filestoreCleanupJobMutationParams{
+			JobExternalID: jobExternalID,
+			WorkspaceUUID: workspaceUUID,
+			JobType:       filestoreCleanupJobType,
+			Bucket:        blob.S3Bucket,
+			Key:           blob.S3Key,
+			VersionID:     blob.S3VersionID,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -939,28 +784,4 @@ func cancelAttachedFilestoreObjectCleanupJobTx(ctx context.Context, tx *sqlx.Tx,
 		return ErrFilestoreCleanupJobNotCancelable
 	}
 	return nil
-}
-
-func filestoreCleanupJobColumns(jobAlias, filesystemAlias string) string {
-	return fmt.Sprintf(`cast(%[1]s.uuid as text) as uuid, %[1]s.external_id as external_id,
-		cast(%[1]s.workspace_uuid as text) as workspace_uuid,
-		cast(%[2]s.uuid as text) as filesystem_uuid,
-		%[2]s.external_id as filesystem_external_id,
-		coalesce(%[1]s.payload->>'entry_external_id', '') as entry_external_id,
-		coalesce(%[1]s.payload->>'bucket', '') as bucket,
-		coalesce(%[1]s.payload->>'key', '') as key,
-		coalesce(%[1]s.payload->>'etag', '') as etag,
-		coalesce(%[1]s.payload->>'version_id', '') as version_id,
-		coalesce(%[1]s.payload->>'reason', '') as reason,
-		%[1]s.attempts as attempts, %[1]s.run_after as run_after`,
-		jobAlias, filesystemAlias)
-}
-
-func filestoreFilesystemCleanupJobColumns(jobAlias, filesystemAlias string) string {
-	return fmt.Sprintf(`cast(%[1]s.uuid as text) as uuid, %[1]s.external_id as external_id,
-		cast(%[1]s.workspace_uuid as text) as workspace_uuid,
-		cast(%[2]s.uuid as text) as filesystem_uuid,
-		%[2]s.external_id as filesystem_external_id,
-		%[1]s.attempts as attempts, %[1]s.run_after as run_after`,
-		jobAlias, filesystemAlias)
 }

@@ -126,6 +126,11 @@ UUID，参数映射只区分 `dbUUID(value)` 和 `dbNullableUUID(pointer)` 两�
 `uuid.UUID`/`uuid.NullUUID`。自定义参数类型不实现 `driver.Valuer`，PostgreSQL driver
 只接收标准 typed UUID，校验错误也在 SQL 绑定前返回。
 
+yourbatis Mapper 直接声明业务字段，不引入自定义 UUID 参数结构。生成 SQL 保留参数字段名，
+executor 通过 `BoundSQL.Values()` 将字段值交给 `database/sql`；PostgreSQL 根据 UUID 列的
+比较或写入上下文推断字符串参数类型。需要在发送查询前校验 UUID 的业务入口仍应显式调用
+`parseDBUUID`，不要根据 Mapper 字段名隐式转换参数。
+
 sqlx 行结构同样使用 `uuid.UUID`/`uuid.NullUUID` 扫描 `uuid` 列，只有映射到 HTTP、SDK、
 事件或其他文本协议 DTO 时才调用 `String()`。因此普通查询不得通过
 `CAST(:..._uuid AS uuid)` 修复字符串输入，也不得通过 `CAST(uuid AS text) AS uuid`

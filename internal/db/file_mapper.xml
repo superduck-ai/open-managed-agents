@@ -1,0 +1,387 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="FileMapper">
+    <sql id="fileColumns">
+        uuid, external_id, workspace_uuid, filename, mime_type, size_bytes, sha256,
+        s3_bucket, s3_key, downloadable, scope_type, scope_id,
+        created_by_api_key_uuid, created_at
+    </sql>
+
+    <sql id="visibleFilePredicate">
+        AND (
+            NOT EXISTS (
+                SELECT 1
+                FROM session_resources owner
+                WHERE owner.file_uuid = files.uuid
+                    AND owner.workspace_uuid = files.workspace_uuid
+                    AND owner.payload IS NULL
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM session_resources owner
+                WHERE owner.file_uuid = files.uuid
+                    AND owner.workspace_uuid = files.workspace_uuid
+                    AND owner.payload IS NULL
+                    AND owner.deleted_at IS NULL
+                    AND (owner.expires_at IS NULL OR owner.expires_at &gt; now())
+                    AND left(owner.path, char_length('/outputs/')) = '/outputs/'
+            )
+        )
+    </sql>
+
+    <sql id="catalogResourceCTE">
+        catalog_resource AS (
+            SELECT DISTINCT ON (resource.file_uuid)
+                resource.file_uuid, resource.workspace_uuid, resource.session_external_id,
+                resource.created_at, resource.uuid
+            FROM session_resources resource
+            WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
+                AND resource.session_external_id = #{params.ScopeID}
+                AND resource.resource_type = 'file'
+                AND resource.deleted_at IS NULL
+                AND (resource.expires_at IS NULL OR resource.expires_at &gt; now())
+                AND (
+                    (resource.payload IS NOT NULL
+                        AND left(resource.path, char_length('/uploads/')) = '/uploads/')
+                    OR (resource.payload IS NULL
+                        AND left(resource.path, char_length('/outputs/')) = '/outputs/')
+                )
+            ORDER BY resource.file_uuid, resource.created_at DESC, resource.uuid DESC
+        )
+    </sql>
+
+    <insert id="InsertFile" result="exec">
+        INSERT INTO files (
+            uuid, external_id, workspace_uuid, filename, mime_type, size_bytes, sha256,
+            s3_bucket, s3_key, downloadable, scope_type, scope_id,
+            created_by_api_key_uuid, created_at
+        )
+        VALUES (
+            #{params.FileUUID}, #{params.FileExternalID}, #{params.WorkspaceUUID},
+            #{params.Filename}, #{params.MimeType}, #{params.SizeBytes}, #{params.SHA256},
+            #{params.S3Bucket}, #{params.S3Key}, #{params.Downloadable},
+            #{params.ScopeType}, #{params.ScopeID}, #{params.CreatedByAPIKeyUUID},
+            #{params.CreatedAt}
+        )
+    </insert>
+
+    <select id="GetFile" resultType="fileRecordRow">
+        SELECT <include refid="fileColumns"/>
+        FROM files
+        WHERE workspace_uuid = #{workspaceUUID}
+            AND external_id = #{fileExternalID}
+            AND deleted_at IS NULL
+            <include refid="visibleFilePredicate"/>
+    </select>
+
+    <select id="GetFileForShare" resultType="fileRecordRow">
+        SELECT <include refid="fileColumns"/>
+        FROM files
+        WHERE workspace_uuid = #{workspaceUUID}
+            AND external_id = #{fileExternalID}
+            AND deleted_at IS NULL
+        FOR SHARE
+    </select>
+
+    <select id="GetFileByUUID" resultType="fileRecordRow">
+        SELECT <include refid="fileColumns"/>
+        FROM files
+        WHERE workspace_uuid = #{workspaceUUID}
+            AND uuid = #{fileUUID}
+            AND deleted_at IS NULL
+    </select>
+
+    <select id="GetFileByUUIDInOrganization" resultType="fileRecordRow">
+        SELECT f.uuid, f.external_id, f.workspace_uuid, f.filename, f.mime_type,
+            f.size_bytes, f.sha256, f.s3_bucket, f.s3_key, f.downloadable,
+            f.scope_type, f.scope_id, f.created_by_api_key_uuid, f.created_at
+        FROM files f
+        JOIN workspaces w ON w.uuid = f.workspace_uuid
+        WHERE w.organization_uuid = #{organizationUUID}
+            AND f.uuid = #{fileUUID}
+            AND f.deleted_at IS NULL
+    </select>
+
+    <select id="ListFiles" resultType="fileRecordRow">
+        SELECT <include refid="fileColumns"/>
+        FROM files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <include refid="visibleFilePredicate"/>
+            <if test="params.HasScope">
+                AND scope_id = #{params.ScopeID}
+            </if>
+        ORDER BY created_at DESC, uuid DESC
+    </select>
+
+    <select id="ListSessionFiles" resultType="fileRecordRow">
+        WITH <include refid="catalogResourceCTE"/>
+        SELECT file.uuid, file.external_id, file.workspace_uuid,
+            file.filename, file.mime_type, file.size_bytes, file.sha256,
+            file.s3_bucket, file.s3_key, file.downloadable,
+            CAST('session' AS text) AS scope_type,
+            resource.session_external_id AS scope_id,
+            file.created_by_api_key_uuid, file.created_at AS created_at
+        FROM catalog_resource resource
+        JOIN files file
+            ON file.uuid = resource.file_uuid
+            AND file.workspace_uuid = resource.workspace_uuid
+            AND file.deleted_at IS NULL
+        ORDER BY resource.created_at DESC, resource.uuid DESC
+    </select>
+
+    <select id="FindPageCursor" result="optional" resultType="filePageCursorRow">
+        SELECT uuid, created_at
+        FROM files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+            AND external_id = #{params.CursorExternalID}
+            AND deleted_at IS NULL
+            <include refid="visibleFilePredicate"/>
+            <if test="params.HasScope">
+                AND scope_id = #{params.ScopeID}
+            </if>
+    </select>
+
+    <select id="FindSessionPageCursor" result="optional" resultType="filePageCursorRow">
+        WITH <include refid="catalogResourceCTE"/>
+        SELECT resource.uuid, resource.created_at
+        FROM catalog_resource resource
+        JOIN files file
+            ON file.uuid = resource.file_uuid
+            AND file.workspace_uuid = resource.workspace_uuid
+            AND file.deleted_at IS NULL
+        WHERE file.external_id = #{params.CursorExternalID}
+    </select>
+
+    <select id="ListFilesPage" resultType="fileRecordRow">
+        SELECT <include refid="fileColumns"/>
+        FROM files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <include refid="visibleFilePredicate"/>
+            <if test="params.HasScope">
+                AND scope_id = #{params.ScopeID}
+            </if>
+            <if test="params.HasCursor">
+                AND (
+                <choose>
+                    <when test="params.Before">
+                        created_at &gt; #{params.CursorCreatedAt}
+                        OR (created_at = #{params.CursorCreatedAt} AND uuid &gt; #{params.CursorUUID})
+                    </when>
+                    <otherwise>
+                        created_at &lt; #{params.CursorCreatedAt}
+                        OR (created_at = #{params.CursorCreatedAt} AND uuid &lt; #{params.CursorUUID})
+                    </otherwise>
+                </choose>
+                )
+            </if>
+        <choose>
+            <when test="params.Before">
+                ORDER BY created_at ASC, uuid ASC
+            </when>
+            <otherwise>
+                ORDER BY created_at DESC, uuid DESC
+            </otherwise>
+        </choose>
+        LIMIT #{params.Limit}
+    </select>
+
+    <select id="ListSessionFilesPage" resultType="fileRecordRow">
+        WITH <include refid="catalogResourceCTE"/>
+        SELECT file.uuid, file.external_id, file.workspace_uuid,
+            file.filename, file.mime_type, file.size_bytes, file.sha256,
+            file.s3_bucket, file.s3_key, file.downloadable,
+            CAST('session' AS text) AS scope_type,
+            resource.session_external_id AS scope_id,
+            file.created_by_api_key_uuid, file.created_at AS created_at
+        FROM catalog_resource resource
+        JOIN files file
+            ON file.uuid = resource.file_uuid
+            AND file.workspace_uuid = resource.workspace_uuid
+            AND file.deleted_at IS NULL
+        <if test="params.HasCursor">
+            WHERE
+            <choose>
+                <when test="params.Before">
+                    resource.created_at &gt; #{params.CursorCreatedAt}
+                    OR (resource.created_at = #{params.CursorCreatedAt}
+                        AND resource.uuid &gt; #{params.CursorUUID})
+                </when>
+                <otherwise>
+                    resource.created_at &lt; #{params.CursorCreatedAt}
+                    OR (resource.created_at = #{params.CursorCreatedAt}
+                        AND resource.uuid &lt; #{params.CursorUUID})
+                </otherwise>
+            </choose>
+        </if>
+        <choose>
+            <when test="params.Before">
+                ORDER BY resource.created_at ASC, resource.uuid ASC
+            </when>
+            <otherwise>
+                ORDER BY resource.created_at DESC, resource.uuid DESC
+            </otherwise>
+        </choose>
+        LIMIT #{params.Limit}
+    </select>
+
+    <select id="GetFileForDelete" resultType="fileRecordRow">
+        SELECT <include refid="fileColumns"/>
+        FROM files
+        WHERE workspace_uuid = #{workspaceUUID}
+            AND uuid = #{fileUUID}
+            AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="HasActiveReference" result="scalar">
+        SELECT EXISTS (
+            SELECT 1
+            FROM session_resources resource
+            WHERE resource.workspace_uuid = #{workspaceUUID}
+                AND resource.file_uuid = #{fileUUID}
+                AND resource.deleted_at IS NULL
+        ) AS referenced
+    </select>
+
+    <update id="SoftDeleteFile" result="exec">
+        UPDATE files
+        SET deleted_at = now()
+        WHERE workspace_uuid = #{workspaceUUID}
+            AND uuid = #{fileUUID}
+            AND deleted_at IS NULL
+    </update>
+
+    <update id="UpdateOwnedFile" result="exec">
+        UPDATE files file
+        SET filename = #{params.Filename}, mime_type = #{params.MediaType},
+        detected_mime_type = #{params.DetectedMimeType}, size_bytes = #{params.SizeBytes},
+        metadata = CAST(#{params.Metadata} AS jsonb),
+        authorization_metadata = CAST(#{params.AuthorizationMetadata} AS jsonb),
+        tags = #{params.Tags}, downloadable = #{params.Downloadable}, md5 = #{params.MD5},
+        sha256 = #{params.SHA256}, s3_bucket = #{params.S3Bucket}, s3_key = #{params.S3Key},
+        s3_etag = #{params.S3ETag}, s3_version_id = #{params.S3VersionID}, deleted_at = NULL
+        WHERE file.workspace_uuid = #{params.WorkspaceUUID}
+        AND file.uuid = (
+        SELECT resource.file_uuid
+        FROM session_resources resource
+        WHERE resource.uuid = #{params.ResourceUUID}
+        AND resource.workspace_uuid = #{params.WorkspaceUUID}
+        AND resource.session_uuid = #{params.SessionUUID}
+        )
+    </update>
+
+    <update id="RetireOwnedFile" result="exec">
+        UPDATE files file
+        SET deleted_at = COALESCE(file.deleted_at, #{params.RetiredAt})
+        WHERE file.workspace_uuid = #{params.WorkspaceUUID}
+        AND file.uuid = (
+        SELECT resource.file_uuid
+        FROM session_resources resource
+        WHERE resource.uuid = #{params.ResourceUUID}
+        AND resource.workspace_uuid = #{params.WorkspaceUUID}
+        AND resource.payload IS NULL
+        )
+    </update>
+
+    <update id="RetireOwnedFilesInSubtree" result="exec">
+        UPDATE files file
+        SET deleted_at = COALESCE(file.deleted_at, #{params.Now})
+        WHERE file.workspace_uuid = #{params.WorkspaceUUID}
+        AND file.uuid IN (
+        SELECT resource.file_uuid
+        FROM session_resources resource
+        WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
+        AND resource.session_uuid = #{params.SessionUUID}
+        AND resource.deleted_at IS NULL
+        AND resource.payload IS NULL
+        AND resource.resource_type = 'file'
+        AND (
+        resource.path = #{params.EntryPath}
+        OR left(resource.path, char_length(#{params.EntryPath}) + 1) = #{params.EntryPath} || '/'
+        )
+        )
+    </update>
+
+    <update id="RetireSkillArchiveFiles" result="exec">
+        UPDATE files file
+        SET deleted_at = #{params.Now}
+        WHERE file.workspace_uuid = #{params.WorkspaceUUID}
+        AND file.deleted_at IS NULL
+        AND file.uuid IN (
+        SELECT resource.file_uuid
+        FROM session_resources resource
+        WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
+        AND resource.session_uuid = #{params.SessionUUID}
+        AND resource.resource_type = 'skill_archive'
+        AND resource.file_uuid IS NOT NULL
+        AND resource.deleted_at IS NULL
+        )
+    </update>
+
+    <insert id="InsertSkillArchiveFile" result="exec">
+        INSERT INTO files (
+        uuid, external_id, workspace_uuid, filename, mime_type, detected_mime_type,
+        size_bytes, metadata, authorization_metadata, tags, downloadable,
+        sha256, s3_bucket, s3_key, created_by_api_key_uuid, created_at
+        )
+        SELECT #{params.FileUUID}, #{params.FileExternalID}, session.workspace_uuid,
+        #{params.Filename}, 'application/zip', 'application/zip', #{params.SizeBytes},
+        jsonb_build_object('skill_source', CAST(#{params.Source} AS text)),
+        CAST('{}' AS jsonb), CAST(ARRAY[] AS text[]), false,
+        #{params.SHA256}, #{params.S3Bucket}, #{params.S3Key},
+        session.created_by_api_key_uuid, #{params.Now}
+        FROM sessions session
+        WHERE session.uuid = #{params.SessionUUID}
+        AND session.workspace_uuid = #{params.WorkspaceUUID}
+        AND session.deleted_at IS NULL
+    </insert>
+
+    <insert id="EnqueueObjectCleanupJob" result="exec">
+        INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
+        VALUES (
+            concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+            #{workspaceUUID}, 'object_cleanup', 'pending', CAST(#{payload} AS jsonb)
+        )
+    </insert>
+
+    <update id="LeaseObjectCleanupJobs" result="returning" resultType="objectCleanupJobRow">
+        WITH next_jobs AS (
+            SELECT uuid
+            FROM jobs
+            WHERE type = 'object_cleanup'
+                AND run_after &lt;= now()
+                AND (
+                    status IN ('pending', 'retry')
+                    OR (status = 'running' AND locked_until &lt; now())
+                )
+            ORDER BY run_after, created_at
+            LIMIT #{limit}
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE jobs j
+        SET status = 'running', locked_by = #{workerID},
+            locked_until = now() + interval '1 minute', updated_at = now()
+        FROM next_jobs
+        WHERE j.uuid = next_jobs.uuid
+        RETURNING j.uuid, j.external_id, j.workspace_uuid,
+            COALESCE(j.payload-&gt;&gt;'bucket', '') AS bucket,
+            COALESCE(j.payload-&gt;&gt;'key', '') AS object_key,
+            COALESCE(j.payload-&gt;&gt;'file_id', '') AS file_external_id,
+            j.attempts
+    </update>
+
+    <update id="CompleteObjectCleanupJob" result="exec">
+        UPDATE jobs
+        SET status = 'completed', locked_by = NULL, locked_until = NULL, updated_at = now()
+        WHERE uuid = #{jobUUID} AND type = 'object_cleanup'
+    </update>
+
+    <update id="FailObjectCleanupJob" result="exec">
+        UPDATE jobs
+        SET status = #{params.Status}, locked_by = NULL, locked_until = NULL,
+            run_after = #{params.RunAfter}, updated_at = now(), attempts = #{params.Attempts},
+            payload = payload || jsonb_build_object('last_error', CAST(#{params.Reason} AS text))
+        WHERE uuid = #{params.JobUUID} AND type = 'object_cleanup'
+    </update>
+</mapper>

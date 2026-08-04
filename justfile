@@ -43,6 +43,10 @@ restart-web:
 test: generate
   go test ./... -count=1
 
+# Regenerate DB mappers with the version pinned by go.mod's tool directive.
+generate-yourbatis-mappers:
+  go generate ./internal/db
+
 # Run the repository's configured Go static-analysis and formatting checks.
 lint: generate
   golangci-lint run --config .golangci.yml ./...

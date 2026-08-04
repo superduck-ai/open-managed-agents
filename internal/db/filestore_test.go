@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/superduck-ai/yourbatis"
 )
 
 func TestValidateFilestorePath(t *testing.T) {
@@ -154,48 +155,40 @@ func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
 	}
 
 	t.Run("lists direct children without cursor", func(t *testing.T) {
-		query, args := buildSessionResourceFilesPageQuery(filesystem, ListSessionResourceFilesPageParams{
+		bound := buildSessionResourceFileMapperListResourceFilesPage(yourbatis.DialectPostgres, sessionResourceFilePageMapperParams{
+			WorkspaceUUID: filesystem.WorkspaceUUID,
+			SessionUUID:   filesystem.SessionUUID,
 			DirectoryPath: "/reports",
-			Limit:         25,
+			FetchLimit:    26,
 		})
-		if !strings.Contains(query, "and parent_path = :directory_path") ||
-			strings.Contains(query, "(path, id) >") ||
-			!strings.Contains(query, "limit :fetch_limit") {
-			t.Fatalf("direct-child query = %q", query)
+		if !strings.Contains(bound.SQL, "AND parent_path = $3") ||
+			strings.Contains(bound.SQL, "(path, uuid) >") ||
+			!strings.Contains(bound.SQL, "LIMIT $4") {
+			t.Fatalf("direct-child query = %q", bound.SQL)
 		}
-		wantArgs := map[string]any{
-			"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
-			"session_uuid":   dbUUID(filesystem.SessionUUID),
-			"directory_path": "/reports",
-			"fetch_limit":    26,
-		}
-		if !reflect.DeepEqual(args, wantArgs) {
-			t.Fatalf("direct-child args = %#v, want %#v", args, wantArgs)
+		if len(bound.Args) != 4 {
+			t.Fatalf("direct-child argument count = %d, want 4", len(bound.Args))
 		}
 	})
 
 	t.Run("lists recursive descendants after cursor", func(t *testing.T) {
-		query, args := buildSessionResourceFilesPageQuery(filesystem, ListSessionResourceFilesPageParams{
-			DirectoryPath: "/reports",
-			Recursive:     true,
-			Limit:         25,
-			Cursor:        &SessionResourceFilePageCursor{Path: "/reports/a", UUID: "00000000-0000-4000-8000-000000000010"},
+		bound := buildSessionResourceFileMapperListResourceFilesPage(yourbatis.DialectPostgres, sessionResourceFilePageMapperParams{
+			WorkspaceUUID:   filesystem.WorkspaceUUID,
+			SessionUUID:     filesystem.SessionUUID,
+			DirectoryPrefix: "/reports/",
+			Recursive:       true,
+			HasCursor:       true,
+			CursorPath:      "/reports/a",
+			CursorUUID:      "00000000-0000-4000-8000-000000000010",
+			FetchLimit:      26,
 		})
-		if !strings.Contains(query, "left(path, char_length(:directory_prefix)) = :directory_prefix") ||
-			!strings.Contains(query, "and (path, uuid) > (:cursor_path, :cursor_uuid)") ||
-			!strings.Contains(query, "limit :fetch_limit") {
-			t.Fatalf("recursive query = %q", query)
+		if !strings.Contains(bound.SQL, "left(path, char_length($3)) = $4") ||
+			!strings.Contains(bound.SQL, "AND (path, uuid) > ($5, $6)") ||
+			!strings.Contains(bound.SQL, "LIMIT $7") {
+			t.Fatalf("recursive query = %q", bound.SQL)
 		}
-		wantArgs := map[string]any{
-			"workspace_uuid":   dbUUID(filesystem.WorkspaceUUID),
-			"session_uuid":     dbUUID(filesystem.SessionUUID),
-			"directory_prefix": "/reports/",
-			"cursor_path":      "/reports/a",
-			"cursor_uuid":      dbUUID("00000000-0000-4000-8000-000000000010"),
-			"fetch_limit":      26,
-		}
-		if !reflect.DeepEqual(args, wantArgs) {
-			t.Fatalf("recursive args = %#v, want %#v", args, wantArgs)
+		if len(bound.Args) != 7 {
+			t.Fatalf("recursive argument count = %d, want 7", len(bound.Args))
 		}
 	})
 

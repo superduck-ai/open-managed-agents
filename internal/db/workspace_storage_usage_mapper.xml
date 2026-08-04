@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="WorkspaceStorageUsageMapper">
+    <update id="LockWorkspace" result="exec">
+        SELECT pg_advisory_xact_lock(hashtextextended(CAST(#{workspaceUUID} AS text), 0))
+    </update>
+
+    <select id="GetWorkspaceStorageBytes" result="scalar">
+        SELECT COALESCE((
+        SELECT files_bytes + filestore_bytes
+        FROM workspace_storage_usage
+        WHERE workspace_uuid = #{workspaceUUID}
+        ), 0) AS total_bytes
+    </select>
+
+    <select id="ReconcileWorkspaceStorageUsage" resultType="workspaceStorageUsage">
+        SELECT
+        COALESCE((
+        SELECT sum(file.size_bytes)
+        FROM files file
+        WHERE file.workspace_uuid = #{workspaceUUID}
+        AND file.deleted_at IS NULL
+        AND NOT EXISTS (
+        SELECT 1
+        FROM session_resources resource
+        WHERE resource.workspace_uuid = #{workspaceUUID}
+        AND resource.file_uuid = file.uuid
+        AND resource.payload IS NULL
+        AND resource.deleted_at IS NULL
+        )
+        ), 0) AS files_bytes,
+        COALESCE((
+        SELECT sum(file.size_bytes)
+        FROM files file
+        JOIN session_resources resource
+        ON resource.file_uuid = file.uuid
+        AND resource.workspace_uuid = #{workspaceUUID}
+        AND resource.resource_type = 'file'
+        AND resource.payload IS NULL
+        AND resource.deleted_at IS NULL
+        WHERE file.workspace_uuid = #{workspaceUUID}
+        AND file.deleted_at IS NULL
+        ), 0) AS filestore_bytes
+    </select>
+
+    <insert id="UpsertWorkspaceStorageUsage" result="exec">
+        INSERT INTO workspace_storage_usage (
+        workspace_uuid, files_bytes, filestore_bytes, updated_at
+        )
+        VALUES (
+        #{params.WorkspaceUUID}, #{params.FilesBytes}, #{params.FilestoreBytes}, now()
+        )
+        ON CONFLICT (workspace_uuid) DO UPDATE SET
+        files_bytes = excluded.files_bytes,
+        filestore_bytes = excluded.filestore_bytes,
+        updated_at = excluded.updated_at
+    </insert>
+
+    <insert id="EnsureWorkspaceStorageUsage" result="exec">
+        INSERT INTO workspace_storage_usage (workspace_uuid)
+        VALUES (#{workspaceUUID})
+        ON CONFLICT (workspace_uuid) DO NOTHING
+    </insert>
+
+    <select id="GetWorkspaceStorageUsageForUpdate" resultType="workspaceStorageUsage">
+        SELECT files_bytes, filestore_bytes
+        FROM workspace_storage_usage
+        WHERE workspace_uuid = #{workspaceUUID}
+        FOR UPDATE
+    </select>
+
+    <update id="UpdateWorkspaceStorageUsage" result="exec">
+        UPDATE workspace_storage_usage
+        SET files_bytes = #{params.FilesBytes},
+        filestore_bytes = #{params.FilestoreBytes},
+        updated_at = now()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+    </update>
+</mapper>

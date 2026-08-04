@@ -14,55 +14,69 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
+	"github.com/superduck-ai/yourbatis"
 )
 
-func (d *DB) beginFilestoreNamespaceMutation(ctx context.Context, workspaceUUID, filesystemUUID string) (*sqlx.Tx, FilestoreFilesystem, error) {
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return nil, FilestoreFilesystem{}, err
-	}
-	rollback := true
-	defer func() {
-		if rollback {
-			_ = tx.Rollback()
+func withFilestoreNamespaceMutation[T any](
+	ctx context.Context,
+	database *yourbatis.DB,
+	workspaceUUID string,
+	filesystemUUID string,
+	fn func(yourbatis.Executor, FilestoreFilesystem) (T, error),
+) (T, error) {
+	var result T
+	err := database.Transaction(ctx, func(executor yourbatis.Executor) error {
+		storageMapper := NewWorkspaceStorageUsageMapper(executor)
+		// 即使目录操作通常不改变容量，也可能替换到期文件；统一锁序比事后升级锁更安全。
+		if err := storageMapper.LockWorkspace(ctx, workspaceUUID); err != nil {
+			return err
 		}
-	}()
-	// 即使目录操作通常不改变容量，也可能替换到期文件；统一锁序比事后升级锁更安全。
-	if _, err := namedExecContext(ctx, tx, fileWorkspaceLockQuery, map[string]any{
-		"workspace_uuid": dbUUID(workspaceUUID),
-	}); err != nil {
-		return nil, FilestoreFilesystem{}, err
-	}
-	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = :workspace_uuid
-			and uuid = :filesystem_uuid and deleted_at is null
-		for update
-	`, map[string]any{
-		"workspace_uuid":  dbUUID(workspaceUUID),
-		"filesystem_uuid": dbUUID(filesystemUUID),
+		filesystemMapper := NewFilestoreFilesystemMapper(executor)
+		row, found, err := filesystemMapper.FindFilesystemForMutation(ctx, workspaceUUID, filesystemUUID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return ErrNotFound
+		}
+		filesystem, err := row.filesystem()
+		if err != nil {
+			return err
+		}
+		if err := filesystemMapper.LockFilesystem(ctx, filesystem.UUID); err != nil {
+			return err
+		}
+		result, err = fn(executor, filesystem)
+		return err
 	})
 	if err != nil {
-		return nil, FilestoreFilesystem{}, err
+		var zero T
+		return zero, err
 	}
-	if _, err := namedExecContext(ctx, tx, provisionFilestoreNamespaceLockQuery, map[string]any{
-		"filesystem_uuid": dbUUID(filesystem.UUID),
-	}); err != nil {
-		return nil, FilestoreFilesystem{}, err
-	}
-	rollback = false
-	return tx, filesystem, nil
+	return result, nil
 }
 
 func (d *DB) resolveFilestoreDirectoryForRead(ctx context.Context, workspaceUUID, filesystemUUID string, directoryPath string) (FilestoreFilesystem, error) {
-	filesystem, err := getFilestoreFilesystemByUUIDSQLX(ctx, d.sql, workspaceUUID, filesystemUUID)
+	filesystemMapper := NewFilestoreFilesystemMapper(d.mapperDB)
+	filesystemRow, found, err := filesystemMapper.FindFilesystemByUUID(
+		ctx,
+		workspaceUUID,
+		filesystemUUID,
+	)
+	if err != nil {
+		return FilestoreFilesystem{}, err
+	}
+	if !found {
+		return FilestoreFilesystem{}, ErrNotFound
+	}
+	filesystem, err := filesystemRow.filesystem()
 	if err != nil {
 		return FilestoreFilesystem{}, err
 	}
 	if directoryPath == "/" {
 		return filesystem, nil
 	}
-	entry, err := getActiveSessionResourceFileSQLX(ctx, d.sql, filesystem, directoryPath)
+	entry, err := getActiveSessionResourceFile(ctx, d.mapperDB, filesystem, directoryPath)
 	if err != nil {
 		return FilestoreFilesystem{}, err
 	}
@@ -72,7 +86,7 @@ func (d *DB) resolveFilestoreDirectoryForRead(ctx context.Context, workspaceUUID
 	return filesystem, nil
 }
 
-func requireFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, directoryPath string) error {
+func requireFilestoreDirectoryTx(ctx context.Context, tx yourbatis.Executor, filesystem FilestoreFilesystem, directoryPath string) error {
 	if directoryPath == "/" {
 		return nil
 	}
@@ -89,34 +103,24 @@ func requireFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fi
 	return nil
 }
 
-func getSessionResourceFileForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, bool, error) {
-	entry, err := getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and path = :entry_path
-			and deleted_at is null
-	`, sessionResourceFileMutationArguments(filesystem, entryPath))
-	if errors.Is(err, ErrNotFound) {
+func getSessionResourceFileForMutation(ctx context.Context, tx yourbatis.Executor, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, bool, error) {
+	row, found, err := NewSessionResourceFileMapper(tx).FindResourceFile(ctx, sessionResourcePathParams{
+		WorkspaceUUID: filesystem.WorkspaceUUID,
+		SessionUUID:   filesystem.SessionUUID,
+		EntryPath:     entryPath,
+	})
+	if err != nil {
+		return SessionResourceFile{}, false, err
+	}
+	if !found {
 		return SessionResourceFile{}, false, nil
 	}
+	entry, err := row.entry()
 	return entry, err == nil, err
 }
 
-func getActiveSessionResourceFileForMutation(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, error) {
-	return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and path = :entry_path
-			and deleted_at is null and (expires_at is null or expires_at > now())
-	`, sessionResourceFileMutationArguments(filesystem, entryPath))
-}
-
-func sessionResourceFileMutationArguments(filesystem FilestoreFilesystem, entryPath string) map[string]any {
-	return map[string]any{
-		"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
-		"session_uuid":   dbUUID(filesystem.SessionUUID),
-		"entry_path":     entryPath,
-	}
+func getActiveSessionResourceFileForMutation(ctx context.Context, tx yourbatis.Executor, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, error) {
+	return getActiveSessionResourceFile(ctx, tx, filesystem, entryPath)
 }
 
 func validateFilestorePath(value string) error {
@@ -179,7 +183,7 @@ func filestoreNow(value time.Time) time.Time {
 // 如果这个 directoryPath 已经存在，而且本来就是目录，就直接返回现有目录。
 // 如果这个路径被非目录 entry 占着，就返回 ErrFilestorePathExists。
 // 如果这个路径根本不存在，就插入一条新的 directory entry。
-func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (SessionResourceFile, error) {
+func ensureFilestoreDirectoryTx(ctx context.Context, tx yourbatis.Executor, filesystem FilestoreFilesystem, directoryPath string, now time.Time) (SessionResourceFile, error) {
 	existing, found, err := getSessionResourceFileForMutation(ctx, tx, filesystem, directoryPath)
 	if err != nil {
 		return SessionResourceFile{}, err
@@ -194,39 +198,31 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx *sqlx.Tx, filesystem Fil
 	if err != nil {
 		return SessionResourceFile{}, err
 	}
-	var insertedID int64
-	err = namedGetContext(ctx, tx, &insertedID, `
-		insert into session_resources (
-			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
-			session_external_id, resource_type, payload, secret_payload,
-			path, parent_path, created_at, updated_at
-		)
-		select :resource_uuid,
-			:resource_external_id,
-			:organization_uuid, :workspace_uuid, session.uuid,
-			session.external_id, 'directory', null, null,
-			:entry_path, :parent_path, :now, :now
-		from sessions session
-		where session.uuid = :session_uuid
-			and session.workspace_uuid = :workspace_uuid
-			and session.deleted_at is null
-		returning id
-	`, map[string]any{
-		"resource_uuid":        dbUUID(resourceUUID),
-		"resource_external_id": resourceExternalID,
-		"organization_uuid":    dbUUID(filesystem.OrganizationUUID),
-		"workspace_uuid":       dbUUID(filesystem.WorkspaceUUID),
-		"session_uuid":         dbUUID(filesystem.SessionUUID),
-		"entry_path":           directoryPath,
-		"parent_path":          filestoreParentPath(directoryPath),
-		"now":                  now,
+	_, err = NewSessionResourceMapper(tx).InsertDirectory(ctx, sessionResourceDirectoryInsertParams{
+		ResourceUUID:       resourceUUID,
+		ResourceExternalID: resourceExternalID,
+		OrganizationUUID:   filesystem.OrganizationUUID,
+		WorkspaceUUID:      filesystem.WorkspaceUUID,
+		SessionUUID:        filesystem.SessionUUID,
+		EntryPath:          directoryPath,
+		ParentPath:         filestoreParentPath(directoryPath),
+		Now:                now,
 	})
 	if err := mapSessionNamespaceInsertError(err); err != nil {
 		return SessionResourceFile{}, err
 	}
-	return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-		where uuid = :resource_uuid and deleted_at is null
-	`, map[string]any{"resource_uuid": dbUUID(resourceUUID)})
+	row, err := NewSessionResourceFileMapper(tx).GetResourceFileByUUID(ctx, sessionResourceIdentityParams{
+		WorkspaceUUID: filesystem.WorkspaceUUID,
+		SessionUUID:   filesystem.SessionUUID,
+		ResourceUUID:  resourceUUID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionResourceFile{}, ErrNotFound
+	}
+	if err != nil {
+		return SessionResourceFile{}, err
+	}
+	return row.entry()
 }
 
 type putFilestoreFileTxInput struct {
@@ -239,7 +235,7 @@ type putFilestoreFileTxInput struct {
 	Now                        time.Time
 }
 
-func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, input putFilestoreFileTxInput) (FilestoreMutationResult, error) {
+func putFilestoreFileTx(ctx context.Context, tx yourbatis.Executor, filesystem FilestoreFilesystem, input putFilestoreFileTxInput) (FilestoreMutationResult, error) {
 	if err := requireFilestoreDirectoryTx(ctx, tx, filesystem, filestoreParentPath(input.Path)); err != nil {
 		return FilestoreMutationResult{}, err
 	}
@@ -263,7 +259,7 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 		}
 	}
 	storageDelta := input.Blob.SizeBytes - oldSize
-	if err := applyWorkspaceStorageDeltaSQLXTx(
+	if err := applyWorkspaceStorageDeltaTx(
 		ctx, tx, input.WorkspaceUUID, 0, storageDelta, input.WorkspaceStorageLimitBytes,
 	); err != nil {
 		return FilestoreMutationResult{}, err
@@ -294,44 +290,28 @@ func putFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFi
 	return FilestoreMutationResult{Node: entry, CleanupJobs: cleanupJobs}, nil
 }
 
-func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem FilestoreFilesystem, existing SessionResourceFile, found bool, input putFilestoreFileTxInput) (SessionResourceFile, error) {
-	arguments := filestoreFileWriteArguments(filesystem, input)
+func writeFilestoreFileTx(ctx context.Context, tx yourbatis.Executor, filesystem FilestoreFilesystem, existing SessionResourceFile, found bool, input putFilestoreFileTxInput) (SessionResourceFile, error) {
+	params := filestoreFileWriteMapperParams(filesystem, input)
+	fileMapper := NewFileMapper(tx)
+	resourceMapper := NewSessionResourceMapper(tx)
+	viewMapper := NewSessionResourceFileMapper(tx)
 	if found {
-		arguments["resource_uuid"] = dbUUID(existing.UUID)
-		if _, err := namedExecContext(ctx, tx, `
-			update files file
-			set filename = :filename, mime_type = :media_type,
-				detected_mime_type = :detected_mime_type, size_bytes = :size_bytes,
-				metadata = CAST(:metadata AS jsonb),
-				authorization_metadata = CAST(:authorization_metadata AS jsonb),
-				tags = :tags, downloadable = :downloadable, md5 = :md5,
-				sha256 = :sha256, s3_bucket = :s3_bucket, s3_key = :s3_key,
-				s3_etag = :s3_etag, s3_version_id = :s3_version_id,
-				deleted_at = null
-			where file.workspace_uuid = :workspace_uuid
-				and file.uuid = (
-				select resource.file_uuid from session_resources resource
-				where resource.uuid = :resource_uuid
-					and resource.workspace_uuid = :workspace_uuid
-					and resource.session_uuid = :session_uuid
-			)
-		`, arguments); err != nil {
+		params.ResourceUUID = existing.UUID
+		if err := fileMapper.UpdateOwnedFile(ctx, params); err != nil {
 			return SessionResourceFile{}, err
 		}
-		if _, err := namedExecContext(ctx, tx, `
-			update session_resources
-			set resource_type = 'file', payload = null, secret_payload = null,
-				path = :entry_path, parent_path = :parent_path,
-				expires_at = :expires_at, updated_at = :now
-			where uuid = :resource_uuid
-				and workspace_uuid = :workspace_uuid
-				and session_uuid = :session_uuid and deleted_at is null
-		`, arguments); err != nil {
+		if err := resourceMapper.UpdateResourceFile(ctx, params); err != nil {
 			return SessionResourceFile{}, err
 		}
-		return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-			where uuid = :resource_uuid and deleted_at is null
-		`, arguments)
+		row, err := viewMapper.GetResourceFileByUUID(ctx, sessionResourceIdentityParams{
+			WorkspaceUUID: params.WorkspaceUUID,
+			SessionUUID:   params.SessionUUID,
+			ResourceUUID:  params.ResourceUUID,
+		})
+		if err != nil {
+			return SessionResourceFile{}, err
+		}
+		return row.entry()
 	}
 	fileUUID, fileExternalID, err := newFileIdentity()
 	if err != nil {
@@ -341,58 +321,23 @@ func writeFilestoreFileTx(ctx context.Context, tx *sqlx.Tx, filesystem Filestore
 	if err != nil {
 		return SessionResourceFile{}, err
 	}
-	arguments["file_uuid"] = dbUUID(fileUUID)
-	arguments["file_external_id"] = fileExternalID
-	arguments["resource_uuid"] = dbUUID(resourceUUID)
-	arguments["resource_external_id"] = resourceExternalID
-	var insertedID int64
-	err = namedGetContext(ctx, tx, &insertedID, `
-		with inserted_file as (
-			insert into files (
-				uuid, external_id, workspace_uuid, filename, mime_type,
-				detected_mime_type, size_bytes, metadata, authorization_metadata,
-				tags, downloadable, md5, sha256, s3_bucket, s3_key,
-				s3_etag, s3_version_id, scope_type, scope_id,
-				created_by_api_key_uuid, created_at
-			)
-			select :file_uuid,
-				:file_external_id,
-				:workspace_uuid, :filename, :media_type, :detected_mime_type,
-				:size_bytes, CAST(:metadata AS jsonb),
-				CAST(:authorization_metadata AS jsonb), :tags, :downloadable,
-				:md5, :sha256, :s3_bucket, :s3_key, :s3_etag, :s3_version_id,
-				'session', session.external_id,
-				coalesce(api_key.uuid, session.created_by_api_key_uuid), :now
-			from sessions session
-			left join api_keys api_key
-				on api_key.uuid = :created_by_api_key_uuid
-				and api_key.workspace_uuid = session.workspace_uuid
-			where session.uuid = :session_uuid
-				and session.workspace_uuid = :workspace_uuid
-				and session.deleted_at is null
-			returning uuid
-		)
-		insert into session_resources (
-			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
-			session_external_id, resource_type, payload, secret_payload,
-			path, parent_path, file_uuid, expires_at, created_at, updated_at
-		)
-		select :resource_uuid,
-			:resource_external_id,
-			:organization_uuid, :workspace_uuid, session.uuid,
-			session.external_id, 'file', null, null, :entry_path, :parent_path,
-			inserted_file.uuid, :expires_at, :now, :now
-		from inserted_file
-		join sessions session on session.uuid = :session_uuid
-		returning id
-	`, arguments)
+	params.FileUUID = fileUUID
+	params.FileExternalID = fileExternalID
+	params.ResourceUUID = resourceUUID
+	params.ResourceExternalID = resourceExternalID
+	_, err = resourceMapper.InsertOwnedFileAndResource(ctx, params)
 	if err := mapSessionNamespaceInsertError(err); err != nil {
 		return SessionResourceFile{}, err
 	}
-	arguments["resource_uuid"] = dbUUID(resourceUUID)
-	return getSessionResourceFileSQLX(ctx, tx, sessionResourceFileSelectSQL()+`
-		where uuid = :resource_uuid and deleted_at is null
-	`, arguments)
+	row, err := viewMapper.GetResourceFileByUUID(ctx, sessionResourceIdentityParams{
+		WorkspaceUUID: params.WorkspaceUUID,
+		SessionUUID:   params.SessionUUID,
+		ResourceUUID:  params.ResourceUUID,
+	})
+	if err != nil {
+		return SessionResourceFile{}, err
+	}
+	return row.entry()
 }
 
 func mapSessionNamespaceInsertError(err error) error {
@@ -424,31 +369,30 @@ func newFileIdentity() (fileUUID, fileExternalID string, err error) {
 	return uuid.NewString(), fileExternalID, nil
 }
 
-func filestoreFileWriteArguments(filesystem FilestoreFilesystem, input putFilestoreFileTxInput) map[string]any {
-	return map[string]any{
-		"organization_uuid":       dbUUID(filesystem.OrganizationUUID),
-		"workspace_uuid":          dbUUID(filesystem.WorkspaceUUID),
-		"entry_path":              input.Path,
-		"filename":                path.Base(input.Path),
-		"parent_path":             filestoreParentPath(input.Path),
-		"size_bytes":              input.Blob.SizeBytes,
-		"media_type":              input.Blob.MediaType,
-		"detected_mime_type":      filestoreNullableString(input.Blob.DetectedMimeType),
-		"metadata":                string(filestoreJSONObject(input.Blob.Metadata)),
-		"authorization_metadata":  string(filestoreJSONObject(input.Blob.AuthorizationMetadata)),
-		"tags":                    filestoreTags(input.Blob.Tags),
-		"downloadable":            input.Blob.Downloadable,
-		"md5":                     input.Blob.MD5,
-		"sha256":                  input.Blob.SHA256,
-		"s3_bucket":               input.Blob.S3Bucket,
-		"s3_key":                  input.Blob.S3Key,
-		"s3_etag":                 filestoreNullableString(input.Blob.S3ETag),
-		"s3_version_id":           filestoreNullableString(input.Blob.S3VersionID),
-		"expires_at":              input.Blob.ExpiresAt,
-		"created_by_api_key_uuid": dbNullableUUID(filesystem.CreatedByAPIKeyUUID),
-		"session_uuid":            dbUUID(filesystem.SessionUUID),
-
-		"now": input.Now,
+func filestoreFileWriteMapperParams(filesystem FilestoreFilesystem, input putFilestoreFileTxInput) sessionResourceFileWriteParams {
+	return sessionResourceFileWriteParams{
+		OrganizationUUID:      filesystem.OrganizationUUID,
+		WorkspaceUUID:         filesystem.WorkspaceUUID,
+		EntryPath:             input.Path,
+		Filename:              path.Base(input.Path),
+		ParentPath:            filestoreParentPath(input.Path),
+		SizeBytes:             input.Blob.SizeBytes,
+		MediaType:             input.Blob.MediaType,
+		DetectedMimeType:      filestoreNullableString(input.Blob.DetectedMimeType),
+		Metadata:              string(filestoreJSONObject(input.Blob.Metadata)),
+		AuthorizationMetadata: string(filestoreJSONObject(input.Blob.AuthorizationMetadata)),
+		Tags:                  filestoreTags(input.Blob.Tags),
+		Downloadable:          input.Blob.Downloadable,
+		MD5:                   input.Blob.MD5,
+		SHA256:                input.Blob.SHA256,
+		S3Bucket:              input.Blob.S3Bucket,
+		S3Key:                 input.Blob.S3Key,
+		S3ETag:                filestoreNullableString(input.Blob.S3ETag),
+		S3VersionID:           filestoreNullableString(input.Blob.S3VersionID),
+		ExpiresAt:             input.Blob.ExpiresAt,
+		CreatedByAPIKeyUUID:   filesystem.CreatedByAPIKeyUUID,
+		SessionUUID:           filesystem.SessionUUID,
+		Now:                   input.Now,
 	}
 }
 
@@ -477,39 +421,18 @@ func sameFilestoreObject(entry SessionResourceFile, blob FilestoreFileBlob) bool
 
 func retireSessionResourceFileTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	tx yourbatis.Executor,
 	workspaceUUID string,
 	resourceUUID string,
 	retiredAt time.Time,
 ) error {
-	if _, err := namedExecContext(ctx, tx, `
-		update files file
-		set deleted_at = coalesce(file.deleted_at, :retired_at)
-		where file.workspace_uuid = :workspace_uuid
-			and file.uuid = (
-				select resource.file_uuid
-				from session_resources resource
-				where resource.uuid = :resource_uuid
-					and resource.workspace_uuid = :workspace_uuid
-					and resource.payload is null
-			)
-	`, map[string]any{
-		"resource_uuid":  dbUUID(resourceUUID),
-		"workspace_uuid": dbUUID(workspaceUUID),
-		"retired_at":     retiredAt,
-	}); err != nil {
+	params := sessionResourceRetireParams{
+		ResourceUUID:  resourceUUID,
+		WorkspaceUUID: workspaceUUID,
+		RetiredAt:     retiredAt,
+	}
+	if err := NewFileMapper(tx).RetireOwnedFile(ctx, params); err != nil {
 		return err
 	}
-	_, err := namedExecContext(ctx, tx, `
-		update session_resources
-		set deleted_at = coalesce(deleted_at, :retired_at), updated_at = :retired_at
-		where uuid = :resource_uuid
-			and workspace_uuid = :workspace_uuid
-			and deleted_at is null
-	`, map[string]any{
-		"resource_uuid":  dbUUID(resourceUUID),
-		"workspace_uuid": dbUUID(workspaceUUID),
-		"retired_at":     retiredAt,
-	})
-	return err
+	return NewSessionResourceMapper(tx).RetireResource(ctx, params)
 }

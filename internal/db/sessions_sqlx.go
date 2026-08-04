@@ -471,13 +471,13 @@ func insertSessionSQLXTx(
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
-	filesystem, err := insertSessionFilesystemSQLXTx(ctx, tx, session)
+	filesystem, err := insertSessionFilesystemTx(ctx, tx, session)
 	if err != nil {
 		return Session{}, SessionThread{}, nil, EnvironmentWork{}, err
 	}
 	if err := ensureFilestoreFixedRootsTx(
 		ctx,
-		tx,
+		newSQLXTxExecutor(tx),
 		filesystem,
 		session.CreatedAt,
 	); err != nil {

@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="SessionResourceFileMapper">
+    <sql id="resourceFileColumns">
+        id, uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        kind, path, parent_path, size_bytes, media_type, detected_mime_type,
+        metadata, authorization_metadata, tags_json, downloadable, md5, sha256,
+        s3_bucket, s3_key, s3_etag, s3_version_id, expires_at,
+        source_file_uuid, created_at, updated_at, deleted_at
+    </sql>
+
+    <sql id="resourceFileSource">
+        SELECT resource.id,
+        resource.uuid,
+        resource.external_id,
+        resource.organization_uuid,
+        resource.workspace_uuid,
+        resource.session_uuid,
+        CASE resource.resource_type
+        WHEN 'skill_archive' THEN 'archive'
+        ELSE resource.resource_type
+        END AS kind,
+        resource.path,
+        resource.parent_path,
+        file.size_bytes,
+        file.mime_type AS media_type,
+        file.detected_mime_type,
+        COALESCE(file.metadata, CAST('{}' AS jsonb)) AS metadata,
+        COALESCE(file.authorization_metadata, CAST('{}' AS jsonb)) AS authorization_metadata,
+        CAST(COALESCE(to_jsonb(file.tags), CAST('[]' AS jsonb)) AS text) AS tags_json,
+        COALESCE(file.downloadable, false) AS downloadable,
+        file.md5,
+        file.sha256,
+        file.s3_bucket,
+        file.s3_key,
+        file.s3_etag,
+        file.s3_version_id,
+        resource.expires_at,
+        CASE WHEN resource.payload IS NOT NULL
+        THEN resource.file_uuid
+        ELSE NULL
+        END AS source_file_uuid,
+        resource.created_at,
+        resource.updated_at,
+        resource.deleted_at
+        FROM session_resources resource
+        LEFT JOIN files file ON file.uuid = resource.file_uuid
+        WHERE resource.path IS NOT NULL
+    </sql>
+
+    <select id="FindResourceFile" result="optional" resultType="sessionResourceFileRow">
+        SELECT
+        <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND path = #{params.EntryPath}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindActiveResourceFile" result="optional" resultType="sessionResourceFileRow">
+        SELECT
+        <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND path = #{params.EntryPath}
+        AND deleted_at IS NULL
+        AND (expires_at IS NULL OR expires_at &gt; now())
+    </select>
+
+    <select id="GetResourceFileByUUID" resultType="sessionResourceFileRow">
+        SELECT
+        <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE uuid = #{params.ResourceUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="GetResourceFileForMoveResult" resultType="sessionResourceFileRow">
+        SELECT
+        <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND uuid = #{params.ResourceUUID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="GetMovedDirectory" resultType="sessionResourceFileRow">
+        SELECT
+        <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND path = #{params.DestinationPath}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListResourceFilesPage" resultType="sessionResourceFileRow">
+        SELECT
+        <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND kind &lt;&gt; 'archive'
+        AND deleted_at IS NULL
+        AND (expires_at IS NULL OR expires_at &gt; now())
+        <choose>
+            <when test="params.Recursive">
+                AND left(path, char_length(#{params.DirectoryPrefix})) = #{params.DirectoryPrefix}
+            </when>
+            <otherwise>
+                AND parent_path = #{params.DirectoryPath}
+            </otherwise>
+        </choose>
+        <if test="params.HasCursor">
+            AND (path, uuid) &gt; (#{params.CursorPath}, #{params.CursorUUID})
+        </if>
+        ORDER BY path ASC, uuid ASC
+        LIMIT #{params.FetchLimit}
+    </select>
+
+    <select id="ListSkillArchiveResources" resultType="sessionResourceFileRow">
+        SELECT
+        <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_uuid = (
+        SELECT session_uuid
+        FROM filestore_filesystems
+        WHERE uuid = #{filesystemUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        )
+        AND kind = 'archive'
+        AND deleted_at IS NULL
+        ORDER BY path, id
+    </select>
+</mapper>

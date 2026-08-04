@@ -72,7 +72,7 @@ Yourbatis 生成 PostgreSQL 位置参数和固定 `rows.Scan`。若要正式采�
 2. 评审并记录生成 Mapper 代码的受控例外及其静态安全保证。
 
 Yourbatis runtime 与生成器均由 `go.mod` 固定到已发布的
-`github.com/superduck-ai/yourbatis v0.1.0`：应用依赖不再使用本地 module replacement，
+`github.com/superduck-ai/yourbatis v0.1.1`：应用依赖不再使用本地 module replacement，
 `sqlmapgen` 通过 Go `tool` 指令声明，并由 `go:generate` 使用 `go tool sqlmapgen` 调用。
 后续升级只需更新 `go.mod` 中的模块版本，运行时和生成器会保持一致。
 

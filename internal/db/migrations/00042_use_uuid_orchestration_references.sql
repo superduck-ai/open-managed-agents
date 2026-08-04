@@ -24,6 +24,10 @@ alter table session_threads
 	add column workspace_uuid uuid,
 	add column session_uuid uuid,
 	add column parent_thread_uuid uuid;
+alter table session_resources
+	add column organization_uuid uuid,
+	add column workspace_uuid uuid,
+	add column session_uuid uuid;
 alter table session_events
 	add column organization_uuid uuid,
 	add column workspace_uuid uuid,
@@ -87,6 +91,15 @@ where o.id = r.organization_id
 	and w.id = r.workspace_id
 	and s.id = r.session_id;
 
+update session_resources r
+set organization_uuid = o.uuid,
+	workspace_uuid = w.uuid,
+	session_uuid = s.uuid
+from organizations o, workspaces w, sessions s
+where o.id = r.organization_id
+	and w.id = r.workspace_id
+	and s.id = r.session_id;
+
 update session_events r
 set organization_uuid = o.uuid,
 	workspace_uuid = w.uuid,
@@ -145,6 +158,10 @@ alter table session_threads
 	alter column organization_uuid set not null,
 	alter column workspace_uuid set not null,
 	alter column session_uuid set not null;
+alter table session_resources
+	alter column organization_uuid set not null,
+	alter column workspace_uuid set not null,
+	alter column session_uuid set not null;
 alter table session_events
 	alter column organization_uuid set not null,
 	alter column workspace_uuid set not null,
@@ -174,6 +191,10 @@ alter table session_threads
 	drop column workspace_id,
 	drop column session_id,
 	drop column parent_thread_id;
+alter table session_resources
+	drop column organization_id,
+	drop column workspace_id,
+	drop column session_id;
 alter table session_events
 	drop column organization_id,
 	drop column workspace_id,
@@ -188,6 +209,8 @@ alter table sessions
 	add constraint sessions_workspace_external_id_key unique (workspace_uuid, external_id);
 alter table session_threads
 	add constraint session_threads_workspace_external_id_key unique (workspace_uuid, external_id);
+alter table session_resources
+	add constraint session_resources_workspace_external_id_key unique (workspace_uuid, external_id);
 alter table session_events
 	add constraint session_events_workspace_external_id_key unique (workspace_uuid, external_id);
 
@@ -230,6 +253,12 @@ create index sessions_workspace_deployment_created_v2_idx
 create index session_threads_session_created_v2_idx
 	on session_threads (workspace_uuid, session_uuid, created_at desc, uuid desc)
 	where deleted_at is null;
+create index session_resources_session_created_v2_idx
+	on session_resources (workspace_uuid, session_uuid, created_at desc, uuid desc)
+	where deleted_at is null;
+create index session_resources_memory_store_v2_idx
+	on session_resources (workspace_uuid, (payload->>'memory_store_id'))
+	where deleted_at is null and resource_type = 'memory_store';
 create index session_events_session_created_v2_idx
 	on session_events (workspace_uuid, session_uuid, created_at asc, uuid asc)
 	where deleted_at is null;
@@ -247,6 +276,7 @@ alter table deployment_runs add column organization_id bigint, add column worksp
 alter table sessions rename column deployment_external_id to deployment_id;
 alter table sessions add column organization_id bigint, add column workspace_id bigint, add column created_by_api_key_id bigint, add column environment_id bigint, add column agent_id bigint;
 alter table session_threads add column organization_id bigint, add column workspace_id bigint, add column session_id bigint, add column parent_thread_id bigint;
+alter table session_resources add column organization_id bigint, add column workspace_id bigint, add column session_id bigint;
 alter table session_events add column organization_id bigint, add column workspace_id bigint, add column session_id bigint, add column thread_id bigint;
 
 update deployments r
@@ -275,6 +305,10 @@ set organization_id = o.id, workspace_id = w.id, session_id = s.id,
 	)
 from organizations o, workspaces w, sessions s
 where o.uuid = r.organization_uuid and w.uuid = r.workspace_uuid and s.uuid = r.session_uuid;
+update session_resources r
+set organization_id = o.id, workspace_id = w.id, session_id = s.id
+from organizations o, workspaces w, sessions s
+where o.uuid = r.organization_uuid and w.uuid = r.workspace_uuid and s.uuid = r.session_uuid;
 update session_events r
 set organization_id = o.id, workspace_id = w.id, session_id = s.id,
 	thread_id = (
@@ -287,18 +321,21 @@ alter table deployments alter column organization_id set not null, alter column 
 alter table deployment_runs alter column organization_id set not null, alter column workspace_id set not null, alter column created_by_api_key_id set not null, alter column deployment_id set not null, alter column agent_id set not null;
 alter table sessions alter column organization_id set not null, alter column workspace_id set not null, alter column created_by_api_key_id set not null, alter column environment_id set not null, alter column agent_id set not null;
 alter table session_threads alter column organization_id set not null, alter column workspace_id set not null, alter column session_id set not null;
+alter table session_resources alter column organization_id set not null, alter column workspace_id set not null, alter column session_id set not null;
 alter table session_events alter column organization_id set not null, alter column workspace_id set not null, alter column session_id set not null;
 
 alter table deployments drop column organization_uuid, drop column workspace_uuid, drop column created_by_api_key_uuid, drop column environment_uuid, drop column agent_uuid;
 alter table deployment_runs drop column organization_uuid, drop column workspace_uuid, drop column created_by_api_key_uuid, drop column deployment_uuid, drop column agent_uuid;
 alter table sessions drop column organization_uuid, drop column workspace_uuid, drop column created_by_api_key_uuid, drop column environment_uuid, drop column agent_uuid, drop column deployment_uuid;
 alter table session_threads drop column organization_uuid, drop column workspace_uuid, drop column session_uuid, drop column parent_thread_uuid;
+alter table session_resources drop column organization_uuid, drop column workspace_uuid, drop column session_uuid;
 alter table session_events drop column organization_uuid, drop column workspace_uuid, drop column session_uuid, drop column thread_uuid;
 
 alter table deployments add constraint deployments_workspace_external_id_key unique (workspace_id, external_id);
 alter table deployment_runs add constraint deployment_runs_workspace_external_id_key unique (workspace_id, external_id);
 alter table sessions add constraint sessions_workspace_external_id_key unique (workspace_id, external_id);
 alter table session_threads add constraint session_threads_workspace_external_id_key unique (workspace_id, external_id);
+alter table session_resources add constraint session_resources_workspace_external_id_key unique (workspace_id, external_id);
 alter table session_events add constraint session_events_workspace_external_id_key unique (workspace_id, external_id);
 
 create index deployments_workspace_created_v1_idx on deployments (workspace_id, created_at desc, id desc) where deleted_at is null;
@@ -314,6 +351,8 @@ create index sessions_workspace_status_created_v1_idx on sessions (workspace_id,
 create index sessions_workspace_agent_created_v1_idx on sessions (workspace_id, agent_external_id, agent_version, created_at desc, id desc) where deleted_at is null;
 create index sessions_workspace_deployment_created_v1_idx on sessions (workspace_id, deployment_id, created_at desc, id desc) where deleted_at is null and deployment_id is not null;
 create index session_threads_session_created_v1_idx on session_threads (workspace_id, session_external_id, created_at desc, id desc) where deleted_at is null;
+create index session_resources_session_created_v1_idx on session_resources (workspace_id, session_external_id, created_at desc, id desc) where deleted_at is null;
+create index session_resources_memory_store_v1_idx on session_resources (workspace_id, (payload->>'memory_store_id')) where deleted_at is null and resource_type = 'memory_store';
 create index session_events_session_created_v1_idx on session_events (workspace_id, session_external_id, created_at asc, id asc) where deleted_at is null;
 create index session_events_thread_created_v1_idx on session_events (workspace_id, session_external_id, thread_external_id, created_at asc, id asc) where deleted_at is null and thread_external_id is not null;
 create index session_events_type_created_v1_idx on session_events (workspace_id, event_type, created_at asc, id asc) where deleted_at is null;

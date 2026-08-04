@@ -602,7 +602,7 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, se
 	if session.ArchivedAt != nil {
 		return ErrInvalidState
 	}
-	resource, err := getSessionResourceForMutationSQLX(
+	resource, err := getSessionResourceForMutation(
 		ctx,
 		tx,
 		workspaceUUID,
@@ -615,7 +615,7 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, se
 	if err := unbindSessionFileResourceTx(ctx, tx, session, resource); err != nil {
 		return err
 	}
-	if err := softDeleteSessionResourceSQLX(
+	if err := softDeleteSessionResource(
 		ctx,
 		tx,
 		workspaceUUID,

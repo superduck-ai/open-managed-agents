@@ -14,7 +14,7 @@ begin
 				(select count(*)
 				 from skill_versions version
 				 where version.uuid = resource.skill_version_uuid
-					and version.workspace_id = resource.workspace_id)
+					and version.workspace_uuid = resource.workspace_uuid)
 				+
 				(select count(*)
 				 from builtin_skill_versions version
@@ -40,7 +40,7 @@ where resource.resource_type = 'skill_archive'
 		select 1
 		from skill_versions version
 		where version.uuid = resource.skill_version_uuid
-			and version.workspace_id = resource.workspace_id
+			and version.workspace_uuid = resource.workspace_uuid
 	);
 
 update session_resources resource
@@ -55,15 +55,15 @@ where resource.resource_type = 'skill_archive'
 
 -- Resource 与 File 各自保留独立 UUID；File 固化 ZIP 的对象位置与校验事实。
 insert into files (
-	uuid, external_id, workspace_id, filename, mime_type, detected_mime_type,
+	uuid, external_id, workspace_uuid, filename, mime_type, detected_mime_type,
 	size_bytes, metadata, authorization_metadata, tags, downloadable, md5, sha256,
 	s3_bucket, s3_key, s3_etag, s3_version_id, scope_type, scope_id,
-	created_by_api_key_id, created_at, deleted_at
+	created_by_api_key_uuid, created_at, deleted_at
 )
 select
 	resource.file_uuid,
 	concat('file_', replace(cast(gen_random_uuid() as text), '-', '')),
-	resource.workspace_id,
+	resource.workspace_uuid,
 	concat(regexp_replace(resource.path, '^.*/', ''), '.zip'),
 	'application/zip',
 	'application/zip',
@@ -80,16 +80,16 @@ select
 	null,
 	null,
 	null,
-	session.created_by_api_key_id,
+	session.created_by_api_key_uuid,
 	resource.created_at,
 	resource.deleted_at
 from session_resources resource
 join sessions session
-	on session.id = resource.session_id
-	and session.workspace_id = resource.workspace_id
+	on session.uuid = resource.session_uuid
+	and session.workspace_uuid = resource.workspace_uuid
 join skill_versions version
 	on version.uuid = resource.skill_version_uuid
-	and version.workspace_id = resource.workspace_id
+	and version.workspace_uuid = resource.workspace_uuid
 where resource.resource_type = 'skill_archive'
 	and resource.file_uuid is not null
 	and not exists (
@@ -101,7 +101,7 @@ union all
 select
 	resource.file_uuid,
 	concat('file_', replace(cast(gen_random_uuid() as text), '-', '')),
-	resource.workspace_id,
+	resource.workspace_uuid,
 	concat(regexp_replace(resource.path, '^.*/', ''), '.zip'),
 	'application/zip',
 	'application/zip',
@@ -118,13 +118,13 @@ select
 	null,
 	null,
 	null,
-	session.created_by_api_key_id,
+	session.created_by_api_key_uuid,
 	resource.created_at,
 	resource.deleted_at
 from session_resources resource
 join sessions session
-	on session.id = resource.session_id
-	and session.workspace_id = resource.workspace_id
+	on session.uuid = resource.session_uuid
+	and session.workspace_uuid = resource.workspace_uuid
 join builtin_skill_versions version
 	on version.uuid = resource.skill_version_uuid
 where resource.resource_type = 'skill_archive'
@@ -133,7 +133,7 @@ where resource.resource_type = 'skill_archive'
 		select 1
 		from skill_versions custom_version
 		where custom_version.uuid = resource.skill_version_uuid
-			and custom_version.workspace_id = resource.workspace_id
+			and custom_version.workspace_uuid = resource.workspace_uuid
 	)
 	and not exists (
 		select 1
@@ -148,7 +148,7 @@ alter table session_resources
 drop index session_resources_owned_file_uuid_v1_idx;
 
 create index session_resources_owned_file_uuid_v1_idx
-	on session_resources (workspace_id, file_uuid)
+	on session_resources (workspace_uuid, file_uuid)
 	where file_uuid is not null and payload is null and resource_type = 'file';
 
 alter table session_resources

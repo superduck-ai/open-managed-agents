@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="SkillVersionMapper">
+    <select id="ValidateSkillArchiveVersion" result="scalar">
+        SELECT CASE CAST(#{params.Source} AS text)
+        WHEN 'custom' THEN EXISTS (
+        SELECT 1
+        FROM skill_versions version
+        WHERE version.workspace_uuid = #{params.WorkspaceUUID}
+        AND version.uuid = #{params.VersionUUID}
+        AND version.directory = #{params.Directory}
+        AND version.s3_bucket = #{params.S3Bucket}
+        AND version.s3_key = #{params.S3Key}
+        AND version.size_bytes = #{params.SizeBytes}
+        AND version.sha256 = #{params.SHA256}
+        AND version.deleted_at IS NULL
+        )
+        WHEN 'anthropic' THEN EXISTS (
+        SELECT 1
+        FROM builtin_skill_versions version
+        WHERE version.uuid = #{params.VersionUUID}
+        AND version.directory = #{params.Directory}
+        AND version.s3_bucket = #{params.S3Bucket}
+        AND version.s3_key = #{params.S3Key}
+        AND version.size_bytes = #{params.SizeBytes}
+        AND version.sha256 = #{params.SHA256}
+        AND version.deleted_at IS NULL
+        )
+        ELSE false
+        END AS valid
+    </select>
+</mapper>

@@ -5,55 +5,56 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/superduck-ai/yourbatis"
 )
 
-func TestSessionSkillArchiveResourceQueriesUseSQLXNamedParameters(t *testing.T) {
-	arguments := map[string]any{
-		"resource_uuid":                "00000000-0000-4000-8000-000000000047",
-		"resource_external_id":         "sesrsc_011CZkZBJq5dWxk9fVLNcPht",
-		"session_external_id":          "session_41",
-		"organization_uuid":            "00000000-0000-4000-8000-000000000041",
-		"workspace_uuid":               "00000000-0000-4000-8000-000000000042",
-		"session_uuid":                 "00000000-0000-4000-8000-000000000044",
-		"filesystem_uuid":              "00000000-0000-4000-8000-000000000043",
-		"source":                       "custom",
-		"skill_version_uuid":           "00000000-0000-4000-8000-000000000044",
-		"file_uuid":                    "00000000-0000-4000-8000-000000000048",
-		"file_external_id":             "file_011CZkZBJq5dWxk9fVLNcPht",
-		"entry_path":                   "/skills/demo",
-		"filename":                     "demo.zip",
-		"s3_bucket":                    "skills",
-		"s3_key":                       "skills/demo.zip",
-		"size_bytes":                   int64(1024),
-		"sha256":                       strings.Repeat("a", 64),
-		"created_by_api_key_uuid":      "00000000-0000-4000-8000-000000000045",
-		"created_by_session_uuid":      "00000000-0000-4000-8000-000000000046",
-		"created_by_code_session_uuid": nil,
-		"now":                          time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC),
+func TestSessionSkillArchiveResourceMapperBuildsPostgresArguments(t *testing.T) {
+	workspaceUUID := "00000000-0000-4000-8000-000000000042"
+	sessionUUID := "00000000-0000-4000-8000-000000000044"
+	filesystemUUID := "00000000-0000-4000-8000-000000000043"
+	now := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
+	retireParams := sessionSkillArchiveRetireParams{
+		WorkspaceUUID: workspaceUUID,
+		SessionUUID:   sessionUUID,
+		Now:           now,
+	}
+	insertParams := sessionSkillArchiveInsertParams{
+		ResourceUUID:       "00000000-0000-4000-8000-000000000047",
+		ResourceExternalID: "sesrsc_011CZkZBJq5dWxk9fVLNcPht",
+		FileUUID:           "00000000-0000-4000-8000-000000000048",
+		FileExternalID:     "file_011CZkZBJq5dWxk9fVLNcPht",
+		WorkspaceUUID:      workspaceUUID,
+		SessionUUID:        sessionUUID,
+		EntryPath:          "/skills/demo",
+		Filename:           "demo.zip",
+		Source:             "custom",
+		SizeBytes:          1024,
+		SHA256:             strings.Repeat("a", 64),
+		S3Bucket:           "skills",
+		S3Key:              "skills/demo.zip",
+		Now:                now,
 	}
 	tests := []struct {
 		name         string
-		query        string
+		bound        yourbatis.BoundSQL
 		wantArgCount int
 	}{
-		{"filesystem", sessionSkillArchiveResourceFilesystemQuery, 3},
-		{"retire", sessionSkillArchiveResourceRetireQuery, 4},
-		{"retire files", sessionSkillArchiveFileRetireQuery, 4},
-		{"insert file", sessionSkillArchiveFileInsertQuery, 11},
-		{"insert", sessionSkillArchiveResourceInsertQuery, 8},
-		{"list", sessionSkillArchiveResourceListQuery, 3},
+		{
+			"filesystem",
+			buildFilestoreFilesystemMapperFindSessionFilesystemByExternalID(yourbatis.DialectPostgres, workspaceUUID, "session_41"),
+			3,
+		},
+		{"retire", buildSessionResourceMapperRetireSkillArchiveResources(yourbatis.DialectPostgres, retireParams), 4},
+		{"retire files", buildFileMapperRetireSkillArchiveFiles(yourbatis.DialectPostgres, retireParams), 4},
+		{"insert file", buildFileMapperInsertSkillArchiveFile(yourbatis.DialectPostgres, insertParams), 11},
+		{"insert", buildSessionResourceMapperInsertSkillArchiveResource(yourbatis.DialectPostgres, insertParams), 8},
+		{"list", buildSessionResourceFileMapperListSkillArchiveResources(yourbatis.DialectPostgres, workspaceUUID, filesystemUUID), 3},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			query, boundArguments, err := bindNamed(postgresRebinder{}, test.query, arguments)
-			if err != nil {
-				t.Fatalf("bind named query: %v", err)
-			}
-			if strings.Contains(query, ":") {
-				t.Fatalf("query retains colon syntax after binding: %q", query)
-			}
-			if len(boundArguments) != test.wantArgCount {
-				t.Fatalf("argument count = %d, want %d", len(boundArguments), test.wantArgCount)
+			if len(test.bound.Args) != test.wantArgCount {
+				t.Fatalf("argument count = %d, want %d", len(test.bound.Args), test.wantArgCount)
 			}
 		})
 	}

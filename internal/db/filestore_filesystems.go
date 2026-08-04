@@ -2,14 +2,13 @@ package db
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/superduck-ai/yourbatis"
 )
 
 const (
@@ -18,166 +17,6 @@ const (
 	filestoreWorkspaceExternalIDKey  = "filestore_filesystems_workspace_uuid_external_id_key"
 	filestoreWorkspaceSessionKey     = "filestore_filesystems_workspace_session_active_v4_key"
 )
-
-var (
-	retireSessionFilesystemQuery = `
-		with retired as (
-			update filestore_filesystems fs
-			set deleted_at = coalesce(fs.deleted_at, :retired_at),
-				updated_at = :retired_at
-			where fs.workspace_uuid = :workspace_uuid
-				and fs.organization_uuid = :organization_uuid
-				and fs.session_uuid = :session_uuid
-				and fs.deleted_at is null
-			returning fs.uuid
-		)
-		select ` + filestoreFilesystemColumns() + `
-		from filestore_filesystems
-		where uuid = (select uuid from retired)
-	`
-	provisionFilestoreAdvisoryLockQuery = `
-		select pg_advisory_xact_lock(
-			hashtextextended(
-				concat(
-					'filestore-provision',
-					chr(58),
-					CAST(:workspace_uuid AS text),
-					chr(58),
-					CAST(:filesystem_external_id AS text)
-				),
-				0
-			)
-		)
-	`
-	validateFilestoreSessionBindingQuery = `
-		select s.workspace_uuid
-		from sessions s
-		join workspaces w
-			on w.uuid = s.workspace_uuid
-			and w.organization_uuid = s.organization_uuid
-		where s.uuid = :session_uuid
-			and s.organization_uuid = :organization_uuid
-			and s.workspace_uuid = :workspace_uuid
-			and s.status <> 'terminated'
-			and s.archived_at is null
-			and s.deleted_at is null
-			and w.archived_at is null
-			and (
-				not :has_code_session
-				or exists (
-					select 1
-					from code_sessions cs
-					where cs.uuid = :code_session_uuid
-						and cs.session_uuid = s.uuid
-						and cs.organization_uuid = s.organization_uuid
-						and cs.workspace_uuid = s.workspace_uuid
-						and cs.status = 'active'
-						and cs.deleted_at is null
-				)
-			)
-			and (
-				not :has_created_by_api_key
-				or exists (
-					select 1
-					from api_keys ak
-					where ak.uuid = :created_by_api_key_uuid
-						and ak.workspace_uuid = w.uuid
-				)
-			)
-		limit 1
-		for update of s
-	`
-	provisionFilestoreWorkspaceLockQuery = `
-		select pg_advisory_xact_lock(
-			hashtextextended(CAST(:workspace_uuid AS text), 0)
-		)
-	`
-	provisionFilestoreByExternalIDQuery = `
-		where workspace_uuid = :workspace_uuid
-			and (
-				external_id = :filesystem_external_id
-				or uuid = :filesystem_uuid
-			)
-			and deleted_at is null
-		order by (external_id = :filesystem_external_id) desc
-		limit 1
-		for update
-	`
-	provisionFilestoreBySessionQuery = `
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and deleted_at is null
-		limit 1
-		for update
-	`
-	insertProvisionedFilestoreQuery = `
-		insert into filestore_filesystems (
-			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
-			code_session_uuid, created_by_api_key_uuid, created_at, updated_at
-		)
-		values (
-			coalesce(:filesystem_uuid, gen_random_uuid()),
-			:filesystem_external_id,
-			:organization_uuid,
-			:workspace_uuid,
-			:session_uuid,
-			:code_session_uuid,
-			:created_by_api_key_uuid,
-			:now,
-			:now
-		)
-		returning ` + filestoreFilesystemColumns() + `
-	`
-	provisionFilestoreNamespaceLockQuery = `
-		select pg_advisory_xact_lock(
-			hashtextextended(
-				concat('filestore-filesystem', chr(58), CAST(:filesystem_uuid AS text)),
-				0
-			)
-		)
-	`
-)
-
-type filestoreSessionBindingRow struct {
-	WorkspaceUUID uuid.UUID `db:"workspace_uuid"`
-}
-
-const filestoreSessionTokenScopeQuery = `
-	select o.uuid as organization_uuid,
-		w.uuid as workspace_uuid,
-		w.external_id as workspace_external_id,
-		u.uuid as account_uuid,
-		u.external_id as account_external_id,
-		fs.uuid as filesystem_uuid,
-		fs.external_id as filesystem_external_id,
-		coalesce(o.settings->'org_taints', cast('[]' as jsonb)) as org_taints_json,
-		(nullif(trim(w.external_key_id), '') is not null) as workspace_cmek_enabled
-	from sessions s
-	join organizations o
-		on o.uuid = s.organization_uuid
-	join workspaces w
-		on w.uuid = s.workspace_uuid
-		and w.organization_uuid = s.organization_uuid
-	join api_keys ak
-		on ak.uuid = s.created_by_api_key_uuid
-		and ak.workspace_uuid = s.workspace_uuid
-	join users u
-		on u.uuid = ak.created_by_user_uuid
-		and u.organization_uuid = o.uuid
-		and u.deleted_at is null
-	join filestore_filesystems fs
-		on fs.organization_uuid = o.uuid
-		and fs.workspace_uuid = w.uuid
-		and fs.session_uuid = s.uuid
-		and fs.deleted_at is null
-	where s.workspace_uuid = :workspace_uuid
-		and s.external_id = :session_external_id
-		and s.status <> 'terminated'
-		and s.archived_at is null
-		and s.deleted_at is null
-		and w.archived_at is null
-	limit 1
-`
 
 // ResolveFilestoreTokenScope 用一次查询把 token 中的组织、账号、工作区与文件系统
 // 绑定到同一条活跃租户链。当前模型没有 workspace alias，因此 tagged ID 与
@@ -193,54 +32,17 @@ func (d *DB) ResolveFilestoreTokenScope(
 ) (FilestoreTokenScope, error) {
 	// 查询末尾两列同时取回当前安全策略：组织 taints 来自 settings JSON，
 	// CMEK 状态则由工作区是否配置 external_key_id 推导，供鉴权层校验 JWT 快照。
-	return getFilestoreTokenScopeSQLX(ctx, d.sql, `
-		select o.uuid as organization_uuid,
-			w.uuid as workspace_uuid,
-			w.external_id as workspace_external_id,
-			u.uuid as account_uuid,
-			u.external_id as account_external_id,
-			fs.uuid as filesystem_uuid,
-			fs.external_id as filesystem_external_id,
-			coalesce(o.settings->'org_taints', cast('[]' as jsonb)) as org_taints_json,
-			(nullif(trim(w.external_key_id), '') is not null) as workspace_cmek_enabled
-		from organizations o
-		join workspaces w
-			on w.organization_uuid = o.uuid
-		join users u
-			on u.organization_uuid = o.uuid
-			and u.deleted_at is null
-		join filestore_filesystems fs
-			on fs.organization_uuid = o.uuid
-			and fs.workspace_uuid = w.uuid
-			and fs.deleted_at is null
-		join sessions s
-			on s.uuid = fs.session_uuid
-			and s.organization_uuid = o.uuid
-			and s.workspace_uuid = w.uuid
-			and s.archived_at is null
-			and s.deleted_at is null
-			and s.status <> 'terminated'
-		where o.uuid = :organization_uuid
-			and u.uuid = :account_uuid
-			and w.uuid = :workspace_uuid
-			and w.external_id = :workspace_tagged_id
-			and w.external_id = :resolved_workspace_tagged_id
-			and (
-				fs.external_id = :filesystem_id
-				or fs.uuid = :filesystem_uuid
-			)
-			and w.archived_at is null
-		order by (fs.external_id = :filesystem_id) desc
-		limit 1
-	`, map[string]any{
-		"organization_uuid":            dbUUID(organizationUUID),
-		"account_uuid":                 dbUUID(accountUUID),
-		"workspace_uuid":               dbUUID(workspaceUUID),
-		"workspace_tagged_id":          strings.TrimSpace(workspaceTaggedID),
-		"resolved_workspace_tagged_id": strings.TrimSpace(resolvedWorkspaceTaggedID),
-		"filesystem_id":                strings.TrimSpace(filesystemID),
-		"filesystem_uuid":              tryParseDBUUIDIdentifier(filesystemID),
-	})
+	row, found, err := NewFilestoreFilesystemMapper(d.mapperDB).FindTokenScope(
+		ctx,
+		organizationUUID,
+		accountUUID,
+		workspaceUUID,
+		strings.TrimSpace(workspaceTaggedID),
+		strings.TrimSpace(resolvedWorkspaceTaggedID),
+		strings.TrimSpace(filesystemID),
+		tryParseDBUUIDIdentifier(filesystemID),
+	)
+	return filestoreTokenScopeFromMapperRow(row, found, err)
 }
 
 func createFilestoreFilesystemWithGeneratedID(
@@ -309,6 +111,12 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	if err != nil {
 		return FilestoreFilesystem{}, false, ErrPreconditionFailed
 	}
+	if strings.TrimSpace(input.UUID) != "" {
+		input.UUID, err = normalizeFilestoreReferenceUUID(input.UUID)
+		if err != nil {
+			return FilestoreFilesystem{}, false, ErrPreconditionFailed
+		}
+	}
 	if input.CodeSessionUUID, err = normalizeOptionalFilestoreReferenceUUID(input.CodeSessionUUID); err != nil {
 		return FilestoreFilesystem{}, false, ErrPreconditionFailed
 	}
@@ -324,26 +132,33 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	defer tx.Rollback()
 
 	// 按 (workspace, externalID) 串行化首次建档，避免并发请求各自通过“尚不存在”的检查。
-	arguments := provisionFilestoreFilesystemArguments(input)
-	if _, err := namedExecContext(ctx, tx, provisionFilestoreAdvisoryLockQuery, arguments); err != nil {
+	params := filestoreFilesystemProvisionParameters(input)
+	mapper := NewFilestoreFilesystemMapper(newSQLXTxExecutor(tx))
+	if err := mapper.LockProvision(ctx, params.WorkspaceUUID, params.FilesystemExternalID); err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-	binding, err := validateFilestoreSessionBinding(ctx, tx, input)
+	binding, err := validateFilestoreSessionBinding(ctx, mapper, params)
 	if err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-	arguments["workspace_uuid"] = binding.WorkspaceUUID
-	if _, err := namedExecContext(ctx, tx, provisionFilestoreWorkspaceLockQuery, arguments); err != nil {
+	if err := mapper.LockWorkspace(ctx, binding.WorkspaceUUID.String()); err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
 
-	existing, err := getFilestoreFilesystemSQLX(
+	existingRow, found, err := mapper.FindProvisionedByIdentifier(
 		ctx,
-		tx,
-		filestoreFilesystemSelectSQL()+provisionFilestoreByExternalIDQuery,
-		arguments,
+		params.WorkspaceUUID,
+		params.FilesystemExternalID,
+		tryParseDBUUIDIdentifier(input.UUID),
 	)
-	if err == nil {
+	if err != nil {
+		return FilestoreFilesystem{}, false, err
+	}
+	if found {
+		existing, convertErr := existingRow.filesystem()
+		if convertErr != nil {
+			return FilestoreFilesystem{}, false, convertErr
+		}
 		if existing.OrganizationUUID != input.OrganizationUUID || existing.SessionUUID != input.SessionUUID {
 			return FilestoreFilesystem{}, false, ErrDuplicate
 		}
@@ -355,30 +170,23 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 		}
 		return existing, false, nil
 	}
-	if !errors.Is(err, ErrNotFound) {
+	_, found, err = mapper.FindProvisionedBySession(ctx, params.WorkspaceUUID, params.SessionUUID)
+	if err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-	if _, err := getFilestoreFilesystemSQLX(
-		ctx,
-		tx,
-		filestoreFilesystemSelectSQL()+provisionFilestoreBySessionQuery,
-		arguments,
-	); err == nil {
+	if found {
 		return FilestoreFilesystem{}, false, ErrDuplicate
-	} else if !errors.Is(err, ErrNotFound) {
-		return FilestoreFilesystem{}, false, err
 	}
 
-	filesystem, err := getFilestoreFilesystemSQLX(
-		ctx,
-		tx,
-		insertProvisionedFilestoreQuery,
-		arguments,
-	)
+	filesystemRow, err := mapper.InsertProvisioned(ctx, params)
 	if isUniqueViolationOnConstraint(err, filestoreWorkspaceSessionKey) ||
 		isUniqueViolationOnConstraint(err, filestoreWorkspaceExternalIDKey) {
 		return FilestoreFilesystem{}, false, ErrDuplicate
 	}
+	if err != nil {
+		return FilestoreFilesystem{}, false, err
+	}
+	filesystem, err := filesystemRow.filesystem()
 	if err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
@@ -391,18 +199,22 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	return filesystem, true, nil
 }
 
-func provisionFilestoreFilesystemArguments(input ProvisionFilestoreFilesystemInput) map[string]any {
-	return map[string]any{
-		"filesystem_uuid":         dbNullableUUID(&input.UUID),
-		"filesystem_external_id":  input.ExternalID,
-		"organization_uuid":       dbUUID(input.OrganizationUUID),
-		"workspace_uuid":          dbUUID(input.WorkspaceUUID),
-		"session_uuid":            dbUUID(input.SessionUUID),
-		"code_session_uuid":       dbNullableUUID(input.CodeSessionUUID),
-		"has_code_session":        input.CodeSessionUUID != nil,
-		"created_by_api_key_uuid": dbNullableUUID(input.CreatedByAPIKeyUUID),
-		"has_created_by_api_key":  input.CreatedByAPIKeyUUID != nil,
-		"now":                     input.Now,
+func filestoreFilesystemProvisionParameters(input ProvisionFilestoreFilesystemInput) filestoreFilesystemProvisionParams {
+	var filesystemUUID *string
+	if input.UUID != "" {
+		filesystemUUID = &input.UUID
+	}
+	return filestoreFilesystemProvisionParams{
+		FilesystemUUID:       filesystemUUID,
+		FilesystemExternalID: input.ExternalID,
+		OrganizationUUID:     input.OrganizationUUID,
+		WorkspaceUUID:        input.WorkspaceUUID,
+		SessionUUID:          input.SessionUUID,
+		CodeSessionUUID:      input.CodeSessionUUID,
+		CreatedByAPIKeyUUID:  input.CreatedByAPIKeyUUID,
+		HasCodeSession:       input.CodeSessionUUID != nil,
+		HasCreatedByAPIKey:   input.CreatedByAPIKeyUUID != nil,
+		Now:                  input.Now,
 	}
 }
 
@@ -412,12 +224,11 @@ func ensureProvisionedFilestoreRootsTx(
 	filesystem FilestoreFilesystem,
 	now time.Time,
 ) error {
-	if _, err := namedExecContext(ctx, tx, provisionFilestoreNamespaceLockQuery, map[string]any{
-		"filesystem_uuid": dbUUID(filesystem.UUID),
-	}); err != nil {
+	executor := newSQLXTxExecutor(tx)
+	if err := NewFilestoreFilesystemMapper(executor).LockFilesystem(ctx, filesystem.UUID); err != nil {
 		return err
 	}
-	return ensureFilestoreFixedRootsTx(ctx, tx, filesystem, now)
+	return ensureFilestoreFixedRootsTx(ctx, executor, filesystem, now)
 }
 
 // ensureFilestoreFixedRootsTx 在指定 filesystem 的数据库命名空间中确保五个固定根目录存在。
@@ -440,7 +251,7 @@ func ensureProvisionedFilestoreRootsTx(
 // 补建根目录时，调用方必须先持有 namespace advisory lock。
 func ensureFilestoreFixedRootsTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	tx yourbatis.Executor,
 	filesystem FilestoreFilesystem,
 	now time.Time,
 ) error {
@@ -461,39 +272,24 @@ func ensureFilestoreFixedRootsTx(
 
 // GetFilestoreFilesystem 在工作区边界内按外部 ID 或 UUID 查找文件系统。
 func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceUUID string, externalID string) (FilestoreFilesystem, error) {
-	return getFilestoreFilesystemSQLX(ctx, d.sql, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = :workspace_uuid
-			and (
-				external_id = :filesystem_id
-				or uuid = :filesystem_uuid
-			)
-			and deleted_at is null
-		order by (external_id = :filesystem_id) desc
-		limit 1
-	`, map[string]any{
-		"workspace_uuid":  dbUUID(workspaceUUID),
-		"filesystem_id":   externalID,
-		"filesystem_uuid": tryParseDBUUIDIdentifier(externalID),
-	})
+	row, found, err := NewFilestoreFilesystemMapper(d.mapperDB).FindFilesystemByIdentifier(
+		ctx,
+		workspaceUUID,
+		externalID,
+		tryParseDBUUIDIdentifier(externalID),
+	)
+	return filestoreFilesystemFromMapperRow(row, found, err)
 }
 
 // GetFilestoreFilesystemBySession 返回 public session 唯一拥有的活动文件系统。
 // Code session 是可重建的执行实例，不参与文件系统归属判断。
 func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceUUID string, sessionExternalID string) (FilestoreFilesystem, error) {
-	return getFilestoreFilesystemSQLX(ctx, d.sql, filestoreFilesystemSelectSQL()+`
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = (
-				select uuid from sessions
-				where workspace_uuid = :workspace_uuid
-					and external_id = :session_external_id
-					and deleted_at is null
-			)
-			and deleted_at is null
-		limit 1
-	`, map[string]any{
-		"workspace_uuid":      dbUUID(workspaceUUID),
-		"session_external_id": sessionExternalID,
-	})
+	row, found, err := NewFilestoreFilesystemMapper(d.mapperDB).FindFilesystemBySessionExternalID(
+		ctx,
+		workspaceUUID,
+		sessionExternalID,
+	)
+	return filestoreFilesystemFromMapperRow(row, found, err)
 }
 
 // GetFilestoreTokenScopeForSessionIssue 为 Runner 查询签发 Filestore token 所需的
@@ -518,34 +314,43 @@ func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceUUID 
 // token 仍会在每次 Filestore 请求中重新回查数据库，因此这里返回的是签发时快照，
 // 不是绕过后续鉴权的永久授权。
 func (d *DB) GetFilestoreTokenScopeForSessionIssue(ctx context.Context, workspaceUUID string, sessionExternalID string) (FilestoreTokenScope, error) {
-	return getFilestoreTokenScopeSQLX(ctx, d.sql, filestoreSessionTokenScopeQuery, filestoreSessionTokenScopeArguments(workspaceUUID, sessionExternalID))
-}
-
-func filestoreSessionTokenScopeArguments(workspaceUUID string, sessionExternalID string) map[string]any {
-	return map[string]any{
-		"workspace_uuid":      dbUUID(workspaceUUID),
-		"session_external_id": strings.TrimSpace(sessionExternalID),
-	}
+	row, found, err := NewFilestoreFilesystemMapper(d.mapperDB).FindSessionTokenScope(
+		ctx,
+		workspaceUUID,
+		strings.TrimSpace(sessionExternalID),
+	)
+	return filestoreTokenScopeFromMapperRow(row, found, err)
 }
 
 // retireSessionFilesystemTx 先撤销命名空间访问，再投递有界的后台回收任务。
 // 文件元数据和 S3 对象都由 worker 分批处理，Session 删除事务不会随文件数量增长。
 func retireSessionFilesystemTx(ctx context.Context, tx *sqlx.Tx, session Session) error {
 	retiredAt := filestoreNow(session.UpdatedAt)
-	filesystem, err := getFilestoreFilesystemSQLX(ctx, tx, retireSessionFilesystemQuery, map[string]any{
-		"workspace_uuid":    dbUUID(session.WorkspaceUUID),
-		"organization_uuid": dbUUID(session.OrganizationUUID),
-		"session_uuid":      dbUUID(session.UUID),
-		"retired_at":        retiredAt,
-	})
-	if errors.Is(err, ErrNotFound) {
-		// 兼容自动建档上线前已经存在、但尚未回填 filesystem 的历史会话。
-		return nil
-	}
+	row, found, err := NewFilestoreFilesystemMapper(newSQLXTxExecutor(tx)).RetireSessionFilesystem(
+		ctx,
+		session.WorkspaceUUID,
+		session.OrganizationUUID,
+		session.UUID,
+		retiredAt,
+	)
 	if err != nil {
 		return err
 	}
-	_, err = enqueueFilestoreFilesystemCleanupJobTx(ctx, tx, filesystem, session.WorkspaceUUID, retiredAt)
+	if !found {
+		// 兼容自动建档上线前已经存在、但尚未回填 filesystem 的历史会话。
+		return nil
+	}
+	filesystem, err := row.filesystem()
+	if err != nil {
+		return err
+	}
+	_, err = enqueueFilestoreFilesystemCleanupJobTx(
+		ctx,
+		newSQLXTxExecutor(tx),
+		filesystem,
+		session.WorkspaceUUID,
+		retiredAt,
+	)
 	return err
 }
 
@@ -570,22 +375,15 @@ func retireSessionFilesystemTx(ctx context.Context, tx *sqlx.Tx, session Session
 // 内部 ID 用于获取后续的 Workspace 级事务锁。
 func validateFilestoreSessionBinding(
 	ctx context.Context,
-	tx *sqlx.Tx,
-	input ProvisionFilestoreFilesystemInput,
+	mapper FilestoreFilesystemMapper,
+	params filestoreFilesystemProvisionParams,
 ) (filestoreSessionBindingRow, error) {
-	var binding filestoreSessionBindingRow
-	err := namedGetContext(
-		ctx,
-		tx,
-		&binding,
-		validateFilestoreSessionBindingQuery,
-		provisionFilestoreFilesystemArguments(input),
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return filestoreSessionBindingRow{}, ErrNotFound
-	}
+	binding, found, err := mapper.ValidateSessionBinding(ctx, params)
 	if err != nil {
 		return filestoreSessionBindingRow{}, err
+	}
+	if !found {
+		return filestoreSessionBindingRow{}, ErrNotFound
 	}
 	return binding, nil
 }

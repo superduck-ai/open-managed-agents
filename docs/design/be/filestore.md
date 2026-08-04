@@ -52,7 +52,13 @@ flowchart LR
 
 应用启动时只创建一个 `internal/storage.Client`，再用配置中的默认 bucket 名派生并检查一个 `storage.ObjectStore`，供 Files、Skills、Batches、Memory 和 Filestore 共享。`Client.ForBucket(name)` 不新建网络连接，只生成不可变的 bucket 作用域对象存储；通用对象清理 worker 因任务本身持久化了 bucket 名，直接按每条任务选择对象存储，因此可以在同一 endpoint、region 和凭证范围内清理多个 bucket。各资源统一依赖 `storage.ObjectStore` 的 `Upload`、`Open`、`Copy` 和 `Delete` 操作，不再保留旧 `Put/Get/Delete` 方言或 Filestore 专属适配接口。`UploadOptions.Size` 区分已知长度与未知长度流；`Open` 的可选字节区间支持范围读取；`DeleteOptions` 分别表达普通删除、精确版本删除和同键全部版本清理。S3 错误分类、版本查询及删除标记清理由共享实现统一负责。
 
-Files、Filestore 与 Sessions 的查询、namespace 写入、cleanup、配额和游标分页全部使用 `sqlx` 命名参数与结构体映射。Session API 与手动 Deployment Run 共用 `insertSessionSQLXTx`，Session、filesystem、固定根、Thread、公开 Resources、Input Resource 和 Environment Work 只有一条创建路径。普通 namespace mutation 在同一 `sqlx.Tx` 中持有 workspace/filesystem lock，同时维护 Resource、Owned File、账本与 cleanup job；Input attach 则在同一事务中锁定 Source File 并只更新 Resource。`sqlx` 通过 `pgx/stdlib` 复用应用唯一的 `pgxpool`。
+本次统一涉及的 Files Catalog、Session Resource/File namespace、cleanup、配额和游标分页 SQL 由 yourbatis Mapper XML 定义并生成类型化 Go Mapper；业务代码不再拼装这些 SQL 或传递 `map[string]any`。Mapper 按主要持久化表和投影职责拆分：`FileMapper` 负责 `files`，`FilestoreFilesystemMapper` 负责 `filestore_filesystems`，`SessionResourceMapper` 负责 `session_resources` 的写入与树操作，`SessionResourceFileMapper` 只读取 Resource/File 联合投影，`WorkspaceStorageUsageMapper` 负责容量账本，`SkillVersionMapper` 负责 archive 版本校验。创建 Owned File 与 Session Resource 的 CTE 仍由 `SessionResourceMapper` 作为一个 statement 执行，避免为了 mapper 归类破坏跨表原子性。
+
+文件按职责固定拆分：`xxxxs.go`（或同一领域下聚焦的复数业务文件）只保留 `DB` 对上层暴露的 API 与事务编排，`xxx_mapper.go` 保存 Mapper 接口、参数/行结构及 `go:generate` 入口，`xxx_mapper.xml` 保存 SQL，`xxx_mapper.sqlmap.gen.go` 只保存生成代码。业务文件不再使用 `_sqlx.go` 后缀，也不保留仅转调 Mapper 的薄封装。
+
+数据库初始化时基于 `pgx/stdlib` 暴露的同一个 `*sql.DB` 调用一次 `yourbatis.NewDB`，普通 Mapper 直接注入这个共享 Executor；Mapper 自己拥有的事务则通过它的 `BeginTx` 创建，并把返回的事务 Executor 注入事务内的全部 Mapper。因此普通 namespace mutation 仍在同一事务中持有 workspace/filesystem lock，并原子维护 Resource、Owned File、账本与 cleanup job；Input attach 也仍在同一事务中锁定 Source File 并只更新 Resource。Session 创建、删除等仍混合既有命名 `sqlx` SQL 的事务只在事务边界使用窄的兼容 Executor，不再为 `*sqlx.DB` 定义或注入重复的 `dbtx` 抽象。`sqlx` 与 yourbatis 复用应用唯一的 `pgxpool`，不会新建第二个连接池或拆分事务。
+
+Mapper runtime 与生成器统一使用 `go.mod` 固定的 `github.com/superduck-ai/yourbatis v0.1.1`；`sqlmapgen` 通过 Go `tool` 指令声明，避免运行时与生成器版本分叉。更新 XML 后使用 `just generate-yourbatis-mappers` 在本地重建并验证生成文件；`*.gen.go` 按仓库约定不纳入版本控制。Session API 与手动 Deployment Run 仍共用 `insertSessionSQLXTx`，Session、filesystem、固定根、Thread、公开 Resources、Input Resource 和 Environment Work 只有一条创建路径。
 
 ## 鉴权和租户边界
 
@@ -202,8 +208,10 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 
 ## 数据模型
 
-迁移 `00036_unify_session_resources_and_files.sql` 完成 namespace 的原子切换，迁移
-`00037_snapshot_session_skills.sql` 将 Skill Archive 从 catalog version 投影转换为 Session File 快照：
+迁移 `00047_unify_session_resources_and_files.sql` 完成 namespace 的原子切换，迁移
+`00048_snapshot_session_skills.sql` 将 Skill Archive 从 catalog version 投影转换为 Session File 快照：
+
+`00036` 至 `00046` 保持与已发布 main 完全一致；Session Resource/File 迁移只追加到其后，不能通过重编号把新 SQL 塞入已经记录在 `goose_db_version` 的版本。这样从 main `00046` 原地升级与空库顺序执行得到相同 schema，也不会因 force-push 后复用版本号而静默跳过 namespace 切换。
 
 - `filestore_filesystems` 继续只负责将 Filestore external ID 解析到唯一 public Session，不把 filesystem UUID 复制到 Resource。
 - `session_resources` 只使用 `path`、`parent_path`、`file_uuid` 与 `expires_at` 表达 File、Directory 和 Skill Archive 节点；Skill ZIP 的大小、SHA-256、bucket 与 key 与普通文件一样保存在 `files` 行中。
@@ -212,11 +220,11 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 - Resource + File 通用投影直接读取 Resource 的 `organization_uuid/workspace_uuid/session_uuid`，不关联 `filestore_filesystems`。普通读写入口先解析一次活动 filesystem，再用其 `(workspace_uuid, session_uuid)` 查询 namespace；没有预解析上下文的 TTL 全局扫描使用专用查询恢复 cleanup scope。
 - schema 不创建 PostgreSQL 外键；workspace/session/file 的引用完整性和 Skill 快照的来源真实性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
 
-迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00036` 接入统一 Resource，再由 `00037` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00037` 复用该 File，不重复插入同一 identity。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
+迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00047` 接入统一 Resource，再由 `00048` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00048` 复用该 File，不重复插入同一 identity。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
 
 迁移 `00019_add_workspace_storage_usage.sql` 新增 `workspace_storage_usage`。它按工作区分别保存 Files API 与 Filestore 的有效字节数，是配额判定的事务型投影，不是最终文件事实来源；迁移会从两类文件记录建立一次基线，后续由资源写事务按增量维护。
 
-迁移 `00023` 至 `00034` 描述统一前的 filesystem、旧 namespace、Source reference 与 scoped File 同步历史；这些结构只作为 `00036` 的一次性输入，不再是运行时模型。`00036` 成功后应用代码不再读取、写入或修复旧结构。
+迁移 `00023` 至 `00034` 描述统一前的 filesystem、旧 namespace、Source reference 与 scoped File 同步历史；这些结构只作为 `00047` 的一次性输入，不再是运行时模型。`00047` 成功后应用代码不再读取、写入或修复旧结构。
 
 根目录 `/` 仍由 filesystem 合成，不写 marker row 或 S3 marker object；五个固定一级目录是 `resource_type='directory'` 的内部 Resource。每个 `/skills/<directory>` 是 `resource_type='skill_archive'` 的内部 Resource，并通过 `file_uuid` 指向一份不可变 ZIP File 快照；ZIP 成员根据 central directory 动态合成，不持久化成员，也不生成虚假 UUID 或 `fse_` ID。
 

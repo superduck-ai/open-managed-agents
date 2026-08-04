@@ -42,12 +42,6 @@ func TestRuntimeResourceQueriesUseSQLXNamedParameters(t *testing.T) {
 		want      []any
 	}{
 		{
-			name:      "get file",
-			query:     getFileQuery,
-			arguments: getFileArguments(resource.WorkspaceUUID, "file_test"),
-			want:      []any{uuid.MustParse(resource.WorkspaceUUID), "file_test"},
-		},
-		{
 			name:      "get session",
 			query:     getSessionQuery,
 			arguments: sessionLookupArguments(resource.WorkspaceUUID, "session_test"),
@@ -151,8 +145,6 @@ func TestSessionCreationQueriesUseSQLXNamedParameters(t *testing.T) {
 		wantArgCount int
 	}{
 		{"session", createSessionQuery, createSessionArguments(session), 22},
-		{"filesystem", insertSessionFilesystemSQLXQuery, sessionFilesystemArguments(session, "claude_chat_test", createdAt), 7},
-		{"filesystem conflict", sessionFilesystemExternalIDConflictQuery, sessionFilesystemArguments(session, "claude_chat_test", createdAt), 2},
 		{"thread", createSessionThreadQuery, createSessionThreadArguments(thread), 14},
 		{"environment work", createEnvironmentWorkQuery, createEnvironmentWorkArguments(work), 12},
 	}

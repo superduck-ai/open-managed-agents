@@ -1,6 +1,10 @@
 package db
 
-import "context"
+import (
+	"context"
+
+	"github.com/superduck-ai/yourbatis"
+)
 
 const (
 	defaultSessionResourceFilesPageLimit = 100
@@ -13,14 +17,26 @@ func (d *DB) GetSessionResourceFile(ctx context.Context, workspaceUUID, filesyst
 	if err := validateFilestorePath(entryPath); err != nil {
 		return SessionResourceFile{}, err
 	}
-	filesystem, err := getFilestoreFilesystemByUUIDSQLX(ctx, d.sql, workspaceUUID, filesystemUUID)
+	filesystemMapper := NewFilestoreFilesystemMapper(d.mapperDB)
+	filesystemRow, found, err := filesystemMapper.FindFilesystemByUUID(
+		ctx,
+		workspaceUUID,
+		filesystemUUID,
+	)
+	if err != nil {
+		return SessionResourceFile{}, err
+	}
+	if !found {
+		return SessionResourceFile{}, ErrNotFound
+	}
+	filesystem, err := filesystemRow.filesystem()
 	if err != nil {
 		return SessionResourceFile{}, err
 	}
 	if entryPath == "/" {
 		return virtualFilestoreRoot(filesystem), nil
 	}
-	return getActiveSessionResourceFileSQLX(ctx, d.sql, filesystem, entryPath)
+	return getActiveSessionResourceFile(ctx, d.mapperDB, filesystem, entryPath)
 }
 
 // ListSessionResourceFilesPage 以 (path, id) 为稳定排序键执行键集分页。
@@ -34,12 +50,24 @@ func (d *DB) ListSessionResourceFilesPage(ctx context.Context, params ListSessio
 	if err != nil {
 		return SessionResourceFilePage{}, err
 	}
-	query, args := buildSessionResourceFilesPageQuery(filesystem, params)
-	var rows []sessionResourceFileRow
-	if err := namedSelectContext(ctx, d.sql, &rows, query, args); err != nil {
+	mapperParams := sessionResourceFilePageMapperParams{
+		WorkspaceUUID:   filesystem.WorkspaceUUID,
+		SessionUUID:     filesystem.SessionUUID,
+		DirectoryPath:   params.DirectoryPath,
+		DirectoryPrefix: filestoreDirectoryPrefix(params.DirectoryPath),
+		FetchLimit:      params.Limit + 1,
+		Recursive:       params.Recursive,
+		HasCursor:       params.Cursor != nil,
+	}
+	if params.Cursor != nil {
+		mapperParams.CursorPath = params.Cursor.Path
+		mapperParams.CursorUUID = params.Cursor.UUID
+	}
+	rows, err := NewSessionResourceFileMapper(d.mapperDB).ListResourceFilesPage(ctx, mapperParams)
+	if err != nil {
 		return SessionResourceFilePage{}, err
 	}
-	entries, err := sessionResourceFilesFromSQLXRows(rows)
+	entries, err := sessionResourceFilesFromMapperRows(rows)
 	if err != nil {
 		return SessionResourceFilePage{}, err
 	}
@@ -57,37 +85,6 @@ func normalizeSessionResourceFilesPageLimit(limit int) int {
 	}
 }
 
-func buildSessionResourceFilesPageQuery(filesystem FilestoreFilesystem, params ListSessionResourceFilesPageParams) (string, map[string]any) {
-	query := sessionResourceFileSelectSQL() + `
-		where workspace_uuid = :workspace_uuid
-			and session_uuid = :session_uuid
-			and kind <> 'archive'
-			and deleted_at is null
-			and (expires_at is null or expires_at > now())
-	`
-	args := map[string]any{
-		"workspace_uuid": dbUUID(filesystem.WorkspaceUUID),
-		"session_uuid":   dbUUID(filesystem.SessionUUID),
-		"fetch_limit":    params.Limit + 1,
-	}
-	if params.Recursive {
-		// 在 Go 中补齐分隔符，确保 /foo 不会误包含 /foobar。
-		query += " and left(path, char_length(:directory_prefix)) = :directory_prefix"
-		args["directory_prefix"] = filestoreDirectoryPrefix(params.DirectoryPath)
-	} else {
-		query += " and parent_path = :directory_path"
-		args["directory_path"] = params.DirectoryPath
-	}
-	if params.Cursor != nil {
-		query += " and (path, uuid) > (:cursor_path, :cursor_uuid)"
-		args["cursor_path"] = params.Cursor.Path
-		args["cursor_uuid"] = dbUUID(params.Cursor.UUID)
-	}
-	// 多取一条只用于判定 HasMore；返回页仍严格遵守请求的 Limit。
-	query += " order by path asc, uuid asc limit :fetch_limit"
-	return query, args
-}
-
 func filestoreDirectoryPrefix(directoryPath string) string {
 	if directoryPath == "/" {
 		return directoryPath
@@ -101,4 +98,24 @@ func newSessionResourceFilePage(entries []SessionResourceFile, limit int) Sessio
 		page.Entries = entries[:limit]
 	}
 	return page
+}
+
+func getActiveSessionResourceFile(
+	ctx context.Context,
+	database yourbatis.Executor,
+	filesystem FilestoreFilesystem,
+	entryPath string,
+) (SessionResourceFile, error) {
+	row, found, err := NewSessionResourceFileMapper(database).FindActiveResourceFile(ctx, sessionResourcePathParams{
+		WorkspaceUUID: filesystem.WorkspaceUUID,
+		SessionUUID:   filesystem.SessionUUID,
+		EntryPath:     entryPath,
+	})
+	if err != nil {
+		return SessionResourceFile{}, err
+	}
+	if !found {
+		return SessionResourceFile{}, ErrNotFound
+	}
+	return row.entry()
 }

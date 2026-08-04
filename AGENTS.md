@@ -135,6 +135,16 @@
 - 只有本次任务完全未触碰的既有事务编排、批量/COPY、PostgreSQL 特有类型或 API 路径可以继续保留原生 `pgx`；该例外不得用于新增 SQL。
 - sqlx 迁移至少覆盖查询生成与参数绑定单测；涉及 nullable、JSON、数组、自定义类型或 PostgreSQL cast 时，还要增加真实 PostgreSQL 测试，验证命名参数绑定和结构体扫描，而不能只依赖 mock。
 
+## Yourbatis 文件拆分
+
+- 新增或修改 Yourbatis Mapper 前，必须先阅读 `docs/design/be/yourbatis-guidelines.md`；本节规定必须遵守的文件边界，设计文档说明 Mapper、XML、事务、参数安全和测试的具体实现方式。
+- 使用 Yourbatis 的资源按以下职责拆分文件，不要把对上层暴露的 DB API、业务编排、Mapper 声明、XML SQL 和生成代码混放在同一个文件中：
+  - `xxxxs.go`：承载 `DB` 对上层暴露的公共方法、领域参数与结果类型，以及事务、错误映射、分页和其他业务编排；不要在这里声明 Yourbatis Mapper interface 或 `go:generate` 入口。
+  - `xxx_mapper.go`：承载 Yourbatis Mapper interface、Mapper 专属的查询参数与数据库行类型，以及对应的 `//go:generate go tool sqlmapgen ...` 生成入口；不要在这里实现 `DB` 对上层暴露的业务方法。
+  - `xxx.xml`：只承载该 Mapper 的 SQL、动态 SQL、公共 SQL fragment 和结果映射；XML `namespace` 必须与 Mapper interface 名一致，statement `id` 必须与 Mapper 方法名一一对应。
+  - `xxx.sqlmap.gen.go`：由 `sqlmapgen` 生成，禁止手工编辑且不纳入版本控制；修改 Mapper interface 或 XML 后必须重新运行 `go generate ./...` 验证生成结果。
+- 上述文件应放在同一个资源 package 和目录中，并使用一致的 `xxx` 资源前缀，使 Go Mapper、XML 与生成输出可以直接对应；一个生成入口只负责一个 Mapper interface 和一个 XML 文件。
+
 ## PostgreSQL Schema 规则
 
 - 不要创建 PostgreSQL 外键约束。

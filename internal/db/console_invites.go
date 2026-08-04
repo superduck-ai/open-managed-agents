@@ -96,6 +96,9 @@ func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status stri
 		"limit":    limit,
 	})
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return []platform.ConsoleInvite{}, nil
+		}
 		return nil, err
 	}
 

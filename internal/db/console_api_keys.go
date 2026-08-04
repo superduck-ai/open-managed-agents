@@ -59,6 +59,9 @@ func (d *DB) ListConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceUU
 	mapper := NewConsoleAPIKeyMapper(d.mapperDB)
 	rows, err := mapper.List(ctx, orgUUID, workspaceID)
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return []platform.ConsoleAPIKey{}, nil
+		}
 		return nil, err
 	}
 	return lo.Map(rows, func(row consoleAPIKeyRow, _ int) platform.ConsoleAPIKey {
@@ -193,6 +196,9 @@ func (d *DB) CountConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceU
 	mapper := NewConsoleAPIKeyMapper(d.mapperDB)
 	count, err := mapper.CountUnarchived(ctx, orgUUID, workspaceUUID)
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	return int(count), nil
@@ -273,6 +279,9 @@ func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeA
 	query, arguments := listConsoleWorkspacesQuery(orgUUID, includeArchived)
 	workspaces, err := selectConsoleWorkspacesSQLX(ctx, d.sql, query, arguments)
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return []platform.ConsoleWorkspace{}, nil
+		}
 		return nil, err
 	}
 	return workspaces, nil

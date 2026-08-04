@@ -97,6 +97,9 @@ func (d *DB) ListOrgUsers(ctx context.Context, orgUUID string, limit int) ([]pla
 		"limit":    limit,
 	})
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return []platform.OrgUser{}, nil
+		}
 		return nil, err
 	}
 
@@ -143,6 +146,9 @@ func (d *DB) RemoveOrgUser(ctx context.Context, orgUUID string, userID string) (
 	}
 	rowsAffected, err := namedExecRowsAffected(ctx, tx, removeOrgUserQuery, arguments)
 	if err != nil {
+		if isUndefinedRelationError(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	if rowsAffected == 0 {

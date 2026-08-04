@@ -21,8 +21,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go generate ./internal/db \
-    && CGO_ENABLED=0 go build -ldflags="-s -w" -o /oma-server .
+RUN ./scripts/generate-go.sh
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /oma-server .
 
 # ---- 前端构建 (Bun) ---------------------------------------------------------
 FROM ${REGISTRY}/node:22 AS web-builder

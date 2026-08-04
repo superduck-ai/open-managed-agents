@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - '**/*.go'
-      - 'internal/db/*.xml'
+      - 'internal/db/*_mapper.xml'
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
@@ -16,7 +16,7 @@ on:
       - main
     paths:
       - '**/*.go'
-      - 'internal/db/*.xml'
+      - 'internal/db/*_mapper.xml'
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'

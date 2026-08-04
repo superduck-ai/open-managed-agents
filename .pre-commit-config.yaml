@@ -19,6 +19,14 @@ repos:
 
   - repo: local
     hooks:
+      - id: go-generate
+        name: Generate ignored Go sources
+        entry: scripts/generate-go.sh
+        language: script
+        files: ^(?:.*\.go|internal/db/.*_mapper\.xml|go\.(?:mod|sum)|scripts/generate-go\.sh)$
+        pass_filenames: false
+        require_serial: true
+
       - id: gofmt
         name: Format staged Go files
         entry: gofmt -w
@@ -29,14 +37,14 @@ repos:
         name: Lint packages containing staged Go inputs
         entry: scripts/pre-commit-go-lint.sh
         language: script
-        files: ^(?:.*\.go|internal/db/.*\.xml|go\.(?:mod|sum)|scripts/generate-go\.sh)$
+        files: ^(?:.*\.go|internal/db/.*_mapper\.xml|go\.(?:mod|sum)|scripts/generate-go\.sh)$
         require_serial: true
 
       - id: go-dead-code
         name: Detect unreachable Go declarations
         entry: scripts/go-dead-code.sh
         language: script
-        files: ^(?:.*\.go|internal/db/.*\.xml|\.golangci-dead-code\.yml|go\.(?:mod|sum)|scripts/(?:generate-go|go-dead-code)\.sh)$
+        files: ^(?:.*\.go|internal/db/.*_mapper\.xml|\.golangci-dead-code\.yml|go\.(?:mod|sum)|scripts/(?:generate-go|go-dead-code)\.sh)$
         pass_filenames: false
         require_serial: true
 
@@ -44,7 +52,7 @@ repos:
         name: Enforce Go cyclomatic complexity
         entry: scripts/go-complexity.sh
         language: script
-        files: ^(?:.*\.go|internal/db/.*\.xml|\.golangci-complexity\.yml|go\.(?:mod|sum)|scripts/(?:generate-go|go-complexity)\.sh)$
+        files: ^(?:.*\.go|internal/db/.*_mapper\.xml|\.golangci-complexity\.yml|go\.(?:mod|sum)|scripts/(?:generate-go|go-complexity)\.sh)$
         pass_filenames: false
         require_serial: true
 

@@ -24,8 +24,8 @@ Admin API Key 部分覆盖读取、列表、游标查询和更新。公共 DB �
   `rowsAffected`，公共 DB 方法将 `0` 行更新映射为 `ErrNotFound`，不返回数据库实体。
 
 领域记录、公共参数和 DB 对外方法保留在 `admin_api_keys.go`；生成入口、直接参数形式的 Mapper
-接口及分页锚点类型集中在 `admin_api_keys_mapper.go`。SQL、动态过滤条件、结果投影和扫描顺序由
-`admin_api_keys_mapper.xml` 与生成的 `admin_api_keys_mapper.sqlmap.gen.go` 承担。
+接口及分页锚点类型集中在 `admin_api_keys_mapper.go`。SQL、动态过滤条件和结果投影由
+`admin_api_keys_mapper.xml` 描述，扫描与绑定代码在本地构建过程中生成。
 Mapper 方法按实际用途命名为 `FindByExternalID`、`FindPageAnchorByExternalID`、`ListPage`、
 `Insert`、`UpdateByExternalID` 与 `UpdateStatusByUUID`。游标定位和列表过滤拆成两条简单 SQL，避免列表语句中嵌套定位子查询，
 也让 cursor 不存在的 `found=false` 语义保持显式。
@@ -75,6 +75,12 @@ Yourbatis runtime 与生成器均由 `go.mod` 固定到已发布的
 `github.com/superduck-ai/yourbatis v0.1.0`：应用依赖不再使用本地 module replacement，
 `sqlmapgen` 通过 Go `tool` 指令声明，并由 `go:generate` 使用 `go tool sqlmapgen` 调用。
 后续升级只需更新 `go.mod` 中的模块版本，运行时和生成器会保持一致。
+
+生成的 `*.gen.go` 不纳入版本控制，由 `.gitignore` 排除。干净 checkout 必须先执行
+`./scripts/generate-go.sh`（内部为 `go generate ./internal/db`）；`just server`、`just test`、Go
+lint/死代码/复杂度门禁、pre-commit、GitHub Actions 和 Docker 构建都在消费生成代码前自动
+执行该入口。XML 和生成器版本因此成为唯一受版本控制的 Mapper 代码来源，避免生成输出与声明
+发生漂移。
 
 ## 验证
 

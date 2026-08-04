@@ -51,7 +51,8 @@
         SELECT
         <include refid="columns"/>
         FROM code_sessions
-        WHERE uuid = #{codeSessionUUID}
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND uuid = #{codeSessionUUID}
           AND status = 'initializing'
           AND deleted_at IS NULL
         FOR UPDATE
@@ -79,13 +80,4 @@
           AND status = 'initializing'
           AND deleted_at IS NULL
     </update>
-
-    <select id="GetLatestCodeSessionStatus" result="optional">
-        SELECT status
-        FROM code_sessions
-        WHERE session_uuid = #{sessionUUID}
-          AND deleted_at IS NULL
-        ORDER BY created_at DESC, uuid DESC
-        LIMIT 1
-    </select>
 </mapper>

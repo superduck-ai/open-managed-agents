@@ -18,6 +18,7 @@ type CodeSessionMapper interface {
 
 	LockInitializingCodeSession(
 		ctx context.Context,
+		workspaceUUID uuid.UUID,
 		codeSessionUUID uuid.UUID,
 	) (codeSessionRow, bool, error)
 
@@ -40,9 +41,4 @@ type CodeSessionMapper interface {
 		codeSessionUUID uuid.UUID,
 		now time.Time,
 	) (int64, error)
-
-	GetLatestCodeSessionStatus(
-		ctx context.Context,
-		sessionUUID uuid.UUID,
-	) (string, bool, error)
 }

@@ -145,7 +145,11 @@ func (s *Service) ActivateManagedAgentCodeSession(
 			return err
 		}
 		// lock code_session by code session id
-		lockedCodeSession, err := tx.LockInitializingCodeSession(ctx, codeSession.UUID)
+		lockedCodeSession, err := tx.LockInitializingCodeSession(
+			ctx,
+			codeSession.WorkspaceUUID,
+			codeSession.UUID,
+		)
 		if err != nil {
 			return err
 		}

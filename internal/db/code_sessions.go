@@ -281,13 +281,18 @@ func (d *DB) CreateCodeSession(ctx context.Context, input CreateCodeSessionInput
 
 func (tx ManagedAgentActivationTx) LockInitializingCodeSession(
 	ctx context.Context,
+	workspaceUUID string,
 	codeSessionUUID string,
 ) (CodeSession, error) {
+	parsedWorkspaceUUID, err := parseDBUUID("workspace_uuid", workspaceUUID)
+	if err != nil {
+		return CodeSession{}, err
+	}
 	parsedUUID, err := parseDBUUID("code_session_uuid", codeSessionUUID)
 	if err != nil {
 		return CodeSession{}, err
 	}
-	row, found, err := tx.codeSessionMapper.LockInitializingCodeSession(ctx, parsedUUID)
+	row, found, err := tx.codeSessionMapper.LockInitializingCodeSession(ctx, parsedWorkspaceUUID, parsedUUID)
 	if err != nil {
 		return CodeSession{}, err
 	}
@@ -379,21 +384,24 @@ func listExistingActivationInboundEvents(
 	if err != nil {
 		return nil, err
 	}
-	rows, err := codeSessionInboundEventMapper.ListExistingActivationInboundEvents(
-		ctx,
-		organizationUUID,
-		workspaceUUID,
-		idempotencyKeys,
-	)
-	if err != nil {
-		return nil, err
-	}
-	existing := make(map[string]struct{}, len(rows))
-	for _, row := range rows {
-		if row.CodeSessionExternalID != codeSession.ExternalID {
-			return nil, ErrInvalidState
+	existing := make(map[string]struct{}, len(idempotencyKeys))
+	for start := 0; start < len(idempotencyKeys); start += managedAgentActivationInboundBatchSize {
+		end := min(start+managedAgentActivationInboundBatchSize, len(idempotencyKeys))
+		rows, err := codeSessionInboundEventMapper.ListExistingActivationInboundEvents(
+			ctx,
+			organizationUUID,
+			workspaceUUID,
+			idempotencyKeys[start:end],
+		)
+		if err != nil {
+			return nil, err
 		}
-		existing[row.IdempotencyKey] = struct{}{}
+		for _, row := range rows {
+			if row.CodeSessionExternalID != codeSession.ExternalID {
+				return nil, ErrInvalidState
+			}
+			existing[row.IdempotencyKey] = struct{}{}
+		}
 	}
 	return existing, nil
 }

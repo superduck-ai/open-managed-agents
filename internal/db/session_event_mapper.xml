@@ -20,7 +20,7 @@
         deleted_at
     </sql>
 
-	<select id="ListSessionEventsForActivation" resultType="sessionEventRow">
+    <select id="ListSessionEventsForActivation" resultType="sessionEventRow">
         SELECT
         <include refid="columns"/>
         FROM session_events

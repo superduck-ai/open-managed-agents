@@ -167,11 +167,11 @@ func (s *Service) ActivateManagedAgentCodeSession(
 		if err := tx.AppendCodeSessionInboundEvents(ctx, lockedCodeSession, inboundInputs); err != nil {
 			return err
 		}
-		statusUpdated, err := tx.ActivateCodeSession(ctx, lockedCodeSession.UUID, time.Now().UTC())
+		activated, err := tx.ActivateCodeSession(ctx, lockedCodeSession.UUID, time.Now().UTC())
 		if err != nil {
 			return err
 		}
-		if !statusUpdated {
+		if !activated {
 			return db.ErrInvalidState
 		}
 		return nil

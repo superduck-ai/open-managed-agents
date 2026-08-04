@@ -1022,25 +1022,26 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 		inboundMapper := NewCodeSessionInboundEventMapper(executor)
 		outboundMapper := NewCodeSessionOutboundEventMapper(executor)
 
-		session, found, err := codeSessionMapper.LockCodeSessionByExternalID(ctx, codeSessionExternalID)
+		codeSession, found, err := codeSessionMapper.LockCodeSessionByExternalID(ctx, codeSessionExternalID)
 		if err != nil {
 			return err
 		}
 		if !found {
 			return ErrNotFound
 		}
-		if input.RequiredWorkerEpoch != nil && session.CurrentWorkerEpoch != *input.RequiredWorkerEpoch {
+		if input.RequiredWorkerEpoch != nil && codeSession.CurrentWorkerEpoch != *input.RequiredWorkerEpoch {
 			return ErrWorkerEpochMismatch
 		}
+		// 有幂等键时先按 workspace 查是否已写入；命中则返回已有事件并标记 duplicate，避免重复插入。
 		if input.IdempotencyKey != "" {
 			var existing codeSessionEventRow
 			if direction == "outbound" {
 				existing, found, err = outboundMapper.GetCodeSessionOutboundEventByIdempotencyKey(
-					ctx, session.WorkspaceUUID, input.IdempotencyKey,
+					ctx, codeSession.WorkspaceUUID, input.IdempotencyKey,
 				)
 			} else {
 				existing, found, err = inboundMapper.GetCodeSessionInboundEventByIdempotencyKey(
-					ctx, session.WorkspaceUUID, input.IdempotencyKey,
+					ctx, codeSession.WorkspaceUUID, input.IdempotencyKey,
 				)
 			}
 			if err != nil {
@@ -1057,14 +1058,15 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 		if now.IsZero() {
 			now = time.Now().UTC()
 		}
+		// outbound：写入 worker 产出事件，并推进 last_outbound_sequence_num。
 		if direction == "outbound" {
-			sequence := session.LastOutboundSequenceNum + 1
+			sequence := codeSession.LastOutboundSequenceNum + 1
 			inserted, err := outboundMapper.InsertCodeSessionOutboundEvent(ctx, codeSessionOutboundEventInsertRow{
 				ExternalID:            input.ExternalID,
-				OrganizationUUID:      session.OrganizationUUID,
-				WorkspaceUUID:         session.WorkspaceUUID,
-				CodeSessionUUID:       session.UUID,
-				CodeSessionExternalID: session.ExternalID,
+				OrganizationUUID:      codeSession.OrganizationUUID,
+				WorkspaceUUID:         codeSession.WorkspaceUUID,
+				CodeSessionUUID:       codeSession.UUID,
+				CodeSessionExternalID: codeSession.ExternalID,
 				SequenceNum:           sequence,
 				EventType:             input.EventType,
 				EventSubtype:          input.EventSubtype,
@@ -1080,7 +1082,7 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 			if err != nil {
 				return err
 			}
-			updated, err := codeSessionMapper.UpdateCodeSessionOutboundSequence(ctx, session.UUID, sequence, now)
+			updated, err := codeSessionMapper.UpdateCodeSessionOutboundSequence(ctx, codeSession.UUID, sequence, now)
 			if err != nil {
 				return err
 			}
@@ -1091,17 +1093,18 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 			return nil
 		}
 
+		// inbound：写入投递给 worker 的事件（默认 delivery_status=queued），并推进 last_inbound_sequence_num。
 		deliveryStatus := input.DeliveryStatus
 		if deliveryStatus == "" {
 			deliveryStatus = "queued"
 		}
-		sequence := session.LastInboundSequenceNum + 1
+		sequence := codeSession.LastInboundSequenceNum + 1
 		inserted, err := inboundMapper.InsertCodeSessionInboundEvent(ctx, codeSessionInboundEventInsertRow{
 			ExternalID:            input.ExternalID,
-			OrganizationUUID:      session.OrganizationUUID,
-			WorkspaceUUID:         session.WorkspaceUUID,
-			CodeSessionUUID:       session.UUID,
-			CodeSessionExternalID: session.ExternalID,
+			OrganizationUUID:      codeSession.OrganizationUUID,
+			WorkspaceUUID:         codeSession.WorkspaceUUID,
+			CodeSessionUUID:       codeSession.UUID,
+			CodeSessionExternalID: codeSession.ExternalID,
 			SequenceNum:           sequence,
 			EventType:             input.EventType,
 			EventSubtype:          input.EventSubtype,
@@ -1117,7 +1120,7 @@ func (d *DB) appendCodeSessionEvent(ctx context.Context, direction string, codeS
 		if err != nil {
 			return err
 		}
-		updated, err := codeSessionMapper.UpdateCodeSessionInboundSequence(ctx, session.UUID, sequence, now)
+		updated, err := codeSessionMapper.UpdateCodeSessionInboundSequence(ctx, codeSession.UUID, sequence, now)
 		if err != nil {
 			return err
 		}

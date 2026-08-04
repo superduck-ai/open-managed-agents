@@ -240,15 +240,15 @@ func TestDeploymentsAPI(t *testing.T) {
 		)
 	})
 
-	t.Run("success initial user messages enter startup queue in order", func(t *testing.T) {
-		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployment-startup-queue-agent"}`)
+	t.Run("success initial user messages replay in order", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployment-initial-history-agent"}`)
 		defer cleanupAgentRows(t, app.db, agent.ID)
-		env := createEnvironment(t, app, `{"name":"deployment-startup-queue-env"}`)
+		env := createEnvironment(t, app, `{"name":"deployment-initial-history-env"}`)
 		defer cleanupEnvironmentRows(t, app.db, env.ID)
 		deployment := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
-			"name":"deployment startup queue",
+			"name":"deployment initial history",
 			"initial_events":[
 				{"type":"user.message","content":[{"type":"text","text":"deployment first"}]},
 				{"type":"system.message","content":[{"type":"text","text":"public only"}]},
@@ -258,13 +258,9 @@ func TestDeploymentsAPI(t *testing.T) {
 		defer cleanupDeploymentRows(t, app, deployment.ID)
 		run := runDeployment(t, app, deployment.ID)
 		if run.SessionID == nil || *run.SessionID == "" {
-			t.Fatalf("deployment startup queue Session ID = nil: %+v", run)
+			t.Fatalf("deployment initial history Session ID = nil: %+v", run)
 		}
 		defer deleteSession(t, app, *run.SessionID)
-
-		if queued := sessionEventQueueEventIDs(t, app, *run.SessionID); len(queued) != 2 {
-			t.Fatalf("deployment startup queue size = %d, want 2", len(queued))
-		}
 
 		codeSessionID := launchLocalCodeSession(t, app, *run.SessionID)
 		inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
@@ -276,9 +272,6 @@ func TestDeploymentsAPI(t *testing.T) {
 			!strings.Contains(string(inbound[1].Payload), "deployment first") ||
 			!strings.Contains(string(inbound[2].Payload), "deployment second") {
 			t.Fatalf("deployment startup inbound = %#v, want initialize, first, second", inbound)
-		}
-		if remaining := sessionEventQueueEventIDs(t, app, *run.SessionID); len(remaining) != 0 {
-			t.Fatalf("deployment startup queue after activation = %#v, want empty", remaining)
 		}
 	})
 

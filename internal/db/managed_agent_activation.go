@@ -13,7 +13,6 @@ type ManagedAgentActivationTx struct {
 	codeSessionInboundEventMapper CodeSessionInboundEventMapper
 	sessionMapper                 SessionMapper
 	sessionEventMapper            SessionEventMapper
-	sessionEventQueueMapper       SessionEventQueueMapper
 }
 
 // WithManagedAgentActivationTx owns the database transaction lifecycle while
@@ -28,7 +27,27 @@ func (d *DB) WithManagedAgentActivationTx(
 			codeSessionInboundEventMapper: NewCodeSessionInboundEventMapper(executor),
 			sessionMapper:                 NewSessionMapper(executor),
 			sessionEventMapper:            NewSessionEventMapper(executor),
-			sessionEventQueueMapper:       NewSessionEventQueueMapper(executor),
 		})
 	})
+}
+
+// ListSessionEventsForActivation returns complete public history in insertion order.
+func (tx ManagedAgentActivationTx) ListSessionEventsForActivation(
+	ctx context.Context,
+	session Session,
+) ([]SessionEvent, error) {
+	rows, err := tx.sessionEventMapper.ListSessionEventsForActivation(
+		ctx,
+		session.OrganizationUUID,
+		session.WorkspaceUUID,
+		session.UUID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	events := make([]SessionEvent, len(rows))
+	for i, row := range rows {
+		events[i] = row.event()
+	}
+	return events, nil
 }

@@ -36,13 +36,4 @@
         AND deleted_at IS NULL
         FOR UPDATE
     </select>
-
-    <update id="SetSessionOutcomeEvaluations" result="rows">
-        UPDATE sessions
-        SET outcome_evaluations = CAST(#{outcomeEvaluations} AS jsonb),
-        updated_at = NOW()
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND external_id = #{sessionExternalID}
-        AND deleted_at IS NULL
-    </update>
 </mapper>

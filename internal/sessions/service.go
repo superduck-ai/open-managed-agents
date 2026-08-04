@@ -613,23 +613,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
-	created, delivery, err := h.db.AppendSessionEventsForDelivery(
-		r.Context(),
-		session.WorkspaceUUID,
-		session.ExternalID,
-		events,
-		outcomeEvaluations,
-	)
+	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
-		if errors.Is(err, db.ErrSessionStartupMessageConflict) {
-			httpapi.WriteError(w, r, httpapi.NewError(
-				http.StatusConflict,
-				"conflict_error",
-				"Only one user message can be accepted while the session starts",
-			))
-			return
-		}
-		if errors.Is(err, db.ErrSessionArchived) {
+		if errors.Is(err, db.ErrInvalidState) {
 			writeBadRequest(w, r, errors.New("archived sessions do not accept new events"))
 			return
 		}
@@ -639,7 +625,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	for _, event := range created {
 		h.broadcast(event)
 	}
-	if h.codeSessions != nil && delivery == db.SessionEventDeliveryRealtime {
+	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
 		}

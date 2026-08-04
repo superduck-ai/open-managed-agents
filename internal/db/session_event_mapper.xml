@@ -20,41 +20,7 @@
         deleted_at
     </sql>
 
-    <insert id="InsertSessionEvent"
-            result="returning"
-            resultType="sessionEventRow">
-        INSERT INTO session_events (
-            uuid,
-            external_id,
-            organization_uuid,
-            workspace_uuid,
-            session_uuid,
-            session_external_id,
-            thread_uuid,
-            thread_external_id,
-            event_type,
-            payload,
-            processed_at,
-            created_at
-        ) VALUES (
-            #{row.UUID},
-            #{row.ExternalID},
-            #{row.OrganizationUUID},
-            #{row.WorkspaceUUID},
-            #{row.SessionUUID},
-            #{row.SessionExternalID},
-            #{row.ThreadUUID},
-            #{row.ThreadExternalID},
-            #{row.EventType},
-            CAST(#{row.Payload} AS jsonb),
-            #{row.ProcessedAt},
-            #{row.CreatedAt}
-        )
-        RETURNING
-        <include refid="columns"/>
-    </insert>
-
-    <select id="ListSessionEventsForActivation" resultType="sessionEventRow">
+	<select id="ListSessionEventsForActivation" resultType="sessionEventRow">
         SELECT
         <include refid="columns"/>
         FROM session_events
@@ -63,18 +29,5 @@
           AND session_uuid = #{sessionUUID}
           AND deleted_at IS NULL
         ORDER BY created_at ASC, id ASC
-    </select>
-
-    <select id="ListSessionEventsByUUIDs" resultType="sessionEventRow">
-        SELECT
-        <include refid="columns"/>
-        FROM session_events
-        WHERE uuid IN
-        <foreach collection="sessionEventUUIDs" item="sessionEventUUID"
-                 open="(" separator="," close=")">
-            #{sessionEventUUID}
-        </foreach>
-          AND session_uuid = #{sessionUUID}
-          AND deleted_at IS NULL
     </select>
 </mapper>

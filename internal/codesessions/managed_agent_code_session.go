@@ -125,9 +125,8 @@ func (s *Service) CreateManagedAgentCodeSession(ctx context.Context, input Manag
 	}, nil
 }
 
-// ActivateManagedAgentCodeSession locks the owning Session, loads the
-// startup queue and complete public history, writes forwardable events in
-// stable order, clears the queue, and activates the Code Session atomically.
+// ActivateManagedAgentCodeSession locks the owning Session, replays complete
+// public history in stable order, and activates the Code Session atomically.
 func (s *Service) ActivateManagedAgentCodeSession(
 	ctx context.Context,
 	codeSession db.CodeSession,
@@ -150,18 +149,6 @@ func (s *Service) ActivateManagedAgentCodeSession(
 		if err != nil {
 			return err
 		}
-		// Queue rows are only a startup-delivery responsibility check. Inbound
-		// payloads and order come from locked public history below; after that
-		// succeeds the queue is cleared as the handoff completes.
-		queuedEvents, err := tx.ListSessionEventQueueItems(ctx, lockedSession)
-		if err != nil {
-			return err
-		}
-		for _, event := range queuedEvents {
-			if event.EventType != "user.message" {
-				return db.ErrInvalidState
-			}
-		}
 		sessionEvents, err := tx.ListSessionEventsForActivation(ctx, lockedSession)
 		if err != nil {
 			return err
@@ -178,9 +165,6 @@ func (s *Service) ActivateManagedAgentCodeSession(
 			inboundInputs = append(inboundInputs, inbound)
 		}
 		if err := tx.AppendCodeSessionInboundEvents(ctx, lockedCodeSession, inboundInputs); err != nil {
-			return err
-		}
-		if err := tx.DeleteSessionEventQueue(ctx, lockedSession.UUID); err != nil {
 			return err
 		}
 		statusUpdated, err := tx.ActivateCodeSession(ctx, lockedCodeSession.UUID, time.Now().UTC())

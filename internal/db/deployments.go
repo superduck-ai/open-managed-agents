@@ -280,15 +280,6 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	shouldEnqueue, err := shouldQueueForStartupSQLX(ctx, tx, session)
-	if err != nil {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
-	}
-	if shouldEnqueue {
-		if err := enqueueSessionEventsSQLXTx(ctx, tx, session, events); err != nil {
-			return DeploymentRun{}, Session{}, SessionThread{}, nil, err
-		}
-	}
 
 	run := input.Run
 	run.DeploymentUUID = deployment.UUID

@@ -388,9 +388,6 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 		!bytes.Contains(queued[2].Payload, []byte(interruptEventID)) {
 		t.Fatalf("inbound = %#v, want initialize, accepted user message, interrupt", queued)
 	}
-	if remaining := sessionEventQueueEventIDs(t, app, session.ID); len(remaining) != 0 {
-		t.Fatalf("remaining startup session event queue = %#v, want empty", remaining)
-	}
 }
 
 func TestEnvironmentRunnerPackageProvisioning(t *testing.T) {

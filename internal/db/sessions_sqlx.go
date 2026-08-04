@@ -354,13 +354,9 @@ func (tx ManagedAgentActivationTx) LockSessionForEvents(
 	workspaceUUID string,
 	sessionExternalID string,
 ) (Session, error) {
-	parsedWorkspaceUUID, err := parseDBUUID("workspace_uuid", workspaceUUID)
-	if err != nil {
-		return Session{}, err
-	}
 	row, found, err := tx.sessionMapper.LockSessionForEvents(
 		ctx,
-		parsedWorkspaceUUID,
+		workspaceUUID,
 		sessionExternalID,
 	)
 	if err != nil {

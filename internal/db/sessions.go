@@ -329,9 +329,6 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 	if _, err := namedExecContext(ctx, tx, deleteSessionResourcesQuery, arguments); err != nil {
 		return Session{}, err
 	}
-	if err := deleteSessionEventQueueSQLX(ctx, tx, session.UUID); err != nil {
-		return Session{}, err
-	}
 	if _, err := namedExecContext(ctx, tx, deleteSessionEventsQuery, arguments); err != nil {
 		return Session{}, err
 	}
@@ -637,7 +634,13 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, se
 	return tx.Commit()
 }
 
-func (d *DB) AppendSessionEvents(ctx context.Context, workspaceUUID string, sessionExternalID string, events []SessionEvent) ([]SessionEvent, error) {
+func (d *DB) AppendSessionEvents(
+	ctx context.Context,
+	workspaceUUID string,
+	sessionExternalID string,
+	events []SessionEvent,
+	outcomeEvaluations json.RawMessage,
+) ([]SessionEvent, error) {
 	tx, err := d.sql.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -654,6 +657,15 @@ func (d *DB) AppendSessionEvents(ctx context.Context, workspaceUUID string, sess
 	created, err := insertSessionEventsSQLXTx(ctx, tx, session, events, false)
 	if err != nil {
 		return nil, err
+	}
+	if len(outcomeEvaluations) > 0 {
+		if _, err := getSessionSQLX(ctx, tx, setSessionOutcomeEvaluationsQuery, map[string]any{
+			"workspace_uuid":      dbUUID(session.WorkspaceUUID),
+			"session_external_id": session.ExternalID,
+			"outcome_evaluations": jsonArg(outcomeEvaluations),
+		}); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

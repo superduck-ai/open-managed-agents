@@ -685,7 +685,7 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 	}
 }
 
-func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T) {
+func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
 	ctx := context.Background()
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-managed-agent-activation-bucket"))
 	defer app.close()
@@ -712,14 +712,16 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	}
 	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
 
-	accepted := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"must be delivered before activation"}]}]}`, defaultTestKey)
-	if len(accepted.Data) != 1 {
-		t.Fatalf("accepted session events = %#v, want one", accepted.Data)
+	accepted := sendSessionEvents(t, app, session.ID, `{"events":[
+		{"type":"user.message","content":[{"type":"text","text":"startup message one"}]},
+		{"type":"user.message","content":[{"type":"text","text":"startup message two"}]}
+	]}`, defaultTestKey)
+	if len(accepted.Data) != 2 {
+		t.Fatalf("accepted session events = %#v, want two", accepted.Data)
 	}
-	acceptedEventID := sessionEventStringField(t, accepted.Data[0], "id")
 
 	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
-		t.Fatalf("activate with queued session event: %v", err)
+		t.Fatalf("activate with startup history: %v", err)
 	}
 	codeSession, err = app.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
@@ -728,36 +730,26 @@ func TestManagedAgentActivationAtomicallyDeliversSessionEventQueue(t *testing.T)
 	if codeSession.Status != "active" {
 		t.Fatalf("status after activation = %q, want active", codeSession.Status)
 	}
-	if queued := sessionEventQueueEventIDs(t, app, session.ID); len(queued) != 0 {
-		t.Fatalf("Session event queue after activation = %#v, want empty", queued)
-	}
 	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("list inbound after activation: %v", err)
 	}
-	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte(acceptedEventID)) {
-		t.Fatalf("inbound after activation = %#v, want initialize and accepted user message", inbound)
+	if len(inbound) != 3 ||
+		!bytes.Contains(inbound[1].Payload, []byte("startup message one")) ||
+		!bytes.Contains(inbound[2].Payload, []byte("startup message two")) {
+		t.Fatalf("inbound after activation = %#v, want initialize and both startup messages", inbound)
 	}
 
-	// active 后只实时投当前 batch，不再写入 startup queue。
-	sent := sendSessionEvents(t, app, session.ID, `{"events":[
-		{"type":"user.message","content":[{"type":"text","text":"post-cutover batch one"}]},
-		{"type":"user.message","content":[{"type":"text","text":"post-cutover batch two"}]}
-	]}`, defaultTestKey)
-	if len(sent.Data) != 2 {
-		t.Fatalf("post-cutover events = %#v, want two", sent.Data)
-	}
-	if queued := sessionEventQueueEventIDs(t, app, session.ID); len(queued) != 0 {
-		t.Fatalf("post-cutover startup queue = %#v, want empty", queued)
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"post-cutover message"}]}]}`, defaultTestKey)
+	if len(sent.Data) != 1 {
+		t.Fatalf("post-cutover events = %#v, want one", sent.Data)
 	}
 	inbound, err = app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
 	if err != nil {
 		t.Fatalf("list post-cutover inbound: %v", err)
 	}
-	if len(inbound) != 4 ||
-		!bytes.Contains(inbound[2].Payload, []byte("post-cutover batch one")) ||
-		!bytes.Contains(inbound[3].Payload, []byte("post-cutover batch two")) {
-		t.Fatalf("post-cutover inbound = %#v, want realtime user batch after startup message", inbound)
+	if len(inbound) != 4 || !bytes.Contains(inbound[3].Payload, []byte("post-cutover message")) {
+		t.Fatalf("post-cutover inbound = %#v, want realtime message after startup history", inbound)
 	}
 }
 
@@ -805,7 +797,7 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 			CreatedAt:   createdAt,
 		})
 	}
-	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, events); err != nil {
+	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, events, nil); err != nil {
 		t.Fatalf("append large history: %v", err)
 	}
 	if err := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
@@ -826,14 +818,14 @@ func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
 	}
 }
 
-func TestSessionEventQueueDeliveryRollsBackOnHistoryConversionFailure(t *testing.T) {
+func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T) {
 	ctx := context.Background()
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-queue-rollback-bucket"))
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-history-activation-rollback-bucket"))
 	defer app.close()
 
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-queue-rollback-agent"}`)
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-history-activation-rollback-agent"}`)
 	defer cleanupAgentRows(t, app.db, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-event-queue-rollback-env"}`)
+	env := createEnvironment(t, app, `{"name":"sessions-history-activation-rollback-env"}`)
 	defer cleanupEnvironmentRows(t, app.db, env.ID)
 	sessionResponse := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	defer deleteSession(t, app, sessionResponse.ID)
@@ -846,7 +838,7 @@ func TestSessionEventQueueDeliveryRollsBackOnHistoryConversionFailure(t *testing
 	`, codeSessionID); err != nil {
 		t.Fatalf("set rollback code session initializing: %v", err)
 	}
-	sendSessionEvents(t, app, sessionResponse.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"queue row must survive"}]}]}`, defaultTestKey)
+	sendSessionEvents(t, app, sessionResponse.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"history must remain durable"}]}]}`, defaultTestKey)
 	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.db).WorkspaceUUID, sessionResponse.ID)
 	if err != nil {
 		t.Fatalf("load rollback Session: %v", err)
@@ -863,7 +855,7 @@ func TestSessionEventQueueDeliveryRollsBackOnHistoryConversionFailure(t *testing
 		Payload:     json.RawMessage(`[]`),
 		ProcessedAt: invalidAt,
 		CreatedAt:   invalidAt,
-	}}); err != nil {
+	}}, nil); err != nil {
 		t.Fatalf("append invalid forwardable history event: %v", err)
 	}
 	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
@@ -873,9 +865,6 @@ func TestSessionEventQueueDeliveryRollsBackOnHistoryConversionFailure(t *testing
 	}
 	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err == nil {
 		t.Fatal("activation with invalid forwardable history succeeded")
-	}
-	if queued := sessionEventQueueEventIDs(t, app, sessionResponse.ID); len(queued) != 1 {
-		t.Fatalf("queue after rolled-back inbound = %#v, want one row", queued)
 	}
 	after, listErr := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
 	if listErr != nil || len(after) != 1 {
@@ -887,171 +876,6 @@ func TestSessionEventQueueDeliveryRollsBackOnHistoryConversionFailure(t *testing
 	}
 	if reloaded.Status != "initializing" {
 		t.Fatalf("rollback Code Session status = %q, want initializing", reloaded.Status)
-	}
-}
-
-func TestSessionStartupRejectsSecondUserMessage(t *testing.T) {
-	ctx := context.Background()
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-startup-message-conflict-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-startup-message-conflict-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-startup-message-conflict-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, session.ID)
-
-	first := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"first startup message"}]}]}`, defaultTestKey)
-	if len(first.Data) != 1 {
-		t.Fatalf("first startup response = %#v, want one event", first.Data)
-	}
-	firstID := sessionEventStringField(t, first.Data[0], "id")
-
-	second := doSessionRequest(
-		t,
-		app,
-		http.MethodPost,
-		"/v1/sessions/"+session.ID+"/events?beta=true",
-		strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"second startup message"}]}]}`),
-		defaultTestKey,
-		true,
-	)
-	assertError(t, second, http.StatusConflict, "conflict_error")
-
-	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
-	if len(publicEvents.Data) != 1 || !eventPageContains(publicEvents, firstID) {
-		t.Fatalf("public events after conflict = %#v, want only %s", publicEvents.Data, firstID)
-	}
-	queuedEventIDs := sessionEventQueueEventIDs(t, app, session.ID)
-	if !reflect.DeepEqual(queuedEventIDs, []string{firstID}) {
-		t.Fatalf("startup queue event IDs = %#v, want [%s]", queuedEventIDs, firstID)
-	}
-
-	codeSessionID := launchLocalCodeSession(t, app, session.ID)
-	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
-	if err != nil {
-		t.Fatalf("list startup conflict inbound events: %v", err)
-	}
-	if len(inbound) != 2 ||
-		inbound[0].EventSubtype != "initialize" ||
-		!bytes.Contains(inbound[1].Payload, []byte("first startup message")) ||
-		bytes.Contains(inbound[1].Payload, []byte("second startup message")) {
-		t.Fatalf("inbound after startup conflict = %#v, want initialize and first message", inbound)
-	}
-	if remaining := sessionEventQueueEventIDs(t, app, session.ID); len(remaining) != 0 {
-		t.Fatalf("startup queue after activation = %#v, want empty", remaining)
-	}
-}
-
-func TestSessionStartupRejectedBatchHasNoSideEffects(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-startup-message-outcome-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-startup-message-outcome-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-startup-message-outcome-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, session.ID)
-
-	response := doSessionRequest(
-		t,
-		app,
-		http.MethodPost,
-		"/v1/sessions/"+session.ID+"/events?beta=true",
-		strings.NewReader(`{"events":[
-			{"type":"user.define_outcome","description":"must not persist","rubric":{"type":"text","text":"must pass"}},
-			{"type":"user.message","content":[{"type":"text","text":"reject the whole batch"}]}
-		]}`),
-		defaultTestKey,
-		true,
-	)
-	assertError(t, response, http.StatusConflict, "conflict_error")
-
-	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
-	if string(retrieved.OutcomeEvaluations) != "[]" {
-		t.Fatalf("outcomes after rejected startup batch = %s, want []", retrieved.OutcomeEvaluations)
-	}
-	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
-		t.Fatalf("startup outcome batch public events = %#v, want empty", events.Data)
-	}
-	if queued := sessionEventQueueEventIDs(t, app, session.ID); len(queued) != 0 {
-		t.Fatalf("startup outcome batch queue = %#v, want empty", queued)
-	}
-}
-
-func TestSessionStartupSerializesConcurrentUserMessages(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-startup-message-concurrency-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-startup-message-concurrency-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-startup-message-concurrency-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, session.ID)
-
-	type sendResult struct {
-		status int
-		body   []byte
-		err    error
-	}
-	start := make(chan struct{})
-	results := make(chan sendResult, 2)
-	for _, prompt := range []string{"concurrent startup message one", "concurrent startup message two"} {
-		request, err := http.NewRequest(
-			http.MethodPost,
-			app.baseURL+"/v1/sessions/"+session.ID+"/events?beta=true",
-			strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":`+quoteJSON(prompt)+`}]}]}`),
-		)
-		if err != nil {
-			t.Fatalf("create concurrent startup request: %v", err)
-		}
-		request.Header.Set("X-Api-Key", defaultTestKey)
-		request.Header.Set("anthropic-version", "2023-06-01")
-		request.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
-		request.Header.Set("Content-Type", "application/json")
-		go func() {
-			<-start
-			response, err := app.client.Do(request)
-			if err != nil {
-				results <- sendResult{err: err}
-				return
-			}
-			defer response.Body.Close()
-			body, readErr := io.ReadAll(response.Body)
-			results <- sendResult{status: response.StatusCode, body: body, err: readErr}
-		}()
-	}
-	close(start)
-
-	okCount := 0
-	conflictCount := 0
-	for range 2 {
-		result := <-results
-		if result.err != nil {
-			t.Fatalf("send concurrent startup message: %v", result.err)
-		}
-		switch result.status {
-		case http.StatusOK:
-			okCount++
-		case http.StatusConflict:
-			conflictCount++
-		default:
-			t.Fatalf("concurrent startup status = %d, want 200 or 409: %s", result.status, result.body)
-		}
-	}
-	if okCount != 1 || conflictCount != 1 {
-		t.Fatalf("concurrent startup results = %d success, %d conflict; want 1/1", okCount, conflictCount)
-	}
-	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
-	queuedEventIDs := sessionEventQueueEventIDs(t, app, session.ID)
-	if len(publicEvents.Data) != 1 || len(queuedEventIDs) != 1 {
-		t.Fatalf("concurrent startup persisted public/queue = %d/%d, want 1/1", len(publicEvents.Data), len(queuedEventIDs))
-	}
-	if eventID := sessionEventStringField(t, publicEvents.Data[0], "id"); eventID != queuedEventIDs[0] {
-		t.Fatalf("concurrent startup public event = %s, queue event = %s", eventID, queuedEventIDs[0])
 	}
 }
 
@@ -1684,7 +1508,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 			ProcessedAt: now.Add(time.Second),
 			CreatedAt:   now.Add(time.Second),
 		},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("append legacy env manager log: %v", err)
 	}
 
@@ -3669,6 +3493,40 @@ func TestCodeSessionWorkerStreamReplaysUnprocessedEventsForNewEpoch(t *testing.T
 	}
 }
 
+func TestSessionEventRejectedBatchHasNoSideEffects(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-events-atomicity-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-events-atomicity-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-events-atomicity-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[
+			{"type":"user.define_outcome","description":"must not persist","rubric":{"type":"text","text":"must pass"}},
+			{"type":"user.message","content":[]}
+		]}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+
+	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
+	if string(retrieved.OutcomeEvaluations) != "[]" {
+		t.Fatalf("outcomes after rejected batch = %s, want []", retrieved.OutcomeEvaluations)
+	}
+	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("rejected batch public events = %#v, want empty", events.Data)
+	}
+}
+
 func TestSessionEventInputValidation(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-events-validation-bucket"))
 	defer app.close()
@@ -3691,6 +3549,10 @@ func TestSessionEventInputValidation(t *testing.T) {
 	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"ctool_123"},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
 	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"user.custom_tool_result"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
 		t.Fatalf("unexpected valid events response: %+v", valid)
+	}
+	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
+	if !bytes.Contains(retrieved.OutcomeEvaluations, []byte(`"max_iterations":2`)) {
+		t.Fatalf("outcomes after accepted batch = %s, want committed evaluation", retrieved.OutcomeEvaluations)
 	}
 }
 
@@ -3806,7 +3668,6 @@ func TestSessionsSchemaHasNoForeignKeys(t *testing.T) {
 			and ns.oid = current_schema()::regnamespace
 			and cls.relname in (
 				'sessions', 'session_threads', 'session_events', 'session_resources',
-				'session_event_queue',
 				'code_sessions', 'code_session_inbound_events', 'code_session_outbound_events',
 				'code_session_internal_events'
 			)
@@ -4009,34 +3870,6 @@ func sessionEventStringField(t *testing.T, raw json.RawMessage, field string) st
 		t.Fatalf("session event %s = %#v, want non-empty string; raw=%s", field, payload[field], raw)
 	}
 	return value
-}
-
-func sessionEventQueueEventIDs(t *testing.T, app *testApp, sessionID string) []string {
-	t.Helper()
-	rows, err := app.db.Pool.Query(context.Background(), `
-		select e.external_id
-		from session_event_queue q
-		join sessions s on s.uuid = q.session_uuid
-		join session_events e on e.uuid = q.session_event_uuid and e.deleted_at is null
-		where s.external_id = $1
-		order by q.id asc
-	`, sessionID)
-	if err != nil {
-		t.Fatalf("list session event queue: %v", err)
-	}
-	defer rows.Close()
-	var eventIDs []string
-	for rows.Next() {
-		var eventID string
-		if err := rows.Scan(&eventID); err != nil {
-			t.Fatalf("scan session event queue: %v", err)
-		}
-		eventIDs = append(eventIDs, eventID)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate session event queue: %v", err)
-	}
-	return eventIDs
 }
 
 func eventPageContains(events sessionEventPageAPIResponse, needle string) bool {

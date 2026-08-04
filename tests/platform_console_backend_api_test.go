@@ -816,7 +816,7 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 	t.Run("success console workspace create route", func(t *testing.T) {
 		path := consoleOrgPath + "/workspaces"
 		workspaceName := fmt.Sprintf("Docs %d", time.Now().UnixNano())
-		createResp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"name":"`+workspaceName+`","display_color":"#1A8961","data_residency":{"workspace_geo":"us"}}`), cookies)
+		createResp := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"name":"`+workspaceName+`","display_color":"#1A8961"}`), cookies)
 		defer createResp.Body.Close()
 		if createResp.StatusCode != http.StatusOK {
 			t.Fatalf("create workspace status = %d, want 200: %s", createResp.StatusCode, readAll(t, createResp.Body))
@@ -829,10 +829,6 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 		}
 		if created["type"] != "workspace" || created["name"] != workspaceName || created["display_color"] != "#1A8961" || created["color"] != "#1A8961" {
 			t.Fatalf("created workspace = %#v, want source-compatible workspace shape", created)
-		}
-		dataResidency, ok := created["data_residency"].(map[string]any)
-		if !ok || dataResidency["workspace_geo"] != "us" || dataResidency["allowed_inference_geos"] != "unrestricted" || dataResidency["default_inference_geo"] != "global" {
-			t.Fatalf("created data_residency = %#v, want normalized us residency", created["data_residency"])
 		}
 
 		listResp := app.platformRequest(t, http.MethodGet, path, nil, cookies)

@@ -34,7 +34,6 @@ create table if not exists workspaces (
 	archived_at timestamptz,
 	compartment_id text not null default gen_random_uuid()::text,
 	display_color text not null default '#6C5BB9',
-	data_residency jsonb not null default '{"workspace_geo":"us","allowed_inference_geos":"unrestricted","default_inference_geo":"global"}'::jsonb,
 	external_key_id text,
 	tags jsonb not null default '{}'::jsonb,
 	constraint workspaces_id_pk primary key (id),
@@ -47,7 +46,6 @@ alter table if exists workspaces add column if not exists updated_at timestamptz
 alter table if exists workspaces add column if not exists archived_at timestamptz;
 alter table if exists workspaces add column if not exists compartment_id text not null default gen_random_uuid()::text;
 alter table if exists workspaces add column if not exists display_color text not null default '#6C5BB9';
-alter table if exists workspaces add column if not exists data_residency jsonb not null default '{"workspace_geo":"us","allowed_inference_geos":"unrestricted","default_inference_geo":"global"}'::jsonb;
 alter table if exists workspaces add column if not exists external_key_id text;
 alter table if exists workspaces add column if not exists tags jsonb not null default '{}'::jsonb;
 

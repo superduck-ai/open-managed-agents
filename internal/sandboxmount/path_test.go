@@ -67,6 +67,15 @@ func TestFileBackingPath(t *testing.T) {
 			t.Fatalf("backing path = %q", backingPath)
 		}
 	})
+	t.Run("maps official default mount path into uploads", func(t *testing.T) {
+		backingPath, err := FileBackingPath("/uploads/file_test")
+		if err != nil {
+			t.Fatalf("FileBackingPath(): %v", err)
+		}
+		if backingPath != "/uploads/file_test" {
+			t.Fatalf("backing path = %q", backingPath)
+		}
+	})
 	t.Run("keeps runtime-looking names isolated beneath uploads", func(t *testing.T) {
 		backingPath, err := FileBackingPath("/tmp/rclone-mount-config.json")
 		if err != nil {
@@ -89,6 +98,11 @@ func TestValidateFileMountPaths(t *testing.T) {
 			t.Fatal("ValidateFileMountPaths() accepted ancestry conflict")
 		}
 	})
+	t.Run("rejects public and legacy aliases of one backing path", func(t *testing.T) {
+		if err := ValidateFileMountPaths([]string{"/uploads/file_test", "/file_test"}); err == nil {
+			t.Fatal("ValidateFileMountPaths() accepted duplicate backing paths")
+		}
+	})
 	t.Run("accepts distinct paths", func(t *testing.T) {
 		if err := ValidateFileMountPaths([]string{"/workspace/data.csv", "/workspace/config.json"}); err != nil {
 			t.Fatalf("ValidateFileMountPaths(): %v", err)
@@ -97,7 +111,10 @@ func TestValidateFileMountPaths(t *testing.T) {
 }
 
 func TestDefaultFileMountPath(t *testing.T) {
-	if mountPath := DefaultFileMountPath("file_abc123"); mountPath != "/file_abc123" {
+	if mountPath := DefaultFileMountPath("file_abc123", "quarterly report.csv"); mountPath != "/uploads/quarterly report.csv" {
 		t.Fatalf("default mount path = %q", mountPath)
+	}
+	if mountPath := DefaultFileMountPath("file_abc123", ""); mountPath != "/uploads/file_abc123" {
+		t.Fatalf("fallback mount path = %q", mountPath)
 	}
 }

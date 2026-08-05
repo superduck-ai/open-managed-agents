@@ -54,7 +54,7 @@ func ParseFileID(fields map[string]json.RawMessage) (string, error) {
 
 // NormalizeFileSpec applies the public source and mount_path defaults after the
 // caller has resolved fileID in the current workspace.
-func NormalizeFileSpec(fileID string, sourceRaw, mountPathRaw json.RawMessage) (FileSpec, error) {
+func NormalizeFileSpec(fileID, filename string, sourceRaw, mountPathRaw json.RawMessage) (FileSpec, error) {
 	if strings.TrimSpace(fileID) == "" {
 		return FileSpec{}, errors.New("file_id must be non-empty")
 	}
@@ -63,7 +63,7 @@ func NormalizeFileSpec(fileID string, sourceRaw, mountPathRaw json.RawMessage) (
 	}
 	mountPath, err := optionalString(
 		mountPathRaw,
-		sandboxmount.DefaultFileMountPath(fileID),
+		sandboxmount.DefaultFileMountPath(fileID, filename),
 		"mount_path",
 	)
 	if err != nil {

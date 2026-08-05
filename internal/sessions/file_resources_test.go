@@ -112,7 +112,7 @@ func testNormalizedFileResource(t *testing.T, mountPath string) normalizedSessio
 	if err != nil {
 		t.Fatalf("marshal mount path: %v", err)
 	}
-	spec, err := sessionresource.NormalizeFileSpec("file_test", nil, raw)
+	spec, err := sessionresource.NormalizeFileSpec("file_test", "data.csv", nil, raw)
 	if err != nil {
 		t.Fatalf("normalize FileSpec: %v", err)
 	}

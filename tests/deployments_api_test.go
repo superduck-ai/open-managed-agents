@@ -303,7 +303,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		assertRawContains(t, created.Schedule, `"upcoming_runs_at"`)
 		assertRawContains(t, created.Resources, `"github_repository"`)
 		assertRawContains(t, created.Resources, `"source":"/uploads"`)
-		assertRawContains(t, created.Resources, `"mount_path":"/`+file.ID+`"`)
+		assertRawContains(t, created.Resources, `"mount_path":"/uploads/`+file.Filename+`"`)
 		assertRawNotContains(t, created.Resources, "secret-token")
 
 		listed := listDeployments(t, app, "agent_id="+url.QueryEscape(agent.ID))

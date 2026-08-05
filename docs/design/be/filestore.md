@@ -179,12 +179,13 @@ Session 与 Deployment File resource 的公开合同固定为：
 {
   "type": "file",
   "file_id": "file_abc123",
-  "source": "/uploads",
   "mount_path": "/workspace/data.csv"
 }
 ```
 
-`source` 省略时由服务端补为 `/uploads`，显式传入 `null` 或其他值均拒绝。`mount_path` 使用绝对路径形式表达 `/uploads` namespace 中的路径，不是 Sandbox 根目录中的任意目标；示例的 Filestore 路径是 `/uploads/workspace/data.csv`，Sandbox 访问路径是 `/mnt/session/uploads/workspace/data.csv`。未传 `mount_path` 时使用 `/<file_id>`，对应 `/mnt/session/uploads/<file_id>`。
+公开响应不返回内部 Filestore `source` 字段，并统一将 `mount_path` 规范化为 `/uploads` 前缀。为兼容既有请求，边界仍接受省略的 `source` 并在持久化 payload 中补为 `/uploads`，显式传入 `null` 或其他值均拒绝。显式传入 `/workspace/data.csv` 时，公开响应返回 `/uploads/workspace/data.csv`，对应同名 Filestore 路径和 Sandbox 访问路径 `/mnt/session/uploads/workspace/data.csv`；已有数据库记录即使仍保存旧式 `/workspace/data.csv`，序列化时也会补齐前缀。未传 `mount_path` 时，服务端读取 Files API 记录中的原始文件名，公开响应按 Anthropic 示例返回 `/uploads/<filename>`；仅当旧数据缺少文件名时才回退到 `/uploads/<file_id>`。
+
+GitHub Repository 未传 `mount_path` 时使用 `/workspace/<repo-name>`；仓库名从 URL 最后一个路径段派生并去掉 `.git` 后缀，无法解析时回退到 `/workspace/repository`。Session 与 Deployment 共用同一默认值函数。
 
 Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一规范化合同。边界校验拒绝相对路径、根目录、点路径段、空路径段，并限制初始 Session 或 Deployment 最多 100 个 File Resource。数据库在一只 `sqlx.Tx` 内锁定活动 Session，统计容量后提交公开 payload、`/uploads` path 与 Source File UUID；两个并发请求不能把 99 个文件增加到 101 个。路径占用由同一 namespace lock、目录实体和活动路径唯一索引裁决：与其他 Input Resource 的重复或祖先/后代冲突映射为 `400`，被普通 resource 占用则映射为 `409`。rclone ready 后整个 `/uploads` namespace 已直接可见，不执行逐文件软链接。
 
@@ -196,7 +197,7 @@ File resource 写入时，服务锁定 Session、filesystem 和当前 workspace 
 
 - `path` 与 `parent_path` 表示 `/uploads` namespace 位置；
 - `file_uuid` 指向 Source File；
-- `payload` 保留公开 Session Resource 合同，因此 `payload is not null` 同时表达该行是公开 Resource。
+- `payload` 保留资源合同与内部 `source` 映射；Session API 在序列化 File Resource 时过滤内部 `source`，因此 `payload is not null` 同时表达该行是公开 Resource。
 
 Input attach 不创建新的 `files` 行，不复制 File 元数据或 S3 对象，也不修改存储账本。请求与响应的 `file_id` 都是 Source File ID。同一 Source File 可以多次 attach，每次保留独立 `sesrsc_` 和 path；Attach 实例的身份由 Resource ID 表达，而不是再生成一个 `file_`。
 

@@ -134,13 +134,19 @@ func (h *Handler) normalizeResource(
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		if _, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID); err != nil {
+		file, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
+		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return normalizedDeploymentResource{}, fmt.Errorf("file not found: %s", fileID)
 			}
 			return normalizedDeploymentResource{}, err
 		}
-		fileSpec, err := sessionresource.NormalizeFileSpec(fileID, fields["source"], fields["mount_path"])
+		fileSpec, err := sessionresource.NormalizeFileSpec(
+			fileID,
+			file.Filename,
+			fields["source"],
+			fields["mount_path"],
+		)
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
@@ -151,7 +157,11 @@ func (h *Handler) normalizeResource(
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		mountPath, err := optionalStringWithDefault(fields["mount_path"], defaultRepoMountPath(repoURL), "mount_path")
+		mountPath, err := optionalStringWithDefault(
+			fields["mount_path"],
+			sessionresource.DefaultGitHubRepositoryMountPath(repoURL),
+			"mount_path",
+		)
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}

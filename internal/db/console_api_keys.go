@@ -157,7 +157,7 @@ func (d *DB) UpdateConsoleAPIKeyStatus(ctx context.Context, input platform.Updat
 		if updateErr != nil {
 			return mapNoRows(updateErr)
 		}
-		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, row.WorkspaceAPIKeyUUID, input.Status)
+		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, row.WorkspaceAPIKeyUUID.String(), input.Status)
 		if updateErr != nil {
 			return updateErr
 		}

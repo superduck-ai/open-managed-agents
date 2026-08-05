@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminWorkspaceMemberMapper">
+    <sql id="adminWorkspaceMemberColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        workspace_external_id,
+        user_uuid,
+        user_external_id,
+        workspace_role,
+        created_at,
+        updated_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="AdminWorkspaceMember">
+        INSERT INTO workspace_members (
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            workspace_external_id,
+            user_uuid,
+            user_external_id,
+            workspace_role,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.WorkspaceExternalID},
+            #{params.UserUUID},
+            #{params.UserExternalID},
+            #{params.WorkspaceRole},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="adminWorkspaceMemberColumns"/>
+    </insert>
+
+    <select id="FindByUserExternalID" resultType="AdminWorkspaceMember">
+        SELECT
+        <include refid="adminWorkspaceMemberColumns"/>
+        FROM workspace_members
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_external_id = #{workspaceExternalID}
+        AND user_external_id = #{userExternalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindPageAnchorByUserExternalID" resultType="pagePosition">
+        SELECT created_at, uuid
+        FROM workspace_members
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND user_external_id = #{userExternalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListPage" resultType="AdminWorkspaceMember">
+        SELECT
+        <include refid="adminWorkspaceMemberColumns"/>
+        FROM workspace_members
+        <where>
+            organization_uuid = #{organizationUUID}
+            AND workspace_uuid = #{workspaceUUID}
+            AND deleted_at IS NULL
+            <if test="anchor != nil">
+                <choose>
+                    <when test="before">
+                        AND (created_at, uuid) &gt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </when>
+                    <otherwise>
+                        AND (created_at, uuid) &lt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </otherwise>
+                </choose>
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="UpdateRoleByUserExternalID" result="returning" resultType="AdminWorkspaceMember">
+        UPDATE workspace_members
+        SET workspace_role = #{params.WorkspaceRole},
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_external_id = #{params.WorkspaceExternalID}
+        AND user_external_id = #{params.UserExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="adminWorkspaceMemberColumns"/>
+    </update>
+
+    <update id="SoftDeleteByUserExternalID" result="returning" resultType="AdminWorkspaceMember">
+        UPDATE workspace_members
+        SET deleted_at = COALESCE(deleted_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_external_id = #{workspaceExternalID}
+        AND user_external_id = #{userExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="adminWorkspaceMemberColumns"/>
+    </update>
+</mapper>

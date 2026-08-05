@@ -247,6 +247,33 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}); err != nil || len(agents) == 0 {
 		t.Fatalf("list Agents with typed UUID cursor = (%+v, %v)", agents, err)
 	}
+	nextAgent := agent
+	nextAgent.Name = "string UUID PostgreSQL agent"
+	nextAgent.UpdatedAt = now.Add(time.Minute)
+	updatedAgent, err := app.db.UpdateAgent(
+		ctx,
+		ids.WorkspaceUUID,
+		agentID,
+		1,
+		nextAgent,
+		"agentver_string_uuid_"+suffix,
+	)
+	if err != nil || updatedAgent.CurrentVersion != 2 || updatedAgent.Name != nextAgent.Name {
+		t.Fatalf("update Agent through string UUID mapper parameters = (%+v, %v)", updatedAgent, err)
+	}
+	if version, err := app.db.GetAgentVersion(ctx, ids.WorkspaceUUID, agentID, 1); err != nil || version.Name != agent.Name {
+		t.Fatalf("get initial Agent version through string UUID mapper parameters = (%+v, %v)", version, err)
+	}
+	if versions, _, err := app.db.ListAgentVersionsPage(ctx, db.ListAgentVersionsPageParams{
+		WorkspaceUUID:   ids.WorkspaceUUID,
+		AgentExternalID: agentID,
+		Limit:           10,
+	}); err != nil || len(versions) != 2 || versions[0].CurrentVersion != 2 {
+		t.Fatalf("list Agent versions through string UUID mapper parameters = (%+v, %v)", versions, err)
+	}
+	if archived, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
+		t.Fatalf("archive Agent through string UUID mapper parameters = (%+v, %v)", archived, err)
+	}
 
 	skillID := "skill_typed_uuid_" + suffix
 	skillTitle := "typed UUID " + suffix

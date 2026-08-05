@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminWorkspaceMapper">
+    <sql id="adminWorkspaceColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        name,
+        created_at,
+        updated_at,
+        archived_at,
+        compartment_id,
+        display_color,
+        data_residency,
+        external_key_id,
+        tags
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="AdminWorkspace">
+        INSERT INTO workspaces (
+            uuid,
+            external_id,
+            organization_uuid,
+            name,
+            created_at,
+            updated_at,
+            compartment_id,
+            display_color,
+            data_residency,
+            external_key_id,
+            tags
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.Name},
+            #{params.CreatedAt},
+            #{params.CreatedAt},
+            #{params.CompartmentID},
+            #{params.DisplayColor},
+            CAST(#{params.DataResidency} AS jsonb),
+            #{params.ExternalKeyID},
+            CAST(#{params.Tags} AS jsonb)
+        )
+        RETURNING
+        <include refid="adminWorkspaceColumns"/>
+    </insert>
+
+    <select id="FindByIdentifier" resultType="AdminWorkspace">
+        SELECT
+        <include refid="adminWorkspaceColumns"/>
+        FROM workspaces
+        WHERE organization_uuid = #{organizationUUID}
+        AND (external_id = #{externalID} OR uuid = #{workspaceUUID})
+    </select>
+
+    <select id="FindPageAnchorByExternalID" resultType="pagePosition">
+        SELECT created_at, uuid
+        FROM workspaces
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+    </select>
+
+    <select id="ListPage" resultType="AdminWorkspace">
+        SELECT
+        <include refid="adminWorkspaceColumns"/>
+        FROM workspaces
+        <where>
+            organization_uuid = #{organizationUUID}
+            <if test="!includeArchived">
+                AND archived_at IS NULL
+            </if>
+            <if test="anchor != nil">
+                <choose>
+                    <when test="before">
+                        AND (created_at, uuid) &gt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </when>
+                    <otherwise>
+                        AND (created_at, uuid) &lt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </otherwise>
+                </choose>
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="AdminWorkspace">
+        UPDATE workspaces
+        SET name = #{params.Name},
+            data_residency = CAST(#{params.DataResidency} AS jsonb),
+            external_key_id = #{params.ExternalKeyID},
+            tags = CAST(#{params.Tags} AS jsonb),
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND external_id = #{params.ExternalID}
+        RETURNING
+        <include refid="adminWorkspaceColumns"/>
+    </update>
+
+    <update id="ArchiveByExternalID" result="returning" resultType="AdminWorkspace">
+        UPDATE workspaces
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        RETURNING
+        <include refid="adminWorkspaceColumns"/>
+    </update>
+
+    <select id="CountByExternalKeyID" result="scalar">
+        SELECT COUNT(*)
+        FROM workspaces
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_key_id = #{externalID}
+    </select>
+</mapper>

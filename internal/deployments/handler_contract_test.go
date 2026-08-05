@@ -50,7 +50,7 @@ func TestDeploymentResourcesResponse(t *testing.T) {
 		}
 	})
 
-	t.Run("uses official default mount path without rewriting explicit path", func(t *testing.T) {
+	t.Run("maps every file mount path into the uploads namespace", func(t *testing.T) {
 		response, err := deploymentResourcesResponse(json.RawMessage(`[
 			{"type":"file","file_id":"file_default","source":"/uploads","mount_path":"/file_default","_oma_mount_path_defaulted":true},
 			{"type":"file","file_id":"file_explicit","source":"/uploads","mount_path":"/file_explicit","_oma_mount_path_defaulted":false},
@@ -62,11 +62,11 @@ func TestDeploymentResourcesResponse(t *testing.T) {
 		if !strings.Contains(string(response), `"mount_path":"/uploads/file_default"`) {
 			t.Fatalf("default mount path is not public: %s", response)
 		}
-		if !strings.Contains(string(response), `"mount_path":"/file_explicit"`) {
-			t.Fatalf("explicit mount path was rewritten: %s", response)
+		if !strings.Contains(string(response), `"mount_path":"/uploads/file_explicit"`) {
+			t.Fatalf("explicit mount path is not mapped into uploads: %s", response)
 		}
-		if !strings.Contains(string(response), `"mount_path":"/file_legacy_explicit"`) {
-			t.Fatalf("unmarked explicit mount path was rewritten: %s", response)
+		if !strings.Contains(string(response), `"mount_path":"/uploads/file_legacy_explicit"`) {
+			t.Fatalf("unmarked mount path is not mapped into uploads: %s", response)
 		}
 	})
 }

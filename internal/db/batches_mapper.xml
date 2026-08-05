@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="MessageBatchMapper">
+    <sql id="messageBatchColumns">
+        mb.uuid,
+        mb.external_id,
+        mb.workspace_uuid,
+        mb.created_by_api_key_uuid,
+        mb.api_variant,
+        mb.anthropic_version,
+        mb.beta_headers,
+        mb.processing_status,
+        mb.request_count,
+        mb.processing_count,
+        mb.succeeded_count,
+        mb.errored_count,
+        mb.canceled_count,
+        mb.expired_count,
+        mb.results_s3_bucket,
+        mb.results_s3_key,
+        mb.results_size_bytes,
+        mb.results_sha256,
+        mb.created_at,
+        mb.expires_at,
+        mb.ended_at,
+        mb.cancel_initiated_at,
+        mb.archived_at,
+        mb.deleted_at,
+        mb.last_error,
+        mb.updated_at
+    </sql>
+
+    <sql id="messageBatchRequestColumns">
+        uuid,
+        workspace_uuid,
+        message_batch_uuid,
+        request_index,
+        external_id,
+        custom_id,
+        params,
+        status,
+        result,
+        upstream_request_id,
+        started_at,
+        completed_at,
+        in_flight_worker_id,
+        created_at,
+        updated_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="messageBatchCreatedRow">
+        INSERT INTO message_batches (
+            uuid,
+            external_id,
+            workspace_uuid,
+            created_by_api_key_uuid,
+            api_variant,
+            anthropic_version,
+            beta_headers,
+            request_count,
+            processing_count,
+            created_at,
+            expires_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.APIVariant},
+            #{params.AnthropicVersion},
+            CAST(#{params.BetaHeaders} AS jsonb),
+            #{params.RequestCount},
+            #{params.RequestCount},
+            #{params.CreatedAt},
+            #{params.ExpiresAt}
+        )
+        RETURNING uuid, created_at, updated_at
+    </insert>
+
+    <insert id="InsertRequest" result="exec">
+        INSERT INTO message_batch_requests (
+            external_id,
+            workspace_uuid,
+            message_batch_uuid,
+            request_index,
+            custom_id,
+            params
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.WorkspaceUUID},
+            #{params.MessageBatchUUID},
+            #{params.RequestIndex},
+            #{params.CustomID},
+            CAST(#{params.Params,sensitive=true} AS jsonb)
+        )
+    </insert>
+
+    <insert id="InsertJob" result="exec">
+        INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
+        VALUES (
+            CONCAT('job_', REPLACE(CAST(gen_random_uuid() AS text), '-', '')),
+            #{workspaceUUID},
+            'message_batch_process',
+            'pending',
+            CAST(#{payload} AS jsonb)
+        )
+    </insert>
+
+    <select id="FindByExternalID" resultType="messageBatchRow">
+        SELECT
+        <include refid="messageBatchColumns"/>
+        FROM message_batches mb
+        WHERE mb.workspace_uuid = #{workspaceUUID}
+        AND mb.external_id = #{externalID}
+        AND mb.deleted_at IS NULL
+    </select>
+
+    <select id="FindByUUID" resultType="messageBatchRow">
+        SELECT
+        <include refid="messageBatchColumns"/>
+        FROM message_batches mb
+        WHERE mb.uuid = #{batchUUID}
+    </select>
+
+    <select id="FindPageAnchorByExternalID" resultType="messageBatchPageAnchor">
+        SELECT uuid, created_at
+        FROM message_batches
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListPage" resultType="messageBatchRow">
+        SELECT
+        <include refid="messageBatchColumns"/>
+        FROM message_batches mb
+        <where>
+            mb.workspace_uuid = #{workspaceUUID}
+            AND mb.deleted_at IS NULL
+            <if test="anchor != nil">
+                <choose>
+                    <when test="before">
+                        AND (mb.created_at, mb.uuid) &gt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </when>
+                    <otherwise>
+                        AND (mb.created_at, mb.uuid) &lt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </otherwise>
+                </choose>
+            </if>
+        </where>
+        ORDER BY mb.created_at DESC, mb.uuid DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="MarkCancelingByExternalID" result="rows">
+        UPDATE message_batches
+        SET processing_status = 'canceling',
+            cancel_initiated_at = NOW(),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        AND processing_status = 'in_progress'
+    </update>
+
+    <select id="ExistsByExternalID" result="scalar">
+        SELECT EXISTS(
+            SELECT 1
+            FROM message_batches
+            WHERE workspace_uuid = #{workspaceUUID}
+            AND external_id = #{externalID}
+            AND deleted_at IS NULL
+        )
+    </select>
+
+    <update id="SoftDeleteEndedByExternalID" result="rows">
+        UPDATE message_batches
+        SET deleted_at = NOW(),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        AND processing_status = 'ended'
+    </update>
+
+    <select id="FindProcessingStatusByExternalID" result="scalar">
+        SELECT processing_status
+        FROM message_batches
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <update id="Finalize" result="rows">
+        UPDATE message_batches
+        SET processing_status = 'ended',
+            ended_at = #{params.EndedAt},
+            processing_count = #{params.Processing},
+            succeeded_count = #{params.Succeeded},
+            errored_count = #{params.Errored},
+            canceled_count = #{params.Canceled},
+            expired_count = #{params.Expired},
+            results_s3_bucket = #{params.ResultsBucket},
+            results_s3_key = #{params.ResultsKey},
+            results_size_bytes = #{params.ResultsSize},
+            results_sha256 = #{params.ResultsSHA256},
+            updated_at = NOW()
+        WHERE uuid = #{params.BatchUUID}
+        AND processing_status IN ('in_progress', 'canceling')
+    </update>
+
+    <update id="FinalizePendingRequests" result="exec">
+        UPDATE message_batch_requests
+        SET status = #{finalStatus},
+            result = CAST(#{result,sensitive=true} AS jsonb),
+            completed_at = NOW(),
+            updated_at = NOW()
+        WHERE message_batch_uuid = #{batchUUID}
+        AND status = 'queued'
+    </update>
+
+    <update id="MarkStaleInFlightRequestsErrored" result="rows">
+        UPDATE message_batch_requests
+        SET status = 'errored',
+            result = CAST(#{result,sensitive=true} AS jsonb),
+            completed_at = NOW(),
+            updated_at = NOW()
+        WHERE message_batch_uuid = #{batchUUID}
+        AND status = 'in_flight'
+        AND started_at &lt; #{before}
+    </update>
+
+    <select id="CountRequestsByStatus" resultType="messageBatchRequestCountsRow">
+        SELECT
+            CAST(COUNT(*) FILTER (WHERE status IN ('queued', 'in_flight')) AS int) AS processing,
+            CAST(COUNT(*) FILTER (WHERE status = 'succeeded') AS int) AS succeeded,
+            CAST(COUNT(*) FILTER (WHERE status = 'errored') AS int) AS errored,
+            CAST(COUNT(*) FILTER (WHERE status = 'canceled') AS int) AS canceled,
+            CAST(COUNT(*) FILTER (WHERE status = 'expired') AS int) AS expired
+        FROM message_batch_requests
+        WHERE message_batch_uuid = #{batchUUID}
+    </select>
+
+    <select id="ListExpired" resultType="messageBatchRow">
+        SELECT
+        <include refid="messageBatchColumns"/>
+        FROM message_batches mb
+        WHERE mb.deleted_at IS NULL
+        AND mb.processing_status IN ('in_progress', 'canceling')
+        AND mb.expires_at &lt;= #{now}
+        ORDER BY mb.expires_at, mb.uuid
+        LIMIT #{limit}
+    </select>
+
+    <select id="FindRequestByIndex" resultType="messageBatchRequestRow">
+        SELECT
+        <include refid="messageBatchRequestColumns"/>
+        FROM message_batch_requests
+        WHERE message_batch_uuid = #{batchUUID}
+        AND request_index = #{requestIndex}
+    </select>
+
+    <select id="ListRequestsOrdered" resultType="messageBatchRequestRow">
+        SELECT
+        <include refid="messageBatchRequestColumns"/>
+        FROM message_batch_requests
+        WHERE message_batch_uuid = #{batchUUID}
+        ORDER BY request_index
+    </select>
+
+    <update id="ClaimRequest" result="rows">
+        UPDATE message_batch_requests
+        SET status = 'in_flight',
+            started_at = #{startedAt},
+            in_flight_worker_id = #{workerID},
+            updated_at = NOW()
+        WHERE uuid = #{requestUUID}
+        AND status = 'queued'
+    </update>
+
+    <update id="CompleteRequest" result="rows">
+        UPDATE message_batch_requests
+        SET status = #{params.Status},
+            result = CAST(#{params.Result,sensitive=true} AS jsonb),
+            upstream_request_id = NULLIF(#{params.UpstreamRequestID}, ''),
+            completed_at = #{params.CompletedAt},
+            updated_at = NOW()
+        WHERE uuid = #{params.RequestUUID}
+        AND status = 'in_flight'
+    </update>
+
+    <update id="LeaseJobs" result="returning" resultType="messageBatchJobRow">
+        WITH next_jobs AS (
+            SELECT uuid
+            FROM jobs
+            WHERE type = 'message_batch_process'
+            AND run_after &lt;= NOW()
+            AND (
+                status IN ('pending', 'retry')
+                OR (status = 'running' AND locked_until &lt; NOW())
+            )
+            ORDER BY run_after, created_at
+            LIMIT #{limit}
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE jobs j
+        SET status = 'running',
+            locked_by = #{workerID},
+            locked_until = NOW() + #{leaseMicroseconds} * INTERVAL '1 microsecond',
+            updated_at = NOW()
+        FROM next_jobs
+        WHERE j.uuid = next_jobs.uuid
+        RETURNING j.uuid,
+            j.external_id,
+            j.workspace_uuid,
+            j.payload->>'message_batch_uuid' AS message_batch_uuid,
+            COALESCE(j.payload->>'message_batch_external_id', '') AS message_batch_external_id,
+            j.attempts
+    </update>
+
+    <update id="ExtendJobLease" result="rows">
+        UPDATE jobs
+        SET locked_until = NOW() + #{leaseMicroseconds} * INTERVAL '1 microsecond',
+            updated_at = NOW()
+        WHERE uuid = #{jobUUID}
+        AND type = 'message_batch_process'
+        AND status = 'running'
+        AND locked_by = #{workerID}
+    </update>
+
+    <update id="CompleteJob" result="exec">
+        UPDATE jobs
+        SET status = 'completed',
+            locked_by = NULL,
+            locked_until = NULL,
+            updated_at = NOW()
+        WHERE uuid = #{jobUUID}
+        AND type = 'message_batch_process'
+    </update>
+
+    <update id="FailJob" result="exec">
+        UPDATE jobs
+        SET status = #{params.Status},
+            locked_by = NULL,
+            locked_until = NULL,
+            run_after = #{params.RunAfter},
+            updated_at = NOW(),
+            attempts = #{params.Attempts},
+            payload = payload || jsonb_build_object('last_error', CAST(#{params.Reason,sensitive=true} AS text))
+        WHERE uuid = #{params.JobUUID}
+        AND type = 'message_batch_process'
+    </update>
+</mapper>

@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="BuiltinSkillMapper">
+    <sql id="skillColumns">
+        id,
+        uuid,
+        external_id,
+        display_title,
+        latest_version,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <sql id="versionColumns">
+        id,
+        uuid,
+        external_id,
+        skill_id,
+        skill_external_id,
+        version,
+        name,
+        description,
+        directory,
+        s3_bucket,
+        s3_key,
+        size_bytes,
+        sha256,
+        created_at,
+        deleted_at
+    </sql>
+
+    <insert id="UpsertSkill" result="returning" resultType="builtinSkillRow">
+        INSERT INTO builtin_skills (
+            external_id,
+            display_title,
+            latest_version,
+            created_at,
+            updated_at,
+            deleted_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.DisplayTitle},
+            #{params.LatestVersion},
+            #{params.CreatedAt},
+            #{params.CreatedAt},
+            NULL
+        )
+        ON CONFLICT (external_id) DO UPDATE SET
+            display_title = EXCLUDED.display_title,
+            latest_version = EXCLUDED.latest_version,
+            updated_at = EXCLUDED.updated_at,
+            deleted_at = NULL
+        RETURNING
+        <include refid="skillColumns"/>
+    </insert>
+
+    <insert id="UpsertVersion" result="returning" resultType="builtinSkillVersionRow">
+        INSERT INTO builtin_skill_versions (
+            external_id,
+            skill_id,
+            skill_external_id,
+            version,
+            name,
+            description,
+            directory,
+            s3_bucket,
+            s3_key,
+            size_bytes,
+            sha256,
+            created_at,
+            deleted_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.SkillID},
+            #{params.SkillExternalID},
+            #{params.Version},
+            #{params.Name},
+            #{params.Description},
+            #{params.Directory},
+            #{params.S3Bucket},
+            #{params.S3Key},
+            #{params.SizeBytes},
+            #{params.SHA256},
+            #{params.CreatedAt},
+            NULL
+        )
+        ON CONFLICT (skill_id, version) DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            directory = EXCLUDED.directory,
+            s3_bucket = EXCLUDED.s3_bucket,
+            s3_key = EXCLUDED.s3_key,
+            size_bytes = EXCLUDED.size_bytes,
+            sha256 = EXCLUDED.sha256,
+            created_at = CASE
+                WHEN builtin_skill_versions.deleted_at IS NOT NULL THEN EXCLUDED.created_at
+                ELSE builtin_skill_versions.created_at
+            END,
+            deleted_at = NULL
+        WHERE builtin_skill_versions.sha256 = EXCLUDED.sha256
+        RETURNING
+        <include refid="versionColumns"/>
+    </insert>
+
+    <select id="ListSkillsPage" resultType="builtinSkillRow">
+        SELECT
+        <include refid="skillColumns"/>
+        FROM builtin_skills
+        WHERE deleted_at IS NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{limit}
+        OFFSET #{offset}
+    </select>
+
+    <select id="CountSkills" result="scalar">
+        SELECT COUNT(*)
+        FROM builtin_skills
+        WHERE deleted_at IS NULL
+    </select>
+
+    <select id="FindSkillByExternalID" resultType="builtinSkillRow">
+        SELECT
+        <include refid="skillColumns"/>
+        FROM builtin_skills
+        WHERE external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindSkillIDByExternalID" result="scalar">
+        SELECT id
+        FROM builtin_skills
+        WHERE external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListVersionsPage" resultType="builtinSkillVersionRow">
+        SELECT
+        <include refid="versionColumns"/>
+        FROM builtin_skill_versions
+        WHERE skill_id = #{skillID}
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT #{limit}
+        OFFSET #{offset}
+    </select>
+
+    <select id="FindVersion" resultType="builtinSkillVersionRow">
+        SELECT
+        <include refid="versionColumns"/>
+        FROM builtin_skill_versions
+        WHERE skill_external_id = #{skillExternalID}
+        AND version = #{version}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListMissingVersions" resultType="builtinSkillVersionRow">
+        SELECT
+        <include refid="versionColumns"/>
+        FROM builtin_skill_versions
+        WHERE deleted_at IS NULL
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(CAST(#{keepExternalIDsJSON} AS jsonb)) AS kept(external_id)
+            WHERE kept.external_id = builtin_skill_versions.skill_external_id
+        )
+        ORDER BY skill_external_id, version
+    </select>
+
+    <update id="SoftDeleteMissingVersions" result="exec">
+        UPDATE builtin_skill_versions
+        SET deleted_at = #{params.DeletedAt}
+        WHERE deleted_at IS NULL
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(CAST(#{params.KeepExternalIDsJSON} AS jsonb)) AS kept(external_id)
+            WHERE kept.external_id = builtin_skill_versions.skill_external_id
+        )
+    </update>
+
+    <update id="SoftDeleteMissingSkills" result="exec">
+        UPDATE builtin_skills
+        SET deleted_at = #{params.DeletedAt},
+            updated_at = #{params.DeletedAt}
+        WHERE deleted_at IS NULL
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(CAST(#{params.KeepExternalIDsJSON} AS jsonb)) AS kept(external_id)
+            WHERE kept.external_id = builtin_skills.external_id
+        )
+    </update>
+</mapper>

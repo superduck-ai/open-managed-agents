@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ConsoleInviteMapper">
+    <sql id="consoleInviteColumns">
+        external_id AS id,
+        email,
+        role,
+        status,
+        invited_at,
+        expires_at
+    </sql>
+
+    <select id="List" resultType="consoleInviteRow">
+        SELECT
+        <include refid="consoleInviteColumns"/>
+        FROM organization_invites
+        <where>
+            organization_uuid = #{organizationUUID}
+            <choose>
+                <when test="status == ''">
+                    AND deleted_at IS NULL
+                </when>
+                <when test="status == 'pending'">
+                    AND deleted_at IS NULL
+                    AND status = 'pending'
+                    AND expires_at &gt; NOW()
+                </when>
+                <when test="status == 'expired'">
+                    AND deleted_at IS NULL
+                    AND (status = 'expired' OR (status = 'pending' AND expires_at &lt;= NOW()))
+                </when>
+                <when test="status == 'accepted'">
+                    AND deleted_at IS NULL
+                    AND status = 'accepted'
+                </when>
+                <when test="status == 'deleted'">
+                    AND (status = 'deleted' OR deleted_at IS NOT NULL)
+                </when>
+                <otherwise>
+                    AND FALSE
+                </otherwise>
+            </choose>
+        </where>
+        ORDER BY invited_at DESC, uuid DESC
+        LIMIT #{limit}
+    </select>
+
+    <insert id="Insert" result="returning" resultType="consoleInviteRow">
+        INSERT INTO organization_invites (
+            external_id,
+            organization_uuid,
+            email,
+            role,
+            status,
+            invited_at,
+            expires_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.Email},
+            #{params.Role},
+            'pending',
+            #{params.InvitedAt},
+            #{params.ExpiresAt}
+        )
+        RETURNING
+        <include refid="consoleInviteColumns"/>
+    </insert>
+
+    <update id="ResendByExternalID" result="returning" resultType="consoleInviteRow">
+        UPDATE organization_invites
+        SET status = 'pending',
+            invited_at = #{params.InvitedAt},
+            expires_at = #{params.ExpiresAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="consoleInviteColumns"/>
+    </update>
+
+    <update id="SoftDeleteByExternalID" result="returning" resultType="consoleInviteRow">
+        UPDATE organization_invites
+        SET status = 'deleted',
+            deleted_at = COALESCE(deleted_at, NOW())
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        RETURNING
+        <include refid="consoleInviteColumns"/>
+    </update>
+</mapper>

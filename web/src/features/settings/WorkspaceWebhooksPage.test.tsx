@@ -64,6 +64,30 @@ describe('Workspace webhooks page', () => {
     expect(api.requests[0].headers.get('x-workspace-id')).toBe('default');
   });
 
+  test('keeps create errors visible outside the scrolling form body', async () => {
+    resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
+    mockWebhooks([], 'Webhook rejected');
+
+    render(
+      <WorkspaceWebhooksHarness>
+        <WorkspaceWebhooksContent routeWorkspaceId="default" />
+      </WorkspaceWebhooksHarness>,
+    );
+
+    await screen.findByText('No webhook endpoints have been created for Default.');
+    fireEvent.click(screen.getByRole('button', { name: 'Add webhook endpoint' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create webhook endpoint' });
+    fireEvent.change(within(dialog).getByPlaceholderText('https://example.com/webhooks'), {
+      target: { value: 'https://example.com/webhooks' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert.textContent).toContain('Webhook rejected');
+    expect(dialog.querySelector('.subtle-scrollbar-auto')?.contains(alert)).toBe(false);
+  });
+
   test('creates a webhook with default event subscriptions and shows the one-time signing secret', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/webhooks');
     const api = mockWebhooks([]);
@@ -352,7 +376,7 @@ type RecordedRequest = {
   body?: Record<string, unknown>;
 };
 
-function mockWebhooks(initialWebhooks: WebhookEndpoint[]) {
+function mockWebhooks(initialWebhooks: WebhookEndpoint[], createError?: string) {
   let webhooks = [...initialWebhooks];
   const requests: RecordedRequest[] = [];
   const deletedIds: string[] = [];
@@ -370,6 +394,9 @@ function mockWebhooks(initialWebhooks: WebhookEndpoint[]) {
     }
 
     if (url === '/v1/webhooks?beta=true' && method === 'POST') {
+      if (createError) {
+        return jsonResponse({ error: { message: createError } }, 500);
+      }
       const created: WebhookEndpoint = {
         id: 'wh_created',
         type: 'webhook',

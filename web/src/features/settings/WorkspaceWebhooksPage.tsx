@@ -1085,16 +1085,17 @@ function CreateWebhookDialog({
                 })}
               </div>
             </fieldset>
-
-            {error ? <InlineError>{error}</InlineError> : null}
           </div>
 
-          <DialogFooter className="px-4 py-4">
-            <Button type="submit" disabled={!canSubmit} size="lg" className="min-w-[82px]">
-              {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              {msg('common.create', 'Create')}
-            </Button>
-          </DialogFooter>
+          <div className="px-4">
+            {error ? <InlineError>{error}</InlineError> : null}
+            <DialogFooter className="py-4">
+              <Button type="submit" disabled={!canSubmit} size="lg" className="min-w-[82px]">
+                {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                {msg('common.create', 'Create')}
+              </Button>
+            </DialogFooter>
+          </div>
         </form>
       </DialogContent>
     </Dialog>

@@ -1000,15 +1000,20 @@ function CreateWebhookDialog({
         }
       }}
     >
+      {/* grid-rows-[auto_minmax(0,1fr)] pins the header at its content height and lets
+          the form absorb any overflow inside the max-h cap, so header/footer sizing is
+          not coupled to hardcoded pixel budgets. The form repeats the same split: its
+          minmax(0,1fr) row scrolls (min-h-0 on the scroll container resolves the grid
+          item's auto min-height), while the auto row keeps the Create button visible. */}
       <DialogContent
-        className="max-h-[min(720px,calc(100vh-48px))] gap-0 overflow-hidden p-0 sm:max-w-[540px]"
+        className="grid-rows-[auto_minmax(0,1fr)] max-h-[min(720px,calc(100vh-48px))] gap-0 overflow-hidden p-0 sm:max-w-[540px]"
         initialFocus={urlRef}
       >
         <DialogHeader className="px-4 py-4">
           <DialogTitle>{msg('webhooks.createTitle', 'Create webhook endpoint')}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit}>
-          <div className="subtle-scrollbar-auto max-h-[min(588px,calc(100vh-192px))] overflow-y-auto pl-4 pr-2 py-4 space-y-4">
+        <form className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]" onSubmit={handleSubmit}>
+          <div className="subtle-scrollbar-auto min-h-0 space-y-4 overflow-y-auto pl-4 pr-2 py-4">
             <Label className="block" htmlFor="webhook-url">
               {msg('webhooks.endpointUrl', 'Endpoint URL')}
             </Label>

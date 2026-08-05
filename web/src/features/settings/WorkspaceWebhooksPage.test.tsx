@@ -83,6 +83,15 @@ describe('Workspace webhooks page', () => {
     expect(within(dialog).getAllByText('3 of 3').length).toBe(2);
     expect(within(dialog).getByText('1 of 1')).toBeTruthy();
 
+    // Layout regression for #122: the header/footer stay pinned while only the form
+    // body scrolls, driven by grid rows instead of hardcoded pixel budgets.
+    expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)]');
+    expect(dialog.className).toContain('overflow-hidden');
+    const scrollArea = dialog.querySelector('.subtle-scrollbar-auto') as HTMLElement | null;
+    expect(scrollArea).toBeTruthy();
+    expect(scrollArea?.className).toContain('min-h-0');
+    expect(scrollArea?.className).toContain('overflow-y-auto');
+
     fireEvent.change(within(dialog).getByPlaceholderText('https://example.com/webhooks'), {
       target: { value: 'https://example.com/webhooks' },
     });

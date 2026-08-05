@@ -268,7 +268,7 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 	if err != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
 	}
-	if deployment.ArchivedAt != nil || deployment.Status != "active" {
+	if deployment.ArchivedAt != nil {
 		return DeploymentRun{}, Session{}, SessionThread{}, nil, ErrInvalidState
 	}
 

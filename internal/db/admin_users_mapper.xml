@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminUserMapper">
+    <sql id="adminUserColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        email,
+        name,
+        role,
+        added_at
+    </sql>
+
+    <select id="FindByExternalID" resultType="AdminUser">
+        SELECT
+        <include refid="adminUserColumns"/>
+        FROM users
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindPageAnchorByExternalID" resultType="pagePosition">
+        SELECT added_at AS created_at, uuid
+        FROM users
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListPage" resultType="AdminUser">
+        SELECT
+        <include refid="adminUserColumns"/>
+        FROM users
+        <where>
+            organization_uuid = #{organizationUUID}
+            AND deleted_at IS NULL
+            <if test="email != ''">
+                AND LOWER(email) = LOWER(#{email})
+            </if>
+            <if test="anchor != nil">
+                <choose>
+                    <when test="before">
+                        AND (added_at, uuid) &gt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </when>
+                    <otherwise>
+                        AND (added_at, uuid) &lt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </otherwise>
+                </choose>
+            </if>
+        </where>
+        ORDER BY added_at DESC, uuid DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="UpdateRoleByExternalID" result="returning" resultType="AdminUser">
+        UPDATE users
+        SET role = #{role},
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="adminUserColumns"/>
+    </update>
+
+    <update id="SoftDeleteByExternalID" result="returning" resultType="AdminUser">
+        UPDATE users
+        SET deleted_at = COALESCE(deleted_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="adminUserColumns"/>
+    </update>
+
+    <update id="SoftDeleteWorkspaceMembersByUserUUID" result="exec">
+        UPDATE workspace_members
+        SET deleted_at = COALESCE(deleted_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+        AND user_uuid = #{userUUID}
+        AND deleted_at IS NULL
+    </update>
+</mapper>

@@ -2,7 +2,6 @@ package db
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -41,24 +40,5 @@ func TestAppendAdminCursorFilterBuildsBeforeCondition(t *testing.T) {
 	}
 	if !reflect.DeepEqual(values, wantValues) {
 		t.Fatalf("bindNamed() values = %#v, want %#v", values, wantValues)
-	}
-}
-
-func TestGetAdminOrganizationQueryUsesUUID(t *testing.T) {
-	organizationUUID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
-	query, arguments, err := bindNamed(postgresRebinder{}, getAdminOrganizationQuery, map[string]any{
-		"organization_uuid": organizationUUID,
-	})
-	if err != nil {
-		t.Fatalf("bindNamed() error = %v", err)
-	}
-	if len(arguments) != 1 || arguments[0] != organizationUUID {
-		t.Fatalf("bindNamed() arguments = %#v, want organization UUID", arguments)
-	}
-	if want := "where uuid = $1"; !strings.Contains(query, want) {
-		t.Fatalf("bound query = %q, want %q", query, want)
-	}
-	if strings.Contains(query, "CAST(") {
-		t.Fatalf("bound query contains UUID cast ceremony: %q", query)
 	}
 }

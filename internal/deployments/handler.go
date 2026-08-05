@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -27,11 +27,12 @@ import (
 )
 
 const (
-	maxDeploymentBodySize = 4 << 20
+	maxDeploymentBodySize      = 4 << 20
+	managedAgentsBeta          = "managed-agents-2026-04-01"
+	defaultAnthropicAPIVersion = "2023-06-01"
 )
 
 type Handler struct {
-	cfg      config.Config
 	db       *db.DB
 	webhooks webhookEnqueuer
 	logger   *slog.Logger
@@ -43,7 +44,6 @@ type webhookEnqueuer interface {
 }
 
 type RunsHandler struct {
-	cfg    config.Config
 	db     *db.DB
 	logger *slog.Logger
 	router chi.Router
@@ -90,9 +90,59 @@ type resolvedAgent struct {
 	ref      json.RawMessage
 }
 
-func NewHandler(cfg config.Config, database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+type deploymentContentBlockRequest struct {
+	Type    json.RawMessage `json:"type"`
+	Text    json.RawMessage `json:"text"`
+	Source  json.RawMessage `json:"source"`
+	Context json.RawMessage `json:"context"`
+	Title   json.RawMessage `json:"title"`
+}
+
+type deploymentContentSourceRequest struct {
+	Type      json.RawMessage `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	MediaType json.RawMessage `json:"media_type"`
+	URL       json.RawMessage `json:"url"`
+	FileID    json.RawMessage `json:"file_id"`
+}
+
+type deploymentOutcomeRubricRequest struct {
+	Type    json.RawMessage `json:"type"`
+	FileID  json.RawMessage `json:"file_id"`
+	Content json.RawMessage `json:"content"`
+}
+
+type deploymentInitialEvent struct {
+	Type          string          `json:"type"`
+	Content       json.RawMessage `json:"content,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	Rubric        json.RawMessage `json:"rubric,omitempty"`
+	MaxIterations *int            `json:"max_iterations,omitempty"`
+}
+
+type deploymentSessionEventPayload struct {
+	ID            string          `json:"id"`
+	ProcessedAt   string          `json:"processed_at"`
+	Type          string          `json:"type"`
+	Content       json.RawMessage `json:"content,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	Rubric        json.RawMessage `json:"rubric,omitempty"`
+	MaxIterations int             `json:"max_iterations,omitempty"`
+	OutcomeID     string          `json:"outcome_id,omitempty"`
+}
+
+type deploymentOutcomeEvaluation struct {
+	ID            string `json:"id"`
+	OutcomeID     string `json:"outcome_id"`
+	MaxIterations int    `json:"max_iterations"`
+	Status        string `json:"status"`
+	Type          string `json:"type"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, logger: logger}
+	h := &Handler{db: database, webhooks: webhookEvents, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -110,9 +160,9 @@ func NewHandler(cfg config.Config, database *db.DB, webhookEvents webhookEnqueue
 	return h
 }
 
-func NewRunsHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *RunsHandler {
+func NewRunsHandler(database *db.DB, logger *slog.Logger) *RunsHandler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &RunsHandler{cfg: cfg, db: database, logger: logger}
+	h := &RunsHandler{db: database, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -123,16 +173,16 @@ func NewRunsHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Ru
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Deployments API requires beta=true"))
+	if !deploymentAPIContractEnabled(r) {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Deployments API requires anthropic-version and anthropic-beta: "+managedAgentsBeta))
 		return
 	}
 	h.router.ServeHTTP(w, r)
 }
 
 func (h *RunsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Deployment Runs API requires beta=true"))
+	if !deploymentAPIContractEnabled(r) {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Deployment Runs API requires anthropic-version and anthropic-beta: "+managedAgentsBeta))
 		return
 	}
 	h.router.ServeHTTP(w, r)
@@ -152,27 +202,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	if h.isOfficialSDKFixturePrincipal(principal) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(fields, "active", false))
-		return
-	}
-	agent, err := h.resolveAgent(r, principal, fields["agent"])
-	if err != nil {
+	if err := rejectNullFields(fields, "metadata", "resources", "vault_ids"); err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
 	environmentID, err := parseRequiredStringField(fields, "environment_id")
 	if err != nil {
 		writeBadRequest(w, r, err)
-		return
-	}
-	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
-	if err != nil {
-		h.writeEnvironmentLoadError(w, r, err, environmentID)
-		return
-	}
-	if env.ArchivedAt != nil {
-		writeBadRequest(w, r, errors.New("environment must not be archived"))
 		return
 	}
 	name, err := parseRequiredStringField(fields, "name")
@@ -195,6 +231,25 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
+	schedule, err := normalizeOptionalSchedule(fields["schedule"])
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
+	}
+	agent, err := h.resolveAgent(r, principal, fields["agent"])
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
+	}
+	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
+	if err != nil {
+		h.writeEnvironmentLoadError(w, r, err, environmentID)
+		return
+	}
+	if env.ArchivedAt != nil {
+		writeBadRequest(w, r, errors.New("environment must not be archived"))
+		return
+	}
 	resources, resourceSecrets, err := h.normalizeResources(r, principal, fieldOrDefault(fields, "resources", `[]`))
 	if err != nil {
 		h.writeResourceBuildError(w, r, err)
@@ -205,12 +260,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	schedule, err := normalizeOptionalSchedule(fields["schedule"])
-	if err != nil {
-		writeBadRequest(w, r, err)
-		return
-	}
-	deploymentID, err := ids.New("dep_")
+	deploymentID, err := ids.New("depl_")
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate deployment ID"))
 		return
@@ -245,7 +295,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment"))
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(created, now))
+	h.writeDeploymentResponse(w, r, created)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -273,8 +323,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("status must be active or paused"))
 		return
 	}
-	if status != "" && includeArchived {
-		writeBadRequest(w, r, errors.New("status cannot be combined with include_archived=true"))
+	if status != "" && r.URL.Query().Has("include_archived") {
+		writeBadRequest(w, r, errors.New("status cannot be combined with include_archived"))
 		return
 	}
 	createdAtGTE, err := httpapi.ParseOptionalTime(r, "created_at[gte]")
@@ -305,7 +355,13 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	data := make([]deploymentResponse, 0, len(records))
 	for _, record := range records {
-		data = append(data, responseFromDeployment(record, now))
+		response, err := responseFromDeployment(record, now)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "map deployment response", "error", err, "deployment_id", record.ExternalID)
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list deployments"))
+			return
+		}
+		data = append(data, response)
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
@@ -321,16 +377,12 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	if h.isOfficialSDKFixtureDeployment(principal, deploymentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(nil, "active", false))
-		return
-	}
 	record, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(record, time.Now().UTC()))
+	h.writeDeploymentResponse(w, r, record)
 }
 
 func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
@@ -342,10 +394,6 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	fields, err := httpapi.DecodeObjectBody(w, r, maxDeploymentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
-		return
-	}
-	if h.isOfficialSDKFixtureDeployment(principal, deploymentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(fields, "active", false))
 		return
 	}
 	current, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
@@ -405,7 +453,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = httpapi.PatchMetadata(next.Metadata, raw, validateMetadataEntries)
+		next.Metadata, err = patchDeploymentMetadata(next.Metadata, raw)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -445,7 +493,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(updated, time.Now().UTC()))
+	h.writeDeploymentResponse(w, r, updated)
 }
 
 func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
@@ -454,16 +502,12 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	if h.isOfficialSDKFixtureDeployment(principal, deploymentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(nil, "active", true))
-		return
-	}
 	archived, err := h.db.ArchiveDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(archived, time.Now().UTC()))
+	h.writeDeploymentResponse(w, r, archived)
 }
 
 func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) {
@@ -473,16 +517,12 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
 	reason := json.RawMessage(`{"type":"manual"}`)
-	if h.isOfficialSDKFixtureDeployment(principal, deploymentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(nil, "paused", false))
-		return
-	}
 	paused, err := h.db.PauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(paused, time.Now().UTC()))
+	h.writeDeploymentResponse(w, r, paused)
 }
 
 func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) {
@@ -491,16 +531,12 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	if h.isOfficialSDKFixtureDeployment(principal, deploymentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeployment(nil, "active", false))
-		return
-	}
 	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromDeployment(unpaused, time.Now().UTC()))
+	h.writeDeploymentResponse(w, r, unpaused)
 }
 
 func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
@@ -509,10 +545,6 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	if h.isOfficialSDKFixtureDeployment(principal, deploymentID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureDeploymentRun(deploymentID, nil))
-		return
-	}
 	deployment, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
@@ -520,10 +552,6 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	if deployment.ArchivedAt != nil {
 		writeBadRequest(w, r, errors.New("archived deployments cannot be run"))
-		return
-	}
-	if deployment.Status != "active" {
-		writeBadRequest(w, r, errors.New("paused deployments cannot be run"))
 		return
 	}
 	if referenceError := h.validateRunReferences(r, principal, deployment); referenceError != nil {
@@ -752,10 +780,6 @@ func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runID := chi.URLParam(r, "deployment_run_id")
-	if h.isOfficialSDKFixtureRun(principal, runID) {
-		httpapi.WriteJSON(w, http.StatusOK, fixtureRun(h.cfg, h.cfg.SDKFixtures.DeploymentID, &h.cfg.SDKFixtures.SessionID))
-		return
-	}
 	run, err := h.db.GetDeploymentRun(r.Context(), principal.WorkspaceUUID, runID)
 	if err != nil {
 		h.writeRunLoadError(w, r, err, runID)
@@ -839,36 +863,11 @@ func (h *RunsHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw json.RawMessage) (resolvedAgent, error) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return resolvedAgent{}, errors.New("agent is required")
-	}
-	var agentID string
-	var version int
-	if json.Unmarshal(raw, &agentID) != nil {
-		var object struct {
-			Type    string `json:"type"`
-			ID      string `json:"id"`
-			Version *int   `json:"version"`
-		}
-		if err := json.Unmarshal(raw, &object); err != nil {
-			return resolvedAgent{}, errors.New("agent must be a string or object")
-		}
-		if object.Type != "" && object.Type != "agent" {
-			return resolvedAgent{}, errors.New("agent.type must be agent")
-		}
-		agentID = object.ID
-		if object.Version != nil {
-			version = *object.Version
-			if version < 1 {
-				return resolvedAgent{}, errors.New("agent.version must be at least 1")
-			}
-		}
-	}
-	if strings.TrimSpace(agentID) == "" {
-		return resolvedAgent{}, errors.New("agent id must be non-empty")
+	agentID, version, err := parseAgentReference(raw)
+	if err != nil {
+		return resolvedAgent{}, err
 	}
 	var agent db.Agent
-	var err error
 	if version > 0 {
 		agent, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, agentID, version)
 	} else {
@@ -892,6 +891,38 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 		return resolvedAgent{}, err
 	}
 	return resolvedAgent{record: agent, snapshot: snapshot, ref: ref}, nil
+}
+
+func parseAgentReference(raw json.RawMessage) (string, int, error) {
+	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
+		return "", 0, errors.New("agent is required")
+	}
+	var agentID string
+	var version int
+	if json.Unmarshal(raw, &agentID) != nil {
+		var object struct {
+			Type    string `json:"type"`
+			ID      string `json:"id"`
+			Version *int   `json:"version"`
+		}
+		if err := json.Unmarshal(raw, &object); err != nil {
+			return "", 0, errors.New("agent must be a string or object")
+		}
+		if object.Type != "agent" {
+			return "", 0, errors.New("agent.type is required and must be agent")
+		}
+		agentID = object.ID
+		if object.Version != nil {
+			version = *object.Version
+			if version < 1 {
+				return "", 0, errors.New("agent.version must be at least 1")
+			}
+		}
+	}
+	if strings.TrimSpace(agentID) == "" {
+		return "", 0, errors.New("agent id must be non-empty")
+	}
+	return agentID, version, nil
 }
 
 func agentRefRaw(id string, version int) (json.RawMessage, error) {
@@ -931,92 +962,95 @@ func normalizeInitialEvents(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return nil, errors.New("initial_events is required")
 	}
-	var events []map[string]json.RawMessage
+	var events []deploymentInitialEvent
 	if err := json.Unmarshal(raw, &events); err != nil {
 		return nil, errors.New("initial_events must be an array")
 	}
 	if len(events) == 0 || len(events) > 50 {
 		return nil, errors.New("initial_events must contain between 1 and 50 events")
 	}
-	normalized := make([]map[string]any, 0, len(events))
-	for _, event := range events {
-		eventType, err := parseRequiredStringField(event, "type")
-		if err != nil {
-			return nil, err
-		}
-		if !allowedInitialEventType(eventType) {
-			return nil, errors.New("initial_events type must be user.message, user.define_outcome, or system.message")
-		}
-		if _, ok := event["content"]; !ok && eventType != "user.define_outcome" {
-			return nil, errors.New("initial_events content is required")
-		}
-		var payload map[string]any
-		data, _ := json.Marshal(event)
-		if err := json.Unmarshal(data, &payload); err != nil {
-			return nil, errors.New("initial_events entries must be objects")
-		}
-		if eventType == "user.define_outcome" {
-			if _, ok := event["description"]; !ok {
-				return nil, errors.New("user.define_outcome description is required")
+	systemMessages := 0
+	for index := range events {
+		event := &events[index]
+		switch event.Type {
+		case "user.message":
+			if err := validateMessageContent(event.Content, false); err != nil {
+				return nil, err
 			}
-			if _, ok := event["rubric"]; !ok {
-				return nil, errors.New("user.define_outcome rubric is required")
+		case "system.message":
+			systemMessages++
+			if systemMessages > 1 {
+				return nil, errors.New("initial_events may contain at most one system.message")
 			}
-			if rawMax, ok := event["max_iterations"]; ok && !httpapi.IsJSONNull(rawMax) {
-				maxIterations, err := parsePositiveIntRaw(rawMax, "max_iterations")
-				if err != nil {
-					return nil, err
+			if index != len(events)-1 {
+				return nil, errors.New("system.message must be the final initial event")
+			}
+			if index == 0 || events[index-1].Type != "user.message" {
+				return nil, errors.New("system.message must immediately follow user.message")
+			}
+			if err := validateMessageContent(event.Content, true); err != nil {
+				return nil, err
+			}
+		case "user.define_outcome":
+			if strings.TrimSpace(event.Description) == "" {
+				return nil, errors.New("description must be non-empty")
+			}
+			if err := validateOutcomeRubric(event.Rubric); err != nil {
+				return nil, err
+			}
+			if event.MaxIterations != nil {
+				if *event.MaxIterations < 1 {
+					return nil, errors.New("max_iterations must be positive")
 				}
-				if maxIterations > 20 {
+				if *event.MaxIterations > 20 {
 					return nil, errors.New("max_iterations must be at most 20")
 				}
-				payload["max_iterations"] = maxIterations
 			}
+		default:
+			return nil, errors.New("initial_events type must be user.message, user.define_outcome, or system.message")
 		}
-		normalized = append(normalized, payload)
 	}
-	return httpapi.MarshalRaw(normalized)
+	return httpapi.MarshalRaw(events)
 }
 
 func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.SessionEvent, json.RawMessage, error) {
-	var inputs []map[string]any
+	var inputs []deploymentInitialEvent
 	if err := json.Unmarshal(raw, &inputs); err != nil {
 		return nil, nil, errors.New("stored initial_events are invalid")
 	}
 	events := make([]db.SessionEvent, 0, len(inputs))
-	outcomes := make([]map[string]any, 0)
+	outcomes := make([]deploymentOutcomeEvaluation, 0)
 	for _, input := range inputs {
-		eventType, _ := input["type"].(string)
 		eventID, err := ids.New("sevt_")
 		if err != nil {
 			return nil, nil, err
 		}
-		payload := cloneMap(input)
-		payload["id"] = eventID
-		payload["processed_at"] = now.Format(time.RFC3339)
-		if eventType == "user.define_outcome" {
-			outcomeID, _ := payload["outcome_id"].(string)
-			if strings.TrimSpace(outcomeID) == "" {
-				outcomeID, err = ids.New("outc_")
-				if err != nil {
-					return nil, nil, err
-				}
-				payload["outcome_id"] = outcomeID
+		payload := deploymentSessionEventPayload{
+			ID:          eventID,
+			ProcessedAt: now.Format(time.RFC3339),
+			Type:        input.Type,
+			Content:     input.Content,
+			Description: input.Description,
+			Rubric:      input.Rubric,
+		}
+		if input.Type == "user.define_outcome" {
+			outcomeID, err := ids.New("outc_")
+			if err != nil {
+				return nil, nil, err
 			}
 			maxIterations := 3
-			if value, ok := payload["max_iterations"].(float64); ok && value > 0 {
-				maxIterations = int(value)
-			} else if value, ok := payload["max_iterations"].(int); ok && value > 0 {
-				maxIterations = value
+			if input.MaxIterations != nil {
+				maxIterations = *input.MaxIterations
 			}
-			payload["max_iterations"] = maxIterations
-			outcomes = append(outcomes, map[string]any{
-				"id":             outcomeID,
-				"outcome_id":     outcomeID,
-				"max_iterations": maxIterations,
-				"status":         "pending",
-				"type":           "outcome_evaluation",
-				"updated_at":     now.Format(time.RFC3339),
+			payload.OutcomeID = outcomeID
+			payload.MaxIterations = maxIterations
+			outcomes = append(outcomes, deploymentOutcomeEvaluation{
+				ID:            outcomeID,
+				OutcomeID:     outcomeID,
+				MaxIterations: maxIterations,
+				Status:        "pending",
+				Type:          "outcome_evaluation",
+				UpdatedAt:     now.Format(time.RFC3339),
 			})
 		}
 		payloadRaw, err := httpapi.MarshalRaw(payload)
@@ -1026,7 +1060,7 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 		events = append(events, db.SessionEvent{
 			UUID:        uuid.NewString(),
 			ExternalID:  eventID,
-			EventType:   eventType,
+			EventType:   input.Type,
 			Payload:     payloadRaw,
 			ProcessedAt: now,
 			CreatedAt:   now,
@@ -1249,12 +1283,29 @@ func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now tim
 	return raw
 }
 
-func responseFromDeployment(deployment db.Deployment, now time.Time) deploymentResponse {
+func (h *Handler) writeDeploymentResponse(w http.ResponseWriter, r *http.Request, deployment db.Deployment) {
+	response, err := responseFromDeployment(deployment, time.Now().UTC())
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "map deployment response", "error", err, "deployment_id", deployment.ExternalID)
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not return deployment"))
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusOK, response)
+}
+
+func responseFromDeployment(deployment db.Deployment, now time.Time) (deploymentResponse, error) {
 	description := ""
 	if deployment.Description != nil {
 		description = *deployment.Description
 	}
-	ref, _ := agentRefRaw(deployment.AgentExternalID, deployment.AgentVersion)
+	ref, err := agentRefRaw(deployment.AgentExternalID, deployment.AgentVersion)
+	if err != nil {
+		return deploymentResponse{}, err
+	}
+	resources, err := deploymentResourcesResponse(deployment.Resources)
+	if err != nil {
+		return deploymentResponse{}, err
+	}
 	return deploymentResponse{
 		ID:            deployment.ExternalID,
 		Agent:         ref,
@@ -1266,13 +1317,13 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) deploymentR
 		Metadata:      httpapi.RawOr(deployment.Metadata, `{}`),
 		Name:          deployment.Name,
 		PausedReason:  deployment.PausedReason,
-		Resources:     httpapi.RawOr(deployment.Resources, `[]`),
+		Resources:     resources,
 		Schedule:      scheduleResponse(deployment.Schedule, deployment.LastRunAt, now, deployment.ArchivedAt != nil),
 		Status:        deployment.Status,
 		Type:          "deployment",
 		UpdatedAt:     httpapi.FormatTime(deployment.UpdatedAt),
 		VaultIDs:      httpapi.RawOr(deployment.VaultIDs, `[]`),
-	}
+	}, nil
 }
 
 func responseFromRun(run db.DeploymentRun) deploymentRunResponse {
@@ -1349,134 +1400,6 @@ func newRunIDs() (sessionID, threadID, workID, runID string, err error) {
 		return
 	}
 	return
-}
-
-func fixtureRun(cfg config.Config, deploymentID string, sessionID *string) deploymentRunResponse {
-	now := time.Now().UTC()
-	var errRaw json.RawMessage
-	return deploymentRunResponse{
-		ID:             cfg.SDKFixtures.DeploymentRunID,
-		Agent:          json.RawMessage(fmt.Sprintf(`{"id":%q,"type":"agent","version":1}`, cfg.SDKFixtures.AgentID)),
-		CreatedAt:      httpapi.FormatTime(now),
-		DeploymentID:   deploymentID,
-		Error:          errRaw,
-		SessionID:      sessionID,
-		TriggerContext: json.RawMessage(`{"type":"manual"}`),
-		Type:           "deployment_run",
-	}
-}
-
-func (h *Handler) fixtureDeploymentRun(deploymentID string, sessionID *string) deploymentRunResponse {
-	if sessionID == nil {
-		sessionID = &h.cfg.SDKFixtures.SessionID
-	}
-	return fixtureRun(h.cfg, deploymentID, sessionID)
-}
-
-func (h *Handler) fixtureDeployment(fields map[string]json.RawMessage, status string, archived bool) deploymentResponse {
-	now := time.Now().UTC()
-	archivedAt := (*string)(nil)
-	if archived {
-		value := httpapi.FormatTime(now)
-		archivedAt = &value
-	}
-	name := "deployment"
-	if fields != nil {
-		if parsed, err := parseRequiredRawString(fields["name"], "name"); err == nil {
-			name = parsed
-		}
-	}
-	description := ""
-	if fields != nil {
-		if parsed, err := nullableStringFromRaw(fields["description"], "description"); err == nil && parsed != nil {
-			description = *parsed
-		}
-	}
-	environmentID := h.cfg.SDKFixtures.EnvironmentID
-	if fields != nil {
-		if parsed, err := parseRequiredRawString(fields["environment_id"], "environment_id"); err == nil {
-			environmentID = parsed
-		}
-	}
-	initialEvents := json.RawMessage(`[{"type":"user.message","content":[{"type":"text","text":"Where is my order #1234?"}]}]`)
-	if fields != nil && len(fields["initial_events"]) > 0 && !httpapi.IsJSONNull(fields["initial_events"]) {
-		initialEvents = fields["initial_events"]
-	}
-	metadata := json.RawMessage(`{"foo":"string"}`)
-	if fields != nil && len(fields["metadata"]) > 0 && !httpapi.IsJSONNull(fields["metadata"]) {
-		metadata = fields["metadata"]
-	}
-	resources := json.RawMessage(`[]`)
-	if fields != nil && len(fields["resources"]) > 0 && !httpapi.IsJSONNull(fields["resources"]) {
-		resources = stripFixtureResourceSecrets(fields["resources"])
-	}
-	vaultIDs := json.RawMessage(`["string"]`)
-	if fields != nil && len(fields["vault_ids"]) > 0 && !httpapi.IsJSONNull(fields["vault_ids"]) {
-		vaultIDs = fields["vault_ids"]
-	}
-	var schedule json.RawMessage
-	if fields != nil && len(fields["schedule"]) > 0 && !httpapi.IsJSONNull(fields["schedule"]) {
-		schedule = fixtureSchedule(fields["schedule"])
-	}
-	var pausedReason json.RawMessage
-	if status == "paused" {
-		pausedReason = json.RawMessage(`{"type":"manual"}`)
-	}
-	return deploymentResponse{
-		ID:            h.cfg.SDKFixtures.DeploymentID,
-		Agent:         json.RawMessage(fmt.Sprintf(`{"id":%q,"type":"agent","version":1}`, h.cfg.SDKFixtures.AgentID)),
-		ArchivedAt:    archivedAt,
-		CreatedAt:     httpapi.FormatTime(now),
-		Description:   description,
-		EnvironmentID: environmentID,
-		InitialEvents: initialEvents,
-		Metadata:      metadata,
-		Name:          name,
-		PausedReason:  pausedReason,
-		Resources:     resources,
-		Schedule:      schedule,
-		Status:        status,
-		Type:          "deployment",
-		UpdatedAt:     httpapi.FormatTime(now),
-		VaultIDs:      vaultIDs,
-	}
-}
-
-func fixtureSchedule(raw json.RawMessage) json.RawMessage {
-	var schedule map[string]any
-	if err := json.Unmarshal(raw, &schedule); err != nil || schedule == nil {
-		return nil
-	}
-	schedule["last_run_at"] = nil
-	schedule["upcoming_runs_at"] = []any{}
-	out, _ := httpapi.MarshalRaw(schedule)
-	return out
-}
-
-func stripFixtureResourceSecrets(raw json.RawMessage) json.RawMessage {
-	var resources []map[string]any
-	if err := json.Unmarshal(raw, &resources); err != nil {
-		return raw
-	}
-	for _, resource := range resources {
-		delete(resource, "authorization_token")
-	}
-	out, _ := httpapi.MarshalRaw(resources)
-	return out
-}
-
-func (h *Handler) isOfficialSDKFixturePrincipal(principal auth.Principal) bool {
-	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
-}
-
-func (h *Handler) isOfficialSDKFixtureDeployment(principal auth.Principal, deploymentID string) bool {
-	return h.isOfficialSDKFixturePrincipal(principal) && deploymentID == h.cfg.SDKFixtures.DeploymentID
-}
-
-func (h *RunsHandler) isOfficialSDKFixtureRun(principal auth.Principal, runID string) bool {
-	return principal.CredentialType == "api_key" &&
-		principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID &&
-		runID == h.cfg.SDKFixtures.DeploymentRunID
 }
 
 func requireAPIKey(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
@@ -1558,16 +1481,176 @@ func optionalStringWithDefault(raw json.RawMessage, fallback, name string) (stri
 	return parseRequiredRawString(raw, name)
 }
 
-func parsePositiveIntRaw(raw json.RawMessage, name string) (int, error) {
-	var value int
-	if err := json.Unmarshal(raw, &value); err != nil || value < 1 {
-		return 0, fmt.Errorf("%s must be at least 1", name)
+func validateMetadataEntries(metadata map[string]string) error {
+	if err := httpapi.ValidateMetadataEntryLimit(metadata, 16, "metadata may contain at most 16 entries"); err != nil {
+		return err
 	}
-	return value, nil
+	for key, value := range metadata {
+		if key == "" || utf8.RuneCountInString(key) > 64 {
+			return errors.New("metadata keys must be between 1 and 64 characters")
+		}
+		if utf8.RuneCountInString(value) > 512 {
+			return errors.New("metadata values must be at most 512 characters")
+		}
+	}
+	return nil
 }
 
-func validateMetadataEntries(metadata map[string]string) error {
-	return httpapi.ValidateMetadataEntryLimit(metadata, 16, "metadata may contain at most 16 entries")
+func patchDeploymentMetadata(current, raw json.RawMessage) (json.RawMessage, error) {
+	if httpapi.IsJSONNull(raw) {
+		return nil, errors.New("metadata must be an object with string or null values")
+	}
+	metadata := map[string]string{}
+	if len(current) > 0 && !httpapi.IsJSONNull(current) {
+		if err := json.Unmarshal(current, &metadata); err != nil {
+			return nil, errors.New("stored metadata is invalid")
+		}
+	}
+	var patch map[string]*string
+	if err := json.Unmarshal(raw, &patch); err != nil {
+		return nil, errors.New("metadata must be an object with string or null values")
+	}
+	for key, value := range patch {
+		if value == nil {
+			delete(metadata, key)
+			continue
+		}
+		metadata[key] = *value
+	}
+	if err := validateMetadataEntries(metadata); err != nil {
+		return nil, err
+	}
+	return httpapi.MarshalRaw(metadata)
+}
+
+func rejectNullFields(fields map[string]json.RawMessage, names ...string) error {
+	for _, name := range names {
+		if raw, ok := fields[name]; ok && httpapi.IsJSONNull(raw) {
+			return fmt.Errorf("%s must not be null", name)
+		}
+	}
+	return nil
+}
+
+func validateMessageContent(raw json.RawMessage, textOnly bool) error {
+	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
+		return errors.New("initial_events content is required")
+	}
+	var blocks []deploymentContentBlockRequest
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return errors.New("initial_events content must be an array")
+	}
+	if len(blocks) == 0 {
+		return errors.New("initial_events content must contain at least one block")
+	}
+	for _, block := range blocks {
+		blockType, err := parseRequiredRawString(block.Type, "content.type")
+		if err != nil {
+			return err
+		}
+		if textOnly && blockType != "text" {
+			return errors.New("system.message content must contain only text blocks")
+		}
+		switch blockType {
+		case "text":
+			if _, err := parseRequiredRawString(block.Text, "content.text"); err != nil {
+				return err
+			}
+		case "image":
+			if err := validateContentSource(block.Source, false); err != nil {
+				return err
+			}
+		case "document":
+			if err := validateContentSource(block.Source, true); err != nil {
+				return err
+			}
+			for _, field := range []struct {
+				name string
+				raw  json.RawMessage
+			}{{name: "context", raw: block.Context}, {name: "title", raw: block.Title}} {
+				if len(field.raw) > 0 && !httpapi.IsJSONNull(field.raw) {
+					if _, err := parseRequiredRawString(field.raw, field.name); err != nil {
+						return err
+					}
+				}
+			}
+		default:
+			return errors.New("user.message content type must be text, image, or document")
+		}
+	}
+	return nil
+}
+
+func validateContentSource(raw json.RawMessage, document bool) error {
+	var source deploymentContentSourceRequest
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return errors.New("content source must be an object")
+	}
+	sourceType, err := parseRequiredRawString(source.Type, "source.type")
+	if err != nil {
+		return err
+	}
+	switch sourceType {
+	case "base64":
+		if _, err := parseRequiredRawString(source.Data, "source.data"); err != nil {
+			return err
+		}
+		_, err = parseRequiredRawString(source.MediaType, "source.media_type")
+		return err
+	case "url":
+		_, err = parseRequiredRawString(source.URL, "source.url")
+		return err
+	case "file":
+		_, err = parseRequiredRawString(source.FileID, "source.file_id")
+		return err
+	case "text":
+		if !document {
+			return errors.New("image source type must be base64, url, or file")
+		}
+		if _, err := parseRequiredRawString(source.Data, "source.data"); err != nil {
+			return err
+		}
+		mediaType, err := parseRequiredRawString(source.MediaType, "source.media_type")
+		if err != nil {
+			return err
+		}
+		if mediaType != "text/plain" {
+			return errors.New("text document media_type must be text/plain")
+		}
+		return nil
+	default:
+		if document {
+			return errors.New("document source type must be base64, text, url, or file")
+		}
+		return errors.New("image source type must be base64, url, or file")
+	}
+}
+
+func validateOutcomeRubric(raw json.RawMessage) error {
+	var rubric deploymentOutcomeRubricRequest
+	if err := json.Unmarshal(raw, &rubric); err != nil {
+		return errors.New("user.define_outcome rubric must be an object")
+	}
+	rubricType, err := parseRequiredRawString(rubric.Type, "rubric.type")
+	if err != nil {
+		return err
+	}
+	switch rubricType {
+	case "file":
+		_, err = parseRequiredRawString(rubric.FileID, "rubric.file_id")
+		return err
+	case "text":
+		content, err := parseRequiredRawString(rubric.Content, "rubric.content")
+		if err != nil {
+			return err
+		}
+		if utf8.RuneCountInString(content) > 262144 {
+			return errors.New("user.define_outcome text rubric must be at most 262144 characters")
+		}
+		return nil
+	default:
+		return errors.New("user.define_outcome rubric type must be file or text")
+	}
 }
 
 func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
@@ -1575,17 +1658,6 @@ func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) js
 		return raw
 	}
 	return json.RawMessage(fallback)
-}
-
-func copyOptionalPayloadString(payload map[string]any, fields map[string]json.RawMessage, name string) {
-	raw, ok := fields[name]
-	if !ok || httpapi.IsJSONNull(raw) {
-		return
-	}
-	var value string
-	if json.Unmarshal(raw, &value) == nil {
-		payload[name] = value
-	}
 }
 
 func validateCheckout(raw json.RawMessage) error {
@@ -1608,13 +1680,22 @@ func validateCheckout(raw json.RawMessage) error {
 	return err
 }
 
-func allowedInitialEventType(eventType string) bool {
-	switch eventType {
-	case "user.message", "user.define_outcome", "system.message":
+func deploymentAPIContractEnabled(r *http.Request) bool {
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if ok && principal.CredentialType == auth.CredentialTypePlatformSession && r.URL.Query().Get("beta") == "true" {
 		return true
-	default:
+	}
+	if strings.TrimSpace(r.Header.Get("anthropic-version")) != defaultAnthropicAPIVersion {
 		return false
 	}
+	for _, value := range r.Header.Values("anthropic-beta") {
+		for _, beta := range strings.Split(value, ",") {
+			if strings.TrimSpace(beta) == managedAgentsBeta {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func defaultRepoMountPath(rawURL string) string {
@@ -1630,14 +1711,6 @@ func defaultRepoMountPath(rawURL string) string {
 		name = "repository"
 	}
 	return "/workspace/" + name
-}
-
-func cloneMap(input map[string]any) map[string]any {
-	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
-	return output
 }
 
 func parseOptionalBool(r *http.Request, name string) (bool, error) {
@@ -1736,6 +1809,10 @@ func (h *Handler) writeEnvironmentLoadError(w http.ResponseWriter, r *http.Reque
 func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) {
 	var refErr resourceReferenceError
 	if errors.As(err, &refErr) {
+		if refErr.ResourceType == "file" && errors.Is(refErr.Err, db.ErrNotFound) {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+refErr.ResourceID))
+			return
+		}
 		if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Memory store not found: "+refErr.ResourceID))
 			return

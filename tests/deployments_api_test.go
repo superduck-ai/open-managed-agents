@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -54,17 +55,37 @@ func TestDeploymentsAPI(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("deployments-bucket"))
 	defer app.close()
 
-	t.Run("success missing beta header", func(t *testing.T) {
+	t.Run("failure API key request missing managed agents beta header", func(t *testing.T) {
 		resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployments?beta=true", nil, defaultTestKey, false)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("failure API key request missing Anthropic version header", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, app.baseURL+"/v1/deployments", nil)
+		if err != nil {
+			t.Fatalf("new deployment request: %v", err)
+		}
+		req.Header.Set("X-Api-Key", defaultTestKey)
+		req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
+		resp, err := app.client.Do(req)
+		if err != nil {
+			t.Fatalf("do deployment request: %v", err)
+		}
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("success canonical URLs without beta query", func(t *testing.T) {
+		resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployments", nil, defaultTestKey, true)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 		}
-	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
-		resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployments", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		resp = doDeploymentRequest(t, app, http.MethodGet, "/v1/deployment_runs", nil, defaultTestKey, true)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("deployment runs status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
 	})
 
 	t.Run("failure invalid json", func(t *testing.T) {
@@ -74,6 +95,79 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure missing required fields", func(t *testing.T) {
 		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(`{"name":"missing"}`), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("create request contract", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-request-contract-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-request-contract-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		store := createMemoryStore(t, app, "deployments-request-contract-store")
+
+		tests := []struct {
+			name string
+			body string
+		}{
+			{
+				name: "agent object without type",
+				body: `{"agent":{"id":` + quoteJSON(agent.ID) + `},"environment_id":` + quoteJSON(env.ID) + `,"name":"invalid","initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`,
+			},
+			{name: "null metadata", body: deploymentBodyWithExtra(agent.ID, env.ID, `"metadata":null`)},
+			{name: "null resources", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":null`)},
+			{name: "null vault ids", body: deploymentBodyWithExtra(agent.ID, env.ID, `"vault_ids":null`)},
+			{name: "metadata key too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"metadata":{`+quoteJSON(strings.Repeat("k", 65))+`:"value"}`)},
+			{name: "metadata value too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"metadata":{"key":`+quoteJSON(strings.Repeat("v", 513))+`}`)},
+			{name: "message content is not an array", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.message","content":"hello"}]`)},
+			{name: "message content is empty", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.message","content":[]}]`)},
+			{name: "system message contains image", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.message","content":[{"type":"text","text":"hello"}]},{"type":"system.message","content":[{"type":"image","source":{"type":"url","url":"https://example.com/image.png"}}]}]`)},
+			{name: "outcome rubric is not an object", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.define_outcome","description":"ship it","rubric":"be correct"}]`)},
+			{name: "github token is missing", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo.git"}]`)},
+			{name: "memory instructions are not a string", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":42}]`)},
+			{name: "memory instructions are too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":`+quoteJSON(strings.Repeat("i", 4097))+`}]`)},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments", strings.NewReader(test.body), defaultTestKey, true)
+				assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+			})
+		}
+
+		t.Run("success agent object without version uses latest", func(t *testing.T) {
+			created := createDeployment(t, app, `{"agent":{"id":`+quoteJSON(agent.ID)+`,"type":"agent"},"environment_id":`+quoteJSON(env.ID)+`,"name":"latest agent","initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`)
+			defer cleanupDeploymentRows(t, app, created.ID)
+			assertRawContains(t, created.Agent, `"version":1`)
+		})
+
+		t.Run("success agent object with version", func(t *testing.T) {
+			created := createDeployment(t, app, `{"agent":{"id":`+quoteJSON(agent.ID)+`,"type":"agent","version":1},"environment_id":`+quoteJSON(env.ID)+`,"name":"versioned agent","initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`)
+			defer cleanupDeploymentRows(t, app, created.ID)
+			assertRawContains(t, created.Agent, `"version":1`)
+		})
+
+		t.Run("success memory instructions may be empty", func(t *testing.T) {
+			created := createDeployment(
+				t,
+				app,
+				deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"memory_store","memory_store_id":`+quoteJSON(store.ID)+`,"instructions":""}]`),
+			)
+			defer cleanupDeploymentRows(t, app, created.ID)
+			assertRawContains(t, created.Resources, `"instructions":""`)
+		})
+
+	})
+
+	t.Run("failure github resources returned by get require token on update", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-github-round-trip-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-github-round-trip-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo.git","authorization_token":"secret"}]`))
+		defer cleanupDeploymentRows(t, app, created.ID)
+
+		retrieved := retrieveDeployment(t, app, created.ID)
+		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+created.ID, strings.NewReader(`{"resources":`+string(retrieved.Resources)+`}`), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
@@ -102,6 +196,135 @@ func TestDeploymentsAPI(t *testing.T) {
 		)
 		resp = doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(duplicateMounts), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("deployment file resources use the official aggregate resource limit", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-resource-limit-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-resource-limit-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		file := uploadFile(t, app, "deployment-resource-limit.txt", "text/plain", []byte("resource limit"))
+		defer deleteFile(t, app, file.ID)
+
+		t.Run("failure 501 file resources", func(t *testing.T) {
+			body := deploymentBodyWithFileResources(agent.ID, env.ID, file.ID, 501)
+			resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments", strings.NewReader(body), defaultTestKey, true)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		})
+
+		t.Run("success 500 file resources and run", func(t *testing.T) {
+			body := deploymentBodyWithFileResources(agent.ID, env.ID, file.ID, 500)
+			created := createDeployment(t, app, body)
+			defer cleanupDeploymentRows(t, app, created.ID)
+			var resources []json.RawMessage
+			if err := json.Unmarshal(created.Resources, &resources); err != nil {
+				t.Fatalf("decode resources: %v", err)
+			}
+			if len(resources) != 500 {
+				t.Fatalf("resources = %d, want 500", len(resources))
+			}
+			run := runDeployment(t, app, created.ID)
+			if run.SessionID == nil || *run.SessionID == "" {
+				t.Fatalf("deployment run Session ID = nil: %+v", run)
+			}
+			defer deleteSession(t, app, *run.SessionID)
+		})
+
+		t.Run("update uses the same file limit", func(t *testing.T) {
+			created := createDeployment(t, app, minimalDeploymentBody(agent.ID, env.ID))
+			defer cleanupDeploymentRows(t, app, created.ID)
+
+			resp := doDeploymentRequest(
+				t,
+				app,
+				http.MethodPost,
+				"/v1/deployments/"+created.ID,
+				strings.NewReader(`{"resources":`+fileResourcesJSON(file.ID, 501)+`}`),
+				defaultTestKey,
+				true,
+			)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
+			updated := updateDeployment(t, app, created.ID, `{"resources":`+fileResourcesJSON(file.ID, 500)+`}`)
+			var resources []json.RawMessage
+			if err := json.Unmarshal(updated.Resources, &resources); err != nil {
+				t.Fatalf("decode resources: %v", err)
+			}
+			if len(resources) != 500 {
+				t.Fatalf("resources = %d, want 500", len(resources))
+			}
+		})
+	})
+
+	t.Run("update preserves omitted fields and clears nullable replacements", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-update-contract-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-update-contract-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		file := uploadFile(t, app, "deployment-update-contract.txt", "text/plain", []byte("contract"))
+		defer deleteFile(t, app, file.ID)
+		vault := createVault(t, app, `{"display_name":"deployments update contract"}`)
+		defer deleteVault(t, app, vault.ID)
+
+		created := createDeployment(t, app, `{
+			"agent":`+quoteJSON(agent.ID)+`,
+			"environment_id":`+quoteJSON(env.ID)+`,
+			"name":"update contract",
+			"description":"preserve me",
+			"initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}],
+			"metadata":{"keep":"yes"},
+			"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}],
+			"vault_ids":[`+quoteJSON(vault.ID)+`]
+		}`)
+		defer cleanupDeploymentRows(t, app, created.ID)
+
+		resp := doDeploymentRequest(
+			t,
+			app,
+			http.MethodPost,
+			"/v1/deployments/"+created.ID,
+			strings.NewReader(`{"metadata":null}`),
+			defaultTestKey,
+			true,
+		)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
+		roundTripped := updateDeployment(t, app, created.ID, `{"resources":`+string(created.Resources)+`}`)
+		assertRawContains(t, roundTripped.Resources, `"file_id":"`+file.ID+`"`)
+		assertRawContains(t, roundTripped.Resources, `"mount_path":"/uploads/`+file.ID+`"`)
+		run := runDeployment(t, app, created.ID)
+		if run.SessionID == nil {
+			t.Fatalf("deployment run Session ID = nil: %+v", run)
+		}
+		defer deleteSession(t, app, *run.SessionID)
+		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceUUID, *run.SessionID)
+		if err != nil || len(resources) != 1 {
+			t.Fatalf("deployment run Session resources = %d, error = %v", len(resources), err)
+		}
+		assertSessionFileReference(t, app, *run.SessionID, resources[0].Payload, file.ID, "/uploads/"+file.ID)
+
+		preserved := updateDeployment(t, app, created.ID, `{"name":"updated name only"}`)
+		if preserved.Description != "preserve me" {
+			t.Fatalf("description = %v, want preserved value", preserved.Description)
+		}
+		assertRawContains(t, preserved.Metadata, `"keep":"yes"`)
+		assertRawContains(t, preserved.Resources, `"file_id":"`+file.ID+`"`)
+		assertRawContains(t, preserved.VaultIDs, quoteJSON(vault.ID))
+
+		cleared := updateDeployment(t, app, created.ID, `{"description":"","resources":null,"vault_ids":null}`)
+		if cleared.Description != "" || string(cleared.Resources) != "[]" || string(cleared.VaultIDs) != "[]" {
+			t.Fatalf("nullable replacements were not cleared: %+v", cleared)
+		}
+		assertRawContains(t, cleared.Metadata, `"keep":"yes"`)
+
+		withDescription := updateDeployment(t, app, created.ID, `{"description":"clear with null"}`)
+		if withDescription.Description == "" {
+			t.Fatal("description was not restored before null clear")
+		}
+		cleared = updateDeployment(t, app, created.ID, `{"description":null}`)
+		if cleared.Description != "" {
+			t.Fatalf("description = %q, want empty string", cleared.Description)
+		}
 	})
 
 	t.Run("failure invalid schedule", func(t *testing.T) {
@@ -166,12 +389,14 @@ func TestDeploymentsAPI(t *testing.T) {
 
 		body := deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]`)
 		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(body), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		assertError(t, resp, http.StatusNotFound, "not_found_error")
 	})
 
 	t.Run("failure list status conflicts with include archived", func(t *testing.T) {
-		resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployments?beta=true&status=active&include_archived=true", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		for _, includeArchived := range []string{"true", "false"} {
+			resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployments?beta=true&status=active&include_archived="+includeArchived, nil, defaultTestKey, true)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		}
 	})
 
 	t.Run("success manual run records reference error", func(t *testing.T) {
@@ -217,6 +442,11 @@ func TestDeploymentsAPI(t *testing.T) {
 			),
 		)
 		defer cleanupDeploymentRows(t, app, created.ID)
+		if created.Description != "" {
+			t.Fatalf("description = %q, want empty string", created.Description)
+		}
+		assertRawNotContains(t, created.Resources, `"source"`)
+		assertRawContains(t, created.Resources, `"mount_path":"/workspace/deployment.txt"`)
 		run := runDeployment(t, app, created.ID)
 		if run.SessionID == nil || *run.SessionID == "" {
 			t.Fatalf("deployment run Session ID = nil: %+v", run)
@@ -248,8 +478,8 @@ func TestDeploymentsAPI(t *testing.T) {
 			"name":"deployment initial history",
 			"initial_events":[
 				{"type":"user.message","content":[{"type":"text","text":"deployment first"}]},
-				{"type":"system.message","content":[{"type":"text","text":"public only"}]},
-				{"type":"user.message","content":[{"type":"text","text":"deployment second"}]}
+				{"type":"user.message","content":[{"type":"text","text":"deployment second"}]},
+				{"type":"system.message","content":[{"type":"text","text":"public only"}]}
 			]
 		}`)
 		defer cleanupDeploymentRows(t, app, deployment.ID)
@@ -293,7 +523,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			],
 			"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}
 		}`)
-		if created.Type != "deployment" || !strings.HasPrefix(created.ID, "dep_") || created.Status != "active" {
+		if created.Type != "deployment" || !strings.HasPrefix(created.ID, "depl_") || created.Status != "active" {
 			t.Fatalf("unexpected created deployment: %+v", created)
 		}
 		if created.EnvironmentID != env.ID || created.Description != "handles orders" {
@@ -302,8 +532,8 @@ func TestDeploymentsAPI(t *testing.T) {
 		assertRawContains(t, created.Metadata, `"case":"1234"`)
 		assertRawContains(t, created.Schedule, `"upcoming_runs_at"`)
 		assertRawContains(t, created.Resources, `"github_repository"`)
-		assertRawContains(t, created.Resources, `"source":"/uploads"`)
-		assertRawContains(t, created.Resources, `"mount_path":"/`+file.ID+`"`)
+		assertRawNotContains(t, created.Resources, `"source"`)
+		assertRawContains(t, created.Resources, `"mount_path":"/uploads/`+file.ID+`"`)
 		assertRawNotContains(t, created.Resources, "secret-token")
 
 		listed := listDeployments(t, app, "agent_id="+url.QueryEscape(agent.ID))
@@ -324,18 +554,29 @@ func TestDeploymentsAPI(t *testing.T) {
 		if updated.Name != "Updated order triage" {
 			t.Fatalf("updated name = %s", updated.Name)
 		}
+		assertRawContains(t, updated.Metadata, `"case":""`)
 		assertRawContains(t, updated.Metadata, `"priority":"high"`)
-		assertRawNotContains(t, updated.Metadata, `"case"`)
 		if string(updated.Resources) != "[]" || string(updated.Schedule) != "null" {
 			t.Fatalf("unexpected updated resources/schedule: resources=%s schedule=%s", updated.Resources, updated.Schedule)
 		}
+
+		updated = updateDeployment(t, app, created.ID, `{"metadata":{"case":null}}`)
+		assertRawNotContains(t, updated.Metadata, `"case"`)
+		assertRawContains(t, updated.Metadata, `"priority":"high"`)
 
 		paused := pauseDeployment(t, app, created.ID)
 		if paused.Status != "paused" || !strings.Contains(string(paused.PausedReason), `"manual"`) {
 			t.Fatalf("unexpected paused deployment: %+v", paused)
 		}
-		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+created.ID+"/run?beta=true", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		pausedRun := runDeployment(t, app, created.ID)
+		if pausedRun.SessionID == nil || *pausedRun.SessionID == "" {
+			t.Fatalf("paused deployment run = %+v", pausedRun)
+		}
+		defer deleteSession(t, app, *pausedRun.SessionID)
+		stillPaused := retrieveDeployment(t, app, created.ID)
+		if stillPaused.Status != "paused" {
+			t.Fatalf("deployment status after manual run = %s, want paused", stillPaused.Status)
+		}
 
 		unpaused := unpauseDeployment(t, app, created.ID)
 		if unpaused.Status != "active" || string(unpaused.PausedReason) != "null" {
@@ -370,7 +611,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		if !containsDeploymentRun(runs.Data, run.ID) {
 			t.Fatalf("run list missing %s: %+v", run.ID, runs.Data)
 		}
-		missingDeploymentRuns := listDeploymentRuns(t, app, "deployment_id="+url.QueryEscape("dep_missing_test"))
+		missingDeploymentRuns := listDeploymentRuns(t, app, "deployment_id="+url.QueryEscape("depl_missing_test"))
 		if len(missingDeploymentRuns.Data) != 0 {
 			t.Fatalf("missing deployment run list = %+v, want empty data", missingDeploymentRuns.Data)
 		}
@@ -422,7 +663,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		if archived.ArchivedAt == nil {
 			t.Fatalf("archived_at = nil")
 		}
-		resp = doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+created.ID+"/run?beta=true", nil, defaultTestKey, true)
+		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+created.ID+"/run?beta=true", nil, defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 }
@@ -452,7 +693,7 @@ func doDeploymentRequest(t *testing.T, app *testApp, method, path string, body i
 
 func createDeployment(t *testing.T, app *testApp, body string) deploymentAPIResponse {
 	t.Helper()
-	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(body), defaultTestKey, true)
+	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments", strings.NewReader(body), defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("create deployment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -467,7 +708,7 @@ func createDeployment(t *testing.T, app *testApp, body string) deploymentAPIResp
 
 func retrieveDeployment(t *testing.T, app *testApp, deploymentID string) deploymentAPIResponse {
 	t.Helper()
-	resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployments/"+deploymentID+"?beta=true", nil, defaultTestKey, true)
+	resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployments/"+deploymentID, nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("retrieve deployment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -479,7 +720,7 @@ func retrieveDeployment(t *testing.T, app *testApp, deploymentID string) deploym
 
 func updateDeployment(t *testing.T, app *testApp, deploymentID, body string) deploymentAPIResponse {
 	t.Helper()
-	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"?beta=true", strings.NewReader(body), defaultTestKey, true)
+	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID, strings.NewReader(body), defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("update deployment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -491,7 +732,7 @@ func updateDeployment(t *testing.T, app *testApp, deploymentID, body string) dep
 
 func pauseDeployment(t *testing.T, app *testApp, deploymentID string) deploymentAPIResponse {
 	t.Helper()
-	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"/pause?beta=true", nil, defaultTestKey, true)
+	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"/pause", nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pause deployment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -503,7 +744,7 @@ func pauseDeployment(t *testing.T, app *testApp, deploymentID string) deployment
 
 func unpauseDeployment(t *testing.T, app *testApp, deploymentID string) deploymentAPIResponse {
 	t.Helper()
-	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"/unpause?beta=true", nil, defaultTestKey, true)
+	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"/unpause", nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unpause deployment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -515,7 +756,7 @@ func unpauseDeployment(t *testing.T, app *testApp, deploymentID string) deployme
 
 func archiveDeployment(t *testing.T, app *testApp, deploymentID string) deploymentAPIResponse {
 	t.Helper()
-	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"/archive?beta=true", nil, defaultTestKey, true)
+	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"/archive", nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("archive deployment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -527,7 +768,7 @@ func archiveDeployment(t *testing.T, app *testApp, deploymentID string) deployme
 
 func runDeployment(t *testing.T, app *testApp, deploymentID string) deploymentRunAPIResponse {
 	t.Helper()
-	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"/run?beta=true", nil, defaultTestKey, true)
+	resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments/"+deploymentID+"/run", nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("run deployment status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -539,7 +780,7 @@ func runDeployment(t *testing.T, app *testApp, deploymentID string) deploymentRu
 
 func retrieveDeploymentRun(t *testing.T, app *testApp, runID string) deploymentRunAPIResponse {
 	t.Helper()
-	resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployment_runs/"+runID+"?beta=true", nil, defaultTestKey, true)
+	resp := doDeploymentRequest(t, app, http.MethodGet, "/v1/deployment_runs/"+runID, nil, defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("retrieve deployment run status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -551,9 +792,9 @@ func retrieveDeploymentRun(t *testing.T, app *testApp, runID string) deploymentR
 
 func listDeployments(t *testing.T, app *testApp, query string) deploymentPageAPIResponse {
 	t.Helper()
-	path := "/v1/deployments?beta=true"
+	path := "/v1/deployments"
 	if query != "" {
-		path += "&" + query
+		path += "?" + query
 	}
 	resp := doDeploymentRequest(t, app, http.MethodGet, path, nil, defaultTestKey, true)
 	defer resp.Body.Close()
@@ -567,9 +808,9 @@ func listDeployments(t *testing.T, app *testApp, query string) deploymentPageAPI
 
 func listDeploymentRuns(t *testing.T, app *testApp, query string) deploymentRunPageAPIResponse {
 	t.Helper()
-	path := "/v1/deployment_runs?beta=true"
+	path := "/v1/deployment_runs"
 	if query != "" {
-		path += "&" + query
+		path += "?" + query
 	}
 	resp := doDeploymentRequest(t, app, http.MethodGet, path, nil, defaultTestKey, true)
 	defer resp.Body.Close()
@@ -596,6 +837,32 @@ func deploymentBodyWithExtra(agentID, envID, extra string) string {
 		"initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]
 		` + extra + `
 	}`
+}
+
+func deploymentBodyWithInitialEvents(agentID, envID, events string) string {
+	return `{
+		"agent":` + quoteJSON(agentID) + `,
+		"environment_id":` + quoteJSON(envID) + `,
+		"name":"initial events deployment",
+		"initial_events":` + events + `
+	}`
+}
+
+func deploymentBodyWithFileResources(agentID, envID, fileID string, count int) string {
+	return deploymentBodyWithExtra(agentID, envID, `"resources":`+fileResourcesJSON(fileID, count))
+}
+
+func fileResourcesJSON(fileID string, count int) string {
+	resources := make([]map[string]string, count)
+	for index := range resources {
+		resources[index] = map[string]string{
+			"type":       "file",
+			"file_id":    fileID,
+			"mount_path": "/resource-" + strconv.Itoa(index),
+		}
+	}
+	raw, _ := json.Marshal(resources)
+	return string(raw)
 }
 
 func containsDeployment(deployments []deploymentAPIResponse, id string) bool {

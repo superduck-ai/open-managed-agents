@@ -223,9 +223,9 @@ func TestSessionFileResourceContract(t *testing.T) {
 		}
 	})
 
-	t.Run("failure more than 100 files", func(t *testing.T) {
-		resources := make([]string, 0, 101)
-		for index := 0; index < 101; index++ {
+	t.Run("failure more than 500 files", func(t *testing.T) {
+		resources := make([]string, 0, 501)
+		for index := 0; index < 501; index++ {
 			resources = append(resources, `{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/files/data-`+strconv.Itoa(index)+`.csv"}`)
 		}
 		resp := doSessionRequest(
@@ -1506,8 +1506,8 @@ func TestCreateSessionResourceFileLimitIsAtomic(t *testing.T) {
 	file := uploadFile(t, app, "shared.txt", "text/plain", []byte("shared"))
 	defer deleteFile(t, app, file.ID)
 
-	resources := make([]string, 0, 99)
-	for index := range 99 {
+	resources := make([]string, 0, db.MaxSessionFileResources-1)
+	for index := range db.MaxSessionFileResources - 1 {
 		resources = append(resources, `{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/limit/file-`+strconv.Itoa(index)+`.txt"}`)
 	}
 	created := createSession(
@@ -1588,8 +1588,8 @@ func TestCreateSessionResourceFileLimitIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list resources after concurrent add: %v", err)
 	}
-	if len(persisted) != 100 {
-		t.Fatalf("persisted resources = %d, want 100", len(persisted))
+	if len(persisted) != db.MaxSessionFileResources {
+		t.Fatalf("persisted resources = %d, want %d", len(persisted), db.MaxSessionFileResources)
 	}
 }
 

@@ -199,7 +199,7 @@ func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDe
 			return mapNoRows(err)
 		}
 		deployment := deploymentRow.deployment()
-		if deployment.ArchivedAt != nil || deployment.Status != "active" {
+		if deployment.ArchivedAt != nil {
 			return ErrInvalidState
 		}
 

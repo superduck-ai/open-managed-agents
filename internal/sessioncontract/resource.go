@@ -4,5 +4,13 @@ package sessioncontract
 
 const (
 	FileResourceType = "file"
-	MaxFileResources = 100
+
+	// MaxResources is the official Claude managed-agents ceiling for the top-level
+	// Session/Deployment resources array (mixed types).
+	MaxResources = 500
+
+	// MaxFileResources is the maximum number of file entries in that array.
+	// Official docs allow files to fill the full resources budget, so this equals
+	// MaxResources. Keep both names so call sites can state which limit they mean.
+	MaxFileResources = MaxResources
 )

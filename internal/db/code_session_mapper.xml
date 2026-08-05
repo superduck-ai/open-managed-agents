@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="CodeSessionMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        session_uuid,
+        session_external_id,
+        environment_uuid,
+        environment_external_id,
+        work_dir,
+        permission_mode,
+        model,
+        status,
+        metadata,
+        connection_status,
+        last_inbound_sequence_num,
+        last_outbound_sequence_num,
+        last_internal_sequence_num,
+        last_worker_connected_at,
+        last_worker_activity_at,
+        current_worker_epoch,
+        worker_lease_expires_at,
+        worker_registered_at,
+        worker_last_heartbeat_at,
+        worker_token_session_id,
+        worker_binding,
+        worker_status,
+        worker_external_metadata,
+        worker_requires_action_details,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <select id="LockCodeSessionByExternalID" resultType="codeSessionRow" result="optional">
+        SELECT
+        <include refid="columns"/>
+        FROM code_sessions
+        WHERE external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="LockInitializingCodeSession" resultType="codeSessionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM code_sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND uuid = #{codeSessionUUID}
+          AND status = 'initializing'
+          AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="UpdateCodeSessionInboundSequence" result="rows">
+        UPDATE code_sessions
+        SET last_inbound_sequence_num = #{sequenceNum},
+            updated_at = #{now}
+        WHERE uuid = #{codeSessionUUID}
+    </update>
+
+    <update id="UpdateCodeSessionOutboundSequence" result="rows">
+        UPDATE code_sessions
+        SET last_outbound_sequence_num = #{sequenceNum},
+            updated_at = #{now}
+        WHERE uuid = #{codeSessionUUID}
+    </update>
+
+    <update id="ActivateCodeSession" result="rows">
+        UPDATE code_sessions
+        SET status = 'active',
+            updated_at = #{now}
+        WHERE uuid = #{codeSessionUUID}
+          AND status = 'initializing'
+          AND deleted_at IS NULL
+    </update>
+</mapper>

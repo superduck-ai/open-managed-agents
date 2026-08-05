@@ -29,7 +29,7 @@ jobs:
           cache: true
 
       - name: Generate Go sources
-        run: go generate ./...
+        run: ./scripts/generate-go.sh
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9

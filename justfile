@@ -8,7 +8,7 @@ help:
 
 # Generate ignored Go sources required by builds, tests, and static analysis.
 generate:
-  go generate ./...
+  ./scripts/generate-go.sh
 
 # Create the gitignored Docker Compose runtime config without overwriting an existing secret-bearing file.
 init-compose-config:

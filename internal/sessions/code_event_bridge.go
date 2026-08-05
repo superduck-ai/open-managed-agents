@@ -13,7 +13,7 @@ import (
 )
 
 func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, events []db.SessionEvent) {
-	created, err := h.db.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events)
+	created, err := h.db.AppendSessionEvents(r.Context(), workspaceUUIDFromRequest(r), sessionID, events, nil)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "append internal session events", "session_id", sessionID, "error", err)
 		return

@@ -561,7 +561,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		Payload:     []byte(`{"typed_uuid":true}`),
 		ProcessedAt: now,
 		CreatedAt:   now,
-	}})
+	}}, nil)
 	if err != nil || len(events) != 1 || events[0].ThreadUUID == nil || *events[0].ThreadUUID != thread.UUID {
 		t.Fatalf("append Session event with inferred typed thread UUID = (%+v, %v)", events, err)
 	}

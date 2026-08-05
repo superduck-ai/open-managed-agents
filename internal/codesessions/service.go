@@ -43,30 +43,6 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 	return &Service{db: database, credentials: credentials, logger: logger}
 }
 
-func (s *Service) queueInitialPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage, now time.Time) error {
-	if len(payloads) == 0 {
-		return nil
-	}
-	workerPayloads := make([]json.RawMessage, 0, len(payloads))
-	for _, raw := range payloads {
-		object, err := decodeJSONObject(raw)
-		if err != nil {
-			s.logger.WarnContext(ctx, "skip initial code session event", "code_session_id", codeSession.ExternalID, "error", err)
-			continue
-		}
-		if !forwardPublicEventToWorker(stringField(object, "type")) {
-			continue
-		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, raw, now)
-		if err != nil {
-			s.logger.ErrorContext(ctx, "convert initial code session event", "code_session_id", codeSession.ExternalID, "error", err)
-			continue
-		}
-		workerPayloads = append(workerPayloads, payload)
-	}
-	return s.QueueRawPublicSessionEvents(ctx, codeSession, workerPayloads)
-}
-
 func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
 	if s == nil || len(events) == 0 {
 		return nil
@@ -78,9 +54,12 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		}
 		return err
 	}
+	if codeSession.Status != "active" {
+		return nil
+	}
 	payloads := make([]json.RawMessage, 0, len(events))
 	for _, event := range events {
-		if !forwardPublicEventToWorker(event.EventType) {
+		if !shouldForwardPublicEventToWorker(event.EventType) {
 			continue
 		}
 		if event.EventType == "user.tool_confirmation" {
@@ -216,7 +195,7 @@ func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, codeSess
 				return err
 			}
 		}
-		if event.Ephemeral || !publicWorkerOutputEvent(event.EventType) {
+		if event.Ephemeral || !isPublicWorkerOutputEvent(event.EventType) {
 			continue
 		}
 		publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, event, publicObject)
@@ -282,7 +261,7 @@ func (s *Service) appendWorkerEvent(ctx context.Context, codeSessionID string, r
 	if meta.EventType == "control_request" && meta.EventSubtype == "can_use_tool" {
 		return s.handleToolPermissionRequest(ctx, codeSessionID, object, meta)
 	}
-	if hiddenWorkerEvent(meta.EventType) {
+	if isHiddenWorkerEvent(meta.EventType) {
 		return nil
 	}
 	publicPayloads, ok, err := publicPayloadsFromWorkerEvent(codeSessionID, event, object)
@@ -324,15 +303,23 @@ func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSessio
 }
 
 func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string, payload json.RawMessage, source string) (db.CodeSessionEvent, bool, error) {
-	meta, err := BuildEventMetadata(codeSessionID, "inbound", payload)
+	input, err := newInboundEventInput(codeSessionID, payload, source)
 	if err != nil {
 		return db.CodeSessionEvent{}, false, err
+	}
+	return s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, input)
+}
+
+func newInboundEventInput(codeSessionID string, payload json.RawMessage, source string) (db.AppendCodeSessionEventInput, error) {
+	meta, err := BuildEventMetadata(codeSessionID, "inbound", payload)
+	if err != nil {
+		return db.AppendCodeSessionEventInput{}, err
 	}
 	eventID, err := ids.New("csev_")
 	if err != nil {
-		return db.CodeSessionEvent{}, false, err
+		return db.AppendCodeSessionEventInput{}, err
 	}
-	return s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, db.AppendCodeSessionEventInput{
+	return db.AppendCodeSessionEventInput{
 		ExternalID:     eventID,
 		EventType:      meta.EventType,
 		EventSubtype:   meta.EventSubtype,
@@ -344,7 +331,7 @@ func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string
 		DeliveryStatus: "queued",
 		Source:         strings.TrimSpace(source),
 		CreatedAt:      time.Now().UTC(),
-	})
+	}, nil
 }
 
 func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
@@ -460,7 +447,7 @@ func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.Cod
 	return threadByAgent, nil
 }
 
-func forwardPublicEventToWorker(eventType string) bool {
+func shouldForwardPublicEventToWorker(eventType string) bool {
 	switch eventType {
 	case "user.message", "user.interrupt", "user.tool_confirmation", "user.tool_result", "user.custom_tool_result":
 		return true
@@ -469,7 +456,7 @@ func forwardPublicEventToWorker(eventType string) bool {
 	}
 }
 
-func hiddenWorkerEvent(eventType string) bool {
+func isHiddenWorkerEvent(eventType string) bool {
 	switch eventType {
 	case "control_request", "control_response", "control_cancel_request":
 		return true
@@ -478,7 +465,7 @@ func hiddenWorkerEvent(eventType string) bool {
 	}
 }
 
-func publicWorkerOutputEvent(eventType string) bool {
+func isPublicWorkerOutputEvent(eventType string) bool {
 	return maevents.IsWorkerOutputEvent(eventType) || maevents.IsStreamDelta(eventType)
 }
 

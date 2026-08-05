@@ -237,6 +237,41 @@ func TestDeploymentsAPI(t *testing.T) {
 		)
 	})
 
+	t.Run("success initial user messages replay in order", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployment-initial-history-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployment-initial-history-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		deployment := createDeployment(t, app, `{
+			"agent":`+quoteJSON(agent.ID)+`,
+			"environment_id":`+quoteJSON(env.ID)+`,
+			"name":"deployment initial history",
+			"initial_events":[
+				{"type":"user.message","content":[{"type":"text","text":"deployment first"}]},
+				{"type":"system.message","content":[{"type":"text","text":"public only"}]},
+				{"type":"user.message","content":[{"type":"text","text":"deployment second"}]}
+			]
+		}`)
+		defer cleanupDeploymentRows(t, app, deployment.ID)
+		run := runDeployment(t, app, deployment.ID)
+		if run.SessionID == nil || *run.SessionID == "" {
+			t.Fatalf("deployment initial history Session ID = nil: %+v", run)
+		}
+		defer deleteSession(t, app, *run.SessionID)
+
+		codeSessionID := launchLocalCodeSession(t, app, *run.SessionID)
+		inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+		if err != nil {
+			t.Fatalf("list deployment startup inbound: %v", err)
+		}
+		if len(inbound) != 3 ||
+			inbound[0].EventSubtype != "initialize" ||
+			!strings.Contains(string(inbound[1].Payload), "deployment first") ||
+			!strings.Contains(string(inbound[2].Payload), "deployment second") {
+			t.Fatalf("deployment startup inbound = %#v, want initialize, first, second", inbound)
+		}
+	})
+
 	t.Run("success lifecycle manual run session events and run filters", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-api-agent"}`)
 		defer cleanupAgentRows(t, app.db, agent.ID)

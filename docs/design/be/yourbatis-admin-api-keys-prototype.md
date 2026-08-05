@@ -77,9 +77,10 @@ Yourbatis runtime 与生成器均由 `go.mod` 固定到已发布的
 后续升级只需更新 `go.mod` 中的模块版本，运行时和生成器会保持一致。
 
 生成的 `*.gen.go` 不纳入版本控制，由 `.gitignore` 排除。干净 checkout 必须先执行
-`go generate ./...`；`just server`、`just test`、Go lint/死代码/复杂度门禁、pre-commit、
-GitHub Actions 和 Docker 构建都在消费生成代码前自动执行该命令。XML 和生成器版本因此成为唯一
-受版本控制的 Mapper 代码来源，避免生成输出与声明发生漂移。
+`./scripts/generate-go.sh`（内部为 `go generate ./internal/db`）；`just server`、`just test`、Go
+lint/死代码/复杂度门禁、pre-commit、GitHub Actions 和 Docker 构建都在消费生成代码前自动
+执行该入口。XML 和生成器版本因此成为唯一受版本控制的 Mapper 代码来源，避免生成输出与声明
+发生漂移。
 
 ## 验证
 

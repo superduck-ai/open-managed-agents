@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -315,6 +316,77 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	}
 	if metadata["claude_code_session_id"] != codeSession.ExternalID || metadata["claude_code_sdk_url_path"] != "/v1/code/sessions/"+codeSession.ExternalID || metadata["runtime"] != "claude_code_local" {
 		t.Fatalf("session metadata was not patched: %#v", metadata)
+	}
+}
+
+// TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation 对应 #189：
+// Session 已可发消息，但 Code Session 在 Runner 后半段才创建。
+// 在 provider.Create 时发送（prepare 已完成、Code Session 尚不存在）：
+// 消息应进入 session_events，且 Runner 结束后也应出现在 code_session_inbound_events
+// （initialize 之后）。修复前该窗口内只有 session_events，inbound 往往只有 initialize。
+func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-startup-message-bucket"))
+	defer app.close()
+	cfg.CodeSession.SandboxAPIBaseURL = app.baseURL
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Startup Message Agent"}`)
+	defer archiveAgent(t, app, agent.ID)
+	env := createEnvironment(t, app, `{"name":"runner-startup-message-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	const prompt = "startup-window message must reach inbound"
+	ids := getDefaultDBIDs(t, app.db)
+	var acceptedEventID, interruptEventID string
+	provider := &recordingRunnerProvider{
+		sandboxID: "sandbox-runner-startup-message",
+		beforeCreate: func() {
+			if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceUUID, session.ID); !errors.Is(err, db.ErrNotFound) {
+				t.Fatalf("code session at provider.Create = %v, want ErrNotFound", err)
+			}
+			sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":`+quoteJSON(prompt)+`}]}]}`, defaultTestKey)
+			if len(sent.Data) != 1 {
+				t.Fatalf("accepted events = %#v, want one", sent.Data)
+			}
+			acceptedEventID = sessionEventStringField(t, sent.Data[0], "id")
+			interrupt := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.interrupt"}]}`, defaultTestKey)
+			if len(interrupt.Data) != 1 {
+				t.Fatalf("accepted interrupt = %#v, want one", interrupt.Data)
+			}
+			interruptEventID = sessionEventStringField(t, interrupt.Data[0], "id")
+		},
+	}
+
+	processed, err := newManagedAgentRunner(t, app, provider, cfg).RunOnce(ctx, "runner-startup-message-test")
+	if err != nil || !processed {
+		t.Fatalf("RunOnce() = (%t, %v), want success", processed, err)
+	}
+
+	publicEvents := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey)
+	if !eventPageContains(publicEvents, acceptedEventID) {
+		t.Fatalf("session_events missing accepted event %q: %+v", acceptedEventID, publicEvents.Data)
+	}
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceUUID, session.ID)
+	if err != nil {
+		t.Fatalf("load Code Session after runner startup: %v", err)
+	}
+	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	if err != nil {
+		t.Fatalf("list queued inbound events: %v", err)
+	}
+	if len(queued) != 3 ||
+		queued[0].EventSubtype != "initialize" ||
+		queued[1].EventType != "user" ||
+		!bytes.Contains(queued[1].Payload, []byte(acceptedEventID)) ||
+		!bytes.Contains(queued[1].Payload, []byte(prompt)) ||
+		!bytes.Contains(queued[2].Payload, []byte(interruptEventID)) {
+		t.Fatalf("inbound = %#v, want initialize, accepted user message, interrupt", queued)
 	}
 }
 

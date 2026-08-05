@@ -8,6 +8,7 @@ on:
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
+      - 'scripts/generate-go.sh'
       - 'scripts/go-dead-code.sh'
       - '.github/workflows/dead-code.yml'
   push:
@@ -19,6 +20,7 @@ on:
       - '.golangci-dead-code.yml'
       - 'go.mod'
       - 'go.sum'
+      - 'scripts/generate-go.sh'
       - 'scripts/go-dead-code.sh'
       - '.github/workflows/dead-code.yml'
 
@@ -45,7 +47,7 @@ jobs:
           cache: true
 
       - name: Generate Go sources
-        run: go generate ./...
+        run: ./scripts/generate-go.sh
 
       - name: Detect unreachable Go declarations
         uses: golangci/golangci-lint-action@v9

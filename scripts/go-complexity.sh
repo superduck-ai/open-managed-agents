@@ -9,6 +9,8 @@ if ! command -v golangci-lint >/dev/null 2>&1; then
   exit 1
 fi
 
+./scripts/generate-go.sh
+
 packages=()
 while IFS= read -r directory; do
   [[ "$directory" == "$repo_root/web/node_modules/"* ]] && continue

@@ -141,8 +141,6 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/superduck-ai/e2b-go-sdk v0.0.1 h1:yW23X/fEQvaPdJHhDnp8PgnsaIixn+UTVMt94X4Kr0s=
 github.com/superduck-ai/e2b-go-sdk v0.0.1/go.mod h1:dWlhv18vJamYp5gQ3ktmjjrX7tUaMe2OyTJXUo8EeXY=
-github.com/superduck-ai/yourbatis v0.1.0 h1:U49je+0PhoR6PVJKfR3mbNo31rr+2SzkWwBi28wndwE=
-github.com/superduck-ai/yourbatis v0.1.0/go.mod h1:BlCyyT1yfU2Zxya89rDf89keXqsdcwP6Q3PFscIjvig=
 github.com/superduck-ai/yourbatis v0.1.1 h1:iAEi8Hrx+p6MjS8ciI2kL8ueQ7FOrFDEphnN1NP3GSc=
 github.com/superduck-ai/yourbatis v0.1.1/go.mod h1:BlCyyT1yfU2Zxya89rDf89keXqsdcwP6Q3PFscIjvig=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=

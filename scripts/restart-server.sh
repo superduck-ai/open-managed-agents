@@ -60,6 +60,7 @@ stop_listeners() {
   fi
 }
 
+"$REPO_ROOT/scripts/generate-go.sh"
 stop_listeners
 
 echo "Starting claude-api-server with $CONFIG_FILE in foreground"

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="SessionEventMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        session_uuid,
+        session_external_id,
+        thread_uuid,
+        thread_external_id,
+        event_type,
+        payload,
+        processed_at,
+        created_at,
+        deleted_at
+    </sql>
+
+    <select id="ListSessionEventsForActivation" resultType="sessionEventRow">
+        SELECT
+        <include refid="columns"/>
+        FROM session_events
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND session_uuid = #{sessionUUID}
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC, id ASC
+    </select>
+</mapper>

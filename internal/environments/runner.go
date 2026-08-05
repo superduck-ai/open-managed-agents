@@ -77,7 +77,6 @@ type Runner struct {
 
 type managedAgentLaunchPreparation struct {
 	Session       db.Session
-	InitialEvents []json.RawMessage
 	SessionConfig json.RawMessage
 	WorkDir       string
 	Title         string
@@ -483,10 +482,6 @@ func (r *Runner) prepareManagedAgentLaunch(
 	if err != nil {
 		return nil, fmt.Errorf("list managed agent Session resources: %w", err)
 	}
-	events, err := r.sessionEventPayloads(ctx, session)
-	if err != nil {
-		return nil, fmt.Errorf("list managed agent Session events: %w", err)
-	}
 	runtimeSkills, err := r.resolveRuntimeSkills(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("resolve managed agent skills: %w", err)
@@ -503,7 +498,6 @@ func (r *Runner) prepareManagedAgentLaunch(
 	}
 	return &managedAgentLaunchPreparation{
 		Session:       session,
-		InitialEvents: events,
 		SessionConfig: sessionConfig,
 		WorkDir:       workDir,
 		Title:         title,
@@ -526,7 +520,6 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		PermissionMode:             "bypassPermissions",
 		DangerouslySkipPermissions: true,
 		Config:                     preparation.SessionConfig,
-		InitialEvents:              preparation.InitialEvents,
 	})
 	if err != nil {
 		return managedAgentRuntimeLaunch{}, err
@@ -802,31 +795,6 @@ func (r *Runner) replaceRuntimeSkillArchives(
 		return fmt.Errorf("replace managed agent Skill Archive Resources: %w", err)
 	}
 	return nil
-}
-
-func (r *Runner) sessionEventPayloads(ctx context.Context, session db.Session) ([]json.RawMessage, error) {
-	var out []json.RawMessage
-	var cursor *db.SessionEventPageCursor
-	for {
-		events, hasMore, err := r.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-			WorkspaceUUID:     session.WorkspaceUUID,
-			SessionExternalID: session.ExternalID,
-			Limit:             100,
-			Cursor:            cursor,
-			Order:             "asc",
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, event := range events {
-			out = append(out, append(json.RawMessage(nil), event.Payload...))
-		}
-		if !hasMore || len(events) == 0 {
-			return out, nil
-		}
-		last := events[len(events)-1]
-		cursor = &db.SessionEventPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}
-	}
 }
 
 func sessionIDFromEnvironmentWork(work db.EnvironmentWork) (string, bool) {

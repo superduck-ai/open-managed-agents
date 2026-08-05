@@ -353,6 +353,25 @@ func sessionLookupArguments(workspaceUUID string, sessionExternalID string) map[
 	}
 }
 
+func (tx ManagedAgentActivationTx) LockSessionForEvents(
+	ctx context.Context,
+	workspaceUUID string,
+	sessionExternalID string,
+) (Session, error) {
+	row, found, err := tx.sessionMapper.LockSessionForEvents(
+		ctx,
+		workspaceUUID,
+		sessionExternalID,
+	)
+	if err != nil {
+		return Session{}, err
+	}
+	if !found {
+		return Session{}, ErrNotFound
+	}
+	return row.session(), nil
+}
+
 func getSessionSQLX(
 	ctx context.Context,
 	database sqlxNamedQueryer,

@@ -596,16 +596,24 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	events := make([]db.SessionEvent, 0, len(inputs))
 	var outcomesChanged bool
+	normalizedSession := session
 	for _, raw := range inputs {
-		event, changed, err := h.normalizeInputEvent(r.Context(), session, raw, now)
+		event, outcomes, changed, err := normalizeInputEvent(normalizedSession, raw, now)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
-		outcomesChanged = outcomesChanged || changed
+		if changed {
+			normalizedSession.OutcomeEvaluations = outcomes
+			outcomesChanged = true
+		}
 		events = append(events, event)
 	}
-	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events)
+	var outcomeEvaluations json.RawMessage
+	if outcomesChanged {
+		outcomeEvaluations = normalizedSession.OutcomeEvaluations
+	}
+	created, err := h.db.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			writeBadRequest(w, r, errors.New("archived sessions do not accept new events"))

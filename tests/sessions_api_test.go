@@ -685,6 +685,200 @@ func TestSessionClaudeCodeTaskEventsMapToCanonicalThreads(t *testing.T) {
 	}
 }
 
+func TestManagedAgentActivationReplaysStartupHistory(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-managed-agent-activation-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-managed-agent-activation-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-managed-agent-activation-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+
+	if _, err := app.db.Pool.Exec(ctx, `
+		update code_sessions
+		set status = 'initializing'
+		where external_id = $1
+	`, codeSessionID); err != nil {
+		t.Fatalf("set code session initializing: %v", err)
+	}
+
+	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load initializing code session: %v", err)
+	}
+	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
+
+	accepted := sendSessionEvents(t, app, session.ID, `{"events":[
+		{"type":"user.message","content":[{"type":"text","text":"startup message one"}]},
+		{"type":"user.message","content":[{"type":"text","text":"startup message two"}]}
+	]}`, defaultTestKey)
+	if len(accepted.Data) != 2 {
+		t.Fatalf("accepted session events = %#v, want two", accepted.Data)
+	}
+
+	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
+		t.Fatalf("activate with startup history: %v", err)
+	}
+	codeSession, err = app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("reload activated code session: %v", err)
+	}
+	if codeSession.Status != "active" {
+		t.Fatalf("status after activation = %q, want active", codeSession.Status)
+	}
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list inbound after activation: %v", err)
+	}
+	if len(inbound) != 3 ||
+		!bytes.Contains(inbound[1].Payload, []byte("startup message one")) ||
+		!bytes.Contains(inbound[2].Payload, []byte("startup message two")) {
+		t.Fatalf("inbound after activation = %#v, want initialize and both startup messages", inbound)
+	}
+
+	sent := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"post-cutover message"}]}]}`, defaultTestKey)
+	if len(sent.Data) != 1 {
+		t.Fatalf("post-cutover events = %#v, want one", sent.Data)
+	}
+	inbound, err = app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list post-cutover inbound: %v", err)
+	}
+	if len(inbound) != 4 || !bytes.Contains(inbound[3].Payload, []byte("post-cutover message")) {
+		t.Fatalf("post-cutover inbound = %#v, want realtime message after startup history", inbound)
+	}
+}
+
+func TestManagedAgentActivationPreservesLargeHistoryOrder(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-managed-agent-large-history-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-managed-agent-large-history-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-managed-agent-large-history-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	sessionResponse := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, sessionResponse.ID)
+	codeSessionID := launchLocalCodeSession(t, app, sessionResponse.ID)
+	if _, err := app.db.Pool.Exec(ctx, `update code_sessions set status = 'initializing' where external_id = $1`, codeSessionID); err != nil {
+		t.Fatalf("set Code Session initializing: %v", err)
+	}
+
+	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.db).WorkspaceUUID, sessionResponse.ID)
+	if err != nil {
+		t.Fatalf("load Session: %v", err)
+	}
+	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load Code Session: %v", err)
+	}
+	const eventCount = 501
+	createdAt := time.Now().UTC()
+	uuidPrefix := uuid.New()
+	eventIDs := make([]string, 0, eventCount)
+	events := make([]db.SessionEvent, 0, eventCount)
+	for i := range eventCount {
+		eventID := fmt.Sprintf("sevt_large_history_%03d_%s", i, strings.TrimPrefix(codeSessionID, "cse_"))
+		eventUUID := uuidPrefix
+		eventUUID[14] = byte((eventCount - i) >> 8)
+		eventUUID[15] = byte(eventCount - i)
+		eventIDs = append(eventIDs, eventID)
+		events = append(events, db.SessionEvent{
+			UUID:        eventUUID.String(),
+			ExternalID:  eventID,
+			EventType:   "user.interrupt",
+			Payload:     json.RawMessage(`{"type":"user.interrupt","id":` + quoteJSON(eventID) + `}`),
+			ProcessedAt: createdAt,
+			CreatedAt:   createdAt,
+		})
+	}
+	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, events, nil); err != nil {
+		t.Fatalf("append large history: %v", err)
+	}
+	if err := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).ActivateManagedAgentCodeSession(ctx, codeSession); err != nil {
+		t.Fatalf("activate Code Session: %v", err)
+	}
+
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("list inbound: %v", err)
+	}
+	if len(inbound) != eventCount+1 {
+		t.Fatalf("inbound count = %d, want %d", len(inbound), eventCount+1)
+	}
+	for i, eventID := range eventIDs {
+		if !bytes.Contains(inbound[i+1].Payload, []byte(eventID)) {
+			t.Fatalf("inbound %d is out of order: %s", i, inbound[i+1].Payload)
+		}
+	}
+}
+
+func TestManagedAgentActivationRollsBackOnHistoryConversionFailure(t *testing.T) {
+	ctx := context.Background()
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-history-activation-rollback-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-history-activation-rollback-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-history-activation-rollback-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	sessionResponse := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, sessionResponse.ID)
+	codeSessionID := launchLocalCodeSession(t, app, sessionResponse.ID)
+
+	if _, err := app.db.Pool.Exec(ctx, `
+		update code_sessions
+		set status = 'initializing'
+		where external_id = $1
+	`, codeSessionID); err != nil {
+		t.Fatalf("set rollback code session initializing: %v", err)
+	}
+	sendSessionEvents(t, app, sessionResponse.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"history must remain durable"}]}]}`, defaultTestKey)
+	session, err := app.db.GetSession(ctx, getDefaultDBIDs(t, app.db).WorkspaceUUID, sessionResponse.ID)
+	if err != nil {
+		t.Fatalf("load rollback Session: %v", err)
+	}
+	codeSession, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load rollback Code Session: %v", err)
+	}
+	invalidAt := time.Now().UTC().Add(time.Second)
+	if _, err := app.db.AppendSessionEvents(ctx, session.WorkspaceUUID, session.ExternalID, []db.SessionEvent{{
+		UUID:        uuid.NewString(),
+		ExternalID:  "sevt_activation_invalid_" + strings.TrimPrefix(codeSessionID, "cse_"),
+		EventType:   "user.interrupt",
+		Payload:     json.RawMessage(`[]`),
+		ProcessedAt: invalidAt,
+		CreatedAt:   invalidAt,
+	}}, nil); err != nil {
+		t.Fatalf("append invalid forwardable history event: %v", err)
+	}
+	codeSessionService := codesessions.NewServiceWithCredentials(app.db, app.credentials, nil)
+	before, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("rollback inbound before delivery = (%#v, %v), want initialize", before, err)
+	}
+	if err := codeSessionService.ActivateManagedAgentCodeSession(ctx, codeSession); err == nil {
+		t.Fatal("activation with invalid forwardable history succeeded")
+	}
+	after, listErr := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSessionID)
+	if listErr != nil || len(after) != 1 {
+		t.Fatalf("rollback inbound after delivery = (%#v, %v), want unchanged initialize", after, listErr)
+	}
+	reloaded, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("reload rollback Code Session: %v", err)
+	}
+	if reloaded.Status != "initializing" {
+		t.Fatalf("rollback Code Session status = %q, want initializing", reloaded.Status)
+	}
+}
+
 func TestSessionClaudeCodeSubagentInternalEventsPublishToChildThread(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-claude-code-subagent-internal-bucket"))
 	defer app.close()
@@ -1314,7 +1508,7 @@ func TestSessionEventsListHidesLegacyEnvManagerLog(t *testing.T) {
 			ProcessedAt: now.Add(time.Second),
 			CreatedAt:   now.Add(time.Second),
 		},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("append legacy env manager log: %v", err)
 	}
 
@@ -2232,6 +2426,78 @@ func TestCodeSessionWorkerEventAppendChecksEpochInsideTransaction(t *testing.T) 
 	})
 	if err != nil {
 		t.Fatalf("current epoch append: %v", err)
+	}
+}
+
+func TestCodeSessionEventAppendPreservesIdempotencyAndDirectionSequences(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-event-append-sequences-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-code-event-append-sequences-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-code-event-append-sequences-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	ctx := context.Background()
+
+	before, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load Code Session before append: %v", err)
+	}
+	suffix := strings.TrimPrefix(codeSessionID, "cse_")
+	inboundInput := db.AppendCodeSessionEventInput{
+		ExternalID:     "csev_inbound_sequence_" + suffix,
+		EventType:      "user",
+		Payload:        json.RawMessage(`{"type":"user"}`),
+		PayloadHash:    "inbound-sequence",
+		IdempotencyKey: "inbound-sequence:" + suffix,
+		Source:         "test",
+	}
+	inbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, inboundInput)
+	if err != nil || duplicate {
+		t.Fatalf("append inbound event = (%+v, duplicate=%v, err=%v)", inbound, duplicate, err)
+	}
+	if inbound.SequenceNum != before.LastInboundSequenceNum+1 {
+		t.Fatalf("inbound sequence = %d, want %d", inbound.SequenceNum, before.LastInboundSequenceNum+1)
+	}
+	duplicateInbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, inboundInput)
+	if err != nil || !duplicate || duplicateInbound.UUID != inbound.UUID {
+		t.Fatalf("duplicate inbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateInbound, duplicate, err, inbound.UUID)
+	}
+
+	outboundInput := db.AppendCodeSessionEventInput{
+		ExternalID:     "csev_outbound_sequence_" + suffix,
+		EventType:      "assistant",
+		Payload:        json.RawMessage(`{"type":"assistant"}`),
+		PayloadHash:    "outbound-sequence",
+		IdempotencyKey: "outbound-sequence:" + suffix,
+		Source:         "test",
+	}
+	outbound, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, outboundInput)
+	if err != nil || duplicate {
+		t.Fatalf("append outbound event = (%+v, duplicate=%v, err=%v)", outbound, duplicate, err)
+	}
+	if outbound.SequenceNum != before.LastOutboundSequenceNum+1 {
+		t.Fatalf("outbound sequence = %d, want %d", outbound.SequenceNum, before.LastOutboundSequenceNum+1)
+	}
+	duplicateOutbound, duplicate, err := app.db.AppendCodeSessionOutboundEvent(ctx, codeSessionID, outboundInput)
+	if err != nil || !duplicate || duplicateOutbound.UUID != outbound.UUID {
+		t.Fatalf("duplicate outbound event = (%+v, duplicate=%v, err=%v), want UUID %q", duplicateOutbound, duplicate, err, outbound.UUID)
+	}
+
+	after, err := app.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		t.Fatalf("load Code Session after append: %v", err)
+	}
+	if after.LastInboundSequenceNum != inbound.SequenceNum || after.LastOutboundSequenceNum != outbound.SequenceNum {
+		t.Fatalf(
+			"stored sequences = inbound %d/outbound %d, want inbound %d/outbound %d",
+			after.LastInboundSequenceNum,
+			after.LastOutboundSequenceNum,
+			inbound.SequenceNum,
+			outbound.SequenceNum,
+		)
 	}
 }
 
@@ -3227,6 +3493,40 @@ func TestCodeSessionWorkerStreamReplaysUnprocessedEventsForNewEpoch(t *testing.T
 	}
 }
 
+func TestSessionEventRejectedBatchHasNoSideEffects(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-events-atomicity-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-events-atomicity-agent"}`)
+	defer cleanupAgentRows(t, app.db, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-events-atomicity-env"}`)
+	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[
+			{"type":"user.define_outcome","description":"must not persist","rubric":{"type":"text","text":"must pass"}},
+			{"type":"user.message","content":[]}
+		]}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+
+	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
+	if string(retrieved.OutcomeEvaluations) != "[]" {
+		t.Fatalf("outcomes after rejected batch = %s, want []", retrieved.OutcomeEvaluations)
+	}
+	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("rejected batch public events = %#v, want empty", events.Data)
+	}
+}
+
 func TestSessionEventInputValidation(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-events-validation-bucket"))
 	defer app.close()
@@ -3249,6 +3549,10 @@ func TestSessionEventInputValidation(t *testing.T) {
 	valid := sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.custom_tool_result","custom_tool_use_id":"ctool_123"},{"type":"user.define_outcome","description":"done","rubric":{"type":"text","text":"must pass"},"max_iterations":2}]}`, defaultTestKey)
 	if len(valid.Data) != 2 || !bytes.Contains(valid.Data[0], []byte(`"type":"user.custom_tool_result"`)) || !bytes.Contains(valid.Data[1], []byte(`"type":"user.define_outcome"`)) {
 		t.Fatalf("unexpected valid events response: %+v", valid)
+	}
+	retrieved := retrieveSession(t, app, session.ID, defaultTestKey)
+	if !bytes.Contains(retrieved.OutcomeEvaluations, []byte(`"max_iterations":2`)) {
+		t.Fatalf("outcomes after accepted batch = %s, want committed evaluation", retrieved.OutcomeEvaluations)
 	}
 }
 

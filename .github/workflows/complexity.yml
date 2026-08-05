@@ -8,6 +8,7 @@ on:
       - '.golangci-complexity.yml'
       - 'go.mod'
       - 'go.sum'
+      - 'scripts/generate-go.sh'
       - 'scripts/go-complexity.sh'
       - 'web/**'
       - '.github/workflows/complexity.yml'
@@ -20,6 +21,7 @@ on:
       - '.golangci-complexity.yml'
       - 'go.mod'
       - 'go.sum'
+      - 'scripts/generate-go.sh'
       - 'scripts/go-complexity.sh'
       - 'web/**'
       - '.github/workflows/complexity.yml'
@@ -47,7 +49,7 @@ jobs:
           cache: true
 
       - name: Generate Go sources
-        run: go generate ./...
+        run: ./scripts/generate-go.sh
 
       - name: Check Go complexity
         uses: golangci/golangci-lint-action@v9

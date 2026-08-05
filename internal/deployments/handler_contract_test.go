@@ -59,7 +59,7 @@ func TestDeploymentResourcesResponse(t *testing.T) {
 		if err != nil {
 			t.Fatalf("deploymentResourcesResponse() error = %v", err)
 		}
-		if !strings.Contains(string(response), `"mount_path":"/mnt/session/uploads/file_default"`) {
+		if !strings.Contains(string(response), `"mount_path":"/uploads/file_default"`) {
 			t.Fatalf("default mount path is not public: %s", response)
 		}
 		if !strings.Contains(string(response), `"mount_path":"/file_explicit"`) {

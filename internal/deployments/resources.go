@@ -185,7 +185,7 @@ func (h *Handler) normalizeResource(
 			return normalizedDeploymentResource{}, err
 		}
 		defaulted := len(fields.MountPath) == 0 || httpapi.IsJSONNull(fields.MountPath)
-		if mountPath == sandboxmount.PublicDefaultFileMountPath(fileID) {
+		if mountPath == sandboxmount.FileSource+sandboxmount.DefaultFileMountPath(fileID) {
 			mountPath = sandboxmount.DefaultFileMountPath(fileID)
 			defaulted = true
 		}
@@ -311,7 +311,7 @@ func deploymentResourcesResponse(raw json.RawMessage) (json.RawMessage, error) {
 			continue
 		}
 		if envelope.MountPathDefaulted != nil && *envelope.MountPathDefaulted {
-			mountPath, err := json.Marshal(sandboxmount.PublicDefaultFileMountPath(envelope.FileID))
+			mountPath, err := json.Marshal(sandboxmount.FileSource + sandboxmount.DefaultFileMountPath(envelope.FileID))
 			if err != nil {
 				return nil, err
 			}

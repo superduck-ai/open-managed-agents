@@ -291,7 +291,7 @@ func TestDeploymentsAPI(t *testing.T) {
 
 		roundTripped := updateDeployment(t, app, created.ID, `{"resources":`+string(created.Resources)+`}`)
 		assertRawContains(t, roundTripped.Resources, `"file_id":"`+file.ID+`"`)
-		assertRawContains(t, roundTripped.Resources, `"mount_path":"/mnt/session/uploads/`+file.ID+`"`)
+		assertRawContains(t, roundTripped.Resources, `"mount_path":"/uploads/`+file.ID+`"`)
 		run := runDeployment(t, app, created.ID)
 		if run.SessionID == nil {
 			t.Fatalf("deployment run Session ID = nil: %+v", run)
@@ -536,7 +536,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		assertRawContains(t, created.Schedule, `"upcoming_runs_at"`)
 		assertRawContains(t, created.Resources, `"github_repository"`)
 		assertRawNotContains(t, created.Resources, `"source"`)
-		assertRawContains(t, created.Resources, `"mount_path":"/mnt/session/uploads/`+file.ID+`"`)
+		assertRawContains(t, created.Resources, `"mount_path":"/uploads/`+file.ID+`"`)
 		assertRawNotContains(t, created.Resources, "secret-token")
 
 		listed := listDeployments(t, app, "agent_id="+url.QueryEscape(agent.ID))

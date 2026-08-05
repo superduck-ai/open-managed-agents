@@ -58,7 +58,7 @@ Sandbox:  /mnt/session/uploads/reports/input.csv
 - Mount path 以 `/uploads/` 开头；
 - 不以 `/` 结尾，不包含 `//`、`.` 或 `..` 路径段。
 
-File 是否存在、Workspace 隔离、100 个上限、跨卡片路径冲突、Filestore namespace 冲突和完整路径规则均以后端为权威。
+File 是否存在、Workspace 隔离、500 个上限、跨卡片路径冲突、Filestore namespace 冲突和完整路径规则均以后端为权威。
 
 ## 实现与验收
 

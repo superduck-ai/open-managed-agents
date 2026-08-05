@@ -101,7 +101,7 @@ func TestGoSDKDeploymentsManualRunE2E(t *testing.T) {
 		t.Fatalf("create deployment: %v", err)
 	}
 	deploymentID = deployment.ID
-	if !strings.HasPrefix(deployment.ID, "dep_") || deployment.EnvironmentID != environment.ID {
+	if !strings.HasPrefix(deployment.ID, "depl_") || deployment.EnvironmentID != environment.ID {
 		t.Fatalf("unexpected deployment: %+v", deployment)
 	}
 

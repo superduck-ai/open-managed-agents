@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper FilestoreFilesystemMapper -sql ./filestore_filesystem_mapper.xml -out ./filestore_filesystem_mapper.sqlmap.gen.go -dialect postgres
@@ -15,12 +13,12 @@ type FilestoreFilesystemMapper interface {
 	LockProvision(ctx context.Context, workspaceUUID, filesystemExternalID string) error
 	ValidateSessionBinding(ctx context.Context, params filestoreFilesystemProvisionParams) (filestoreSessionBindingRow, bool, error)
 	LockWorkspace(ctx context.Context, workspaceUUID string) error
-	FindProvisionedByIdentifier(ctx context.Context, workspaceUUID, filesystemExternalID string, filesystemUUID uuid.NullUUID) (filestoreFilesystemRow, bool, error)
+	FindProvisionedByIdentifier(ctx context.Context, workspaceUUID, filesystemExternalID, filesystemUUID string) (filestoreFilesystemRow, bool, error)
 	FindProvisionedBySession(ctx context.Context, workspaceUUID, sessionUUID string) (filestoreFilesystemRow, bool, error)
 	InsertProvisioned(ctx context.Context, params filestoreFilesystemProvisionParams) (filestoreFilesystemRow, error)
-	FindTokenScope(ctx context.Context, organizationUUID, accountUUID, workspaceUUID, workspaceTaggedID, resolvedWorkspaceTaggedID, filesystemID string, filesystemUUID uuid.NullUUID) (filestoreTokenScopeRow, bool, error)
+	FindTokenScope(ctx context.Context, organizationUUID, accountUUID, workspaceUUID, workspaceTaggedID, resolvedWorkspaceTaggedID, filesystemID, filesystemUUID string) (filestoreTokenScopeRow, bool, error)
 	FindSessionTokenScope(ctx context.Context, workspaceUUID, sessionExternalID string) (filestoreTokenScopeRow, bool, error)
-	FindFilesystemByIdentifier(ctx context.Context, workspaceUUID, filesystemID string, filesystemUUID uuid.NullUUID) (filestoreFilesystemRow, bool, error)
+	FindFilesystemByIdentifier(ctx context.Context, workspaceUUID, filesystemID, filesystemUUID string) (filestoreFilesystemRow, bool, error)
 	FindFilesystemBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (filestoreFilesystemRow, bool, error)
 	LockFilesystem(ctx context.Context, filesystemUUID string) error
 	FindFilesystemByUUID(ctx context.Context, workspaceUUID, filesystemUUID string) (filestoreFilesystemRow, bool, error)
@@ -55,32 +53,32 @@ type sessionFilesystemInsertParams struct {
 }
 
 type filestoreSessionBindingRow struct {
-	WorkspaceUUID uuid.UUID `db:"workspace_uuid"`
+	WorkspaceUUID string `db:"workspace_uuid"`
 }
 
 type filestoreFilesystemRow struct {
-	UUID                uuid.UUID     `db:"uuid"`
-	ExternalID          string        `db:"external_id"`
-	OrganizationUUID    uuid.UUID     `db:"organization_uuid"`
-	WorkspaceUUID       uuid.UUID     `db:"workspace_uuid"`
-	SessionUUID         uuid.UUID     `db:"session_uuid"`
-	CodeSessionUUID     uuid.NullUUID `db:"code_session_uuid"`
-	CreatedByAPIKeyUUID uuid.NullUUID `db:"created_by_api_key_uuid"`
-	CreatedAt           time.Time     `db:"created_at"`
-	UpdatedAt           time.Time     `db:"updated_at"`
-	DeletedAt           *time.Time    `db:"deleted_at"`
+	UUID                string     `db:"uuid"`
+	ExternalID          string     `db:"external_id"`
+	OrganizationUUID    string     `db:"organization_uuid"`
+	WorkspaceUUID       string     `db:"workspace_uuid"`
+	SessionUUID         string     `db:"session_uuid"`
+	CodeSessionUUID     *string    `db:"code_session_uuid"`
+	CreatedByAPIKeyUUID *string    `db:"created_by_api_key_uuid"`
+	CreatedAt           time.Time  `db:"created_at"`
+	UpdatedAt           time.Time  `db:"updated_at"`
+	DeletedAt           *time.Time `db:"deleted_at"`
 }
 
 type filestoreTokenScopeRow struct {
-	OrganizationUUID     uuid.UUID `db:"organization_uuid"`
-	WorkspaceUUID        uuid.UUID `db:"workspace_uuid"`
-	WorkspaceExternalID  string    `db:"workspace_external_id"`
-	AccountUUID          uuid.UUID `db:"account_uuid"`
-	AccountExternalID    string    `db:"account_external_id"`
-	FilesystemUUID       uuid.UUID `db:"filesystem_uuid"`
-	FilesystemExternalID string    `db:"filesystem_external_id"`
-	OrgTaintsJSON        []byte    `db:"org_taints_json"`
-	WorkspaceCMEKEnabled bool      `db:"workspace_cmek_enabled"`
+	OrganizationUUID     string `db:"organization_uuid"`
+	WorkspaceUUID        string `db:"workspace_uuid"`
+	WorkspaceExternalID  string `db:"workspace_external_id"`
+	AccountUUID          string `db:"account_uuid"`
+	AccountExternalID    string `db:"account_external_id"`
+	FilesystemUUID       string `db:"filesystem_uuid"`
+	FilesystemExternalID string `db:"filesystem_external_id"`
+	OrgTaintsJSON        []byte `db:"org_taints_json"`
+	WorkspaceCMEKEnabled bool   `db:"workspace_cmek_enabled"`
 }
 
 func filestoreFilesystemFromMapperRow(
@@ -112,17 +110,17 @@ func filestoreTokenScopeFromMapperRow(
 }
 
 func (row filestoreFilesystemRow) filesystem() (FilestoreFilesystem, error) {
-	if row.SessionUUID == uuid.Nil {
+	if row.SessionUUID == "" {
 		return FilestoreFilesystem{}, ErrNotFound
 	}
 	return FilestoreFilesystem{
-		UUID:                row.UUID.String(),
+		UUID:                row.UUID,
 		ExternalID:          row.ExternalID,
-		OrganizationUUID:    row.OrganizationUUID.String(),
-		WorkspaceUUID:       row.WorkspaceUUID.String(),
-		SessionUUID:         row.SessionUUID.String(),
-		CodeSessionUUID:     nullableUUIDString(row.CodeSessionUUID),
-		CreatedByAPIKeyUUID: nullableUUIDString(row.CreatedByAPIKeyUUID),
+		OrganizationUUID:    row.OrganizationUUID,
+		WorkspaceUUID:       row.WorkspaceUUID,
+		SessionUUID:         row.SessionUUID,
+		CodeSessionUUID:     row.CodeSessionUUID,
+		CreatedByAPIKeyUUID: row.CreatedByAPIKeyUUID,
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,
 		DeletedAt:           row.DeletedAt,
@@ -138,12 +136,12 @@ func (row filestoreTokenScopeRow) scope() (FilestoreTokenScope, error) {
 		orgTaints = []string{}
 	}
 	return FilestoreTokenScope{
-		OrganizationUUID:     row.OrganizationUUID.String(),
-		WorkspaceUUID:        row.WorkspaceUUID.String(),
+		OrganizationUUID:     row.OrganizationUUID,
+		WorkspaceUUID:        row.WorkspaceUUID,
 		WorkspaceExternalID:  row.WorkspaceExternalID,
-		AccountUUID:          row.AccountUUID.String(),
+		AccountUUID:          row.AccountUUID,
 		AccountExternalID:    row.AccountExternalID,
-		FilesystemUUID:       row.FilesystemUUID.String(),
+		FilesystemUUID:       row.FilesystemUUID,
 		FilesystemExternalID: row.FilesystemExternalID,
 		OrgTaints:            orgTaints,
 		WorkspaceCMEKEnabled: row.WorkspaceCMEKEnabled,

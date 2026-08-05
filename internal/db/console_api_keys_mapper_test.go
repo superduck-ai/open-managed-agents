@@ -2,13 +2,13 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -29,7 +29,7 @@ func TestConsoleAPIKeyMapperList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(rows) != 1 || rows[0].ID != "apikey_console" || rows[0].WorkspaceAPIKeyUUID == uuid.Nil {
+	if len(rows) != 1 || rows[0].ID != "apikey_console" || rows[0].WorkspaceAPIKeyUUID == "" {
 		t.Fatalf("List() rows = %+v", rows)
 	}
 	assertMapperTestExecution(
@@ -69,7 +69,7 @@ func TestConsoleAPIKeyMapperCountUnarchived(t *testing.T) {
 	)
 }
 
-func TestConsoleAPIKeyMapperCreatorExists(t *testing.T) {
+func TestConsoleUserMapperExistsActiveByUUID(t *testing.T) {
 	organizationUUID := "11111111-1111-4111-8111-111111111111"
 	creatorUUID := "44444444-4444-4444-8444-444444444444"
 	wantValues := []any{organizationUUID, creatorUUID}
@@ -79,22 +79,22 @@ func TestConsoleAPIKeyMapperCreatorExists(t *testing.T) {
 			columns: []string{"exists"},
 			rows:    [][]driver.Value{{false}},
 		})
-		found, err := NewConsoleAPIKeyMapper(executor).CreatorExists(
+		found, err := NewConsoleUserMapper(executor).ExistsActiveByUUID(
 			context.Background(),
 			organizationUUID,
 			creatorUUID,
 		)
 		if err != nil || found {
-			t.Fatalf("CreatorExists() = (%t, %v), want false, nil", found, err)
+			t.Fatalf("ExistsActiveByUUID() = (%t, %v), want false, nil", found, err)
 		}
 		assertMapperTestExecution(
 			t,
 			executor,
-			"ConsoleAPIKeyMapper.CreatorExists",
+			"ConsoleUserMapper.ExistsActiveByUUID",
 			yourbatis.StatementSelect,
 			wantValues,
 			"SELECT EXISTS",
-			"u.uuid = $2",
+			"uuid = $2",
 		)
 	})
 
@@ -103,18 +103,18 @@ func TestConsoleAPIKeyMapperCreatorExists(t *testing.T) {
 			columns: []string{"exists"},
 			rows:    [][]driver.Value{{true}},
 		})
-		found, err := NewConsoleAPIKeyMapper(executor).CreatorExists(
+		found, err := NewConsoleUserMapper(executor).ExistsActiveByUUID(
 			context.Background(),
 			organizationUUID,
 			creatorUUID,
 		)
 		if err != nil || !found {
-			t.Fatalf("CreatorExists() = (%t, %v), want true, nil", found, err)
+			t.Fatalf("ExistsActiveByUUID() = (%t, %v), want true, nil", found, err)
 		}
 		assertMapperTestExecution(
 			t,
 			executor,
-			"ConsoleAPIKeyMapper.CreatorExists",
+			"ConsoleUserMapper.ExistsActiveByUUID",
 			yourbatis.StatementSelect,
 			wantValues,
 		)
@@ -235,7 +235,7 @@ func consoleAPIKeyMapperTestRow(externalID string, createdAt time.Time) []driver
 func consoleAPIKeyMapperTestInsertParams() insertConsoleAPIKeyQuery {
 	return insertConsoleAPIKeyQuery{
 		ExternalID:         "apikey_console",
-		APIKeyUUID:         uuid.MustParse("33333333-3333-4333-8333-333333333333"),
+		APIKeyUUID:         "33333333-3333-4333-8333-333333333333",
 		OrganizationUUID:   "11111111-1111-4111-8111-111111111111",
 		WorkspaceUUID:      "22222222-2222-4222-8222-222222222222",
 		WorkspaceDisplayID: "workspace_default",
@@ -286,7 +286,7 @@ func TestConsoleAPIKeyMapperListBuildsOptionalWorkspaceScope(t *testing.T) {
 func TestConsoleAPIKeyMapperInsertMarksCredentialFieldsSensitive(t *testing.T) {
 	params := insertConsoleAPIKeyQuery{
 		ExternalID:         "apikey_console",
-		APIKeyUUID:         uuid.MustParse("33333333-3333-4333-8333-333333333333"),
+		APIKeyUUID:         "33333333-3333-4333-8333-333333333333",
 		OrganizationUUID:   "11111111-1111-4111-8111-111111111111",
 		WorkspaceUUID:      "22222222-2222-4222-8222-222222222222",
 		WorkspaceDisplayID: "workspace_default",
@@ -345,17 +345,17 @@ func TestConsoleAPIKeyMapperUpdateStatusBuildsScopedUpdate(t *testing.T) {
 }
 
 func TestConsoleAPIKeyRowMapsNullableFields(t *testing.T) {
-	creatorUUID := uuid.MustParse("44444444-4444-4444-8444-444444444444")
+	creatorUUID := "44444444-4444-4444-8444-444444444444"
 	expiresAt := time.Date(2026, time.August, 4, 1, 2, 3, 0, time.UTC)
 	key := (consoleAPIKeyRow{
 		ID:                "apikey_console",
-		OrgUUID:           uuid.MustParse("11111111-1111-4111-8111-111111111111"),
-		WorkspaceUUID:     uuid.MustParse("22222222-2222-4222-8222-222222222222"),
-		CreatedByUserUUID: uuid.NullUUID{UUID: creatorUUID, Valid: true},
+		OrgUUID:           "11111111-1111-4111-8111-111111111111",
+		WorkspaceUUID:     "22222222-2222-4222-8222-222222222222",
+		CreatedByUserUUID: sql.NullString{String: creatorUUID, Valid: true},
 		ExpiresAt:         &expiresAt,
 	}).key()
 
-	if key.CreatedByUserUUID == nil || *key.CreatedByUserUUID != creatorUUID.String() {
+	if key.CreatedByUserUUID == nil || *key.CreatedByUserUUID != creatorUUID {
 		t.Fatalf("created by user UUID = %#v, want %s", key.CreatedByUserUUID, creatorUUID)
 	}
 	if key.ExpiresAt == nil || !key.ExpiresAt.Equal(expiresAt) {

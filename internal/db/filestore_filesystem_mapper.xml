@@ -84,7 +84,7 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND (
         external_id = #{filesystemExternalID}
-        <if test="filesystemUUID.Valid == true">
+        <if test="filesystemUUID != ''">
             OR uuid = #{filesystemUUID}
         </if>
         )
@@ -152,7 +152,7 @@
         AND w.external_id = #{resolvedWorkspaceTaggedID}
         AND (
         fs.external_id = #{filesystemID}
-        <if test="filesystemUUID.Valid == true">
+        <if test="filesystemUUID != ''">
             OR fs.uuid = #{filesystemUUID}
         </if>
         )
@@ -198,7 +198,7 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND (
         external_id = #{filesystemID}
-        <if test="filesystemUUID.Valid == true">
+        <if test="filesystemUUID != ''">
             OR uuid = #{filesystemUUID}
         </if>
         )

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminMCPTunnelCertificateMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        tunnel_uuid,
+        tunnel_external_id,
+        ca_certificate_pem,
+        fingerprint,
+        expires_at,
+        created_at,
+        archived_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="adminMCPTunnelCertificateRow">
+        INSERT INTO mcp_tunnel_certificates (
+            external_id,
+            organization_uuid,
+            tunnel_uuid,
+            tunnel_external_id,
+            ca_certificate_pem,
+            fingerprint,
+            expires_at,
+            created_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.TunnelUUID},
+            #{params.TunnelExternalID},
+            #{params.CACertificatePEM,sensitive=true},
+            #{params.Fingerprint},
+            #{params.ExpiresAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="adminMCPTunnelCertificateRow">
+        SELECT
+        <include refid="columns"/>
+        FROM mcp_tunnel_certificates
+        WHERE organization_uuid = #{organizationUUID}
+          AND tunnel_external_id = #{tunnelExternalID}
+          AND external_id = #{certificateExternalID}
+    </select>
+
+    <select id="ListPage" resultType="adminMCPTunnelCertificateRow">
+        SELECT
+        <include refid="columns"/>
+        FROM mcp_tunnel_certificates
+        WHERE organization_uuid = #{params.OrganizationUUID}
+          AND tunnel_uuid = #{params.TunnelUUID}
+        <if test="!params.IncludeArchived">
+          AND archived_at IS NULL
+        </if>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.Limit}
+        OFFSET #{params.Offset}
+    </select>
+
+    <update id="ArchiveByExternalID" result="returning" resultType="adminMCPTunnelCertificateRow">
+        UPDATE mcp_tunnel_certificates
+        SET archived_at = COALESCE(archived_at, NOW())
+        WHERE organization_uuid = #{organizationUUID}
+          AND tunnel_external_id = #{tunnelExternalID}
+          AND external_id = #{certificateExternalID}
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <select id="CountActive" result="scalar">
+        SELECT CAST(COUNT(*) AS integer)
+        FROM mcp_tunnel_certificates
+        WHERE organization_uuid = #{organizationUUID}
+          AND tunnel_uuid = #{tunnelUUID}
+          AND archived_at IS NULL
+    </select>
+
+    <update id="ArchiveActiveByTunnelUUID" result="exec">
+        UPDATE mcp_tunnel_certificates
+        SET archived_at = COALESCE(archived_at, NOW())
+        WHERE organization_uuid = #{organizationUUID}
+          AND tunnel_uuid = #{tunnelUUID}
+          AND archived_at IS NULL
+    </update>
+</mapper>

@@ -5,21 +5,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/superduck-ai/yourbatis"
 )
 
 type AdminTunnel struct {
-	UUID                uuid.UUID     `db:"uuid"`
-	ExternalID          string        `db:"external_id"`
-	OrganizationUUID    uuid.UUID     `db:"organization_uuid"`
-	WorkspaceUUID       uuid.NullUUID `db:"workspace_uuid"`
-	WorkspaceExternalID *string       `db:"workspace_external_id"`
-	DisplayName         *string       `db:"display_name"`
-	Domain              string        `db:"domain"`
-	TokenID             *string       `db:"token_id"`
-	TunnelToken         *string       `db:"tunnel_token"`
-	CreatedAt           time.Time     `db:"created_at"`
-	UpdatedAt           time.Time     `db:"updated_at"`
-	ArchivedAt          *time.Time    `db:"archived_at"`
+	UUID                uuid.UUID
+	ExternalID          string
+	OrganizationUUID    uuid.UUID
+	WorkspaceUUID       uuid.NullUUID
+	WorkspaceExternalID *string
+	DisplayName         *string
+	Domain              string
+	TokenID             *string
+	TunnelToken         *string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	ArchivedAt          *time.Time
 }
 
 type ListAdminTunnelsParams struct {
@@ -31,27 +32,24 @@ type ListAdminTunnelsParams struct {
 }
 
 func (d *DB) GetAdminTunnel(ctx context.Context, organizationUUID, externalID string) (AdminTunnel, error) {
-	return getAdminRow[AdminTunnel](ctx, d.sql, adminTunnelSelectSQL()+`
-		where organization_uuid = :organization_uuid and external_id = :external_id
-	`, map[string]any{"organization_uuid": dbUUID(organizationUUID), "external_id": externalID})
+	mapper := NewAdminMCPTunnelMapper(d.mapperDB)
+	row, err := mapper.FindByExternalID(ctx, organizationUUID, externalID)
+	return adminTunnelFromMapperRow(row, err)
 }
 
 func (d *DB) ListAdminTunnelsPage(ctx context.Context, params ListAdminTunnelsParams) ([]AdminTunnel, bool, error) {
-	query := adminTunnelSelectSQL() + ` where organization_uuid = :organization_uuid`
-	args := map[string]any{
-		"organization_uuid": dbUUID(params.OrganizationUUID),
-		"limit":             params.Limit + 1,
-		"offset":            params.Offset,
+	mapper := NewAdminMCPTunnelMapper(d.mapperDB)
+	rows, err := mapper.ListPage(ctx, listAdminTunnelsMapperParams{
+		OrganizationUUID:    params.OrganizationUUID,
+		WorkspaceExternalID: params.WorkspaceExternalID,
+		IncludeArchived:     params.IncludeArchived,
+		Limit:               params.Limit + 1,
+		Offset:              params.Offset,
+	})
+	if err != nil {
+		return nil, false, err
 	}
-	if !params.IncludeArchived {
-		query += " and archived_at is null"
-	}
-	if params.WorkspaceExternalID != "" {
-		query += " and workspace_external_id = :workspace_external_id"
-		args["workspace_external_id"] = params.WorkspaceExternalID
-	}
-	query += " order by created_at desc, uuid desc limit :limit offset :offset"
-	tunnels, err := selectAdminRows[AdminTunnel](ctx, d.sql, query, args)
+	tunnels, err := adminTunnelsFromMapperRows(rows)
 	if err != nil {
 		return nil, false, err
 	}
@@ -59,68 +57,85 @@ func (d *DB) ListAdminTunnelsPage(ctx context.Context, params ListAdminTunnelsPa
 }
 
 func (d *DB) SetAdminTunnelToken(ctx context.Context, organizationUUID, externalID, tokenID, token string) (AdminTunnel, error) {
-	return getAdminRow[AdminTunnel](ctx, d.sql, `
-		update mcp_tunnels
-		set token_id = :token_id,
-			tunnel_token = :tunnel_token,
-			updated_at = now()
-		where organization_uuid = :organization_uuid and external_id = :external_id and archived_at is null
-		returning uuid, external_id,
-			organization_uuid,
-			workspace_uuid, workspace_external_id,
-			display_name, domain, token_id, tunnel_token, created_at, updated_at, archived_at
-	`, map[string]any{
-		"organization_uuid": dbUUID(organizationUUID),
-		"external_id":       externalID,
-		"token_id":          tokenID,
-		"tunnel_token":      token,
+	mapper := NewAdminMCPTunnelMapper(d.mapperDB)
+	row, err := mapper.UpdateTokenByExternalID(ctx, updateAdminTunnelTokenParams{
+		OrganizationUUID: organizationUUID,
+		ExternalID:       externalID,
+		TokenID:          tokenID,
+		TunnelToken:      token,
 	})
+	return adminTunnelFromMapperRow(row, err)
 }
 
 func (d *DB) ArchiveAdminTunnel(ctx context.Context, organizationUUID, externalID string) (AdminTunnel, error) {
-	tx, err := d.sql.BeginTxx(ctx, nil)
+	var tunnel AdminTunnel
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		tunnelMapper := NewAdminMCPTunnelMapper(executor)
+		certificateMapper := NewAdminMCPTunnelCertificateMapper(executor)
+		row, txErr := tunnelMapper.ArchiveByExternalID(ctx, organizationUUID, externalID)
+		tunnel, txErr = adminTunnelFromMapperRow(row, txErr)
+		if txErr != nil {
+			return txErr
+		}
+		return certificateMapper.ArchiveActiveByTunnelUUID(ctx, organizationUUID, row.UUID)
+	})
 	if err != nil {
-		return AdminTunnel{}, err
-	}
-	defer tx.Rollback()
-	args := map[string]any{"organization_uuid": dbUUID(organizationUUID), "external_id": externalID}
-	tunnel, err := getAdminRow[AdminTunnel](ctx, tx, `
-		update mcp_tunnels
-		set archived_at = coalesce(archived_at, now()),
-			token_id = null,
-			tunnel_token = null,
-			updated_at = now()
-		where organization_uuid = :organization_uuid and external_id = :external_id
-		returning uuid, external_id,
-			organization_uuid,
-			workspace_uuid, workspace_external_id,
-			display_name, domain, token_id, tunnel_token, created_at, updated_at, archived_at
-	`, args)
-	if err != nil {
-		return AdminTunnel{}, err
-	}
-	args["tunnel_uuid"] = tunnel.UUID
-	if _, err := namedExecContext(ctx, tx, `
-		update mcp_tunnel_certificates
-		set archived_at = coalesce(archived_at, now())
-		where organization_uuid = :organization_uuid
-			and tunnel_uuid = :tunnel_uuid
-			and archived_at is null
-	`, args); err != nil {
-		return AdminTunnel{}, err
-	}
-	if err := tx.Commit(); err != nil {
 		return AdminTunnel{}, err
 	}
 	return tunnel, nil
 }
 
-func adminTunnelSelectSQL() string {
-	return `
-		select uuid, external_id,
-			organization_uuid,
-			workspace_uuid, workspace_external_id,
-			display_name, domain, token_id, tunnel_token, created_at, updated_at, archived_at
-		from mcp_tunnels
-	`
+func adminTunnelFromMapperRow(row adminMCPTunnelRow, err error) (AdminTunnel, error) {
+	if err != nil {
+		return AdminTunnel{}, mapNoRows(err)
+	}
+	tunnelUUID, err := uuid.Parse(row.UUID)
+	if err != nil {
+		return AdminTunnel{}, err
+	}
+	organizationUUID, err := uuid.Parse(row.OrganizationUUID)
+	if err != nil {
+		return AdminTunnel{}, err
+	}
+	workspaceUUID, err := nullableAdminTunnelUUID(row.WorkspaceUUID)
+	if err != nil {
+		return AdminTunnel{}, err
+	}
+	return AdminTunnel{
+		UUID:                tunnelUUID,
+		ExternalID:          row.ExternalID,
+		OrganizationUUID:    organizationUUID,
+		WorkspaceUUID:       workspaceUUID,
+		WorkspaceExternalID: row.WorkspaceExternalID,
+		DisplayName:         row.DisplayName,
+		Domain:              row.Domain,
+		TokenID:             row.TokenID,
+		TunnelToken:         row.TunnelToken,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+		ArchivedAt:          row.ArchivedAt,
+	}, nil
+}
+
+func adminTunnelsFromMapperRows(rows []adminMCPTunnelRow) ([]AdminTunnel, error) {
+	tunnels := make([]AdminTunnel, len(rows))
+	for index := range rows {
+		tunnel, err := adminTunnelFromMapperRow(rows[index], nil)
+		if err != nil {
+			return nil, err
+		}
+		tunnels[index] = tunnel
+	}
+	return tunnels, nil
+}
+
+func nullableAdminTunnelUUID(value *string) (uuid.NullUUID, error) {
+	if value == nil {
+		return uuid.NullUUID{}, nil
+	}
+	parsed, err := uuid.Parse(*value)
+	if err != nil {
+		return uuid.NullUUID{}, err
+	}
+	return uuid.NullUUID{UUID: parsed, Valid: true}, nil
 }

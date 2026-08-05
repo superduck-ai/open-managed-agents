@@ -29,15 +29,44 @@
         last_delivery_attempt_at,
         last_delivery_update_at,
         delivery_attempts,
-        false AS ephemeral,
+        FALSE AS ephemeral,
         created_at,
         updated_at,
         deleted_at
     </sql>
 
-    <select id="GetCodeSessionInboundEventByIdempotencyKey"
-            resultType="codeSessionEventRow"
-            result="optional">
+    <sql id="aliasedEventColumns">
+        e.uuid,
+        e.external_id,
+        e.organization_uuid,
+        e.workspace_uuid,
+        e.code_session_uuid,
+        e.code_session_external_id,
+        e.sequence_num,
+        e.event_type,
+        e.event_subtype,
+        e.payload_uuid,
+        e.request_id,
+        e.payload,
+        e.payload_hash,
+        e.idempotency_key,
+        e.delivery_status,
+        e.source,
+        e.sent_at,
+        e.delivery_worker_epoch,
+        e.received_at,
+        e.processing_at,
+        e.processed_at,
+        e.last_delivery_attempt_at,
+        e.last_delivery_update_at,
+        e.delivery_attempts,
+        FALSE AS ephemeral,
+        e.created_at,
+        e.updated_at,
+        e.deleted_at
+    </sql>
+
+    <select id="GetCodeSessionInboundEventByIdempotencyKey" resultType="codeSessionEventRow" result="optional">
         SELECT
         <include refid="eventColumns"/>
         FROM code_session_inbound_events
@@ -47,9 +76,7 @@
         LIMIT 1
     </select>
 
-    <insert id="InsertCodeSessionInboundEvent"
-            result="returning"
-            resultType="codeSessionEventRow">
+    <insert id="InsertCodeSessionInboundEvent" result="returning" resultType="codeSessionEventRow">
         INSERT INTO code_session_inbound_events (
             external_id,
             organization_uuid,
@@ -79,8 +106,8 @@
             #{row.EventSubtype},
             #{row.PayloadUUID},
             #{row.RequestID},
-            CAST(#{row.Payload} AS jsonb),
-            #{row.PayloadHash},
+            CAST(#{row.Payload,sensitive=true} AS jsonb),
+            #{row.PayloadHash,sensitive=true},
             #{row.IdempotencyKey},
             #{row.DeliveryStatus},
             #{row.Source},
@@ -91,17 +118,13 @@
         <include refid="eventColumns"/>
     </insert>
 
-    <select id="ListExistingActivationInboundEvents"
-            resultType="codeSessionInboundEventIdentityRow">
-        SELECT
-            code_session_external_id,
-            idempotency_key
+    <select id="ListExistingActivationInboundEvents" resultType="codeSessionInboundEventIdentityRow">
+        SELECT code_session_external_id, idempotency_key
         FROM code_session_inbound_events
         WHERE organization_uuid = #{organizationUUID}
           AND workspace_uuid = #{workspaceUUID}
           AND idempotency_key IN
-          <foreach collection="idempotencyKeys" item="idempotencyKey"
-                   open="(" separator="," close=")">
+          <foreach collection="idempotencyKeys" item="idempotencyKey" open="(" separator="," close=")">
               #{idempotencyKey}
           </foreach>
           AND deleted_at IS NULL
@@ -139,8 +162,8 @@
                 #{row.EventSubtype},
                 #{row.PayloadUUID},
                 #{row.RequestID},
-                CAST(#{row.Payload} AS jsonb),
-                #{row.PayloadHash},
+                CAST(#{row.Payload,sensitive=true} AS jsonb),
+                #{row.PayloadHash,sensitive=true},
                 #{row.IdempotencyKey},
                 #{row.DeliveryStatus},
                 #{row.Source},
@@ -149,4 +172,124 @@
             )
         </foreach>
     </insert>
+
+    <select id="ListQueued" resultType="codeSessionEventRow">
+        SELECT
+        <include refid="eventColumns"/>
+        FROM code_session_inbound_events
+        WHERE code_session_external_id = #{codeSessionExternalID}
+          AND delivery_status = 'queued'
+          AND deleted_at IS NULL
+        ORDER BY sequence_num ASC
+    </select>
+
+    <select id="ListQueuedForEpoch" resultType="codeSessionEventRow">
+        SELECT
+        <include refid="aliasedEventColumns"/>
+        FROM code_session_inbound_events e
+        JOIN code_sessions cs ON cs.uuid = e.code_session_uuid
+        WHERE e.code_session_external_id = #{codeSessionExternalID}
+          AND e.delivery_status = 'queued'
+          AND e.deleted_at IS NULL
+          AND cs.deleted_at IS NULL
+          AND cs.current_worker_epoch = #{epoch}
+          AND cs.current_worker_epoch &gt; 0
+        ORDER BY e.sequence_num ASC
+    </select>
+
+    <select id="ListForWorkerStream" resultType="codeSessionEventRow">
+        SELECT
+        <include refid="aliasedEventColumns"/>
+        FROM code_session_inbound_events e
+        JOIN code_sessions cs ON cs.uuid = e.code_session_uuid
+        WHERE e.code_session_external_id = #{codeSessionExternalID}
+          AND e.sequence_num &gt; #{afterSequence}
+          AND e.delivery_status &lt;&gt; 'processed'
+          AND NOT (
+              e.delivery_status = 'sent'
+              AND e.delivery_worker_epoch IS NULL
+              AND e.received_at IS NULL
+              AND e.processing_at IS NULL
+              AND e.processed_at IS NULL
+          )
+          AND e.deleted_at IS NULL
+          AND cs.deleted_at IS NULL
+          AND cs.current_worker_epoch = #{epoch}
+          AND cs.current_worker_epoch &gt; 0
+        ORDER BY e.sequence_num ASC
+    </select>
+
+    <update id="MarkSent" result="rows">
+        UPDATE code_session_inbound_events
+        SET delivery_status = CASE WHEN delivery_status = 'queued' THEN 'sent' ELSE delivery_status END,
+            sent_at = COALESCE(sent_at, NOW()),
+            last_delivery_attempt_at = NOW(),
+            delivery_attempts = delivery_attempts + 1,
+            updated_at = NOW()
+        WHERE external_id = #{eventExternalID}
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="MarkSentForEpoch" result="rows">
+        UPDATE code_session_inbound_events e
+        SET delivery_status = CASE WHEN e.delivery_status = 'queued' THEN 'sent' ELSE e.delivery_status END,
+            sent_at = COALESCE(e.sent_at, NOW()),
+            delivery_worker_epoch = #{epoch},
+            last_delivery_attempt_at = NOW(),
+            delivery_attempts = e.delivery_attempts + 1,
+            updated_at = NOW()
+        FROM code_sessions cs
+        WHERE e.external_id = #{eventExternalID}
+          AND e.code_session_external_id = #{codeSessionExternalID}
+          AND e.deleted_at IS NULL
+          AND cs.uuid = e.code_session_uuid
+          AND cs.deleted_at IS NULL
+          AND cs.current_worker_epoch = #{epoch}
+          AND cs.current_worker_epoch &gt; 0
+    </update>
+
+    <select id="LockDeliveryByPayloadUUID" resultType="codeSessionEventRow">
+        SELECT
+        <include refid="eventColumns"/>
+        FROM code_session_inbound_events
+        WHERE code_session_uuid = #{codeSessionUUID}
+          AND payload_uuid = #{eventID}
+          AND deleted_at IS NULL
+        ORDER BY sequence_num ASC
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <select id="LockDeliveryByExternalID" resultType="codeSessionEventRow">
+        SELECT
+        <include refid="eventColumns"/>
+        FROM code_session_inbound_events
+        WHERE code_session_uuid = #{codeSessionUUID}
+          AND external_id = #{eventID}
+          AND deleted_at IS NULL
+        LIMIT 1
+        FOR UPDATE
+    </select>
+
+    <update id="UpdateDelivery">
+        UPDATE code_session_inbound_events
+        SET delivery_status = #{params.TargetStatus},
+            received_at = CASE
+                WHEN #{params.MarkReceived} THEN COALESCE(received_at, #{params.Now})
+                ELSE received_at
+            END,
+            processing_at = CASE
+                WHEN #{params.MarkProcessing} THEN COALESCE(processing_at, #{params.Now})
+                ELSE processing_at
+            END,
+            processed_at = CASE
+                WHEN #{params.MarkProcessed} THEN COALESCE(processed_at, #{params.Now})
+                ELSE processed_at
+            END,
+            delivery_worker_epoch = #{params.Epoch},
+            last_delivery_update_at = #{params.Now},
+            updated_at = #{params.Now}
+        WHERE uuid = #{params.UUID}
+          AND deleted_at IS NULL
+    </update>
 </mapper>

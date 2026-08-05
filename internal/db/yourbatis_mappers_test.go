@@ -7,14 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	yourbatis "github.com/superduck-ai/yourbatis"
 )
 
 func TestTableMappersBuildDynamicQueries(t *testing.T) {
-	organizationUUID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	workspaceUUID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
-	codeSessionUUID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	organizationUUID := "11111111-1111-4111-8111-111111111111"
+	workspaceUUID := "22222222-2222-4222-8222-222222222222"
+	codeSessionUUID := "33333333-3333-4333-8333-333333333333"
 
 	t.Run("single code session event append", func(t *testing.T) {
 		lockBound := buildCodeSessionMapperLockCodeSessionByExternalID(
@@ -68,9 +67,9 @@ func TestTableMappersBuildDynamicQueries(t *testing.T) {
 }
 
 func TestTableMappersBuildWrites(t *testing.T) {
-	organizationUUID := uuid.MustParse("11111111-1111-4111-8111-111111111111")
-	workspaceUUID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
-	codeSessionUUID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	organizationUUID := "11111111-1111-4111-8111-111111111111"
+	workspaceUUID := "22222222-2222-4222-8222-222222222222"
+	codeSessionUUID := "33333333-3333-4333-8333-333333333333"
 	createdAt := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
 	row := codeSessionInboundEventInsertRow{
 		ExternalID:            "evt_test",

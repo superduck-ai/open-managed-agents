@@ -38,6 +38,143 @@
         deleted_at
     </sql>
 
+    <sql id="credentialColumns">
+        cs.uuid AS code_session_uuid,
+        cs.external_id AS code_session_external_id,
+        cs.organization_uuid AS organization_uuid,
+        cs.workspace_uuid AS workspace_uuid,
+        w.external_id AS workspace_external_id,
+        s.uuid AS public_session_uuid,
+        s.external_id AS public_session_external_id,
+        s.agent_uuid AS agent_uuid,
+        s.agent_external_id,
+        s.agent_version,
+        COALESCE(u.email, '') AS account_email
+    </sql>
+
+    <sql id="credentialJoins">
+        FROM code_sessions cs
+        JOIN workspaces w ON w.uuid = cs.workspace_uuid
+            AND w.organization_uuid = cs.organization_uuid
+        JOIN sessions s ON s.uuid = cs.session_uuid
+            AND s.workspace_uuid = cs.workspace_uuid
+            AND s.organization_uuid = cs.organization_uuid
+            AND s.deleted_at IS NULL
+        LEFT JOIN api_keys ak ON ak.uuid = s.created_by_api_key_uuid
+            AND ak.workspace_uuid = w.uuid
+        LEFT JOIN users u ON u.uuid = ak.created_by_user_uuid
+            AND u.organization_uuid = cs.organization_uuid
+            AND u.deleted_at IS NULL
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="codeSessionRow">
+        INSERT INTO code_sessions (
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            session_uuid,
+            session_external_id,
+            environment_uuid,
+            environment_external_id,
+            work_dir,
+            permission_mode,
+            model,
+            status,
+            metadata,
+            oauth_access_token_hash,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.SessionUUID},
+            #{params.SessionExternalID},
+            #{params.EnvironmentUUID},
+            #{params.EnvironmentExternalID},
+            #{params.WorkDir},
+            #{params.PermissionMode},
+            #{params.Model},
+            #{params.Status},
+            CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            #{params.OAuthAccessTokenHash,sensitive=true},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindCredentialByOAuthAccessTokenHash" resultType="codeSessionCredentialContextRow">
+        SELECT
+        <include refid="credentialColumns"/>
+        <include refid="credentialJoins"/>
+        WHERE cs.oauth_access_token_hash = #{tokenHash,sensitive=true}
+          AND cs.status = 'active'
+          AND cs.deleted_at IS NULL
+          AND s.status &lt;&gt; 'terminated'
+          AND cs.worker_lease_expires_at &gt; NOW()
+    </select>
+
+    <select id="FindCredentialForIssue" resultType="codeSessionCredentialContextRow">
+        SELECT
+        <include refid="credentialColumns"/>
+        <include refid="credentialJoins"/>
+        WHERE cs.external_id = #{codeSessionExternalID}
+          AND cs.organization_uuid = #{organizationUUID}
+          AND cs.workspace_uuid = #{workspaceUUID}
+          AND cs.status = 'active'
+          AND cs.deleted_at IS NULL
+          AND s.status &lt;&gt; 'terminated'
+    </select>
+
+    <select id="FindNetworkPolicyContext" resultType="codeSessionNetworkPolicyContextRow">
+        SELECT
+            cs.organization_uuid AS organization_uuid,
+            cs.workspace_uuid AS workspace_uuid,
+            e.external_id AS environment_external_id,
+            e.config AS environment_config,
+            s.agent_snapshot
+        FROM code_sessions cs
+        JOIN environments e ON e.uuid = cs.environment_uuid
+            AND e.external_id = cs.environment_external_id
+            AND e.organization_uuid = cs.organization_uuid
+            AND e.workspace_uuid = cs.workspace_uuid
+            AND e.deleted_at IS NULL
+        JOIN sessions s ON s.uuid = cs.session_uuid
+            AND s.external_id = cs.session_external_id
+            AND s.organization_uuid = cs.organization_uuid
+            AND s.workspace_uuid = cs.workspace_uuid
+            AND s.environment_uuid = cs.environment_uuid
+            AND s.environment_external_id = cs.environment_external_id
+            AND s.deleted_at IS NULL
+        WHERE cs.external_id = #{codeSessionExternalID}
+          AND cs.organization_uuid = #{organizationUUID}
+          AND cs.workspace_uuid = #{workspaceUUID}
+          AND cs.status = 'active'
+          AND cs.deleted_at IS NULL
+          AND s.status &lt;&gt; 'terminated'
+    </select>
+
+    <select id="FindByExternalID" resultType="codeSessionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM code_sessions
+        WHERE external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+    </select>
+
+    <select id="FindLatestBySessionExternalID" resultType="codeSessionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM code_sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND session_external_id = #{sessionExternalID}
+          AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT 1
+    </select>
+
     <select id="LockCodeSessionByExternalID" resultType="codeSessionRow" result="optional">
         SELECT
         <include refid="columns"/>
@@ -47,7 +184,7 @@
         FOR UPDATE
     </select>
 
-    <select id="LockInitializingCodeSession" resultType="codeSessionRow">
+    <select id="LockInitializingCodeSession" resultType="codeSessionRow" result="optional">
         SELECT
         <include refid="columns"/>
         FROM code_sessions
@@ -57,6 +194,75 @@
           AND deleted_at IS NULL
         FOR UPDATE
     </select>
+
+    <select id="LockWorkerLeaseByExternalID" resultType="codeSessionWorkerLeaseRow">
+        SELECT uuid, current_worker_epoch, worker_lease_expires_at
+        FROM code_sessions
+        WHERE external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="FindCurrentWorkerEpochByExternalID" result="scalar" resultType="int64">
+        SELECT current_worker_epoch
+        FROM code_sessions
+        WHERE external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+    </select>
+
+    <update id="RegisterWorker" result="returning" resultType="int64">
+        UPDATE code_sessions
+        SET current_worker_epoch = #{params.Epoch},
+            worker_lease_expires_at = #{params.ExpiresAt},
+            worker_registered_at = #{params.Now},
+            worker_last_heartbeat_at = NULL,
+            worker_token_session_id = #{params.WorkerTokenSessionID,sensitive=true},
+            worker_binding = COALESCE(CAST(#{params.WorkerBinding,sensitive=true} AS jsonb), CAST('{}' AS jsonb)),
+            connection_status = 'connected',
+            last_worker_connected_at = #{params.Now},
+            last_worker_activity_at = #{params.Now},
+            updated_at = #{params.Now}
+        WHERE uuid = #{params.UUID}
+        RETURNING current_worker_epoch
+    </update>
+
+    <update id="HeartbeatWorkerByExternalID" result="returning" resultType="codeSessionWorkerExpiryRow">
+        UPDATE code_sessions
+        SET worker_last_heartbeat_at = #{params.Now},
+            worker_lease_expires_at = #{params.ExpiresAt},
+            last_worker_activity_at = #{params.Now},
+            connection_status = 'connected',
+            updated_at = #{params.Now}
+        WHERE external_id = #{params.ExternalID}
+          AND current_worker_epoch = #{params.Epoch}
+          AND deleted_at IS NULL
+        RETURNING worker_lease_expires_at
+    </update>
+
+    <update id="HeartbeatWorkerByUUID" result="returning" resultType="codeSessionWorkerExpiryRow">
+        UPDATE code_sessions
+        SET worker_last_heartbeat_at = #{params.Now},
+            worker_lease_expires_at = #{params.ExpiresAt},
+            last_worker_activity_at = #{params.Now},
+            connection_status = 'connected',
+            updated_at = #{params.Now}
+        WHERE uuid = #{params.UUID}
+        RETURNING worker_lease_expires_at
+    </update>
+
+    <update id="UpdateWorkerState" result="returning" resultType="codeSessionRow">
+        UPDATE code_sessions
+        SET worker_status = #{params.WorkerStatus},
+            worker_requires_action_details = CAST(#{params.RequiresActionDetails,sensitive=true} AS jsonb),
+            worker_external_metadata = CAST(#{params.ExternalMetadata,sensitive=true} AS jsonb),
+            connection_status = 'connected',
+            last_worker_connected_at = #{params.Now},
+            last_worker_activity_at = #{params.Now},
+            updated_at = #{params.Now}
+        WHERE uuid = #{params.UUID}
+        RETURNING
+        <include refid="columns"/>
+    </update>
 
     <update id="UpdateCodeSessionInboundSequence" result="rows">
         UPDATE code_sessions
@@ -72,12 +278,76 @@
         WHERE uuid = #{codeSessionUUID}
     </update>
 
+    <update id="UpdateCodeSessionInternalSequence">
+        UPDATE code_sessions
+        SET last_internal_sequence_num = #{sequenceNum},
+            updated_at = #{now}
+        WHERE uuid = #{codeSessionUUID}
+    </update>
+
     <update id="ActivateCodeSession" result="rows">
         UPDATE code_sessions
         SET status = 'active',
             updated_at = #{now}
         WHERE uuid = #{codeSessionUUID}
           AND status = 'initializing'
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="TouchWorkerActivityByUUID">
+        UPDATE code_sessions
+        SET last_worker_activity_at = #{now},
+            updated_at = #{now}
+        WHERE uuid = #{codeSessionUUID}
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="TouchWorkerActivityForActiveLease" result="rows">
+        UPDATE code_sessions
+        SET last_worker_activity_at = #{now},
+            updated_at = #{now}
+        WHERE external_id = #{codeSessionExternalID}
+          AND current_worker_epoch = #{epoch}
+          AND worker_lease_expires_at &gt; #{now}
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="TouchWorkerActivity" result="rows">
+        UPDATE code_sessions
+        SET last_worker_activity_at = #{now},
+            updated_at = #{now}
+        WHERE external_id = #{codeSessionExternalID}
+          <if test="requiredEpoch != nil">
+              AND current_worker_epoch = #{requiredEpoch}
+          </if>
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="UpdateConnection" result="rows">
+        UPDATE code_sessions
+        SET connection_status = #{params.Status},
+            <if test="params.Connected">
+                last_worker_connected_at = #{params.Now},
+            </if>
+            last_worker_activity_at = #{params.Now},
+            updated_at = #{params.Now}
+        WHERE external_id = #{params.ExternalID}
+          <if test="params.RequiredEpoch != nil">
+              AND current_worker_epoch = #{params.RequiredEpoch}
+          </if>
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="TerminateByExternalID" result="rows">
+        UPDATE code_sessions
+        SET status = 'terminated',
+            oauth_access_token_hash = NULL,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND external_id = #{codeSessionExternalID}
           AND deleted_at IS NULL
     </update>
 </mapper>

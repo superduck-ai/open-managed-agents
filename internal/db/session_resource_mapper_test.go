@@ -406,8 +406,8 @@ func TestSessionResourceMapperPropagatesExecutionErrors(t *testing.T) {
 func TestSessionResourceMapperResultSemantics(t *testing.T) {
 	t.Run("returning row scan error", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{
-			columns: []string{"uuid"},
-			rows:    [][]driver.Value{{"invalid-uuid"}},
+			columns: []string{"created_at"},
+			rows:    [][]driver.Value{{"invalid-time"}},
 		})
 		_, err := NewSessionResourceMapper(executor).BindSessionFileResource(context.Background(), sessionFileResourceBindingParams{})
 		if err == nil {

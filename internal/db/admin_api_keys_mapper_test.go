@@ -153,7 +153,7 @@ func TestAdminAPIKeyMapperListPage(t *testing.T) {
 
 func TestAdminAPIKeyMapperInsert(t *testing.T) {
 	params := insertAdminAPIKeyParams{
-		UUID:              uuid.MustParse("33333333-3333-4333-8333-333333333333"),
+		UUID:              "33333333-3333-4333-8333-333333333333",
 		ExternalID:        "apikey_console",
 		WorkspaceUUID:     "22222222-2222-4222-8222-222222222222",
 		KeyHash:           "secret-hash",
@@ -375,7 +375,7 @@ func TestAdminAPIKeyMapperFindPageAnchorBuildsScopedLookup(t *testing.T) {
 
 func TestAdminAPIKeyMapperInsertMarksKeyHashSensitive(t *testing.T) {
 	params := insertAdminAPIKeyParams{
-		UUID:              uuid.MustParse("33333333-3333-4333-8333-333333333333"),
+		UUID:              "33333333-3333-4333-8333-333333333333",
 		ExternalID:        "apikey_console",
 		WorkspaceUUID:     "22222222-2222-4222-8222-222222222222",
 		KeyHash:           "secret-hash",

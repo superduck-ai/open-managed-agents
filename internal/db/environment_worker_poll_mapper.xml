@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EnvironmentWorkerPollMapper">
+    <insert id="Upsert" result="exec">
+        INSERT INTO environment_worker_polls (
+            organization_uuid,
+            workspace_uuid,
+            environment_uuid,
+            environment_external_id,
+            worker_id,
+            last_poll_at
+        )
+        SELECT
+            organization_uuid,
+            workspace_uuid,
+            uuid,
+            external_id,
+            #{workerID},
+            NOW()
+        FROM environments
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{environmentExternalID}
+        AND deleted_at IS NULL
+        ON CONFLICT (environment_uuid, worker_id) DO UPDATE SET
+            last_poll_at = EXCLUDED.last_poll_at
+    </insert>
+</mapper>

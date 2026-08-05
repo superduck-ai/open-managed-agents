@@ -79,8 +79,8 @@
             #{row.EventSubtype},
             #{row.PayloadUUID},
             #{row.RequestID},
-            CAST(#{row.Payload} AS jsonb),
-            #{row.PayloadHash},
+            CAST(#{row.Payload,sensitive=true} AS jsonb),
+            #{row.PayloadHash,sensitive=true},
             #{row.IdempotencyKey},
             #{row.Source},
             #{row.Ephemeral},
@@ -90,4 +90,28 @@
         RETURNING
         <include refid="eventColumns"/>
     </insert>
+
+    <select id="ListAfter" resultType="codeSessionEventRow">
+        SELECT
+        <include refid="eventColumns"/>
+        FROM code_session_outbound_events
+        WHERE code_session_external_id = #{codeSessionExternalID}
+          AND sequence_num &gt; #{afterSequence}
+          AND deleted_at IS NULL
+        ORDER BY sequence_num ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="FindLatestToolPermissionRequest" resultType="codeSessionEventRow">
+        SELECT
+        <include refid="eventColumns"/>
+        FROM code_session_outbound_events
+        WHERE code_session_external_id = #{codeSessionExternalID}
+          AND event_type = 'control_request'
+          AND event_subtype = 'can_use_tool'
+          AND payload-&gt;'request'-&gt;&gt;'tool_use_id' = #{toolUseID}
+          AND deleted_at IS NULL
+        ORDER BY sequence_num DESC
+        LIMIT 1
+    </select>
 </mapper>

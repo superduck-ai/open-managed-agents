@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="CodeSessionInternalEventMapper">
+    <sql id="eventColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        code_session_uuid,
+        code_session_external_id,
+        sequence_num,
+        event_type,
+        payload_uuid,
+        agent_id,
+        is_compaction,
+        payload,
+        payload_hash,
+        idempotency_key,
+        event_metadata,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <sql id="aliasedEventColumns">
+        e.uuid,
+        e.external_id,
+        e.organization_uuid,
+        e.workspace_uuid,
+        e.code_session_uuid,
+        e.code_session_external_id,
+        e.sequence_num,
+        e.event_type,
+        e.payload_uuid,
+        e.agent_id,
+        e.is_compaction,
+        e.payload,
+        e.payload_hash,
+        e.idempotency_key,
+        e.event_metadata,
+        e.created_at,
+        e.updated_at,
+        e.deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="codeSessionInternalEventRow">
+        INSERT INTO code_session_internal_events (
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            code_session_uuid,
+            code_session_external_id,
+            sequence_num,
+            event_type,
+            payload_uuid,
+            agent_id,
+            is_compaction,
+            payload,
+            payload_hash,
+            idempotency_key,
+            event_metadata,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.CodeSessionUUID},
+            #{params.CodeSessionExternalID},
+            #{params.SequenceNum},
+            #{params.EventType},
+            #{params.PayloadUUID},
+            #{params.AgentID},
+            #{params.IsCompaction},
+            CAST(#{params.Payload,sensitive=true} AS jsonb),
+            #{params.PayloadHash,sensitive=true},
+            #{params.IdempotencyKey},
+            CAST(#{params.EventMetadata,sensitive=true} AS jsonb),
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        ON CONFLICT (workspace_uuid, idempotency_key)
+        WHERE idempotency_key &lt;&gt; '' AND deleted_at IS NULL
+        DO NOTHING
+        RETURNING
+        <include refid="eventColumns"/>
+    </insert>
+
+    <select id="ListPage" resultType="codeSessionInternalEventRow">
+        WITH boundaries AS (
+            SELECT c.agent_id, MAX(c.sequence_num) AS sequence_num
+            FROM code_session_internal_events c
+            WHERE c.workspace_uuid = #{params.WorkspaceUUID}
+              AND c.code_session_external_id = #{params.CodeSessionExternalID}
+              AND (
+                  (#{params.Subagents} AND c.agent_id IS NOT NULL)
+                  OR (NOT #{params.Subagents} AND c.agent_id IS NULL)
+              )
+              AND c.is_compaction
+              AND c.deleted_at IS NULL
+            GROUP BY c.agent_id
+        )
+        SELECT
+        <include refid="aliasedEventColumns"/>
+        FROM code_session_internal_events e
+        LEFT JOIN boundaries b ON b.agent_id IS NOT DISTINCT FROM e.agent_id
+        WHERE e.workspace_uuid = #{params.WorkspaceUUID}
+          AND e.code_session_external_id = #{params.CodeSessionExternalID}
+          AND (
+              (#{params.Subagents} AND e.agent_id IS NOT NULL)
+              OR (NOT #{params.Subagents} AND e.agent_id IS NULL)
+          )
+          AND e.deleted_at IS NULL
+          AND e.sequence_num &gt; GREATEST(
+              CAST(#{params.AfterSequence} AS bigint),
+              COALESCE(b.sequence_num - 1, 0)
+          )
+        ORDER BY e.sequence_num ASC
+        LIMIT #{params.Limit}
+    </select>
+</mapper>

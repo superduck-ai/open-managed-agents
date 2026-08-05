@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jmoiron/sqlx"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -32,7 +31,8 @@ func (d *DB) ResolveFilestoreTokenScope(
 ) (FilestoreTokenScope, error) {
 	// 查询末尾两列同时取回当前安全策略：组织 taints 来自 settings JSON，
 	// CMEK 状态则由工作区是否配置 external_key_id 推导，供鉴权层校验 JWT 快照。
-	row, found, err := NewFilestoreFilesystemMapper(d.mapperDB).FindTokenScope(
+	mapper := NewFilestoreFilesystemMapper(d.mapperDB)
+	row, found, err := mapper.FindTokenScope(
 		ctx,
 		organizationUUID,
 		accountUUID,
@@ -40,7 +40,7 @@ func (d *DB) ResolveFilestoreTokenScope(
 		strings.TrimSpace(workspaceTaggedID),
 		strings.TrimSpace(resolvedWorkspaceTaggedID),
 		strings.TrimSpace(filesystemID),
-		tryParseDBUUIDIdentifier(filesystemID),
+		tryParseDBUUIDIdentifierString(filesystemID),
 	)
 	return filestoreTokenScopeFromMapperRow(row, found, err)
 }
@@ -84,7 +84,7 @@ func createFilestoreFilesystemWithGeneratedID(
 //   - 同一 Workspace 内的 external ID 已属于其他 Session，或当前 Session 已有
 //     另一个活动 filesystem：返回 ErrDuplicate，不会改写已有归属。
 //
-// 整个过程在同一个 sqlx 事务中完成。函数组合使用 external ID advisory lock、
+// 整个过程在同一个 Yourbatis 事务中完成。函数组合使用 external ID advisory lock、
 // Session 行锁、Workspace advisory lock 和 filesystem namespace advisory lock，
 // 并由数据库唯一索引兜底，避免并发请求创建重复记录，也避免与 Session 删除或目录
 // 更新发生竞态。任何一步失败都会回滚，不会留下只有 filesystem、没有完整固定
@@ -125,15 +125,23 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	}
 	input.Now = filestoreNow(input.Now)
 
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return FilestoreFilesystem{}, false, err
-	}
-	defer tx.Rollback()
+	var filesystem FilestoreFilesystem
+	var created bool
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		var txErr error
+		filesystem, created, txErr = provisionFilestoreFilesystemTx(ctx, executor, input)
+		return txErr
+	})
+	return filesystem, created, err
+}
 
-	// 按 (workspace, externalID) 串行化首次建档，避免并发请求各自通过“尚不存在”的检查。
+func provisionFilestoreFilesystemTx(
+	ctx context.Context,
+	executor yourbatis.Executor,
+	input ProvisionFilestoreFilesystemInput,
+) (FilestoreFilesystem, bool, error) {
 	params := filestoreFilesystemProvisionParameters(input)
-	mapper := NewFilestoreFilesystemMapper(newSQLXTxExecutor(tx))
+	mapper := NewFilestoreFilesystemMapper(executor)
 	if err := mapper.LockProvision(ctx, params.WorkspaceUUID, params.FilesystemExternalID); err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
@@ -141,15 +149,14 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	if err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-	if err := mapper.LockWorkspace(ctx, binding.WorkspaceUUID.String()); err != nil {
+	if err = mapper.LockWorkspace(ctx, binding.WorkspaceUUID); err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-
 	existingRow, found, err := mapper.FindProvisionedByIdentifier(
 		ctx,
 		params.WorkspaceUUID,
 		params.FilesystemExternalID,
-		tryParseDBUUIDIdentifier(input.UUID),
+		tryParseDBUUIDIdentifierString(input.UUID),
 	)
 	if err != nil {
 		return FilestoreFilesystem{}, false, err
@@ -162,13 +169,7 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 		if existing.OrganizationUUID != input.OrganizationUUID || existing.SessionUUID != input.SessionUUID {
 			return FilestoreFilesystem{}, false, ErrDuplicate
 		}
-		if err := ensureProvisionedFilestoreRootsTx(ctx, tx, existing, input.Now); err != nil {
-			return FilestoreFilesystem{}, false, err
-		}
-		if err := tx.Commit(); err != nil {
-			return FilestoreFilesystem{}, false, err
-		}
-		return existing, false, nil
+		return existing, false, ensureProvisionedFilestoreRootsTx(ctx, executor, existing, input.Now)
 	}
 	_, found, err = mapper.FindProvisionedBySession(ctx, params.WorkspaceUUID, params.SessionUUID)
 	if err != nil {
@@ -177,8 +178,7 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	if found {
 		return FilestoreFilesystem{}, false, ErrDuplicate
 	}
-
-	filesystemRow, err := mapper.InsertProvisioned(ctx, params)
+	row, err := mapper.InsertProvisioned(ctx, params)
 	if isUniqueViolationOnConstraint(err, filestoreWorkspaceSessionKey) ||
 		isUniqueViolationOnConstraint(err, filestoreWorkspaceExternalIDKey) {
 		return FilestoreFilesystem{}, false, ErrDuplicate
@@ -186,17 +186,11 @@ func (d *DB) ProvisionFilestoreFilesystem(ctx context.Context, input ProvisionFi
 	if err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-	filesystem, err := filesystemRow.filesystem()
+	filesystem, err := row.filesystem()
 	if err != nil {
 		return FilestoreFilesystem{}, false, err
 	}
-	if err := ensureProvisionedFilestoreRootsTx(ctx, tx, filesystem, input.Now); err != nil {
-		return FilestoreFilesystem{}, false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return FilestoreFilesystem{}, false, err
-	}
-	return filesystem, true, nil
+	return filesystem, true, ensureProvisionedFilestoreRootsTx(ctx, executor, filesystem, input.Now)
 }
 
 func filestoreFilesystemProvisionParameters(input ProvisionFilestoreFilesystemInput) filestoreFilesystemProvisionParams {
@@ -220,12 +214,12 @@ func filestoreFilesystemProvisionParameters(input ProvisionFilestoreFilesystemIn
 
 func ensureProvisionedFilestoreRootsTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	filesystem FilestoreFilesystem,
 	now time.Time,
 ) error {
-	executor := newSQLXTxExecutor(tx)
-	if err := NewFilestoreFilesystemMapper(executor).LockFilesystem(ctx, filesystem.UUID); err != nil {
+	mapper := NewFilestoreFilesystemMapper(executor)
+	if err := mapper.LockFilesystem(ctx, filesystem.UUID); err != nil {
 		return err
 	}
 	return ensureFilestoreFixedRootsTx(ctx, executor, filesystem, now)
@@ -272,11 +266,12 @@ func ensureFilestoreFixedRootsTx(
 
 // GetFilestoreFilesystem 在工作区边界内按外部 ID 或 UUID 查找文件系统。
 func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceUUID string, externalID string) (FilestoreFilesystem, error) {
-	row, found, err := NewFilestoreFilesystemMapper(d.mapperDB).FindFilesystemByIdentifier(
+	mapper := NewFilestoreFilesystemMapper(d.mapperDB)
+	row, found, err := mapper.FindFilesystemByIdentifier(
 		ctx,
 		workspaceUUID,
 		externalID,
-		tryParseDBUUIDIdentifier(externalID),
+		tryParseDBUUIDIdentifierString(externalID),
 	)
 	return filestoreFilesystemFromMapperRow(row, found, err)
 }
@@ -284,7 +279,8 @@ func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceUUID string, e
 // GetFilestoreFilesystemBySession 返回 public session 唯一拥有的活动文件系统。
 // Code session 是可重建的执行实例，不参与文件系统归属判断。
 func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceUUID string, sessionExternalID string) (FilestoreFilesystem, error) {
-	row, found, err := NewFilestoreFilesystemMapper(d.mapperDB).FindFilesystemBySessionExternalID(
+	mapper := NewFilestoreFilesystemMapper(d.mapperDB)
+	row, found, err := mapper.FindFilesystemBySessionExternalID(
 		ctx,
 		workspaceUUID,
 		sessionExternalID,
@@ -314,7 +310,8 @@ func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceUUID 
 // token 仍会在每次 Filestore 请求中重新回查数据库，因此这里返回的是签发时快照，
 // 不是绕过后续鉴权的永久授权。
 func (d *DB) GetFilestoreTokenScopeForSessionIssue(ctx context.Context, workspaceUUID string, sessionExternalID string) (FilestoreTokenScope, error) {
-	row, found, err := NewFilestoreFilesystemMapper(d.mapperDB).FindSessionTokenScope(
+	mapper := NewFilestoreFilesystemMapper(d.mapperDB)
+	row, found, err := mapper.FindSessionTokenScope(
 		ctx,
 		workspaceUUID,
 		strings.TrimSpace(sessionExternalID),
@@ -324,9 +321,10 @@ func (d *DB) GetFilestoreTokenScopeForSessionIssue(ctx context.Context, workspac
 
 // retireSessionFilesystemTx 先撤销命名空间访问，再投递有界的后台回收任务。
 // 文件元数据和 S3 对象都由 worker 分批处理，Session 删除事务不会随文件数量增长。
-func retireSessionFilesystemTx(ctx context.Context, tx *sqlx.Tx, session Session) error {
+func retireSessionFilesystemTx(ctx context.Context, executor yourbatis.Executor, session Session) error {
 	retiredAt := filestoreNow(session.UpdatedAt)
-	row, found, err := NewFilestoreFilesystemMapper(newSQLXTxExecutor(tx)).RetireSessionFilesystem(
+	mapper := NewFilestoreFilesystemMapper(executor)
+	row, found, err := mapper.RetireSessionFilesystem(
 		ctx,
 		session.WorkspaceUUID,
 		session.OrganizationUUID,
@@ -346,7 +344,7 @@ func retireSessionFilesystemTx(ctx context.Context, tx *sqlx.Tx, session Session
 	}
 	_, err = enqueueFilestoreFilesystemCleanupJobTx(
 		ctx,
-		newSQLXTxExecutor(tx),
+		executor,
 		filesystem,
 		session.WorkspaceUUID,
 		retiredAt,

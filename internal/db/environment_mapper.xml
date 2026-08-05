@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EnvironmentMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        name,
+        description,
+        config,
+        metadata,
+        scope,
+        provider,
+        resolved_template,
+        created_at,
+        updated_at,
+        archived_at,
+        deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="environmentMapperRow">
+        INSERT INTO environments (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            created_by_api_key_uuid,
+            name,
+            description,
+            config,
+            metadata,
+            scope,
+            provider,
+            resolved_template,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.Name},
+            #{params.Description},
+            CAST(#{params.Config,sensitive=true} AS jsonb),
+            CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            #{params.Scope},
+            #{params.Provider},
+            #{params.ResolvedTemplate},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="environmentMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environments
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindByUUID" resultType="environmentMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environments
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{environmentUUID}
+        AND deleted_at IS NULL
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="environmentMapperRow">
+        UPDATE environments
+        SET name = #{params.Name},
+            description = #{params.Description},
+            config = CAST(#{params.Config,sensitive=true} AS jsonb),
+            metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            scope = #{params.Scope},
+            resolved_template = #{params.ResolvedTemplate},
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="ArchiveByExternalID" result="returning" resultType="environmentMapperRow">
+        UPDATE environments
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <select id="LockUUIDByExternalID" result="scalar">
+        SELECT uuid
+        FROM environments
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="SoftDeleteByUUID" result="rows">
+        UPDATE environments
+        SET deleted_at = COALESCE(deleted_at, NOW()),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{environmentUUID}
+        AND deleted_at IS NULL
+    </update>
+
+    <select id="ListPage" resultType="environmentMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environments
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <if test="!params.IncludeArchived">
+                AND archived_at IS NULL
+            </if>
+            <if test="params.Cursor != nil">
+                AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.FetchLimit}
+    </select>
+</mapper>

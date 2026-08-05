@@ -45,6 +45,14 @@ func tryParseDBUUIDIdentifier(value string) uuid.NullUUID {
 	return uuid.NullUUID{UUID: parsed, Valid: true}
 }
 
+func tryParseDBUUIDIdentifierString(value string) string {
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
+	if err != nil || parsed == uuid.Nil {
+		return ""
+	}
+	return parsed.String()
+}
+
 func parseDBUUID(name, value string) (uuid.UUID, error) {
 	parsed, err := uuid.Parse(strings.TrimSpace(value))
 	if err != nil || parsed == uuid.Nil {

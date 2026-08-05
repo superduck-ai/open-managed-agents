@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="DeploymentMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        environment_uuid,
+        environment_external_id,
+        agent_uuid,
+        agent_external_id,
+        agent_version,
+        agent_snapshot,
+        name,
+        description,
+        metadata,
+        initial_events,
+        resources,
+        resource_secrets,
+        vault_ids,
+        schedule,
+        last_run_at,
+        status,
+        paused_reason,
+        created_at,
+        updated_at,
+        archived_at,
+        deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="deploymentMapperRow">
+        INSERT INTO deployments (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            created_by_api_key_uuid,
+            environment_uuid,
+            environment_external_id,
+            agent_uuid,
+            agent_external_id,
+            agent_version,
+            agent_snapshot,
+            name,
+            description,
+            metadata,
+            initial_events,
+            resources,
+            resource_secrets,
+            vault_ids,
+            schedule,
+            last_run_at,
+            status,
+            paused_reason,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.EnvironmentUUID},
+            #{params.EnvironmentExternalID},
+            #{params.AgentUUID},
+            #{params.AgentExternalID},
+            #{params.AgentVersion},
+            CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
+            #{params.Name},
+            #{params.Description},
+            CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            CAST(#{params.InitialEvents,sensitive=true} AS jsonb),
+            CAST(#{params.Resources,sensitive=true} AS jsonb),
+            CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
+            CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
+            CAST(#{params.Schedule,sensitive=true} AS jsonb),
+            #{params.LastRunAt},
+            #{params.Status},
+            CAST(#{params.PausedReason,sensitive=true} AS jsonb),
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="deploymentMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM deployments
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="LockByExternalID" resultType="deploymentMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM deployments
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="deploymentMapperRow">
+        UPDATE deployments
+        SET environment_uuid = #{params.EnvironmentUUID},
+            environment_external_id = #{params.EnvironmentExternalID},
+            agent_uuid = #{params.AgentUUID},
+            agent_external_id = #{params.AgentExternalID},
+            agent_version = #{params.AgentVersion},
+            agent_snapshot = CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
+            name = #{params.Name},
+            description = #{params.Description},
+            metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            initial_events = CAST(#{params.InitialEvents,sensitive=true} AS jsonb),
+            resources = CAST(#{params.Resources,sensitive=true} AS jsonb),
+            resource_secrets = CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
+            vault_ids = CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
+            schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="ArchiveByExternalID" result="returning" resultType="deploymentMapperRow">
+        UPDATE deployments
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="PauseByExternalID" result="returning" resultType="deploymentMapperRow">
+        UPDATE deployments
+        SET status = 'paused',
+            paused_reason = CAST(#{pausedReason,sensitive=true} AS jsonb),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        AND archived_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="UnpauseByExternalID" result="returning" resultType="deploymentMapperRow">
+        UPDATE deployments
+        SET status = 'active',
+            paused_reason = NULL,
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        AND archived_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <select id="ListPage" resultType="deploymentMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM deployments
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <if test="!params.IncludeArchived">
+                AND archived_at IS NULL
+            </if>
+            <if test="params.AgentExternalID != ''">
+                AND agent_external_id = #{params.AgentExternalID}
+            </if>
+            <if test="params.Status != ''">
+                AND status = #{params.Status}
+            </if>
+            <if test="params.CreatedAtGTE != nil">
+                AND created_at &gt;= #{params.CreatedAtGTE}
+            </if>
+            <if test="params.CreatedAtLTE != nil">
+                AND created_at &lt;= #{params.CreatedAtLTE}
+            </if>
+            <if test="params.Cursor != nil">
+                AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.FetchLimit}
+    </select>
+
+    <update id="UpdateLastRun" result="rows">
+        UPDATE deployments
+        SET last_run_at = #{lastRunAt},
+            updated_at = #{lastRunAt}
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+    </update>
+</mapper>

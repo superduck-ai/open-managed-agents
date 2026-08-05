@@ -6,16 +6,16 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 
-	"github.com/jmoiron/sqlx"
+	"github.com/superduck-ai/yourbatis"
 )
 
 func insertSessionFilesystemTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	session Session,
 ) (FilestoreFilesystem, error) {
 	createdAt := filestoreNow(session.CreatedAt)
-	mapper := NewFilestoreFilesystemMapper(newSQLXTxExecutor(tx))
+	mapper := NewFilestoreFilesystemMapper(executor)
 	return createFilestoreFilesystemWithGeneratedID(
 		func() (string, error) {
 			return ids.New(filestoreFilesystemIDPrefix)

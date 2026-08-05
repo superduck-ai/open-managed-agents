@@ -15,7 +15,7 @@ type adminAPIKeyPageAnchor struct {
 }
 
 type insertAdminAPIKeyParams struct {
-	UUID              uuid.UUID
+	UUID              string
 	ExternalID        string
 	WorkspaceUUID     string
 	KeyHash           string

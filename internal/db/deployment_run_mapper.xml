@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="DeploymentRunMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        deployment_uuid,
+        deployment_external_id,
+        agent_uuid,
+        agent_external_id,
+        agent_version,
+        agent_snapshot,
+        session_external_id,
+        error,
+        trigger_type,
+        trigger_context,
+        created_at,
+        deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="deploymentRunMapperRow">
+        INSERT INTO deployment_runs (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            created_by_api_key_uuid,
+            deployment_uuid,
+            deployment_external_id,
+            agent_uuid,
+            agent_external_id,
+            agent_version,
+            agent_snapshot,
+            session_external_id,
+            error,
+            trigger_type,
+            trigger_context,
+            created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.DeploymentUUID},
+            #{params.DeploymentExternalID},
+            #{params.AgentUUID},
+            #{params.AgentExternalID},
+            #{params.AgentVersion},
+            CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
+            #{params.SessionExternalID},
+            CAST(#{params.Error,sensitive=true} AS jsonb),
+            #{params.TriggerType},
+            CAST(#{params.TriggerContext,sensitive=true} AS jsonb),
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="deploymentRunMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM deployment_runs
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListPage" resultType="deploymentRunMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM deployment_runs
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <if test="params.DeploymentExternalID != ''">
+                AND deployment_external_id = #{params.DeploymentExternalID}
+            </if>
+            <if test="params.TriggerType != ''">
+                AND trigger_type = #{params.TriggerType}
+            </if>
+            <if test="params.HasErrorFilter">
+                <choose>
+                    <when test="params.HasError">
+                        AND error IS NOT NULL
+                    </when>
+                    <otherwise>
+                        AND error IS NULL
+                    </otherwise>
+                </choose>
+            </if>
+            <if test="params.CreatedAtGT != nil">
+                AND created_at &gt; #{params.CreatedAtGT}
+            </if>
+            <if test="params.CreatedAtGTE != nil">
+                AND created_at &gt;= #{params.CreatedAtGTE}
+            </if>
+            <if test="params.CreatedAtLT != nil">
+                AND created_at &lt; #{params.CreatedAtLT}
+            </if>
+            <if test="params.CreatedAtLTE != nil">
+                AND created_at &lt;= #{params.CreatedAtLTE}
+            </if>
+            <if test="params.Cursor != nil">
+                AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.FetchLimit}
+    </select>
+</mapper>

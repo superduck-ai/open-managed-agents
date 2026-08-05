@@ -78,11 +78,11 @@ func TestAuthorizationMetadataUsesProtoScalarPresence(t *testing.T) {
 }
 
 func TestFilePayloadKeepsEntryTaggedIDWireAlias(t *testing.T) {
-	value, err := json.Marshal(filePayload{EntryTaggedID: "fse_entry"})
+	value, err := json.Marshal(filePayload{EntryTaggedID: "sesrsc_node"})
 	if err != nil {
 		t.Fatalf("marshal file payload: %v", err)
 	}
-	if string(value) != `{"workspaceTaggedId":"fse_entry"}` {
+	if string(value) != `{"workspaceTaggedId":"sesrsc_node"}` {
 		t.Fatalf("file payload = %s", value)
 	}
 }

@@ -8,6 +8,14 @@ import (
 
 func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 	now := time.Date(2026, time.July, 27, 16, 0, 0, 0, time.UTC)
+	for name, query := range map[string]string{
+		"get resource":    getSessionResourceQuery,
+		"update resource": updateSessionResourceQuery,
+	} {
+		if !strings.Contains(query, "payload is not null") {
+			t.Fatalf("%s query exposes internal Session namespace resources: %q", name, query)
+		}
+	}
 	threadArguments := createSessionThreadArguments(SessionThread{
 		UUID:              "11111111-1111-4111-8111-111111111111",
 		ExternalID:        "sesthr_test",
@@ -147,29 +155,6 @@ func TestMigratedSessionQueriesBindNamedArguments(t *testing.T) {
 				"resource_external_id": "sesres_test",
 				"payload":              []byte(`{}`),
 				"secret_payload":       []byte(`{}`),
-			},
-			wantArgCount: 5,
-		},
-		{
-			name:  "retire filesystem",
-			query: retireSessionFilesystemQuery,
-			arguments: map[string]any{
-				"workspace_uuid":    "00000000-0000-0000-0000-000000000002",
-				"organization_uuid": "00000000-0000-0000-0000-000000000001",
-				"session_uuid":      "22222222-2222-4222-8222-222222222222",
-				"retired_at":        now,
-			},
-			wantArgCount: 5,
-		},
-		{
-			name:  "enqueue filesystem cleanup",
-			query: enqueueFilestoreFilesystemCleanupJobQuery,
-			arguments: map[string]any{
-				"workspace_uuid":  "00000000-0000-0000-0000-000000000002",
-				"filesystem_uuid": "00000000-0000-0000-0000-000000000004",
-				"payload":         []byte(`{"filesystem_uuid":"00000000-0000-0000-0000-000000000004"}`),
-				"job_type":        filestoreFilesystemCleanupJobType,
-				"run_after":       now,
 			},
 			wantArgCount: 5,
 		},

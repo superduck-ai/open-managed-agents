@@ -29,12 +29,12 @@ Resources 区域可以添加多张 File 卡片。每张卡片包含 File ID、Mo
 前端、API 与 Sandbox 使用三种路径表示：
 
 ```text
-表单:     /uploads/reports/input.csv
+表单:     reports/input.csv
 API:      /reports/input.csv
 Sandbox:  /mnt/session/uploads/reports/input.csv
 ```
 
-提交时前端去掉固定 `/uploads` 前缀：
+Mount path 是相对于 `/uploads` 的必填路径，用户无需输入 `/uploads` 前缀。提交时前端补上 API 所需的开头 `/`：
 
 ```json
 {
@@ -55,8 +55,8 @@ Sandbox:  /mnt/session/uploads/reports/input.csv
 前端只做即时校验：
 
 - File ID 去除首尾空白后非空；
-- Mount path 以 `/uploads/` 开头；
-- 不以 `/` 结尾，不包含 `//`、`.` 或 `..` 路径段。
+- Mount path 去除首尾空白后非空；
+- 使用相对于 `/uploads` 的路径，不以 `/` 开头或结尾，不包含 `//`、`.` 或 `..` 路径段。
 
 File 是否存在、Workspace 隔离、500 个上限、跨卡片路径冲突、Filestore namespace 冲突和完整路径规则均以后端为权威。
 
@@ -69,4 +69,4 @@ File 是否存在、Workspace 隔离、500 个上限、跨卡片路径冲突、F
 - `web/src/features/managed-agents/sessions/file-resource-path.ts`：路径转换；
 - `web/src/features/managed-agents/api.ts`：Create Session 请求体。
 
-测试覆盖上传成功/失败与部分成功、上传后返回第一页、Workspace header、空资源、路径转换及非法路径段、非法输入禁用创建、删除草稿卡片、Files 链接和运行时路径预览。
+测试覆盖上传成功/失败与部分成功、上传后返回第一页、Workspace header、空资源、相对路径转换及非法路径段、非法输入禁用创建、删除草稿卡片、Files 链接和运行时路径预览。

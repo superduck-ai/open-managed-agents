@@ -316,13 +316,6 @@ func (d *DB) DeleteSession(ctx context.Context, workspaceUUID string, externalID
 	if err := retireSessionFilesystemTx(ctx, tx, session); err != nil {
 		return Session{}, err
 	}
-	if _, err := namedExecContext(ctx, tx, softDeleteSessionFileProjectionsByScopeSQL, map[string]any{
-		"workspace_uuid": dbUUID(session.WorkspaceUUID),
-		"scope_type":     sessionFileProjectionScope,
-		"scope_id":       session.ExternalID,
-	}); err != nil {
-		return Session{}, err
-	}
 	if _, err := namedExecContext(ctx, tx, deleteSessionThreadsQuery, arguments); err != nil {
 		return Session{}, err
 	}
@@ -416,7 +409,7 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 		query += " and (s.created_at " + comparison + ` :cursor_created_at
 			or (s.created_at = :cursor_created_at and s.uuid ` + comparison + ` :cursor_uuid))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
 	query += " order by s.created_at " + order + ", s.uuid " + order + " limit :limit"
 
@@ -458,7 +451,7 @@ func (d *DB) ListSessionThreadsPage(ctx context.Context, params ListSessionThrea
 		query += ` and (created_at < :cursor_created_at
 			or (created_at = :cursor_created_at and uuid < :cursor_uuid))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
 	query += " order by created_at desc, uuid desc limit :limit"
 	threads, err := listSessionThreadsSQLX(ctx, d.sql, query, arguments)
@@ -550,7 +543,7 @@ func (d *DB) CreateSessionResource(
 		if err != nil {
 			return SessionResource{}, err
 		}
-		if err := bindSessionFileResourceWithLockedFilesystemTx(
+		if _, err := bindSessionFileResourceWithLockedFilesystemTx(
 			ctx,
 			tx,
 			session,
@@ -609,7 +602,7 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, se
 	if session.ArchivedAt != nil {
 		return ErrInvalidState
 	}
-	resource, err := getSessionResourceForMutationSQLX(
+	resource, err := getSessionResourceForMutation(
 		ctx,
 		tx,
 		workspaceUUID,
@@ -622,7 +615,7 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, se
 	if err := unbindSessionFileResourceTx(ctx, tx, session, resource); err != nil {
 		return err
 	}
-	if err := softDeleteSessionResourceSQLX(
+	if err := softDeleteSessionResource(
 		ctx,
 		tx,
 		workspaceUUID,
@@ -774,7 +767,7 @@ func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEvents
 		query += " and (created_at " + comparison + ` :cursor_created_at
 			or (created_at = :cursor_created_at and uuid ` + comparison + ` :cursor_uuid))`
 		arguments["cursor_created_at"] = params.Cursor.CreatedAt
-		arguments["cursor_uuid"] = dbUUID(params.Cursor.UUID)
+		arguments["cursor_uuid"] = params.Cursor.UUID
 	}
 	query += " order by created_at " + order + ", uuid " + order + " limit :limit"
 	events, err := listSessionEventsSQLX(ctx, d.sql, query, arguments)

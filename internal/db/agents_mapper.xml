@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AgentMapper">
+    <sql id="agentColumns">
+        uuid,
+        external_id,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        current_version,
+        name,
+        description,
+        system,
+        model,
+        mcp_servers,
+        metadata,
+        multiagent,
+        skills,
+        tools,
+        created_at,
+        updated_at,
+        archived_at,
+        deleted_at
+    </sql>
+
+    <sql id="agentVersionColumns">
+        uuid,
+        agent_external_id AS external_id,
+        workspace_uuid,
+        CAST(NULL AS uuid) AS created_by_api_key_uuid,
+        version AS current_version,
+        name,
+        description,
+        system,
+        model,
+        mcp_servers,
+        metadata,
+        multiagent,
+        skills,
+        tools,
+        agent_created_at AS created_at,
+        agent_updated_at AS updated_at,
+        archived_at,
+        CAST(NULL AS timestamptz) AS deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="agentRow">
+        INSERT INTO agents (
+            uuid,
+            external_id,
+            workspace_uuid,
+            created_by_api_key_uuid,
+            current_version,
+            name,
+            description,
+            system,
+            model,
+            mcp_servers,
+            metadata,
+            multiagent,
+            skills,
+            tools,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID},
+            1,
+            #{params.Config.Name},
+            #{params.Config.Description,sensitive=true},
+            #{params.Config.System,sensitive=true},
+            CAST(#{params.Config.Model,sensitive=true} AS jsonb),
+            CAST(#{params.Config.MCPServers,sensitive=true} AS jsonb),
+            CAST(#{params.Config.Metadata,sensitive=true} AS jsonb),
+            CAST(#{params.Config.Multiagent,sensitive=true} AS jsonb),
+            CAST(#{params.Config.Skills,sensitive=true} AS jsonb),
+            CAST(#{params.Config.Tools,sensitive=true} AS jsonb),
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="agentColumns"/>
+    </insert>
+
+    <insert id="InsertVersion" result="exec">
+        INSERT INTO agent_versions (
+            external_id,
+            workspace_uuid,
+            agent_uuid,
+            agent_external_id,
+            version,
+            name,
+            description,
+            system,
+            model,
+            mcp_servers,
+            metadata,
+            multiagent,
+            skills,
+            tools,
+            agent_created_at,
+            agent_updated_at,
+            archived_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.WorkspaceUUID},
+            #{params.AgentUUID},
+            #{params.AgentExternalID},
+            #{params.Version},
+            #{params.Config.Name},
+            #{params.Config.Description,sensitive=true},
+            #{params.Config.System,sensitive=true},
+            CAST(#{params.Config.Model,sensitive=true} AS jsonb),
+            CAST(#{params.Config.MCPServers,sensitive=true} AS jsonb),
+            CAST(#{params.Config.Metadata,sensitive=true} AS jsonb),
+            CAST(#{params.Config.Multiagent,sensitive=true} AS jsonb),
+            CAST(#{params.Config.Skills,sensitive=true} AS jsonb),
+            CAST(#{params.Config.Tools,sensitive=true} AS jsonb),
+            #{params.AgentCreatedAt},
+            #{params.AgentUpdatedAt},
+            #{params.ArchivedAt}
+        )
+    </insert>
+
+    <select id="FindByExternalID" resultType="agentRow">
+        SELECT
+        <include refid="agentColumns"/>
+        FROM agents
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindVersion" resultType="agentRow">
+        SELECT
+        <include refid="agentVersionColumns"/>
+        FROM agent_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND agent_external_id = #{externalID}
+        AND version = #{version}
+    </select>
+
+    <select id="LockByExternalID" resultType="agentRow">
+        SELECT
+        <include refid="agentColumns"/>
+        FROM agents
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="agentRow">
+        UPDATE agents
+        SET current_version = #{params.CurrentVersion},
+            name = #{params.Config.Name},
+            description = #{params.Config.Description,sensitive=true},
+            system = #{params.Config.System,sensitive=true},
+            model = CAST(#{params.Config.Model,sensitive=true} AS jsonb),
+            mcp_servers = CAST(#{params.Config.MCPServers,sensitive=true} AS jsonb),
+            metadata = CAST(#{params.Config.Metadata,sensitive=true} AS jsonb),
+            multiagent = CAST(#{params.Config.Multiagent,sensitive=true} AS jsonb),
+            skills = CAST(#{params.Config.Skills,sensitive=true} AS jsonb),
+            tools = CAST(#{params.Config.Tools,sensitive=true} AS jsonb),
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="agentColumns"/>
+    </update>
+
+    <update id="ArchiveByExternalID" result="returning" resultType="agentRow">
+        UPDATE agents
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="agentColumns"/>
+    </update>
+
+    <select id="ListPage" resultType="agentRow">
+        SELECT
+        <include refid="agentColumns"/>
+        FROM agents
+        <where>
+            workspace_uuid = #{filter.WorkspaceUUID}
+            AND deleted_at IS NULL
+            <if test="!filter.IncludeArchived">
+                AND archived_at IS NULL
+            </if>
+            <if test="filter.CreatedAtGTE != nil">
+                AND created_at &gt;= #{filter.CreatedAtGTE}
+            </if>
+            <if test="filter.CreatedAtLTE != nil">
+                AND created_at &lt;= #{filter.CreatedAtLTE}
+            </if>
+            <if test="filter.Name != ''">
+                AND POSITION(LOWER(#{filter.Name}) IN LOWER(name)) &gt; 0
+            </if>
+            <if test="filter.Cursor != nil">
+                AND (created_at, uuid) &lt; (#{filter.Cursor.CreatedAt}, #{filter.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{filter.Limit}
+    </select>
+
+    <select id="FindUUIDByExternalID" result="scalar">
+        SELECT uuid
+        FROM agents
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListVersionsPage" resultType="agentRow">
+        SELECT
+        <include refid="agentVersionColumns"/>
+        FROM agent_versions
+        <where>
+            agent_uuid = #{agentUUID}
+            <if test="cursor != nil">
+                AND (version, uuid) &lt; (#{cursor.Version}, #{cursor.UUID})
+            </if>
+        </where>
+        ORDER BY version DESC, uuid DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

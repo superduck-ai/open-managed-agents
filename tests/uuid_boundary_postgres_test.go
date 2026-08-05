@@ -247,6 +247,33 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}); err != nil || len(agents) == 0 {
 		t.Fatalf("list Agents with typed UUID cursor = (%+v, %v)", agents, err)
 	}
+	nextAgent := agent
+	nextAgent.Name = "string UUID PostgreSQL agent"
+	nextAgent.UpdatedAt = now.Add(time.Minute)
+	updatedAgent, err := app.db.UpdateAgent(
+		ctx,
+		ids.WorkspaceUUID,
+		agentID,
+		1,
+		nextAgent,
+		"agentver_string_uuid_"+suffix,
+	)
+	if err != nil || updatedAgent.CurrentVersion != 2 || updatedAgent.Name != nextAgent.Name {
+		t.Fatalf("update Agent through string UUID mapper parameters = (%+v, %v)", updatedAgent, err)
+	}
+	if version, err := app.db.GetAgentVersion(ctx, ids.WorkspaceUUID, agentID, 1); err != nil || version.Name != agent.Name {
+		t.Fatalf("get initial Agent version through string UUID mapper parameters = (%+v, %v)", version, err)
+	}
+	if versions, _, err := app.db.ListAgentVersionsPage(ctx, db.ListAgentVersionsPageParams{
+		WorkspaceUUID:   ids.WorkspaceUUID,
+		AgentExternalID: agentID,
+		Limit:           10,
+	}); err != nil || len(versions) != 2 || versions[0].CurrentVersion != 2 {
+		t.Fatalf("list Agent versions through string UUID mapper parameters = (%+v, %v)", versions, err)
+	}
+	if archived, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
+		t.Fatalf("archive Agent through string UUID mapper parameters = (%+v, %v)", archived, err)
+	}
 
 	skillID := "skill_typed_uuid_" + suffix
 	skillTitle := "typed UUID " + suffix
@@ -886,57 +913,29 @@ func TestTypedUUIDFilesAndFilestorePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("put Filestore file through typed UUID parameters: %v", err)
 	}
-	if activeResult.Entry.UUID == "" || activeResult.Entry.ManagedResourceUUID != nil ||
-		activeResult.Entry.SourceFileUUID != nil ||
-		activeResult.Entry.CreatedByCodeSessionUUID == nil ||
-		*activeResult.Entry.CreatedByCodeSessionUUID != codeSessionUUID {
-		t.Fatalf("Filestore nullable UUID row = %+v", activeResult.Entry)
+	if activeResult.Node.UUID == "" || activeResult.Node.SourceFileUUID != nil {
+		t.Fatalf("Filestore nullable UUID row = %+v", activeResult.Node)
 	}
 
-	expiredAt := now.Add(-time.Minute)
-	if _, err := app.db.PutFilestoreFile(ctx, db.PutFilestoreFileInput{
-		WorkspaceUUID:  workspaceUUID,
-		FilesystemUUID: filesystem.UUID,
-		Path:           "/outputs/expired.txt",
-		Blob: db.FilestoreFileBlob{
-			SizeBytes:             5,
-			MediaType:             "text/plain",
-			Metadata:              []byte(`{}`),
-			AuthorizationMetadata: []byte(`{}`),
-			MD5:                   strings.Repeat("b", 32),
-			SHA256:                strings.Repeat("b", 64),
-			S3Bucket:              "typed-uuid",
-			S3Key:                 "filestore/" + suffix + "/expired.txt",
-			ExpiresAt:             &expiredAt,
-		},
-		Now: now,
-	}); err != nil {
-		t.Fatalf("put expiring Filestore file: %v", err)
-	}
-	expiryJobs, err := app.db.ExpireFilestoreEntries(ctx, 10)
-	if err != nil || len(expiryJobs) == 0 {
-		t.Fatalf("expire Filestore entries through UUID array binding = (%+v, %v)", expiryJobs, err)
-	}
-
-	page, err := app.db.ListFilestoreEntriesPage(ctx, db.ListFilestoreEntriesPageParams{
+	page, err := app.db.ListSessionResourceFilesPage(ctx, db.ListSessionResourceFilesPageParams{
 		WorkspaceUUID:  workspaceUUID,
 		FilesystemUUID: filesystem.UUID,
 		DirectoryPath:  "/outputs",
 		Recursive:      true,
 		Limit:          1,
-		Cursor: &db.FilestoreEntryPageCursor{
+		Cursor: &db.SessionResourceFilePageCursor{
 			Path: "/outputs",
 			UUID: uuid.NewString(),
 		},
 	})
-	if err != nil || len(page.Entries) != 1 || page.Entries[0].UUID != activeResult.Entry.UUID {
+	if err != nil || len(page.Entries) != 1 || page.Entries[0].UUID != activeResult.Node.UUID {
 		t.Fatalf("list Filestore entries with typed UUID cursor = (%+v, %v)", page, err)
 	}
 
 	cleanupJob, err := app.db.EnqueueFilestoreObjectCleanupJob(ctx, db.EnqueueFilestoreObjectCleanupJobInput{
 		WorkspaceUUID:   workspaceUUID,
 		FilesystemUUID:  filesystem.UUID,
-		EntryExternalID: activeResult.Entry.ExternalID,
+		EntryExternalID: activeResult.Node.ExternalID,
 		Bucket:          "typed-uuid",
 		Key:             "filestore/" + suffix + "/sentinel.txt",
 		Reason:          "typed_uuid_integration",
@@ -964,7 +963,7 @@ func TestTypedUUIDFilesAndFilestorePostgres(t *testing.T) {
 	}
 
 	storageBytes, err := app.db.GetWorkspaceStorageBytes(ctx, workspaceUUID)
-	if err != nil || storageBytes != firstFile.SizeBytes+secondFile.SizeBytes+activeResult.Entry.OwnedBytes() {
+	if err != nil || storageBytes != firstFile.SizeBytes+secondFile.SizeBytes+activeResult.Node.OwnedBytes() {
 		t.Fatalf("workspace storage bytes = (%d, %v), want %d", storageBytes, err, 16)
 	}
 }

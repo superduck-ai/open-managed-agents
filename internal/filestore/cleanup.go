@@ -19,22 +19,19 @@ const (
 	filestoreCleanupBatchSize           = 10
 	filestoreFilesystemCleanupBatchSize = 100
 	filestoreCleanupMaxAttempts         = 10
-	filestoreTTLSweepBatchSize          = 100
 	filestoreCleanupPollInterval        = 30 * time.Second
-	filestoreTTLSweepInterval           = 5 * time.Minute
 )
 
 type filestoreCleanupDatabase interface {
 	LeaseFilestoreFilesystemCleanupJobs(context.Context, string, int, int) ([]db.FilestoreFilesystemCleanupJob, error)
-	ProcessLeasedFilestoreFilesystemCleanupJob(context.Context, string, string, int) (bool, error)
+	ProcessLeasedFilestoreFilesystemCleanupJob(context.Context, string, string, int) (bool, []db.FilestoreCleanupAnomaly, error)
 	FailLeasedFilestoreFilesystemCleanupJob(context.Context, string, string, string, time.Duration, int) error
 	LeaseFilestoreObjectCleanupJobs(context.Context, string, int, int) ([]db.FilestoreObjectCleanupJob, error)
 	CompleteLeasedFilestoreObjectCleanupJob(context.Context, string, string) error
 	FailLeasedFilestoreObjectCleanupJob(context.Context, string, string, string, time.Duration, int) error
-	ExpireFilestoreEntries(context.Context, int) ([]db.FilestoreObjectCleanupJob, error)
 }
 
-// CleanupWorker owns the filestore cleanup and TTL sweep loops.
+// CleanupWorker owns the filestore cleanup loop.
 type CleanupWorker struct {
 	database filestoreCleanupDatabase
 	client   storage.Client
@@ -50,8 +47,7 @@ func NewCleanupWorker(database filestoreCleanupDatabase, client storage.Client, 
 	}
 }
 
-// Start 启动单个后台循环，分别处理对象清理任务与 TTL 到期扫描。
-// 两类工作都会在启动时立即执行一次，不必等待首个定时周期。
+// Start 启动后台清理循环，并在启动时立即处理一次，不必等待首个定时周期。
 func (w *CleanupWorker) Start(ctx context.Context) {
 	if w == nil || w.database == nil || w.client == nil {
 		return
@@ -63,17 +59,11 @@ func (w *CleanupWorker) Start(ctx context.Context) {
 func (w *CleanupWorker) runLoop(ctx context.Context, workerID string) {
 	cleanupTicker := time.NewTicker(filestoreCleanupPollInterval)
 	defer cleanupTicker.Stop()
-	ttlTicker := time.NewTicker(filestoreTTLSweepInterval)
-	defer ttlTicker.Stop()
 
 	if ctx.Err() != nil {
 		return
 	}
 	w.runFilesystemCleanupAndLog(ctx, workerID)
-	if ctx.Err() != nil {
-		return
-	}
-	w.runTTLSweepAndLog(ctx)
 	if ctx.Err() != nil {
 		return
 	}
@@ -86,8 +76,6 @@ func (w *CleanupWorker) runLoop(ctx context.Context, workerID string) {
 		case <-cleanupTicker.C:
 			w.runFilesystemCleanupAndLog(ctx, workerID)
 			w.runCleanupAndLog(ctx, workerID)
-		case <-ttlTicker.C:
-			w.runTTLSweepAndLog(ctx)
 		}
 	}
 }
@@ -101,12 +89,6 @@ func (w *CleanupWorker) runFilesystemCleanupAndLog(ctx context.Context, workerID
 func (w *CleanupWorker) runCleanupAndLog(ctx context.Context, workerID string) {
 	if err := w.RunCleanupOnce(ctx, workerID); err != nil {
 		w.logger.ErrorContext(ctx, "filestore cleanup worker", "error", err)
-	}
-}
-
-func (w *CleanupWorker) runTTLSweepAndLog(ctx context.Context) {
-	if err := w.RunTTLSweepOnce(ctx); err != nil {
-		w.logger.ErrorContext(ctx, "filestore TTL sweep", "error", err)
 	}
 }
 
@@ -125,12 +107,13 @@ func (w *CleanupWorker) RunFilesystemCleanupOnce(ctx context.Context, workerID s
 			errs = append(errs, err)
 			break
 		}
-		_, processErr := w.database.ProcessLeasedFilestoreFilesystemCleanupJob(
+		_, anomalies, processErr := w.database.ProcessLeasedFilestoreFilesystemCleanupJob(
 			ctx,
 			job.UUID,
 			workerID,
 			filestoreFilesystemCleanupBatchSize,
 		)
+		w.logCleanupAnomalies(ctx, anomalies)
 		if processErr == nil {
 			continue
 		}
@@ -212,10 +195,17 @@ func (w *CleanupWorker) RunCleanupOnce(ctx context.Context, workerID string) err
 	return errors.Join(errs...)
 }
 
-// RunTTLSweepOnce 将一批到期条目原子地标记为删除，并同时创建对应的对象清理任务。
-func (w *CleanupWorker) RunTTLSweepOnce(ctx context.Context) error {
-	_, err := w.database.ExpireFilestoreEntries(ctx, filestoreTTLSweepBatchSize)
-	return err
+func (w *CleanupWorker) logCleanupAnomalies(ctx context.Context, anomalies []db.FilestoreCleanupAnomaly) {
+	for _, anomaly := range anomalies {
+		w.logger.WarnContext(
+			ctx,
+			"filestore cleanup metadata anomaly",
+			"workspace_id", anomaly.WorkspaceUUID,
+			"filesystem_id", anomaly.FilesystemUUID,
+			"entry_external_id", anomaly.EntryExternalID,
+			"reason", anomaly.Reason,
+		)
+	}
 }
 
 func filestoreCleanupRetryDelay(attempts int) time.Duration {

@@ -259,7 +259,7 @@ func TestAdminAPIKeyMapperUpdateByExternalID(t *testing.T) {
 }
 
 func TestAdminAPIKeyMapperUpdateStatusByUUID(t *testing.T) {
-	apiKeyUUID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	apiKeyUUID := "33333333-3333-4333-8333-333333333333"
 	wantValues := []any{"archived", apiKeyUUID}
 
 	t.Run("execution error", func(t *testing.T) {

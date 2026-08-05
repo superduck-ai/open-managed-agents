@@ -134,7 +134,7 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		}
 		assertWorkspaceStorageBytes(t, fixture, 8)
 
-		if _, err := fixture.app.db.RemoveFilestoreFile(context.Background(), db.RemoveFilestoreEntryInput{
+		if _, err := fixture.app.db.RemoveFilestoreFile(context.Background(), db.RemoveSessionResourceFileInput{
 			WorkspaceUUID:  fixture.workspaceUUID,
 			FilesystemUUID: fixture.filesystem.UUID,
 			Path:           "/shared.txt",
@@ -206,47 +206,9 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		assertWorkspaceStorageBytes(t, fixture, 3)
 	})
 
-	t.Run("success expired bytes are released by the ttl transaction", func(t *testing.T) {
+	t.Run("success directory move releases expired destination bytes", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
-		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/expired.txt",
-			Blob:           workspaceStorageBlob(4, &expiresAt),
-		}); err != nil {
-			t.Fatalf("put expired file: %v", err)
-		}
-		assertWorkspaceStorageBytes(t, fixture, 4)
-		if _, err := fixture.app.db.GetFilestoreEntry(context.Background(), fixture.workspaceUUID, fixture.filesystem.UUID, "/expired.txt"); !errors.Is(err, db.ErrNotFound) {
-			t.Fatalf("read expired file error = %v, want ErrNotFound", err)
-		}
-		if _, err := fixture.app.db.ExpireFilestoreEntries(context.Background(), 1000); err != nil {
-			t.Fatalf("expire Filestore entries: %v", err)
-		}
-		assertWorkspaceStorageBytes(t, fixture, 0)
-	})
-
-	t.Run("success namespace reuse releases expired destination bytes", func(t *testing.T) {
-		fixture := newWorkspaceStorageFixture(t)
-		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
-		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/directory",
-			Blob:           workspaceStorageBlob(4, &expiresAt),
-		}); err != nil {
-			t.Fatalf("put expired directory destination: %v", err)
-		}
-		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/directory",
-		}); err != nil {
-			t.Fatalf("replace expired file with directory: %v", err)
-		}
-		assertWorkspaceStorageBytes(t, fixture, 0)
-
 		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
 			WorkspaceUUID:  fixture.workspaceUUID,
 			FilesystemUUID: fixture.filesystem.UUID,

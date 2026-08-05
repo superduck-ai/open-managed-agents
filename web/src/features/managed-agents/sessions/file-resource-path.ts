@@ -1,23 +1,19 @@
-const sessionUploadsRoot = '/uploads';
-const sandboxSessionRoot = '/mnt/session';
+const sandboxSessionUploadsRoot = '/mnt/session/uploads';
 
 export function isValidSessionFileMountPath(value: string) {
   const path = value.trim();
-  if (!path.startsWith(`${sessionUploadsRoot}/`) || path.endsWith('/') || path.includes('//')) {
+  if (path.length === 0 || path.startsWith('/') || path.endsWith('/') || path.includes('//')) {
     return false;
   }
-  return path
-    .slice(sessionUploadsRoot.length + 1)
-    .split('/')
-    .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+  return path.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
 }
 
 export function sessionFileRuntimePath(value: string) {
   const path = value.trim();
-  return isValidSessionFileMountPath(path) ? `${sandboxSessionRoot}${path}` : '';
+  return isValidSessionFileMountPath(path) ? `${sandboxSessionUploadsRoot}/${path}` : '';
 }
 
 export function sessionFileAPIMountPath(value: string) {
   const path = value.trim();
-  return isValidSessionFileMountPath(path) ? path.slice(sessionUploadsRoot.length) : path;
+  return isValidSessionFileMountPath(path) ? `/${path}` : path;
 }

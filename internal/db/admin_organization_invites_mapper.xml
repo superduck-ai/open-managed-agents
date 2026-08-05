@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminInviteMapper">
+    <sql id="adminInviteColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        email,
+        role,
+        status,
+        invited_at,
+        expires_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="AdminInvite">
+        INSERT INTO organization_invites (
+            external_id,
+            organization_uuid,
+            email,
+            role,
+            status,
+            invited_at,
+            expires_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.Email},
+            #{params.Role},
+            #{params.Status},
+            #{params.InvitedAt},
+            #{params.ExpiresAt}
+        )
+        RETURNING
+        <include refid="adminInviteColumns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="AdminInvite">
+        SELECT
+        <include refid="adminInviteColumns"/>
+        FROM organization_invites
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+    </select>
+
+    <select id="FindPageAnchorByExternalID" resultType="pagePosition">
+        SELECT invited_at AS created_at, uuid
+        FROM organization_invites
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+    </select>
+
+    <select id="ListPage" resultType="AdminInvite">
+        SELECT
+        <include refid="adminInviteColumns"/>
+        FROM organization_invites
+        <where>
+            organization_uuid = #{organizationUUID}
+            <if test="anchor != nil">
+                <choose>
+                    <when test="before">
+                        AND (invited_at, uuid) &gt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </when>
+                    <otherwise>
+                        AND (invited_at, uuid) &lt; (#{anchor.CreatedAt}, #{anchor.UUID})
+                    </otherwise>
+                </choose>
+            </if>
+        </where>
+        ORDER BY invited_at DESC, uuid DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="SoftDeleteByExternalID" result="returning" resultType="AdminInvite">
+        UPDATE organization_invites
+        SET status = 'deleted',
+            deleted_at = COALESCE(deleted_at, NOW())
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        RETURNING
+        <include refid="adminInviteColumns"/>
+    </update>
+</mapper>

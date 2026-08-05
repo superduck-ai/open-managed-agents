@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="SessionResourceMapper">
+    <sql id="sessionResourceColumns">
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        session_external_id, resource_type, payload, secret_payload,
+        created_at, updated_at, deleted_at
+    </sql>
+
+    <select id="CountSessionFileResources" result="scalar">
+        SELECT count(*) AS resource_count
+        FROM session_resources
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND resource_type = #{resourceType}
+        AND payload IS NOT NULL
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindMountConflict" result="optional" resultType="string">
+        SELECT resource.path
+        FROM session_resources resource
+        CROSS JOIN (VALUES (CAST(#{params.EntryPath} AS text))) AS candidate(path)
+        WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
+        AND resource.session_uuid = #{params.SessionUUID}
+        AND resource.payload IS NOT NULL
+        AND resource.deleted_at IS NULL
+        AND (
+        resource.path = candidate.path
+        OR left(resource.path, length(candidate.path) + 1) = concat(candidate.path, '/')
+        OR left(candidate.path, length(resource.path) + 1) = concat(resource.path, '/')
+        )
+        ORDER BY resource.path
+        LIMIT 1
+    </select>
+
+    <update id="BindSessionFileResource" result="returning" resultType="sessionResourceRow">
+        UPDATE session_resources
+        SET path = #{params.EntryPath}, parent_path = #{params.ParentPath},
+        file_uuid = #{params.FileUUID}, updated_at = #{params.UpdatedAt}
+        WHERE uuid = #{params.ResourceUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="sessionResourceColumns"/>
+    </update>
+
+    <select id="GetSessionResourceForMutation" resultType="sessionResourceRow">
+        SELECT
+        <include refid="sessionResourceColumns"/>
+        FROM session_resources
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND external_id = #{resourceExternalID}
+        AND payload IS NOT NULL
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="SoftDeleteSessionResource" result="rows">
+        UPDATE session_resources
+        SET deleted_at = now(), updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND external_id = #{resourceExternalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <insert id="InsertDirectory" result="returning" resultType="int64">
+        INSERT INTO session_resources (
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        session_external_id, resource_type, payload, secret_payload,
+        path, parent_path, created_at, updated_at
+        )
+        SELECT #{params.ResourceUUID}, #{params.ResourceExternalID},
+        #{params.OrganizationUUID}, #{params.WorkspaceUUID}, session.uuid,
+        session.external_id, 'directory', NULL, NULL,
+        #{params.EntryPath}, #{params.ParentPath}, #{params.Now}, #{params.Now}
+        FROM sessions session
+        WHERE session.uuid = #{params.SessionUUID}
+        AND session.workspace_uuid = #{params.WorkspaceUUID}
+        AND session.deleted_at IS NULL
+        RETURNING id
+    </insert>
+
+    <update id="UpdateResourceFile" result="exec">
+        UPDATE session_resources
+        SET resource_type = 'file', payload = NULL, secret_payload = NULL,
+        path = #{params.EntryPath}, parent_path = #{params.ParentPath},
+        expires_at = #{params.ExpiresAt}, updated_at = #{params.Now}
+        WHERE uuid = #{params.ResourceUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+    </update>
+
+    <!-- This stays atomic because the File and Session Resource identities must commit together. -->
+    <insert id="InsertOwnedFileAndResource" result="returning" resultType="int64">
+        WITH inserted_file AS (
+        INSERT INTO files (
+        uuid, external_id, workspace_uuid, filename, mime_type,
+        detected_mime_type, size_bytes, metadata, authorization_metadata,
+        tags, downloadable, md5, sha256, s3_bucket, s3_key,
+        s3_etag, s3_version_id, scope_type, scope_id,
+        created_by_api_key_uuid, created_at
+        )
+        SELECT #{params.FileUUID}, #{params.FileExternalID},
+        #{params.WorkspaceUUID}, #{params.Filename}, #{params.MediaType},
+        #{params.DetectedMimeType}, #{params.SizeBytes}, CAST(#{params.Metadata} AS jsonb),
+        CAST(#{params.AuthorizationMetadata} AS jsonb), #{params.Tags},
+        #{params.Downloadable}, #{params.MD5}, #{params.SHA256},
+        #{params.S3Bucket}, #{params.S3Key}, #{params.S3ETag}, #{params.S3VersionID},
+        'session', session.external_id,
+        COALESCE(api_key.uuid, session.created_by_api_key_uuid), #{params.Now}
+        FROM sessions session
+        LEFT JOIN api_keys api_key
+        ON api_key.uuid = #{params.CreatedByAPIKeyUUID}
+        AND api_key.workspace_uuid = session.workspace_uuid
+        WHERE session.uuid = #{params.SessionUUID}
+        AND session.workspace_uuid = #{params.WorkspaceUUID}
+        AND session.deleted_at IS NULL
+        RETURNING uuid
+        )
+        INSERT INTO session_resources (
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        session_external_id, resource_type, payload, secret_payload,
+        path, parent_path, file_uuid, expires_at, created_at, updated_at
+        )
+        SELECT #{params.ResourceUUID}, #{params.ResourceExternalID},
+        #{params.OrganizationUUID}, #{params.WorkspaceUUID}, session.uuid,
+        session.external_id, 'file', NULL, NULL, #{params.EntryPath},
+        #{params.ParentPath}, inserted_file.uuid, #{params.ExpiresAt},
+        #{params.Now}, #{params.Now}
+        FROM inserted_file
+        JOIN sessions session ON session.uuid = #{params.SessionUUID}
+        RETURNING id
+    </insert>
+
+    <update id="RetireResource" result="exec">
+        UPDATE session_resources
+        SET deleted_at = COALESCE(deleted_at, #{params.RetiredAt}),
+        updated_at = #{params.RetiredAt}
+        WHERE uuid = #{params.ResourceUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND deleted_at IS NULL
+    </update>
+
+    <update id="MoveResourceFile" result="exec">
+        UPDATE session_resources
+        SET path = #{params.DestinationPath}, parent_path = #{params.DestinationParentPath},
+        updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND uuid = #{params.ResourceUUID}
+        AND deleted_at IS NULL
+    </update>
+
+    <select id="MaxMovedPathBytes" result="scalar">
+        SELECT COALESCE(max(
+        octet_length(CAST(#{params.DestinationPath} AS text))
+        + octet_length(path)
+        - octet_length(CAST(#{params.SourcePath} AS text))
+        ), 0) AS max_path_bytes
+        FROM session_resources
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+        AND (
+        path = #{params.SourcePath}
+        OR left(path, char_length(#{params.SourcePath}) + 1) = #{params.SourcePath} || '/'
+        )
+    </select>
+
+    <select id="SubtreeContainsInput" result="scalar">
+        SELECT EXISTS (
+        SELECT 1
+        FROM session_resources
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+        AND payload IS NOT NULL
+        AND (
+        path = #{params.SourcePath}
+        OR left(path, char_length(#{params.SourcePath}) + 1) = #{params.SourcePath} || '/'
+        )
+        ) AS contains_input
+    </select>
+
+    <select id="FindMoveConflict" result="optional" resultType="int64">
+        SELECT id
+        FROM session_resources
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+        AND (expires_at IS NULL OR expires_at &gt; now())
+        AND (
+        path = #{params.DestinationPath}
+        OR left(path, char_length(#{params.DestinationPath}) + 1) = #{params.DestinationPath} || '/'
+        )
+        LIMIT 1
+    </select>
+
+    <update id="MoveResourceSubtree" result="exec">
+        UPDATE session_resources
+        SET path = #{params.DestinationPath} || substring(path FROM char_length(#{params.SourcePath}) + 1),
+        parent_path = CASE
+        WHEN path = #{params.SourcePath} THEN #{params.DestinationParentPath}
+        ELSE #{params.DestinationPath} || substring(parent_path FROM char_length(#{params.SourcePath}) + 1)
+        END,
+        updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+        AND (
+        path = #{params.SourcePath}
+        OR left(path, char_length(#{params.SourcePath}) + 1) = #{params.SourcePath} || '/'
+        )
+    </update>
+
+    <select id="CountDirectoryChildren" result="scalar">
+        SELECT count(*) AS child_count
+        FROM session_resources
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND parent_path = #{params.EntryPath}
+        AND deleted_at IS NULL
+        AND (expires_at IS NULL OR expires_at &gt; now())
+    </select>
+
+    <select id="SubtreeContainsMountedInput" result="scalar">
+        SELECT EXISTS (
+        SELECT 1
+        FROM session_resources
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+        AND payload IS NOT NULL
+        AND (
+        path = #{params.EntryPath}
+        OR left(path, char_length(#{params.EntryPath}) + 1) = #{params.EntryPath} || '/'
+        )
+        ) AS contains_input
+    </select>
+
+    <update id="RetireResourceSubtree" result="exec">
+        UPDATE session_resources
+        SET deleted_at = #{params.Now}, updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND deleted_at IS NULL
+        AND (
+        path = #{params.EntryPath}
+        OR left(path, char_length(#{params.EntryPath}) + 1) = #{params.EntryPath} || '/'
+        )
+    </update>
+
+    <update id="RetireSkillArchiveResources" result="exec">
+        UPDATE session_resources
+        SET deleted_at = #{params.Now}, updated_at = #{params.Now}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_uuid = #{params.SessionUUID}
+        AND resource_type = 'skill_archive'
+        AND deleted_at IS NULL
+    </update>
+
+    <insert id="InsertSkillArchiveResource" result="exec">
+        INSERT INTO session_resources (
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        session_external_id, resource_type, payload, secret_payload,
+        path, parent_path, file_uuid, created_at, updated_at
+        )
+        SELECT #{params.ResourceUUID}, #{params.ResourceExternalID},
+        session.organization_uuid, session.workspace_uuid, session.uuid,
+        session.external_id, 'skill_archive', NULL, NULL,
+        #{params.EntryPath}, '/skills', #{params.FileUUID}, #{params.Now}, #{params.Now}
+        FROM sessions session
+        WHERE session.uuid = #{params.SessionUUID}
+        AND session.workspace_uuid = #{params.WorkspaceUUID}
+        AND session.deleted_at IS NULL
+    </insert>
+</mapper>

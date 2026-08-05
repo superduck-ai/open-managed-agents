@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	FilestoreEntryKindFile      = "file"
-	FilestoreEntryKindDirectory = "directory"
-	FilestoreEntryKindArchive   = "archive"
+	SessionResourceFileKindFile      = "file"
+	SessionResourceFileKindDirectory = "directory"
+	SessionResourceFileKindArchive   = "archive"
 
 	filestoreMaxPathBytes             = filestorepath.MaxBytes
 	filestoreCleanupJobType           = "filestore_object_cleanup"
@@ -21,8 +21,8 @@ const (
 var (
 	ErrFilestorePathExists              = errors.New("filestore path already exists")
 	ErrFilestoreParentMissing           = errors.New("filestore parent directory does not exist")
-	ErrFilestoreNotFile                 = errors.New("filestore entry is not a file")
-	ErrFilestoreNotDirectory            = errors.New("filestore entry is not a directory")
+	ErrFilestoreNotFile                 = errors.New("filestore resource is not a file")
+	ErrFilestoreNotDirectory            = errors.New("filestore resource is not a directory")
 	ErrFilestoreDirectoryNotEmpty       = errors.New("filestore directory is not empty")
 	ErrFilestoreInvalidMove             = errors.New("invalid filestore move")
 	ErrFilestoreCleanupJobNotCancelable = errors.New("filestore cleanup job is not cancelable")
@@ -72,41 +72,37 @@ type ProvisionFilestoreFilesystemInput struct {
 	Now                 time.Time
 }
 
-// FilestoreEntry 是目录树中的一个持久化节点。
-// 目录字段保持为空；文件与 archive 字段指向对象存储中的不可变对象版本。
-// Managed 字段标识借用其他资源对象、但投影到 Session 命名空间中的条目。
-type FilestoreEntry struct {
-	UUID                     string
-	ExternalID               string
-	OrganizationUUID         string
-	WorkspaceUUID            string
-	FilesystemUUID           string
-	Kind                     string
-	Path                     string
-	ParentPath               *string
-	SizeBytes                *int64
-	MediaType                *string
-	DetectedMimeType         *string
-	Metadata                 json.RawMessage
-	AuthorizationMetadata    json.RawMessage
-	Tags                     []string
-	Downloadable             bool
-	MD5                      *string
-	SHA256                   *string
-	S3Bucket                 *string
-	S3Key                    *string
-	S3ETag                   *string
-	S3VersionID              *string
-	ExpiresAt                *time.Time
-	ManagedBy                *string
-	ManagedResourceUUID      *string
-	SourceFileUUID           *string
-	CreatedByAPIKeyUUID      *string
-	CreatedBySessionUUID     *string
-	CreatedByCodeSessionUUID *string
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
-	DeletedAt                *time.Time
+// SessionResourceFile 是由 Session Resource 与可选真实 File 组合出的资源文件。
+// 目录不关联 File；Input Resource 引用 Source File；Owned File 与 Skill Archive
+// 都通过 file_uuid 引用承载各自快照的 File。
+type SessionResourceFile struct {
+	ID                    int64
+	UUID                  string
+	ExternalID            string
+	OrganizationUUID      string
+	WorkspaceUUID         string
+	SessionUUID           string
+	Kind                  string
+	Path                  string
+	ParentPath            *string
+	SizeBytes             *int64
+	MediaType             *string
+	DetectedMimeType      *string
+	Metadata              json.RawMessage
+	AuthorizationMetadata json.RawMessage
+	Tags                  []string
+	Downloadable          bool
+	MD5                   *string
+	SHA256                *string
+	S3Bucket              *string
+	S3Key                 *string
+	S3ETag                *string
+	S3VersionID           *string
+	ExpiresAt             *time.Time
+	SourceFileUUID        *string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	DeletedAt             *time.Time
 }
 
 // FilestoreFileBlob 汇集写入文件节点所需的内容元数据与对象定位信息。
@@ -127,9 +123,9 @@ type FilestoreFileBlob struct {
 	ExpiresAt             *time.Time
 }
 
-// FilestoreSkillArchiveEntryInput 描述一个已解析的不可变 skill ZIP。
-// Source 只写入通用 metadata；对象及其生命周期仍由 skill catalog 管理。
-type FilestoreSkillArchiveEntryInput struct {
+// SessionSkillArchiveResourceInput 描述一个已解析的不可变 skill ZIP。
+// SkillVersionUUID 只用于写入时验证来源，不会持久化到 Session Resource 或 File。
+type SessionSkillArchiveResourceInput struct {
 	Source           string
 	SkillVersionUUID string
 	Directory        string
@@ -139,26 +135,26 @@ type FilestoreSkillArchiveEntryInput struct {
 	SHA256           string
 }
 
-// FilestoreEntryPageCursor 保存键集分页的最后一个 (Path, UUID) 排序键。
-type FilestoreEntryPageCursor struct {
+// SessionResourceFilePageCursor 保存键集分页的最后一个 (Path, UUID) 排序键。
+type SessionResourceFilePageCursor struct {
 	Path string
 	UUID string
 }
 
-// FilestoreEntryPage 表示一页目录节点及其后续页状态。
-type FilestoreEntryPage struct {
-	Entries []FilestoreEntry
+// SessionResourceFilePage 表示一页目录节点及其后续页状态。
+type SessionResourceFilePage struct {
+	Entries []SessionResourceFile
 	HasMore bool
 }
 
-// ListFilestoreEntriesPageParams 定义一次有界的目录枚举。
-type ListFilestoreEntriesPageParams struct {
+// ListSessionResourceFilesPageParams 定义一次有界的目录枚举。
+type ListSessionResourceFilesPageParams struct {
 	WorkspaceUUID  string
 	FilesystemUUID string
 	DirectoryPath  string
 	Recursive      bool
 	Limit          int
-	Cursor         *FilestoreEntryPageCursor
+	Cursor         *SessionResourceFilePageCursor
 }
 
 // MakeFilestoreDirectoryInput 描述目录创建及可选的父目录补齐行为。
@@ -220,8 +216,8 @@ type MoveFilestoreDirectoryInput struct {
 	Now             time.Time
 }
 
-// RemoveFilestoreEntryInput 描述单个文件的软删除。
-type RemoveFilestoreEntryInput struct {
+// RemoveSessionResourceFileInput 描述单个文件的软删除。
+type RemoveSessionResourceFileInput struct {
 	WorkspaceUUID  string
 	FilesystemUUID string
 	Path           string
@@ -237,9 +233,9 @@ type RemoveFilestoreDirectoryInput struct {
 	Now            time.Time
 }
 
-// FilestoreMutationResult 返回变更后的主条目及随事务创建的对象清理任务。
+// FilestoreMutationResult 返回变更后的 namespace 节点及随事务创建的对象清理任务。
 type FilestoreMutationResult struct {
-	Entry       FilestoreEntry
+	Node        SessionResourceFile
 	CleanupJobs []FilestoreObjectCleanupJob
 }
 
@@ -259,6 +255,15 @@ type FilestoreObjectCleanupJob struct {
 	Reason               string    `db:"reason"`
 	Attempts             int       `db:"attempts"`
 	RunAfter             time.Time `db:"run_after"`
+}
+
+// FilestoreCleanupAnomaly 表示清理时发现无法定位底层对象的 Owned File。
+// 数据库仍会退休逻辑节点并修正账本；worker 负责记录该异常供运维追踪。
+type FilestoreCleanupAnomaly struct {
+	WorkspaceUUID   string
+	FilesystemUUID  string
+	EntryExternalID string
+	Reason          string
 }
 
 // FilestoreFilesystemCleanupJob 将已删除 Session 的整个文件系统拆成有界批次回收。

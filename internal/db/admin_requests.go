@@ -126,6 +126,9 @@ func (d *DB) ListAdminRequests(ctx context.Context, orgUUID string, requestType 
 		limit,
 	)
 	if err != nil {
+		if postgresErr, ok := postgresError(err); ok && postgresErr.Code == "42P01" {
+			return []platform.AdminRequest{}, nil
+		}
 		return nil, err
 	}
 	return requests, nil

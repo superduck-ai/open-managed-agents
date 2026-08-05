@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminOrganizationMapper">
+    <select id="FindByUUID" resultType="AdminOrganization">
+        SELECT uuid, name, created_at
+        FROM organizations
+        WHERE uuid = #{organizationUUID}
+    </select>
+</mapper>

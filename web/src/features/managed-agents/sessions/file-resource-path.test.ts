@@ -4,24 +4,26 @@ import { isValidSessionFileMountPath, sessionFileAPIMountPath, sessionFileRuntim
 describe('session file resource paths', () => {
   test('rejects paths outside uploads and ambiguous path segments', () => {
     for (const path of [
+      '',
       '/workspace/input.csv',
-      '/uploads',
-      '/uploads/input.csv/',
-      '/uploads/reports//input.csv',
-      '/uploads/./input.csv',
-      '/uploads/reports/../input.csv',
+      '/uploads/input.csv',
+      'input.csv/',
+      'reports//input.csv',
+      './input.csv',
+      'reports/../input.csv',
     ]) {
       expect(isValidSessionFileMountPath(path)).toBe(false);
     }
   });
 
   test('returns safe fallback values for invalid paths', () => {
-    expect(sessionFileRuntimePath('/uploads/../secret.txt')).toBe('');
-    expect(sessionFileAPIMountPath(' relative.txt ')).toBe('relative.txt');
+    expect(sessionFileRuntimePath('')).toBe('');
+    expect(sessionFileRuntimePath('../secret.txt')).toBe('');
+    expect(sessionFileAPIMountPath(' /absolute.txt ')).toBe('/absolute.txt');
   });
 
-  test('validates and translates uploads paths', () => {
-    const path = ' /uploads/reports/input.csv ';
+  test('validates and prefixes uploads-relative paths', () => {
+    const path = ' reports/input.csv ';
 
     expect(isValidSessionFileMountPath(path)).toBe(true);
     expect(sessionFileRuntimePath(path)).toBe('/mnt/session/uploads/reports/input.csv');

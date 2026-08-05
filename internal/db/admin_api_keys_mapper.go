@@ -34,5 +34,5 @@ type AdminAPIKeyMapper interface {
 	Insert(ctx context.Context, params insertAdminAPIKeyParams) error
 	UpdateByExternalID(ctx context.Context, organizationUUID string, externalID string,
 		setName bool, name string, setStatus bool, status string) (int64, error)
-	UpdateStatusByUUID(ctx context.Context, apiKeyUUID uuid.UUID, status string) (int64, error)
+	UpdateStatusByUUID(ctx context.Context, apiKeyUUID string, status string) (int64, error)
 }

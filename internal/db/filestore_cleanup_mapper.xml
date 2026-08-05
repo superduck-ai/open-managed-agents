@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="FilestoreCleanupMapper">
+    <sql id="resourceFileColumns">
+        id, uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        kind, path, parent_path, size_bytes, media_type, detected_mime_type,
+        metadata, authorization_metadata, tags_json, downloadable, md5, sha256,
+        s3_bucket, s3_key, s3_etag, s3_version_id, expires_at,
+        source_file_uuid, created_at, updated_at, deleted_at
+    </sql>
+
+    <sql id="resourceFileSource">
+        SELECT resource.id, resource.uuid, resource.external_id,
+            resource.organization_uuid, resource.workspace_uuid, resource.session_uuid,
+            CASE resource.resource_type
+                WHEN 'skill_archive' THEN 'archive'
+                ELSE resource.resource_type
+            END AS kind,
+            resource.path, resource.parent_path, file.size_bytes,
+            file.mime_type AS media_type, file.detected_mime_type,
+            COALESCE(file.metadata, CAST('{}' AS jsonb)) AS metadata,
+            COALESCE(file.authorization_metadata, CAST('{}' AS jsonb)) AS authorization_metadata,
+            CAST(COALESCE(to_jsonb(file.tags), CAST('[]' AS jsonb)) AS text) AS tags_json,
+            COALESCE(file.downloadable, false) AS downloadable,
+            file.md5, file.sha256, file.s3_bucket, file.s3_key, file.s3_etag,
+            file.s3_version_id, resource.expires_at,
+            CASE WHEN resource.payload IS NOT NULL THEN resource.file_uuid ELSE NULL END
+                AS source_file_uuid,
+            resource.created_at, resource.updated_at, resource.deleted_at
+        FROM session_resources resource
+        LEFT JOIN files file ON file.uuid = resource.file_uuid
+        WHERE resource.path IS NOT NULL
+    </sql>
+
+    <sql id="objectJobColumns">
+        j.uuid AS uuid, j.external_id AS external_id,
+        j.workspace_uuid AS workspace_uuid, fs.uuid AS filesystem_uuid,
+        fs.external_id AS filesystem_external_id,
+        COALESCE(j.payload-&gt;&gt;'entry_external_id', '') AS entry_external_id,
+        COALESCE(j.payload-&gt;&gt;'bucket', '') AS bucket,
+        COALESCE(j.payload-&gt;&gt;'key', '') AS key,
+        COALESCE(j.payload-&gt;&gt;'etag', '') AS etag,
+        COALESCE(j.payload-&gt;&gt;'version_id', '') AS version_id,
+        COALESCE(j.payload-&gt;&gt;'reason', '') AS reason,
+        j.attempts AS attempts, j.run_after AS run_after
+    </sql>
+
+    <sql id="filesystemJobColumns">
+        j.uuid AS uuid, j.external_id AS external_id,
+        j.workspace_uuid AS workspace_uuid, fs.uuid AS filesystem_uuid,
+        fs.external_id AS filesystem_external_id,
+        j.attempts AS attempts, j.run_after AS run_after
+    </sql>
+
+    <sql id="leaseJobsCTE">
+        exhausted_candidates AS (
+            SELECT j.uuid
+            FROM jobs j
+            WHERE j.type = #{params.JobType}
+                AND j.run_after &lt;= now()
+                AND (
+                    j.status IN ('pending', 'retry')
+                    OR (j.status = 'running' AND j.locked_until &lt; now())
+                )
+                AND COALESCE(CAST(j.payload-&gt;&gt;'lease_attempts' AS integer), 0)
+                    &gt;= #{params.MaxLeaseAttempts}
+            ORDER BY j.run_after, j.created_at, j.uuid
+            LIMIT #{params.Limit}
+            FOR UPDATE OF j SKIP LOCKED
+        ),
+        exhausted_jobs AS (
+            UPDATE jobs j
+            SET status = 'failed', locked_by = NULL, locked_until = NULL,
+                updated_at = now(),
+                payload = (j.payload - 'lease_attempts') || jsonb_build_object(
+                    'last_error', 'cleanup lease repeatedly expired before acknowledgement'
+                )
+            FROM exhausted_candidates candidate
+            WHERE j.uuid = candidate.uuid
+            RETURNING j.uuid
+        ),
+        next_jobs AS (
+            SELECT j.uuid, j.workspace_uuid
+            FROM jobs j
+            JOIN filestore_filesystems fs
+                ON CAST(fs.uuid AS text) = j.payload-&gt;&gt;'filesystem_uuid'
+                AND fs.workspace_uuid = j.workspace_uuid
+            WHERE j.type = #{params.JobType}
+                AND j.run_after &lt;= now()
+                AND COALESCE(CAST(j.payload-&gt;&gt;'lease_attempts' AS integer), 0)
+                    &lt; #{params.MaxLeaseAttempts}
+                AND NOT EXISTS (
+                    SELECT 1 FROM exhausted_jobs exhausted WHERE exhausted.uuid = j.uuid
+                )
+                AND (
+                    j.status IN ('pending', 'retry')
+                    OR (j.status = 'running' AND j.locked_until &lt; now())
+                )
+            ORDER BY j.run_after, j.created_at, j.uuid
+            LIMIT #{params.Limit}
+            FOR UPDATE OF j SKIP LOCKED
+        ),
+        leased_jobs AS (
+            UPDATE jobs j
+            SET status = 'running', locked_by = #{params.WorkerID},
+                locked_until = now() + interval '1 minute', updated_at = now(),
+                workspace_uuid = next_jobs.workspace_uuid,
+                payload = j.payload || jsonb_build_object(
+                    'lease_attempts',
+                    COALESCE(CAST(j.payload-&gt;&gt;'lease_attempts' AS integer), 0) + 1
+            )
+            FROM next_jobs
+            WHERE j.uuid = next_jobs.uuid
+            RETURNING j.uuid, j.external_id, j.workspace_uuid, j.payload,
+                j.attempts, j.run_after
+        )
+    </sql>
+
+    <select id="GetLeasedFilesystemJob" resultType="filestoreFilesystemCleanupJobRow">
+        SELECT <include refid="filesystemJobColumns"/>
+        FROM jobs j
+        JOIN filestore_filesystems fs
+            ON CAST(fs.uuid AS text) = j.payload-&gt;&gt;'filesystem_uuid'
+            AND fs.workspace_uuid = j.workspace_uuid
+        WHERE j.uuid = #{params.JobUUID} AND j.type = #{params.JobType}
+            AND j.status = 'running' AND j.locked_by = #{params.LeaseToken}
+            AND j.locked_until &gt;= now()
+        FOR UPDATE OF j
+    </select>
+
+    <select id="GetFilesystemForCleanup" resultType="filestoreFilesystemRow">
+        SELECT uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+            code_session_uuid, created_by_api_key_uuid, created_at, updated_at, deleted_at
+        FROM filestore_filesystems
+        WHERE workspace_uuid = #{workspaceUUID}
+            AND uuid = #{filesystemUUID}
+    </select>
+
+    <select id="ListFilesystemFiles" resultType="sessionResourceFileRow">
+        SELECT <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+            AND session_uuid = #{params.SessionUUID}
+            AND kind = 'file' AND deleted_at IS NULL
+        ORDER BY uuid
+        LIMIT #{params.Limit}
+    </select>
+
+    <select id="FilesystemFilesRemain" result="scalar">
+        SELECT EXISTS (
+            SELECT 1 FROM session_resources
+            WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
+                AND resource_type = 'file' AND deleted_at IS NULL
+        ) AS files_remain
+    </select>
+
+    <update id="RetireSkillFiles" result="exec">
+        UPDATE files file SET deleted_at = #{params.RetiredAt}
+        WHERE file.workspace_uuid = #{params.WorkspaceUUID} AND file.deleted_at IS NULL
+            AND file.uuid IN (
+                SELECT resource.file_uuid FROM session_resources resource
+                WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
+                    AND resource.session_uuid = #{params.SessionUUID}
+                    AND resource.resource_type = 'skill_archive'
+                    AND resource.file_uuid IS NOT NULL AND resource.deleted_at IS NULL
+            )
+    </update>
+
+    <update id="RetireNamespace" result="exec">
+        UPDATE session_resources
+        SET deleted_at = #{params.RetiredAt}, updated_at = #{params.RetiredAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND session_uuid = #{params.SessionUUID}
+            AND resource_type IN ('directory', 'skill_archive') AND deleted_at IS NULL
+    </update>
+
+    <update id="CompleteFilesystemBatch" result="rows">
+        UPDATE jobs
+        SET status = #{params.Status}, locked_by = NULL, locked_until = NULL,
+            run_after = #{params.RetiredAt}, updated_at = #{params.RetiredAt},
+            payload = payload - 'lease_attempts'
+        WHERE uuid = #{params.JobUUID} AND type = #{params.JobType} AND status = 'running'
+            AND locked_by = #{params.LeaseToken}
+    </update>
+
+    <select id="InsertFilesystemJob" resultType="filestoreFilesystemCleanupJobRow">
+        WITH inserted_job AS (
+            INSERT INTO jobs (external_id, workspace_uuid, type, status, payload, run_after)
+            VALUES (
+                concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+                #{params.WorkspaceUUID}, #{params.JobType}, 'pending',
+                jsonb_build_object(
+                    'workspace_uuid', CAST(#{params.WorkspaceUUID} AS text),
+                    'filesystem_uuid', CAST(#{params.FilesystemUUID} AS text)
+                ), #{params.RunAfter}
+            )
+            RETURNING uuid, external_id, workspace_uuid, payload, attempts, run_after
+        )
+        SELECT <include refid="filesystemJobColumns"/>
+        FROM inserted_job j
+        JOIN filestore_filesystems fs
+            ON CAST(fs.uuid AS text) = j.payload-&gt;&gt;'filesystem_uuid'
+            AND fs.workspace_uuid = j.workspace_uuid
+    </select>
+
+    <select id="InsertObjectJob" resultType="filestoreObjectCleanupJobRow">
+        WITH inserted_job AS (
+            INSERT INTO jobs (external_id, workspace_uuid, type, status, payload, run_after)
+            VALUES (
+                concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
+                #{params.WorkspaceUUID}, #{params.JobType}, 'pending',
+                jsonb_build_object(
+                    'workspace_uuid', CAST(#{params.WorkspaceUUID} AS text),
+                    'filesystem_uuid', CAST(#{params.FilesystemUUID} AS text),
+                    'entry_external_id', CAST(#{params.EntryExternalID} AS text),
+                    'bucket', CAST(#{params.Bucket} AS text),
+                    'key', CAST(#{params.Key} AS text),
+                    'etag', CAST(#{params.ETag} AS text),
+                    'version_id', CAST(#{params.VersionID} AS text),
+                    'reason', CAST(#{params.Reason} AS text)
+                ), #{params.RunAfter}
+            )
+            RETURNING uuid, external_id, workspace_uuid, payload, attempts, run_after
+        )
+        SELECT <include refid="objectJobColumns"/>
+        FROM inserted_job j
+        JOIN filestore_filesystems fs
+            ON CAST(fs.uuid AS text) = j.payload-&gt;&gt;'filesystem_uuid'
+            AND fs.workspace_uuid = j.workspace_uuid
+    </select>
+
+    <select id="LeaseFilesystemJobs" resultType="filestoreFilesystemCleanupJobRow">
+        WITH <include refid="leaseJobsCTE"/>
+        SELECT <include refid="filesystemJobColumns"/>
+        FROM leased_jobs j
+        JOIN filestore_filesystems fs
+            ON CAST(fs.uuid AS text) = j.payload-&gt;&gt;'filesystem_uuid'
+            AND fs.workspace_uuid = j.workspace_uuid
+    </select>
+
+    <select id="LeaseObjectJobs" resultType="filestoreObjectCleanupJobRow">
+        WITH <include refid="leaseJobsCTE"/>
+        SELECT <include refid="objectJobColumns"/>
+        FROM leased_jobs j
+        JOIN filestore_filesystems fs
+            ON CAST(fs.uuid AS text) = j.payload-&gt;&gt;'filesystem_uuid'
+            AND fs.workspace_uuid = j.workspace_uuid
+    </select>
+
+    <update id="AttachObjectVersion" result="rows">
+        UPDATE jobs
+        SET payload = payload || jsonb_build_object(
+                'etag', CAST(#{params.ETag} AS text),
+                'version_id', CAST(#{params.VersionID} AS text)
+            ), updated_at = now()
+        WHERE external_id = #{params.JobExternalID} AND type = #{params.JobType}
+            AND status IN ('pending', 'retry')
+            AND payload-&gt;&gt;'workspace_uuid' = CAST(#{params.WorkspaceUUID} AS text)
+    </update>
+
+    <update id="CompletePendingObjectJob" result="rows">
+        UPDATE jobs
+        SET status = 'completed', locked_by = NULL, locked_until = NULL, updated_at = now()
+        WHERE uuid = #{params.JobUUID} AND type = #{params.JobType}
+            AND status IN ('pending', 'retry')
+    </update>
+
+    <update id="CompleteLeasedObjectJob" result="rows">
+        UPDATE jobs
+        SET status = 'completed', locked_by = NULL, locked_until = NULL, updated_at = now()
+        WHERE uuid = #{params.JobUUID} AND type = #{params.JobType} AND status = 'running'
+            AND locked_by = #{params.LeaseToken} AND locked_until &gt;= now()
+    </update>
+
+    <update id="FailLeasedJob" result="rows">
+        UPDATE jobs
+        SET status = CASE WHEN attempts + 1 &gt;= #{params.MaxAttempts} THEN 'failed' ELSE 'retry' END,
+            attempts = attempts + 1, locked_by = NULL, locked_until = NULL,
+            run_after = #{params.RunAfter}, updated_at = now(),
+            payload = (payload - 'lease_attempts') || jsonb_build_object(
+                'last_error', CAST(#{params.Reason} AS text)
+            )
+        WHERE uuid = #{params.JobUUID} AND type = #{params.JobType} AND status = 'running'
+            AND locked_by = #{params.LeaseToken} AND locked_until &gt;= now()
+    </update>
+
+    <update id="CancelPendingObjectJob" result="rows">
+        UPDATE jobs
+        SET status = 'canceled', locked_by = NULL, locked_until = NULL, updated_at = now()
+        WHERE external_id = #{params.JobExternalID} AND type = #{params.JobType}
+            AND status IN ('pending', 'retry')
+            AND payload-&gt;&gt;'workspace_uuid' = CAST(#{params.WorkspaceUUID} AS text)
+    </update>
+
+    <select id="GetObjectJobStatus" result="scalar">
+        SELECT status FROM jobs
+        WHERE external_id = #{params.JobExternalID} AND type = #{params.JobType}
+            AND payload-&gt;&gt;'workspace_uuid' = CAST(#{params.WorkspaceUUID} AS text)
+    </select>
+
+    <update id="CancelAttachedObjectJob" result="rows">
+        UPDATE jobs
+        SET status = 'canceled', locked_by = NULL, locked_until = NULL, updated_at = now()
+        WHERE external_id = #{params.JobExternalID} AND type = #{params.JobType}
+            AND status IN ('pending', 'retry')
+            AND payload-&gt;&gt;'workspace_uuid' = CAST(#{params.WorkspaceUUID} AS text)
+            AND payload-&gt;&gt;'bucket' = #{params.Bucket}
+            AND payload-&gt;&gt;'key' = #{params.Key}
+            AND COALESCE(payload-&gt;&gt;'version_id', '') = #{params.VersionID}
+    </update>
+
+    <select id="ListSubtreeFiles" resultType="sessionResourceFileRow">
+        SELECT <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND session_uuid = #{params.SessionUUID}
+            AND kind = 'file' AND deleted_at IS NULL
+            AND left(path, char_length(#{params.RootPath}) + 1) = #{params.RootPath} || '/'
+        ORDER BY id
+    </select>
+
+    <select id="ListExpiredSubtreeFiles" resultType="sessionResourceFileRow">
+        SELECT <include refid="resourceFileColumns"/>
+        FROM (<include refid="resourceFileSource"/>) session_resource_files
+        WHERE workspace_uuid = #{params.WorkspaceUUID} AND session_uuid = #{params.SessionUUID}
+            AND kind = 'file' AND deleted_at IS NULL AND expires_at &lt;= now()
+            AND (
+                path = #{params.RootPath}
+                OR left(path, char_length(#{params.RootPath}) + 1) = #{params.RootPath} || '/'
+            )
+        ORDER BY id
+    </select>
+</mapper>

@@ -476,15 +476,15 @@ func (r *Runner) prepareManagedAgentLaunch(
 	}
 	session, err := r.db.GetSession(ctx, work.WorkspaceUUID, sessionID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load managed agent Session: %w", err)
 	}
 	resources, err := r.db.ListSessionResources(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list managed agent Session resources: %w", err)
 	}
 	runtimeSkills, err := r.resolveRuntimeSkills(ctx, session)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve managed agent skills: %w", err)
 	}
 	if err := r.replaceRuntimeSkillArchives(ctx, session, runtimeSkills); err != nil {
 		return nil, err
@@ -754,19 +754,18 @@ func (r *Runner) resolveRuntimeSkills(ctx context.Context, session db.Session) (
 }
 
 // replaceRuntimeSkillArchives 使用已解析的不可变 skill archive，完整替换 Managed Agent
-// Session 的 /skills archive entries。
+// Session 的 /skills Skill Archive Resources。
 //
-// runtimeSkills 必须已经包含具体的版本 UUID 和可信对象元数据；"latest" 会在调用本函数
-// 前解析为确定版本。本函数只保留将 zip 映射为 /skills/<directory> 所需的字段，不下载、
-// 复制或解压 archive。每个 zip 作为 kind=archive 的受管 entry 写入
-// /skills/<directory>，来源保存在通用 metadata 中。
+// runtimeSkills 必须已经包含具体 Version UUID 和可信对象元数据；"latest" 会在调用本函数
+// 前解析为确定内容。Version UUID 只用于写入时校验，持久化结果是一条 File 快照和引用它的
+// /skills/<directory> Resource，不下载、复制或解压 archive。
 //
-// DB 操作会校验来源、目录、版本 UUID、对象大小和 SHA-256。它在同一个事务中锁定 Session
-// filesystem 记录及其命名空间，确保固定根目录存在，然后软删除旧 entries 并插入新集合。
+// DB 操作会校验来源、Version UUID、目录、对象大小和 SHA-256。它在同一个事务中锁定 Session
+// filesystem 记录及其命名空间，确保固定根目录存在，然后软删除旧 Resource/File 并插入新集合。
 // 采用全量替换，是为了让已从 Agent snapshot 移除的 skill 同步消失，并避免读取方或并发的
 // 命名空间写入方看到只更新了一部分的视图；软删除则保留历史投影供审计。
 //
-// 成功时返回 nil，确保固定根目录存在并替换 archive entries；catalog 对象仍归 skill
+// 成功时返回 nil，确保固定根目录存在并替换 Skill Archive Resources；catalog 对象仍归 skill
 // catalog 所有。runtimeSkills 为空时会清空 archive 子目录，但保留 /skills 根目录。元数据无效、
 // Session filesystem 不存在、目录重复，或事务、加锁、写入失败时，函数返回包装后的
 // 错误，并回滚整个替换操作。
@@ -780,9 +779,9 @@ func (r *Runner) replaceRuntimeSkillArchives(
 	session db.Session,
 	runtimeSkills []skillsapi.RuntimeSkill,
 ) error {
-	archives := make([]db.FilestoreSkillArchiveEntryInput, 0, len(runtimeSkills))
+	archives := make([]db.SessionSkillArchiveResourceInput, 0, len(runtimeSkills))
 	for _, skill := range runtimeSkills {
-		archives = append(archives, db.FilestoreSkillArchiveEntryInput{
+		archives = append(archives, db.SessionSkillArchiveResourceInput{
 			Source:           skill.Source,
 			SkillVersionUUID: skill.VersionUUID,
 			Directory:        skill.Directory,
@@ -792,8 +791,8 @@ func (r *Runner) replaceRuntimeSkillArchives(
 			SHA256:           skill.SHA256,
 		})
 	}
-	if err := r.db.ReplaceFilestoreSkillArchiveEntries(ctx, session.WorkspaceUUID, session.ExternalID, archives); err != nil {
-		return fmt.Errorf("replace managed agent skill archive entries: %w", err)
+	if err := r.db.ReplaceSessionSkillArchiveResources(ctx, session.WorkspaceUUID, session.ExternalID, archives); err != nil {
+		return fmt.Errorf("replace managed agent Skill Archive Resources: %w", err)
 	}
 	return nil
 }

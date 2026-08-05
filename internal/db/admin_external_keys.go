@@ -26,18 +26,15 @@ type ListAdminExternalKeysParams struct {
 }
 
 func (d *DB) CreateAdminExternalKey(ctx context.Context, key AdminExternalKey) (AdminExternalKey, error) {
-	created, err := getAdminRow[AdminExternalKey](ctx, d.sql, `
-		insert into external_keys (
-			external_id, organization_uuid, display_name, geo, provider_config, created_at, updated_at
-		)
-		values (
-			:external_id, :organization_uuid, :display_name, :geo,
-			CAST(:provider_config AS jsonb), :created_at, :created_at
-		)
-		returning uuid, external_id,
-			organization_uuid,
-			display_name, geo, provider_config, created_at, updated_at
-	`, adminExternalKeyArguments(key))
+	mapper := NewAdminExternalKeyMapper(d.mapperDB)
+	created, err := mapper.Insert(ctx, insertAdminExternalKeyParams{
+		ExternalID:       key.ExternalID,
+		OrganizationUUID: key.OrganizationUUID,
+		DisplayName:      key.DisplayName,
+		Geo:              key.Geo,
+		ProviderConfig:   key.ProviderConfig,
+		CreatedAt:        key.CreatedAt,
+	})
 	if isUniqueViolation(err) {
 		return AdminExternalKey{}, ErrDuplicate
 	}
@@ -45,22 +42,19 @@ func (d *DB) CreateAdminExternalKey(ctx context.Context, key AdminExternalKey) (
 }
 
 func (d *DB) GetAdminExternalKey(ctx context.Context, organizationUUID, externalID string) (AdminExternalKey, error) {
-	return getAdminRow[AdminExternalKey](ctx, d.sql, adminExternalKeySelectSQL()+`
-		where organization_uuid = :organization_uuid
-			and external_id = :external_id and deleted_at is null
-	`, map[string]any{"organization_uuid": dbUUID(organizationUUID), "external_id": externalID})
+	mapper := NewAdminExternalKeyMapper(d.mapperDB)
+	key, err := mapper.FindByExternalID(ctx, organizationUUID, externalID)
+	return key, mapNoRows(err)
 }
 
 func (d *DB) ListAdminExternalKeysPage(ctx context.Context, params ListAdminExternalKeysParams) ([]AdminExternalKey, bool, error) {
-	keys, err := selectAdminRows[AdminExternalKey](ctx, d.sql, adminExternalKeySelectSQL()+`
-		where organization_uuid = :organization_uuid and deleted_at is null
-		order by created_at desc, uuid desc
-		limit :limit offset :offset
-	`, map[string]any{
-		"organization_uuid": dbUUID(params.OrganizationUUID),
-		"limit":             params.Limit + 1,
-		"offset":            params.Offset,
-	})
+	mapper := NewAdminExternalKeyMapper(d.mapperDB)
+	keys, err := mapper.ListPage(
+		ctx,
+		params.OrganizationUUID,
+		params.Limit+1,
+		params.Offset,
+	)
 	if err != nil {
 		return nil, false, err
 	}
@@ -68,31 +62,21 @@ func (d *DB) ListAdminExternalKeysPage(ctx context.Context, params ListAdminExte
 }
 
 func (d *DB) UpdateAdminExternalKey(ctx context.Context, organizationUUID, externalID string, next AdminExternalKey) (AdminExternalKey, error) {
-	args := adminExternalKeyArguments(next)
-	args["organization_uuid"] = dbUUID(organizationUUID)
-	args["external_id"] = externalID
-	return getAdminRow[AdminExternalKey](ctx, d.sql, `
-		update external_keys
-		set display_name = :display_name,
-			geo = :geo,
-			provider_config = CAST(:provider_config AS jsonb),
-			updated_at = :updated_at
-		where organization_uuid = :organization_uuid
-			and external_id = :external_id and deleted_at is null
-		returning uuid, external_id,
-			organization_uuid,
-			display_name, geo, provider_config, created_at, updated_at
-	`, args)
+	mapper := NewAdminExternalKeyMapper(d.mapperDB)
+	updated, err := mapper.UpdateByExternalID(ctx, updateAdminExternalKeyParams{
+		OrganizationUUID: organizationUUID,
+		ExternalID:       externalID,
+		DisplayName:      next.DisplayName,
+		Geo:              next.Geo,
+		ProviderConfig:   next.ProviderConfig,
+		UpdatedAt:        next.UpdatedAt,
+	})
+	return updated, mapNoRows(err)
 }
 
 func (d *DB) DeleteAdminExternalKey(ctx context.Context, organizationUUID, externalID string) error {
-	affected, err := namedExecRowsAffected(ctx, d.sql, `
-		update external_keys
-		set deleted_at = coalesce(deleted_at, now()),
-			updated_at = now()
-		where organization_uuid = :organization_uuid
-			and external_id = :external_id and deleted_at is null
-	`, map[string]any{"organization_uuid": dbUUID(organizationUUID), "external_id": externalID})
+	mapper := NewAdminExternalKeyMapper(d.mapperDB)
+	affected, err := mapper.SoftDeleteByExternalID(ctx, organizationUUID, externalID)
 	if err != nil {
 		return err
 	}
@@ -100,25 +84,4 @@ func (d *DB) DeleteAdminExternalKey(ctx context.Context, organizationUUID, exter
 		return ErrNotFound
 	}
 	return nil
-}
-
-func adminExternalKeySelectSQL() string {
-	return `
-		select uuid, external_id,
-			organization_uuid,
-			display_name, geo, provider_config, created_at, updated_at
-		from external_keys
-	`
-}
-
-func adminExternalKeyArguments(key AdminExternalKey) map[string]any {
-	return map[string]any{
-		"external_id":       key.ExternalID,
-		"organization_uuid": key.OrganizationUUID,
-		"display_name":      key.DisplayName,
-		"geo":               key.Geo,
-		"provider_config":   jsonArg(key.ProviderConfig),
-		"created_at":        key.CreatedAt,
-		"updated_at":        key.UpdatedAt,
-	}
 }

@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -87,14 +86,14 @@ func (b *skillArchivePathBackend) listDirectory(
 	cursor directoryCursor,
 	limit int,
 ) (listDirectoryResponse, *apiError) {
-	archiveEntries, err := b.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceUUID, filesystem.UUID)
+	archiveEntries, err := b.db.ListSessionSkillArchiveResources(ctx, principal.WorkspaceUUID, filesystem.UUID)
 	if err != nil {
-		return listDirectoryResponse{}, mapDatabaseError("list skill archive entries", err)
+		return listDirectoryResponse{}, mapDatabaseError("list Skill Archive Resources", err)
 	}
 	nodes := make([]skillArchiveNode, 0)
 	directoryExists := request.Path == skillNamespacePath
 	for _, archiveEntry := range archiveEntries {
-		// 顶层目录名已经由 archive entry 确定，无需为非递归列举下载和校验 zip。
+		// 顶层目录名已经由 Skill Archive Resource 确定，无需为非递归列举下载和校验 zip。
 		if request.Path == skillNamespacePath && !request.Recursive {
 			nodes = append(nodes, skillArchiveNode{
 				path:      archiveEntry.Path,
@@ -174,7 +173,7 @@ func (b *skillArchivePathBackend) readMetadata(
 	if apiErr != nil {
 		return entryPayload{}, apiErr
 	}
-	return skillNodePayload(node, filesystem.ExternalID, []db.FilestoreEntry{archiveEntry}), nil
+	return skillNodePayload(node, filesystem.ExternalID, []db.SessionResourceFile{archiveEntry}), nil
 }
 
 func (b *skillArchivePathBackend) readFile(
@@ -226,10 +225,10 @@ func (b *skillArchivePathBackend) resolveSkillNode(
 	principal Principal,
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
-) (db.FilestoreEntry, *loadedSkillArchive, skillArchiveNode, *apiError) {
-	archiveEntries, err := b.db.ListFilestoreSkillArchiveEntries(ctx, principal.WorkspaceUUID, filesystem.UUID)
+) (db.SessionResourceFile, *loadedSkillArchive, skillArchiveNode, *apiError) {
+	archiveEntries, err := b.db.ListSessionSkillArchiveResources(ctx, principal.WorkspaceUUID, filesystem.UUID)
 	if err != nil {
-		return db.FilestoreEntry{}, nil, skillArchiveNode{}, mapDatabaseError("list skill archive entries", err)
+		return db.SessionResourceFile{}, nil, skillArchiveNode{}, mapDatabaseError("list Skill Archive Resources", err)
 	}
 	for _, archiveEntry := range archiveEntries {
 		if entryPath != archiveEntry.Path && !strings.HasPrefix(entryPath, archiveEntry.Path+"/") {
@@ -237,20 +236,20 @@ func (b *skillArchivePathBackend) resolveSkillNode(
 		}
 		archive, apiErr := b.loadSkillArchive(ctx, archiveEntry)
 		if apiErr != nil {
-			return db.FilestoreEntry{}, nil, skillArchiveNode{}, apiErr
+			return db.SessionResourceFile{}, nil, skillArchiveNode{}, apiErr
 		}
 		node, ok := archive.nodes[entryPath]
 		if !ok {
-			return db.FilestoreEntry{}, nil, skillArchiveNode{}, notFound("resource does not exist")
+			return db.SessionResourceFile{}, nil, skillArchiveNode{}, notFound("resource does not exist")
 		}
 		return archiveEntry, archive, node, nil
 	}
-	return db.FilestoreEntry{}, nil, skillArchiveNode{}, notFound("resource does not exist")
+	return db.SessionResourceFile{}, nil, skillArchiveNode{}, notFound("resource does not exist")
 }
 
 func (b *skillArchivePathBackend) loadSkillArchive(
 	ctx context.Context,
-	archiveEntry db.FilestoreEntry,
+	archiveEntry db.SessionResourceFile,
 ) (*loadedSkillArchive, *apiError) {
 	if b.cache == nil {
 		return nil, internalError("load skill archive", errors.New("skill archive cache is unavailable"))
@@ -340,7 +339,7 @@ func skillArchiveRequestCanceled(cause error) *apiError {
 
 func (b *skillArchivePathBackend) fetchSkillArchive(
 	ctx context.Context,
-	archiveEntry db.FilestoreEntry,
+	archiveEntry db.SessionResourceFile,
 	bucket string,
 	objectKey string,
 	checksum string,
@@ -378,22 +377,19 @@ func (b *skillArchivePathBackend) fetchSkillArchive(
 	return archive, nil
 }
 
-func skillArchiveObject(entry db.FilestoreEntry) (string, string, string, int64, error) {
-	if entry.Kind != db.FilestoreEntryKindArchive ||
-		entry.ManagedBy == nil ||
-		*entry.ManagedBy != "skill_archive" ||
-		entry.ManagedResourceUUID == nil ||
+func skillArchiveObject(entry db.SessionResourceFile) (string, string, string, int64, error) {
+	if entry.Kind != db.SessionResourceFileKindArchive ||
 		entry.S3Bucket == nil ||
 		entry.S3Key == nil ||
 		entry.SHA256 == nil ||
 		entry.SizeBytes == nil ||
 		*entry.SizeBytes <= 0 {
-		return "", "", "", 0, errors.New("skill archive entry is invalid")
+		return "", "", "", 0, errors.New("Skill Archive Resource is invalid")
 	}
 	return *entry.S3Bucket, *entry.S3Key, *entry.SHA256, *entry.SizeBytes, nil
 }
 
-func indexSkillArchive(archiveEntry db.FilestoreEntry, data []byte) (*loadedSkillArchive, error) {
+func indexSkillArchive(archiveEntry db.SessionResourceFile, data []byte) (*loadedSkillArchive, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, errors.New("skill archive is not a valid zip")
@@ -503,25 +499,15 @@ func addSkillDirectoryNode(nodes map[string]skillArchiveNode, directoryPath stri
 func skillNodePayload(
 	node skillArchiveNode,
 	filesystemExternalID string,
-	archiveEntries []db.FilestoreEntry,
+	archiveEntries []db.SessionResourceFile,
 ) entryPayload {
 	createdAt := time.Unix(0, 0).UTC()
-	nodeIdentity := ""
 	for _, archiveEntry := range archiveEntries {
 		if node.path == archiveEntry.Path || strings.HasPrefix(node.path, archiveEntry.Path+"/") {
 			createdAt = archiveEntry.CreatedAt
-			versionUUID := ""
-			if archiveEntry.ManagedResourceUUID != nil {
-				versionUUID = *archiveEntry.ManagedResourceUUID
-			}
-			nodeIdentity = strings.Join([]string{
-				archiveEntry.FilesystemUUID,
-				versionUUID,
-			}, "\x00")
 			break
 		}
 	}
-	nodeUUID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(nodeIdentity+"\x00"+node.path)).String()
 	if node.directory {
 		directory := directoryPayload{
 			FilesystemID: filesystemExternalID,
@@ -534,12 +520,10 @@ func skillNodePayload(
 		FilesystemID: filesystemExternalID,
 		Path:         node.path,
 		File: filePayload{
-			UUID:             nodeUUID,
 			CreatedAt:        formatTimestamp(createdAt),
 			Size:             protoInt64(node.size),
 			MediaType:        node.mediaType,
 			DetectedMimeType: node.mediaType,
-			EntryTaggedID:    "fse_" + strings.ReplaceAll(nodeUUID, "-", ""),
 			FilesystemID:     filesystemExternalID,
 		},
 	}

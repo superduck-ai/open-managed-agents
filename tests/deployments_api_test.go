@@ -453,18 +453,15 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 		defer deleteSession(t, app, *run.SessionID)
 
-		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceUUID, *run.SessionID)
-		if err != nil {
-			t.Fatalf("list deployment run Session resources: %v", err)
-		}
-		if len(resources) != 1 {
-			t.Fatalf("deployment run Session resources = %d, want 1", len(resources))
+		runSession := retrieveSession(t, app, *run.SessionID, defaultTestKey)
+		if len(runSession.Resources) != 1 {
+			t.Fatalf("deployment run Session resources = %d, want 1", len(runSession.Resources))
 		}
 		assertSessionFileReference(
 			t,
 			app,
 			*run.SessionID,
-			resources[0].Payload,
+			runSession.Resources[0],
 			file.ID,
 			"/uploads/workspace/deployment.txt",
 		)
@@ -594,8 +591,8 @@ func TestDeploymentsAPI(t *testing.T) {
 		if err := app.db.Pool.QueryRow(context.Background(), `
 			select count(*)
 			from filestore_filesystems fs
-			join sessions s on s.uuid = fs.session_uuid
-				and s.workspace_uuid = fs.workspace_uuid
+			join workspaces w on w.uuid = fs.workspace_uuid
+				join sessions s on s.uuid = fs.session_uuid and s.workspace_uuid = w.uuid
 			where s.external_id = $1 and fs.deleted_at is null
 		`, *run.SessionID).Scan(&filesystemCount); err != nil {
 			t.Fatalf("count deployment Session filesystem: %v", err)

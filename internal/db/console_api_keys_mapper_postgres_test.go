@@ -145,7 +145,7 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 		if updateErr != nil || updated.Status != "archived" || updated.ArchivedAt == nil {
 			t.Fatalf("UpdateStatus() = (%+v, %v)", updated, updateErr)
 		}
-		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, apiKeyUUID, "archived")
+		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, apiKeyUUID.String(), "archived")
 		if updateErr != nil || rowsAffected != 1 {
 			t.Fatalf("AdminAPIKeyMapper.UpdateStatusByUUID() = (%d, %v), want 1", rowsAffected, updateErr)
 		}

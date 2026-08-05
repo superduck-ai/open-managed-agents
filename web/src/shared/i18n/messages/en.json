@@ -793,7 +793,7 @@
   "managedAgents.sessions.resources.description": "Mount files into the session uploads directory.",
   "managedAgents.sessions.resources.fileId": "File ID",
   "managedAgents.sessions.resources.manageFiles": "Manage files",
-  "managedAgents.sessions.resources.mountHelp": "Must start with {path}",
+  "managedAgents.sessions.resources.mountHelp": "Enter a path relative to {path}",
   "managedAgents.sessions.resources.mountPath": "Mount path",
   "managedAgents.sessions.resources.removeFile": "Remove file resource {index}",
   "managedAgents.sessions.resources.runtimePath": "Available at {path}",

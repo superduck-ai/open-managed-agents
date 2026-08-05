@@ -29,15 +29,15 @@ const (
 
 type filestoreDatabase interface {
 	GetFilestoreFilesystem(context.Context, string, string) (db.FilestoreFilesystem, error)
-	GetFilestoreEntry(context.Context, string, string, string) (db.FilestoreEntry, error)
-	ListFilestoreEntriesPage(context.Context, db.ListFilestoreEntriesPageParams) (db.FilestoreEntryPage, error)
-	ListFilestoreSkillArchiveEntries(context.Context, string, string) ([]db.FilestoreEntry, error)
-	MakeFilestoreDirectory(context.Context, db.MakeFilestoreDirectoryInput) (db.FilestoreEntry, error)
+	GetSessionResourceFile(context.Context, string, string, string) (db.SessionResourceFile, error)
+	ListSessionResourceFilesPage(context.Context, db.ListSessionResourceFilesPageParams) (db.SessionResourceFilePage, error)
+	ListSessionSkillArchiveResources(context.Context, string, string) ([]db.SessionResourceFile, error)
+	MakeFilestoreDirectory(context.Context, db.MakeFilestoreDirectoryInput) (db.SessionResourceFile, error)
 	PutFilestoreFile(context.Context, db.PutFilestoreFileInput) (db.FilestoreMutationResult, error)
 	CopyFilestoreFile(context.Context, db.CopyFilestoreFileInput) (db.FilestoreMutationResult, error)
 	MoveFilestoreFile(context.Context, db.MoveFilestoreFileInput) (db.FilestoreMutationResult, error)
 	MoveFilestoreDirectory(context.Context, db.MoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
-	RemoveFilestoreFile(context.Context, db.RemoveFilestoreEntryInput) (db.FilestoreMutationResult, error)
+	RemoveFilestoreFile(context.Context, db.RemoveSessionResourceFileInput) (db.FilestoreMutationResult, error)
 	RemoveFilestoreDirectory(context.Context, db.RemoveFilestoreDirectoryInput) (db.FilestoreMutationResult, error)
 	EnqueueFilestoreObjectCleanupJob(context.Context, db.EnqueueFilestoreObjectCleanupJobInput) (db.FilestoreObjectCleanupJob, error)
 	AttachFilestoreObjectCleanupJobVersion(context.Context, string, string, string, string) error
@@ -234,7 +234,7 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 		// 若提交其实成功，事务已原子取消该哨兵；否则后台清理会在宽限期后回收对象。
 		return fileResponse{}, mapDatabaseError("create file", err)
 	}
-	payload, err := filePayloadFromEntry(result.Entry, filesystem.ExternalID)
+	payload, err := filePayloadFromEntry(result.Node, filesystem.ExternalID)
 	if err != nil {
 		return fileResponse{}, internalError("encode file", err)
 	}
@@ -256,11 +256,11 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	source, err := s.db.GetFilestoreEntry(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Source)
+	source, err := s.db.GetSessionResourceFile(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Source)
 	if err != nil {
 		return fileResponse{}, mapDatabaseError("read copy source", err)
 	}
-	if source.Kind != db.FilestoreEntryKindFile || source.S3Key == nil {
+	if source.Kind != db.SessionResourceFileKindFile || source.S3Key == nil {
 		return fileResponse{}, failedPrecondition("source is not a file")
 	}
 	if source.SourceFileUUID != nil {
@@ -268,10 +268,10 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		// 服务端复制（server-side copy），把一个由 Filestore 自己拥有的对象
 		// 复制成新对象，再把该副本绑定到目标路径”，而不是客户端先把源文件
 		// 读出来，再调用 createFile 生成一个新文件。
-		// Session /uploads 中的 borrowed file 只是对 Files API 对象的引用；
+		// Session /uploads 中的 Input Resource 只是对 Source File 的引用；
 		// Sandbox 内的普通 cp 仍然可以通过 read + create/write 完成复制，但
 		// 不能在这个控制面接口里被隐式转换成新的 Filestore-owned file。
-		return fileResponse{}, failedPrecondition("borrowed file references cannot be copied")
+		return fileResponse{}, failedPrecondition("attached input files cannot be copied")
 	}
 	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Destination); apiErr != nil {
 		return fileResponse{}, apiErr
@@ -310,7 +310,7 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 		// 与 CreateFile 相同，提交结果未知时由延迟哨兵裁决，避免误删已提交的新副本。
 		return fileResponse{}, mapDatabaseError("copy file", err)
 	}
-	payload, err := filePayloadFromEntry(result.Entry, filesystem.ExternalID)
+	payload, err := filePayloadFromEntry(result.Node, filesystem.ExternalID)
 	if err != nil {
 		return fileResponse{}, internalError("encode copied file", err)
 	}
@@ -340,7 +340,7 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 	if err != nil {
 		return fileResponse{}, mapDatabaseError("move file", err)
 	}
-	payload, err := filePayloadFromEntry(result.Entry, filesystem.ExternalID)
+	payload, err := filePayloadFromEntry(result.Node, filesystem.ExternalID)
 	if err != nil {
 		return fileResponse{}, internalError("encode moved file", err)
 	}
@@ -375,7 +375,7 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 	if err != nil {
 		return directoryResponse{}, mapDatabaseError("move directory", err)
 	}
-	return directoryResponse{Directory: directoryPayloadFromEntry(result.Entry, filesystem.ExternalID)}, nil
+	return directoryResponse{Directory: directoryPayloadFromEntry(result.Node, filesystem.ExternalID)}, nil
 }
 
 // ReadFile 打开完整文件或指定字节区间；元数据存在而对象缺失视为服务端一致性故障。
@@ -403,7 +403,7 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
 		return apiErr
 	}
-	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveFilestoreEntryInput{
+	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveSessionResourceFileInput{
 		WorkspaceUUID:  principal.WorkspaceUUID,
 		FilesystemUUID: filesystem.UUID,
 		Path:           request.Path,
@@ -429,12 +429,12 @@ func (s *Service) ReadMetadata(ctx context.Context, principal Principal, request
 }
 
 func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, filesystemID string) (db.FilestoreFilesystem, *apiError) {
-	if strings.TrimSpace(principal.WorkspaceUUID) == "" {
+	if principal.WorkspaceUUID == "" {
 		return db.FilestoreFilesystem{}, &apiError{Status: http.StatusUnauthorized, Code: "unauthenticated", Message: "Invalid principal"}
 	}
 	// 数据库回查已把 claim 解析成规范的 external ID 与 UUID。请求可任选其一，
 	// 但不能借此访问同工作区内的其他 filesystem。
-	if strings.TrimSpace(principal.FilesystemUUID) == "" ||
+	if principal.FilesystemUUID == "" ||
 		(filesystemID != principal.FilesystemExternalID && !strings.EqualFold(filesystemID, principal.FilesystemUUID)) {
 		return db.FilestoreFilesystem{}, permissionDenied("Filestore token does not grant access to this filesystem")
 	}
@@ -442,22 +442,22 @@ func (s *Service) resolveFilesystem(ctx context.Context, principal Principal, fi
 	if err != nil {
 		return db.FilestoreFilesystem{}, mapDatabaseError("resolve filesystem", err)
 	}
-	if !strings.EqualFold(filesystem.UUID, principal.FilesystemUUID) {
+	if filesystem.UUID != principal.FilesystemUUID {
 		return db.FilestoreFilesystem{}, permissionDenied("Filestore token does not grant access to this filesystem")
 	}
 	return filesystem, nil
 }
 
-func (s *Service) requireParentDirectory(ctx context.Context, workspaceUUID, filesystemUUID, entryPath string) *apiError {
+func (s *Service) requireParentDirectory(ctx context.Context, workspaceUUID, filesystemUUID string, entryPath string) *apiError {
 	parent := parentPath(entryPath)
-	entry, err := s.db.GetFilestoreEntry(ctx, workspaceUUID, filesystemUUID, parent)
+	entry, err := s.db.GetSessionResourceFile(ctx, workspaceUUID, filesystemUUID, parent)
 	if errors.Is(err, db.ErrNotFound) {
 		return failedPrecondition("parent directory does not exist")
 	}
 	if err != nil {
 		return mapDatabaseError("read parent directory", err)
 	}
-	if entry.Kind != db.FilestoreEntryKindDirectory {
+	if entry.Kind != db.SessionResourceFileKindDirectory {
 		return failedPrecondition("parent path is not a directory")
 	}
 	return nil
@@ -664,13 +664,13 @@ func resolveReadRange(requestRange *readFileRange, fileSize int64) (*storage.Byt
 	return &storage.ByteRange{Offset: offset, Length: length}, length, nil
 }
 
-func payloadFromEntry(entry db.FilestoreEntry, filesystemExternalID string) (entryPayload, error) {
-	if entry.Kind == db.FilestoreEntryKindDirectory {
+func payloadFromEntry(entry db.SessionResourceFile, filesystemExternalID string) (entryPayload, error) {
+	if entry.Kind == db.SessionResourceFileKindDirectory {
 		directory := directoryPayloadFromEntry(entry, filesystemExternalID)
 		return entryPayload{Directory: &directory}, nil
 	}
-	if entry.Kind != db.FilestoreEntryKindFile {
-		return entryPayload{}, fmt.Errorf("unsupported filestore entry kind %q", entry.Kind)
+	if entry.Kind != db.SessionResourceFileKindFile {
+		return entryPayload{}, fmt.Errorf("unsupported filestore resource kind %q", entry.Kind)
 	}
 	file, err := filePayloadFromEntry(entry, filesystemExternalID)
 	if err != nil {
@@ -679,9 +679,9 @@ func payloadFromEntry(entry db.FilestoreEntry, filesystemExternalID string) (ent
 	return entryPayload{File: &file}, nil
 }
 
-func filePayloadFromEntry(entry db.FilestoreEntry, filesystemExternalID string) (filesystemFilePayload, error) {
-	if entry.Kind != db.FilestoreEntryKindFile || entry.SizeBytes == nil {
-		return filesystemFilePayload{}, errors.New("filestore entry is not a complete file")
+func filePayloadFromEntry(entry db.SessionResourceFile, filesystemExternalID string) (filesystemFilePayload, error) {
+	if entry.Kind != db.SessionResourceFileKindFile || entry.SizeBytes == nil {
+		return filesystemFilePayload{}, errors.New("filestore resource is not a complete file")
 	}
 	metadata := map[string]any{}
 	if len(entry.Metadata) != 0 && string(entry.Metadata) != "null" {
@@ -708,7 +708,7 @@ func filePayloadFromEntry(entry db.FilestoreEntry, filesystemExternalID string) 
 	return filesystemFilePayload{File: payload, FilesystemID: filesystemExternalID, Path: entry.Path}, nil
 }
 
-func directoryPayloadFromEntry(entry db.FilestoreEntry, filesystemExternalID string) directoryPayload {
+func directoryPayloadFromEntry(entry db.SessionResourceFile, filesystemExternalID string) directoryPayload {
 	return directoryPayload{
 		FilesystemID: filesystemExternalID,
 		Path:         entry.Path,

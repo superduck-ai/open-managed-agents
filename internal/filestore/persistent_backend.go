@@ -23,7 +23,7 @@ func (b *persistentPathBackend) listDirectory(
 	cursor directoryCursor,
 	limit int,
 ) (listDirectoryResponse, *apiError) {
-	params := db.ListFilestoreEntriesPageParams{
+	params := db.ListSessionResourceFilesPageParams{
 		WorkspaceUUID:  principal.WorkspaceUUID,
 		FilesystemUUID: filesystem.UUID,
 		DirectoryPath:  request.Path,
@@ -31,10 +31,10 @@ func (b *persistentPathBackend) listDirectory(
 		Limit:          limit,
 	}
 	if request.Cursor != "" {
-		// Path 是主排序键，UUID 在路径相同的边界情形下提供稳定的决胜键。
-		params.Cursor = &db.FilestoreEntryPageCursor{Path: cursor.LastPath, UUID: cursor.LastUUID}
+		// Path 是主排序键，ID 在路径相同的边界情形下提供稳定的决胜键。
+		params.Cursor = &db.SessionResourceFilePageCursor{Path: cursor.LastPath, UUID: cursor.LastUUID}
 	}
-	page, err := b.db.ListFilestoreEntriesPage(ctx, params)
+	page, err := b.db.ListSessionResourceFilesPage(ctx, params)
 	if err != nil {
 		return listDirectoryResponse{}, mapDatabaseError("list directory", err)
 	}
@@ -70,11 +70,11 @@ func (b *persistentPathBackend) readFile(
 	filesystem db.FilestoreFilesystem,
 	request readFileRequest,
 ) (readFileResult, *apiError) {
-	entry, err := b.db.GetFilestoreEntry(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Path)
+	entry, err := b.db.GetSessionResourceFile(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Path)
 	if err != nil {
 		return readFileResult{}, mapDatabaseError("read file metadata", err)
 	}
-	if entry.Kind != db.FilestoreEntryKindFile || entry.S3Key == nil || entry.SizeBytes == nil {
+	if entry.Kind != db.SessionResourceFileKindFile || entry.S3Key == nil || entry.SizeBytes == nil {
 		return readFileResult{}, failedPrecondition("path is not a file")
 	}
 	objectRange, responseSize, apiErr := resolveReadRange(request.Range, *entry.SizeBytes)
@@ -104,7 +104,7 @@ func (b *persistentPathBackend) readMetadata(
 	filesystem db.FilestoreFilesystem,
 	entryPath string,
 ) (entryPayload, *apiError) {
-	entry, err := b.db.GetFilestoreEntry(ctx, principal.WorkspaceUUID, filesystem.UUID, entryPath)
+	entry, err := b.db.GetSessionResourceFile(ctx, principal.WorkspaceUUID, filesystem.UUID, entryPath)
 	if err != nil {
 		return entryPayload{}, mapDatabaseError("read metadata", err)
 	}

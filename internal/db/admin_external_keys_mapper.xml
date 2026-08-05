@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminExternalKeyMapper">
+    <sql id="adminExternalKeyColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        display_name,
+        geo,
+        provider_config,
+        created_at,
+        updated_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="AdminExternalKey">
+        INSERT INTO external_keys (
+            external_id,
+            organization_uuid,
+            display_name,
+            geo,
+            provider_config,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.DisplayName},
+            #{params.Geo},
+            CAST(#{params.ProviderConfig,sensitive=true} AS jsonb),
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="adminExternalKeyColumns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="AdminExternalKey">
+        SELECT
+        <include refid="adminExternalKeyColumns"/>
+        FROM external_keys
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListPage" resultType="AdminExternalKey">
+        SELECT
+        <include refid="adminExternalKeyColumns"/>
+        FROM external_keys
+        WHERE organization_uuid = #{organizationUUID}
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{limit}
+        OFFSET #{offset}
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="AdminExternalKey">
+        UPDATE external_keys
+        SET display_name = #{params.DisplayName},
+            geo = #{params.Geo},
+            provider_config = CAST(#{params.ProviderConfig,sensitive=true} AS jsonb),
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="adminExternalKeyColumns"/>
+    </update>
+
+    <update id="SoftDeleteByExternalID" result="rows">
+        UPDATE external_keys
+        SET deleted_at = COALESCE(deleted_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </update>
+</mapper>

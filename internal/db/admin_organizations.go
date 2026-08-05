@@ -13,14 +13,8 @@ type AdminOrganization struct {
 	CreatedAt time.Time `db:"created_at"`
 }
 
-const getAdminOrganizationQuery = `
-	select uuid, name, created_at
-	from organizations
-	where uuid = :organization_uuid
-`
-
 func (d *DB) GetAdminOrganization(ctx context.Context, organizationUUID uuid.UUID) (AdminOrganization, error) {
-	return getAdminRow[AdminOrganization](ctx, d.sql, getAdminOrganizationQuery, map[string]any{
-		"organization_uuid": organizationUUID,
-	})
+	mapper := NewAdminOrganizationMapper(d.mapperDB)
+	organization, err := mapper.FindByUUID(ctx, organizationUUID.String())
+	return organization, mapNoRows(err)
 }

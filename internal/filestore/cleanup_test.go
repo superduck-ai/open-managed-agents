@@ -236,34 +236,6 @@ func TestCleanupWorkerRunCleanupOnceStopsOnCanceledDelete(t *testing.T) {
 	}
 }
 
-func TestCleanupWorkerRunTTLSweepOnceUsesBoundedBatch(t *testing.T) {
-	t.Parallel()
-
-	database := &fakeFilestoreCleanupDatabase{}
-
-	worker := NewCleanupWorker(database, nil, nil)
-	if err := worker.RunTTLSweepOnce(context.Background()); err != nil {
-		t.Fatalf("RunTTLSweepOnce() error = %v", err)
-	}
-	if database.expireCalls != 1 || database.expireLimit != filestoreTTLSweepBatchSize {
-		t.Fatalf("ExpireFilestoreEntries calls = %d, limit = %d", database.expireCalls, database.expireLimit)
-	}
-}
-
-func TestCleanupWorkerRunTTLSweepOnceReturnsDatabaseError(t *testing.T) {
-	t.Parallel()
-
-	expireErr := errors.New("expiry failed")
-	database := &fakeFilestoreCleanupDatabase{expireError: expireErr}
-
-	worker := NewCleanupWorker(database, nil, nil)
-	err := worker.RunTTLSweepOnce(context.Background())
-
-	if !errors.Is(err, expireErr) {
-		t.Fatalf("RunTTLSweepOnce() error = %v", err)
-	}
-}
-
 func TestCleanupWorkerRunFilesystemCleanupOnceSchedulesProcessFailureRetry(t *testing.T) {
 	t.Parallel()
 
@@ -395,9 +367,6 @@ type fakeFilestoreCleanupDatabase struct {
 	completeError            error
 	failures                 []cleanupFailure
 	failError                error
-	expireCalls              int
-	expireLimit              int
-	expireError              error
 	filesystemJobs           []db.FilestoreFilesystemCleanupJob
 	filesystemLeaseError     error
 	filesystemLeasedWorkerID string
@@ -406,6 +375,7 @@ type fakeFilestoreCleanupDatabase struct {
 	filesystemProcessed      []string
 	filesystemProcessLimit   int
 	filesystemProcessError   error
+	filesystemAnomalies      []db.FilestoreCleanupAnomaly
 	filesystemFailures       []cleanupFailure
 }
 
@@ -426,10 +396,10 @@ func (d *fakeFilestoreCleanupDatabase) ProcessLeasedFilestoreFilesystemCleanupJo
 	jobUUID string,
 	_ string,
 	limit int,
-) (bool, error) {
+) (bool, []db.FilestoreCleanupAnomaly, error) {
 	d.filesystemProcessed = append(d.filesystemProcessed, jobUUID)
 	d.filesystemProcessLimit = limit
-	return d.filesystemProcessError == nil, d.filesystemProcessError
+	return d.filesystemProcessError == nil, d.filesystemAnomalies, d.filesystemProcessError
 }
 
 func (d *fakeFilestoreCleanupDatabase) FailLeasedFilestoreFilesystemCleanupJob(
@@ -484,13 +454,4 @@ func (d *fakeFilestoreCleanupDatabase) FailLeasedFilestoreObjectCleanupJob(
 		maxAttempts: maxAttempts,
 	})
 	return d.failError
-}
-
-func (d *fakeFilestoreCleanupDatabase) ExpireFilestoreEntries(
-	_ context.Context,
-	limit int,
-) ([]db.FilestoreObjectCleanupJob, error) {
-	d.expireCalls++
-	d.expireLimit = limit
-	return nil, d.expireError
 }

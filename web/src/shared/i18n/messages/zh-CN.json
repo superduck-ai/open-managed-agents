@@ -793,7 +793,7 @@
   "managedAgents.sessions.resources.description": "将文件挂载到会话的 uploads 目录。",
   "managedAgents.sessions.resources.fileId": "文件 ID",
   "managedAgents.sessions.resources.manageFiles": "管理文件",
-  "managedAgents.sessions.resources.mountHelp": "必须以 {path} 开头",
+  "managedAgents.sessions.resources.mountHelp": "输入相对于 {path} 的路径",
   "managedAgents.sessions.resources.mountPath": "挂载路径",
   "managedAgents.sessions.resources.removeFile": "移除文件资源 {index}",
   "managedAgents.sessions.resources.runtimePath": "可在 {path} 访问",

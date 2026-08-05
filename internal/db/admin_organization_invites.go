@@ -26,17 +26,16 @@ type ListAdminInvitesParams struct {
 }
 
 func (d *DB) CreateAdminInvite(ctx context.Context, invite AdminInvite) (AdminInvite, error) {
-	created, err := getAdminRow[AdminInvite](ctx, d.sql, `
-		insert into organization_invites (
-			external_id, organization_uuid, email, role, status, invited_at, expires_at
-		)
-		values (
-			:external_id, :organization_uuid, :email, :role, :status, :invited_at, :expires_at
-		)
-		returning uuid, external_id,
-			organization_uuid,
-			email, role, status, invited_at, expires_at
-	`, adminInviteArguments(invite))
+	mapper := NewAdminInviteMapper(d.mapperDB)
+	created, err := mapper.Insert(ctx, insertAdminInviteParams{
+		ExternalID:       invite.ExternalID,
+		OrganizationUUID: invite.OrganizationUUID,
+		Email:            invite.Email,
+		Role:             invite.Role,
+		Status:           invite.Status,
+		InvitedAt:        invite.InvitedAt,
+		ExpiresAt:        invite.ExpiresAt,
+	})
 	if isUniqueViolation(err) {
 		return AdminInvite{}, ErrDuplicate
 	}
@@ -44,32 +43,27 @@ func (d *DB) CreateAdminInvite(ctx context.Context, invite AdminInvite) (AdminIn
 }
 
 func (d *DB) GetAdminInvite(ctx context.Context, organizationUUID, externalID string) (AdminInvite, error) {
-	return getAdminRow[AdminInvite](ctx, d.sql, adminInviteSelectSQL()+`
-		where organization_uuid = :organization_uuid and external_id = :external_id
-	`, map[string]any{"organization_uuid": dbUUID(organizationUUID), "external_id": externalID})
+	mapper := NewAdminInviteMapper(d.mapperDB)
+	invite, err := mapper.FindByExternalID(ctx, organizationUUID, externalID)
+	return invite, mapNoRows(err)
 }
 
 func (d *DB) ListAdminInvitesPage(ctx context.Context, params ListAdminInvitesParams) ([]AdminInvite, bool, error) {
+	mapper := NewAdminInviteMapper(d.mapperDB)
+	var anchor *pagePosition
 	cursorID := firstNonEmpty(params.AfterID, params.BeforeID)
-	cursor, cursorOK, err := d.adminCursor(
-		ctx,
-		"organization_invites",
-		"invited_at",
-		"organization_uuid = :organization_uuid and external_id = :cursor_external_id",
-		map[string]any{"organization_uuid": dbUUID(params.OrganizationUUID), "cursor_external_id": cursorID},
-		cursorID,
-	)
-	if err != nil {
-		return nil, false, err
+	if cursorID != "" {
+		value, found, err := mapper.FindPageAnchorByExternalID(ctx, params.OrganizationUUID, cursorID)
+		if err != nil {
+			return nil, false, err
+		}
+		if !found {
+			return nil, false, nil
+		}
+		anchor = &value
 	}
-	if (params.AfterID != "" || params.BeforeID != "") && !cursorOK {
-		return nil, false, nil
-	}
-	query := adminInviteSelectSQL() + ` where organization_uuid = :organization_uuid`
-	args := map[string]any{"organization_uuid": dbUUID(params.OrganizationUUID), "limit": params.Limit + 1}
-	query = appendCursorFilter(query, args, "invited_at", params.AfterID, params.BeforeID, cursor)
-	query += " order by invited_at desc, uuid desc limit :limit"
-	invites, err := selectAdminRows[AdminInvite](ctx, d.sql, query, args)
+	before := params.AfterID == "" && params.BeforeID != ""
+	invites, err := mapper.ListPage(ctx, params.OrganizationUUID, anchor, before, params.Limit+1)
 	if err != nil {
 		return nil, false, err
 	}
@@ -77,34 +71,7 @@ func (d *DB) ListAdminInvitesPage(ctx context.Context, params ListAdminInvitesPa
 }
 
 func (d *DB) DeleteAdminInvite(ctx context.Context, organizationUUID, externalID string) (AdminInvite, error) {
-	return getAdminRow[AdminInvite](ctx, d.sql, `
-		update organization_invites
-		set status = 'deleted',
-			deleted_at = coalesce(deleted_at, now())
-		where organization_uuid = :organization_uuid and external_id = :external_id
-		returning uuid, external_id,
-			organization_uuid,
-			email, role, status, invited_at, expires_at
-	`, map[string]any{"organization_uuid": dbUUID(organizationUUID), "external_id": externalID})
-}
-
-func adminInviteSelectSQL() string {
-	return `
-		select uuid, external_id,
-			organization_uuid,
-			email, role, status, invited_at, expires_at
-		from organization_invites
-	`
-}
-
-func adminInviteArguments(invite AdminInvite) map[string]any {
-	return map[string]any{
-		"external_id":       invite.ExternalID,
-		"organization_uuid": invite.OrganizationUUID,
-		"email":             invite.Email,
-		"role":              invite.Role,
-		"status":            invite.Status,
-		"invited_at":        invite.InvitedAt,
-		"expires_at":        invite.ExpiresAt,
-	}
+	mapper := NewAdminInviteMapper(d.mapperDB)
+	invite, err := mapper.SoftDeleteByExternalID(ctx, organizationUUID, externalID)
+	return invite, mapNoRows(err)
 }

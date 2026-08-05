@@ -1000,11 +1000,8 @@ function CreateWebhookDialog({
         }
       }}
     >
-      {/* grid-rows-[auto_minmax(0,1fr)] pins the header at its content height and lets
-          the form absorb any overflow inside the max-h cap, so header/footer sizing is
-          not coupled to hardcoded pixel budgets. The form repeats the same split: its
-          minmax(0,1fr) row scrolls (min-h-0 on the scroll container resolves the grid
-          item's auto min-height), while the auto row keeps the Create button visible. */}
+      {/* Header/footer keep content height via auto grid rows; the minmax(0,1fr) form row absorbs overflow
+          inside the max-h cap instead of hardcoded pixel budgets, and min-h-0 lets the scroll area shrink. */}
       <DialogContent
         className="grid-rows-[auto_minmax(0,1fr)] max-h-[min(720px,calc(100vh-48px))] gap-0 overflow-hidden p-0 sm:max-w-[540px]"
         initialFocus={urlRef}

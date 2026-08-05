@@ -88,7 +88,6 @@ describe('Workspace webhooks page', () => {
     expect(dialog.className).toContain('grid-rows-[auto_minmax(0,1fr)]');
     expect(dialog.className).toContain('overflow-hidden');
     const scrollArea = dialog.querySelector('.subtle-scrollbar-auto') as HTMLElement | null;
-    expect(scrollArea).toBeTruthy();
     expect(scrollArea?.className).toContain('min-h-0');
     expect(scrollArea?.className).toContain('overflow-y-auto');
 

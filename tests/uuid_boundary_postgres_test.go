@@ -890,31 +890,6 @@ func TestTypedUUIDFilesAndFilestorePostgres(t *testing.T) {
 		t.Fatalf("Filestore nullable UUID row = %+v", activeResult.Node)
 	}
 
-	expiredAt := now.Add(-time.Minute)
-	if _, err := app.db.PutFilestoreFile(ctx, db.PutFilestoreFileInput{
-		WorkspaceUUID:  workspaceUUID,
-		FilesystemUUID: filesystem.UUID,
-		Path:           "/outputs/expired.txt",
-		Blob: db.FilestoreFileBlob{
-			SizeBytes:             5,
-			MediaType:             "text/plain",
-			Metadata:              []byte(`{}`),
-			AuthorizationMetadata: []byte(`{}`),
-			MD5:                   strings.Repeat("b", 32),
-			SHA256:                strings.Repeat("b", 64),
-			S3Bucket:              "typed-uuid",
-			S3Key:                 "filestore/" + suffix + "/expired.txt",
-			ExpiresAt:             &expiredAt,
-		},
-		Now: now,
-	}); err != nil {
-		t.Fatalf("put expiring Filestore file: %v", err)
-	}
-	expiryJobs, anomalies, err := app.db.ExpireSessionResourceFiles(ctx, 10)
-	if err != nil || len(expiryJobs) == 0 {
-		t.Fatalf("expire Filestore entries through UUID array binding = (%+v, %+v, %v)", expiryJobs, anomalies, err)
-	}
-
 	page, err := app.db.ListSessionResourceFilesPage(ctx, db.ListSessionResourceFilesPageParams{
 		WorkspaceUUID:  workspaceUUID,
 		FilesystemUUID: filesystem.UUID,

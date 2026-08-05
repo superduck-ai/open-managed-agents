@@ -217,7 +217,7 @@ Provider Sandbox 创建前的失败会停止 Environment Work，且不会创建 
 - `session_resources` 只使用 `path`、`parent_path`、`file_uuid` 与 `expires_at` 表达 File、Directory 和 Skill Archive 节点；Skill ZIP 的大小、SHA-256、bucket 与 key 与普通文件一样保存在 `files` 行中。
 - `files` 新增 detected MIME、metadata、authorization metadata、tags、MD5、ETag 与 Version ID，保存所有真实文件元数据和对象事实。
 - 不新增 `attached`、`cataloged`、`namespace_role`、`filesystem_uuid`、`files.source_file_uuid` 或 ownership 列。公开 Resource 由 `payload is not null` 判断，Catalog 角色由固定根路径判断。
-- Resource + File 通用投影直接读取 Resource 的 `organization_uuid/workspace_uuid/session_uuid`，不关联 `filestore_filesystems`。普通读写入口先解析一次活动 filesystem，再用其 `(workspace_uuid, session_uuid)` 查询 namespace；没有预解析上下文的 TTL 全局扫描使用专用查询恢复 cleanup scope。
+- Resource + File 通用投影直接读取 Resource 的 `organization_uuid/workspace_uuid/session_uuid`，不关联 `filestore_filesystems`。普通读写入口先解析一次活动 filesystem，再用其 `(workspace_uuid, session_uuid)` 查询 namespace。
 - schema 不创建 PostgreSQL 外键；workspace/session/file 的引用完整性和 Skill 快照的来源真实性由带租户范围的同事务写入、删除守卫与真实 PostgreSQL 测试维护。
 
 迁移只转换活动旧节点，软删除历史直接丢弃。Input 保留原 `sesrsc_`，把 path 与 Source File UUID 写入 Resource，并删除旧兼容 File 行；旧兼容 `file_` 不再保留，不扣配额、不登记对象清理。Output 保留原 File UUID 与 `file_`，用旧节点补齐真实 File metadata，再创建独立 Resource；其他文件转换为 Owned File + Resource，目录与固定根转换为 Resource。Skill Archive 先由 `00047` 接入统一 Resource，再由 `00048` 创建独立 File 快照、写入 `file_uuid` 并删除 Skill Version UUID；如果目标 `file_uuid` 已存在，`00048` 复用该 File，不重复插入同一 identity。切换不引入双写、双读、兼容 view、trigger、feature flag 或 reconciliation。
@@ -348,7 +348,7 @@ Files metadata/download 只解析真实 File ID。Input 因而沿用 Source File
 
 上传保持流式：请求 body 不落本地临时文件，AWS v2 multipart uploader 使用有限 part size 和并发度；读取过程中同时计算实际字节数、MD5 和 SHA-256。`storage.max_file_bytes` 在流式边界执行，`storage.workspace_limit_bytes` 配额同时统计普通 Files API 对象和 Session Owned File；Input Resource 不重复计费。
 
-正常配额检查只锁定并读取当前工作区的一行 `workspace_storage_usage`，成本不随文件数量增长。文件创建、覆盖、覆盖式移动、删除、递归删除和 TTL 清理分别计算字节增量，并与资源变更在同一个 PostgreSQL 事务内提交；事务失败时预留或释放的用量也一并回滚。账本列带有非负约束，避免重复扣减静默掩盖一致性问题。`ReconcileWorkspaceStorageUsage` 可在迁移校验或低频运维任务中持有同一工作区锁后重新聚合事实表并修正账本，但不进入普通请求路径。
+正常配额检查只锁定并读取当前工作区的一行 `workspace_storage_usage`，成本不随文件数量增长。文件创建、覆盖、覆盖式移动、删除和递归删除分别计算字节增量，并与资源变更在同一个 PostgreSQL 事务内提交；事务失败时预留或释放的用量也一并回滚。账本列带有非负约束，避免重复扣减静默掩盖一致性问题。`ReconcileWorkspaceStorageUsage` 可在迁移校验或低频运维任务中持有同一工作区锁后重新聚合事实表并修正账本，但不进入普通请求路径。
 
 ```mermaid
 sequenceDiagram
@@ -374,17 +374,17 @@ sequenceDiagram
 
 进入 Resource + File 写事务后，service 不根据返回的 `COMMIT` error 立即删除对象：网络型错误可能使提交结果未知。事务若实际成功，guard 已在同一事务内取消；若没有提交，pending guard 会在延迟窗口后清理对象。只有在尚未进入事务且能确定没有 Resource 引用时，才执行 best-effort 立即删除。
 
-Owned File 的覆盖、删除、递归删除和 TTL 过期在同一个数据库事务中软删除/替换 Resource 与 File、更新用量账本，并写入 `filestore_object_cleanup` job。Input Resource 禁止通用 mutation；删除它只退休 Resource，不进入对象清理或容量释放。独立 worker 按 job 中的 bucket、key 和 VersionID 幂等删除 Owned File 对象；provider not-found 视为成功，失败使用有界重试与租约保护。
+Owned File 的覆盖、删除和递归删除在同一个数据库事务中软删除/替换 Resource 与 File、更新用量账本，并写入 `filestore_object_cleanup` job。Input Resource 禁止通用 mutation；删除它只退休 Resource，不进入对象清理或容量释放。独立 worker 按 job 中的 bucket、key 和 VersionID 幂等删除 Owned File 对象；provider not-found 视为成功，失败使用有界重试与租约保护。
 
 删除 Session 时，短事务立即退休公开 Resources 与 filesystem，并投递一个 `filestore_filesystem_cleanup` 父任务，不遍历全部 Owned File，也不调用 S3。worker 每次最多退休 100 个 Owned File Resource：生成精确版本 cleanup 子任务并扣减容量；全部 Owned File 退休后再软删除内部目录、Skill Archive Resources 及其 File 快照。Skill File 只借用 catalog 对象，不生成对象清理；Input Resource 已在 Session 删除事务中退休，也不生成对象清理。
 
 两类 Filestore cleanup job 的持久化 payload 都只保存 `workspace_uuid` 与 `filesystem_uuid`，不保存 `workspace_id`、`filesystem_id` 或冗余的 filesystem external ID。`jobs.workspace_uuid` 也是稳定的 workspace 路由引用；worker 取得租约后直接按 payload UUID 关联并锁定 filesystem，不再把 workspace identity 当作缓存写回。整 filesystem 清理进入事务后会再次按 UUID 校验当前记录。迁移会先验证每条历史 bigint 引用都能解析且归属一致，再改写引用与 payload；发现孤立或错配引用时直接中止，避免恢复或合库后把任务指向另一条恰好复用了相同 identity 的记录。
 
-现在文件不考虑 expire
+`expires_at` 只影响 Resource 和 Catalog 查询的可见性。cleanup worker 不做全局到期扫描，也不会仅因到期自动软删除 Resource、释放配额或创建对象清理任务；持久化对象继续由覆盖、递归 namespace 清理或 Session cleanup 等既有生命周期路径处理。
 
 若进程在上传完成后、回填 VersionID 前退出，orphan guard 会以空 VersionID 进入清理。由于 blob key 每次写入都唯一，这不会误删其他 Resource 引用的对象。
 
-namespace 写入按 filesystem advisory lock 串行化；所有可能改变字节数的操作先获取 workspace lock，再获取 filesystem lock，从而与 Files API 共享同一配额串行点。事务内使用 PostgreSQL `now()` 判断 Resource 是否过期；TTL 批处理按 workspace 与 filesystem ID 升序加锁，避免死锁。
+namespace 写入按 filesystem advisory lock 串行化；所有可能改变字节数的操作先获取 workspace lock，再获取 filesystem lock，从而与 Files API 共享同一配额串行点。需要判断 Resource 是否过期时使用 PostgreSQL `now()`，不依赖应用进程时钟。
 
 ## Wire contract
 

@@ -1,10 +1,8 @@
 package filestore
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -238,63 +236,6 @@ func TestCleanupWorkerRunCleanupOnceStopsOnCanceledDelete(t *testing.T) {
 	}
 }
 
-func TestCleanupWorkerRunTTLSweepOnceUsesBoundedBatch(t *testing.T) {
-	t.Parallel()
-
-	database := &fakeFilestoreCleanupDatabase{}
-
-	worker := NewCleanupWorker(database, nil, nil)
-	if err := worker.RunTTLSweepOnce(context.Background()); err != nil {
-		t.Fatalf("RunTTLSweepOnce() error = %v", err)
-	}
-	if database.expireCalls != 1 || database.expireLimit != filestoreTTLSweepBatchSize {
-		t.Fatalf("ExpireSessionResourceFiles calls = %d, limit = %d", database.expireCalls, database.expireLimit)
-	}
-}
-
-func TestCleanupWorkerRunTTLSweepOnceLogsMetadataAnomalies(t *testing.T) {
-	t.Parallel()
-
-	database := &fakeFilestoreCleanupDatabase{expireAnomalies: []db.FilestoreCleanupAnomaly{{
-		WorkspaceUUID:   "00000000-0000-4000-8000-000000000042",
-		FilesystemUUID:  "00000000-0000-4000-8000-000000000043",
-		EntryExternalID: "sesrsc_malformed",
-		Reason:          "missing_object_location",
-	}}}
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	worker := NewCleanupWorker(database, nil, logger)
-
-	if err := worker.RunTTLSweepOnce(context.Background()); err != nil {
-		t.Fatalf("RunTTLSweepOnce() error = %v", err)
-	}
-	for _, want := range []string{
-		`"msg":"filestore cleanup metadata anomaly"`,
-		`"workspace_id":"00000000-0000-4000-8000-000000000042"`,
-		`"filesystem_id":"00000000-0000-4000-8000-000000000043"`,
-		`"entry_external_id":"sesrsc_malformed"`,
-		`"reason":"missing_object_location"`,
-	} {
-		if !strings.Contains(logs.String(), want) {
-			t.Fatalf("cleanup anomaly log lacks %s: %s", want, logs.String())
-		}
-	}
-}
-
-func TestCleanupWorkerRunTTLSweepOnceReturnsDatabaseError(t *testing.T) {
-	t.Parallel()
-
-	expireErr := errors.New("expiry failed")
-	database := &fakeFilestoreCleanupDatabase{expireError: expireErr}
-
-	worker := NewCleanupWorker(database, nil, nil)
-	err := worker.RunTTLSweepOnce(context.Background())
-
-	if !errors.Is(err, expireErr) {
-		t.Fatalf("RunTTLSweepOnce() error = %v", err)
-	}
-}
-
 func TestCleanupWorkerRunFilesystemCleanupOnceSchedulesProcessFailureRetry(t *testing.T) {
 	t.Parallel()
 
@@ -426,9 +367,6 @@ type fakeFilestoreCleanupDatabase struct {
 	completeError            error
 	failures                 []cleanupFailure
 	failError                error
-	expireCalls              int
-	expireLimit              int
-	expireError              error
 	filesystemJobs           []db.FilestoreFilesystemCleanupJob
 	filesystemLeaseError     error
 	filesystemLeasedWorkerID string
@@ -439,7 +377,6 @@ type fakeFilestoreCleanupDatabase struct {
 	filesystemProcessError   error
 	filesystemAnomalies      []db.FilestoreCleanupAnomaly
 	filesystemFailures       []cleanupFailure
-	expireAnomalies          []db.FilestoreCleanupAnomaly
 }
 
 func (d *fakeFilestoreCleanupDatabase) LeaseFilestoreFilesystemCleanupJobs(
@@ -517,13 +454,4 @@ func (d *fakeFilestoreCleanupDatabase) FailLeasedFilestoreObjectCleanupJob(
 		maxAttempts: maxAttempts,
 	})
 	return d.failError
-}
-
-func (d *fakeFilestoreCleanupDatabase) ExpireSessionResourceFiles(
-	_ context.Context,
-	limit int,
-) ([]db.FilestoreObjectCleanupJob, []db.FilestoreCleanupAnomaly, error) {
-	d.expireCalls++
-	d.expireLimit = limit
-	return nil, d.expireAnomalies, d.expireError
 }

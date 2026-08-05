@@ -10,8 +10,6 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper FilestoreCleanupMapper -sql ./filestore_cleanup_mapper.xml -out ./filestore_cleanup_mapper.sqlmap.gen.go -dialect postgres
 
 type FilestoreCleanupMapper interface {
-	ListExpiredScopes(ctx context.Context, limit int) ([]expiredFilestoreCleanupScopeRow, error)
-	ListExpiredFiles(ctx context.Context, params filestoreExpiredFilesMapperParams) ([]sessionResourceFileRow, error)
 	GetLeasedFilesystemJob(ctx context.Context, params filestoreCleanupJobLeaseIdentity) (filestoreFilesystemCleanupJobRow, error)
 	GetFilesystemForCleanup(ctx context.Context, workspaceUUID, filesystemUUID string) (filestoreFilesystemRow, error)
 	ListFilesystemFiles(ctx context.Context, params filestoreFilesystemBatchMapperParams) ([]sessionResourceFileRow, error)
@@ -34,11 +32,6 @@ type FilestoreCleanupMapper interface {
 
 	ListSubtreeFiles(ctx context.Context, params filestoreSubtreeMapperParams) ([]sessionResourceFileRow, error)
 	ListExpiredSubtreeFiles(ctx context.Context, params filestoreSubtreeMapperParams) ([]sessionResourceFileRow, error)
-}
-
-type filestoreExpiredFilesMapperParams struct {
-	FilesystemUUIDs []string
-	Limit           int
 }
 
 type filestoreCleanupJobLeaseIdentity struct {

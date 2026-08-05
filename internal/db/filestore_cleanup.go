@@ -4,160 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
-
-// ExpireSessionResourceFiles 原子软删除一批到期文件，并为每个失去引用的精确对象版本创建清理任务。
-// 无法定位对象的异常节点仍会被退休并通过 anomalies 返回给 worker 记录。
-func (d *DB) ExpireSessionResourceFiles(ctx context.Context, limit int) ([]FilestoreObjectCleanupJob, []FilestoreCleanupAnomaly, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	var jobs []FilestoreObjectCleanupJob
-	var anomalies []FilestoreCleanupAnomaly
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		var transactionErr error
-		jobs, anomalies, transactionErr = expireSessionResourceFilesTx(ctx, executor, limit)
-		return transactionErr
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return jobs, anomalies, nil
-}
-
-func expireSessionResourceFilesTx(
-	ctx context.Context,
-	tx yourbatis.Executor,
-	limit int,
-) ([]FilestoreObjectCleanupJob, []FilestoreCleanupAnomaly, error) {
-	cleanupMapper := NewFilestoreCleanupMapper(tx)
-	scopeRows, err := cleanupMapper.ListExpiredScopes(ctx, limit)
-	if err != nil {
-		return nil, nil, err
-	}
-	workspaceUUIDSet := make(map[string]struct{})
-	filesystemUUIDSet := make(map[string]struct{})
-	cleanupScopeByNamespace := make(map[sessionResourceFileNamespaceKey]sessionResourceFileCleanupScope)
-	var workspaceUUIDs []string
-	var filesystemUUIDs []string
-	for _, row := range scopeRows {
-		workspaceUUID := row.WorkspaceUUID.String()
-		filesystemUUID := row.FilesystemUUID.String()
-		sessionUUID := row.SessionUUID.String()
-		if _, found := workspaceUUIDSet[workspaceUUID]; !found {
-			workspaceUUIDSet[workspaceUUID] = struct{}{}
-			workspaceUUIDs = append(workspaceUUIDs, workspaceUUID)
-		}
-		if _, found := filesystemUUIDSet[filesystemUUID]; !found {
-			filesystemUUIDSet[filesystemUUID] = struct{}{}
-			filesystemUUIDs = append(filesystemUUIDs, filesystemUUID)
-		}
-		cleanupScopeByNamespace[sessionResourceFileNamespaceKey{
-			WorkspaceUUID: workspaceUUID,
-			SessionUUID:   sessionUUID,
-		}] = sessionResourceFileCleanupScope{
-			WorkspaceUUID: workspaceUUID, FilesystemUUID: filesystemUUID,
-		}
-	}
-	if len(workspaceUUIDs) == 0 {
-		return nil, nil, nil
-	}
-	sort.Slice(workspaceUUIDs, func(i, j int) bool {
-		return workspaceUUIDs[i] < workspaceUUIDs[j]
-	})
-	sort.Slice(filesystemUUIDs, func(i, j int) bool {
-		return filesystemUUIDs[i] < filesystemUUIDs[j]
-	})
-	// 所有容量变更都先锁工作区，再锁文件系统；批处理内部也按 ID 升序取得同类锁。
-	storageMapper := NewWorkspaceStorageUsageMapper(tx)
-	for _, workspaceUUID := range workspaceUUIDs {
-		if err := storageMapper.LockWorkspace(ctx, workspaceUUID); err != nil {
-			return nil, nil, err
-		}
-	}
-	filesystemMapper := NewFilestoreFilesystemMapper(tx)
-	for _, filesystemUUID := range filesystemUUIDs {
-		if err := filesystemMapper.LockFilesystem(ctx, filesystemUUID); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	entryRows, err := cleanupMapper.ListExpiredFiles(ctx, filestoreExpiredFilesMapperParams{
-		FilesystemUUIDs: filesystemUUIDs,
-		Limit:           limit,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	entries, err := sessionResourceFilesFromMapperRows(entryRows)
-	if err != nil {
-		return nil, nil, err
-	}
-	now := time.Now().UTC()
-	jobs := make([]FilestoreObjectCleanupJob, 0, len(entries))
-	anomalies := make([]FilestoreCleanupAnomaly, 0)
-	anomalyWorkspaces := make(map[string]struct{})
-	releasedBytesByWorkspace := make(map[string]int64)
-	for _, entry := range entries {
-		// Input Resource 引用的 Source File 不由 Session namespace 拥有或计费。
-		// schema 禁止这类引用设置 TTL；此守卫仍可避免异常历史数据触发对象清理。
-		if entry.ReferencesSourceFile() {
-			continue
-		}
-		scope, found := cleanupScopeByNamespace[sessionResourceFileNamespaceKey{
-			WorkspaceUUID: entry.WorkspaceUUID,
-			SessionUUID:   entry.SessionUUID,
-		}]
-		if !found {
-			return nil, nil, ErrNotFound
-		}
-		if anomaly, malformed := sessionResourceFileCleanupAnomaly(scope, entry); malformed {
-			anomalies = append(anomalies, anomaly)
-			anomalyWorkspaces[scope.WorkspaceUUID] = struct{}{}
-		} else {
-			job, err := enqueueSessionResourceFileCleanupJobTx(ctx, tx, scope, entry, "ttl_expired", now)
-			if err != nil {
-				return nil, nil, err
-			}
-			jobs = append(jobs, job)
-		}
-		if err := retireSessionResourceFileTx(ctx, tx, scope.WorkspaceUUID, entry.UUID, now); err != nil {
-			return nil, nil, err
-		}
-		releasedBytes, err := addWorkspaceStorageDelta(
-			releasedBytesByWorkspace[scope.WorkspaceUUID], filestoreInt64(entry.SizeBytes),
-		)
-		if err != nil {
-			return nil, nil, err
-		}
-		releasedBytesByWorkspace[scope.WorkspaceUUID] = releasedBytes
-	}
-	for _, workspaceUUID := range workspaceUUIDs {
-		if _, malformed := anomalyWorkspaces[workspaceUUID]; malformed {
-			if _, err := reconcileWorkspaceStorageUsageTx(ctx, tx, workspaceUUID); err != nil {
-				return nil, nil, err
-			}
-			continue
-		}
-		releasedBytes := releasedBytesByWorkspace[workspaceUUID]
-		if releasedBytes == 0 {
-			continue
-		}
-		if err := applyWorkspaceStorageDeltaTx(ctx, tx, workspaceUUID, 0, -releasedBytes, 0); err != nil {
-			return nil, nil, err
-		}
-	}
-	return jobs, anomalies, nil
-}
 
 // LeaseFilestoreFilesystemCleanupJobs 租约一批待拆分的整文件系统清理任务。
 func (d *DB) LeaseFilestoreFilesystemCleanupJobs(ctx context.Context, workerID string, limit, maxLeaseAttempts int) ([]FilestoreFilesystemCleanupJob, error) {
@@ -618,17 +469,6 @@ func (d *DB) filestoreCleanupJobMutationMiss(ctx context.Context, workspaceUUID 
 type sessionResourceFileCleanupScope struct {
 	WorkspaceUUID  string
 	FilesystemUUID string
-}
-
-type sessionResourceFileNamespaceKey struct {
-	WorkspaceUUID string
-	SessionUUID   string
-}
-
-type expiredFilestoreCleanupScopeRow struct {
-	WorkspaceUUID  uuid.UUID `db:"workspace_uuid"`
-	FilesystemUUID uuid.UUID `db:"filesystem_uuid"`
-	SessionUUID    uuid.UUID `db:"session_uuid"`
 }
 
 const filestoreCleanupAnomalyMissingObjectLocation = "missing_object_location"

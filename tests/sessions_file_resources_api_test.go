@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -1154,60 +1153,6 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	}
 	if len(files) != 0 {
 		t.Fatalf("catalog files after output removal = %+v, want none", files)
-	}
-
-	alreadyExpiredAt := time.Unix(0, 0).UTC()
-	alreadyExpiredBlob := workspaceStorageBlob(2, &alreadyExpiredAt)
-	if _, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceUUID:  record.WorkspaceUUID,
-		FilesystemUUID: filesystem.UUID,
-		Path:           "/outputs/reports/already-expired.txt",
-		Blob:           alreadyExpiredBlob,
-	}); err != nil {
-		t.Fatalf("create already expired output entry: %v", err)
-	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
-	if err != nil {
-		t.Fatalf("list output catalog files after already expired write: %v", err)
-	}
-	if len(files) != 0 {
-		t.Fatalf("catalog files after already expired write = %+v, want none", files)
-	}
-
-	expiresAt := time.Now().UTC().Add(time.Hour)
-	expiringBlob := workspaceStorageBlob(3, &expiresAt)
-	expiringEntry, err := app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-		WorkspaceUUID:  record.WorkspaceUUID,
-		FilesystemUUID: filesystem.UUID,
-		Path:           "/outputs/reports/expired.txt",
-		Blob:           expiringBlob,
-	})
-	if err != nil {
-		t.Fatalf("create expiring output entry: %v", err)
-	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
-	if err != nil {
-		t.Fatalf("list expired output catalog before cleanup: %v", err)
-	}
-	if len(files) != 1 || files[0].Filename != "expired.txt" {
-		t.Fatalf("expired output catalog before cleanup = %+v, want expired.txt", files)
-	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
-		update session_resources
-		set expires_at = to_timestamp(0)
-		where uuid = $1
-	`, expiringEntry.Node.UUID); err != nil {
-		t.Fatalf("expire output entry before cleanup: %v", err)
-	}
-	if _, _, err := app.db.ExpireSessionResourceFiles(context.Background(), 1000); err != nil {
-		t.Fatalf("expire output entry: %v", err)
-	}
-	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
-	if err != nil {
-		t.Fatalf("list output catalog files after expiry: %v", err)
-	}
-	if len(files) != 0 {
-		t.Fatalf("output catalog files after expiry = %+v, want none", files)
 	}
 }
 

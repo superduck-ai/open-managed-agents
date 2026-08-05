@@ -105,55 +105,6 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 		assertWorkspaceStorageBytes(t, fixture, 0)
 	})
 
-	t.Run("failure malformed ttl node does not block valid cleanup", func(t *testing.T) {
-		fixture := newWorkspaceStorageFixture(t)
-		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
-		malformed, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/malformed.txt",
-			Blob:           workspaceStorageBlob(4, &expiresAt),
-		})
-		if err != nil {
-			t.Fatalf("put malformed candidate: %v", err)
-		}
-		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/healthy.txt",
-			Blob:           workspaceStorageBlob(3, &expiresAt),
-		}); err != nil {
-			t.Fatalf("put healthy expired file: %v", err)
-		}
-		if _, err := fixture.app.db.Pool.Exec(context.Background(), `
-			delete from files
-			where uuid = (
-				select file_uuid from session_resources where id = $1
-			)
-		`, malformed.Node.ID); err != nil {
-			t.Fatalf("remove malformed backing File: %v", err)
-		}
-
-		jobs, anomalies, err := fixture.app.db.ExpireSessionResourceFiles(context.Background(), 1000)
-		if err != nil {
-			t.Fatalf("expire malformed batch: %v", err)
-		}
-		if len(jobs) != 1 || len(anomalies) != 1 || anomalies[0].EntryExternalID != malformed.Node.ExternalID {
-			t.Fatalf("cleanup result = jobs %+v, anomalies %+v", jobs, anomalies)
-		}
-		assertWorkspaceStorageBytes(t, fixture, 0)
-		var activeFiles int
-		if err := fixture.app.db.Pool.QueryRow(context.Background(), `
-			select count(*) from session_resources
-			where workspace_uuid = $1 and resource_type = 'file' and deleted_at is null
-		`, fixture.filesystem.WorkspaceUUID).Scan(&activeFiles); err != nil {
-			t.Fatalf("count active files after malformed cleanup: %v", err)
-		}
-		if activeFiles != 0 {
-			t.Fatalf("active files after malformed cleanup = %d, want 0", activeFiles)
-		}
-	})
-
 	t.Run("success files and filestore maintain one transactional total", func(t *testing.T) {
 		fixture := newWorkspaceStorageFixture(t)
 		file := workspaceStorageFile(fixture.workspaceUUID, fixture.apiKeyUUID, 6)
@@ -253,59 +204,6 @@ func TestWorkspaceStorageUsageLedger(t *testing.T) {
 			t.Fatalf("remove directory recursively: %v", err)
 		}
 		assertWorkspaceStorageBytes(t, fixture, 3)
-	})
-
-	t.Run("success expired bytes are released by the ttl transaction", func(t *testing.T) {
-		fixture := newWorkspaceStorageFixture(t)
-		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
-		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/expired.txt",
-			Blob:           workspaceStorageBlob(4, &expiresAt),
-		}); err != nil {
-			t.Fatalf("put expired file: %v", err)
-		}
-		assertWorkspaceStorageBytes(t, fixture, 4)
-		if _, err := fixture.app.db.GetSessionResourceFile(context.Background(), fixture.workspaceUUID, fixture.filesystem.UUID, "/expired.txt"); !errors.Is(err, db.ErrNotFound) {
-			t.Fatalf("read expired file error = %v, want ErrNotFound", err)
-		}
-		if _, _, err := fixture.app.db.ExpireSessionResourceFiles(context.Background(), 1000); err != nil {
-			t.Fatalf("expire Filestore entries: %v", err)
-		}
-		assertWorkspaceStorageBytes(t, fixture, 0)
-	})
-
-	t.Run("failure expired file path remains reserved until ttl cleanup", func(t *testing.T) {
-		fixture := newWorkspaceStorageFixture(t)
-		expiresAt := time.Date(1900, time.January, 1, 0, 0, 0, 0, time.UTC)
-		if _, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/directory",
-			Blob:           workspaceStorageBlob(4, &expiresAt),
-		}); err != nil {
-			t.Fatalf("put expired directory destination: %v", err)
-		}
-		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/directory",
-		}); !errors.Is(err, db.ErrFilestorePathExists) {
-			t.Fatalf("replace expired file with directory error = %v, want ErrFilestorePathExists", err)
-		}
-		assertWorkspaceStorageBytes(t, fixture, 4)
-		if _, _, err := fixture.app.db.ExpireSessionResourceFiles(context.Background(), 1000); err != nil {
-			t.Fatalf("expire Filestore entries: %v", err)
-		}
-		if _, err := fixture.app.db.MakeFilestoreDirectory(context.Background(), db.MakeFilestoreDirectoryInput{
-			WorkspaceUUID:  fixture.workspaceUUID,
-			FilesystemUUID: fixture.filesystem.UUID,
-			Path:           "/directory",
-		}); err != nil {
-			t.Fatalf("make directory after ttl cleanup: %v", err)
-		}
-		assertWorkspaceStorageBytes(t, fixture, 0)
 	})
 
 	t.Run("success directory move releases expired destination bytes", func(t *testing.T) {

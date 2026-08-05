@@ -115,38 +115,6 @@
         )
     </sql>
 
-    <select id="ListExpiredScopes" resultType="expiredFilestoreCleanupScopeRow">
-        SELECT DISTINCT oldest_expired.workspace_uuid,
-            filesystem.uuid AS filesystem_uuid, oldest_expired.session_uuid
-        FROM (
-            SELECT workspace_uuid, session_uuid, expires_at, uuid
-            FROM session_resources
-            WHERE resource_type = 'file' AND deleted_at IS NULL AND expires_at &lt;= now()
-            ORDER BY expires_at, uuid
-            LIMIT #{limit}
-        ) oldest_expired
-        JOIN filestore_filesystems filesystem
-            ON filesystem.session_uuid = oldest_expired.session_uuid
-            AND filesystem.workspace_uuid = oldest_expired.workspace_uuid
-            AND filesystem.deleted_at IS NULL
-    </select>
-
-    <select id="ListExpiredFiles" resultType="sessionResourceFileRow">
-        SELECT <include refid="resourceFileColumns"/>
-        FROM (<include refid="resourceFileSource"/>) session_resource_files
-        WHERE kind = 'file' AND deleted_at IS NULL AND expires_at &lt;= now()
-            AND (workspace_uuid, session_uuid) IN (
-                SELECT workspace_uuid, session_uuid
-                FROM filestore_filesystems
-                WHERE uuid IN
-                <foreach collection="params.FilesystemUUIDs" item="filesystemUUID" open="(" separator="," close=")">
-                    #{filesystemUUID}
-                </foreach>
-            )
-        ORDER BY expires_at, uuid
-        LIMIT #{params.Limit}
-    </select>
-
     <select id="GetLeasedFilesystemJob" resultType="filestoreFilesystemCleanupJobRow">
         SELECT <include refid="filesystemJobColumns"/>
         FROM jobs j

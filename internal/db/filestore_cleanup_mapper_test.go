@@ -33,24 +33,6 @@ func TestFilestoreCleanupMapperBuildsPostgresArguments(t *testing.T) {
 		wantClauses  []string
 	}{
 		{
-			name:         "expired scopes",
-			bound:        buildFilestoreCleanupMapperListExpiredScopes(yourbatis.DialectPostgres, 100),
-			wantArgCount: 1,
-			wantClauses:  []string{"session_resources", "filesystem.deleted_at IS NULL", "LIMIT $1"},
-		},
-		{
-			name: "expired files",
-			bound: buildFilestoreCleanupMapperListExpiredFiles(yourbatis.DialectPostgres, filestoreExpiredFilesMapperParams{
-				FilesystemUUIDs: []string{
-					"00000000-0000-4000-8000-000000000043",
-					"00000000-0000-4000-8000-000000000044",
-				},
-				Limit: 100,
-			}),
-			wantArgCount: 3,
-			wantClauses:  []string{"filestore_filesystems", "uuid IN", "$1", "$2", "LIMIT $3"},
-		},
-		{
 			name: "leased filesystem job",
 			bound: buildFilestoreCleanupMapperGetLeasedFilesystemJob(yourbatis.DialectPostgres, filestoreCleanupJobLeaseIdentity{
 				JobUUID:    batch.JobUUID,
@@ -349,25 +331,6 @@ func TestFilestoreCleanupMapperScopeAndLeaseBuilderContracts(t *testing.T) {
 		name     string
 		contract mapperBuilderContract
 	}{
-		{name: "list expired scopes", contract: mapperBuilderContract{
-			statement:         filestoreCleanupMapperListExpiredScopesStatement,
-			bound:             buildFilestoreCleanupMapperListExpiredScopes(yourbatis.DialectPostgres, 10),
-			wantID:            "FilestoreCleanupMapper.ListExpiredScopes",
-			wantKind:          yourbatis.StatementSelect,
-			wantArgumentNames: []string{"limit"},
-			wantSQLFragments:  []string{"FROM session_resources", "expires_at <= now()", "LIMIT $1"},
-		}},
-		{name: "list expired files", contract: mapperBuilderContract{
-			statement: filestoreCleanupMapperListExpiredFilesStatement,
-			bound: buildFilestoreCleanupMapperListExpiredFiles(yourbatis.DialectPostgres, filestoreExpiredFilesMapperParams{
-				FilesystemUUIDs: []string{"filesystem-1", "filesystem-2"},
-				Limit:           10,
-			}),
-			wantID:            "FilestoreCleanupMapper.ListExpiredFiles",
-			wantKind:          yourbatis.StatementSelect,
-			wantArgumentNames: []string{"filesystemUUID", "filesystemUUID", "params.Limit"},
-			wantSQLFragments:  []string{"WHERE uuid IN", "$1", "$2", "LIMIT $3"},
-		}},
 		{name: "get leased filesystem job", contract: mapperBuilderContract{
 			statement:         filestoreCleanupMapperGetLeasedFilesystemJobStatement,
 			bound:             buildFilestoreCleanupMapperGetLeasedFilesystemJob(yourbatis.DialectPostgres, leaseIdentity),
@@ -506,14 +469,6 @@ func TestFilestoreCleanupMapperScopeAndLeaseMethodsPropagateExecutionErrors(t *t
 		name     string
 		contract mapperExecutionErrorContract
 	}{
-		{name: "list expired scopes", contract: mapperExecutionErrorContract{statementID: "FilestoreCleanupMapper.ListExpiredScopes", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
-			_, err := NewFilestoreCleanupMapper(executor).ListExpiredScopes(ctx, 0)
-			return err
-		}}},
-		{name: "list expired files", contract: mapperExecutionErrorContract{statementID: "FilestoreCleanupMapper.ListExpiredFiles", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
-			_, err := NewFilestoreCleanupMapper(executor).ListExpiredFiles(ctx, filestoreExpiredFilesMapperParams{})
-			return err
-		}}},
 		{name: "get leased filesystem job", contract: mapperExecutionErrorContract{statementID: "FilestoreCleanupMapper.GetLeasedFilesystemJob", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
 			_, err := NewFilestoreCleanupMapper(executor).GetLeasedFilesystemJob(ctx, filestoreCleanupJobLeaseIdentity{})
 			return err

@@ -103,7 +103,7 @@ func TestAdminRequestMapperScansPostgreSQLRows(t *testing.T) {
 	}
 	defer database.Close()
 
-	tx, err := database.sql.BeginTxx(ctx, nil)
+	tx, err := database.sql.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestAdminRequestMapperScansPostgreSQLRows(t *testing.T) {
 		t.Fatalf("seed temporary admin request: %v", err)
 	}
 
-	mapper := NewAdminRequestMapper(newSQLXTxExecutor(tx))
+	mapper := NewAdminRequestMapper(sqlTxMapperExecutor{transaction: tx})
 	rows, err := mapper.List(ctx, listAdminRequestsParams{
 		OrgUUID: orgUUID, RequestType: "join_org", Status: "pending", Limit: 10,
 	})

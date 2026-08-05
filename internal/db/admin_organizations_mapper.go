@@ -6,4 +6,6 @@ import "context"
 
 type AdminOrganizationMapper interface {
 	FindByUUID(ctx context.Context, organizationUUID string) (AdminOrganization, error)
+	LockSeed(ctx context.Context) (int, error)
+	SeedDefault(ctx context.Context, workspaceExternalID, name string) (string, error)
 }

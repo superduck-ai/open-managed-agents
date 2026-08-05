@@ -1,10 +1,9 @@
-# Yourbatis API Keys 原型
+# Yourbatis API Keys 设计
 
 ## 状态与范围
 
-本实现是一个本地实验原型，用于评估将 `internal/db/admin_api_keys.go` 和
-`internal/db/console_api_keys.go` 中 API Key 相关的手写 `sqlx` 查询迁移到强类型 Mapper 接口、
-MyBatis 风格 XML 和生成 Go 代码后的可读性与维护成本。
+API Key 持久化使用强类型 Mapper 接口、MyBatis 风格 XML 和生成 Go 代码。Admin、Console、
+鉴权查询和默认 seed 都在各自按表拆分的 Mapper 中实现。
 它不改变 Admin API 的鉴权、租户隔离、正常游标语义或数据库 schema。列表接口现在会明确拒绝同时
 提供 `after_id` 与 `before_id` 的歧义请求并返回 `400 invalid_request_error`；此前实现会静默优先
 采用 `after_id`。
@@ -42,34 +41,29 @@ Console API Key 部分覆盖 `console_api_keys` 的列表、未归档计数、cr
 `UpdateConsoleAPIKeyStatus` 都在 `yourbatis.DB.Transaction` 回调中使用同一个
 `yourbatis.Executor` 分别构造 `ConsoleAPIKeyMapper` 与 `AdminAPIKeyMapper`：前者只操作
 `console_api_keys`，后者负责 `api_keys` 的插入和状态更新。因此双表写入共享同一事务，不会在
-`sqlx.Tx` 与 Yourbatis 之间拆分原子性。更新核心记录时要求恰好命中一行；否则整个事务
+不同数据库句柄之间拆分原子性。更新核心记录时要求恰好命中一行；否则整个事务
 回滚，避免两张表的状态分叉。该同步更新直接使用 `api_key_ref_uuid` 定位 workspace API key 记录，
 不通过 external ID 进行跨表关联。key prefix、suffix 和 hash 在 Mapper 参数中标记为敏感值。
 
-Console workspace 持久化不在这次 API Key 迁移范围内，仍使用原有 `sqlx` 实现。
-
 ## 连接与生命周期
 
-Mapper runtime 使用现有 `sqlx.DB` 包装层持有的同一个 `database/sql.DB`，因此底层仍通过
-`pgx/stdlib` 复用应用唯一的 `pgxpool`。应用 `DB` 只持有 `*yourbatis.DB`，不提前保存绑定到
+Mapper runtime 使用 `pgx/stdlib` 暴露的同一个 `database/sql.DB`，因此底层复用应用唯一的
+`pgxpool`。应用 `DB` 持有 `*yourbatis.DB`，不提前保存绑定到
 数据库 executor 的具体 Mapper。普通方法在调用范围内用 `NewXxxMapper(mapperDB)` 构造
 局部 Mapper 变量；事务方法则在 `yourbatis.DB.Transaction` 回调内使用传入的
 `yourbatis.Executor` 构造局部 Mapper，确保所有语句绑定到当前 `*yourbatis.Tx`，不会绕过事务。
 
 Mapper 构造器只包装 executor，不创建连接或持有独立生命周期。Yourbatis runtime 也不单独创建
-或关闭连接池；`DB.Close` 继续由现有 `sqlx.DB` 与 `pgxpool` 生命周期负责。进程组装层向
+或关闭连接池；`DB.Close` 统一关闭标准库包装层与底层 `pgxpool`。进程组装层向
 `db.Open` 显式传入 `component=database` 的 `slog.Logger`，`mapperDB` 通过
 `yourbatis.SlogLogger` 持有它，事务自动继承相同 logger。成功语句使用 Debug 级别，失败语句
 使用 Error 级别；`YOURBATIS_DEBUG` 仍是独立的本地诊断开关，可额外输出带脱敏参数的 SQL 块。
 
-## 已知的产品化门槛
+## 产品化状态
 
-该原型尚不满足仓库当前“所有查询统一使用 sqlx 命名参数及结构体扫描”的质量约束：
-Yourbatis 生成 PostgreSQL 位置参数和固定 `rows.Scan`。若要正式采用，需要先作出以下之一的
-明确架构决策：
-
-1. 为 Yourbatis 增加符合本仓库约束的 sqlx backend；
-2. 评审并记录生成 Mapper 代码的受控例外及其静态安全保证。
+Yourbatis 已成为应用运行时 SQL 的统一访问层。生成代码负责 PostgreSQL 位置参数和固定列扫描；
+Mapper XML、生成器校验、绑定单测和真实 PostgreSQL 集成测试共同保护参数顺序、结果投影与事务
+边界。标准库 SQL 仅保留在数据库创建、迁移和 schema 维护路径。
 
 Yourbatis runtime 与生成器均由 `go.mod` 固定到已发布的
 `github.com/superduck-ai/yourbatis v0.1.1`：应用依赖不再使用本地 module replacement，

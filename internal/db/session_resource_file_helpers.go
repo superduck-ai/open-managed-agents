@@ -104,7 +104,8 @@ func requireFilestoreDirectoryTx(ctx context.Context, tx yourbatis.Executor, fil
 }
 
 func getSessionResourceFileForMutation(ctx context.Context, tx yourbatis.Executor, filesystem FilestoreFilesystem, entryPath string) (SessionResourceFile, bool, error) {
-	row, found, err := NewSessionResourceFileMapper(tx).FindResourceFile(ctx, sessionResourcePathParams{
+	mapper := NewSessionResourceFileMapper(tx)
+	row, found, err := mapper.FindResourceFile(ctx, sessionResourcePathParams{
 		WorkspaceUUID: filesystem.WorkspaceUUID,
 		SessionUUID:   filesystem.SessionUUID,
 		EntryPath:     entryPath,
@@ -198,7 +199,8 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx yourbatis.Executor, file
 	if err != nil {
 		return SessionResourceFile{}, err
 	}
-	_, err = NewSessionResourceMapper(tx).InsertDirectory(ctx, sessionResourceDirectoryInsertParams{
+	resourceMapper := NewSessionResourceMapper(tx)
+	_, err = resourceMapper.InsertDirectory(ctx, sessionResourceDirectoryInsertParams{
 		ResourceUUID:       resourceUUID,
 		ResourceExternalID: resourceExternalID,
 		OrganizationUUID:   filesystem.OrganizationUUID,
@@ -211,7 +213,8 @@ func ensureFilestoreDirectoryTx(ctx context.Context, tx yourbatis.Executor, file
 	if err := mapSessionNamespaceInsertError(err); err != nil {
 		return SessionResourceFile{}, err
 	}
-	row, err := NewSessionResourceFileMapper(tx).GetResourceFileByUUID(ctx, sessionResourceIdentityParams{
+	fileMapper := NewSessionResourceFileMapper(tx)
+	row, err := fileMapper.GetResourceFileByUUID(ctx, sessionResourceIdentityParams{
 		WorkspaceUUID: filesystem.WorkspaceUUID,
 		SessionUUID:   filesystem.SessionUUID,
 		ResourceUUID:  resourceUUID,
@@ -431,8 +434,10 @@ func retireSessionResourceFileTx(
 		WorkspaceUUID: workspaceUUID,
 		RetiredAt:     retiredAt,
 	}
-	if err := NewFileMapper(tx).RetireOwnedFile(ctx, params); err != nil {
+	fileMapper := NewFileMapper(tx)
+	if err := fileMapper.RetireOwnedFile(ctx, params); err != nil {
 		return err
 	}
-	return NewSessionResourceMapper(tx).RetireResource(ctx, params)
+	resourceMapper := NewSessionResourceMapper(tx)
+	return resourceMapper.RetireResource(ctx, params)
 }

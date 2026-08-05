@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="VaultMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        display_name,
+        metadata,
+        created_at,
+        updated_at,
+        archived_at,
+        deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="vaultRow">
+        INSERT INTO vaults (
+            uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+            display_name, metadata, created_at, updated_at
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID}, #{params.DisplayName}, CAST(#{params.Metadata} AS jsonb),
+            #{params.CreatedAt}, #{params.CreatedAt}
+        )
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="vaultRow">
+        SELECT <include refid="columns"/>
+        FROM vaults
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindByIdentifier" resultType="vaultRow">
+        SELECT <include refid="columns"/>
+        FROM vaults
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND (
+            external_id = #{identifier}
+            <if test="vaultUUID != ''">OR uuid = #{vaultUUID}</if>
+        )
+        AND deleted_at IS NULL
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="vaultRow">
+        UPDATE vaults
+        SET display_name = #{params.DisplayName},
+            metadata = CAST(#{params.Metadata} AS jsonb),
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING <include refid="columns"/>
+    </update>
+
+    <update id="ArchiveByExternalID" result="returning" resultType="vaultRow">
+        UPDATE vaults
+        SET archived_at = COALESCE(archived_at, NOW()), updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        RETURNING <include refid="columns"/>
+    </update>
+
+    <select id="FindUUIDForUpdate" result="scalar">
+        SELECT uuid FROM vaults
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="FindActiveUUIDForUpdate" result="scalar">
+        SELECT uuid FROM vaults
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        AND archived_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <delete id="DeleteByUUID" result="exec">
+        DELETE FROM vaults
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{vaultUUID}
+    </delete>
+
+    <select id="ListPage" resultType="vaultRow">
+        SELECT <include refid="columns"/>
+        FROM vaults
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND deleted_at IS NULL
+        <if test="!params.IncludeArchived">AND archived_at IS NULL</if>
+        <if test="params.Cursor != nil">
+            AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+        </if>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.Limit}
+    </select>
+</mapper>

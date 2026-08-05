@@ -333,10 +333,3 @@ func agentJSONArg(raw json.RawMessage) []byte {
 	}
 	return raw
 }
-
-func jsonArg(raw json.RawMessage) any {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	return []byte(raw)
-}

@@ -122,18 +122,16 @@
 - 不要为了凑文档而写重复内容；优先更新最贴近该功能的后端、前端或跨端设计文档，并保持实现细节、兼容说明和测试计划一致。
 - 编写或更新设计文档时，优先用 Mermaid 辅助说明复杂流程、状态机、组件/服务依赖、时序交互和数据流；图示应服务于理解，不要替代必要的文字说明。
 
-## Go 数据库访问与 sqlx 强制规则
+## Go 数据库访问与 Yourbatis 强制规则
 
-- 所有新增的应用运行时 SQL 操作，包括查询、写入、事务和返回行扫描，都必须使用 `github.com/jmoiron/sqlx`；禁止新增通过 `pgxpool.Query`、`pgxpool.QueryRow`、`pgxpool.Exec`、`pgx.Tx` 或等价原生 `pgx` 接口执行的 SQL。
-- 本次任务实质修改到的既有普通 SQL 也必须迁移到 `sqlx`。不要为了统一形式而批量改写本次任务未涉及的 `pgx` 代码。
-- `sqlx` 必须通过 `pgx/stdlib` 复用应用现有的唯一 `pgxpool`，不得为它另建连接池。关闭数据库时同时释放 `sqlx` 包装层与底层 pool，但不能让两者形成重复连接或彼此独立的容量配置。
-- 查询统一使用命名参数和带 `db` tag 的数据库行结构，并通过 `GetContext`、`SelectContext` 或 `StructScan` 显式映射；数据库行、领域模型和 API DTO 语义不一致时应分别定义并在边界转换，不要让数据库 tag 或 nullable/编码细节泄漏到业务模型。
+- 所有应用运行时 SQL 操作，包括查询、写入、事务和返回行扫描，都必须使用 Yourbatis Mapper；禁止通过 `database/sql`、`pgxpool.Query`、`pgxpool.QueryRow`、`pgxpool.Exec`、`pgx.Tx` 或等价原生接口执行应用 SQL。
+- 数据库创建、迁移、schema 检查和约束清理等启动期维护操作可以直接使用 `database/sql`；该例外不得扩展到业务 CRUD。
+- Yourbatis 通过 `pgx/stdlib` 复用应用现有的唯一 `pgxpool`，不得另建连接池。关闭数据库时释放标准库包装层与底层 pool，不能让两者形成重复连接或彼此独立的容量配置。
+- 查询统一在 Mapper XML 中使用绑定参数，并由生成代码扫描带 `db` tag 的数据库行结构；数据库行、领域模型和 API DTO 语义不一致时应分别定义并在边界转换，不要让数据库 tag 或 nullable/编码细节泄漏到业务模型。
 - PostgreSQL `uuid` 列的查询和写入参数不强制使用 Go `uuid.UUID` 类型；已有调用链使用字符串标识符时，应直接以 `string` 绑定参数，不要仅为了匹配数据库列而在 DB 层重复调用 `uuid.Parse`、`parseDBUUID` 或增加类型包装。外部不可信输入如需校验，应在 HTTP、resource 或 service 边界完成；已经是 `uuid.UUID` 的内部值可以继续直接绑定。
-- PostgreSQL 能从 UUID 列比较和写入位置推断参数类型；普通条件和值绑定直接使用 `organization_uuid = :organization_uuid`、`workspace_uuid = :workspace_uuid` 或 Yourbatis 的 `organization_uuid = #{organizationUUID}`，不要写 `CAST(:organization_uuid AS uuid)` 或 `CAST(#{organizationUUID} AS uuid)`。只有参数所在表达式确实无法由 PostgreSQL 推断类型，并有测试证明需要显式类型时，才允许使用 cast。
-- 使用 sqlx 命名参数的 PostgreSQL SQL 不要写 `value::type`，因为冒号可能与命名参数解析冲突；统一写成 `CAST(value AS type)`。
-- 已有 `pgx.Tx` 事务链不得只迁移其中一段，避免同一业务事务跨 `pgx` 与 `sqlx` 两个句柄。需要在既有 `pgx.Tx` 事务链中增加或修改 SQL 时，必须先将整条事务链迁移为同一只 `sqlx.Tx`，再实施变更。
-- 只有本次任务完全未触碰的既有事务编排、批量/COPY、PostgreSQL 特有类型或 API 路径可以继续保留原生 `pgx`；该例外不得用于新增 SQL。
-- sqlx 迁移至少覆盖查询生成与参数绑定单测；涉及 nullable、JSON、数组、自定义类型或 PostgreSQL cast 时，还要增加真实 PostgreSQL 测试，验证命名参数绑定和结构体扫描，而不能只依赖 mock。
+- PostgreSQL 能从 UUID 列比较和写入位置推断参数类型；普通条件和值绑定直接使用 `organization_uuid = #{organizationUUID}` 或 `workspace_uuid = #{workspaceUUID}`，不要写 `CAST(#{organizationUUID} AS uuid)`。只有参数所在表达式确实无法由 PostgreSQL 推断类型，并有测试证明需要显式类型时，才允许使用 cast。
+- 已有原生事务链不得只迁移其中一段。需要增加或修改应用 SQL 时，必须先将整条事务链迁移为同一个 Yourbatis transaction executor，再实施变更。
+- Mapper 迁移至少覆盖生成 SQL 和参数绑定单测；涉及 nullable、JSON、数组、自定义类型或 PostgreSQL cast 时，还要增加真实 PostgreSQL 测试，验证绑定和扫描，不能只依赖 mock。
 
 ## Yourbatis 文件拆分
 

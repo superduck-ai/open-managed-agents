@@ -116,28 +116,22 @@ identity 静默带入新结构。PostgreSQL schema 仍不创建外键约束。
 鉴权边界只提供资源 UUID 与协议所需 external ID，不再提供 organization/workspace/API key 等资源的 bigint identity。其中 Organization Admin、Workspace Admin、Workspace API Key Admin、External Key 和 Tunnel 直接传递可信 `organization_uuid`，写入和租户过滤均使用：
 
 ```sql
-workspaces.organization_uuid = :organization_uuid
+workspaces.organization_uuid = #{organizationUUID}
 ```
 
-DB 方法需要在查询前复用、比较或序列化 UUID 时，应在方法入口通过 `parseDBUUID` 或
-`parseDBNullableUUID` 转换成 `uuid.UUID`/`uuid.NullUUID`。对于仍由兼容模型承载的字符串
-UUID，参数映射只区分 `dbUUID(value)` 和 `dbNullableUUID(pointer)` 两种 SQL 语义；统一的
-`bindNamed` 边界在调用 `sqlx.Named` 前将它们转换成标准
-`uuid.UUID`/`uuid.NullUUID`。自定义参数类型不实现 `driver.Valuer`，PostgreSQL driver
-只接收标准 typed UUID，校验错误也在 SQL 绑定前返回。
-
-yourbatis Mapper 直接声明业务字段，不引入自定义 UUID 参数结构。生成 SQL 保留参数字段名，
+DB 方法需要在查询前复用、比较或序列化 UUID 时，可以在方法入口通过 `parseDBUUID` 转换为
+`uuid.UUID`；只用于查询和写入的 UUID 则直接作为字符串传给 Mapper。Mapper 直接声明业务字段，
+不引入自定义 UUID 参数结构。生成 SQL 保留参数字段名，
 executor 通过 `BoundSQL.Values()` 将字段值交给 `database/sql`；PostgreSQL 根据 UUID 列的
 比较或写入上下文推断字符串参数类型。需要在发送查询前校验 UUID 的业务入口仍应显式调用
 `parseDBUUID`，不要根据 Mapper 字段名隐式转换参数。
 
-sqlx 行结构同样使用 `uuid.UUID`/`uuid.NullUUID` 扫描 `uuid` 列，只有映射到 HTTP、SDK、
-事件或其他文本协议 DTO 时才调用 `String()`。因此普通查询不得通过
-`CAST(:..._uuid AS uuid)` 修复字符串输入，也不得通过 `CAST(uuid AS text) AS uuid`
-把数据库输出降级成字符串。
+Mapper 专属行结构使用 `string`/`sql.NullString` 扫描 UUID 列，并在映射到需要 typed UUID 的
+领域模型时显式调用 `parseDBUUID`。普通查询不得通过 `CAST(#{...} AS uuid)` 修复字符串输入，
+也不得通过 `CAST(uuid AS text) AS uuid` 改变数据库输出类型。
 
 同时兼容 external ID 与 UUID 的查询使用两个参数：原始 external ID 文本，以及由
-`tryParseDBUUIDIdentifier` 解析出的 nullable UUID；SQL 分别比较 `external_id` 和 `uuid`，
+`tryParseDBUUIDIdentifierString` 解析出的可选 UUID 字符串；SQL 分别比较 `external_id` 和 `uuid`，
 不再对 UUID 列做文本 CAST。JSON job payload 在 Go 边界序列化，UUID 关联优先使用同一查询中
 已有的 typed UUID 参数或 PostgreSQL `to_jsonb(uuid)`。
 
@@ -206,12 +200,12 @@ Console 与 Workbench 的 workspace 路由仍需兼容协议 external ID 和 `de
 - deployments/session、Code Session/runtime、jobs/statistics、Console/Workbench 的跨表引用均为 UUID；
 - 目标表的应用模型、过滤条件、父子关联与稳定排序不读取 bigint identity；
 - nullable UUID 引用保留原有可空语义，必填或已有非空引用无法映射时 migration 失败；
-- DB 输入参数在 sqlx 边界校验为 typed UUID，UUID/nullable UUID 列使用
-  `uuid.UUID`/`uuid.NullUUID` 扫描，普通 SQL 不包含 UUID 输入或输出修复 CAST；
-- “external ID 或 UUID”兼容查询使用独立 nullable typed UUID 参数，不对 UUID 列转文本；
+- DB 输入参数由上层边界按需校验；Mapper 的 UUID/nullable UUID 字段使用字符串类型，普通 SQL
+  不包含 UUID 输入或输出修复 CAST；
+- “external ID 或 UUID”兼容查询使用独立可选 UUID 字符串参数，不对 UUID 列转文本；
 - Auth/Admin、Admin/Console/Workbench、资源目录、Sessions/runtime、Files/Filestore 五组路径
-  都有真实 PostgreSQL 集成测试，覆盖 named binding、nullable UUID、结构体扫描、事务和分页；
-- 生产 DB 源码的回归测试拒绝重新引入 `CAST(:..._uuid AS uuid)`、UUID 输出列文本 CAST 或
+  都有真实 PostgreSQL 集成测试，覆盖 Mapper binding、nullable UUID、结构体扫描、事务和分页；
+- 生产 DB 源码的回归测试拒绝重新引入 `CAST(#{...} AS uuid)`、UUID 输出列文本 CAST 或
   UUID 标识符列侧文本 CAST；
 - Platform session 持久化 API key UUID，并兼容升级前缺少该字段的已登录 session；
 - 鉴权 Principal 与 Filestore Principal 不携带 bigint identity；

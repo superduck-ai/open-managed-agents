@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper SessionResourceFileMapper -sql ./session_resource_file_mapper.xml -out ./session_resource_file_mapper.sqlmap.gen.go -dialect postgres
@@ -42,33 +40,33 @@ type sessionResourceFilePageMapperParams struct {
 }
 
 type sessionResourceFileRow struct {
-	ID                    int64         `db:"id"`
-	UUID                  uuid.UUID     `db:"uuid"`
-	ExternalID            string        `db:"external_id"`
-	OrganizationUUID      uuid.UUID     `db:"organization_uuid"`
-	WorkspaceUUID         uuid.UUID     `db:"workspace_uuid"`
-	SessionUUID           uuid.UUID     `db:"session_uuid"`
-	Kind                  string        `db:"kind"`
-	Path                  string        `db:"path"`
-	ParentPath            *string       `db:"parent_path"`
-	SizeBytes             *int64        `db:"size_bytes"`
-	MediaType             *string       `db:"media_type"`
-	DetectedMimeType      *string       `db:"detected_mime_type"`
-	Metadata              []byte        `db:"metadata"`
-	AuthorizationMetadata []byte        `db:"authorization_metadata"`
-	TagsJSON              string        `db:"tags_json"`
-	Downloadable          bool          `db:"downloadable"`
-	MD5                   *string       `db:"md5"`
-	SHA256                *string       `db:"sha256"`
-	S3Bucket              *string       `db:"s3_bucket"`
-	S3Key                 *string       `db:"s3_key"`
-	S3ETag                *string       `db:"s3_etag"`
-	S3VersionID           *string       `db:"s3_version_id"`
-	ExpiresAt             *time.Time    `db:"expires_at"`
-	SourceFileUUID        uuid.NullUUID `db:"source_file_uuid"`
-	CreatedAt             time.Time     `db:"created_at"`
-	UpdatedAt             time.Time     `db:"updated_at"`
-	DeletedAt             *time.Time    `db:"deleted_at"`
+	ID                    int64      `db:"id"`
+	UUID                  string     `db:"uuid"`
+	ExternalID            string     `db:"external_id"`
+	OrganizationUUID      string     `db:"organization_uuid"`
+	WorkspaceUUID         string     `db:"workspace_uuid"`
+	SessionUUID           string     `db:"session_uuid"`
+	Kind                  string     `db:"kind"`
+	Path                  string     `db:"path"`
+	ParentPath            *string    `db:"parent_path"`
+	SizeBytes             *int64     `db:"size_bytes"`
+	MediaType             *string    `db:"media_type"`
+	DetectedMimeType      *string    `db:"detected_mime_type"`
+	Metadata              []byte     `db:"metadata"`
+	AuthorizationMetadata []byte     `db:"authorization_metadata"`
+	TagsJSON              string     `db:"tags_json"`
+	Downloadable          bool       `db:"downloadable"`
+	MD5                   *string    `db:"md5"`
+	SHA256                *string    `db:"sha256"`
+	S3Bucket              *string    `db:"s3_bucket"`
+	S3Key                 *string    `db:"s3_key"`
+	S3ETag                *string    `db:"s3_etag"`
+	S3VersionID           *string    `db:"s3_version_id"`
+	ExpiresAt             *time.Time `db:"expires_at"`
+	SourceFileUUID        *string    `db:"source_file_uuid"`
+	CreatedAt             time.Time  `db:"created_at"`
+	UpdatedAt             time.Time  `db:"updated_at"`
+	DeletedAt             *time.Time `db:"deleted_at"`
 }
 
 func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
@@ -81,11 +79,11 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 	}
 	return SessionResourceFile{
 		ID:                    row.ID,
-		UUID:                  row.UUID.String(),
+		UUID:                  row.UUID,
 		ExternalID:            row.ExternalID,
-		OrganizationUUID:      row.OrganizationUUID.String(),
-		WorkspaceUUID:         row.WorkspaceUUID.String(),
-		SessionUUID:           row.SessionUUID.String(),
+		OrganizationUUID:      row.OrganizationUUID,
+		WorkspaceUUID:         row.WorkspaceUUID,
+		SessionUUID:           row.SessionUUID,
 		Kind:                  row.Kind,
 		Path:                  row.Path,
 		ParentPath:            row.ParentPath,
@@ -104,7 +102,7 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 		S3VersionID:           row.S3VersionID,
 		ExpiresAt:             row.ExpiresAt,
 		// SourceFileUUID 只标识公开 Input Resource 引用的 Source File。
-		SourceFileUUID: nullableUUIDString(row.SourceFileUUID),
+		SourceFileUUID: row.SourceFileUUID,
 		CreatedAt:      row.CreatedAt,
 		UpdatedAt:      row.UpdatedAt,
 		DeletedAt:      row.DeletedAt,

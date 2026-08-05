@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="MCPOAuthFlowMapper">
+    <sql id="columns">
+        uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
+        user_uuid, COALESCE(user_external_id, '') AS user_external_id,
+        COALESCE(platform_session_external_id, '') AS platform_session_external_id,
+        mcp_server_url, redirect_url, display_name, source, authorization_endpoint, token_endpoint,
+        COALESCE(registration_endpoint, '') AS registration_endpoint,
+        COALESCE(issuer, '') AS issuer, resource, COALESCE(scope, '') AS scope, client_id,
+        COALESCE(client_secret, '') AS client_secret, token_endpoint_auth_method, code_verifier,
+        code_challenge_method, status,
+        COALESCE(credential_external_id, '') AS credential_external_id,
+        COALESCE(error_code, '') AS error_code,
+        created_at, updated_at, expires_at, completed_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="mcpOAuthFlowRow">
+        INSERT INTO mcp_oauth_flows (
+            uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
+            user_uuid, user_external_id, platform_session_external_id, mcp_server_url,
+            redirect_url, display_name, source, authorization_endpoint, token_endpoint,
+            registration_endpoint, issuer, resource, scope, client_id, client_secret,
+            token_endpoint_auth_method, code_verifier, code_challenge_method, status,
+            created_at, updated_at, expires_at
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.VaultUUID}, #{params.VaultExternalID}, #{params.UserUUID},
+            NULLIF(#{params.UserExternalID}, ''), NULLIF(#{params.PlatformSessionExternalID}, ''),
+            #{params.MCPServerURL}, #{params.RedirectURL}, #{params.DisplayName}, #{params.Source},
+            #{params.AuthorizationEndpoint}, #{params.TokenEndpoint},
+            NULLIF(#{params.RegistrationEndpoint}, ''), NULLIF(#{params.Issuer}, ''),
+            #{params.Resource}, NULLIF(#{params.Scope}, ''), #{params.ClientID},
+            NULLIF(#{params.ClientSecret,sensitive=true}, ''), #{params.TokenEndpointAuthMethod},
+            #{params.CodeVerifier,sensitive=true}, #{params.CodeChallengeMethod}, #{params.Status},
+            #{params.CreatedAt}, #{params.CreatedAt}, #{params.ExpiresAt}
+        )
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="mcpOAuthFlowRow">
+        SELECT <include refid="columns"/>
+        FROM mcp_oauth_flows
+        WHERE external_id = #{externalID}
+    </select>
+
+    <update id="Complete" result="rows">
+        UPDATE mcp_oauth_flows
+        SET status = 'completed', credential_external_id = #{credentialExternalID}, error_code = NULL,
+            client_secret = NULL, code_verifier = '', completed_at = #{completedAt}, updated_at = #{completedAt}
+        WHERE external_id = #{externalID}
+        AND status = 'pending'
+    </update>
+
+    <update id="Fail" result="rows">
+        UPDATE mcp_oauth_flows
+        SET status = 'failed', error_code = #{errorCode}, client_secret = NULL,
+            code_verifier = '', updated_at = #{failedAt}
+        WHERE external_id = #{externalID}
+        AND status = 'pending'
+    </update>
+</mapper>

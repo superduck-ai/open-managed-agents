@@ -1,10 +1,6 @@
 package db
 
-import (
-	"context"
-
-	"github.com/google/uuid"
-)
+import "context"
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper AdminUserMapper -sql ./admin_users_mapper.xml -out ./admin_users_mapper.sqlmap.gen.go -dialect postgres
 
@@ -15,5 +11,6 @@ type AdminUserMapper interface {
 		anchor *pagePosition, before bool, limit int) ([]AdminUser, error)
 	UpdateRoleByExternalID(ctx context.Context, organizationUUID, externalID, role string) (AdminUser, error)
 	SoftDeleteByExternalID(ctx context.Context, organizationUUID, externalID string) (AdminUser, error)
-	SoftDeleteWorkspaceMembersByUserUUID(ctx context.Context, organizationUUID string, userUUID uuid.UUID) error
+	SoftDeleteWorkspaceMembersByUserUUID(ctx context.Context, organizationUUID, userUUID string) error
+	SeedDefault(ctx context.Context, externalID, organizationUUID, email, name string) (string, error)
 }

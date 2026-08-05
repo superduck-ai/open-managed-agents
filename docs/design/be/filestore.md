@@ -54,11 +54,11 @@ flowchart LR
 
 本次统一涉及的 Files Catalog、Session Resource/File namespace、cleanup、配额和游标分页 SQL 由 yourbatis Mapper XML 定义并生成类型化 Go Mapper；业务代码不再拼装这些 SQL 或传递 `map[string]any`。Mapper 按主要持久化表和投影职责拆分：`FileMapper` 负责 `files`，`FilestoreFilesystemMapper` 负责 `filestore_filesystems`，`SessionResourceMapper` 负责 `session_resources` 的写入与树操作，`SessionResourceFileMapper` 只读取 Resource/File 联合投影，`WorkspaceStorageUsageMapper` 负责容量账本，`SkillVersionMapper` 负责 archive 版本校验。创建 Owned File 与 Session Resource 的 CTE 仍由 `SessionResourceMapper` 作为一个 statement 执行，避免为了 mapper 归类破坏跨表原子性。
 
-文件按职责固定拆分：`xxxxs.go`（或同一领域下聚焦的复数业务文件）只保留 `DB` 对上层暴露的 API 与事务编排，`xxx_mapper.go` 保存 Mapper 接口、参数/行结构及 `go:generate` 入口，`xxx_mapper.xml` 保存 SQL，`xxx_mapper.sqlmap.gen.go` 只保存生成代码。业务文件不再使用 `_sqlx.go` 后缀，也不保留仅转调 Mapper 的薄封装。
+文件按职责固定拆分：`xxxxs.go`（或同一领域下聚焦的复数业务文件）只保留 `DB` 对上层暴露的 API 与事务编排，`xxx_mapper.go` 保存 Mapper 接口、参数/行结构及 `go:generate` 入口，`xxx_mapper.xml` 保存 SQL，`xxx_mapper.sqlmap.gen.go` 只保存生成代码。业务文件不再使用旧数据访问实现的专属后缀，也不保留仅转调 Mapper 的薄封装。
 
-数据库初始化时基于 `pgx/stdlib` 暴露的同一个 `*sql.DB` 调用一次 `yourbatis.NewDB`，普通 Mapper 直接注入这个共享 Executor；Mapper 自己拥有的事务则通过它的 `BeginTx` 创建，并把返回的事务 Executor 注入事务内的全部 Mapper。因此普通 namespace mutation 仍在同一事务中持有 workspace/filesystem lock，并原子维护 Resource、Owned File、账本与 cleanup job；Input attach 也仍在同一事务中锁定 Source File 并只更新 Resource。Session 创建、删除等仍混合既有命名 `sqlx` SQL 的事务只在事务边界使用窄的兼容 Executor，不再为 `*sqlx.DB` 定义或注入重复的 `dbtx` 抽象。`sqlx` 与 yourbatis 复用应用唯一的 `pgxpool`，不会新建第二个连接池或拆分事务。
+数据库初始化时基于 `pgx/stdlib` 暴露的同一个 `*sql.DB` 调用一次 `yourbatis.NewDB`，普通 Mapper 直接注入这个共享 Executor；事务通过 `yourbatis.DB.Transaction` 创建，并把返回的事务 Executor 注入事务内的全部 Mapper。因此 namespace mutation、Session 创建和删除都在同一事务中持有 workspace/filesystem lock，并原子维护 Resource、Owned File、账本与 cleanup job。Yourbatis 与启动期维护代码复用应用唯一的 `pgxpool`，不会新建第二个连接池或拆分事务。
 
-Mapper runtime 与生成器统一使用 `go.mod` 固定的 `github.com/superduck-ai/yourbatis v0.1.1`；`sqlmapgen` 通过 Go `tool` 指令声明，避免运行时与生成器版本分叉。更新 XML 后使用 `just generate-yourbatis-mappers` 在本地重建并验证生成文件；`*.gen.go` 按仓库约定不纳入版本控制。Session API 与手动 Deployment Run 仍共用 `insertSessionSQLXTx`，Session、filesystem、固定根、Thread、公开 Resources、Input Resource 和 Environment Work 只有一条创建路径。
+Mapper runtime 与生成器统一使用 `go.mod` 固定的 `github.com/superduck-ai/yourbatis v0.1.1`；`sqlmapgen` 通过 Go `tool` 指令声明，避免运行时与生成器版本分叉。更新 XML 后使用 `just generate-yourbatis-mappers` 在本地重建并验证生成文件；`*.gen.go` 按仓库约定不纳入版本控制。Session API 与手动 Deployment Run 共用 `insertSessionTx`，Session、filesystem、固定根、Thread、公开 Resources、Input Resource 和 Environment Work 只有一条创建路径。
 
 ## 鉴权和租户边界
 
@@ -186,7 +186,7 @@ Session 与 Deployment File resource 的公开合同固定为：
 
 `source` 省略时由服务端补为 `/uploads`，显式传入 `null` 或其他值均拒绝。`mount_path` 使用绝对路径形式表达 `/uploads` namespace 中的路径，不是 Sandbox 根目录中的任意目标；示例的 Filestore 路径是 `/uploads/workspace/data.csv`，Sandbox 访问路径是 `/mnt/session/uploads/workspace/data.csv`。未传 `mount_path` 时使用 `/<file_id>`，对应 `/mnt/session/uploads/<file_id>`。
 
-Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一规范化合同。边界校验拒绝相对路径、根目录、点路径段、空路径段，并限制初始 Session 或 Deployment 最多 100 个 File Resource。数据库在一只 `sqlx.Tx` 内锁定活动 Session，统计容量后提交公开 payload、`/uploads` path 与 Source File UUID；两个并发请求不能把 99 个文件增加到 101 个。路径占用由同一 namespace lock、目录实体和活动路径唯一索引裁决：与其他 Input Resource 的重复或祖先/后代冲突映射为 `400`，被普通 resource 占用则映射为 `409`。rclone ready 后整个 `/uploads` namespace 已直接可见，不执行逐文件软链接。
+Session 创建、后续添加 Resource 和 Deployment 创建/更新共用同一规范化合同。边界校验拒绝相对路径、根目录、点路径段、空路径段，并限制初始 Session 或 Deployment 最多 100 个 File Resource。数据库在一只 Yourbatis 事务内锁定活动 Session，统计容量后提交公开 payload、`/uploads` path 与 Source File UUID；两个并发请求不能把 99 个文件增加到 101 个。路径占用由同一 namespace lock、目录实体和活动路径唯一索引裁决：与其他 Input Resource 的重复或祖先/后代冲突映射为 `400`，被普通 resource 占用则映射为 `409`。rclone ready 后整个 `/uploads` namespace 已直接可见，不执行逐文件软链接。
 
 运行中新增或删除 File Resource 直接改变同一 Session 的数据库 namespace；已经挂载的 Sandbox 在 rclone metadata cache 刷新后看到变化，`/uploads` 当前固定为 `1s`。FUSE mount 本身不变。API 成功响应表示 Resource 已提交，不需要等待下一次 Sandbox 启动。
 
@@ -240,7 +240,7 @@ workspaces/{workspaceUUID}/filestores/{filesystemUUID}/blobs/{blobUUID}
 
 public Session 是 filesystem 的生命周期归属者；Code Session 只是可重建的执行实例，调度、重试或替换 Code Session 都复用同一个 filesystem。因此新建记录的 `code_session_uuid` 固定为 `NULL`，按 Session 查询 filesystem 时也不使用 Code Session 作为所有权条件。
 
-普通 Session 与 Deployment Session 最终都进入共享的 `insertSessionSQLXTx`。Session 行写入后，事务创建 filesystem 与五个固定目录 Resources，再继续写 Thread、公开 Resources、Input Resource 与 Environment Work；任一步失败都回滚整个 Session 图。
+普通 Session 与 Deployment Session 最终都进入共享的 `insertSessionTx`。Session 行写入后，事务创建 filesystem 与五个固定目录 Resources，再继续写 Thread、公开 Resources、Input Resource 与 Environment Work；任一步失败都回滚整个 Session 图。
 
 filesystem external ID 的格式为 `claude_chat_<24 位 Base62>`。生成器使用 `crypto/rand`，只接受小于 248 的随机字节，再以 `% 62` 映射字符；248 是不超过 256 的最大 62 倍数，因此不会产生取模偏差。24 位 Base62 约有 143 bit 熵、约 `1.04 × 10^43` 种组合；即使生成十亿个 ID，理论碰撞概率也约为 `4.8 × 10^-26`。随机性只降低碰撞概率，数据库仍是最终裁决者：
 

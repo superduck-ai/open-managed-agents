@@ -7,8 +7,8 @@
 这些边界。`yourbatis-admin-api-keys-prototype.md` 记录 API Key 原型的具体设计，本文是跨资源复用的
 通用规范。
 
-新增 Yourbatis 使用范围或把既有 sqlx、pgx 事务迁移到 Yourbatis 时，应先确认整个事务链和受影响
-资源的迁移边界。不要只为一条 SQL 引入 Mapper，也不要让一次原子操作跨越多个事务实现。
+新增 Mapper 或迁移既有原生事务时，应先确认整个事务链和受影响资源的迁移边界。不要只迁移一条
+SQL，也不要让一次原子操作跨越多个事务实现。
 
 ## 文件职责
 
@@ -130,9 +130,9 @@ err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 })
 ```
 
-同一原子事务链中禁止混用事务 executor、`d.mapperDB`、`d.sql`、`sqlx.Tx` 或 `pgx.Tx`。迁移既有
-事务时必须迁移完整事务链，不能只替换其中一条语句。事务 executor 不得保存、异步使用或逃逸到
-事务回调之外。
+同一原子事务链中禁止混用事务 executor、`d.mapperDB`、`d.sql` 或原生 `pgx.Tx`。迁移既有事务时
+必须迁移完整事务链，不能只替换其中一条语句。事务 executor 不得保存、异步使用或逃逸到事务
+回调之外。
 
 ## 日志
 

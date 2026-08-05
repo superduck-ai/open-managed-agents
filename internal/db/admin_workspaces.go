@@ -34,9 +34,9 @@ type ListAdminWorkspacesParams struct {
 func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace) (AdminWorkspace, error) {
 	mapper := NewAdminWorkspaceMapper(d.mapperDB)
 	created, err := mapper.Insert(ctx, insertAdminWorkspaceParams{
-		UUID:             workspace.UUID,
+		UUID:             workspace.UUID.String(),
 		ExternalID:       workspace.ExternalID,
-		OrganizationUUID: workspace.OrganizationUUID,
+		OrganizationUUID: workspace.OrganizationUUID.String(),
 		Name:             workspace.Name,
 		CreatedAt:        workspace.CreatedAt,
 		CompartmentID:    workspace.CompartmentID,
@@ -57,7 +57,7 @@ func (d *DB) GetAdminWorkspace(ctx context.Context, organizationUUID, externalID
 		ctx,
 		organizationUUID,
 		externalID,
-		tryParseDBUUIDIdentifier(externalID),
+		tryParseDBUUIDIdentifierString(externalID),
 	)
 	return workspace, mapNoRows(err)
 }

@@ -30,6 +30,30 @@ type mapperTestExecutor struct {
 	execCallCount  int
 }
 
+type sqlTxMapperExecutor struct {
+	transaction *sql.Tx
+}
+
+func (executor sqlTxMapperExecutor) Dialect() yourbatis.Dialect {
+	return yourbatis.DialectPostgres
+}
+
+func (executor sqlTxMapperExecutor) Query(
+	ctx context.Context,
+	_ yourbatis.Statement,
+	bound yourbatis.BoundSQL,
+) (*sql.Rows, error) {
+	return executor.transaction.QueryContext(ctx, bound.SQL, bound.Values()...)
+}
+
+func (executor sqlTxMapperExecutor) Exec(
+	ctx context.Context,
+	_ yourbatis.Statement,
+	bound yourbatis.BoundSQL,
+) (sql.Result, error) {
+	return executor.transaction.ExecContext(ctx, bound.SQL, bound.Values()...)
+}
+
 type mapperBuilderContract struct {
 	statement                  yourbatis.Statement
 	bound                      yourbatis.BoundSQL

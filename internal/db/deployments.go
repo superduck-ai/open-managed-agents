@@ -187,72 +187,65 @@ func (d *DB) ListDeploymentsPage(ctx context.Context, params ListDeploymentsPage
 }
 
 func (d *DB) CreateManualDeploymentRun(ctx context.Context, input CreateManualDeploymentRunInput) (DeploymentRun, Session, SessionThread, []SessionEvent, error) {
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
-	}
-	defer tx.Rollback()
+	var created DeploymentRun
+	var session Session
+	var thread SessionThread
+	var events []SessionEvent
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		deploymentMapper := NewDeploymentMapper(executor)
+		runMapper := NewDeploymentRunMapper(executor)
+		deploymentRow, err := deploymentMapper.LockByExternalID(ctx, input.Run.WorkspaceUUID, input.DeploymentExternalID)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		deployment := deploymentRow.deployment()
+		if deployment.ArchivedAt != nil || deployment.Status != "active" {
+			return ErrInvalidState
+		}
 
-	executor := newSQLXTxExecutor(tx)
-	deploymentMapper := NewDeploymentMapper(executor)
-	runMapper := NewDeploymentRunMapper(executor)
-	deploymentRow, err := deploymentMapper.LockByExternalID(ctx, input.Run.WorkspaceUUID, input.DeploymentExternalID)
-	if err != nil {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, mapNoRows(err)
-	}
-	deployment := deploymentRow.deployment()
-	if deployment.ArchivedAt != nil || deployment.Status != "active" {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, ErrInvalidState
-	}
+		session, thread, _, _, err = insertSessionTx(ctx, executor, input.Session)
+		if err != nil {
+			return err
+		}
+		events, err = insertSessionEventsTx(ctx, executor, session, input.Events, false)
+		if err != nil {
+			return err
+		}
 
-	session, thread, _, _, err := insertSessionTx(ctx, executor, input.Session)
-	if err != nil {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
-	}
-	events, err := insertSessionEventsTx(ctx, executor, session, input.Events, false)
-	if err != nil {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
-	}
-
-	run := deploymentRunFromDeployment(input.Run, deployment)
-	run.SessionExternalID = &session.ExternalID
-	run.Error = nil
-	createdRow, err := runMapper.Insert(ctx, deploymentRunWriteParamsFrom(run))
-	if err != nil {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
-	}
-	if err := updateDeploymentLastRun(ctx, deploymentMapper, deployment.WorkspaceUUID, deployment.ExternalID, input.Now); err != nil {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return DeploymentRun{}, Session{}, SessionThread{}, nil, err
-	}
-	return createdRow.run(), session, thread, events, nil
+		run := deploymentRunFromDeployment(input.Run, deployment)
+		run.SessionExternalID = &session.ExternalID
+		run.Error = nil
+		createdRow, err := runMapper.Insert(ctx, deploymentRunWriteParamsFrom(run))
+		if err != nil {
+			return err
+		}
+		if err := updateDeploymentLastRun(ctx, deploymentMapper, deployment.WorkspaceUUID, deployment.ExternalID, input.Now); err != nil {
+			return err
+		}
+		created = createdRow.run()
+		return nil
+	})
+	return created, session, thread, events, err
 }
 
 func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployment, run DeploymentRun) (DeploymentRun, error) {
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return DeploymentRun{}, err
-	}
-	defer tx.Rollback()
-
-	executor := newSQLXTxExecutor(tx)
-	runMapper := NewDeploymentRunMapper(executor)
-	deploymentMapper := NewDeploymentMapper(executor)
-	run = deploymentRunFromDeployment(run, deployment)
-	run.SessionExternalID = nil
-	createdRow, err := runMapper.Insert(ctx, deploymentRunWriteParamsFrom(run))
-	if err != nil {
-		return DeploymentRun{}, err
-	}
-	if err := updateDeploymentLastRun(ctx, deploymentMapper, deployment.WorkspaceUUID, deployment.ExternalID, run.CreatedAt); err != nil {
-		return DeploymentRun{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return DeploymentRun{}, err
-	}
-	return createdRow.run(), nil
+	var created DeploymentRun
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		runMapper := NewDeploymentRunMapper(executor)
+		deploymentMapper := NewDeploymentMapper(executor)
+		run = deploymentRunFromDeployment(run, deployment)
+		run.SessionExternalID = nil
+		createdRow, err := runMapper.Insert(ctx, deploymentRunWriteParamsFrom(run))
+		if err != nil {
+			return err
+		}
+		if err := updateDeploymentLastRun(ctx, deploymentMapper, deployment.WorkspaceUUID, deployment.ExternalID, run.CreatedAt); err != nil {
+			return err
+		}
+		created = createdRow.run()
+		return nil
+	})
+	return created, err
 }
 
 func (d *DB) GetDeploymentRun(ctx context.Context, workspaceUUID string, externalID string) (DeploymentRun, error) {

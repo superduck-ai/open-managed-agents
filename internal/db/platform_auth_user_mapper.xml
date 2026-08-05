@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAuthUserMapper">
+    <select id="FindContextByEmail" resultType="platformAuthUserContextRow">
+        SELECT u.external_id AS user_external_id, u.organization_uuid AS org_uuid
+        FROM users u
+        WHERE LOWER(u.email) = LOWER(#{email})
+        AND u.deleted_at IS NULL
+        AND EXISTS (
+            SELECT 1 FROM workspace_members wm
+            WHERE wm.organization_uuid = u.organization_uuid
+            AND wm.user_uuid = u.uuid
+            AND wm.deleted_at IS NULL
+        )
+        ORDER BY u.added_at ASC, u.uuid ASC
+        LIMIT 1
+    </select>
+
+    <update id="UpdateEmptyName" result="exec">
+        UPDATE users
+        SET name = #{defaultName}, updated_at = NOW()
+        WHERE external_id = #{userExternalID}
+        AND name = ''
+    </update>
+
+    <insert id="Insert" result="returning" resultType="string">
+        INSERT INTO users (uuid, external_id, organization_uuid, email, name, role)
+        VALUES (#{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID},
+            #{params.Email}, #{params.Name}, #{params.Role})
+        RETURNING uuid
+    </insert>
+
+    <select id="ResolveSessionIdentity" resultType="platformSessionIdentityRow">
+        SELECT u.organization_uuid AS organization_uuid,
+            w.uuid AS workspace_uuid, w.external_id AS workspace_external_id,
+            u.uuid AS user_uuid, u.external_id AS user_external_id,
+            ak.uuid AS api_key_uuid, ak.external_id AS api_key_external_id
+        FROM users u
+        JOIN LATERAL (
+            SELECT uuid, external_id FROM workspaces
+            WHERE organization_uuid = u.organization_uuid AND archived_at IS NULL
+            ORDER BY CASE WHEN external_id = 'workspace_default' THEN 0 ELSE 1 END,
+                created_at ASC, uuid ASC
+            LIMIT 1
+        ) w ON TRUE
+        JOIN LATERAL (
+            SELECT uuid, external_id FROM api_keys
+            WHERE workspace_uuid = w.uuid AND status = 'active'
+            AND (expires_at IS NULL OR expires_at &gt; NOW())
+            ORDER BY CASE WHEN external_id = 'api_key_default' THEN 0 ELSE 1 END,
+                created_at ASC, uuid ASC
+            LIMIT 1
+        ) ak ON TRUE
+        WHERE u.organization_uuid = #{organizationUUID}
+        AND u.deleted_at IS NULL
+        AND (
+            u.external_id = #{userID}
+            <if test="userUUID != nil">OR u.uuid = #{userUUID}</if>
+            OR 'user_' || LEFT(REPLACE(CAST(u.uuid AS text), '-', ''), 24) = #{userID}
+        )
+        LIMIT 1
+    </select>
+</mapper>

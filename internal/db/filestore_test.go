@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -199,7 +198,7 @@ func TestBuildSessionResourceFilesPageQuery(t *testing.T) {
 	})
 }
 
-func TestSessionResourceFileSQLXRowEntry(t *testing.T) {
+func TestSessionResourceFileMapperRowEntry(t *testing.T) {
 	t.Run("rejects malformed tag JSON", func(t *testing.T) {
 		_, err := (sessionResourceFileRow{TagsJSON: "not-json"}).entry()
 		if err == nil {
@@ -210,11 +209,11 @@ func TestSessionResourceFileSQLXRowEntry(t *testing.T) {
 	t.Run("maps database row to domain entry", func(t *testing.T) {
 		row := sessionResourceFileRow{
 			ID:                    7,
-			UUID:                  uuid.MustParse("00000000-0000-4000-8000-000000000001"),
+			UUID:                  "00000000-0000-4000-8000-000000000001",
 			ExternalID:            "file_7",
-			OrganizationUUID:      uuid.MustParse("00000000-0000-4000-8000-000000000002"),
-			WorkspaceUUID:         uuid.MustParse("00000000-0000-4000-8000-000000000003"),
-			SessionUUID:           uuid.MustParse("00000000-0000-4000-8000-000000000004"),
+			OrganizationUUID:      "00000000-0000-4000-8000-000000000002",
+			WorkspaceUUID:         "00000000-0000-4000-8000-000000000003",
+			SessionUUID:           "00000000-0000-4000-8000-000000000004",
 			Kind:                  SessionResourceFileKindFile,
 			Path:                  "/reports/july.txt",
 			Metadata:              []byte(`{"source":"test"}`),

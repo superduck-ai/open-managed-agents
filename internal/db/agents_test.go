@@ -57,10 +57,10 @@ func TestAgentMapperInsertBindsJSONArguments(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 23, 4, 5, 6, 0, time.UTC)
 	agent := Agent{
 		UUID:                "4b01277d-4904-43c6-8d6a-3d866637d540",
-		ExternalID:          "agent_sqlx",
+		ExternalID:          "agent_mapper",
 		WorkspaceUUID:       "00000000-0000-0000-0000-000000000011",
 		CreatedByAPIKeyUUID: "00000000-0000-0000-0000-000000000012",
-		Name:                "SQLX agent",
+		Name:                "Mapper agent",
 		Model:               json.RawMessage(`{"id":"claude-opus-4-6"}`),
 		MCPServers:          json.RawMessage(`[]`),
 		Metadata:            json.RawMessage(`{"source":"test"}`),
@@ -82,7 +82,7 @@ func TestAgentMapperInsertBindsJSONArguments(t *testing.T) {
 		t.Fatalf("mapper query JSON cast = %q, want model bound as PostgreSQL parameter $8", bound.SQL)
 	}
 	if len(values) != 15 {
-		t.Fatalf("bindNamed() value count = %d, want 15", len(values))
+		t.Fatalf("mapper value count = %d, want 15", len(values))
 	}
 	if model, ok := values[7].([]byte); !ok || !bytes.Equal(model, agent.Model) {
 		t.Fatalf("bound model = %#v, want %s", values[7], agent.Model)

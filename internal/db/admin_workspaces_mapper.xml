@@ -50,7 +50,12 @@
         <include refid="adminWorkspaceColumns"/>
         FROM workspaces
         WHERE organization_uuid = #{organizationUUID}
-        AND (external_id = #{externalID} OR uuid = #{workspaceUUID})
+        AND (
+            external_id = #{externalID}
+            <if test="workspaceUUID != ''">
+                OR uuid = #{workspaceUUID}
+            </if>
+        )
     </select>
 
     <select id="FindPageAnchorByExternalID" resultType="pagePosition">
@@ -113,4 +118,13 @@
         WHERE organization_uuid = #{organizationUUID}
         AND external_key_id = #{externalID}
     </select>
+
+    <insert id="SeedDefault" result="returning" resultType="string">
+        INSERT INTO workspaces (external_id, organization_uuid, name)
+        VALUES (#{externalID}, #{organizationUUID}, #{name})
+        ON CONFLICT (external_id) DO UPDATE SET
+            organization_uuid = excluded.organization_uuid,
+            name = excluded.name
+        RETURNING uuid
+    </insert>
 </mapper>

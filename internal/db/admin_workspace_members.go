@@ -32,10 +32,10 @@ func (d *DB) CreateAdminWorkspaceMember(ctx context.Context, member AdminWorkspa
 	mapper := NewAdminWorkspaceMemberMapper(d.mapperDB)
 	created, err := mapper.Insert(ctx, insertAdminWorkspaceMemberParams{
 		ExternalID:          member.ExternalID,
-		OrganizationUUID:    member.OrganizationUUID,
-		WorkspaceUUID:       member.WorkspaceUUID,
+		OrganizationUUID:    member.OrganizationUUID.String(),
+		WorkspaceUUID:       member.WorkspaceUUID.String(),
 		WorkspaceExternalID: member.WorkspaceExternalID,
-		UserUUID:            member.UserUUID,
+		UserUUID:            member.UserUUID.String(),
 		UserExternalID:      member.UserExternalID,
 		WorkspaceRole:       member.WorkspaceRole,
 		CreatedAt:           member.CreatedAt,

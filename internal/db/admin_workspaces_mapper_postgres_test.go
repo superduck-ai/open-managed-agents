@@ -81,7 +81,7 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			ctx,
 			organizationUUID.String(),
 			"wrkspc_missing",
-			uuid.NullUUID{},
+			"",
 		)
 		if !errors.Is(findErr, sql.ErrNoRows) {
 			t.Fatalf("FindByIdentifier() error = %v, want sql.ErrNoRows", findErr)
@@ -122,9 +122,9 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 		}
 		for index, id := range workspaceIDs {
 			created, createErr := workspaceMapper.Insert(ctx, insertAdminWorkspaceParams{
-				UUID:             id,
+				UUID:             id.String(),
 				ExternalID:       "wrkspc_mapper_" + string(rune('a'+index)),
-				OrganizationUUID: organizationUUID,
+				OrganizationUUID: organizationUUID.String(),
 				Name:             "Mapper workspace",
 				CreatedAt:        baseTime.Add(time.Duration(index) * time.Minute),
 				CompartmentID:    "compartment_mapper",
@@ -142,7 +142,7 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			ctx,
 			organizationUUID.String(),
 			"wrkspc_mapper_a",
-			uuid.NullUUID{},
+			"",
 		)
 		if findErr != nil || foundByExternalID.UUID != workspaceUUID {
 			t.Fatalf("FindByIdentifier(external ID) = (%+v, %v)", foundByExternalID, findErr)
@@ -151,7 +151,7 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			ctx,
 			organizationUUID.String(),
 			workspaceUUID.String(),
-			uuid.NullUUID{UUID: workspaceUUID, Valid: true},
+			workspaceUUID.String(),
 		)
 		if findErr != nil || foundByUUID.ExternalID != "wrkspc_mapper_a" {
 			t.Fatalf("FindByIdentifier(UUID) = (%+v, %v)", foundByUUID, findErr)
@@ -229,10 +229,10 @@ func TestAdminWorkspaceMappersPostgreSQL(t *testing.T) {
 			letter := string(rune('a' + index))
 			created, createErr := memberMapper.Insert(ctx, insertAdminWorkspaceMemberParams{
 				ExternalID:          "wsm_mapper_" + letter,
-				OrganizationUUID:    organizationUUID,
-				WorkspaceUUID:       workspaceUUID,
+				OrganizationUUID:    organizationUUID.String(),
+				WorkspaceUUID:       workspaceUUID.String(),
 				WorkspaceExternalID: "wrkspc_mapper_a",
-				UserUUID:            userUUID,
+				UserUUID:            userUUID.String(),
 				UserExternalID:      "user_mapper_" + letter,
 				WorkspaceRole:       "workspace_developer",
 				CreatedAt:           baseTime.Add(time.Duration(index) * time.Minute),

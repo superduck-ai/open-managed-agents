@@ -119,4 +119,31 @@
             updated_at = NOW()
         WHERE uuid = #{apiKeyUUID}
     </update>
+
+    <insert id="SeedDefault" result="exec">
+        INSERT INTO api_keys (
+            external_id, workspace_uuid, key_hash, status, created_by_user_uuid, name, partial_key_hint
+        ) VALUES (
+            #{params.ExternalID}, #{params.WorkspaceUUID}, #{params.KeyHash,sensitive=true},
+            'active', #{params.CreatedByUserUUID}, #{params.Name}, #{params.PartialKeyHint}
+        )
+        ON CONFLICT (external_id) DO UPDATE SET
+            workspace_uuid = excluded.workspace_uuid,
+            key_hash = excluded.key_hash,
+            status = 'active',
+            created_by_user_uuid = excluded.created_by_user_uuid,
+            name = excluded.name,
+            partial_key_hint = excluded.partial_key_hint,
+            updated_at = NOW()
+    </insert>
+
+    <select id="FindActiveByKeyHash" resultType="apiKeyAuthRow">
+        SELECT ak.uuid, ak.external_id, w.organization_uuid,
+            w.uuid AS workspace_uuid, w.external_id AS workspace_external_id
+        FROM api_keys ak
+        JOIN workspaces w ON w.uuid = ak.workspace_uuid
+        WHERE ak.key_hash = #{keyHash,sensitive=true}
+        AND ak.status = 'active'
+        AND (ak.expires_at IS NULL OR ak.expires_at &gt; NOW())
+    </select>
 </mapper>

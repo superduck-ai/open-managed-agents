@@ -76,7 +76,7 @@ func TestAdminAPIKeyMapperFindPageAnchorByExternalID(t *testing.T) {
 			organizationUUID,
 			"api_key_anchor",
 		)
-		if err != nil || found || anchor.UUID != uuid.Nil {
+		if err != nil || found || anchor.UUID != "" {
 			t.Fatalf("FindPageAnchorByExternalID() = (%+v, %t, %v), want zero, false, nil", anchor, found, err)
 		}
 		assertMapperTestExecution(
@@ -100,7 +100,7 @@ func TestAdminAPIKeyMapperFindPageAnchorByExternalID(t *testing.T) {
 			organizationUUID,
 			"api_key_anchor",
 		)
-		if err != nil || !found || anchor.UUID != keyUUID || !anchor.CreatedAt.Equal(createdAt) {
+		if err != nil || !found || anchor.UUID != keyUUID.String() || !anchor.CreatedAt.Equal(createdAt) {
 			t.Fatalf("FindPageAnchorByExternalID() = (%+v, %t, %v)", anchor, found, err)
 		}
 		assertMapperTestExecution(
@@ -400,7 +400,7 @@ func TestAdminAPIKeyMapperListPageBuildsAfterAnchor(t *testing.T) {
 	organizationUUID := "22222222-2222-4222-8222-222222222222"
 	anchor := &adminAPIKeyPageAnchor{
 		CreatedAt: time.Date(2026, time.July, 1, 2, 3, 4, 0, time.UTC),
-		UUID:      uuid.MustParse("33333333-3333-4333-8333-333333333333"),
+		UUID:      "33333333-3333-4333-8333-333333333333",
 	}
 
 	bound := buildAdminAPIKeyMapperListPage(
@@ -445,7 +445,7 @@ func TestAdminAPIKeyMapperListPageBuildsBeforeAnchor(t *testing.T) {
 	organizationUUID := "99999999-9999-4999-8999-999999999999"
 	anchor := &adminAPIKeyPageAnchor{
 		CreatedAt: time.Date(2026, time.August, 1, 2, 3, 4, 0, time.UTC),
-		UUID:      uuid.MustParse("88888888-8888-4888-8888-888888888888"),
+		UUID:      "88888888-8888-4888-8888-888888888888",
 	}
 
 	bound := buildAdminAPIKeyMapperListPage(

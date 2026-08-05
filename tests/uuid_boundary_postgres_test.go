@@ -17,8 +17,8 @@ import (
 )
 
 // TestTypedUUIDAuthAndAdminPostgres is intentionally backed by PostgreSQL.
-// It exercises both sqlx's native UUID binding/scanning and the string-based
-// HTTP protocol boundary used by API key authentication and Admin responses.
+// It exercises Mapper UUID binding/scanning and the string-based HTTP protocol
+// boundary used by API key authentication and Admin responses.
 func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("typed-uuid-auth-admin"))
 	defer app.close()

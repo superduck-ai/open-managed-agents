@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAuthAPIKeyMapper">
+    <insert id="Insert" result="exec">
+        INSERT INTO api_keys (
+            external_id, workspace_uuid, key_hash, status, created_by_user_uuid, name, partial_key_hint
+        ) VALUES (
+            #{params.ExternalID}, #{params.WorkspaceUUID}, #{params.KeyHash,sensitive=true},
+            #{params.Status}, #{params.CreatedByUserUUID}, #{params.Name},
+            #{params.PartialKeyHint,sensitive=true}
+        )
+    </insert>
+</mapper>

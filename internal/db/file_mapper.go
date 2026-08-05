@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper FileMapper -sql ./file_mapper.xml -out ./file_mapper.sqlmap.gen.go -dialect postgres
@@ -77,9 +75,9 @@ type objectCleanupJobFailureParams struct {
 }
 
 type fileRecordRow struct {
-	UUID                uuid.UUID `db:"uuid"`
+	UUID                string    `db:"uuid"`
 	ExternalID          string    `db:"external_id"`
-	WorkspaceUUID       uuid.UUID `db:"workspace_uuid"`
+	WorkspaceUUID       string    `db:"workspace_uuid"`
 	Filename            string    `db:"filename"`
 	MimeType            string    `db:"mime_type"`
 	SizeBytes           int64     `db:"size_bytes"`
@@ -89,23 +87,23 @@ type fileRecordRow struct {
 	Downloadable        bool      `db:"downloadable"`
 	ScopeType           *string   `db:"scope_type"`
 	ScopeID             *string   `db:"scope_id"`
-	CreatedByAPIKeyUUID uuid.UUID `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID string    `db:"created_by_api_key_uuid"`
 	CreatedAt           time.Time `db:"created_at"`
 }
 
 type filePageCursorRow struct {
-	UUID      uuid.UUID `db:"uuid"`
+	UUID      string    `db:"uuid"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
 type objectCleanupJobRow struct {
-	UUID           uuid.UUID `db:"uuid"`
-	ExternalID     string    `db:"external_id"`
-	WorkspaceUUID  uuid.UUID `db:"workspace_uuid"`
-	Bucket         string    `db:"bucket"`
-	Key            string    `db:"object_key"`
-	FileExternalID string    `db:"file_external_id"`
-	Attempts       int       `db:"attempts"`
+	UUID           string `db:"uuid"`
+	ExternalID     string `db:"external_id"`
+	WorkspaceUUID  string `db:"workspace_uuid"`
+	Bucket         string `db:"bucket"`
+	Key            string `db:"object_key"`
+	FileExternalID string `db:"file_external_id"`
+	Attempts       int    `db:"attempts"`
 }
 
 func fileMapperRecordParameters(file FileRecord) fileMapperRecordParams {
@@ -162,9 +160,9 @@ func fileRecordsFromMapperRows(rows []fileRecordRow, err error) ([]FileRecord, e
 
 func (r fileRecordRow) record() FileRecord {
 	return FileRecord{
-		UUID:                r.UUID.String(),
+		UUID:                r.UUID,
 		ExternalID:          r.ExternalID,
-		WorkspaceUUID:       r.WorkspaceUUID.String(),
+		WorkspaceUUID:       r.WorkspaceUUID,
 		Filename:            r.Filename,
 		MimeType:            r.MimeType,
 		SizeBytes:           r.SizeBytes,
@@ -174,16 +172,16 @@ func (r fileRecordRow) record() FileRecord {
 		Downloadable:        r.Downloadable,
 		ScopeType:           r.ScopeType,
 		ScopeID:             r.ScopeID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID.String(),
+		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
 		CreatedAt:           r.CreatedAt,
 	}
 }
 
 func (r objectCleanupJobRow) job() ObjectCleanupJob {
 	return ObjectCleanupJob{
-		UUID:           r.UUID.String(),
+		UUID:           r.UUID,
 		ExternalID:     r.ExternalID,
-		WorkspaceUUID:  r.WorkspaceUUID.String(),
+		WorkspaceUUID:  r.WorkspaceUUID,
 		Bucket:         r.Bucket,
 		Key:            r.Key,
 		FileExternalID: r.FileExternalID,

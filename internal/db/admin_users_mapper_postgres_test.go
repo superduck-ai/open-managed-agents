@@ -163,13 +163,14 @@ func TestAdminUserMapperPostgreSQL(t *testing.T) {
 			t.Fatalf("GetAdminUser() after delete error = %v, want ErrNotFound", getErr)
 		}
 		var activeMemberships int
-		if countErr := database.sql.GetContext(ctx, &activeMemberships, `
+		countErr := database.sql.QueryRowContext(ctx, `
 			SELECT COUNT(*)
 			FROM workspace_members
 			WHERE organization_uuid = $1
 			AND user_uuid = $2
 			AND deleted_at IS NULL
-		`, organizationUUID, userUUIDs[1]); countErr != nil || activeMemberships != 0 {
+		`, organizationUUID, userUUIDs[1]).Scan(&activeMemberships)
+		if countErr != nil || activeMemberships != 0 {
 			t.Fatalf("active workspace memberships = %d, error = %v, want 0", activeMemberships, countErr)
 		}
 	})

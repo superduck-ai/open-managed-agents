@@ -102,7 +102,7 @@ export function SessionFileResourcesField({
                 <Input
                   id={`session-file-mount-path-${index}`}
                   value={resource.mountPath}
-                  placeholder="/uploads/myfile.txt"
+                  placeholder="myfile.txt"
                   required
                   aria-invalid={resource.mountPath.length > 0 && !isValidSessionFileMountPath(resource.mountPath)}
                   onChange={(event) => updateResource(index, { mountPath: event.currentTarget.value })}
@@ -112,8 +112,8 @@ export function SessionFileResourcesField({
                     ? msg('managedAgents.sessions.resources.runtimePath', 'Available at {path}', {
                         path: runtimePath,
                       })
-                    : msg('managedAgents.sessions.resources.mountHelp', 'Must start with {path}', {
-                        path: '/uploads/',
+                    : msg('managedAgents.sessions.resources.mountHelp', 'Enter a path relative to {path}', {
+                        path: '/uploads',
                       })}
                 </FieldDescription>
               </Field>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WorkbenchGeneratedTestCaseMapper">
+    <insert id="Insert" result="exec">
+        INSERT INTO workbench_generated_test_cases (
+            organization_uuid,
+            values,
+            created_at
+        ) VALUES (
+            #{organizationUUID},
+            CAST(#{valuesJSON,sensitive=true} AS jsonb),
+            CURRENT_TIMESTAMP
+        )
+    </insert>
+
+    <delete id="DeleteOlderThanLimit" result="exec">
+        DELETE FROM workbench_generated_test_cases
+        WHERE organization_uuid = #{organizationUUID}
+        AND uuid NOT IN (
+            SELECT uuid
+            FROM workbench_generated_test_cases
+            WHERE organization_uuid = #{organizationUUID}
+            ORDER BY created_at DESC, uuid DESC
+            LIMIT #{limit}
+        )
+    </delete>
+
+    <select id="ListForUpdate" resultType="workbenchGeneratedTestCaseRow">
+        SELECT
+            uuid,
+            CAST(values AS text) AS values_json
+        FROM workbench_generated_test_cases
+        WHERE organization_uuid = #{organizationUUID}
+        ORDER BY created_at ASC, uuid ASC
+        FOR UPDATE
+    </select>
+
+    <delete id="DeleteByUUID" result="exec">
+        DELETE FROM workbench_generated_test_cases
+        WHERE uuid = #{testCaseUUID}
+    </delete>
+
+    <delete id="DeleteByOrganization" result="exec">
+        DELETE FROM workbench_generated_test_cases
+        WHERE organization_uuid = #{organizationUUID}
+    </delete>
+</mapper>

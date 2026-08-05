@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WebhookWorkspaceMapper">
+    <select id="FindIdentifiers" resultType="workspaceIdentifiersRow">
+        SELECT
+            organization_uuid,
+            external_id AS workspace_external_id
+        FROM workspaces
+        WHERE uuid = #{workspaceUUID}
+    </select>
+</mapper>

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WorkbenchPromptRevisionMapper">
+    <sql id="columns">
+        r.organization_uuid,
+        r.prompt_uuid,
+        r.revision_uuid,
+        CAST(r.payload AS text) AS payload_json,
+        r.created_at,
+        r.updated_at
+    </sql>
+
+    <select id="Find" resultType="workbenchRevisionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM workbench_prompt_revisions r
+        JOIN workbench_prompts p ON p.uuid = r.prompt_ref_uuid
+        WHERE r.organization_uuid = #{organizationUUID}
+        AND p.prompt_uuid = #{promptUUID}
+        AND r.revision_uuid = #{revisionUUID}
+        LIMIT 1
+    </select>
+
+    <insert id="Upsert" result="rows">
+        WITH target_prompt AS (
+            SELECT uuid
+            FROM workbench_prompts
+            WHERE organization_uuid = #{params.OrganizationUUID}
+            AND prompt_uuid = #{params.PromptUUID}
+            LIMIT 1
+        )
+        INSERT INTO workbench_prompt_revisions (
+            organization_uuid,
+            prompt_ref_uuid,
+            prompt_uuid,
+            revision_uuid,
+            payload,
+            created_at,
+            updated_at
+        )
+        SELECT
+            #{params.OrganizationUUID},
+            target_prompt.uuid,
+            #{params.PromptUUID},
+            #{params.RevisionUUID},
+            CAST(#{params.PayloadJSON,sensitive=true} AS jsonb),
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        FROM target_prompt
+        ON CONFLICT (organization_uuid, prompt_ref_uuid, revision_uuid) DO UPDATE SET
+            payload = EXCLUDED.payload,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+    <delete id="DeleteByPromptRefUUID" result="exec">
+        DELETE FROM workbench_prompt_revisions
+        WHERE prompt_ref_uuid = #{promptRefUUID}
+    </delete>
+</mapper>

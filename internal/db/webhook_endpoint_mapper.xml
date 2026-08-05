@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WebhookEndpointMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        url,
+        name,
+        description,
+        enabled_events,
+        signing_secret,
+        status,
+        disabled_reason,
+        consecutive_failures,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="webhookEndpointRow">
+        INSERT INTO webhook_endpoints (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            created_by_api_key_uuid,
+            url,
+            name,
+            description,
+            enabled_events,
+            signing_secret,
+            status,
+            disabled_reason,
+            consecutive_failures,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.URL,sensitive=true},
+            #{params.Name},
+            #{params.Description},
+            CAST(#{params.EnabledEvents} AS jsonb),
+            #{params.SigningSecret,sensitive=true},
+            #{params.Status},
+            #{params.DisabledReason,sensitive=true},
+            #{params.ConsecutiveFailures},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="List" resultType="webhookEndpointRow">
+        SELECT
+        <include refid="columns"/>
+        FROM webhook_endpoints
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+    </select>
+
+    <select id="FindByExternalID" resultType="webhookEndpointRow">
+        SELECT
+        <include refid="columns"/>
+        FROM webhook_endpoints
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="webhookEndpointRow">
+        UPDATE webhook_endpoints
+        SET url = #{params.URL,sensitive=true},
+            name = #{params.Name},
+            description = #{params.Description},
+            enabled_events = CAST(#{params.EnabledEvents} AS jsonb),
+            status = #{params.Status},
+            disabled_reason = #{params.DisabledReason,sensitive=true},
+            consecutive_failures = #{params.ConsecutiveFailures},
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="UpdateSigningSecret" result="rows">
+        UPDATE webhook_endpoints
+        SET signing_secret = #{params.SigningSecret,sensitive=true},
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <update id="SoftDeleteByExternalID" result="rows">
+        UPDATE webhook_endpoints
+        SET deleted_at = NOW(),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <select id="Exists" result="scalar">
+        SELECT EXISTS(
+            SELECT 1
+            FROM webhook_endpoints
+            WHERE workspace_uuid = #{workspaceUUID}
+            AND deleted_at IS NULL
+        )
+    </select>
+
+    <select id="ListActiveForEvent" resultType="webhookEndpointRow">
+        SELECT
+        <include refid="columns"/>
+        FROM webhook_endpoints
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        AND status = 'enabled'
+        AND jsonb_exists(enabled_events, #{eventType})
+        ORDER BY created_at ASC, uuid ASC
+    </select>
+
+    <update id="RecordDeliverySuccess" result="exec">
+        UPDATE webhook_endpoints
+        SET consecutive_failures = 0,
+            disabled_reason = NULL,
+            updated_at = NOW()
+        WHERE uuid = #{endpointUUID}
+        AND deleted_at IS NULL
+        AND status = 'enabled'
+    </update>
+
+    <update id="RecordDeliveryFailure" result="exec">
+        UPDATE webhook_endpoints
+        SET consecutive_failures = consecutive_failures + 1,
+            status = CASE
+                WHEN consecutive_failures + 1 &gt;= #{params.DisableAfter} THEN 'disabled'
+                ELSE status
+            END,
+            disabled_reason = CASE
+                WHEN consecutive_failures + 1 &gt;= #{params.DisableAfter} THEN #{params.Reason,sensitive=true}
+                ELSE disabled_reason
+            END,
+            updated_at = NOW()
+        WHERE uuid = #{params.EndpointUUID}
+        AND deleted_at IS NULL
+        AND status = 'enabled'
+    </update>
+</mapper>

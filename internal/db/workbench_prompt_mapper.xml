@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WorkbenchPromptMapper">
+    <sql id="columns">
+        organization_uuid,
+        prompt_uuid,
+        workspace_uuid,
+        workspace_display_id,
+        name,
+        is_shared_with_workspace,
+        latest_revision_uuid,
+        deleted_at,
+        created_at,
+        updated_at
+    </sql>
+
+    <select id="FindByPromptUUID" resultType="workbenchPromptRow">
+        SELECT
+        <include refid="columns"/>
+        FROM workbench_prompts
+        WHERE organization_uuid = #{organizationUUID}
+        AND prompt_uuid = #{promptUUID}
+        LIMIT 1
+    </select>
+
+    <select id="ListByWorkspace" resultType="workbenchPromptRow">
+        SELECT
+        <include refid="columns"/>
+        FROM workbench_prompts
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        ORDER BY updated_at DESC, uuid DESC
+    </select>
+
+    <insert id="Upsert" result="returning" resultType="workbenchPromptRow">
+        INSERT INTO workbench_prompts (
+            organization_uuid,
+            prompt_uuid,
+            workspace_uuid,
+            workspace_display_id,
+            name,
+            is_shared_with_workspace,
+            latest_revision_uuid,
+            deleted_at,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.OrganizationUUID},
+            #{params.PromptUUID},
+            #{params.WorkspaceUUID},
+            #{params.WorkspaceDisplayID},
+            #{params.Name},
+            #{params.IsSharedWithWorkspace},
+            #{params.LatestRevisionUUID},
+            #{params.DeletedAt},
+            #{params.CreatedAt},
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (organization_uuid, prompt_uuid) DO UPDATE SET
+            workspace_uuid = EXCLUDED.workspace_uuid,
+            workspace_display_id = EXCLUDED.workspace_display_id,
+            name = EXCLUDED.name,
+            is_shared_with_workspace = EXCLUDED.is_shared_with_workspace,
+            latest_revision_uuid = EXCLUDED.latest_revision_uuid,
+            deleted_at = EXCLUDED.deleted_at,
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <insert id="ResetAndReturnUUID" result="returning" resultType="string">
+        INSERT INTO workbench_prompts (
+            organization_uuid,
+            prompt_uuid,
+            workspace_uuid,
+            workspace_display_id,
+            name,
+            deleted_at,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.OrganizationUUID},
+            #{params.PromptUUID},
+            #{params.WorkspaceUUID},
+            #{params.WorkspaceDisplayID},
+            '',
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (organization_uuid, prompt_uuid) DO UPDATE SET
+            name = '',
+            is_shared_with_workspace = FALSE,
+            latest_revision_uuid = NULL,
+            deleted_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING uuid
+    </insert>
+</mapper>

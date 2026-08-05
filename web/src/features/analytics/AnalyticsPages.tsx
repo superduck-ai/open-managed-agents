@@ -500,7 +500,7 @@ export function LogsPage() {
         <FilterBar compact>
           <FilterControl
             label={msg('analytics.filter.workspace', 'Workspace')}
-            value={filters.workspace}
+            value={routeWorkspaceId ?? filters.workspace}
             options={workspaceOptions}
             disabled={Boolean(routeWorkspaceId)}
             onValueChange={(workspace) => setFilters((current) => ({ ...current, workspace }))}

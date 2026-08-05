@@ -175,6 +175,39 @@ describe('Analytics pages', () => {
     expect(workspaceSelect.textContent).toContain('Default');
   });
 
+  test('updates the scoped logs workspace filter when the route workspace id changes in place', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/wrkspc_alpha/logs');
+
+    const alphaWorkspace: Workspace = {
+      id: 'wrkspc_alpha',
+      type: 'workspace',
+      name: 'Alpha Workspace',
+    };
+    const betaWorkspace: Workspace = {
+      id: 'wrkspc_beta',
+      type: 'workspace',
+      name: 'Beta Workspace',
+    };
+    const workspaces = [alphaWorkspace, betaWorkspace];
+
+    const { rerender } = renderWithWorkspace(<LogsPage />, workspaces);
+
+    expect(screen.getByRole('combobox', { name: /Workspace/i }).textContent).toContain('Alpha Workspace');
+
+    window.history.replaceState(null, '', 'https://oma.duck.ai/workspaces/wrkspc_beta/logs');
+    rerender(
+      <WorkspaceHarness workspaces={workspaces}>
+        <LogsPage />
+      </WorkspaceHarness>,
+    );
+
+    const workspaceSelect = screen.getByRole('combobox', { name: /Workspace/i }) as HTMLButtonElement;
+    expect(workspaceSelect.disabled).toBe(true);
+    expect(workspaceSelect.textContent).toContain('Beta Workspace');
+    expect(workspaceSelect.textContent).not.toContain('Alpha Workspace');
+    expect(workspaceSelect.getAttribute('aria-label')).toContain('Beta Workspace');
+  });
+
   test('renders workspace logs with official table headers and pagination', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/logs');
 

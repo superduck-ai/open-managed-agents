@@ -16,6 +16,13 @@ func TestSessionResourcesFromDeploymentRejectsInvalidSecrets(t *testing.T) {
 	}
 }
 
+func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
+	_, err := sessionResourcesFromDeployment(db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{})
+	if err == nil {
+		t.Fatal("sessionResourcesFromDeployment() error = nil")
+	}
+}
+
 func TestDeploymentResponseUsesEmptyDescription(t *testing.T) {
 	response, err := json.Marshal(deploymentResponse{})
 	if err != nil || !strings.Contains(string(response), `"description":""`) {

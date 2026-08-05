@@ -113,16 +113,13 @@ func TestDeploymentsAPI(t *testing.T) {
 				name: "agent object without type",
 				body: `{"agent":{"id":` + quoteJSON(agent.ID) + `},"environment_id":` + quoteJSON(env.ID) + `,"name":"invalid","initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`,
 			},
-			{
-				name: "agent object without version",
-				body: `{"agent":{"id":` + quoteJSON(agent.ID) + `,"type":"agent"},"environment_id":` + quoteJSON(env.ID) + `,"name":"invalid","initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`,
-			},
 			{name: "null metadata", body: deploymentBodyWithExtra(agent.ID, env.ID, `"metadata":null`)},
 			{name: "null resources", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":null`)},
 			{name: "null vault ids", body: deploymentBodyWithExtra(agent.ID, env.ID, `"vault_ids":null`)},
 			{name: "metadata key too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"metadata":{`+quoteJSON(strings.Repeat("k", 65))+`:"value"}`)},
 			{name: "metadata value too long", body: deploymentBodyWithExtra(agent.ID, env.ID, `"metadata":{"key":`+quoteJSON(strings.Repeat("v", 513))+`}`)},
 			{name: "message content is not an array", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.message","content":"hello"}]`)},
+			{name: "message content is empty", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.message","content":[]}]`)},
 			{name: "system message contains image", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.message","content":[{"type":"text","text":"hello"}]},{"type":"system.message","content":[{"type":"image","source":{"type":"url","url":"https://example.com/image.png"}}]}]`)},
 			{name: "outcome rubric is not an object", body: deploymentBodyWithInitialEvents(agent.ID, env.ID, `[{"type":"user.define_outcome","description":"ship it","rubric":"be correct"}]`)},
 			{name: "github token is missing", body: deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo.git"}]`)},
@@ -136,6 +133,12 @@ func TestDeploymentsAPI(t *testing.T) {
 				assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 			})
 		}
+
+		t.Run("success agent object without version uses latest", func(t *testing.T) {
+			created := createDeployment(t, app, `{"agent":{"id":`+quoteJSON(agent.ID)+`,"type":"agent"},"environment_id":`+quoteJSON(env.ID)+`,"name":"latest agent","initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`)
+			defer cleanupDeploymentRows(t, app, created.ID)
+			assertRawContains(t, created.Agent, `"version":1`)
+		})
 
 		t.Run("success agent object with version", func(t *testing.T) {
 			created := createDeployment(t, app, `{"agent":{"id":`+quoteJSON(agent.ID)+`,"type":"agent","version":1},"environment_id":`+quoteJSON(env.ID)+`,"name":"versioned agent","initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`)
@@ -289,6 +292,16 @@ func TestDeploymentsAPI(t *testing.T) {
 		roundTripped := updateDeployment(t, app, created.ID, `{"resources":`+string(created.Resources)+`}`)
 		assertRawContains(t, roundTripped.Resources, `"file_id":"`+file.ID+`"`)
 		assertRawContains(t, roundTripped.Resources, `"mount_path":"/mnt/session/uploads/`+file.ID+`"`)
+		run := runDeployment(t, app, created.ID)
+		if run.SessionID == nil {
+			t.Fatalf("deployment run Session ID = nil: %+v", run)
+		}
+		defer deleteSession(t, app, *run.SessionID)
+		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceUUID, *run.SessionID)
+		if err != nil || len(resources) != 1 {
+			t.Fatalf("deployment run Session resources = %d, error = %v", len(resources), err)
+		}
+		assertSessionFileReference(t, app, *run.SessionID, resources[0].Payload, file.ID, "/uploads/"+file.ID)
 
 		preserved := updateDeployment(t, app, created.ID, `{"name":"updated name only"}`)
 		if preserved.Description != "preserve me" {
@@ -376,7 +389,7 @@ func TestDeploymentsAPI(t *testing.T) {
 
 		body := deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]`)
 		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(body), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		assertError(t, resp, http.StatusNotFound, "not_found_error")
 	})
 
 	t.Run("failure list status conflicts with include archived", func(t *testing.T) {

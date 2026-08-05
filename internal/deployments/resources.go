@@ -185,6 +185,10 @@ func (h *Handler) normalizeResource(
 			return normalizedDeploymentResource{}, err
 		}
 		defaulted := len(fields.MountPath) == 0 || httpapi.IsJSONNull(fields.MountPath)
+		if mountPath == sandboxmount.PublicDefaultFileMountPath(fileID) {
+			mountPath = sandboxmount.DefaultFileMountPath(fileID)
+			defaulted = true
+		}
 		resource.payload = deploymentResourcePayload{
 			Type:               sessionresource.FileType,
 			FileID:             fileID,
@@ -253,10 +257,11 @@ func (h *Handler) normalizeResource(
 	switch resource.resourceType {
 	case sessionresource.FileType:
 		if _, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, resource.referenceID); err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				return normalizedDeploymentResource{}, fmt.Errorf("file not found: %s", resource.referenceID)
+			return normalizedDeploymentResource{}, resourceReferenceError{
+				ResourceType: sessionresource.FileType,
+				ResourceID:   resource.referenceID,
+				Err:          err,
 			}
-			return normalizedDeploymentResource{}, err
 		}
 	case "memory_store":
 		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, resource.referenceID)
@@ -306,7 +311,7 @@ func deploymentResourcesResponse(raw json.RawMessage) (json.RawMessage, error) {
 			continue
 		}
 		if envelope.MountPathDefaulted != nil && *envelope.MountPathDefaulted {
-			mountPath, err := json.Marshal("/mnt/session/uploads/" + envelope.FileID)
+			mountPath, err := json.Marshal(sandboxmount.PublicDefaultFileMountPath(envelope.FileID))
 			if err != nil {
 				return nil, err
 			}
@@ -355,7 +360,7 @@ func sessionResourcesFromDeployment(
 	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
 	for index, configRaw := range configs {
 		var config map[string]any
-		if err := json.Unmarshal(configRaw, &config); err != nil {
+		if err := json.Unmarshal(configRaw, &config); err != nil || config == nil {
 			return nil, errors.New("stored resources are invalid")
 		}
 		resourceType, _ := config["type"].(string)

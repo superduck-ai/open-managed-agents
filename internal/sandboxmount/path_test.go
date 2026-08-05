@@ -101,3 +101,12 @@ func TestDefaultFileMountPath(t *testing.T) {
 		t.Fatalf("default mount path = %q", mountPath)
 	}
 }
+
+func TestPublicDefaultFileMountPath(t *testing.T) {
+	if mountPath := PublicDefaultFileMountPath("file_abc123"); mountPath != SandboxUploadsMount+"/file_abc123" {
+		t.Fatalf("public default mount path = %q", mountPath)
+	}
+	if PublicDefaultFileMountPath("file_abc123") != SandboxUploadsMount+DefaultFileMountPath("file_abc123") {
+		t.Fatal("public default mount path must be SandboxUploadsMount + DefaultFileMountPath")
+	}
+}

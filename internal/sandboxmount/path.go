@@ -14,6 +14,8 @@ import (
 const (
 	// FileSource 是 managed-agent File resource 唯一允许的 Filestore source。
 	FileSource = "/uploads"
+	// SandboxUploadsMount 是 FileSource 在 Sandbox 中的挂载点。
+	SandboxUploadsMount = "/mnt/session/uploads"
 )
 
 // NormalizeFileSource 为省略的 source 补默认值，并拒绝 null 或其他 namespace。
@@ -36,8 +38,14 @@ func DefaultFileMountPath(fileID string) string {
 	return "/" + fileID
 }
 
+// PublicDefaultFileMountPath 返回默认 File mount 在 API/Sandbox 中的公开路径形式。
+// Deployments 响应投影与请求入库折回共用此路径，避免字面量分叉。
+func PublicDefaultFileMountPath(fileID string) string {
+	return SandboxUploadsMount + DefaultFileMountPath(fileID)
+}
+
 // ValidateFileMountPath 校验 File resource 在固定 uploads 根目录下的相对命名空间路径。
-// 对外合同使用绝对路径形式；Sandbox 中的最终路径始终加上 /mnt/session/uploads 前缀。
+// 对外合同使用绝对路径形式；Sandbox 中的最终路径始终加上 SandboxUploadsMount 前缀。
 func ValidateFileMountPath(mountPath string) error {
 	_, err := FileBackingPath(mountPath)
 	return err

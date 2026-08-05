@@ -912,12 +912,11 @@ func parseAgentReference(raw json.RawMessage) (string, int, error) {
 			return "", 0, errors.New("agent.type is required and must be agent")
 		}
 		agentID = object.ID
-		if object.Version == nil {
-			return "", 0, errors.New("agent.version is required when agent is an object")
-		}
-		version = *object.Version
-		if version < 1 {
-			return "", 0, errors.New("agent.version must be at least 1")
+		if object.Version != nil {
+			version = *object.Version
+			if version < 1 {
+				return "", 0, errors.New("agent.version must be at least 1")
+			}
 		}
 	}
 	if strings.TrimSpace(agentID) == "" {
@@ -1541,6 +1540,9 @@ func validateMessageContent(raw json.RawMessage, textOnly bool) error {
 	if err := json.Unmarshal(raw, &blocks); err != nil {
 		return errors.New("initial_events content must be an array")
 	}
+	if len(blocks) == 0 {
+		return errors.New("initial_events content must contain at least one block")
+	}
 	for _, block := range blocks {
 		blockType, err := parseRequiredRawString(block.Type, "content.type")
 		if err != nil {
@@ -1807,6 +1809,10 @@ func (h *Handler) writeEnvironmentLoadError(w http.ResponseWriter, r *http.Reque
 func (h *Handler) writeResourceBuildError(w http.ResponseWriter, r *http.Request, err error) {
 	var refErr resourceReferenceError
 	if errors.As(err, &refErr) {
+		if refErr.ResourceType == "file" && errors.Is(refErr.Err, db.ErrNotFound) {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found: "+refErr.ResourceID))
+			return
+		}
 		if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Memory store not found: "+refErr.ResourceID))
 			return

@@ -1,23 +1,17 @@
-# Vault 存储加密（本期）与运行时注入（后续）
+# Vault 存储加密与运行时注入
 
 ## 目标
 
 两件事：
 
-1. **存库加密（本期 PR）**：库被拖走、或只有读库权限的人，都拿不到明文密码。
-2. **运行时注入（不在本期）**：Sandbox 调需要认证的 MCP/API 时能用上密码；Sandbox 本身永远看不到真密码。**本 PR 不实现注入**；设计保留为后续工作。
+1. **存库加密（已完成）**：库被拖走、或只有读库权限的人，都拿不到明文密码。
+2. **运行时注入（static_bearer MVP：已完成）**：Sandbox 调需要认证的 MCP 时能用上密码；Sandbox 本身永远看不到真密码。
 
-主密钥本期放 `config.yaml`（全局一把，多 workspace 共用）。不做分片、不做 KMS；`KeyProvider` 接口先留好，以后再接。
+主密钥放 `config.yaml` / `kek_file`（全局一把，多 workspace 共用）。本地支持 `version` + `decrypt_only`。不做分片；`KeyProvider` 预留以后接 KMS。
 
 ## 背景
 
-Vault CRUD 和 OAuth 注册已经有了，但：
-
-- 密码曾以明文落库（`secret_payload` jsonb）；OAuth 流程里的 `client_secret` 也是明文。
-- 运行时不会注入凭证。挂了 `vault_ids` 的 session，沙箱连 MCP 时还是没认证信息，vault 等于空转。
-
-**本期只补加密存储**；运行时注入另开 PR。
-
+Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。运行时注入挂在 Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`），对真实 `mcp_url` 注入 static_bearer。
 ## 威胁模型（加密管到哪）
 
 | 场景 | 加密能否挡住 |
@@ -151,43 +145,55 @@ vault:
 
 KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销毁；本期价值在「换钥后旧数据仍可读」，不靠扫表迁移。
 
-## 运行时注入（后续，本 PR 不包含）
+## 运行时注入（static_bearer MVP）
 
-> **状态：未实现 / 不在本 PR。** 下文是后续设计草案，避免与“已打通”混淆。
+> **状态：已实现。** 存库加密已完成；MCP HTTP proxy 路径仅注入 static_bearer。
 
-目标：Sandbox 调需认证的 MCP 时，由 OMA 在出站请求里注入凭证；Sandbox 只看到 MCP URL，看不到 token。
+目标：Sandbox 调需认证的 MCP 时，由 OMA 在 MCP HTTP proxy 转发前注入凭证；Sandbox 只看到改写后的 proxy URL，看不到 token。
 
-注入点拟用现有 CCRv2 上游代理（已支持 MITM）。Sandbox 出站 HTTPS 经代理：终结 TLS → 见明文 HTTP → 加 `Authorization` → 再 TLS 转发给真实 MCP。Sandbox 信任代理 TLS，是因为信任 OMA 的 MITM CA（`upstream_proxy_ca_key_file` 已就绪）。
+注入点：`/v2/ccr-sessions/{code_session_id}/mcp`。Runner 把真实 MCP URL 放进 `mcp_url`，Claude Code 只连 session 级 proxy。Proxy 验 JWT、按 Agent Snapshot + Environment 策略授权后，对真实 `mcp_url` 做 Credential URL match，再注入 `Authorization` 并转发。不依赖 upstream CONNECT MITM。
 
-拟议流程（每次出站 MCP 请求）：
+### MVP 决策（grilling 已确认）
 
-1. 代理已认证 session（`authenticateRuntimeSession`）→ code session → workspace → `vault_ids`。
-2. 在 `vault_ids` 的活动凭证里，按出站目标匹配 `mcp_server_url`；按 `vault_ids` 顺序，首个命中胜出。同 host 无 path 命中 → fail-closed；host 不在任何凭证的 `mcp_server_url` 上 → passthrough（包管理器等）。
-3. OMA 用 KEK 解 `wrapped_dek`，再解 token。全程在 OMA 内。
-4. 命中时删掉沙箱自带的 `Authorization`（可能是占位符），加 `Authorization: Bearer <token>`，转发。passthrough 不改客户端 Authorization。
-5. 仅当目标命中该凭证的 `networking.allowed_hosts`（`limited`）才注入；`unrestricted` 不额外拦。不命中则跳过该凭证，不降级到别的「错误」凭证。
-6. 跨 origin redirect：代理不自动跟 redirect；客户端新请求会重新匹配，token 不带到非预期目标。
+| 项 | 决定 |
+|---|---|
+| 凭证类型 | 仅 **static_bearer**；`mcp_oauth` / `environment_variable` 本切片不做 |
+| 注入落点 | Session MCP HTTP proxy（`injectMCPProxyHeaders` → `vaults.Injector`）；**不**走 CONNECT MITM |
+| Credential `networking` | **不做**；出站仍受 Environment / MCP proxy 策略约束 |
+| 数据加载 | **每请求查库**（code session → session → `vault_ids` → 活动凭证）；不缓存明文 token |
+| Redirect | **不自动跟随**跨 origin redirect（ReverseProxy 透传 3xx，不代跟） |
+| host 未覆盖 | **passthrough**（即使 session 有 `vault_ids`） |
+| 失败对外 | 注入拒绝 / Open 失败 → **HTTP 502** |
+| 代码落点 | 匹配 / Open 在 `internal/vaults`；`codesessions.WithVaultSecrets` 接到 MCP proxy |
+
+### 每次 MCP 出站流程
+
+1. Proxy 已认证 session（`authenticateRuntimeSession`）→ 解析 `mcp_url` → 策略授权。
+2. 查 code session → workspace → `vault_ids` → 活动凭证；按真实 `mcp_url` 匹配；按 `vault_ids` 顺序，**首个可注入（static_bearer）命中胜出**。非 static_bearer 跳过。同 host 无 path 命中 → **fail-closed**；host 不在任何凭证的 `mcp_server_url` 上 → **passthrough**。
+3. Open 信封得到 Transient secret payload（token）。Open 失败 → **拒绝该请求**（不换下一条、不 passthrough）。
+4. 删掉客户端带给 proxy 的 `Authorization`（session JWT），加 `Authorization: Bearer <token>`，转发真实上游。passthrough 不写上游 Authorization。
+5. 跨 origin redirect：代理不自动跟；客户端新请求重新匹配。
 
 匹配规则：凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。
 
-凭证类型：
+后续（非本切片）：
 
-- **static_bearer**：固定 token，直接注入。后续 MVP。
-- **mcp_oauth**：检查 access_token 过期；快过期则用 refresh_token + token_endpoint 刷新后再注入。static_bearer 之后做。
-- **env_var**：往沙箱环境变量塞占位符、出口替换。OMA 用 E2B → **v1 不做注入**；创建 env_var 凭证时是否拒绝由注入 PR 决定。
+- **mcp_oauth**：过期检查 + refresh 后再注入
+- **environment_variable**：环境占位符 / 出口替换（E2B 上另议）
+- Credential 级 `networking.allowed_hosts` 门控
 
-Sandbox 拿到的 `mcp_config` 只有服务器 URL，没有 token。真 token 只在 OMA 代理里瞬态出现。
+Sandbox 拿到的 `mcp_config` 只有 proxy URL + session JWT，没有上游 token。真 token 只在 OMA proxy 里瞬态出现。日志不记录明文。
 
 ## 实施阶段
 
 0. 本文档：威胁模型、接口、失败用例 ✅
-1. Secret Service + 加密 + 本地 provider（KEK 来自 config）+ 契约测试 ✅（本期）
-2. DB Direct cutover：加信封列 + 删 `secret_payload`；无 Expand/Backfill ✅（本期）
-3. vault API 收口：写走加密，读只返回元信息；缺信封 → 400；Open 失败 → 5xx ✅（本期，含 platform MCP OAuth callback seal）
-4. Transport 注入（static_bearer）❌ **不在本期**
-5. OAuth 刷新；env 占位符（若 E2B 支持）；创建 env_var 拒绝 — **未做**
+1. Secret Service + 加密 + 本地 provider（KEK 来自 config）+ 契约测试 ✅
+2. DB Direct cutover：加信封列 + 删 `secret_payload`；无 Expand/Backfill ✅
+3. vault API 收口：写走加密，读只返回元信息；缺信封 → 400；Open 失败 → 5xx ✅（含 platform MCP OAuth callback seal）
+4. Transport 注入（static_bearer MVP）✅
+5. OAuth 刷新；env 占位符；credential networking — **未做**
 
-## 验收（本期：存库加密）
+## 验收（存库加密：已完成）
 
 - DB、日志、trace 不出现明文密码 / DEK；**主密钥只在 `config.yaml` / `kek_file`**（不进 DB/日志）；dev/prod 均须配置，无 ephemeral 兜底。*（注：`mcp_oauth_flows` 的 client_secret/code_verifier 本期仍明文，拆小 issue。）*
 - 写统一经 Secret Service；读不返回密码；`secret_payload` 列不存在。
@@ -195,26 +201,33 @@ Sandbox 拿到的 `mcp_config` 只有服务器 URL，没有 token。真 token �
 - 活动凭证缺信封且未带完整替换 secret 的 update/validate（含仅改 metadata/display_name）→ HTTP 400；带完整替换 secret 的 update → 直接 reseal；`version` CAS 冲突 → HTTP 409。
 - 归档凭证时清空信封列（不只标 `archived_at`）。
 - `POST /v1/vaults/backfill_secrets` 不再注册。
-- `go test ./internal/secrets/ ./internal/vaults/ ./internal/config/ ./internal/db/ ./internal/api/ -count=1`；相关 E2E / `tests/vaults_encryption_test.go`；`internal/db` 中 `TestVaultMapper*` 覆盖 Mapper SQL/敏感标记与 PostgreSQL 临时表回滚验收。
+- 本地 KEK：`version` + `decrypt_only`（无 rewrap）。
+- `go test ./internal/secrets/ ./internal/vaults/ ./internal/config/ ./internal/db/ ./internal/api/ -count=1`；相关 E2E / `tests/vaults_encryption_test.go`。
 
-注入相关验收（沙箱拿不到真 token、path 前缀匹配、fail closed 等）留给后续注入 PR。
+## 验收（运行时注入 MVP：已完成）
 
-> 注：本地 KEK 轮换通过 `version` + `decrypt_only` 完成（无 rewrap）。云 KMS 自动轮换 / DisableKey 另议。
+- Managed Agent MCP 走 `/v2/ccr-sessions/{id}/mcp`；vault 注入接在该 proxy，不依赖 MITM。
+- static_bearer：path 前缀命中后注入 Bearer；沙箱 / `mcp_config` / 日志不见 token。
+- host 未覆盖 → passthrough；同 host path 不配 → 拒绝（502）；命中后 Open 失败 → 拒绝（502）。
+- 不自动跟随跨 origin redirect 携带注入头。
+- Environment / MCP proxy 网络策略仍生效；本切片不做 credential `networking`。
 
-## 不做（本期）
+> 注：云 KMS 自动轮换 / DisableKey 另议。
 
-- 运行时 MITM 凭证注入
-- Expand/Backfill/Contract 双读窗口与 `backfill_secrets` 维护接口
-- Shamir 分片
-- 云 KMS / Vault Transit / OpenBao（只留接口）
+## 不做（注入 MVP）
+
+- `mcp_oauth` 注入与 refresh
+- `environment_variable` 出口替换
+- Credential 级 `networking.allowed_hosts`
+- Expand/Backfill、`backfill_secrets`
+- Shamir / 云 KMS provider 实现
 - 重做 vault CRUD、管理页、MCP Catalog/Permission/Confirmation
-- 自建 KMS/HSM 控制面
-- 防"打进 OMA 进程"（运行时加固，另议）
+- 防「打进 OMA 进程」（运行时加固，另议）
 
 ## 参考
 
 - https://platform.claude.com/docs/en/managed-agents/vaults
 - https://www.anthropic.com/engineering/managed-agents
 - HashiCorp Vault：`vault/barrier_aes_gcm.go`、`shamir/`
-- Related: #65、#52、#121、#137
-- Ubiquitous language: `CONTEXT.md`（Secret envelope / Transient secret payload / Direct envelope cutover）
+- Related: #65、#52、#121、#137、#142
+- Ubiquitous language: `CONTEXT.md`（Secret envelope / Runtime credential injection / Credential URL match）

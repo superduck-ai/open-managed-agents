@@ -282,6 +282,40 @@ func (d *DB) ListVaultCredentialsPage(ctx context.Context, params ListVaultCrede
 	return trimAdminPage(credentials, params.Limit), len(credentials) > params.Limit, nil
 }
 
+// ListActiveVaultCredentialsForVaultIDs returns active credentials in vault_ids
+// order. Missing or archived vaults contribute nothing. Per-vault Get+List with
+// a 100-credential cap; replace with batch SQL if vault_ids lists grow large.
+func (d *DB) ListActiveVaultCredentialsForVaultIDs(ctx context.Context, workspaceUUID string, vaultIDs []string) ([]VaultCredential, error) {
+	out := make([]VaultCredential, 0)
+	for _, vaultID := range vaultIDs {
+		vaultID = strings.TrimSpace(vaultID)
+		if vaultID == "" {
+			continue
+		}
+		vault, err := d.GetVault(ctx, workspaceUUID, vaultID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		if vault.ArchivedAt != nil {
+			continue
+		}
+		credentials, _, err := d.ListVaultCredentialsPage(ctx, ListVaultCredentialsPageParams{
+			WorkspaceUUID:   workspaceUUID,
+			VaultExternalID: vaultID,
+			Limit:           100,
+			IncludeArchived: false,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, credentials...)
+	}
+	return out, nil
+}
+
 func vaultInsertParams(vault Vault) insertVaultParams {
 	return insertVaultParams{
 		UUID:                vault.UUID,

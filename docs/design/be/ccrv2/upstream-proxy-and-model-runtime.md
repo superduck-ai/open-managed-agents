@@ -188,6 +188,7 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - 域名先解析，服务端只拨号已验证的 public IP，避免校验后再次解析造成 DNS rebinding。
 - 不记录 bearer token、Basic header、上游 API key 或隧道内容。
 - MITM 默认关闭；开启后只解密通过 code-session 双重鉴权且通过 SSRF 校验的 CONNECT 流量。
+- MITM 解密并完成 Host 校验后，为每条 HTTP 请求记录结构化的 `host`、`port` 和去除 query 的 `url`；不记录 header 或 body。
 - 即使开启 MITM，也不会信任动态 CA 作为真实上游根证书；服务端到目标网站始终使用系统信任链。
 
 本地 fake-IP/TUN DNS 可能把公网域名解析到 `198.18.0.0/15`，从而触发上述保护。仅用于临时排障时，可以设置 `code_session.upstream_proxy_disable_ssrf_protection: true` 关闭目标 IP 过滤；默认值为 `false`。该开关仍然只允许端口 `443`，但会允许 loopback、私网、link-local 与 fake-IP，因此不得在生产环境启用。

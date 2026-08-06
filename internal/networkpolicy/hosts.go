@@ -143,66 +143,78 @@ func NormalizeHost(raw string) (string, error) {
 // hostMatcher 是编译后的 allowlist 只读索引：只在 newHostMatcher 构造阶段
 // 写入，构造完成后可供多个 goroutine 并发读取。
 type hostMatcher struct {
-	exact        map[string]struct{}
-	wildcardRoot *hostMatcherNode
+	root *hostMatcherNode
 }
 
 type hostMatcherNode struct {
 	children map[string]*hostMatcherNode
+	rules    map[string]hostMatchRule
+}
+
+type hostMatchRule struct {
+	exact    bool
 	wildcard bool
 }
 
 func newHostMatcher(entries []allowedHost) hostMatcher {
-	matcher := hostMatcher{
-		exact:        make(map[string]struct{}, len(entries)),
-		wildcardRoot: &hostMatcherNode{children: map[string]*hostMatcherNode{}},
-	}
+	matcher := hostMatcher{root: newHostMatcherNode()}
 	for _, entry := range entries {
-		if entry.port != "" && entry.port != "443" {
-			continue
-		}
-		if entry.wildcard {
-			matcher.addWildcard(entry.host)
-			continue
-		}
-		matcher.exact[entry.host] = struct{}{}
+		matcher.add(entry)
 	}
 	return matcher
 }
 
-func (m hostMatcher) match(host string) bool {
-	if _, ok := m.exact[host]; ok {
-		return true
-	}
-	labels := strings.Split(host, ".")
-	node := m.wildcardRoot
+func (m hostMatcher) match(host string, port string) bool {
+	node := m.root
 	if node == nil {
 		return false
 	}
+	labels := strings.Split(host, ".")
 	for index := len(labels) - 1; index >= 0; index-- {
 		next, ok := node.children[labels[index]]
 		if !ok {
 			return false
 		}
 		node = next
-		if node.wildcard && index > 0 {
+		if index > 0 && node.matchesWildcard(port) {
 			return true
 		}
 	}
-	return false
+	return node.matchesExact(port)
 }
 
-func (m hostMatcher) addWildcard(host string) {
-	node := m.wildcardRoot
-	labels := strings.Split(host, ".")
+func newHostMatcherNode() *hostMatcherNode {
+	return &hostMatcherNode{children: map[string]*hostMatcherNode{}}
+}
+
+func (m hostMatcher) add(entry allowedHost) {
+	node := m.root
+	labels := strings.Split(entry.host, ".")
 	for index := len(labels) - 1; index >= 0; index-- {
 		label := labels[index]
 		next, ok := node.children[label]
 		if !ok {
-			next = &hostMatcherNode{children: map[string]*hostMatcherNode{}}
+			next = newHostMatcherNode()
 			node.children[label] = next
 		}
 		node = next
 	}
-	node.wildcard = true
+	if node.rules == nil {
+		node.rules = map[string]hostMatchRule{}
+	}
+	rule := node.rules[entry.port]
+	if entry.wildcard {
+		rule.wildcard = true
+	} else {
+		rule.exact = true
+	}
+	node.rules[entry.port] = rule
+}
+
+func (n *hostMatcherNode) matchesExact(port string) bool {
+	return n.rules[""].exact || n.rules[port].exact
+}
+
+func (n *hostMatcherNode) matchesWildcard(port string) bool {
+	return n.rules[""].wildcard || n.rules[port].wildcard
 }

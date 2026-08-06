@@ -21,6 +21,7 @@ func (h *Handler) RegisterV1Routes(router chi.Router) {
 func (h *Handler) RegisterV2Routes(router chi.Router) {
 	h.registerSessionIngressRoutes(router)
 	router.Get("/sessions/{code_session_id}", h.handleSessionContext)
+	router.Handle("/ccr-sessions/{code_session_id}/mcp", http.HandlerFunc(h.handleMCPProxy))
 }
 
 func (h *Handler) registerRuntimeRoutes(router chi.Router) {

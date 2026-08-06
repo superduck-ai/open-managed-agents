@@ -38,8 +38,39 @@ func TestValidateAllowedHostRejectsInvalidEntries(t *testing.T) {
 }
 
 func TestHostMatcherZeroValueDoesNotMatch(t *testing.T) {
-	if (hostMatcher{}).match("api.example.com") {
+	if (hostMatcher{}).match("api.example.com", "443") {
 		t.Fatal("zero hostMatcher must not match")
+	}
+}
+
+func TestHostMatcherRequiresConfiguredPort(t *testing.T) {
+	entries, err := parseConfigAllowedHosts([]string{"api.example.com:8443", "*.example.org:9443", "public.example.net"})
+	if err != nil {
+		t.Fatalf("parseConfigAllowedHosts() error = %v", err)
+	}
+	matcher := newHostMatcher(entries)
+	if matcher.match("api.example.com", "443") || matcher.match("service.example.org", "443") {
+		t.Fatal("port-specific entries must not match a different port")
+	}
+	if !matcher.match("api.example.com", "8443") || !matcher.match("service.example.org", "9443") {
+		t.Fatal("port-specific entries must match their configured port")
+	}
+	if !matcher.match("public.example.net", "8080") {
+		t.Fatal("host-only entries must match any valid target port")
+	}
+}
+
+func TestHostMatcherSeparatesExactAndWildcardRulesAtSameNode(t *testing.T) {
+	entries, err := parseConfigAllowedHosts([]string{"example.com:443", "*.example.com:8443"})
+	if err != nil {
+		t.Fatalf("parseConfigAllowedHosts() error = %v", err)
+	}
+	matcher := newHostMatcher(entries)
+	if matcher.match("example.com", "8443") || matcher.match("api.example.com", "443") {
+		t.Fatal("exact and wildcard rules must not borrow each other's ports")
+	}
+	if !matcher.match("example.com", "443") || !matcher.match("api.example.com", "8443") {
+		t.Fatal("exact and wildcard rules must match their own ports")
 	}
 }
 
@@ -75,9 +106,9 @@ func TestHostMatcherSupportsConcurrentReads(t *testing.T) {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			results <- matcher.match("api.example.com") &&
-				matcher.match("storage.googleapis.com") &&
-				!matcher.match("example.org")
+			results <- matcher.match("api.example.com", "443") &&
+				matcher.match("storage.googleapis.com", "443") &&
+				!matcher.match("example.org", "443")
 		}()
 	}
 	group.Wait()

@@ -82,7 +82,7 @@ func stubUnrestrictedPolicyContext(t *testing.T, handler *Handler) {
 	if err != nil {
 		t.Fatalf("ParsePolicy() error = %v", err)
 	}
-	handler.loadPolicyContext = func(context.Context, upstreamProxyIdentity) (upstreamProxyPolicyContext, error) {
+	handler.loadUpstreamPolicyContext = func(context.Context, upstreamProxyIdentity) (upstreamProxyPolicyContext, error) {
 		return upstreamProxyPolicyContext{policy: policy}, nil
 	}
 }
@@ -90,12 +90,14 @@ func stubUnrestrictedPolicyContext(t *testing.T, handler *Handler) {
 func policyTestHandler(t *testing.T, policy networkpolicy.Policy, err error) *Handler {
 	t.Helper()
 	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
-	handler.loadPolicyContext = func(context.Context, upstreamProxyIdentity) (upstreamProxyPolicyContext, error) {
+	handler.loadUpstreamPolicyContext = func(context.Context, upstreamProxyIdentity) (upstreamProxyPolicyContext, error) {
 		return upstreamProxyPolicyContext{
-			policy:                policy,
-			organizationUUID:      "00000000-0000-0000-0000-000000000001",
-			workspaceUUID:         "00000000-0000-0000-0000-000000000002",
-			environmentExternalID: "env_test",
+			policy: policy,
+			proxyPolicyScope: proxyPolicyScope{
+				organizationUUID:      "00000000-0000-0000-0000-000000000001",
+				workspaceUUID:         "00000000-0000-0000-0000-000000000002",
+				environmentExternalID: "env_test",
+			},
 		}, err
 	}
 	return handler

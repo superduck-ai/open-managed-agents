@@ -7,13 +7,22 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 )
 
-// upstreamProxyPolicyContext 是一次 CONNECT 授权所需的策略上下文：
-// Policy 供纯策略模块决策，其余字段只用于服务端审计日志。
-type upstreamProxyPolicyContext struct {
-	policy                networkpolicy.Policy
+type proxyPolicyScope struct {
 	organizationUUID      string
 	workspaceUUID         string
 	environmentExternalID string
+}
+
+// upstreamProxyPolicyContext 是一次 CONNECT 授权所需的编译后策略与审计作用域。
+type upstreamProxyPolicyContext struct {
+	policy networkpolicy.Policy
+	proxyPolicyScope
+}
+
+// mcpProxyPolicyContext 是一次 MCP HTTP proxy 授权所需的编译后策略与审计作用域。
+type mcpProxyPolicyContext struct {
+	policy networkpolicy.MCPProxyPolicy
+	proxyPolicyScope
 }
 
 // upstreamProxyIdentity 只由已验签的 session-ingress JWT claims 构造，作为
@@ -43,10 +52,38 @@ func (h *Handler) loadUpstreamProxyPolicyContext(ctx context.Context, identity u
 		return upstreamProxyPolicyContext{}, err
 	}
 	return upstreamProxyPolicyContext{
-		organizationUUID:      record.OrganizationUUID,
-		workspaceUUID:         record.WorkspaceUUID,
-		environmentExternalID: record.EnvironmentExternalID,
-		policy:                policy,
+		policy: policy,
+		proxyPolicyScope: proxyPolicyScope{
+			organizationUUID:      record.OrganizationUUID,
+			workspaceUUID:         record.WorkspaceUUID,
+			environmentExternalID: record.EnvironmentExternalID,
+		},
+	}, nil
+}
+
+// loadMCPProxyPolicyContext 为 MCP HTTP proxy 编译精确 URL 与 Environment
+// host 策略；原始 Agent Snapshot 不会越过该加载边界。
+func (h *Handler) loadMCPProxyPolicyContext(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
+	record, err := h.db.GetCodeSessionNetworkPolicyContext(
+		ctx,
+		identity.codeSessionExternalID,
+		identity.organizationUUID,
+		identity.workspaceUUID,
+	)
+	if err != nil {
+		return mcpProxyPolicyContext{}, err
+	}
+	policy, err := networkpolicy.ParseMCPProxyPolicy(record.EnvironmentConfig, record.AgentSnapshot)
+	if err != nil {
+		return mcpProxyPolicyContext{}, err
+	}
+	return mcpProxyPolicyContext{
+		policy: policy,
+		proxyPolicyScope: proxyPolicyScope{
+			organizationUUID:      record.OrganizationUUID,
+			workspaceUUID:         record.WorkspaceUUID,
+			environmentExternalID: record.EnvironmentExternalID,
+		},
 	}, nil
 }
 
@@ -54,7 +91,7 @@ func (h *Handler) loadUpstreamProxyPolicyContext(ctx context.Context, identity u
 // Environment networking 策略。拒绝时只向 relay 返回通用 framed 403，reason 与
 // 维度标识只进服务端审计日志；不记录 credential、query、header 或 body。
 func (h *Handler) authorizeUpstreamProxyTarget(ctx context.Context, identity upstreamProxyIdentity, target string) bool {
-	policyContext, err := h.loadPolicyContext(ctx, identity)
+	policyContext, err := h.loadUpstreamPolicyContext(ctx, identity)
 	attrs := []any{
 		"event", "upstream_proxy_policy",
 		"organization_uuid", identity.organizationUUID,

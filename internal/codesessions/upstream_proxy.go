@@ -239,11 +239,15 @@ func upstreamProxyCredentialsMatch(request upstreamProxyConnectRequest, expected
 func resolveUpstreamProxyTarget(ctx context.Context, target string, disableSSRFProtection bool) (string, error) {
 	// 即使临时关闭 SSRF 地址过滤，也继续限制为 443：当前协议只支持 HTTPS CONNECT，
 	// 不能把该开关扩展成任意端口的通用 TCP 转发器。
+	return resolveProxyTarget(ctx, target, disableSSRFProtection, true)
+}
+
+func resolveProxyTarget(ctx context.Context, target string, disableSSRFProtection bool, httpsOnly bool) (string, error) {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil || strings.TrimSpace(host) == "" {
 		return "", &upstreamProxyTargetError{status: http.StatusBadRequest, cause: errors.New("invalid CONNECT target")}
 	}
-	if port != "443" {
+	if strings.TrimSpace(port) == "" || (httpsOnly && port != "443") {
 		return "", &upstreamProxyTargetError{status: http.StatusForbidden, cause: errors.New("only HTTPS targets are allowed")}
 	}
 	// IP 字面量无需 DNS；默认必须是公网地址，临时开关开启时才原样放行。

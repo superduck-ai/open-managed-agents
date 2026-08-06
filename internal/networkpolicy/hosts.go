@@ -140,12 +140,27 @@ func NormalizeHost(raw string) (string, error) {
 	return ascii, nil
 }
 
-// hostMatcher 是编译后的 allowlist 只读索引：只在 newHostMatcher 构造阶段
-// 写入，构造完成后可供多个 goroutine 并发读取。
+// hostMatcher 是按 DNS label 倒序存储的 trie。例如 api.example.com 的路径是
+// root → com → example → api，这样遍历到 example 节点时即可判断
+// *.example.com。索引只在 newHostMatcher 构造阶段写入，构造完成后可供多个
+// goroutine 并发读取。
 type hostMatcher struct {
 	root *hostMatcherNode
 }
 
+// 每个节点的 children map 只表达下一层域名 label，保留完整的父子路径；不能按
+// 整棵树的深度共用 map，否则 example.com 与 example.org 下的同名子节点会冲突。
+// rules 只存在于一条规则的终止节点：key 为空表示任意有效端口，非空 key 表示
+// 指定端口；value 分开标记 apex exact 与子域 wildcard，避免二者借用彼此的端口。
+// 例如 example.com:443、*.example.com:8443、api.example.com:9443 会编译为：
+//
+//	root
+//	└── children["com"]
+//	    └── children["example"]
+//	        ├── rules["443"]  = exact
+//	        ├── rules["8443"] = wildcard
+//	        └── children["api"]
+//	            └── rules["9443"] = exact
 type hostMatcherNode struct {
 	children map[string]*hostMatcherNode
 	rules    map[string]hostMatchRule
@@ -176,10 +191,13 @@ func (m hostMatcher) match(host string, port string) bool {
 			return false
 		}
 		node = next
+		// 仍有 label 未消费时，当前节点只允许匹配 wildcard；因此
+		// *.example.com 可以匹配 api.example.com，但不会匹配 apex example.com。
 		if index > 0 && node.matchesWildcard(port) {
 			return true
 		}
 	}
+	// 所有 label 都已消费，只有终止节点的 exact 规则可以匹配 apex。
 	return node.matchesExact(port)
 }
 

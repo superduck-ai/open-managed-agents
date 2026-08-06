@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -504,6 +505,49 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 		EnvironmentConfig:     copyRaw(row.EnvironmentConfig),
 		AgentSnapshot:         copyRaw(row.AgentSnapshot),
 	}, nil
+}
+
+// GetCodeSessionVaultIDs loads parent-session vault_ids for an active code session
+// scoped to the authenticated organization/workspace.
+func (d *DB) GetCodeSessionVaultIDs(
+	ctx context.Context,
+	codeSessionExternalID string,
+	organizationUUID string,
+	workspaceUUID string,
+) ([]string, error) {
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	row, err := mapper.FindVaultIDs(
+		ctx,
+		strings.TrimSpace(organizationUUID),
+		strings.TrimSpace(workspaceUUID),
+		strings.TrimSpace(codeSessionExternalID),
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeVaultIDList(row.VaultIDs)
+}
+
+func decodeVaultIDList(raw []byte) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err != nil {
+		return nil, fmt.Errorf("decode vault_ids: %w", err)
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, error) {

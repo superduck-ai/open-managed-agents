@@ -152,7 +152,7 @@ func SealCredentialSecret(ctx context.Context, secretSvc *secrets.Service, crede
 		return fmt.Errorf("seal credential secret: %w", err)
 	}
 	credential.SecretEnvelope = &envelope
-	credential.SecretPayload = nil
+	clearCredentialSecretPayload(credential)
 	return nil
 }
 
@@ -173,6 +173,16 @@ func OpenCredentialSecret(ctx context.Context, secretSvc *secrets.Service, crede
 	}
 	credential.SecretPayload = plaintext
 	return nil
+}
+
+func clearCredentialSecretPayload(credential *db.VaultCredential) {
+	if credential == nil {
+		return
+	}
+	for i := range credential.SecretPayload {
+		credential.SecretPayload[i] = 0
+	}
+	credential.SecretPayload = nil
 }
 
 func requireSecretsService(secretSvc *secrets.Service) error {

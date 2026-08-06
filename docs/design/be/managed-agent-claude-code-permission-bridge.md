@@ -60,7 +60,7 @@ session config 继续通过现有字段传给 `environment-manager`：
 }
 ```
 
-`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数，因此本设计不改变 v0 stdin schema，也不修改 `environment-manager` 代码。MCP config file 保持 `0600`；代理验证 session-ingress JWT 与路径中的 Code Session ID，并要求 `mcp_url` 精确匹配该 Session Agent Snapshot 中的 MCP URL。转发前删除 OMA 的 `Authorization` / `X-Api-Key`，保留 `Mcp-Session-Id`、`Last-Event-ID`、content negotiation 等端到端 header。服务端凭证注入集中在独立 header injector 边界，当前默认不注入，后续可按已验签 claims、目标 URL 和 vault 写入真实上游凭证。
+`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数，因此本设计不改变 v0 stdin schema，也不修改 `environment-manager` 代码。MCP config file 保持 `0600`；代理验证 session-ingress JWT 与路径中的 Code Session ID，并要求 `mcp_url` 精确匹配该 Session Agent Snapshot 中的 MCP URL。转发前删除 OMA 的 `Authorization` / `X-Api-Key`，保留 `Mcp-Session-Id`、`Last-Event-ID`、content negotiation 等端到端 header。服务端凭证注入集中在 `injectMCPProxyHeaders`：`WithVaultSecrets` 接到 `vaults.Injector`，按真实 `mcp_url` 匹配 `static_bearer` 并写入上游 `Authorization`（详见 `docs/design/be/vault-runtime.md`）。
 
 ### 2.2 静态提示层
 

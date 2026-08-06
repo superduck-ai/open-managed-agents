@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aigateway"
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 )
 
@@ -71,6 +72,9 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.Storage.S3.AccessKeyID) == "" || strings.TrimSpace(cfg.Storage.S3.SecretAccessKey) == "" {
 		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
 	}
+	if err := aigateway.ValidateConfig(cfg.AnthropicUpstream.BaseURL, cfg.AnthropicUpstream.APIKey); err != nil {
+		return fmt.Errorf("anthropic_upstream: %w", err)
+	}
 	if err := modelmapping.Validate(cfg.AnthropicUpstream.ModelMappings); err != nil {
 		return fmt.Errorf("anthropic_upstream.model_mappings: %w", err)
 	}
@@ -87,6 +91,8 @@ func validatePositiveValues(cfg Config) error {
 	}{
 		{name: "storage.max_file_bytes", valid: cfg.Storage.MaxFileBytes > 0},
 		{name: "storage.workspace_limit_bytes", valid: cfg.Storage.WorkspaceLimitBytes > 0},
+		{name: "model_catalog.refresh_interval", valid: cfg.ModelCatalog.RefreshInterval > 0},
+		{name: "model_catalog.refresh_timeout", valid: cfg.ModelCatalog.RefreshTimeout > 0},
 		{name: "batch.worker_concurrency", valid: cfg.Batch.WorkerConcurrency > 0},
 		{name: "batch.max_requests", valid: cfg.Batch.MaxRequests > 0},
 		{name: "batch.max_body_bytes", valid: cfg.Batch.MaxBodyBytes > 0},

@@ -99,6 +99,13 @@ func TestAgentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
+	t.Run("failure model outside catalog", func(t *testing.T) {
+		body := `{"model":"not-in-catalog","name":"unknown model"}`
+		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+		defer resp.Body.Close()
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
 	t.Run("failure unreferenced mcp server when using mcp toolsets", func(t *testing.T) {
 		body := `{
 			"model":"claude-opus-4-6",

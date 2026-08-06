@@ -41,6 +41,7 @@ type yamlConfig struct {
 	Redis             RedisConfig             `yaml:"redis"`
 	Storage           StorageConfig           `yaml:"storage"`
 	AnthropicUpstream AnthropicUpstreamConfig `yaml:"anthropic_upstream"`
+	ModelCatalog      ModelCatalogConfig      `yaml:"model_catalog"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
@@ -94,6 +95,7 @@ func newYAMLConfig() yamlConfig {
 		Redis:             defaults.Redis,
 		Storage:           defaults.Storage,
 		AnthropicUpstream: defaults.AnthropicUpstream,
+		ModelCatalog:      defaults.ModelCatalog,
 		Batch:             defaults.Batch,
 		E2B:               defaults.E2B,
 		EnvironmentRunner: defaults.EnvironmentRunner,
@@ -133,6 +135,7 @@ func (input yamlConfig) resolve() Config {
 		Redis:             input.Redis,
 		Storage:           input.Storage,
 		AnthropicUpstream: input.AnthropicUpstream,
+		ModelCatalog:      input.ModelCatalog,
 		Batch:             input.Batch,
 		E2B:               input.E2B,
 		EnvironmentRunner: input.EnvironmentRunner,

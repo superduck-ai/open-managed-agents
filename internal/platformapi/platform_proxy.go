@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aigateway"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
@@ -26,6 +26,7 @@ type messagesRewriteFields struct {
 type rawJSONEnvelope map[string]json.RawMessage
 
 func handleProxyMessages(cfg config.Config) http.HandlerFunc {
+	client := aigateway.NewHTTPClient(nil, 0)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := visibleOrgUUID(w, r); !ok {
 			return
@@ -61,7 +62,7 @@ func handleProxyMessages(cfg config.Config) http.HandlerFunc {
 		upstreamReq.Header.Del("Host")
 		upstreamReq.Header.Set("X-API-Key", strings.TrimSpace(cfg.AnthropicUpstream.APIKey))
 
-		upstreamRes, err := http.DefaultClient.Do(upstreamReq)
+		upstreamRes, err := client.Do(upstreamReq)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": err.Error()})
 			return
@@ -126,16 +127,10 @@ func rewriteMappedModel(body []byte, mappings map[string]string) ([]byte, error)
 }
 
 func anthropicMessagesEndpointFromConfig(cfg config.Config) (string, error) {
-	baseURL := strings.TrimSpace(cfg.AnthropicUpstream.BaseURL)
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com"
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
+	if err := aigateway.ValidateConfig(cfg.AnthropicUpstream.BaseURL, cfg.AnthropicUpstream.APIKey); err != nil {
 		return "", err
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/v1/messages"
-	return parsed.String(), nil
+	return aigateway.Endpoint(cfg.AnthropicUpstream.BaseURL, "v1/messages", "")
 }
 
 func proxyMessagesWantsStream(body []byte) bool {

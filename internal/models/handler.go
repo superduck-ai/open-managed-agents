@@ -1,36 +1,55 @@
 package models
 
 import (
-	"maps"
+	"errors"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
-	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/samber/lo"
 )
 
 type Handler struct {
-	router        chi.Router
-	modelMappings map[string]string
+	router  chi.Router
+	catalog modelcatalog.Reader
+	logger  *slog.Logger
 }
 
 type listResponse struct {
-	Data    []map[string]any `json:"data"`
-	HasMore bool             `json:"has_more"`
-	FirstID string           `json:"first_id"`
-	LastID  string           `json:"last_id"`
+	Data    []modelResponse `json:"data"`
+	HasMore bool            `json:"has_more"`
+	FirstID string          `json:"first_id"`
+	LastID  string          `json:"last_id"`
 }
 
-func NewHandler(upstream config.AnthropicUpstreamConfig) *Handler {
-	h := &Handler{modelMappings: upstream.ModelMappings}
+type modelResponse struct {
+	ID             string                    `json:"id"`
+	Capabilities   modelcatalog.Capabilities `json:"capabilities,omitempty"`
+	CreatedAt      string                    `json:"created_at,omitempty"`
+	DisplayName    string                    `json:"display_name"`
+	MaxInputTokens *int                      `json:"max_input_tokens,omitempty"`
+	MaxTokens      *int                      `json:"max_tokens,omitempty"`
+	Type           string                    `json:"type"`
+}
+
+type listParams struct {
+	AfterID  string
+	BeforeID string
+	Limit    int
+}
+
+func NewHandler(catalog modelcatalog.Reader, logger *slog.Logger) *Handler {
+	h := &Handler{catalog: catalog, logger: logging.LoggerOrDefault(logger)}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
 	router.Get("/", h.list)
+	router.Get("/*", h.retrieve)
 	h.router = router
 	return h
 }
@@ -43,171 +62,133 @@ func notFound(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
 }
 
-func (h *Handler) list(w http.ResponseWriter, _ *http.Request) {
-	models := resolvePlatformModels(buildPlatformModels(), h.modelMappings)
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	params, err := parseListParams(r)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		return
+	}
+	snapshot, ok := h.loadSnapshot(w, r)
+	if !ok {
+		return
+	}
+	models, hasMore, err := paginateModels(snapshot.Models, params)
+	if err != nil {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		return
+	}
+
+	data := make([]modelResponse, 0, len(models))
+	for _, model := range models {
+		data = append(data, modelResponseFromCatalog(model))
+	}
 	firstID := ""
 	lastID := ""
 	if len(models) > 0 {
-		firstID, _ = models[0]["id"].(string)
-		lastID, _ = models[len(models)-1]["id"].(string)
+		firstID = models[0].ID
+		lastID = models[len(models)-1].ID
 	}
 	httpapi.WriteJSON(w, http.StatusOK, listResponse{
-		Data:    models,
-		HasMore: false,
+		Data:    data,
+		HasMore: hasMore,
 		FirstID: firstID,
 		LastID:  lastID,
 	})
 }
 
-func resolvePlatformModels(models []map[string]any, mappings map[string]string) []map[string]any {
-	resolved := lo.Map(models, func(model map[string]any, _ int) map[string]any {
-		out := maps.Clone(model)
-		modelID, _ := out["id"].(string)
-		sourceID := strings.TrimSpace(modelID)
-		effectiveID := modelmapping.Resolve(modelID, mappings)
-		out["id"] = effectiveID
-		if effectiveID != sourceID {
-			out["display_name"] = effectiveID
+func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request) {
+	snapshot, ok := h.loadSnapshot(w, r)
+	if !ok {
+		return
+	}
+	modelID := strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	for _, model := range snapshot.Models {
+		if model.ID == modelID {
+			httpapi.WriteJSON(w, http.StatusOK, modelResponseFromCatalog(model))
+			return
 		}
-		return out
-	})
-	return lo.UniqBy(resolved, func(model map[string]any) string {
-		modelID, _ := model["id"].(string)
-		return modelID
-	})
+	}
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Model not found"))
 }
 
-func buildPlatformModels() []map[string]any {
-	return []map[string]any{
-		platformModel("claude-fable-5", "Claude Fable 5", "2026-06-07T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  false,
-			Effort:           true,
-			XHighEffort:      true,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-opus-4-8", "Claude Opus 4.8", "2026-05-28T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  false,
-			Effort:           true,
-			XHighEffort:      true,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-opus-4-7", "Claude Opus 4.7", "2026-04-14T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  false,
-			Effort:           true,
-			XHighEffort:      true,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-sonnet-4-6", "Claude Sonnet 4.6", "2026-02-17T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  true,
-			Effort:           true,
-			XHighEffort:      false,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-opus-4-6", "Claude Opus 4.6", "2026-02-04T00:00:00Z", 1000000, 128000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   true,
-			AdaptiveThinking: true,
-			ThinkingEnabled:  true,
-			Effort:           true,
-			XHighEffort:      false,
-			MaxEffort:        true,
-		}),
-		platformModel("claude-opus-4-5-20251101", "Claude Opus 4.5", "2025-11-24T00:00:00Z", 200000, 64000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   false,
-			AdaptiveThinking: false,
-			ThinkingEnabled:  true,
-			Effort:           true,
-			XHighEffort:      false,
-			MaxEffort:        false,
-		}),
-		platformModel("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "2025-10-15T00:00:00Z", 200000, 64000, platformModelCapabilities{
-			CodeExecution:    false,
-			CompactContext:   false,
-			AdaptiveThinking: false,
-			ThinkingEnabled:  true,
-			Effort:           false,
-			XHighEffort:      false,
-			MaxEffort:        false,
-		}),
-		platformModel("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "2025-09-29T00:00:00Z", 1000000, 64000, platformModelCapabilities{
-			CodeExecution:    true,
-			CompactContext:   false,
-			AdaptiveThinking: false,
-			ThinkingEnabled:  true,
-			Effort:           false,
-			XHighEffort:      false,
-			MaxEffort:        false,
-		}),
+func (h *Handler) loadSnapshot(w http.ResponseWriter, r *http.Request) (modelcatalog.Snapshot, bool) {
+	if h.catalog == nil {
+		h.logger.WarnContext(r.Context(), "model catalog is not configured")
+		writeCatalogUnavailable(w, r)
+		return modelcatalog.Snapshot{}, false
+	}
+	snapshot, err := h.catalog.Snapshot(r.Context())
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "load model catalog snapshot", "error", err)
+		writeCatalogUnavailable(w, r)
+		return modelcatalog.Snapshot{}, false
+	}
+	return snapshot, true
+}
+
+func writeCatalogUnavailable(w http.ResponseWriter, r *http.Request) {
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "Model catalog is unavailable"))
+}
+
+func modelResponseFromCatalog(model modelcatalog.Model) modelResponse {
+	return modelResponse{
+		ID:             model.ID,
+		Capabilities:   model.Capabilities,
+		CreatedAt:      model.CreatedAt,
+		DisplayName:    model.DisplayName,
+		MaxInputTokens: model.MaxInputTokens,
+		MaxTokens:      model.MaxTokens,
+		Type:           "model",
 	}
 }
 
-type platformModelCapabilities struct {
-	CodeExecution    bool
-	CompactContext   bool
-	AdaptiveThinking bool
-	ThinkingEnabled  bool
-	Effort           bool
-	XHighEffort      bool
-	MaxEffort        bool
+func parseListParams(r *http.Request) (listParams, error) {
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 1000 {
+			return listParams{}, errors.New("limit must be between 1 and 1000")
+		}
+		limit = parsed
+	}
+	params := listParams{
+		AfterID:  r.URL.Query().Get("after_id"),
+		BeforeID: r.URL.Query().Get("before_id"),
+		Limit:    limit,
+	}
+	if params.AfterID != "" && params.BeforeID != "" {
+		return listParams{}, errors.New("after_id and before_id cannot be used together")
+	}
+	return params, nil
 }
 
-func platformModel(id string, displayName string, createdAt string, maxInputTokens int, maxTokens int, capabilities platformModelCapabilities) map[string]any {
-	return map[string]any{
-		"type":             "model",
-		"id":               id,
-		"display_name":     displayName,
-		"created_at":       createdAt,
-		"max_input_tokens": maxInputTokens,
-		"max_tokens":       maxTokens,
-		"capabilities": map[string]any{
-			"batch":              map[string]any{"supported": true},
-			"citations":          map[string]any{"supported": true},
-			"code_execution":     map[string]any{"supported": capabilities.CodeExecution},
-			"context_management": platformContextManagementCapabilities(capabilities.CompactContext),
-			"effort":             platformEffortCapabilities(capabilities),
-			"image_input":        map[string]any{"supported": true},
-			"pdf_input":          map[string]any{"supported": true},
-			"structured_outputs": map[string]any{"supported": true},
-			"thinking": map[string]any{
-				"supported": true,
-				"types": map[string]any{
-					"enabled":  map[string]any{"supported": capabilities.ThinkingEnabled},
-					"adaptive": map[string]any{"supported": capabilities.AdaptiveThinking},
-				},
-			},
-		},
+func paginateModels(models []modelcatalog.Model, params listParams) ([]modelcatalog.Model, bool, error) {
+	start := 0
+	end := len(models)
+	if params.AfterID != "" {
+		index := modelIndex(models, params.AfterID)
+		if index < 0 {
+			return nil, false, errors.New("after_id does not match an available model")
+		}
+		start = index + 1
+	} else if params.BeforeID != "" {
+		index := modelIndex(models, params.BeforeID)
+		if index < 0 {
+			return nil, false, errors.New("before_id does not match an available model")
+		}
+		end = index
+		start = max(0, end-params.Limit)
+		return models[start:end], start > 0, nil
 	}
+	end = min(end, start+params.Limit)
+	return models[start:end], end < len(models), nil
 }
 
-func platformContextManagementCapabilities(compactSupported bool) map[string]any {
-	return map[string]any{
-		"supported":                true,
-		"clear_tool_uses_20250919": map[string]any{"supported": true},
-		"clear_thinking_20251015":  map[string]any{"supported": true},
-		"compact_20260112":         map[string]any{"supported": compactSupported},
+func modelIndex(models []modelcatalog.Model, id string) int {
+	for index, model := range models {
+		if model.ID == id {
+			return index
+		}
 	}
-}
-
-func platformEffortCapabilities(capabilities platformModelCapabilities) map[string]any {
-	return map[string]any{
-		"supported": capabilities.Effort,
-		"low":       map[string]any{"supported": capabilities.Effort},
-		"medium":    map[string]any{"supported": capabilities.Effort},
-		"high":      map[string]any{"supported": capabilities.Effort},
-		"xhigh":     map[string]any{"supported": capabilities.XHighEffort},
-		"max":       map[string]any{"supported": capabilities.MaxEffort},
-	}
+	return -1
 }

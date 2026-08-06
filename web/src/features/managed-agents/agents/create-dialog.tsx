@@ -14,6 +14,8 @@ import {
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { useWorkspace } from '../../../shared/workspaces/context';
+import { ModelCatalogSelect } from '../../model-catalog/ModelCatalogSelect';
+import { useModelCatalog } from '../../model-catalog/hooks';
 import clsx from 'clsx';
 import { ChevronDown, Loader2, Sparkles, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -32,6 +34,7 @@ import { useEffectiveModelMappings } from '../modelMappings';
 import { type AgentApiResponse, type AgentTemplate, type CodeFormat, type CreateAgentInput } from '../types';
 import { errorMessage, navigateToAgentConfig } from '../utils';
 import { CreateDialogConfigEditor } from './create-dialog-config-editor';
+import { agentModelName } from './model';
 
 type CreateAgentDialogProps = {
   workspaceId: string;
@@ -102,6 +105,7 @@ function CreateAgentDialogContent({
   modelMappings,
 }: CreateAgentDialogProps & { orgUuid?: string; modelMappings: Record<string, string> }) {
   const { msg, locale } = useI18n();
+  const modelCatalog = useModelCatalog(orgUuid);
   const [startingPointOpen, setStartingPointOpen] = useState(true);
   const [mode, setMode] = useState<'describe' | 'template'>('describe');
   const [selectedTemplateId, setSelectedTemplateId] = useState(blankAgentTemplate.id);
@@ -109,10 +113,10 @@ function CreateAgentDialogContent({
   const [description, setDescription] = useState('');
   const [generatedConfig, setGeneratedConfig] = useState<CreateAgentInput | null>(null);
   const [configInput, setConfigInput] = useState<CreateAgentInput>(() =>
-    createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings),
+    createDialogAgentConfig(blankAgentTemplate, locale),
   );
   const [configText, setConfigText] = useState(() =>
-    createAgentConfigText(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings), 'YAML'),
+    createAgentConfigText(createDialogAgentConfig(blankAgentTemplate, locale), 'YAML'),
   );
   const [configError, setConfigError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -126,7 +130,9 @@ function CreateAgentDialogContent({
     mode === 'describe'
       ? generatedConfig?.name?.trim() || msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')
       : templateTitle(selectedTemplate, msg);
-  const createDisabled = Boolean(configError) || isGenerating || isCreating;
+  const selectedModelID = agentModelName(configInput.model);
+  const selectedModelAvailable = modelCatalog.modelIDs.includes(selectedModelID);
+  const createDisabled = Boolean(configError) || !selectedModelAvailable || isGenerating || isCreating;
 
   useEffect(() => {
     configInputRef.current = configInput;
@@ -138,11 +144,26 @@ function CreateAgentDialogContent({
   }, []);
 
   const hydrateConfig = (input: CreateAgentInput) => {
-    setConfigInput(input);
-    setConfigText(createAgentConfigText(input, format));
+    const modelID =
+      agentModelName(input.model) || agentModelName(configInputRef.current.model) || modelCatalog.defaultModelID;
+    const nextInput = { ...input, model: modelID };
+    configInputRef.current = nextInput;
+    setConfigInput(nextInput);
+    setConfigText(createAgentConfigText(nextInput, format));
     setConfigError(null);
     setCreateError(null);
   };
+
+  useEffect(() => {
+    const defaultModelID = modelCatalog.defaultModelID;
+    if (!defaultModelID || agentModelName(configInputRef.current.model)) {
+      return;
+    }
+    const nextInput = { ...configInputRef.current, model: defaultModelID };
+    configInputRef.current = nextInput;
+    setConfigInput(nextInput);
+    setConfigText(createAgentConfigText(nextInput, format));
+  }, [format, modelCatalog.defaultModelID]);
 
   const parseCurrentConfig = () => {
     const parsed = parseCreateAgentConfigText(configText, format, configInput);
@@ -184,11 +205,12 @@ function CreateAgentDialogContent({
       return;
     }
     setMode(nextMode);
+    const modelID = agentModelName(configInputRef.current.model) || modelCatalog.defaultModelID;
     if (nextMode === 'describe') {
       setGeneratedConfig(null);
-      hydrateConfig(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings));
+      hydrateConfig(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelID));
     } else {
-      hydrateConfig(createDialogAgentConfig(selectedTemplate, locale, undefined, modelMappings));
+      hydrateConfig(createDialogAgentConfig(selectedTemplate, locale, undefined, modelID));
     }
     setCreateError(null);
   };
@@ -197,7 +219,14 @@ function CreateAgentDialogContent({
     setSelectedTemplateId(template.id);
     setMode('template');
     setGeneratedConfig(null);
-    hydrateConfig(createDialogAgentConfig(template, locale, undefined, modelMappings));
+    hydrateConfig(
+      createDialogAgentConfig(
+        template,
+        locale,
+        undefined,
+        agentModelName(configInputRef.current.model) || modelCatalog.defaultModelID,
+      ),
+    );
     setStartingPointOpen(false);
   };
 
@@ -212,6 +241,10 @@ function CreateAgentDialogContent({
       );
       return;
     }
+    if (!selectedModelAvailable) {
+      setCreateError(msg('managedAgents.agents.createDialog.selectModel', 'Select an available model first.'));
+      return;
+    }
     const baseConfig = parseCurrentConfig() ?? configInput;
     const controller = new AbortController();
     generateAbortRef.current?.abort();
@@ -224,6 +257,7 @@ function CreateAgentDialogContent({
         workspaceId,
         description: prompt,
         currentConfig: baseConfig,
+        availableModelIDs: modelCatalog.modelIDs,
         modelMappings,
         signal: controller.signal,
         locale,
@@ -245,6 +279,10 @@ function CreateAgentDialogContent({
   const handleCreate = async () => {
     const parsed = parseCurrentConfig();
     if (!parsed) {
+      return;
+    }
+    if (!modelCatalog.modelIDs.includes(agentModelName(parsed.model))) {
+      setCreateError(msg('managedAgents.agents.createDialog.selectModel', 'Select an available model first.'));
       return;
     }
     setIsCreating(true);
@@ -382,7 +420,7 @@ function CreateAgentDialogContent({
                           type="submit"
                           variant="secondary"
                           size="sm"
-                          disabled={!description.trim() || isGenerating}
+                          disabled={!description.trim() || !selectedModelAvailable || isGenerating}
                           className="rounded-lg px-4 text-[13px] font-semibold"
                         >
                           {isGenerating ? (
@@ -414,6 +452,24 @@ function CreateAgentDialogContent({
               </Tabs>
             </CollapsibleContent>
           </Collapsible>
+
+          <ModelCatalogSelect
+            models={modelCatalog.models}
+            value={selectedModelID}
+            onValueChange={(modelID) => {
+              const parsed = parseCurrentConfig();
+              if (!parsed) {
+                return;
+              }
+              hydrateConfig({ ...parsed, model: modelID });
+            }}
+            loading={modelCatalog.isPending}
+            error={modelCatalog.isError}
+            stale={Boolean(modelCatalog.catalogState?.stale)}
+            disabled={isCreating || isGenerating}
+            label={msg('analytics.table.model', 'Model')}
+            className="mt-4"
+          />
 
           <CreateDialogConfigEditor
             format={format}

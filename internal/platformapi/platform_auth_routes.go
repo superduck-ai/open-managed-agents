@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 
 	"github.com/go-chi/chi/v5"
@@ -81,13 +82,13 @@ type platformMagicLinkService interface {
 	ResolvePlatformSessionIdentity(ctx context.Context, input platformsession.CreateInput) (platformsession.Session, error)
 }
 
-func RegisterPlatformEmailLoginRoutes(r chi.Router, store OrganizationStore, authService platformMagicLinkService, sessions platformsession.Store) {
+func RegisterPlatformEmailLoginRoutes(r chi.Router, store OrganizationStore, authService platformMagicLinkService, sessions platformsession.Store, catalog modelcatalog.Reader) {
 	r.Get("/api/auth/login_methods", handleAuthLoginMethods)
 	r.Post("/api/auth/send_magic_link", handleSendMagicLink)
-	r.Post("/api/auth/verify_magic_link", handleVerifyMagicLink(store, authService, sessions, false))
+	r.Post("/api/auth/verify_magic_link", handleVerifyMagicLink(store, authService, sessions, catalog, false))
 	r.Post("/api/auth/logout", handleWebLogout(store, sessions))
 	r.Post("/auth/send_magic_link", handleSendMagicLink)
-	r.Post("/auth/verify_magic_link", handleVerifyMagicLink(store, authService, sessions, true))
+	r.Post("/auth/verify_magic_link", handleVerifyMagicLink(store, authService, sessions, catalog, true))
 	r.Post("/auth/logout", handleAndroidLogout(store, sessions))
 }
 
@@ -103,7 +104,7 @@ func handleSendMagicLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, SendMagicLinkResponse{Sent: true})
 }
 
-func handleVerifyMagicLink(store OrganizationStore, authService platformMagicLinkService, sessions platformsession.Store, androidShape bool) http.HandlerFunc {
+func handleVerifyMagicLink(store OrganizationStore, authService platformMagicLinkService, sessions platformsession.Store, catalog modelcatalog.Reader, androidShape bool) http.HandlerFunc {
 	magicLinkStore, _ := store.(platformMagicLinkStore)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if magicLinkStore == nil || authService == nil || sessions == nil {
@@ -118,7 +119,7 @@ func handleVerifyMagicLink(store OrganizationStore, authService platformMagicLin
 			return
 		}
 
-		account, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), magicLinkStore, userUUID, orgUUID)
+		account, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), magicLinkStore, userUUID, orgUUID, loadPlatformModelCatalog(r.Context(), catalog))
 		if err != nil {
 			internalError(w, "failed to load verified account")
 			return

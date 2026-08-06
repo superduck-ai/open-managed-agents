@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
 
 	"github.com/go-chi/chi/v5"
@@ -31,10 +33,18 @@ const (
 var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	logger *slog.Logger
-	router chi.Router
+	cfg     config.Config
+	db      *db.DB
+	catalog modelcatalog.Reader
+	logger  *slog.Logger
+	router  chi.Router
+}
+
+type HandlerDeps struct {
+	Config       config.Config
+	DB           *db.DB
+	ModelCatalog modelcatalog.Reader
+	Logger       *slog.Logger
 }
 
 type agentResponse struct {
@@ -85,9 +95,14 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
-	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, logger: logger}
+func NewHandler(deps HandlerDeps) *Handler {
+	logger := logging.LoggerOrDefault(deps.Logger)
+	h := &Handler{
+		cfg:     deps.Config,
+		db:      deps.DB,
+		catalog: deps.ModelCatalog,
+		logger:  logger,
+	}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -113,6 +128,35 @@ func notFound(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
 }
 
+func (h *Handler) writeStateError(w http.ResponseWriter, r *http.Request, err error) {
+	if modelcatalog.IsUnavailable(err) {
+		h.logger.ErrorContext(r.Context(), "write agent state", "error", err)
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusServiceUnavailable, "api_error", "Model catalog is unavailable"))
+		return
+	}
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+}
+
+func (h *Handler) validateModelSelection(ctx context.Context, raw json.RawMessage) error {
+	if h.catalog == nil {
+		return modelcatalog.ErrUnavailable
+	}
+	var model struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &model); err != nil || model.ID == "" {
+		return errors.New("model.id is required")
+	}
+	err := h.catalog.ValidateModel(ctx, model.ID)
+	if modelcatalog.IsUnknownModel(err) {
+		return errors.New("model.id is not available from the configured model catalog")
+	}
+	if err != nil {
+		return fmt.Errorf("%w: validate model selection", modelcatalog.ErrUnavailable)
+	}
+	return nil
+}
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
@@ -132,7 +176,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := h.stateFromCreate(r, principal, agentID, fields)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		h.writeStateError(w, r, err)
 		return
 	}
 	versionID, err := ids.New("agentver_")
@@ -332,7 +376,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 	}
 	nextState, err := h.stateFromUpdate(r, principal, current, fields)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
+		h.writeStateError(w, r, err)
 		return
 	}
 	versionID, err := ids.New("agentver_")
@@ -454,7 +498,11 @@ func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, age
 	if err != nil {
 		return agentState{}, err
 	}
-	if state.Model, err = httpapi.MarshalRaw(model); err != nil {
+	state.Model, err = httpapi.MarshalRaw(model)
+	if err != nil {
+		return agentState{}, err
+	}
+	if err := h.validateModelSelection(r.Context(), state.Model); err != nil {
 		return agentState{}, err
 	}
 	if state.Description, err = parseNullableStringField(fields, "description"); err != nil {
@@ -513,7 +561,14 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 		if err != nil {
 			return agentState{}, err
 		}
-		if state.Model, err = httpapi.MarshalRaw(mapped); err != nil {
+		if mapped.ID == model.ID && mapped.Effort == nil && modelObjectOmitsEffort(raw) {
+			mapped.Effort = model.Effort
+		}
+		state.Model, err = httpapi.MarshalRaw(mapped)
+		if err != nil {
+			return agentState{}, err
+		}
+		if err := h.validateModelSelection(r.Context(), state.Model); err != nil {
 			return agentState{}, err
 		}
 	}
@@ -756,13 +811,19 @@ func parseRequiredVersion(raw json.RawMessage) (int, error) {
 }
 
 type agentModelInput struct {
-	ID    *string `json:"id"`
-	Speed *string `json:"speed"`
+	ID     *string         `json:"id"`
+	Effort json.RawMessage `json:"effort"`
+	Speed  *string         `json:"speed"`
+}
+
+type agentModelEffort struct {
+	Type string `json:"type"`
 }
 
 type normalizedAgentModel struct {
-	ID    string `json:"id"`
-	Speed string `json:"speed"`
+	ID     string            `json:"id"`
+	Effort *agentModelEffort `json:"effort,omitempty"`
+	Speed  string            `json:"speed"`
 }
 
 func normalizeModel(raw json.RawMessage, mappings map[string]string) (normalizedAgentModel, error) {
@@ -795,6 +856,13 @@ func normalizeModel(raw json.RawMessage, mappings map[string]string) (normalized
 		ID:    modelID,
 		Speed: "standard",
 	}
+	if len(model.Effort) > 0 {
+		effort, err := normalizeModelEffort(model.Effort)
+		if err != nil {
+			return normalizedAgentModel{}, err
+		}
+		normalized.Effort = effort
+	}
 	if model.Speed != nil {
 		if *model.Speed != "standard" && *model.Speed != "fast" {
 			return normalizedAgentModel{}, errors.New("model.speed must be standard or fast")
@@ -802,6 +870,39 @@ func normalizeModel(raw json.RawMessage, mappings map[string]string) (normalized
 		normalized.Speed = *model.Speed
 	}
 	return normalized, nil
+}
+
+func normalizeModelEffort(raw json.RawMessage) (*agentModelEffort, error) {
+	var level string
+	if err := json.Unmarshal(raw, &level); err == nil {
+		if !validModelEffort(level) {
+			return nil, errors.New("model.effort must be low, medium, high, xhigh, or max")
+		}
+		return &agentModelEffort{Type: level}, nil
+	}
+	var effort agentModelEffort
+	if err := json.Unmarshal(raw, &effort); err != nil || !validModelEffort(effort.Type) {
+		return nil, errors.New("model.effort.type must be low, medium, high, xhigh, or max")
+	}
+	return &effort, nil
+}
+
+func validModelEffort(level string) bool {
+	switch level {
+	case "low", "medium", "high", "xhigh", "max":
+		return true
+	default:
+		return false
+	}
+}
+
+func modelObjectOmitsEffort(raw json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return false
+	}
+	_, hasEffort := fields["effort"]
+	return !hasEffort
 }
 
 func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {

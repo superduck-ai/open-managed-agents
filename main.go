@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
@@ -45,7 +46,6 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-
 	database, err := db.Open(ctx, cfg, logger.With("component", "database"))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -62,6 +62,27 @@ func run(logger *slog.Logger) error {
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
+	catalog, err := modelcatalog.NewService(
+		ctx,
+		modelcatalog.NewPostgresStore(database),
+		modelcatalog.NewHTTPUpstream(cfg.AnthropicUpstream),
+		modelcatalog.Options{
+			DefaultModelID:  cfg.ModelCatalog.DefaultModelID,
+			RefreshInterval: cfg.ModelCatalog.RefreshInterval,
+			RefreshTimeout:  cfg.ModelCatalog.RefreshTimeout,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("initialize model catalog: %w", err)
+	}
+	catalog.StartRefreshLoop(ctx, func(refreshErr error) {
+		logger.Warn("model catalog refresh failed", "error", refreshErr)
+	})
+	go func() {
+		if refreshErr := catalog.Refresh(ctx); refreshErr != nil {
+			logger.Warn("initial model catalog refresh failed", "error", refreshErr)
+		}
+	}()
 	platformSessions, err := platformsession.NewRedisStore(ctx, cfg.Redis.URL)
 	if err != nil {
 		return fmt.Errorf("open platform session store: %w", err)
@@ -125,6 +146,7 @@ func run(logger *slog.Logger) error {
 			DB:                     database,
 			ObjectStore:            objectStore,
 			Logger:                 logger,
+			ModelCatalog:           catalog,
 			PlatformStore:          platformSessions,
 			CodeSessionCredentials: codeSessionCredentials,
 			SandboxTimeoutExtender: sandboxProvider,
@@ -139,7 +161,7 @@ func run(logger *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("claude api server listening", "addr", cfg.Server.Addr)
+		logger.Info("Open Managed Agents API server listening", "addr", cfg.Server.Addr)
 		errCh <- server.ListenAndServe()
 	}()
 

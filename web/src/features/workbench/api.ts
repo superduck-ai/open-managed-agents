@@ -79,12 +79,29 @@ export type WorkbenchModel = {
   model_name: string;
   display_name?: string;
   name?: string;
+  description?: string;
   model_group?: string;
   max_tokens?: number;
   max_context_window?: number;
+  capabilities?: Record<string, unknown>;
+  supports_batch?: boolean;
+  supports_citations?: boolean;
+  supports_code_execution?: boolean;
+  supports_context_management?: boolean;
+  supports_clear_thinking?: boolean;
+  supports_clear_tool_uses?: boolean;
+  supports_compact_context?: boolean;
+  supports_image_input?: boolean;
+  supports_pdf_input?: boolean;
+  supports_structured_outputs?: boolean;
   supports_thinking?: boolean;
+  supports_thinking_enabled?: boolean;
+  supports_auto_thinking?: boolean;
   supports_tool_use?: boolean;
   supports_vision?: boolean;
+  supports_images?: boolean;
+  supports_documents?: boolean;
+  supported_effort_levels?: string[];
   [key: string]: unknown;
 };
 
@@ -107,6 +124,12 @@ export type WorkbenchModelsResponse = {
     max_tokens_to_sample?: number;
   };
   models?: WorkbenchModel[];
+  model_catalog?: {
+    stale?: boolean;
+    default_available?: boolean;
+    last_attempt_at?: string;
+    last_success_at?: string;
+  };
 };
 
 export type WorkbenchKVResponse = {

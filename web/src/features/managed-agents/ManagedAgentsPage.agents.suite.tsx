@@ -152,7 +152,7 @@ export function registerManagedAgentsAgentsTests() {
         button: /Incident commander/i,
         yaml: [
           'name: Incident commander',
-          'model: claude-opus-4-8',
+          'model: claude-sonnet-4-6',
           'https://api.githubcopilot.com/mcp/',
           'mcp_server_name: github',
         ],
@@ -273,6 +273,10 @@ export function registerManagedAgentsAgentsTests() {
     setAgentConfigEditorValue(dialog, '{', 'Agent config JSON');
     expect(within(dialog).getByText(/JSON is not valid/i)).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Create agent' }).hasAttribute('disabled')).toBe(true);
+
+    await selectManagedComboboxOption(dialog, 'Model', /Claude Opus 4\.8/);
+    expect(within(dialog).getByText(/JSON is not valid/i)).toBeTruthy();
+    expect(within(dialog).getByRole('combobox', { name: 'Model' }).textContent).toContain('Claude Sonnet 4.6');
 
     setAgentConfigEditorValue(
       dialog,
@@ -519,7 +523,7 @@ export function registerManagedAgentsAgentsTests() {
     const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
     await waitFor(() => expect(within(section).getByRole('button', { name: /Tool permissions\s+2/ })).toBeTruthy());
     const directoryStatus = within(section).getByRole('status');
-    expect(directoryStatus.textContent).toBe('MCP tool metadata loaded.');
+    expect(directoryStatus.textContent).toContain('MCP tool metadata loaded.');
     expect(directoryStatus.parentElement?.getAttribute('aria-busy')).toBe('false');
     const cards = Array.from(section.querySelectorAll<HTMLElement>('[data-slot="card"]'));
     expect(cards).toHaveLength(3);
@@ -578,7 +582,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(await screen.findByRole('heading', { name: 'Private MCP agent', hidden: true })).toBeTruthy();
     const section = screen.getByRole('heading', { name: 'MCPs and tools' }).closest('section') as HTMLElement;
     await waitFor(() =>
-      expect(within(section).getByRole('status').textContent).toBe('MCP tool metadata is unavailable.'),
+      expect(within(section).getByRole('status').textContent).toContain('MCP tool metadata is unavailable.'),
     );
     const permissionsButton = within(section).getByRole('button', {
       name: /Private Docs Tool permissions — Always ask/,
@@ -1365,6 +1369,30 @@ export function registerManagedAgentsAgentsTests() {
     );
     expect(updateRequest?.body?.version).toBe(3);
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit agent' })).toBeNull());
+  });
+
+  test('does not save an unavailable model with Cmd+S', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit_shortcut_invalid');
+    const api = mockAgentsApi([{ id: 'agent_edit_shortcut_invalid', name: 'Invalid shortcut agent', version: 3 }]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Invalid shortcut agent' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+    setAgentConfigEditorValue(
+      dialog,
+      'name: Invalid shortcut agent\nmodel: provider/not-in-catalog\ntools: []\nmcp_servers: []\nskills: []',
+      'Agent configuration',
+    );
+
+    fireEvent.keyDown(document, { key: 's', metaKey: true });
+
+    expect(await within(dialog).findByText('Select an available model first.')).toBeTruthy();
+    expect(
+      api.requests.some(
+        (request) => request.method === 'POST' && request.url === '/v1/agents/agent_edit_shortcut_invalid?beta=true',
+      ),
+    ).toBe(false);
   });
 
   test('queries agents for the active workspace and refetches when it changes', async () => {

@@ -194,7 +194,7 @@ export function SkillsPage({ initialCreateOpen = false, initialSkillId }: Skills
           <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">
             {msg(
               'skills.description',
-              'Skills are repeatable and customizable instructions that Claude API can follow.',
+              'Skills are repeatable and customizable instructions that an agent can follow.',
               {
                 workspaceName,
               },

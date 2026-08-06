@@ -211,6 +211,21 @@ export function registerManagedAgentsQuickstartTests() {
     expect(screen.queryByRole('button', { name: /数据分析师/i })).toBeNull();
   });
 
+  test('selects the first catalog model when no configured default is available', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    const modelCatalog = {
+      models: [
+        { model_name: 'gateway/alpha', display_name: 'Gateway Alpha' },
+        { model_name: 'gateway/beta', display_name: 'Gateway Beta' },
+      ],
+      model_catalog: { stale: false, default_available: false },
+    };
+    mockAgentsApi([], { modelCatalog });
+    render(<ManagedAgentsPage section="quickstart" />, undefined, { modelCatalog });
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Model' }).textContent).toContain('Gateway Alpha'));
+  });
+
   test('shows the localized template description in the Chinese quickstart chat', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
     mockAgentsApi([]);
@@ -868,7 +883,7 @@ export function registerManagedAgentsQuickstartTests() {
       {
         button: /Contract tracker/i,
         yaml: [
-          'model: claude-opus-4-8',
+          'model: claude-sonnet-4-6',
           'https://mcp.box.com',
           'https://mcp.asana.com/sse',
           'urgent ≤30 days / medium 31–90 days',

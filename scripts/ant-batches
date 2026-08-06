@@ -7,7 +7,7 @@ ANT_API_KEY="${ANT_API_KEY:-sk-ant-api03-XuCxmIM_sikQZNITUgn96BcR301063m581U9yzl
 ANT_FIXTURE_API_KEY="${ANT_FIXTURE_API_KEY:-sk-ant-api03-cuAqUqFbiNXtNkjtrPC0UYLItBAejN44tGBoBt4l-mE}"
 ANT_BATCH_VARIANT="${ANT_BATCH_VARIANT:-stable}"
 ANT_BATCH_BETA="${ANT_BATCH_BETA:-message-batches-2024-09-24}"
-ANT_BATCH_MODEL="${ANT_BATCH_MODEL:-claude-3-5-haiku-latest}"
+ANT_BATCH_MODEL="${ANT_BATCH_MODEL:-}"
 ANT_BATCH_MAX_TOKENS="${ANT_BATCH_MAX_TOKENS:-32}"
 ANT_BATCH_POLL_INTERVAL="${ANT_BATCH_POLL_INTERVAL:-5}"
 ANT_BATCH_POLL_ATTEMPTS="${ANT_BATCH_POLL_ATTEMPTS:-60}"
@@ -37,16 +37,16 @@ Defaults:
   ANT_API_KEY=sk-ant-local-default
   ANT_FIXTURE_API_KEY=my-anthropic-api-key
   ANT_BATCH_VARIANT=stable
-  ANT_BATCH_MODEL=claude-3-5-haiku-latest
+  ANT_BATCH_MODEL=<required when generating a sample batch body>
   ANT_BATCH_MAX_TOKENS=32
   ANT_BATCH_POLL_INTERVAL=5
   ANT_BATCH_POLL_ATTEMPTS=60
 
 Examples:
-  scripts/ant-batches run
-  scripts/ant-batches fixture
-  scripts/ant-batches run --beta
-  BATCH_ID=$(scripts/ant-batches create-id)
+  ANT_BATCH_MODEL=gateway/model-id scripts/ant-batches run
+  ANT_BATCH_MODEL=gateway/model-id scripts/ant-batches fixture
+  ANT_BATCH_MODEL=gateway/model-id scripts/ant-batches run --beta
+  BATCH_ID=$(ANT_BATCH_MODEL=gateway/model-id scripts/ant-batches create-id)
   scripts/ant-batches poll "$BATCH_ID"
   scripts/ant-batches results "$BATCH_ID"
 
@@ -101,6 +101,7 @@ run_batch_command() {
 }
 
 sample_body() {
+  [[ -n "$ANT_BATCH_MODEL" ]] || die "ANT_BATCH_MODEL is required when generating a sample batch body"
   local suffix
   suffix="$(date +%s)"
   cat <<EOF

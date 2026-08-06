@@ -1,0 +1,23 @@
+export type { ModelCatalogModel, ModelCatalogResponse } from '../../shared/api/model-catalog';
+import type { ModelCatalogModel, ModelCatalogResponse } from '../../shared/api/model-catalog';
+
+export function catalogModelIDs(models: readonly ModelCatalogModel[]) {
+  return Array.from(new Set(models.map((model) => model.model_name.trim()).filter((modelID) => Boolean(modelID))));
+}
+
+export function isCatalogModelID(modelID: string, models: readonly ModelCatalogModel[]) {
+  const normalizedModelID = modelID.trim();
+  return Boolean(normalizedModelID) && models.some((model) => model.model_name === normalizedModelID);
+}
+
+export function resolveCatalogDefaultModelID(catalog: ModelCatalogResponse) {
+  if (!catalog.model_catalog?.default_available) {
+    return catalogModelIDs(catalog.models ?? [])[0] ?? '';
+  }
+  const modelID = catalog.default_prompt_settings?.model_name?.trim() ?? '';
+  return isCatalogModelID(modelID, catalog.models ?? []) ? modelID : '';
+}
+
+export function modelCatalogDisplayName(model: ModelCatalogModel) {
+  return model.display_name?.trim() || model.model_name;
+}

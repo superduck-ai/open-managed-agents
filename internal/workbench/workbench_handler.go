@@ -6,6 +6,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -43,20 +44,34 @@ type workbenchHandler struct {
 	store      workbenchPersistenceStore
 	workspaces workbenchWorkspaceLister
 	upstream   config.AnthropicUpstreamConfig
+	catalog    modelcatalog.Reader
+	userStore  workbenchModelCatalogUserStore
 	logger     *slog.Logger
 }
 
 func newWorkbenchHandler(store OrganizationStore, upstream config.AnthropicUpstreamConfig, logger *slog.Logger) *workbenchHandler {
+	return newWorkbenchHandlerWithCatalog(store, upstream, nil, logger)
+}
+
+func newWorkbenchHandlerWithCatalog(
+	store OrganizationStore,
+	upstream config.AnthropicUpstreamConfig,
+	catalog modelcatalog.Reader,
+	logger *slog.Logger,
+) *workbenchHandler {
 	return &workbenchHandler{
 		store:      workbenchPersistenceFromStore(store),
 		workspaces: workbenchWorkspaceListerFromStore(store),
 		upstream:   upstream,
+		catalog:    catalog,
+		userStore:  workbenchModelCatalogUserStoreFromStore(store),
 		logger:     logging.LoggerOrDefault(logger),
 	}
 }
 
 func (h *workbenchHandler) registerRoutes(r chi.Router) {
 	r.Get("/models", h.handleWorkbenchModels)
+	r.Post("/models/refresh", h.handleWorkbenchModelCatalogRefresh)
 	r.Get("/rate_limits_v2", h.handleWorkbenchRateLimitsV2)
 	r.Get("/workspaces/{workspaceId}/rate_limits", h.handleWorkbenchWorkspaceRateLimits)
 	r.Get("/workspaces/{workspaceId}/prompts", h.handleListWorkbenchWorkspacePrompts)
@@ -100,4 +115,9 @@ func workbenchPersistenceFromStore(store OrganizationStore) workbenchPersistence
 func workbenchWorkspaceListerFromStore(store OrganizationStore) workbenchWorkspaceLister {
 	lister, _ := store.(workbenchWorkspaceLister)
 	return lister
+}
+
+func workbenchModelCatalogUserStoreFromStore(store OrganizationStore) workbenchModelCatalogUserStore {
+	userStore, _ := store.(workbenchModelCatalogUserStore)
+	return userStore
 }

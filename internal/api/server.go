@@ -24,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	memoryapi "github.com/superduck-ai/open-managed-agents/internal/memory"
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
@@ -42,6 +43,7 @@ import (
 type Server struct {
 	cfg                  config.Config
 	db                   *db.DB
+	catalog              modelcatalog.Reader
 	logger               *slog.Logger
 	router               chi.Router
 	platformStore        platformsession.Store
@@ -73,6 +75,7 @@ type ServerDeps struct {
 	DB                     *db.DB
 	ObjectStore            storage.ObjectStore
 	Logger                 *slog.Logger
+	ModelCatalog           modelcatalog.Reader
 	PlatformStore          platformsession.Store
 	CodeSessionCredentials *codesessions.SessionCredentials
 	SandboxTimeoutExtender codesessions.SandboxTimeoutExtender
@@ -91,6 +94,10 @@ func NewServer(deps ServerDeps) *Server {
 	if platformStore == nil {
 		platformStore = platformsession.NewMemoryStore()
 	}
+	catalog := deps.ModelCatalog
+	if catalog == nil {
+		catalog = modelcatalog.UnavailableReader{}
+	}
 	codeSessionLogger := componentLogger("codesessions")
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger)
 	webhookLogger := componentLogger("webhooks")
@@ -102,14 +109,21 @@ func NewServer(deps ServerDeps) *Server {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.ObjectStore)
 	}
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
+	agentsHandler := agents.NewHandler(agents.HandlerDeps{
+		Config:       deps.Config,
+		DB:           deps.DB,
+		ModelCatalog: catalog,
+		Logger:       componentLogger("agents"),
+	})
 	s := &Server{
 		cfg:                  deps.Config,
 		db:                   deps.DB,
+		catalog:              catalog,
 		logger:               componentLogger("api"),
 		platformStore:        platformStore,
 		filestoreCredentials: deps.FilestoreCredentials,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
-		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
+		agents:               agentsHandler,
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger),
 		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, componentLogger("deployments")),
@@ -119,7 +133,7 @@ func NewServer(deps ServerDeps) *Server {
 		filestore:            filestoreHandler,
 		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")),
 		messages:             messagesapi.NewHandler(deps.Config, componentLogger("messages")),
-		models:               modelsapi.NewHandler(deps.Config.AnthropicUpstream),
+		models:               modelsapi.NewHandler(catalog, componentLogger("models")),
 		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, componentLogger("sessions")),
 		skills:               skillsapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("skills")),
 		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("vaults")),
@@ -190,15 +204,15 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
-		platformapi.RegisterPlatformAccountRoutes(r, s.db)
-		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, platformauth.New(s.db), s.platformStore)
+		platformapi.RegisterPlatformAccountRoutes(r, s.db, s.catalog)
+		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, platformauth.New(s.db), s.platformStore, s.catalog)
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)
 		r.Route("/api/organizations/{orgUuid}", func(r chi.Router) {
-			platformapi.RegisterOrganizationRootRoutes(r, s.db)
+			platformapi.RegisterOrganizationRootRoutes(r, s.db, s.catalog)
 			platformapi.RegisterOrganizationProfileRoutes(r, s.db)
 			platformapi.RegisterOrganizationSSORoutes(r)
 			platformapi.RegisterOrganizationOnboardingRoutes(r)
@@ -206,7 +220,7 @@ func (s *Server) registerPlatformConsoleRoutes(router chi.Router, workbenchLogge
 			platformapi.RegisterOrganizationBillingRoutes(r)
 			platformapi.RegisterOrganizationAnalyticsRoutes(r)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.cfg)
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream, workbenchLogger)
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.cfg.AnthropicUpstream, s.catalog, workbenchLogger)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 		})
 		r.Route("/api/oauth/organizations/{orgUuid}", func(r chi.Router) {

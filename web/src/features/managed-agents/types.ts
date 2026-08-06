@@ -46,7 +46,7 @@ export type AgentApiResponse = {
   description: string | null;
   mcp_servers: unknown[];
   metadata: Record<string, string>;
-  model: string | { id?: string; speed?: string };
+  model: string | { id?: string; effort?: AgentModelEffort; speed?: string };
   multiagent: unknown | null;
   name: string;
   skills: unknown[];
@@ -554,8 +554,15 @@ export type AgentModelInput =
   | string
   | {
       id: string;
+      effort?: AgentModelEffort;
       speed?: string;
     };
+
+export const AGENT_MODEL_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+export type AgentModelEffortLevel = (typeof AGENT_MODEL_EFFORT_LEVELS)[number];
+
+export type AgentModelEffort = AgentModelEffortLevel | { type: AgentModelEffortLevel };
 
 export type CreateAgentInput = {
   name: string;

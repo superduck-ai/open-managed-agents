@@ -35,6 +35,16 @@ e2b:
   sandbox_url: http://host.docker.internal:3099
   template: ghcr.io/superduck-ai/managed-agent-sandbox:latest
 
+vault:
+  master_key:
+    # Required in every env. Example:
+    #   just generate-vault-kek config/secrets/vault-kek
+    # then set kek_file: secrets/vault-kek
+    # or paste the printed base64 into kek.
+    # Documentation placeholder only — replace before real use.
+    version: 1
+    kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="
+
 code_session:
   sandbox_api_base_url: http://host.docker.internal:38080
   otlp_file_log_enabled: false

@@ -1504,7 +1504,7 @@ export function listVaultCredentials(vaultId: string, workspaceId: string) {
 export function createVaultCredential(vaultId: string, values: CredentialFormValues, workspaceId: string) {
   return anthropicBetaApi.vaults.credentials.create<VaultCredentialApiResponse>(
     vaultId,
-    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, true), metadata: {} },
+    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, 'create'), metadata: {} },
     workspaceId,
   );
 }
@@ -1518,7 +1518,7 @@ export function updateVaultCredential(
   return anthropicBetaApi.vaults.credentials.update<VaultCredentialApiResponse>(
     vaultId,
     credentialId,
-    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, false), metadata: {} },
+    { display_name: values.displayName.trim(), auth: credentialAuthBody(values, 'update'), metadata: {} },
     workspaceId,
   );
 }

@@ -73,6 +73,13 @@ generate-upstream-proxy-ca-key output:
 test-generate-upstream-proxy-ca-key:
   ./scripts/tests/generate-upstream-proxy-ca-key_test.sh
 
+# Generate a vault master KEK (base64 32 bytes). Example: just generate-vault-kek config/secrets/vault-kek
+generate-vault-kek output:
+  ./scripts/generate-vault-kek.sh "{{ output }}"
+
+test-generate-vault-kek:
+  ./scripts/tests/generate-vault-kek_test.sh
+
 go-complexity: generate
   ./scripts/go-complexity.sh
 

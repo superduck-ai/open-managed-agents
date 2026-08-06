@@ -90,4 +90,3 @@ func openStaticBearerToken(ctx context.Context, secretSvc *secrets.Service, cred
 	}
 	return token, nil
 }
-

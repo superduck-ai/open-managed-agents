@@ -13,14 +13,17 @@
                 FROM session_resources owner
                 WHERE owner.file_uuid = files.uuid
                     AND owner.workspace_uuid = files.workspace_uuid
-                    AND owner.payload IS NULL
+                    AND (
+                        owner.file_ownership = 'owned'
+                        OR owner.resource_type = 'skill_archive'
+                    )
             )
             OR EXISTS (
                 SELECT 1
                 FROM session_resources owner
                 WHERE owner.file_uuid = files.uuid
                     AND owner.workspace_uuid = files.workspace_uuid
-                    AND owner.payload IS NULL
+                    AND owner.file_ownership = 'owned'
                     AND owner.deleted_at IS NULL
                     AND (owner.expires_at IS NULL OR owner.expires_at &gt; now())
                     AND left(owner.path, char_length('/outputs/')) = '/outputs/'
@@ -40,9 +43,9 @@
                 AND resource.deleted_at IS NULL
                 AND (resource.expires_at IS NULL OR resource.expires_at &gt; now())
                 AND (
-                    (resource.payload IS NOT NULL
+                    (resource.file_ownership = 'referenced'
                         AND left(resource.path, char_length('/uploads/')) = '/uploads/')
-                    OR (resource.payload IS NULL
+                    OR (resource.file_ownership = 'owned'
                         AND left(resource.path, char_length('/outputs/')) = '/outputs/')
                 )
             ORDER BY resource.file_uuid, resource.created_at DESC, resource.uuid DESC
@@ -79,6 +82,16 @@
         WHERE workspace_uuid = #{workspaceUUID}
             AND external_id = #{fileExternalID}
             AND deleted_at IS NULL
+            AND NOT EXISTS (
+                SELECT 1
+                FROM session_resources owner
+                WHERE owner.workspace_uuid = files.workspace_uuid
+                    AND owner.file_uuid = files.uuid
+                    AND (
+                        owner.file_ownership = 'owned'
+                        OR owner.resource_type = 'skill_archive'
+                    )
+            )
         FOR SHARE
     </select>
 
@@ -268,6 +281,7 @@
         WHERE resource.uuid = #{params.ResourceUUID}
         AND resource.workspace_uuid = #{params.WorkspaceUUID}
         AND resource.session_uuid = #{params.SessionUUID}
+        AND resource.file_ownership = 'owned'
         )
     </update>
 
@@ -280,7 +294,7 @@
         FROM session_resources resource
         WHERE resource.uuid = #{params.ResourceUUID}
         AND resource.workspace_uuid = #{params.WorkspaceUUID}
-        AND resource.payload IS NULL
+        AND resource.file_ownership = 'owned'
         )
     </update>
 
@@ -294,7 +308,7 @@
         WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
         AND resource.session_uuid = #{params.SessionUUID}
         AND resource.deleted_at IS NULL
-        AND resource.payload IS NULL
+        AND resource.file_ownership = 'owned'
         AND resource.resource_type = 'file'
         AND (
         resource.path = #{params.EntryPath}

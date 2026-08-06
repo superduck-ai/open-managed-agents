@@ -50,7 +50,7 @@ func TestSessionResourceFileMapperBuilderContracts(t *testing.T) {
 				wantID:            "SessionResourceFileMapper.FindResourceFile",
 				wantKind:          yourbatis.StatementSelect,
 				wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionUUID", "params.EntryPath"},
-				wantSQLFragments:  []string{"FROM session_resources resource", "workspace_uuid = $1", "path = $3"},
+				wantSQLFragments:  []string{"FROM session_resources resource", "resource.file_uuid", "resource.file_ownership", "workspace_uuid = $1", "path = $3"},
 			},
 		},
 		{

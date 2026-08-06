@@ -24,7 +24,10 @@
         FROM session_resources resource
         WHERE resource.workspace_uuid = #{workspaceUUID}
         AND resource.file_uuid = file.uuid
-        AND resource.payload IS NULL
+        AND (
+            resource.file_ownership = 'owned'
+            OR resource.resource_type = 'skill_archive'
+        )
         AND resource.deleted_at IS NULL
         )
         ), 0) AS files_bytes,
@@ -35,7 +38,7 @@
         ON resource.file_uuid = file.uuid
         AND resource.workspace_uuid = #{workspaceUUID}
         AND resource.resource_type = 'file'
-        AND resource.payload IS NULL
+        AND resource.file_ownership = 'owned'
         AND resource.deleted_at IS NULL
         WHERE file.workspace_uuid = #{workspaceUUID}
         AND file.deleted_at IS NULL

@@ -743,7 +743,7 @@ func TestServiceCopyFileRejectsInputResourceBeforeObjectCopy(t *testing.T) {
 
 	filesystem := serviceTestFilesystem()
 	source := serviceTestFileEntry(filesystem, "/uploads/source.txt", []byte("source"))
-	source.SourceFileUUID = serviceTestPointer("11111111-1111-4111-8111-111111111111")
+	source.FileOwnership = db.SessionResourceFileOwnershipReferenced
 	database := &fakeServiceDatabase{
 		getFilesystemFn: serviceFilesystemLookup(filesystem),
 		getEntryFn: func(_ context.Context, _ string, _ string, entryPath string) (db.SessionResourceFile, error) {

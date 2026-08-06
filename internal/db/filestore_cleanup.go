@@ -188,7 +188,10 @@ func processFilesystemCleanupEntries(
 	anomalies := make([]FilestoreCleanupAnomaly, 0)
 	var releasedBytes int64
 	for _, entry := range entries {
-		if !entry.ReferencesSourceFile() {
+		switch {
+		case entry.ReferencesSourceFile():
+			// referenced Resource 只退役 namespace 节点。
+		case entry.OwnsFile():
 			if anomaly, malformed := sessionResourceFileCleanupAnomaly(cleanupScope, entry); malformed {
 				anomalies = append(anomalies, anomaly)
 			} else {
@@ -206,6 +209,8 @@ func processFilesystemCleanupEntries(
 					return nil, 0, err
 				}
 			}
+		default:
+			return nil, 0, ErrPreconditionFailed
 		}
 		if err := retireSessionResourceFileTx(ctx, tx, workspaceUUID, entry.UUID, retiredAt); err != nil {
 			return nil, 0, err
@@ -489,7 +494,7 @@ func sessionResourceFileCleanupAnomaly(
 	scope sessionResourceFileCleanupScope,
 	entry SessionResourceFile,
 ) (FilestoreCleanupAnomaly, bool) {
-	if entry.Kind != SessionResourceFileKindFile || entry.ReferencesSourceFile() ||
+	if !entry.OwnsFile() ||
 		entry.S3Bucket != nil && strings.TrimSpace(*entry.S3Bucket) != "" &&
 			entry.S3Key != nil && strings.TrimSpace(*entry.S3Key) != "" {
 		return FilestoreCleanupAnomaly{}, false
@@ -505,8 +510,7 @@ func sessionResourceFileCleanupAnomaly(
 func enqueueSessionResourceFileCleanupJobTx(ctx context.Context, tx yourbatis.Executor, scope sessionResourceFileCleanupScope, entry SessionResourceFile, reason string, runAfter time.Time) (FilestoreObjectCleanupJob, error) {
 	// 该辅助函数也用于退役整个 filesystem。Owned File 必须进入对象清理；
 	// Input Resource 只引用 Files API 对象，不能登记对象删除。
-	if entry.Kind != SessionResourceFileKindFile || entry.S3Bucket == nil ||
-		entry.S3Key == nil || entry.ReferencesSourceFile() {
+	if !entry.OwnsFile() || entry.S3Bucket == nil || entry.S3Key == nil {
 		return FilestoreObjectCleanupJob{}, ErrPreconditionFailed
 	}
 	return insertFilestoreObjectCleanupJob(ctx, tx, EnqueueFilestoreObjectCleanupJobInput{
@@ -532,6 +536,9 @@ func enqueueOwnedSessionResourceFileCleanupJobTx(
 ) (FilestoreObjectCleanupJob, bool, error) {
 	if entry.ReferencesSourceFile() {
 		return FilestoreObjectCleanupJob{}, false, nil
+	}
+	if !entry.OwnsFile() {
+		return FilestoreObjectCleanupJob{}, false, ErrPreconditionFailed
 	}
 	job, err := enqueueSessionResourceFileCleanupJobTx(ctx, tx, scope, entry, reason, runAfter)
 	return job, err == nil, err

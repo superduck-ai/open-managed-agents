@@ -86,6 +86,17 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 		contract mapperBuilderContract
 	}{
 		{
+			name: "soft delete resources by session",
+			contract: mapperBuilderContract{
+				statement:         sessionResourceMapperSoftDeleteBySessionStatement,
+				bound:             buildSessionResourceMapperSoftDeleteBySession(yourbatis.DialectPostgres, "workspace-uuid", "session-external-id"),
+				wantID:            "SessionResourceMapper.SoftDeleteBySession",
+				wantKind:          yourbatis.StatementUpdate,
+				wantArgumentNames: []string{"workspaceUUID", "sessionExternalID"},
+				wantSQLFragments:  []string{"payload IS NOT NULL", "file_ownership IS DISTINCT FROM 'owned'", "deleted_at IS NULL"},
+			},
+		},
+		{
 			name: "count session file resources",
 			contract: mapperBuilderContract{
 				statement:         sessionResourceMapperCountSessionFileResourcesStatement,
@@ -104,7 +115,7 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 				wantID:            "SessionResourceMapper.FindMountConflict",
 				wantKind:          yourbatis.StatementSelect,
 				wantArgumentNames: []string{"params.EntryPath", "params.WorkspaceUUID", "params.SessionUUID"},
-				wantSQLFragments:  []string{"CROSS JOIN (VALUES (CAST($1 AS text)))", "payload IS NOT NULL", "LIMIT 1"},
+				wantSQLFragments:  []string{"CROSS JOIN (VALUES (CAST($1 AS text)))", "file_ownership = 'referenced'", "LIMIT 1"},
 			},
 		},
 		{
@@ -115,7 +126,7 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 				wantID:            "SessionResourceMapper.BindSessionFileResource",
 				wantKind:          yourbatis.StatementUpdate,
 				wantArgumentNames: []string{"params.EntryPath", "params.ParentPath", "params.FileUUID", "params.UpdatedAt", "params.ResourceUUID", "params.WorkspaceUUID", "params.SessionUUID"},
-				wantSQLFragments:  []string{"UPDATE session_resources", "file_uuid = $3", "RETURNING", "uuid, external_id"},
+				wantSQLFragments:  []string{"UPDATE session_resources", "file_uuid = $3", "file_ownership = 'referenced'", "RETURNING", "uuid, external_id"},
 			},
 		},
 		{
@@ -159,7 +170,7 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 				wantID:            "SessionResourceMapper.UpdateResourceFile",
 				wantKind:          yourbatis.StatementUpdate,
 				wantArgumentNames: []string{"params.EntryPath", "params.ParentPath", "params.ExpiresAt", "params.Now", "params.ResourceUUID", "params.WorkspaceUUID", "params.SessionUUID"},
-				wantSQLFragments:  []string{"resource_type = 'file'", "payload = NULL", "uuid = $5"},
+				wantSQLFragments:  []string{"resource_type = 'file'", "file_ownership = 'owned'", "uuid = $5"},
 			},
 		},
 		{
@@ -177,7 +188,7 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 					"params.ResourceUUID", "params.ResourceExternalID", "params.OrganizationUUID", "params.WorkspaceUUID", "params.EntryPath",
 					"params.ParentPath", "params.ExpiresAt", "params.Now", "params.Now", "params.SessionUUID",
 				},
-				wantSQLFragments: []string{"WITH inserted_file AS", "INSERT INTO files", "INSERT INTO session_resources", "RETURNING id"},
+				wantSQLFragments: []string{"WITH inserted_file AS", "INSERT INTO files", "INSERT INTO session_resources", "'owned'", "RETURNING id"},
 			},
 		},
 		{
@@ -199,7 +210,7 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 				wantID:            "SessionResourceMapper.MoveResourceFile",
 				wantKind:          yourbatis.StatementUpdate,
 				wantArgumentNames: []string{"params.DestinationPath", "params.DestinationParentPath", "params.Now", "params.WorkspaceUUID", "params.SessionUUID", "params.ResourceUUID"},
-				wantSQLFragments:  []string{"SET path = $1, parent_path = $2", "session_uuid = $5", "uuid = $6"},
+				wantSQLFragments:  []string{"SET path = $1, parent_path = $2", "session_uuid = $5", "uuid = $6", "file_ownership = 'owned'"},
 			},
 		},
 		{
@@ -221,7 +232,7 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 				wantID:            "SessionResourceMapper.SubtreeContainsInput",
 				wantKind:          yourbatis.StatementSelect,
 				wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionUUID", "params.SourcePath", "params.SourcePath", "params.SourcePath"},
-				wantSQLFragments:  []string{"SELECT EXISTS", "payload IS NOT NULL", "AS contains_input"},
+				wantSQLFragments:  []string{"SELECT EXISTS", "file_ownership = 'referenced'", "AS contains_input"},
 			},
 		},
 		{
@@ -265,7 +276,7 @@ func TestSessionResourceMapperBuilderContracts(t *testing.T) {
 				wantID:            "SessionResourceMapper.SubtreeContainsMountedInput",
 				wantKind:          yourbatis.StatementSelect,
 				wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionUUID", "params.EntryPath", "params.EntryPath", "params.EntryPath"},
-				wantSQLFragments:  []string{"SELECT EXISTS", "payload IS NOT NULL", "AS contains_input"},
+				wantSQLFragments:  []string{"SELECT EXISTS", "file_ownership = 'referenced'", "AS contains_input"},
 			},
 		},
 		{

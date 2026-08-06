@@ -1009,6 +1009,40 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	outputFileID := files[0].ExternalID
 	outputFileCreatedAt := files[0].CreatedAt
 	outputResourceCreatedAt := entry.Node.CreatedAt
+	rejectedOwnedAttach := app.do(
+		t,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/resources?beta=true",
+		strings.NewReader(`{"type":"file","file_id":`+quoteJSON(outputFileID)+`,"mount_path":"/owned-output.txt"}`),
+		defaultTestKey,
+		true,
+		"application/json",
+	)
+	assertError(t, rejectedOwnedAttach, http.StatusNotFound, "not_found_error")
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		update session_resources
+		set deleted_at = now(), updated_at = now()
+		where uuid = $1 and file_ownership = 'owned'
+	`, entry.Node.UUID); err != nil {
+		t.Fatalf("retire owned Resource before historical owner attach check: %v", err)
+	}
+	rejectedHistoricalOwnedAttach := app.do(
+		t,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/resources?beta=true",
+		strings.NewReader(`{"type":"file","file_id":`+quoteJSON(outputFileID)+`,"mount_path":"/retired-owned-output.txt"}`),
+		defaultTestKey,
+		true,
+		"application/json",
+	)
+	assertError(t, rejectedHistoricalOwnedAttach, http.StatusNotFound, "not_found_error")
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		update session_resources
+		set deleted_at = null, updated_at = now()
+		where uuid = $1 and file_ownership = 'owned'
+	`, entry.Node.UUID); err != nil {
+		t.Fatalf("restore owned Resource after historical owner attach check: %v", err)
+	}
 	hiddenResource := app.do(
 		t,
 		http.MethodGet,
@@ -1030,6 +1064,17 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	if len(files) != 1 || files[0].ExternalID != outputFileID {
 		t.Fatalf("repeated output listing = %+v, want stable file ID %q", files, outputFileID)
 	}
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		update session_resources
+		set payload = jsonb_build_object(
+			'id', external_id,
+			'type', 'file',
+			'file_id', cast($2 as text)
+		)
+		where uuid = $1 and file_ownership = 'owned'
+	`, entry.Node.UUID, outputFileID); err != nil {
+		t.Fatalf("change owned Resource payload without changing ownership: %v", err)
+	}
 
 	replacement := workspaceStorageBlob(9, nil)
 	replacement.Downloadable = true
@@ -1048,6 +1093,28 @@ func TestSessionOutputFileLifecycle(t *testing.T) {
 	}
 	if !replaced.Node.CreatedAt.Equal(outputResourceCreatedAt) {
 		t.Fatalf("overwritten Resource created_at = %s, want stable %s", replaced.Node.CreatedAt, outputResourceCreatedAt)
+	}
+	var persistedOwnership string
+	var payloadPresent bool
+	if err := app.db.Pool.QueryRow(context.Background(), `
+		select file_ownership, payload is not null
+		from session_resources
+		where uuid = $1
+	`, entry.Node.UUID).Scan(&persistedOwnership, &payloadPresent); err != nil {
+		t.Fatalf("load ownership after payload change and overwrite: %v", err)
+	}
+	if persistedOwnership != string(db.SessionResourceFileOwnershipOwned) || !payloadPresent || !replaced.Node.OwnsFile() {
+		t.Fatalf(
+			"owned Resource after payload change = ownership %q payload %t node %+v",
+			persistedOwnership,
+			payloadPresent,
+			replaced.Node,
+		)
+	}
+	if _, err := app.db.Pool.Exec(context.Background(), `
+		update session_resources set payload = null where uuid = $1
+	`, entry.Node.UUID); err != nil {
+		t.Fatalf("restore internal Output payload: %v", err)
 	}
 	files, err = app.db.ListFiles(context.Background(), record.WorkspaceUUID, record.ExternalID)
 	if err != nil {
@@ -1684,8 +1751,9 @@ func assertSessionFileReference(
 	if entry.Kind != db.SessionResourceFileKindFile ||
 		entry.UUID != resource.UUID ||
 		payload.FileID != fileExternalID ||
-		entry.SourceFileUUID == nil ||
-		*entry.SourceFileUUID != file.UUID ||
+		entry.FileUUID == nil ||
+		*entry.FileUUID != file.UUID ||
+		entry.FileOwnership != db.SessionResourceFileOwnershipReferenced ||
 		entry.MD5 != nil ||
 		entry.ExpiresAt != nil ||
 		entry.SizeBytes == nil ||

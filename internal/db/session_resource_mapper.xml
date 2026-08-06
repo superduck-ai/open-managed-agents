@@ -63,6 +63,7 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND session_external_id = #{sessionExternalID}
         AND payload IS NOT NULL
+        AND file_ownership IS DISTINCT FROM 'owned'
         AND deleted_at IS NULL
     </update>
     <select id="CountSessionFileResources" result="scalar">
@@ -81,7 +82,7 @@
         CROSS JOIN (VALUES (CAST(#{params.EntryPath} AS text))) AS candidate(path)
         WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
         AND resource.session_uuid = #{params.SessionUUID}
-        AND resource.payload IS NOT NULL
+        AND resource.file_ownership = 'referenced'
         AND resource.deleted_at IS NULL
         AND (
         resource.path = candidate.path
@@ -95,10 +96,12 @@
     <update id="BindSessionFileResource" result="returning" resultType="sessionResourceRow">
         UPDATE session_resources
         SET path = #{params.EntryPath}, parent_path = #{params.ParentPath},
-        file_uuid = #{params.FileUUID}, updated_at = #{params.UpdatedAt}
+        file_uuid = #{params.FileUUID}, file_ownership = 'referenced',
+        updated_at = #{params.UpdatedAt}
         WHERE uuid = #{params.ResourceUUID}
         AND workspace_uuid = #{params.WorkspaceUUID}
         AND session_uuid = #{params.SessionUUID}
+        AND file_ownership IS NULL
         AND deleted_at IS NULL
         RETURNING
         <include refid="sessionResourceColumns"/>
@@ -129,12 +132,12 @@
         INSERT INTO session_resources (
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
         session_external_id, resource_type, payload, secret_payload,
-        path, parent_path, created_at, updated_at
+        path, parent_path, file_ownership, created_at, updated_at
         )
         SELECT #{params.ResourceUUID}, #{params.ResourceExternalID},
         #{params.OrganizationUUID}, #{params.WorkspaceUUID}, session.uuid,
         session.external_id, 'directory', NULL, NULL,
-        #{params.EntryPath}, #{params.ParentPath}, #{params.Now}, #{params.Now}
+        #{params.EntryPath}, #{params.ParentPath}, NULL, #{params.Now}, #{params.Now}
         FROM sessions session
         WHERE session.uuid = #{params.SessionUUID}
         AND session.workspace_uuid = #{params.WorkspaceUUID}
@@ -144,12 +147,13 @@
 
     <update id="UpdateResourceFile" result="exec">
         UPDATE session_resources
-        SET resource_type = 'file', payload = NULL, secret_payload = NULL,
-        path = #{params.EntryPath}, parent_path = #{params.ParentPath},
+        SET resource_type = 'file', path = #{params.EntryPath},
+        parent_path = #{params.ParentPath}, file_ownership = 'owned',
         expires_at = #{params.ExpiresAt}, updated_at = #{params.Now}
         WHERE uuid = #{params.ResourceUUID}
         AND workspace_uuid = #{params.WorkspaceUUID}
         AND session_uuid = #{params.SessionUUID}
+        AND file_ownership = 'owned'
         AND deleted_at IS NULL
     </update>
 
@@ -183,12 +187,12 @@
         INSERT INTO session_resources (
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
         session_external_id, resource_type, payload, secret_payload,
-        path, parent_path, file_uuid, expires_at, created_at, updated_at
+        path, parent_path, file_uuid, file_ownership, expires_at, created_at, updated_at
         )
         SELECT #{params.ResourceUUID}, #{params.ResourceExternalID},
         #{params.OrganizationUUID}, #{params.WorkspaceUUID}, session.uuid,
         session.external_id, 'file', NULL, NULL, #{params.EntryPath},
-        #{params.ParentPath}, inserted_file.uuid, #{params.ExpiresAt},
+        #{params.ParentPath}, inserted_file.uuid, 'owned', #{params.ExpiresAt},
         #{params.Now}, #{params.Now}
         FROM inserted_file
         JOIN sessions session ON session.uuid = #{params.SessionUUID}
@@ -211,6 +215,7 @@
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND session_uuid = #{params.SessionUUID}
         AND uuid = #{params.ResourceUUID}
+        AND file_ownership = 'owned'
         AND deleted_at IS NULL
     </update>
 
@@ -237,7 +242,7 @@
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND session_uuid = #{params.SessionUUID}
         AND deleted_at IS NULL
-        AND payload IS NOT NULL
+        AND file_ownership = 'referenced'
         AND (
         path = #{params.SourcePath}
         OR left(path, char_length(#{params.SourcePath}) + 1) = #{params.SourcePath} || '/'
@@ -293,7 +298,7 @@
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND session_uuid = #{params.SessionUUID}
         AND deleted_at IS NULL
-        AND payload IS NOT NULL
+        AND file_ownership = 'referenced'
         AND (
         path = #{params.EntryPath}
         OR left(path, char_length(#{params.EntryPath}) + 1) = #{params.EntryPath} || '/'
@@ -326,12 +331,12 @@
         INSERT INTO session_resources (
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
         session_external_id, resource_type, payload, secret_payload,
-        path, parent_path, file_uuid, created_at, updated_at
+        path, parent_path, file_uuid, file_ownership, created_at, updated_at
         )
         SELECT #{params.ResourceUUID}, #{params.ResourceExternalID},
         session.organization_uuid, session.workspace_uuid, session.uuid,
         session.external_id, 'skill_archive', NULL, NULL,
-        #{params.EntryPath}, '/skills', #{params.FileUUID}, #{params.Now}, #{params.Now}
+        #{params.EntryPath}, '/skills', #{params.FileUUID}, NULL, #{params.Now}, #{params.Now}
         FROM sessions session
         WHERE session.uuid = #{params.SessionUUID}
         AND session.workspace_uuid = #{params.WorkspaceUUID}

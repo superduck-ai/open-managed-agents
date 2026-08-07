@@ -17,6 +17,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -55,6 +56,9 @@ func run(logger *slog.Logger) error {
 	if cfg.Database.AutoMigrate {
 		if err := database.Migrate(ctx); err != nil {
 			return fmt.Errorf("migrate database: %w", err)
+		}
+		if err := deployments.MigrateRiver(ctx, database, logger.With("component", "deployment_scheduler")); err != nil {
+			return fmt.Errorf("migrate River: %w", err)
 		}
 	} else {
 		logger.Info("database auto migration disabled", "env", cfg.Env)
@@ -117,6 +121,25 @@ func run(logger *slog.Logger) error {
 	}
 	environmentRunner.Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	webhookEnqueuer := webhooks.NewEnqueuer(database, cfg.Webhook, logger.With("component", "webhooks"))
+	deploymentScheduler, err := deployments.NewDeploymentScheduler(
+		database,
+		webhookEnqueuer,
+		logger.With("component", "deployment_scheduler"),
+	)
+	if err != nil {
+		return fmt.Errorf("create deployment scheduler: %w", err)
+	}
+	if err := deploymentScheduler.Start(ctx); err != nil {
+		return fmt.Errorf("start deployment scheduler: %w", err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := deploymentScheduler.Stop(stopCtx); err != nil {
+			logger.Error("stop deployment scheduler", "error", err)
+		}
+	}()
 
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
@@ -130,6 +153,7 @@ func run(logger *slog.Logger) error {
 			SandboxTimeoutExtender: sandboxProvider,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
+			DeploymentScheduler:    deploymentScheduler,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,

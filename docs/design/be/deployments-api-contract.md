@@ -51,9 +51,50 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 
 公开合同没有说明的模糊行为保持不变，包括 `limit=0`、`schedule:null`、默认列表顺序，以及未记录的错误状态和幂等行为。
 
-本次对齐仅涉及 HTTP/API 边界和手动运行的状态检查，不新增调度器、数据库迁移、Filestore 或 Sandbox 投影变更、自动暂停行为及其他运行时功能。
+## Scheduled Deployment 执行
+
+OMA 使用 River `v0.42.0` 持久执行 schedule。River 官方 migrator 在应用 PostgreSQL database 的 `public` schema 中创建并升级 `river_job`、`river_queue`、`river_leader`、`river_notification` 和 `river_migration`；应用表仍由 Goose 管理。`river_migration` 持久记录已应用版本，进程启动只检查并应用缺失版本，不会重建 River 表。`cmd/migrate up` 和开发环境自动迁移会使用同一个数据库连接配置，依次推进两套 migration。River 内部表的 DDL 不复制到应用 migration，避免升级 River 时出现两套 schema 定义。
+
+Cron 统一由 `internal/deployments` 的 schedule 组件解析：
+
+- 只接受五段 POSIX Cron 与有效 IANA timezone；拒绝 seconds/year、`L/W/#/?` 和 `@daily` shortcut。
+- `upcoming_runs_at` 返回最多五个不含 jitter 的名义 UTC 时刻，不再使用 366 天扫描上限，因此闰日计划有效。
+- spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
+- 实际 River Job 只正向延后。jitter 窗口为相邻名义 occurrence 间隔的 15%，下限 5 秒、上限 9 分钟；窗口内 offset 由 Deployment ID 与名义时刻的稳定哈希决定。这是 OMA 内部选择，不是 Claude 公开的哈希算法。
+
+每个 Deployment 持久化 `schedule_revision` 和 `next_scheduled_at`。create、明确修改或清除 schedule、pause、unpause、archive 都使旧 revision 的 Job 失效；PATCH 未携带 schedule 时不写这三个调度字段。schedule revision 在锁定 Deployment 的事务内由数据库原子递增，避免锁外旧快照覆盖 worker 已推进的游标。unpause 只从当前时间之后的下一个 occurrence 恢复，不补暂停期间的触发。worker 成功提交一个 Run 后推进到下一个名义 occurrence。create、明确修改 schedule 和 unpause 通过 Yourbatis 公开的 `SQLTx()` 将同一个事务交给 River `InsertTx`，使游标与 Job 一起提交或回滚。worker 推进游标和启动回填后的 Job 仍由每 30 秒一次的 reconciliation 补齐，入队使用 `ByArgs` 保持幂等。启动回填或 reconciliation 遇到单条确定性的存量 schedule 解析错误时记录并跳过该 Deployment；数据库或 River 基础设施错误仍使启动失败。
+
+```mermaid
+sequenceDiagram
+    participant API as Deployment API
+    participant AppDB as Application schema
+    participant River as public River tables
+    participant Worker as Scheduled worker
+
+    API->>AppDB: 开启 Yourbatis 事务并保存调度游标
+    API->>River: 使用同一事务幂等插入 Job
+    Note over AppDB,River: Deployment 与 Job 一起提交或回滚
+    River->>Worker: 到达 jitter 后的 trigger_at
+    Worker->>AppDB: 锁定并校验 active/revision/next_scheduled_at
+    Worker->>AppDB: 原子写 Session 或失败 Run、推进/暂停游标并写 webhook outbox
+    Worker-->>River: occurrence 已完成
+```
+
+`deployment_runs.trigger_type` 区分 manual 与 schedule，`scheduled_at` 保存 schedule Run 的名义时刻；部分唯一索引 `(deployment_uuid, scheduled_at) WHERE trigger_type = 'schedule'` 是 River at-least-once 下的最终幂等边界。API 的 `trigger_context` 由这两列生成，数据库不重复保存同义 JSON。Run 只表示 Session 创建成功或失败，不跟踪 Session 后续执行。
+
+失败行为按 Claude 公开合同处理：
+
+- 根 Agent 归档会在同一数据库事务自动归档其 Deployment 并写入 `deployment.archived` outbox；根 Agent 在触发时已删除也会自动归档并原子写入该事件，且不生成 Run。
+- 其他引用或配置失败生成最终失败 Run。只有公开的 14 类 paused-reason error 会自动暂停；`session_rate_limited_error` 与 `session_creation_rejected_error` 不暂停，并继续下一个 occurrence。
+- 数据库或进程级失败发生在最终 Run 提交之前时交给 River 重试；已提交成功或失败 Run 后不重试当前 occurrence。
+- paused Deployment 仍允许 manual Run；manual Run 不发送 `deployment_run.*` webhook。
+
+组织级最多保留 1,000 个未归档且 schedule 非空的 Deployment。创建以及从无 schedule 更新为有 schedule 时会先锁定 organization 并在事务内检查额度，避免并发越界。
+
+Deployment 生命周期发送 `deployment.created/updated/paused/unpaused/archived`；scheduled Run 发送同一 Run ID 的 `deployment_run.started`，随后发送 `succeeded` 或 `failed`。自动暂停还发送以 Deployment ID 为资源 ID 的 `deployment.paused`。成功创建 Session 时继续发送现有 Session webhook。Scheduled Run 的这些 webhook delivery jobs 与 Run、Session、Deployment 状态和调度游标在同一个 Yourbatis 事务中提交；任一 outbox 写入失败都会回滚 occurrence 并交给 River 重试。
 
 主要参考资料：
 
 - <https://platform.claude.com/docs/en/api/beta/deployments>
 - <https://platform.claude.com/docs/en/api/beta/deployment_runs>
+- <https://platform.claude.com/docs/en/managed-agents/scheduled-deployments>

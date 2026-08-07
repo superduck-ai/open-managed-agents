@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestScheduledDeploymentsMigrationDefinesOccurrenceInvariant(t *testing.T) {
+	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00049_schedule_deployments_with_river.sql")
+	if err != nil {
+		t.Fatalf("read scheduled deployments migration: %v", err)
+	}
+	text := string(migration)
+	for _, fragment := range []string{
+		"add column schedule_revision bigint not null default 0",
+		"add column next_scheduled_at timestamptz",
+		"set scheduled_at = (trigger_context ->> 'scheduled_at')::timestamptz",
+		"deployment_runs_scheduled_at_check",
+		"deployment_runs_schedule_occurrence_idx",
+		"where trigger_type = 'schedule'",
+		"drop column trigger_context",
+		"jsonb_build_object('type', 'schedule', 'scheduled_at', scheduled_at)",
+	} {
+		if !strings.Contains(text, fragment) {
+			t.Errorf("migration does not contain %q", fragment)
+		}
+	}
+}
+
 func TestSnapshotSessionSkillsMigrationSkipsExistingFiles(t *testing.T) {
 	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00048_snapshot_session_skills.sql")
 	if err != nil {

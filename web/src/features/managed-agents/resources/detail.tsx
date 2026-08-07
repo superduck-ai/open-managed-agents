@@ -118,7 +118,6 @@ import {
   removeMemoryFromBranches,
   sortMemoryRows,
   statusPillTone,
-  triggerLabel,
   updateMemoryQueryParam,
   upsertMemoryInBranch,
   upsertMemoryInBranches,
@@ -678,7 +677,7 @@ export function DeploymentRunsPanel({
       rows={state.data.map((run) => [
         compactEntityId(run.id),
         deploymentRunStatus(run),
-        run.trigger_type || triggerLabel(run.trigger),
+        run.trigger_context.type,
         run.session_id ? (
           <a
             className="font-sans text-[13px] text-foreground underline-offset-2 hover:underline"

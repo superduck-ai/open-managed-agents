@@ -27,6 +27,8 @@ type deploymentMapperRow struct {
 	ResourceSecrets       []byte     `db:"resource_secrets"`
 	VaultIDs              []byte     `db:"vault_ids"`
 	Schedule              []byte     `db:"schedule"`
+	ScheduleRevision      int64      `db:"schedule_revision"`
+	NextScheduledAt       *time.Time `db:"next_scheduled_at"`
 	LastRunAt             *time.Time `db:"last_run_at"`
 	Status                string     `db:"status"`
 	PausedReason          []byte     `db:"paused_reason"`
@@ -56,11 +58,53 @@ type deploymentWriteParams struct {
 	ResourceSecrets       []byte
 	VaultIDs              []byte
 	Schedule              []byte
+	ScheduleChanged       bool
+	ScheduleRevision      int64
+	NextScheduledAt       *time.Time
 	LastRunAt             *time.Time
 	Status                string
 	PausedReason          []byte
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
+}
+
+type unpauseDeploymentParams struct {
+	WorkspaceUUID   string
+	ExternalID      string
+	NextScheduledAt *time.Time
+}
+
+type deploymentScheduleRow struct {
+	WorkspaceUUID    string     `db:"workspace_uuid"`
+	ExternalID       string     `db:"external_id"`
+	Schedule         []byte     `db:"schedule"`
+	ScheduleRevision int64      `db:"schedule_revision"`
+	NextScheduledAt  *time.Time `db:"next_scheduled_at"`
+}
+
+type setInitialNextScheduledAtParams struct {
+	WorkspaceUUID    string
+	ExternalID       string
+	ScheduleRevision int64
+	NextScheduledAt  time.Time
+}
+
+type advanceDeploymentScheduleParams struct {
+	WorkspaceUUID    string
+	ExternalID       string
+	ScheduleRevision int64
+	ScheduledAt      time.Time
+	NextScheduledAt  *time.Time
+	LastRunAt        time.Time
+}
+
+type pauseScheduledDeploymentParams struct {
+	WorkspaceUUID    string
+	ExternalID       string
+	ScheduleRevision int64
+	ScheduledAt      time.Time
+	PausedReason     []byte
+	LastRunAt        time.Time
 }
 
 type deploymentPageMapperParams struct {
@@ -76,12 +120,20 @@ type deploymentPageMapperParams struct {
 
 type DeploymentMapper interface {
 	Insert(ctx context.Context, params deploymentWriteParams) (deploymentMapperRow, error)
+	LockOrganization(ctx context.Context, organizationUUID string) (string, error)
+	CountScheduledByOrganization(ctx context.Context, organizationUUID string) (int64, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	LockByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	UpdateByExternalID(ctx context.Context, params deploymentWriteParams) (deploymentMapperRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
+	ArchiveByRootAgent(ctx context.Context, workspaceUUID, agentExternalID string) ([]deploymentMapperRow, error)
 	PauseByExternalID(ctx context.Context, workspaceUUID, externalID string, pausedReason []byte) (deploymentMapperRow, error)
-	UnpauseByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
+	UnpauseByExternalID(ctx context.Context, params unpauseDeploymentParams) (deploymentMapperRow, error)
+	ListActiveSchedules(ctx context.Context) ([]deploymentScheduleRow, error)
+	ListSchedulesMissingNextScheduledAt(ctx context.Context) ([]deploymentScheduleRow, error)
+	SetInitialNextScheduledAt(ctx context.Context, params setInitialNextScheduledAtParams) (int64, error)
+	AdvanceSchedule(ctx context.Context, params advanceDeploymentScheduleParams) (int64, error)
+	PauseAfterScheduledRun(ctx context.Context, params pauseScheduledDeploymentParams) (int64, error)
 	ListPage(ctx context.Context, params deploymentPageMapperParams) ([]deploymentMapperRow, error)
 	UpdateLastRun(ctx context.Context, workspaceUUID, externalID string, lastRunAt time.Time) (int64, error)
 }

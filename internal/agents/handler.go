@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -31,10 +32,15 @@ const (
 var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	logger *slog.Logger
-	router chi.Router
+	cfg      config.Config
+	db       *db.DB
+	webhooks webhookEnqueuer
+	logger   *slog.Logger
+	router   chi.Router
+}
+
+type webhookEnqueuer interface {
+	PrepareDeliveryEvent(webhooks.EnqueueInput, time.Time) (db.WebhookDeliveryEvent, error)
 }
 
 type agentResponse struct {
@@ -85,9 +91,9 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
+func NewHandler(cfg config.Config, database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, logger: logger}
+	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -382,7 +388,18 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
 		return
 	}
-	record, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
+	var buildEvent db.DeploymentArchiveEventBuilder
+	if h.webhooks != nil {
+		createdAt := time.Now().UTC()
+		buildEvent = func(deployment db.Deployment) (db.WebhookDeliveryEvent, error) {
+			return h.webhooks.PrepareDeliveryEvent(webhooks.EnqueueInput{
+				WorkspaceUUID: principal.WorkspaceUUID, OrganizationUUID: principal.OrganizationUUID,
+				WorkspaceExternalID: principal.WorkspaceExternalID, EventType: "deployment.archived",
+				ResourceID: deployment.ExternalID,
+			}, createdAt)
+		}
+	}
+	archived, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID, buildEvent)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
@@ -392,7 +409,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive agent"))
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(record))
+	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(archived))
 }
 
 func (h *Handler) versionsRoute(w http.ResponseWriter, r *http.Request) {

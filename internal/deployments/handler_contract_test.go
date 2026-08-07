@@ -30,6 +30,19 @@ func TestDeploymentResponseUsesEmptyDescription(t *testing.T) {
 	}
 }
 
+func TestDeploymentRunResponseBuildsOfficialTriggerContext(t *testing.T) {
+	manual := responseFromRun(db.DeploymentRun{TriggerType: "manual"})
+	if manual.TriggerContext.Type != "manual" || manual.TriggerContext.ScheduledAt != "" {
+		t.Fatalf("manual trigger context = %+v", manual.TriggerContext)
+	}
+
+	scheduledAt := time.Date(2026, time.August, 6, 14, 20, 0, 0, time.UTC)
+	scheduled := responseFromRun(db.DeploymentRun{TriggerType: "schedule", ScheduledAt: &scheduledAt})
+	if scheduled.TriggerContext.Type != "schedule" || scheduled.TriggerContext.ScheduledAt != "2026-08-06T14:20:00Z" {
+		t.Fatalf("schedule trigger context = %+v", scheduled.TriggerContext)
+	}
+}
+
 func TestDeploymentResourcesResponse(t *testing.T) {
 	t.Run("rejects invalid stored resources", func(t *testing.T) {
 		if _, err := deploymentResourcesResponse(json.RawMessage(`{"type":"file"}`)); err == nil {

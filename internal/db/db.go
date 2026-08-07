@@ -36,6 +36,7 @@ var (
 	ErrLimitExceeded         = errors.New("limit exceeded")
 	ErrFileInUse             = errors.New("file is in use")
 	ErrFileReferenceNotFound = errors.New("file reference not found")
+	ErrStaleSchedule         = errors.New("stale deployment schedule")
 )
 
 type DB struct {
@@ -141,6 +142,26 @@ func (d *DB) Close() {
 	if d.Pool != nil {
 		d.Pool.Close()
 	}
+}
+
+// Transaction executes fn in a Yourbatis transaction owned by DB.
+func (d *DB) Transaction(ctx context.Context, fn func(*yourbatis.Tx) error) error {
+	if fn == nil {
+		return errors.New("database transaction callback is nil")
+	}
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		tx, ok := executor.(*yourbatis.Tx)
+		if !ok {
+			return fmt.Errorf("unexpected Yourbatis transaction type %T", executor)
+		}
+		return fn(tx)
+	})
+}
+
+// RiverSQLDB exposes the shared database/sql wrapper only to the River queue
+// integration. Application queries must continue to use Yourbatis mappers.
+func (d *DB) RiverSQLDB() *sql.DB {
+	return d.sql
 }
 
 func EnsureDatabase(ctx context.Context, databaseURL string) error {

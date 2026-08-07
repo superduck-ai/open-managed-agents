@@ -283,8 +283,7 @@ export type DeploymentRunApiResponse = {
   deployment_id: string;
   error?: unknown;
   session_id?: string | null;
-  trigger?: unknown;
-  trigger_type?: string | null;
+  trigger_context: { type: 'manual' } | { type: 'schedule'; scheduled_at: string };
   type: 'deployment_run';
 };
 

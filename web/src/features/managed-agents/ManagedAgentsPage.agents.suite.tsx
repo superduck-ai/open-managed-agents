@@ -831,11 +831,11 @@ export function registerManagedAgentsAgentsTests() {
     const directoryIcon = mcpCard.querySelector('img') as HTMLImageElement;
     expect(directoryIcon).toBeTruthy();
     fireEvent.error(directoryIcon);
-    const serverFavicon = mcpCard.querySelector('img') as HTMLImageElement;
-    expect(serverFavicon.getAttribute('src')).toBe('https://agent.example.com/favicon.ico');
-    fireEvent.error(serverFavicon);
+    const directoryFavicon = mcpCard.querySelector('img') as HTMLImageElement;
+    expect(directoryFavicon.getAttribute('src')).toBe('https://example.com/favicon.ico');
+    fireEvent.error(directoryFavicon);
     const publicFavicon = mcpCard.querySelector('img') as HTMLImageElement;
-    expect(publicFavicon.getAttribute('src')).toBe('https://www.google.com/s2/favicons?domain=agent.example.com&sz=64');
+    expect(publicFavicon.getAttribute('src')).toBe('https://www.google.com/s2/favicons?domain=example.com&sz=64');
     fireEvent.error(publicFavicon);
     expect(mcpCard.querySelector('img')).toBeNull();
     expect(mcpCard.querySelector('.lucide-server')).toBeTruthy();

@@ -371,7 +371,7 @@ function permissionLabel(permission: ToolPermissionState, msg: ReturnType<typeof
 
 function ToolCardIcon({ card }: { card: AgentToolDisplayCard }) {
   if (card.kind === 'mcp') {
-    return <RemoteServerIcon iconUrl={card.iconUrl} serverUrl={card.subtitle} />;
+    return <RemoteServerIcon directoryIconUrl={card.iconUrl} />;
   }
 
   return (

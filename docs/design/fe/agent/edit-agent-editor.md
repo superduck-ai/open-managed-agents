@@ -18,7 +18,7 @@ flowchart LR
   Draft -->|有语义变化且校验通过| Update["POST /v1/agents/{id}?beta=true"]
 ```
 
-- 支持的标准配置默认进入 `Rendered`；合法但含未知旧字段、未知工具类型或无法安全映射的数据默认进入 `Raw`，并禁用 `Rendered`，避免静默丢字段。
+- 支持的标准配置默认进入 `Rendered`；合法但含未知旧字段、未知工具类型、重复 toolset 或无法安全映射的数据默认进入 `Raw`，并禁用 `Rendered`，避免静默丢字段。
 - Rendered 和 Raw 共享同一份 Edit Draft。进入 Raw 或切换 YAML/JSON 时均从 Draft 重新序列化，不做文本级转换。
 - Raw 语法或顶层 schema 无效时不污染最后合法 Draft，并阻止切换格式、切回 Rendered及保存。
 - Rendered 允许表单处于临时无效状态，错误在底部操作区展示；修正前禁止保存，不会自动切换到 Raw。

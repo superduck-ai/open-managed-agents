@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { createdFilterStartISOString } from '../api';
+import { createdFilterRange } from '../api';
 import { StatusPill } from '../components/common';
 import { numericValueFromKeys } from '../sessions/SessionDetailPage';
 import {
@@ -148,8 +148,11 @@ export function agentMatchesClientFilters(
     return false;
   }
   if (applyCreatedFilter) {
-    const createdAtGTE = createdFilterStartISOString(filters.created);
-    if (createdAtGTE && Date.parse(agent.created_at) < Date.parse(createdAtGTE)) {
+    const createdRange = createdFilterRange(filters.created);
+    if (createdRange.gte && Date.parse(agent.created_at) < Date.parse(createdRange.gte)) {
+      return false;
+    }
+    if (createdRange.lte && Date.parse(agent.created_at) > Date.parse(createdRange.lte)) {
       return false;
     }
   }

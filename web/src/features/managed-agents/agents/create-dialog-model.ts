@@ -11,7 +11,6 @@ import {
   BUILT_IN_AGENT_TOOLSETS,
   aggregateToolPermissions,
   effectiveToolPermission,
-  type McpDirectoryServer,
   type ToolPermissionState,
 } from './tools/model';
 
@@ -29,6 +28,19 @@ export type AgentSkillOption = {
   latestVersion: string;
   source: 'anthropic' | 'custom';
 };
+
+export type McpServerInput = {
+  name: string;
+  url: string;
+};
+
+export type McpServerInputErrors = {
+  name?: 'required' | 'too_long' | 'duplicate';
+  url?: 'required' | 'too_long' | 'invalid';
+  form?: 'limit';
+};
+
+export type AddMcpServerResult = { ok: true; draft: CreateAgentInput } | { ok: false; errors: McpServerInputErrors };
 
 const modelSchema = z.union([
   z.string().trim().min(1, 'Model is required.'),
@@ -235,23 +247,27 @@ export function toggleSkill(draft: CreateAgentInput, skill: AgentSkillOption): C
   return { ...draft, skills };
 }
 
-export function addMcpServer(draft: CreateAgentInput, server: McpDirectoryServer): CreateAgentInput {
-  if (!server.url || draft.mcp_servers.some((value) => toRecord(value)?.name === server.slug)) {
-    return draft;
+export function addMcpServer(draft: CreateAgentInput, input: McpServerInput): AddMcpServerResult {
+  const name = input.name.trim();
+  const url = input.url.trim();
+  const errors = validateMcpServerInput(draft, name, url);
+  if (Object.keys(errors).length) {
+    return { ok: false, errors };
   }
-  return {
+  const nextDraft = {
     ...draft,
-    mcp_servers: [...draft.mcp_servers, { name: server.slug, type: 'url', url: server.url }],
+    mcp_servers: [...draft.mcp_servers, { name, type: 'url', url }],
     tools: [
       ...draft.tools,
       {
         type: 'mcp_toolset',
-        mcp_server_name: server.slug,
+        mcp_server_name: name,
         default_config: permissionConfig('always_ask'),
         configs: [],
       },
     ],
   };
+  return { ok: true, draft: nextDraft };
 }
 
 export function addBuiltInToolset(draft: CreateAgentInput): CreateAgentInput {
@@ -269,26 +285,6 @@ export function removeToolset(draft: CreateAgentInput, key: string): CreateAgent
     ...draft,
     mcp_servers: draft.mcp_servers.filter((server) => toRecord(server)?.name !== key),
     tools: draft.tools.filter((tool) => !(tool.type === 'mcp_toolset' && tool.mcp_server_name === key)),
-  };
-}
-
-export function addCustomTool(draft: CreateAgentInput): CreateAgentInput {
-  const used = new Set(draft.tools.filter((tool) => tool.type === 'custom').map((tool) => String(tool.name)));
-  let name = 'new_tool';
-  for (let suffix = 2; used.has(name); suffix += 1) {
-    name = `new_tool_${suffix}`;
-  }
-  return {
-    ...draft,
-    tools: [
-      ...draft.tools,
-      {
-        type: 'custom',
-        name,
-        description: 'Describe what this tool does.',
-        input_schema: { type: 'object', properties: {} },
-      },
-    ],
   };
 }
 
@@ -369,6 +365,48 @@ export function permissionConfig(permission: EditablePermission) {
   return permission === 'always_deny'
     ? { enabled: false, permission_policy: { type: 'always_allow' } }
     : { enabled: true, permission_policy: { type: permission } };
+}
+
+function validateMcpServerInput(draft: CreateAgentInput, name: string, url: string): McpServerInputErrors {
+  const errors: McpServerInputErrors = {};
+  if (!name) {
+    errors.name = 'required';
+  } else if (name.length > 255) {
+    errors.name = 'too_long';
+  } else if (
+    draft.mcp_servers.some((server) => toRecord(server)?.name === name) ||
+    draft.tools.some((tool) => tool.type === 'mcp_toolset' && tool.mcp_server_name === name)
+  ) {
+    errors.name = 'duplicate';
+  }
+
+  if (!url) {
+    errors.url = 'required';
+  } else if (url.length > 2048) {
+    errors.url = 'too_long';
+  } else if (!isHTTPURL(url)) {
+    errors.url = 'invalid';
+  }
+
+  if (draft.mcp_servers.length >= 20) {
+    errors.form = 'limit';
+  }
+  return errors;
+}
+
+function isHTTPURL(value: string) {
+  try {
+    const parsed = new URL(value);
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      Boolean(parsed.hostname) &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.hash
+    );
+  } catch {
+    return false;
+  }
 }
 
 function normalizeDraftModel(model: AgentModelInput): AgentModelInput {

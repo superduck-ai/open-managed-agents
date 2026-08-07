@@ -846,19 +846,37 @@ export function VaultCredentialsPanel({
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
+  const { orgUuid } = useWorkspace();
   const [state, setState] = useState<{ loading: boolean; error: string | null; data: VaultCredentialApiResponse[] }>({
     loading: true,
     error: null,
     data: [],
   });
-  const [dialog, setDialog] = useState<{ mode: 'create' | 'edit'; credential?: VaultCredentialApiResponse } | null>(
-    null,
-  );
+  const [dialog, setDialog] = useState<{
+    mode: 'create' | 'edit';
+    credential?: VaultCredentialApiResponse;
+    firstCredential?: boolean;
+  } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     action: 'archive' | 'delete';
     credential: VaultCredentialApiResponse;
   } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('addCredential') !== '1') {
+      return;
+    }
+    setDialog({ mode: 'create', firstCredential: true });
+    params.delete('addCredential');
+    const search = params.toString();
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${search ? `?${search}` : ''}${window.location.hash}`,
+    );
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -988,8 +1006,16 @@ export function VaultCredentialsPanel({
       {dialog ? (
         <CredentialDialog
           credential={dialog.credential}
+          vaultId={vault.id}
+          workspaceId={workspaceId}
+          orgUuid={orgUuid}
+          firstCredential={dialog.firstCredential}
           onClose={() => setDialog(null)}
           onSubmit={(values) => submit(values, dialog.credential)}
+          onOAuthComplete={() => {
+            setDialog(null);
+            onRefresh();
+          }}
         />
       ) : null}
     </>

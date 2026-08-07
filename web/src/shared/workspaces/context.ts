@@ -11,6 +11,7 @@ export type WorkspaceContextValue = {
   error: unknown;
   selectWorkspace: (workspaceId: string) => void;
   createWorkspace: (input: CreateWorkspaceInput) => Promise<Workspace>;
+  archiveWorkspace: (workspaceId: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
 };
 
@@ -29,6 +30,7 @@ const fallbackWorkspaceContext: WorkspaceContextValue = {
     color: input.display_color,
     data_residency: input.data_residency,
   }),
+  archiveWorkspace: async () => undefined,
   refreshWorkspaces: async () => undefined,
 };
 

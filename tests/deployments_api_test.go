@@ -581,6 +581,163 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("execution update invalidates a stale occurrence without moving the cursor", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-execution-revision-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-execution-revision-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		created := createDeployment(t, app, `{
+			"agent":`+quoteJSON(agent.ID)+`,
+			"environment_id":`+quoteJSON(env.ID)+`,
+			"name":"execution revision",
+			"initial_events":[{"type":"user.message","content":[{"type":"text","text":"before"}]}],
+			"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}
+		}`)
+		defer cleanupDeploymentRows(t, app, created.ID)
+
+		ctx := context.Background()
+		ids := getDefaultDBIDs(t, app.db)
+		stale, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		if err != nil || stale.NextScheduledAt == nil {
+			t.Fatalf("load scheduled deployment = (%+v, %v)", stale, err)
+		}
+		updateDeployment(t, app, created.ID, `{"initial_events":[{"type":"user.message","content":[{"type":"text","text":"after"}]}]}`)
+		current, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		if err != nil {
+			t.Fatalf("load updated deployment: %v", err)
+		}
+		if current.ScheduleRevision != stale.ScheduleRevision+1 {
+			t.Fatalf("schedule_revision = %d, want %d", current.ScheduleRevision, stale.ScheduleRevision+1)
+		}
+		if current.NextScheduledAt == nil || !current.NextScheduledAt.Equal(*stale.NextScheduledAt) {
+			t.Fatalf("next_scheduled_at = %v, want %s", current.NextScheduledAt, stale.NextScheduledAt)
+		}
+		_, err = app.db.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+			WorkspaceUUID: ids.WorkspaceUUID, DeploymentExternalID: created.ID,
+			ScheduleRevision: stale.ScheduleRevision, ScheduledAt: *stale.NextScheduledAt,
+		})
+		if !errors.Is(err, db.ErrStaleSchedule) {
+			t.Fatalf("ApplyScheduledOccurrence() error = %v, want ErrStaleSchedule", err)
+		}
+	})
+
+	t.Run("unpause calculates the cursor from the locked schedule", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-unpause-lock-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-unpause-lock-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		created := createDeployment(t, app, `{
+			"agent":`+quoteJSON(agent.ID)+`,
+			"environment_id":`+quoteJSON(env.ID)+`,
+			"name":"unpause lock",
+			"initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}],
+			"schedule":{"type":"cron","expression":"0 * * * *","timezone":"UTC"}
+		}`)
+		defer cleanupDeploymentRows(t, app, created.ID)
+		pauseDeployment(t, app, created.ID)
+
+		ctx := context.Background()
+		ids := getDefaultDBIDs(t, app.db)
+		patchTx, err := app.db.Pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin concurrent schedule patch: %v", err)
+		}
+		defer patchTx.Rollback(ctx) //nolint:errcheck
+		if _, err := patchTx.Exec(ctx, `
+			update deployments
+			set schedule = $1::jsonb, schedule_revision = schedule_revision + 1
+			where workspace_uuid = $2 and external_id = $3
+		`, `{"type":"cron","expression":"30 * * * *","timezone":"UTC"}`, ids.WorkspaceUUID, created.ID); err != nil {
+			t.Fatalf("stage concurrent schedule patch: %v", err)
+		}
+
+		type unpauseResult struct {
+			response *http.Response
+			err      error
+		}
+		started := make(chan struct{})
+		done := make(chan unpauseResult, 1)
+		go func() {
+			req, requestErr := http.NewRequest(http.MethodPost, app.baseURL+"/v1/deployments/"+created.ID+"/unpause", nil)
+			if requestErr == nil {
+				req.Header.Set("X-Api-Key", defaultTestKey)
+				req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
+				req.Header.Set("anthropic-version", "2023-06-01")
+			}
+			close(started)
+			if requestErr != nil {
+				done <- unpauseResult{err: requestErr}
+				return
+			}
+			response, requestErr := app.client.Do(req)
+			done <- unpauseResult{response: response, err: requestErr}
+		}()
+		<-started
+		select {
+		case result := <-done:
+			t.Fatalf("unpause returned before schedule patch committed: %v", result.err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		if err := patchTx.Commit(ctx); err != nil {
+			t.Fatalf("commit concurrent schedule patch: %v", err)
+		}
+		result := <-done
+		if result.err != nil {
+			t.Fatalf("unpause request: %v", result.err)
+		}
+		defer result.response.Body.Close()
+		if result.response.StatusCode != http.StatusOK {
+			t.Fatalf("unpause status = %d, want 200: %s", result.response.StatusCode, readAll(t, result.response.Body))
+		}
+		stored, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		if err != nil || stored.NextScheduledAt == nil || stored.NextScheduledAt.Minute() != 30 {
+			t.Fatalf("deployment after unpause = (%+v, %v), want minute 30 cursor", stored, err)
+		}
+	})
+
+	t.Run("failure archived workspace rejects a scheduled session", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-archived-workspace-agent"}`)
+		defer cleanupAgentRows(t, app.db, agent.ID)
+		env := createEnvironment(t, app, `{"name":"deployments-archived-workspace-env"}`)
+		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		created := createDeployment(t, app, `{
+			"agent":`+quoteJSON(agent.ID)+`,
+			"environment_id":`+quoteJSON(env.ID)+`,
+			"name":"archived workspace",
+			"initial_events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}],
+			"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}
+		}`)
+		defer cleanupDeploymentRows(t, app, created.ID)
+
+		ctx := context.Background()
+		ids := getDefaultDBIDs(t, app.db)
+		deployment, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		if err != nil || deployment.NextScheduledAt == nil {
+			t.Fatalf("load scheduled deployment = (%+v, %v)", deployment, err)
+		}
+		if _, err := app.db.ArchiveAdminWorkspace(ctx, ids.OrganizationUUID, "workspace_default"); err != nil {
+			t.Fatalf("archive workspace: %v", err)
+		}
+		defer func() {
+			if _, err := app.db.Pool.Exec(context.Background(), `update workspaces set archived_at = null where uuid = $1`, ids.WorkspaceUUID); err != nil {
+				t.Errorf("restore workspace: %v", err)
+			}
+		}()
+
+		_, err = app.db.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+			WorkspaceUUID: ids.WorkspaceUUID, DeploymentExternalID: created.ID,
+			ScheduleRevision: deployment.ScheduleRevision, ScheduledAt: *deployment.NextScheduledAt,
+			Session: &db.CreateSessionInput{},
+		})
+		if !errors.Is(err, db.ErrWorkspaceArchived) {
+			t.Fatalf("ApplyScheduledOccurrence() error = %v, want ErrWorkspaceArchived", err)
+		}
+		after, loadErr := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		if loadErr != nil || after.Status != "active" || after.NextScheduledAt == nil || !after.NextScheduledAt.Equal(*deployment.NextScheduledAt) {
+			t.Fatalf("deployment after rejected occurrence = (%+v, %v), want unchanged", after, loadErr)
+		}
+	})
+
 	t.Run("failure auto pause rolls back when outbox cannot be written", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-outbox-agent"}`)
 		defer cleanupAgentRows(t, app.db, agent.ID)

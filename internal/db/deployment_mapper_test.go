@@ -16,8 +16,11 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	params := deploymentMapperTestWriteParams(now)
 	params.ScheduleChanged = true
+	params.RevisionChanged = true
 	withoutSchedule := params
 	withoutSchedule.ScheduleChanged = false
+	withoutRevision := withoutSchedule
+	withoutRevision.RevisionChanged = false
 	page := deploymentPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: 21,
 		Cursor:          &DeploymentPageCursor{CreatedAt: now, UUID: "00000000-0000-4000-8000-000000000009"},
@@ -61,6 +64,12 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			wantID:    "DeploymentMapper.LockOrganization", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{"organizationUUID"}, wantSQLFragments: []string{"FROM organizations", "FOR UPDATE"},
 		}},
+		{"lock workspace", mapperBuilderContract{
+			statement: deploymentMapperLockWorkspaceStatement,
+			bound:     buildDeploymentMapperLockWorkspace(yourbatis.DialectPostgres, params.OrganizationUUID, params.WorkspaceUUID),
+			wantID:    "DeploymentMapper.LockWorkspace", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"organizationUUID", "workspaceUUID"}, wantSQLFragments: []string{"FROM workspaces", "archived_at", "FOR UPDATE"},
+		}},
 		{"count scheduled organization", mapperBuilderContract{
 			statement: deploymentMapperCountScheduledByOrganizationStatement,
 			bound:     buildDeploymentMapperCountScheduledByOrganization(yourbatis.DialectPostgres, params.OrganizationUUID),
@@ -86,9 +95,25 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			wantSensitiveArgumentNames: deploymentSensitiveArgumentNames(false),
 			wantSQLFragments:           []string{"UPDATE deployments", "schedule_revision = schedule_revision + 1", "workspace_uuid = $17", "RETURNING"},
 		}},
-		{"update without schedule", mapperBuilderContract{
+		{"update execution without schedule", mapperBuilderContract{
 			statement: deploymentMapperUpdateByExternalIDStatement,
 			bound:     buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutSchedule),
+			wantID:    "DeploymentMapper.UpdateByExternalID", wantKind: yourbatis.StatementUpdate,
+			wantArgumentNames: []string{
+				"params.EnvironmentUUID", "params.EnvironmentExternalID", "params.AgentUUID", "params.AgentExternalID",
+				"params.AgentVersion", "params.AgentSnapshot", "params.Name", "params.Description", "params.Metadata",
+				"params.InitialEvents", "params.Resources", "params.ResourceSecrets", "params.VaultIDs", "params.UpdatedAt",
+				"params.WorkspaceUUID", "params.ExternalID",
+			},
+			wantSensitiveArgumentNames: []string{
+				"params.AgentSnapshot", "params.Metadata", "params.InitialEvents", "params.Resources",
+				"params.ResourceSecrets", "params.VaultIDs",
+			},
+			wantSQLFragments: []string{"UPDATE deployments", "schedule_revision = schedule_revision + 1", "workspace_uuid = $15", "RETURNING"},
+		}},
+		{"update without execution change", mapperBuilderContract{
+			statement: deploymentMapperUpdateByExternalIDStatement,
+			bound:     buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutRevision),
 			wantID:    "DeploymentMapper.UpdateByExternalID", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
 				"params.EnvironmentUUID", "params.EnvironmentExternalID", "params.AgentUUID", "params.AgentExternalID",
@@ -200,6 +225,13 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) { assertMapperBuilderContract(t, test.contract) })
 	}
+
+	t.Run("update without execution change preserves revision", func(t *testing.T) {
+		bound := buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutRevision)
+		if containsSQL(bound.SQL, "schedule_revision = schedule_revision + 1") || containsSQL(bound.SQL, "next_scheduled_at =") {
+			t.Fatalf("SQL unexpectedly changes schedule state: %q", bound.SQL)
+		}
+	})
 
 	t.Run("include archived omits archived filter", func(t *testing.T) {
 		page.IncludeArchived = true

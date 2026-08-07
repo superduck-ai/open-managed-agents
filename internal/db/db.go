@@ -37,6 +37,7 @@ var (
 	ErrFileInUse             = errors.New("file is in use")
 	ErrFileReferenceNotFound = errors.New("file reference not found")
 	ErrStaleSchedule         = errors.New("stale deployment schedule")
+	ErrWorkspaceArchived     = errors.New("workspace archived")
 )
 
 type DB struct {

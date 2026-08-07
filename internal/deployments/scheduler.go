@@ -275,6 +275,9 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 	if errors.Is(err, db.ErrStaleSchedule) {
 		return nil
 	}
+	if errors.Is(err, db.ErrWorkspaceArchived) {
+		return w.recordFailure(ctx, deployment, args, nextScheduledAt, runError("workspace_archived_error", "Workspace is archived"), now)
+	}
 	if errors.Is(err, db.ErrFileReferenceNotFound) {
 		return w.recordFailure(ctx, deployment, args, nextScheduledAt, runErrorForReference("file", db.ErrNotFound, false), now)
 	}

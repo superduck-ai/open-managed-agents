@@ -59,6 +59,7 @@ type deploymentWriteParams struct {
 	VaultIDs              []byte
 	Schedule              []byte
 	ScheduleChanged       bool
+	RevisionChanged       bool
 	ScheduleRevision      int64
 	NextScheduledAt       *time.Time
 	LastRunAt             *time.Time
@@ -80,6 +81,10 @@ type deploymentScheduleRow struct {
 	Schedule         []byte     `db:"schedule"`
 	ScheduleRevision int64      `db:"schedule_revision"`
 	NextScheduledAt  *time.Time `db:"next_scheduled_at"`
+}
+
+type deploymentWorkspaceStateRow struct {
+	ArchivedAt *time.Time `db:"archived_at"`
 }
 
 type setInitialNextScheduledAtParams struct {
@@ -121,6 +126,7 @@ type deploymentPageMapperParams struct {
 type DeploymentMapper interface {
 	Insert(ctx context.Context, params deploymentWriteParams) (deploymentMapperRow, error)
 	LockOrganization(ctx context.Context, organizationUUID string) (string, error)
+	LockWorkspace(ctx context.Context, organizationUUID, workspaceUUID string) (deploymentWorkspaceStateRow, error)
 	CountScheduledByOrganization(ctx context.Context, organizationUUID string) (int64, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	LockByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)

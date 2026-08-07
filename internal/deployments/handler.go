@@ -617,19 +617,16 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	current, err := h.db.GetDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
-	if err != nil {
-		h.writeDeploymentLoadError(w, r, err, deploymentID)
-		return
-	}
-	next, err := nextScheduledAt(current.Schedule, time.Now().UTC())
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "calculate next deployment schedule", "deployment_id", deploymentID, "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not unpause deployment"))
-		return
-	}
 	var unpaused db.Deployment
-	err = h.db.Transaction(r.Context(), func(tx *yourbatis.Tx) error {
+	err := h.db.Transaction(r.Context(), func(tx *yourbatis.Tx) error {
+		current, err := h.db.LockDeploymentTx(r.Context(), tx, principal.WorkspaceUUID, deploymentID)
+		if err != nil {
+			return err
+		}
+		next, err := nextScheduledAt(current.Schedule, time.Now().UTC())
+		if err != nil {
+			return err
+		}
 		unpaused, err = h.db.UnpauseDeploymentTx(r.Context(), tx, principal.WorkspaceUUID, deploymentID, next)
 		if err != nil {
 			return err

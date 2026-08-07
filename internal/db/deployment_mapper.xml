@@ -98,6 +98,14 @@
 		FOR UPDATE
 	</select>
 
+	<select id="LockWorkspace" resultType="deploymentWorkspaceStateRow">
+		SELECT archived_at
+		FROM workspaces
+		WHERE organization_uuid = #{organizationUUID}
+		AND uuid = #{workspaceUUID}
+		FOR UPDATE
+	</select>
+
 	<select id="CountScheduledByOrganization" result="scalar">
 		SELECT COUNT(*)
 		FROM deployments
@@ -143,8 +151,10 @@
             vault_ids = CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
 			<if test="params.ScheduleChanged">
 				schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
-				schedule_revision = schedule_revision + 1,
 				next_scheduled_at = #{params.NextScheduledAt},
+			</if>
+			<if test="params.RevisionChanged">
+				schedule_revision = schedule_revision + 1,
 			</if>
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}

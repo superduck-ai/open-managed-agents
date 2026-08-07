@@ -212,11 +212,26 @@ func updateDeployment(ctx context.Context, executor yourbatis.Executor, workspac
 	params.WorkspaceUUID = workspaceUUID
 	params.ExternalID = externalID
 	params.ScheduleChanged = input.ScheduleChanged
+	params.RevisionChanged = input.ScheduleChanged || deploymentExecutionChanged(current.deployment(), next)
 	row, err := deploymentMapper.UpdateByExternalID(ctx, params)
 	if err != nil {
 		return Deployment{}, mapNoRows(err)
 	}
 	return row.deployment(), nil
+}
+
+func deploymentExecutionChanged(current, next Deployment) bool {
+	return current.EnvironmentUUID != next.EnvironmentUUID ||
+		current.EnvironmentExternalID != next.EnvironmentExternalID ||
+		current.AgentUUID != next.AgentUUID ||
+		current.AgentExternalID != next.AgentExternalID ||
+		current.AgentVersion != next.AgentVersion ||
+		!sameJSON(current.AgentSnapshot, next.AgentSnapshot) ||
+		!sameJSON(current.Metadata, next.Metadata) ||
+		!sameJSON(current.InitialEvents, next.InitialEvents) ||
+		!sameJSON(current.Resources, next.Resources) ||
+		!sameJSON(current.ResourceSecrets, next.ResourceSecrets) ||
+		!sameJSON(current.VaultIDs, next.VaultIDs)
 }
 
 func checkScheduledDeploymentQuota(ctx context.Context, mapper DeploymentMapper, organizationUUID string) error {
@@ -257,6 +272,14 @@ func (d *DB) UnpauseDeployment(ctx context.Context, workspaceUUID string, extern
 
 func (d *DB) UnpauseDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string, nextScheduledAt *time.Time) (Deployment, error) {
 	return unpauseDeployment(ctx, tx, workspaceUUID, externalID, nextScheduledAt)
+}
+
+func (d *DB) LockDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, externalID string) (Deployment, error) {
+	row, err := NewDeploymentMapper(tx).LockByExternalID(ctx, workspaceUUID, externalID)
+	if err != nil {
+		return Deployment{}, mapNoRows(err)
+	}
+	return row.deployment(), nil
 }
 
 func unpauseDeployment(ctx context.Context, executor yourbatis.Executor, workspaceUUID string, externalID string, nextScheduledAt *time.Time) (Deployment, error) {
@@ -387,6 +410,15 @@ func (d *DB) ApplyScheduledOccurrence(ctx context.Context, input ApplyScheduledO
 				return err
 			}
 			return enqueueWebhookDeliveryEventsTx(ctx, executor, input.WorkspaceUUID, input.WebhookEvents)
+		}
+		if input.Session != nil {
+			workspace, err := deploymentMapper.LockWorkspace(ctx, deployment.OrganizationUUID, deployment.WorkspaceUUID)
+			if err != nil {
+				return mapNoRows(err)
+			}
+			if workspace.ArchivedAt != nil {
+				return ErrWorkspaceArchived
+			}
 		}
 
 		run := deploymentRunFromDeployment(input.Run, deployment)

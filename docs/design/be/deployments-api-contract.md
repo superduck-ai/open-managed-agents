@@ -57,12 +57,12 @@ OMA 使用 River `v0.42.0` 持久执行 schedule。River 官方 migrator 在应�
 
 Cron 统一由 `internal/deployments` 的 schedule 组件解析：
 
-- 只接受五段 POSIX Cron 与有效 IANA timezone；拒绝 seconds/year、`L/W/#/?` 和 `@daily` shortcut。
+- 只接受有实际 occurrence 的五段 POSIX Cron 与有效 IANA timezone；拒绝 seconds/year、`L/W/#/?`、`@daily` shortcut 和永远不会发生的日期组合。
 - `upcoming_runs_at` 返回最多五个不含 jitter 的名义 UTC 时刻，不再使用 366 天扫描上限，因此闰日计划有效。
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
 - 实际 River Job 只正向延后。jitter 窗口为相邻名义 occurrence 间隔的 15%，下限 5 秒、上限 9 分钟；窗口内 offset 由 Deployment ID 与名义时刻的稳定哈希决定。这是 OMA 内部选择，不是 Claude 公开的哈希算法。
 
-每个 Deployment 持久化 `schedule_revision` 和 `next_scheduled_at`。create、明确修改或清除 schedule、pause、unpause、archive 都使旧 revision 的 Job 失效；PATCH 未携带 schedule 时不写这三个调度字段。schedule revision 在锁定 Deployment 的事务内由数据库原子递增，避免锁外旧快照覆盖 worker 已推进的游标。unpause 只从当前时间之后的下一个 occurrence 恢复，不补暂停期间的触发。worker 成功提交一个 Run 后推进到下一个名义 occurrence。create、明确修改 schedule 和 unpause 通过 Yourbatis 公开的 `SQLTx()` 将同一个事务交给 River `InsertTx`，使游标与 Job 一起提交或回滚。worker 推进游标和启动回填后的 Job 仍由每 30 秒一次的 reconciliation 补齐，入队使用 `ByArgs` 保持幂等。启动回填或 reconciliation 遇到单条确定性的存量 schedule 解析错误时记录并跳过该 Deployment；数据库或 River 基础设施错误仍使启动失败。
+每个 Deployment 持久化 `schedule_revision` 和 `next_scheduled_at`。这个 revision 同时保护 schedule 和执行输入：create、明确修改或清除 schedule、修改 agent/environment/metadata/initial events/resources/vaults、pause、unpause、archive 都使旧 Job 失效；不影响执行的 PATCH 不改 revision。执行输入 PATCH 会保留事务内锁定行的 cursor，并为新 revision 重新入队，避免 worker 使用旧配置提交 Session。unpause 在锁定 Deployment 后计算下一个 occurrence，只从当前时间之后恢复，不补暂停期间的触发。worker 成功提交一个 Run 后推进到下一个名义 occurrence。create、相关 PATCH 和 unpause 通过 Yourbatis 公开的 `SQLTx()` 将同一个事务交给 River `InsertTx`，使游标与 Job 一起提交或回滚。worker 推进游标和启动回填后的 Job 仍由每 30 秒一次的 reconciliation 补齐，入队使用 `ByArgs` 保持幂等。启动回填或 reconciliation 遇到单条确定性的存量 schedule 解析错误时记录并跳过该 Deployment；数据库或 River 基础设施错误仍使启动失败。
 
 ```mermaid
 sequenceDiagram
@@ -75,7 +75,7 @@ sequenceDiagram
     API->>River: 使用同一事务幂等插入 Job
     Note over AppDB,River: Deployment 与 Job 一起提交或回滚
     River->>Worker: 到达 jitter 后的 trigger_at
-    Worker->>AppDB: 锁定并校验 active/revision/next_scheduled_at
+    Worker->>AppDB: 锁定并校验 Workspace、active、revision 与 cursor
     Worker->>AppDB: 原子写 Session 或失败 Run、推进/暂停游标并写 webhook outbox
     Worker-->>River: occurrence 已完成
 ```
@@ -85,6 +85,7 @@ sequenceDiagram
 失败行为按 Claude 公开合同处理：
 
 - 根 Agent 归档会在同一数据库事务自动归档其 Deployment 并写入 `deployment.archived` outbox；根 Agent 在触发时已删除也会自动归档并原子写入该事件，且不生成 Run。
+- Workspace 已归档时，最终事务拒绝创建 Session，worker 改为记录 `workspace_archived_error` 失败 Run 并自动暂停 Deployment。
 - 其他引用或配置失败生成最终失败 Run。只有公开的 14 类 paused-reason error 会自动暂停；`session_rate_limited_error` 与 `session_creation_rejected_error` 不暂停，并继续下一个 occurrence。
 - 数据库或进程级失败发生在最终 Run 提交之前时交给 River 重试；已提交成功或失败 Run 后不重试当前 occurrence。
 - paused Deployment 仍允许 manual Run；manual Run 不发送 `deployment_run.*` webhook。

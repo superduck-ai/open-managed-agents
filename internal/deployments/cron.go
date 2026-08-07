@@ -70,6 +70,9 @@ func parseDeploymentSchedule(raw json.RawMessage) (parsedSchedule, error) {
 	if err != nil {
 		return parsedSchedule{}, errors.New("schedule.timezone must be a valid IANA timezone")
 	}
+	if cronSchedule.Next(time.Date(2000, time.January, 1, 0, 0, 0, 0, location)).IsZero() {
+		return parsedSchedule{}, errors.New("schedule.expression has no valid occurrence")
+	}
 	return parsedSchedule{config: config, cron: cronSchedule, location: location}, nil
 }
 
@@ -120,6 +123,9 @@ func nextScheduledAt(raw json.RawMessage, after time.Time) (*time.Time, error) {
 		return nil, err
 	}
 	next := schedule.cron.Next(after.In(schedule.location)).UTC()
+	if next.IsZero() {
+		return nil, nil
+	}
 	return &next, nil
 }
 
@@ -131,6 +137,9 @@ func nextScheduledTimes(raw json.RawMessage, after time.Time, count int) ([]time
 	times := make([]time.Time, 0, count)
 	cursor := schedule.cron.Next(after.In(schedule.location)).UTC()
 	for range count {
+		if cursor.IsZero() {
+			break
+		}
 		times = append(times, cursor)
 		cursor = nextAfterOccurrence(schedule, cursor)
 	}
@@ -143,10 +152,16 @@ func nextAfterScheduled(raw json.RawMessage, scheduledAt time.Time) (*time.Time,
 		return nil, err
 	}
 	next := nextAfterOccurrence(schedule, scheduledAt.UTC())
+	if next.IsZero() {
+		return nil, nil
+	}
 	return &next, nil
 }
 
 func nextAfterOccurrence(schedule parsedSchedule, occurrence time.Time) time.Time {
+	if occurrence.IsZero() {
+		return time.Time{}
+	}
 	local := occurrence.In(schedule.location)
 	for candidate := occurrence.Add(time.Minute); !candidate.After(occurrence.Add(3 * time.Hour)); candidate = candidate.Add(time.Minute) {
 		candidateLocal := candidate.In(schedule.location)
@@ -166,6 +181,9 @@ func jitteredTriggerAt(deploymentID string, scheduleRaw json.RawMessage, schedul
 	next, err := nextAfterScheduled(scheduleRaw, scheduledAt)
 	if err != nil {
 		return time.Time{}, err
+	}
+	if next == nil {
+		return time.Time{}, errors.New("schedule has no next occurrence")
 	}
 	window := time.Duration(float64(next.Sub(scheduledAt)) * 0.15)
 	window = max(window, 5*time.Second)

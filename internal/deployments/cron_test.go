@@ -56,6 +56,8 @@ func TestNormalizeOptionalScheduleRejectsUnsupportedSyntax(t *testing.T) {
 		`{"type":"cron","expression":"@daily","timezone":"UTC"}`,
 		`{"type":"cron","expression":"0 0 L * *","timezone":"UTC"}`,
 		`{"type":"cron","expression":"0 0 0 * * *","timezone":"UTC"}`,
+		`{"type":"cron","expression":"0 0 30 2 *","timezone":"UTC"}`,
+		`{"type":"cron","expression":"0 0 31 4 *","timezone":"UTC"}`,
 	}
 	for _, raw := range tests {
 		if _, err := normalizeOptionalSchedule(json.RawMessage(raw)); err == nil {

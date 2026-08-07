@@ -1,7 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 
-import { type DeploymentApiResponse, type EnvironmentApiResponse, type EnvironmentEditValues } from '../types';
-import { environmentConfigBody, environmentEditValues, statusPillTone } from './model';
+import {
+  type CredentialFormValues,
+  type DeploymentApiResponse,
+  type EnvironmentApiResponse,
+  type EnvironmentEditValues,
+} from '../types';
+import {
+  credentialAuthBody,
+  credentialFormReady,
+  credentialFormValues,
+  emptyCredentialFormValues,
+  environmentConfigBody,
+  environmentEditValues,
+  statusPillTone,
+} from './model';
 
 function editValues(overrides: Partial<EnvironmentEditValues>): EnvironmentEditValues {
   return {
@@ -122,5 +135,81 @@ describe('environmentEditValues networking round-trip', () => {
     expect(values.allowMcpServers).toBe(false);
     expect(values.allowPackageManagers).toBe(false);
     expect(values.allowedHostsText).toBe('');
+  });
+});
+
+describe('credentialAuthBody mcp_oauth', () => {
+  function oauthValues(overrides: Partial<CredentialFormValues> = {}): CredentialFormValues {
+    return {
+      ...emptyCredentialFormValues(),
+      displayName: 'Slack MCP',
+      authType: 'mcp_oauth',
+      mcpServerUrl: 'https://mcp.example.com/mcp',
+      token: 'access-secret',
+      ...overrides,
+    };
+  }
+
+  test('create body includes access_token and optional refresh', () => {
+    expect(credentialAuthBody(oauthValues(), true)).toEqual({
+      type: 'mcp_oauth',
+      mcp_server_url: 'https://mcp.example.com/mcp',
+      access_token: 'access-secret',
+    });
+    expect(
+      credentialAuthBody(
+        oauthValues({
+          refreshToken: 'refresh-secret',
+          refreshTokenEndpoint: 'https://auth.example.com/token',
+          refreshClientId: 'client-123',
+          refreshAuthType: 'client_secret_post',
+          refreshClientSecret: 'client-secret',
+        }),
+        true,
+      ),
+    ).toEqual({
+      type: 'mcp_oauth',
+      mcp_server_url: 'https://mcp.example.com/mcp',
+      access_token: 'access-secret',
+      refresh: {
+        token_endpoint: 'https://auth.example.com/token',
+        client_id: 'client-123',
+        refresh_token: 'refresh-secret',
+        token_endpoint_auth: { type: 'client_secret_post', client_secret: 'client-secret' },
+      },
+    });
+  });
+
+  test('update body omits immutable url and empty access token', () => {
+    expect(credentialAuthBody(oauthValues({ token: '' }), false)).toEqual({ type: 'mcp_oauth' });
+    expect(credentialAuthBody(oauthValues({ token: 'rotated' }), false)).toEqual({
+      type: 'mcp_oauth',
+      access_token: 'rotated',
+    });
+  });
+
+  test('credentialFormValues detects mcp_oauth', () => {
+    const values = credentialFormValues({
+      id: 'vcrd_1',
+      vault_id: 'vault_1',
+      type: 'vault_credential',
+      display_name: 'OAuth',
+      created_at: '2026-08-01T00:00:00Z',
+      updated_at: '2026-08-01T00:00:00Z',
+      archived_at: null,
+      metadata: {},
+      auth: { type: 'mcp_oauth', mcp_server_url: 'https://mcp.example.com/mcp' },
+    });
+    expect(values.authType).toBe('mcp_oauth');
+    expect(values.mcpServerUrl).toBe('https://mcp.example.com/mcp');
+  });
+
+  test('credentialFormReady gates ack, connect, and paste paths', () => {
+    expect(credentialFormReady(oauthValues({ token: '' }), 'create', false)).toBe(false);
+    expect(credentialFormReady(oauthValues({ token: '' }), 'create', true)).toBe(true);
+    expect(credentialFormReady(oauthValues({ token: '', oauthClientSecret: 'secret-only' }), 'create', true)).toBe(
+      false,
+    );
+    expect(credentialFormReady(oauthValues(), 'create', true)).toBe(true);
   });
 });

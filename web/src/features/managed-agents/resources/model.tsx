@@ -638,16 +638,66 @@ export function environmentMetadataBody(values: EnvironmentEditValues) {
   return metadata;
 }
 
+export function emptyCredentialFormValues(): CredentialFormValues {
+  return {
+    displayName: '',
+    authType: 'static_bearer',
+    mcpServerUrl: '',
+    token: '',
+    secretName: '',
+    secretValue: '',
+    refreshToken: '',
+    refreshTokenEndpoint: '',
+    refreshClientId: '',
+    refreshClientSecret: '',
+    refreshAuthType: 'none',
+    oauthClientId: '',
+    oauthClientSecret: '',
+  };
+}
+
+export function parseCredentialAuthType(value: string): CredentialFormValues['authType'] {
+  if (value === 'environment_variable' || value === 'mcp_oauth') {
+    return value;
+  }
+  return 'static_bearer';
+}
+
 export function credentialFormValues(credential?: VaultCredentialApiResponse): CredentialFormValues {
   const auth = objectRecord(credential?.auth);
-  const authType = auth.type === 'environment_variable' ? 'environment_variable' : 'static_bearer';
   return {
+    ...emptyCredentialFormValues(),
     displayName: credential?.display_name || '',
-    authType,
+    authType: parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : ''),
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
-    token: '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
-    secretValue: '',
+  };
+}
+
+function credentialRefreshStarted(values: CredentialFormValues) {
+  return (
+    Boolean(values.refreshToken.trim()) ||
+    Boolean(values.refreshTokenEndpoint.trim()) ||
+    Boolean(values.refreshClientId.trim()) ||
+    Boolean(values.refreshClientSecret.trim()) ||
+    values.refreshAuthType !== 'none'
+  );
+}
+
+function credentialRefreshBody(values: CredentialFormValues) {
+  const refreshToken = values.refreshToken.trim();
+  const tokenEndpoint = values.refreshTokenEndpoint.trim();
+  const clientId = values.refreshClientId.trim();
+  if (!refreshToken || !tokenEndpoint || !clientId) {
+    return undefined;
+  }
+  const authType = values.refreshAuthType;
+  return {
+    token_endpoint: tokenEndpoint,
+    client_id: clientId,
+    refresh_token: values.refreshToken,
+    token_endpoint_auth:
+      authType === 'none' ? { type: 'none' as const } : { type: authType, client_secret: values.refreshClientSecret },
   };
 }
 
@@ -660,6 +710,15 @@ export function credentialAuthBody(values: CredentialFormValues, includeImmutabl
       networking: { type: 'unrestricted' },
     };
   }
+  if (values.authType === 'mcp_oauth') {
+    const refresh = includeImmutable ? credentialRefreshBody(values) : undefined;
+    return {
+      type: 'mcp_oauth',
+      ...(includeImmutable ? { mcp_server_url: values.mcpServerUrl.trim() } : {}),
+      ...(values.token.trim() ? { access_token: values.token } : {}),
+      ...(refresh ? { refresh } : {}),
+    };
+  }
   return {
     type: 'static_bearer',
     ...(includeImmutable ? { mcp_server_url: values.mcpServerUrl.trim() } : {}),
@@ -667,12 +726,61 @@ export function credentialAuthBody(values: CredentialFormValues, includeImmutabl
   };
 }
 
+function credentialRefreshComplete(values: CredentialFormValues) {
+  if (!credentialRefreshStarted(values)) {
+    return true;
+  }
+  if (!values.refreshToken.trim() || !values.refreshTokenEndpoint.trim() || !values.refreshClientId.trim()) {
+    return false;
+  }
+  if (values.refreshAuthType !== 'none' && !values.refreshClientSecret.trim()) {
+    return false;
+  }
+  return true;
+}
+
+export function credentialFormReady(values: CredentialFormValues, mode: 'create' | 'edit', acknowledged: boolean) {
+  if (!acknowledged || !values.displayName.trim()) {
+    return false;
+  }
+  if (values.authType === 'environment_variable') {
+    if (mode === 'edit') {
+      return Boolean(values.secretValue.trim());
+    }
+    return Boolean(values.secretName.trim() && values.secretValue.trim());
+  }
+  if (values.authType === 'static_bearer') {
+    if (mode === 'edit') {
+      return Boolean(values.token.trim());
+    }
+    return Boolean(values.mcpServerUrl.trim() && values.token.trim());
+  }
+  if (mode === 'create' && !values.mcpServerUrl.trim()) {
+    return false;
+  }
+  if (!credentialRefreshComplete(values)) {
+    return false;
+  }
+  if (mode === 'edit' || values.token.trim()) {
+    return true;
+  }
+  // Connect path: refresh fields belong to paste-token create; client_secret needs client_id
+  if (credentialRefreshStarted(values)) {
+    return false;
+  }
+  return !values.oauthClientSecret.trim() || Boolean(values.oauthClientId.trim());
+}
+
 export function credentialAuthLabel(auth: unknown) {
   const record = objectRecord(auth);
-  if (record.type === 'environment_variable') {
+  return credentialAuthTypeLabel(typeof record.type === 'string' ? record.type : '');
+}
+
+export function credentialAuthTypeLabel(authType: string) {
+  if (authType === 'environment_variable') {
     return 'Environment variable';
   }
-  if (record.type === 'mcp_oauth') {
+  if (authType === 'mcp_oauth') {
     return 'MCP OAuth';
   }
   return 'Static bearer';

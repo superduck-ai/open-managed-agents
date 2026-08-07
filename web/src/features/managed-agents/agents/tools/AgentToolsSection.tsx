@@ -5,17 +5,7 @@ import { Button } from '../../../../shared/ui/button';
 import { Card } from '../../../../shared/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../../shared/ui/collapsible';
 import { toast } from '../../../../shared/ui/sonner';
-import {
-  Ban,
-  BriefcaseBusiness,
-  CheckCircle2,
-  ChevronRight,
-  Ellipsis,
-  Hand,
-  RefreshCw,
-  Server,
-  Wrench,
-} from 'lucide-react';
+import { Ban, BriefcaseBusiness, CheckCircle2, ChevronRight, Ellipsis, Hand, RefreshCw, Wrench } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useContext, useMemo, useState } from 'react';
 import { type AgentApiResponse } from '../../types';
@@ -27,6 +17,7 @@ import {
   type McpToolCatalog,
   type ToolPermissionState,
 } from './model';
+import { RemoteServerIcon } from './RemoteServerIcon';
 
 type McpCatalogQueryData = { data: McpToolCatalog[]; version: number };
 type McpCatalogQueryKey = readonly ['agent-mcp-tool-catalogs', string, string, string, number];
@@ -379,27 +370,16 @@ function permissionLabel(permission: ToolPermissionState, msg: ReturnType<typeof
 }
 
 function ToolCardIcon({ card }: { card: AgentToolDisplayCard }) {
-  const [failedIconUrl, setFailedIconUrl] = useState<string>();
-  const fallback =
-    card.kind === 'built-in' ? (
-      <BriefcaseBusiness className="size-5" aria-hidden />
-    ) : card.kind === 'custom' ? (
-      <Wrench className="size-5" aria-hidden />
-    ) : (
-      <Server className="size-5" aria-hidden />
-    );
+  if (card.kind === 'mcp') {
+    return <RemoteServerIcon iconUrl={card.iconUrl} serverUrl={card.subtitle} />;
+  }
 
   return (
     <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-secondary text-foreground">
-      {card.iconUrl && failedIconUrl !== card.iconUrl ? (
-        <img
-          src={card.iconUrl}
-          alt=""
-          className="size-5 object-contain"
-          onError={() => setFailedIconUrl(card.iconUrl)}
-        />
+      {card.kind === 'built-in' ? (
+        <BriefcaseBusiness className="size-5" aria-hidden />
       ) : (
-        fallback
+        <Wrench className="size-5" aria-hidden />
       )}
     </span>
   );

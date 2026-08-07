@@ -182,6 +182,14 @@ async function sdkPage<T>(operation: () => Promise<unknown>) {
   return toPlainPage<T>((await sdkCall(operation)) as PageLike<T>);
 }
 
+export const anthropicApi = {
+  models: {
+    list<T>(params: Record<string, unknown>, workspaceId?: string) {
+      return sdkPage<T>(() => getAnthropicClient().models.list(params, requestOptions(workspaceId)));
+    },
+  },
+};
+
 export const anthropicBetaApi = {
   files: {
     list<T>(params: Record<string, unknown>, workspaceId?: string) {

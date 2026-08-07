@@ -14,24 +14,27 @@ import {
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { useWorkspace } from '../../../shared/workspaces/context';
+import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ChevronDown, Loader2, Sparkles, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   blankAgentTemplate,
-  createAgentConfigText,
   createAgentTemplates,
   createDialogAgentConfig,
   createTemplateAppTags,
   generateCreateAgentConfig,
-  parseCreateAgentConfigText,
 } from '../agentConfig';
 import { ManagedErrorAlert } from '../components/common';
 import { templateBody, templateTitle } from '../labels';
 import { useEffectiveModelMappings } from '../modelMappings';
-import { type AgentApiResponse, type AgentTemplate, type CodeFormat, type CreateAgentInput } from '../types';
+import { type AgentApiResponse, type AgentTemplate, type CreateAgentInput } from '../types';
 import { errorMessage, navigateToAgentConfig } from '../utils';
+import { listCreateAgentModels } from './create-dialog-api';
 import { CreateDialogConfigEditor } from './create-dialog-config-editor';
+import { normalizeCreateAgentDraft } from './create-dialog-model';
+import { AgentConfigRenderedEditor } from './create-dialog-rendered';
+import { useCreateAgentDraft } from './use-create-agent-draft';
 
 type CreateAgentDialogProps = {
   workspaceId: string;
@@ -42,13 +45,31 @@ type CreateAgentDialogProps = {
 export function CreateAgentDialog(props: CreateAgentDialogProps) {
   const { orgUuid } = useWorkspace();
   const modelMappingsQuery = useEffectiveModelMappings(orgUuid);
-  if (orgUuid && modelMappingsQuery.isPending) {
+  const modelsQuery = useQuery({
+    queryKey: ['create-agent', 'models', props.workspaceId],
+    queryFn: () => listCreateAgentModels(props.workspaceId),
+    retry: false,
+  });
+  if ((orgUuid && modelMappingsQuery.isPending) || modelsQuery.isPending) {
     return <CreateAgentDialogLoading onClose={props.onClose} />;
   }
-  if (orgUuid && modelMappingsQuery.isError) {
-    return <CreateAgentDialogLoading error onClose={props.onClose} onRetry={() => void modelMappingsQuery.refetch()} />;
+  if ((orgUuid && modelMappingsQuery.isError) || modelsQuery.isError) {
+    return (
+      <CreateAgentDialogLoading
+        error
+        onClose={props.onClose}
+        onRetry={() => void Promise.all([modelMappingsQuery.refetch(), modelsQuery.refetch()])}
+      />
+    );
   }
-  return <CreateAgentDialogContent {...props} orgUuid={orgUuid} modelMappings={modelMappingsQuery.data ?? {}} />;
+  return (
+    <CreateAgentDialogContent
+      {...props}
+      orgUuid={orgUuid}
+      modelMappings={modelMappingsQuery.data ?? {}}
+      modelOptions={modelsQuery.data ?? []}
+    />
+  );
 }
 
 function CreateAgentDialogLoading({
@@ -100,110 +121,60 @@ function CreateAgentDialogContent({
   onCreate,
   orgUuid,
   modelMappings,
-}: CreateAgentDialogProps & { orgUuid?: string; modelMappings: Record<string, string> }) {
+  modelOptions,
+}: CreateAgentDialogProps & {
+  orgUuid?: string;
+  modelMappings: Record<string, string>;
+  modelOptions: Awaited<ReturnType<typeof listCreateAgentModels>>;
+}) {
   const { msg, locale } = useI18n();
   const [startingPointOpen, setStartingPointOpen] = useState(true);
   const [mode, setMode] = useState<'describe' | 'template'>('describe');
   const [selectedTemplateId, setSelectedTemplateId] = useState(blankAgentTemplate.id);
-  const [format, setFormat] = useState<CodeFormat>('YAML');
   const [description, setDescription] = useState('');
   const [generatedConfig, setGeneratedConfig] = useState<CreateAgentInput | null>(null);
-  const [configInput, setConfigInput] = useState<CreateAgentInput>(() =>
-    createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings),
-  );
-  const [configText, setConfigText] = useState(() =>
-    createAgentConfigText(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings), 'YAML'),
-  );
-  const [configError, setConfigError] = useState<string | null>(null);
+  const draftState = useCreateAgentDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings));
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const generateAbortRef = useRef<AbortController | null>(null);
-  const configInputRef = useRef(configInput);
+  const rawErrorRef = useRef(draftState.rawError);
+  rawErrorRef.current = draftState.rawError;
   const selectedTemplate =
     createAgentTemplates.find((template) => template.id === selectedTemplateId) ?? blankAgentTemplate;
   const startingPointName =
     mode === 'describe'
-      ? generatedConfig?.name?.trim() || msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')
+      ? generatedConfig?.name?.trim() || templateTitle(blankAgentTemplate, msg)
       : templateTitle(selectedTemplate, msg);
-  const createDisabled = Boolean(configError) || isGenerating || isCreating;
-
-  useEffect(() => {
-    configInputRef.current = configInput;
-  }, [configInput]);
-
-  const validateEditorText = useCallback((text: string, nextFormat: CodeFormat) => {
-    const parsed = parseCreateAgentConfigText(text, nextFormat, configInputRef.current);
-    return parsed.ok ? null : parsed.error;
-  }, []);
-
-  const hydrateConfig = (input: CreateAgentInput) => {
-    setConfigInput(input);
-    setConfigText(createAgentConfigText(input, format));
-    setConfigError(null);
-    setCreateError(null);
-  };
-
-  const parseCurrentConfig = () => {
-    const parsed = parseCreateAgentConfigText(configText, format, configInput);
-    if (!parsed.ok) {
-      setConfigError(parsed.error);
-      return null;
-    }
-    setConfigError(null);
-    setConfigInput(parsed.input);
-    return parsed.input;
-  };
-
-  const handleEditorChange = (value: string) => {
-    setConfigText(value);
-    const parsed = parseCreateAgentConfigText(value, format, configInput);
-    if (!parsed.ok) {
-      setConfigError(parsed.error);
-      return;
-    }
-    setConfigError(null);
-    setConfigInput(parsed.input);
-  };
-
-  const selectFormat = (nextFormat: CodeFormat) => {
-    if (nextFormat === format) {
-      return;
-    }
-    const parsed = parseCurrentConfig();
-    if (!parsed) {
-      return;
-    }
-    setFormat(nextFormat);
-    setConfigText(createAgentConfigText(parsed, nextFormat));
-    setCreateError(null);
-  };
+  const createDisabled = createSubmissionDisabled(draftState.rawError, draftState.draftError, isGenerating, isCreating);
 
   const selectMode = (nextMode: 'describe' | 'template') => {
-    if (nextMode === mode) {
+    if (nextMode === mode || draftState.rawError) {
       return;
     }
     setMode(nextMode);
     if (nextMode === 'describe') {
       setGeneratedConfig(null);
-      hydrateConfig(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings));
+      draftState.replaceDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings));
     } else {
-      hydrateConfig(createDialogAgentConfig(selectedTemplate, locale, undefined, modelMappings));
+      draftState.replaceDraft(createDialogAgentConfig(selectedTemplate, locale, undefined, modelMappings));
     }
     setCreateError(null);
   };
 
   const selectTemplate = (template: AgentTemplate) => {
-    setSelectedTemplateId(template.id);
-    setMode('template');
-    setGeneratedConfig(null);
-    hydrateConfig(createDialogAgentConfig(template, locale, undefined, modelMappings));
-    setStartingPointOpen(false);
+    runWithValidRaw(draftState.rawError, () => {
+      setSelectedTemplateId(template.id);
+      setMode('template');
+      setGeneratedConfig(null);
+      draftState.replaceDraft(createDialogAgentConfig(template, locale, undefined, modelMappings));
+      setStartingPointOpen(false);
+    });
   };
 
   const handleGenerate = async () => {
     const prompt = description.trim();
-    if (!prompt || isGenerating) {
+    if (generationBlocked(prompt, isGenerating, draftState.rawError)) {
       return;
     }
     if (!orgUuid) {
@@ -212,7 +183,7 @@ function CreateAgentDialogContent({
       );
       return;
     }
-    const baseConfig = parseCurrentConfig() ?? configInput;
+    const baseConfig = draftState.draft;
     const controller = new AbortController();
     generateAbortRef.current?.abort();
     generateAbortRef.current = controller;
@@ -228,8 +199,12 @@ function CreateAgentDialogContent({
         signal: controller.signal,
         locale,
       });
+      if (rawErrorRef.current) {
+        return;
+      }
       setGeneratedConfig(nextConfig);
-      hydrateConfig(nextConfig);
+      draftState.replaceDraft(nextConfig);
+      setStartingPointOpen(false);
     } catch (error) {
       if ((error as DOMException).name !== 'AbortError') {
         setCreateError(errorMessage(error));
@@ -243,14 +218,13 @@ function CreateAgentDialogContent({
   };
 
   const handleCreate = async () => {
-    const parsed = parseCurrentConfig();
-    if (!parsed) {
+    if (draftState.rawError || draftState.draftError) {
       return;
     }
     setIsCreating(true);
     setCreateError(null);
     try {
-      const created = await onCreate(parsed);
+      const created = await onCreate(normalizeCreateAgentDraft(draftState.draft));
       onClose();
       navigateToAgentConfig(workspaceId, created.id);
     } catch (error) {
@@ -270,10 +244,10 @@ function CreateAgentDialogContent({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         aria-label={msg('managedAgents.agents.createLabel', 'Create agent')}
-        className="h-[min(720px,calc(100dvh-2rem))] max-w-[720px] overflow-hidden rounded-[17px] p-0 sm:max-w-[720px]"
+        className="h-[calc(100dvh-2rem)] max-w-[880px] overflow-hidden rounded-[22px] p-0 sm:max-w-[calc(100vw-2rem)] xl:max-w-[880px]"
         showCloseButton={false}
       >
-        <div className="flex h-full min-h-0 flex-col px-[23px] pb-[23px] pt-[19px] text-foreground">
+        <div className="flex h-full min-h-0 flex-col text-foreground">
           <DialogClose
             render={
               <Button
@@ -288,7 +262,7 @@ function CreateAgentDialogContent({
             <span className="sr-only">{msg('common.close', 'Close')}</span>
           </DialogClose>
 
-          <DialogHeader className="pr-8">
+          <DialogHeader className="px-[23px] pt-[19px] pr-14">
             <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
               {msg('managedAgents.agents.createLabel', 'Create agent')}
             </DialogTitle>
@@ -297,126 +271,157 @@ function CreateAgentDialogContent({
             </DialogDescription>
           </DialogHeader>
 
-          <Collapsible
-            open={startingPointOpen}
-            onOpenChange={setStartingPointOpen}
-            className="mt-4 overflow-hidden rounded-xl border border-border/70 bg-card/60 shadow-sm"
-          >
-            <div className="flex items-center gap-3 px-2 py-1.5">
-              <CollapsibleTrigger
-                type="button"
-                className="flex h-9 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-              >
-                <ChevronDown
-                  className={clsx(
-                    'size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none',
-                    startingPointOpen ? '' : '-rotate-90',
-                  )}
-                  aria-hidden
-                />
-                <span>{msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}</span>
-              </CollapsibleTrigger>
-              {!startingPointOpen ? (
-                <Badge
-                  variant="secondary"
-                  className="max-w-[220px] shrink-0 justify-start truncate rounded-md px-2 py-1 text-xs font-medium text-muted-foreground"
+          <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto px-[23px]">
+            <Collapsible
+              open={startingPointOpen}
+              onOpenChange={setStartingPointOpen}
+              className={startingPointContainerClass(startingPointOpen)}
+            >
+              <div className={startingPointRowClass(startingPointOpen)}>
+                <CollapsibleTrigger
+                  type="button"
+                  className="flex h-9 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
                 >
-                  {startingPointName}
-                </Badge>
-              ) : null}
+                  <ChevronDown
+                    className={clsx(
+                      'size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none',
+                      startingPointOpen ? '' : '-rotate-90',
+                    )}
+                    aria-hidden
+                  />
+                  <span>{msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}</span>
+                  {!startingPointOpen ? (
+                    <span className="min-w-0 truncate font-normal text-muted-foreground" aria-hidden>
+                      · {startingPointName}
+                    </span>
+                  ) : null}
+                </CollapsibleTrigger>
+              </div>
+
+              <CollapsibleContent className="border-t border-border/60 px-3 pb-3 pt-3">
+                <Tabs
+                  value={mode}
+                  onValueChange={(nextValue) => nextValue && selectMode(nextValue as 'describe' | 'template')}
+                  className="gap-4"
+                >
+                  <TabsList
+                    aria-label={msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}
+                    className="grid h-10 w-full grid-cols-2"
+                  >
+                    <TabsTrigger value="describe" className="px-3 text-sm font-semibold">
+                      {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
+                    </TabsTrigger>
+                    <TabsTrigger value="template" className="px-3 text-sm font-semibold">
+                      {msg('managedAgents.quickstart.templateSuffix', 'Template')}
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="describe" className="mt-0">
+                    <form
+                      className="rounded-xl"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void handleGenerate();
+                      }}
+                    >
+                      <label htmlFor="create-agent-description-input" className="sr-only">
+                        {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
+                      </label>
+                      <InputGroup className="min-h-[156px] items-stretch gap-0 rounded-[20px] border border-border/70 bg-background/70 px-3 py-3 shadow-sm transition-colors hover:border-border focus-within:border-ring/60">
+                        <InputGroupTextarea
+                          id="create-agent-description-input"
+                          value={description}
+                          rows={1}
+                          placeholder={msg(
+                            'managedAgents.agents.createDialog.describePlaceholder',
+                            'Summarizes new GitHub PRs and posts a digest to Slack.',
+                          )}
+                          className="subtle-scrollbar min-h-[108px] max-h-[176px] overflow-y-auto overscroll-contain px-1 py-1 text-[15px] leading-6 placeholder:text-muted-foreground/70"
+                          onChange={(event) => setDescription(event.target.value)}
+                          autoFocus
+                        />
+                        <InputGroupAddon align="block-end" className="cursor-default justify-end gap-0 px-0 pb-0 pt-3">
+                          <InputGroupButton
+                            type="submit"
+                            variant="secondary"
+                            size="sm"
+                            disabled={!description.trim() || isGenerating || Boolean(draftState.rawError)}
+                            className="rounded-lg px-4 text-[13px] font-semibold"
+                          >
+                            {isGenerating ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden />
+                            ) : (
+                              <Sparkles className="size-4" aria-hidden />
+                            )}
+                            {isGenerating
+                              ? msg('managedAgents.agents.createDialog.generating', 'Generating...')
+                              : msg('managedAgents.agents.createDialog.generate', 'Generate')}
+                          </InputGroupButton>
+                        </InputGroupAddon>
+                      </InputGroup>
+                    </form>
+                  </TabsContent>
+
+                  <TabsContent value="template" className="mt-0">
+                    <div className="grid grid-cols-3 gap-3">
+                      {createAgentTemplates.map((template) => (
+                        <CreateAgentTemplateCard
+                          key={template.id}
+                          template={template}
+                          selected={template.id === selectedTemplateId}
+                          onSelect={() => selectTemplate(template)}
+                        />
+                      ))}
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </CollapsibleContent>
+            </Collapsible>
+
+            <div className="mt-6 flex items-center justify-between border-b border-border pb-4">
+              <h2 className="text-base font-semibold">
+                {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
+              </h2>
+              <Tabs
+                value={draftState.view}
+                onValueChange={(value) => value && draftState.selectView(value as 'rendered' | 'raw')}
+              >
+                <TabsList aria-label={msg('managedAgents.agents.createDialog.editorMode', 'Editor mode')}>
+                  <TabsTrigger value="rendered">
+                    {msg('managedAgents.agents.createDialog.rendered', 'Rendered')}
+                  </TabsTrigger>
+                  <TabsTrigger value="raw">{msg('managedAgents.agents.createDialog.raw', 'Raw')}</TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
 
-            <CollapsibleContent className="border-t border-border/60 px-3 pb-3 pt-3">
-              <Tabs
-                value={mode}
-                onValueChange={(nextValue) => nextValue && selectMode(nextValue as 'describe' | 'template')}
-                className="gap-4"
-              >
-                <TabsList
-                  aria-label={msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}
-                  className="grid h-10 w-full grid-cols-2"
-                >
-                  <TabsTrigger value="describe" className="px-3 text-sm font-semibold">
-                    {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
-                  </TabsTrigger>
-                  <TabsTrigger value="template" className="px-3 text-sm font-semibold">
-                    {msg('managedAgents.quickstart.templateSuffix', 'Template')}
-                  </TabsTrigger>
-                </TabsList>
+            {draftState.view === 'rendered' ? (
+              <AgentConfigRenderedEditor
+                workspaceId={workspaceId}
+                draft={draftState.draft}
+                modelOptions={modelOptions}
+                onChange={draftState.setDraft}
+              />
+            ) : (
+              <div className="min-h-[520px] pb-8">
+                <CreateDialogConfigEditor
+                  format={draftState.format}
+                  configText={draftState.rawText}
+                  configError={draftState.rawError}
+                  onFormatChange={draftState.selectFormat}
+                  onEditorChange={draftState.updateRawText}
+                  validateEditorText={draftState.validateRawText}
+                />
+              </div>
+            )}
+          </div>
 
-                <TabsContent value="describe" className="mt-0">
-                  <form
-                    className="rounded-xl"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void handleGenerate();
-                    }}
-                  >
-                    <label htmlFor="create-agent-description-input" className="sr-only">
-                      {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
-                    </label>
-                    <InputGroup className="min-h-[156px] items-stretch gap-0 rounded-[20px] border border-border/70 bg-background/70 px-3 py-3 shadow-sm transition-colors hover:border-border focus-within:border-ring/60">
-                      <InputGroupTextarea
-                        id="create-agent-description-input"
-                        value={description}
-                        rows={1}
-                        placeholder={msg(
-                          'managedAgents.agents.createDialog.describePlaceholder',
-                          'Summarizes new GitHub PRs and posts a digest to Slack.',
-                        )}
-                        className="subtle-scrollbar min-h-[108px] max-h-[176px] overflow-y-auto overscroll-contain px-1 py-1 text-[15px] leading-6 placeholder:text-muted-foreground/70"
-                        onChange={(event) => setDescription(event.target.value)}
-                        autoFocus
-                      />
-                      <InputGroupAddon align="block-end" className="cursor-default justify-end gap-0 px-0 pb-0 pt-3">
-                        <InputGroupButton
-                          type="submit"
-                          variant="secondary"
-                          size="sm"
-                          disabled={!description.trim() || isGenerating}
-                          className="rounded-lg px-4 text-[13px] font-semibold"
-                        >
-                          {isGenerating ? (
-                            <Loader2 className="size-4 animate-spin" aria-hidden />
-                          ) : (
-                            <Sparkles className="size-4" aria-hidden />
-                          )}
-                          {isGenerating
-                            ? msg('managedAgents.agents.createDialog.generating', 'Generating...')
-                            : msg('managedAgents.agents.createDialog.generate', 'Generate')}
-                        </InputGroupButton>
-                      </InputGroupAddon>
-                    </InputGroup>
-                  </form>
-                </TabsContent>
-
-                <TabsContent value="template" className="mt-0">
-                  <div className="grid grid-cols-3 gap-3">
-                    {createAgentTemplates.map((template) => (
-                      <CreateAgentTemplateCard
-                        key={template.id}
-                        template={template}
-                        selected={template.id === selectedTemplateId}
-                        onSelect={() => selectTemplate(template)}
-                      />
-                    ))}
-                  </div>
-                </TabsContent>
-              </Tabs>
-            </CollapsibleContent>
-          </Collapsible>
-
-          <CreateDialogConfigEditor
-            format={format}
-            configText={configText}
-            configError={configError}
-            onFormatChange={selectFormat}
-            onEditorChange={handleEditorChange}
-            validateEditorText={validateEditorText}
-          />
-
-          <div className="mt-4 flex items-center justify-between gap-4">
-            {createError ? <p className="text-sm text-destructive">{createError}</p> : <span />}
+          <div className="flex min-h-16 items-center justify-between gap-4 border-t border-border px-[23px] py-3">
+            {createError || draftState.draftError ? (
+              <p className="line-clamp-2 text-sm text-destructive">{createError || draftState.draftError}</p>
+            ) : (
+              <span />
+            )}
             <Button
               type="button"
               disabled={createDisabled}
@@ -438,6 +443,25 @@ function CreateAgentDialogContent({
       </DialogContent>
     </Dialog>
   );
+}
+
+function generationBlocked(prompt: string, isGenerating: boolean, rawError: string | null) {
+  return !prompt || isGenerating || Boolean(rawError);
+}
+
+function createSubmissionDisabled(
+  rawError: string | null,
+  draftError: string | null,
+  isGenerating: boolean,
+  isCreating: boolean,
+) {
+  return Boolean(rawError || draftError) || isGenerating || isCreating;
+}
+
+function runWithValidRaw(rawError: string | null, action: () => void) {
+  if (!rawError) {
+    action();
+  }
 }
 
 export function CreateAgentTemplateCard({
@@ -478,6 +502,17 @@ export function CreateAgentTemplateCard({
       </Card>
     </Button>
   );
+}
+
+function startingPointContainerClass(open: boolean) {
+  return clsx(
+    'mt-4 overflow-hidden',
+    open ? 'rounded-xl border border-border/70 bg-card/60 shadow-sm' : 'border-b border-border/70',
+  );
+}
+
+function startingPointRowClass(open: boolean) {
+  return clsx('flex items-center gap-3 py-1.5', open ? 'px-2' : 'px-0');
 }
 
 export function CreateTemplateApps({ templateId }: { templateId: string }) {

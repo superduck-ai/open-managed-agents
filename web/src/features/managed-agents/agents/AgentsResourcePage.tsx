@@ -101,7 +101,9 @@ export function AgentsResourcePage({
   const [createdFilter, setCreatedFilter] = useState<AgentCreatedFilter>(defaultAgentFilters.created);
   const [statusFilter, setStatusFilter] = useState<AgentStatusFilter>(defaultAgentFilters.status);
   const [openFilterMenu, setOpenFilterMenu] = useState<AgentFilterMenu | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('create_agent') === '1',
+  );
   const [remoteAgentsState, setRemoteAgentsState] = useState<{
     workspaceId: string;
     requestKey: string;
@@ -214,6 +216,18 @@ export function AgentsResourcePage({
     setArchiveError(null);
     setArchivingIds(new Set());
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!dialogOpen || typeof window === 'undefined') {
+      return;
+    }
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('create_agent') !== '1') {
+      return;
+    }
+    url.searchParams.delete('create_agent');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [dialogOpen]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search), 300);

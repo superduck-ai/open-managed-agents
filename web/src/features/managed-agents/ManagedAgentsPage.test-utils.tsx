@@ -67,6 +67,13 @@ export function render(
   if (queryOptions.seedModelMappings !== false) {
     queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
   }
+  queryClient.setQueryData(
+    ['create-agent', 'models', 'default'],
+    [
+      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+    ],
+  );
   return testingLibrary.render(
     <AuthContext.Provider value={managedAgentsAuthContextValue}>
       <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
@@ -83,7 +90,7 @@ export function resetManagedAgentsTestState() {
 }
 
 export function expectPageTextToContain(value: string) {
-  expect(document.body.textContent?.replace(/ /g, ' ')).toContain(value);
+  expect(document.body.textContent?.replace(/\u00a0/g, ' ')).toContain(value);
 }
 
 export function codeBlockContaining(value: string) {
@@ -141,6 +148,13 @@ export function renderManagedAgentsPage(
     },
   });
   queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
+  queryClient.setQueryData(
+    ['create-agent', 'models', 'default'],
+    [
+      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+    ],
+  );
   const history = createBrowserHistory({ window });
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
@@ -241,6 +255,7 @@ export type MockAgentsApiOptions = {
   agentsSearchErrorOnce?: boolean;
   agentArchiveErrorOnce?: boolean;
   agentsSearchPageSize?: number;
+  models?: Array<{ id: string; displayName?: string }>;
 };
 
 export type RecordedRequest = {
@@ -314,6 +329,17 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 503);
       }
       return jsonResponse({ model_mappings: options.modelMappings ?? {} });
+    }
+
+    if (url.startsWith('/v1/models?') && method === 'GET') {
+      const models = options.models ?? [
+        { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+        { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+      ];
+      return jsonResponse({
+        data: models.map((model) => ({ id: model.id, display_name: model.displayName || model.id, type: 'model' })),
+        has_more: false,
+      });
     }
 
     const mcpCatalogMatch = url.match(
@@ -437,6 +463,10 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     if (skillRetrieveMatch && method === 'GET') {
       const skillId = decodeURIComponent(skillRetrieveMatch[1]);
       return jsonResponse(skillDetails.get(skillId) ?? skillResponse({ id: skillId }));
+    }
+
+    if (url.startsWith('/v1/skills?') && method === 'GET') {
+      return jsonResponse({ data: [...skillDetails.values()], has_more: false, next_page: null });
     }
 
     if (url.startsWith('/v1/sessions?') && method === 'GET') {

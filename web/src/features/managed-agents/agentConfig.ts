@@ -16,6 +16,7 @@ import {
   type CreateAgentInput,
 } from './types';
 import { cloneJsonValue, objectRecord, parseToolInput, toRecord } from './utils';
+import { createAgentDraftSchema, normalizeCreateAgentDraft } from './agents/create-dialog-model';
 
 export {
   agentTemplates,
@@ -398,6 +399,7 @@ export function quickstartBuildAgentConfigInput(
     : fallback.tools.map((tool) => ({ ...tool }));
   const skills = Array.isArray(rawConfig.skills) ? cloneJsonArray(rawConfig.skills) : cloneJsonArray(fallback.skills);
   const metadata = quickstartMetadata(rawConfig.metadata, fallback.metadata);
+  const multiagent = toRecord(rawConfig.multiagent) ?? toRecord(fallback.multiagent);
 
   return {
     name,
@@ -408,6 +410,7 @@ export function quickstartBuildAgentConfigInput(
     tools,
     skills,
     ...(metadata ? { metadata } : {}),
+    ...(multiagent ? { multiagent: cloneJsonValue(multiagent) as CreateAgentInput['multiagent'] } : {}),
   };
 }
 
@@ -464,7 +467,6 @@ export function createAgentConfigText(config: CreateAgentInput, format: CodeForm
 export function parseCreateAgentConfigText(
   text: string,
   format: CodeFormat,
-  fallback: CreateAgentInput,
 ): { ok: true; input: CreateAgentInput } | { ok: false; error: string } {
   if (!text.trim()) {
     return { ok: false, error: 'Agent config is required.' };
@@ -475,11 +477,11 @@ export function parseCreateAgentConfigText(
     if (!record) {
       return { ok: false, error: 'Agent config must be an object.' };
     }
-    const input = quickstartBuildAgentConfigInput(record, fallback);
-    if (!input.name.trim()) {
-      return { ok: false, error: 'Agent config name is required.' };
+    const result = createAgentDraftSchema.safeParse(record);
+    if (!result.success) {
+      return { ok: false, error: agentEditValidationMessage(result.error.issues) };
     }
-    return { ok: true, input };
+    return { ok: true, input: normalizeCreateAgentDraft(result.data) };
   } catch (error) {
     const message = error instanceof Error && error.message ? error.message : 'Invalid config.';
     return { ok: false, error: `${format} is not valid: ${message}` };

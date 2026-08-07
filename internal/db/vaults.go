@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -171,11 +172,11 @@ func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredenti
 	var created VaultCredential
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		vaultMapper := NewVaultMapper(executor)
-		credentialMapper := NewVaultCredentialMapper(executor)
 		vaultUUID, err := vaultMapper.FindActiveUUIDForUpdate(ctx, credential.WorkspaceUUID, credential.VaultExternalID)
 		if err != nil {
 			return mapNoRows(err)
 		}
+		credentialMapper := NewVaultCredentialMapper(executor)
 		activeCount, err := credentialMapper.CountActive(ctx, credential.WorkspaceUUID, vaultUUID)
 		if err != nil {
 			return err
@@ -375,7 +376,7 @@ func (r vaultRow) vault() Vault {
 		WorkspaceUUID:       r.WorkspaceUUID,
 		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
 		DisplayName:         r.DisplayName,
-		Metadata:            copyRaw(r.Metadata),
+		Metadata:            bytes.Clone(r.Metadata),
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
 		ArchivedAt:          r.ArchivedAt,
@@ -397,10 +398,10 @@ func (r vaultCredentialRow) credential() VaultCredential {
 		VaultExternalID:     r.VaultExternalID,
 		CreatedByAPIKeyUUID: createdByAPIKeyUUID,
 		DisplayName:         r.DisplayName,
-		Metadata:            copyRaw(r.Metadata),
+		Metadata:            bytes.Clone(r.Metadata),
 		AuthType:            r.AuthType,
 		CredentialKey:       r.CredentialKey,
-		Auth:                copyRaw(r.Auth),
+		Auth:                bytes.Clone(r.Auth),
 		SecretVersion:       r.Version,
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
@@ -409,9 +410,9 @@ func (r vaultCredentialRow) credential() VaultCredential {
 	}
 	if len(r.Ciphertext) > 0 {
 		credential.SecretEnvelope = &secrets.Envelope{
-			Ciphertext:    append([]byte(nil), r.Ciphertext...),
-			Nonce:         append([]byte(nil), r.Nonce...),
-			WrappedDEK:    append([]byte(nil), r.WrappedDEK...),
+			Ciphertext:    bytes.Clone(r.Ciphertext),
+			Nonce:         bytes.Clone(r.Nonce),
+			WrappedDEK:    bytes.Clone(r.WrappedDEK),
 			FormatVersion: int(r.FormatVersion.Int32),
 			KeyProvider:   r.KeyProvider.String,
 			KeyVersion:    r.KeyVersion.Int64,

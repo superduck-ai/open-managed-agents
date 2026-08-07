@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"reflect"
@@ -249,12 +250,12 @@ func (row agentRow) agent() Agent {
 		Name:                row.Name,
 		Description:         row.Description,
 		System:              row.System,
-		Model:               copyRaw(row.Model),
-		MCPServers:          copyRaw(row.MCPServers),
-		Metadata:            copyRaw(row.Metadata),
-		Multiagent:          copyRaw(row.Multiagent),
-		Skills:              copyRaw(row.Skills),
-		Tools:               copyRaw(row.Tools),
+		Model:               bytes.Clone(row.Model),
+		MCPServers:          bytes.Clone(row.MCPServers),
+		Metadata:            bytes.Clone(row.Metadata),
+		Multiagent:          bytes.Clone(row.Multiagent),
+		Skills:              bytes.Clone(row.Skills),
+		Tools:               bytes.Clone(row.Tools),
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,
 		ArchivedAt:          row.ArchivedAt,
@@ -318,13 +319,6 @@ func trimAgentPage(agents []Agent, limit int) ([]Agent, bool, error) {
 		agents = agents[:limit]
 	}
 	return agents, hasMore, nil
-}
-
-func copyRaw(value []byte) json.RawMessage {
-	if len(value) == 0 {
-		return nil
-	}
-	return append(json.RawMessage(nil), value...)
 }
 
 func agentJSONArg(raw json.RawMessage) []byte {

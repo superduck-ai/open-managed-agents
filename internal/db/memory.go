@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -854,7 +855,7 @@ func (r memoryStoreRow) store() MemoryStore {
 		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
 		Name:                r.Name,
 		Description:         r.Description,
-		Metadata:            copyRaw(r.Metadata),
+		Metadata:            bytes.Clone(r.Metadata),
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
 		ArchivedAt:          r.ArchivedAt,

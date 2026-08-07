@@ -64,8 +64,8 @@ func NewLocalService(ctx context.Context, kek []byte) (*Service, error) {
 
 // NewLocalServiceWithKeys builds a Service with a current wrap KEK and optional
 // decrypt-only KEKs for older envelope key_version values.
-func NewLocalServiceWithKeys(ctx context.Context, current LocalKeyMaterial, decryptOnly []LocalKeyMaterial) (*Service, error) {
-	provider, err := NewLocalKeyProvider(current, decryptOnly)
+func NewLocalServiceWithKeys(ctx context.Context, current LocalKeyMaterial, decryptOnlyKeys []LocalKeyMaterial) (*Service, error) {
+	provider, err := NewLocalKeyProvider(current, decryptOnlyKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -77,24 +77,24 @@ func NewLocalServiceWithKeys(ctx context.Context, current LocalKeyMaterial, decr
 
 // NewLocalKeyProvider validates current and decrypt-only KEKs. Key material is
 // copied so the caller's slices can be wiped.
-func NewLocalKeyProvider(current LocalKeyMaterial, decryptOnly []LocalKeyMaterial) (*LocalKeyProvider, error) {
-	version := current.Version
-	if version == 0 {
-		version = 1
+func NewLocalKeyProvider(current LocalKeyMaterial, decryptOnlyKeys []LocalKeyMaterial) (*LocalKeyProvider, error) {
+	currentVersion := current.Version
+	if currentVersion == 0 {
+		currentVersion = 1
 	}
-	if version < 1 {
+	if currentVersion < 1 {
 		return nil, fmt.Errorf("secrets: local KEK version must be >= 1, got %d", current.Version)
 	}
 	if len(current.KEK) != 32 {
 		return nil, fmt.Errorf("secrets: local KEK must be 32 bytes, got %d", len(current.KEK))
 	}
-	keys := make(map[int64][]byte, 1+len(decryptOnly))
-	keys[version] = copyKEK(current.KEK)
-	for i, entry := range decryptOnly {
+	keys := make(map[int64][]byte, 1+len(decryptOnlyKeys))
+	keys[currentVersion] = copyKEK(current.KEK)
+	for i, entry := range decryptOnlyKeys {
 		if entry.Version < 1 {
 			return nil, fmt.Errorf("secrets: decrypt_only[%d] version must be >= 1, got %d", i, entry.Version)
 		}
-		if entry.Version == version {
+		if entry.Version == currentVersion {
 			return nil, fmt.Errorf("secrets: decrypt_only[%d] version %d collides with current", i, entry.Version)
 		}
 		if _, ok := keys[entry.Version]; ok {
@@ -105,7 +105,7 @@ func NewLocalKeyProvider(current LocalKeyMaterial, decryptOnly []LocalKeyMateria
 		}
 		keys[entry.Version] = copyKEK(entry.KEK)
 	}
-	return &LocalKeyProvider{currentVersion: version, keys: keys}, nil
+	return &LocalKeyProvider{currentVersion: currentVersion, keys: keys}, nil
 }
 
 func copyKEK(kek []byte) []byte {
@@ -149,7 +149,7 @@ func (p *LocalKeyProvider) UnwrapDEK(_ context.Context, wrapped WrappedKey) ([]b
 	}
 	gcm, err := newAESGCM(kek)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("secrets: build AES-GCM for unwrap: %w", err)
 	}
 	nonceSize := gcm.NonceSize()
 	if len(wrapped.Ciphertext) < nonceSize {

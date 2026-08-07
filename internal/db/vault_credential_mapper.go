@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -107,9 +108,9 @@ func vaultCredentialSecretColumns(envelope *secrets.Envelope) (ciphertext, nonce
 	version := int32(envelope.FormatVersion)
 	provider := envelope.KeyProvider
 	keyVer := envelope.KeyVersion
-	return append([]byte(nil), envelope.Ciphertext...),
-		append([]byte(nil), envelope.Nonce...),
-		append([]byte(nil), envelope.WrappedDEK...),
+	return bytes.Clone(envelope.Ciphertext),
+		bytes.Clone(envelope.Nonce),
+		bytes.Clone(envelope.WrappedDEK),
 		&version,
 		&provider,
 		&keyVer

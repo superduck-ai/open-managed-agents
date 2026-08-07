@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/superduck-ai/yourbatis"
@@ -260,10 +261,10 @@ func (r sessionRow) session() Session {
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
 		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
-		AgentSnapshot: copyRaw(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
-		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: copyRaw(r.Metadata),
-		VaultIDs: copyRaw(r.VaultIDs), Status: r.Status, Usage: copyRaw(r.Usage), Stats: copyRaw(r.Stats),
-		OutcomeEvaluations: copyRaw(r.OutcomeEvaluations), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
+		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: bytes.Clone(r.Metadata),
+		VaultIDs: bytes.Clone(r.VaultIDs), Status: r.Status, Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
+		OutcomeEvaluations: bytes.Clone(r.OutcomeEvaluations), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }
@@ -273,7 +274,7 @@ func (r sessionThreadRow) thread() SessionThread {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ParentThreadUUID: r.ParentThreadUUID, ParentThreadExternalID: r.ParentThreadExternalID,
-		AgentSnapshot: copyRaw(r.AgentSnapshot), Status: r.Status, Usage: copyRaw(r.Usage), Stats: copyRaw(r.Stats),
+		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Status: r.Status, Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }
@@ -282,7 +283,7 @@ func (r sessionResourceRow) resource() SessionResource {
 	return SessionResource{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
-		ResourceType: r.ResourceType, Payload: copyRaw(r.Payload), SecretPayload: copyRaw(r.SecretPayload),
+		ResourceType: r.ResourceType, Payload: bytes.Clone(r.Payload), SecretPayload: bytes.Clone(r.SecretPayload),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, DeletedAt: r.DeletedAt,
 	}
 }
@@ -292,7 +293,7 @@ func (r sessionEventRow) event() SessionEvent {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
-		Payload: copyRaw(r.Payload), ProcessedAt: r.ProcessedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
+		Payload: bytes.Clone(r.Payload), ProcessedAt: r.ProcessedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }
 

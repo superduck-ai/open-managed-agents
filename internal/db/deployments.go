@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -367,10 +368,10 @@ func (r deploymentMapperRow) deployment() Deployment {
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
 		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
-		AgentSnapshot: copyRaw(r.AgentSnapshot), Name: r.Name, Description: r.Description,
-		Metadata: copyRaw(r.Metadata), InitialEvents: copyRaw(r.InitialEvents), Resources: copyRaw(r.Resources),
-		ResourceSecrets: copyRaw(r.ResourceSecrets), VaultIDs: copyRaw(r.VaultIDs), Schedule: copyRaw(r.Schedule),
-		LastRunAt: r.LastRunAt, Status: r.Status, PausedReason: copyRaw(r.PausedReason), CreatedAt: r.CreatedAt,
+		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Name: r.Name, Description: r.Description,
+		Metadata: bytes.Clone(r.Metadata), InitialEvents: bytes.Clone(r.InitialEvents), Resources: bytes.Clone(r.Resources),
+		ResourceSecrets: bytes.Clone(r.ResourceSecrets), VaultIDs: bytes.Clone(r.VaultIDs), Schedule: bytes.Clone(r.Schedule),
+		LastRunAt: r.LastRunAt, Status: r.Status, PausedReason: bytes.Clone(r.PausedReason), CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }
@@ -381,8 +382,8 @@ func (r deploymentRunMapperRow) run() DeploymentRun {
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
 		DeploymentUUID: r.DeploymentUUID, DeploymentExternalID: r.DeploymentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
-		AgentSnapshot: copyRaw(r.AgentSnapshot), SessionExternalID: r.SessionExternalID,
-		Error: copyRaw(r.Error), TriggerType: r.TriggerType, TriggerContext: copyRaw(r.TriggerContext),
+		AgentSnapshot: bytes.Clone(r.AgentSnapshot), SessionExternalID: r.SessionExternalID,
+		Error: bytes.Clone(r.Error), TriggerType: r.TriggerType, TriggerContext: bytes.Clone(r.TriggerContext),
 		CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }

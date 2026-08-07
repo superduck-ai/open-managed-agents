@@ -1451,6 +1451,55 @@ export function registerManagedAgentsAgentsTests() {
     expect(new URL(window.location.href).searchParams.get('deployment')).toBeNull();
   });
 
+  test('preserves custom tool schema text while publishing parsed JSON', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_custom_schema');
+    const api = mockAgentsApi([
+      {
+        id: 'agent_custom_schema',
+        name: 'Custom schema agent',
+        version: 2,
+        tools: [
+          {
+            type: 'custom',
+            name: 'lookup',
+            description: 'Lookup data',
+            input_schema: { type: 'object', properties: {} },
+          },
+        ],
+      },
+    ]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Custom schema agent' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+    const schemaInput = within(dialog).getByLabelText('Input schema') as HTMLTextAreaElement;
+    const compactSchema = '{"type":"object","properties":{"id":{"type":"string"}}}';
+
+    fireEvent.change(schemaInput, { target: { value: compactSchema } });
+
+    expect(schemaInput.value).toBe(compactSchema);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) => request.method === 'POST' && request.url === '/v1/agents/agent_custom_schema?beta=true',
+        ),
+      ).toBe(true),
+    );
+    const updateRequest = api.requests.find(
+      (request) => request.method === 'POST' && request.url === '/v1/agents/agent_custom_schema?beta=true',
+    );
+    expect(updateRequest?.body?.tools).toEqual([
+      {
+        type: 'custom',
+        name: 'lookup',
+        description: 'Lookup data',
+        input_schema: { type: 'object', properties: { id: { type: 'string' } } },
+      },
+    ]);
+  });
+
   test('opens the edit modal in Rendered mode and preserves the YAML Raw editor', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit123456');
     mockAgentsApi([

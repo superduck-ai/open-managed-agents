@@ -26,6 +26,50 @@ const baseDraft: CreateAgentInput = {
 };
 
 describe('create agent draft model', () => {
+  test('rejects Raw MCP URLs that the rendered form rejects', () => {
+    for (const url of [
+      'ftp://internal.example/mcp',
+      'https://user:secret@example.com/mcp',
+      'https://example.com/mcp#tools',
+    ]) {
+      const parsed = parseCreateAgentConfigText(
+        JSON.stringify({
+          ...baseDraft,
+          mcp_servers: [{ name: 'invalid-runtime-url', type: 'url', url }],
+          tools: [...baseDraft.tools, { type: 'mcp_toolset', mcp_server_name: 'invalid-runtime-url' }],
+        }),
+        'JSON',
+      );
+
+      expect(parsed.ok).toBe(false);
+    }
+  });
+
+  test('preserves untouched skill payloads while toggling another skill', () => {
+    const draft: CreateAgentInput = {
+      ...baseDraft,
+      skills: [
+        { type: 'custom', skill_id: 'skill_unpinned' },
+        { type: 'custom', skill_id: 'skill_remove', version: '3' },
+      ],
+    };
+    const removed = toggleSkill(draft, {
+      id: 'skill_remove',
+      displayTitle: 'Remove',
+      latestVersion: '3',
+      source: 'custom',
+    });
+    const added = toggleSkill(draft, {
+      id: 'skill_new',
+      displayTitle: 'New',
+      latestVersion: '1',
+      source: 'custom',
+    });
+
+    expect(removed.skills).toEqual([{ type: 'custom', skill_id: 'skill_unpinned' }]);
+    expect(added.skills).toEqual([...draft.skills, { type: 'custom', skill_id: 'skill_new', version: 'latest' }]);
+  });
+
   test('rejects duplicate built-in and MCP toolsets', () => {
     const duplicateBuiltIns: CreateAgentInput = {
       ...baseDraft,

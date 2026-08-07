@@ -1,5 +1,5 @@
 import { Ban, BriefcaseBusiness, CheckCircle2, ChevronDown, Hand, Plus, Server, Trash2, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '../../../shared/lib/utils';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
@@ -329,8 +329,16 @@ function CustomToolCard({
   onRemove: () => void;
 }) {
   const { msg } = useI18n();
-  const schemaText =
-    typeof tool.input_schema === 'string' ? tool.input_schema : JSON.stringify(tool.input_schema ?? {}, null, 2);
+  const serializedSchema = customToolSchemaText(tool.input_schema);
+  const [schemaText, setSchemaText] = useState(serializedSchema);
+  const publishedSchemaText = useRef(serializedSchema);
+  useEffect(() => {
+    if (serializedSchema === publishedSchemaText.current) {
+      return;
+    }
+    publishedSchemaText.current = serializedSchema;
+    setSchemaText(serializedSchema);
+  }, [serializedSchema]);
   return (
     <Card className="gap-4 rounded-xl p-4 shadow-none">
       <div className="flex items-center gap-3">
@@ -371,16 +379,25 @@ function CustomToolCard({
           className="min-h-32 font-mono text-xs"
           value={schemaText}
           onChange={(event) => {
+            const nextText = event.target.value;
+            setSchemaText(nextText);
+            let inputSchema: unknown = nextText;
             try {
-              onChange({ input_schema: JSON.parse(event.target.value) as unknown });
+              inputSchema = JSON.parse(nextText) as unknown;
             } catch {
-              onChange({ input_schema: event.target.value });
+              inputSchema = nextText;
             }
+            publishedSchemaText.current = customToolSchemaText(inputSchema);
+            onChange({ input_schema: inputSchema });
           }}
         />
       </label>
     </Card>
   );
+}
+
+function customToolSchemaText(inputSchema: unknown) {
+  return typeof inputSchema === 'string' ? inputSchema : (JSON.stringify(inputSchema ?? {}, null, 2) ?? '{}');
 }
 
 function configuredServerURL(draft: CreateAgentInput, name: string) {

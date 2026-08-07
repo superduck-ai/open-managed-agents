@@ -91,7 +91,7 @@ const mcpServerSchema = z
   .object({
     name: z.string().trim().min(1).max(255),
     type: z.literal('url'),
-    url: z.url().max(2048),
+    url: z.string().trim().max(2048).refine(isHTTPURL, 'MCP server URL must be a safe HTTP/HTTPS URL.'),
   })
   .strict();
 
@@ -251,8 +251,8 @@ export function toggleSkill(draft: CreateAgentInput, skill: AgentSkillOption): C
   const current = selectedSkillReferences(draft);
   const exists = current.some((reference) => reference.skill_id === skill.id);
   const skills = exists
-    ? current.filter((reference) => reference.skill_id !== skill.id)
-    : [...current, { type: skill.source, skill_id: skill.id, version: 'latest' }];
+    ? draft.skills.filter((reference) => toRecord(reference)?.skill_id !== skill.id)
+    : [...draft.skills, { type: skill.source, skill_id: skill.id, version: 'latest' }];
   return { ...draft, skills };
 }
 

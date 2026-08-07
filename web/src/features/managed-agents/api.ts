@@ -1509,6 +1509,24 @@ export function createVaultCredential(vaultId: string, values: CredentialFormVal
   );
 }
 
+export type StartMCPVaultAuthInput = {
+  mcp_server_url: string;
+  vault_id: string;
+  workspace_id: string;
+  redirect_url: string;
+  display_name?: string;
+  source?: string;
+  client_id?: string;
+  client_secret?: string;
+};
+
+export function startMCPVaultAuth(orgUuid: string, input: StartMCPVaultAuthInput, csrfToken?: string) {
+  return consoleApi<{ oauth_flow_id: string; redirect_url: string }>(
+    `/api/organizations/${encodeURIComponent(orgUuid)}/mcp/vault-auth/start`,
+    { method: 'POST', body: JSON.stringify(input), csrfToken },
+  );
+}
+
 export function updateVaultCredential(
   vaultId: string,
   credentialId: string,

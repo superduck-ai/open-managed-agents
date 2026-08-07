@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	EnvironmentDev  = "dev"
@@ -15,6 +18,7 @@ type Config struct {
 	Redis             RedisConfig             `yaml:"redis"`
 	Storage           StorageConfig           `yaml:"storage"`
 	AnthropicUpstream AnthropicUpstreamConfig `yaml:"anthropic_upstream"`
+	WebSearch         WebSearchConfig         `yaml:"web_search"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
@@ -57,6 +61,22 @@ type AnthropicUpstreamConfig struct {
 	BaseURL       string            `yaml:"base_url"`
 	APIKey        string            `yaml:"api_key"`
 	ModelMappings map[string]string `yaml:"model_mappings"`
+}
+
+type WebSearchConfig struct {
+	Provider string        `yaml:"provider"`
+	Timeout  time.Duration `yaml:"timeout"`
+	// MaxServerToolIterations caps BYOK sampling calls per request; tools[].max_uses caps searches.
+	MaxServerToolIterations int                                `yaml:"max_server_tool_iterations"`
+	Providers               map[string]WebSearchProviderConfig `yaml:"providers"`
+}
+
+// WebSearchProviderConfig keeps provider payloads at the configuration boundary.
+// Each provider factory decodes Options into its own named schema before use.
+type WebSearchProviderConfig struct {
+	Endpoint string                     `yaml:"endpoint"`
+	APIKey   string                     `yaml:"api_key"`
+	Options  map[string]json.RawMessage `yaml:"options"`
 }
 
 type BatchConfig struct {

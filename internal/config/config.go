@@ -108,6 +108,24 @@ func validatePositiveValues(cfg Config) error {
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
 	}
+	return validateNonNegativeValues(cfg)
+}
+
+// validateNonNegativeValues 校验允许留空、但不允许为负的字段。这些字段的零值表示
+// "使用内置默认值"，负值只会被静默当成零值，因此必须在启动时报错而不是悄悄生效。
+func validateNonNegativeValues(cfg Config) error {
+	checks := []struct {
+		name  string
+		valid bool
+	}{
+		{name: "web_search.timeout", valid: cfg.WebSearch.Timeout >= 0},
+		{name: "web_search.max_server_tool_iterations", valid: cfg.WebSearch.MaxServerToolIterations >= 0},
+	}
+	for _, check := range checks {
+		if !check.valid {
+			return fmt.Errorf("%s must not be negative", check.name)
+		}
+	}
 	return nil
 }
 

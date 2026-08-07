@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/websearch"
 )
 
 // maxRequestBodyBytes 是流式读取上限；MaxBytesReader 不会据此预分配 32 MiB 内存。
@@ -51,9 +53,10 @@ var responseHeadersToRemove = map[string]struct{}{
 
 // Handler 将 Anthropic Messages 请求流式转发到真实上游，不解析或持久化请求正文。
 type Handler struct {
-	cfg    config.Config
-	client *http.Client
-	logger *slog.Logger
+	cfg              config.Config
+	client           *http.Client
+	webSearchGateway *webSearchGateway
+	logger           *slog.Logger
 }
 
 // flushingResponseWriter 在每次复制一块响应后主动 flush，避免 SSE 被 net/http 缓冲。
@@ -64,8 +67,16 @@ type flushingResponseWriter struct {
 
 // NewHandler 创建复用连接池的 Messages 代理 handler。
 func NewHandler(cfg config.Config, logger *slog.Logger) *Handler {
+	client := &http.Client{Transport: newProxyTransport()}
 	logger = logging.LoggerOrDefault(logger)
-	return &Handler{cfg: cfg, client: &http.Client{Transport: newProxyTransport()}, logger: logger}
+	var webSearchGatewayHandler *webSearchGateway
+	provider, err := websearch.NewProvider(cfg.WebSearch, client)
+	if err != nil {
+		logger.Error("configure messages web search provider", "error", err)
+	} else if provider != nil {
+		webSearchGatewayHandler = newWebSearchGateway(cfg, client, provider, logger)
+	}
+	return &Handler{cfg: cfg, client: client, webSearchGateway: webSearchGatewayHandler, logger: logger}
 }
 
 func newProxyTransport() http.RoundTripper {
@@ -82,7 +93,7 @@ func newProxyTransport() http.RoundTripper {
 // Create 处理 canonical POST /v1/messages，并以有界内存完成请求和响应的双向流式转发。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	// 鉴权已由 API middleware 完成；这里只确认 Principal 存在，避免 handler 被错误地裸挂载。
-	_, ok := auth.PrincipalFromContext(r.Context())
+	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
 		return
@@ -94,6 +105,41 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > maxRequestBodyBytes {
 		writeRequestTooLarge(w, r)
 		return
+	}
+	if h.webSearchGateway != nil && principal.CredentialType == auth.CredentialTypeCodeSessionOAuth {
+		body, candidate, err := readWebSearchGatewayCandidate(w, r)
+		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				writeRequestTooLarge(w, r)
+				return
+			}
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Could not read request body"))
+			return
+		}
+		if candidate {
+			response, handled, webSearchGatewayErr := h.webSearchGateway.handle(r.Context(), body, r.URL.RawQuery, r.Header)
+			if webSearchGatewayErr != nil {
+				var requestErr *webSearchGatewayRequestError
+				if errors.As(webSearchGatewayErr, &requestErr) {
+					h.logger.WarnContext(r.Context(), "reject Messages web search gateway request", "error", webSearchGatewayErr)
+					httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", requestErr.Error()))
+					return
+				}
+				h.logger.ErrorContext(r.Context(), "handle Messages web search gateway request", "error", webSearchGatewayErr)
+				httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "Messages web search gateway is unavailable"))
+				return
+			}
+			if handled {
+				responseBody := &http.Response{StatusCode: response.statusCode, Header: response.header, Body: io.NopCloser(bytes.NewReader(response.body))}
+				if err := writeProxyResponse(w, responseBody); err != nil && r.Context().Err() == nil {
+					h.logger.ErrorContext(r.Context(), "write Messages web search gateway response", "error", err)
+				}
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			r.ContentLength = int64(len(body))
+		}
 	}
 	target, err := messagesEndpoint(h.cfg.AnthropicUpstream.BaseURL, r.URL.RawQuery)
 	if err != nil {
@@ -132,6 +178,41 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 func writeRequestTooLarge(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteError(w, r, httpapi.NewError(http.StatusRequestEntityTooLarge, "request_too_large", "Request body exceeds maximum size"))
+}
+
+// readWebSearchGatewayCandidate 逐字节探测请求体是否以 JSON 开头，避免非 JSON
+// 请求（如 multipart）被 json.Decoder 消费后无法回退到直通代理路径。探测为 JSON
+// 时返回完整 body，否则将已读字节重新注入 r.Body 实现零拷贝回退。
+func readWebSearchGatewayCandidate(w http.ResponseWriter, r *http.Request) ([]byte, bool, error) {
+	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	prefix := make([]byte, 0, 16)
+	for {
+		var one [1]byte
+		n, err := body.Read(one[:])
+		if n > 0 {
+			prefix = append(prefix, one[0])
+			switch one[0] {
+			case ' ', '\t', '\r', '\n':
+				continue
+			case '{':
+				rest, readErr := io.ReadAll(body)
+				if readErr != nil {
+					return nil, false, readErr
+				}
+				return append(prefix, rest...), true, nil
+			default:
+				r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), body))
+				return nil, false, nil
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				r.Body = io.NopCloser(bytes.NewReader(prefix))
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+	}
 }
 
 func messagesEndpoint(baseURL string, rawQuery string) (string, error) {

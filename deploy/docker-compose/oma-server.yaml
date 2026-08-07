@@ -31,6 +31,9 @@ anthropic_upstream:
   api_key: ""
 
 e2b:
+  # e2b-local does not authenticate this placeholder, but the client SDK
+  # validates the e2b_ + lowercase-hex format before sending the request.
+  api_key: e2b_0000000000000000000000000000000000000000
   api_url: http://host.docker.internal:3099
   sandbox_url: http://host.docker.internal:3099
   template: ghcr.io/superduck-ai/managed-agent-sandbox:latest

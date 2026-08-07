@@ -146,6 +146,15 @@ func validateYAMLNodeWithAliases(node *yaml.Node, target reflect.Type, prefix []
 			}
 		}
 	case yaml.MappingNode:
+		if target.Kind() == reflect.Map {
+			for index := 0; index+1 < len(node.Content); index += 2 {
+				name := node.Content[index].Value
+				if err := validateYAMLNodeWithAliases(node.Content[index+1], target.Elem(), appendYAMLPath(prefix, name), aliases); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		if target.Kind() != reflect.Struct {
 			return nil
 		}

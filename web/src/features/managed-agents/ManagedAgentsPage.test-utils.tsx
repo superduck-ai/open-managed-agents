@@ -1097,7 +1097,7 @@ export function mockManagedResourceApi() {
         type: 'session.status_idle',
         created_at: new Date(Date.now() - 29_000).toISOString(),
         result:
-          'Verification with `Glob("*")` shows only:\n\n- `.bash_logout`\n- `.bashrc`\n- `.profile`\n\n| Language | Translation | Directory listing |\n|---|---|---|\n| Chinese Simplified (zh-CN) | **你好，世界** | reported empty |\n| Japanese (ja) | こんにちは、世界 | inaccurate mixed list |\n\nNote: The translations look correct.',
+          'Verification with `Glob("*")` shows only:\n\n- `.bash_logout`\n- `.bashrc`\n- `.profile`\n\n| Language | Translation | Directory listing |\n|---|---|---|\n| Chinese Simplified (zh-CN) | **你好，世界** | reported empty |\n| Japanese (ja) | こんにちは、世界 | inaccurate mixed list |\n\n> *Automated* verification replaced the ~~legacy~~ check.\n\nNote: The translations look correct.',
       },
     ],
     sessionThreadEvents: {

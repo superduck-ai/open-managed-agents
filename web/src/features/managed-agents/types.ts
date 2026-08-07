@@ -673,13 +673,6 @@ export type QuickstartQuestion = {
   options: Array<{ label: string; description: string }>;
 };
 
-export type TranscriptMarkdownBlock =
-  | { type: 'paragraph'; text: string }
-  | { type: 'heading'; level: number; text: string }
-  | { type: 'list'; items: string[] }
-  | { type: 'table'; headers: string[]; rows: string[][] }
-  | { type: 'code'; language?: string; value: string };
-
 export type SessionThreadHint = { id: string; name: string };
 
 export type HighlightLanguage =

@@ -10,6 +10,7 @@ import {
 } from '../../../shared/ui/dropdown-menu';
 import { Input } from '../../../shared/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
+import { MarkdownContent } from '../../../shared/ui/markdown-content';
 import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 import {
@@ -36,7 +37,6 @@ import {
   type ToolBatchEntry,
   type ToolCallEntry,
   type ToolLifecycle,
-  type TranscriptMarkdownBlock,
 } from '../types';
 import { copyText, toRecord } from '../utils';
 import clsx from 'clsx';
@@ -49,9 +49,6 @@ import {
   buildSessionTraceEntries,
   compactSessionEventId,
   compareSessionEvents,
-  isSafeTranscriptMarkdownHref,
-  parseTranscriptCode,
-  parseTranscriptMarkdownBlocks,
   prettyCode,
   sessionEventDebugJson,
   sessionEventErrorMessage,
@@ -1435,138 +1432,11 @@ export function DebugDeltasDetail({ frames }: { frames: QuickstartSessionEvent[]
 }
 
 export function TranscriptContent({ value }: { value: string }) {
-  const code = parseTranscriptCode(value);
-  if (code) {
-    return <SyntaxCodeBlock value={code.value} language={code.language} />;
-  }
-
-  return <MarkdownTranscriptContent value={value} />;
-}
-
-export function MarkdownTranscriptContent({ value }: { value: string }) {
-  const blocks = parseTranscriptMarkdownBlocks(value);
   return (
-    <div data-testid="session-trace-markdown" className="space-y-4 text-sm leading-relaxed text-foreground">
-      {blocks.map((block, index) => renderTranscriptMarkdownBlock(block, index))}
+    <div data-testid="session-trace-markdown">
+      <MarkdownContent value={value} className="text-sm leading-relaxed text-foreground" />
     </div>
   );
-}
-
-export function renderTranscriptMarkdownBlock(block: TranscriptMarkdownBlock, index: number) {
-  switch (block.type) {
-    case 'heading': {
-      const HeadingTag = block.level <= 2 ? 'h3' : 'h4';
-      return (
-        <HeadingTag key={index} className="text-base font-semibold leading-6 text-foreground">
-          {renderTranscriptMarkdownInline(block.text, `heading-${index}`)}
-        </HeadingTag>
-      );
-    }
-    case 'list':
-      return (
-        <ul key={index} className="list-disc space-y-1 pl-5">
-          {block.items.map((item, itemIndex) => (
-            <li key={itemIndex} className="pl-1">
-              {renderTranscriptMarkdownInline(item, `list-${index}-${itemIndex}`)}
-            </li>
-          ))}
-        </ul>
-      );
-    case 'table':
-      return (
-        <div key={index} className="subtle-scrollbar overflow-x-auto rounded-md border border-border">
-          <table className="min-w-full border-collapse text-left text-sm">
-            <thead className="bg-secondary">
-              <tr>
-                {block.headers.map((header, headerIndex) => (
-                  <th
-                    key={headerIndex}
-                    scope="col"
-                    className="border-b border-border px-3 py-2 font-semibold text-foreground"
-                  >
-                    {renderTranscriptMarkdownInline(header, `table-${index}-head-${headerIndex}`)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {block.rows.map((row, rowIndex) => (
-                <tr key={rowIndex} className="border-t border-border first:border-t-0">
-                  {block.headers.map((_, cellIndex) => (
-                    <td key={cellIndex} className="align-top px-3 py-2 text-foreground">
-                      {renderTranscriptMarkdownInline(row[cellIndex] ?? '', `table-${index}-${rowIndex}-${cellIndex}`)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    case 'code':
-      return <SyntaxCodeBlock key={index} value={block.value} language={block.language} />;
-    default:
-      return (
-        <p key={index} className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-          {renderTranscriptMarkdownInline(block.text, `paragraph-${index}`)}
-        </p>
-      );
-  }
-}
-
-export function renderTranscriptMarkdownInline(text: string, keyPrefix: string): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[\s\S]+?\*\*|\[[^\]]+\]\([^)]+\))/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let index = 0;
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-    const token = match[0];
-    const key = `${keyPrefix}-${index}`;
-    if (token.startsWith('`') && token.endsWith('`')) {
-      nodes.push(
-        <code
-          key={key}
-          className="rounded border border-border bg-secondary px-1 py-0.5 font-mono text-[0.92em] text-foreground"
-        >
-          {token.slice(1, -1)}
-        </code>,
-      );
-    } else if (token.startsWith('**') && token.endsWith('**')) {
-      nodes.push(
-        <strong key={key} className="font-semibold text-foreground">
-          {renderTranscriptMarkdownInline(token.slice(2, -2), `${key}-strong`)}
-        </strong>,
-      );
-    } else {
-      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-      const href = link?.[2]?.trim() ?? '';
-      nodes.push(
-        isSafeTranscriptMarkdownHref(href) ? (
-          <a
-            key={key}
-            href={href}
-            target="_blank"
-            rel="noreferrer"
-            className="text-primary underline-offset-2 hover:underline"
-          >
-            {renderTranscriptMarkdownInline(link?.[1] ?? token, `${key}-link`)}
-          </a>
-        ) : (
-          token
-        ),
-      );
-    }
-    lastIndex = match.index + token.length;
-    index += 1;
-  }
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-  return nodes;
 }
 
 export function TranscriptTypedContent({ entry, value }: { entry: SessionTraceEntry; value: string }) {

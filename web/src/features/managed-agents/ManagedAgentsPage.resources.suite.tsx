@@ -357,6 +357,9 @@ export function registerManagedAgentsResourceTests() {
     expect(markdown.querySelector('table')?.textContent).toContain('Chinese Simplified');
     expect(markdown.querySelector('strong')?.textContent).toBe('你好，世界');
     expect(markdown.querySelector('code')?.textContent).toBe('Glob("*")');
+    expect(markdown.querySelector('blockquote')?.textContent).toContain('Automated verification');
+    expect(markdown.querySelector('em')?.textContent).toBe('Automated');
+    expect(markdown.querySelector('del')?.textContent).toBe('legacy');
     fireEvent.click(within(resultDetail).getByRole('button', { name: 'Close detail panel' }));
 
     await waitFor(() =>

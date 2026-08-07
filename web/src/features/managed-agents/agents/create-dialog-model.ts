@@ -159,6 +159,15 @@ export const createAgentDraftSchema = z
     if (new Set(serverNames).size !== serverNames.length) {
       context.addIssue({ code: 'custom', message: 'MCP server names must be unique.', path: ['mcp_servers'] });
     }
+    const toolsetKeys = draft.tools.flatMap((tool) => {
+      if (tool.type === 'agent_toolset_20260401') {
+        return [tool.type];
+      }
+      return tool.type === 'mcp_toolset' ? [`${tool.type}:${tool.mcp_server_name}`] : [];
+    });
+    if (new Set(toolsetKeys).size !== toolsetKeys.length) {
+      context.addIssue({ code: 'custom', message: 'Toolsets must be unique.', path: ['tools'] });
+    }
     const toolsets = draft.tools.filter((tool) => tool.type === 'mcp_toolset');
     for (const toolset of toolsets) {
       if (!serverNames.includes(String(toolset.mcp_server_name))) {

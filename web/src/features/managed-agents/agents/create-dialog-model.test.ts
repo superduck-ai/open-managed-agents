@@ -26,6 +26,25 @@ const baseDraft: CreateAgentInput = {
 };
 
 describe('create agent draft model', () => {
+  test('rejects duplicate built-in and MCP toolsets', () => {
+    const duplicateBuiltIns: CreateAgentInput = {
+      ...baseDraft,
+      tools: [{ type: 'agent_toolset_20260401' }, { type: 'agent_toolset_20260401' }],
+    };
+    const duplicateMcpToolsets: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' }],
+      tools: [
+        ...baseDraft.tools,
+        { type: 'mcp_toolset', mcp_server_name: 'github' },
+        { type: 'mcp_toolset', mcp_server_name: 'github' },
+      ],
+    };
+
+    expect(createAgentDraftSchema.safeParse(duplicateBuiltIns).success).toBe(false);
+    expect(createAgentDraftSchema.safeParse(duplicateMcpToolsets).success).toBe(false);
+  });
+
   test('round trips supported YAML and JSON fields without accepting model effort', () => {
     const input: CreateAgentInput = {
       ...baseDraft,

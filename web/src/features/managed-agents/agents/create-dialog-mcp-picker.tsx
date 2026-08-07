@@ -146,14 +146,7 @@ export function CreateDialogMcpPicker({
                 label: server.displayName,
                 description: server.url,
                 disabled: atLimit,
-                icon: (
-                  <RemoteServerIcon
-                    iconUrl={server.iconUrl}
-                    serverUrl={server.url}
-                    className="size-8"
-                    iconClassName="size-4"
-                  />
-                ),
+                icon: <RemoteServerIcon directoryIconUrl={server.iconUrl} className="size-8" iconClassName="size-4" />,
               }))}
               selectedIds={[]}
               loading={directoryLoading}

@@ -103,4 +103,24 @@
         RETURNING
         <include refid="adminWorkspaceMemberColumns"/>
     </update>
+
+    <insert id="SeedDefault" result="exec">
+        INSERT INTO workspace_members (
+            external_id, organization_uuid, workspace_uuid, workspace_external_id,
+            user_uuid, user_external_id, workspace_role
+        ) VALUES (
+            #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.WorkspaceExternalID}, #{params.UserUUID}, #{params.UserExternalID},
+            'workspace_admin'
+        )
+        ON CONFLICT (external_id) DO UPDATE SET
+            organization_uuid = excluded.organization_uuid,
+            workspace_uuid = excluded.workspace_uuid,
+            workspace_external_id = excluded.workspace_external_id,
+            user_uuid = excluded.user_uuid,
+            user_external_id = excluded.user_external_id,
+            workspace_role = excluded.workspace_role,
+            deleted_at = NULL,
+            updated_at = NOW()
+    </insert>
 </mapper>

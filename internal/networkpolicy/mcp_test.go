@@ -94,3 +94,19 @@ func TestMCPAllowedHostsAcceptsCanonicalAndTransportRemoteServerTypes(t *testing
 		t.Fatalf("hosts = %v, want %v", hosts, want)
 	}
 }
+
+func TestParseMCPServerTargetsPreservesConfiguredURLs(t *testing.T) {
+	snapshot := json.RawMessage(`{"mcp_servers":[
+		{"type":"url","url":"https://example.test/mcp?tenant=one"},
+		{"type":"http","url":"http://streamable.example/mcp"},
+		{"type":"stdio","command":"npx"}
+	]}`)
+	targets, err := parseMCPServerTargets(snapshot)
+	if err != nil {
+		t.Fatalf("parse MCP targets: %v", err)
+	}
+	want := []string{"https://example.test/mcp?tenant=one", "http://streamable.example/mcp"}
+	if !slices.Equal(targets.urls, want) {
+		t.Fatalf("urls = %v, want %v", targets.urls, want)
+	}
+}

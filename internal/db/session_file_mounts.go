@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/jmoiron/sqlx"
+	"github.com/superduck-ai/yourbatis"
 )
 
 func enforceSessionFileResourceCapacityTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	workspaceUUID string,
 	sessionExternalID string,
 	additionalFiles int,
@@ -20,7 +20,8 @@ func enforceSessionFileResourceCapacityTx(
 	if additionalFiles == 0 {
 		return nil
 	}
-	activeFiles, err := NewSessionResourceMapper(newSQLXTxExecutor(tx)).CountSessionFileResources(
+	mapper := NewSessionResourceMapper(executor)
+	activeFiles, err := mapper.CountSessionFileResources(
 		ctx,
 		workspaceUUID,
 		sessionExternalID,
@@ -56,11 +57,11 @@ func sessionHasFileMount(resources []CreateSessionResourceInput) bool {
 
 func lockSessionFilestoreMutationTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	session Session,
 ) (FilestoreFilesystem, error) {
-	executor := newSQLXTxExecutor(tx)
-	if err := NewWorkspaceStorageUsageMapper(executor).LockWorkspace(ctx, session.WorkspaceUUID); err != nil {
+	storageMapper := NewWorkspaceStorageUsageMapper(executor)
+	if err := storageMapper.LockWorkspace(ctx, session.WorkspaceUUID); err != nil {
 		return FilestoreFilesystem{}, err
 	}
 	filesystemMapper := NewFilestoreFilesystemMapper(executor)
@@ -83,7 +84,7 @@ func lockSessionFilestoreMutationTx(
 
 func bindSessionFileResourceWithLockedFilesystemTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	session Session,
 	filesystem FilestoreFilesystem,
 	resource SessionResource,
@@ -104,12 +105,12 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 	if err := validateFilestorePath(mount.Path); err != nil {
 		return SessionResource{}, err
 	}
-	if err := rejectSessionFileMountConflictTx(ctx, tx, filesystem, mount.Path); err != nil {
+	if err := rejectSessionFileMountConflictTx(ctx, executor, filesystem, mount.Path); err != nil {
 		return SessionResource{}, err
 	}
 
-	executor := newSQLXTxExecutor(tx)
-	fileRow, err := NewFileMapper(executor).GetFileForShare(ctx, session.WorkspaceUUID, mount.FileExternalID)
+	fileMapper := NewFileMapper(executor)
+	fileRow, err := fileMapper.GetFileForShare(ctx, session.WorkspaceUUID, mount.FileExternalID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionResource{}, ErrFileReferenceNotFound
 	}
@@ -128,7 +129,8 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 			return SessionResource{}, err
 		}
 	}
-	row, err := NewSessionResourceMapper(executor).BindSessionFileResource(ctx, sessionFileResourceBindingParams{
+	resourceMapper := NewSessionResourceMapper(executor)
+	row, err := resourceMapper.BindSessionFileResource(ctx, sessionFileResourceBindingParams{
 		EntryPath:     mount.Path,
 		ParentPath:    filestoreParentPath(mount.Path),
 		FileUUID:      file.UUID,
@@ -148,14 +150,15 @@ func bindSessionFileResourceWithLockedFilesystemTx(
 
 func rejectSessionFileMountConflictTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	filesystem FilestoreFilesystem,
 	path string,
 ) error {
 	// The filesystem mutation lock is already held. This lookup only classifies
 	// namespace conflicts owned by another Session File resource so the API can
 	// return 400; ordinary occupied entries remain ErrFilestorePathExists/409.
-	conflictingPath, found, err := NewSessionResourceMapper(newSQLXTxExecutor(tx)).FindMountConflict(ctx, sessionResourcePathParams{
+	mapper := NewSessionResourceMapper(executor)
+	conflictingPath, found, err := mapper.FindMountConflict(ctx, sessionResourcePathParams{
 		WorkspaceUUID: filesystem.WorkspaceUUID,
 		SessionUUID:   filesystem.SessionUUID,
 		EntryPath:     path,
@@ -174,12 +177,13 @@ func rejectSessionFileMountConflictTx(
 
 func getSessionResourceForMutation(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	workspaceUUID string,
 	sessionExternalID string,
 	resourceExternalID string,
 ) (SessionResource, error) {
-	row, err := NewSessionResourceMapper(newSQLXTxExecutor(tx)).GetSessionResourceForMutation(
+	mapper := NewSessionResourceMapper(executor)
+	row, err := mapper.GetSessionResourceForMutation(
 		ctx,
 		workspaceUUID,
 		sessionExternalID,
@@ -196,25 +200,26 @@ func getSessionResourceForMutation(
 
 func unbindSessionFileResourceTx(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	session Session,
 	resource SessionResource,
 ) error {
 	if resource.ResourceType != SessionResourceTypeFile {
 		return nil
 	}
-	_, err := lockSessionFilestoreMutationTx(ctx, tx, session)
+	_, err := lockSessionFilestoreMutationTx(ctx, executor, session)
 	return err
 }
 
 func softDeleteSessionResource(
 	ctx context.Context,
-	tx *sqlx.Tx,
+	executor yourbatis.Executor,
 	workspaceUUID string,
 	sessionExternalID string,
 	resourceExternalID string,
 ) error {
-	affected, err := NewSessionResourceMapper(newSQLXTxExecutor(tx)).SoftDeleteSessionResource(
+	mapper := NewSessionResourceMapper(executor)
+	affected, err := mapper.SoftDeleteSessionResource(
 		ctx,
 		workspaceUUID,
 		sessionExternalID,

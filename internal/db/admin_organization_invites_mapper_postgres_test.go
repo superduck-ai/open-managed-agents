@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-
-	"github.com/google/uuid"
 )
 
 func TestAdminInviteMapperPostgreSQL(t *testing.T) {
@@ -94,7 +92,7 @@ func TestAdminInviteMapperPostgreSQL(t *testing.T) {
 			invitedAt := baseInvitedAt.Add(time.Duration(index) * time.Second)
 			invite, insertErr := mapper.Insert(ctx, insertAdminInviteParams{
 				ExternalID:       externalID,
-				OrganizationUUID: uuid.MustParse(organizationUUID),
+				OrganizationUUID: organizationUUID,
 				Email:            externalID + "@example.com",
 				Role:             "developer",
 				Status:           "pending",

@@ -4,7 +4,6 @@
   max-height: calc(100dvh - 32px) !important;
   border: 0 !important;
   border-radius: 12px !important;
-  background: #383835 !important;
   box-shadow: 0 26px 70px rgba(0, 0, 0, 0.58) !important;
 }
 
@@ -16,7 +15,7 @@
 
 .workbench-code-dialog-header .grid {
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--secondary);
 }
 
 .workbench-code-dialog-title {
@@ -39,6 +38,21 @@
 
 .workbench-code-dialog-close:hover {
   background: rgba(255, 255, 255, 0.05);
+  color: var(--foreground);
+}
+
+/*
+ * Theme-aware overrides scoped to the Get Code modal. The shared
+ * .workbench-code-dialog-close class is also applied to the rename, share,
+ * generate and attachment-URL dialogs (see web/src/features/workbench/dialogs.tsx),
+ * so the theme variables must not leak into those variants.
+ */
+.workbench-code-dialog .workbench-code-dialog-close {
+  color: var(--muted-foreground);
+}
+
+.workbench-code-dialog .workbench-code-dialog-close:hover {
+  background: var(--accent);
   color: var(--foreground);
 }
 
@@ -68,9 +82,9 @@
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
-  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  border: 0.5px solid var(--border);
   border-radius: 8px;
-  background: #383835;
+  background: var(--card);
 }
 
 .workbench-code-pre {
@@ -105,7 +119,7 @@
 
 .workbench-code-line-number {
   user-select: none;
-  color: rgba(244, 241, 234, 0.34);
+  color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }

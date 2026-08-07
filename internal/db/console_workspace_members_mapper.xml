@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ConsoleWorkspaceMemberMapper">
+    <update id="SoftDeleteByOrganizationUser" result="exec">
+        WITH target_user AS (
+            SELECT uuid
+            FROM users
+            WHERE organization_uuid = #{params.OrgUUID}
+            AND (
+                external_id = #{params.UserID}
+                OR 'user_' || LEFT(REPLACE(CAST(uuid AS text), '-', ''), 24) = #{params.UserID}
+                <if test="params.UserUUID != ''">
+                    OR uuid = #{params.UserUUID}
+                </if>
+            )
+            LIMIT 1
+        )
+        UPDATE workspace_members wm
+        SET deleted_at = COALESCE(wm.deleted_at, NOW()),
+            updated_at = NOW()
+        FROM target_user u
+        WHERE wm.organization_uuid = #{params.OrgUUID}
+        AND wm.user_uuid = u.uuid
+        AND wm.deleted_at IS NULL
+    </update>
+</mapper>

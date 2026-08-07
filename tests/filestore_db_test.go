@@ -304,8 +304,8 @@ func TestCreateSessionProvisionsFilesystem(t *testing.T) {
 	}
 }
 
-func TestListSessionResourceFilesPageWithSQLX(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("filestore-sqlx-list"))
+func TestListSessionResourceFilesPageWithMapper(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("filestore-mapper-list"))
 	t.Cleanup(app.close)
 
 	ctx := context.Background()
@@ -383,44 +383,44 @@ func TestListSessionResourceFilesPageWithSQLX(t *testing.T) {
 	})
 }
 
-func TestSessionResourceFileMutationSQLXBinding(t *testing.T) {
+func TestSessionResourceFileMutationMapperBinding(t *testing.T) {
 	fixture := newWorkspaceStorageFixture(t)
 	blob := workspaceStorageBlob(12, nil)
 	blob.DetectedMimeType = "text/plain; charset=utf-8"
-	blob.Metadata = json.RawMessage(`{"source":"sqlx"}`)
+	blob.Metadata = json.RawMessage(`{"source":"mapper"}`)
 	blob.AuthorizationMetadata = json.RawMessage(`{"scope":"workspace"}`)
-	blob.Tags = []string{"report", "sqlx"}
+	blob.Tags = []string{"report", "mapper"}
 	blob.Downloadable = true
-	blob.S3ETag = "etag-sqlx-1"
-	blob.S3VersionID = "version-sqlx-1"
+	blob.S3ETag = "etag-mapper-1"
+	blob.S3VersionID = "version-mapper-1"
 
 	created, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
 		WorkspaceUUID:  fixture.workspaceUUID,
 		FilesystemUUID: fixture.filesystem.UUID,
-		Path:           "/sqlx.txt",
+		Path:           "/mapper.txt",
 		Blob:           blob,
 	})
 	if err != nil {
 		t.Fatalf("PutFilestoreFile() error = %v", err)
 	}
 	entry := created.Node
-	if entry.Path != "/sqlx.txt" ||
+	if entry.Path != "/mapper.txt" ||
 		entry.DetectedMimeType == nil || *entry.DetectedMimeType != blob.DetectedMimeType ||
 		!reflect.DeepEqual(entry.Tags, blob.Tags) ||
 		entry.S3VersionID == nil || *entry.S3VersionID != blob.S3VersionID {
-		t.Fatalf("created entry = %+v, want SQLX-bound nullable, JSON, array, and version fields", entry)
+		t.Fatalf("created entry = %+v, want Mapper-bound nullable, JSON, array, and version fields", entry)
 	}
 	assertRawJSONEqual(t, entry.Metadata, string(blob.Metadata))
 	assertRawJSONEqual(t, entry.AuthorizationMetadata, string(blob.AuthorizationMetadata))
 
 	replacement := blob
 	replacement.S3Key += "-replacement"
-	replacement.S3ETag = "etag-sqlx-2"
-	replacement.S3VersionID = "version-sqlx-2"
+	replacement.S3ETag = "etag-mapper-2"
+	replacement.S3VersionID = "version-mapper-2"
 	replaced, err := fixture.app.db.PutFilestoreFile(context.Background(), db.PutFilestoreFileInput{
 		WorkspaceUUID:     fixture.workspaceUUID,
 		FilesystemUUID:    fixture.filesystem.UUID,
-		Path:              "/sqlx.txt",
+		Path:              "/mapper.txt",
 		Blob:              replacement,
 		OverwriteExisting: true,
 	})
@@ -516,15 +516,15 @@ func TestFilestoreObjectCleanupJobStopsAfterRepeatedExpiredLeases(t *testing.T) 
 	}
 }
 
-func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("filestore-sqlx-cleanup"))
+func TestFilestoreObjectCleanupJobMapperLifecycle(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("filestore-mapper-cleanup"))
 	t.Cleanup(app.close)
 
 	ctx := context.Background()
 	_, _, organizationUUID, workspaceUUID, _, _, _, sessionUUID, _, apiKeyUUID := seedFilestoreLookupScope(t, app)
 	filesystem, created, err := app.db.ProvisionFilestoreFilesystem(ctx, db.ProvisionFilestoreFilesystemInput{
 		UUID:                uuid.NewString(),
-		ExternalID:          "claude_chat_sqlx_" + uuid.NewString(),
+		ExternalID:          "claude_chat_mapper_" + uuid.NewString(),
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
 		SessionUUID:         sessionUUID,
@@ -536,10 +536,10 @@ func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
 	job, err := app.db.EnqueueFilestoreObjectCleanupJob(ctx, db.EnqueueFilestoreObjectCleanupJobInput{
 		WorkspaceUUID:   workspaceUUID,
 		FilesystemUUID:  filesystem.UUID,
-		EntryExternalID: "file_sqlx",
-		Bucket:          "filestore-sqlx-cleanup",
-		Key:             "objects/sqlx",
-		Reason:          "sqlx_test",
+		EntryExternalID: "file_mapper",
+		Bucket:          "filestore-mapper-cleanup",
+		Key:             "objects/mapper",
+		Reason:          "mapper_test",
 		RunAfter:        time.Now().UTC().Add(-time.Second),
 	})
 	if err != nil {
@@ -573,13 +573,13 @@ func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
 		ctx,
 		workspaceUUID,
 		job.ExternalID,
-		"etag-sqlx",
-		"version-sqlx",
+		"etag-mapper",
+		"version-mapper",
 	); err != nil {
 		t.Fatalf("AttachFilestoreObjectCleanupJobVersion() error = %v", err)
 	}
 
-	const workerID = "filestore-sqlx-worker"
+	const workerID = "filestore-mapper-worker"
 	leasedJobs, err := app.db.LeaseFilestoreObjectCleanupJobs(ctx, workerID, 100, 10)
 	if err != nil {
 		t.Fatalf("LeaseFilestoreObjectCleanupJobs() error = %v", err)
@@ -594,9 +594,9 @@ func TestFilestoreObjectCleanupJobSQLXLifecycle(t *testing.T) {
 	if leased.UUID == "" {
 		t.Fatalf("leased jobs = %+v, want job %s", leasedJobs, job.UUID)
 	}
-	if leased.ETag != "etag-sqlx" || leased.VersionID != "version-sqlx" ||
+	if leased.ETag != "etag-mapper" || leased.VersionID != "version-mapper" ||
 		leased.WorkspaceUUID != workspaceUUID ||
-		leased.Bucket != "filestore-sqlx-cleanup" {
+		leased.Bucket != "filestore-mapper-cleanup" {
 		t.Fatalf("leased job = %+v, want mapped payload fields", leased)
 	}
 	t.Run("rejects a stale lease owner", func(t *testing.T) {

@@ -20,9 +20,9 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	externalKeyID := "key_mapper"
 	params := insertAdminWorkspaceParams{
-		UUID:             uuid.MustParse("22222222-2222-4222-8222-222222222222"),
+		UUID:             "22222222-2222-4222-8222-222222222222",
 		ExternalID:       "wrkspc_mapper",
-		OrganizationUUID: uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+		OrganizationUUID: "11111111-1111-4111-8111-111111111111",
 		Name:             "Mapper workspace",
 		CreatedAt:        createdAt,
 		CompartmentID:    "compartment_mapper",
@@ -87,10 +87,7 @@ func TestAdminWorkspaceMapperInsert(t *testing.T) {
 
 func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 	organizationUUID := "11111111-1111-4111-8111-111111111111"
-	workspaceUUID := uuid.NullUUID{
-		UUID:  uuid.MustParse("22222222-2222-4222-8222-222222222222"),
-		Valid: true,
-	}
+	workspaceUUID := "22222222-2222-4222-8222-222222222222"
 	wantValues := []any{organizationUUID, "wrkspc_mapper", workspaceUUID}
 
 	t.Run("not found", func(t *testing.T) {
@@ -115,7 +112,7 @@ func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 		)
 	})
 
-	t.Run("found", func(t *testing.T) {
+	t.Run("found by external ID", func(t *testing.T) {
 		createdAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: adminWorkspaceMapperTestColumns(),
@@ -125,10 +122,22 @@ func TestAdminWorkspaceMapperFindByIdentifier(t *testing.T) {
 			context.Background(),
 			organizationUUID,
 			"wrkspc_mapper",
-			workspaceUUID,
+			"",
 		)
 		if err != nil || workspace.ExternalID != "wrkspc_mapper" {
 			t.Fatalf("FindByIdentifier() = (%+v, %v)", workspace, err)
+		}
+		assertMapperTestExecution(
+			t,
+			executor,
+			"AdminWorkspaceMapper.FindByIdentifier",
+			yourbatis.StatementSelect,
+			[]any{organizationUUID, "wrkspc_mapper"},
+			"organization_uuid = $1",
+			"external_id = $2",
+		)
+		if strings.Contains(executor.bound.SQL, "uuid = $3") {
+			t.Fatalf("FindByIdentifier() SQL unexpectedly contains UUID filter: %s", executor.bound.SQL)
 		}
 	})
 }
@@ -137,7 +146,7 @@ func TestAdminWorkspaceMapperListPageBuildsFilters(t *testing.T) {
 	organizationUUID := "11111111-1111-4111-8111-111111111111"
 	anchor := &pagePosition{
 		CreatedAt: time.Date(2026, time.August, 5, 4, 5, 6, 0, time.UTC),
-		UUID:      uuid.MustParse("22222222-2222-4222-8222-222222222222"),
+		UUID:      "22222222-2222-4222-8222-222222222222",
 	}
 	tests := []struct {
 		name            string

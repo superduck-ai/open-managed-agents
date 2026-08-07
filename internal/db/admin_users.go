@@ -78,7 +78,7 @@ func (d *DB) DeleteAdminUser(ctx context.Context, organizationUUID, externalID s
 		if deleteErr = mapper.SoftDeleteWorkspaceMembersByUserUUID(
 			ctx,
 			organizationUUID,
-			deleted.UUID,
+			deleted.UUID.String(),
 		); deleteErr != nil {
 			return deleteErr
 		}

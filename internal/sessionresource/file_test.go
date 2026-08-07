@@ -24,7 +24,7 @@ func TestNormalizeFileSpecRejectsInvalidInput(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := NormalizeFileSpec(test.fileID, test.source, test.mountPath); err == nil {
+			if _, err := NormalizeFileSpec(test.fileID, "data.csv", test.source, test.mountPath); err == nil {
 				t.Fatal("NormalizeFileSpec() succeeded")
 			}
 		})
@@ -83,11 +83,11 @@ func TestParseFilePayloadRejectsMismatchedResourceID(t *testing.T) {
 func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
 	t.Parallel()
 
-	spec, err := NormalizeFileSpec("file_test", nil, nil)
+	spec, err := NormalizeFileSpec("file_test", "report.csv", nil, nil)
 	if err != nil {
 		t.Fatalf("NormalizeFileSpec(): %v", err)
 	}
-	if spec.fileID != "file_test" || spec.mountPath != "/file_test" {
+	if spec.fileID != "file_test" || spec.mountPath != "/uploads/report.csv" {
 		t.Fatalf("spec = %#v", spec)
 	}
 
@@ -117,8 +117,19 @@ func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
 	}
 	if mount.ResourceID != "sesrsc_test" ||
 		mount.FileID != "file_test" ||
-		mount.Path != "/uploads/file_test" {
+		mount.Path != "/uploads/report.csv" {
 		t.Fatalf("mount = %#v", mount)
+	}
+}
+
+func TestDefaultGitHubRepositoryMountPath(t *testing.T) {
+	t.Parallel()
+
+	if got := DefaultGitHubRepositoryMountPath("://invalid"); got != "/workspace/repository" {
+		t.Fatalf("invalid repository URL mount path = %q", got)
+	}
+	if got := DefaultGitHubRepositoryMountPath("https://github.com/example/widgets.git"); got != "/workspace/widgets" {
+		t.Fatalf("default repository mount path = %q", got)
 	}
 }
 

@@ -5,4 +5,33 @@
         FROM organizations
         WHERE uuid = #{organizationUUID}
     </select>
+
+    <select id="LockSeed" result="scalar">
+        SELECT 1 FROM (SELECT pg_advisory_xact_lock(704611533427849228)) locked
+    </select>
+
+    <select id="SeedDefault" resultType="string">
+        WITH existing AS (
+            SELECT o.uuid
+            FROM organizations o
+            JOIN workspaces w ON w.organization_uuid = o.uuid
+            WHERE w.external_id = #{workspaceExternalID}
+            LIMIT 1
+        ), updated AS (
+            UPDATE organizations o
+            SET name = #{name}, updated_at = NOW()
+            FROM existing
+            WHERE o.uuid = existing.uuid
+            RETURNING o.uuid
+        ), inserted AS (
+            INSERT INTO organizations (name)
+            SELECT #{name}
+            WHERE NOT EXISTS (SELECT 1 FROM existing)
+            RETURNING uuid
+        )
+        SELECT uuid FROM updated
+        UNION ALL
+        SELECT uuid FROM inserted
+        LIMIT 1
+    </select>
 </mapper>

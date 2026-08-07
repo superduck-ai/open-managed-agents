@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EnvironmentSandboxMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        environment_uuid,
+        environment_external_id,
+        work_uuid,
+        work_external_id,
+        provider,
+        template,
+        provider_sandbox_id,
+        state,
+        metadata,
+        last_error,
+        created_at,
+        updated_at,
+        stopped_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="environmentSandboxMapperRow">
+        INSERT INTO environment_sandboxes (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            environment_uuid,
+            environment_external_id,
+            work_uuid,
+            work_external_id,
+            provider,
+            template,
+            provider_sandbox_id,
+            state,
+            metadata,
+            last_error,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.EnvironmentUUID},
+            #{params.EnvironmentExternalID},
+            #{params.WorkUUID},
+            #{params.WorkExternalID},
+            #{params.Provider},
+            #{params.Template},
+            #{params.ProviderSandboxID},
+            #{params.State},
+            CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            #{params.LastError,sensitive=true},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <update id="UpdateState" result="exec">
+        UPDATE environment_sandboxes
+        SET state = #{params.State},
+            provider_sandbox_id = COALESCE(#{params.ProviderSandboxID}, provider_sandbox_id),
+            last_error = #{params.LastError,sensitive=true},
+            stopped_at = COALESCE(#{params.StoppedAt}, stopped_at),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+    </update>
+
+    <select id="FindActiveForWork" resultType="environmentSandboxMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environment_sandboxes
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND environment_external_id = #{environmentExternalID}
+        AND work_external_id = #{workExternalID}
+        AND provider_sandbox_id IS NOT NULL
+        AND state IN ('creating', 'running', 'stopping')
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT 1
+    </select>
+
+    <select id="FindRenewableByCodeSessionExternalID" resultType="environmentSandboxMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environment_sandboxes
+        WHERE uuid = (
+            SELECT sandbox.uuid
+            FROM code_sessions code_session
+            JOIN environment_work work
+            ON work.organization_uuid = code_session.organization_uuid
+            AND work.workspace_uuid = code_session.workspace_uuid
+            AND work.environment_uuid = code_session.environment_uuid
+            AND work.environment_external_id = code_session.environment_external_id
+            AND work.data-&gt;&gt;'type' = 'session'
+            AND work.data-&gt;&gt;'id' = code_session.session_external_id
+            AND work.deleted_at IS NULL
+            JOIN environment_sandboxes sandbox
+            ON sandbox.organization_uuid = code_session.organization_uuid
+            AND sandbox.workspace_uuid = code_session.workspace_uuid
+            AND sandbox.environment_uuid = code_session.environment_uuid
+            AND sandbox.work_uuid = work.uuid
+            AND sandbox.provider_sandbox_id IS NOT NULL
+            AND sandbox.state = 'running'
+            WHERE code_session.external_id = #{codeSessionExternalID}
+            AND code_session.status = 'active'
+            AND code_session.worker_status = 'running'
+            AND code_session.deleted_at IS NULL
+            ORDER BY sandbox.created_at DESC, sandbox.uuid DESC
+            LIMIT 1
+        )
+    </select>
+</mapper>

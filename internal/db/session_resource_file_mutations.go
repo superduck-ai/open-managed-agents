@@ -213,10 +213,12 @@ func (d *DB) MoveFilestoreFile(ctx context.Context, input MoveFilestoreFileInput
 				DestinationParentPath: filestoreParentPath(input.DestinationPath),
 				Now:                   input.Now,
 			}
-			if err := NewSessionResourceMapper(tx).MoveResourceFile(ctx, moveParams); err != nil {
+			resourceMapper := NewSessionResourceMapper(tx)
+			if err := resourceMapper.MoveResourceFile(ctx, moveParams); err != nil {
 				return FilestoreMutationResult{}, err
 			}
-			row, err := NewSessionResourceFileMapper(tx).GetResourceFileForMoveResult(ctx, sessionResourceIdentityParams{
+			fileMapper := NewSessionResourceFileMapper(tx)
+			row, err := fileMapper.GetResourceFileForMoveResult(ctx, sessionResourceIdentityParams{
 				WorkspaceUUID: moveParams.WorkspaceUUID,
 				SessionUUID:   moveParams.SessionUUID,
 				ResourceUUID:  moveParams.ResourceUUID,
@@ -315,7 +317,8 @@ func (d *DB) MoveFilestoreDirectory(ctx context.Context, input MoveFilestoreDire
 			if err := resourceMapper.MoveResourceSubtree(ctx, moveParams); err != nil {
 				return FilestoreMutationResult{}, err
 			}
-			row, err := NewSessionResourceFileMapper(tx).GetMovedDirectory(ctx, moveParams)
+			fileMapper := NewSessionResourceFileMapper(tx)
+			row, err := fileMapper.GetMovedDirectory(ctx, moveParams)
 			if err != nil {
 				return FilestoreMutationResult{}, err
 			}
@@ -427,7 +430,8 @@ func (d *DB) RemoveFilestoreDirectory(ctx context.Context, input RemoveFilestore
 			if err != nil {
 				return FilestoreMutationResult{}, err
 			}
-			if err := NewFileMapper(tx).RetireOwnedFilesInSubtree(ctx, subtreeParams); err != nil {
+			fileMapper := NewFileMapper(tx)
+			if err := fileMapper.RetireOwnedFilesInSubtree(ctx, subtreeParams); err != nil {
 				return FilestoreMutationResult{}, err
 			}
 			if err := resourceMapper.RetireResourceSubtree(ctx, subtreeParams); err != nil {

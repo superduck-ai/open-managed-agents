@@ -1,0 +1,264 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EnvironmentWorkMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        environment_uuid,
+        environment_external_id,
+        data,
+        metadata,
+        secret,
+        state,
+        claimed_by_worker_id,
+        claim_expires_at,
+        acknowledged_at,
+        started_at,
+        latest_heartbeat_at,
+        heartbeat_ttl_seconds,
+        stop_requested_at,
+        stopped_at,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="environmentWorkMapperRow">
+        INSERT INTO environment_work (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            environment_uuid,
+            environment_external_id,
+            data,
+            metadata,
+            secret,
+            state,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.EnvironmentUUID},
+            #{params.EnvironmentExternalID},
+            CAST(#{params.Data,sensitive=true} AS jsonb),
+            CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            #{params.Secret,sensitive=true},
+            #{params.State},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="CountActive" result="scalar">
+        SELECT COUNT(*)
+        FROM environment_work
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND environment_uuid = #{environmentUUID}
+        AND deleted_at IS NULL
+        AND state &lt;&gt; 'stopped'
+    </select>
+
+    <select id="FindByExternalID" resultType="environmentWorkMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environment_work
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND environment_external_id = #{environmentExternalID}
+        AND external_id = #{workExternalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindLatestByData" resultType="environmentWorkMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environment_work
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND environment_external_id = #{environmentExternalID}
+        AND data-&gt;&gt;'type' = #{dataType}
+        AND data-&gt;&gt;'id' = #{dataID}
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT 1
+    </select>
+
+    <select id="ListPage" resultType="environmentWorkMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environment_work
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND environment_external_id = #{params.EnvironmentExternalID}
+            AND deleted_at IS NULL
+            <if test="params.Cursor != nil">
+                AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.FetchLimit}
+    </select>
+
+    <update id="ClaimForEnvironment" result="returning" resultType="environmentWorkMapperRow">
+        UPDATE environment_work
+        SET claimed_by_worker_id = #{workerID},
+            claim_expires_at = #{claimExpiresAt},
+            updated_at = NOW()
+        WHERE uuid = (
+            SELECT uuid
+            FROM environment_work
+            WHERE workspace_uuid = #{workspaceUUID}
+            AND environment_external_id = #{environmentExternalID}
+            AND deleted_at IS NULL
+            AND state = 'queued'
+            AND (claim_expires_at IS NULL OR claim_expires_at &lt;= NOW())
+            ORDER BY created_at ASC, uuid ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="ClaimNext" result="returning" resultType="environmentWorkMapperRow">
+        UPDATE environment_work
+        SET claimed_by_worker_id = #{workerID},
+            claim_expires_at = #{claimExpiresAt},
+            updated_at = NOW()
+        WHERE uuid = (
+            SELECT uuid
+            FROM environment_work
+            WHERE deleted_at IS NULL
+            AND state = 'queued'
+            AND (claim_expires_at IS NULL OR claim_expires_at &lt;= NOW())
+            <if test="!includeSessionWork">
+                AND COALESCE(data-&gt;&gt;'type', '') &lt;&gt; 'session'
+            </if>
+            ORDER BY created_at ASC, uuid ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <select id="LockByExternalID" resultType="environmentWorkMapperRow">
+        SELECT
+        <include refid="columns"/>
+        FROM environment_work
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND environment_external_id = #{environmentExternalID}
+        AND external_id = #{workExternalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="AckByExternalID" result="returning" resultType="environmentWorkMapperRow">
+        UPDATE environment_work
+        SET state = CASE WHEN state = 'queued' THEN 'starting' ELSE state END,
+            acknowledged_at = COALESCE(acknowledged_at, NOW()),
+            started_at = COALESCE(started_at, NOW()),
+            claim_expires_at = NULL,
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND environment_external_id = #{environmentExternalID}
+        AND external_id = #{workExternalID}
+        AND deleted_at IS NULL
+        AND state IN ('queued', 'starting', 'active')
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="UpdateMetadata" result="returning" resultType="environmentWorkMapperRow">
+        UPDATE environment_work
+        SET metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND environment_external_id = #{params.EnvironmentExternalID}
+        AND external_id = #{params.WorkExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="MergeMetadata" result="rows">
+        UPDATE environment_work
+        SET metadata = COALESCE(metadata, CAST('{}' AS jsonb))
+                || CAST(#{params.MetadataPatch,sensitive=true} AS jsonb),
+            updated_at = NOW()
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND environment_uuid = #{params.EnvironmentUUID}
+        AND environment_external_id = #{params.EnvironmentExternalID}
+        AND external_id = #{params.WorkExternalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <update id="Heartbeat" result="returning" resultType="environmentWorkMapperRow">
+        UPDATE environment_work
+        SET state = #{params.State},
+            latest_heartbeat_at = NOW(),
+            heartbeat_ttl_seconds = #{params.TTLSeconds},
+            updated_at = NOW()
+        WHERE uuid = #{params.WorkUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND environment_external_id = #{params.EnvironmentExternalID}
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="Stop" result="returning" resultType="environmentWorkMapperRow">
+        UPDATE environment_work
+        SET state = #{params.State},
+            stop_requested_at = COALESCE(stop_requested_at, NOW()),
+            stopped_at = CASE
+                WHEN #{params.State} = 'stopped' THEN COALESCE(stopped_at, NOW())
+                ELSE stopped_at
+            END,
+            updated_at = NOW()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND environment_external_id = #{params.EnvironmentExternalID}
+        AND external_id = #{params.WorkExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="StopForDeletedSession" result="rows">
+        UPDATE environment_work
+        SET state = CASE WHEN state = 'stopped' THEN state ELSE 'stopping' END,
+            stop_requested_at = COALESCE(stop_requested_at, NOW()),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND environment_external_id = #{environmentExternalID}
+        AND data-&gt;&gt;'id' = #{sessionExternalID}
+        AND deleted_at IS NULL
+        AND state &lt;&gt; 'stopped'
+    </update>
+
+    <select id="Stats" resultType="environmentWorkStatsMapperRow">
+        SELECT
+            CAST(COUNT(*) FILTER (
+                WHERE state = 'queued'
+                AND (claim_expires_at IS NULL OR claim_expires_at &lt;= NOW())
+            ) AS int) AS depth,
+            CAST(COUNT(*) FILTER (WHERE state &lt;&gt; 'stopped') AS int) AS pending,
+            MIN(created_at) FILTER (WHERE state = 'queued') AS oldest_queued_at,
+            COALESCE((
+                SELECT CAST(COUNT(DISTINCT worker_id) AS int)
+                FROM environment_worker_polls p
+                WHERE p.workspace_uuid = #{workspaceUUID}
+                AND p.environment_external_id = #{environmentExternalID}
+                AND p.last_poll_at &gt; NOW() - INTERVAL '30 seconds'
+            ), 0) AS workers_polling
+        FROM environment_work
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND environment_external_id = #{environmentExternalID}
+        AND deleted_at IS NULL
+    </select>
+</mapper>

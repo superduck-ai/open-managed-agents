@@ -17,7 +17,7 @@ func TestAdminInviteMapperInsert(t *testing.T) {
 	invitedAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	params := insertAdminInviteParams{
 		ExternalID:       "invite_mapper",
-		OrganizationUUID: uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+		OrganizationUUID: "11111111-1111-4111-8111-111111111111",
 		Email:            "invitee@example.com",
 		Role:             "developer",
 		Status:           "pending",
@@ -141,7 +141,7 @@ func TestAdminInviteMapperFindPageAnchorByExternalID(t *testing.T) {
 			organizationUUID,
 			"invite_anchor",
 		)
-		if err != nil || found || anchor.UUID != uuid.Nil {
+		if err != nil || found || anchor.UUID != "" {
 			t.Fatalf("FindPageAnchorByExternalID() = (%+v, %t, %v), want zero, false, nil", anchor, found, err)
 		}
 		assertMapperTestExecution(
@@ -165,7 +165,7 @@ func TestAdminInviteMapperFindPageAnchorByExternalID(t *testing.T) {
 			organizationUUID,
 			"invite_anchor",
 		)
-		if err != nil || !found || anchor.UUID != inviteUUID || !anchor.CreatedAt.Equal(invitedAt) {
+		if err != nil || !found || anchor.UUID != inviteUUID.String() || !anchor.CreatedAt.Equal(invitedAt) {
 			t.Fatalf("FindPageAnchorByExternalID() = (%+v, %t, %v)", anchor, found, err)
 		}
 		assertMapperTestExecution(
@@ -183,7 +183,7 @@ func TestAdminInviteMapperListPage(t *testing.T) {
 	organizationUUID := "11111111-1111-4111-8111-111111111111"
 	anchor := &pagePosition{
 		CreatedAt: time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC),
-		UUID:      uuid.MustParse("22222222-2222-4222-8222-222222222222"),
+		UUID:      "22222222-2222-4222-8222-222222222222",
 	}
 
 	t.Run("query error", func(t *testing.T) {

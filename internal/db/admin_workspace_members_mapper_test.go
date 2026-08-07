@@ -19,10 +19,10 @@ func TestAdminWorkspaceMemberMapperInsert(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	params := insertAdminWorkspaceMemberParams{
 		ExternalID:          "wsm_mapper",
-		OrganizationUUID:    uuid.MustParse("11111111-1111-4111-8111-111111111111"),
-		WorkspaceUUID:       uuid.MustParse("22222222-2222-4222-8222-222222222222"),
+		OrganizationUUID:    "11111111-1111-4111-8111-111111111111",
+		WorkspaceUUID:       "22222222-2222-4222-8222-222222222222",
 		WorkspaceExternalID: "wrkspc_mapper",
-		UserUUID:            uuid.MustParse("33333333-3333-4333-8333-333333333333"),
+		UserUUID:            "33333333-3333-4333-8333-333333333333",
 		UserExternalID:      "user_mapper",
 		WorkspaceRole:       "workspace_developer",
 		CreatedAt:           createdAt,
@@ -125,7 +125,7 @@ func TestAdminWorkspaceMemberMapperListPageBuildsFilters(t *testing.T) {
 	workspaceUUID := "22222222-2222-4222-8222-222222222222"
 	anchor := &pagePosition{
 		CreatedAt: time.Date(2026, time.August, 5, 4, 5, 6, 0, time.UTC),
-		UUID:      uuid.MustParse("33333333-3333-4333-8333-333333333333"),
+		UUID:      "33333333-3333-4333-8333-333333333333",
 	}
 	tests := []struct {
 		name       string

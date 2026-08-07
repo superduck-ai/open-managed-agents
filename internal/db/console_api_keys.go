@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
@@ -16,37 +15,6 @@ import (
 	"github.com/samber/lo"
 	"github.com/superduck-ai/yourbatis"
 )
-
-//go:generate go tool sqlmapgen -dir $PWD -mapper ConsoleAPIKeyMapper -sql ./console_api_keys_mapper.xml -out ./console_api_keys_mapper.sqlmap.gen.go -dialect postgres
-
-type insertConsoleAPIKeyQuery struct {
-	ExternalID         string
-	APIKeyUUID         uuid.UUID
-	OrganizationUUID   string
-	WorkspaceUUID      string
-	WorkspaceDisplayID string
-	Name               string
-	KeyPrefix          string
-	KeySuffix          string
-	KeyHash            string
-	CreatedByUserUUID  *string
-	ExpiresAt          *time.Time
-}
-
-type updateConsoleAPIKeyStatusQuery struct {
-	OrganizationUUID string
-	WorkspaceUUID    string
-	ExternalID       string
-	Status           string
-}
-
-type ConsoleAPIKeyMapper interface {
-	List(ctx context.Context, organizationUUID, workspaceUUID string) ([]consoleAPIKeyRow, error)
-	CountUnarchived(ctx context.Context, organizationUUID, workspaceUUID string) (int64, error)
-	CreatorExists(ctx context.Context, organizationUUID, userUUID string) (bool, error)
-	Insert(ctx context.Context, params insertConsoleAPIKeyQuery) (consoleAPIKeyRow, error)
-	UpdateStatus(ctx context.Context, params updateConsoleAPIKeyStatusQuery) (consoleAPIKeyRow, error)
-}
 
 func (d *DB) ListConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceUUID *string) ([]platform.ConsoleAPIKey, error) {
 	if d == nil || d.mapperDB == nil || orgUUID == "" {
@@ -84,14 +52,15 @@ func (d *DB) CreateConsoleAPIKey(ctx context.Context, input platform.CreateConso
 		keySuffix = keySuffix[len(keySuffix)-6:]
 	}
 	externalID := consolePrefixedID("apikey", 18)
-	workspaceAPIKeyUUID := uuid.New()
+	workspaceAPIKeyUUID := uuid.NewString()
 	keyHash := auth.HashAPIKey(rawKey)
 
 	var key platform.ConsoleAPIKey
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		consoleMapper := NewConsoleAPIKeyMapper(executor)
+		userMapper := NewConsoleUserMapper(executor)
 		adminMapper := NewAdminAPIKeyMapper(executor)
-		createdByUserUUID, resolveErr := findConsoleAPIKeyCreatorUUID(ctx, consoleMapper, input.OrgUUID, input.CreatedByUserUUID)
+		createdByUserUUID, resolveErr := findConsoleAPIKeyCreatorUUID(ctx, userMapper, input.OrgUUID, input.CreatedByUserUUID)
 		if resolveErr != nil {
 			return resolveErr
 		}
@@ -157,7 +126,7 @@ func (d *DB) UpdateConsoleAPIKeyStatus(ctx context.Context, input platform.Updat
 		if updateErr != nil {
 			return mapNoRows(updateErr)
 		}
-		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, row.WorkspaceAPIKeyUUID.String(), input.Status)
+		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, row.WorkspaceAPIKeyUUID, input.Status)
 		if updateErr != nil {
 			return updateErr
 		}
@@ -172,14 +141,14 @@ func (d *DB) UpdateConsoleAPIKeyStatus(ctx context.Context, input platform.Updat
 
 func findConsoleAPIKeyCreatorUUID(
 	ctx context.Context,
-	mapper ConsoleAPIKeyMapper,
+	mapper ConsoleUserMapper,
 	orgUUID string,
 	userUUID *string,
 ) (*string, error) {
 	if userUUID == nil || *userUUID == "" {
 		return nil, nil
 	}
-	found, err := mapper.CreatorExists(ctx, orgUUID, *userUUID)
+	found, err := mapper.ExistsActiveByUUID(ctx, orgUUID, *userUUID)
 	if err != nil || !found {
 		return nil, err
 	}
@@ -199,7 +168,7 @@ func (d *DB) CountConsoleAPIKeys(ctx context.Context, orgUUID string, workspaceU
 }
 
 func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateConsoleWorkspaceInput) (platform.ConsoleWorkspace, error) {
-	if d == nil || d.sql == nil || input.OrgUUID == "" || input.Name == "" {
+	if d == nil || d.mapperDB == nil || input.OrgUUID == "" || input.Name == "" {
 		return platform.ConsoleWorkspace{}, platform.ErrNotFound
 	}
 	externalID := consolePrefixedID("wrkspc", 18)
@@ -214,95 +183,42 @@ func (d *DB) CreateConsoleWorkspace(ctx context.Context, input platform.CreateCo
 	if displayColor == "" {
 		displayColor = "#9B87F5"
 	}
-	workspace, err := getConsoleWorkspaceSQLX(ctx, d.sql, `
-		with org as (
-			select uuid
-			from organizations
-			where uuid = :org_uuid
-			limit 1
-		)
-		insert into workspaces (
-			uuid,
-			external_id,
-			organization_uuid,
-			name,
-			compartment_id,
-			display_color,
-			data_residency,
-			tags
-		)
-		select :uuid, :external_id, org.uuid, :name, :external_id, :display_color,
-			CAST(:data_residency AS jsonb), CAST('{}' AS jsonb)
-		from org
-		on conflict (organization_uuid, name) do update set
-			display_color = excluded.display_color,
-			data_residency = excluded.data_residency,
-			archived_at = null,
-			updated_at = now()
-		returning
-			uuid,
-			external_id,
-			organization_uuid AS org_uuid,
-			name,
-			display_color AS display_color,
-			display_color AS color,
-			data_residency,
-			external_key_id,
-			tags,
-			archived_at,
-			created_at,
-			updated_at
-	`, map[string]any{
-		"org_uuid":       input.OrgUUID,
-		"uuid":           uuid.New(),
-		"external_id":    externalID,
-		"name":           input.Name,
-		"display_color":  displayColor,
-		"data_residency": dataResidency,
+	mapper := NewConsoleWorkspaceMapper(d.mapperDB)
+	row, err := mapper.Upsert(ctx, upsertConsoleWorkspaceParams{
+		UUID:          uuid.NewString(),
+		ExternalID:    externalID,
+		OrgUUID:       input.OrgUUID,
+		Name:          input.Name,
+		DisplayColor:  displayColor,
+		DataResidency: dataResidency,
 	})
 	if isUniqueViolation(err) {
 		return platform.ConsoleWorkspace{}, err
 	}
-	return workspace, err
+	if err != nil {
+		return platform.ConsoleWorkspace{}, mapNoRows(err)
+	}
+	return row.workspace()
 }
 
 func (d *DB) ListConsoleWorkspaces(ctx context.Context, orgUUID string, includeArchived bool) ([]platform.ConsoleWorkspace, error) {
-	if d == nil || d.sql == nil || orgUUID == "" {
+	if d == nil || d.mapperDB == nil || orgUUID == "" {
 		return []platform.ConsoleWorkspace{}, nil
 	}
-	query, arguments := listConsoleWorkspacesQuery(orgUUID, includeArchived)
-	workspaces, err := selectConsoleWorkspacesSQLX(ctx, d.sql, query, arguments)
+	mapper := NewConsoleWorkspaceMapper(d.mapperDB)
+	rows, err := mapper.List(ctx, orgUUID, includeArchived)
 	if err != nil {
 		return nil, err
 	}
-	return workspaces, nil
-}
-
-func listConsoleWorkspacesQuery(orgUUID string, includeArchived bool) (string, map[string]any) {
-	archivedFilter := "and w.archived_at is null"
-	if includeArchived {
-		archivedFilter = ""
+	workspaces := make([]platform.ConsoleWorkspace, 0, len(rows))
+	for _, row := range rows {
+		workspace, mapErr := row.workspace()
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		workspaces = append(workspaces, workspace)
 	}
-	query := `
-		select
-			w.uuid,
-			w.external_id,
-			w.organization_uuid AS org_uuid,
-			w.name,
-			w.display_color AS display_color,
-			w.display_color AS color,
-			w.data_residency,
-			w.external_key_id,
-			w.tags,
-			w.archived_at,
-			w.created_at,
-			w.updated_at
-		from workspaces w
-		where w.organization_uuid = :org_uuid
-		` + archivedFilter + `
-		order by w.name asc, w.uuid asc
-	`
-	return query, map[string]any{"org_uuid": orgUUID}
+	return workspaces, nil
 }
 
 func (r consoleWorkspaceRow) workspace() (platform.ConsoleWorkspace, error) {
@@ -315,9 +231,9 @@ func (r consoleWorkspaceRow) workspace() (platform.ConsoleWorkspace, error) {
 		return platform.ConsoleWorkspace{}, err
 	}
 	return platform.ConsoleWorkspace{
-		UUID:                  r.UUID.String(),
+		UUID:                  r.UUID,
 		ExternalID:            r.ExternalID,
-		OrgUUID:               r.OrgUUID.String(),
+		OrgUUID:               r.OrgUUID,
 		Name:                  r.Name,
 		DisplayColor:          r.DisplayColor,
 		Color:                 r.Color,
@@ -331,84 +247,22 @@ func (r consoleWorkspaceRow) workspace() (platform.ConsoleWorkspace, error) {
 	}, nil
 }
 
-type consoleAPIKeyRow struct {
-	ID                  string        `db:"id"`
-	WorkspaceAPIKeyUUID uuid.UUID     `db:"workspace_api_key_uuid"`
-	OrgUUID             uuid.UUID     `db:"org_uuid"`
-	WorkspaceUUID       uuid.UUID     `db:"workspace_uuid"`
-	WorkspaceDisplayID  string        `db:"workspace_display_id"`
-	Name                string        `db:"name"`
-	KeyPrefix           string        `db:"key_prefix"`
-	KeySuffix           string        `db:"key_suffix"`
-	Status              string        `db:"status"`
-	CreatedByUserUUID   uuid.NullUUID `db:"created_by_user_uuid"`
-	LastUsedAt          *time.Time    `db:"last_used_at"`
-	ExpiresAt           *time.Time    `db:"expires_at"`
-	ArchivedAt          *time.Time    `db:"archived_at"`
-	CreatedAt           time.Time     `db:"created_at"`
-	UpdatedAt           time.Time     `db:"updated_at"`
-}
-
-type consoleWorkspaceRow struct {
-	UUID          uuid.UUID  `db:"uuid"`
-	ExternalID    string     `db:"external_id"`
-	OrgUUID       uuid.UUID  `db:"org_uuid"`
-	Name          string     `db:"name"`
-	DisplayColor  string     `db:"display_color"`
-	Color         string     `db:"color"`
-	DataResidency []byte     `db:"data_residency"`
-	ExternalKeyID *string    `db:"external_key_id"`
-	Tags          []byte     `db:"tags"`
-	ArchivedAt    *time.Time `db:"archived_at"`
-	CreatedAt     time.Time  `db:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at"`
-}
-
-func getConsoleWorkspaceSQLX(
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	query string,
-	arguments map[string]any,
-) (platform.ConsoleWorkspace, error) {
-	var row consoleWorkspaceRow
-	if err := namedGetContext(ctx, database, &row, query, arguments); err != nil {
-		return platform.ConsoleWorkspace{}, mapNoRows(err)
-	}
-	return row.workspace()
-}
-
-func selectConsoleWorkspacesSQLX(
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	query string,
-	arguments map[string]any,
-) ([]platform.ConsoleWorkspace, error) {
-	var rows []consoleWorkspaceRow
-	if err := namedSelectContext(ctx, database, &rows, query, arguments); err != nil {
-		return nil, err
-	}
-	workspaces := make([]platform.ConsoleWorkspace, 0, len(rows))
-	for _, row := range rows {
-		workspace, err := row.workspace()
-		if err != nil {
-			return nil, err
-		}
-		workspaces = append(workspaces, workspace)
-	}
-	return workspaces, nil
-}
-
 func (r consoleAPIKeyRow) key() platform.ConsoleAPIKey {
+	var createdByUserUUID *string
+	if r.CreatedByUserUUID.Valid {
+		value := r.CreatedByUserUUID.String
+		createdByUserUUID = &value
+	}
 	return platform.ConsoleAPIKey{
 		ID:                 r.ID,
-		OrgUUID:            r.OrgUUID.String(),
-		WorkspaceUUID:      r.WorkspaceUUID.String(),
+		OrgUUID:            r.OrgUUID,
+		WorkspaceUUID:      r.WorkspaceUUID,
 		WorkspaceDisplayID: r.WorkspaceDisplayID,
 		Name:               r.Name,
 		KeyPrefix:          r.KeyPrefix,
 		KeySuffix:          r.KeySuffix,
 		Status:             r.Status,
-		CreatedByUserUUID:  nullableUUIDString(r.CreatedByUserUUID),
+		CreatedByUserUUID:  createdByUserUUID,
 		LastUsedAt:         r.LastUsedAt,
 		ExpiresAt:          r.ExpiresAt,
 		ArchivedAt:         r.ArchivedAt,

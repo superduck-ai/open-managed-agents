@@ -142,8 +142,7 @@ func (h *Handler) fixtureResource(now time.Time) json.RawMessage {
 		"id":         h.cfg.SDKFixtures.SessionResourceID,
 		"created_at": httpapi.FormatTime(now),
 		"file_id":    "file_011CNha8iCJcU1wXNR6q4V8w",
-		"mount_path": "/receipt.pdf",
-		"source":     "/uploads",
+		"mount_path": "/uploads/receipt.pdf",
 		"type":       "file",
 		"updated_at": httpapi.FormatTime(now),
 	})

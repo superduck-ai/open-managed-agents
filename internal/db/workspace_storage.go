@@ -18,7 +18,8 @@ type workspaceStorageUsage struct {
 // ledger, so its cost does not grow with the number of files. A workspace with
 // no ledger row is treated as using zero bytes.
 func (d *DB) GetWorkspaceStorageBytes(ctx context.Context, workspaceUUID string) (int64, error) {
-	return NewWorkspaceStorageUsageMapper(d.mapperDB).GetWorkspaceStorageBytes(ctx, workspaceUUID)
+	mapper := NewWorkspaceStorageUsageMapper(d.mapperDB)
+	return mapper.GetWorkspaceStorageBytes(ctx, workspaceUUID)
 }
 
 // ReconcileWorkspaceStorageUsage 在工作区锁内从文件事实表重建账本。
@@ -26,7 +27,8 @@ func (d *DB) GetWorkspaceStorageBytes(ctx context.Context, workspaceUUID string)
 func (d *DB) ReconcileWorkspaceStorageUsage(ctx context.Context, workspaceUUID string) (int64, error) {
 	var usage workspaceStorageUsage
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		if err := NewWorkspaceStorageUsageMapper(executor).LockWorkspace(ctx, workspaceUUID); err != nil {
+		mapper := NewWorkspaceStorageUsageMapper(executor)
+		if err := mapper.LockWorkspace(ctx, workspaceUUID); err != nil {
 			return err
 		}
 		var err error

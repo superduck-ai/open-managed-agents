@@ -20,6 +20,116 @@
         deleted_at
     </sql>
 
+    <sql id="insertColumns">
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        session_external_id, thread_uuid, thread_external_id, event_type,
+        payload, processed_at, created_at
+    </sql>
+
+    <sql id="insertValues">
+        #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+        #{params.SessionUUID}, #{params.SessionExternalID}, #{params.ThreadUUID},
+        #{params.ThreadExternalID}, #{params.EventType}, CAST(#{params.Payload,sensitive=true} AS jsonb),
+        #{params.ProcessedAt}, #{params.CreatedAt}
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="sessionEventRow">
+        INSERT INTO session_events (<include refid="insertColumns"/>)
+        VALUES (<include refid="insertValues"/>)
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <select id="InsertIfAbsent" result="optional" resultType="sessionEventRow">
+        WITH inserted AS (
+            INSERT INTO session_events (<include refid="insertColumns"/>)
+            VALUES (<include refid="insertValues"/>)
+            ON CONFLICT (workspace_uuid, external_id) DO NOTHING
+            RETURNING <include refid="columns"/>
+        )
+        SELECT <include refid="columns"/> FROM inserted
+    </select>
+
+    <select id="FindByExternalID" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND external_id = #{eventExternalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListPage" resultType="sessionEventRow">
+        SELECT <include refid="columns"/>
+        FROM session_events
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND session_external_id = #{params.SessionExternalID}
+            AND deleted_at IS NULL
+            <if test="params.ThreadExternalID != ''">
+                AND thread_external_id = #{params.ThreadExternalID}
+            </if>
+            <if test="params.ThreadExternalID == '' &amp;&amp; params.PrimaryOnly">
+                AND thread_external_id = (
+                    SELECT external_id FROM session_threads
+                    WHERE workspace_uuid = #{params.WorkspaceUUID}
+                    AND session_external_id = #{params.SessionExternalID}
+                    AND parent_thread_uuid IS NULL
+                    AND deleted_at IS NULL
+                    ORDER BY created_at ASC, uuid ASC
+                    LIMIT 1
+                )
+            </if>
+            <if test="len(params.Types) &gt; 0">
+                AND event_type IN
+                <foreach collection="params.Types" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
+            </if>
+            <if test="params.CreatedAtGT != nil">AND created_at &gt; #{params.CreatedAtGT}</if>
+            <if test="params.CreatedAtGTE != nil">AND created_at &gt;= #{params.CreatedAtGTE}</if>
+            <if test="params.CreatedAtLT != nil">AND created_at &lt; #{params.CreatedAtLT}</if>
+            <if test="params.CreatedAtLTE != nil">AND created_at &lt;= #{params.CreatedAtLTE}</if>
+            <if test="params.Cursor != nil">
+                AND (created_at, uuid)
+                <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
+                (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY created_at
+        <choose><when test="params.Descending">DESC, uuid DESC</when><otherwise>ASC, uuid ASC</otherwise></choose>
+        LIMIT #{params.FetchLimit}
+    </select>
+
+    <select id="ChildSessionToolUseIDs" resultType="string">
+        SELECT DISTINCT COALESCE(
+            e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id',
+            e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id'
+        ) AS tool_use_id
+        FROM session_events e
+        JOIN session_threads t
+        ON t.workspace_uuid = e.workspace_uuid
+        AND t.session_uuid = e.session_uuid
+        AND t.uuid = e.thread_uuid
+        AND t.deleted_at IS NULL
+        WHERE e.workspace_uuid = #{workspaceUUID}
+        AND e.session_external_id = #{sessionExternalID}
+        AND e.deleted_at IS NULL
+        AND t.parent_thread_uuid IS NOT NULL
+        AND e.event_type IN
+        <foreach collection="eventTypes" item="eventType" open="(" separator="," close=")">#{eventType}</foreach>
+        AND COALESCE(
+            e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id',
+            e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id'
+        ) IN
+        <foreach collection="toolUseIDs" item="toolUseID" open="(" separator="," close=")">#{toolUseID}</foreach>
+    </select>
+
+    <update id="SoftDeleteBySession" result="rows">
+        UPDATE session_events
+        SET deleted_at = COALESCE(deleted_at, NOW())
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+    </update>
+
     <select id="ListSessionEventsForActivation" resultType="sessionEventRow">
         SELECT
         <include refid="columns"/>

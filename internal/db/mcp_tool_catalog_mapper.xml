@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="MCPToolCatalogMapper">
+    <sql id="columns">
+        id,
+        uuid,
+        external_id,
+        transport_type,
+        endpoint_url,
+        tools,
+        created_at,
+        updated_at
+    </sql>
+
+    <select id="FindByEndpoint" resultType="mcpToolCatalogRow">
+        SELECT
+        <include refid="columns"/>
+        FROM mcp_tool_catalogs
+        WHERE transport_type = #{transportType}
+        AND endpoint_url = #{endpointURL,sensitive=true}
+    </select>
+
+    <insert id="Upsert" result="returning" resultType="mcpToolCatalogRow">
+        INSERT INTO mcp_tool_catalogs (
+            external_id,
+            transport_type,
+            endpoint_url,
+            tools,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.TransportType},
+            #{params.EndpointURL,sensitive=true},
+            CAST(#{params.Tools} AS jsonb),
+            NOW(),
+            NOW()
+        )
+        ON CONFLICT (transport_type, endpoint_url)
+        DO UPDATE SET tools = excluded.tools,
+            updated_at = NOW()
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+</mapper>

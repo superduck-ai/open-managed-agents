@@ -18,7 +18,8 @@ func (d *DB) LeaseFilestoreFilesystemCleanupJobs(ctx context.Context, workerID s
 		limit,
 		maxLeaseAttempts,
 	)
-	rows, err := NewFilestoreCleanupMapper(d.mapperDB).LeaseFilesystemJobs(ctx, params)
+	mapper := NewFilestoreCleanupMapper(d.mapperDB)
+	rows, err := mapper.LeaseFilesystemJobs(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -83,10 +84,12 @@ func processLeasedFilestoreFilesystemCleanupJobTx(
 		return false, nil, err
 	}
 	job := jobRow.job()
-	if err := NewWorkspaceStorageUsageMapper(tx).LockWorkspace(ctx, job.WorkspaceUUID); err != nil {
+	storageMapper := NewWorkspaceStorageUsageMapper(tx)
+	if err := storageMapper.LockWorkspace(ctx, job.WorkspaceUUID); err != nil {
 		return false, nil, err
 	}
-	if err := NewFilestoreFilesystemMapper(tx).LockFilesystem(ctx, job.FilesystemUUID); err != nil {
+	filesystemMapper := NewFilestoreFilesystemMapper(tx)
+	if err := filesystemMapper.LockFilesystem(ctx, job.FilesystemUUID); err != nil {
 		return false, nil, err
 	}
 
@@ -241,7 +244,8 @@ func insertFilestoreObjectCleanupJob(
 	database yourbatis.Executor,
 	input EnqueueFilestoreObjectCleanupJobInput,
 ) (FilestoreObjectCleanupJob, error) {
-	jobRow, err := NewFilestoreCleanupMapper(database).InsertObjectJob(
+	mapper := NewFilestoreCleanupMapper(database)
+	jobRow, err := mapper.InsertObjectJob(
 		ctx,
 		filestoreCleanupJobInsertParams{
 			WorkspaceUUID:   input.WorkspaceUUID,
@@ -272,7 +276,8 @@ func (d *DB) AttachFilestoreObjectCleanupJobVersion(ctx context.Context, workspa
 	if workspaceUUID == "" || jobExternalID == "" {
 		return ErrPreconditionFailed
 	}
-	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).AttachObjectVersion(
+	mapper := NewFilestoreCleanupMapper(d.mapperDB)
+	rowsAffected, err := mapper.AttachObjectVersion(
 		ctx,
 		filestoreCleanupJobMutationParams{
 			JobExternalID: jobExternalID,
@@ -299,7 +304,8 @@ func (d *DB) LeaseFilestoreObjectCleanupJobs(ctx context.Context, workerID strin
 		limit,
 		maxLeaseAttempts,
 	)
-	rows, err := NewFilestoreCleanupMapper(d.mapperDB).LeaseObjectJobs(ctx, params)
+	mapper := NewFilestoreCleanupMapper(d.mapperDB)
+	rows, err := mapper.LeaseObjectJobs(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +334,8 @@ func normalizeFilestoreCleanupJobLeaseParams(
 
 // CompleteFilestoreObjectCleanupJob 完成一条尚未出租的任务，供请求内即时补偿使用。
 func (d *DB) CompleteFilestoreObjectCleanupJob(ctx context.Context, jobUUID string) error {
-	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).CompletePendingObjectJob(
+	mapper := NewFilestoreCleanupMapper(d.mapperDB)
+	rowsAffected, err := mapper.CompletePendingObjectJob(
 		ctx,
 		filestoreCleanupJobMutationParams{
 			JobUUID: jobUUID,
@@ -349,7 +356,8 @@ func (d *DB) CompleteLeasedFilestoreObjectCleanupJob(ctx context.Context, jobUUI
 	if strings.TrimSpace(leaseToken) == "" {
 		return ErrPreconditionFailed
 	}
-	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).CompleteLeasedObjectJob(
+	mapper := NewFilestoreCleanupMapper(d.mapperDB)
+	rowsAffected, err := mapper.CompleteLeasedObjectJob(
 		ctx,
 		filestoreCleanupJobMutationParams{
 			JobUUID:    jobUUID,
@@ -387,7 +395,8 @@ func (d *DB) failLeasedFilestoreCleanupJob(ctx context.Context, jobUUID string, 
 		maxAttempts = 10
 	}
 	runAfter := time.Now().UTC().Add(retryDelay)
-	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).FailLeasedJob(
+	mapper := NewFilestoreCleanupMapper(d.mapperDB)
+	rowsAffected, err := mapper.FailLeasedJob(
 		ctx,
 		filestoreCleanupJobMutationParams{
 			JobUUID:     jobUUID,
@@ -414,7 +423,8 @@ func enqueueFilestoreFilesystemCleanupJobTx(
 	workspaceUUID string,
 	runAfter time.Time,
 ) (FilestoreFilesystemCleanupJob, error) {
-	jobRow, err := NewFilestoreCleanupMapper(tx).InsertFilesystemJob(
+	mapper := NewFilestoreCleanupMapper(tx)
+	jobRow, err := mapper.InsertFilesystemJob(
 		ctx,
 		filestoreCleanupJobInsertParams{
 			WorkspaceUUID:  workspaceUUID,
@@ -431,7 +441,8 @@ func enqueueFilestoreFilesystemCleanupJobTx(
 
 // CancelFilestoreObjectCleanupJob 取消尚未被 worker 执行的清理任务。
 func (d *DB) CancelFilestoreObjectCleanupJob(ctx context.Context, workspaceUUID string, jobExternalID string) error {
-	rowsAffected, err := NewFilestoreCleanupMapper(d.mapperDB).CancelPendingObjectJob(
+	mapper := NewFilestoreCleanupMapper(d.mapperDB)
+	rowsAffected, err := mapper.CancelPendingObjectJob(
 		ctx,
 		filestoreCleanupJobMutationParams{
 			JobExternalID: jobExternalID,
@@ -449,7 +460,8 @@ func (d *DB) CancelFilestoreObjectCleanupJob(ctx context.Context, workspaceUUID 
 }
 
 func (d *DB) filestoreCleanupJobMutationMiss(ctx context.Context, workspaceUUID string, jobExternalID string) error {
-	_, err := NewFilestoreCleanupMapper(d.mapperDB).GetObjectJobStatus(
+	mapper := NewFilestoreCleanupMapper(d.mapperDB)
+	_, err := mapper.GetObjectJobStatus(
 		ctx,
 		filestoreCleanupJobMutationParams{
 			JobExternalID: jobExternalID,
@@ -527,7 +539,8 @@ func enqueueOwnedSessionResourceFileCleanupJobTx(
 
 func enqueueFilestoreSubtreeCleanupJobsTx(ctx context.Context, tx yourbatis.Executor, scope sessionResourceFileCleanupScope, filesystem FilestoreFilesystem, rootPath string, runAfter time.Time) ([]FilestoreObjectCleanupJob, int64, error) {
 	// rootPath 本身是目录，文件只可能出现在严格后代中；分隔符比较避免同前缀误选。
-	rows, err := NewFilestoreCleanupMapper(tx).ListSubtreeFiles(
+	mapper := NewFilestoreCleanupMapper(tx)
+	rows, err := mapper.ListSubtreeFiles(
 		ctx,
 		filestoreSubtreeMapperParameters(filesystem, rootPath),
 	)
@@ -564,7 +577,8 @@ func retireExpiredFilestoreSubtreeTx(
 	rootPath string,
 	retiredAt time.Time,
 ) ([]FilestoreObjectCleanupJob, int64, error) {
-	rows, err := NewFilestoreCleanupMapper(tx).ListExpiredSubtreeFiles(
+	mapper := NewFilestoreCleanupMapper(tx)
+	rows, err := mapper.ListExpiredSubtreeFiles(
 		ctx,
 		filestoreSubtreeMapperParameters(filesystem, rootPath),
 	)
@@ -606,7 +620,8 @@ func filestoreSubtreeMapperParameters(filesystem FilestoreFilesystem, rootPath s
 
 func cancelAttachedFilestoreObjectCleanupJobTx(ctx context.Context, tx yourbatis.Executor, workspaceUUID string, jobExternalID string, blob FilestoreFileBlob) error {
 	// 将哨兵取消与文件条目提交置于同一事务；任一失败都会保留可重试的清理路径。
-	rowsAffected, err := NewFilestoreCleanupMapper(tx).CancelAttachedObjectJob(
+	mapper := NewFilestoreCleanupMapper(tx)
+	rowsAffected, err := mapper.CancelAttachedObjectJob(
 		ctx,
 		filestoreCleanupJobMutationParams{
 			JobExternalID: jobExternalID,

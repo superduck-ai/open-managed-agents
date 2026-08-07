@@ -149,6 +149,20 @@ Proxy-Authorization: Basic base64(code_session_id:session_ingress_jwt)
 - MITM 关闭：拨号成功后返回 framed `HTTP/1.1 200 Connection Established`，后续 chunk 作为原始 TCP bytes 双向转发。
 - MITM 开启：先加载 CA、动态签发目标 leaf certificate，并完成真实上游 TLS 握手；全部成功后才返回 `200`。服务端随后把 framed WebSocket 适配为 `net.Conn`，作为 TLS server 解密客户端 HTTP，并使用独立 TLS client 验证真实目标证书。
 
+### `GET|POST|DELETE /v2/ccr-sessions/{code_session_id}/mcp`
+
+Managed Agent 的远程 MCP 不再由 Sandbox 直接访问。Runner 在 environment-manager payload 边界把 Agent Snapshot 中的真实 URL 编码到 `mcp_url`，并将 MCP config 的连接地址改成此 session 级代理，同时通过 config header 携带 session-ingress JWT。
+
+代理执行以下边界：
+
+1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，并将签名 claims 中的 `session_id` 绑定到路径参数。
+2. `mcp_url` 必须是唯一、长度不超过 2048 字节、不含 userinfo/fragment 的绝对 HTTP(S) URL，并精确匹配当前 Session Agent Snapshot 的一个远程 MCP URL。
+3. 每次请求新鲜读取 Code Session → Environment / Session 租户关系，并在加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 编译为精确 URL 集合、MCP host 集合以及 Environment host/port matcher。handler 只把未改写的 `mcp_url` 交给 `AuthorizeMCPURL`；策略同时完成精确 URL 与真实 scheme/host/有效端口授权，不使用伪造的 `host:443`，也不在 handler 中重新解析 snapshot。随后解析目标地址并应用与 upstream proxy 相同的公网 IP / DNS rebinding 防护。受控本地排障可复用 `upstream_proxy_disable_ssrf_protection`，生产默认不得关闭。
+4. 删除 OMA 的 `Authorization`、`X-Api-Key`、`Proxy-Authorization` 和 `Proxy-Connection`，保留 MCP 协议与 content negotiation header。真实 MCP 凭证只允许在服务端 header injector 边界按已验签 session claims 和目标 URL 注入；默认实现不注入。
+5. 请求 method、body、目标 path/query、上游状态、端到端响应 header 和响应 body 均流式转发；`Mcp-Session-Id`、`Last-Event-ID` 与 SSE 不被缓冲或改写。
+
+该接口只接受 MCP Streamable HTTP 所需的 `GET`、`POST`、`DELETE`，不是任意 method 或任意 URL 的开放反向代理。收到合法代理请求时记录 method、Code Session ID、去除 query 的 `mcp_url`、Content-Type 和 Content-Length；策略日志另外记录租户、目标 host、reason 和错误。除白名单化的 Content-Type 外，日志不记录 `mcp_url` query、其他 header 值或 body。
+
 ## HTTPS MITM 边界
 
 根 CA 生命周期、动态 leaf 签发、缓存并发和有效期续签限制的完整设计见 [《CCRv2 MITM 证书签发设计》](./mitm-certificate-issuance.md)。
@@ -174,6 +188,7 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - 域名先解析，服务端只拨号已验证的 public IP，避免校验后再次解析造成 DNS rebinding。
 - 不记录 bearer token、Basic header、上游 API key 或隧道内容。
 - MITM 默认关闭；开启后只解密通过 code-session 双重鉴权且通过 SSRF 校验的 CONNECT 流量。
+- MITM 解密并完成 Host 校验后，为每条 HTTP 请求记录结构化的 `host`、`port` 和去除 query 的 `url`；不记录 header 或 body。
 - 即使开启 MITM，也不会信任动态 CA 作为真实上游根证书；服务端到目标网站始终使用系统信任链。
 
 本地 fake-IP/TUN DNS 可能把公网域名解析到 `198.18.0.0/15`，从而触发上述保护。仅用于临时排障时，可以设置 `code_session.upstream_proxy_disable_ssrf_protection: true` 关闭目标 IP 过滤；默认值为 `false`。该开关仍然只允许端口 `443`，但会允许 loopback、私网、link-local 与 fake-IP，因此不得在生产环境启用。
@@ -184,9 +199,11 @@ upstream proxy 是 Environment networking（`unrestricted` / `limited`）的**�
 
 ### 策略来源与解析时机
 
-- 策略模块是 `internal/networkpolicy`：纯策略深模块，不访问数据库。Environment 配置与 Session AgentSnapshot 的原始 JSON 只在加载边界出现，随后按命名 wire schema 解析为领域 `Config`，其中 allowlist 字符串只解析一次并保存为已校验、已归一化的 host/port/wildcard 值，再编译为类型化 `Policy`。proxy matcher 与 E2B provider projection 都消费这份领域值，避免 IDNA、IP、大小写和尾点语义漂移。授权函数只接收编译后策略与 CONNECT target，返回带机器可测 reason 的 `Decision`；org/workspace/environment 标识保留在 `codesessions` 上下文中用于数据库作用域与审计日志。
+- 策略模块是 `internal/networkpolicy`：纯策略深模块，不访问数据库。Environment 配置与 Session AgentSnapshot 的原始 JSON 只在加载边界出现，随后按命名 wire schema 解析为领域 `Config`，其中 allowlist 字符串只解析一次并保存为已校验、已归一化的 host/port/wildcard 值。CONNECT 使用编译后的 `Policy`；MCP HTTP proxy 使用 `MCPProxyPolicy`，在一次 snapshot 解析中同时编译精确 URL set、MCP host set 和相同的 Environment host matcher。两类 `codesessions` 策略上下文只保存各自的编译后策略与审计作用域，不保存或复制原始 Agent Snapshot。授权函数接收真实 CONNECT target 或未改写的 MCP URL，返回带机器可测 reason 的 `Decision`；org/workspace/environment 标识保留在 `codesessions` 上下文中用于数据库作用域与审计日志。
 - proxy 在 CONNECT Basic 双重凭证校验**之后**、DNS 解析与拨号**之前**，保留经 JWT 验证的 code session ID、organization UUID 与 workspace UUID，并通过单条租户作用域查询同时校验 `CodeSession` → Environment / Session 的内部 ID、external ID、organization 和 workspace 关系，读取 Environment 当前配置与 Session AgentSnapshot。查询同时要求 Code Session 为 `active` 且 Session 未 `terminated`，使会话停止后的下一次 CONNECT 立即失效。该查询在**每次 CONNECT 新鲜执行**（不缓存）。Environment 编辑因此对存活 Sandbox 的代理出口即时生效；E2B 层仍是 Sandbox 创建时的固定快照，两层语义差异是有意取舍（收紧即时生效优先于两层严格一致）。跨 CONNECT 复用 DB 结果与编译策略需要明确 revision 与失效语义，在 [#137](https://github.com/superduck-ai/open-managed-agents/issues/137) 单独设计；本阶段不引入可能延迟权限撤销的临时缓存。
-- Code Session、Environment、Session 任一读取失败，Environment 配置畸形，或 `allow_mcp_servers=true` 时 Session AgentSnapshot（包括 JSON `null`）/ 非空 MCP URL 无法解析，都必须 **fail-closed**：拒绝 CONNECT 并记录 `policy_unavailable`，绝不降级为 unrestricted 或跳过坏条目后部分放行。`networking` 对象存在但 `type` 未知（含空串）同样 fail-closed；只有顶层 `type` 为 `cloud` 的 Environment 配置才评估 networking（非 cloud Environment 没有受管 Sandbox 出口，视为 unrestricted）。整条链从已认证的 Code Session 行出发，relay 提交的任何 environment ID 或 allowlist 都不被信任，跨 workspace 借用 allowlist 在结构上不可能。
+- Code Session、Environment、Session 任一读取失败或 Environment 配置畸形都必须 **fail-closed**。CONNECT 在 `allow_mcp_servers=true` 时还要求 Session AgentSnapshot（包括 JSON `null`）及其中 MCP URL 可解析；MCP proxy 无论 networking 模式如何都要求 snapshot 合法，因为精确 URL set 是该接口的必需授权条件。失败时记录 `policy_unavailable`，绝不降级为 unrestricted 或跳过坏条目后部分放行。`networking` 对象存在但 `type` 未知（含空串）同样 fail-closed；只有顶层 `type` 为 `cloud` 的 Environment 配置才评估 networking（非 cloud Environment 没有受管 Sandbox 出口，视为 unrestricted）。整条链从已认证的 Code Session 行出发，relay 提交的任何 environment ID 或 allowlist 都不被信任，跨 workspace 借用 allowlist 在结构上不可能。
+
+精确 URL 与 Environment host policy 属于静态授权模型，由 `AuthorizeMCPURL` 统一裁决；公网 IP、DNS rebinding 和拨号地址锁定依赖请求时的 DNS 结果，仍属于 transport dialer 的运行时安全边界。两者顺序固定为先授权、后解析和拨号，不能用拨号层代替策略授权。
 
 ```mermaid
 flowchart TD
@@ -215,9 +232,9 @@ flowchart TD
 
 Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-go@v1.55.8`）会重定向到 `storage.googleapis.com/proxy-golang-org-prod/...`。为了使 `allow_package_managers=true` 对这类真实下载保持完整，本阶段把 `storage.googleapis.com` 作为 package-manager host 放行。当前 CONNECT 策略只能按 host 决策，不能把授权限制到 `proxy-golang-org-prod` path，因此这是有意接受的 host 级权限扩大：启用 package-manager 网络访问也会允许该公共 GCS host 上的其他 HTTPS 路径。若未来需要只允许 Go proxy 签名重定向路径，必须在独立的 MITM path-aware 策略中实现，不能在明文 CONNECT 层伪造路径隔离。
 
-匹配规则：`*.example.com` 匹配任意深度子域但**不含 apex**（`example.com` 需单独列出）；带非 443 端口的条目对 proxy 惰性（CONNECT 只放行 443）；allowlist 条目在策略解析时先校验端口范围和完整 hostname label 语义，任一非法条目使整份策略 fail-closed。合法 allowlist 条目与 CONNECT target 匹配前统一归一化（小写、去尾点、IDNA→punycode）；DNS 子域与 wildcard 的字符、label 和 253 长度边界使用与 Kubernetes 同款的 RFC 1123 validator（vendored 自 `k8s.io/apimachinery` 的 `pkg/util/validation` 最小子集，位于 `internal/networkpolicy/dns1123.go`，正则与错误信息与上游逐字一致，不引入 k8s 依赖链），不在本项目维护自制正则。IDNA lookup 保留浏览器兼容映射，Unicode host 先转 punycode 再校验。IPv4/IPv6 字面量在 IDNA 前通过 `netip` 规范化，IPv4-mapped IPv6 统一为 IPv4，带 zone 的 IPv6 不接受；IP allowlist 只做精确匹配且仍须通过 SSRF/公网 IP 检查。编译后 `Policy` 用 exact set 和按 DNS label 倒序的 wildcard 索引匹配 target，不在授权时逐条重复解析 allowlist。策略授权不替代既有 443 端口、SSRF、公网 IP、DNS rebinding 与 MITM Host/SNI 检查。
+匹配规则：`*.example.com` 匹配任意深度子域但**不含 apex**（`example.com` 需单独列出）；无端口条目匹配该 host 的任意有效端口，显式端口条目只匹配相同端口。因 CONNECT 只接受 443，带非 443 端口的条目对 CONNECT 仍然惰性；MCP URL 则按 `http` 默认 80、`https` 默认 443 或 URL 显式端口匹配。allowlist 条目在策略解析时先校验端口范围和完整 hostname label 语义，任一非法条目使整份策略 fail-closed。合法 allowlist 条目与 target 匹配前统一归一化（小写、去尾点、IDNA→punycode）；DNS 子域与 wildcard 的字符、label 和 253 长度边界使用与 Kubernetes 同款的 RFC 1123 validator（vendored 自 `k8s.io/apimachinery` 的 `pkg/util/validation` 最小子集，位于 `internal/networkpolicy/dns1123.go`，正则与错误信息与上游逐字一致，不引入 k8s 依赖链），不在本项目维护自制正则。IDNA lookup 保留浏览器兼容映射，Unicode host 先转 punycode 再校验。IPv4/IPv6 字面量在 IDNA 前通过 `netip` 规范化，IPv4-mapped IPv6 统一为 IPv4，带 zone 的 IPv6 不接受；IP allowlist 只做精确匹配且仍须通过 SSRF/公网 IP 检查。编译后 `Policy` 使用一棵按 DNS label 倒序的 trie，节点按端口保存 exact 与 wildcard 终止规则，不在授权时逐条重复解析 allowlist。策略授权不替代既有 CONNECT 443 限制、SSRF、公网 IP、DNS rebinding 与 MITM Host/SNI 检查。
 
-`unrestricted` 保持既有行为：允许通过 SSRF 安全检查的任意公网 `host:443`。
+`unrestricted` 保持 CONNECT 的既有行为：允许通过 SSRF 安全检查的任意公网 `host:443`；MCP proxy 仍要求 URL 精确存在于当前 Session Agent Snapshot，但允许其中通过 SSRF 检查的 HTTP(S) 实际端口。
 
 ### 拒绝语义与观测
 

@@ -3,6 +3,8 @@ package codesessions
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -20,9 +22,12 @@ type Handler struct {
 	logger                 *slog.Logger
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	upstreamProxy          upstreamProxyRuntime
-	// loadPolicyContext 解析 CONNECT 授权所需的策略上下文；测试可替换为 fixture。
-	loadPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
-	otlpLogMu         sync.Mutex
+	mcpProxyTransport      http.RoundTripper
+	injectMCPProxyHeaders  mcpProxyHeaderInjector
+	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
+	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
+	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
+	otlpLogMu                 sync.Mutex
 }
 
 // SandboxTimeoutExtender renews the provider-side lifetime of a managed-agent
@@ -45,8 +50,11 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		logger:                 logger,
 		sandboxTimeoutExtender: sandboxTimeoutExtender,
 		upstreamProxy:          newUpstreamProxyRuntime(),
+		mcpProxyTransport:      newMCPProxyTransport(cfg.CodeSession.UpstreamProxyDisableSSRFProtection),
+		injectMCPProxyHeaders:  func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error { return nil },
 	}
-	handler.loadPolicyContext = handler.loadUpstreamProxyPolicyContext
+	handler.loadUpstreamPolicyContext = handler.loadUpstreamProxyPolicyContext
+	handler.loadMCPPolicyContext = handler.loadMCPProxyPolicyContext
 	// 只有 MITM 开启时才在构造阶段读取稳定私钥并签发一年期根证书，使配置错误在启动期失败。
 	// MITM 关闭时私钥路径完全休眠，由 CA 下载接口按需生成进程级临时 CA。
 	if cfg.CodeSession.UpstreamProxyMITMEnabled {

@@ -3,18 +3,16 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper AdminWorkspaceMemberMapper -sql ./admin_workspace_members_mapper.xml -out ./admin_workspace_members_mapper.sqlmap.gen.go -dialect postgres
 
 type insertAdminWorkspaceMemberParams struct {
 	ExternalID          string
-	OrganizationUUID    uuid.UUID
-	WorkspaceUUID       uuid.UUID
+	OrganizationUUID    string
+	WorkspaceUUID       string
 	WorkspaceExternalID string
-	UserUUID            uuid.UUID
+	UserUUID            string
 	UserExternalID      string
 	WorkspaceRole       string
 	CreatedAt           time.Time
@@ -25,6 +23,15 @@ type updateAdminWorkspaceMemberRoleParams struct {
 	WorkspaceExternalID string
 	UserExternalID      string
 	WorkspaceRole       string
+}
+
+type seedAdminWorkspaceMemberParams struct {
+	ExternalID          string
+	OrganizationUUID    string
+	WorkspaceUUID       string
+	WorkspaceExternalID string
+	UserUUID            string
+	UserExternalID      string
 }
 
 type AdminWorkspaceMemberMapper interface {
@@ -39,4 +46,5 @@ type AdminWorkspaceMemberMapper interface {
 		params updateAdminWorkspaceMemberRoleParams) (AdminWorkspaceMember, error)
 	SoftDeleteByUserExternalID(ctx context.Context, organizationUUID,
 		workspaceExternalID, userExternalID string) (AdminWorkspaceMember, error)
+	SeedDefault(ctx context.Context, params seedAdminWorkspaceMemberParams) error
 }

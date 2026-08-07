@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAuthOrganizationMapper">
+    <insert id="Insert" result="returning" resultType="string">
+        INSERT INTO organizations (name) VALUES (#{name}) RETURNING uuid
+    </insert>
+</mapper>

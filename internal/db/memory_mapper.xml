@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="MemoryMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        memory_store_uuid,
+        memory_store_external_id,
+        current_version_uuid,
+        COALESCE(current_version_external_id, '') AS current_version_external_id,
+        path,
+        content_size_bytes,
+        content_sha256,
+        s3_bucket,
+        s3_key,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="memoryRow">
+        INSERT INTO memories (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            memory_store_uuid,
+            memory_store_external_id,
+            current_version_external_id,
+            path,
+            content_size_bytes,
+            content_sha256,
+            s3_bucket,
+            s3_key,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.MemoryStoreUUID},
+            #{params.MemoryStoreExternalID},
+            #{params.CurrentVersionExternalID},
+            #{params.Path},
+            #{params.ContentSizeBytes},
+            #{params.ContentSHA256},
+            #{params.S3Bucket},
+            #{params.S3Key},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="memoryRow">
+        SELECT
+        <include refid="columns"/>
+        FROM memories
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_external_id = #{memoryStoreExternalID}
+        AND external_id = #{memoryExternalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindForUpdate" resultType="memoryRow">
+        SELECT
+        <include refid="columns"/>
+        FROM memories
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_external_id = #{memoryStoreExternalID}
+        AND external_id = #{memoryExternalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <update id="UpdateCurrentVersion" result="returning" resultType="memoryRow">
+        UPDATE memories
+        SET current_version_uuid = #{params.VersionUUID},
+            current_version_external_id = #{params.VersionExternalID}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND uuid = #{params.MemoryUUID}
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="UpdateByExternalID" result="returning" resultType="memoryRow">
+        UPDATE memories
+        SET current_version_uuid = #{params.VersionUUID},
+            current_version_external_id = #{params.VersionExternalID},
+            path = #{params.Path},
+            content_size_bytes = #{params.ContentSizeBytes},
+            content_sha256 = #{params.ContentSHA256},
+            s3_bucket = #{params.S3Bucket},
+            s3_key = #{params.S3Key},
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND memory_store_external_id = #{params.MemoryStoreExternalID}
+        AND external_id = #{params.MemoryExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="SoftDeleteByExternalID" result="rows">
+        UPDATE memories
+        SET current_version_uuid = #{params.VersionUUID},
+            current_version_external_id = #{params.VersionExternalID},
+            updated_at = #{params.UpdatedAt},
+            deleted_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND memory_store_external_id = #{params.MemoryStoreExternalID}
+        AND external_id = #{params.MemoryExternalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <select id="ListPage" resultType="memoryRow">
+        SELECT
+        <include refid="columns"/>
+        FROM memories
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND memory_store_external_id = #{params.MemoryStoreExternalID}
+            AND deleted_at IS NULL
+            <if test="params.PathPrefix != ''">
+                AND LEFT(path, LENGTH(#{params.PathPrefix})) = #{params.PathPrefix}
+            </if>
+            <if test="params.HasCursor">
+                AND (
+                <choose>
+                    <when test="params.OrderBy == 'created_at'">
+                        <choose>
+                            <when test="params.Descending">
+                                created_at &lt; #{params.CursorCreatedAt}
+                                OR (created_at = #{params.CursorCreatedAt} AND uuid &lt; #{params.CursorUUID})
+                            </when>
+                            <otherwise>
+                                created_at &gt; #{params.CursorCreatedAt}
+                                OR (created_at = #{params.CursorCreatedAt} AND uuid &gt; #{params.CursorUUID})
+                            </otherwise>
+                        </choose>
+                    </when>
+                    <when test="params.OrderBy == 'updated_at'">
+                        <choose>
+                            <when test="params.Descending">
+                                updated_at &lt; #{params.CursorUpdatedAt}
+                                OR (updated_at = #{params.CursorUpdatedAt} AND uuid &lt; #{params.CursorUUID})
+                            </when>
+                            <otherwise>
+                                updated_at &gt; #{params.CursorUpdatedAt}
+                                OR (updated_at = #{params.CursorUpdatedAt} AND uuid &gt; #{params.CursorUUID})
+                            </otherwise>
+                        </choose>
+                    </when>
+                    <otherwise>
+                        <choose>
+                            <when test="params.Descending">
+                                path &lt; #{params.CursorPath}
+                                OR (path = #{params.CursorPath} AND uuid &lt; #{params.CursorUUID})
+                            </when>
+                            <otherwise>
+                                path &gt; #{params.CursorPath}
+                                OR (path = #{params.CursorPath} AND uuid &gt; #{params.CursorUUID})
+                            </otherwise>
+                        </choose>
+                    </otherwise>
+                </choose>
+                )
+            </if>
+        </where>
+        ORDER BY
+        <choose>
+            <when test="params.OrderBy == 'created_at'">created_at</when>
+            <when test="params.OrderBy == 'updated_at'">updated_at</when>
+            <otherwise>path</otherwise>
+        </choose>
+        <choose>
+            <when test="params.Descending">DESC, uuid DESC</when>
+            <otherwise>ASC, uuid ASC</otherwise>
+        </choose>
+        LIMIT #{params.Limit}
+    </select>
+
+    <select id="ListForDepth" resultType="memoryRow">
+        SELECT
+        <include refid="columns"/>
+        FROM memories
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND memory_store_external_id = #{params.MemoryStoreExternalID}
+        AND deleted_at IS NULL
+        <if test="params.PathPrefix != ''">
+            AND LEFT(path, LENGTH(#{params.PathPrefix})) = #{params.PathPrefix}
+        </if>
+        ORDER BY path ASC, uuid ASC
+    </select>
+
+    <select id="FindPathConflict" result="optional" resultType="string">
+        SELECT external_id
+        FROM memories
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_uuid = #{storeUUID}
+        AND path = #{path}
+        <if test="excludeMemoryUUID != ''">
+            AND uuid &lt;&gt; #{excludeMemoryUUID}
+        </if>
+        AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <select id="CountActiveHead" result="scalar">
+        SELECT CAST(COUNT(*) AS integer)
+        FROM memories
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_external_id = #{memoryStoreExternalID}
+        AND current_version_uuid = #{versionUUID}
+        AND deleted_at IS NULL
+    </select>
+
+    <delete id="DeleteByStoreUUID" result="exec">
+        DELETE FROM memories
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_uuid = #{storeUUID}
+    </delete>
+</mapper>

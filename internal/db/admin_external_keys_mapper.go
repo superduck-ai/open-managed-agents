@@ -4,15 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper AdminExternalKeyMapper -sql ./admin_external_keys_mapper.xml -out ./admin_external_keys_mapper.sqlmap.gen.go -dialect postgres
 
 type insertAdminExternalKeyParams struct {
 	ExternalID       string
-	OrganizationUUID uuid.UUID
+	OrganizationUUID string
 	DisplayName      string
 	Geo              string
 	ProviderConfig   json.RawMessage

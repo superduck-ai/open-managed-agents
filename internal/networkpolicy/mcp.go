@@ -12,7 +12,7 @@ import (
 )
 
 // ErrMalformedAgentSnapshot 表示 Session AgentSnapshot 或其中的 MCP URL
-// 无法安全解析；allow_mcp_servers 开启时调用方必须 fail closed。
+// 无法安全解析；MCP 授权依赖 snapshot 时调用方必须 fail closed。
 var ErrMalformedAgentSnapshot = errors.New("malformed session agent snapshot")
 
 type agentSnapshotSchema struct {
@@ -25,6 +25,11 @@ type mcpServerSchema struct {
 }
 
 type mcpServerListSchema []mcpServerSchema
+
+type mcpServerTargets struct {
+	hosts []string
+	urls  []string
+}
 
 func (s *mcpServerListSchema) UnmarshalJSON(raw []byte) error {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -43,28 +48,51 @@ func (s *mcpServerListSchema) UnmarshalJSON(raw []byte) error {
 // 自然排除；畸形 snapshot 或非空但不可解析的 URL 返回错误。runner 写入 work
 // metadata 与 proxy 授权共用本函数，保证两处语义不漂移。
 func MCPAllowedHosts(agentSnapshot json.RawMessage) ([]string, error) {
-	var snapshot agentSnapshotSchema
-	trimmed := bytes.TrimSpace(agentSnapshot)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, ErrMalformedAgentSnapshot
+	targets, err := parseMCPServerTargets(agentSnapshot)
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(trimmed, &snapshot); err != nil {
-		if errors.Is(err, ErrMalformedAgentSnapshot) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: invalid JSON", ErrMalformedAgentSnapshot)
+	return targets.hosts, nil
+}
+
+func parseMCPServerTargets(agentSnapshot json.RawMessage) (mcpServerTargets, error) {
+	snapshot, err := parseAgentSnapshotMCPServers(agentSnapshot)
+	if err != nil {
+		return mcpServerTargets{}, err
 	}
 	var hosts []string
+	var urls []string
 	for _, server := range snapshot.MCPServers {
 		host, err := mcpServerHost(server)
 		if err != nil {
-			return nil, err
+			return mcpServerTargets{}, err
 		}
 		if host != "" {
 			hosts = append(hosts, host)
 		}
+		if rawURL := strings.TrimSpace(server.URL); rawURL != "" {
+			urls = append(urls, rawURL)
+		}
 	}
-	return collections.UniqueTrimmedStrings(hosts), nil
+	return mcpServerTargets{
+		hosts: collections.UniqueTrimmedStrings(hosts),
+		urls:  collections.UniqueTrimmedStrings(urls),
+	}, nil
+}
+
+func parseAgentSnapshotMCPServers(agentSnapshot json.RawMessage) (agentSnapshotSchema, error) {
+	var snapshot agentSnapshotSchema
+	trimmed := bytes.TrimSpace(agentSnapshot)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return agentSnapshotSchema{}, ErrMalformedAgentSnapshot
+	}
+	if err := json.Unmarshal(trimmed, &snapshot); err != nil {
+		if errors.Is(err, ErrMalformedAgentSnapshot) {
+			return agentSnapshotSchema{}, err
+		}
+		return agentSnapshotSchema{}, fmt.Errorf("%w: invalid JSON", ErrMalformedAgentSnapshot)
+	}
+	return snapshot, nil
 }
 
 func mcpServerHost(server mcpServerSchema) (string, error) {

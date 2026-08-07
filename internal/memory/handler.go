@@ -294,7 +294,7 @@ func (h *Handler) memoryStoreForRead(ctx context.Context, principal auth.Princip
 	if !errors.Is(err, db.ErrNotFound) || principal.CredentialType != auth.CredentialTypePlatformSession {
 		return db.MemoryStore{}, err
 	}
-	return h.db.GetMemoryStoreByExternalID(ctx, storeID)
+	return h.db.GetMemoryStoreByExternalID(ctx, principal.OrganizationUUID, storeID)
 }
 
 func (h *Handler) updateStoreRoute(w http.ResponseWriter, r *http.Request) {

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -1696,21 +1695,6 @@ func deploymentAPIContractEnabled(r *http.Request) bool {
 		}
 	}
 	return false
-}
-
-func defaultRepoMountPath(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "/workspace/repository"
-	}
-	name := strings.TrimSuffix(strings.Trim(strings.TrimSpace(parsed.Path), "/"), ".git")
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		name = name[idx+1:]
-	}
-	if name == "" {
-		name = "repository"
-	}
-	return "/workspace/" + name
 }
 
 func parseOptionalBool(r *http.Request, name string) (bool, error) {

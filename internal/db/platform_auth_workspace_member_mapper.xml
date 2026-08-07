@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAuthWorkspaceMemberMapper">
+    <insert id="Insert" result="exec">
+        INSERT INTO workspace_members (
+            external_id, organization_uuid, workspace_uuid, workspace_external_id,
+            user_uuid, user_external_id, workspace_role
+        ) VALUES (
+            #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.WorkspaceExternalID}, #{params.UserUUID}, #{params.UserExternalID},
+            #{params.WorkspaceRole}
+        )
+    </insert>
+</mapper>

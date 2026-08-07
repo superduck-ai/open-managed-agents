@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="SessionThreadMapper">
+    <sql id="columns">
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        session_external_id, parent_thread_uuid, parent_thread_external_id,
+        agent_snapshot, status, usage, stats, created_at, updated_at, archived_at, deleted_at
+    </sql>
+
+    <sql id="insertColumns">
+        uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+        session_external_id, parent_thread_uuid, parent_thread_external_id,
+        agent_snapshot, status, usage, stats, created_at, updated_at
+    </sql>
+
+    <sql id="insertValues">
+        #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+        #{params.SessionUUID}, #{params.SessionExternalID}, #{params.ParentThreadUUID},
+        #{params.ParentThreadExternalID}, CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
+        #{params.Status}, CAST(#{params.Usage,sensitive=true} AS jsonb),
+        CAST(#{params.Stats,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt}
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="sessionThreadRow">
+        INSERT INTO session_threads (<include refid="insertColumns"/>)
+        VALUES (<include refid="insertValues"/>)
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <select id="InsertIfAbsent" result="optional" resultType="sessionThreadRow">
+        WITH inserted AS (
+            INSERT INTO session_threads (<include refid="insertColumns"/>)
+            VALUES (<include refid="insertValues"/>)
+            ON CONFLICT (workspace_uuid, external_id) DO NOTHING
+            RETURNING <include refid="columns"/>
+        )
+        SELECT <include refid="columns"/> FROM inserted
+    </select>
+
+    <select id="FindPrimary" resultType="sessionThreadRow">
+        SELECT <include refid="columns"/>
+        FROM session_threads
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND parent_thread_uuid IS NULL
+        AND deleted_at IS NULL
+        ORDER BY created_at ASC, uuid ASC
+        LIMIT 1
+    </select>
+
+    <select id="FindByExternalID" resultType="sessionThreadRow">
+        SELECT <include refid="columns"/>
+        FROM session_threads
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND external_id = #{threadExternalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListPage" resultType="sessionThreadRow">
+        SELECT <include refid="columns"/>
+        FROM session_threads
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND session_external_id = #{params.SessionExternalID}
+            AND deleted_at IS NULL
+            <if test="params.Cursor != nil">
+                AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.FetchLimit}
+    </select>
+
+    <select id="List" resultType="sessionThreadRow">
+        SELECT <include refid="columns"/>
+        FROM session_threads
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+        ORDER BY created_at ASC, uuid ASC
+    </select>
+
+    <update id="SetStatus" result="rows">
+        UPDATE session_threads
+        SET status = #{status}, updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND external_id = #{threadExternalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <update id="Archive" result="returning" resultType="sessionThreadRow">
+        UPDATE session_threads
+        SET archived_at = COALESCE(archived_at, NOW()),
+            status = 'terminated',
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND external_id = #{threadExternalID}
+        AND deleted_at IS NULL
+        AND status NOT IN ('running', 'rescheduling')
+        RETURNING <include refid="columns"/>
+    </update>
+
+    <update id="SoftDeleteBySession" result="rows">
+        UPDATE session_threads
+        SET deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+    </update>
+</mapper>

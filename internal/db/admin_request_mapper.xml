@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdminRequestMapper">
+    <select id="List" resultType="adminRequestRow">
+        SELECT
+            ar.request_uuid,
+            ar.org_uuid,
+            ar.request_type,
+            ar.requester_uuid,
+            ar.requested_seat_tier,
+            ar.details,
+            ar.status,
+            ar.created_at,
+            ar.resolved_at,
+            u.email AS requester_email,
+            NULLIF(u.name, '') AS requester_name,
+            u.role AS requester_role,
+            CAST(NULL AS text) AS requester_seat_tier
+        FROM admin_requests ar
+        LEFT JOIN users u
+          ON u.uuid = ar.requester_uuid
+         AND u.organization_uuid = ar.org_uuid
+         AND u.deleted_at IS NULL
+        WHERE ar.org_uuid = #{params.OrgUUID}
+          AND ar.request_type = #{params.RequestType}
+          AND ar.status = #{params.Status}
+        ORDER BY ar.created_at DESC, ar.request_uuid DESC
+        LIMIT #{params.Limit}
+    </select>
+</mapper>

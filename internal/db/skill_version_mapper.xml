@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8" ?>
+<?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="SkillVersionMapper">
     <select id="ValidateSkillArchiveVersion" result="scalar">
         SELECT CASE CAST(#{params.Source} AS text)
@@ -27,5 +27,157 @@
         )
         ELSE false
         END AS valid
+    </select>
+
+    <sql id="columns">
+        uuid,
+        external_id,
+        workspace_uuid,
+        skill_uuid,
+        skill_external_id,
+        version,
+        name,
+        description,
+        directory,
+        s3_bucket,
+        s3_key,
+        size_bytes,
+        sha256,
+        created_by_api_key_uuid,
+        created_at,
+        deleted_at
+    </sql>
+
+    <sql id="aliasedColumns">
+        sv.uuid,
+        sv.external_id,
+        sv.workspace_uuid,
+        sv.skill_uuid,
+        sv.skill_external_id,
+        sv.version,
+        sv.name,
+        sv.description,
+        sv.directory,
+        sv.s3_bucket,
+        sv.s3_key,
+        sv.size_bytes,
+        sv.sha256,
+        sv.created_by_api_key_uuid,
+        sv.created_at,
+        sv.deleted_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="skillVersionRow">
+        INSERT INTO skill_versions (
+            uuid,
+            external_id,
+            workspace_uuid,
+            skill_uuid,
+            skill_external_id,
+            version,
+            name,
+            description,
+            directory,
+            s3_bucket,
+            s3_key,
+            size_bytes,
+            sha256,
+            created_by_api_key_uuid,
+            created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.WorkspaceUUID},
+            #{params.SkillUUID},
+            #{params.SkillExternalID},
+            #{params.Version},
+            #{params.Name},
+            #{params.Description},
+            #{params.Directory},
+            #{params.S3Bucket},
+            #{params.S3Key},
+            #{params.SizeBytes},
+            #{params.SHA256},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="Find" resultType="skillVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM skill_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND skill_external_id = #{skillExternalID}
+        AND version = #{version}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindLatest" resultType="skillVersionRow">
+        SELECT
+        <include refid="aliasedColumns"/>
+        FROM skills s
+        JOIN skill_versions sv
+        ON sv.skill_uuid = s.uuid
+        AND sv.version = s.latest_version
+        AND sv.deleted_at IS NULL
+        WHERE s.workspace_uuid = #{workspaceUUID}
+        AND sv.workspace_uuid = #{workspaceUUID}
+        AND s.external_id = #{skillExternalID}
+        AND s.deleted_at IS NULL
+        AND s.latest_version IS NOT NULL
+        AND s.latest_version &lt;&gt; ''
+    </select>
+
+    <select id="ListPageBySkillUUID" resultType="skillVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM skill_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND skill_uuid = #{skillUUID}
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="ListBySkillUUID" resultType="skillVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM skill_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND skill_uuid = #{skillUUID}
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+    </select>
+
+    <update id="SoftDeleteBySkillUUID" result="exec">
+        UPDATE skill_versions
+        SET deleted_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND skill_uuid = #{skillUUID}
+        AND deleted_at IS NULL
+    </update>
+
+    <update id="SoftDeleteByVersion" result="returning" resultType="skillVersionRow">
+        UPDATE skill_versions
+        SET deleted_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND skill_uuid = #{skillUUID}
+        AND version = #{version}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <select id="FindLatestVersion" result="optional" resultType="string">
+        SELECT version
+        FROM skill_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND skill_uuid = #{skillUUID}
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT 1
     </select>
 </mapper>

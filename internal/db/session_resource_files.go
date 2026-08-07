@@ -63,7 +63,8 @@ func (d *DB) ListSessionResourceFilesPage(ctx context.Context, params ListSessio
 		mapperParams.CursorPath = params.Cursor.Path
 		mapperParams.CursorUUID = params.Cursor.UUID
 	}
-	rows, err := NewSessionResourceFileMapper(d.mapperDB).ListResourceFilesPage(ctx, mapperParams)
+	mapper := NewSessionResourceFileMapper(d.mapperDB)
+	rows, err := mapper.ListResourceFilesPage(ctx, mapperParams)
 	if err != nil {
 		return SessionResourceFilePage{}, err
 	}
@@ -106,7 +107,8 @@ func getActiveSessionResourceFile(
 	filesystem FilestoreFilesystem,
 	entryPath string,
 ) (SessionResourceFile, error) {
-	row, found, err := NewSessionResourceFileMapper(database).FindActiveResourceFile(ctx, sessionResourcePathParams{
+	mapper := NewSessionResourceFileMapper(database)
+	row, found, err := mapper.FindActiveResourceFile(ctx, sessionResourcePathParams{
 		WorkspaceUUID: filesystem.WorkspaceUUID,
 		SessionUUID:   filesystem.SessionUUID,
 		EntryPath:     entryPath,

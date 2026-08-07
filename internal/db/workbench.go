@@ -9,55 +9,8 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
-
-	"github.com/google/uuid"
+	"github.com/superduck-ai/yourbatis"
 )
-
-type workbenchPromptRow struct {
-	OrgUUID               uuid.UUID      `db:"organization_uuid"`
-	PromptUUID            string         `db:"prompt_uuid"`
-	WorkspaceUUID         uuid.UUID      `db:"workspace_uuid"`
-	WorkspaceDisplayID    string         `db:"workspace_display_id"`
-	Name                  string         `db:"name"`
-	IsSharedWithWorkspace bool           `db:"is_shared_with_workspace"`
-	LatestRevisionUUID    sql.NullString `db:"latest_revision_uuid"`
-	DeletedAt             sql.NullTime   `db:"deleted_at"`
-	CreatedAt             time.Time      `db:"created_at"`
-	UpdatedAt             time.Time      `db:"updated_at"`
-}
-
-type workbenchRevisionRow struct {
-	OrgUUID      uuid.UUID `db:"organization_uuid"`
-	PromptUUID   string    `db:"prompt_uuid"`
-	RevisionUUID string    `db:"revision_uuid"`
-	PayloadJSON  string    `db:"payload_json"`
-	CreatedAt    time.Time `db:"created_at"`
-	UpdatedAt    time.Time `db:"updated_at"`
-}
-
-type workbenchKVRow struct {
-	OrgUUID     uuid.UUID      `db:"organization_uuid"`
-	PromptUUID  string         `db:"prompt_uuid"`
-	Key         string         `db:"key"`
-	Value       string         `db:"value"`
-	VersionJSON sql.NullString `db:"version_json"`
-	CreatedAt   time.Time      `db:"created_at"`
-	UpdatedAt   time.Time      `db:"updated_at"`
-}
-
-type workbenchEvaluationRow struct {
-	OrgUUID        uuid.UUID `db:"organization_uuid"`
-	RevisionUUID   string    `db:"revision_uuid"`
-	EvaluationUUID string    `db:"evaluation_uuid"`
-	PayloadJSON    string    `db:"payload_json"`
-	CreatedAt      time.Time `db:"created_at"`
-	UpdatedAt      time.Time `db:"updated_at"`
-}
-
-type workbenchGeneratedTestCaseRow struct {
-	UUID       uuid.UUID `db:"uuid"`
-	ValuesJSON string    `db:"values_json"`
-}
 
 func mapNoRows(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
@@ -66,11 +19,7 @@ func mapNoRows(err error) error {
 	return err
 }
 
-func workbenchUpsertResult(result sql.Result, err error) error {
-	if err != nil {
-		return err
-	}
-	rowsAffected, err := result.RowsAffected()
+func workbenchUpsertResult(rowsAffected int64, err error) error {
 	if err != nil {
 		return err
 	}
@@ -81,24 +30,15 @@ func workbenchUpsertResult(result sql.Result, err error) error {
 }
 
 func (d *DB) GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID string) (*platform.WorkbenchPromptRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" {
 		return nil, platform.ErrNotFound
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil, platform.ErrNotFound
 	}
-	var row workbenchPromptRow
-	err = namedGetContext(ctx, d.sql, &row, `
-		SELECT organization_uuid, prompt_uuid,
-		       workspace_uuid, workspace_display_id,
-		       name, is_shared_with_workspace, latest_revision_uuid,
-		       deleted_at, created_at, updated_at
-		FROM workbench_prompts
-		WHERE organization_uuid = :organization_uuid
-		  AND prompt_uuid = :prompt_uuid
-		LIMIT 1
-	`, map[string]any{"organization_uuid": typedOrgUUID, "prompt_uuid": promptUUID})
+	mapper := NewWorkbenchPromptMapper(d.mapperDB)
+	row, err := mapper.FindByPromptUUID(ctx, typedOrgUUID.String(), promptUUID)
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
@@ -107,7 +47,7 @@ func (d *DB) GetWorkbenchPrompt(ctx context.Context, orgUUID string, promptUUID 
 }
 
 func (d *DB) ListWorkbenchPrompts(ctx context.Context, orgUUID string, workspaceUUID string) ([]platform.WorkbenchPromptRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(workspaceUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(workspaceUUID) == "" {
 		return nil, nil
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
@@ -118,21 +58,8 @@ func (d *DB) ListWorkbenchPrompts(ctx context.Context, orgUUID string, workspace
 	if err != nil {
 		return nil, nil
 	}
-	var rows []workbenchPromptRow
-	err = namedSelectContext(ctx, d.sql, &rows, `
-		SELECT organization_uuid, prompt_uuid,
-		       workspace_uuid, workspace_display_id,
-		       name, is_shared_with_workspace, latest_revision_uuid,
-		       deleted_at, created_at, updated_at
-		FROM workbench_prompts
-		WHERE organization_uuid = :organization_uuid
-		  AND workspace_uuid = :workspace_uuid
-		  AND deleted_at IS NULL
-		ORDER BY updated_at DESC, uuid DESC
-	`, map[string]any{
-		"organization_uuid": typedOrgUUID,
-		"workspace_uuid":    typedWorkspaceUUID,
-	})
+	mapper := NewWorkbenchPromptMapper(d.mapperDB)
+	rows, err := mapper.ListByWorkspace(ctx, typedOrgUUID.String(), typedWorkspaceUUID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +71,7 @@ func (d *DB) ListWorkbenchPrompts(ctx context.Context, orgUUID string, workspace
 }
 
 func (d *DB) UpsertWorkbenchPrompt(ctx context.Context, record platform.WorkbenchPromptRecord) (platform.WorkbenchPromptRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" {
 		return platform.WorkbenchPromptRecord{}, platform.ErrNotFound
 	}
 	record.OrgUUID = strings.TrimSpace(record.OrgUUID)
@@ -168,51 +95,27 @@ func (d *DB) UpsertWorkbenchPrompt(ctx context.Context, record platform.Workbenc
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = time.Now().UTC()
 	}
-	if record.UpdatedAt.IsZero() {
-		record.UpdatedAt = time.Now().UTC()
-	}
-	var latestRevisionUUID any
+	var latestRevisionUUID *string
 	if record.LatestRevisionUUID != nil && strings.TrimSpace(*record.LatestRevisionUUID) != "" {
-		latestRevisionUUID = strings.TrimSpace(*record.LatestRevisionUUID)
+		value := strings.TrimSpace(*record.LatestRevisionUUID)
+		latestRevisionUUID = &value
 	}
-	var deletedAt any
+	var deletedAt *time.Time
 	if record.DeletedAt != nil && !record.DeletedAt.IsZero() {
-		deletedAt = record.DeletedAt.UTC()
+		value := record.DeletedAt.UTC()
+		deletedAt = &value
 	}
-	var row workbenchPromptRow
-	err = namedGetContext(ctx, d.sql, &row, `
-		INSERT INTO workbench_prompts (
-			organization_uuid, prompt_uuid, workspace_uuid, workspace_display_id,
-			name, is_shared_with_workspace,
-			latest_revision_uuid, deleted_at, created_at, updated_at
-		)
-		VALUES (
-			:organization_uuid, :prompt_uuid, :workspace_uuid,
-			:workspace_display_id, :name, :is_shared_with_workspace,
-			:latest_revision_uuid, :deleted_at, :created_at, CURRENT_TIMESTAMP
-		)
-		ON CONFLICT (organization_uuid, prompt_uuid) DO UPDATE
-		SET workspace_uuid = EXCLUDED.workspace_uuid,
-		    workspace_display_id = EXCLUDED.workspace_display_id,
-		    name = EXCLUDED.name,
-		    is_shared_with_workspace = EXCLUDED.is_shared_with_workspace,
-		    latest_revision_uuid = EXCLUDED.latest_revision_uuid,
-		    deleted_at = EXCLUDED.deleted_at,
-		    updated_at = CURRENT_TIMESTAMP
-		RETURNING organization_uuid, prompt_uuid,
-		          workspace_uuid, workspace_display_id,
-		          name, is_shared_with_workspace, latest_revision_uuid,
-		          deleted_at, created_at, updated_at
-	`, map[string]any{
-		"organization_uuid":        organizationUUID,
-		"prompt_uuid":              record.PromptUUID,
-		"workspace_uuid":           workspaceUUID,
-		"workspace_display_id":     record.WorkspaceDisplayID,
-		"name":                     record.Name,
-		"is_shared_with_workspace": record.IsSharedWithWorkspace,
-		"latest_revision_uuid":     latestRevisionUUID,
-		"deleted_at":               deletedAt,
-		"created_at":               record.CreatedAt,
+	mapper := NewWorkbenchPromptMapper(d.mapperDB)
+	row, err := mapper.Upsert(ctx, upsertWorkbenchPromptParams{
+		OrganizationUUID:      organizationUUID.String(),
+		PromptUUID:            record.PromptUUID,
+		WorkspaceUUID:         workspaceUUID.String(),
+		WorkspaceDisplayID:    record.WorkspaceDisplayID,
+		Name:                  record.Name,
+		IsSharedWithWorkspace: record.IsSharedWithWorkspace,
+		LatestRevisionUUID:    latestRevisionUUID,
+		DeletedAt:             deletedAt,
+		CreatedAt:             record.CreatedAt,
 	})
 	if err != nil {
 		return platform.WorkbenchPromptRecord{}, err
@@ -227,7 +130,7 @@ func (d *DB) DeleteWorkbenchPromptState(
 	workspaceUUID string,
 	workspaceDisplayID string,
 ) error {
-	if d == nil || d.sql == nil ||
+	if d == nil || d.mapperDB == nil ||
 		strings.TrimSpace(orgUUID) == "" ||
 		strings.TrimSpace(promptUUID) == "" ||
 		strings.TrimSpace(workspaceUUID) == "" {
@@ -241,77 +144,48 @@ func (d *DB) DeleteWorkbenchPromptState(
 	if err != nil {
 		return nil
 	}
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		promptMapper := NewWorkbenchPromptMapper(executor)
+		revisionMapper := NewWorkbenchPromptRevisionMapper(executor)
+		kvMapper := NewWorkbenchPromptKVMapper(executor)
+		evaluationMapper := NewWorkbenchEvaluationMapper(executor)
+		generatedTestCaseMapper := NewWorkbenchGeneratedTestCaseMapper(executor)
 
-	arguments := map[string]any{
-		"organization_uuid": organizationUUID,
-		"workspace_uuid":    typedWorkspaceUUID,
-		"workspace_display_id": firstNonEmpty(
-			strings.TrimSpace(workspaceDisplayID),
-			strings.TrimSpace(workspaceUUID),
-		),
-		"prompt_uuid": promptUUID,
-	}
-	var promptRefUUID uuid.UUID
-	if err := namedGetContext(ctx, tx, &promptRefUUID, `
-		INSERT INTO workbench_prompts (
-			organization_uuid, prompt_uuid, workspace_uuid, workspace_display_id,
-			name, deleted_at, created_at, updated_at
-		)
-		VALUES (
-			:organization_uuid, :prompt_uuid, :workspace_uuid,
-			:workspace_display_id, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-		)
-		ON CONFLICT (organization_uuid, prompt_uuid) DO UPDATE
-		SET name = '',
-		    is_shared_with_workspace = FALSE,
-		    latest_revision_uuid = NULL,
-		    deleted_at = CURRENT_TIMESTAMP,
-		    updated_at = CURRENT_TIMESTAMP
-		RETURNING uuid
-	`, arguments); err != nil {
-		return err
-	}
-	arguments["prompt_ref_uuid"] = promptRefUUID
-	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_prompt_revisions WHERE prompt_ref_uuid = :prompt_ref_uuid`, arguments); err != nil {
-		return err
-	}
-	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_prompt_kv WHERE prompt_ref_uuid = :prompt_ref_uuid`, arguments); err != nil {
-		return err
-	}
-	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_evaluations WHERE organization_uuid = :organization_uuid`, arguments); err != nil {
-		return err
-	}
-	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_generated_test_cases WHERE organization_uuid = :organization_uuid`, arguments); err != nil {
-		return err
-	}
-	return tx.Commit()
+		promptRefUUID, txErr := promptMapper.ResetAndReturnUUID(ctx, resetWorkbenchPromptParams{
+			OrganizationUUID: organizationUUID.String(),
+			PromptUUID:       promptUUID,
+			WorkspaceUUID:    typedWorkspaceUUID.String(),
+			WorkspaceDisplayID: firstNonEmpty(
+				strings.TrimSpace(workspaceDisplayID),
+				strings.TrimSpace(workspaceUUID),
+			),
+		})
+		if txErr != nil {
+			return txErr
+		}
+		if txErr = revisionMapper.DeleteByPromptRefUUID(ctx, promptRefUUID); txErr != nil {
+			return txErr
+		}
+		if txErr = kvMapper.DeleteByPromptRefUUID(ctx, promptRefUUID); txErr != nil {
+			return txErr
+		}
+		if txErr = evaluationMapper.DeleteByOrganization(ctx, organizationUUID.String()); txErr != nil {
+			return txErr
+		}
+		return generatedTestCaseMapper.DeleteByOrganization(ctx, organizationUUID.String())
+	})
 }
 
 func (d *DB) GetWorkbenchRevision(ctx context.Context, orgUUID string, promptUUID string, revisionUUID string) (*platform.WorkbenchRevisionRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(revisionUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(revisionUUID) == "" {
 		return nil, platform.ErrNotFound
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil, platform.ErrNotFound
 	}
-	var row workbenchRevisionRow
-	err = namedGetContext(ctx, d.sql, &row, `
-		SELECT r.organization_uuid,
-		       r.prompt_uuid, r.revision_uuid, CAST(r.payload AS text) AS payload_json,
-		       r.created_at, r.updated_at
-		FROM workbench_prompt_revisions r
-		JOIN workbench_prompts p ON p.uuid = r.prompt_ref_uuid
-		WHERE r.organization_uuid = :organization_uuid
-		  AND p.prompt_uuid = :prompt_uuid
-		  AND r.revision_uuid = :revision_uuid
-		LIMIT 1
-	`, map[string]any{"organization_uuid": typedOrgUUID, "prompt_uuid": promptUUID, "revision_uuid": revisionUUID})
+	mapper := NewWorkbenchPromptRevisionMapper(d.mapperDB)
+	row, err := mapper.Find(ctx, typedOrgUUID.String(), promptUUID, revisionUUID)
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
@@ -319,28 +193,8 @@ func (d *DB) GetWorkbenchRevision(ctx context.Context, orgUUID string, promptUUI
 	return &record, nil
 }
 
-const upsertWorkbenchRevisionQuery = `
-	WITH target_prompt AS (
-		SELECT uuid
-		FROM workbench_prompts
-		WHERE organization_uuid = :organization_uuid
-		  AND prompt_uuid = :prompt_uuid
-		LIMIT 1
-	)
-	INSERT INTO workbench_prompt_revisions (
-		organization_uuid, prompt_ref_uuid, prompt_uuid, revision_uuid,
-		payload, created_at, updated_at
-	)
-	SELECT :organization_uuid, target_prompt.uuid, :prompt_uuid,
-	       :revision_uuid, CAST(:payload AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-	FROM target_prompt
-	ON CONFLICT (organization_uuid, prompt_ref_uuid, revision_uuid) DO UPDATE
-	SET payload = EXCLUDED.payload,
-	    updated_at = CURRENT_TIMESTAMP
-`
-
 func (d *DB) UpsertWorkbenchRevision(ctx context.Context, record platform.WorkbenchRevisionRecord) error {
-	if d == nil || d.sql == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" || strings.TrimSpace(record.RevisionUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" || strings.TrimSpace(record.RevisionUUID) == "" {
 		return nil
 	}
 	payloadJSON, err := marshalWorkbenchJSON(record.Payload, map[string]any{})
@@ -351,62 +205,48 @@ func (d *DB) UpsertWorkbenchRevision(ctx context.Context, record platform.Workbe
 	if err != nil {
 		return platform.ErrNotFound
 	}
-	result, err := namedExecContext(ctx, d.sql, upsertWorkbenchRevisionQuery, map[string]any{
-		"organization_uuid": organizationUUID,
-		"prompt_uuid":       strings.TrimSpace(record.PromptUUID),
-		"revision_uuid":     strings.TrimSpace(record.RevisionUUID),
-		"payload":           payloadJSON,
+	mapper := NewWorkbenchPromptRevisionMapper(d.mapperDB)
+	rowsAffected, err := mapper.Upsert(ctx, upsertWorkbenchRevisionParams{
+		OrganizationUUID: organizationUUID.String(),
+		PromptUUID:       strings.TrimSpace(record.PromptUUID),
+		RevisionUUID:     strings.TrimSpace(record.RevisionUUID),
+		PayloadJSON:      payloadJSON,
 	})
-	return workbenchUpsertResult(result, err)
+	return workbenchUpsertResult(rowsAffected, err)
 }
 
 func (d *DB) ListWorkbenchEvaluationRevisionIDs(ctx context.Context, orgUUID string) ([]string, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" {
 		return nil, nil
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil, nil
 	}
-	var revisionIDs []string
-	err = namedSelectContext(ctx, d.sql, &revisionIDs, `
-		SELECT DISTINCT revision_uuid
-		FROM workbench_evaluations
-		WHERE organization_uuid = :organization_uuid
-		ORDER BY revision_uuid ASC
-	`, map[string]any{"organization_uuid": typedOrgUUID})
+	mapper := NewWorkbenchEvaluationMapper(d.mapperDB)
+	rows, err := mapper.ListRevisionIDs(ctx, typedOrgUUID.String())
 	if err != nil {
 		return nil, err
 	}
-	filtered := revisionIDs[:0]
-	for _, revisionID := range revisionIDs {
-		if strings.TrimSpace(revisionID) != "" {
-			filtered = append(filtered, revisionID)
+	revisionIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.RevisionUUID) != "" {
+			revisionIDs = append(revisionIDs, row.RevisionUUID)
 		}
 	}
-	return filtered, nil
+	return revisionIDs, nil
 }
 
 func (d *DB) GetWorkbenchKV(ctx context.Context, orgUUID string, promptUUID string, key string) (*platform.WorkbenchKVRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(key) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(key) == "" {
 		return nil, platform.ErrNotFound
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil, platform.ErrNotFound
 	}
-	var row workbenchKVRow
-	err = namedGetContext(ctx, d.sql, &row, `
-		SELECT k.organization_uuid,
-		       k.prompt_uuid, k.key, k.value, CAST(k.version AS text) AS version_json,
-		       k.created_at, k.updated_at
-		FROM workbench_prompt_kv k
-		JOIN workbench_prompts p ON p.uuid = k.prompt_ref_uuid
-		WHERE k.organization_uuid = :organization_uuid
-		  AND p.prompt_uuid = :prompt_uuid
-		  AND k.key = :key
-		LIMIT 1
-	`, map[string]any{"organization_uuid": typedOrgUUID, "prompt_uuid": promptUUID, "key": key})
+	mapper := NewWorkbenchPromptKVMapper(d.mapperDB)
+	row, err := mapper.Find(ctx, typedOrgUUID.String(), promptUUID, key)
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
@@ -415,7 +255,7 @@ func (d *DB) GetWorkbenchKV(ctx context.Context, orgUUID string, promptUUID stri
 }
 
 func (d *DB) UpsertWorkbenchKV(ctx context.Context, record platform.WorkbenchKVRecord) error {
-	if d == nil || d.sql == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" || strings.TrimSpace(record.Key) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.PromptUUID) == "" || strings.TrimSpace(record.Key) == "" {
 		return nil
 	}
 	versionJSON, err := marshalWorkbenchNullableJSON(record.Version)
@@ -426,73 +266,39 @@ func (d *DB) UpsertWorkbenchKV(ctx context.Context, record platform.WorkbenchKVR
 	if err != nil {
 		return platform.ErrNotFound
 	}
-	result, err := namedExecContext(ctx, d.sql, `
-		WITH target_prompt AS (
-			SELECT uuid
-			FROM workbench_prompts
-			WHERE organization_uuid = :organization_uuid
-			  AND prompt_uuid = :prompt_uuid
-			LIMIT 1
-		)
-		INSERT INTO workbench_prompt_kv (
-			organization_uuid, prompt_ref_uuid, prompt_uuid, key, value, version,
-			created_at, updated_at
-		)
-		SELECT :organization_uuid, target_prompt.uuid, :prompt_uuid,
-		       :key, :value, CAST(:version AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-		FROM target_prompt
-		ON CONFLICT (organization_uuid, prompt_ref_uuid, key) DO UPDATE
-		SET value = EXCLUDED.value,
-		    version = EXCLUDED.version,
-		    updated_at = CURRENT_TIMESTAMP
-	`, map[string]any{
-		"organization_uuid": organizationUUID,
-		"prompt_uuid":       strings.TrimSpace(record.PromptUUID),
-		"key":               strings.TrimSpace(record.Key),
-		"value":             record.Value,
-		"version":           versionJSON,
+	mapper := NewWorkbenchPromptKVMapper(d.mapperDB)
+	rowsAffected, err := mapper.Upsert(ctx, upsertWorkbenchKVParams{
+		OrganizationUUID: organizationUUID.String(),
+		PromptUUID:       strings.TrimSpace(record.PromptUUID),
+		Key:              strings.TrimSpace(record.Key),
+		Value:            record.Value,
+		VersionJSON:      versionJSON,
 	})
-	return workbenchUpsertResult(result, err)
+	return workbenchUpsertResult(rowsAffected, err)
 }
 
 func (d *DB) DeleteWorkbenchKV(ctx context.Context, orgUUID string, promptUUID string, key string) error {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(key) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(promptUUID) == "" || strings.TrimSpace(key) == "" {
 		return nil
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil
 	}
-	_, err = namedExecContext(ctx, d.sql, `
-		DELETE FROM workbench_prompt_kv k
-		USING workbench_prompts p
-		WHERE p.uuid = k.prompt_ref_uuid
-		  AND k.organization_uuid = :organization_uuid
-		  AND p.prompt_uuid = :prompt_uuid
-		  AND k.key = :key
-	`, map[string]any{"organization_uuid": typedOrgUUID, "prompt_uuid": promptUUID, "key": key})
-	return err
+	mapper := NewWorkbenchPromptKVMapper(d.mapperDB)
+	return mapper.Delete(ctx, typedOrgUUID.String(), promptUUID, key)
 }
 
 func (d *DB) ListWorkbenchEvaluations(ctx context.Context, orgUUID string, revisionUUID string) ([]platform.WorkbenchEvaluationRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(revisionUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(revisionUUID) == "" {
 		return nil, nil
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil, nil
 	}
-	var rows []workbenchEvaluationRow
-	err = namedSelectContext(ctx, d.sql, &rows, `
-		SELECT e.organization_uuid,
-		       e.revision_uuid, e.evaluation_uuid, CAST(e.payload AS text) AS payload_json,
-		       e.created_at, e.updated_at
-		FROM workbench_evaluations e
-		JOIN workbench_prompt_revisions r ON r.uuid = e.revision_ref_uuid
-		WHERE e.organization_uuid = :organization_uuid
-		  AND r.revision_uuid = :revision_uuid
-		ORDER BY e.created_at ASC, e.uuid ASC
-	`, map[string]any{"organization_uuid": typedOrgUUID, "revision_uuid": revisionUUID})
+	mapper := NewWorkbenchEvaluationMapper(d.mapperDB)
+	rows, err := mapper.ListByRevision(ctx, typedOrgUUID.String(), revisionUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -504,23 +310,15 @@ func (d *DB) ListWorkbenchEvaluations(ctx context.Context, orgUUID string, revis
 }
 
 func (d *DB) GetWorkbenchEvaluation(ctx context.Context, orgUUID string, evaluationUUID string) (*platform.WorkbenchEvaluationRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(evaluationUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(evaluationUUID) == "" {
 		return nil, platform.ErrNotFound
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil, platform.ErrNotFound
 	}
-	var row workbenchEvaluationRow
-	err = namedGetContext(ctx, d.sql, &row, `
-		SELECT organization_uuid,
-		       revision_uuid, evaluation_uuid, CAST(payload AS text) AS payload_json,
-		       created_at, updated_at
-		FROM workbench_evaluations
-		WHERE organization_uuid = :organization_uuid
-		  AND evaluation_uuid = :evaluation_uuid
-		LIMIT 1
-	`, map[string]any{"organization_uuid": typedOrgUUID, "evaluation_uuid": evaluationUUID})
+	mapper := NewWorkbenchEvaluationMapper(d.mapperDB)
+	row, err := mapper.Find(ctx, typedOrgUUID.String(), evaluationUUID)
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
@@ -529,7 +327,7 @@ func (d *DB) GetWorkbenchEvaluation(ctx context.Context, orgUUID string, evaluat
 }
 
 func (d *DB) UpsertWorkbenchEvaluation(ctx context.Context, record platform.WorkbenchEvaluationRecord) error {
-	if d == nil || d.sql == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.RevisionUUID) == "" || strings.TrimSpace(record.EvaluationUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(record.OrgUUID) == "" || strings.TrimSpace(record.RevisionUUID) == "" || strings.TrimSpace(record.EvaluationUUID) == "" {
 		return nil
 	}
 	payloadJSON, err := marshalWorkbenchJSON(record.Payload, map[string]any{})
@@ -540,53 +338,26 @@ func (d *DB) UpsertWorkbenchEvaluation(ctx context.Context, record platform.Work
 	if err != nil {
 		return platform.ErrNotFound
 	}
-	result, err := namedExecContext(ctx, d.sql, `
-		WITH target_revision AS (
-			SELECT uuid
-			FROM workbench_prompt_revisions
-			WHERE organization_uuid = :organization_uuid
-			  AND revision_uuid = :revision_uuid
-			ORDER BY created_at DESC, uuid DESC
-			LIMIT 1
-		)
-		INSERT INTO workbench_evaluations (
-			organization_uuid, revision_ref_uuid, revision_uuid, evaluation_uuid,
-			payload, created_at, updated_at
-		)
-		SELECT :organization_uuid, target_revision.uuid, :revision_uuid,
-		       :evaluation_uuid, CAST(:payload AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-		FROM target_revision
-		ON CONFLICT (organization_uuid, evaluation_uuid) DO UPDATE
-		SET revision_ref_uuid = EXCLUDED.revision_ref_uuid,
-		    revision_uuid = EXCLUDED.revision_uuid,
-		    payload = EXCLUDED.payload,
-		    updated_at = CURRENT_TIMESTAMP
-	`, map[string]any{
-		"organization_uuid": organizationUUID,
-		"revision_uuid":     strings.TrimSpace(record.RevisionUUID),
-		"evaluation_uuid":   strings.TrimSpace(record.EvaluationUUID),
-		"payload":           payloadJSON,
+	mapper := NewWorkbenchEvaluationMapper(d.mapperDB)
+	rowsAffected, err := mapper.Upsert(ctx, upsertWorkbenchEvaluationParams{
+		OrganizationUUID: organizationUUID.String(),
+		RevisionUUID:     strings.TrimSpace(record.RevisionUUID),
+		EvaluationUUID:   strings.TrimSpace(record.EvaluationUUID),
+		PayloadJSON:      payloadJSON,
 	})
-	return workbenchUpsertResult(result, err)
+	return workbenchUpsertResult(rowsAffected, err)
 }
 
 func (d *DB) DeleteWorkbenchEvaluation(ctx context.Context, orgUUID string, evaluationUUID string) (*platform.WorkbenchEvaluationRecord, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(evaluationUUID) == "" {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || strings.TrimSpace(evaluationUUID) == "" {
 		return nil, platform.ErrNotFound
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil, platform.ErrNotFound
 	}
-	var row workbenchEvaluationRow
-	err = namedGetContext(ctx, d.sql, &row, `
-		DELETE FROM workbench_evaluations
-		WHERE organization_uuid = :organization_uuid
-		  AND evaluation_uuid = :evaluation_uuid
-		RETURNING organization_uuid,
-		          revision_uuid, evaluation_uuid, CAST(payload AS text) AS payload_json,
-		          created_at, updated_at
-	`, map[string]any{"organization_uuid": typedOrgUUID, "evaluation_uuid": evaluationUUID})
+	mapper := NewWorkbenchEvaluationMapper(d.mapperDB)
+	row, err := mapper.Delete(ctx, typedOrgUUID.String(), evaluationUUID)
 	if err != nil {
 		return nil, mapNoRows(err)
 	}
@@ -595,7 +366,7 @@ func (d *DB) DeleteWorkbenchEvaluation(ctx context.Context, orgUUID string, eval
 }
 
 func (d *DB) AppendWorkbenchGeneratedTestCase(ctx context.Context, orgUUID string, values map[string]any) error {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || len(values) == 0 {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || len(values) == 0 {
 		return nil
 	}
 	valuesJSON, err := marshalWorkbenchJSON(values, map[string]any{})
@@ -606,93 +377,57 @@ func (d *DB) AppendWorkbenchGeneratedTestCase(ctx context.Context, orgUUID strin
 	if err != nil {
 		return nil
 	}
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	arguments := map[string]any{"organization_uuid": typedOrgUUID, "values": valuesJSON}
-	if _, err := namedExecContext(ctx, tx, `
-		INSERT INTO workbench_generated_test_cases (organization_uuid, values, created_at)
-		VALUES (:organization_uuid, CAST(:values AS jsonb), CURRENT_TIMESTAMP)
-	`, arguments); err != nil {
-		return err
-	}
-	if _, err := namedExecContext(ctx, tx, `
-		DELETE FROM workbench_generated_test_cases
-		WHERE organization_uuid = :organization_uuid
-		  AND uuid NOT IN (
-		      SELECT uuid
-		      FROM workbench_generated_test_cases
-		      WHERE organization_uuid = :organization_uuid
-		      ORDER BY created_at DESC, uuid DESC
-		      LIMIT 10
-		  )
-	`, arguments); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewWorkbenchGeneratedTestCaseMapper(executor)
+		if txErr := mapper.Insert(ctx, typedOrgUUID.String(), valuesJSON); txErr != nil {
+			return txErr
+		}
+		return mapper.DeleteOlderThanLimit(ctx, typedOrgUUID.String(), 10)
+	})
 }
 
 func (d *DB) TakeWorkbenchGeneratedTestCase(ctx context.Context, orgUUID string, requested map[string]any) (map[string]any, bool, error) {
-	if d == nil || d.sql == nil || strings.TrimSpace(orgUUID) == "" || len(requested) == 0 {
+	if d == nil || d.mapperDB == nil || strings.TrimSpace(orgUUID) == "" || len(requested) == 0 {
 		return nil, false, nil
 	}
 	typedOrgUUID, err := parseDBUUID("organization_uuid", orgUUID)
 	if err != nil {
 		return nil, false, nil
 	}
-	tx, err := d.sql.BeginTxx(ctx, nil)
-	if err != nil {
-		return nil, false, err
-	}
-	defer tx.Rollback()
-
-	var rows []workbenchGeneratedTestCaseRow
-	err = namedSelectContext(ctx, tx, &rows, `
-		SELECT uuid, CAST(values AS text) AS values_json
-		FROM workbench_generated_test_cases
-		WHERE organization_uuid = :organization_uuid
-		ORDER BY created_at ASC, uuid ASC
-		FOR UPDATE
-	`, map[string]any{"organization_uuid": typedOrgUUID})
-	if err != nil {
-		return nil, false, err
-	}
-
-	var selectedUUID uuid.UUID
 	var selectedValues map[string]any
-	for _, row := range rows {
-		values := parseWorkbenchMapJSON(row.ValuesJSON)
-		if workbenchGeneratedValuesMatchRequest(values, requested) {
-			selectedUUID = row.UUID
-			selectedValues = values
-			break
+	var found bool
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewWorkbenchGeneratedTestCaseMapper(executor)
+		rows, txErr := mapper.ListForUpdate(ctx, typedOrgUUID.String())
+		if txErr != nil {
+			return txErr
 		}
-	}
-	if selectedUUID == uuid.Nil {
-		if err := tx.Commit(); err != nil {
-			return nil, false, err
+		selectedUUID := ""
+		for _, row := range rows {
+			values := parseWorkbenchMapJSON(row.ValuesJSON)
+			if workbenchGeneratedValuesMatchRequest(values, requested) {
+				selectedUUID = row.UUID
+				selectedValues = values
+				break
+			}
 		}
-		return nil, false, nil
-	}
-	if _, err := namedExecContext(ctx, tx, `DELETE FROM workbench_generated_test_cases WHERE uuid = :uuid`, map[string]any{
-		"uuid": selectedUUID,
-	}); err != nil {
-		return nil, false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, false, err
-	}
-	return selectedValues, true, nil
+		if selectedUUID == "" {
+			return nil
+		}
+		if txErr = mapper.DeleteByUUID(ctx, selectedUUID); txErr != nil {
+			return txErr
+		}
+		found = true
+		return nil
+	})
+	return selectedValues, found, err
 }
 
 func (r workbenchPromptRow) record() platform.WorkbenchPromptRecord {
 	record := platform.WorkbenchPromptRecord{
-		OrgUUID:               r.OrgUUID.String(),
+		OrgUUID:               r.OrgUUID,
 		PromptUUID:            r.PromptUUID,
-		WorkspaceUUID:         r.WorkspaceUUID.String(),
+		WorkspaceUUID:         r.WorkspaceUUID,
 		WorkspaceDisplayID:    r.WorkspaceDisplayID,
 		Name:                  r.Name,
 		IsSharedWithWorkspace: r.IsSharedWithWorkspace,
@@ -712,7 +447,7 @@ func (r workbenchPromptRow) record() platform.WorkbenchPromptRecord {
 
 func (r workbenchRevisionRow) record() platform.WorkbenchRevisionRecord {
 	return platform.WorkbenchRevisionRecord{
-		OrgUUID:      r.OrgUUID.String(),
+		OrgUUID:      r.OrgUUID,
 		PromptUUID:   r.PromptUUID,
 		RevisionUUID: r.RevisionUUID,
 		Payload:      parseWorkbenchMapJSON(r.PayloadJSON),
@@ -723,7 +458,7 @@ func (r workbenchRevisionRow) record() platform.WorkbenchRevisionRecord {
 
 func (r workbenchKVRow) record() platform.WorkbenchKVRecord {
 	record := platform.WorkbenchKVRecord{
-		OrgUUID:    r.OrgUUID.String(),
+		OrgUUID:    r.OrgUUID,
 		PromptUUID: r.PromptUUID,
 		Key:        r.Key,
 		Value:      r.Value,
@@ -741,7 +476,7 @@ func (r workbenchKVRow) record() platform.WorkbenchKVRecord {
 
 func (r workbenchEvaluationRow) record() platform.WorkbenchEvaluationRecord {
 	return platform.WorkbenchEvaluationRecord{
-		OrgUUID:        r.OrgUUID.String(),
+		OrgUUID:        r.OrgUUID,
 		RevisionUUID:   r.RevisionUUID,
 		EvaluationUUID: r.EvaluationUUID,
 		Payload:        parseWorkbenchMapJSON(r.PayloadJSON),
@@ -761,7 +496,7 @@ func marshalWorkbenchJSON(value any, fallback any) (string, error) {
 	return string(encoded), nil
 }
 
-func marshalWorkbenchNullableJSON(value any) (any, error) {
+func marshalWorkbenchNullableJSON(value any) (*string, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -769,7 +504,8 @@ func marshalWorkbenchNullableJSON(value any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return string(encoded), nil
+	result := string(encoded)
+	return &result, nil
 }
 
 func parseWorkbenchMapJSON(raw string) map[string]any {

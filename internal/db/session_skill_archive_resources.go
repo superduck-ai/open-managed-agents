@@ -31,7 +31,7 @@ func (d *DB) ReplaceSessionSkillArchiveResources(
 	sessionExternalID string,
 	inputs []SessionSkillArchiveResourceInput,
 ) error {
-	if d == nil || d.sql == nil {
+	if d == nil || d.mapperDB == nil {
 		return errors.New("database is unavailable")
 	}
 	entries, err := normalizeSessionSkillArchiveResources(inputs)
@@ -137,7 +137,8 @@ func validateFilestoreSkillArchiveVersionTx(
 	workspaceUUID string,
 	entry normalizedSessionSkillArchiveResource,
 ) error {
-	valid, err := NewSkillVersionMapper(tx).ValidateSkillArchiveVersion(ctx, sessionSkillArchiveValidationParams{
+	mapper := NewSkillVersionMapper(tx)
+	valid, err := mapper.ValidateSkillArchiveVersion(ctx, sessionSkillArchiveValidationParams{
 		Source:        entry.Source,
 		WorkspaceUUID: workspaceUUID,
 		VersionUUID:   entry.SkillVersionUUID,
@@ -163,7 +164,8 @@ func (d *DB) ListSessionSkillArchiveResources(
 	workspaceUUID string,
 	filesystemUUID string,
 ) ([]SessionResourceFile, error) {
-	rows, err := NewSessionResourceFileMapper(d.mapperDB).ListSkillArchiveResources(
+	mapper := NewSessionResourceFileMapper(d.mapperDB)
+	rows, err := mapper.ListSkillArchiveResources(
 		ctx,
 		workspaceUUID,
 		filesystemUUID,

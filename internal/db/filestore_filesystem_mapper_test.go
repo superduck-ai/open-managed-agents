@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -22,7 +21,7 @@ func TestFilestoreFilesystemMapperBuildsProvisionQueries(t *testing.T) {
 		CreatedByAPIKeyUUID: &apiKeyUUID,
 		Now:                 time.Date(2026, time.July, 23, 17, 0, 0, 0, time.UTC),
 	})
-	filesystemUUID := tryParseDBUUIDIdentifier(*params.FilesystemUUID)
+	filesystemUUID := tryParseDBUUIDIdentifierString(*params.FilesystemUUID)
 	tests := []struct {
 		name         string
 		bound        yourbatis.BoundSQL
@@ -138,7 +137,7 @@ func TestFilestoreFilesystemMapperBuildsLifecycleQueries(t *testing.T) {
 		yourbatis.DialectPostgres,
 		workspaceUUID,
 		"claude_chat_mapper",
-		uuid.NullUUID{},
+		"",
 	)
 	if strings.Contains(withoutUUID.SQL, "OR uuid =") || len(withoutUUID.Args) != 3 {
 		t.Fatalf("external-ID-only lookup = %#v", withoutUUID)

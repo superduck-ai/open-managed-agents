@@ -29,7 +29,7 @@ func (d *DB) CreateAdminExternalKey(ctx context.Context, key AdminExternalKey) (
 	mapper := NewAdminExternalKeyMapper(d.mapperDB)
 	created, err := mapper.Insert(ctx, insertAdminExternalKeyParams{
 		ExternalID:       key.ExternalID,
-		OrganizationUUID: key.OrganizationUUID,
+		OrganizationUUID: key.OrganizationUUID.String(),
 		DisplayName:      key.DisplayName,
 		Geo:              key.Geo,
 		ProviderConfig:   key.ProviderConfig,

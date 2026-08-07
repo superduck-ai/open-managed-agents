@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ConsoleOrganizationMapper">
+    <sql id="columns">
+        uuid,
+        name,
+        CAST(NULL AS text) AS domain,
+        CAST(NULL AS uuid) AS parent_organization_uuid,
+        COALESCE(settings, CAST('{}' AS jsonb)) AS settings,
+        created_at,
+        updated_at,
+        '' AS role,
+        created_at AS added_at
+    </sql>
+
+    <select id="FindByUUID" resultType="consoleOrganizationRow">
+        SELECT
+        <include refid="columns"/>
+        FROM organizations
+        WHERE uuid = #{orgUUID}
+        LIMIT 1
+    </select>
+
+    <update id="UpdateByUUID" result="returning" resultType="consoleOrganizationRow">
+        UPDATE organizations
+        SET name = COALESCE(CAST(#{params.Name} AS text), name),
+            settings = COALESCE(CAST(#{params.Settings} AS jsonb), settings),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE uuid = #{params.OrgUUID}
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <select id="FindProfileByUUID" resultType="consoleOrganizationProfileRow">
+        SELECT COALESCE(profile, CAST('{}' AS jsonb)) AS profile
+        FROM organizations
+        WHERE uuid = #{orgUUID}
+        LIMIT 1
+    </select>
+
+    <update id="UpdateProfileByUUID" result="returning" resultType="consoleOrganizationProfileRow">
+        UPDATE organizations
+        SET profile = CAST(#{params.Profile} AS jsonb),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE uuid = #{params.OrgUUID}
+        RETURNING COALESCE(profile, CAST('{}' AS jsonb)) AS profile
+    </update>
+</mapper>

@@ -3,8 +3,6 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper FilestoreCleanupMapper -sql ./filestore_cleanup_mapper.xml -out ./filestore_cleanup_mapper.sqlmap.gen.go -dialect postgres
@@ -94,10 +92,10 @@ type filestoreSubtreeMapperParams struct {
 }
 
 type filestoreObjectCleanupJobRow struct {
-	UUID                 uuid.UUID `db:"uuid"`
+	UUID                 string    `db:"uuid"`
 	ExternalID           string    `db:"external_id"`
-	WorkspaceUUID        uuid.UUID `db:"workspace_uuid"`
-	FilesystemUUID       uuid.UUID `db:"filesystem_uuid"`
+	WorkspaceUUID        string    `db:"workspace_uuid"`
+	FilesystemUUID       string    `db:"filesystem_uuid"`
 	FilesystemExternalID string    `db:"filesystem_external_id"`
 	EntryExternalID      string    `db:"entry_external_id"`
 	Bucket               string    `db:"bucket"`
@@ -110,10 +108,10 @@ type filestoreObjectCleanupJobRow struct {
 }
 
 type filestoreFilesystemCleanupJobRow struct {
-	UUID                 uuid.UUID `db:"uuid"`
+	UUID                 string    `db:"uuid"`
 	ExternalID           string    `db:"external_id"`
-	WorkspaceUUID        uuid.UUID `db:"workspace_uuid"`
-	FilesystemUUID       uuid.UUID `db:"filesystem_uuid"`
+	WorkspaceUUID        string    `db:"workspace_uuid"`
+	FilesystemUUID       string    `db:"filesystem_uuid"`
 	FilesystemExternalID string    `db:"filesystem_external_id"`
 	Attempts             int       `db:"attempts"`
 	RunAfter             time.Time `db:"run_after"`
@@ -121,10 +119,10 @@ type filestoreFilesystemCleanupJobRow struct {
 
 func (row filestoreObjectCleanupJobRow) job() FilestoreObjectCleanupJob {
 	return FilestoreObjectCleanupJob{
-		UUID:                 row.UUID.String(),
+		UUID:                 row.UUID,
 		ExternalID:           row.ExternalID,
-		WorkspaceUUID:        row.WorkspaceUUID.String(),
-		FilesystemUUID:       row.FilesystemUUID.String(),
+		WorkspaceUUID:        row.WorkspaceUUID,
+		FilesystemUUID:       row.FilesystemUUID,
 		FilesystemExternalID: row.FilesystemExternalID,
 		EntryExternalID:      row.EntryExternalID,
 		Bucket:               row.Bucket,
@@ -139,10 +137,10 @@ func (row filestoreObjectCleanupJobRow) job() FilestoreObjectCleanupJob {
 
 func (row filestoreFilesystemCleanupJobRow) job() FilestoreFilesystemCleanupJob {
 	return FilestoreFilesystemCleanupJob{
-		UUID:                 row.UUID.String(),
+		UUID:                 row.UUID,
 		ExternalID:           row.ExternalID,
-		WorkspaceUUID:        row.WorkspaceUUID.String(),
-		FilesystemUUID:       row.FilesystemUUID.String(),
+		WorkspaceUUID:        row.WorkspaceUUID,
+		FilesystemUUID:       row.FilesystemUUID,
 		FilesystemExternalID: row.FilesystemExternalID,
 		Attempts:             row.Attempts,
 		RunAfter:             row.RunAfter,

@@ -22,6 +22,15 @@ func authorizeHTTPSFixture(t *testing.T, fixture rawPolicyFixture, target string
 	return policy.AuthorizeHTTPS(target)
 }
 
+func authorizeMCPURLFixture(t *testing.T, fixture rawPolicyFixture, target string) Decision {
+	t.Helper()
+	policy, err := ParseMCPProxyPolicy(fixture.Config, fixture.AgentSnapshot)
+	if err != nil {
+		t.Fatalf("ParseMCPProxyPolicy() error = %v", err)
+	}
+	return policy.AuthorizeMCPURL(target)
+}
+
 func limitedConfig(t *testing.T, networking string) json.RawMessage {
 	t.Helper()
 	return json.RawMessage(`{"type":"cloud","networking":` + networking + `}`)
@@ -170,6 +179,16 @@ func TestParsePolicyRejectsMalformedAgentSnapshotWhenMCPAllowed(t *testing.T) {
 	}
 }
 
+func TestParseMCPProxyPolicyRejectsMalformedSnapshotWhenUnrestricted(t *testing.T) {
+	_, err := ParseMCPProxyPolicy(
+		limitedConfig(t, `{"type":"unrestricted"}`),
+		json.RawMessage(`{"mcp_servers":[`),
+	)
+	if !errors.Is(err, ErrMalformedAgentSnapshot) {
+		t.Fatalf("expected ErrMalformedAgentSnapshot, got %v", err)
+	}
+}
+
 func TestParsePolicyRejectsMalformedMCPURL(t *testing.T) {
 	_, err := ParsePolicy(
 		limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com"],"allow_mcp_servers":true,"allow_package_managers":false}`),
@@ -204,6 +223,33 @@ func TestAuthorizeHTTPSDeniesNonCatalogHostWhenPackageSwitchOn(t *testing.T) {
 	decision := authorizeHTTPSFixture(t, fixture, "evil-packages.example.com:443")
 	if decision.Allow {
 		t.Fatal("non-catalog host must be denied")
+	}
+}
+
+func TestAuthorizeMCPURLDeniesURLNotConfiguredForSession(t *testing.T) {
+	fixture := rawPolicyFixture{
+		Config:        limitedConfig(t, `{"type":"unrestricted"}`),
+		AgentSnapshot: snapshotWithMCP(t, "https://configured.example/mcp"),
+	}
+	decision := authorizeMCPURLFixture(t, fixture, "https://other.example/mcp")
+	if decision.Allow || decision.Reason != ReasonHostNotAllowed {
+		t.Fatalf("unconfigured MCP URL decision = %+v, want host_not_allowed denial", decision)
+	}
+}
+
+func TestAuthorizeMCPURLDeniesDifferentActualPort(t *testing.T) {
+	for _, target := range []string{
+		"http://api.example.com/mcp",
+		"https://api.example.com:8443/mcp",
+	} {
+		fixture := rawPolicyFixture{
+			Config:        limitedConfig(t, `{"type":"limited","allowed_hosts":["api.example.com:443"],"allow_mcp_servers":false,"allow_package_managers":false}`),
+			AgentSnapshot: snapshotWithMCP(t, target),
+		}
+		decision := authorizeMCPURLFixture(t, fixture, target)
+		if decision.Allow || decision.Reason != ReasonHostNotAllowed {
+			t.Fatalf("target %q decision = %+v, want actual-port denial", target, decision)
+		}
 	}
 }
 
@@ -299,6 +345,37 @@ func TestAuthorizeHTTPSAllowsMCPHostWhenSwitchOn(t *testing.T) {
 	}
 	if decision.Reason != ReasonMCPHost {
 		t.Fatalf("expected reason %q, got %q", ReasonMCPHost, decision.Reason)
+	}
+}
+
+func TestAuthorizeMCPURLAllowsActualHTTPAndCustomHTTPSPorts(t *testing.T) {
+	for _, test := range []struct {
+		target      string
+		allowedHost string
+	}{
+		{target: "http://api.example.com/mcp", allowedHost: "api.example.com:80"},
+		{target: "https://api.example.com:8443/mcp", allowedHost: "api.example.com:8443"},
+	} {
+		fixture := rawPolicyFixture{
+			Config:        limitedConfig(t, `{"type":"limited","allowed_hosts":["`+test.allowedHost+`"],"allow_mcp_servers":false,"allow_package_managers":false}`),
+			AgentSnapshot: snapshotWithMCP(t, test.target),
+		}
+		decision := authorizeMCPURLFixture(t, fixture, test.target)
+		if !decision.Allow || decision.Reason != ReasonExplicitHost {
+			t.Fatalf("target %q decision = %+v, want explicit_host allow", test.target, decision)
+		}
+	}
+}
+
+func TestAuthorizeMCPURLAllowsConfiguredPortWhenMCPSwitchOn(t *testing.T) {
+	const target = "http://mcp.example.com:8080/mcp"
+	fixture := rawPolicyFixture{
+		Config:        limitedConfig(t, `{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true,"allow_package_managers":false}`),
+		AgentSnapshot: snapshotWithMCP(t, target),
+	}
+	decision := authorizeMCPURLFixture(t, fixture, target)
+	if !decision.Allow || decision.Reason != ReasonMCPHost {
+		t.Fatalf("MCP URL decision = %+v, want mcp_host allow", decision)
 	}
 }
 

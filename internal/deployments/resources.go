@@ -45,16 +45,15 @@ type deploymentResourceRequest struct {
 }
 
 type deploymentResourcePayload struct {
-	Type               string          `json:"type"`
-	FileID             string          `json:"file_id,omitempty"`
-	Source             string          `json:"source,omitempty"`
-	MountPath          string          `json:"mount_path,omitempty"`
-	MountPathDefaulted *bool           `json:"_oma_mount_path_defaulted,omitempty"`
-	URL                string          `json:"url,omitempty"`
-	Checkout           json.RawMessage `json:"checkout,omitempty"`
-	MemoryStoreID      string          `json:"memory_store_id,omitempty"`
-	Access             string          `json:"access,omitempty"`
-	Instructions       *string         `json:"instructions,omitempty"`
+	Type          string          `json:"type"`
+	FileID        string          `json:"file_id,omitempty"`
+	Source        string          `json:"source,omitempty"`
+	MountPath     string          `json:"mount_path,omitempty"`
+	URL           string          `json:"url,omitempty"`
+	Checkout      json.RawMessage `json:"checkout,omitempty"`
+	MemoryStoreID string          `json:"memory_store_id,omitempty"`
+	Access        string          `json:"access,omitempty"`
+	Instructions  *string         `json:"instructions,omitempty"`
 }
 
 type deploymentResourceSecret struct {
@@ -177,24 +176,32 @@ func (h *Handler) normalizeResource(
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		if _, err := sessionresource.NormalizeFileSpec(fileID, fields.Source, fields.MountPath); err != nil {
+		file, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
+		if err != nil {
+			return normalizedDeploymentResource{}, resourceReferenceError{
+				ResourceType: sessionresource.FileType,
+				ResourceID:   fileID,
+				Err:          err,
+			}
+		}
+		if _, err := sessionresource.NormalizeFileSpec(
+			fileID,
+			file.Filename,
+			fields.Source,
+			fields.MountPath,
+		); err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		mountPath, err := optionalStringWithDefault(fields.MountPath, sandboxmount.DefaultFileMountPath(fileID), "mount_path")
+		defaultMountPath := sandboxmount.DefaultFileMountPath(fileID, file.Filename)
+		mountPath, err := optionalStringWithDefault(fields.MountPath, defaultMountPath, "mount_path")
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		defaulted := len(fields.MountPath) == 0 || httpapi.IsJSONNull(fields.MountPath)
-		if mountPath == sandboxmount.FileSource+sandboxmount.DefaultFileMountPath(fileID) {
-			mountPath = sandboxmount.DefaultFileMountPath(fileID)
-			defaulted = true
-		}
 		resource.payload = deploymentResourcePayload{
-			Type:               sessionresource.FileType,
-			FileID:             fileID,
-			Source:             sandboxmount.FileSource,
-			MountPath:          mountPath,
-			MountPathDefaulted: &defaulted,
+			Type:      sessionresource.FileType,
+			FileID:    fileID,
+			Source:    sandboxmount.FileSource,
+			MountPath: mountPath,
 		}
 		resource.referenceID = fileID
 		resource.mountPath = mountPath
@@ -203,7 +210,11 @@ func (h *Handler) normalizeResource(
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
-		mountPath, err := optionalStringWithDefault(fields.MountPath, defaultRepoMountPath(repoURL), "mount_path")
+		mountPath, err := optionalStringWithDefault(
+			fields.MountPath,
+			sessionresource.DefaultGitHubRepositoryMountPath(repoURL),
+			"mount_path",
+		)
 		if err != nil {
 			return normalizedDeploymentResource{}, err
 		}
@@ -254,16 +265,7 @@ func (h *Handler) normalizeResource(
 		)
 	}
 
-	switch resource.resourceType {
-	case sessionresource.FileType:
-		if _, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, resource.referenceID); err != nil {
-			return normalizedDeploymentResource{}, resourceReferenceError{
-				ResourceType: sessionresource.FileType,
-				ResourceID:   resource.referenceID,
-				Err:          err,
-			}
-		}
-	case "memory_store":
+	if resource.resourceType == "memory_store" {
 		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, resource.referenceID)
 		if err != nil {
 			return normalizedDeploymentResource{}, resourceReferenceError{
@@ -284,10 +286,9 @@ func (h *Handler) normalizeResource(
 }
 
 type deploymentResourceEnvelope struct {
-	Type               string `json:"type"`
-	FileID             string `json:"file_id"`
-	MountPath          string `json:"mount_path"`
-	MountPathDefaulted *bool  `json:"_oma_mount_path_defaulted"`
+	Type      string `json:"type"`
+	FileID    string `json:"file_id"`
+	MountPath string `json:"mount_path"`
 }
 
 func deploymentResourcesResponse(raw json.RawMessage) (json.RawMessage, error) {
@@ -310,13 +311,15 @@ func deploymentResourcesResponse(raw json.RawMessage) (json.RawMessage, error) {
 		if envelope.Type != sessionresource.FileType || envelope.FileID == "" {
 			continue
 		}
-		if envelope.MountPathDefaulted != nil && *envelope.MountPathDefaulted {
-			mountPath, err := json.Marshal(sandboxmount.FileSource + sandboxmount.DefaultFileMountPath(envelope.FileID))
-			if err != nil {
-				return nil, err
-			}
-			resource["mount_path"] = mountPath
+		publicMountPath, err := sandboxmount.FileBackingPath(envelope.MountPath)
+		if err != nil {
+			return nil, errors.New("stored deployment file mount_path is invalid")
 		}
+		mountPath, err := json.Marshal(publicMountPath)
+		if err != nil {
+			return nil, err
+		}
+		resource["mount_path"] = mountPath
 	}
 	response, err := httpapi.MarshalRaw(resources)
 	if err != nil {

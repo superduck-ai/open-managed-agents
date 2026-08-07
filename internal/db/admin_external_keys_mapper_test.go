@@ -18,7 +18,7 @@ func TestAdminExternalKeyMapperInsert(t *testing.T) {
 	createdAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	params := insertAdminExternalKeyParams{
 		ExternalID:       "key_external",
-		OrganizationUUID: uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+		OrganizationUUID: "11111111-1111-4111-8111-111111111111",
 		DisplayName:      "External key",
 		Geo:              "us",
 		ProviderConfig:   json.RawMessage(`{"type":"aws"}`),

@@ -6,6 +6,65 @@
         created_at, updated_at, deleted_at
     </sql>
 
+    <insert id="Insert" result="returning" resultType="sessionResourceRow">
+        INSERT INTO session_resources (
+            uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+            session_external_id, resource_type, payload, secret_payload, created_at, updated_at
+        )
+        SELECT #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            s.uuid, #{params.SessionExternalID}, #{params.ResourceType},
+            CAST(#{params.Payload,sensitive=true} AS jsonb),
+            CAST(#{params.SecretPayload,sensitive=true} AS jsonb),
+            #{params.CreatedAt}, #{params.CreatedAt}
+        FROM sessions s
+        WHERE s.workspace_uuid = #{params.WorkspaceUUID}
+        AND s.external_id = #{params.SessionExternalID}
+        AND s.deleted_at IS NULL
+        AND s.archived_at IS NULL
+        RETURNING <include refid="sessionResourceColumns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="sessionResourceRow">
+        SELECT <include refid="sessionResourceColumns"/>
+        FROM session_resources
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND external_id = #{resourceExternalID}
+        AND payload IS NOT NULL
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="List" resultType="sessionResourceRow">
+        SELECT <include refid="sessionResourceColumns"/>
+        FROM session_resources
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND payload IS NOT NULL
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+    </select>
+
+    <update id="Update" result="returning" resultType="sessionResourceRow">
+        UPDATE session_resources
+        SET payload = CAST(#{params.Payload,sensitive=true} AS jsonb),
+            secret_payload = CAST(#{params.SecretPayload,sensitive=true} AS jsonb),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND session_external_id = #{params.SessionExternalID}
+        AND external_id = #{params.ResourceExternalID}
+        AND payload IS NOT NULL
+        AND deleted_at IS NULL
+        RETURNING <include refid="sessionResourceColumns"/>
+    </update>
+
+    <update id="SoftDeleteBySession" result="rows">
+        UPDATE session_resources
+        SET deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND payload IS NOT NULL
+        AND deleted_at IS NULL
+    </update>
     <select id="CountSessionFileResources" result="scalar">
         SELECT count(*) AS resource_count
         FROM session_resources

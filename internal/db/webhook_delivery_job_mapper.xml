@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WebhookDeliveryJobMapper">
+    <insert id="Insert" result="exec">
+        INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
+        VALUES (
+            CONCAT('job_', REPLACE(CAST(gen_random_uuid() AS text), '-', '')),
+            #{workspaceUUID},
+            'webhook_delivery',
+            'pending',
+            CAST(#{payload,sensitive=true} AS jsonb)
+        )
+    </insert>
+
+    <select id="Lease" resultType="webhookDeliveryJobRow">
+        WITH next_jobs AS (
+            SELECT uuid
+            FROM jobs
+            WHERE type = 'webhook_delivery'
+            AND run_after &lt;= NOW()
+            AND (
+                status IN ('pending', 'retry')
+                OR (status = 'running' AND locked_until &lt; NOW())
+            )
+            ORDER BY run_after, created_at
+            LIMIT #{limit}
+            FOR UPDATE SKIP LOCKED
+        ),
+        updated_jobs AS (
+            UPDATE jobs j
+            SET status = 'running',
+                locked_by = #{workerID},
+                locked_until = NOW() + #{leaseMicroseconds} * INTERVAL '1 microsecond',
+                updated_at = NOW()
+            FROM next_jobs
+            WHERE j.uuid = next_jobs.uuid
+            RETURNING j.uuid, j.external_id, j.workspace_uuid, j.payload, j.attempts
+        )
+        SELECT
+            u.uuid,
+            u.external_id,
+            u.workspace_uuid,
+            COALESCE(u.payload-&gt;&gt;'event_type', '') AS event_type,
+            COALESCE(u.payload-&gt;'event', CAST('{}' AS jsonb)) AS event,
+            u.attempts,
+            we.uuid AS webhook_endpoint_uuid,
+            we.external_id AS webhook_endpoint_external_id,
+            we.url AS webhook_endpoint_url,
+            we.signing_secret AS webhook_endpoint_secret,
+            we.status AS webhook_endpoint_status
+        FROM updated_jobs u
+        LEFT JOIN webhook_endpoints we
+        ON we.uuid = CAST(NULLIF(u.payload-&gt;&gt;'webhook_endpoint_uuid', '') AS uuid)
+        AND we.deleted_at IS NULL
+    </select>
+
+    <update id="Complete" result="exec">
+        UPDATE jobs
+        SET status = 'completed',
+            locked_by = NULL,
+            locked_until = NULL,
+            updated_at = NOW()
+        WHERE uuid = #{jobUUID}
+        AND type = 'webhook_delivery'
+    </update>
+
+    <update id="Fail" result="exec">
+        UPDATE jobs
+        SET status = #{params.Status},
+            locked_by = NULL,
+            locked_until = NULL,
+            run_after = #{params.RunAfter},
+            updated_at = NOW(),
+            attempts = #{params.Attempts},
+            payload = payload || jsonb_build_object('last_error', CAST(#{params.Reason,sensitive=true} AS text))
+        WHERE uuid = #{params.JobUUID}
+        AND type = 'webhook_delivery'
+    </update>
+</mapper>

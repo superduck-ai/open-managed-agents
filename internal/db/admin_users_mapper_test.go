@@ -74,7 +74,7 @@ func TestAdminUserMapperFindPageAnchorByExternalID(t *testing.T) {
 			organizationUUID,
 			"user_anchor",
 		)
-		if err != nil || found || anchor.UUID != uuid.Nil {
+		if err != nil || found || anchor.UUID != "" {
 			t.Fatalf("FindPageAnchorByExternalID() = (%+v, %t, %v), want zero, false, nil", anchor, found, err)
 		}
 		assertMapperTestExecution(
@@ -98,7 +98,7 @@ func TestAdminUserMapperFindPageAnchorByExternalID(t *testing.T) {
 			organizationUUID,
 			"user_anchor",
 		)
-		if err != nil || !found || anchor.UUID != userUUID || !anchor.CreatedAt.Equal(addedAt) {
+		if err != nil || !found || anchor.UUID != userUUID.String() || !anchor.CreatedAt.Equal(addedAt) {
 			t.Fatalf("FindPageAnchorByExternalID() = (%+v, %t, %v)", anchor, found, err)
 		}
 		assertMapperTestExecution(
@@ -175,7 +175,7 @@ func TestAdminUserMapperListPageBuildsFilters(t *testing.T) {
 	organizationUUID := "11111111-1111-4111-8111-111111111111"
 	anchor := &pagePosition{
 		CreatedAt: time.Date(2026, time.August, 5, 4, 5, 6, 0, time.UTC),
-		UUID:      uuid.MustParse("22222222-2222-4222-8222-222222222222"),
+		UUID:      "22222222-2222-4222-8222-222222222222",
 	}
 	tests := []struct {
 		name       string
@@ -328,7 +328,7 @@ func TestAdminUserMapperSoftDeleteByExternalID(t *testing.T) {
 
 func TestAdminUserMapperSoftDeleteWorkspaceMembersByUserUUID(t *testing.T) {
 	organizationUUID := "11111111-1111-4111-8111-111111111111"
-	userUUID := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	userUUID := "22222222-2222-4222-8222-222222222222"
 	wantValues := []any{organizationUUID, userUUID}
 
 	t.Run("execution error", func(t *testing.T) {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
-import { defaultWorkspace } from '../../shared/workspaces/api';
+import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from './AnalyticsPages';
@@ -143,6 +143,71 @@ describe('Analytics pages', () => {
     expect(screen.getByText('Default')).toBeTruthy();
   });
 
+  test('lists all workspaces in the logs workspace filter on the non-scoped /logs route', () => {
+    resetTestDom('https://oma.duck.ai/logs');
+
+    const extraWorkspace: Workspace = {
+      id: 'wrkspc_extra',
+      type: 'workspace',
+      name: 'Extra Workspace',
+    };
+
+    renderWithWorkspace(<LogsPage />, [defaultWorkspace, extraWorkspace]);
+
+    const workspaceSelect = screen.getByRole('combobox', { name: /Workspace/i }) as HTMLButtonElement;
+    expect(workspaceSelect.disabled).toBe(false);
+
+    fireEvent.click(workspaceSelect);
+    const listbox = screen.getByRole('listbox');
+    expect(listbox).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'All workspaces' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Default' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Extra Workspace' })).toBeTruthy();
+  });
+
+  test('disables and scopes the logs workspace filter on a scoped /workspaces/:id/logs route', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/logs');
+
+    renderWithWorkspace(<LogsPage />);
+
+    const workspaceSelect = screen.getByRole('combobox', { name: /Workspace/i }) as HTMLButtonElement;
+    expect(workspaceSelect.disabled).toBe(true);
+    expect(workspaceSelect.textContent).toContain('Default');
+  });
+
+  test('updates the scoped logs workspace filter when the route workspace id changes in place', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/wrkspc_alpha/logs');
+
+    const alphaWorkspace: Workspace = {
+      id: 'wrkspc_alpha',
+      type: 'workspace',
+      name: 'Alpha Workspace',
+    };
+    const betaWorkspace: Workspace = {
+      id: 'wrkspc_beta',
+      type: 'workspace',
+      name: 'Beta Workspace',
+    };
+    const workspaces = [alphaWorkspace, betaWorkspace];
+
+    const { rerender } = renderWithWorkspace(<LogsPage />, workspaces);
+
+    expect(screen.getByRole('combobox', { name: /Workspace/i }).textContent).toContain('Alpha Workspace');
+
+    window.history.replaceState(null, '', 'https://oma.duck.ai/workspaces/wrkspc_beta/logs');
+    rerender(
+      <WorkspaceHarness workspaces={workspaces}>
+        <LogsPage />
+      </WorkspaceHarness>,
+    );
+
+    const workspaceSelect = screen.getByRole('combobox', { name: /Workspace/i }) as HTMLButtonElement;
+    expect(workspaceSelect.disabled).toBe(true);
+    expect(workspaceSelect.textContent).toContain('Beta Workspace');
+    expect(workspaceSelect.textContent).not.toContain('Alpha Workspace');
+    expect(workspaceSelect.getAttribute('aria-label')).toContain('Beta Workspace');
+  });
+
   test('renders workspace logs with official table headers and pagination', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/logs');
 
@@ -197,24 +262,31 @@ describe('Analytics pages', () => {
   });
 });
 
-function renderWithWorkspace(children: ReactNode) {
-  return render(<WorkspaceHarness>{children}</WorkspaceHarness>);
+function renderWithWorkspace(children: ReactNode, workspaces = [defaultWorkspace]) {
+  return render(<WorkspaceHarness workspaces={workspaces}>{children}</WorkspaceHarness>);
 }
 
-function WorkspaceHarness({ children }: { children: ReactNode }) {
+function WorkspaceHarness({
+  children,
+  workspaces = [defaultWorkspace],
+}: {
+  children: ReactNode;
+  workspaces?: Workspace[];
+}) {
   const workspaceValue = useMemo<WorkspaceContextValue>(
     () => ({
       orgUuid: 'org_test',
-      workspaces: [defaultWorkspace],
-      activeWorkspace: defaultWorkspace,
-      activeWorkspaceId: defaultWorkspace.id,
+      workspaces,
+      activeWorkspace: workspaces[0] ?? defaultWorkspace,
+      activeWorkspaceId: (workspaces[0] ?? defaultWorkspace).id,
       isLoading: false,
       error: null,
       selectWorkspace: () => undefined,
       createWorkspace: async () => defaultWorkspace,
       refreshWorkspaces: async () => undefined,
     }),
-    [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [workspaces],
   );
 
   return <WorkspaceContext.Provider value={workspaceValue}>{children}</WorkspaceContext.Provider>;

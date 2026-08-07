@@ -1,80 +1,12 @@
 package db
 
 import (
-	"context"
-	"database/sql"
-	"errors"
-	"fmt"
-	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type pagePosition struct {
 	CreatedAt time.Time `db:"created_at"`
-	UUID      uuid.UUID `db:"uuid"`
-}
-
-func appendCursorFilter(
-	query string,
-	arguments map[string]any,
-	column, afterID, beforeID string,
-	cursor *pagePosition,
-) string {
-	if afterID == "" && beforeID == "" {
-		return query
-	}
-	if cursor == nil {
-		return query
-	}
-	uuidColumn := "uuid"
-	if dot := strings.LastIndex(column, "."); dot > 0 {
-		uuidColumn = column[:dot] + ".uuid"
-	}
-	if afterID != "" {
-		query += fmt.Sprintf(
-			" and (%s < :cursor_created_at or (%s = :cursor_created_at and %s < :cursor_uuid))",
-			column,
-			column,
-			uuidColumn,
-		)
-	} else {
-		query += fmt.Sprintf(
-			" and (%s > :cursor_created_at or (%s = :cursor_created_at and %s > :cursor_uuid))",
-			column,
-			column,
-			uuidColumn,
-		)
-	}
-	arguments["cursor_created_at"] = cursor.CreatedAt
-	arguments["cursor_uuid"] = cursor.UUID
-	return query
-}
-
-func getAdminRow[T any](
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	query string,
-	arguments map[string]any,
-) (T, error) {
-	var row T
-	err := namedGetContext(ctx, database, &row, query, arguments)
-	if errors.Is(err, sql.ErrNoRows) {
-		return row, ErrNotFound
-	}
-	return row, err
-}
-
-func selectAdminRows[T any](
-	ctx context.Context,
-	database sqlxNamedQueryer,
-	query string,
-	arguments map[string]any,
-) ([]T, error) {
-	var rows []T
-	err := namedSelectContext(ctx, database, &rows, query, arguments)
-	return rows, err
+	UUID      string    `db:"uuid"`
 }
 
 func trimAdminPage[T any](items []T, limit int) []T {

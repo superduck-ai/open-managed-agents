@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +17,8 @@ import (
 )
 
 // TestTypedUUIDAuthAndAdminPostgres is intentionally backed by PostgreSQL.
-// It exercises both sqlx's native UUID binding/scanning and the string-based
-// HTTP protocol boundary used by API key authentication and Admin responses.
+// It exercises Mapper UUID binding/scanning and the string-based HTTP protocol
+// boundary used by API key authentication and Admin responses.
 func TestTypedUUIDAuthAndAdminPostgres(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("typed-uuid-auth-admin"))
 	defer app.close()
@@ -194,6 +195,96 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	if prompt.OrgUUID != ids.OrganizationUUID || prompt.WorkspaceUUID != ids.WorkspaceUUID {
 		t.Fatalf("Workbench prompt UUIDs = (%s, %s), want (%s, %s)", prompt.OrgUUID, prompt.WorkspaceUUID, ids.OrganizationUUID, ids.WorkspaceUUID)
 	}
+
+	if err := app.db.UpsertWorkbenchRevision(ctx, platform.WorkbenchRevisionRecord{
+		OrgUUID:      ids.OrganizationUUID,
+		PromptUUID:   promptID,
+		RevisionUUID: revisionID,
+		Payload:      map[string]any{"model": "test"},
+	}); err != nil {
+		t.Fatalf("upsert Workbench revision: %v", err)
+	}
+	revision, err := app.db.GetWorkbenchRevision(ctx, ids.OrganizationUUID, promptID, revisionID)
+	if err != nil {
+		t.Fatalf("get Workbench revision = (%+v, %v)", revision, err)
+	}
+	if revision.Payload["model"] != "test" {
+		t.Fatalf("Workbench revision payload = %+v", revision.Payload)
+	}
+
+	kvRecord := platform.WorkbenchKVRecord{
+		OrgUUID:    ids.OrganizationUUID,
+		PromptUUID: promptID,
+		Key:        "model",
+		Value:      "test",
+		Version:    map[string]any{"number": 1},
+	}
+	if err := app.db.UpsertWorkbenchKV(ctx, kvRecord); err != nil {
+		t.Fatalf("upsert Workbench key value: %v", err)
+	}
+	keyValue, err := app.db.GetWorkbenchKV(ctx, ids.OrganizationUUID, promptID, kvRecord.Key)
+	if err != nil {
+		t.Fatalf("get Workbench key value = (%+v, %v)", keyValue, err)
+	}
+	version, versionOK := keyValue.Version.(map[string]any)
+	if !versionOK || version["number"] != float64(1) {
+		t.Fatalf("get Workbench key value = (%+v, %v)", keyValue, err)
+	}
+	kvRecord.Version = nil
+	if err := app.db.UpsertWorkbenchKV(ctx, kvRecord); err != nil {
+		t.Fatalf("upsert Workbench key value with nullable version: %v", err)
+	}
+	keyValue, err = app.db.GetWorkbenchKV(ctx, ids.OrganizationUUID, promptID, kvRecord.Key)
+	if err != nil {
+		t.Fatalf("get Workbench key value with nullable version = (%+v, %v)", keyValue, err)
+	}
+	if keyValue.Version != nil {
+		t.Fatalf("get Workbench key value with nullable version = (%+v, %v)", keyValue, err)
+	}
+
+	evaluationID := "evaluation_typed_uuid_" + uuid.NewString()
+	if err := app.db.UpsertWorkbenchEvaluation(ctx, platform.WorkbenchEvaluationRecord{
+		OrgUUID:        ids.OrganizationUUID,
+		RevisionUUID:   revisionID,
+		EvaluationUUID: evaluationID,
+		Payload:        map[string]any{"score": 1},
+	}); err != nil {
+		t.Fatalf("upsert Workbench evaluation: %v", err)
+	}
+	revisionIDs, err := app.db.ListWorkbenchEvaluationRevisionIDs(ctx, ids.OrganizationUUID)
+	if err != nil || !slices.Contains(revisionIDs, revisionID) {
+		t.Fatalf("list Workbench evaluation revision IDs = (%+v, %v)", revisionIDs, err)
+	}
+	evaluations, err := app.db.ListWorkbenchEvaluations(ctx, ids.OrganizationUUID, revisionID)
+	if err != nil || len(evaluations) != 1 || evaluations[0].EvaluationUUID != evaluationID {
+		t.Fatalf("list Workbench evaluations = (%+v, %v)", evaluations, err)
+	}
+	evaluation, err := app.db.GetWorkbenchEvaluation(ctx, ids.OrganizationUUID, evaluationID)
+	if err != nil {
+		t.Fatalf("get Workbench evaluation = (%+v, %v)", evaluation, err)
+	}
+	if evaluation.Payload["score"] != float64(1) {
+		t.Fatalf("get Workbench evaluation = (%+v, %v)", evaluation, err)
+	}
+	deletedEvaluation, err := app.db.DeleteWorkbenchEvaluation(ctx, ids.OrganizationUUID, evaluationID)
+	if err != nil {
+		t.Fatalf("delete Workbench evaluation = (%+v, %v)", deletedEvaluation, err)
+	}
+	if deletedEvaluation.EvaluationUUID != evaluationID {
+		t.Fatalf("delete Workbench evaluation = (%+v, %v)", deletedEvaluation, err)
+	}
+
+	generatedValues := map[string]any{"input": "value", "expected": "result"}
+	if err := app.db.AppendWorkbenchGeneratedTestCase(ctx, ids.OrganizationUUID, generatedValues); err != nil {
+		t.Fatalf("append Workbench generated test case: %v", err)
+	}
+	takenValues, found, err := app.db.TakeWorkbenchGeneratedTestCase(ctx, ids.OrganizationUUID, map[string]any{"input": nil})
+	if err != nil || !found || takenValues["expected"] != "result" {
+		t.Fatalf("take Workbench generated test case = (%+v, %t, %v)", takenValues, found, err)
+	}
+	if err := app.db.DeleteWorkbenchKV(ctx, ids.OrganizationUUID, promptID, kvRecord.Key); err != nil {
+		t.Fatalf("delete Workbench key value: %v", err)
+	}
 }
 
 func containsConsoleAPIKey(keys []platform.ConsoleAPIKey, keyID string, status string) bool {
@@ -308,6 +399,34 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		Limit:           10,
 	}); err != nil || len(versions) != 1 || versions[0].UUID != skillVersion.UUID {
 		t.Fatalf("list Skill versions through typed UUID rows = (%+v, %v)", versions, err)
+	}
+	updatedSkill, secondSkillVersion, err := app.db.CreateSkillVersion(
+		ctx,
+		ids.WorkspaceUUID,
+		skillID,
+		db.SkillVersion{
+			UUID:                uuid.NewString(),
+			ExternalID:          "skillver_typed_uuid_second_" + suffix,
+			Version:             "2.0.0",
+			Name:                "typed-uuid-v2",
+			Description:         "PostgreSQL UUID boundary second version",
+			Directory:           "typed-uuid",
+			S3Bucket:            "test",
+			S3Key:               "typed-uuid/second/" + suffix,
+			SizeBytes:           2,
+			SHA256:              "typed-uuid-v2",
+			CreatedByAPIKeyUUID: ids.APIKeyUUID,
+			CreatedAt:           now.Add(time.Second),
+		},
+	)
+	if err != nil || updatedSkill.LatestVersion == nil || *updatedSkill.LatestVersion != secondSkillVersion.Version {
+		t.Fatalf("create second Skill version = (%+v, %+v, %v)", updatedSkill, secondSkillVersion, err)
+	}
+	if loaded, err := app.db.GetSkillVersion(ctx, ids.WorkspaceUUID, skillID, skillVersion.Version); err != nil || loaded.UUID != skillVersion.UUID {
+		t.Fatalf("get Skill version through string UUID mapper parameters = (%+v, %v)", loaded, err)
+	}
+	if latest, err := app.db.GetLatestSkillVersion(ctx, ids.WorkspaceUUID, skillID); err != nil || latest.UUID != secondSkillVersion.UUID {
+		t.Fatalf("get latest Skill version through string UUID mapper parameters = (%+v, %v)", latest, err)
 	}
 
 	environmentID := "env_typed_uuid_" + suffix
@@ -528,6 +647,19 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 
 	if loadedSkill, err := app.db.GetSkill(ctx, ids.WorkspaceUUID, skillID); err != nil || loadedSkill.UUID != skill.UUID {
 		t.Fatalf("get Skill through typed UUID row = (%+v, %v)", loadedSkill, err)
+	}
+	deletedVersion, latestVersion, err := app.db.SoftDeleteSkillVersion(
+		ctx,
+		ids.WorkspaceUUID,
+		skillID,
+		secondSkillVersion.Version,
+	)
+	if err != nil || deletedVersion.UUID != secondSkillVersion.UUID || latestVersion == nil || *latestVersion != skillVersion.Version {
+		t.Fatalf("soft delete Skill version = (%+v, %+v, %v)", deletedVersion, latestVersion, err)
+	}
+	deletedSkill, deletedVersions, err := app.db.SoftDeleteSkill(ctx, ids.WorkspaceUUID, skillID)
+	if err != nil || deletedSkill.UUID != skill.UUID || len(deletedVersions) != 1 || deletedVersions[0].UUID != skillVersion.UUID {
+		t.Fatalf("soft delete Skill = (%+v, %+v, %v)", deletedSkill, deletedVersions, err)
 	}
 }
 

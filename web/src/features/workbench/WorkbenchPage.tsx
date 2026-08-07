@@ -2270,7 +2270,7 @@ export function WorkbenchPage() {
           </div>
 
           <TabsContent value="prompt" className="mt-0 min-h-0">
-            <div className="workbench-header-actions">
+            <div className="workbench-header-actions workbench-header-actions-prompt">
               <Button type="button" variant="outline" size="lg" className="bg-transparent px-4" onClick={openCodeModal}>
                 Get Code
               </Button>

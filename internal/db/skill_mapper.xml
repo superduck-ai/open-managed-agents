@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="SkillMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        workspace_uuid,
+        created_by_api_key_uuid,
+        display_title,
+        latest_version,
+        source,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <select id="FindExternalIDByDisplayTitle" result="optional" resultType="string">
+        SELECT external_id
+        FROM skills
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND display_title = #{displayTitle}
+        AND deleted_at IS NULL
+        LIMIT 1
+    </select>
+
+    <insert id="Insert" result="returning" resultType="skillRow">
+        INSERT INTO skills (
+            uuid,
+            external_id,
+            workspace_uuid,
+            created_by_api_key_uuid,
+            display_title,
+            latest_version,
+            source,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.DisplayTitle},
+            #{params.LatestVersion},
+            'custom',
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="skillRow">
+        SELECT
+        <include refid="columns"/>
+        FROM skills
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="FindForUpdateByExternalID" resultType="skillRow">
+        SELECT
+        <include refid="columns"/>
+        FROM skills
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="ListPage" resultType="skillRow">
+        SELECT
+        <include refid="columns"/>
+        FROM skills
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="FindUUIDByExternalID" result="scalar">
+        SELECT uuid
+        FROM skills
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <update id="UpdateLatestVersionByExternalID" result="returning" resultType="skillRow">
+        UPDATE skills
+        SET latest_version = #{params.LatestVersion},
+            updated_at = #{params.UpdatedAt}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="SoftDeleteByUUID" result="returning" resultType="skillRow">
+        UPDATE skills
+        SET deleted_at = NOW(),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{skillUUID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <update id="UpdateLatestVersionByUUID" result="exec">
+        UPDATE skills
+        SET latest_version = #{latestVersion},
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND uuid = #{skillUUID}
+    </update>
+</mapper>

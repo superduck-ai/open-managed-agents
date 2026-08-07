@@ -29,7 +29,7 @@ func (d *DB) CreateAdminInvite(ctx context.Context, invite AdminInvite) (AdminIn
 	mapper := NewAdminInviteMapper(d.mapperDB)
 	created, err := mapper.Insert(ctx, insertAdminInviteParams{
 		ExternalID:       invite.ExternalID,
-		OrganizationUUID: invite.OrganizationUUID,
+		OrganizationUUID: invite.OrganizationUUID.String(),
 		Email:            invite.Email,
 		Role:             invite.Role,
 		Status:           invite.Status,

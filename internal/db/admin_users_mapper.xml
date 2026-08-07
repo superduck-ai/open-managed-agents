@@ -82,4 +82,17 @@
         AND user_uuid = #{userUUID}
         AND deleted_at IS NULL
     </update>
+
+    <insert id="SeedDefault" result="returning" resultType="string">
+        INSERT INTO users (external_id, organization_uuid, email, name, role)
+        VALUES (#{externalID}, #{organizationUUID}, #{email}, #{name}, 'admin')
+        ON CONFLICT (external_id) DO UPDATE SET
+            organization_uuid = excluded.organization_uuid,
+            email = excluded.email,
+            name = excluded.name,
+            role = excluded.role,
+            deleted_at = NULL,
+            updated_at = NOW()
+        RETURNING uuid
+    </insert>
 </mapper>

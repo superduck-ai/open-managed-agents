@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { type EnvironmentApiResponse, type EnvironmentEditValues } from '../types';
-import { environmentConfigBody, environmentEditValues } from './model';
+import { type DeploymentApiResponse, type EnvironmentApiResponse, type EnvironmentEditValues } from '../types';
+import { environmentConfigBody, environmentEditValues, statusPillTone } from './model';
 
 function editValues(overrides: Partial<EnvironmentEditValues>): EnvironmentEditValues {
   return {
@@ -31,6 +31,33 @@ function apiEnvironment(config: unknown): EnvironmentApiResponse {
     updated_at: '2026-07-19T00:00:00Z',
   };
 }
+
+function apiDeployment(): DeploymentApiResponse {
+  return {
+    id: 'deployment_test',
+    agent: 'agent_test',
+    archived_at: null,
+    created_at: '2026-07-19T00:00:00Z',
+    environment_id: 'env_test',
+    name: 'deployment',
+    status: 'active',
+    type: 'deployment',
+    updated_at: '2026-07-19T00:00:00Z',
+  };
+}
+
+describe('statusPillTone', () => {
+  test('keeps deployment active and archived resource statuses neutral', () => {
+    expect(statusPillTone('deployments', apiDeployment())).toBe('neutral');
+    expect(statusPillTone('environments', { ...apiEnvironment({ type: 'cloud' }), archived_at: '2026-07-20' })).toBe(
+      'neutral',
+    );
+  });
+
+  test('uses success for active resources', () => {
+    expect(statusPillTone('environments', apiEnvironment({ type: 'cloud' }))).toBe('success');
+  });
+});
 
 describe('environmentConfigBody limited networking', () => {
   test('normalizes messy allowed hosts text into a deduped ordered array', () => {

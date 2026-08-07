@@ -242,9 +242,14 @@ function CreateAgentDialogContent({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
+      {/* grid-rows-1 forces the single grid row to fill the fixed height, so the
+          inner flex h-full container resolves to a real height. Without it the
+          auto grid track makes h-full collapse to content height, and the config
+          editor + Create button get clipped by overflow-hidden when the Starting
+          Point panel is expanded. */}
       <DialogContent
         aria-label={msg('managedAgents.agents.createLabel', 'Create agent')}
-        className="h-[calc(100dvh-2rem)] max-w-[880px] overflow-hidden rounded-[22px] p-0 sm:max-w-[calc(100vw-2rem)] xl:max-w-[880px]"
+        className="grid-rows-1 h-[calc(100dvh-2rem)] max-w-[880px] overflow-hidden rounded-[22px] p-0 sm:max-w-[calc(100vw-2rem)] xl:max-w-[880px]"
         showCloseButton={false}
       >
         <div className="flex h-full min-h-0 flex-col text-foreground">
@@ -506,7 +511,7 @@ export function CreateAgentTemplateCard({
 
 function startingPointContainerClass(open: boolean) {
   return clsx(
-    'mt-4 overflow-hidden',
+    'mt-4 shrink-0 overflow-hidden',
     open ? 'rounded-xl border border-border/70 bg-card/60 shadow-sm' : 'border-b border-border/70',
   );
 }

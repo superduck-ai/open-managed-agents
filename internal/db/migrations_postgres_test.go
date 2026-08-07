@@ -12,8 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/jmoiron/sqlx"
 	"github.com/pressly/goose/v3"
+	"github.com/superduck-ai/yourbatis"
 )
 
 const migrationBackfillFixtureSQL = `
@@ -339,7 +339,8 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 		t.Fatalf("load migrated Session tenant IDs: %v", err)
 	}
 	createdAt := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
-	created, err := createSessionResourceSQLX(ctx, sqlx.NewDb(database, "pgx"), SessionResource{
+	mapperDB := yourbatis.NewDB(database, yourbatis.DialectPostgres, yourbatis.WithDatabaseID("postgres"))
+	created, err := createSessionResource(ctx, mapperDB, SessionResource{
 		UUID:              "50000000-0000-0000-0000-000000000099",
 		ExternalID:        "sesrsc_runtime_after_uuid_migration",
 		OrganizationUUID:  organizationUUID,

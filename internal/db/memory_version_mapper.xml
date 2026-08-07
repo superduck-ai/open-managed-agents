@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="MemoryVersionMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        memory_store_uuid,
+        memory_store_external_id,
+        memory_uuid,
+        memory_external_id,
+        operation,
+        path,
+        content_size_bytes,
+        content_sha256,
+        s3_bucket,
+        s3_key,
+        created_by_actor_type,
+        created_by_api_key_uuid,
+        created_by_api_key_external_id,
+        created_by_session_id,
+        created_by_user_id,
+        redacted_at,
+        redacted_by_actor_type,
+        redacted_by_api_key_uuid,
+        redacted_by_api_key_external_id,
+        redacted_by_session_id,
+        redacted_by_user_id,
+        created_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="memoryVersionRow">
+        INSERT INTO memory_versions (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            memory_store_uuid,
+            memory_store_external_id,
+            memory_uuid,
+            memory_external_id,
+            operation,
+            path,
+            content_size_bytes,
+            content_sha256,
+            s3_bucket,
+            s3_key,
+            created_by_actor_type,
+            created_by_api_key_uuid,
+            created_by_api_key_external_id,
+            created_by_session_id,
+            created_by_user_id,
+            created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.MemoryStoreUUID},
+            #{params.MemoryStoreExternalID},
+            #{params.MemoryUUID},
+            #{params.MemoryExternalID},
+            #{params.Operation},
+            #{params.Path},
+            #{params.ContentSizeBytes},
+            #{params.ContentSHA256},
+            #{params.S3Bucket},
+            #{params.S3Key},
+            #{params.CreatedByActorType},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.CreatedByAPIKeyExternalID},
+            #{params.CreatedBySessionID},
+            #{params.CreatedByUserID},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="memoryVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM memory_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_external_id = #{memoryStoreExternalID}
+        AND external_id = #{versionExternalID}
+    </select>
+
+    <select id="FindForUpdate" resultType="memoryVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM memory_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_external_id = #{memoryStoreExternalID}
+        AND external_id = #{versionExternalID}
+        FOR UPDATE
+    </select>
+
+    <select id="ListPage" resultType="memoryVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM memory_versions
+        <where>
+            workspace_uuid = #{params.WorkspaceUUID}
+            AND memory_store_external_id = #{params.MemoryStoreExternalID}
+            <if test="params.MemoryExternalID != ''">
+                AND memory_external_id = #{params.MemoryExternalID}
+            </if>
+            <if test="params.Operation != ''">
+                AND operation = #{params.Operation}
+            </if>
+            <if test="params.APIKeyExternalID != ''">
+                AND created_by_api_key_external_id = #{params.APIKeyExternalID}
+            </if>
+            <if test="params.SessionID != ''">
+                AND created_by_session_id = #{params.SessionID}
+            </if>
+            <if test="params.HasCreatedAtGTE">
+                AND created_at &gt;= #{params.CreatedAtGTE}
+            </if>
+            <if test="params.HasCreatedAtLTE">
+                AND created_at &lt;= #{params.CreatedAtLTE}
+            </if>
+            <if test="params.HasCursor">
+                AND (
+                    created_at &lt; #{params.CursorCreatedAt}
+                    OR (created_at = #{params.CursorCreatedAt} AND uuid &lt; #{params.CursorUUID})
+                )
+            </if>
+        </where>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.Limit}
+    </select>
+
+    <select id="ListObjectRefsByStoreUUID" resultType="memoryObjectRefRow">
+        SELECT workspace_uuid,
+            COALESCE(s3_bucket, '') AS bucket,
+            COALESCE(s3_key, '') AS key,
+            external_id AS resource_id
+        FROM memory_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_uuid = #{storeUUID}
+        AND s3_key IS NOT NULL
+    </select>
+
+    <update id="RedactByExternalID" result="returning" resultType="memoryVersionRow">
+        UPDATE memory_versions
+        SET path = NULL,
+            content_size_bytes = NULL,
+            content_sha256 = NULL,
+            s3_bucket = NULL,
+            s3_key = NULL,
+            redacted_at = #{params.RedactedAt},
+            redacted_by_actor_type = #{params.RedactedByActorType},
+            redacted_by_api_key_uuid = #{params.RedactedByAPIKeyUUID},
+            redacted_by_api_key_external_id = #{params.RedactedByAPIKeyExternalID},
+            redacted_by_session_id = #{params.RedactedBySessionID},
+            redacted_by_user_id = #{params.RedactedByUserID}
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND memory_store_external_id = #{params.MemoryStoreExternalID}
+        AND external_id = #{params.VersionExternalID}
+        RETURNING
+        <include refid="columns"/>
+    </update>
+
+    <delete id="DeleteByStoreUUID" result="exec">
+        DELETE FROM memory_versions
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND memory_store_uuid = #{storeUUID}
+    </delete>
+</mapper>

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WorkbenchEvaluationMapper">
+    <sql id="columns">
+        e.organization_uuid,
+        e.revision_uuid,
+        e.evaluation_uuid,
+        CAST(e.payload AS text) AS payload_json,
+        e.created_at,
+        e.updated_at
+    </sql>
+
+    <sql id="returningColumns">
+        organization_uuid,
+        revision_uuid,
+        evaluation_uuid,
+        CAST(payload AS text) AS payload_json,
+        created_at,
+        updated_at
+    </sql>
+
+    <select id="ListRevisionIDs" resultType="workbenchEvaluationRevisionRow">
+        SELECT DISTINCT revision_uuid
+        FROM workbench_evaluations
+        WHERE organization_uuid = #{organizationUUID}
+        ORDER BY revision_uuid ASC
+    </select>
+
+    <select id="ListByRevision" resultType="workbenchEvaluationRow">
+        SELECT
+        <include refid="columns"/>
+        FROM workbench_evaluations e
+        JOIN workbench_prompt_revisions r ON r.uuid = e.revision_ref_uuid
+        WHERE e.organization_uuid = #{organizationUUID}
+        AND r.revision_uuid = #{revisionUUID}
+        ORDER BY e.created_at ASC, e.uuid ASC
+    </select>
+
+    <select id="Find" resultType="workbenchEvaluationRow">
+        SELECT
+        <include refid="columns"/>
+        FROM workbench_evaluations e
+        WHERE e.organization_uuid = #{organizationUUID}
+        AND e.evaluation_uuid = #{evaluationUUID}
+        LIMIT 1
+    </select>
+
+    <insert id="Upsert" result="rows">
+        WITH target_revision AS (
+            SELECT uuid
+            FROM workbench_prompt_revisions
+            WHERE organization_uuid = #{params.OrganizationUUID}
+            AND revision_uuid = #{params.RevisionUUID}
+            ORDER BY created_at DESC, uuid DESC
+            LIMIT 1
+        )
+        INSERT INTO workbench_evaluations (
+            organization_uuid,
+            revision_ref_uuid,
+            revision_uuid,
+            evaluation_uuid,
+            payload,
+            created_at,
+            updated_at
+        )
+        SELECT
+            #{params.OrganizationUUID},
+            target_revision.uuid,
+            #{params.RevisionUUID},
+            #{params.EvaluationUUID},
+            CAST(#{params.PayloadJSON,sensitive=true} AS jsonb),
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        FROM target_revision
+        ON CONFLICT (organization_uuid, evaluation_uuid) DO UPDATE SET
+            revision_ref_uuid = EXCLUDED.revision_ref_uuid,
+            revision_uuid = EXCLUDED.revision_uuid,
+            payload = EXCLUDED.payload,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+    <delete id="Delete" result="returning" resultType="workbenchEvaluationRow">
+        DELETE FROM workbench_evaluations e
+        WHERE e.organization_uuid = #{organizationUUID}
+        AND e.evaluation_uuid = #{evaluationUUID}
+        RETURNING
+        <include refid="returningColumns"/>
+    </delete>
+
+    <delete id="DeleteByOrganization" result="exec">
+        DELETE FROM workbench_evaluations
+        WHERE organization_uuid = #{organizationUUID}
+    </delete>
+</mapper>

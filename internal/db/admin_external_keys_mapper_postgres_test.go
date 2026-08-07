@@ -92,7 +92,7 @@ func TestAdminExternalKeyMapperPostgreSQL(t *testing.T) {
 		createdAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 		created, createErr := mapper.Insert(ctx, insertAdminExternalKeyParams{
 			ExternalID:       "key_mapper_fixture",
-			OrganizationUUID: uuid.MustParse(organizationUUID),
+			OrganizationUUID: organizationUUID,
 			DisplayName:      "Mapper external key",
 			Geo:              "us",
 			ProviderConfig:   json.RawMessage(`{"type":"aws","region":"us-east-1"}`),

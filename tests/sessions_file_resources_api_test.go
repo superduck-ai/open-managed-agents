@@ -285,14 +285,14 @@ func TestSessionFileResourceContract(t *testing.T) {
 		if len(created.Resources) != 1 {
 			t.Fatalf("created resources = %d, want 1", len(created.Resources))
 		}
-		assertFileResourcePayload(t, created.Resources[0], file.ID, "/uploads", "/"+file.ID)
+		assertFileResourcePayload(t, created.Resources[0], file.ID, "/uploads/"+file.Filename)
 		createdResourceID := assertSessionFileReference(
 			t,
 			app,
 			created.ID,
 			created.Resources[0],
 			file.ID,
-			"/uploads/"+file.ID,
+			"/uploads/"+file.Filename,
 		)
 		scopedFiles := listFiles(t, app, "scope_id="+created.ID)
 		if len(scopedFiles.Data) != 1 {
@@ -342,7 +342,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 		}
 		var added json.RawMessage
 		decodeJSON(t, resp.Body, &added)
-		assertFileResourcePayload(t, added, file.ID, "/uploads", "/workspace/data.csv")
+		assertFileResourcePayload(t, added, file.ID, "/uploads/workspace/data.csv")
 		addedResourceID := assertSessionFileReference(
 			t,
 			app,
@@ -453,6 +453,26 @@ func TestSessionFileResourceContract(t *testing.T) {
 		scopedFiles = listFiles(t, app, "scope_id="+created.ID)
 		if len(scopedFiles.Data) != 1 {
 			t.Fatalf("scoped files after resource delete = %+v, want one remaining input", scopedFiles.Data)
+		}
+	})
+
+	t.Run("success github repository defaults to repository name", func(t *testing.T) {
+		created := createSession(t, app, `{`+base+`,"resources":[{
+			"type":"github_repository",
+			"url":"https://github.com/example/widgets.git"
+		}]}`)
+		defer deleteSession(t, app, created.ID)
+		if len(created.Resources) != 1 {
+			t.Fatalf("created resources = %d, want 1", len(created.Resources))
+		}
+		var resource struct {
+			MountPath string `json:"mount_path"`
+		}
+		if err := json.Unmarshal(created.Resources[0], &resource); err != nil {
+			t.Fatalf("decode github repository resource: %v", err)
+		}
+		if resource.MountPath != "/workspace/widgets" {
+			t.Fatalf("github repository mount_path = %q, want /workspace/widgets", resource.MountPath)
 		}
 	})
 
@@ -1593,18 +1613,24 @@ func TestCreateSessionResourceFileLimitIsAtomic(t *testing.T) {
 	}
 }
 
-func assertFileResourcePayload(t *testing.T, raw json.RawMessage, sourceFileID, source, mountPath string) {
+func assertFileResourcePayload(t *testing.T, raw json.RawMessage, sourceFileID, mountPath string) {
 	t.Helper()
 	var payload struct {
 		FileID    string `json:"file_id"`
-		Source    string `json:"source"`
 		MountPath string `json:"mount_path"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("decode file resource: %v", err)
 	}
-	if payload.FileID != sourceFileID || payload.Source != source || payload.MountPath != mountPath {
-		t.Fatalf("file resource = %+v, want Source File %q, source=%q mount_path=%q", payload, sourceFileID, source, mountPath)
+	if payload.FileID != sourceFileID || payload.MountPath != mountPath {
+		t.Fatalf("file resource = %+v, want Source File %q, mount_path=%q", payload, sourceFileID, mountPath)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("decode file resource fields: %v", err)
+	}
+	if _, ok := fields["source"]; ok {
+		t.Fatalf("file resource contains non-Anthropic source field: %s", raw)
 	}
 }
 

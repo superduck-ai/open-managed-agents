@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ConsoleWorkspaceMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid AS org_uuid,
+        name,
+        display_color AS display_color,
+        display_color AS color,
+        data_residency,
+        external_key_id,
+        tags,
+        archived_at,
+        created_at,
+        updated_at
+    </sql>
+
+    <insert id="Upsert" result="returning" resultType="consoleWorkspaceRow">
+        WITH org AS (
+            SELECT uuid
+            FROM organizations
+            WHERE uuid = #{params.OrgUUID}
+            LIMIT 1
+        )
+        INSERT INTO workspaces (
+            uuid,
+            external_id,
+            organization_uuid,
+            name,
+            compartment_id,
+            display_color,
+            data_residency,
+            tags
+        )
+        SELECT
+            #{params.UUID},
+            #{params.ExternalID},
+            org.uuid,
+            #{params.Name},
+            #{params.ExternalID},
+            #{params.DisplayColor},
+            CAST(#{params.DataResidency} AS jsonb),
+            CAST('{}' AS jsonb)
+        FROM org
+        ON CONFLICT (organization_uuid, name) DO UPDATE SET
+            display_color = excluded.display_color,
+            data_residency = excluded.data_residency,
+            archived_at = NULL,
+            updated_at = NOW()
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="List" resultType="consoleWorkspaceRow">
+        SELECT
+        <include refid="columns"/>
+        FROM workspaces
+        WHERE organization_uuid = #{orgUUID}
+        <if test="!includeArchived">
+            AND archived_at IS NULL
+        </if>
+        ORDER BY name ASC, uuid ASC
+    </select>
+</mapper>

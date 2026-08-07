@@ -64,7 +64,7 @@ func (h *Handler) serveUpstreamProxyMITM(connection *websocket.Conn, target stri
 	if err := clientConnection.HandshakeContext(handshakeContext); err != nil {
 		return
 	}
-	_ = serveUpstreamProxyMITMHTTP(clientConnection, transport, target, targetHost)
+	_ = h.serveUpstreamProxyMITMHTTP(clientConnection, transport, target, targetHost)
 }
 
 func newUpstreamProxyMITMServerTLSConfig(authority *upstreamProxyCertificateAuthority, targetHost string, now time.Time) (*tls.Config, error) {
@@ -156,7 +156,7 @@ func newUpstreamProxyMITMTransport(dialer *upstreamProxyMITMTLSDialer) *http.Tra
 	}
 }
 
-func serveUpstreamProxyMITMHTTP(connection net.Conn, transport http.RoundTripper, target string, targetHost string) error {
+func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http.RoundTripper, target string, targetHost string) error {
 	targetURL := &url.URL{Scheme: "https", Host: target}
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
@@ -181,6 +181,14 @@ func serveUpstreamProxyMITMHTTP(connection net.Conn, transport http.RoundTripper
 			http.Error(w, "request host does not match CONNECT target", http.StatusMisdirectedRequest)
 			return
 		}
+		logURL := *targetURL
+		logURL.Path = request.URL.Path
+		logURL.RawPath = request.URL.RawPath
+		h.logger.InfoContext(request.Context(), "upstream proxy request received",
+			"host", targetHost,
+			"port", targetURL.Port(),
+			"url", logURL.String(),
+		)
 		proxy.ServeHTTP(w, request)
 	})
 	listener := newUpstreamProxySingleConnectionListener(connection)

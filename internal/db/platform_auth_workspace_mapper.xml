@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAuthWorkspaceMapper">
+    <insert id="Insert" result="returning" resultType="string">
+        INSERT INTO workspaces (uuid, external_id, organization_uuid, name, compartment_id)
+        VALUES (#{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID},
+            #{params.Name}, #{params.CompartmentID})
+        RETURNING uuid
+    </insert>
+</mapper>

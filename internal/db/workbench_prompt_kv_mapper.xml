@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WorkbenchPromptKVMapper">
+    <sql id="columns">
+        k.organization_uuid,
+        k.prompt_uuid,
+        k.key,
+        k.value,
+        CAST(k.version AS text) AS version_json,
+        k.created_at,
+        k.updated_at
+    </sql>
+
+    <select id="Find" resultType="workbenchKVRow">
+        SELECT
+        <include refid="columns"/>
+        FROM workbench_prompt_kv k
+        JOIN workbench_prompts p ON p.uuid = k.prompt_ref_uuid
+        WHERE k.organization_uuid = #{organizationUUID}
+        AND p.prompt_uuid = #{promptUUID}
+        AND k.key = #{key}
+        LIMIT 1
+    </select>
+
+    <insert id="Upsert" result="rows">
+        WITH target_prompt AS (
+            SELECT uuid
+            FROM workbench_prompts
+            WHERE organization_uuid = #{params.OrganizationUUID}
+            AND prompt_uuid = #{params.PromptUUID}
+            LIMIT 1
+        )
+        INSERT INTO workbench_prompt_kv (
+            organization_uuid,
+            prompt_ref_uuid,
+            prompt_uuid,
+            key,
+            value,
+            version,
+            created_at,
+            updated_at
+        )
+        SELECT
+            #{params.OrganizationUUID},
+            target_prompt.uuid,
+            #{params.PromptUUID},
+            #{params.Key},
+            #{params.Value,sensitive=true},
+            CAST(#{params.VersionJSON,sensitive=true} AS jsonb),
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        FROM target_prompt
+        ON CONFLICT (organization_uuid, prompt_ref_uuid, key) DO UPDATE SET
+            value = EXCLUDED.value,
+            version = EXCLUDED.version,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+    <delete id="Delete" result="exec">
+        DELETE FROM workbench_prompt_kv k
+        USING workbench_prompts p
+        WHERE p.uuid = k.prompt_ref_uuid
+        AND k.organization_uuid = #{organizationUUID}
+        AND p.prompt_uuid = #{promptUUID}
+        AND k.key = #{key}
+    </delete>
+
+    <delete id="DeleteByPromptRefUUID" result="exec">
+        DELETE FROM workbench_prompt_kv
+        WHERE prompt_ref_uuid = #{promptRefUUID}
+    </delete>
+</mapper>

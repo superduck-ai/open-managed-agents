@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EnvironmentKeyMapper">
+    <insert id="Upsert" result="exec">
+        INSERT INTO environment_keys (
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            environment_uuid,
+            environment_external_id,
+            key_hash,
+            status
+        ) VALUES (
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.EnvironmentUUID},
+            #{params.EnvironmentExternalID},
+            #{params.KeyHash,sensitive=true},
+            'active'
+        )
+        ON CONFLICT (external_id) DO UPDATE SET
+            organization_uuid = EXCLUDED.organization_uuid,
+            workspace_uuid = EXCLUDED.workspace_uuid,
+            environment_uuid = EXCLUDED.environment_uuid,
+            environment_external_id = EXCLUDED.environment_external_id,
+            key_hash = EXCLUDED.key_hash,
+            status = 'active'
+    </insert>
+
+    <select id="FindAndTouchByHash" resultType="environmentKeyMapperRow">
+        WITH updated AS (
+            UPDATE environment_keys
+            SET last_used_at = NOW()
+            WHERE key_hash = #{keyHash,sensitive=true}
+            AND status = 'active'
+            RETURNING
+                uuid,
+                external_id,
+                organization_uuid,
+                workspace_uuid,
+                environment_uuid,
+                environment_external_id
+        )
+        SELECT
+            updated.uuid,
+            updated.external_id,
+            updated.organization_uuid,
+            updated.workspace_uuid,
+            workspaces.external_id AS workspace_external_id,
+            updated.environment_uuid,
+            updated.environment_external_id
+        FROM updated
+        JOIN workspaces ON workspaces.uuid = updated.workspace_uuid
+    </select>
+</mapper>

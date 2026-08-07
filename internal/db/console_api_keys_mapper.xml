@@ -55,16 +55,6 @@
         AND archived_at IS NULL
     </select>
 
-    <select id="CreatorExists" result="scalar">
-        SELECT EXISTS (
-            SELECT 1
-            FROM users u
-            WHERE u.organization_uuid = #{organizationUUID}
-            AND u.uuid = #{userUUID}
-            AND u.deleted_at IS NULL
-        )
-    </select>
-
     <insert id="Insert" result="returning" resultMap="consoleAPIKeyResult">
         INSERT INTO console_api_keys (
             external_id,

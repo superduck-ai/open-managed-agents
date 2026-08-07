@@ -19,7 +19,7 @@ Environment Runner 在创建 cloud managed-agent Sandbox 前完成：
    在当前 workspace 内从 `skills` / `skill_versions` 解析版本。
 3. `latest` 在启动时解析为具体 active version row。后续 catalog 的 latest 变化不会改变
    已启动 Session 的视图。
-4. 在一只 `sqlx.Tx` 中通过生成的 Session Resource/File Mapper 锁定 filesystem 和 namespace，确保 `/skills` 固定根存在，
+4. 在一只 Yourbatis 事务中通过生成的 Session Resource/File Mapper 锁定 filesystem 和 namespace，确保 `/skills` 固定根存在，
    并原子替换该 Session 中 `resource_type=skill_archive` 的内部 Resource 集合。
    替换时旧的 Resource 与 File 快照统一写入 `deleted_at`；每个新 Resource 通过 `file_uuid`
    指向一条固化解析结果的 ZIP File。

@@ -1809,7 +1809,11 @@ export function registerManagedAgentsResourceTests() {
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
 
-    expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
+    const detailHeader = (await screen.findByRole('heading', { name: 'Environment one' })).closest(
+      'header',
+    ) as HTMLElement;
+    expect(within(detailHeader).getByText('Cloud')).toBeTruthy();
+    expect(within(detailHeader).getByText('Active').className).toContain('status-success');
     const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
     expect(breadcrumb.dataset.slot).toBe('breadcrumb');
     expect(within(breadcrumb).getByRole('link', { name: 'Environments' }).getAttribute('href')).toBe(

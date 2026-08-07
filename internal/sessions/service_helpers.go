@@ -14,6 +14,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
 	"github.com/google/uuid"
@@ -153,14 +154,19 @@ func (h *Handler) resourceFromFields(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		_, err = h.db.GetFile(r.Context(), session.WorkspaceUUID, fileID)
+		file, err := h.db.GetFile(r.Context(), session.WorkspaceUUID, fileID)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return normalizedSessionResource{}, db.ErrFileReferenceNotFound
 			}
 			return normalizedSessionResource{}, err
 		}
-		fileSpec, err := sessionresource.NormalizeFileSpec(fileID, fields["source"], fields["mount_path"])
+		fileSpec, err := sessionresource.NormalizeFileSpec(
+			fileID,
+			file.Filename,
+			fields["source"],
+			fields["mount_path"],
+		)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
@@ -171,7 +177,11 @@ func (h *Handler) resourceFromFields(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		mountPath, err := optionalStringWithDefault(fields["mount_path"], "/workspace/repository", "mount_path")
+		mountPath, err := optionalStringWithDefault(
+			fields["mount_path"],
+			sessionresource.DefaultGitHubRepositoryMountPath(url),
+			"mount_path",
+		)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
@@ -484,6 +494,14 @@ func responseFromResource(resource db.SessionResource) json.RawMessage {
 	}
 	payload["id"] = resource.ExternalID
 	payload["type"] = resource.ResourceType
+	if resource.ResourceType == sessionresource.FileType {
+		delete(payload, "source")
+		if mountPath, ok := payload["mount_path"].(string); ok {
+			if publicMountPath, err := sandboxmount.FileBackingPath(mountPath); err == nil {
+				payload["mount_path"] = publicMountPath
+			}
+		}
+	}
 	payload["created_at"] = httpapi.FormatTime(resource.CreatedAt)
 	payload["updated_at"] = httpapi.FormatTime(resource.UpdatedAt)
 	raw, _ := json.Marshal(payload)

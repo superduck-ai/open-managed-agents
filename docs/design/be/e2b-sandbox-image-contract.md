@@ -39,7 +39,7 @@ ready 后镜像内必须呈现：
 /root/.claude/skills         # readonly virtual archive tree
 ```
 
-File resource 不新增独立 FUSE mount，也不创建逐文件软链接。`mount_path` 始终解释为 `/uploads` namespace 下的路径；resource 写事务已经在当前 Session 的 `filesystem_id` 下插入借用 Files 对象的数据库 entry，rclone 只负责把这个权威 namespace 整体只读挂载到 `/mnt/session/uploads`。例如 `/uploads/workspace/data.csv` 在 Sandbox 中通过 `/mnt/session/uploads/workspace/data.csv` 访问。镜像、Runner 和 Environment Manager 都不负责下载、复制、调和或投影单个 File resource，Runner 也不再把 `type=file` resource 转发给 Environment Manager。
+File resource 不新增独立 FUSE mount，也不创建逐文件软链接。resource 写事务已经在当前 Session 的 `filesystem_id` 下插入借用 Files 对象的数据库 entry，rclone 只负责把 `/uploads` 权威 namespace 整体只读挂载到 `/mnt/session/uploads`。显式请求 `mount_path=/workspace/data.csv` 会映射为 Filestore 与公开响应中的 `/uploads/workspace/data.csv`；省略时优先使用 `/uploads/<filename>`，文件名为空时回退到 `/uploads/<file_id>`。镜像、Runner 和 Environment Manager 都不负责下载、复制、调和或投影单个 File resource，Runner 也不再把 `type=file` resource 转发给 Environment Manager。
 
 同一 `filesystem_id` 的 namespace 在 mount 存活期间继续由数据库维护。运行中增删 File resource 不重建 FUSE mount；现有 Sandbox 在 `/uploads` 的 `1s` metadata cache 刷新后读取到新的 namespace 状态。
 

@@ -1,9 +1,12 @@
 import { expect, test } from 'bun:test';
+import { EditorSelection } from '@codemirror/state';
 import {
   ManagedAgentsPage,
   WorkspaceContext,
   act,
   cleanup,
+  type CodeMirrorTestElement,
+  codeBlockContaining,
   createAgentRequestFixture,
   fireEvent,
   mockAgentsApi,
@@ -73,6 +76,7 @@ export function registerManagedAgentsAgentsTests() {
     const startingPointButton = within(dialog).getByRole('button', { name: /^Starting point$/i });
     expect(startingPointButton.getAttribute('data-slot')).toBe('collapsible-trigger');
     expect(startingPointButton.parentElement?.parentElement?.className).toContain('rounded-xl');
+    expect(startingPointButton.parentElement?.parentElement?.className).toContain('shrink-0');
     expect(startingPointButton.className).toContain('items-center');
     expect(startingPointButton.getAttribute('aria-expanded')).toBe('true');
     expect(within(dialog).getByRole('tab', { name: 'Rendered' }).getAttribute('aria-selected')).toBe('true');
@@ -92,6 +96,19 @@ export function registerManagedAgentsAgentsTests() {
     expect(yamlEditor.closest('.agent-config-codemirror')?.getAttribute('style')).toContain(
       '--agent-config-editor-min-height: 0px',
     );
+    // drawSelection is disabled so CodeMirror must not paint its own
+    // .cm-selectionLayer, nor inject hideNativeSelection (which forces the OS
+    // Highlight color on ::selection while focused and inverts the syntax
+    // foreground). Regression guard for the jarring selected-text color.
+    expect(yamlEditor.closest('.cm-editor')?.querySelector('.cm-selectionLayer')).toBeNull();
+    const editorView = (yamlEditor as CodeMirrorTestElement).__agentConfigCodeMirrorView;
+    expect(editorView).toBeTruthy();
+    act(() => {
+      editorView?.dispatch({
+        selection: EditorSelection.create([EditorSelection.cursor(0), EditorSelection.cursor(1)]),
+      });
+    });
+    expect(editorView?.state.selection.ranges).toHaveLength(1);
 
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Template' }));
 
@@ -171,6 +188,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(dialog).queryByRole('button', { name: /Structured extractor/i })).toBeNull();
     expect(dialog.className).toContain('h-[calc(100dvh-2rem)]');
     expect(dialog.className).toContain('max-w-[880px]');
+    expect(dialog.className).toContain('grid-rows-1');
     expect(dialog.firstElementChild?.className).toContain('flex-col');
 
     fireEvent.click(within(dialog).getByRole('tab', { name: 'JSON' }));

@@ -59,17 +59,20 @@ func (d *DB) CreateFileIfWithinLimit(ctx context.Context, f FileRecord, workspac
 }
 
 func (d *DB) GetFile(ctx context.Context, workspaceUUID string, fileExternalID string) (FileRecord, error) {
-	row, err := NewFileMapper(d.mapperDB).GetFile(ctx, workspaceUUID, fileExternalID)
+	mapper := NewFileMapper(d.mapperDB)
+	row, err := mapper.GetFile(ctx, workspaceUUID, fileExternalID)
 	return fileRecordFromMapperRow(row, err)
 }
 
 func (d *DB) GetFileByUUID(ctx context.Context, workspaceUUID string, fileUUID string) (FileRecord, error) {
-	row, err := NewFileMapper(d.mapperDB).GetFileByUUID(ctx, workspaceUUID, fileUUID)
+	mapper := NewFileMapper(d.mapperDB)
+	row, err := mapper.GetFileByUUID(ctx, workspaceUUID, fileUUID)
 	return fileRecordFromMapperRow(row, err)
 }
 
 func (d *DB) GetFileByUUIDInOrganization(ctx context.Context, organizationUUID string, fileUUID string) (FileRecord, error) {
-	row, err := NewFileMapper(d.mapperDB).GetFileByUUIDInOrganization(
+	mapper := NewFileMapper(d.mapperDB)
+	row, err := mapper.GetFileByUUIDInOrganization(
 		ctx,
 		organizationUUID,
 		fileUUID,
@@ -169,7 +172,8 @@ func withFileCreateTransaction(
 	fn func(yourbatis.Executor) error,
 ) error {
 	return database.Transaction(ctx, func(executor yourbatis.Executor) error {
-		if err := NewWorkspaceStorageUsageMapper(executor).LockWorkspace(ctx, workspaceUUID); err != nil {
+		storageMapper := NewWorkspaceStorageUsageMapper(executor)
+		if err := storageMapper.LockWorkspace(ctx, workspaceUUID); err != nil {
 			return err
 		}
 		return fn(executor)
@@ -177,7 +181,8 @@ func withFileCreateTransaction(
 }
 
 func insertFileTx(ctx context.Context, tx yourbatis.Executor, file FileRecord) error {
-	return NewFileMapper(tx).InsertFile(ctx, fileMapperRecordParameters(file))
+	mapper := NewFileMapper(tx)
+	return mapper.InsertFile(ctx, fileMapperRecordParameters(file))
 }
 
 func listFilesPage(
@@ -197,7 +202,7 @@ func listFilesPage(
 		return nil, false, err
 	}
 	mapperParams.HasCursor = mapperParams.CursorExternalID != ""
-	mapperParams.CursorUUID = cursor.UUID.String()
+	mapperParams.CursorUUID = cursor.UUID
 	mapperParams.CursorCreatedAt = cursor.CreatedAt
 	mapperParams.Limit = params.Limit + 1
 	mapperParams.Before = params.BeforeID != ""
@@ -306,7 +311,8 @@ func enqueueObjectCleanupResourceJob(
 	if err != nil {
 		return fmt.Errorf("encode object cleanup job payload: %w", err)
 	}
-	return NewFileMapper(database).EnqueueObjectCleanupJob(ctx, workspaceUUID, payload)
+	mapper := NewFileMapper(database)
+	return mapper.EnqueueObjectCleanupJob(ctx, workspaceUUID, payload)
 }
 
 func leaseObjectCleanupJobs(
@@ -318,7 +324,8 @@ func leaseObjectCleanupJobs(
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := NewFileMapper(database).LeaseObjectCleanupJobs(ctx, workerID, limit)
+	mapper := NewFileMapper(database)
+	rows, err := mapper.LeaseObjectCleanupJobs(ctx, workerID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +340,8 @@ func leaseObjectCleanupJobs(
 }
 
 func completeObjectCleanupJob(ctx context.Context, database yourbatis.Executor, jobUUID string) error {
-	return NewFileMapper(database).CompleteObjectCleanupJob(ctx, jobUUID)
+	mapper := NewFileMapper(database)
+	return mapper.CompleteObjectCleanupJob(ctx, jobUUID)
 }
 
 func failObjectCleanupJob(
@@ -350,7 +358,8 @@ func failObjectCleanupJob(
 	if nextAttempts >= maxAttempts {
 		status = "failed"
 	}
-	return NewFileMapper(database).FailObjectCleanupJob(ctx, objectCleanupJobFailureParams{
+	mapper := NewFileMapper(database)
+	return mapper.FailObjectCleanupJob(ctx, objectCleanupJobFailureParams{
 		JobUUID:  jobUUID,
 		Status:   status,
 		RunAfter: time.Now().UTC().Add(retryDelay),

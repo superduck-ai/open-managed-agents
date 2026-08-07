@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ConsoleUserMapper">
+    <sql id="memberColumns">
+        u.uuid AS user_uuid,
+        u.email,
+        NULLIF(u.name, '') AS full_name,
+        u.role,
+        u.added_at
+    </sql>
+
+    <select id="ExistsActiveByUUID" result="scalar">
+        SELECT EXISTS (
+            SELECT 1
+            FROM users
+            WHERE organization_uuid = #{orgUUID}
+            AND uuid = #{userUUID}
+            AND deleted_at IS NULL
+        )
+    </select>
+
+    <select id="ListOrganizationMembers" resultType="consoleMemberRow">
+        SELECT
+        <include refid="memberColumns"/>
+        FROM users u
+        WHERE u.organization_uuid = #{orgUUID}
+        AND u.deleted_at IS NULL
+        ORDER BY u.added_at ASC, u.uuid ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="UpdateOrganizationRole" result="returning" resultType="consoleMemberRow">
+        UPDATE users u
+        SET role = #{params.Role},
+            updated_at = NOW()
+        WHERE u.organization_uuid = #{params.OrgUUID}
+        AND u.deleted_at IS NULL
+        AND (
+            u.external_id = #{params.UserID}
+            OR 'user_' || LEFT(REPLACE(CAST(u.uuid AS text), '-', ''), 24) = #{params.UserID}
+            <if test="params.UserUUID != ''">
+                OR u.uuid = #{params.UserUUID}
+            </if>
+        )
+        RETURNING
+        <include refid="memberColumns"/>
+    </update>
+
+    <update id="SoftDeleteOrganizationMember" result="rows">
+        UPDATE users u
+        SET deleted_at = COALESCE(u.deleted_at, NOW()),
+            updated_at = NOW()
+        WHERE u.organization_uuid = #{params.OrgUUID}
+        AND u.deleted_at IS NULL
+        AND (
+            u.external_id = #{params.UserID}
+            OR 'user_' || LEFT(REPLACE(CAST(u.uuid AS text), '-', ''), 24) = #{params.UserID}
+            <if test="params.UserUUID != ''">
+                OR u.uuid = #{params.UserUUID}
+            </if>
+        )
+    </update>
+
+    <select id="FindBootstrapContext" resultType="bootstrapUserContextRow">
+        SELECT
+            u.external_id AS user_external_id,
+            u.organization_uuid AS org_uuid
+        FROM users u
+        WHERE u.deleted_at IS NULL
+        <if test="preferredOrgUUID != ''">
+            AND u.organization_uuid = #{preferredOrgUUID}
+        </if>
+        ORDER BY CASE WHEN u.external_id = 'user_default' THEN 0 ELSE 1 END,
+            u.added_at ASC,
+            u.uuid ASC
+        LIMIT 1
+    </select>
+
+    <select id="FindBootstrapUser" resultType="bootstrapUserRow">
+        SELECT
+            u.uuid,
+            u.external_id,
+            u.email,
+            NULLIF(u.name, '') AS full_name,
+            NULLIF(u.name, '') AS display_name,
+            true AS is_verified,
+            true AS age_is_verified,
+            u.added_at AS created_at
+        FROM users u
+        WHERE u.deleted_at IS NULL
+        AND (
+            u.external_id = #{userExternalID}
+            OR 'user_' || LEFT(REPLACE(CAST(u.uuid AS text), '-', ''), 24) = #{userExternalID}
+            <if test="userUUID != ''">
+                OR u.uuid = #{userUUID}
+            </if>
+        )
+        ORDER BY u.added_at ASC, u.uuid ASC
+        LIMIT 1
+    </select>
+
+    <select id="ListBootstrapOrganizations" resultType="consoleOrganizationRow">
+        SELECT
+            o.uuid,
+            o.name,
+            CAST(NULL AS text) AS domain,
+            CAST(NULL AS uuid) AS parent_organization_uuid,
+            COALESCE(o.settings, CAST('{}' AS jsonb)) AS settings,
+            o.created_at,
+            o.updated_at,
+            u.role,
+            u.added_at
+        FROM users u
+        JOIN organizations o ON o.uuid = u.organization_uuid
+        WHERE u.deleted_at IS NULL
+        AND (
+            u.external_id = #{userExternalID}
+            OR 'user_' || LEFT(REPLACE(CAST(u.uuid AS text), '-', ''), 24) = #{userExternalID}
+            <if test="userUUID != ''">
+                OR u.uuid = #{userUUID}
+            </if>
+        )
+        ORDER BY
+        <if test="preferredOrgUUID != ''">
+            CASE WHEN o.uuid = #{preferredOrgUUID} THEN 0 ELSE 1 END,
+        </if>
+            u.added_at ASC,
+            u.uuid ASC
+    </select>
+</mapper>

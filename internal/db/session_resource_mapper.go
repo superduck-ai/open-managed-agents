@@ -8,6 +8,11 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper SessionResourceMapper -sql ./session_resource_mapper.xml -out ./session_resource_mapper.sqlmap.gen.go -dialect postgres
 
 type SessionResourceMapper interface {
+	Insert(ctx context.Context, params sessionResourceWriteParams) (sessionResourceRow, error)
+	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)
+	List(ctx context.Context, workspaceUUID, sessionExternalID string) ([]sessionResourceRow, error)
+	Update(ctx context.Context, params sessionResourceUpdateParams) (sessionResourceRow, error)
+	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	CountSessionFileResources(ctx context.Context, workspaceUUID, sessionExternalID, resourceType string) (int, error)
 	FindMountConflict(ctx context.Context, params sessionResourcePathParams) (string, bool, error)
 	BindSessionFileResource(ctx context.Context, params sessionFileResourceBindingParams) (sessionResourceRow, error)
@@ -29,6 +34,41 @@ type SessionResourceMapper interface {
 
 	RetireSkillArchiveResources(ctx context.Context, params sessionSkillArchiveRetireParams) error
 	InsertSkillArchiveResource(ctx context.Context, params sessionSkillArchiveInsertParams) error
+}
+
+type sessionResourceRow struct {
+	UUID              string     `db:"uuid"`
+	ExternalID        string     `db:"external_id"`
+	OrganizationUUID  string     `db:"organization_uuid"`
+	WorkspaceUUID     string     `db:"workspace_uuid"`
+	SessionUUID       string     `db:"session_uuid"`
+	SessionExternalID string     `db:"session_external_id"`
+	ResourceType      string     `db:"resource_type"`
+	Payload           []byte     `db:"payload"`
+	SecretPayload     []byte     `db:"secret_payload"`
+	CreatedAt         time.Time  `db:"created_at"`
+	UpdatedAt         time.Time  `db:"updated_at"`
+	DeletedAt         *time.Time `db:"deleted_at"`
+}
+
+type sessionResourceWriteParams struct {
+	UUID              string
+	ExternalID        string
+	OrganizationUUID  string
+	WorkspaceUUID     string
+	SessionExternalID string
+	ResourceType      string
+	Payload           []byte
+	SecretPayload     []byte
+	CreatedAt         time.Time
+}
+
+type sessionResourceUpdateParams struct {
+	WorkspaceUUID      string
+	SessionExternalID  string
+	ResourceExternalID string
+	Payload            []byte
+	SecretPayload      []byte
 }
 
 type sessionResourcePathParams struct {

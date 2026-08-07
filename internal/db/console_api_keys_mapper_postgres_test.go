@@ -12,7 +12,6 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 
-	"github.com/google/uuid"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -46,19 +45,20 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 
 	fixture := seedConsoleAPIKeyMapperPostgreSQLFixture(t, ctx, tx)
 	consoleMapper := NewConsoleAPIKeyMapper(tx)
+	userMapper := NewConsoleUserMapper(tx)
 	adminMapper := NewAdminAPIKeyMapper(tx)
 
 	t.Run("failure does not resolve a creator from another organization", func(t *testing.T) {
-		found, findErr := consoleMapper.CreatorExists(
+		found, findErr := userMapper.ExistsActiveByUUID(
 			ctx,
 			fixture.otherOrganizationUUID,
 			fixture.creatorUUID,
 		)
 		if findErr != nil {
-			t.Fatalf("CreatorExists() error = %v", findErr)
+			t.Fatalf("ExistsActiveByUUID() error = %v", findErr)
 		}
 		if found {
-			t.Fatal("CreatorExists() = true, want false")
+			t.Fatal("ExistsActiveByUUID() = true, want false")
 		}
 	})
 
@@ -75,16 +75,16 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 	})
 
 	t.Run("success creates lists counts and archives both API key records", func(t *testing.T) {
-		found, findErr := consoleMapper.CreatorExists(
+		found, findErr := userMapper.ExistsActiveByUUID(
 			ctx,
 			fixture.organizationUUID,
 			fixture.creatorUUID,
 		)
 		if findErr != nil || !found {
-			t.Fatalf("CreatorExists() = (%t, %v), want true, nil", found, findErr)
+			t.Fatalf("ExistsActiveByUUID() = (%t, %v), want true, nil", found, findErr)
 		}
 
-		apiKeyUUID := uuid.MustParse("55555555-5555-4555-8555-555555555555")
+		apiKeyUUID := "55555555-5555-4555-8555-555555555555"
 		expiresAt := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 		creatorUUID := fixture.creatorUUID
 		creator := &creatorUUID
@@ -106,7 +106,7 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 		}
 		if row.ID != fixture.apiKeyExternalID ||
 			!row.CreatedByUserUUID.Valid ||
-			row.CreatedByUserUUID.UUID.String() != fixture.creatorUUID ||
+			row.CreatedByUserUUID.String != fixture.creatorUUID ||
 			row.ExpiresAt == nil {
 			t.Fatalf("Insert() row = %+v", row)
 		}
@@ -145,7 +145,7 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 		if updateErr != nil || updated.Status != "archived" || updated.ArchivedAt == nil {
 			t.Fatalf("UpdateStatus() = (%+v, %v)", updated, updateErr)
 		}
-		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, apiKeyUUID.String(), "archived")
+		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, apiKeyUUID, "archived")
 		if updateErr != nil || rowsAffected != 1 {
 			t.Fatalf("AdminAPIKeyMapper.UpdateStatusByUUID() = (%d, %v), want 1", rowsAffected, updateErr)
 		}
@@ -160,6 +160,7 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 
 	for _, expected := range []string{
 		`component=database`,
+		`statement=ConsoleUserMapper.ExistsActiveByUUID`,
 		`statement=ConsoleAPIKeyMapper.List`,
 		`statement=AdminAPIKeyMapper.UpdateStatusByUUID`,
 	} {

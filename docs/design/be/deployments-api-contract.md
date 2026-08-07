@@ -23,7 +23,7 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 - 元数据最多包含 16 个键；每个键最多 64 个字符，每个值最多 512 个字符。
 - `user.message.content` 是至少包含一个受支持内容块的数组；`system.message` 只接受至少一个文本块，最多出现一次，并且必须作为最后一个事件紧跟在 `user.message` 之后；`user.define_outcome.rubric` 必须是文件或文本评分标准对象。
 - GitHub 资源必须提供只写的 `authorization_token`；Memory Store 的 `instructions` 必须是最多 4096 个字符的字符串。
-- File 资源响应会省略内部字段 `source`；请求未传 `mount_path` 时，响应使用 `/uploads/<file_id>`，显式传入的挂载路径保持不变。
+- File 资源响应会省略内部字段 `source`，并把 `mount_path` 统一映射到 `/uploads` 命名空间；请求未传 `mount_path` 时默认使用 `/uploads/<filename>`（文件名缺失时回退到 `file_id`），显式传入的挂载路径也映射为 `/uploads/<相对路径>`，与 Session 资源响应一致。
 - 创建或更新 Deployment 时引用不存在的 File 返回 `404 not_found_error`。
 - Deployment 更新请求中的元数据使用字符串（包括空字符串）新增或覆盖键，使用键级别的 `null` 删除键。
 - Deployment 更新请求拒绝整个字段为 `metadata: null`；省略 `metadata` 时保留原值，传入 `{}` 时不做修改。

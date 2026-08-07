@@ -3,15 +3,13 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper AdminInviteMapper -sql ./admin_organization_invites_mapper.xml -out ./admin_organization_invites_mapper.sqlmap.gen.go -dialect postgres
 
 type insertAdminInviteParams struct {
 	ExternalID       string
-	OrganizationUUID uuid.UUID
+	OrganizationUUID string
 	Email            string
 	Role             string
 	Status           string

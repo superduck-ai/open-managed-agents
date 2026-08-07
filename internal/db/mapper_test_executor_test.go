@@ -30,13 +30,38 @@ type mapperTestExecutor struct {
 	execCallCount  int
 }
 
+type sqlTxMapperExecutor struct {
+	transaction *sql.Tx
+}
+
+func (executor sqlTxMapperExecutor) Dialect() yourbatis.Dialect {
+	return yourbatis.DialectPostgres
+}
+
+func (executor sqlTxMapperExecutor) Query(
+	ctx context.Context,
+	_ yourbatis.Statement,
+	bound yourbatis.BoundSQL,
+) (*sql.Rows, error) {
+	return executor.transaction.QueryContext(ctx, bound.SQL, bound.Values()...)
+}
+
+func (executor sqlTxMapperExecutor) Exec(
+	ctx context.Context,
+	_ yourbatis.Statement,
+	bound yourbatis.BoundSQL,
+) (sql.Result, error) {
+	return executor.transaction.ExecContext(ctx, bound.SQL, bound.Values()...)
+}
+
 type mapperBuilderContract struct {
-	statement         yourbatis.Statement
-	bound             yourbatis.BoundSQL
-	wantID            string
-	wantKind          yourbatis.StatementKind
-	wantArgumentNames []string
-	wantSQLFragments  []string
+	statement                  yourbatis.Statement
+	bound                      yourbatis.BoundSQL
+	wantID                     string
+	wantKind                   yourbatis.StatementKind
+	wantArgumentNames          []string
+	wantSensitiveArgumentNames []string
+	wantSQLFragments           []string
 }
 
 type mapperExecutionErrorContract struct {
@@ -60,20 +85,28 @@ func assertMapperBuilderContract(t *testing.T, contract mapperBuilderContract) {
 		t.Fatal("mapper statement source is empty")
 	}
 	argumentNames := make([]string, 0, len(contract.bound.Args))
+	var sensitiveArgumentNames []string
 	for _, argument := range contract.bound.Args {
 		argumentNames = append(argumentNames, argument.Name)
 		if argument.Sensitive {
-			t.Fatalf("mapper argument %q is unexpectedly marked sensitive", argument.Name)
+			sensitiveArgumentNames = append(sensitiveArgumentNames, argument.Name)
 		}
 	}
 	if !reflect.DeepEqual(argumentNames, contract.wantArgumentNames) {
 		t.Fatalf("mapper argument names = %#v, want %#v", argumentNames, contract.wantArgumentNames)
 	}
+	if !reflect.DeepEqual(sensitiveArgumentNames, contract.wantSensitiveArgumentNames) {
+		t.Fatalf(
+			"mapper sensitive argument names = %#v, want %#v",
+			sensitiveArgumentNames,
+			contract.wantSensitiveArgumentNames,
+		)
+	}
 	if strings.Contains(contract.bound.SQL, "#{") || strings.Contains(contract.bound.SQL, "::") {
 		t.Fatalf("mapper SQL retains unsupported placeholder or cast syntax: %q", contract.bound.SQL)
 	}
 	for _, fragment := range contract.wantSQLFragments {
-		if !strings.Contains(contract.bound.SQL, fragment) {
+		if !containsMapperSQL(contract.bound.SQL, fragment) {
 			t.Fatalf("mapper SQL = %q, want fragment %q", contract.bound.SQL, fragment)
 		}
 	}
@@ -158,10 +191,17 @@ func assertMapperTestExecution(
 		t.Fatalf("mapper arguments = %#v, want %#v", values, wantValues)
 	}
 	for _, fragment := range wantSQLFragments {
-		if !strings.Contains(executor.bound.SQL, fragment) {
+		if !containsMapperSQL(executor.bound.SQL, fragment) {
 			t.Fatalf("mapper SQL = %q, want fragment %q", executor.bound.SQL, fragment)
 		}
 	}
+}
+
+func containsMapperSQL(sql, fragment string) bool {
+	return strings.Contains(
+		strings.Join(strings.Fields(sql), " "),
+		strings.Join(strings.Fields(fragment), " "),
+	)
 }
 
 type mapperTestConnector struct {

@@ -3,19 +3,17 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper AdminAPIKeyMapper -sql ./admin_api_keys_mapper.xml -out ./admin_api_keys_mapper.sqlmap.gen.go -dialect postgres
 
 type adminAPIKeyPageAnchor struct {
 	CreatedAt time.Time `db:"created_at"`
-	UUID      uuid.UUID `db:"uuid"`
+	UUID      string    `db:"uuid"`
 }
 
 type insertAdminAPIKeyParams struct {
-	UUID              uuid.UUID
+	UUID              string
 	ExternalID        string
 	WorkspaceUUID     string
 	KeyHash           string
@@ -23,6 +21,23 @@ type insertAdminAPIKeyParams struct {
 	Name              string
 	PartialKeyHint    string
 	ExpiresAt         *time.Time
+}
+
+type seedAdminAPIKeyParams struct {
+	ExternalID        string
+	WorkspaceUUID     string
+	KeyHash           string
+	CreatedByUserUUID string
+	Name              string
+	PartialKeyHint    string
+}
+
+type apiKeyAuthRow struct {
+	UUID                string `db:"uuid"`
+	ExternalID          string `db:"external_id"`
+	OrganizationUUID    string `db:"organization_uuid"`
+	WorkspaceUUID       string `db:"workspace_uuid"`
+	WorkspaceExternalID string `db:"workspace_external_id"`
 }
 
 type AdminAPIKeyMapper interface {
@@ -35,4 +50,6 @@ type AdminAPIKeyMapper interface {
 	UpdateByExternalID(ctx context.Context, organizationUUID string, externalID string,
 		setName bool, name string, setStatus bool, status string) (int64, error)
 	UpdateStatusByUUID(ctx context.Context, apiKeyUUID string, status string) (int64, error)
+	SeedDefault(ctx context.Context, params seedAdminAPIKeyParams) error
+	FindActiveByKeyHash(ctx context.Context, keyHash string) (apiKeyAuthRow, error)
 }

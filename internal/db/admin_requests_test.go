@@ -2,12 +2,13 @@ package db
 
 import (
 	"context"
-	"reflect"
-	"strings"
+	"database/sql/driver"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/yourbatis"
 )
 
 func TestAdminRequestRowRejectsInvalidDetails(t *testing.T) {
@@ -17,41 +18,80 @@ func TestAdminRequestRowRejectsInvalidDetails(t *testing.T) {
 	}
 }
 
-func TestListAdminRequestsQueryUsesNamedPostgreSQLArguments(t *testing.T) {
-	query, arguments, err := bindNamed(postgresRebinder{}, listAdminRequestsSQL, map[string]any{
-		"org_uuid":     "11111111-1111-1111-1111-111111111111",
-		"request_type": "join_org",
-		"status":       "pending",
-		"limit":        25,
+func TestAdminRequestMapperBuilderContract(t *testing.T) {
+	params := listAdminRequestsParams{
+		OrgUUID:     "11111111-1111-4111-8111-111111111111",
+		RequestType: "join_org",
+		Status:      "pending",
+		Limit:       25,
+	}
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: adminRequestMapperListStatement,
+		bound:     buildAdminRequestMapperList(yourbatis.DialectPostgres, params),
+		wantID:    "AdminRequestMapper.List",
+		wantKind:  yourbatis.StatementSelect,
+		wantArgumentNames: []string{
+			"params.OrgUUID", "params.RequestType", "params.Status", "params.Limit",
+		},
+		wantSQLFragments: []string{
+			"FROM admin_requests ar",
+			"u.organization_uuid = ar.org_uuid",
+			"ar.org_uuid = $1",
+			"ar.request_type = $2",
+			"ar.status = $3",
+			"LIMIT $4",
+		},
 	})
-	if err != nil {
-		t.Fatalf("bindNamed() error = %v", err)
-	}
-	wantArguments := []any{
-		"11111111-1111-1111-1111-111111111111",
-		"join_org",
-		"pending",
-		25,
-	}
-	if !reflect.DeepEqual(arguments, wantArguments) {
-		t.Fatalf("bindNamed() arguments = %#v, want %#v", arguments, wantArguments)
-	}
-	if strings.Contains(query, "::") {
-		t.Fatalf("bindNamed() query contains PostgreSQL shorthand cast: %q", query)
-	}
-	for _, clause := range []string{
-		"where ar.org_uuid = $1",
-		"and ar.request_type = $2",
-		"and ar.status = $3",
-		"limit $4",
-	} {
-		if !strings.Contains(query, clause) {
-			t.Fatalf("bindNamed() query does not contain %q: %q", clause, query)
-		}
-	}
 }
 
-func TestListAdminRequestsSQLXScansPostgreSQLRows(t *testing.T) {
+func TestAdminRequestMapperResultSemantics(t *testing.T) {
+	ctx := context.Background()
+	params := listAdminRequestsParams{OrgUUID: "org", RequestType: "join_org", Status: "pending", Limit: 10}
+	createdAt := time.Date(2026, time.July, 23, 9, 30, 0, 0, time.UTC)
+
+	t.Run("query error", func(t *testing.T) {
+		wantErr := errors.New("list admin requests failed")
+		executor := newMapperTestExecutor(t, mapperTestResponse{queryErr: wantErr})
+		_, err := NewAdminRequestMapper(executor).List(ctx, params)
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("List() error = %v, want query error", err)
+		}
+	})
+
+	t.Run("string UUID and JSON row", func(t *testing.T) {
+		executor := newMapperTestExecutor(t, mapperTestResponse{
+			columns: adminRequestMapperTestColumns(),
+			rows: [][]driver.Value{{
+				"22222222-2222-4222-8222-222222222222",
+				"11111111-1111-4111-8111-111111111111",
+				"join_org",
+				"33333333-3333-4333-8333-333333333333",
+				"standard",
+				[]byte(`{"reason":"collaboration"}`),
+				"pending",
+				createdAt,
+				nil,
+				"requester@example.com",
+				"Requester",
+				"user",
+				nil,
+			}},
+		})
+		rows, err := NewAdminRequestMapper(executor).List(ctx, params)
+		if err != nil {
+			t.Fatalf("List() error = %v", err)
+		}
+		requests, conversionErr := adminRequestsFromMapperRows(rows)
+		if conversionErr != nil || len(requests) != 1 || requests[0].UUID != "22222222-2222-4222-8222-222222222222" {
+			t.Fatalf("List() = (%+v, %v)", requests, conversionErr)
+		}
+		if requests[0].RequesterUUID == nil || requests[0].Details["reason"] != "collaboration" {
+			t.Fatalf("List() request = %+v", requests[0])
+		}
+	})
+}
+
+func TestAdminRequestMapperScansPostgreSQLRows(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := config.Load()
 	if err != nil {
@@ -63,7 +103,7 @@ func TestListAdminRequestsSQLXScansPostgreSQLRows(t *testing.T) {
 	}
 	defer database.Close()
 
-	tx, err := database.sql.BeginTxx(ctx, nil)
+	tx, err := database.sql.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}
@@ -133,39 +173,54 @@ func TestListAdminRequestsSQLXScansPostgreSQLRows(t *testing.T) {
 		t.Fatalf("seed temporary admin request: %v", err)
 	}
 
-	requests, err := listAdminRequestsSQLX(ctx, tx, orgUUID, "join_org", "pending", 10)
+	mapper := NewAdminRequestMapper(sqlTxMapperExecutor{transaction: tx})
+	rows, err := mapper.List(ctx, listAdminRequestsParams{
+		OrgUUID: orgUUID, RequestType: "join_org", Status: "pending", Limit: 10,
+	})
 	if err != nil {
-		t.Fatalf("listAdminRequestsSQLX() error = %v", err)
+		t.Fatalf("AdminRequestMapper.List() error = %v", err)
+	}
+	requests, err := adminRequestsFromMapperRows(rows)
+	if err != nil {
+		t.Fatalf("adminRequestsFromMapperRows() error = %v", err)
 	}
 	if len(requests) != 1 {
-		t.Fatalf("listAdminRequestsSQLX() returned %d requests, want 1", len(requests))
+		t.Fatalf("AdminRequestMapper.List() returned %d requests, want 1", len(requests))
 	}
 	request := requests[0]
 	if request.UUID != requestUUID || request.OrgUUID != orgUUID || request.RequestType != "join_org" {
-		t.Fatalf("listAdminRequestsSQLX() identity fields = %#v", request)
+		t.Fatalf("AdminRequestMapper.List() identity fields = %#v", request)
 	}
 	if request.RequesterUUID == nil || *request.RequesterUUID != requesterUUID {
-		t.Fatalf("listAdminRequestsSQLX() requester UUID = %#v, want %q", request.RequesterUUID, requesterUUID)
+		t.Fatalf("AdminRequestMapper.List() requester UUID = %#v, want %q", request.RequesterUUID, requesterUUID)
 	}
 	if request.RequestedSeatTier == nil || *request.RequestedSeatTier != "standard" {
-		t.Fatalf("listAdminRequestsSQLX() requested seat tier = %#v, want standard", request.RequestedSeatTier)
+		t.Fatalf("AdminRequestMapper.List() requested seat tier = %#v, want standard", request.RequestedSeatTier)
 	}
 	if request.RequesterEmail == nil || *request.RequesterEmail != "requester@example.com" {
-		t.Fatalf("listAdminRequestsSQLX() requester email = %#v", request.RequesterEmail)
+		t.Fatalf("AdminRequestMapper.List() requester email = %#v", request.RequesterEmail)
 	}
 	if request.RequesterName == nil || *request.RequesterName != "Requester" {
-		t.Fatalf("listAdminRequestsSQLX() requester name = %#v", request.RequesterName)
+		t.Fatalf("AdminRequestMapper.List() requester name = %#v", request.RequesterName)
 	}
 	if request.RequesterRole == nil || *request.RequesterRole != "user" {
-		t.Fatalf("listAdminRequestsSQLX() requester role = %#v", request.RequesterRole)
+		t.Fatalf("AdminRequestMapper.List() requester role = %#v", request.RequesterRole)
 	}
 	if request.RequesterSeatTier != nil || request.ResolvedAt != nil {
-		t.Fatalf("listAdminRequestsSQLX() nullable fields = seat tier %#v, resolved at %#v", request.RequesterSeatTier, request.ResolvedAt)
+		t.Fatalf("AdminRequestMapper.List() nullable fields = seat tier %#v, resolved at %#v", request.RequesterSeatTier, request.ResolvedAt)
 	}
 	if request.Details["reason"] != "collaboration" {
-		t.Fatalf("listAdminRequestsSQLX() details = %#v", request.Details)
+		t.Fatalf("AdminRequestMapper.List() details = %#v", request.Details)
 	}
 	if !request.CreatedAt.Equal(createdAt) {
-		t.Fatalf("listAdminRequestsSQLX() created at = %v, want %v", request.CreatedAt, createdAt)
+		t.Fatalf("AdminRequestMapper.List() created at = %v, want %v", request.CreatedAt, createdAt)
+	}
+}
+
+func adminRequestMapperTestColumns() []string {
+	return []string{
+		"request_uuid", "org_uuid", "request_type", "requester_uuid",
+		"requested_seat_tier", "details", "status", "created_at", "resolved_at",
+		"requester_email", "requester_name", "requester_role", "requester_seat_tier",
 	}
 }

@@ -652,13 +652,22 @@ export type QuickstartDeploymentInput = {
   initial_message?: string;
 };
 
+export type CredentialTokenEndpointAuthType = 'none' | 'client_secret_post' | 'client_secret_basic';
+
 export type CredentialFormValues = {
   displayName: string;
-  authType: 'static_bearer' | 'environment_variable';
+  authType: 'static_bearer' | 'environment_variable' | 'mcp_oauth';
   mcpServerUrl: string;
   token: string;
   secretName: string;
   secretValue: string;
+  refreshToken: string;
+  refreshTokenEndpoint: string;
+  refreshClientId: string;
+  refreshClientSecret: string;
+  refreshAuthType: CredentialTokenEndpointAuthType;
+  oauthClientId: string;
+  oauthClientSecret: string;
 };
 
 export type MemoryFormValues = {

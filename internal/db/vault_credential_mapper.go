@@ -1,15 +1,9 @@
 package db
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"fmt"
-	"math"
-	"strings"
 	"time"
-
-	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 //go:generate go tool sqlmapgen -dir $PWD -mapper VaultCredentialMapper -sql ./vault_credential_mapper.xml -out ./vault_credential_mapper.sqlmap.gen.go -dialect postgres
@@ -99,37 +93,4 @@ type VaultCredentialMapper interface {
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (vaultCredentialRow, error)
 	DeleteByExternalID(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (int64, error)
 	ListPage(ctx context.Context, params listVaultCredentialsMapperParams) ([]vaultCredentialRow, error)
-}
-
-func vaultCredentialSecretColumns(envelope *secrets.Envelope) (ciphertext, nonce, wrappedDEK []byte, formatVersion *int32, keyProvider *string, keyVersion *int64) {
-	if envelope == nil {
-		return nil, nil, nil, nil, nil, nil
-	}
-	version := int32(envelope.FormatVersion)
-	provider := envelope.KeyProvider
-	keyVer := envelope.KeyVersion
-	return bytes.Clone(envelope.Ciphertext),
-		bytes.Clone(envelope.Nonce),
-		bytes.Clone(envelope.WrappedDEK),
-		&version,
-		&provider,
-		&keyVer
-}
-
-// requireCompleteSecretEnvelope rejects active credential writes that would
-// persist NULL or partial envelope columns. Archive clears secrets via archive SQL.
-func requireCompleteSecretEnvelope(envelope *secrets.Envelope) error {
-	if envelope == nil {
-		return fmt.Errorf("%w: missing", ErrIncompleteSecretEnvelope)
-	}
-	if len(envelope.Ciphertext) == 0 || len(envelope.Nonce) == 0 || len(envelope.WrappedDEK) == 0 {
-		return fmt.Errorf("%w: ciphertext, nonce, and wrapped_dek are required", ErrIncompleteSecretEnvelope)
-	}
-	if envelope.FormatVersion < 1 || envelope.FormatVersion > math.MaxInt32 {
-		return fmt.Errorf("%w: format_version must fit PostgreSQL integer", ErrIncompleteSecretEnvelope)
-	}
-	if strings.TrimSpace(envelope.KeyProvider) == "" || envelope.KeyVersion < 1 {
-		return fmt.Errorf("%w: key_provider and key_version are required", ErrIncompleteSecretEnvelope)
-	}
-	return nil
 }

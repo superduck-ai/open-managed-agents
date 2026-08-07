@@ -70,7 +70,7 @@ func (s *Service) Seal(ctx context.Context, binding Binding, plaintext []byte) (
 	if err != nil {
 		return Envelope{}, fmt.Errorf("secrets: generate DEK: %w", err)
 	}
-	defer wipe(dek)
+	defer clear(dek)
 
 	gcm, err := newAESGCM(dek)
 	if err != nil {
@@ -111,7 +111,7 @@ func (s *Service) Open(ctx context.Context, binding Binding, envelope Envelope) 
 	if err != nil {
 		return nil, err
 	}
-	defer wipe(dek)
+	defer clear(dek)
 
 	gcm, err := newAESGCM(dek)
 	if err != nil {
@@ -160,10 +160,4 @@ func aadBytes(b Binding, formatVersion int) []byte {
 func writePrefixString(buf *bytes.Buffer, s string) {
 	_ = binary.Write(buf, binary.BigEndian, int32(len(s)))
 	buf.WriteString(s)
-}
-
-func wipe(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }

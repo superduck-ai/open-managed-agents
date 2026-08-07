@@ -35,14 +35,16 @@ flowchart LR
 
 ### MCP 与 Tools
 
-- 添加 Directory MCP 必须原子添加 `mcp_servers` 和同名 `mcp_toolset`；删除时原子删除二者。
-- 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API。
+- “添加 MCP 服务器”沿用 CMA 官方的 Popover 与 Directory 搜索列表，并在同一 Popover 中增加“自定义 MCP”页签作为 OMA 扩展；两个页签共享同一 Draft 写入接口。
+- 添加 Directory 或自定义 MCP 必须原子添加 `mcp_servers` 和同名 `mcp_toolset`；删除时原子删除二者。自定义名称在当前 Agent 内唯一，URL 必须是合法且不含内嵌凭据或 fragment 的 HTTP/HTTPS 绝对地址。
+- 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API；自定义 MCP 在创建阶段不探测工具列表，只提供 Toolset 级权限。
 - MCP 候选项优先展示 Directory `icon_url`。若该字段是网页地址，则改用同源 favicon；加载失败后依次尝试 MCP 服务域名 favicon、公开 favicon 服务，全部失败才回退到统一的 Server 图标。图标使用懒加载，避免展开选择器时同时请求全部候选资源。
-- “添加 MCP 服务器”与“添加自定义工具”使用相同的 `36px` 高度、`14px` 字号、常规字重、间距和 Plus 图标规格。
+- Directory 加载失败不阻止使用自定义 MCP；关闭、取消或按 Escape 会丢弃尚未提交的名称和 URL，但不会关闭外层 Agent 编辑弹窗或修改 Draft。
 - 内置工具仅展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`，默认 `always_allow`；新 MCP 默认 `always_ask`。
 - 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
 - Toolset 级权限写入 `default_config` 并清空逐工具覆盖；逐工具权限与默认值一致时不保留冗余覆盖。
 - `always_deny` 规范化为 `enabled:false`；`custom` 只是聚合展示状态，不写入 API。
+- Rendered 不再提供新增 Custom Tool 的入口；Raw、模板或既有 Agent 中合法的 Custom Tool 仍可在 Rendered 中编辑和移除，并在视图往返时保留。
 - Custom Tool 名称必须唯一且符合后端命名规则，描述与 JSON object `input_schema` 必须有效。
 - Raw codec 使用与 Agents API 一致的 Tool 判别联合：MCP Server 仅接受 `type:"url"`，权限策略仅接受 `always_allow`/`always_ask`，Custom Tool 的 `input_schema.type` 必须为 `object`。
 
@@ -58,7 +60,7 @@ flowchart LR
 ## 验收
 
 - YAML 与 JSON 可往返全部支持字段，未知顶层字段和 `model.effort` 被拒绝。
-- Rendered 可完成 General、Multiagent、Skills、内置/MCP/Custom Tools 配置并创建 Agent。
+- Rendered 可完成 General、Multiagent、Skills、内置工具与 Directory/自定义 MCP 配置；既有 Custom Tool 可继续编辑和移除。
 - MCP 与 toolset 始终成对，权限聚合和 deny 序列化与运行时一致。
 - 模型、候选 Agent、Skills 和 Directory 加载失败都有可重试状态。
 - 弹窗支持键盘导航、浅深主题和窄屏单列布局。

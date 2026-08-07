@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import { createAgentConfigText, parseCreateAgentConfigText } from '../agentConfig';
 import { type AgentApiResponse, type CreateAgentInput } from '../types';
 import {
-  addCustomTool,
   addBuiltInToolset,
   addMcpServer,
   createAgentDraftSchema,
@@ -108,13 +107,76 @@ describe('create agent draft model', () => {
     ).toEqual(fullDraft.multiagent);
   });
 
-  test('adds and removes MCP server and toolset atomically', () => {
-    const withMcp = addMcpServer(baseDraft, {
-      slug: 'github',
-      displayName: 'GitHub',
-      url: 'https://api.githubcopilot.com/mcp/',
-      toolNames: ['search_code'],
+  test('rejects invalid MCP inputs without changing the draft', () => {
+    const invalid = addMcpServer(baseDraft, { name: ' ', url: 'ftp://internal.example/mcp' });
+    expect(invalid).toEqual({ ok: false, errors: { name: 'required', url: 'invalid' } });
+    expect(baseDraft.mcp_servers).toEqual([]);
+    expect(baseDraft.tools).toEqual([{ type: 'agent_toolset_20260401' }]);
+
+    expect(addMcpServer(baseDraft, { name: 'x'.repeat(256), url: `https://example.com/${'x'.repeat(2049)}` })).toEqual({
+      ok: false,
+      errors: { name: 'too_long', url: 'too_long' },
     });
+
+    for (const url of ['https://user:secret@example.com/mcp', 'https://example.com/mcp#tools']) {
+      expect(addMcpServer(baseDraft, { name: 'invalid-runtime-url', url })).toEqual({
+        ok: false,
+        errors: { url: 'invalid' },
+      });
+    }
+  });
+
+  test('rejects duplicate, conflicting, and over-limit MCP servers', () => {
+    const configuredDraft: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' }],
+      tools: [...baseDraft.tools, { type: 'mcp_toolset', mcp_server_name: 'github' }],
+    };
+    expect(addMcpServer(configuredDraft, { name: ' github ', url: 'https://example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { name: 'duplicate' },
+    });
+
+    const conflictDraft: CreateAgentInput = {
+      ...baseDraft,
+      tools: [...baseDraft.tools, { type: 'mcp_toolset', mcp_server_name: 'reserved' }],
+    };
+    expect(addMcpServer(conflictDraft, { name: 'reserved', url: 'https://example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { name: 'duplicate' },
+    });
+
+    const fullDraft: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: Array.from({ length: 20 }, (_, index) => ({
+        name: `server-${index}`,
+        type: 'url',
+        url: `https://server-${index}.example.com/mcp`,
+      })),
+      tools: [
+        ...baseDraft.tools,
+        ...Array.from({ length: 20 }, (_, index) => ({
+          type: 'mcp_toolset',
+          mcp_server_name: `server-${index}`,
+        })),
+      ],
+    };
+    expect(addMcpServer(fullDraft, { name: 'overflow', url: 'https://overflow.example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { form: 'limit' },
+    });
+  });
+
+  test('adds and removes MCP server and toolset atomically', () => {
+    const result = addMcpServer(baseDraft, {
+      name: ' github ',
+      url: 'https://api.githubcopilot.com/mcp/',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const withMcp = result.draft;
     expect(withMcp.mcp_servers).toEqual([{ name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' }]);
     expect(withMcp.tools[1]).toEqual({
       type: 'mcp_toolset',
@@ -148,13 +210,20 @@ describe('create agent draft model', () => {
     expect(setToolPermission(askBash, () => true, 'bash', 'always_allow', 'always_allow').tools[0].configs).toEqual([]);
   });
 
-  test('creates unique custom tool names and makes invalid schemas observable', () => {
-    const first = addCustomTool(baseDraft);
-    const second = addCustomTool(first);
-    expect(first.tools[1].name).toBe('new_tool');
-    expect(second.tools[2].name).toBe('new_tool_2');
-
-    const invalid = updateCustomTool(first, 1, { input_schema: '{' });
+  test('keeps invalid custom tool schemas observable without offering a create helper', () => {
+    const withCustomTool: CreateAgentInput = {
+      ...baseDraft,
+      tools: [
+        ...baseDraft.tools,
+        {
+          type: 'custom',
+          name: 'lookup',
+          description: 'Lookup data.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+    };
+    const invalid = updateCustomTool(withCustomTool, 1, { input_schema: '{' });
     const parsed = parseCreateAgentConfigText(JSON.stringify(invalid), 'JSON');
     expect(parsed.ok).toBe(false);
   });

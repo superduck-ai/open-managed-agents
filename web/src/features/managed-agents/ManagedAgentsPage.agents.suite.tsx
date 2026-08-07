@@ -162,7 +162,7 @@ export function registerManagedAgentsAgentsTests() {
     ];
 
     const openStartingPoint = () => {
-      const trigger = within(dialog).getByRole('button', { name: /^Starting point$/i });
+      const trigger = within(dialog).getByRole('button', { name: /^Starting point(?: · .+)?$/i });
       if (trigger.getAttribute('aria-expanded') === 'false') {
         fireEvent.click(trigger);
       }
@@ -180,9 +180,7 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(within(dialog).getByRole('button', { name: /Deep researcher/i }));
     expect(dialog.textContent).toContain('name: Deep researcher');
     expect(
-      within(dialog)
-        .getByRole('button', { name: /^Starting point$/i })
-        .getAttribute('aria-expanded'),
+      within(dialog).getByRole('button', { name: 'Starting point · Deep researcher' }).getAttribute('aria-expanded'),
     ).toBe('false');
     expect(within(dialog).getByText(/· Deep researcher/)).toBeTruthy();
     expect(within(dialog).queryByRole('button', { name: /Structured extractor/i })).toBeNull();
@@ -308,9 +306,7 @@ export function registerManagedAgentsAgentsTests() {
     });
     await waitFor(() => expect(dialog.textContent).toContain('PR digest'));
     expect(
-      within(dialog)
-        .getByRole('button', { name: /^Starting point$/i })
-        .getAttribute('aria-expanded'),
+      within(dialog).getByRole('button', { name: 'Starting point · PR digest' }).getAttribute('aria-expanded'),
     ).toBe('false');
     expect(dialog.textContent).toContain('PR digest');
 
@@ -385,7 +381,7 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(githubOption);
     const githubCard = within(dialog).getByText('GitHub').closest('[data-slot="card"]') as HTMLElement;
     expect(githubCard).toBeTruthy();
-    fireEvent.click(within(githubCard).getByRole('button', { name: 'Toolset permission' }));
+    fireEvent.click(within(githubCard).getByRole('button', { name: 'Tool permissions' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Always allow' }));
 
     const addMcpButton = within(dialog).getByRole('combobox', { name: 'Add MCP server' });
@@ -467,6 +463,27 @@ export function registerManagedAgentsAgentsTests() {
     ).toBe(true);
     fireEvent.click(remoteHelper);
     expect(within(dialog).getByText('Remote helper')).toBeTruthy();
+  });
+
+  test('loads skill options beyond the fifth page', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const api = mockAgentsApi([], {
+      skills: Array.from({ length: 6 }, (_, index) => ({
+        id: `skill_page_${index + 1}`,
+        displayTitle: `Paged skill ${index + 1}`,
+        latestVersion: '1',
+        source: 'custom',
+      })),
+      skillsPageSize: 1,
+    });
+    render(<ManagedAgentsPage section="agents" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add skill' }));
+
+    expect(await screen.findByRole('option', { name: /Paged skill 6/ })).toBeTruthy();
+    expect(api.requests.filter((request) => request.url.startsWith('/v1/skills?')).length).toBe(6);
   });
 
   test('opens the create dialog from the create_agent route query and consumes the query', async () => {

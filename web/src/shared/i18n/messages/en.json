@@ -398,6 +398,7 @@
   "managedAgents.agents.createDialog.builtInTools": "Built-in tools",
   "managedAgents.agents.createDialog.configFormat": "Config format",
   "managedAgents.agents.createDialog.customTool": "Custom tool",
+  "managedAgents.agents.createDialog.removeItem": "Remove {name}",
   "managedAgents.agents.createDialog.describePlaceholder": "Summarizes new GitHub PRs and posts a digest to Slack.",
   "managedAgents.agents.createDialog.description": "Start from a template or describe what you need.",
   "managedAgents.agents.createDialog.describeHint": "Generate a starter config from this description.",

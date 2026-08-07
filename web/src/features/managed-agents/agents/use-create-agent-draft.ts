@@ -7,7 +7,7 @@ export function useCreateAgentDraft(initialDraft: CreateAgentInput) {
   const [draft, setDraftState] = useState(() => normalizeCreateAgentDraft(initialDraft));
   const [view, setViewState] = useState<CreateAgentView>('rendered');
   const [format, setFormatState] = useState<CodeFormat>('YAML');
-  const [rawText, setRawText] = useState(() => createAgentConfigText(initialDraft, 'YAML'));
+  const [rawText, setRawText] = useState(() => createAgentConfigText(normalizeCreateAgentDraft(initialDraft), 'YAML'));
   const [rawError, setRawError] = useState<string | null>(null);
 
   const draftError = useMemo(() => {

@@ -31,7 +31,8 @@ export async function listCreateAgentModels(workspaceId: string): Promise<AgentM
 export async function listCreateAgentSkills(workspaceId: string): Promise<AgentSkillOption[]> {
   const rows: AgentSkillOption[] = [];
   let page: string | undefined;
-  for (let pageCount = 0; pageCount < 5; pageCount += 1) {
+  const seenPages = new Set<string>();
+  while (true) {
     const response = (await anthropicBetaApi.skills.list(
       { limit: 100, ...(page ? { page } : {}) },
       workspaceId,
@@ -47,10 +48,15 @@ export async function listCreateAgentSkills(workspaceId: string): Promise<AgentS
         source: skill.source === 'anthropic' ? 'anthropic' : 'custom',
       });
     }
-    page = response.next_page || undefined;
-    if (!page) {
+    const nextPage = response.next_page || undefined;
+    if (!nextPage) {
       break;
     }
+    if (seenPages.has(nextPage)) {
+      throw new Error('Skills pagination returned a repeated cursor.');
+    }
+    seenPages.add(nextPage);
+    page = nextPage;
   }
   return rows;
 }

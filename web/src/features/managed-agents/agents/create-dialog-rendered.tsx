@@ -374,6 +374,7 @@ function SelectedPills({
   items: Array<{ id: string; label: string }>;
   onRemove: (id: string) => void;
 }) {
+  const { msg } = useI18n();
   if (!items.length) {
     return null;
   }
@@ -387,7 +388,7 @@ function SelectedPills({
             variant="ghost"
             size="icon-sm"
             className="size-5 rounded-full"
-            aria-label={`Remove ${item.label}`}
+            aria-label={msg('managedAgents.agents.createDialog.removeItem', 'Remove {name}', { name: item.label })}
             onClick={() => onRemove(item.id)}
           >
             <X className="size-3" aria-hidden />

@@ -285,6 +285,13 @@ function CreateAgentDialogContent({
               <div className={startingPointRowClass(startingPointOpen)}>
                 <CollapsibleTrigger
                   type="button"
+                  aria-label={
+                    startingPointOpen
+                      ? msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')
+                      : msg('managedAgents.agents.createDialog.startingPointSummary', 'Starting point · {name}', {
+                          name: startingPointName,
+                        })
+                  }
                   className="flex h-9 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
                 >
                   <ChevronDown

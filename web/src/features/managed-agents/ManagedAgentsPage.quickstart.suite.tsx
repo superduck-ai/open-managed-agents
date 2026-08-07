@@ -370,11 +370,9 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(within(dialog).getByRole('tab', { name: '模板' }));
     fireEvent.click(within(dialog).getByRole('button', { name: /深度调研助手/i }));
 
-    expect(
-      within(dialog)
-        .getByRole('button', { name: /^起点$/i })
-        .getAttribute('aria-expanded'),
-    ).toBe('false');
+    expect(within(dialog).getByRole('button', { name: '起点 · 深度调研助手' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
     expect(within(dialog).getByText(/· 深度调研助手/)).toBeTruthy();
   });
 

@@ -255,6 +255,7 @@ export type MockAgentsApiOptions = {
   agentsSearchErrorOnce?: boolean;
   agentArchiveErrorOnce?: boolean;
   agentsSearchPageSize?: number;
+  skillsPageSize?: number;
   models?: Array<{ id: string; displayName?: string }>;
 };
 
@@ -466,7 +467,17 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     }
 
     if (url.startsWith('/v1/skills?') && method === 'GET') {
-      return jsonResponse({ data: [...skillDetails.values()], has_more: false, next_page: null });
+      const params = new URL(url, 'https://oma.duck.ai').searchParams;
+      const skills = [...skillDetails.values()];
+      const requestedLimit = Number(params.get('limit')) || skills.length;
+      const pageSize = Math.min(requestedLimit, options.skillsPageSize ?? requestedLimit);
+      const page = params.get('page');
+      const parsedOffset = page?.startsWith('skills_') ? Number(page.slice('skills_'.length)) : NaN;
+      const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+      const data = skills.slice(offset, offset + pageSize);
+      const nextOffset = offset + pageSize;
+      const nextPage = nextOffset < skills.length ? `skills_${nextOffset}` : null;
+      return jsonResponse({ data, has_more: Boolean(nextPage), next_page: nextPage });
     }
 
     if (url.startsWith('/v1/sessions?') && method === 'GET') {

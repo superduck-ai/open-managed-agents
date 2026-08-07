@@ -399,7 +399,7 @@ export function quickstartBuildAgentConfigInput(
     : fallback.tools.map((tool) => ({ ...tool }));
   const skills = Array.isArray(rawConfig.skills) ? cloneJsonArray(rawConfig.skills) : cloneJsonArray(fallback.skills);
   const metadata = quickstartMetadata(rawConfig.metadata, fallback.metadata);
-  const multiagent = toRecord(rawConfig.multiagent) ?? toRecord(fallback.multiagent);
+  const multiagent = 'multiagent' in rawConfig ? toRecord(rawConfig.multiagent) : toRecord(fallback.multiagent);
 
   return {
     name,

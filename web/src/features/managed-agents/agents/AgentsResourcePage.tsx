@@ -102,7 +102,10 @@ export function AgentsResourcePage({
   const [statusFilter, setStatusFilter] = useState<AgentStatusFilter>(defaultAgentFilters.status);
   const [openFilterMenu, setOpenFilterMenu] = useState<AgentFilterMenu | null>(null);
   const [dialogOpen, setDialogOpen] = useState(
-    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('create_agent') === '1',
+    () =>
+      config.section === 'agents' &&
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('create_agent') === '1',
   );
   const [remoteAgentsState, setRemoteAgentsState] = useState<{
     workspaceId: string;

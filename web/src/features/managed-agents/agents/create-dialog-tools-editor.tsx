@@ -216,7 +216,13 @@ function ToolsetCard({
           <span className="block text-sm font-medium">{title}</span>
           <code className="block truncate text-xs text-muted-foreground">{subtitle}</code>
         </span>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${title}`} onClick={onRemove}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={msg('managedAgents.agents.createDialog.removeItem', 'Remove {name}', { name: title })}
+          onClick={onRemove}
+        >
           <X className="size-4" aria-hidden />
         </Button>
       </div>
@@ -280,7 +286,7 @@ function PermissionMenu({
             variant="secondary"
             size="sm"
             className="min-w-28 justify-between"
-            aria-label="Toolset permission"
+            aria-label={msg('managedAgents.agents.createDialog.toolPermissions', 'Tool permissions')}
           />
         }
       >
@@ -372,7 +378,15 @@ function CustomToolCard({
         <span className="flex-1 text-sm font-medium">
           {msg('managedAgents.agents.createDialog.customTool', 'Custom tool')}
         </span>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove custom tool" onClick={onRemove}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={msg('managedAgents.agents.createDialog.removeItem', 'Remove {name}', {
+            name: msg('managedAgents.agents.createDialog.customTool', 'Custom tool'),
+          })}
+          onClick={onRemove}
+        >
           <Trash2 className="size-4" aria-hidden />
         </Button>
       </div>

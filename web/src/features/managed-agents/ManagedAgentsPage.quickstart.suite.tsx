@@ -687,6 +687,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect(chatContent.className).toContain('justify-end');
     expect(chatContent.className).toContain('px-4');
     expect(chatContent.className).not.toContain('w-[432px]');
+    expect(chatContent.querySelector('[data-scroll-anchor="true"]')).toBeNull();
     expect(codeBlockContaining('ant beta:agents create')?.className).toContain('subtle-scrollbar-auto');
 
     const userMessage = within(chatContent)
@@ -1218,7 +1219,10 @@ export function registerManagedAgentsQuickstartTests() {
     expect(screen.queryByTestId('quickstart-pinned-interaction')).toBeNull();
     const chatStream = screen.getByTestId('quickstart-chat-stream');
     expect(within(chatStream).getByText('Does this agent need to access external services?')).toBeTruthy();
-    expect(within(chatStream).getByTestId('quickstart-question-card').className).toContain('border-border');
+    const questionCard = within(chatStream).getByTestId('quickstart-question-card');
+    expect(questionCard.className).toContain('max-w-xl');
+    expect(questionCard.className).not.toContain('border-border');
+    expect(questionCard.getAttribute('data-slot')).toBe('questionnaire');
     const networkingChoices = within(chatStream).getByRole('radiogroup', {
       name: 'Does this agent need to access external services?',
     });
@@ -1232,7 +1236,13 @@ export function registerManagedAgentsQuickstartTests() {
     expect(fireEvent.keyDown(blockedReply, { key: 'Enter', code: 'Enter' })).toBe(false);
     expect(proxyCalls).toBe(1);
     fireEvent.change(blockedReply, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('radio', { name: /Limited networking/i }));
+    const limitedNetworking = screen.getByRole('radio', { name: /Limited networking/i }) as HTMLInputElement;
+    const otherAnswer = screen.getByPlaceholderText('Something else') as HTMLInputElement;
+    fireEvent.click(limitedNetworking);
+    fireEvent.change(otherAnswer, { target: { value: 'Private proxy' } });
+    expect(limitedNetworking.checked).toBe(false);
+    fireEvent.click(limitedNetworking);
+    expect(otherAnswer.value).toBe('');
     expect(screen.queryByText("Thanks, I'll continue from there.")).toBeNull();
     const confirmButton = screen.getByRole('button', { name: 'Confirm' });
     expect(confirmButton.hasAttribute('disabled')).toBe(false);
@@ -1415,9 +1425,9 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(screen.getByRole('radio', { name: /Weekly/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
 
-    expect(screen.getByRole('radio', { name: /Operations/i }).getAttribute('aria-checked')).toBe('true');
+    expect((screen.getByRole('radio', { name: /Operations/i }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Next', exact: true }));
-    expect(screen.getByRole('radio', { name: /Weekly/i }).getAttribute('aria-checked')).toBe('true');
+    expect((screen.getByRole('radio', { name: /Weekly/i }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     expect(await screen.findByText('Question set confirmed.')).toBeTruthy();

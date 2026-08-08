@@ -14,6 +14,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -184,4 +185,63 @@ func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) 
 	if strings.Contains(logOutput.String(), "tenant=one") || strings.Contains(logOutput.String(), "upstream-secret") {
 		t.Fatalf("MCP proxy request log leaked sensitive data: %s", logOutput.String())
 	}
+}
+
+func TestMCPProxyVaultInjectionRejectedReturns502(t *testing.T) {
+	targetURL := "https://mcp.example.com/mcp"
+	handler, token := newMCPProxyTestHandler(t, targetURL, slog.Default())
+	handler.injectMCPProxyHeaders = func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error {
+		return vaults.ErrInjectionRejected
+	}
+
+	router := chi.NewRouter()
+	router.Route("/v2", handler.RegisterV2Routes)
+	proxyServer := httptest.NewServer(router)
+	t.Cleanup(proxyServer.Close)
+
+	request, err := http.NewRequest(http.MethodPost, proxyServer.URL+"/v2/ccr-sessions/cse_test/mcp?"+url.Values{"mcp_url": {targetURL}}.Encode(), bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", response.StatusCode)
+	}
+}
+
+func newMCPProxyTestHandler(t *testing.T, allowedMCPURL string, logger *slog.Logger) (*Handler, string) {
+	t.Helper()
+	snapshot, err := json.Marshal(map[string]any{"mcp_servers": []any{map[string]any{"type": "http", "url": allowedMCPURL}}})
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	policy, err := networkpolicy.ParseMCPProxyPolicy(json.RawMessage(`{"type":"cloud","networking":{"type":"unrestricted"}}`), snapshot)
+	if err != nil {
+		t.Fatalf("parse policy: %v", err)
+	}
+	credentials, err := NewSessionCredentials(config.Config{})
+	if err != nil {
+		t.Fatalf("create credentials: %v", err)
+	}
+	handler := NewHandler(config.Config{}, NewServiceWithCredentials(nil, credentials, nil), nil, logger)
+	handler.loadMCPPolicyContext = func(context.Context, upstreamProxyIdentity) (mcpProxyPolicyContext, error) {
+		return mcpProxyPolicyContext{policy: policy}, nil
+	}
+	token, err := credentials.Issue(SessionCredentialIdentity{
+		SessionID:        "cse_test",
+		PublicSessionID:  "sesn_test",
+		AgentID:          "agent_test",
+		AgentVersion:     1,
+		OrganizationUUID: "00000000-0000-0000-0000-000000000001",
+		WorkspaceUUID:    "00000000-0000-0000-0000-000000000002",
+	})
+	if err != nil {
+		t.Fatalf("issue session token: %v", err)
+	}
+	return handler, token
 }

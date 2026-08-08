@@ -38,5 +38,4 @@ vault:
     # then set kek_file: secrets/vault-kek
     # or paste the printed base64 into kek.
     # Documentation placeholder only — replace before real use.
-    version: 1
     kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="

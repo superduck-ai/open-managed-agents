@@ -152,15 +152,15 @@ func SealCredentialSecret(ctx context.Context, secretSvc *secrets.Service, crede
 		return fmt.Errorf("seal credential secret: %w", err)
 	}
 	credential.SecretEnvelope = &envelope
-	credential.SecretPayload = nil
+	clearCredentialSecretPayload(credential)
 	return nil
 }
 
-// openCredentialSecret decrypts a credential's envelope back into SecretPayload
+// OpenCredentialSecret decrypts a credential's envelope back into SecretPayload
 // so callers can read the secret for merge or runtime use. A missing envelope
 // returns ErrMissingSecretEnvelope. A present envelope that fails to open
 // fails closed. Decrypted plaintext must not be persisted or logged.
-func openCredentialSecret(ctx context.Context, secretSvc *secrets.Service, credential *db.VaultCredential) error {
+func OpenCredentialSecret(ctx context.Context, secretSvc *secrets.Service, credential *db.VaultCredential) error {
 	if credential.SecretEnvelope == nil {
 		return ErrMissingSecretEnvelope
 	}
@@ -173,6 +173,16 @@ func openCredentialSecret(ctx context.Context, secretSvc *secrets.Service, crede
 	}
 	credential.SecretPayload = plaintext
 	return nil
+}
+
+func clearCredentialSecretPayload(credential *db.VaultCredential) {
+	if credential == nil {
+		return
+	}
+	for i := range credential.SecretPayload {
+		credential.SecretPayload[i] = 0
+	}
+	credential.SecretPayload = nil
 }
 
 func requireSecretsService(secretSvc *secrets.Service) error {
@@ -648,7 +658,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		// A missing envelope can still be repaired when the body carries a
 		// complete replacement secret; otherwise ask the client to resubmit.
 		if current.SecretEnvelope != nil {
-			if err := openCredentialSecret(r.Context(), h.secretSvc, &current); err != nil {
+			if err := OpenCredentialSecret(r.Context(), h.secretSvc, &current); err != nil {
 				writeSecretOpenError(w, r, h.logger, "update", err)
 				return
 			}
@@ -788,7 +798,7 @@ func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request
 	}
 	// Decrypt transiently to inspect whether a refresh token is present. The
 	// plaintext is not persisted or logged.
-	if err := openCredentialSecret(r.Context(), h.secretSvc, &credential); err != nil {
+	if err := OpenCredentialSecret(r.Context(), h.secretSvc, &credential); err != nil {
 		writeSecretOpenError(w, r, h.logger, "validate", err)
 		return
 	}

@@ -518,9 +518,9 @@ func (d *DB) GetCodeSessionVaultIDs(
 	mapper := NewCodeSessionMapper(d.mapperDB)
 	row, err := mapper.FindVaultIDs(
 		ctx,
-		strings.TrimSpace(organizationUUID),
-		strings.TrimSpace(workspaceUUID),
-		strings.TrimSpace(codeSessionExternalID),
+		organizationUUID,
+		workspaceUUID,
+		codeSessionExternalID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

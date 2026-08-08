@@ -86,7 +86,7 @@ func TestProvisionFilestoreFilesystemFixedRoots(t *testing.T) {
 		}
 		assertFixedFilestoreRoots(t, app, filesystem)
 
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			delete from session_resources
 			where session_uuid = $1 and path = '/transcripts'
 		`, filesystem.SessionUUID); err != nil {
@@ -115,7 +115,7 @@ func TestProvisionFilestoreFilesystemSerializesWithSessionDeletion(t *testing.T)
 		apiKeyUUID,
 	)
 	var sessionExternalID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select external_id from sessions where uuid = $1
 	`, sessionUUID).Scan(&sessionExternalID); err != nil {
 		t.Fatalf("load Session external ID: %v", err)
@@ -123,7 +123,7 @@ func TestProvisionFilestoreFilesystemSerializesWithSessionDeletion(t *testing.T)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	blocker, err := app.db.Pool.Begin(ctx)
+	blocker, err := app.pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin workspace lock blocker: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestProvisionFilestoreFilesystemSerializesWithSessionDeletion(t *testing.T)
 	}
 
 	var activeFilesystems, retiredFilesystems int
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		select
 			count(*) filter (where deleted_at is null),
 			count(*) filter (where deleted_at is not null)
@@ -207,7 +207,7 @@ func waitForAdvisoryLockWait(t *testing.T, app *testApp) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		var waiting bool
-		if err := app.db.Pool.QueryRow(context.Background(), `
+		if err := app.pool.QueryRow(context.Background(), `
 			select exists (
 				select 1
 				from pg_stat_activity
@@ -253,7 +253,7 @@ func insertFilestoreFilesystemWithoutRoots(
 	input db.ProvisionFilestoreFilesystemInput,
 ) db.FilestoreFilesystem {
 	t.Helper()
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		insert into filestore_filesystems (
 			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
 			code_session_uuid, created_by_api_key_uuid, created_at, updated_at
@@ -287,7 +287,7 @@ func assertFixedFilestoreRoots(t *testing.T, app *testApp, filesystem db.Filesto
 
 func filestoreRootKinds(t *testing.T, app *testApp, filesystem db.FilestoreFilesystem) map[string]string {
 	t.Helper()
-	rows, err := app.db.Pool.Query(context.Background(), `
+	rows, err := app.pool.Query(context.Background(), `
 		select path, case resource_type when 'skill_archive' then 'archive' else resource_type end
 		from session_resources
 		where session_uuid = $1

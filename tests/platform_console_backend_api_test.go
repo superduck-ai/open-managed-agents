@@ -1024,7 +1024,7 @@ func containsConsoleWorkspace(workspaces []map[string]any, workspaceID string, n
 func loadDefaultOrganizationUUID(t *testing.T, app *testApp) string {
 	t.Helper()
 	var orgUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select o.uuid::text
 		from organizations o
 		join workspaces w on w.organization_uuid = o.uuid
@@ -1039,14 +1039,14 @@ func seedConsoleDefaultWorkspace(t *testing.T, app *testApp, organizationName st
 	t.Helper()
 	var organizationID int64
 	var orgUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		insert into organizations (name)
 		values ($1)
 		returning id, uuid::text
 	`, organizationName).Scan(&organizationID, &orgUUID); err != nil {
 		t.Fatalf("seed console org: %v", err)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		insert into workspaces (external_id, organization_uuid, name)
 		select $1, uuid, 'default'
 		from organizations

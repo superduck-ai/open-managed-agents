@@ -99,7 +99,7 @@ func TestMessagesAPIFailures(t *testing.T) {
 	t.Run("failure expired worker lease rejects credential", func(t *testing.T) {
 		credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
 		registerCodeSessionWorker(t, app, credential.CodeSessionID)
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update code_sessions
 			set worker_lease_expires_at = now() - interval '1 minute'
 			where external_id = $1
@@ -114,13 +114,13 @@ func TestMessagesAPIFailures(t *testing.T) {
 		credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
 		registerCodeSessionWorker(t, app, credential.CodeSessionID)
 		var previousStatus string
-		if err := app.db.Pool.QueryRow(context.Background(), `select status from sessions where uuid = $1`, credential.PublicSessionUUID).Scan(&previousStatus); err != nil {
+		if err := app.pool.QueryRow(context.Background(), `select status from sessions where uuid = $1`, credential.PublicSessionUUID).Scan(&previousStatus); err != nil {
 			t.Fatalf("load public session status: %v", err)
 		}
 		t.Cleanup(func() {
-			_, _ = app.db.Pool.Exec(context.Background(), `update sessions set status = $2 where uuid = $1`, credential.PublicSessionUUID, previousStatus)
+			_, _ = app.pool.Exec(context.Background(), `update sessions set status = $2 where uuid = $1`, credential.PublicSessionUUID, previousStatus)
 		})
-		if _, err := app.db.Pool.Exec(context.Background(), `update sessions set status = 'terminated' where uuid = $1`, credential.PublicSessionUUID); err != nil {
+		if _, err := app.pool.Exec(context.Background(), `update sessions set status = 'terminated' where uuid = $1`, credential.PublicSessionUUID); err != nil {
 			t.Fatalf("terminate public session: %v", err)
 		}
 		resp := doMessagesRequest(t, app, credential.Token, `{"model":"`+messagesTestModel+`","max_tokens":16,"messages":[]}`)
@@ -208,7 +208,7 @@ func TestMessagesAPISuccess(t *testing.T) {
 	t.Run("success code session credential forwards requested model", func(t *testing.T) {
 		credential := createMessagesCodeSessionCredential(t, app, messagesTestModel)
 		workerEpoch := registerCodeSessionWorker(t, app, credential.CodeSessionID)
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update code_sessions set created_at = now() - interval '30 days' where external_id = $1
 		`, credential.CodeSessionID); err != nil {
 			t.Fatalf("age lifecycle-bound Messages credential: %v", err)
@@ -291,7 +291,7 @@ func createMessagesCodeSessionCredential(t *testing.T, app *testApp, model strin
 		t.Fatalf("generate code session ID: %v", err)
 	}
 	var sessionUUID, sessionExternalID, environmentUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select uuid::text, external_id, environment_uuid::text
 		from sessions
 		where workspace_uuid = $1 and organization_uuid = $2 and deleted_at is null

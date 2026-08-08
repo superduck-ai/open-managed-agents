@@ -103,7 +103,9 @@ func TestAdminRequestMapperScansPostgreSQLRows(t *testing.T) {
 	}
 	defer database.Close()
 
-	tx, err := database.sql.BeginTx(ctx, nil)
+	standardDB := newStandardDB(database.pool)
+	defer standardDB.Close()
+	tx, err := standardDB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}

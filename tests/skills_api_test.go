@@ -65,8 +65,8 @@ func TestSkillsAPI(t *testing.T) {
 	store := newFakeStore("fake-bucket")
 	app := newTestAppWithStore(t, nil, store)
 	defer app.close()
-	cleanupBuiltinSkillRows(t, app.db)
-	defer cleanupBuiltinSkillRows(t, app.db)
+	cleanupBuiltinSkillRows(t, app.pool)
+	defer cleanupBuiltinSkillRows(t, app.pool)
 	seedBuiltinSkill(t, app, store, "xlsx", "20260203")
 
 	t.Run("failure missing beta header", func(t *testing.T) {
@@ -220,7 +220,7 @@ func TestSkillsAPI(t *testing.T) {
 
 	t.Run("failure cross workspace isolation", func(t *testing.T) {
 		otherKey := "sk-ant-local-skills-other"
-		seedWorkspaceKey(t, app.db, "org_skills_other_test", "workspace_skills_other_test", "api_key_skills_other_test", otherKey)
+		seedWorkspaceKey(t, app.pool, "org_skills_other_test", "workspace_skills_other_test", "api_key_skills_other_test", otherKey)
 
 		created := createSkill(t, app, "cross-workspace-skill")
 		defer deleteSkill(t, app, created.ID)
@@ -411,7 +411,7 @@ func TestSkillsAPI(t *testing.T) {
 		if objectKey == "" {
 			t.Fatalf("expected skill object to be stored")
 		}
-		defer cleanupApp.db.Pool.Exec(context.Background(), `delete from jobs where payload->>'key' = $1`, objectKey)
+		defer cleanupApp.pool.Exec(context.Background(), `delete from jobs where payload->>'key' = $1`, objectKey)
 
 		resp := doSkillRequest(t, cleanupApp, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
@@ -423,7 +423,7 @@ func TestSkillsAPI(t *testing.T) {
 		}
 
 		var jobCount int
-		if err := cleanupApp.db.Pool.QueryRow(context.Background(), `
+		if err := cleanupApp.pool.QueryRow(context.Background(), `
 			select count(*)
 			from jobs
 			where type = 'object_cleanup'
@@ -541,7 +541,7 @@ func TestSkillsDisplayTitleSchema(t *testing.T) {
 	defer app.close()
 
 	var isNullable string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select is_nullable
 		from information_schema.columns
 		where table_schema = current_schema()
@@ -555,7 +555,7 @@ func TestSkillsDisplayTitleSchema(t *testing.T) {
 	}
 
 	var indexDef string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select indexdef
 		from pg_indexes
 		where schemaname = current_schema()
@@ -778,9 +778,9 @@ func newSkillsPaginationTestApp(t *testing.T) (*testApp, *fakeStore) {
 	t.Helper()
 	store := newFakeStore("skills-pagination-bucket-" + uniqueSkillSuffix())
 	app := newTestAppWithStore(t, nil, store)
-	cleanupBuiltinSkillRows(t, app.db)
+	cleanupBuiltinSkillRows(t, app.pool)
 	t.Cleanup(func() {
-		cleanupBuiltinSkillRows(t, app.db)
+		cleanupBuiltinSkillRows(t, app.pool)
 		app.close()
 	})
 	return app, store

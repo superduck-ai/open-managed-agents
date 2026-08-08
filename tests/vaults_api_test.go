@@ -293,7 +293,7 @@ func TestVaultsAPI(t *testing.T) {
 		assertRawContains(t, staticRotated.Auth, `"mcp_server_url":"https://mcp.github.example/mcp"`)
 		assertRawNotContains(t, staticRotated.Auth, "bearer-secret")
 		var credentialKey string
-		if err := app.db.Pool.QueryRow(context.Background(), `
+		if err := app.pool.QueryRow(context.Background(), `
 			select credential_key from vault_credentials where external_id = $1
 		`, static.ID).Scan(&credentialKey); err != nil {
 			t.Fatalf("load credential_key: %v", err)
@@ -429,7 +429,7 @@ func TestVaultsSchemaHasNoForeignKeys(t *testing.T) {
 	defer app.close()
 
 	var foreignKeyCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from pg_constraint con
 		join pg_class cls on cls.oid = con.conrelid
@@ -653,7 +653,7 @@ func containsVaultCredential(credentials []vaultCredentialAPIResponse, id string
 func webhookJobDataField(t *testing.T, app *testApp, eventType, resourceID, field string) string {
 	t.Helper()
 	var value string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select jsonb_extract_path_text(payload, 'event', 'data', $3)
 		from jobs
 		where type = 'webhook_delivery'
@@ -669,10 +669,10 @@ func webhookJobDataField(t *testing.T, app *testApp, eventType, resourceID, fiel
 
 func cleanupVaultRows(t *testing.T, app *testApp, vaultID string) {
 	t.Helper()
-	if _, err := app.db.Pool.Exec(context.Background(), `delete from vault_credentials where vault_external_id = $1`, vaultID); err != nil {
+	if _, err := app.pool.Exec(context.Background(), `delete from vault_credentials where vault_external_id = $1`, vaultID); err != nil {
 		t.Fatalf("cleanup vault credentials: %v", err)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `delete from vaults where external_id = $1`, vaultID); err != nil {
+	if _, err := app.pool.Exec(context.Background(), `delete from vaults where external_id = $1`, vaultID); err != nil {
 		t.Fatalf("cleanup vault: %v", err)
 	}
 }
@@ -680,7 +680,7 @@ func cleanupVaultRows(t *testing.T, app *testApp, vaultID string) {
 func assertVaultSecretsPurged(t *testing.T, app *testApp, vaultID string) {
 	t.Helper()
 	var count int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from vault_credentials
 		where vault_external_id = $1

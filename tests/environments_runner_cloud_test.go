@@ -23,6 +23,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
@@ -337,12 +338,12 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Startup Message Agent"}`)
 	defer archiveAgent(t, app, agent.ID)
 	env := createEnvironment(t, app, `{"name":"runner-startup-message-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`"}`)
-	defer cleanupEnvironmentRows(t, app.db, env.ID)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
 	defer deleteSession(t, app, session.ID)
 
 	const prompt = "startup-window message must reach inbound"
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	var acceptedEventID, interruptEventID string
 	provider := &recordingRunnerProvider{
 		sandboxID: "sandbox-runner-startup-message",
@@ -531,9 +532,9 @@ type packageRunnerCase struct {
 
 const cfgPackageProvisionTimeoutForTest = 37 * time.Second
 
-func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, environmentID string, force bool) {
+func requestPackageEnvironmentStop(t *testing.T, ctx context.Context, database *db.DB, pool *pgxpool.Pool, environmentID string, force bool) {
 	t.Helper()
-	ids := getDefaultDBIDs(t, database)
+	ids := getDefaultDBIDs(t, pool)
 	works, _, err := database.ListEnvironmentWorkPage(ctx, db.ListEnvironmentWorkPageParams{
 		WorkspaceUUID:         ids.WorkspaceUUID,
 		EnvironmentExternalID: environmentID,
@@ -575,7 +576,7 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 			"pip":["requests[socks] @ https://example.test/a.whl ; python_version >= \"3.11\"","name; touch /tmp/oma-package-shell"]
 		}}
 	}`)
-	t.Cleanup(func() { cleanupEnvironmentRows(t, app.db, environment.ID) })
+	t.Cleanup(func() { cleanupEnvironmentRows(t, app.pool, environment.ID) })
 	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
 	session, err := client.Beta.Sessions.New(runCtx, anthropic.BetaSessionNewParams{
 		Agent: anthropic.BetaSessionNewParamsAgentUnion{OfString: anthropic.String(agent.ID)}, EnvironmentID: environment.ID,
@@ -595,7 +596,7 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 	}
 	if testCase.stopAfterProvision || testCase.forceStopAfterProvision {
 		provider.afterCommand = func() {
-			requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID, testCase.forceStopAfterProvision)
+			requestPackageEnvironmentStop(t, runCtx, app.db, app.pool, environment.ID, testCase.forceStopAfterProvision)
 			if testCase.forceStopAfterProvision {
 				provider.Kill(runCtx, provider.sandboxID)
 			}
@@ -603,14 +604,14 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 	}
 	if testCase.forceStopBeforeFailure {
 		provider.beforeRunFailure = func() {
-			requestPackageEnvironmentStop(t, runCtx, app.db, environment.ID, true)
+			requestPackageEnvironmentStop(t, runCtx, app.db, app.pool, environment.ID, true)
 			provider.Kill(runCtx, provider.sandboxID)
 		}
 	}
 	runner := newManagedAgentRunner(t, app, provider, cfg)
 	processed, runErr := runner.RunOnce(runCtx, "runner-package-test")
 	inspectionCtx := context.Background()
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	_, codeSessionErr := app.db.GetCodeSessionBySessionExternalID(inspectionCtx, ids.WorkspaceUUID, session.ID)
 	switch {
 	case codeSessionErr == nil:
@@ -631,7 +632,7 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 		t.Fatalf("load package runner session: %v", sessionErr)
 	}
 	provider.sessionHasRuntimeMetadata = hasJSONKey(storedSession.Metadata, "claude_code_session_id")
-	if err := app.db.Pool.QueryRow(inspectionCtx, `
+	if err := app.pool.QueryRow(inspectionCtx, `
 		select state, last_error
 		from environment_sandboxes
 		where work_uuid = $1
@@ -660,7 +661,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Rclone Failure Agent"}`)
 	defer archiveAgent(t, app, agent.ID)
 	environment := createEnvironment(t, app, `{"name":"runner-rclone-failure"}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, environment.ID)
 
 	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
 	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
@@ -673,7 +674,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	}
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceUUID, environment.ID, "session", session.ID)
 	if err != nil {
 		t.Fatalf("load queued environment work: %v", err)
@@ -713,7 +714,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	}
 	var sandboxState string
 	var sandboxError *string
-	if err := app.db.Pool.QueryRow(ctx, `
+	if err := app.pool.QueryRow(ctx, `
 		select state, last_error
 		from environment_sandboxes
 		where work_uuid = $1
@@ -749,7 +750,7 @@ func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-8","name":"Runner Manager Failure Agent"}`)
 	defer archiveAgent(t, app, agent.ID)
 	environment := createEnvironment(t, app, `{"name":"runner-manager-failure"}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, environment.ID)
 
 	client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
 	session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
@@ -762,7 +763,7 @@ func TestEnvironmentRunnerRevokesCodeSessionWhenManagerStartFails(t *testing.T) 
 	}
 	defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	provider := &recordingRunnerProvider{
 		sandboxID:         "sandbox-manager-start-failure",
 		failOperation:     "environment-manager",
@@ -864,13 +865,13 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if len(provider.launches) != 1 {
 		t.Fatalf("sandbox launches = %#v, want one environment-manager background process", provider.launches)
 	}
-	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceUUID, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("get session filestore: %v", err)
 	}
 	archiveEntries, err := app.db.ListSessionSkillArchiveResources(
 		ctx,
-		getDefaultDBIDs(t, app.db).WorkspaceUUID,
+		getDefaultDBIDs(t, app.pool).WorkspaceUUID,
 		filesystem.UUID,
 	)
 	if err != nil {
@@ -965,13 +966,13 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 	if len(provider.creates) != 1 || len(provider.launches) != 1 {
 		t.Fatalf("provider launch counts = creates:%d launches:%d, want one each", len(provider.creates), len(provider.launches))
 	}
-	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.db).WorkspaceUUID, session.ID)
+	filesystem, err := app.db.GetFilestoreFilesystemBySession(ctx, getDefaultDBIDs(t, app.pool).WorkspaceUUID, session.ID)
 	if err != nil {
 		t.Fatalf("get session filestore: %v", err)
 	}
 	archiveEntries, err := app.db.ListSessionSkillArchiveResources(
 		ctx,
-		getDefaultDBIDs(t, app.db).WorkspaceUUID,
+		getDefaultDBIDs(t, app.pool).WorkspaceUUID,
 		filesystem.UUID,
 	)
 	if err != nil {
@@ -1013,7 +1014,7 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 			"networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":true}
 		}
 	}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, environment.ID)
 
 	client := anthropic.NewClient(
 		option.WithBaseURL(app.baseURL),
@@ -1097,7 +1098,7 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 				"name":"runner-empty-mcp-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`",
 				"config":{"type":"cloud","networking":`+test.networking+`}
 			}`)
-			defer cleanupEnvironmentRows(t, app.db, environment.ID)
+			defer cleanupEnvironmentRows(t, app.pool, environment.ID)
 
 			client := anthropic.NewClient(option.WithBaseURL(app.baseURL), option.WithAPIKey(defaultTestKey))
 			session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
@@ -1110,7 +1111,7 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			}
 			defer client.Beta.Sessions.Delete(context.Background(), session.ID, anthropic.BetaSessionDeleteParams{})
 
-			ids := getDefaultDBIDs(t, app.db)
+			ids := getDefaultDBIDs(t, app.pool)
 			work, err := app.db.GetLatestEnvironmentWorkByData(ctx, ids.WorkspaceUUID, environment.ID, "session", session.ID)
 			if err != nil {
 				t.Fatalf("load environment work: %v", err)
@@ -1182,7 +1183,7 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 	}`)
 	defer archiveAgent(t, app, agent.ID)
 	environment := createEnvironment(t, app, `{"name":"runner-resolve-failure-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`"}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, environment.ID)
 
 	client := anthropic.NewClient(
 		option.WithBaseURL(app.baseURL),
@@ -1213,7 +1214,7 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 	if len(provider.creates) != 0 || len(provider.commands) != 0 || len(provider.launches) != 0 {
 		t.Fatalf("provider should not create sandbox after resolve failure: creates=%#v commands=%#v launches=%#v", provider.creates, provider.commands, provider.launches)
 	}
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	if _, err := app.db.GetCodeSessionBySessionExternalID(ctx, ids.WorkspaceUUID, session.ID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("code session lookup error = %v, want ErrNotFound", err)
 	}

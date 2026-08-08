@@ -165,7 +165,7 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 
 新增进程级配置时，应放入拥有该行为的领域配置并定义严格的 YAML 字段。资源 handler 可以依赖根配置，但不得把数据库行、HTTP DTO 或 organization/workspace 业务配置塞入进程配置。需要动态更新、租户 scope、权限或审计的配置应继续通过 API 和数据库管理。
 
-根 `Config` 只在 `main` 和 `internal/api` 等组装边界用于分发依赖。`internal/runtime/e2bruntime` 的 provider 只接收 `E2BConfig`，`internal/webhooks` 的 handler、enqueue 和 worker 只接收 `WebhookConfig`；调用方必须在进入领域包前显式传入 `cfg.E2B` 或 `cfg.Webhook`。E2B SDK 的 `ConnectionOpts` 映射由 `e2bruntime.ConnectionOptsFromConfig` 唯一维护，避免生产与 E2E 调用遗漏同一配置字段。
+根 `Config` 只在 `main` 和 `internal/api` 等组装边界用于分发依赖。E2B runtime provider 只接收 `E2BConfig`，`internal/webhooks` 的 handler、enqueue 和 worker 只接收 `WebhookConfig`；调用方必须在进入领域包前显式传入 `cfg.E2B` 或 `cfg.Webhook`。E2B SDK 的 `ConnectionOpts` 映射由 runtime provider 的 `ConnectionOptsFromConfig` 唯一维护，避免生产与 E2E 调用遗漏同一配置字段。
 
 ## 兼容与安全合同
 

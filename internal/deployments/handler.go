@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/yourbatis"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -32,10 +33,11 @@ const (
 )
 
 type Handler struct {
-	db       *db.DB
-	webhooks webhookEnqueuer
-	logger   *slog.Logger
-	router   chi.Router
+	db        *db.DB
+	webhooks  webhookEnqueuer
+	scheduler *DeploymentScheduler
+	logger    *slog.Logger
+	router    chi.Router
 }
 
 type webhookEnqueuer interface {
@@ -68,14 +70,19 @@ type deploymentResponse struct {
 }
 
 type deploymentRunResponse struct {
-	ID             string          `json:"id"`
-	Agent          json.RawMessage `json:"agent"`
-	CreatedAt      string          `json:"created_at"`
-	DeploymentID   string          `json:"deployment_id"`
-	Error          json.RawMessage `json:"error"`
-	SessionID      *string         `json:"session_id"`
-	TriggerContext json.RawMessage `json:"trigger_context"`
-	Type           string          `json:"type"`
+	ID             string                      `json:"id"`
+	Agent          json.RawMessage             `json:"agent"`
+	CreatedAt      string                      `json:"created_at"`
+	DeploymentID   string                      `json:"deployment_id"`
+	Error          json.RawMessage             `json:"error"`
+	SessionID      *string                     `json:"session_id"`
+	TriggerContext deploymentRunTriggerContext `json:"trigger_context"`
+	Type           string                      `json:"type"`
+}
+
+type deploymentRunTriggerContext struct {
+	ScheduledAt string `json:"scheduled_at,omitempty"`
+	Type        string `json:"type"`
 }
 
 type pageResponse[T any] struct {
@@ -139,9 +146,23 @@ type deploymentOutcomeEvaluation struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
-func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+type deploymentAgentSnapshot struct {
+	Multiagent *struct {
+		Agents []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		} `json:"agents"`
+	} `json:"multiagent"`
+	Skills []struct {
+		ID      string `json:"skill_id"`
+		Type    string `json:"type"`
+		Version string `json:"version"`
+	} `json:"skills"`
+}
+
+func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, scheduler *DeploymentScheduler, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, webhooks: webhookEvents, logger: logger}
+	h := &Handler{db: database, webhooks: webhookEvents, scheduler: scheduler, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -265,7 +286,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
+	nextScheduledAt, err := nextScheduledAt(schedule, now)
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
+	}
+	revision := int64(0)
+	if nextScheduledAt != nil {
+		revision = 1
+	}
+	deployment := db.Deployment{
 		UUID:                  uuid.NewString(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      principal.OrganizationUUID,
@@ -285,15 +315,33 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		ResourceSecrets:       resourceSecrets,
 		VaultIDs:              vaultIDs,
 		Schedule:              schedule,
+		ScheduleRevision:      revision,
+		NextScheduledAt:       nextScheduledAt,
 		Status:                "active",
 		CreatedAt:             now,
 		UpdatedAt:             now,
+	}
+	var created db.Deployment
+	err = h.db.Transaction(r.Context(), func(tx *yourbatis.Tx) error {
+		created, err = h.db.CreateDeploymentTx(r.Context(), tx, deployment)
+		if err != nil {
+			return err
+		}
+		return h.enqueueScheduledOccurrenceTx(r.Context(), tx, created)
 	})
 	if err != nil {
+		if errors.Is(err, db.ErrLimitExceeded) {
+			writeBadRequest(w, r, fmt.Errorf(
+				"an organization may have at most %d scheduled deployments",
+				db.MaxScheduledDeploymentsPerOrganization,
+			))
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "create deployment", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment"))
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "deployment.created", created.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, created)
 }
 
@@ -479,20 +527,57 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if raw, ok := fields["schedule"]; ok {
-		next.Schedule, err = normalizeOptionalSchedule(raw)
+	now := time.Now().UTC()
+	scheduleRaw := fields["schedule"]
+	if err := applyScheduleUpdate(&next, scheduleRaw, now); err != nil {
+		writeBadRequest(w, r, err)
+		return
+	}
+	next.UpdatedAt = now
+	var updated db.Deployment
+	err = h.db.Transaction(r.Context(), func(tx *yourbatis.Tx) error {
+		updated, err = h.db.UpdateDeploymentTx(r.Context(), tx, principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
+			Deployment: next, ScheduleChanged: scheduleRaw != nil,
+		})
 		if err != nil {
-			writeBadRequest(w, r, err)
+			return err
+		}
+		return h.enqueueScheduledOccurrenceTx(r.Context(), tx, updated)
+	})
+	if err != nil {
+		if errors.Is(err, db.ErrLimitExceeded) {
+			writeBadRequest(w, r, fmt.Errorf(
+				"an organization may have at most %d scheduled deployments",
+				db.MaxScheduledDeploymentsPerOrganization,
+			))
 			return
 		}
-	}
-	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, next)
-	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "deployment.updated", updated.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, updated)
+}
+
+func applyScheduleUpdate(next *db.Deployment, raw json.RawMessage, now time.Time) error {
+	if raw == nil {
+		return nil
+	}
+	schedule, err := normalizeOptionalSchedule(raw)
+	if err != nil {
+		return err
+	}
+	next.Schedule = schedule
+	if next.Status != "active" || len(next.Schedule) == 0 {
+		next.NextScheduledAt = nil
+		return nil
+	}
+	value, err := nextScheduledAt(next.Schedule, now)
+	if err != nil {
+		return err
+	}
+	next.NextScheduledAt = value
+	return nil
 }
 
 func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
@@ -506,6 +591,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "deployment.archived", archived.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, archived)
 }
 
@@ -521,6 +607,7 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "deployment.paused", paused.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, paused)
 }
 
@@ -530,12 +617,35 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
+	var unpaused db.Deployment
+	err := h.db.Transaction(r.Context(), func(tx *yourbatis.Tx) error {
+		current, err := h.db.LockDeploymentTx(r.Context(), tx, principal.WorkspaceUUID, deploymentID)
+		if err != nil {
+			return err
+		}
+		next, err := nextScheduledAt(current.Schedule, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		unpaused, err = h.db.UnpauseDeploymentTx(r.Context(), tx, principal.WorkspaceUUID, deploymentID, next)
+		if err != nil {
+			return err
+		}
+		return h.enqueueScheduledOccurrenceTx(r.Context(), tx, unpaused)
+	})
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "deployment.unpaused", unpaused.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, unpaused)
+}
+
+func (h *Handler) enqueueScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, deployment db.Deployment) error {
+	if h.scheduler == nil || deployment.NextScheduledAt == nil {
+		return nil
+	}
+	return h.scheduler.EnqueueTx(ctx, tx, deployment)
 }
 
 func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
@@ -553,91 +663,36 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("archived deployments cannot be run"))
 		return
 	}
-	if referenceError := h.validateRunReferences(r, principal, deployment); referenceError != nil {
-		h.writeRunReferenceFailure(w, r, principal, deployment, referenceError)
+	referenceFailure, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
+	if err != nil {
+		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
-	sessionID, threadID, workID, runID, err := newRunIDs()
-	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate deployment run IDs"))
+	if referenceFailure != nil {
+		h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 		return
 	}
 	now := time.Now().UTC()
-	events, outcomes, err := sessionEventsFromInitialEvents(deployment.InitialEvents, now)
+	preparedRun, err := prepareDeploymentRun(deployment, now)
 	if err != nil {
-		h.writeRunReferenceFailure(w, r, principal, deployment, runError("unknown_error", err.Error()))
-		return
-	}
-	resources, err := sessionResourcesFromDeployment(deployment, now)
-	if err != nil {
+		if errors.Is(err, errRetryableRunPreparation) {
+			h.writeDeploymentLoadError(w, r, err, deploymentID)
+			return
+		}
 		h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 		return
 	}
-	deploymentIDCopy := deployment.ExternalID
-	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
-	triggerContext := json.RawMessage(`{"type":"manual"}`)
 	run, session, thread, createdEvents, err := h.db.CreateManualDeploymentRun(r.Context(), db.CreateManualDeploymentRunInput{
 		DeploymentExternalID: deployment.ExternalID,
-		Session: db.CreateSessionInput{
-			Session: db.Session{
-				UUID:                  uuid.NewString(),
-				ExternalID:            sessionID,
-				OrganizationUUID:      principal.OrganizationUUID,
-				WorkspaceUUID:         principal.WorkspaceUUID,
-				CreatedByAPIKeyUUID:   principal.APIKeyUUID,
-				EnvironmentUUID:       deployment.EnvironmentUUID,
-				EnvironmentExternalID: deployment.EnvironmentExternalID,
-				AgentUUID:             deployment.AgentUUID,
-				AgentExternalID:       deployment.AgentExternalID,
-				AgentVersion:          deployment.AgentVersion,
-				AgentSnapshot:         deployment.AgentSnapshot,
-				DeploymentUUID:        &deployment.UUID,
-				DeploymentID:          &deploymentIDCopy,
-				Metadata:              httpapi.RawOr(deployment.Metadata, `{}`),
-				VaultIDs:              httpapi.RawOr(deployment.VaultIDs, `[]`),
-				Status:                "idle",
-				Usage:                 json.RawMessage(`{}`),
-				Stats:                 json.RawMessage(`{}`),
-				OutcomeEvaluations:    outcomes,
-				CreatedAt:             now,
-				UpdatedAt:             now,
-			},
-			Thread: db.SessionThread{
-				UUID:             uuid.NewString(),
-				ExternalID:       threadID,
-				OrganizationUUID: principal.OrganizationUUID,
-				WorkspaceUUID:    principal.WorkspaceUUID,
-				AgentSnapshot:    deployment.AgentSnapshot,
-				Status:           "idle",
-				Usage:            json.RawMessage(`{}`),
-				Stats:            json.RawMessage(`{}`),
-				CreatedAt:        now,
-				UpdatedAt:        now,
-			},
-			Resources: resources,
-			Work: db.EnvironmentWork{
-				UUID:                  uuid.NewString(),
-				ExternalID:            workID,
-				OrganizationUUID:      principal.OrganizationUUID,
-				WorkspaceUUID:         principal.WorkspaceUUID,
-				EnvironmentUUID:       deployment.EnvironmentUUID,
-				EnvironmentExternalID: deployment.EnvironmentExternalID,
-				Data:                  workData,
-				Metadata:              json.RawMessage(`{}`),
-				State:                 "queued",
-				CreatedAt:             now,
-				UpdatedAt:             now,
-			},
-		},
-		Events: events,
+		Session:              preparedRun.Session,
+		Events:               preparedRun.Events,
 		Run: db.DeploymentRun{
 			UUID:                uuid.NewString(),
-			ExternalID:          runID,
+			ExternalID:          preparedRun.RunID,
 			OrganizationUUID:    principal.OrganizationUUID,
 			WorkspaceUUID:       principal.WorkspaceUUID,
 			CreatedByAPIKeyUUID: principal.APIKeyUUID,
 			TriggerType:         "manual",
-			TriggerContext:      triggerContext,
 			CreatedAt:           now,
 		},
 		Now: now,
@@ -704,7 +759,6 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		Error:               runError,
 		TriggerType:         "manual",
-		TriggerContext:      json.RawMessage(`{"type":"manual"}`),
 		CreatedAt:           now,
 	})
 	if err != nil {
@@ -715,40 +769,72 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 	httpapi.WriteJSON(w, http.StatusOK, responseFromRun(run))
 }
 
-func (h *Handler) validateRunReferences(r *http.Request, principal auth.Principal, deployment db.Deployment) json.RawMessage {
-	agent, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, deployment.AgentExternalID)
+func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (json.RawMessage, error) {
+	agent, err := database.GetAgent(ctx, workspaceUUID, deployment.AgentExternalID)
 	if err != nil {
-		return runErrorForReference("agent", err, false)
+		return classifyReferenceFailure("agent", err, false)
 	}
 	if agent.ArchivedAt != nil {
-		return runErrorForReference("agent", nil, true)
+		return classifyReferenceFailure("agent", nil, true)
 	}
-	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, deployment.EnvironmentExternalID)
+	var snapshot deploymentAgentSnapshot
+	if err := json.Unmarshal(deployment.AgentSnapshot, &snapshot); err != nil {
+		return runError("unknown_error", "Stored agent snapshot is invalid"), nil
+	}
+	if snapshot.Multiagent != nil {
+		for _, reference := range snapshot.Multiagent.Agents {
+			if reference.Type == "self" {
+				continue
+			}
+			subagent, err := database.GetAgent(ctx, workspaceUUID, reference.ID)
+			if err != nil {
+				return classifyReferenceFailure("agent", err, false)
+			}
+			if subagent.ArchivedAt != nil {
+				return classifyReferenceFailure("agent", nil, true)
+			}
+		}
+	}
+	for _, skill := range snapshot.Skills {
+		if skill.Type != "custom" {
+			continue
+		}
+		var err error
+		if skill.Version == "latest" {
+			_, err = database.GetLatestSkillVersion(ctx, workspaceUUID, skill.ID)
+		} else {
+			_, err = database.GetSkillVersion(ctx, workspaceUUID, skill.ID, skill.Version)
+		}
+		if err != nil {
+			return classifyReferenceFailure("skill", err, false)
+		}
+	}
+	env, err := database.GetEnvironment(ctx, workspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
-		return runErrorForReference("environment", err, false)
+		return classifyReferenceFailure("environment", err, false)
 	}
 	if env.ArchivedAt != nil {
-		return runErrorForReference("environment", nil, true)
+		return classifyReferenceFailure("environment", nil, true)
 	}
 	var vaultIDs []string
 	if len(deployment.VaultIDs) > 0 && !httpapi.IsJSONNull(deployment.VaultIDs) {
 		if err := json.Unmarshal(deployment.VaultIDs, &vaultIDs); err != nil {
-			return runError("unknown_error", "Stored vault references are invalid")
+			return runError("unknown_error", "Stored vault references are invalid"), nil
 		}
 	}
 	for _, vaultID := range vaultIDs {
-		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
+		vault, err := database.GetVault(ctx, workspaceUUID, vaultID)
 		if err != nil {
-			return runErrorForReference("vault", err, false)
+			return classifyReferenceFailure("vault", err, false)
 		}
 		if vault.ArchivedAt != nil {
-			return runErrorForReference("vault", nil, true)
+			return classifyReferenceFailure("vault", nil, true)
 		}
 	}
 	var resources []map[string]any
 	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
 		if err := json.Unmarshal(deployment.Resources, &resources); err != nil {
-			return runError("unknown_error", "Stored resources are invalid")
+			return runError("unknown_error", "Stored resources are invalid"), nil
 		}
 	}
 	for _, resource := range resources {
@@ -756,21 +842,21 @@ func (h *Handler) validateRunReferences(r *http.Request, principal auth.Principa
 		switch resourceType {
 		case "file":
 			fileID, _ := resource["file_id"].(string)
-			if _, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID); err != nil {
-				return runErrorForReference("file", err, false)
+			if _, err := database.GetFile(ctx, workspaceUUID, fileID); err != nil {
+				return classifyReferenceFailure("file", err, false)
 			}
 		case "memory_store":
 			storeID, _ := resource["memory_store_id"].(string)
-			store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
+			store, err := database.GetMemoryStore(ctx, workspaceUUID, storeID)
 			if err != nil {
-				return runErrorForReference("memory_store", err, false)
+				return classifyReferenceFailure("memory_store", err, false)
 			}
 			if store.ArchivedAt != nil {
-				return runErrorForReference("memory_store", nil, true)
+				return classifyReferenceFailure("memory_store", nil, true)
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
@@ -1022,7 +1108,7 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 	for _, input := range inputs {
 		eventID, err := ids.New("sevt_")
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, markRunPreparationRetryable(err)
 		}
 		payload := deploymentSessionEventPayload{
 			ID:          eventID,
@@ -1035,7 +1121,7 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 		if input.Type == "user.define_outcome" {
 			outcomeID, err := ids.New("outc_")
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, markRunPreparationRetryable(err)
 			}
 			maxIterations := 3
 			if input.MaxIterations != nil {
@@ -1072,199 +1158,6 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 	return events, outcomesRaw, nil
 }
 
-func normalizeOptionalSchedule(raw json.RawMessage) (json.RawMessage, error) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return nil, nil
-	}
-	var schedule map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &schedule); err != nil {
-		return nil, errors.New("schedule must be an object or null")
-	}
-	scheduleType, err := parseRequiredStringField(schedule, "type")
-	if err != nil {
-		return nil, err
-	}
-	if scheduleType != "cron" {
-		return nil, errors.New("schedule.type must be cron")
-	}
-	expression, err := parseRequiredStringField(schedule, "expression")
-	if err != nil {
-		return nil, err
-	}
-	timezone, err := parseRequiredStringField(schedule, "timezone")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := time.LoadLocation(timezone); err != nil {
-		return nil, errors.New("schedule.timezone must be a valid IANA timezone")
-	}
-	if _, err := parseCronExpression(expression); err != nil {
-		return nil, fmt.Errorf("schedule.expression %v", err)
-	}
-	return httpapi.MarshalRaw(map[string]any{
-		"type":       "cron",
-		"expression": expression,
-		"timezone":   timezone,
-	})
-}
-
-type cronExpression struct {
-	Minute     cronField
-	Hour       cronField
-	DayOfMonth cronField
-	Month      cronField
-	DayOfWeek  cronField
-}
-
-type cronField struct {
-	Values   map[int]bool
-	Wildcard bool
-}
-
-func parseCronExpression(expression string) (cronExpression, error) {
-	parts := strings.Fields(expression)
-	if len(parts) != 5 {
-		return cronExpression{}, errors.New("must be a 5-field POSIX cron expression")
-	}
-	var parsed cronExpression
-	var err error
-	if parsed.Minute, err = parseCronField(parts[0], 0, 59, false); err != nil {
-		return cronExpression{}, fmt.Errorf("minute %w", err)
-	}
-	if parsed.Hour, err = parseCronField(parts[1], 0, 23, false); err != nil {
-		return cronExpression{}, fmt.Errorf("hour %w", err)
-	}
-	if parsed.DayOfMonth, err = parseCronField(parts[2], 1, 31, false); err != nil {
-		return cronExpression{}, fmt.Errorf("day-of-month %w", err)
-	}
-	if parsed.Month, err = parseCronField(parts[3], 1, 12, false); err != nil {
-		return cronExpression{}, fmt.Errorf("month %w", err)
-	}
-	if parsed.DayOfWeek, err = parseCronField(parts[4], 0, 7, true); err != nil {
-		return cronExpression{}, fmt.Errorf("day-of-week %w", err)
-	}
-	return parsed, nil
-}
-
-func parseCronField(raw string, minValue, maxValue int, normalizeSunday bool) (cronField, error) {
-	if raw == "" {
-		return cronField{}, errors.New("is empty")
-	}
-	if strings.ContainsAny(raw, "LW#?@") {
-		return cronField{}, errors.New("contains unsupported syntax")
-	}
-	field := cronField{Values: map[int]bool{}, Wildcard: raw == "*"}
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			return cronField{}, errors.New("contains an empty list item")
-		}
-		step := 1
-		rangePart := part
-		if strings.Contains(part, "/") {
-			pieces := strings.Split(part, "/")
-			if len(pieces) != 2 {
-				return cronField{}, errors.New("contains invalid step syntax")
-			}
-			rangePart = pieces[0]
-			parsedStep, err := strconv.Atoi(pieces[1])
-			if err != nil || parsedStep <= 0 {
-				return cronField{}, errors.New("step must be positive")
-			}
-			step = parsedStep
-		}
-		start, end := minValue, maxValue
-		if rangePart != "*" {
-			if strings.Contains(rangePart, "-") {
-				pieces := strings.Split(rangePart, "-")
-				if len(pieces) != 2 {
-					return cronField{}, errors.New("contains invalid range syntax")
-				}
-				var err error
-				start, err = strconv.Atoi(pieces[0])
-				if err != nil {
-					return cronField{}, errors.New("range start must be numeric")
-				}
-				end, err = strconv.Atoi(pieces[1])
-				if err != nil {
-					return cronField{}, errors.New("range end must be numeric")
-				}
-				if start > end {
-					return cronField{}, errors.New("range start must be <= range end")
-				}
-			} else {
-				value, err := strconv.Atoi(rangePart)
-				if err != nil {
-					return cronField{}, errors.New("value must be numeric")
-				}
-				start, end = value, value
-			}
-		}
-		if start < minValue || end > maxValue {
-			return cronField{}, fmt.Errorf("value must be between %d and %d", minValue, maxValue)
-		}
-		for value := start; value <= end; value += step {
-			if normalizeSunday && value == 7 {
-				field.Values[0] = true
-			} else {
-				field.Values[value] = true
-			}
-		}
-	}
-	return field, nil
-}
-
-func upcomingRuns(scheduleRaw json.RawMessage, lastRunAt *time.Time, now time.Time, archived bool) json.RawMessage {
-	if len(scheduleRaw) == 0 || httpapi.IsJSONNull(scheduleRaw) || archived {
-		return nil
-	}
-	var schedule struct {
-		Type       string `json:"type"`
-		Expression string `json:"expression"`
-		Timezone   string `json:"timezone"`
-	}
-	if err := json.Unmarshal(scheduleRaw, &schedule); err != nil || schedule.Type != "cron" {
-		return nil
-	}
-	cron, err := parseCronExpression(schedule.Expression)
-	if err != nil {
-		return nil
-	}
-	loc, err := time.LoadLocation(schedule.Timezone)
-	if err != nil {
-		return nil
-	}
-	cursor := now.In(loc).Add(time.Minute).Truncate(time.Minute)
-	deadline := cursor.Add(366 * 24 * time.Hour)
-	values := make([]string, 0, 5)
-	for cursor.Before(deadline) && len(values) < 5 {
-		if cronMatches(cron, cursor) {
-			values = append(values, cursor.UTC().Format(time.RFC3339))
-		}
-		cursor = cursor.Add(time.Minute)
-	}
-	raw, _ := httpapi.MarshalRaw(values)
-	return raw
-}
-
-func cronMatches(expr cronExpression, t time.Time) bool {
-	dayOfWeek := int(t.Weekday())
-	domMatches := expr.DayOfMonth.Values[t.Day()]
-	dowMatches := expr.DayOfWeek.Values[dayOfWeek]
-	dayMatches := domMatches && dowMatches
-	if expr.DayOfMonth.Wildcard && !expr.DayOfWeek.Wildcard {
-		dayMatches = dowMatches
-	} else if !expr.DayOfMonth.Wildcard && expr.DayOfWeek.Wildcard {
-		dayMatches = domMatches
-	} else if !expr.DayOfMonth.Wildcard && !expr.DayOfWeek.Wildcard {
-		dayMatches = domMatches || dowMatches
-	}
-	return expr.Minute.Values[t.Minute()] &&
-		expr.Hour.Values[t.Hour()] &&
-		expr.Month.Values[int(t.Month())] &&
-		dayMatches
-}
-
 func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now time.Time, archived bool) json.RawMessage {
 	if len(scheduleRaw) == 0 || httpapi.IsJSONNull(scheduleRaw) {
 		return nil
@@ -1277,7 +1170,7 @@ func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now tim
 	if lastRunAt != nil {
 		schedule["last_run_at"] = httpapi.FormatTime(*lastRunAt)
 	}
-	schedule["upcoming_runs_at"] = agentsnapshot.RawJSONValue(upcomingRuns(scheduleRaw, lastRunAt, now, archived), []any{})
+	schedule["upcoming_runs_at"] = agentsnapshot.RawJSONValue(upcomingRuns(scheduleRaw, now, archived), []any{})
 	raw, _ := httpapi.MarshalRaw(schedule)
 	return raw
 }
@@ -1327,6 +1220,10 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) (deployment
 
 func responseFromRun(run db.DeploymentRun) deploymentRunResponse {
 	ref, _ := agentRefRaw(run.AgentExternalID, run.AgentVersion)
+	triggerContext := deploymentRunTriggerContext{Type: run.TriggerType}
+	if run.ScheduledAt != nil {
+		triggerContext.ScheduledAt = httpapi.FormatTime(*run.ScheduledAt)
+	}
 	return deploymentRunResponse{
 		ID:             run.ExternalID,
 		Agent:          ref,
@@ -1334,7 +1231,7 @@ func responseFromRun(run db.DeploymentRun) deploymentRunResponse {
 		DeploymentID:   run.DeploymentExternalID,
 		Error:          run.Error,
 		SessionID:      run.SessionExternalID,
-		TriggerContext: httpapi.RawOr(run.TriggerContext, `{}`),
+		TriggerContext: triggerContext,
 		Type:           "deployment_run",
 	}
 }
@@ -1366,9 +1263,18 @@ func runErrorForReference(resourceType string, err error, archived bool) json.Ra
 			return runError("file_not_found_error", "File not found")
 		case "memory_store":
 			return runError("session_resource_not_found_error", "Memory store not found")
+		case "skill":
+			return runError("skill_not_found_error", "Referenced skill is unavailable")
 		}
 	}
 	return runError("unknown_error", "Could not create session")
+}
+
+func classifyReferenceFailure(resourceType string, err error, archived bool) (json.RawMessage, error) {
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return nil, err
+	}
+	return runErrorForReference(resourceType, err, archived), nil
 }
 
 func runError(errorType, message string) json.RawMessage {
@@ -1387,15 +1293,19 @@ func outcomesChanged(events []db.SessionEvent) bool {
 
 func newRunIDs() (sessionID, threadID, workID, runID string, err error) {
 	if sessionID, err = ids.New("sesn_"); err != nil {
+		err = markRunPreparationRetryable(err)
 		return
 	}
 	if threadID, err = ids.New("sthr_"); err != nil {
+		err = markRunPreparationRetryable(err)
 		return
 	}
 	if workID, err = ids.New("work_"); err != nil {
+		err = markRunPreparationRetryable(err)
 		return
 	}
 	if runID, err = ids.New("drun_"); err != nil {
+		err = markRunPreparationRetryable(err)
 		return
 	}
 	return

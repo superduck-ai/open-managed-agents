@@ -1217,6 +1217,17 @@ export function mockManagedResourceApi() {
         vault_ids: [],
       },
     ],
+    deploymentRuns: [
+      {
+        id: 'drun_scheduled123456',
+        created_at: now,
+        deployment_id: 'dep_one123456',
+        error: null,
+        session_id: 'sesn_one123456',
+        trigger_context: { type: 'schedule', scheduled_at: now },
+        type: 'deployment_run',
+      },
+    ],
     environments: [
       {
         id: 'env_one123456',
@@ -1414,6 +1425,19 @@ export function mockManagedResourceApi() {
         return matchesCreatedAtParams(deployment, params);
       });
       return jsonResponse({ data: filteredDeployments, next_page: null });
+    }
+    const retrieveDeploymentMatch = url.match(/^\/v1\/deployments\/([^/?]+)\?beta=true$/);
+    if (retrieveDeploymentMatch && method === 'GET') {
+      const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
+      const deployment = resources.deployments.find((item) => item.id === deploymentId);
+      return deployment ? jsonResponse(deployment) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    if (url.startsWith('/v1/deployment_runs?') && method === 'GET') {
+      const deploymentId = new URL(url, 'https://oma.duck.ai').searchParams.get('deployment_id');
+      return jsonResponse({
+        data: resources.deploymentRuns.filter((run) => !deploymentId || run.deployment_id === deploymentId),
+        next_page: null,
+      });
     }
     if (url.startsWith('/v1/environments?') && method === 'GET') {
       const params = new URL(url, 'https://oma.duck.ai').searchParams;

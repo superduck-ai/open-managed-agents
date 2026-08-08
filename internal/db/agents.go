@@ -183,10 +183,36 @@ func isNullJSON(raw json.RawMessage) bool {
 	return value == nil
 }
 
-func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID string, externalID string) (Agent, error) {
-	mapper := NewAgentMapper(d.mapperDB)
-	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	return agentFromRow(row, err)
+type DeploymentArchiveEventBuilder func(Deployment) (WebhookDeliveryEvent, error)
+
+func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID string, externalID string, buildEvent DeploymentArchiveEventBuilder) (Agent, error) {
+	var archived Agent
+	var deployments []Deployment
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		row, err := NewAgentMapper(executor).ArchiveByExternalID(ctx, workspaceUUID, externalID)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		archived = row.agent()
+		rows, err := NewDeploymentMapper(executor).ArchiveByRootAgent(ctx, workspaceUUID, externalID)
+		if err != nil {
+			return err
+		}
+		deployments = deploymentsFromRows(rows)
+		if buildEvent == nil {
+			return nil
+		}
+		events := make([]WebhookDeliveryEvent, 0, len(deployments))
+		for _, deployment := range deployments {
+			event, err := buildEvent(deployment)
+			if err != nil {
+				return err
+			}
+			events = append(events, event)
+		}
+		return enqueueWebhookDeliveryEventsTx(ctx, executor, workspaceUUID, events)
+	})
+	return archived, err
 }
 
 func (d *DB) ListAgentsPage(ctx context.Context, params ListAgentsPageParams) ([]Agent, bool, error) {

@@ -369,7 +369,7 @@ func sessionResourcesFromDeployment(
 		resourceType, _ := config["type"].(string)
 		resourceID, err := ids.New("sesrsc_")
 		if err != nil {
-			return nil, err
+			return nil, markRunPreparationRetryable(err)
 		}
 
 		payload := maps.Clone(config)

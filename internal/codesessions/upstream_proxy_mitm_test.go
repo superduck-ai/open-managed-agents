@@ -11,8 +11,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -281,7 +283,9 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	files := writeTestUpstreamProxyCA(t, "tunnel")
 	upstreamRequests := make(chan *http.Request, 1)
 	dialTargets := make(chan string, 1)
-	handler := NewHandler(files.config(), newTestService(t, nil), nil, nil)
+	var logOutput bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logOutput, nil))
+	handler := NewHandler(files.config(), newTestService(t, nil), nil, logger)
 	stubUnrestrictedPolicyContext(t, handler)
 	authority, err := handler.loadUpstreamProxyCA()
 	if err != nil {
@@ -360,6 +364,26 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	}
 	if captured.Header.Get("Proxy-Authorization") != "" {
 		t.Fatal("Proxy-Authorization leaked to upstream")
+	}
+	var requestLog map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logOutput.String()), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("decode log entry: %v", err)
+		}
+		if entry["msg"] == "upstream proxy request received" {
+			requestLog = entry
+			break
+		}
+	}
+	if requestLog == nil {
+		t.Fatal("upstream proxy request log not found")
+	}
+	if requestLog["host"] != "1.1.1.1" || requestLog["port"] != "443" || requestLog["url"] != "https://1.1.1.1:443/robots.txt" {
+		t.Fatalf("upstream proxy request log = %#v", requestLog)
+	}
+	if strings.Contains(logOutput.String(), "source=mitm") {
+		t.Fatalf("upstream proxy request log leaked query parameters: %s", logOutput.String())
 	}
 }
 

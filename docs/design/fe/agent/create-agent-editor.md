@@ -1,0 +1,64 @@
+# Create Agent 双模式配置编辑器
+
+## 目标
+
+Create Agent 弹窗同时提供结构化 `Rendered` 表单和 YAML/JSON `Raw` 编辑器。两种视图只编辑同一份 Draft，避免切换视图、切换格式或使用模板时出现字段丢失。
+
+本期沿用既有 `model: string | {id, speed}` 合同，不展示或接受 `model.effort`。后端现有 Agents API 已支持 multiagent、skills、MCP 和工具权限，因此无需新增路由或数据库迁移。
+
+## 状态流
+
+```mermaid
+flowchart LR
+  Template["模板或 Describe 生成"] -->|整体替换| Draft["CreateAgentDraft"]
+  Rendered["Rendered 表单"] -->|纯函数更新| Draft
+  Draft -->|序列化| Raw["Raw YAML / JSON"]
+  Raw -->|严格校验成功后原子替换| Draft
+  Draft -->|校验通过| Create["POST /v1/agents"]
+```
+
+- Draft 是唯一合法配置来源；Rendered 不保存字段副本。
+- 进入 Raw 时由 Draft 重新序列化。格式切换也从 Draft 生成，不做文本级 YAML/JSON 转换。
+- Raw 输入无效时保留最后一份合法 Draft，禁止切回 Rendered、切换格式、创建，以及通过模板或 Describe 生成覆盖这段未保存文本；生成请求完成时也会重新检查 Raw 状态。
+- Raw 合法时，模板选择与 Describe 生成成功会整体替换 Draft、清除错误并折叠 Starting point。
+- 关闭弹窗直接丢弃 Draft；生成请求会随组件卸载中止。
+
+## 配置不变量
+
+### Multiagent 与 Skills
+
+- Multiagent 最多包含 20 个引用（`self` 也计入上限）；Agent 引用不得重复，并以 `{type:"agent", id, version}` 固定引用选择时的当前版本。
+- Rendered 不主动提供 `self`，但能够展示、保留和移除合法 Raw 中的 `{type:"self"}`。
+- Agent 选择器初始加载当前工作区前 20 个候选；输入后以 300ms 防抖按名称调用服务端搜索，符合完整 Agent ID 规则时直接精确读取，不受首屏候选数量限制。
+- Skills 最多 20 个，写入 `{type, skill_id, version:"latest"}`。
+- 新建 Agent 或 Skill 使用新标签页；原弹窗保留 Draft，并在重新获得焦点时刷新候选项。
+
+### MCP 与 Tools
+
+- 添加 Directory MCP 必须原子添加 `mcp_servers` 和同名 `mcp_toolset`；删除时原子删除二者。
+- 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API。
+- MCP 候选项优先展示 Directory `icon_url`。若该字段是网页地址，则改用同源 favicon；加载失败后依次尝试 MCP 服务域名 favicon、公开 favicon 服务，全部失败才回退到统一的 Server 图标。图标使用懒加载，避免展开选择器时同时请求全部候选资源。
+- “添加 MCP 服务器”与“添加自定义工具”使用相同的 `36px` 高度、`14px` 字号、常规字重、间距和 Plus 图标规格。
+- 内置工具仅展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`，默认 `always_allow`；新 MCP 默认 `always_ask`。
+- 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
+- Toolset 级权限写入 `default_config` 并清空逐工具覆盖；逐工具权限与默认值一致时不保留冗余覆盖。
+- `always_deny` 规范化为 `enabled:false`；`custom` 只是聚合展示状态，不写入 API。
+- Custom Tool 名称必须唯一且符合后端命名规则，描述与 JSON object `input_schema` 必须有效。
+- Raw codec 使用与 Agents API 一致的 Tool 判别联合：MCP Server 仅接受 `type:"url"`，权限策略仅接受 `always_allow`/`always_ask`，Custom Tool 的 `input_schema.type` 必须为 `object`。
+
+## 数据与组件边界
+
+- 弹窗入口负责模型映射、模型目录加载、创建提交和导航。
+- Draft hook 负责 Rendered/Raw/格式状态及严格 codec。
+- Rendered 各区块只调用 Draft 纯函数，不直接构造请求体。
+- Models、Agents、Skills、Directory 查询经 feature API 适配，展示组件不依赖 Dashboard 页面模块；Models 通过 Anthropic `/v1` SDK client 加载，与 `/api` Console client 保持边界分离。
+- 工具权限读语义复用 Agent 详情页模型，写语义集中在创建 Draft 模型中。
+- 桌面端弹窗最大宽度为 `880px`，说明列收至 `220px`。该尺寸以改造前 `720px` 创建弹窗和项目 `780px` 宽表单为基准，为 Rendered 模式额外保留说明列空间，同时避免接近 `1120px` Raw 编辑器的视觉体量；窄屏仍使用视口内边距和单列布局。
+
+## 验收
+
+- YAML 与 JSON 可往返全部支持字段，未知顶层字段和 `model.effort` 被拒绝。
+- Rendered 可完成 General、Multiagent、Skills、内置/MCP/Custom Tools 配置并创建 Agent。
+- MCP 与 toolset 始终成对，权限聚合和 deny 序列化与运行时一致。
+- 模型、候选 Agent、Skills 和 Directory 加载失败都有可重试状态。
+- 弹窗支持键盘导航、浅深主题和窄屏单列布局。

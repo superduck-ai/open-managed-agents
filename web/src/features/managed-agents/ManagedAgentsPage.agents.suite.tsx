@@ -8,10 +8,8 @@ import {
   type CodeMirrorTestElement,
   codeBlockContaining,
   createAgentRequestFixture,
-  expectPageTextToContain,
   fireEvent,
   mockAgentsApi,
-  mockManagedResourceApi,
   quickstartToolStream,
   render,
   renderManagedAgentsPage,
@@ -81,6 +79,10 @@ export function registerManagedAgentsAgentsTests() {
     expect(startingPointButton.parentElement?.parentElement?.className).toContain('shrink-0');
     expect(startingPointButton.className).toContain('items-center');
     expect(startingPointButton.getAttribute('aria-expanded')).toBe('true');
+    expect(within(dialog).getByRole('tab', { name: 'Rendered' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(dialog).getByText('General')).toBeTruthy();
+    expect(within(dialog).getByDisplayValue('Untitled agent')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
     expect(dialog.textContent).toContain('name: Untitled agent');
     expect(dialog.textContent).toContain('mcp_servers: []');
     expect(within(dialog).getByRole('tab', { name: 'YAML' }).getAttribute('aria-selected')).toBe('true');
@@ -160,7 +162,7 @@ export function registerManagedAgentsAgentsTests() {
     ];
 
     const openStartingPoint = () => {
-      const trigger = within(dialog).getByRole('button', { name: /^Starting point$/i });
+      const trigger = within(dialog).getByRole('button', { name: /^Starting point(?: · .+)?$/i });
       if (trigger.getAttribute('aria-expanded') === 'false') {
         fireEvent.click(trigger);
       }
@@ -178,19 +180,14 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(within(dialog).getByRole('button', { name: /Deep researcher/i }));
     expect(dialog.textContent).toContain('name: Deep researcher');
     expect(
-      within(dialog)
-        .getByRole('button', { name: /^Starting point$/i })
-        .getAttribute('aria-expanded'),
+      within(dialog).getByRole('button', { name: 'Starting point · Deep researcher' }).getAttribute('aria-expanded'),
     ).toBe('false');
-    const collapsedSummary = within(dialog)
-      .getAllByText('Deep researcher')
-      .find((node) => node.closest('[data-slot="badge"]'));
-    expect(collapsedSummary?.closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
+    expect(within(dialog).getByText(/· Deep researcher/)).toBeTruthy();
     expect(within(dialog).queryByRole('button', { name: /Structured extractor/i })).toBeNull();
-    expect(dialog.className).toContain('h-[min(720px,calc(100dvh-2rem))]');
+    expect(dialog.className).toContain('h-[calc(100dvh-2rem)]');
+    expect(dialog.className).toContain('max-w-[880px]');
     expect(dialog.className).toContain('grid-rows-1');
     expect(dialog.firstElementChild?.className).toContain('flex-col');
-    expect(dialog.querySelector('[role="tabpanel"]')?.className).toContain('flex-1');
 
     fireEvent.click(within(dialog).getByRole('tab', { name: 'JSON' }));
     expect(
@@ -204,7 +201,9 @@ export function registerManagedAgentsAgentsTests() {
     expect(window.location.pathname).toBe('/workspaces/default/agents/agent_created123456');
     expect(window.location.search).toBe('?tab=config');
     expect(api.requests.some((request) => request.method === 'GET' && request.url.includes('/v1/agents?'))).toBe(true);
-    const createRequest = api.requests.find((request) => request.method === 'POST');
+    const createRequest = api.requests.find(
+      (request) => request.method === 'POST' && request.url === '/v1/agents?beta=true',
+    );
     expect(createRequest?.url).toBe('/v1/agents?beta=true');
     expect(createRequest?.headers['x-workspace-id']).toBe('default');
     expect(createRequest?.body?.name).toBe('Deep researcher');
@@ -269,10 +268,16 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }));
     const dialog = screen.getByRole('dialog', { name: 'Create agent' });
 
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
     fireEvent.click(within(dialog).getByRole('tab', { name: 'JSON' }));
     setAgentConfigEditorValue(dialog, '{', 'Agent config JSON');
     expect(within(dialog).getByText(/JSON is not valid/i)).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Create agent' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Rendered' }));
+    expect(within(dialog).getByRole('tab', { name: 'Raw' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Template' }));
+    expect(within(dialog).getByRole('tab', { name: 'Raw' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(dialog).getByText(/JSON is not valid/i)).toBeTruthy();
 
     setAgentConfigEditorValue(
       dialog,
@@ -301,10 +306,8 @@ export function registerManagedAgentsAgentsTests() {
     });
     await waitFor(() => expect(dialog.textContent).toContain('PR digest'));
     expect(
-      within(dialog)
-        .getByRole('button', { name: /^Starting point$/i })
-        .getAttribute('aria-expanded'),
-    ).toBe('true');
+      within(dialog).getByRole('button', { name: 'Starting point · PR digest' }).getAttribute('aria-expanded'),
+    ).toBe('false');
     expect(dialog.textContent).toContain('PR digest');
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create agent' }));
@@ -322,6 +325,175 @@ export function registerManagedAgentsAgentsTests() {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create agent' })).toBeNull());
     expect(window.location.pathname).toBe('/workspaces/default/agents/agent_created123456');
     expect(window.location.search).toBe('?tab=config');
+  });
+
+  test('builds multiagent, skills, MCP, custom tools, and permissions from the rendered create form', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const api = mockAgentsApi(
+      [
+        serverAgent,
+        {
+          id: 'agent_helper123456',
+          name: 'Helper agent',
+          version: 3,
+        },
+      ],
+      {
+        skills: [
+          {
+            id: 'skill_reporting',
+            displayTitle: 'Reporting skill',
+            latestVersion: '7',
+            source: 'custom',
+          },
+        ],
+        mcpDirectoryServers: [
+          {
+            type: 'remote',
+            slug: 'github',
+            name: 'GitHub',
+            display_name: 'GitHub',
+            icon_url: 'https://github.com/favicon.ico',
+            tool_names: ['search_code'],
+            visibility: ['commercial'],
+            remote: { url: 'https://api.githubcopilot.com/mcp/' },
+          },
+        ],
+      },
+    );
+    render(<ManagedAgentsPage section="agents" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    fireEvent.change(within(dialog).getByDisplayValue('Untitled agent'), { target: { value: 'Rendered agent' } });
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add subagent' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Helper agent/ }));
+    expect(within(dialog).getByText('Helper agent')).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add skill' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Reporting skill/ }));
+    expect(within(dialog).getByText('Reporting skill')).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
+    const githubOption = await screen.findByRole('option', { name: /GitHub/ });
+    expect(githubOption.querySelector('img')?.getAttribute('src')).toBe('https://github.com/favicon.ico');
+    fireEvent.click(githubOption);
+    const githubCard = within(dialog).getByText('GitHub').closest('[data-slot="card"]') as HTMLElement;
+    expect(githubCard).toBeTruthy();
+    fireEvent.click(within(githubCard).getByRole('button', { name: 'Tool permissions' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Always allow' }));
+
+    const addMcpButton = within(dialog).getByRole('combobox', { name: 'Add MCP server' });
+    const addCustomToolButton = within(dialog).getByRole('button', { name: 'Add custom tool' });
+    for (const className of ['h-9', 'gap-2', 'px-2', 'text-sm', 'font-normal']) {
+      expect(addMcpButton.className).toContain(className);
+      expect(addCustomToolButton.className).toContain(className);
+    }
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove Built-in tools' }));
+    const restoreBuiltInsButton = within(dialog).getByRole('button', { name: 'Add built-in tools' });
+    fireEvent.click(restoreBuiltInsButton);
+    expect(within(dialog).getByText('Built-in tools')).toBeTruthy();
+    fireEvent.click(addCustomToolButton);
+    const customCard = within(dialog).getByText('Custom tool').closest('[data-slot="card"]') as HTMLElement;
+    fireEvent.change(within(customCard).getByLabelText('Name'), { target: { value: 'lookup_customer' } });
+    fireEvent.change(within(customCard).getByLabelText('Description'), {
+      target: { value: 'Find a customer by email.' },
+    });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url === '/v1/agents?beta=true' && request.method === 'POST')).toBe(
+        true,
+      ),
+    );
+    const request = api.requests.find(
+      (candidate) => candidate.url === '/v1/agents?beta=true' && candidate.method === 'POST',
+    );
+    expect(request?.body?.name).toBe('Rendered agent');
+    expect(request?.body?.multiagent).toEqual({
+      type: 'coordinator',
+      agents: [{ type: 'agent', id: 'agent_helper123456', version: 3 }],
+    });
+    expect(request?.body?.skills).toEqual([{ type: 'custom', skill_id: 'skill_reporting', version: 'latest' }]);
+    expect(request?.body?.mcp_servers).toEqual([
+      { name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' },
+    ]);
+    expect(request?.body?.tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'mcp_toolset',
+          mcp_server_name: 'github',
+          default_config: { enabled: true, permission_policy: { type: 'always_allow' } },
+        }),
+        expect.objectContaining({
+          type: 'custom',
+          name: 'lookup_customer',
+          description: 'Find a customer by email.',
+        }),
+      ]),
+    );
+  });
+
+  test('searches subagents on the server beyond the initial 20 candidates', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const api = mockAgentsApi([
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `agent_candidate_${index}`,
+        name: `Candidate ${index}`,
+        version: 1,
+      })),
+      { id: 'agent_remote_helper', name: 'Remote helper', version: 6 },
+    ]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add subagent' }));
+    expect(screen.queryByRole('option', { name: /Remote helper/ })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText('Search agents...'), { target: { value: 'Remote helper' } });
+
+    const remoteHelper = await screen.findByRole('option', { name: /Remote helper/ });
+    expect(
+      api.requests.some(
+        (request) => request.url === '/v1/agents:search?beta=true' && request.body?.name === 'Remote helper',
+      ),
+    ).toBe(true);
+    fireEvent.click(remoteHelper);
+    expect(within(dialog).getByText('Remote helper')).toBeTruthy();
+  });
+
+  test('loads skill options beyond the fifth page', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const api = mockAgentsApi([], {
+      skills: Array.from({ length: 6 }, (_, index) => ({
+        id: `skill_page_${index + 1}`,
+        displayTitle: `Paged skill ${index + 1}`,
+        latestVersion: '1',
+        source: 'custom',
+      })),
+      skillsPageSize: 1,
+    });
+    render(<ManagedAgentsPage section="agents" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add skill' }));
+
+    expect(await screen.findByRole('option', { name: /Paged skill 6/ })).toBeTruthy();
+    expect(api.requests.filter((request) => request.url.startsWith('/v1/skills?')).length).toBe(6);
+  });
+
+  test('opens the create dialog from the create_agent route query and consumes the query', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents?create_agent=1');
+    mockAgentsApi([]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('dialog', { name: 'Create agent' })).toBeTruthy();
+    expect(window.location.pathname).toBe('/workspaces/default/agents');
+    expect(window.location.search).toBe('');
   });
 
   test('renders agent detail and switches the config viewer to a historical version', async () => {
@@ -421,13 +593,13 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url === '/v1/skills/triage?beta=true')).toBe(true);
     expect(api.requests.some((request) => request.url === '/v1/skills/reporting?beta=true')).toBe(true);
     expect(screen.queryByText('No skills configured.')).toBeNull();
-    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+8/ });
+    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+6/ });
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     fireEvent.click(permissionsButton);
     expect(screen.getByText('bash')).toBeTruthy();
-    expect(screen.getByText('web_search')).toBeTruthy();
-    expect(screen.getByText('Search the web')).toBeTruthy();
+    expect(screen.queryByText('web_fetch')).toBeNull();
+    expect(screen.queryByText('web_search')).toBeNull();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     const versionButton = screen.getByRole('button', { name: 'Version: v2' });
     expect(versionButton.className.includes('bg-secondary')).toBe(false);
@@ -531,7 +703,7 @@ export function registerManagedAgentsAgentsTests() {
 
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
-    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+8/ }));
+    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+6/ }));
     expect(within(builtInCard).getByText('bash')).toBeTruthy();
     expect(within(builtInCard).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
@@ -555,6 +727,12 @@ export function registerManagedAgentsAgentsTests() {
     const directoryIcon = mcpCard.querySelector('img') as HTMLImageElement;
     expect(directoryIcon).toBeTruthy();
     fireEvent.error(directoryIcon);
+    const serverFavicon = mcpCard.querySelector('img') as HTMLImageElement;
+    expect(serverFavicon.getAttribute('src')).toBe('https://agent.example.com/favicon.ico');
+    fireEvent.error(serverFavicon);
+    const publicFavicon = mcpCard.querySelector('img') as HTMLImageElement;
+    expect(publicFavicon.getAttribute('src')).toBe('https://www.google.com/s2/favicons?domain=agent.example.com&sz=64');
+    fireEvent.error(publicFavicon);
     expect(mcpCard.querySelector('img')).toBeNull();
     expect(mcpCard.querySelector('.lucide-server')).toBeTruthy();
     expect(api.requests.some((request) => request.url.startsWith('/api/directory/servers?'))).toBe(true);
@@ -1169,7 +1347,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(new URL(window.location.href).searchParams.get('deployment')).toBeNull();
   });
 
-  test('opens the edit modal as a YAML config editor', async () => {
+  test('opens the edit modal in Rendered mode and preserves the YAML Raw editor', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit123456');
     mockAgentsApi([
       {
@@ -1186,22 +1364,70 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
-    expect(within(dialog).getByRole('combobox', { name: 'Code format' })).toBeTruthy();
+    expect(within(dialog).getByRole('tab', { name: 'Rendered' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(dialog).getByText('General')).toBeTruthy();
+    expect(within(dialog).getByDisplayValue('Editable agent')).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Save new version' }).hasAttribute('disabled')).toBe(true);
+
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
+
+    expect(within(dialog).getByRole('tab', { name: 'YAML' }).getAttribute('aria-selected')).toBe('true');
     expect(within(dialog).getByRole('button', { name: 'Copy code' })).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: 'Save new version' })).toBeTruthy();
-    const configTextbox = within(dialog).getByRole('textbox', { name: 'Agent configuration' });
+    const configTextbox = within(dialog).getByRole('textbox', { name: 'Agent config YAML' });
     expect(configTextbox.closest('.cm-editor')?.className).toContain('cm-editor');
-    const configCard = configTextbox.closest('[data-slot="card"]') as HTMLElement | null;
-    expect(configCard?.dataset.slot).toBe('card');
-    expect(configCard?.className).toContain('bg-card');
-    expect(configCard?.className).not.toContain('bg-muted');
     expect(dialog.textContent).toContain('name: Editable agent');
-    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Code format' }));
-    expect(screen.getByRole('option', { name: 'YAML' }).getAttribute('aria-selected')).toBe('true');
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Edit agent' })).toBeNull();
+  });
+
+  test('edits the selected historical config against the latest version baseline', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit_history');
+    const api = mockAgentsApi([
+      {
+        id: 'agent_edit_history',
+        name: 'Latest config',
+        version: 3,
+        description: 'Latest description',
+        versions: [
+          {
+            id: 'agent_edit_history',
+            name: 'Historical config',
+            version: 1,
+            description: 'Historical description',
+            system: 'Historical system prompt',
+          },
+        ],
+      },
+    ]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Latest config' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Version: v3' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'v1' }));
+    await waitFor(() => expect(screen.getByText('Historical system prompt')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+    const nameInput = within(dialog).getByDisplayValue('Historical config');
+    expect(within(dialog).getByDisplayValue('Historical description')).toBeTruthy();
+    fireEvent.change(nameInput, { target: { value: 'Historical config revised' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) => request.method === 'POST' && request.url === '/v1/agents/agent_edit_history?beta=true',
+        ),
+      ).toBe(true),
+    );
+    const updateRequest = api.requests.find(
+      (request) => request.method === 'POST' && request.url === '/v1/agents/agent_edit_history?beta=true',
+    );
+    expect(updateRequest?.body?.version).toBe(3);
+    expect(updateRequest?.body?.name).toBe('Historical config revised');
+    expect(updateRequest?.body?.description).toBe('Historical description');
   });
 
   test('closes the edit modal from the close button and backdrop', async () => {
@@ -1228,6 +1454,31 @@ export function registerManagedAgentsAgentsTests() {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit agent' })).toBeNull());
   });
 
+  test('does not submit an invalid Rendered draft through Raw or Cmd+S', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit_invalid_rendered');
+    const api = mockAgentsApi([
+      {
+        id: 'agent_edit_invalid_rendered',
+        name: 'Validated agent',
+        version: 2,
+      },
+    ]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Validated agent' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+    fireEvent.change(within(dialog).getByDisplayValue('Validated agent'), { target: { value: '' } });
+
+    expect(within(dialog).getByText(/Name is required/i)).toBeTruthy();
+    fireEvent.keyDown(document, { key: 's', metaKey: true });
+    expect(api.requests.some((request) => request.method === 'POST')).toBe(false);
+
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
+    expect(within(dialog).getByText(/Name is required/i)).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Save new version' }).hasAttribute('disabled')).toBe(true);
+  });
+
   test('validates JSON edit config and saves a canonicalized new version body', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit123456');
     const api = mockAgentsApi([
@@ -1248,12 +1499,11 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
-    await selectManagedComboboxOption(dialog, 'Code format', 'JSON');
-    await waitFor(() =>
-      expect(within(dialog).getByRole('combobox', { name: 'Code format' }).textContent).toContain('JSON'),
-    );
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Raw' }));
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'JSON' }));
+    expect(within(dialog).getByRole('tab', { name: 'JSON' }).getAttribute('aria-selected')).toBe('true');
 
-    setAgentConfigEditorValue(dialog, '{', 'Agent configuration');
+    setAgentConfigEditorValue(dialog, '{', 'Agent config JSON');
 
     expect(within(dialog).getByText(/JSON is not valid/i)).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Save new version' }).hasAttribute('disabled')).toBe(true);
@@ -1275,7 +1525,7 @@ export function registerManagedAgentsAgentsTests() {
         null,
         2,
       ),
-      'Agent configuration',
+      'Agent config JSON',
     );
     expect(within(dialog).queryByText(/JSON is not valid/i)).toBeNull();
 
@@ -1329,9 +1579,13 @@ export function registerManagedAgentsAgentsTests() {
       expect(await screen.findByRole('heading', { name: `Editable agent ${status}` })).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
       const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+      fireEvent.change(within(dialog).getByDisplayValue(`Editable agent ${status}`), {
+        target: { value: `Updated agent ${status}` },
+      });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
 
       expect(await within(dialog).findByText(message)).toBeTruthy();
+      expect(within(dialog).getByDisplayValue(`Updated agent ${status}`)).toBeTruthy();
       cleanup();
     }
   });
@@ -1349,7 +1603,8 @@ export function registerManagedAgentsAgentsTests() {
 
     expect(await screen.findByRole('heading', { name: 'Shortcut agent' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    expect(screen.getByRole('dialog', { name: 'Edit agent' })).toBeTruthy();
+    const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+    fireEvent.change(within(dialog).getByDisplayValue('Shortcut agent'), { target: { value: 'Shortcut agent v4' } });
 
     fireEvent.keyDown(document, { key: 's', metaKey: true });
 
@@ -1365,6 +1620,82 @@ export function registerManagedAgentsAgentsTests() {
     );
     expect(updateRequest?.body?.version).toBe(3);
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit agent' })).toBeNull());
+  });
+
+  test('preserves fixed references and model speed when saving from Rendered mode', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit_refs');
+    const api = mockAgentsApi([
+      {
+        id: 'agent_edit_refs',
+        name: 'Coordinator',
+        version: 4,
+        model: { id: 'claude-sonnet-4-6', speed: 'fast' },
+        multiagent: {
+          type: 'coordinator',
+          agents: [{ type: 'self' }, { type: 'agent', id: 'agent_worker', version: 7 }],
+        },
+        skills: [{ type: 'custom', skill_id: 'skill_release', version: '3' }],
+        tools: [
+          { type: 'agent_toolset_20260401' },
+          {
+            type: 'custom',
+            name: 'release_status',
+            description: 'Read release status',
+            input_schema: { type: 'object', properties: {} },
+          },
+        ],
+      },
+      { id: 'agent_worker', name: 'Worker', version: 7 },
+    ]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Coordinator' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+    expect(within(dialog).getByText('This agent')).toBeTruthy();
+    expect(await within(dialog).findByText('Worker')).toBeTruthy();
+
+    fireEvent.change(within(dialog).getByDisplayValue('Coordinator'), { target: { value: 'Coordinator updated' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) => request.method === 'POST' && request.url === '/v1/agents/agent_edit_refs?beta=true',
+        ),
+      ).toBe(true),
+    );
+    const updateRequest = api.requests.find(
+      (request) => request.method === 'POST' && request.url === '/v1/agents/agent_edit_refs?beta=true',
+    );
+    expect(updateRequest?.body?.model).toEqual({ id: 'claude-sonnet-4-6', speed: 'fast' });
+    expect(updateRequest?.body?.multiagent).toEqual({
+      type: 'coordinator',
+      agents: [{ type: 'self' }, { type: 'agent', id: 'agent_worker', version: 7 }],
+    });
+    expect(updateRequest?.body?.skills).toEqual([{ type: 'custom', skill_id: 'skill_release', version: '3' }]);
+  });
+
+  test('falls back to Raw mode for a valid legacy configuration that Rendered cannot edit safely', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit_legacy');
+    mockAgentsApi([
+      {
+        id: 'agent_edit_legacy',
+        name: 'Legacy agent',
+        version: 5,
+        tools: [{ type: 'future_toolset_20269999', config: { preserve: true } }],
+      },
+    ]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Legacy agent' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+
+    expect(within(dialog).getByRole('tab', { name: 'Raw' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(dialog).getByRole('tab', { name: 'Rendered' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(dialog).getByText(/cannot be edited safely in Rendered mode/i)).toBeTruthy();
+    expect(dialog.textContent).toContain('future_toolset_20269999');
   });
 
   test('queries agents for the active workspace and refetches when it changes', async () => {

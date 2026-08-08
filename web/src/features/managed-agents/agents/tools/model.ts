@@ -55,8 +55,6 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'edit', description: 'String replacement in files' },
     { name: 'glob', description: 'File pattern matching' },
     { name: 'grep', description: 'Text search with regex' },
-    { name: 'web_fetch', description: 'Fetch URL content' },
-    { name: 'web_search', description: 'Search the web' },
   ],
 };
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { anthropicBaseURL, anthropicBetaApi, setAnthropicClientForTest } from './anthropic';
+import { anthropicApi, anthropicBaseURL, anthropicBetaApi, setAnthropicClientForTest } from './anthropic';
 import { setConsoleRequestContext } from './client';
 import { resetTestDom } from '../../test/setup';
 
@@ -13,6 +13,25 @@ afterEach(() => {
 });
 
 describe('anthropicBetaApi', () => {
+  test('lists models through the v1 SDK boundary with the requested workspace', async () => {
+    let capturedInput: RequestInfo | URL = '';
+    let capturedInit: RequestInit | undefined;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedInput = input;
+      capturedInit = init;
+      return new Response(JSON.stringify({ data: [{ id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    const page = await anthropicApi.models.list<{ id: string }>({ limit: 1000 }, 'workspace_models');
+
+    expect(String(capturedInput).startsWith('/v1/models?')).toBe(true);
+    expect(new Headers(capturedInit?.headers).get('x-workspace-id')).toBe('workspace_models');
+    expect(page.data).toEqual([{ id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6' }]);
+  });
+
   test('uses same-origin SDK requests with workspace headers and cookie credentials', async () => {
     let capturedInput: RequestInfo | URL = '';
     let capturedInit: RequestInit | undefined;

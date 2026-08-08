@@ -70,7 +70,7 @@ func (s *Service) Seal(ctx context.Context, binding Binding, plaintext []byte) (
 	if err != nil {
 		return Envelope{}, fmt.Errorf("secrets: generate DEK: %w", err)
 	}
-	defer wipe(dek)
+	defer clear(dek)
 
 	gcm, err := newAESGCM(dek)
 	if err != nil {
@@ -97,30 +97,30 @@ func (s *Service) Seal(ctx context.Context, binding Binding, plaintext []byte) (
 // Open decrypts an envelope back to plaintext. Any tamper with the ciphertext,
 // nonce, wrapped DEK, AAD binding, format version, or provider/version mismatch
 // fails closed and returns an error; there is never a plaintext fallback.
-func (s *Service) Open(ctx context.Context, binding Binding, env Envelope) ([]byte, error) {
+func (s *Service) Open(ctx context.Context, binding Binding, envelope Envelope) ([]byte, error) {
 	if err := validateBinding(binding); err != nil {
 		return nil, err
 	}
-	if env.FormatVersion != envelopeFormatVersion {
-		return nil, fmt.Errorf("%w: %d", ErrUnknownEnvelopeFormat, env.FormatVersion)
+	if envelope.FormatVersion != envelopeFormatVersion {
+		return nil, fmt.Errorf("%w: %d", ErrUnknownEnvelopeFormat, envelope.FormatVersion)
 	}
-	if env.KeyProvider != s.provider.Name() {
-		return nil, fmt.Errorf("%w: envelope %q, active %q", ErrKeyProviderMismatch, env.KeyProvider, s.provider.Name())
+	if envelope.KeyProvider != s.provider.Name() {
+		return nil, fmt.Errorf("%w: envelope %q, active %q", ErrKeyProviderMismatch, envelope.KeyProvider, s.provider.Name())
 	}
-	dek, err := s.provider.UnwrapDEK(ctx, WrappedKey{Ciphertext: env.WrappedDEK, KeyVersion: env.KeyVersion})
+	dek, err := s.provider.UnwrapDEK(ctx, WrappedKey{Ciphertext: envelope.WrappedDEK, KeyVersion: envelope.KeyVersion})
 	if err != nil {
 		return nil, err
 	}
-	defer wipe(dek)
+	defer clear(dek)
 
 	gcm, err := newAESGCM(dek)
 	if err != nil {
 		return nil, err
 	}
-	if len(env.Nonce) != gcm.NonceSize() {
-		return nil, fmt.Errorf("secrets: nonce size mismatch: got %d want %d", len(env.Nonce), gcm.NonceSize())
+	if len(envelope.Nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("secrets: nonce size mismatch: got %d want %d", len(envelope.Nonce), gcm.NonceSize())
 	}
-	plaintext, err := gcm.Open(nil, env.Nonce, env.Ciphertext, aadBytes(binding, env.FormatVersion))
+	plaintext, err := gcm.Open(nil, envelope.Nonce, envelope.Ciphertext, aadBytes(binding, envelope.FormatVersion))
 	if err != nil {
 		return nil, fmt.Errorf("secrets: open ciphertext: %w", err)
 	}
@@ -160,10 +160,4 @@ func aadBytes(b Binding, formatVersion int) []byte {
 func writePrefixString(buf *bytes.Buffer, s string) {
 	_ = binary.Write(buf, binary.BigEndian, int32(len(s)))
 	buf.WriteString(s)
-}
-
-func wipe(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }

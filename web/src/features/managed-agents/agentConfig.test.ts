@@ -73,6 +73,19 @@ describe('localized create-agent template configs', () => {
     ).toEqual({ id: 'glm-5-turbo', speed: 'fast' });
   });
 
+  test('distinguishes an omitted generated multiagent from an explicit null', () => {
+    const fallback = {
+      ...createDialogAgentConfig(blankAgentTemplate),
+      multiagent: {
+        type: 'coordinator' as const,
+        agents: [{ type: 'agent' as const, id: 'agent_helper', version: 3 }],
+      },
+    };
+
+    expect(quickstartBuildAgentConfigInput({}, fallback).multiagent).toEqual(fallback.multiagent);
+    expect(quickstartBuildAgentConfigInput({ multiagent: null }, fallback).multiagent).toBeUndefined();
+  });
+
   test('trims mapped and unmapped model ids at the configuration boundary', () => {
     const mappings = { 'claude-sonnet-4-6': ' glm-5-turbo ' };
 

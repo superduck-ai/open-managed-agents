@@ -370,15 +370,10 @@ export function registerManagedAgentsQuickstartTests() {
     fireEvent.click(within(dialog).getByRole('tab', { name: '模板' }));
     fireEvent.click(within(dialog).getByRole('button', { name: /深度调研助手/i }));
 
-    expect(
-      within(dialog)
-        .getByRole('button', { name: /^起点$/i })
-        .getAttribute('aria-expanded'),
-    ).toBe('false');
-    const collapsedSummary = within(dialog)
-      .getAllByText('深度调研助手')
-      .find((node) => node.closest('[data-slot="badge"]'));
-    expect(collapsedSummary?.closest('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
+    expect(within(dialog).getByRole('button', { name: '起点 · 深度调研助手' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+    expect(within(dialog).getByText(/· 深度调研助手/)).toBeTruthy();
   });
 
   test('keeps only the active Builder prompt language fixed when the UI locale changes', async () => {

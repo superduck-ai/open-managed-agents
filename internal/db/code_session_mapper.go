@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -158,7 +159,7 @@ type CodeSessionMapper interface {
 }
 
 func (r codeSessionRow) session() CodeSession {
-	workerExternalMetadata := copyRaw(r.WorkerExternalMetadata)
+	workerExternalMetadata := bytes.Clone(r.WorkerExternalMetadata)
 	if len(workerExternalMetadata) == 0 {
 		workerExternalMetadata = json.RawMessage(`{}`)
 	}
@@ -175,7 +176,7 @@ func (r codeSessionRow) session() CodeSession {
 		PermissionMode:              r.PermissionMode,
 		Model:                       r.Model,
 		Status:                      r.Status,
-		Metadata:                    copyRaw(r.Metadata),
+		Metadata:                    bytes.Clone(r.Metadata),
 		ConnectionStatus:            r.ConnectionStatus,
 		LastInboundSequenceNum:      r.LastInboundSequenceNum,
 		LastOutboundSequenceNum:     r.LastOutboundSequenceNum,
@@ -187,10 +188,10 @@ func (r codeSessionRow) session() CodeSession {
 		WorkerRegisteredAt:          r.WorkerRegisteredAt,
 		WorkerLastHeartbeatAt:       r.WorkerLastHeartbeatAt,
 		WorkerTokenSessionID:        r.WorkerTokenSessionID,
-		WorkerBinding:               copyRaw(r.WorkerBinding),
+		WorkerBinding:               bytes.Clone(r.WorkerBinding),
 		WorkerStatus:                r.WorkerStatus,
 		WorkerExternalMetadata:      workerExternalMetadata,
-		WorkerRequiresActionDetails: copyRaw(r.WorkerRequiresActionDetails),
+		WorkerRequiresActionDetails: bytes.Clone(r.WorkerRequiresActionDetails),
 		CreatedAt:                   r.CreatedAt,
 		UpdatedAt:                   r.UpdatedAt,
 		DeletedAt:                   r.DeletedAt,

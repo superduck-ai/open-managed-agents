@@ -646,20 +646,28 @@ export function credentialFormValues(credential?: VaultCredentialApiResponse): C
   };
 }
 
-export function credentialAuthBody(values: CredentialFormValues, includeImmutable: boolean) {
+export function credentialAuthBody(values: CredentialFormValues, mode: 'create' | 'update') {
   if (values.authType === 'environment_variable') {
-    return {
+    const body: Record<string, unknown> = {
       type: 'environment_variable',
-      ...(includeImmutable ? { secret_name: values.secretName.trim() } : {}),
-      secret_value: values.secretValue,
       networking: { type: 'unrestricted' },
     };
+    if (mode === 'create') {
+      body.secret_name = values.secretName.trim();
+      body.secret_value = values.secretValue;
+    } else if (values.secretValue.trim()) {
+      body.secret_value = values.secretValue;
+    }
+    return body;
   }
-  return {
+  const body: Record<string, unknown> = {
     type: 'static_bearer',
-    ...(includeImmutable ? { mcp_server_url: values.mcpServerUrl.trim() } : {}),
-    token: values.token,
+    mcp_server_url: values.mcpServerUrl.trim(),
   };
+  if (mode === 'create' || values.token.trim()) {
+    body.token = values.token;
+  }
+  return body;
 }
 
 export function credentialAuthLabel(auth: unknown) {

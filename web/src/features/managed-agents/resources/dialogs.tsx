@@ -61,8 +61,8 @@ export function CredentialDialog({
   const canSubmit =
     values.displayName.trim() &&
     (values.authType === 'static_bearer'
-      ? values.mcpServerUrl.trim() && values.token.trim()
-      : values.secretName.trim() && values.secretValue.trim());
+      ? values.mcpServerUrl.trim() && (credential != null || values.token.trim())
+      : values.secretName.trim() && (credential != null || values.secretValue.trim()));
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -130,6 +130,7 @@ export function CredentialDialog({
                   label="Secret name"
                   value={values.secretName}
                   placeholder="EXAMPLE_TOKEN"
+                  disabled={credential != null}
                   onChange={(secretName) => setValues((current) => ({ ...current, secretName }))}
                 />
                 <ManagedTextField

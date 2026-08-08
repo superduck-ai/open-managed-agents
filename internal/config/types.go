@@ -20,8 +20,38 @@ type Config struct {
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
 	CodeSession       CodeSessionConfig       `yaml:"code_session"`
 	Webhook           WebhookConfig           `yaml:"webhook"`
+	Vault             VaultConfig             `yaml:"vault"`
 	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
 	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
+}
+
+// VaultConfig configures at-rest encryption for vault credential secrets.
+type VaultConfig struct {
+	MasterKey MasterKeyConfig `yaml:"master_key"`
+}
+
+// MasterKeyConfig supplies the key-encryption key (KEK) that wraps per-secret
+// DEKs. Exactly one of Kek or KekFile must be set (required in every env, same
+// as storage.s3 access keys). KekFile holds the same base64 text as Kek but
+// read from a mounted file (mirroring the
+// code_session.jwt_signing_private_key_file discipline).
+//
+// Version identifies the current wrap key (defaults to 1 when unset/0).
+// DecryptOnly holds older KEKs that may still open existing envelopes; Seal
+// always uses the current key. There is no rewrap step.
+type MasterKeyConfig struct {
+	Kek         string                 `yaml:"kek"`
+	KekFile     string                 `yaml:"kek_file"`
+	Version     int64                  `yaml:"version"`
+	DecryptOnly []DecryptOnlyKeyConfig `yaml:"decrypt_only"`
+}
+
+// DecryptOnlyKeyConfig is a prior KEK retained only for Open. Version is
+// required and must not collide with the current master_key.version.
+type DecryptOnlyKeyConfig struct {
+	Version int64  `yaml:"version"`
+	Kek     string `yaml:"kek"`
+	KekFile string `yaml:"kek_file"`
 }
 
 type ServerConfig struct {

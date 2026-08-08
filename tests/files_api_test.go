@@ -31,6 +31,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/google/uuid"
@@ -47,6 +48,7 @@ type testApp struct {
 	sessions             *platformsession.MemoryStore
 	credentials          *codesessions.SessionCredentials
 	filestoreCredentials *filestore.TokenCredentials
+	vaultSecrets         *secrets.Service
 	sandboxTimeouts      *recordingSandboxTimeoutExtender
 	server               *httptest.Server
 	baseURL              string
@@ -1055,6 +1057,16 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("ensure object store bucket: %v", err)
 	}
+	kek, err := secrets.GenerateKEK()
+	if err != nil {
+		database.Close()
+		t.Fatalf("generate vault KEK: %v", err)
+	}
+	vaultSecrets, err := secrets.NewLocalService(ctx, kek)
+	if err != nil {
+		database.Close()
+		t.Fatalf("create vault secrets service: %v", err)
+	}
 	sandboxTimeouts := &recordingSandboxTimeoutExtender{}
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{
 		Config:                 cfg,
@@ -1065,6 +1077,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		CodeSessionCredentials: credentials,
 		SandboxTimeoutExtender: sandboxTimeouts,
 		FilestoreCredentials:   filestoreCredentials,
+		VaultSecrets:           vaultSecrets,
 	}))
 	return &testApp{
 		cfg:                  cfg,
@@ -1073,6 +1086,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		sessions:             platformSessions,
 		credentials:          credentials,
 		filestoreCredentials: filestoreCredentials,
+		vaultSecrets:         vaultSecrets,
 		sandboxTimeouts:      sandboxTimeouts,
 		server:               server,
 		baseURL:              server.URL,

@@ -243,6 +243,16 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 		{name: "code_session.otlp_log_root", value: &cfg.CodeSession.OTLPLogRoot},
 		{name: "code_session.jwt_signing_private_key_file", value: &cfg.CodeSession.JWTSigningPrivateKeyFile},
 		{name: "code_session.upstream_proxy_ca_key_file", value: &cfg.CodeSession.UpstreamProxyCAKeyFile},
+		{name: "vault.master_key.kek_file", value: &cfg.Vault.MasterKey.KekFile},
+	}
+	for i := range cfg.Vault.MasterKey.DecryptOnly {
+		paths = append(paths, struct {
+			name  string
+			value *string
+		}{
+			name:  fmt.Sprintf("vault.master_key.decrypt_only[%d].kek_file", i),
+			value: &cfg.Vault.MasterKey.DecryptOnly[i].KekFile,
+		})
 	}
 	for _, path := range paths {
 		if strings.TrimSpace(*path.value) == "" {

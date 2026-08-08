@@ -501,8 +501,8 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 		OrganizationUUID:      row.OrganizationUUID,
 		WorkspaceUUID:         row.WorkspaceUUID,
 		EnvironmentExternalID: row.EnvironmentExternalID,
-		EnvironmentConfig:     copyRaw(row.EnvironmentConfig),
-		AgentSnapshot:         copyRaw(row.AgentSnapshot),
+		EnvironmentConfig:     bytes.Clone(row.EnvironmentConfig),
+		AgentSnapshot:         bytes.Clone(row.AgentSnapshot),
 	}, nil
 }
 
@@ -712,7 +712,7 @@ func (d *DB) UpdateCodeSessionWorkerState(ctx context.Context, codeSessionExtern
 		if input.RequiresActionDetailsSet {
 			requiresActionDetails = nil
 			if !rawIsJSONNull(input.RequiresActionDetails) {
-				requiresActionDetails = copyRaw(input.RequiresActionDetails)
+				requiresActionDetails = bytes.Clone(input.RequiresActionDetails)
 			}
 		}
 		if workerStatus != "requires_action" {
@@ -1303,7 +1303,7 @@ func mergeCodeSessionWorkerExternalMetadata(base json.RawMessage, patch json.Raw
 			delete(merged, key)
 			continue
 		}
-		merged[key] = copyRaw(value)
+		merged[key] = bytes.Clone(value)
 	}
 	if len(merged) == 0 {
 		return json.RawMessage(`{}`), nil

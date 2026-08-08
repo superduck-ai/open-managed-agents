@@ -36,6 +36,10 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 		"storage.s3.region",
 		"storage.s3.secret_access_key",
 		"storage.type",
+		"vault",
+		"vault.master_key",
+		"vault.master_key.kek",
+		"vault.master_key.version",
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {

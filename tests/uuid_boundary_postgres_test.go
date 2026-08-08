@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 
 	"github.com/google/uuid"
 )
@@ -525,9 +526,16 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		AuthType:         "static_bearer",
 		CredentialKey:    "typed_uuid_" + suffix,
 		Auth:             []byte(`{"type":"bearer"}`),
-		SecretPayload:    []byte(`{"token":"test"}`),
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		SecretEnvelope: &secrets.Envelope{
+			Ciphertext:    []byte("typed-uuid-cipher"),
+			Nonce:         []byte("nonce-12byte"),
+			WrappedDEK:    []byte("typed-uuid-wrap"),
+			FormatVersion: 1,
+			KeyProvider:   "local",
+			KeyVersion:    1,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
 	})
 	if err != nil || credential.CreatedByAPIKeyUUID != "" || credential.VaultUUID != vault.UUID {
 		t.Fatalf("create Vault credential with nullable creator UUID = (%+v, %v)", credential, err)

@@ -7,7 +7,7 @@ import (
 )
 
 func TestScheduledDeploymentsMigrationDefinesOccurrenceInvariant(t *testing.T) {
-	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00049_schedule_deployments_with_river.sql")
+	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00050_schedule_deployments_with_river.sql")
 	if err != nil {
 		t.Fatalf("read scheduled deployments migration: %v", err)
 	}

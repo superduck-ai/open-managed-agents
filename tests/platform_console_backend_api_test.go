@@ -563,16 +563,14 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 		assertRawNotContains(t, credential.Auth, "access-token")
 		assertRawNotContains(t, credential.Auth, "refresh-token")
 
-		var secretPayload string
-		if err := app.db.Pool.QueryRow(context.Background(), `
-			select secret_payload::text
-			from vault_credentials
-			where external_id = $1
-		`, credential.ID).Scan(&secretPayload); err != nil {
-			t.Fatalf("load credential secret payload: %v", err)
+		assertVaultCredentialsHaveNoSecretPayloadColumn(t, app)
+		env, binding := readVaultCredentialEnvelope(t, app, credential.ID)
+		opened, err := app.vaultSecrets.Open(context.Background(), binding, env)
+		if err != nil {
+			t.Fatalf("open oauth credential envelope: %v", err)
 		}
-		if !strings.Contains(secretPayload, "access-token") || !strings.Contains(secretPayload, "refresh-token") {
-			t.Fatalf("secret payload = %q, want stored access and refresh tokens", secretPayload)
+		if !strings.Contains(string(opened), "access-token") || !strings.Contains(string(opened), "refresh-token") {
+			t.Fatalf("decrypted oauth secret = %q, want stored access and refresh tokens", opened)
 		}
 	})
 

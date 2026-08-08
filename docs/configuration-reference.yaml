@@ -94,6 +94,30 @@ webhook:
   max_attempts: 10
   allow_insecure: false
 
+vault:
+  master_key:
+    # Base64-encoded 32-byte key-encryption key. Exactly one of kek or kek_file
+    # must be set in every env (same discipline as storage.s3 access keys).
+    # Generate with: just generate-vault-kek config/secrets/vault-kek
+    # then set kek_file, or paste the printed base64 into kek.
+    # The value below is a documentation placeholder only — replace before deploy.
+    kek: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+    # Same base64 KEK read from a mounted file; mirrors the
+    # code_session.jwt_signing_private_key_file mount discipline.
+    kek_file: ""
+    # Current wrap key version persisted on new envelopes as key_version.
+    # Omit or 0 defaults to 1.
+    version: 2
+    # Prior KEKs retained only for Open after rotation (no rewrap). Keep this
+    # list empty until you rotate; then move the old current here with its
+    # original version (must be lower than the new current version). The entry
+    # below is a schema placeholder for the configuration contract — replace
+    # with a real prior KEK after rotation, or use decrypt_only: [].
+    decrypt_only:
+      - version: 1
+        kek: "AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE="
+        kek_file: ""
+
 bootstrap:
   seed_api_keys:
     - external_id: api_key_default

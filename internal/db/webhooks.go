@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -155,7 +156,7 @@ func (r webhookDeliveryJobRow) job() WebhookDeliveryJob {
 		ExternalID:                r.ExternalID,
 		WorkspaceUUID:             r.WorkspaceUUID,
 		EventType:                 r.EventType,
-		Event:                     copyRaw(r.Event),
+		Event:                     bytes.Clone(r.Event),
 		Attempts:                  r.Attempts,
 		WebhookEndpointExternalID: r.WebhookEndpointExternalID.String,
 		WebhookEndpointURL:        r.WebhookEndpointURL.String,

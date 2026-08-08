@@ -21,7 +21,13 @@ type vaultCredentialRow struct {
 	AuthType            string         `db:"auth_type"`
 	CredentialKey       string         `db:"credential_key"`
 	Auth                []byte         `db:"auth"`
-	SecretPayload       []byte         `db:"secret_payload"`
+	Ciphertext          []byte         `db:"ciphertext"`
+	Nonce               []byte         `db:"nonce"`
+	WrappedDEK          []byte         `db:"wrapped_dek"`
+	FormatVersion       sql.NullInt32  `db:"format_version"`
+	KeyProvider         sql.NullString `db:"key_provider"`
+	KeyVersion          sql.NullInt64  `db:"key_version"`
+	Version             int64          `db:"version"`
 	CreatedAt           time.Time      `db:"created_at"`
 	UpdatedAt           time.Time      `db:"updated_at"`
 	ArchivedAt          *time.Time     `db:"archived_at"`
@@ -41,7 +47,13 @@ type insertVaultCredentialParams struct {
 	AuthType            string
 	CredentialKey       string
 	Auth                []byte
-	SecretPayload       []byte
+	Ciphertext          []byte
+	Nonce               []byte
+	WrappedDEK          []byte
+	FormatVersion       *int32
+	KeyProvider         *string
+	KeyVersion          *int64
+	Version             int64
 	CreatedAt           time.Time
 }
 
@@ -51,8 +63,15 @@ type updateVaultCredentialParams struct {
 	CredentialExternalID string
 	DisplayName          string
 	Metadata             []byte
+	CredentialKey        string
 	Auth                 []byte
-	SecretPayload        []byte
+	Ciphertext           []byte
+	Nonce                []byte
+	WrappedDEK           []byte
+	FormatVersion        *int32
+	KeyProvider          *string
+	KeyVersion           *int64
+	ExpectedVersion      int64
 	UpdatedAt            time.Time
 }
 

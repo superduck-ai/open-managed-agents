@@ -516,38 +516,35 @@ func (d *DB) GetCodeSessionVaultIDs(
 	workspaceUUID string,
 ) ([]string, error) {
 	mapper := NewCodeSessionMapper(d.mapperDB)
-	row, err := mapper.FindVaultIDs(
+	row, found, err := mapper.FindVaultIDs(
 		ctx,
 		organizationUUID,
 		workspaceUUID,
 		codeSessionExternalID,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
 		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
 	}
 	return decodeVaultIDList(row.VaultIDs)
 }
 
 func decodeVaultIDList(raw []byte) ([]string, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
 	var ids []string
 	if err := json.Unmarshal(raw, &ids); err != nil {
 		return nil, fmt.Errorf("decode vault_ids: %w", err)
 	}
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		out = append(out, id)
+	if ids == nil {
+		return nil, errors.New("decode vault_ids: expected an array")
 	}
-	return out, nil
+	for _, id := range ids {
+		if id == "" || id != strings.TrimSpace(id) {
+			return nil, fmt.Errorf("decode vault_ids: invalid ID %q", id)
+		}
+	}
+	return ids, nil
 }
 
 func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, error) {

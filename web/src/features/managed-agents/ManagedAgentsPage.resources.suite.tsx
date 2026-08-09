@@ -71,6 +71,30 @@ export function registerManagedAgentsResourceTests() {
     ).toBe(true);
   });
 
+  test('localizes managed resource names, statuses, row controls, and relative times in Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('sessions', 'zh-CN');
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(screen.getAllByText('运行中').length).toBeGreaterThan(0);
+    expect(screen.getByRole('checkbox', { name: '全选所有行' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: '选择 Session one' })).toBeTruthy();
+    expect(screen.getByText(/分钟前$/)).toBeTruthy();
+
+    cleanup();
+    resetTestDom('https://oma.duck.ai/workspaces/default/credential-vaults');
+    renderManagedAgentsPage('credential-vaults', 'zh-CN');
+    expect(await screen.findByRole('heading', { name: '凭据保险库' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '创建保险库' })).toBeTruthy();
+
+    cleanup();
+    resetTestDom('https://oma.duck.ai/workspaces/default/memory-stores');
+    renderManagedAgentsPage('memory-stores', 'zh-CN');
+    expect(await screen.findByRole('heading', { name: '记忆存储' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '创建记忆存储' })).toBeTruthy();
+  });
+
   test('uses client-side navigation for managed resource detail links', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     mockManagedResourceApi();
@@ -1092,6 +1116,8 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('sessions', 'zh-CN');
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+    expect(screen.getByRole('link', { name: '会话' })).toBeTruthy();
+    expect(screen.getAllByText('运行中').length).toBeGreaterThan(0);
     expect(screen.getByRole('tab', { name: '转录' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '全部事件' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '复制全部' })).toBeTruthy();
@@ -1100,6 +1126,29 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(screen.getByRole('button', { name: '操作' }));
     expect(screen.getByRole('menuitem', { name: '复制会话 ID' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '复制当前视图' })).toBeTruthy();
+  });
+
+  test('renders vault details in natural Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('credential-vaults', 'zh-CN');
+
+    expect(await screen.findByRole('heading', { name: 'Vault one' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: '凭据保险库' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '添加凭据' })).toBeTruthy();
+    expect(screen.getByText('供关联此保险库的 Agent 使用的凭据。')).toBeTruthy();
+  });
+
+  test('renders memory store details in natural Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/memory-stores/memstore_one123456?memory=mem_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('memory-stores', 'zh-CN');
+
+    expect(await screen.findByRole('heading', { name: 'Memory one' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: '记忆存储' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '添加记忆' })).toBeTruthy();
+    expect(await screen.findByRole('tablist', { name: '查看模式' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '预览' })).toBeTruthy();
   });
 
   test('renders the official memory store selection column', async () => {

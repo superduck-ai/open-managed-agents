@@ -1,4 +1,4 @@
-import { type AgentApiResponse } from '../../types';
+import { type AgentApiResponse, type I18nMsg } from '../../types';
 
 export type ToolPermissionState = 'always_allow' | 'always_ask' | 'always_deny' | 'custom';
 
@@ -57,6 +57,25 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'grep', description: 'Text search with regex' },
   ],
 };
+
+export function builtInAgentToolDescription(tool: BuiltInAgentTool, msg: I18nMsg) {
+  switch (tool.name) {
+    case 'bash':
+      return msg('managedAgents.agents.createDialog.builtInTool.bash', tool.description);
+    case 'read':
+      return msg('managedAgents.agents.createDialog.builtInTool.read', tool.description);
+    case 'write':
+      return msg('managedAgents.agents.createDialog.builtInTool.write', tool.description);
+    case 'edit':
+      return msg('managedAgents.agents.createDialog.builtInTool.edit', tool.description);
+    case 'glob':
+      return msg('managedAgents.agents.createDialog.builtInTool.glob', tool.description);
+    case 'grep':
+      return msg('managedAgents.agents.createDialog.builtInTool.grep', tool.description);
+    default:
+      return tool.description;
+  }
+}
 
 const CURRENT_BUILT_IN_TOOLSET = 'agent_toolset_20260401';
 

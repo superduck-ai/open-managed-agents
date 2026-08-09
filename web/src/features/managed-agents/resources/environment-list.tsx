@@ -12,7 +12,7 @@ export function useManagedEntityCells(
   const { msg } = useI18n();
   const formatters = useFormatters();
   if (section !== 'environments') {
-    return cellsForEntity(section, entity);
+    return cellsForEntity(section, entity, msg, formatters.relativeTime);
   }
   return {
     Name: entityDisplayName(section, entity),

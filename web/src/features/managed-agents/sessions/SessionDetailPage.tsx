@@ -21,6 +21,7 @@ import {
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { ConfirmEntityDialog, ManagedErrorAlert, ManagedWarningAlert } from '../components/common';
+import { resourceTitle } from '../labels';
 import {
   type EventsTabProps,
   type QuickstartSessionEvent,
@@ -94,6 +95,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const { msg } = useI18n();
   const formatters = useFormatters();
   const listHref = managedEntityListHref(activeWorkspaceId, 'sessions');
+  const listLabel = resourceTitle(config, msg);
   const [session, setSession] = useState<SessionApiResponse | null>(null);
   const [resources, setResources] = useState<SessionResourceApiResponse[]>([]);
   const [threads, setThreads] = useState<SessionThreadApiResponse[]>([]);
@@ -523,7 +525,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   if (loading) {
     return (
       <section className="min-h-[calc(100vh-48px)] text-foreground">
-        <ManagedDetailBreadcrumb listHref={listHref} listLabel={config.title} />
+        <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
         <div className="mt-14 text-sm text-muted-foreground">
           {msg('managedAgents.sessions.detail.loading', 'Loading session...')}
         </div>
@@ -534,7 +536,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   if (!session || loadError || !summary) {
     return (
       <section className="min-h-[calc(100vh-48px)] text-foreground">
-        <ManagedDetailBreadcrumb listHref={listHref} listLabel={config.title} />
+        <ManagedDetailBreadcrumb listHref={listHref} listLabel={listLabel} />
         <ManagedErrorAlert className="mt-6 max-w-xl">
           {loadError || msg('managedAgents.sessions.detail.notFound', 'Session not found')}
         </ManagedErrorAlert>
@@ -569,7 +571,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
         ) : null}
         <ManagedDetailBreadcrumb
           listHref={listHref}
-          listLabel={config.title}
+          listLabel={listLabel}
           currentLabel={compactEntityId(session.id)}
           className="mb-5 min-w-0"
         />

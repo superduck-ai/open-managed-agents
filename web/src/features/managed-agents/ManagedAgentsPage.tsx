@@ -16,6 +16,7 @@ export function ManagedAgentsPage({ section }: { section: ManagedAgentSection })
       position="top-right"
       duration={2200}
       closeButton
+      containerAriaLabel={msg('common.notifications', 'Notifications')}
       toastOptions={{ closeButtonAriaLabel: msg('common.close', 'Close') }}
     />
   );

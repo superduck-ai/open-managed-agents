@@ -25,6 +25,7 @@ import (
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	e2b "github.com/superduck-ai/e2b-go-sdk"
 )
 
@@ -61,6 +62,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if err := database.Migrate(ctx); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
+	pool := openTestPool(t, cfg)
 	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
 		t.Fatalf("seed database: %v", err)
 	}
@@ -116,7 +118,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create environment: %v", err)
 	}
-	defer cleanupE2BIntegrationRows(t, database, env.ExternalID, workID)
+	defer cleanupE2BIntegrationRows(t, pool, env.ExternalID, workID)
 
 	work, err := database.CreateEnvironmentWork(ctx, db.EnvironmentWork{
 		UUID:                  uuid.NewString(),
@@ -154,7 +156,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 		t.Fatal("environment runner did not process queued work")
 	}
 
-	sandboxID, _, sandboxState, sandboxTemplate, sandboxLastError := loadE2BSandboxRow(t, database, env.ExternalID, work.ExternalID)
+	sandboxID, _, sandboxState, sandboxTemplate, sandboxLastError := loadE2BSandboxRow(t, pool, env.ExternalID, work.ExternalID)
 	if sandboxLastError != "" {
 		t.Fatalf("sandbox row has last_error: %s", sandboxLastError)
 	}
@@ -225,7 +227,7 @@ func TestE2BEnvironmentRunnerIntegration(t *testing.T) {
 	}
 	killed = true
 
-	_, _, stoppedSandboxState, _, stoppedSandboxLastError := loadE2BSandboxRow(t, database, env.ExternalID, work.ExternalID)
+	_, _, stoppedSandboxState, _, stoppedSandboxLastError := loadE2BSandboxRow(t, pool, env.ExternalID, work.ExternalID)
 	if stoppedSandboxLastError != "" {
 		t.Fatalf("stopped sandbox row has last_error: %s", stoppedSandboxLastError)
 	}
@@ -258,10 +260,10 @@ func mustJSON(t *testing.T, value any) json.RawMessage {
 	return data
 }
 
-func loadE2BSandboxRow(t *testing.T, database *db.DB, envID, workID string) (providerSandboxID, externalID, state, template, lastError string) {
+func loadE2BSandboxRow(t *testing.T, pool *pgxpool.Pool, envID, workID string) (providerSandboxID, externalID, state, template, lastError string) {
 	t.Helper()
 	var lastErrorPtr *string
-	if err := database.Pool.QueryRow(context.Background(), `
+	if err := pool.QueryRow(context.Background(), `
 		select coalesce(provider_sandbox_id, ''), external_id, state, template, last_error
 		from environment_sandboxes
 		where environment_external_id = $1 and work_external_id = $2
@@ -276,17 +278,17 @@ func loadE2BSandboxRow(t *testing.T, database *db.DB, envID, workID string) (pro
 	return providerSandboxID, externalID, state, template, lastError
 }
 
-func cleanupE2BIntegrationRows(t *testing.T, database *db.DB, envID, workID string) {
+func cleanupE2BIntegrationRows(t *testing.T, pool *pgxpool.Pool, envID, workID string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, err := database.Pool.Exec(ctx, `delete from environment_sandboxes where environment_external_id = $1 or work_external_id = $2`, envID, workID); err != nil {
+	if _, err := pool.Exec(ctx, `delete from environment_sandboxes where environment_external_id = $1 or work_external_id = $2`, envID, workID); err != nil {
 		t.Fatalf("cleanup integration sandbox rows: %v", err)
 	}
-	if _, err := database.Pool.Exec(ctx, `delete from environment_work where environment_external_id = $1 or external_id = $2`, envID, workID); err != nil {
+	if _, err := pool.Exec(ctx, `delete from environment_work where environment_external_id = $1 or external_id = $2`, envID, workID); err != nil {
 		t.Fatalf("cleanup integration work rows: %v", err)
 	}
-	if _, err := database.Pool.Exec(ctx, `delete from environments where external_id = $1`, envID); err != nil {
+	if _, err := pool.Exec(ctx, `delete from environments where external_id = $1`, envID); err != nil {
 		t.Fatalf("cleanup integration environment rows: %v", err)
 	}
 }

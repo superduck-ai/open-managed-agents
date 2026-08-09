@@ -355,10 +355,10 @@ func deleteWebhook(t *testing.T, app *testApp, webhookID string) struct {
 
 func clearWebhookState(t *testing.T, app *testApp) {
 	t.Helper()
-	if _, err := app.db.Pool.Exec(context.Background(), `delete from jobs where type = 'webhook_delivery'`); err != nil {
+	if _, err := app.pool.Exec(context.Background(), `delete from jobs where type = 'webhook_delivery'`); err != nil {
 		t.Fatalf("clear webhook jobs: %v", err)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `delete from webhook_endpoints`); err != nil {
+	if _, err := app.pool.Exec(context.Background(), `delete from webhook_endpoints`); err != nil {
 		t.Fatalf("clear webhook endpoints: %v", err)
 	}
 }

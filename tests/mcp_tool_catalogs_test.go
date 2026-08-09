@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -68,9 +69,9 @@ func TestMCPToolCatalogConsoleAPI(t *testing.T) {
 			{"name":"empty","type":"url","url":%q}
 		]
 		}`, weatherEndpoint, empty.server.URL))
-	defer cleanupAgentRows(t, app.db, agent.ID)
-	defer deleteTestMCPCatalogByEndpoint(t, app.db, weatherEndpoint)
-	defer deleteTestMCPCatalogByEndpoint(t, app.db, empty.server.URL)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	defer deleteTestMCPCatalogByEndpoint(t, app.pool, weatherEndpoint)
+	defer deleteTestMCPCatalogByEndpoint(t, app.pool, empty.server.URL)
 
 	cookies := app.platformLoginCookies(t, "mcp-catalog-console@example.com")
 	orgCookie := responseCookie(cookies, "lastActiveOrg")
@@ -200,7 +201,7 @@ func TestMCPToolCatalogConsoleAPI(t *testing.T) {
 			"name":"shared-mcp-catalog-agent",
 			"mcp_servers":[{"name":"shared_weather","type":"url","url":%q}]
 			}`, weatherEndpoint))
-		defer cleanupAgentRows(t, app.db, other.ID)
+		defer cleanupAgentRows(t, app.pool, other.ID)
 
 		otherPath := basePath + "default/agents/" + other.ID + "/mcp_tool_catalogs"
 		listed := getTestMCPCatalogs(t, app, otherPath, cookies)
@@ -209,7 +210,7 @@ func TestMCPToolCatalogConsoleAPI(t *testing.T) {
 			t.Fatalf("shared endpoint catalog = %#v", item)
 		}
 		var count int
-		if err := app.db.Pool.QueryRow(context.Background(), `
+		if err := app.pool.QueryRow(context.Background(), `
 			select count(*) from mcp_tool_catalogs
 			where transport_type = 'url' and endpoint_url = $1
 		`, weatherEndpoint).Scan(&count); err != nil {
@@ -278,13 +279,13 @@ func findTestCatalogItem(t *testing.T, items []testCatalogItem, serverName strin
 	return testCatalogItem{}
 }
 
-func deleteTestMCPCatalogByEndpoint(t *testing.T, database *db.DB, endpointURL string) {
+func deleteTestMCPCatalogByEndpoint(t *testing.T, pool *pgxpool.Pool, endpointURL string) {
 	t.Helper()
 	normalized, err := mcpcatalogs.NormalizeEndpoint(endpointURL)
 	if err != nil {
 		t.Fatalf("normalize MCP catalog cleanup endpoint: %v", err)
 	}
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 			delete from mcp_tool_catalogs where transport_type = 'url' and endpoint_url = $1
 		`, normalized); err != nil {
 		t.Errorf("delete MCP catalog: %v", err)

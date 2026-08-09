@@ -105,7 +105,7 @@ func TestPlatformEmailLoginRoutes(t *testing.T) {
 		t.Fatalf("signup workspaces = %#v, want no custom workspaces in console list", workspaces)
 	}
 	var defaultWorkspaceCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from organizations o
 		join workspaces w on w.organization_uuid = o.uuid
@@ -344,7 +344,7 @@ func (a *testApp) ensureDefaultPlatformUser(t *testing.T, email string) {
 	if strings.TrimSpace(displayName) == "" {
 		displayName = "Platform Test User"
 	}
-	if _, err := a.db.Pool.Exec(context.Background(), `
+	if _, err := a.pool.Exec(context.Background(), `
 		with refs as (
 			select o.uuid as organization_uuid, w.uuid as workspace_uuid,
 				w.external_id as workspace_external_id

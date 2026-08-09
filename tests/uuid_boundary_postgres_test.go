@@ -61,7 +61,7 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 	defer app.close()
 
 	ctx := context.Background()
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 
 	workspace, err := app.db.GetAdminWorkspace(ctx, ids.OrganizationUUID, "workspace_default")
 	if err != nil {
@@ -107,14 +107,14 @@ func TestTypedUUIDAdminConsoleWorkbenchPostgres(t *testing.T) {
 		t.Fatalf("created Console API key = %+v, want null creator and workspace %s", createdKey.APIKey, ids.WorkspaceUUID)
 	}
 	defer func() {
-		if _, cleanupErr := app.db.Pool.Exec(
+		if _, cleanupErr := app.pool.Exec(
 			context.Background(),
 			"delete from console_api_keys where external_id = $1",
 			createdKey.APIKey.ID,
 		); cleanupErr != nil {
 			t.Errorf("delete Console API key fixture: %v", cleanupErr)
 		}
-		if _, cleanupErr := app.db.Pool.Exec(
+		if _, cleanupErr := app.pool.Exec(
 			context.Background(),
 			"delete from api_keys where external_id = $1",
 			createdKey.APIKey.ID,
@@ -305,7 +305,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	defer app.close()
 
 	ctx := context.Background()
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	suffix := uuid.NewString()
 	now := time.Now().UTC()
 
@@ -680,7 +680,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	t.Cleanup(app.close)
 
 	ctx := context.Background()
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	now := time.Now().UTC()
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 

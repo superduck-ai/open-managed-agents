@@ -40,8 +40,7 @@ var (
 )
 
 type DB struct {
-	Pool     *pgxpool.Pool
-	sql      *sql.DB
+	pool     *pgxpool.Pool
 	mapperDB *yourbatis.DB
 }
 
@@ -103,8 +102,7 @@ func newDB(pool *pgxpool.Pool, logger *slog.Logger) *DB {
 		}),
 	)
 	return &DB{
-		Pool:     pool,
-		sql:      sqlDB,
+		pool:     pool,
 		mapperDB: mapperDB,
 	}
 }
@@ -136,11 +134,11 @@ func (d *DB) Close() {
 	if d == nil {
 		return
 	}
-	if d.sql != nil {
-		_ = d.sql.Close()
+	if d.mapperDB != nil {
+		_ = d.mapperDB.Close()
 	}
-	if d.Pool != nil {
-		d.Pool.Close()
+	if d.pool != nil {
+		d.pool.Close()
 	}
 }
 
@@ -257,14 +255,14 @@ func redactPassword(raw string) string {
 	return parsed.String()
 }
 
-func (d *DB) idColumnDataType(ctx context.Context, table string) (string, error) {
+func idColumnDataType(ctx context.Context, database *sql.DB, table string) (string, error) {
 	var dataType string
-	err := d.sql.QueryRowContext(ctx, idColumnDataTypeQuery, table).Scan(&dataType)
+	err := database.QueryRowContext(ctx, idColumnDataTypeQuery, table).Scan(&dataType)
 	return dataType, err
 }
 
-func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
-	tx, err := d.sql.BeginTx(ctx, nil)
+func migrateLegacyTextIDSchema(ctx context.Context, database *sql.DB) error {
+	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -351,23 +349,32 @@ func (d *DB) migrateLegacyTextIDSchema(ctx context.Context) error {
 }
 
 func (d *DB) Migrate(ctx context.Context) error {
-	dataType, err := d.idColumnDataType(ctx, "organizations")
+	standardDB := newStandardDB(d.pool)
+	defer standardDB.Close()
+
+	dataType, err := idColumnDataType(ctx, standardDB, "organizations")
 	if err != nil {
 		return err
 	}
 	if dataType == "text" {
-		if err := d.migrateLegacyTextIDSchema(ctx); err != nil {
+		if err := migrateLegacyTextIDSchema(ctx, standardDB); err != nil {
 			return err
 		}
 	}
-	if err := d.runGooseMigrations(ctx); err != nil {
+	if err := runGooseMigrations(ctx, standardDB); err != nil {
 		return err
 	}
-	return d.DropForeignKeyConstraints(ctx)
+	return dropForeignKeyConstraints(ctx, standardDB)
 }
 
 func (d *DB) DropForeignKeyConstraints(ctx context.Context) error {
-	rows, err := d.sql.QueryContext(ctx, `
+	standardDB := newStandardDB(d.pool)
+	defer standardDB.Close()
+	return dropForeignKeyConstraints(ctx, standardDB)
+}
+
+func dropForeignKeyConstraints(ctx context.Context, database *sql.DB) error {
+	rows, err := database.QueryContext(ctx, `
 		select cls.relname as table_name, con.conname as constraint_name
 		from pg_constraint con
 		join pg_class cls on cls.oid = con.conrelid
@@ -394,7 +401,7 @@ func (d *DB) DropForeignKeyConstraints(ctx context.Context) error {
 	}
 
 	for _, fk := range constraints {
-		if _, err := d.sql.ExecContext(ctx, fmt.Sprintf("alter table %s drop constraint %s", quoteIdent(fk.Table), quoteIdent(fk.Name))); err != nil {
+		if _, err := database.ExecContext(ctx, fmt.Sprintf("alter table %s drop constraint %s", quoteIdent(fk.Table), quoteIdent(fk.Name))); err != nil {
 			return fmt.Errorf("drop foreign key %s on %s: %w", fk.Name, fk.Table, err)
 		}
 	}

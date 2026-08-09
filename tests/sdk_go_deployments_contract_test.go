@@ -16,9 +16,9 @@ func TestGoSDKDeploymentsContract(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-sdk-contract-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	environment := createEnvironment(t, app, `{"name":"deployments-sdk-contract-environment"}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, environment.ID)
 
 	client := anthropic.NewClient(
 		option.WithBaseURL(app.baseURL),

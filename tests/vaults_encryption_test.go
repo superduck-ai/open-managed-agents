@@ -130,7 +130,7 @@ func TestVaultCredentialBackfillEndpointGone(t *testing.T) {
 func defaultWorkspaceUUID(t *testing.T, app *testApp) string {
 	t.Helper()
 	var id string
-	if err := app.db.Pool.QueryRow(context.Background(), `select uuid::text from workspaces where external_id = 'workspace_default'`).Scan(&id); err != nil {
+	if err := app.pool.QueryRow(context.Background(), `select uuid::text from workspaces where external_id = 'workspace_default'`).Scan(&id); err != nil {
 		t.Fatalf("load default workspace uuid: %v", err)
 	}
 	return id
@@ -139,7 +139,7 @@ func defaultWorkspaceUUID(t *testing.T, app *testApp) string {
 func assertVaultCredentialsHaveNoSecretPayloadColumn(t *testing.T, app *testApp) {
 	t.Helper()
 	var exists bool
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select exists (
 			select 1 from information_schema.columns
 			where table_schema = 'public' and table_name = 'vault_credentials' and column_name = 'secret_payload'
@@ -155,7 +155,7 @@ func assertVaultCredentialsHaveNoSecretPayloadColumn(t *testing.T, app *testApp)
 func vaultCredentialHasEnvelope(t *testing.T, app *testApp, credentialID string) bool {
 	t.Helper()
 	var present bool
-	if err := app.db.Pool.QueryRow(context.Background(), `select ciphertext is not null from vault_credentials where external_id = $1`, credentialID).Scan(&present); err != nil {
+	if err := app.pool.QueryRow(context.Background(), `select ciphertext is not null from vault_credentials where external_id = $1`, credentialID).Scan(&present); err != nil {
 		t.Fatalf("check credential envelope: %v", err)
 	}
 	return present
@@ -170,7 +170,7 @@ func readVaultCredentialEnvelope(t *testing.T, app *testApp, credentialID string
 		keyProvider                        sql.NullString
 		keyVersion                         sql.NullInt64
 	)
-	err := app.db.Pool.QueryRow(context.Background(), `
+	err := app.pool.QueryRow(context.Background(), `
 		select organization_uuid::text, workspace_uuid::text, vault_external_id, external_id,
 			ciphertext, nonce, wrapped_dek, format_version, key_provider, key_version
 		from vault_credentials where external_id = $1
@@ -190,7 +190,7 @@ func readVaultCredentialEnvelope(t *testing.T, app *testApp, credentialID string
 func insertEnvelopeLessCredential(t *testing.T, app *testApp, vaultID, credentialKey string) string {
 	t.Helper()
 	var orgUUID, wsUUID, vaultUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select organization_uuid::text, workspace_uuid::text, uuid::text from vaults where external_id = $1
 	`, vaultID).Scan(&orgUUID, &wsUUID, &vaultUUID); err != nil {
 		t.Fatalf("load vault for envelope-less insert: %v", err)
@@ -199,7 +199,7 @@ func insertEnvelopeLessCredential(t *testing.T, app *testApp, vaultID, credentia
 	if err != nil {
 		t.Fatalf("generate envelope-less credential id: %v", err)
 	}
-	_, err = app.db.Pool.Exec(context.Background(), `
+	_, err = app.pool.Exec(context.Background(), `
 		insert into vault_credentials (
 			uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
 			created_by_api_key_uuid, display_name, metadata, auth_type, credential_key,
@@ -215,7 +215,7 @@ func insertEnvelopeLessCredential(t *testing.T, app *testApp, vaultID, credentia
 
 func tamperVaultCredentialCiphertext(t *testing.T, app *testApp, credentialID string) {
 	t.Helper()
-	tag, err := app.db.Pool.Exec(context.Background(), `
+	tag, err := app.pool.Exec(context.Background(), `
 		update vault_credentials
 		set ciphertext = set_byte(ciphertext, 0, (get_byte(ciphertext, 0) # 1))
 		where external_id = $1 and ciphertext is not null

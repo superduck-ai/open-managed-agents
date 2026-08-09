@@ -39,10 +39,10 @@ func DecideInjection(requestURL *url.URL, credentials []db.VaultCredential) Inje
 	for i := range credentials {
 		cred := &credentials[i]
 		cfg, err := parseMCPAuthConfig(cred.Auth)
-		if err != nil || strings.TrimSpace(cfg.MCPServerURL) == "" {
+		if err != nil || cfg.MCPServerURL == "" {
 			continue
 		}
-		serverURL, err := url.Parse(strings.TrimSpace(cfg.MCPServerURL))
+		serverURL, err := url.Parse(cfg.MCPServerURL)
 		if err != nil || serverURL.Host == "" {
 			continue
 		}

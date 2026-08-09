@@ -107,6 +107,7 @@ type KeyProvider interface {
 | `*.sqlmap.gen.go` | `sqlmapgen` 生成，不入库 |
 
 `ArchiveVault` / `DeleteVault` / `CreateVaultCredential` 在同一 Yourbatis 事务内分别构造两个 Mapper，不再使用 `sqlx.Tx`。
+运行时凭证加载先通过 `VaultMapper` 批量筛选当前 workspace 中未归档的 Vault，再通过 `VaultCredentialMapper` 按 Vault UUID 批量加载活动凭证；Go 层按原始 `vault_ids` 顺序组装结果，最多执行两次查询。
 **Credential secret update（preserve-on-omit）**：更新请求省略 secret 时，Open 现有信封 → merge 非秘密字段 → 用新 DEK reseal，并用 `version` CAS（冲突 → HTTP 409）。缺信封时无法 merge：metadata-only 或未带完整替换 secret → HTTP 400；带完整替换 secret → 直接 reseal。
 
 KEK 版本由 config 管（`version` current + `decrypt_only` 旧列表）。每条凭证用 `key_version` 标明自己用的是哪把。KEK 本身不进库。

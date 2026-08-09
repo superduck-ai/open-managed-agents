@@ -18,8 +18,9 @@ export function SubmittedQuestionSet({
   const [answerIndex, setAnswerIndex] = useState(0);
   const [reviewOpen, setReviewOpen] = useState(false);
   const answers = parseSubmittedQuestionAnswers(fallbackResult);
-  const answer = answers[answerIndex] ?? answers[0];
-  const isQuestionSet = questions.length > 1 && answers.length > 0;
+  const reviewCount = Math.min(questions.length, answers.length);
+  const answer = answers[answerIndex];
+  const isQuestionSet = questions.length > 1 && reviewCount > 0;
 
   if (!isQuestionSet) {
     return (
@@ -50,7 +51,7 @@ export function SubmittedQuestionSet({
         </p>
         {reviewOpen ? (
           <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
-            {answerIndex + 1}/{questions.length}
+            {answerIndex + 1}/{reviewCount}
           </div>
         ) : null}
       </div>
@@ -64,7 +65,7 @@ export function SubmittedQuestionSet({
         className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <span>
-          {msg('managedAgents.quickstart.answersConfirmed', '{count} answers confirmed', { count: answers.length })}
+          {msg('managedAgents.quickstart.answersConfirmed', '{count} answers confirmed', { count: reviewCount })}
         </span>
         <ChevronDown className={clsx('ml-auto size-4 transition-transform', reviewOpen && 'rotate-180')} aria-hidden />
       </CollapsibleTrigger>
@@ -86,8 +87,8 @@ export function SubmittedQuestionSet({
             type="button"
             variant="secondary"
             size="sm"
-            disabled={answerIndex === questions.length - 1}
-            onClick={() => setAnswerIndex((index) => Math.min(questions.length - 1, index + 1))}
+            disabled={answerIndex === reviewCount - 1}
+            onClick={() => setAnswerIndex((index) => Math.min(reviewCount - 1, index + 1))}
           >
             {msg('managedAgents.quickstart.nextQuestion', 'Next')}
           </Button>

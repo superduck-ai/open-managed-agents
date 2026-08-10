@@ -174,7 +174,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 4. 删掉客户端带给 proxy 的 `Authorization`（session JWT），加 `Authorization: Bearer <token>`，转发真实上游。passthrough 不写上游 Authorization。
 5. 跨 origin redirect：代理不自动跟；客户端新请求重新匹配。
 
-匹配规则：凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。
+匹配规则：凭证 `mcp_server_url` 与真实 `mcp_url` 的 **scheme、host、有效端口**须一致；path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。`https://host` 不得匹配 `http://host:443`（避免把 Bearer 注到明文 HTTP）。
 
 后续（非本切片）：
 

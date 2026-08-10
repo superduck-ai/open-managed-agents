@@ -37,6 +37,28 @@ func TestFindPlatformOAuthClientExactMatch(t *testing.T) {
 	}
 }
 
+func TestFindPlatformOAuthClientTrimsClientCredentials(t *testing.T) {
+	clients := []PlatformOAuthClientConfig{{
+		MCPServerURL: " https://api.githubcopilot.com/mcp/ ",
+		ClientID:     " platform-id ",
+		ClientSecret: " platform-secret ",
+	}}
+
+	got, ok := FindPlatformOAuthClient(clients, "https://api.githubcopilot.com/mcp/")
+	if !ok {
+		t.Fatal("expected Platform OAuth Client hit")
+	}
+	if got.MCPServerURL != "https://api.githubcopilot.com/mcp/" {
+		t.Fatalf("MCPServerURL = %q, want trimmed exact url", got.MCPServerURL)
+	}
+	if got.ClientID != "platform-id" {
+		t.Fatalf("ClientID = %q, want trimmed value", got.ClientID)
+	}
+	if got.ClientSecret != "platform-secret" {
+		t.Fatalf("ClientSecret = %q, want trimmed value", got.ClientSecret)
+	}
+}
+
 func TestValidatePlatformOAuthClients(t *testing.T) {
 	t.Run("empty ok", func(t *testing.T) {
 		if err := validatePlatformOAuthClients(nil); err != nil {

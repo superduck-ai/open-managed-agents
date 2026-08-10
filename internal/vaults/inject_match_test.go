@@ -30,6 +30,7 @@ func TestDecideInjection(t *testing.T) {
 		{"skip non-bearer then inject", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost, bearerA}, InjectionInject, "vlt_a"},
 		{"reject non-injectable only", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost}, InjectionReject, ""},
 		{"empty credentials passthrough", "https://mcp.example.com/mcp", nil, InjectionPassthrough, ""},
+		{"https credential does not inject onto http:443", "http://mcp.example.com:443/mcp", []db.VaultCredential{bearerA}, InjectionPassthrough, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

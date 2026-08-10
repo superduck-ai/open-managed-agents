@@ -30,7 +30,7 @@ type mcpAuthConfig struct {
 }
 
 // DecideInjection walks credentials in vault_ids order. First matching static_bearer
-// wins; same-host coverage without an injectable path match rejects.
+// wins; same scheme/host/port coverage without an injectable path match rejects.
 func DecideInjection(requestURL *url.URL, credentials []db.VaultCredential) InjectionDecision {
 	if requestURL == nil {
 		return InjectionDecision{Kind: InjectionReject}
@@ -65,7 +65,8 @@ func DecideInjection(requestURL *url.URL, credentials []db.VaultCredential) Inje
 }
 
 func hostsEqual(serverURL, requestURL *url.URL) bool {
-	return strings.EqualFold(serverURL.Hostname(), requestURL.Hostname()) &&
+	return strings.EqualFold(serverURL.Scheme, requestURL.Scheme) &&
+		strings.EqualFold(serverURL.Hostname(), requestURL.Hostname()) &&
 		effectivePort(serverURL) == effectivePort(requestURL)
 }
 

@@ -95,6 +95,9 @@ func FindPlatformOAuthClient(clients []PlatformOAuthClientConfig, mcpServerURL s
 	}
 	for _, client := range clients {
 		if strings.TrimSpace(client.MCPServerURL) == want {
+			client.MCPServerURL = want
+			client.ClientID = strings.TrimSpace(client.ClientID)
+			client.ClientSecret = strings.TrimSpace(client.ClientSecret)
 			return client, true
 		}
 	}

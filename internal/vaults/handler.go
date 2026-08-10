@@ -40,6 +40,33 @@ type webhookEnqueuer interface {
 	Enqueue(context.Context, webhooks.EnqueueInput)
 }
 
+type createVaultRequest struct {
+	DisplayName string            `json:"display_name"`
+	Metadata    map[string]string `json:"metadata"`
+}
+
+type updateVaultRequest struct {
+	DisplayName *string         `json:"display_name"`
+	Metadata    json.RawMessage `json:"metadata"`
+}
+
+type createCredentialRequest struct {
+	DisplayName string            `json:"display_name"`
+	Metadata    map[string]string `json:"metadata"`
+	Auth        json.RawMessage   `json:"auth"`
+}
+
+type updateCredentialRequest struct {
+	DisplayName *string         `json:"display_name"`
+	Metadata    json.RawMessage `json:"metadata"`
+	Auth        json.RawMessage `json:"auth"`
+}
+
+type pageCursorPayload struct {
+	CreatedAt string `json:"created_at"`
+	UUID      string `json:"uuid"`
+}
+
 type vaultResponse struct {
 	ID          string          `json:"id"`
 	ArchivedAt  *string         `json:"archived_at"`
@@ -164,12 +191,12 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	request, err := httpapi.DecodeObjectBody[createVaultRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	displayName, err := requiredString(fields, "display_name", "display_name")
+	displayName, err := requireNonEmptyString(request.DisplayName, "display_name")
 	if err == nil {
 		err = validateDisplayName(displayName)
 	}
@@ -177,7 +204,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	metadata, err := normalizeMetadata(fieldOrDefault(fields, "metadata", `{}`))
+	metadata, err := normalizeMetadata(request.Metadata)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -290,29 +317,21 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Vault is archived"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	request, err := httpapi.DecodeObjectBody[updateVaultRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
 	next := current
-	if raw, ok := fields["display_name"]; ok {
-		displayName, err := rawString(raw, "display_name")
-		if err == nil {
-			err = validateDisplayName(displayName)
-		}
-		if err != nil {
-			writeBadRequest(w, r, err)
-			return
-		}
-		next.DisplayName = displayName
+	next.DisplayName, err = patchDisplayName(next.DisplayName, request.DisplayName)
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = patchMetadata(next.Metadata, raw)
-		if err != nil {
-			writeBadRequest(w, r, err)
-			return
-		}
+	next.Metadata, err = patchMetadata(next.Metadata, request.Metadata)
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
 	}
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateVault(r.Context(), principal.WorkspaceUUID, vaultID, next)
@@ -397,12 +416,12 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Vault is archived"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	request, err := httpapi.DecodeObjectBody[createCredentialRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	displayName, err := requiredString(fields, "display_name", "display_name")
+	displayName, err := requireNonEmptyString(request.DisplayName, "display_name")
 	if err == nil {
 		err = validateDisplayName(displayName)
 	}
@@ -410,12 +429,12 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		writeBadRequest(w, r, err)
 		return
 	}
-	metadata, err := normalizeMetadata(fieldOrDefault(fields, "metadata", `{}`))
+	metadata, err := normalizeMetadata(request.Metadata)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	authState, err := normalizeCredentialAuthForCreate(fields["auth"])
+	authState, err := normalizeCredentialAuthForCreate(request.Auth)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -556,36 +575,28 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Credential is archived"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	request, err := httpapi.DecodeObjectBody[updateCredentialRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
 	next := current
-	if raw, ok := fields["display_name"]; ok {
-		displayName, err := rawString(raw, "display_name")
-		if err == nil {
-			err = validateDisplayName(displayName)
-		}
-		if err != nil {
-			writeBadRequest(w, r, err)
-			return
-		}
-		next.DisplayName = displayName
+	next.DisplayName, err = patchDisplayName(next.DisplayName, request.DisplayName)
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = patchMetadata(next.Metadata, raw)
-		if err != nil {
-			writeBadRequest(w, r, err)
-			return
-		}
+	next.Metadata, err = patchMetadata(next.Metadata, request.Metadata)
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
 	}
-	if raw, ok := fields["auth"]; ok {
+	if len(request.Auth) != 0 {
 		// Open the existing envelope so partial updates (for example rotating
 		// only an OAuth access token) merge onto stored refresh material
 		// instead of dropping it, then reseal under a fresh DEK.
-		// A missing envelope can still be repaired when the body carries a
-		// complete replacement secret; otherwise ask the client to resubmit.
+		// Without an envelope, auth normalization requires a complete
+		// replacement secret before allowing the credential to be resealed.
 		var currentSecret []byte
 		if current.SecretEnvelope != nil {
 			currentSecret, err = openCredentialSecret(r.Context(), h.secretSvc, current)
@@ -594,18 +605,8 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			defer clear(currentSecret)
-		} else {
-			provides, err := authUpdateProvidesSecretReplacement(current.AuthType, raw)
-			if err != nil {
-				writeBadRequest(w, r, err)
-				return
-			}
-			if !provides {
-				writeSecretOpenError(w, r, h.logger, "update", ErrMissingSecretEnvelope)
-				return
-			}
 		}
-		authState, err := normalizeCredentialAuthForUpdate(current, currentSecret, raw)
+		authState, err := normalizeCredentialAuthForUpdate(current, currentSecret, request.Auth)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -847,34 +848,34 @@ func (h *Handler) writeCredentialResponse(w http.ResponseWriter, r *http.Request
 	httpapi.WriteJSON(w, http.StatusOK, response)
 }
 
-func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxVaultBodySize)
-	var fields map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil {
-		return nil, errors.New("Invalid JSON body")
-	}
-	if fields == nil {
-		return nil, errors.New("JSON body must be an object")
-	}
-	return fields, nil
-}
-
-func normalizeMetadata(raw json.RawMessage) (json.RawMessage, error) {
-	if isJSONNull(raw) {
+func normalizeMetadata(metadata map[string]string) (json.RawMessage, error) {
+	if metadata == nil {
 		return json.RawMessage(`{}`), nil
-	}
-	var metadata map[string]string
-	if err := json.Unmarshal(raw, &metadata); err != nil {
-		return nil, errors.New("metadata must be an object with string values")
 	}
 	if err := validateMetadata(metadata); err != nil {
 		return nil, err
 	}
-	return marshalRaw(metadata)
+	return json.Marshal(metadata)
+}
+
+func patchDisplayName(current string, raw *string) (string, error) {
+	if raw == nil {
+		return current, nil
+	}
+	displayName, err := requireNonEmptyString(*raw, "display_name")
+	if err != nil {
+		return "", err
+	}
+	if err := validateDisplayName(displayName); err != nil {
+		return "", err
+	}
+	return displayName, nil
 }
 
 func patchMetadata(current json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return current, nil
+	}
 	if isJSONNull(raw) {
 		return json.RawMessage(`{}`), nil
 	}
@@ -898,7 +899,7 @@ func patchMetadata(current json.RawMessage, raw json.RawMessage) (json.RawMessag
 	if err := validateMetadata(metadata); err != nil {
 		return nil, err
 	}
-	return marshalRaw(metadata)
+	return json.Marshal(metadata)
 }
 
 func validateMetadata(metadata map[string]string) error {
@@ -951,7 +952,7 @@ func parseOptionalBool(r *http.Request, name string) (bool, error) {
 }
 
 func encodeVaultCursor(vault db.Vault) string {
-	data, _ := json.Marshal(map[string]any{"created_at": formatTime(vault.CreatedAt), "uuid": vault.UUID})
+	data, _ := json.Marshal(pageCursorPayload{CreatedAt: formatTime(vault.CreatedAt), UUID: vault.UUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -963,10 +964,7 @@ func decodeVaultCursor(raw string) (*db.VaultPageCursor, error) {
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	var payload struct {
-		CreatedAt string `json:"created_at"`
-		UUID      string `json:"uuid"`
-	}
+	var payload pageCursorPayload
 	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
 		return nil, errors.New("page is invalid")
 	}
@@ -978,7 +976,7 @@ func decodeVaultCursor(raw string) (*db.VaultPageCursor, error) {
 }
 
 func encodeCredentialCursor(credential db.VaultCredential) string {
-	data, _ := json.Marshal(map[string]any{"created_at": formatTime(credential.CreatedAt), "uuid": credential.UUID})
+	data, _ := json.Marshal(pageCursorPayload{CreatedAt: formatTime(credential.CreatedAt), UUID: credential.UUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -990,10 +988,7 @@ func decodeCredentialCursor(raw string) (*db.VaultCredentialPageCursor, error) {
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	var payload struct {
-		CreatedAt string `json:"created_at"`
-		UUID      string `json:"uuid"`
-	}
+	var payload pageCursorPayload
 	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
 		return nil, errors.New("page is invalid")
 	}

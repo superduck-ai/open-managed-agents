@@ -69,8 +69,10 @@ type KeyProvider interface {
 
 `auth` 在 Yourbatis Mapper 中仍以 JSONB 原始字节扫描，但不会作为 `json.RawMessage` 扩散到运行时策略或
 API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析为 `mcp_oauth`、`static_bearer` 或
-`environment_variable` 的命名 schema；未知类型或具体字段类型不匹配时 fail-closed。HTTP PATCH 为区分
-字段省略与显式 `null`，只在请求边界保留原始字段，完成合并和校验后再写回规范化的公开 auth JSON。
+`environment_variable` 的命名 schema；未知类型或具体字段类型不匹配时 fail-closed。HTTP create/update
+请求同样先解码为命名 DTO；create 使用普通 Go 字段，PATCH 使用指针表示可选字段。只有 `auth` 类型判别，
+以及 `refresh`、`scope`、metadata 等需要区分省略和显式 `null` 的边界保留原始 JSON。PATCH 在命名 schema
+上完成合并和校验，再写回规范化的公开 auth JSON；metadata 因键集合由客户端定义而保留为类型化 map。
 
 新增 migration `00049_add_vault_secret_envelope.sql`（Direct cutover：同一次迁移加信封列并丢弃明文列）：
 

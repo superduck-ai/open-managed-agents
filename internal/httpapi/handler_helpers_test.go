@@ -12,7 +12,7 @@ import (
 func TestDecodeObjectBody(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"demo"}`))
 	rec := httptest.NewRecorder()
-	fields, err := DecodeObjectBody(rec, req, 1024)
+	fields, err := DecodeObjectBody[map[string]json.RawMessage](rec, req, 1024)
 	if err != nil {
 		t.Fatalf("DecodeObjectBody error = %v", err)
 	}
@@ -24,7 +24,7 @@ func TestDecodeObjectBody(t *testing.T) {
 func TestDecodeObjectBodyRejectsNonObject(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", strings.NewReader(`null`))
 	rec := httptest.NewRecorder()
-	_, err := DecodeObjectBody(rec, req, 1024)
+	_, err := DecodeObjectBody[map[string]json.RawMessage](rec, req, 1024)
 	if err == nil || err.Error() != "JSON body must be an object" {
 		t.Fatalf("error = %v", err)
 	}

@@ -23,7 +23,6 @@ func TestDecideInjection(t *testing.T) {
 		{"malformed auth rejected", "https://mcp.example.com/mcp", []db.VaultCredential{{Auth: json.RawMessage(`{"type":"static_bearer","mcp_server_url":42}`)}}, injectionReject, ""},
 		{"non-segment prefix rejected", "https://mcp.example.com/mcp-admin", []db.VaultCredential{bearerA}, injectionReject, ""},
 		{"reject same host without path match", "https://mcp.example.com/admin", []db.VaultCredential{bearerA}, injectionReject, ""},
-		{"reject non-injectable only", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost}, injectionReject, ""},
 		{"scheme mismatch passthrough", "http://mcp.example.com:443/mcp", []db.VaultCredential{bearerA}, injectionPassthrough, ""},
 		{"host mismatch passthrough", "https://other.example.com/mcp", []db.VaultCredential{bearerA}, injectionPassthrough, ""},
 		{"passthrough when host uncovered", "https://registry.npmjs.org/pkg", []db.VaultCredential{bearerA}, injectionPassthrough, ""},
@@ -31,7 +30,9 @@ func TestDecideInjection(t *testing.T) {
 		{"inject first matching static_bearer", "https://mcp.example.com/mcp/sse", []db.VaultCredential{bearerWrongPath, bearerA}, injectionInject, "vlt_a"},
 		{"exact path", "https://mcp.example.com/mcp", []db.VaultCredential{bearerA}, injectionInject, "vlt_a"},
 		{"root path covers host", "https://mcp.example.com/anything", []db.VaultCredential{credential("static_bearer", "https://mcp.example.com/", "vlt_root")}, injectionInject, "vlt_root"},
-		{"skip non-bearer then inject", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost, bearerA}, injectionInject, "vlt_a"},
+		{"skip non-injectable env then inject", "https://mcp.example.com/mcp", []db.VaultCredential{credential("environment_variable", "https://mcp.example.com/mcp", "vlt_env"), bearerA}, injectionInject, "vlt_a"},
+		{"inject mcp_oauth", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost}, injectionInject, "vlt_o"},
+		{"mcp_oauth before later static_bearer", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost, bearerA}, injectionInject, "vlt_o"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -53,7 +54,17 @@ func TestDecideInjection(t *testing.T) {
 }
 
 func credential(authType, serverURL, id string) db.VaultCredential {
-	auth, _ := json.Marshal(map[string]any{"type": authType, "mcp_server_url": serverURL})
+	var auth []byte
+	switch authType {
+	case "environment_variable":
+		auth, _ = json.Marshal(map[string]any{
+			"type":        authType,
+			"secret_name": "EXAMPLE_TOKEN",
+			"networking":  map[string]any{"type": "unrestricted"},
+		})
+	default:
+		auth, _ = json.Marshal(map[string]any{"type": authType, "mcp_server_url": serverURL})
+	}
 	return db.VaultCredential{ExternalID: id, AuthType: authType, Auth: auth}
 }
 

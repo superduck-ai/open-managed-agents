@@ -12,6 +12,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -19,8 +20,12 @@ import (
 const maxMCPProxyURLBytes = 2048
 
 // mcpProxyHeaderInjector 是服务端 MCP 凭证注入边界（真实 mcp_url 目标）。
-// 默认 no-op；WithVaultSecrets 接到 vaults.Injector.RewriteAuthorization。
+// 默认 no-op；测试可注入。生产路径优先用 mcpProxyTransportWrapper。
 type mcpProxyHeaderInjector func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error
+
+// mcpProxyTransportWrapper wraps the MCP upstream RoundTripper for vault
+// inject + mcp_oauth 401 refresh retry.
+type mcpProxyTransportWrapper func(context.Context, SessionCredentialClaims, *url.URL, http.RoundTripper) http.RoundTripper
 
 func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	codeSessionID := strings.TrimSpace(chi.URLParam(r, "code_session_id"))
@@ -65,7 +70,7 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection"} {
 		headers.Del(name)
 	}
-	if h.injectMCPProxyHeaders != nil {
+	if h.wrapMCPVaultTransport == nil && h.injectMCPProxyHeaders != nil {
 		if err := h.injectMCPProxyHeaders(r.Context(), claims, target, headers); err != nil {
 			h.logger.ErrorContext(r.Context(), "inject MCP proxy credentials", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "MCP upstream credentials are unavailable"))
@@ -74,7 +79,7 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	request := r.Clone(r.Context())
 	request.Header = headers
-	h.serveMCPProxy(w, request, target, codeSessionID)
+	h.serveMCPProxy(w, request, target, codeSessionID, claims)
 }
 
 func (h *Handler) authorizeMCPProxyTarget(ctx context.Context, identity upstreamProxyIdentity, target *url.URL, rawTarget string) bool {
@@ -92,10 +97,13 @@ func (h *Handler) authorizeMCPProxyTarget(ctx context.Context, identity upstream
 	return true
 }
 
-func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *url.URL, codeSessionID string) {
+func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *url.URL, codeSessionID string, claims SessionCredentialClaims) {
 	transport := h.mcpProxyTransport
 	if transport == nil {
 		transport = newMCPProxyTransport(h.cfg.CodeSession.UpstreamProxyDisableSSRFProtection)
+	}
+	if h.wrapMCPVaultTransport != nil {
+		transport = h.wrapMCPVaultTransport(r.Context(), claims, target, transport)
 	}
 	proxy := &httputil.ReverseProxy{
 		Transport:     transport,
@@ -106,6 +114,11 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out.Host = target.Host
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
+			if errors.Is(err, vaults.ErrInjectionRejected) {
+				h.logger.ErrorContext(request.Context(), "inject MCP proxy credentials", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
+				httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", "MCP upstream credentials are unavailable"))
+				return
+			}
 			if request.Context().Err() == nil {
 				h.logger.WarnContext(request.Context(), "proxy MCP upstream request", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
 			}

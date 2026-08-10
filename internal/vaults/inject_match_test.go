@@ -17,23 +17,23 @@ func TestDecideInjection(t *testing.T) {
 		name   string
 		url    string
 		creds  []db.VaultCredential
-		want   InjectionKind
+		want   injectionKind
 		wantID string
 	}{
-		{"inject first matching static_bearer", "https://mcp.example.com/mcp/sse", []db.VaultCredential{bearerWrongPath, bearerA}, InjectionInject, "vlt_a"},
-		{"exact path", "https://mcp.example.com/mcp", []db.VaultCredential{bearerA}, InjectionInject, "vlt_a"},
-		{"non-segment prefix rejected", "https://mcp.example.com/mcp-admin", []db.VaultCredential{bearerA}, InjectionReject, ""},
-		{"host mismatch passthrough", "https://other.example.com/mcp", []db.VaultCredential{bearerA}, InjectionPassthrough, ""},
-		{"root path covers host", "https://mcp.example.com/anything", []db.VaultCredential{credential("static_bearer", "https://mcp.example.com/", "vlt_root")}, InjectionInject, "vlt_root"},
-		{"passthrough when host uncovered", "https://registry.npmjs.org/pkg", []db.VaultCredential{bearerA}, InjectionPassthrough, ""},
-		{"reject same host without path match", "https://mcp.example.com/admin", []db.VaultCredential{bearerA}, InjectionReject, ""},
-		{"skip non-bearer then inject", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost, bearerA}, InjectionInject, "vlt_a"},
-		{"reject non-injectable only", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost}, InjectionReject, ""},
-		{"empty credentials passthrough", "https://mcp.example.com/mcp", nil, InjectionPassthrough, ""},
+		{"inject first matching static_bearer", "https://mcp.example.com/mcp/sse", []db.VaultCredential{bearerWrongPath, bearerA}, injectionInject, "vlt_a"},
+		{"exact path", "https://mcp.example.com/mcp", []db.VaultCredential{bearerA}, injectionInject, "vlt_a"},
+		{"non-segment prefix rejected", "https://mcp.example.com/mcp-admin", []db.VaultCredential{bearerA}, injectionReject, ""},
+		{"host mismatch passthrough", "https://other.example.com/mcp", []db.VaultCredential{bearerA}, injectionPassthrough, ""},
+		{"root path covers host", "https://mcp.example.com/anything", []db.VaultCredential{credential("static_bearer", "https://mcp.example.com/", "vlt_root")}, injectionInject, "vlt_root"},
+		{"passthrough when host uncovered", "https://registry.npmjs.org/pkg", []db.VaultCredential{bearerA}, injectionPassthrough, ""},
+		{"reject same host without path match", "https://mcp.example.com/admin", []db.VaultCredential{bearerA}, injectionReject, ""},
+		{"skip non-bearer then inject", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost, bearerA}, injectionInject, "vlt_a"},
+		{"reject non-injectable only", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost}, injectionReject, ""},
+		{"empty credentials passthrough", "https://mcp.example.com/mcp", nil, injectionPassthrough, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			decision := DecideInjection(mustURL(t, tc.url), tc.creds)
+			decision := decideInjection(mustURL(t, tc.url), tc.creds)
 			if decision.Kind != tc.want {
 				t.Fatalf("kind = %v, want %v", decision.Kind, tc.want)
 			}

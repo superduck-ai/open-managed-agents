@@ -69,7 +69,7 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 
 // WithVaultSecrets wires vault static_bearer injection into the MCP HTTP proxy.
 func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service) *Handler {
-	if h == nil || h.db == nil {
+	if h == nil || h.db == nil || secretSvc == nil {
 		return h
 	}
 	injector := vaults.NewInjector(h.db, secretSvc)

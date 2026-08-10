@@ -7,26 +7,26 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-// InjectionKind is the outbound proxy decision for a request URL.
-type InjectionKind int
+// injectionKind is the outbound proxy decision for a request URL.
+type injectionKind int
 
 const (
-	InjectionPassthrough InjectionKind = iota
-	InjectionInject
-	InjectionReject
+	injectionPassthrough injectionKind = iota
+	injectionInject
+	injectionReject
 )
 
-// InjectionDecision is the result of matching vault credentials to an outbound URL.
-type InjectionDecision struct {
-	Kind       InjectionKind
+// injectionDecision is the result of matching vault credentials to an outbound URL.
+type injectionDecision struct {
+	Kind       injectionKind
 	Credential *db.VaultCredential
 }
 
-// DecideInjection walks credentials in vault_ids order. First matching static_bearer
+// decideInjection walks credentials in vault_ids order. First matching static_bearer
 // wins; same-host coverage without an injectable path match rejects.
-func DecideInjection(requestURL *url.URL, credentials []db.VaultCredential) InjectionDecision {
+func decideInjection(requestURL *url.URL, credentials []db.VaultCredential) injectionDecision {
 	if requestURL == nil {
-		return InjectionDecision{Kind: InjectionReject}
+		return injectionDecision{Kind: injectionReject}
 	}
 	hostCovered := false
 	for i := range credentials {
@@ -64,12 +64,12 @@ func DecideInjection(requestURL *url.URL, credentials []db.VaultCredential) Inje
 		if !isInjectableStaticBearer(cred.AuthType, string(authType)) {
 			continue
 		}
-		return InjectionDecision{Kind: InjectionInject, Credential: cred}
+		return injectionDecision{Kind: injectionInject, Credential: cred}
 	}
 	if hostCovered {
-		return InjectionDecision{Kind: InjectionReject}
+		return injectionDecision{Kind: injectionReject}
 	}
-	return InjectionDecision{Kind: InjectionPassthrough}
+	return injectionDecision{Kind: injectionPassthrough}
 }
 
 func hostsEqual(serverURL, requestURL *url.URL) bool {

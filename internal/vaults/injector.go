@@ -2,12 +2,10 @@ package vaults
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -36,9 +34,6 @@ func (i *Injector) RewriteAuthorization(
 	requestURL *url.URL,
 	header http.Header,
 ) error {
-	if i == nil || i.db == nil {
-		return nil
-	}
 	vaultIDs, err := i.db.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
 	if err != nil {
 		return fmt.Errorf("%w: load vault_ids: %w", ErrInjectionRejected, err)
@@ -50,12 +45,12 @@ func (i *Injector) RewriteAuthorization(
 	if err != nil {
 		return fmt.Errorf("%w: load credentials: %w", ErrInjectionRejected, err)
 	}
-	decision := DecideInjection(requestURL, credentials)
+	decision := decideInjection(requestURL, credentials)
 	switch decision.Kind {
-	case InjectionPassthrough:
+	case injectionPassthrough:
 		return nil
-	case InjectionInject:
-		token, err := openStaticBearerToken(ctx, i.secretSvc, decision.Credential)
+	case injectionInject:
+		token, err := i.openStaticBearerToken(ctx, decision.Credential)
 		if err != nil {
 			return fmt.Errorf("%w: open credential: %w", ErrInjectionRejected, err)
 		}
@@ -66,27 +61,19 @@ func (i *Injector) RewriteAuthorization(
 	}
 }
 
-type staticBearerSecret struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
-}
-
-func openStaticBearerToken(ctx context.Context, secretSvc *secrets.Service, credential *db.VaultCredential) (string, error) {
+func (i *Injector) openStaticBearerToken(ctx context.Context, credential *db.VaultCredential) (string, error) {
 	if credential == nil {
 		return "", errors.New("missing credential")
 	}
-	if err := OpenCredentialSecret(ctx, secretSvc, credential); err != nil {
+	plaintext, err := openCredentialSecret(ctx, i.secretSvc, *credential)
+	if err != nil {
 		return "", err
 	}
-	defer clearCredentialSecretPayload(credential)
+	defer clear(plaintext)
 
-	var secret staticBearerSecret
-	if err := json.Unmarshal(credential.SecretPayload, &secret); err != nil {
-		return "", fmt.Errorf("decode static_bearer secret: %w", err)
+	secret, err := decodeStaticBearerCredentialSecret(plaintext)
+	if err != nil {
+		return "", err
 	}
-	token := strings.TrimSpace(secret.Token)
-	if token == "" || secret.Type != "static_bearer" {
-		return "", errors.New("static_bearer secret payload is incomplete")
-	}
-	return token, nil
+	return secret.Token, nil
 }

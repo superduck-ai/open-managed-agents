@@ -269,14 +269,10 @@ export function QuickstartChatPane({
               data-testid="quickstart-chat-content"
               className="mx-auto w-full max-w-3xl justify-end gap-0 px-4 py-6 self-center"
             >
-              {transcript.entries.map(({ item, continued }, index) => {
+              {transcript.entries.map(({ item, continued }) => {
                 if (item.type === 'message') {
                   return (
-                    <MessageScrollerItem
-                      key={item.id}
-                      messageId={item.id}
-                      scrollAnchor={!isStreaming && !error && index === transcript.entries.length - 1}
-                    >
+                    <MessageScrollerItem key={item.id} messageId={item.id}>
                       <QuickstartTurnGroup continued={continued}>
                         <QuickstartMessageBubble item={item} />
                       </QuickstartTurnGroup>
@@ -285,11 +281,7 @@ export function QuickstartChatPane({
                 }
                 if (item.type === 'status') {
                   return (
-                    <MessageScrollerItem
-                      key={item.id}
-                      messageId={item.id}
-                      scrollAnchor={!isStreaming && !error && index === transcript.entries.length - 1}
-                    >
+                    <MessageScrollerItem key={item.id} messageId={item.id}>
                       <StatusLine className="mt-5" tone={item.tone}>
                         {item.content}
                       </StatusLine>
@@ -298,11 +290,7 @@ export function QuickstartChatPane({
                 }
                 if (item.type === 'create_agent_result') {
                   return (
-                    <MessageScrollerItem
-                      key={item.id}
-                      messageId={item.id}
-                      scrollAnchor={!isStreaming && !error && index === transcript.entries.length - 1}
-                    >
+                    <MessageScrollerItem key={item.id} messageId={item.id}>
                       <QuickstartTurnGroup continued={continued}>
                         <CreateAgentResultCard
                           agentConfig={item.agentConfig}
@@ -315,18 +303,14 @@ export function QuickstartChatPane({
                   );
                 }
                 return (
-                  <MessageScrollerItem
-                    key={item.id}
-                    messageId={item.id}
-                    scrollAnchor={!isStreaming && !error && index === transcript.entries.length - 1}
-                  >
+                  <MessageScrollerItem key={item.id} messageId={item.id}>
                     <QuickstartTurnGroup continued={continued}>{renderToolCard(item)}</QuickstartTurnGroup>
                   </MessageScrollerItem>
                 );
               })}
 
               {isStreaming ? (
-                <MessageScrollerItem key="quickstart-streaming" messageId="quickstart-streaming" scrollAnchor>
+                <MessageScrollerItem key="quickstart-streaming" messageId="quickstart-streaming">
                   <QuickstartTurnGroup continued={transcript.lastSpeaker === 'assistant'}>
                     <QuickstartStreamingTurn />
                   </QuickstartTurnGroup>
@@ -334,7 +318,7 @@ export function QuickstartChatPane({
               ) : null}
 
               {error ? (
-                <MessageScrollerItem key="quickstart-error" messageId="quickstart-error" scrollAnchor>
+                <MessageScrollerItem key="quickstart-error" messageId="quickstart-error">
                   <QuickstartTurnGroup continued={transcript.lastSpeaker === 'assistant'}>
                     <QuickstartErrorTurn>{error}</QuickstartErrorTurn>
                   </QuickstartTurnGroup>

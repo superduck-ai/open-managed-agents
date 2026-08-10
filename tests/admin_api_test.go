@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const tunnelsBetaHeader = "mcp-tunnels-2026-05-19"
@@ -83,7 +83,7 @@ func TestAdminResourceReferencesUseUUID(t *testing.T) {
 	for table, columns := range expectedUUIDColumns {
 		for _, column := range columns {
 			var dataType string
-			if err := app.db.Pool.QueryRow(context.Background(), `
+			if err := app.pool.QueryRow(context.Background(), `
 				select data_type
 				from information_schema.columns
 				where table_schema = current_schema()
@@ -108,7 +108,7 @@ func TestAdminResourceReferencesUseUUID(t *testing.T) {
 	for table, columns := range legacyColumns {
 		for _, column := range columns {
 			var count int
-			if err := app.db.Pool.QueryRow(context.Background(), `
+			if err := app.pool.QueryRow(context.Background(), `
 				select count(*)
 				from information_schema.columns
 				where table_schema = current_schema()
@@ -124,7 +124,7 @@ func TestAdminResourceReferencesUseUUID(t *testing.T) {
 	}
 
 	var externalKeyIndexDefinition string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select indexdef
 		from pg_indexes
 		where schemaname = current_schema()
@@ -144,7 +144,7 @@ func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
 	defer app.close()
 
 	var legacyColumnCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from information_schema.columns
 		where table_schema = current_schema()
@@ -156,7 +156,7 @@ func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
 	if legacyColumnCount != 0 {
 		t.Fatalf("workspace organization_id column count = %d, want 0", legacyColumnCount)
 	}
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from information_schema.columns
 		where table_schema = current_schema()
@@ -170,7 +170,7 @@ func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
 	}
 	var dataType string
 	var ordinalPosition int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select data_type, ordinal_position
 		from information_schema.columns
 		where table_schema = current_schema()
@@ -184,7 +184,7 @@ func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
 	}
 
 	var referenceMatches bool
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select w.organization_uuid = o.uuid
 		from workspaces w
 		join organizations o on o.uuid = w.organization_uuid
@@ -198,7 +198,7 @@ func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
 
 	var originalOrganizationUUID string
 	var organizationCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select o.uuid::text, (select count(*) from organizations)
 		from organizations o
 		join workspaces w on w.organization_uuid = o.uuid
@@ -211,7 +211,7 @@ func TestWorkspaceOrganizationReferenceUsesUUID(t *testing.T) {
 	}
 	var seededOrganizationUUID string
 	var seededOrganizationCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select o.uuid::text, (select count(*) from organizations)
 		from organizations o
 		join workspaces w on w.organization_uuid = o.uuid
@@ -302,7 +302,7 @@ func TestAdminAPI(t *testing.T) {
 	})
 
 	t.Run("failure tunnel certificate rejects invalid pem", func(t *testing.T) {
-		tunnelID := seedAdminTunnel(t, app.db, "tunnel_bad_cert_"+suffix, "bad-cert-"+suffix+".local", nil)
+		tunnelID := seedAdminTunnel(t, app.pool, "tunnel_bad_cert_"+suffix, "bad-cert-"+suffix+".local", nil)
 		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/tunnels/"+tunnelID+"/certificates", map[string]any{
 			"ca_certificate_pem": "not a certificate",
 		}, defaultTestKey, tunnelsBetaHeader)
@@ -311,7 +311,7 @@ func TestAdminAPI(t *testing.T) {
 
 	t.Run("failure cross organization isolation", func(t *testing.T) {
 		otherKey := "sk-ant-admin-other-" + suffix
-		seedWorkspaceKey(t, app.db, "org_admin_other_"+suffix, "workspace_admin_other_"+suffix, "api_key_admin_other_"+suffix, otherKey)
+		seedWorkspaceKey(t, app.pool, "org_admin_other_"+suffix, "workspace_admin_other_"+suffix, "api_key_admin_other_"+suffix, otherKey)
 		resp := adminDo(t, app, http.MethodGet, "/v1/organizations/workspaces/workspace_default", nil, otherKey, "")
 		assertError(t, resp, http.StatusNotFound, "not_found_error")
 	})
@@ -331,7 +331,7 @@ func TestAdminAPI(t *testing.T) {
 	t.Run("success invites paginate and soft delete", func(t *testing.T) {
 		first := createAdminInvite(t, app, "one-"+suffix+"@example.com", "user")
 		second := createAdminInvite(t, app, "two-"+suffix+"@example.com", "developer")
-		forceInviteTimes(t, app.db, first.ID, second.ID)
+		forceInviteTimes(t, app.pool, first.ID, second.ID)
 
 		var page adminCursorPage
 		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/invites?limit=1", nil, defaultTestKey, ""), &page)
@@ -353,7 +353,7 @@ func TestAdminAPI(t *testing.T) {
 	})
 
 	t.Run("success users and workspace members", func(t *testing.T) {
-		userID := seedAdminUser(t, app.db, "member-"+suffix+"@example.com", "developer")
+		userID := seedAdminUser(t, app.pool, "member-"+suffix+"@example.com", "developer")
 
 		resp := adminDo(t, app, http.MethodPost, "/v1/organizations/users/"+userID, map[string]any{"role": "admin"}, defaultTestKey, "")
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
@@ -450,9 +450,9 @@ func TestAdminAPI(t *testing.T) {
 	})
 
 	t.Run("success api key status update affects auth", func(t *testing.T) {
-		apiKeyID, rawKey := seedAdminAPIKey(t, app.db, "status-"+suffix, "sk-ant-admin-status-"+suffix)
-		pageKeyID, _ := seedAdminAPIKey(t, app.db, "page-"+suffix, "sk-ant-admin-page-"+suffix)
-		forceAPIKeyTimes(t, app.db, apiKeyID, pageKeyID)
+		apiKeyID, rawKey := seedAdminAPIKey(t, app.pool, "status-"+suffix, "sk-ant-admin-status-"+suffix)
+		pageKeyID, _ := seedAdminAPIKey(t, app.pool, "page-"+suffix, "sk-ant-admin-page-"+suffix)
+		forceAPIKeyTimes(t, app.pool, apiKeyID, pageKeyID)
 
 		var key adminObject
 		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/api_keys/"+apiKeyID, nil, defaultTestKey, ""), &key)
@@ -484,12 +484,12 @@ func TestAdminAPI(t *testing.T) {
 	})
 
 	t.Run("success api key before cursor returns nearest previous page", func(t *testing.T) {
-		creatorID := seedAdminUser(t, app.db, "before-key-creator-"+suffix+"@example.com", "developer")
-		oldestID, _ := seedAdminAPIKey(t, app.db, "before-oldest-"+suffix, "sk-ant-admin-before-oldest-"+suffix)
-		olderMiddleID, _ := seedAdminAPIKey(t, app.db, "before-older-middle-"+suffix, "sk-ant-admin-before-older-middle-"+suffix)
-		newerMiddleID, _ := seedAdminAPIKey(t, app.db, "before-newer-middle-"+suffix, "sk-ant-admin-before-newer-middle-"+suffix)
-		newestID, _ := seedAdminAPIKey(t, app.db, "before-newest-"+suffix, "sk-ant-admin-before-newest-"+suffix)
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		creatorID := seedAdminUser(t, app.pool, "before-key-creator-"+suffix+"@example.com", "developer")
+		oldestID, _ := seedAdminAPIKey(t, app.pool, "before-oldest-"+suffix, "sk-ant-admin-before-oldest-"+suffix)
+		olderMiddleID, _ := seedAdminAPIKey(t, app.pool, "before-older-middle-"+suffix, "sk-ant-admin-before-older-middle-"+suffix)
+		newerMiddleID, _ := seedAdminAPIKey(t, app.pool, "before-newer-middle-"+suffix, "sk-ant-admin-before-newer-middle-"+suffix)
+		newestID, _ := seedAdminAPIKey(t, app.pool, "before-newest-"+suffix, "sk-ant-admin-before-newest-"+suffix)
+		if _, err := app.pool.Exec(context.Background(), `
 			update api_keys ak
 			set created_by_user_uuid = u.uuid
 			from users u
@@ -498,7 +498,7 @@ func TestAdminAPI(t *testing.T) {
 		`, creatorID, oldestID, olderMiddleID, newerMiddleID, newestID); err != nil {
 			t.Fatalf("assign API key creator: %v", err)
 		}
-		forceAPIKeyTimes(t, app.db, oldestID, olderMiddleID, newerMiddleID, newestID)
+		forceAPIKeyTimes(t, app.pool, oldestID, olderMiddleID, newerMiddleID, newestID)
 
 		var middlePage adminCursorPage
 		adminDecodeOK(t, adminDo(
@@ -555,7 +555,7 @@ func TestAdminAPI(t *testing.T) {
 
 	t.Run("success tunnel token certificate limits and archive", func(t *testing.T) {
 		workspace := createAdminWorkspace(t, app, "tunnel-"+suffix, nil, nil)
-		tunnelID := seedAdminTunnel(t, app.db, "tunnel_"+suffix, "tunnel-"+suffix+".local", &workspace.ID)
+		tunnelID := seedAdminTunnel(t, app.pool, "tunnel_"+suffix, "tunnel-"+suffix+".local", &workspace.ID)
 
 		var tunnel adminObject
 		adminDecodeOK(t, adminDo(t, app, http.MethodGet, "/v1/organizations/tunnels/"+tunnelID, nil, defaultTestKey, tunnelsBetaHeader), &tunnel)
@@ -613,7 +613,7 @@ func TestAdminAPI(t *testing.T) {
 	t.Run("success admin tables have no foreign keys", func(t *testing.T) {
 		tables := []string{"users", "organization_invites", "workspace_members", "external_keys", "mcp_tunnels", "mcp_tunnel_certificates", "workspaces", "api_keys"}
 		var foreignKeyCount int
-		if err := app.db.Pool.QueryRow(context.Background(), `
+		if err := app.pool.QueryRow(context.Background(), `
 			select count(*)
 			from information_schema.table_constraints
 			where constraint_type = 'FOREIGN KEY'
@@ -629,7 +629,7 @@ func TestAdminAPI(t *testing.T) {
 
 	t.Run("success tunnel references use UUID columns", func(t *testing.T) {
 		var uuidColumnCount, legacyColumnCount int
-		if err := app.db.Pool.QueryRow(context.Background(), `
+		if err := app.pool.QueryRow(context.Background(), `
 			select
 				count(*) filter (
 					where data_type = 'uuid'
@@ -741,10 +741,10 @@ func createAdminExternalKey(t *testing.T, app *testApp, name string) adminObject
 	return key
 }
 
-func forceInviteTimes(t *testing.T, database *db.DB, olderID, newerID string) {
+func forceInviteTimes(t *testing.T, pool *pgxpool.Pool, olderID, newerID string) {
 	t.Helper()
 	base := time.Now().UTC().Add(100 * 365 * 24 * time.Hour)
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		update organization_invites
 		set invited_at = case external_id
 			when $1 then $3::timestamptz
@@ -757,12 +757,12 @@ func forceInviteTimes(t *testing.T, database *db.DB, olderID, newerID string) {
 	}
 }
 
-func forceAPIKeyTimes(t *testing.T, database *db.DB, apiKeyIDs ...string) {
+func forceAPIKeyTimes(t *testing.T, pool *pgxpool.Pool, apiKeyIDs ...string) {
 	t.Helper()
 	base := time.Now().UTC().Add(100 * 365 * 24 * time.Hour)
 	for index, apiKeyID := range apiKeyIDs {
 		createdAt := base.Add(time.Duration(index) * time.Second)
-		if _, err := database.Pool.Exec(context.Background(), `
+		if _, err := pool.Exec(context.Background(), `
 			update api_keys
 			set created_at = $2::timestamptz,
 				updated_at = $2::timestamptz
@@ -773,11 +773,11 @@ func forceAPIKeyTimes(t *testing.T, database *db.DB, apiKeyIDs ...string) {
 	}
 }
 
-func seedAdminUser(t *testing.T, database *db.DB, email, role string) string {
+func seedAdminUser(t *testing.T, pool *pgxpool.Pool, email, role string) string {
 	t.Helper()
-	ids := getAdminDefaultIDs(t, database)
+	ids := getAdminDefaultIDs(t, pool)
 	userID := "user_admin_" + uniqueAdminSuffix()
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into users (external_id, organization_uuid, email, name, role)
 		values ($1, $2, $3, $4, $5)
 	`, userID, ids.OrganizationUUID, email, "Admin Test User", role); err != nil {
@@ -786,11 +786,11 @@ func seedAdminUser(t *testing.T, database *db.DB, email, role string) string {
 	return userID
 }
 
-func seedAdminAPIKey(t *testing.T, database *db.DB, suffix, rawKey string) (string, string) {
+func seedAdminAPIKey(t *testing.T, pool *pgxpool.Pool, suffix, rawKey string) (string, string) {
 	t.Helper()
-	ids := getAdminDefaultIDs(t, database)
+	ids := getAdminDefaultIDs(t, pool)
 	apiKeyID := "api_key_admin_" + suffix
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into api_keys (
 			external_id, workspace_uuid, key_hash, status, created_by_user_uuid, name, partial_key_hint
 		)
@@ -801,13 +801,13 @@ func seedAdminAPIKey(t *testing.T, database *db.DB, suffix, rawKey string) (stri
 	return apiKeyID, rawKey
 }
 
-func seedAdminTunnel(t *testing.T, database *db.DB, tunnelID, domain string, workspaceExternalID *string) string {
+func seedAdminTunnel(t *testing.T, pool *pgxpool.Pool, tunnelID, domain string, workspaceExternalID *string) string {
 	t.Helper()
-	ids := getAdminDefaultIDs(t, database)
+	ids := getAdminDefaultIDs(t, pool)
 	var workspaceUUID *string
 	if workspaceExternalID != nil {
 		var loadedWorkspaceUUID string
-		if err := database.Pool.QueryRow(context.Background(), `
+		if err := pool.QueryRow(context.Background(), `
 			select CAST(uuid AS text)
 			from workspaces
 			where external_id = $1
@@ -818,7 +818,7 @@ func seedAdminTunnel(t *testing.T, database *db.DB, tunnelID, domain string, wor
 		workspaceUUID = &loadedWorkspaceUUID
 	}
 	displayName := "Tunnel " + tunnelID
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		insert into mcp_tunnels (
 			external_id, organization_uuid, workspace_uuid, workspace_external_id, display_name, domain
 		)
@@ -829,10 +829,10 @@ func seedAdminTunnel(t *testing.T, database *db.DB, tunnelID, domain string, wor
 	return tunnelID
 }
 
-func getAdminDefaultIDs(t *testing.T, database *db.DB) adminDefaultIDs {
+func getAdminDefaultIDs(t *testing.T, pool *pgxpool.Pool) adminDefaultIDs {
 	t.Helper()
 	var ids adminDefaultIDs
-	if err := database.Pool.QueryRow(context.Background(), `
+	if err := pool.QueryRow(context.Background(), `
 		select CAST(w.organization_uuid AS text), CAST(w.uuid AS text), CAST(u.uuid AS text)
 		from workspaces w
 		join users u on u.organization_uuid = w.organization_uuid and u.external_id = 'user_default'

@@ -316,7 +316,10 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
         </SidebarGroup>
       </AppSidebarContent>
       <SidebarFooter account={account} collapsed={collapsed} onLogout={onLogout} onNavigate={onNavigate} />
-      <SidebarRail />
+      <SidebarRail
+        aria-label={msg('common.toggleSidebar', 'Toggle Sidebar')}
+        title={msg('common.toggleSidebar', 'Toggle Sidebar')}
+      />
     </AppSidebar>
   );
 }
@@ -384,7 +387,10 @@ function SettingsSidebar({
         </SidebarGroup>
       </AppSidebarContent>
       <SidebarFooter account={account} collapsed={collapsed} onLogout={onLogout} onNavigate={onNavigate} />
-      <SidebarRail />
+      <SidebarRail
+        aria-label={msg('common.toggleSidebar', 'Toggle Sidebar')}
+        title={msg('common.toggleSidebar', 'Toggle Sidebar')}
+      />
     </AppSidebar>
   );
 }

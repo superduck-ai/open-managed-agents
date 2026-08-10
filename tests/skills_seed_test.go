@@ -14,14 +14,16 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/skills"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSeedBuiltinSkillsRejectsInvalidArchives(t *testing.T) {
 	store := newFakeStore("seed-invalid-bucket")
 	app := newTestAppWithStore(t, nil, store)
 	defer app.close()
-	cleanupBuiltinSkillRows(t, app.db)
-	defer cleanupBuiltinSkillRows(t, app.db)
+	cleanupBuiltinSkillRows(t, app.pool)
+	defer cleanupBuiltinSkillRows(t, app.pool)
 
 	tests := []struct {
 		name    string
@@ -68,8 +70,8 @@ func TestSeedBuiltinSkills(t *testing.T) {
 	store := newFakeStore("seed-bucket")
 	app := newTestAppWithStore(t, nil, store)
 	defer app.close()
-	cleanupBuiltinSkillRows(t, app.db)
-	defer cleanupBuiltinSkillRows(t, app.db)
+	cleanupBuiltinSkillRows(t, app.pool)
+	defer cleanupBuiltinSkillRows(t, app.pool)
 
 	dir := t.TempDir()
 	skillID := uniqueBuiltinSeedID("xlsx")
@@ -131,8 +133,8 @@ func TestSeedBuiltinSkillsPrune(t *testing.T) {
 	store := newFakeStore("seed-prune-bucket")
 	app := newTestAppWithStore(t, nil, store)
 	defer app.close()
-	cleanupBuiltinSkillRows(t, app.db)
-	defer cleanupBuiltinSkillRows(t, app.db)
+	cleanupBuiltinSkillRows(t, app.pool)
+	defer cleanupBuiltinSkillRows(t, app.pool)
 
 	dir := t.TempDir()
 	xlsxID := uniqueBuiltinSeedID("xlsx")
@@ -167,12 +169,12 @@ func TestSeedBuiltinSkillsPrune(t *testing.T) {
 	}
 }
 
-func cleanupBuiltinSkillRows(t *testing.T, database *db.DB) {
+func cleanupBuiltinSkillRows(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	if _, err := database.Pool.Exec(context.Background(), `delete from builtin_skill_versions`); err != nil {
+	if _, err := pool.Exec(context.Background(), `delete from builtin_skill_versions`); err != nil {
 		t.Fatalf("cleanup builtin skill versions: %v", err)
 	}
-	if _, err := database.Pool.Exec(context.Background(), `delete from builtin_skills`); err != nil {
+	if _, err := pool.Exec(context.Background(), `delete from builtin_skills`); err != nil {
 		t.Fatalf("cleanup builtin skills: %v", err)
 	}
 }

@@ -38,7 +38,7 @@ func TestRuntimeResolverResolvesCustomLatestVersion(t *testing.T) {
 	decodeJSON(t, resp.Body, &secondVersion)
 
 	resolver := skillsapi.NewRuntimeResolver(app.db)
-	ids := getDefaultDBIDs(t, app.db)
+	ids := getDefaultDBIDs(t, app.pool)
 	snapshot, err := json.Marshal(map[string]any{
 		"skills": []map[string]string{{
 			"type":     "custom",

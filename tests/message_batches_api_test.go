@@ -15,6 +15,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type batchResponse struct {
@@ -46,7 +48,7 @@ func TestMessageBatchesAPI(t *testing.T) {
 
 	t.Run("failure delete in_progress", func(t *testing.T) {
 		created := createBatch(t, app, defaultTestKey, minimalBatchBody("delete-pending-1"))
-		defer cleanupBatchRows(t, app.db, created.ID)
+		defer cleanupBatchRows(t, app.pool, created.ID)
 
 		resp := doBatchRequest(t, app, http.MethodDelete, "/v1/messages/batches/"+created.ID, nil, defaultTestKey, "")
 		assertError(t, resp, http.StatusConflict, "invalid_request_error")
@@ -81,8 +83,8 @@ func TestMessageBatchesAPI(t *testing.T) {
 		defer failingApp.close()
 
 		created := createBatch(t, failingApp, defaultTestKey, minimalBatchBody("upload-failure-1"))
-		defer cleanupBatchRows(t, failingApp.db, created.ID)
-		prioritizeBatchJob(t, failingApp.db, created.ID)
+		defer cleanupBatchRows(t, failingApp.pool, created.ID)
+		prioritizeBatchJob(t, failingApp.pool, created.ID)
 
 		worker := batches.NewWorker(failingApp.db, failingStore, failingApp.cfg.Batch, &fakeBatchUpstream{}, nil)
 		err := worker.RunOnce(context.Background(), "batch-worker-upload-failure-test")
@@ -107,9 +109,9 @@ func TestMessageBatchesAPI(t *testing.T) {
 
 	t.Run("success create process retrieve results delete", func(t *testing.T) {
 		created := createBatch(t, app, defaultTestKey, minimalBatchBody("success-1", "success-2"))
-		defer cleanupBatchRows(t, app.db, created.ID)
+		defer cleanupBatchRows(t, app.pool, created.ID)
 
-		prioritizeBatchJob(t, app.db, created.ID)
+		prioritizeBatchJob(t, app.pool, created.ID)
 		upstream := &fakeBatchUpstream{}
 		worker := batches.NewWorker(app.db, store, app.cfg.Batch, upstream, nil)
 		if err := worker.RunOnce(context.Background(), "batch-worker-test"); err != nil {
@@ -131,7 +133,7 @@ func TestMessageBatchesAPI(t *testing.T) {
 		}
 
 		var objectKey string
-		if err := app.db.Pool.QueryRow(context.Background(), `
+		if err := app.pool.QueryRow(context.Background(), `
 			select results_s3_key
 			from message_batches
 			where external_id = $1
@@ -263,9 +265,9 @@ func doBatchRequest(t *testing.T, app *testApp, method, path string, body io.Rea
 	return resp
 }
 
-func prioritizeBatchJob(t *testing.T, database *db.DB, batchID string) {
+func prioritizeBatchJob(t *testing.T, pool *pgxpool.Pool, batchID string) {
 	t.Helper()
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		update jobs
 		set run_after = '2000-01-01T00:00:00Z', created_at = '2000-01-01T00:00:00Z'
 		where type = 'message_batch_process'
@@ -275,16 +277,16 @@ func prioritizeBatchJob(t *testing.T, database *db.DB, batchID string) {
 	}
 }
 
-func cleanupBatchRows(t *testing.T, database *db.DB, batchID string) {
+func cleanupBatchRows(t *testing.T, pool *pgxpool.Pool, batchID string) {
 	t.Helper()
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		delete from jobs
 		where type = 'message_batch_process'
 			and payload->>'message_batch_external_id' = $1
 	`, batchID); err != nil {
 		t.Fatalf("cleanup batch jobs: %v", err)
 	}
-	if _, err := database.Pool.Exec(context.Background(), `
+	if _, err := pool.Exec(context.Background(), `
 		delete from message_batch_requests
 		where message_batch_uuid in (
 			select uuid from message_batches where external_id = $1
@@ -292,7 +294,7 @@ func cleanupBatchRows(t *testing.T, database *db.DB, batchID string) {
 	`, batchID); err != nil {
 		t.Fatalf("cleanup batch requests: %v", err)
 	}
-	if _, err := database.Pool.Exec(context.Background(), `delete from message_batches where external_id = $1`, batchID); err != nil {
+	if _, err := pool.Exec(context.Background(), `delete from message_batches where external_id = $1`, batchID); err != nil {
 		t.Fatalf("cleanup message batch: %v", err)
 	}
 }

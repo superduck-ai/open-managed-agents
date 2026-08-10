@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -552,7 +553,7 @@ func (r environmentMapperRow) environment() Environment {
 	return Environment{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
-		Name: r.Name, Description: r.Description, Config: copyRaw(r.Config), Metadata: copyRaw(r.Metadata),
+		Name: r.Name, Description: r.Description, Config: bytes.Clone(r.Config), Metadata: bytes.Clone(r.Metadata),
 		Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
@@ -570,7 +571,7 @@ func (r environmentWorkMapperRow) work() EnvironmentWork {
 	return EnvironmentWork{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, EnvironmentUUID: r.EnvironmentUUID,
-		EnvironmentExternalID: r.EnvironmentExternalID, Data: copyRaw(r.Data), Metadata: copyRaw(r.Metadata),
+		EnvironmentExternalID: r.EnvironmentExternalID, Data: bytes.Clone(r.Data), Metadata: bytes.Clone(r.Metadata),
 		Secret: r.Secret, State: r.State, ClaimedByWorkerID: r.ClaimedByWorkerID,
 		ClaimExpiresAt: r.ClaimExpiresAt, AcknowledgedAt: r.AcknowledgedAt, StartedAt: r.StartedAt,
 		LatestHeartbeatAt: r.LatestHeartbeatAt, HeartbeatTTLSeconds: r.HeartbeatTTLSeconds,
@@ -585,7 +586,7 @@ func (r environmentSandboxMapperRow) sandbox() EnvironmentSandbox {
 		WorkspaceUUID: r.WorkspaceUUID, EnvironmentUUID: r.EnvironmentUUID,
 		EnvironmentExternalID: r.EnvironmentExternalID, WorkUUID: r.WorkUUID,
 		WorkExternalID: r.WorkExternalID, Provider: r.Provider, Template: r.Template,
-		ProviderSandboxID: r.ProviderSandboxID, State: r.State, Metadata: copyRaw(r.Metadata),
+		ProviderSandboxID: r.ProviderSandboxID, State: r.State, Metadata: bytes.Clone(r.Metadata),
 		LastError: r.LastError, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, StoppedAt: r.StoppedAt,
 	}
 }

@@ -42,10 +42,25 @@ export function agentModelName(model: AgentApiResponse['model']) {
   return model?.id || 'claude-sonnet-4-6';
 }
 
-export function relativeTime(value: string) {
+export function relativeTime(value: string, format?: (value: number, unit: Intl.RelativeTimeFormatUnit) => string) {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
     return '—';
+  }
+  if (format) {
+    const seconds = Math.round((timestamp - Date.now()) / 1000);
+    if (Math.abs(seconds) < 60) {
+      return format(0, 'second');
+    }
+    const minutes = Math.trunc(seconds / 60);
+    if (Math.abs(minutes) < 60) {
+      return format(minutes, 'minute');
+    }
+    const hours = Math.trunc(minutes / 60);
+    if (Math.abs(hours) < 24) {
+      return format(hours, 'hour');
+    }
+    return format(Math.trunc(hours / 24), 'day');
   }
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
   if (seconds < 60) {
@@ -335,12 +350,12 @@ export function uniqueVersionNumbers(versions: AgentApiResponse[], fallbackVersi
   ].sort((left, right) => right - left);
 }
 
-export function formatDetailDate(value: string) {
+export function formatDetailDate(value: string, locale = 'en') {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
     return 'recently';
   }
-  return new Intl.DateTimeFormat('en', {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',

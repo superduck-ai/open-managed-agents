@@ -1,0 +1,220 @@
+# Vault 存储加密（本期）与运行时注入（后续）
+
+## 目标
+
+两件事：
+
+1. **存库加密（本期 PR）**：库被拖走、或只有读库权限的人，都拿不到明文密码。
+2. **运行时注入（不在本期）**：Sandbox 调需要认证的 MCP/API 时能用上密码；Sandbox 本身永远看不到真密码。**本 PR 不实现注入**；设计保留为后续工作。
+
+主密钥本期放 `config.yaml`（全局一把，多 workspace 共用）。不做分片、不做 KMS；`KeyProvider` 接口先留好，以后再接。
+
+## 背景
+
+Vault CRUD 和 OAuth 注册已经有了，但：
+
+- 密码曾以明文落库（`secret_payload` jsonb）；OAuth 流程里的 `client_secret` 也是明文。
+- 运行时不会注入凭证。挂了 `vault_ids` 的 session，沙箱连 MCP 时还是没认证信息，vault 等于空转。
+
+**本期只补加密存储**；运行时注入另开 PR。
+
+## 威胁模型（加密管到哪）
+
+| 场景 | 加密能否挡住 |
+|---|---|
+| 数据库被偷（备份/磁盘） | 能 |
+| 只有查库权限的人偷看 | 能 |
+| 数据库 + `config.yaml` 一起丢 | 不能。主密钥就在 config 里，以后分片/KMS 再管 |
+| 打进运行中的 OMA 进程 | 不能。本期不解决 |
+| 沙箱里靠 prompt injection 骗 Agent 偷密码 | 加密不管。靠后续注入设计：沙箱只见占位符，真密码只在 proxy 里瞬态出现 |
+
+加密只覆盖前两行。沙箱偷密走注入（后续）；进程被拿下是运行时加固，另议；config 一起丢是接受的缺口。
+
+## 加密方案：信封加密
+
+每条密码用一次性 DEK 加密，DEK 再用 KEK 包一层一起存。
+
+信封布局预留了“将来只 rewrap DEK、不必重加密业务密文”的空间（AAD 不绑 KEK version）。**本期本地轮换不做 rewrap**：旧行保留原来的 `wrapped_dek` 与 `key_version`；换主密钥后必须把旧 KEK 留在 `decrypt_only`，直到相关凭证被写路径重新 Seal（换新 DEK / 新 `key_version`）。若在仍有旧信封时从 `decrypt_only` 删掉旧钥，Open 会失败，凭证不可用。
+
+细节：
+
+- AES-256-GCM，每次新 nonce，带 auth tag。
+- AAD 绑 `organization_uuid` / `workspace_uuid` / `vault_external_id` / `credential_external_id`（长度前缀字符串）；搬走就解不开。四字段均须非空，`Seal`/`Open` 在空或纯空白时直接拒绝，避免封出之后填 ID 就解不开的信封。故意不绑 KEK 版本，以便将来若做 rewrap 时业务密文可不动。
+- 密文头带 key version，老数据自带“用几号钥匙锁的”。
+- 解不开就报错。不退化明文，不换别的 key 凑合。
+
+## 主密钥
+
+```yaml
+vault:
+  master_key:
+    kek: <32 字节, base64>   # 必填（或 kek_file）；dev/prod 均无临时密钥
+    # 以后可换: provider: shamir | kms | openbao
+```
+
+本期从 `config.yaml` 读（与 S3 access key 相同：启动必填，无 ephemeral 兜底），也支持 `_file` 挂载（同 `upstream_proxy_ca_key_file`）。本地可用 `just generate-vault-kek config/secrets/vault-kek` 生成后配置 `kek_file`，或把打印的 base64 写入 `kek`。
+
+“主密钥从哪来”做成可替换模块：`KeyProvider` + 启动时通用 `Prepare`。主流程不写死读 config。以后要防 config 一起丢，加 Shamir 或 KMS provider 即可；业务密文、DB 字段、对外接口不用动。
+
+```go
+type KeyProvider interface {
+    Prepare(ctx) error
+    WrapDEK(...) (wrappedDEK, error)
+    UnwrapDEK(...) (dek, error)
+}
+```
+
+## 数据库
+
+当前相关列：
+
+| 列 | 现状 |
+|---|---|
+| `auth` | jsonb，非秘密（如 `mcp_server_url`）。`static_bearer` 更新时可改 URL，并同步 `credential_key` |
+| `secret_payload` | **已删除**。明文秘密不再落库；仅进程内 transient 用于 seal/open/merge |
+
+新增 migration `00049_add_vault_secret_envelope.sql`（Direct cutover：同一次迁移加信封列并丢弃明文列）：
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `ciphertext` | bytea | AES-GCM 密文（含 tag） |
+| `nonce` | bytea(12) | nonce |
+| `wrapped_dek` | bytea | 被 KEK 包过的 DEK |
+| `format_version` | int | 密文/AAD 格式版本 |
+| `key_provider` | text | provider 名（`local` / 以后 `aws_kms` 等） |
+| `key_version` | bigint | 用几号 KEK |
+| `version` | bigint not null default 0 | CAS 乐观锁 |
+
+**Direct envelope cutover**：同一 migration 增加信封列并 `drop column secret_payload`。无 Expand/Backfill/Contract 双读窗口；既有明文随列一起丢弃，不提供 `backfill_secrets` 维护接口。信封完整性与 active/archived 生命周期由应用写路径强制，**不使用 PostgreSQL CHECK**。
+
+**活动凭证必须有信封**：`CreateVaultCredential` / `UpdateVaultCredential` 在落库前强制完整信封（`ciphertext`/`nonce`/`wrapped_dek` + `format_version`/`key_provider`/`key_version`）；缺信封或残缺字段直接拒绝，防止 Seal 漏调把 NULL 信封写入 active 行。`SealCredentialSecret` 对空/`null` payload 也返回错误（不再 no-op）。既有 active 行若已缺信封：update / validate / open-for-merge 且请求未携带完整替换 secret → HTTP 400，提示客户端重新提交 secret；缺信封但带完整替换 secret（如 `static_bearer.token`）→ 跳过 Open，直接 Seal 写回。信封存在但 Open 失败（篡改 / 错误 KEK / AAD 不匹配）→ HTTP 5xx fail-closed。
+
+**`POST /v1/vaults/{vault_id}/credentials/{credential_id}` 更新合同（缺信封 / CAS）**：
+
+| 请求形态 | 信封状态 | HTTP |
+|---|---|---|
+| 仅改 `display_name` / `metadata`（无 `auth` 或不含完整替换 secret） | 缺信封 | **400**（与 open-for-merge 相同：要求重新提交 secret；metadata-only 不能绕过） |
+| 带完整替换 secret 的 `auth` | 缺信封 | **200**，跳过 Open，直接 Seal 写回 |
+| 省略 secret 的部分 `auth` 更新 / preserve-on-omit | 有信封 | **200**，Open → merge → reseal |
+| 任意成功路径上的并发写 | `version` CAS 未命中 | **409**（`conflict_error`：Credential was modified concurrently; reload and try again） |
+| `credential_key` 唯一冲突（如改 `mcp_server_url`） | — | **409**（Credential key already exists） |
+
+**归档要清秘密**：archive 凭证（以及 archive vault 级联归档凭证）时，除了标 `archived_at`，还要把信封列清空——官方要求 archive“清秘密、留元数据”，不能只软删了事。
+
+## 持久化实现（Yourbatis）
+
+`internal/db` 中 vault / vault_credential 读写已整链迁到 Yourbatis，四文件拆分：
+
+| 文件 | 职责 |
+|---|---|
+| `vaults.go` | `DB` 对上层暴露的 API、CAS/limit/ErrNotFound 编排、`yourbatis.DB.Transaction` |
+| `vault_mapper.go` + `vault_mapper.xml` | `VaultMapper` |
+| `vault_credential_mapper.go` + `vault_credential_mapper.xml` | `VaultCredentialMapper`（信封列、`sensitive=true`、归档清密文） |
+| `*.sqlmap.gen.go` | `sqlmapgen` 生成，不入库 |
+
+`ArchiveVault` / `DeleteVault` / `CreateVaultCredential` 在同一 Yourbatis 事务内分别构造两个 Mapper，不再使用 `sqlx.Tx`。
+**Credential secret update（preserve-on-omit）**：更新请求省略 secret 时，Open 现有信封 → merge 非秘密字段 → 用新 DEK reseal，并用 `version` CAS（冲突 → HTTP 409）。缺信封时无法 merge：metadata-only 或未带完整替换 secret → HTTP 400；带完整替换 secret → 直接 reseal。
+
+KEK 版本由 config 管（`version` current + `decrypt_only` 旧列表）。每条凭证用 `key_version` 标明自己用的是哪把。KEK 本身不进库。
+
+`mcp_oauth_flows` 里的 `client_secret` / `code_verifier` 也是明文（15min TTL）。若验收要求“DB 零明文”，同样走 Secret Service（该表加一组精简信封列，两者复用同一 DEK）。生命周期短，也可拆小 issue。
+
+Provider/KMS 调用放在 DB 事务外。
+
+> 本期实现：Direct cutover（加信封列 + 删 `secret_payload`）+ CAS + 写路径加密（Vaults API 与 platform MCP OAuth callback）。无 backfill API。
+
+## 轮换
+
+| 层 | 策略 |
+|---|---|
+| DEK | 每次写/改/刷新密码都换新 DEK。v1 的“轮换”就发生在这层，不用定时任务 |
+| KEK | 本地支持 **current + decrypt_only**：新 Seal 只用 current；Open 按信封 `key_version` 在 current∪decrypt_only 选钥。**不做 rewrap**；旧信封保持原 `key_version` 仍可解 |
+
+本地 KEK 轮换操作：
+
+1. 生成新 KEK，把旧 current 挪进 `decrypt_only`（带原 `version`）。
+2. 配置新 `kek`/`kek_file` 与递增的 `version`。
+3. 滚动重启。新写入打新 `key_version`；旧行继续用 decrypt_only 解开。
+4. 从 `decrypt_only` 删除旧钥是运维责任：库中若仍有该 `key_version`，Open 会 5xx。本期不提供批量 rewrap / 退役证明。
+
+```yaml
+vault:
+  master_key:
+    kek: <new-base64-32-bytes>
+    version: 2
+    decrypt_only:
+      - version: 1
+        kek: <old-base64-32-bytes>
+```
+
+正式 DisableKey / 云 KMS 自动轮换等接 KMS 再说。AAD 故意不绑 KEK version，以便将来若要做 rewrap 时业务密文可不动。
+
+KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销毁；本期价值在「换钥后旧数据仍可读」，不靠扫表迁移。
+
+## 运行时注入（后续，本 PR 不包含）
+
+> **状态：未实现 / 不在本 PR。** 下文是后续设计草案，避免与“已打通”混淆。
+
+目标：Sandbox 调需认证的 MCP 时，由 OMA 在出站请求里注入凭证；Sandbox 只看到 MCP URL，看不到 token。
+
+注入点拟用现有 CCRv2 上游代理（已支持 MITM）。Sandbox 出站 HTTPS 经代理：终结 TLS → 见明文 HTTP → 加 `Authorization` → 再 TLS 转发给真实 MCP。Sandbox 信任代理 TLS，是因为信任 OMA 的 MITM CA（`upstream_proxy_ca_key_file` 已就绪）。
+
+拟议流程（每次出站 MCP 请求）：
+
+1. 代理已认证 session（`authenticateRuntimeSession`）→ code session → workspace → `vault_ids`。
+2. 在 `vault_ids` 的活动凭证里，按出站目标匹配 `mcp_server_url`；按 `vault_ids` 顺序，首个命中胜出。同 host 无 path 命中 → fail-closed；host 不在任何凭证的 `mcp_server_url` 上 → passthrough（包管理器等）。
+3. OMA 用 KEK 解 `wrapped_dek`，再解 token。全程在 OMA 内。
+4. 命中时删掉沙箱自带的 `Authorization`（可能是占位符），加 `Authorization: Bearer <token>`，转发。passthrough 不改客户端 Authorization。
+5. 仅当目标命中该凭证的 `networking.allowed_hosts`（`limited`）才注入；`unrestricted` 不额外拦。不命中则跳过该凭证，不降级到别的「错误」凭证。
+6. 跨 origin redirect：代理不自动跟 redirect；客户端新请求会重新匹配，token 不带到非预期目标。
+
+匹配规则：凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。
+
+凭证类型：
+
+- **static_bearer**：固定 token，直接注入。后续 MVP。
+- **mcp_oauth**：检查 access_token 过期；快过期则用 refresh_token + token_endpoint 刷新后再注入。static_bearer 之后做。
+- **env_var**：往沙箱环境变量塞占位符、出口替换。OMA 用 E2B → **v1 不做注入**；创建 env_var 凭证时是否拒绝由注入 PR 决定。
+
+Sandbox 拿到的 `mcp_config` 只有服务器 URL，没有 token。真 token 只在 OMA 代理里瞬态出现。
+
+## 实施阶段
+
+0. 本文档：威胁模型、接口、失败用例 ✅
+1. Secret Service + 加密 + 本地 provider（KEK 来自 config）+ 契约测试 ✅（本期）
+2. DB Direct cutover：加信封列 + 删 `secret_payload`；无 Expand/Backfill ✅（本期）
+3. vault API 收口：写走加密，读只返回元信息；缺信封 → 400；Open 失败 → 5xx ✅（本期，含 platform MCP OAuth callback seal）
+4. Transport 注入（static_bearer）❌ **不在本期**
+5. OAuth 刷新；env 占位符（若 E2B 支持）；创建 env_var 拒绝 — **未做**
+
+## 验收（本期：存库加密）
+
+- DB、日志、trace 不出现明文密码 / DEK；**主密钥只在 `config.yaml` / `kek_file`**（不进 DB/日志）；dev/prod 均须配置，无 ephemeral 兜底。*（注：`mcp_oauth_flows` 的 client_secret/code_verifier 本期仍明文，拆小 issue。）*
+- 写统一经 Secret Service；读不返回密码；`secret_payload` 列不存在。
+- 篡改密文 / nonce / wrapped_dek / AAD 后解密失败；未知格式或 key 不可用 → fail closed（HTTP 5xx）。
+- 活动凭证缺信封且未带完整替换 secret 的 update/validate（含仅改 metadata/display_name）→ HTTP 400；带完整替换 secret 的 update → 直接 reseal；`version` CAS 冲突 → HTTP 409。
+- 归档凭证时清空信封列（不只标 `archived_at`）。
+- `POST /v1/vaults/backfill_secrets` 不再注册。
+- `go test ./internal/secrets/ ./internal/vaults/ ./internal/config/ ./internal/db/ ./internal/api/ -count=1`；相关 E2E / `tests/vaults_encryption_test.go`；`internal/db` 中 `TestVaultMapper*` 覆盖 Mapper SQL/敏感标记与 PostgreSQL 临时表回滚验收。
+
+注入相关验收（沙箱拿不到真 token、path 前缀匹配、fail closed 等）留给后续注入 PR。
+
+> 注：本地 KEK 轮换通过 `version` + `decrypt_only` 完成（无 rewrap）。云 KMS 自动轮换 / DisableKey 另议。
+
+## 不做（本期）
+
+- 运行时 MITM 凭证注入
+- Expand/Backfill/Contract 双读窗口与 `backfill_secrets` 维护接口
+- Shamir 分片
+- 云 KMS / Vault Transit / OpenBao（只留接口）
+- 重做 vault CRUD、管理页、MCP Catalog/Permission/Confirmation
+- 自建 KMS/HSM 控制面
+- 防"打进 OMA 进程"（运行时加固，另议）
+
+## 参考
+
+- https://platform.claude.com/docs/en/managed-agents/vaults
+- https://www.anthropic.com/engineering/managed-agents
+- HashiCorp Vault：`vault/barrier_aes_gcm.go`、`shamir/`
+- Related: #65、#52、#121、#137
+- Ubiquitous language: `CONTEXT.md`（Secret envelope / Transient secret payload / Direct envelope cutover）

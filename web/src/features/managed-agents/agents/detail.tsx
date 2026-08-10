@@ -1,4 +1,4 @@
-import { useI18n } from '../../../shared/i18n';
+import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, AlertDescription, AlertTitle } from '../../../shared/ui/alert';
 import { Badge } from '../../../shared/ui/badge';
@@ -67,7 +67,8 @@ import { managedColumnLabel } from '../labels';
 import {
   deploymentAgentVersion,
   DeploymentRunsPanel,
-  deploymentTrigger,
+  localizedDeploymentTrigger,
+  localizedEntityStatusLabel,
   ManagedEntityDialog,
 } from '../resources/ManagedResources';
 import { numericValueFromKeys, stringValueFromKeys } from '../sessions/SessionDetailPage';
@@ -134,7 +135,7 @@ import { AgentConfigRenderedEditor } from './create-dialog-rendered';
 import { useAgentEditDraft } from './use-agent-edit-draft';
 
 export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string; routeWorkspaceId?: string }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
   const { activeWorkspaceId, orgUuid } = useWorkspace();
   const workspaceId = routeWorkspaceId || activeWorkspaceId;
   const [agent, setAgent] = useState<AgentApiResponse | null>(null);
@@ -329,7 +330,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
             <span className="text-muted-foreground/70">.</span>
             <span>
               {msg('managedAgents.common.lastUpdatedAt', 'Last updated {date}', {
-                date: formatDetailDate(agent.updated_at),
+                date: formatDetailDate(agent.updated_at, locale),
               })}
             </span>
           </div>
@@ -714,7 +715,7 @@ function AgentSkillsList({
   errorsById: Record<string, true>;
   loading: boolean;
 }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
   const [expandedSkillKey, setExpandedSkillKey] = useState<string | null>(null);
 
   const skillRows = skills.map((skill) => {
@@ -847,7 +848,7 @@ function AgentSkillsList({
                         <dt className="font-medium text-muted-foreground">
                           {msg('managedAgents.agents.detail.skillUpdatedLabel', 'Updated')}
                         </dt>
-                        <dd className="text-foreground">{formatDetailDate(skill.updatedAt)}</dd>
+                        <dd className="text-foreground">{formatDetailDate(skill.updatedAt, locale)}</dd>
                       </div>
                     ) : null}
 
@@ -856,7 +857,7 @@ function AgentSkillsList({
                         <dt className="font-medium text-muted-foreground">
                           {msg('managedAgents.agents.detail.skillCreatedLabel', 'Created')}
                         </dt>
-                        <dd className="text-foreground">{formatDetailDate(skill.createdAt)}</dd>
+                        <dd className="text-foreground">{formatDetailDate(skill.createdAt, locale)}</dd>
                       </div>
                     ) : null}
 
@@ -925,6 +926,7 @@ export function AgentSessionsTab({
   versions: AgentApiResponse[];
 }) {
   const { msg } = useI18n();
+  const formatters = useFormatters();
   const [createdFilter, setCreatedFilter] = useState<AgentDetailCreatedFilter>(() =>
     agentDetailSessionCreatedFromSearch(),
   );
@@ -1125,13 +1127,15 @@ export function AgentSessionsTab({
                     </td>
                     <td className="h-11 truncate px-3 align-middle">{session.title || '-'}</td>
                     <td className="h-11 px-3 align-middle">
-                      <StatusPill>{titleCase(session.status || 'idle')}</StatusPill>
+                      <StatusPill>{localizedEntityStatusLabel('sessions', session, msg)}</StatusPill>
                     </td>
                     <td className="h-11 px-3 align-middle">{sessionVersionLabel(session)}</td>
                     <td className="h-11 px-3 align-middle text-muted-foreground">
                       {formatInteger(usage.input)} / {formatInteger(usage.output)}
                     </td>
-                    <td className="h-11 px-3 align-middle text-muted-foreground">{relativeTime(session.created_at)}</td>
+                    <td className="h-11 px-3 align-middle text-muted-foreground">
+                      {relativeTime(session.created_at, formatters.relativeTime)}
+                    </td>
                     <td className="h-11 px-2 align-middle">
                       <ButtonLink
                         href={`/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(session.id)}`}
@@ -1200,6 +1204,7 @@ export function AgentDeploymentsTab({
   onCreateRequestHandled: () => void;
 }) {
   const { msg } = useI18n();
+  const formatters = useFormatters();
   const [deployments, setDeployments] = useState<DeploymentApiResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1350,10 +1355,10 @@ export function AgentDeploymentsTab({
                     <span className="block truncate font-medium">{deployment.name || deployment.id}</span>
                     <span className="block truncate font-sans text-xs text-muted-foreground">{deployment.id}</span>
                   </span>
-                  <StatusPill>{titleCase(deployment.status || 'active')}</StatusPill>
-                  <span className="text-muted-foreground">{deploymentTrigger(deployment)}</span>
+                  <StatusPill>{localizedEntityStatusLabel('deployments', deployment, msg)}</StatusPill>
+                  <span className="text-muted-foreground">{localizedDeploymentTrigger(deployment, msg)}</span>
                   <span className="text-muted-foreground">
-                    {relativeTime(deployment.updated_at || deployment.created_at)}
+                    {relativeTime(deployment.updated_at || deployment.created_at, formatters.relativeTime)}
                   </span>
                   <ChevronDown
                     className={clsx(
@@ -1514,7 +1519,7 @@ export function AgentDeploymentDetailPanel({
 }
 
 export function AgentObservabilityTab({ agentId, orgUuid }: { agentId: string; orgUuid?: string }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
   const [overview, setOverview] = useState<AgentSessionAnalyticsOverview | null>(null);
   const [timeseries, setTimeseries] = useState<AgentSessionAnalyticsTimeseries | null>(null);
   const [loading, setLoading] = useState(Boolean(orgUuid));
@@ -1603,7 +1608,7 @@ export function AgentObservabilityTab({ agentId, orgUuid }: { agentId: string; o
             {data.data_as_of ? (
               <CardDescription className="mt-1 text-xs">
                 {msg('managedAgents.observability.dataAsOf', 'Data as of {date}', {
-                  date: formatDetailDate(data.data_as_of),
+                  date: formatDetailDate(data.data_as_of, locale),
                 })}
               </CardDescription>
             ) : null}

@@ -30,6 +30,7 @@ import {
 import { CreateDialogMcpPicker } from './create-dialog-mcp-picker';
 import {
   BUILT_IN_AGENT_TOOLSETS,
+  builtInAgentToolDescription,
   effectiveToolPermission,
   type McpDirectoryServer,
   type ToolPermissionState,
@@ -214,7 +215,9 @@ function ToolsetCard({
                     className="grid grid-cols-[150px_1fr_auto] items-center gap-4 border-b border-border/70 px-4 py-2 last:border-b-0"
                   >
                     <code className="text-xs">{tool.name}</code>
-                    <span className="truncate text-xs text-muted-foreground">{tool.description}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {builtInAgentToolDescription({ name: tool.name, description: tool.description ?? '' }, msg)}
+                    </span>
                     <PermissionButtons value={permission} onChange={(next) => onToolPermission(tool.name, next)} />
                   </div>
                 );

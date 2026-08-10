@@ -228,6 +228,8 @@ export function managedColumnLabel(column: string, msg: I18nMsg) {
       return msg('managedAgents.common.agent', 'Agent');
     case 'Trigger':
       return msg('managedAgents.common.trigger', 'Trigger');
+    case 'Session':
+      return msg('managedAgents.common.session', 'Session');
     case 'Type':
       return msg('analytics.table.type', 'Type');
     case 'Updated at':

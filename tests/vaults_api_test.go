@@ -283,6 +283,32 @@ func TestVaultsAPI(t *testing.T) {
 		assertRawNotContains(t, updated.Auth, "new-refresh-secret")
 		assertRawContains(t, updated.Auth, `"scope":"channels:read chat:write"`)
 
+		staticRotated := updateVaultCredential(t, app, vault.ID, static.ID, `{
+			"display_name":"static bearer moved",
+			"auth":{
+				"type":"static_bearer",
+				"mcp_server_url":"https://mcp.github.example/mcp"
+			}
+		}`)
+		assertRawContains(t, staticRotated.Auth, `"mcp_server_url":"https://mcp.github.example/mcp"`)
+		assertRawNotContains(t, staticRotated.Auth, "bearer-secret")
+		var credentialKey string
+		if err := app.pool.QueryRow(context.Background(), `
+			select credential_key from vault_credentials where external_id = $1
+		`, static.ID).Scan(&credentialKey); err != nil {
+			t.Fatalf("load credential_key: %v", err)
+		}
+		if credentialKey != "https://mcp.github.example/mcp" {
+			t.Fatalf("credential_key = %q, want updated mcp_server_url", credentialKey)
+		}
+		dupURL := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials/"+static.ID+"?beta=true", strings.NewReader(`{
+			"auth":{
+				"type":"static_bearer",
+				"mcp_server_url":"https://mcp.slack.example/mcp"
+			}
+		}`), defaultTestKey, true)
+		assertError(t, dupURL, http.StatusConflict, "conflict_error")
+
 		validation := validateVaultCredential(t, app, vault.ID, mcp.ID)
 		if validation.Type != "vault_credential_validation" || validation.CredentialID != mcp.ID || !validation.HasRefreshToken || validation.Refresh.Status != "connect_error" {
 			t.Fatalf("unexpected validation response: %+v", validation)
@@ -403,7 +429,7 @@ func TestVaultsSchemaHasNoForeignKeys(t *testing.T) {
 	defer app.close()
 
 	var foreignKeyCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from pg_constraint con
 		join pg_class cls on cls.oid = con.conrelid
@@ -627,7 +653,7 @@ func containsVaultCredential(credentials []vaultCredentialAPIResponse, id string
 func webhookJobDataField(t *testing.T, app *testApp, eventType, resourceID, field string) string {
 	t.Helper()
 	var value string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select jsonb_extract_path_text(payload, 'event', 'data', $3)
 		from jobs
 		where type = 'webhook_delivery'
@@ -643,10 +669,10 @@ func webhookJobDataField(t *testing.T, app *testApp, eventType, resourceID, fiel
 
 func cleanupVaultRows(t *testing.T, app *testApp, vaultID string) {
 	t.Helper()
-	if _, err := app.db.Pool.Exec(context.Background(), `delete from vault_credentials where vault_external_id = $1`, vaultID); err != nil {
+	if _, err := app.pool.Exec(context.Background(), `delete from vault_credentials where vault_external_id = $1`, vaultID); err != nil {
 		t.Fatalf("cleanup vault credentials: %v", err)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `delete from vaults where external_id = $1`, vaultID); err != nil {
+	if _, err := app.pool.Exec(context.Background(), `delete from vaults where external_id = $1`, vaultID); err != nil {
 		t.Fatalf("cleanup vault: %v", err)
 	}
 }
@@ -654,16 +680,16 @@ func cleanupVaultRows(t *testing.T, app *testApp, vaultID string) {
 func assertVaultSecretsPurged(t *testing.T, app *testApp, vaultID string) {
 	t.Helper()
 	var count int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from vault_credentials
 		where vault_external_id = $1
-			and secret_payload is not null
+			and ciphertext is not null
 	`, vaultID).Scan(&count); err != nil {
 		t.Fatalf("count vault credential secrets: %v", err)
 	}
 	if count != 0 {
-		t.Fatalf("vault %s has %d credential secret payloads, want 0", vaultID, count)
+		t.Fatalf("vault %s has %d credential secrets, want 0", vaultID, count)
 	}
 }
 

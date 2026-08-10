@@ -107,6 +107,23 @@ describe('ConsoleShell', () => {
     expect(screen.getByRole('link', { name: 'Files' })).toBeTruthy();
   });
 
+  test('localizes the desktop sidebar rail for Chinese users', () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/dashboard"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+        onLogout={() => undefined}
+      >
+        <div>Dashboard content</div>
+      </ConsoleShell>,
+      { locale: 'zh-CN' },
+    );
+
+    expect(screen.getByRole('button', { name: '切换侧边栏' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Toggle Sidebar' })).toBeNull();
+  });
+
   test('uses client navigation for sidebar links when available', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     const navigate = mock(async () => undefined);

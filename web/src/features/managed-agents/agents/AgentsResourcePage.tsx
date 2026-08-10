@@ -1,5 +1,5 @@
 import { type ApiError } from '../../../shared/api/client';
-import { useI18n } from '../../../shared/i18n';
+import { useFormatters, useI18n } from '../../../shared/i18n';
 import { cn } from '../../../shared/lib/utils';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -94,6 +94,7 @@ export function AgentsResourcePage({
   routeWorkspaceId?: string;
 }) {
   const { msg } = useI18n();
+  const formatters = useFormatters();
   const { activeWorkspaceId } = useWorkspace();
   const workspaceId = routeWorkspaceId || activeWorkspaceId;
   const [search, setSearch] = useState('');
@@ -688,10 +689,10 @@ export function AgentsResourcePage({
                         <AgentStatusBadge archived={Boolean(agent.archived_at)} />
                       </DataTableCell>
                       <DataTableCell className="truncate text-muted-foreground">
-                        {relativeTime(agent.created_at)}
+                        {relativeTime(agent.created_at, formatters.relativeTime)}
                       </DataTableCell>
                       <DataTableCell className="truncate text-muted-foreground">
-                        {relativeTime(agent.updated_at)}
+                        {relativeTime(agent.updated_at, formatters.relativeTime)}
                       </DataTableCell>
                       <DataTableCell edge="end" className="px-2">
                         {renderAgentActionMenu(agent, archiving)}

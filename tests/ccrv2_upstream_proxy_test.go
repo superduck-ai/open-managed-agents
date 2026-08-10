@@ -78,16 +78,16 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"ccrv2-upstream-proxy-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	environment := createEnvironment(t, app, `{"name":"ccrv2-upstream-proxy-env"}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, environment.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(environment.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	messagesToken, err := ids.New("sk-ant-oat01-ccrv2-")
 	if err != nil {
 		t.Fatalf("generate code session Messages token: %v", err)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `
+	if _, err := app.pool.Exec(context.Background(), `
 		update code_sessions
 		set oauth_access_token_hash = $2
 		where external_id = $1
@@ -153,7 +153,7 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 	// 正向证据见 TestCCRV2UpstreamProxyNetworkPolicyAllow（SSRF 关闭的独立 app，
 	// 避免本机 fake-IP DNS 让两个路径返回相同的 403）。
 	limitedEnvironment := createEnvironment(t, app, `{"name":"ccrv2-upstream-proxy-limited-env","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["nonexistent.invalid"],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
-	defer cleanupEnvironmentRows(t, app.db, limitedEnvironment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, limitedEnvironment.ID)
 	limitedSession := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(limitedEnvironment.ID)+`}`)
 	limitedCodeSessionID := launchLocalCodeSession(t, app, limitedSession.ID)
 	limitedIngressToken := codeSessionIngressToken(t, app, limitedCodeSessionID)
@@ -168,7 +168,7 @@ func TestCCRV2RuntimeEndpoints(t *testing.T) {
 	// 即使 allowed_hosts 显式列出私网/loopback 地址，策略放行后仍必须被 SSRF
 	// 地址过滤拦截：策略模块不替代 proxy 的地址检查（两层独立 403）。
 	listedPrivateEnvironment := createEnvironment(t, app, `{"name":"ccrv2-upstream-proxy-listed-private-env","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["127.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
-	defer cleanupEnvironmentRows(t, app.db, listedPrivateEnvironment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, listedPrivateEnvironment.ID)
 	listedPrivateSession := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(listedPrivateEnvironment.ID)+`}`)
 	listedPrivateCodeSessionID := launchLocalCodeSession(t, app, listedPrivateSession.ID)
 	listedPrivateIngressToken := codeSessionIngressToken(t, app, listedPrivateCodeSessionID)
@@ -300,11 +300,11 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"ccrv2-network-policy-chain-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	boundEnvironment := createEnvironment(t, app, `{"name":"ccrv2-network-policy-bound-env","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
-	defer cleanupEnvironmentRows(t, app.db, boundEnvironment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, boundEnvironment.ID)
 	otherEnvironment := createEnvironment(t, app, `{"name":"ccrv2-network-policy-other-env","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["10.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
-	defer cleanupEnvironmentRows(t, app.db, otherEnvironment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, otherEnvironment.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(boundEnvironment.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	ingressToken := codeSessionIngressToken(t, app, codeSessionID)
@@ -318,7 +318,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		if allowed {
 			config = `{"type":"cloud","networking":{"type":"limited","allowed_hosts":["10.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}`
 		}
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update environments
 			set config = $2::jsonb
 			where external_id = $1
@@ -365,7 +365,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 	})
 
 	t.Run("failure malformed persisted allowlist fails closed as a whole", func(t *testing.T) {
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update environments
 			set config = '{"type":"cloud","networking":{"type":"limited","allowed_hosts":["bad/path","10.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}'::jsonb
 			where external_id = $1
@@ -376,7 +376,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
 			t.Fatalf("malformed-policy CONNECT status = %q, want 403", status)
 		}
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update environments
 			set config = '{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}'::jsonb
 			where external_id = $1
@@ -394,7 +394,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load original session snapshot: %v", err)
 		}
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update environments
 			set config = '{"type":"cloud","networking":{"type":"limited","allowed_hosts":["10.0.0.1"],"allow_mcp_servers":true,"allow_package_managers":false}}'::jsonb
 			where external_id = $1
@@ -407,7 +407,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 			`{"mcp_servers":[{"type":"stdio","url":"https://evil.example/mcp"}]}`,
 			`{"mcp_servers":[{"type":"url","url":"ftp://evil.example/mcp"}]}`,
 		} {
-			if _, err := app.db.Pool.Exec(context.Background(), `
+			if _, err := app.pool.Exec(context.Background(), `
 				update sessions set agent_snapshot = $2::jsonb where external_id = $1
 			`, session.ID, snapshot); err != nil {
 				t.Fatalf("persist malformed MCP contract %s: %v", snapshot, err)
@@ -417,12 +417,12 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 				t.Fatalf("malformed-MCP CONNECT status = %q, want 403 for %s", status, snapshot)
 			}
 		}
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update sessions set agent_snapshot = $2::jsonb where external_id = $1
 		`, session.ID, originalSession.AgentSnapshot); err != nil {
 			t.Fatalf("restore session snapshot: %v", err)
 		}
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			update environments
 			set config = '{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}'::jsonb
 			where external_id = $1
@@ -432,14 +432,14 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 	})
 
 	t.Run("failure missing session row fails closed", func(t *testing.T) {
-		if _, err := app.db.Pool.Exec(context.Background(), `update sessions set deleted_at = now() where external_id = $1`, session.ID); err != nil {
+		if _, err := app.pool.Exec(context.Background(), `update sessions set deleted_at = now() where external_id = $1`, session.ID); err != nil {
 			t.Fatalf("soft-delete bound session: %v", err)
 		}
 		status := connect(t, "10.0.0.1:443")
 		if !strings.HasPrefix(status, "HTTP/1.1 403 Forbidden") {
 			t.Fatalf("missing-session CONNECT status = %q, want 403", status)
 		}
-		if _, err := app.db.Pool.Exec(context.Background(), `update sessions set deleted_at = null where external_id = $1`, session.ID); err != nil {
+		if _, err := app.pool.Exec(context.Background(), `update sessions set deleted_at = null where external_id = $1`, session.ID); err != nil {
 			t.Fatalf("restore bound session: %v", err)
 		}
 	})
@@ -447,11 +447,11 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 	t.Run("failure inactive code session fails closed", func(t *testing.T) {
 		setBoundHostAllowed(t, true)
 		t.Cleanup(func() { setBoundHostAllowed(t, false) })
-		if _, err := app.db.Pool.Exec(context.Background(), `update code_sessions set status = 'stopped' where external_id = $1`, codeSessionID); err != nil {
+		if _, err := app.pool.Exec(context.Background(), `update code_sessions set status = 'stopped' where external_id = $1`, codeSessionID); err != nil {
 			t.Fatalf("deactivate code session: %v", err)
 		}
 		t.Cleanup(func() {
-			if _, err := app.db.Pool.Exec(context.Background(), `update code_sessions set status = 'active' where external_id = $1`, codeSessionID); err != nil {
+			if _, err := app.pool.Exec(context.Background(), `update code_sessions set status = 'active' where external_id = $1`, codeSessionID); err != nil {
 				t.Errorf("restore code session status: %v", err)
 			}
 		})
@@ -464,11 +464,11 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 	t.Run("failure terminated session fails closed", func(t *testing.T) {
 		setBoundHostAllowed(t, true)
 		t.Cleanup(func() { setBoundHostAllowed(t, false) })
-		if _, err := app.db.Pool.Exec(context.Background(), `update sessions set status = 'terminated' where external_id = $1`, session.ID); err != nil {
+		if _, err := app.pool.Exec(context.Background(), `update sessions set status = 'terminated' where external_id = $1`, session.ID); err != nil {
 			t.Fatalf("terminate bound session: %v", err)
 		}
 		t.Cleanup(func() {
-			if _, err := app.db.Pool.Exec(context.Background(), `update sessions set status = 'idle' where external_id = $1`, session.ID); err != nil {
+			if _, err := app.pool.Exec(context.Background(), `update sessions set status = 'idle' where external_id = $1`, session.ID); err != nil {
 				t.Errorf("restore session status: %v", err)
 			}
 		})
@@ -479,7 +479,7 @@ func TestCCRV2UpstreamProxyPolicyChainFailures(t *testing.T) {
 	})
 
 	t.Run("failure missing environment row fails closed", func(t *testing.T) {
-		if _, err := app.db.Pool.Exec(context.Background(), `delete from environments where external_id = $1`, boundEnvironment.ID); err != nil {
+		if _, err := app.pool.Exec(context.Background(), `delete from environments where external_id = $1`, boundEnvironment.ID); err != nil {
 			t.Fatalf("delete bound environment: %v", err)
 		}
 		status := connect(t, "10.0.0.1:443")
@@ -497,13 +497,13 @@ func TestCCRV2UpstreamProxyNetworkPolicyAllow(t *testing.T) {
 	defer app.close()
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"ccrv2-network-policy-allow-agent"}`)
-	defer cleanupAgentRows(t, app.db, agent.ID)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
 	environmentName, err := ids.New("ccrv2-network-policy-allow-env-")
 	if err != nil {
 		t.Fatalf("generate environment name: %v", err)
 	}
 	environment := createEnvironment(t, app, `{"name":`+quoteJSON(environmentName)+`,"config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":["127.0.0.1"],"allow_mcp_servers":false,"allow_package_managers":false}}}`)
-	defer cleanupEnvironmentRows(t, app.db, environment.ID)
+	defer cleanupEnvironmentRows(t, app.pool, environment.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(environment.ID)+`}`)
 	codeSessionID := launchLocalCodeSession(t, app, session.ID)
 	ingressToken := codeSessionIngressToken(t, app, codeSessionID)

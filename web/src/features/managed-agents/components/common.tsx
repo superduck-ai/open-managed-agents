@@ -275,13 +275,14 @@ export function NestedRows({
   columns: string[];
   rows: ReactNode[][];
 }) {
+  const { msg } = useI18n();
   if (error) {
     return <ManagedErrorAlert>{error}</ManagedErrorAlert>;
   }
   if (loading) {
     return (
       <div className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
-        Loading...
+        {msg('common.loading', 'Loading...')}
       </div>
     );
   }

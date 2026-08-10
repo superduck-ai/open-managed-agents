@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -31,11 +32,12 @@ const maxVaultBodySize = 4 << 20
 var credentialHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+$`)
 
 type Handler struct {
-	cfg      config.Config
-	db       *db.DB
-	webhooks webhookEnqueuer
-	logger   *slog.Logger
-	router   chi.Router
+	cfg       config.Config
+	db        *db.DB
+	secretSvc *secrets.Service
+	webhooks  webhookEnqueuer
+	logger    *slog.Logger
+	router    chi.Router
 }
 
 type webhookEnqueuer interface {
@@ -114,9 +116,90 @@ type credentialAuthState struct {
 	SecretPayload json.RawMessage
 }
 
-func NewHandler(cfg config.Config, database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+var (
+	// ErrMissingSecretEnvelope is returned when an active credential has no
+	// secret envelope to open. Callers map this to HTTP 400 so clients can
+	// resubmit the secret after a direct-cutover discard.
+	ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
+)
+
+// credentialBinding builds the AAD binding from a credential's identity. The
+// same binding is used to seal and open, so an envelope cannot be moved to
+// another org/workspace/vault/credential and still decrypt.
+func credentialBinding(credential db.VaultCredential) secrets.Binding {
+	return secrets.Binding{
+		OrganizationUUID:     credential.OrganizationUUID,
+		WorkspaceUUID:        credential.WorkspaceUUID,
+		VaultExternalID:      credential.VaultExternalID,
+		CredentialExternalID: credential.ExternalID,
+	}
+}
+
+// SealCredentialSecret seals a credential's plaintext SecretPayload into
+// SecretEnvelope and drops the plaintext so it is never persisted. Empty or
+// JSON-null payloads are rejected so create/update callers cannot believe a
+// seal succeeded when no envelope was produced. Exported so the platform MCP
+// OAuth callback can seal credentials through the same path as the Vaults API.
+func SealCredentialSecret(ctx context.Context, secretSvc *secrets.Service, credential *db.VaultCredential) error {
+	if len(credential.SecretPayload) == 0 || isJSONNull(credential.SecretPayload) {
+		return errors.New("vault credential secret payload is required to seal")
+	}
+	if err := requireSecretsService(secretSvc); err != nil {
+		return err
+	}
+	envelope, err := secretSvc.Seal(ctx, credentialBinding(*credential), credential.SecretPayload)
+	if err != nil {
+		return fmt.Errorf("seal credential secret: %w", err)
+	}
+	credential.SecretEnvelope = &envelope
+	credential.SecretPayload = nil
+	return nil
+}
+
+// openCredentialSecret decrypts a credential's envelope back into SecretPayload
+// so callers can read the secret for merge or runtime use. A missing envelope
+// returns ErrMissingSecretEnvelope. A present envelope that fails to open
+// fails closed. Decrypted plaintext must not be persisted or logged.
+func openCredentialSecret(ctx context.Context, secretSvc *secrets.Service, credential *db.VaultCredential) error {
+	if credential.SecretEnvelope == nil {
+		return ErrMissingSecretEnvelope
+	}
+	if err := requireSecretsService(secretSvc); err != nil {
+		return err
+	}
+	plaintext, err := secretSvc.Open(ctx, credentialBinding(*credential), *credential.SecretEnvelope)
+	if err != nil {
+		return fmt.Errorf("open credential secret: %w", err)
+	}
+	credential.SecretPayload = plaintext
+	return nil
+}
+
+func requireSecretsService(secretSvc *secrets.Service) error {
+	if secretSvc == nil {
+		return errors.New("vault credential encryption is not configured")
+	}
+	return nil
+}
+
+func writeSecretOpenError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, operation string, err error) {
+	if errors.Is(err, ErrMissingSecretEnvelope) {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", ErrMissingSecretEnvelope.Error()))
+		return
+	}
+	logger.ErrorContext(r.Context(), "open vault credential", "operation", operation, "error", err)
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not "+operation+" credential"))
+}
+
+func NewHandler(cfg config.Config, database *db.DB, secretSvc *secrets.Service, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, logger: logger}
+	h := &Handler{
+		cfg:       cfg,
+		db:        database,
+		secretSvc: secretSvc,
+		webhooks:  webhookEvents,
+		logger:    logger,
+	}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -410,7 +493,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	now := time.Now().UTC()
-	created, err := h.db.CreateVaultCredential(r.Context(), db.VaultCredential{
+	credential := db.VaultCredential{
 		UUID:                uuid.NewString(),
 		ExternalID:          credentialID,
 		OrganizationUUID:    vault.OrganizationUUID,
@@ -426,7 +509,13 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		SecretPayload:       authState.SecretPayload,
 		CreatedAt:           now,
 		UpdatedAt:           now,
-	})
+	}
+	if err := SealCredentialSecret(r.Context(), h.secretSvc, &credential); err != nil {
+		h.logger.ErrorContext(r.Context(), "seal vault credential", "error", err)
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create credential"))
+		return
+	}
+	created, err := h.db.CreateVaultCredential(r.Context(), credential)
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicate) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Credential key already exists"))
@@ -553,6 +642,27 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if raw, ok := fields["auth"]; ok {
+		// Open the existing envelope so partial updates (for example rotating
+		// only an OAuth access token) merge onto stored refresh material
+		// instead of dropping it, then reseal under a fresh DEK.
+		// A missing envelope can still be repaired when the body carries a
+		// complete replacement secret; otherwise ask the client to resubmit.
+		if current.SecretEnvelope != nil {
+			if err := openCredentialSecret(r.Context(), h.secretSvc, &current); err != nil {
+				writeSecretOpenError(w, r, h.logger, "update", err)
+				return
+			}
+		} else {
+			provides, err := authUpdateProvidesSecretReplacement(current.AuthType, raw)
+			if err != nil {
+				writeBadRequest(w, r, err)
+				return
+			}
+			if !provides {
+				writeSecretOpenError(w, r, h.logger, "update", ErrMissingSecretEnvelope)
+				return
+			}
+		}
 		authState, err := normalizeCredentialAuthForUpdate(current, raw)
 		if err != nil {
 			writeBadRequest(w, r, err)
@@ -560,12 +670,29 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		}
 		next.Auth = authState.PublicAuth
 		next.SecretPayload = authState.SecretPayload
+		next.CredentialKey = authState.Key
+		if err := SealCredentialSecret(r.Context(), h.secretSvc, &next); err != nil {
+			h.logger.ErrorContext(r.Context(), "seal vault credential", "error", err)
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update credential"))
+			return
+		}
+	} else if current.SecretEnvelope == nil {
+		writeSecretOpenError(w, r, h.logger, "update", ErrMissingSecretEnvelope)
+		return
 	}
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateVaultCredential(r.Context(), principal.WorkspaceUUID, vaultID, credentialID, next)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Credential not found: "+credentialID))
+			return
+		}
+		if errors.Is(err, db.ErrDuplicate) {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Credential key already exists"))
+			return
+		}
+		if errors.Is(err, db.ErrVersionConflict) {
+			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Credential was modified concurrently; reload and try again"))
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "update vault credential", "error", err)
@@ -657,6 +784,12 @@ func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request
 	}
 	if credential.AuthType != "mcp_oauth" {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "mcp_oauth_validate requires an mcp_oauth credential"))
+		return
+	}
+	// Decrypt transiently to inspect whether a refresh token is present. The
+	// plaintext is not persisted or logged.
+	if err := openCredentialSecret(r.Context(), h.secretSvc, &credential); err != nil {
+		writeSecretOpenError(w, r, h.logger, "validate", err)
 		return
 	}
 	hasRefreshToken := hasNestedSecret(credential.SecretPayload, "refresh", "refresh_token")
@@ -1059,8 +1192,17 @@ func normalizeCredentialAuthForUpdate(current db.VaultCredential, raw json.RawMe
 		}
 		return credentialAuthStateFromMaps(current.AuthType, current.CredentialKey, publicAuth, secretPayload)
 	case "static_bearer":
-		if _, ok := fields["mcp_server_url"]; ok {
-			return credentialAuthState{}, errors.New("auth.mcp_server_url is immutable")
+		key := current.CredentialKey
+		if rawServerURL, ok := fields["mcp_server_url"]; ok {
+			serverURL, err := rawString(rawServerURL, "auth.mcp_server_url")
+			if err != nil {
+				return credentialAuthState{}, err
+			}
+			if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
+				return credentialAuthState{}, err
+			}
+			publicAuth["mcp_server_url"] = serverURL
+			key = serverURL
 		}
 		if rawToken, ok := fields["token"]; ok {
 			token, err := rawString(rawToken, "auth.token")
@@ -1069,7 +1211,7 @@ func normalizeCredentialAuthForUpdate(current db.VaultCredential, raw json.RawMe
 			}
 			secretPayload["token"] = token
 		}
-		return credentialAuthStateFromMaps(current.AuthType, current.CredentialKey, publicAuth, secretPayload)
+		return credentialAuthStateFromMaps(current.AuthType, key, publicAuth, secretPayload)
 	case "environment_variable":
 		if _, ok := fields["secret_name"]; ok {
 			return credentialAuthState{}, errors.New("auth.secret_name is immutable")
@@ -1091,6 +1233,29 @@ func normalizeCredentialAuthForUpdate(current db.VaultCredential, raw json.RawMe
 		return credentialAuthStateFromMaps(current.AuthType, current.CredentialKey, publicAuth, secretPayload)
 	default:
 		return credentialAuthState{}, errors.New("stored credential auth type is invalid")
+	}
+}
+
+// authUpdateProvidesSecretReplacement reports whether an auth update body
+// carries enough secret material to reseal without opening an existing
+// envelope (used to repair credentials that lost their envelope).
+func authUpdateProvidesSecretReplacement(authType string, raw json.RawMessage) (bool, error) {
+	fields, err := objectFromRaw(raw, "auth")
+	if err != nil {
+		return false, err
+	}
+	switch authType {
+	case "static_bearer":
+		_, ok := fields["token"]
+		return ok, nil
+	case "environment_variable":
+		_, ok := fields["secret_value"]
+		return ok, nil
+	case "mcp_oauth":
+		_, ok := fields["access_token"]
+		return ok, nil
+	default:
+		return false, nil
 	}
 }
 

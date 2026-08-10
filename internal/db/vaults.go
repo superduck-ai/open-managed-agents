@@ -1,10 +1,17 @@
 package db
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"strings"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -47,11 +54,15 @@ type VaultCredential struct {
 	AuthType            string
 	CredentialKey       string
 	Auth                json.RawMessage
-	SecretPayload       json.RawMessage
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	ArchivedAt          *time.Time
-	DeletedAt           *time.Time
+	// SecretPayload is transient plaintext for Seal/Open only; never persist.
+	SecretPayload json.RawMessage
+	// SecretEnvelope is the at-rest sealed secret; required for active writes.
+	SecretEnvelope *secrets.Envelope
+	SecretVersion  int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	ArchivedAt     *time.Time
+	DeletedAt      *time.Time
 }
 
 type VaultCredentialPageCursor struct {
@@ -164,11 +175,11 @@ func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredenti
 	var created VaultCredential
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		vaultMapper := NewVaultMapper(executor)
-		credentialMapper := NewVaultCredentialMapper(executor)
 		vaultUUID, err := vaultMapper.FindActiveUUIDForUpdate(ctx, credential.WorkspaceUUID, credential.VaultExternalID)
 		if err != nil {
 			return mapNoRows(err)
 		}
+		credentialMapper := NewVaultCredentialMapper(executor)
 		activeCount, err := credentialMapper.CountActive(ctx, credential.WorkspaceUUID, vaultUUID)
 		if err != nil {
 			return err
@@ -177,7 +188,11 @@ func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredenti
 			return ErrLimitExceeded
 		}
 		credential.VaultUUID = vaultUUID
-		row, err := credentialMapper.Insert(ctx, vaultCredentialInsertParams(credential))
+		params, paramsErr := vaultCredentialInsertParams(credential)
+		if paramsErr != nil {
+			return paramsErr
+		}
+		row, err := credentialMapper.Insert(ctx, params)
 		if isUniqueViolation(err) {
 			return ErrDuplicate
 		}
@@ -200,21 +215,31 @@ func (d *DB) GetVaultCredential(ctx context.Context, workspaceUUID, vaultExterna
 }
 
 func (d *DB) UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string, next VaultCredential) (VaultCredential, error) {
-	mapper := NewVaultCredentialMapper(d.mapperDB)
-	row, err := mapper.UpdateByExternalID(ctx, updateVaultCredentialParams{
-		WorkspaceUUID:        workspaceUUID,
-		VaultExternalID:      vaultExternalID,
-		CredentialExternalID: credentialExternalID,
-		DisplayName:          next.DisplayName,
-		Metadata:             next.Metadata,
-		Auth:                 next.Auth,
-		SecretPayload:        next.SecretPayload,
-		UpdatedAt:            next.UpdatedAt,
-	})
-	if err != nil {
-		return VaultCredential{}, mapNoRows(err)
+	if err := requireCompleteSecretEnvelope(next.SecretEnvelope); err != nil {
+		return VaultCredential{}, err
 	}
-	return row.credential(), nil
+	mapper := NewVaultCredentialMapper(d.mapperDB)
+	row, err := mapper.UpdateByExternalID(ctx, vaultCredentialUpdateParams(workspaceUUID, vaultExternalID, credentialExternalID, next))
+	if err == nil {
+		return row.credential(), nil
+	}
+	if isUniqueViolation(err) {
+		return VaultCredential{}, ErrDuplicate
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return VaultCredential{}, err
+	}
+	current, getErr := mapper.FindByExternalID(ctx, workspaceUUID, vaultExternalID, credentialExternalID)
+	if getErr != nil {
+		return VaultCredential{}, mapNoRows(getErr)
+	}
+	if current.ArchivedAt != nil {
+		return VaultCredential{}, ErrNotFound
+	}
+	if current.Version != next.SecretVersion {
+		return VaultCredential{}, ErrVersionConflict
+	}
+	return VaultCredential{}, ErrNotFound
 }
 
 func (d *DB) ArchiveVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (VaultCredential, error) {
@@ -270,7 +295,44 @@ func vaultInsertParams(vault Vault) insertVaultParams {
 	}
 }
 
-func vaultCredentialInsertParams(credential VaultCredential) insertVaultCredentialParams {
+func vaultCredentialSecretColumns(envelope *secrets.Envelope) (ciphertext, nonce, wrappedDEK []byte, formatVersion *int32, keyProvider *string, keyVersion *int64) {
+	if envelope == nil {
+		return nil, nil, nil, nil, nil, nil
+	}
+	version := int32(envelope.FormatVersion)
+	provider := envelope.KeyProvider
+	keyVer := envelope.KeyVersion
+	return bytes.Clone(envelope.Ciphertext),
+		bytes.Clone(envelope.Nonce),
+		bytes.Clone(envelope.WrappedDEK),
+		&version,
+		&provider,
+		&keyVer
+}
+
+// requireCompleteSecretEnvelope rejects active credential writes that would
+// persist NULL or partial envelope columns. Archive clears secrets via archive SQL.
+func requireCompleteSecretEnvelope(envelope *secrets.Envelope) error {
+	if envelope == nil {
+		return fmt.Errorf("%w: missing", ErrIncompleteSecretEnvelope)
+	}
+	if len(envelope.Ciphertext) == 0 || len(envelope.Nonce) == 0 || len(envelope.WrappedDEK) == 0 {
+		return fmt.Errorf("%w: ciphertext, nonce, and wrapped_dek are required", ErrIncompleteSecretEnvelope)
+	}
+	if envelope.FormatVersion < 1 || envelope.FormatVersion > math.MaxInt32 {
+		return fmt.Errorf("%w: format_version must fit PostgreSQL integer", ErrIncompleteSecretEnvelope)
+	}
+	if strings.TrimSpace(envelope.KeyProvider) == "" || envelope.KeyVersion < 1 {
+		return fmt.Errorf("%w: key_provider and key_version are required", ErrIncompleteSecretEnvelope)
+	}
+	return nil
+}
+
+func vaultCredentialInsertParams(credential VaultCredential) (insertVaultCredentialParams, error) {
+	if err := requireCompleteSecretEnvelope(credential.SecretEnvelope); err != nil {
+		return insertVaultCredentialParams{}, err
+	}
+	ciphertext, nonce, wrappedDEK, formatVersion, keyProvider, keyVersion := vaultCredentialSecretColumns(credential.SecretEnvelope)
 	return insertVaultCredentialParams{
 		UUID:                credential.UUID,
 		ExternalID:          credential.ExternalID,
@@ -284,8 +346,38 @@ func vaultCredentialInsertParams(credential VaultCredential) insertVaultCredenti
 		AuthType:            credential.AuthType,
 		CredentialKey:       credential.CredentialKey,
 		Auth:                credential.Auth,
-		SecretPayload:       credential.SecretPayload,
+		Ciphertext:          ciphertext,
+		Nonce:               nonce,
+		WrappedDEK:          wrappedDEK,
+		FormatVersion:       formatVersion,
+		KeyProvider:         keyProvider,
+		KeyVersion:          keyVersion,
+		Version:             credential.SecretVersion,
 		CreatedAt:           credential.CreatedAt,
+	}, nil
+}
+
+func vaultCredentialUpdateParams(
+	workspaceUUID, vaultExternalID, credentialExternalID string,
+	credential VaultCredential,
+) updateVaultCredentialParams {
+	ciphertext, nonce, wrappedDEK, formatVersion, keyProvider, keyVersion := vaultCredentialSecretColumns(credential.SecretEnvelope)
+	return updateVaultCredentialParams{
+		WorkspaceUUID:        workspaceUUID,
+		VaultExternalID:      vaultExternalID,
+		CredentialExternalID: credentialExternalID,
+		DisplayName:          credential.DisplayName,
+		Metadata:             credential.Metadata,
+		CredentialKey:        credential.CredentialKey,
+		Auth:                 credential.Auth,
+		Ciphertext:           ciphertext,
+		Nonce:                nonce,
+		WrappedDEK:           wrappedDEK,
+		FormatVersion:        formatVersion,
+		KeyProvider:          keyProvider,
+		KeyVersion:           keyVersion,
+		ExpectedVersion:      credential.SecretVersion,
+		UpdatedAt:            credential.UpdatedAt,
 	}
 }
 
@@ -320,7 +412,7 @@ func (r vaultRow) vault() Vault {
 		WorkspaceUUID:       r.WorkspaceUUID,
 		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
 		DisplayName:         r.DisplayName,
-		Metadata:            copyRaw(r.Metadata),
+		Metadata:            bytes.Clone(r.Metadata),
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
 		ArchivedAt:          r.ArchivedAt,
@@ -333,7 +425,7 @@ func (r vaultCredentialRow) credential() VaultCredential {
 	if r.CreatedByAPIKeyUUID.Valid {
 		createdByAPIKeyUUID = r.CreatedByAPIKeyUUID.String
 	}
-	return VaultCredential{
+	credential := VaultCredential{
 		UUID:                r.UUID,
 		ExternalID:          r.ExternalID,
 		OrganizationUUID:    r.OrganizationUUID,
@@ -342,14 +434,25 @@ func (r vaultCredentialRow) credential() VaultCredential {
 		VaultExternalID:     r.VaultExternalID,
 		CreatedByAPIKeyUUID: createdByAPIKeyUUID,
 		DisplayName:         r.DisplayName,
-		Metadata:            copyRaw(r.Metadata),
+		Metadata:            bytes.Clone(r.Metadata),
 		AuthType:            r.AuthType,
 		CredentialKey:       r.CredentialKey,
-		Auth:                copyRaw(r.Auth),
-		SecretPayload:       copyRaw(r.SecretPayload),
+		Auth:                bytes.Clone(r.Auth),
+		SecretVersion:       r.Version,
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
 		ArchivedAt:          r.ArchivedAt,
 		DeletedAt:           r.DeletedAt,
 	}
+	if len(r.Ciphertext) > 0 {
+		credential.SecretEnvelope = &secrets.Envelope{
+			Ciphertext:    bytes.Clone(r.Ciphertext),
+			Nonce:         bytes.Clone(r.Nonce),
+			WrappedDEK:    bytes.Clone(r.WrappedDEK),
+			FormatVersion: int(r.FormatVersion.Int32),
+			KeyProvider:   r.KeyProvider.String,
+			KeyVersion:    r.KeyVersion.Int64,
+		}
+	}
+	return credential
 }

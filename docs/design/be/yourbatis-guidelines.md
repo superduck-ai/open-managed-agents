@@ -130,7 +130,7 @@ err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 })
 ```
 
-同一原子事务链中禁止混用事务 executor、`d.mapperDB`、`d.sql` 或原生 `pgx.Tx`。迁移既有事务时
+同一原子事务链中禁止混用事务 executor、`d.mapperDB`、启动期维护句柄或原生 `pgx.Tx`。迁移既有事务时
 必须迁移完整事务链，不能只替换其中一条语句。事务 executor 不得保存、异步使用或逃逸到事务
 回调之外。
 

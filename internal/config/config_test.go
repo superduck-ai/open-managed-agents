@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"maps"
 	"os"
@@ -29,6 +30,9 @@ storage:
     region: us-east-1
     access_key_id: test-access-key
     secret_access_key: test-secret-key
+vault:
+  master_key:
+    kek: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
 `
 
 const (
@@ -81,6 +85,9 @@ storage:
     access_key_id: yaml-access-key
     secret_access_key: yaml-secret-key
     force_path_style: false
+vault:
+  master_key:
+    kek: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
 batch:
   worker_concurrency: 7
   upstream_timeout: 45s
@@ -687,6 +694,61 @@ func TestLoadCodeSessionUpstreamProxyMITMConfiguration(t *testing.T) {
 			t.Fatalf("unexpected MITM config: enabled=%t key=%q", cfg.CodeSession.UpstreamProxyMITMEnabled, cfg.CodeSession.UpstreamProxyCAKeyFile)
 		}
 	})
+}
+
+func TestLoadVaultMasterKeyContract(t *testing.T) {
+	t.Run("at most one KEK source", func(t *testing.T) {
+		prepareLoadTest(t)
+		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: aaaa\n    kek_file: /tmp/k\n"); err == nil || !strings.Contains(err.Error(), "at most one of vault.master_key.kek") {
+			t.Fatalf("Load() error = %v, want at-most-one KEK error", err)
+		}
+	})
+
+	t.Run("current KEK is required", func(t *testing.T) {
+		prepareLoadTest(t)
+		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: \"\"\n    kek_file: \"\"\n"); err == nil || !strings.Contains(err.Error(), "vault.master_key.kek or kek_file is required") {
+			t.Fatalf("Load() error = %v, want required KEK error", err)
+		}
+	})
+
+	t.Run("decrypt_only version collides with current", func(t *testing.T) {
+		prepareLoadTest(t)
+		yaml := "vault:\n  master_key:\n    kek: " + validKEKBase64ForConfigTest() + "\n    version: 2\n    decrypt_only:\n      - version: 2\n        kek: " + validKEKBase64ForConfigTest() + "\n"
+		if _, err := loadConfigTestYAML(t, yaml); err == nil || !strings.Contains(err.Error(), "collides") {
+			t.Fatalf("Load() error = %v, want version collision", err)
+		}
+	})
+
+	t.Run("decrypt_only requires kek source", func(t *testing.T) {
+		prepareLoadTest(t)
+		yaml := "vault:\n  master_key:\n    kek: " + validKEKBase64ForConfigTest() + "\n    version: 2\n    decrypt_only:\n      - version: 1\n"
+		if _, err := loadConfigTestYAML(t, yaml); err == nil || !strings.Contains(err.Error(), "kek or kek_file is required") {
+			t.Fatalf("Load() error = %v, want decrypt_only kek required", err)
+		}
+	})
+
+	t.Run("decrypt_only loads", func(t *testing.T) {
+		prepareLoadTest(t)
+		yaml := "vault:\n  master_key:\n    kek: " + validKEKBase64ForConfigTest() + "\n    version: 2\n    decrypt_only:\n      - version: 1\n        kek: " + validKEKBase64ForConfigTest() + "\n"
+		cfg, err := loadConfigTestYAML(t, yaml)
+		if err != nil {
+			t.Fatalf("Load() error = %v, want nil", err)
+		}
+		if cfg.Vault.MasterKey.EffectiveVersion() != 2 {
+			t.Fatalf("EffectiveVersion() = %d, want 2", cfg.Vault.MasterKey.EffectiveVersion())
+		}
+		if len(cfg.Vault.MasterKey.DecryptOnly) != 1 || cfg.Vault.MasterKey.DecryptOnly[0].Version != 1 {
+			t.Fatalf("DecryptOnly = %+v, want one entry at version 1", cfg.Vault.MasterKey.DecryptOnly)
+		}
+	})
+}
+
+func validKEKBase64ForConfigTest() string {
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	return base64.StdEncoding.EncodeToString(kek)
 }
 
 func writeConfigTestFile(t *testing.T, path string) string {

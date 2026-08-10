@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"time"
 )
@@ -101,7 +102,7 @@ func (r codeSessionEventRow) event() CodeSessionEvent {
 		EventSubtype:          r.EventSubtype,
 		PayloadUUID:           r.PayloadUUID,
 		RequestID:             r.RequestID,
-		Payload:               copyRaw(r.Payload),
+		Payload:               bytes.Clone(r.Payload),
 		PayloadHash:           r.PayloadHash,
 		IdempotencyKey:        r.IdempotencyKey,
 		DeliveryStatus:        r.DeliveryStatus,

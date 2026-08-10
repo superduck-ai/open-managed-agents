@@ -40,7 +40,7 @@ flowchart LR
 - 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API；自定义 MCP 在创建阶段不探测工具列表，只提供 Toolset 级权限。
 - MCP 候选项优先加载 Directory 明确提供的 HTTP/HTTPS 图片 `icon_url`；若该字段是网页或图片加载失败，则依次尝试其同源 `/favicon.ico` 和基于该 Directory 公开主机名的公共 favicon 服务，仍不可用时回退到 Server 图标。自定义 MCP 不向图标组件提供 URL，因此前端不会探测 Agent 配置的 MCP 主机，也不会把自定义主机名发送给第三方。
 - Directory 加载失败不阻止使用自定义 MCP；关闭、取消或按 Escape 会丢弃尚未提交的名称和 URL，但不会关闭外层 Agent 编辑弹窗或修改 Draft。
-- 内置工具仅展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`，默认 `always_allow`；新 MCP 默认 `always_ask`。
+- 内置工具展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`，默认 `always_allow`；其中 `web_fetch` 映射到 Claude Code 在 Sandbox 内执行的 `WebFetch`，不表示 Messages API 的模型服务端工具。`web_search` 继续不在 Rendered 列表中；新 MCP 默认 `always_ask`。
 - 内置 Toolset 可以整体移除，并可通过“添加内置工具”恢复；恢复操作不会复制已存在的 Toolset。
 - Toolset 级权限写入 `default_config` 并清空逐工具覆盖；逐工具权限与默认值一致时不保留冗余覆盖。
 - `always_deny` 规范化为 `enabled:false`；`custom` 只是聚合展示状态，不写入 API。

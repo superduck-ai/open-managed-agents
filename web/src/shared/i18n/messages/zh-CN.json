@@ -1280,6 +1280,7 @@
   "managedAgents.agents.createDialog.builtInTool.glob": "按模式匹配文件路径",
   "managedAgents.agents.createDialog.builtInTool.grep": "使用正则表达式搜索文本",
   "managedAgents.agents.createDialog.builtInTool.read": "读取文件",
+  "managedAgents.agents.createDialog.builtInTool.webFetch": "获取 URL 内容",
   "managedAgents.agents.createDialog.builtInTool.write": "写入文件",
   "managedAgents.agents.createDialog.editorMode": "编辑模式",
   "managedAgents.agents.detail.copySkillId": "复制技能 ID",

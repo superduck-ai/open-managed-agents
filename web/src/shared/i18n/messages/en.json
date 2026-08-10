@@ -1280,6 +1280,7 @@
   "managedAgents.agents.createDialog.builtInTool.glob": "File pattern matching",
   "managedAgents.agents.createDialog.builtInTool.grep": "Text search with regex",
   "managedAgents.agents.createDialog.builtInTool.read": "Read files",
+  "managedAgents.agents.createDialog.builtInTool.webFetch": "Fetch URL content",
   "managedAgents.agents.createDialog.builtInTool.write": "Write files",
   "managedAgents.agents.createDialog.editorMode": "Editor mode",
   "managedAgents.agents.detail.copySkillId": "Copy skill ID",

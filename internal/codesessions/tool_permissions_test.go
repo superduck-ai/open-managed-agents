@@ -99,4 +99,9 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	if identity.Kind != "agent_toolset" || identity.ToolName != "edit" {
 		t.Fatalf("identity = %+v", identity)
 	}
+
+	identity = parseClaudeToolIdentity("WebFetch")
+	if identity.Kind != "agent_toolset" || identity.ToolName != "web_fetch" {
+		t.Fatalf("identity = %+v", identity)
+	}
 }

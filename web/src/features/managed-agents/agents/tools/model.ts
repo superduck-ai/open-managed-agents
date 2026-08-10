@@ -55,6 +55,7 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'edit', description: 'String replacement in files' },
     { name: 'glob', description: 'File pattern matching' },
     { name: 'grep', description: 'Text search with regex' },
+    { name: 'web_fetch', description: 'Fetch URL content' },
   ],
 };
 
@@ -72,6 +73,8 @@ export function builtInAgentToolDescription(tool: BuiltInAgentTool, msg: I18nMsg
       return msg('managedAgents.agents.createDialog.builtInTool.glob', tool.description);
     case 'grep':
       return msg('managedAgents.agents.createDialog.builtInTool.grep', tool.description);
+    case 'web_fetch':
+      return msg('managedAgents.agents.createDialog.builtInTool.webFetch', tool.description);
     default:
       return tool.description;
   }

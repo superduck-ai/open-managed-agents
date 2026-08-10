@@ -540,7 +540,7 @@ func decodeVaultIDList(raw []byte) ([]string, error) {
 		return nil, errors.New("decode vault_ids: expected an array")
 	}
 	for _, id := range ids {
-		if id == "" {
+		if id == "" || strings.TrimSpace(id) != id {
 			return nil, fmt.Errorf("decode vault_ids: invalid ID %q", id)
 		}
 	}

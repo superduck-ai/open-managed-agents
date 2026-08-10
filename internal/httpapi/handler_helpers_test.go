@@ -9,6 +9,27 @@ import (
 	"time"
 )
 
+func TestDecodeObjectBodyRejectsInvalidBodies(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "null", body: `null`, wantErr: "JSON body must be an object"},
+		{name: "trailing JSON value", body: `{"name":"demo"}{"name":"other"}`, wantErr: "Invalid JSON body"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/", strings.NewReader(test.body))
+			rec := httptest.NewRecorder()
+			_, err := DecodeObjectBody[map[string]json.RawMessage](rec, req, 1024)
+			if err == nil || err.Error() != test.wantErr {
+				t.Fatalf("error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestDecodeObjectBody(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"demo"}`))
 	rec := httptest.NewRecorder()
@@ -18,15 +39,6 @@ func TestDecodeObjectBody(t *testing.T) {
 	}
 	if string(fields["name"]) != `"demo"` {
 		t.Fatalf("name = %s", fields["name"])
-	}
-}
-
-func TestDecodeObjectBodyRejectsNonObject(t *testing.T) {
-	req := httptest.NewRequest("POST", "/", strings.NewReader(`null`))
-	rec := httptest.NewRecorder()
-	_, err := DecodeObjectBody[map[string]json.RawMessage](rec, req, 1024)
-	if err == nil || err.Error() != "JSON body must be an object" {
-		t.Fatalf("error = %v", err)
 	}
 }
 

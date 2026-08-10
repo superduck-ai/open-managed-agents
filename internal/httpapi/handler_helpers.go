@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +23,10 @@ func DecodeObjectBody[T any](w http.ResponseWriter, r *http.Request, maxBodySize
 	}
 	if body == nil {
 		return zero, errors.New("JSON body must be an object")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return zero, errors.New("Invalid JSON body")
 	}
 	return *body, nil
 }

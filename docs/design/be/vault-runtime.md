@@ -177,12 +177,12 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 ### 每次 MCP 出站流程
 
 1. Proxy 已认证 session（`authenticateRuntimeSession`）→ 解析 `mcp_url` → 策略授权。
-2. 查 code session → workspace → `vault_ids` → 活动凭证；按真实 `mcp_url` 匹配；按 `vault_ids` 顺序，**首个可注入（static_bearer）命中胜出**。非 static_bearer 跳过。同 host 无 path 命中 → **fail-closed**；host 不在任何凭证的 `mcp_server_url` 上 → **passthrough**。
+2. 查 code session → workspace → `vault_ids` → 活动凭证；按真实 `mcp_url` 匹配；按 `vault_ids` 顺序，**首个可注入（static_bearer）命中胜出**。非 static_bearer 跳过。凭证 auth schema 无法解析 → **fail-closed**；同 scheme、host、effective port 无 path 命中 → **fail-closed**；目标不在任何凭证的 `mcp_server_url` 上 → **passthrough**。
 3. Open 信封得到 Transient secret payload（token）。Open 失败 → **拒绝该请求**（不换下一条、不 passthrough）。
 4. 删掉客户端带给 proxy 的 `Authorization`（session JWT），加 `Authorization: Bearer <token>`，转发真实上游。passthrough 不写上游 Authorization。
 5. 跨 origin redirect：代理不自动跟；客户端新请求重新匹配。
 
-匹配规则：凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。
+匹配规则：凭证与请求 URL 的 scheme、hostname、effective port 必须一致；凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。
 
 后续（非本切片）：
 

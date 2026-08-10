@@ -10,8 +10,9 @@ import (
 )
 
 // ErrMissingSecretEnvelope is returned when an active credential has no
-// secret envelope to open. Callers map this to HTTP 400 so clients can
-// resubmit the secret after a direct-cutover discard.
+// secret envelope to open. The Vaults API maps this to HTTP 400 so clients can
+// resubmit the secret after a direct-cutover discard; the MCP proxy maps it to
+// HTTP 502 because the upstream credential is unavailable.
 var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
 
 // credentialBinding builds the AAD binding from a credential's identity. The

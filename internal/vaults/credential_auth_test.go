@@ -65,34 +65,6 @@ func TestNormalizeCredentialAuthForUpdateRequiresCompleteReplacementWithoutSecre
 	}
 }
 
-func TestNormalizeCredentialAuthForUpdateReplacesMissingOAuthSecret(t *testing.T) {
-	t.Parallel()
-
-	state, err := normalizeCredentialAuthForUpdate(db.VaultCredential{
-		AuthType:      "mcp_oauth",
-		CredentialKey: "https://mcp.example.com",
-		Auth: json.RawMessage(`{
-			"type":"mcp_oauth",
-			"mcp_server_url":"https://mcp.example.com",
-			"refresh":{
-				"token_endpoint":"https://auth.example.com/token",
-				"client_id":"client-id",
-				"token_endpoint_auth":{"type":"client_secret_basic"}
-			}
-		}`),
-	}, nil, json.RawMessage(`{"type":"mcp_oauth","access_token":"replacement-token","refresh":null}`))
-	if err != nil {
-		t.Fatalf("normalize update: %v", err)
-	}
-	secret, err := decodeMCPOAuthCredentialSecret(state.SecretPayload)
-	if err != nil {
-		t.Fatalf("decode secret: %v", err)
-	}
-	if secret.AccessToken != "replacement-token" || secret.Refresh != nil {
-		t.Fatalf("unexpected replacement secret: %+v", secret)
-	}
-}
-
 func TestNormalizeCredentialAuthForCreateRejectsSchemaMismatches(t *testing.T) {
 	t.Parallel()
 
@@ -135,6 +107,47 @@ func TestNormalizeCredentialAuthForUpdateRejectsInvalidStoredPublicSchema(t *tes
 	}, []byte(`{"type":"static_bearer","token":"old-token"}`), json.RawMessage(`{"type":"static_bearer","token":"new-token"}`))
 	if err == nil || !strings.Contains(err.Error(), "decode stored credential auth") {
 		t.Fatalf("normalize update error = %v", err)
+	}
+}
+
+func TestNormalizeCredentialAuthForUpdateRejectsWrongSecretSchema(t *testing.T) {
+	t.Parallel()
+
+	_, err := normalizeCredentialAuthForUpdate(db.VaultCredential{
+		AuthType:      "static_bearer",
+		CredentialKey: "https://mcp.example.com",
+		Auth:          json.RawMessage(`{"type":"static_bearer","mcp_server_url":"https://mcp.example.com"}`),
+	}, []byte(`{"type":"environment_variable","secret_value":"value"}`), json.RawMessage(`{"type":"static_bearer","token":"new-token"}`))
+	if err == nil || !strings.Contains(err.Error(), "static_bearer secret has type") {
+		t.Fatalf("normalize update error = %v", err)
+	}
+}
+
+func TestNormalizeCredentialAuthForUpdateReplacesMissingOAuthSecret(t *testing.T) {
+	t.Parallel()
+
+	state, err := normalizeCredentialAuthForUpdate(db.VaultCredential{
+		AuthType:      "mcp_oauth",
+		CredentialKey: "https://mcp.example.com",
+		Auth: json.RawMessage(`{
+			"type":"mcp_oauth",
+			"mcp_server_url":"https://mcp.example.com",
+			"refresh":{
+				"token_endpoint":"https://auth.example.com/token",
+				"client_id":"client-id",
+				"token_endpoint_auth":{"type":"client_secret_basic"}
+			}
+		}`),
+	}, nil, json.RawMessage(`{"type":"mcp_oauth","access_token":"replacement-token","refresh":null}`))
+	if err != nil {
+		t.Fatalf("normalize update: %v", err)
+	}
+	secret, err := decodeMCPOAuthCredentialSecret(state.SecretPayload)
+	if err != nil {
+		t.Fatalf("decode secret: %v", err)
+	}
+	if secret.AccessToken != "replacement-token" || secret.Refresh != nil {
+		t.Fatalf("unexpected replacement secret: %+v", secret)
 	}
 }
 
@@ -186,19 +199,6 @@ func TestNormalizeCredentialAuthForUpdateAppliesTypedNullPatch(t *testing.T) {
 	}
 	if secret.Refresh == nil || secret.Refresh.TokenEndpointAuth == nil || secret.Refresh.TokenEndpointAuth.Type != "none" {
 		t.Fatalf("unexpected secret refresh: %+v", secret.Refresh)
-	}
-}
-
-func TestNormalizeCredentialAuthForUpdateRejectsWrongSecretSchema(t *testing.T) {
-	t.Parallel()
-
-	_, err := normalizeCredentialAuthForUpdate(db.VaultCredential{
-		AuthType:      "static_bearer",
-		CredentialKey: "https://mcp.example.com",
-		Auth:          json.RawMessage(`{"type":"static_bearer","mcp_server_url":"https://mcp.example.com"}`),
-	}, []byte(`{"type":"environment_variable","secret_value":"value"}`), json.RawMessage(`{"type":"static_bearer","token":"new-token"}`))
-	if err == nil || !strings.Contains(err.Error(), "static_bearer secret has type") {
-		t.Fatalf("normalize update error = %v", err)
 	}
 }
 

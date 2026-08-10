@@ -33,7 +33,7 @@ func decideInjection(requestURL *url.URL, credentials []db.VaultCredential) inje
 		cred := &credentials[i]
 		auth, err := decodeCredentialAuth(cred.Auth)
 		if err != nil {
-			continue
+			return injectionDecision{Kind: injectionReject}
 		}
 		var rawServerURL string
 		var authType credentialAuthType
@@ -73,7 +73,8 @@ func decideInjection(requestURL *url.URL, credentials []db.VaultCredential) inje
 }
 
 func hostsEqual(serverURL, requestURL *url.URL) bool {
-	return strings.EqualFold(serverURL.Hostname(), requestURL.Hostname()) &&
+	return strings.EqualFold(serverURL.Scheme, requestURL.Scheme) &&
+		strings.EqualFold(serverURL.Hostname(), requestURL.Hostname()) &&
 		effectivePort(serverURL) == effectivePort(requestURL)
 }
 

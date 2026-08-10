@@ -9,6 +9,14 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
+func TestOpenStaticBearerTokenMissingEnvelope(t *testing.T) {
+	svc := newTestSecretsService(t)
+	injector := &Injector{secretSvc: svc}
+	if _, err := injector.openStaticBearerToken(context.Background(), &db.VaultCredential{ExternalID: "cred_missing"}); err == nil {
+		t.Fatal("expected error for missing envelope")
+	}
+}
+
 func TestOpenStaticBearerToken(t *testing.T) {
 	svc := newTestSecretsService(t)
 	injector := &Injector{secretSvc: svc}
@@ -37,14 +45,6 @@ func TestOpenStaticBearerToken(t *testing.T) {
 	}
 	if string(credential.SecretPayload) != `{"caller":"owned"}` {
 		t.Fatalf("caller payload was modified: %s", credential.SecretPayload)
-	}
-}
-
-func TestOpenStaticBearerTokenMissingEnvelope(t *testing.T) {
-	svc := newTestSecretsService(t)
-	injector := &Injector{secretSvc: svc}
-	if _, err := injector.openStaticBearerToken(context.Background(), &db.VaultCredential{ExternalID: "cred_missing"}); err == nil {
-		t.Fatal("expected error for missing envelope")
 	}
 }
 

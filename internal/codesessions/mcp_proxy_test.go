@@ -60,6 +60,33 @@ func TestMCPProxyAuthorizationRejectsURLNotInSession(t *testing.T) {
 	}
 }
 
+func TestMCPProxyVaultInjectionRejectedReturns502(t *testing.T) {
+	targetURL := "https://mcp.example.com/mcp"
+	handler, token := newMCPProxyTestHandler(t, targetURL, slog.Default())
+	handler.injectMCPProxyHeaders = func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error {
+		return vaults.ErrInjectionRejected
+	}
+
+	router := chi.NewRouter()
+	router.Route("/v2", handler.RegisterV2Routes)
+	proxyServer := httptest.NewServer(router)
+	t.Cleanup(proxyServer.Close)
+
+	request, err := http.NewRequest(http.MethodPost, proxyServer.URL+"/v2/ccr-sessions/cse_test/mcp?"+url.Values{"mcp_url": {targetURL}}.Encode(), bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", response.StatusCode)
+	}
+}
+
 func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) {
 	type capturedRequest struct {
 		method  string
@@ -186,34 +213,6 @@ func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) 
 		t.Fatalf("MCP proxy request log leaked sensitive data: %s", logOutput.String())
 	}
 }
-
-func TestMCPProxyVaultInjectionRejectedReturns502(t *testing.T) {
-	targetURL := "https://mcp.example.com/mcp"
-	handler, token := newMCPProxyTestHandler(t, targetURL, slog.Default())
-	handler.injectMCPProxyHeaders = func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error {
-		return vaults.ErrInjectionRejected
-	}
-
-	router := chi.NewRouter()
-	router.Route("/v2", handler.RegisterV2Routes)
-	proxyServer := httptest.NewServer(router)
-	t.Cleanup(proxyServer.Close)
-
-	request, err := http.NewRequest(http.MethodPost, proxyServer.URL+"/v2/ccr-sessions/cse_test/mcp?"+url.Values{"mcp_url": {targetURL}}.Encode(), bytes.NewBufferString(`{}`))
-	if err != nil {
-		t.Fatalf("create request: %v", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("proxy request: %v", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502", response.StatusCode)
-	}
-}
-
 func newMCPProxyTestHandler(t *testing.T, allowedMCPURL string, logger *slog.Logger) (*Handler, string) {
 	t.Helper()
 	snapshot, err := json.Marshal(map[string]any{"mcp_servers": []any{map[string]any{"type": "http", "url": allowedMCPURL}}})

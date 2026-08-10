@@ -40,3 +40,10 @@ vault:
     # Documentation placeholder only — replace before real use.
     version: 1
     kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="
+  # Optional Platform OAuth Clients (exact mcp_server_url match). When
+  # vault-auth/start omits BYO client_id, a hit supplies platform client
+  # credentials before DCR. Do not commit real client_secret values.
+  # platform_oauth_clients:
+  #   - mcp_server_url: "https://api.githubcopilot.com/mcp/"
+  #     client_id: "Iv23..."
+  #     client_secret: "..."

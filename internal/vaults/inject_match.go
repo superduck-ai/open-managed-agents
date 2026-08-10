@@ -23,7 +23,7 @@ type injectionDecision struct {
 }
 
 // decideInjection walks credentials in vault_ids order. First matching static_bearer
-// wins; same-host coverage without an injectable path match rejects.
+// wins; same scheme/host/port coverage without an injectable path match rejects.
 func decideInjection(requestURL *url.URL, credentials []db.VaultCredential) injectionDecision {
 	if requestURL == nil {
 		return injectionDecision{Kind: injectionReject}

@@ -31,6 +31,15 @@ import {
 } from '../../../shared/ui/dropdown-menu';
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '../../../shared/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '../../../shared/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Textarea } from '../../../shared/ui/textarea';
@@ -40,6 +49,7 @@ import {
   Archive,
   ArrowUpRight,
   Bot,
+  Check,
   ChevronDown,
   Plus,
   Search,
@@ -48,6 +58,7 @@ import {
   X,
 } from 'lucide-react';
 import { type FormEvent, type KeyboardEventHandler, type ReactNode, useId, useRef, useState } from 'react';
+import { cn } from '../../../shared/lib/utils';
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { entityKindLabel, resourceEmptyAction, resourceEmptyBody, resourceEmptyTitle } from '../labels';
 import { entityDisplayName } from '../resources/ManagedResources';
@@ -763,6 +774,85 @@ export function ManagedSelectField({
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+export function ManagedComboboxField({
+  label,
+  value,
+  placeholder,
+  searchPlaceholder,
+  emptyLabel,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  searchPlaceholder: string;
+  emptyLabel: string;
+  options: EntityOption[];
+  onChange: (value: string) => void;
+}) {
+  const id = `managed-combobox-${useId()}`;
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.id === value);
+  return (
+    <div>
+      <Label htmlFor={id} className="text-sm font-medium text-foreground">
+        {label}
+      </Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              id={id}
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={open}
+              aria-label={label}
+              className="managed-resource-field mt-2 h-10 w-full justify-between border-border bg-secondary px-3 text-sm font-normal text-foreground shadow-none hover:bg-secondary focus-visible:border-ring focus-visible:ring-0"
+            />
+          }
+        >
+          <span className={cn('truncate', selected ? 'text-foreground' : 'text-muted-foreground')}>
+            {selected?.label ?? placeholder}
+          </span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          sideOffset={4}
+          className="w-[min(var(--anchor-width),calc(100vw-2rem))] min-w-[var(--anchor-width)] gap-0 overflow-hidden rounded-lg p-0 shadow-md ring-1 ring-foreground/10"
+        >
+          <Command className="rounded-none bg-transparent">
+            <CommandInput placeholder={searchPlaceholder} className="h-9" />
+            <CommandList className="max-h-60">
+              <CommandEmpty>{emptyLabel}</CommandEmpty>
+              <CommandGroup>
+                {options.map((option) => {
+                  const isSelected = value === option.id;
+                  return (
+                    <CommandItem
+                      key={option.id}
+                      value={`${option.label} ${option.id}`}
+                      onSelect={() => {
+                        onChange(option.id);
+                        setOpen(false);
+                      }}
+                    >
+                      <Check className={cn('size-4', isSelected ? 'opacity-100' : 'opacity-0')} aria-hidden />
+                      <span className="truncate">{option.label}</span>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

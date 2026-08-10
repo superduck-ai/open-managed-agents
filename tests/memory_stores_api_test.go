@@ -104,7 +104,7 @@ func TestMemoryStoresAPI(t *testing.T) {
 
 	t.Run("failure no foreign keys", func(t *testing.T) {
 		var foreignKeyCount int
-		if err := app.db.Pool.QueryRow(context.Background(), `
+		if err := app.pool.QueryRow(context.Background(), `
 			select count(*)
 			from pg_constraint con
 			join pg_class cls on cls.oid = con.conrelid
@@ -141,7 +141,7 @@ func TestMemoryStoresAPI(t *testing.T) {
 		}
 
 		otherKey := "sk-ant-local-memory-other"
-		seedWorkspaceKey(t, app.db, "org_memory_other_test", "workspace_memory_other_test", "api_key_memory_other_test", otherKey)
+		seedWorkspaceKey(t, app.pool, "org_memory_other_test", "workspace_memory_other_test", "api_key_memory_other_test", otherKey)
 		resp := doMemoryRequest(t, app, http.MethodGet, "/v1/memory_stores/"+createdStore.ID+"?beta=true", nil, otherKey, true)
 		assertError(t, resp, http.StatusNotFound, "not_found_error")
 
@@ -256,12 +256,12 @@ func TestMemoryStoreObjectCleanupJobs(t *testing.T) {
 	if objectKey == "" {
 		t.Fatalf("expected memory object to be stored")
 	}
-	defer app.db.Pool.Exec(context.Background(), `delete from jobs where payload->>'key' = $1`, objectKey)
+	defer app.pool.Exec(context.Background(), `delete from jobs where payload->>'key' = $1`, objectKey)
 
 	deleteMemoryStore(t, app, createdStore.ID)
 
 	var jobCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from jobs
 		where type = 'object_cleanup'

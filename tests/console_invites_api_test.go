@@ -14,7 +14,7 @@ func TestConsoleInvitesAPI(t *testing.T) {
 	cookies := app.platformLoginCookies(t, "console-invites@example.com")
 
 	var orgUUID string
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select o.uuid::text
 		from organizations o
 		join workspaces w on w.organization_uuid = o.uuid
@@ -108,7 +108,7 @@ func TestConsoleInvitesAPI(t *testing.T) {
 	t.Run("success create and list pending invites", func(t *testing.T) {
 		suffix := uniqueAdminSuffix()
 		expiredID := "invite_expired_" + suffix
-		if _, err := app.db.Pool.Exec(context.Background(), `
+		if _, err := app.pool.Exec(context.Background(), `
 			insert into organization_invites (
 				external_id, organization_uuid, email, role, status, invited_at, expires_at
 			)

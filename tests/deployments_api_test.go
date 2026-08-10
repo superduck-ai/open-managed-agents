@@ -108,9 +108,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("create request contract", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-request-contract-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-request-contract-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		store := createMemoryStore(t, app, "deployments-request-contract-store")
 
 		tests := []struct {
@@ -168,9 +168,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure github resources returned by get require token on update", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-github-round-trip-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-github-round-trip-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"github_repository","url":"https://github.com/example/repo.git","authorization_token":"secret"}]`))
 		defer cleanupDeploymentRows(t, app, created.ID)
 
@@ -181,9 +181,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure file resource source and mount conflicts", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-file-contract-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-file-contract-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		file := uploadFile(t, app, "deployment-file-contract.txt", "text/plain", []byte("contract"))
 		defer deleteFile(t, app, file.ID)
 
@@ -208,9 +208,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("deployment file resources use the official aggregate resource limit", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-resource-limit-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-resource-limit-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		file := uploadFile(t, app, "deployment-resource-limit.txt", "text/plain", []byte("resource limit"))
 		defer deleteFile(t, app, file.ID)
 
@@ -266,9 +266,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("update preserves omitted fields and clears nullable replacements", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-update-contract-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-update-contract-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		file := uploadFile(t, app, "deployment-update-contract.txt", "text/plain", []byte("contract"))
 		defer deleteFile(t, app, file.ID)
 		vault := createVault(t, app, `{"display_name":"deployments update contract"}`)
@@ -305,7 +305,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("deployment run Session ID = nil: %+v", run)
 		}
 		defer deleteSession(t, app, *run.SessionID)
-		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.db).WorkspaceUUID, *run.SessionID)
+		resources, err := app.db.ListSessionResources(context.Background(), getDefaultDBIDs(t, app.pool).WorkspaceUUID, *run.SessionID)
 		if err != nil || len(resources) != 1 {
 			t.Fatalf("deployment run Session resources = %d, error = %v", len(resources), err)
 		}
@@ -337,9 +337,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure invalid schedule", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-bad-schedule-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-bad-schedule-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		body := `{
 			"agent":` + quoteJSON(agent.ID) + `,
 			"environment_id":` + quoteJSON(env.ID) + `,
@@ -353,9 +353,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("startup skips a bad stored schedule and enqueues valid deployments", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-startup-schedule-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-startup-schedule-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		good := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -375,7 +375,7 @@ func TestDeploymentsAPI(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		if _, err := app.db.Pool.Exec(ctx, `
+		if _, err := app.pool.Exec(ctx, `
 			update deployments
 			set schedule = case when external_id = $1 then '{"type":"cron","expression":"bad","timezone":"UTC"}'::jsonb else schedule end,
 				next_scheduled_at = null
@@ -387,7 +387,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("migrate River: %v", err)
 		}
 		defer func() {
-			if _, err := app.db.Pool.Exec(context.Background(), `delete from river_job where args->>'deployment_id' in ($1, $2)`, good.ID, bad.ID); err != nil {
+			if _, err := app.pool.Exec(context.Background(), `delete from river_job where args->>'deployment_id' in ($1, $2)`, good.ID, bad.ID); err != nil {
 				t.Errorf("cleanup River jobs: %v", err)
 			}
 		}()
@@ -407,7 +407,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			}
 		}()
 
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		goodDeployment, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, good.ID)
 		if err != nil || goodDeployment.NextScheduledAt == nil {
 			t.Fatalf("good deployment after startup = (%+v, %v), want initialized cursor", goodDeployment, err)
@@ -417,7 +417,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("bad deployment after startup = (%+v, %v), want skipped cursor", badDeployment, err)
 		}
 		var jobs int
-		if err := app.db.Pool.QueryRow(ctx, `select count(*) from river_job where args->>'deployment_id' = $1`, good.ID).Scan(&jobs); err != nil {
+		if err := app.pool.QueryRow(ctx, `select count(*) from river_job where args->>'deployment_id' = $1`, good.ID).Scan(&jobs); err != nil {
 			t.Fatalf("count valid River jobs: %v", err)
 		}
 		if jobs == 0 {
@@ -427,9 +427,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("transactional enqueue shares the Yourbatis transaction", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployment-transaction-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployment-transaction-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		deployment := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -444,7 +444,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("migrate River: %v", err)
 		}
 		defer func() {
-			if _, err := app.db.Pool.Exec(context.Background(), `delete from river_job where args->>'deployment_id' = $1`, deployment.ID); err != nil {
+			if _, err := app.pool.Exec(context.Background(), `delete from river_job where args->>'deployment_id' = $1`, deployment.ID); err != nil {
 				t.Errorf("cleanup River jobs: %v", err)
 			}
 		}()
@@ -452,7 +452,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("new deployment scheduler: %v", err)
 		}
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		original, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, deployment.ID)
 		if err != nil || original.NextScheduledAt == nil {
 			t.Fatalf("get scheduled deployment = (%+v, %v)", original, err)
@@ -466,7 +466,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		jobCount := func() int {
 			t.Helper()
 			var count int
-			if err := app.db.Pool.QueryRow(ctx, `select count(*) from river_job where args->>'deployment_id' = $1`, deployment.ID).Scan(&count); err != nil {
+			if err := app.pool.QueryRow(ctx, `select count(*) from river_job where args->>'deployment_id' = $1`, deployment.ID).Scan(&count); err != nil {
 				t.Fatalf("count River jobs: %v", err)
 			}
 			return count
@@ -519,9 +519,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("update without schedule preserves a concurrently advanced cursor", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-concurrent-update-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-concurrent-update-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -532,13 +532,13 @@ func TestDeploymentsAPI(t *testing.T) {
 		defer cleanupDeploymentRows(t, app, created.ID)
 
 		ctx := context.Background()
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		stale, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
 		if err != nil || stale.NextScheduledAt == nil {
 			t.Fatalf("load scheduled deployment = (%+v, %v)", stale, err)
 		}
 		advancedAt := stale.NextScheduledAt.Add(10 * time.Minute)
-		workerTx, err := app.db.Pool.Begin(ctx)
+		workerTx, err := app.pool.Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin worker transaction: %v", err)
 		}
@@ -583,9 +583,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("execution update invalidates a stale occurrence without moving the cursor", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-execution-revision-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-execution-revision-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -596,7 +596,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		defer cleanupDeploymentRows(t, app, created.ID)
 
 		ctx := context.Background()
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		stale, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
 		if err != nil || stale.NextScheduledAt == nil {
 			t.Fatalf("load scheduled deployment = (%+v, %v)", stale, err)
@@ -623,9 +623,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("unpause calculates the cursor from the locked schedule", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-unpause-lock-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-unpause-lock-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -637,8 +637,8 @@ func TestDeploymentsAPI(t *testing.T) {
 		pauseDeployment(t, app, created.ID)
 
 		ctx := context.Background()
-		ids := getDefaultDBIDs(t, app.db)
-		patchTx, err := app.db.Pool.Begin(ctx)
+		ids := getDefaultDBIDs(t, app.pool)
+		patchTx, err := app.pool.Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin concurrent schedule patch: %v", err)
 		}
@@ -697,9 +697,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure archived workspace rejects a scheduled session", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-archived-workspace-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-archived-workspace-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -710,7 +710,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		defer cleanupDeploymentRows(t, app, created.ID)
 
 		ctx := context.Background()
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		deployment, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
 		if err != nil || deployment.NextScheduledAt == nil {
 			t.Fatalf("load scheduled deployment = (%+v, %v)", deployment, err)
@@ -719,7 +719,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("archive workspace: %v", err)
 		}
 		defer func() {
-			if _, err := app.db.Pool.Exec(context.Background(), `update workspaces set archived_at = null where uuid = $1`, ids.WorkspaceUUID); err != nil {
+			if _, err := app.pool.Exec(context.Background(), `update workspaces set archived_at = null where uuid = $1`, ids.WorkspaceUUID); err != nil {
 				t.Errorf("restore workspace: %v", err)
 			}
 		}()
@@ -740,9 +740,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure auto pause rolls back when outbox cannot be written", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-outbox-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-outbox-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -752,7 +752,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		}`)
 		defer cleanupDeploymentRows(t, app, created.ID)
 
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		now := time.Now().UTC()
 		endpoint, err := app.db.CreateWebhookEndpoint(context.Background(), db.WebhookEndpoint{
 			UUID: uuid.NewString(), ExternalID: "wh_outbox_" + uuid.NewString(),
@@ -811,9 +811,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure scheduled root agent archive rolls back when outbox cannot be written", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-scheduled-archive-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-scheduled-archive-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -824,7 +824,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		defer cleanupDeploymentRows(t, app, created.ID)
 
 		ctx := context.Background()
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		deployment, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
 		if err != nil || deployment.NextScheduledAt == nil {
 			t.Fatalf("load scheduled deployment = (%+v, %v)", deployment, err)
@@ -848,14 +848,14 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure agent archive rolls back deployments when outbox cannot be written", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-agent-archive-outbox-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-agent-archive-outbox-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, minimalDeploymentBody(agent.ID, env.ID))
 		defer cleanupDeploymentRows(t, app, created.ID)
 
 		ctx := context.Background()
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		_, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agent.ID, func(db.Deployment) (db.WebhookDeliveryEvent, error) {
 			return db.WebhookDeliveryEvent{
 				EventType: "deployment.archived", Event: json.RawMessage(`{`), FallbackEnabled: true,
@@ -876,14 +876,14 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("agent API archives deployments with webhook outbox", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-agent-archive-webhook-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-agent-archive-webhook-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		created := createDeployment(t, app, minimalDeploymentBody(agent.ID, env.ID))
 		defer cleanupDeploymentRows(t, app, created.ID)
 
 		ctx := context.Background()
-		ids := getDefaultDBIDs(t, app.db)
+		ids := getDefaultDBIDs(t, app.pool)
 		now := time.Now().UTC()
 		endpoint, err := app.db.CreateWebhookEndpoint(ctx, db.WebhookEndpoint{
 			UUID: uuid.NewString(), ExternalID: "wh_agent_archive_" + uuid.NewString(),
@@ -896,7 +896,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("create webhook endpoint: %v", err)
 		}
 		defer func() {
-			if _, err := app.db.Pool.Exec(context.Background(), `delete from jobs where payload->>'webhook_endpoint_uuid' = $1`, endpoint.UUID); err != nil {
+			if _, err := app.pool.Exec(context.Background(), `delete from jobs where payload->>'webhook_endpoint_uuid' = $1`, endpoint.UUID); err != nil {
 				t.Errorf("cleanup webhook jobs: %v", err)
 			}
 			if err := app.db.DeleteWebhookEndpoint(context.Background(), ids.WorkspaceUUID, endpoint.ExternalID); err != nil {
@@ -910,7 +910,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("deployment after agent API archive = (%+v, %v), want archived", archived, err)
 		}
 		var jobs int
-		if err := app.db.Pool.QueryRow(ctx, `
+		if err := app.pool.QueryRow(ctx, `
 			select count(*)
 			from jobs
 			where payload->>'webhook_endpoint_uuid' = $1
@@ -926,9 +926,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure archived agent is rejected", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-archived-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-archived-agent-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		archiveAgent(t, app, agent.ID)
 
 		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(minimalDeploymentBody(agent.ID, env.ID)), defaultTestKey, true)
@@ -937,9 +937,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure archived environment is rejected", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-archived-env-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-archived-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		archiveEnvironment(t, app, env.ID)
 
 		resp := doDeploymentRequest(t, app, http.MethodPost, "/v1/deployments?beta=true", strings.NewReader(minimalDeploymentBody(agent.ID, env.ID)), defaultTestKey, true)
@@ -948,9 +948,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure archived vault is rejected", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-archived-vault-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-archived-vault-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		vault := createVault(t, app, `{"display_name":"deployments archived vault"}`)
 		defer cleanupVaultRows(t, app, vault.ID)
 		archiveVault(t, app, vault.ID)
@@ -962,9 +962,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("failure deleted file resource is rejected", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-deleted-file-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-deleted-file-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		file := uploadFile(t, app, "deployment-deleted-resource.txt", "text/plain", []byte("deleted resource"))
 		deleteFile(t, app, file.ID)
 
@@ -982,9 +982,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("success manual run records reference error", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-run-error-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-run-error-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		file := uploadFile(t, app, "deployment-run-error-resource.txt", "text/plain", []byte("run error resource"))
 
 		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`}]`))
@@ -1007,9 +1007,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("success manual run binds file resource into session filesystem", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-file-run-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-file-run-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		file := uploadFile(t, app, "deployment-file-run.txt", "text/plain", []byte("deployment file run"))
 		defer deleteFile(t, app, file.ID)
 
@@ -1050,9 +1050,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("success initial user messages replay in order", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployment-initial-history-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployment-initial-history-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		deployment := createDeployment(t, app, `{
 			"agent":`+quoteJSON(agent.ID)+`,
 			"environment_id":`+quoteJSON(env.ID)+`,
@@ -1085,9 +1085,9 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	t.Run("success lifecycle manual run session events and run filters", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-api-agent"}`)
-		defer cleanupAgentRows(t, app.db, agent.ID)
+		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-api-env"}`)
-		defer cleanupEnvironmentRows(t, app.db, env.ID)
+		defer cleanupEnvironmentRows(t, app.pool, env.ID)
 		file := uploadFile(t, app, "deployment-resource.txt", "text/plain", []byte("deployment file"))
 		defer deleteFile(t, app, file.ID)
 
@@ -1169,7 +1169,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			t.Fatalf("unexpected deployment run: %+v", run)
 		}
 		var filesystemCount int
-		if err := app.db.Pool.QueryRow(context.Background(), `
+		if err := app.pool.QueryRow(context.Background(), `
 			select count(*)
 			from filestore_filesystems fs
 			join workspaces w on w.uuid = fs.workspace_uuid
@@ -1466,10 +1466,10 @@ func containsDeploymentRun(runs []deploymentRunAPIResponse, id string) bool {
 
 func cleanupDeploymentRows(t *testing.T, app *testApp, deploymentID string) {
 	t.Helper()
-	if _, err := app.db.Pool.Exec(context.Background(), `delete from deployment_runs where deployment_external_id = $1`, deploymentID); err != nil {
+	if _, err := app.pool.Exec(context.Background(), `delete from deployment_runs where deployment_external_id = $1`, deploymentID); err != nil {
 		t.Fatalf("cleanup deployment runs: %v", err)
 	}
-	if _, err := app.db.Pool.Exec(context.Background(), `delete from deployments where external_id = $1`, deploymentID); err != nil {
+	if _, err := app.pool.Exec(context.Background(), `delete from deployments where external_id = $1`, deploymentID); err != nil {
 		t.Fatalf("cleanup deployment: %v", err)
 	}
 }

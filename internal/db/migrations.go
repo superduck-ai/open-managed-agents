@@ -2,11 +2,11 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"fmt"
 	"io/fs"
 
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
 )
@@ -14,14 +14,11 @@ import (
 //go:embed migrations/*.sql
 var embeddedMigrations embed.FS
 
-func (d *DB) runGooseMigrations(ctx context.Context) error {
+func runGooseMigrations(ctx context.Context, standardDB *sql.DB) error {
 	migrationFS, err := fs.Sub(embeddedMigrations, "migrations")
 	if err != nil {
 		return fmt.Errorf("open embedded migrations: %w", err)
 	}
-
-	sqlDB := stdlib.OpenDBFromPool(d.Pool)
-	defer sqlDB.Close()
 
 	sessionLocker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(5, 60))
 	if err != nil {
@@ -29,7 +26,7 @@ func (d *DB) runGooseMigrations(ctx context.Context) error {
 	}
 	provider, err := goose.NewProvider(
 		goose.DialectPostgres,
-		sqlDB,
+		standardDB,
 		migrationFS,
 		goose.WithSessionLocker(sessionLocker),
 		goose.WithDisableGlobalRegistry(true),

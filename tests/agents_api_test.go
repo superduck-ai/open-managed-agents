@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type agentAPIResponse struct {
@@ -50,7 +51,7 @@ func TestAgentsPersistMappedModelIDs(t *testing.T) {
 	defer app.close()
 
 	created := createAgent(t, app, `{"model":"claude-sonnet-4-6","name":"mapped-agent"}`)
-	defer cleanupAgentRows(t, app.db, created.ID)
+	defer cleanupAgentRows(t, app.pool, created.ID)
 	assertRawContains(t, created.Model, `"id":"glm-5-turbo"`)
 
 	updated := updateAgent(t, app, created.ID, `{"version":1,"model":{"id":"claude-opus-4-8","speed":"fast"}}`, http.StatusOK)
@@ -126,7 +127,7 @@ func TestAgentsAPI(t *testing.T) {
 	t.Run("success create update archive list and versions", func(t *testing.T) {
 		start := time.Now().UTC().Add(-time.Second)
 		child := createAgent(t, app, `{"model":"claude-opus-4-6","name":"agents-test-child"}`)
-		defer cleanupAgentRows(t, app.db, child.ID)
+		defer cleanupAgentRows(t, app.pool, child.ID)
 		assertRawContains(t, child.Model, `"speed":"standard"`)
 		noopChild := updateAgent(t, app, child.ID, `{"version":1}`, http.StatusOK)
 		if noopChild.Version != 1 {
@@ -146,7 +147,7 @@ func TestAgentsAPI(t *testing.T) {
 				{"type":"mcp_toolset","mcp_server_name":"main","configs":[{"name":"remote","enabled":false}]}
 			]
 		}`)
-		defer cleanupAgentRows(t, app.db, defaultTools.ID)
+		defer cleanupAgentRows(t, app.pool, defaultTools.ID)
 		var toolConfigs []map[string]any
 		decodeRawJSON(t, defaultTools.Tools, &toolConfigs)
 		if got := toolConfigs[0]["default_config"].(map[string]any)["permission_policy"].(map[string]any)["type"]; got != "always_allow" {
@@ -157,7 +158,7 @@ func TestAgentsAPI(t *testing.T) {
 		}
 
 		sibling := createAgent(t, app, `{"model":"claude-opus-4-6","name":"agents-test-sibling"}`)
-		defer cleanupAgentRows(t, app.db, sibling.ID)
+		defer cleanupAgentRows(t, app.pool, sibling.ID)
 
 		parentBody := `{
 			"model":{"id":"claude-opus-4-6","speed":"standard"},
@@ -175,7 +176,7 @@ func TestAgentsAPI(t *testing.T) {
 			]
 		}`
 		parent := createAgent(t, app, parentBody)
-		defer cleanupAgentRows(t, app.db, parent.ID)
+		defer cleanupAgentRows(t, app.pool, parent.ID)
 		if parent.Type != "agent" || parent.Version != 1 || parent.Name != "agents-test-parent" {
 			t.Fatalf("unexpected created parent: %+v", parent)
 		}
@@ -263,17 +264,17 @@ func TestAgentsAPI(t *testing.T) {
 	t.Run("success search agents by name with archived filtering pagination and workspace isolation", func(t *testing.T) {
 		suffix := strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
 		active := createAgent(t, app, `{"model":"claude-opus-4-6","name":"Search Alpha `+suffix+`"}`)
-		defer cleanupAgentRows(t, app.db, active.ID)
+		defer cleanupAgentRows(t, app.pool, active.ID)
 		archived := createAgent(t, app, `{"model":"claude-opus-4-6","name":"search alpha `+suffix+` archived"}`)
-		defer cleanupAgentRows(t, app.db, archived.ID)
+		defer cleanupAgentRows(t, app.pool, archived.ID)
 		otherName := createAgent(t, app, `{"model":"claude-opus-4-6","name":"Search Beta `+suffix+`"}`)
-		defer cleanupAgentRows(t, app.db, otherName.ID)
+		defer cleanupAgentRows(t, app.pool, otherName.ID)
 		archiveAgent(t, app, archived.ID)
 
 		otherKey := "sk-ant-search-other-" + suffix
-		seedWorkspaceKey(t, app.db, "org_agents_search_other_"+suffix, "workspace_agents_search_other_"+suffix, "api_key_agents_search_other_"+suffix, otherKey)
+		seedWorkspaceKey(t, app.pool, "org_agents_search_other_"+suffix, "workspace_agents_search_other_"+suffix, "api_key_agents_search_other_"+suffix, otherKey)
 		otherWorkspaceAgent := createAgentWithKey(t, app, `{"model":"claude-opus-4-6","name":"Search Alpha `+suffix+`"}`, otherKey)
-		defer cleanupAgentRows(t, app.db, otherWorkspaceAgent.ID)
+		defer cleanupAgentRows(t, app.pool, otherWorkspaceAgent.ID)
 
 		activePage := searchAgents(t, app, `{"name":"alpha `+suffix+`","limit":10}`)
 		if !containsAgent(activePage.Data, active.ID) {
@@ -309,7 +310,7 @@ func TestAgentsSchemaHasNoForeignKeys(t *testing.T) {
 	defer app.close()
 
 	var foreignKeyCount int
-	if err := app.db.Pool.QueryRow(context.Background(), `
+	if err := app.pool.QueryRow(context.Background(), `
 		select count(*)
 		from pg_constraint con
 		join pg_class cls on cls.oid = con.conrelid
@@ -487,12 +488,12 @@ func containsAgent(agents []agentAPIResponse, id string) bool {
 	return false
 }
 
-func cleanupAgentRows(t *testing.T, database *db.DB, agentID string) {
+func cleanupAgentRows(t *testing.T, pool *pgxpool.Pool, agentID string) {
 	t.Helper()
-	if _, err := database.Pool.Exec(context.Background(), `delete from agent_versions where agent_external_id = $1`, agentID); err != nil {
+	if _, err := pool.Exec(context.Background(), `delete from agent_versions where agent_external_id = $1`, agentID); err != nil {
 		t.Fatalf("cleanup agent versions: %v", err)
 	}
-	if _, err := database.Pool.Exec(context.Background(), `delete from agents where external_id = $1`, agentID); err != nil {
+	if _, err := pool.Exec(context.Background(), `delete from agents where external_id = $1`, agentID); err != nil {
 		t.Fatalf("cleanup agent: %v", err)
 	}
 }

@@ -25,7 +25,7 @@ require (
 	github.com/samber/lo v1.53.0
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1
 	github.com/superduck-ai/e2b-go-sdk v0.0.1
-	github.com/superduck-ai/yourbatis v0.1.2
+	github.com/superduck-ai/yourbatis v0.1.4
 	go.opentelemetry.io/proto/otlp v1.10.0
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/net v0.56.0

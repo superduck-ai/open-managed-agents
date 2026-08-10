@@ -3,13 +3,75 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestDecodeObjectBody(t *testing.T) {
+func TestDecodeObjectBodyAsRejectsInvalidBodies(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		maxBodySize int64
+		wantError   string
+	}{
+		{name: "malformed", body: `{"name":`, maxBodySize: 1024, wantError: "Invalid JSON body"},
+		{name: "null", body: `null`, maxBodySize: 1024, wantError: "JSON body must be an object"},
+		{name: "non object", body: `[]`, maxBodySize: 1024, wantError: "Invalid JSON body"},
+		{name: "body too large", body: `{"name":"demo"}`, maxBodySize: int64(len(`{"name":"demo"}`) - 1), wantError: "Invalid JSON body"},
+		{name: "trailing data", body: `{"name":"demo"} trailing`, maxBodySize: 1024, wantError: "Invalid JSON body"},
+		{name: "multiple values", body: `{"name":"demo"} {}`, maxBodySize: 1024, wantError: "Invalid JSON body"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			_, err := DecodeObjectBodyAs[struct {
+				Name string `json:"name"`
+			}](rec, req, tt.maxBodySize)
+			if err == nil || err.Error() != tt.wantError {
+				t.Fatalf("error = %v, want %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestDecodeObjectBodyAsPreservesMaxBytesError(t *testing.T) {
+	payload := `{"name":"demo"}`
+	req := httptest.NewRequest("POST", "/", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	_, err := DecodeObjectBodyAs[struct {
+		Name string `json:"name"`
+	}](rec, req, int64(len(payload)-1))
+
+	var maxBytesErr *http.MaxBytesError
+	if !errors.As(err, &maxBytesErr) {
+		t.Fatalf("error = %v, want wrapped *http.MaxBytesError", err)
+	}
+	if err.Error() != "Invalid JSON body" {
+		t.Fatalf("error = %q, want Invalid JSON body", err)
+	}
+}
+
+func TestDecodeObjectBodyAsDecodesNamedObject(t *testing.T) {
+	type requestBody struct {
+		Name string `json:"name"`
+	}
+	payload := " \n{\"name\":\"demo\"}\t"
+	req := httptest.NewRequest("POST", "/", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	body, err := DecodeObjectBodyAs[requestBody](rec, req, int64(len(payload)))
+	if err != nil {
+		t.Fatalf("DecodeObjectBodyAs error = %v", err)
+	}
+	if body.Name != "demo" {
+		t.Fatalf("name = %q", body.Name)
+	}
+}
+
+func TestDecodeObjectBodyKeepsRawFields(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"demo"}`))
 	rec := httptest.NewRecorder()
 	fields, err := DecodeObjectBody(rec, req, 1024)
@@ -18,15 +80,6 @@ func TestDecodeObjectBody(t *testing.T) {
 	}
 	if string(fields["name"]) != `"demo"` {
 		t.Fatalf("name = %s", fields["name"])
-	}
-}
-
-func TestDecodeObjectBodyRejectsNonObject(t *testing.T) {
-	req := httptest.NewRequest("POST", "/", strings.NewReader(`null`))
-	rec := httptest.NewRecorder()
-	_, err := DecodeObjectBody(rec, req, 1024)
-	if err == nil || err.Error() != "JSON body must be an object" {
-		t.Fatalf("error = %v", err)
 	}
 }
 

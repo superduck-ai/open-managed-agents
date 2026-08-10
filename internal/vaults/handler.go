@@ -241,7 +241,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -364,7 +364,7 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Vault is archived"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -467,7 +467,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Vault is archived"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -621,7 +621,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Credential is archived"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -870,19 +870,6 @@ func responseFromCredential(credential db.VaultCredential) credentialResponse {
 		VaultID:     credential.VaultExternalID,
 		DisplayName: credential.DisplayName,
 	}
-}
-
-func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxVaultBodySize)
-	var fields map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil {
-		return nil, errors.New("Invalid JSON body")
-	}
-	if fields == nil {
-		return nil, errors.New("JSON body must be an object")
-	}
-	return fields, nil
 }
 
 func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {

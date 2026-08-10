@@ -166,7 +166,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxMemoryBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -312,7 +312,7 @@ func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID st
 		writeBadRequest(w, r, errors.New("memory store must not be archived"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxMemoryBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -412,7 +412,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxMemoryBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -679,7 +679,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		writeBadRequest(w, r, err)
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxMemoryBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -1183,19 +1183,6 @@ func rollupPrefix(path, pathPrefix string, depth int) (string, bool) {
 		base += "/"
 	}
 	return base + strings.Join(prefixSegments, "/") + "/", true
-}
-
-func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxMemoryBodySize)
-	var fields map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil {
-		return nil, errors.New("Invalid JSON body")
-	}
-	if fields == nil {
-		return nil, errors.New("JSON body must be an object")
-	}
-	return fields, nil
 }
 
 func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {

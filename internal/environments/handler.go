@@ -136,7 +136,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxEnvironmentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -303,7 +303,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxEnvironmentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -490,7 +490,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "queued"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	fields, err := httpapi.DecodeObjectBody(w, r, maxEnvironmentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -659,7 +659,7 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	force := false
 	if r.Body != nil {
-		fields, err := decodeObjectBody(w, r)
+		fields, err := httpapi.DecodeObjectBody(w, r, maxEnvironmentBodySize)
 		if err == nil {
 			if raw, ok := fields["force"]; ok && !isJSONNull(raw) {
 				if err := json.Unmarshal(raw, &force); err != nil {
@@ -1021,19 +1021,6 @@ func (h *Handler) isOfficialSDKWorkFixture(r *http.Request, workID string) bool 
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	return h.isOfficialSDKPrincipal(principal) &&
 		workID == h.cfg.SDKFixtures.WorkID
-}
-
-func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxEnvironmentBodySize)
-	var fields map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil {
-		return nil, errors.New("Invalid JSON body")
-	}
-	if fields == nil {
-		return nil, errors.New("JSON body must be an object")
-	}
-	return fields, nil
 }
 
 func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {

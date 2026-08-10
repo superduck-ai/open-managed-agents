@@ -673,11 +673,9 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 }
 
 func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (searchRequest, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxAgentBodySize)
-	var body searchRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&body); err != nil {
-		return searchRequest{}, errors.New("Invalid JSON body")
+	body, err := httpapi.DecodeObjectBodyAs[searchRequest](w, r, maxAgentBodySize)
+	if err != nil {
+		return searchRequest{}, err
 	}
 	if strings.TrimSpace(body.Name) == "" {
 		return searchRequest{}, errors.New("name is required")

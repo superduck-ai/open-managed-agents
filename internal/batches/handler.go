@@ -141,12 +141,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.Batch.MaxBodyBytes)
-	var body createRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&body); err != nil {
+	body, err := httpapi.DecodeObjectBodyAs[createRequest](w, r, h.cfg.Batch.MaxBodyBytes)
+	if err != nil {
 		status := http.StatusBadRequest
-		message := "Invalid JSON body"
+		message := err.Error()
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			status = http.StatusRequestEntityTooLarge

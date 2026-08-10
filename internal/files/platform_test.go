@@ -11,8 +11,31 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
+
+func TestPlatformUploadBase64RejectsTrailingJSON(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/organizations/org_test/files/upload_b64",
+		strings.NewReader(`{"file_name":"demo.txt","file_b64":""} {}`),
+	)
+	request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{
+		OrganizationUUID: "org_test",
+		WorkspaceUUID:    "workspace_test",
+	}))
+	recorder := httptest.NewRecorder()
+
+	(&Handler{}).uploadBase64(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(recorder.Body.String(), "Expected JSON body with file_name and file_b64") {
+		t.Fatalf("body = %q, want platform upload JSON error", recorder.Body.String())
+	}
+}
 
 func TestStreamPlatformObject(t *testing.T) {
 	t.Run("failure body read error is logged", func(t *testing.T) {

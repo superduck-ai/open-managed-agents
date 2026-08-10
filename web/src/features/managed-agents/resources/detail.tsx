@@ -673,11 +673,15 @@ export function DeploymentRunsPanel({
         if (active) {
           setState({ loading: false, error: null, data: [...(page.data ?? [])].reverse() });
         }
-      } catch {
+      } catch (error) {
         if (active) {
           setState({
             loading: false,
-            error: msg('managedAgents.deployments.runs.loadError', 'Could not load deployment runs.'),
+            error: msg(
+              'managedAgents.deployments.runs.loadError',
+              'Could not load deployment runs. Server detail: {detail}',
+              { detail: [...errorMessage(error)].slice(0, 500).join('') },
+            ),
             data: [],
           });
         }

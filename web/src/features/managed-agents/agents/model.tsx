@@ -52,15 +52,15 @@ export function relativeTime(value: string, format?: (value: number, unit: Intl.
     if (Math.abs(seconds) < 60) {
       return format(0, 'second');
     }
-    const minutes = Math.round(seconds / 60);
+    const minutes = Math.trunc(seconds / 60);
     if (Math.abs(minutes) < 60) {
       return format(minutes, 'minute');
     }
-    const hours = Math.round(minutes / 60);
+    const hours = Math.trunc(minutes / 60);
     if (Math.abs(hours) < 24) {
       return format(hours, 'hour');
     }
-    return format(Math.round(hours / 24), 'day');
+    return format(Math.trunc(hours / 24), 'day');
   }
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
   if (seconds < 60) {

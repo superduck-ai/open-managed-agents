@@ -12,17 +12,18 @@ import (
 
 type MetadataValidator func(map[string]string) error
 
-func DecodeObjectBody(w http.ResponseWriter, r *http.Request, maxBodySize int64) (map[string]json.RawMessage, error) {
+func DecodeObjectBody[T any](w http.ResponseWriter, r *http.Request, maxBodySize int64) (T, error) {
+	var zero T
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var fields map[string]json.RawMessage
+	var body *T
 	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil {
-		return nil, errors.New("Invalid JSON body")
+	if err := decoder.Decode(&body); err != nil {
+		return zero, errors.New("Invalid JSON body")
 	}
-	if fields == nil {
-		return nil, errors.New("JSON body must be an object")
+	if body == nil {
+		return zero, errors.New("JSON body must be an object")
 	}
-	return fields, nil
+	return *body, nil
 }
 
 func MarshalRaw(value any) (json.RawMessage, error) {

@@ -3,8 +3,11 @@ package vaults
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -18,208 +21,295 @@ type credentialAuthState struct {
 	SecretPayload json.RawMessage
 }
 
+type mcpOAuthCredentialCreateInput struct {
+	MCPServerURL string                      `json:"mcp_server_url"`
+	AccessToken  string                      `json:"access_token"`
+	ExpiresAt    *string                     `json:"expires_at"`
+	Refresh      *mcpOAuthRefreshCreateInput `json:"refresh"`
+}
+
+type mcpOAuthRefreshCreateInput struct {
+	TokenEndpoint     string                  `json:"token_endpoint"`
+	ClientID          string                  `json:"client_id"`
+	TokenEndpointAuth *tokenEndpointAuthInput `json:"token_endpoint_auth"`
+	Scope             *string                 `json:"scope"`
+	Resource          *string                 `json:"resource"`
+	RefreshToken      string                  `json:"refresh_token"`
+}
+
+type tokenEndpointAuthInput struct {
+	Type         string `json:"type"`
+	ClientSecret string `json:"client_secret"`
+}
+
+type staticBearerCredentialCreateInput struct {
+	MCPServerURL string `json:"mcp_server_url"`
+	Token        string `json:"token"`
+}
+
+type environmentVariableCredentialCreateInput struct {
+	SecretName  string                     `json:"secret_name"`
+	SecretValue string                     `json:"secret_value"`
+	Networking  *credentialNetworkingInput `json:"networking"`
+}
+
+type credentialNetworkingInput struct {
+	Type         string   `json:"type"`
+	AllowedHosts []string `json:"allowed_hosts"`
+}
+
+type mcpOAuthCredentialUpdateInput struct {
+	MCPServerURL *string         `json:"mcp_server_url"`
+	AccessToken  *string         `json:"access_token"`
+	ExpiresAt    *string         `json:"expires_at"`
+	Refresh      json.RawMessage `json:"refresh"`
+}
+
+type mcpOAuthRefreshUpdateInput struct {
+	TokenEndpoint     *string         `json:"token_endpoint"`
+	ClientID          *string         `json:"client_id"`
+	TokenEndpointAuth json.RawMessage `json:"token_endpoint_auth"`
+	Scope             json.RawMessage `json:"scope"`
+	Resource          *string         `json:"resource"`
+	RefreshToken      *string         `json:"refresh_token"`
+}
+
+type staticBearerCredentialUpdateInput struct {
+	MCPServerURL *string `json:"mcp_server_url"`
+	Token        *string `json:"token"`
+}
+
+type environmentVariableCredentialUpdateInput struct {
+	SecretName  *string         `json:"secret_name"`
+	SecretValue *string         `json:"secret_value"`
+	Networking  json.RawMessage `json:"networking"`
+}
+
 func normalizeCredentialAuthForCreate(raw json.RawMessage) (credentialAuthState, error) {
-	fields, err := objectFromRaw(raw, "auth")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	authType, err := requiredString(fields, "type", "auth.type")
+	authType, err := credentialAuthTypeFromInput(raw)
 	if err != nil {
 		return credentialAuthState{}, err
 	}
 	switch authType {
-	case "mcp_oauth":
-		return normalizeMCPOAuthForCreate(fields)
-	case "static_bearer":
-		return normalizeStaticBearerForCreate(fields)
-	case "environment_variable":
-		return normalizeEnvironmentVariableForCreate(fields)
+	case credentialAuthTypeMCPOAuth:
+		var input mcpOAuthCredentialCreateInput
+		if err := decodeCredentialAuthInput(raw, &input); err != nil {
+			return credentialAuthState{}, err
+		}
+		return normalizeMCPOAuthForCreate(input)
+	case credentialAuthTypeStaticBearer:
+		var input staticBearerCredentialCreateInput
+		if err := decodeCredentialAuthInput(raw, &input); err != nil {
+			return credentialAuthState{}, err
+		}
+		return normalizeStaticBearerForCreate(input)
+	case credentialAuthTypeEnvironmentVariable:
+		var input environmentVariableCredentialCreateInput
+		if err := decodeCredentialAuthInput(raw, &input); err != nil {
+			return credentialAuthState{}, err
+		}
+		return normalizeEnvironmentVariableForCreate(input)
 	default:
 		return credentialAuthState{}, errors.New("auth.type must be mcp_oauth, static_bearer, or environment_variable")
 	}
 }
 
-func normalizeMCPOAuthForCreate(fields map[string]json.RawMessage) (credentialAuthState, error) {
-	serverURL, err := requiredString(fields, "mcp_server_url", "auth.mcp_server_url")
+func normalizeMCPOAuthForCreate(input mcpOAuthCredentialCreateInput) (credentialAuthState, error) {
+	serverURL, err := requireNonEmptyString(input.MCPServerURL, "auth.mcp_server_url")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
 	if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
 		return credentialAuthState{}, err
 	}
-	accessToken, err := requiredString(fields, "access_token", "auth.access_token")
+	accessToken, err := requireNonEmptyString(input.AccessToken, "auth.access_token")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	publicAuth := map[string]any{
-		"type":           "mcp_oauth",
-		"mcp_server_url": serverURL,
+	if input.ExpiresAt != nil {
+		if _, err := requireNonEmptyString(*input.ExpiresAt, "auth.expires_at"); err != nil {
+			return credentialAuthState{}, err
+		}
+		if err := validateRFC3339(*input.ExpiresAt, "auth.expires_at"); err != nil {
+			return credentialAuthState{}, err
+		}
+	}
+	publicAuth := &mcpOAuthCredentialAuth{
+		Type:         credentialAuthTypeMCPOAuth,
+		MCPServerURL: serverURL,
+		ExpiresAt:    input.ExpiresAt,
 	}
 	secretPayload := mcpOAuthCredentialSecret{
 		Type:        credentialAuthTypeMCPOAuth,
 		AccessToken: accessToken,
 	}
-	if expiresAt, ok, err := optionalString(fields, "expires_at", "auth.expires_at"); err != nil {
-		return credentialAuthState{}, err
-	} else if ok {
-		if err := validateRFC3339(expiresAt, "auth.expires_at"); err != nil {
-			return credentialAuthState{}, err
-		}
-		publicAuth["expires_at"] = expiresAt
-	}
-	if rawRefresh, ok := fields["refresh"]; ok && !isJSONNull(rawRefresh) {
-		publicRefresh, secretRefresh, err := normalizeMCPOAuthRefreshForCreate(rawRefresh)
+	if input.Refresh != nil {
+		publicRefresh, secretRefresh, err := normalizeMCPOAuthRefreshForCreate(*input.Refresh)
 		if err != nil {
 			return credentialAuthState{}, err
 		}
-		publicAuth["refresh"] = publicRefresh
+		publicAuth.Refresh = &publicRefresh
 		secretPayload.Refresh = &secretRefresh
 	}
-	return credentialAuthStateFromValues("mcp_oauth", serverURL, publicAuth, secretPayload)
+	return credentialAuthStateFromValues(credentialAuthTypeMCPOAuth, serverURL, publicAuth, secretPayload)
 }
 
-func normalizeMCPOAuthRefreshForCreate(raw json.RawMessage) (map[string]any, mcpOAuthRefreshSecret, error) {
-	fields, err := objectFromRaw(raw, "auth.refresh")
+func normalizeMCPOAuthRefreshForCreate(input mcpOAuthRefreshCreateInput) (mcpOAuthRefresh, mcpOAuthRefreshSecret, error) {
+	tokenEndpoint, err := requireNonEmptyString(input.TokenEndpoint, "auth.refresh.token_endpoint")
 	if err != nil {
-		return nil, mcpOAuthRefreshSecret{}, err
-	}
-	tokenEndpoint, err := requiredString(fields, "token_endpoint", "auth.refresh.token_endpoint")
-	if err != nil {
-		return nil, mcpOAuthRefreshSecret{}, err
+		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
 	if err := validateHTTPURL(tokenEndpoint, "auth.refresh.token_endpoint"); err != nil {
-		return nil, mcpOAuthRefreshSecret{}, err
+		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
-	clientID, err := requiredString(fields, "client_id", "auth.refresh.client_id")
+	clientID, err := requireNonEmptyString(input.ClientID, "auth.refresh.client_id")
 	if err != nil {
-		return nil, mcpOAuthRefreshSecret{}, err
+		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
-	refreshToken, err := requiredString(fields, "refresh_token", "auth.refresh.refresh_token")
+	refreshToken, err := requireNonEmptyString(input.RefreshToken, "auth.refresh.refresh_token")
 	if err != nil {
-		return nil, mcpOAuthRefreshSecret{}, err
+		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
-	publicTokenAuth, secretTokenAuth, err := normalizeTokenEndpointAuth(fields["token_endpoint_auth"])
+	if input.Scope != nil {
+		if _, err := requireNonEmptyString(*input.Scope, "auth.refresh.scope"); err != nil {
+			return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
+		}
+	}
+	if input.Resource != nil {
+		if _, err := requireNonEmptyString(*input.Resource, "auth.refresh.resource"); err != nil {
+			return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
+		}
+	}
+	publicTokenAuth, secretTokenAuth, err := normalizeTokenEndpointAuth(input.TokenEndpointAuth)
 	if err != nil {
-		return nil, mcpOAuthRefreshSecret{}, err
+		return mcpOAuthRefresh{}, mcpOAuthRefreshSecret{}, err
 	}
-	publicRefresh := map[string]any{
-		"token_endpoint":      tokenEndpoint,
-		"client_id":           clientID,
-		"token_endpoint_auth": publicTokenAuth,
-	}
-	secretRefresh := mcpOAuthRefreshSecret{
-		RefreshToken:      refreshToken,
-		TokenEndpointAuth: &secretTokenAuth,
-	}
-	if value, ok, err := optionalString(fields, "scope", "auth.refresh.scope"); err != nil {
-		return nil, mcpOAuthRefreshSecret{}, err
-	} else if ok {
-		publicRefresh["scope"] = value
-	}
-	if value, ok, err := optionalString(fields, "resource", "auth.refresh.resource"); err != nil {
-		return nil, mcpOAuthRefreshSecret{}, err
-	} else if ok {
-		publicRefresh["resource"] = value
-	}
-	return publicRefresh, secretRefresh, nil
+	return mcpOAuthRefresh{
+			TokenEndpoint:     tokenEndpoint,
+			ClientID:          clientID,
+			TokenEndpointAuth: publicTokenAuth,
+			Scope:             input.Scope,
+			Resource:          input.Resource,
+		}, mcpOAuthRefreshSecret{
+			RefreshToken:      refreshToken,
+			TokenEndpointAuth: &secretTokenAuth,
+		}, nil
 }
 
-func normalizeTokenEndpointAuth(raw json.RawMessage) (map[string]any, tokenEndpointAuthSecret, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return map[string]any{"type": "none"}, tokenEndpointAuthSecret{Type: "none"}, nil
+func normalizeTokenEndpointAuth(input *tokenEndpointAuthInput) (tokenEndpointAuth, tokenEndpointAuthSecret, error) {
+	if input == nil {
+		return tokenEndpointAuth{Type: "none"}, tokenEndpointAuthSecret{Type: "none"}, nil
 	}
-	fields, err := objectFromRaw(raw, "auth.refresh.token_endpoint_auth")
+	authType, err := requireNonEmptyString(input.Type, "auth.refresh.token_endpoint_auth.type")
 	if err != nil {
-		return nil, tokenEndpointAuthSecret{}, err
-	}
-	authType, err := requiredString(fields, "type", "auth.refresh.token_endpoint_auth.type")
-	if err != nil {
-		return nil, tokenEndpointAuthSecret{}, err
+		return tokenEndpointAuth{}, tokenEndpointAuthSecret{}, err
 	}
 	switch authType {
 	case "none":
-		return map[string]any{"type": "none"}, tokenEndpointAuthSecret{Type: "none"}, nil
+		return tokenEndpointAuth{Type: "none"}, tokenEndpointAuthSecret{Type: "none"}, nil
 	case "client_secret_basic", "client_secret_post":
-		clientSecret, err := requiredString(fields, "client_secret", "auth.refresh.token_endpoint_auth.client_secret")
+		clientSecret, err := requireNonEmptyString(input.ClientSecret, "auth.refresh.token_endpoint_auth.client_secret")
 		if err != nil {
-			return nil, tokenEndpointAuthSecret{}, err
+			return tokenEndpointAuth{}, tokenEndpointAuthSecret{}, err
 		}
-		return map[string]any{"type": authType}, tokenEndpointAuthSecret{Type: authType, ClientSecret: clientSecret}, nil
+		return tokenEndpointAuth{Type: authType}, tokenEndpointAuthSecret{Type: authType, ClientSecret: clientSecret}, nil
 	default:
-		return nil, tokenEndpointAuthSecret{}, errors.New("auth.refresh.token_endpoint_auth.type must be none, client_secret_basic, or client_secret_post")
+		return tokenEndpointAuth{}, tokenEndpointAuthSecret{}, errors.New("auth.refresh.token_endpoint_auth.type must be none, client_secret_basic, or client_secret_post")
 	}
 }
 
-func normalizeStaticBearerForCreate(fields map[string]json.RawMessage) (credentialAuthState, error) {
-	serverURL, err := requiredString(fields, "mcp_server_url", "auth.mcp_server_url")
+func normalizeStaticBearerForCreate(input staticBearerCredentialCreateInput) (credentialAuthState, error) {
+	serverURL, err := requireNonEmptyString(input.MCPServerURL, "auth.mcp_server_url")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
 	if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
 		return credentialAuthState{}, err
 	}
-	token, err := requiredString(fields, "token", "auth.token")
+	token, err := requireNonEmptyString(input.Token, "auth.token")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	publicAuth := map[string]any{"type": "static_bearer", "mcp_server_url": serverURL}
+	publicAuth := &staticBearerCredentialAuth{Type: credentialAuthTypeStaticBearer, MCPServerURL: serverURL}
 	secretPayload := staticBearerCredentialSecret{Type: credentialAuthTypeStaticBearer, Token: token}
-	return credentialAuthStateFromValues("static_bearer", serverURL, publicAuth, secretPayload)
+	return credentialAuthStateFromValues(credentialAuthTypeStaticBearer, serverURL, publicAuth, secretPayload)
 }
 
-func normalizeEnvironmentVariableForCreate(fields map[string]json.RawMessage) (credentialAuthState, error) {
-	secretName, err := requiredString(fields, "secret_name", "auth.secret_name")
+func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCreateInput) (credentialAuthState, error) {
+	secretName, err := requireNonEmptyString(input.SecretName, "auth.secret_name")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
 	if err := validateSecretName(secretName); err != nil {
 		return credentialAuthState{}, err
 	}
-	secretValue, err := requiredString(fields, "secret_value", "auth.secret_value")
+	secretValue, err := requireNonEmptyString(input.SecretValue, "auth.secret_value")
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	networking, err := normalizeCredentialNetworking(fields["networking"])
+	networking, err := normalizeCredentialNetworking(input.Networking)
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	publicAuth := map[string]any{
-		"type":        "environment_variable",
-		"secret_name": secretName,
-		"networking":  networking,
+	publicAuth := &environmentVariableCredentialAuth{
+		Type:       credentialAuthTypeEnvironmentVariable,
+		SecretName: secretName,
+		Networking: networking,
 	}
 	secretPayload := environmentVariableCredentialSecret{Type: credentialAuthTypeEnvironmentVariable, SecretValue: secretValue}
-	return credentialAuthStateFromValues("environment_variable", secretName, publicAuth, secretPayload)
+	return credentialAuthStateFromValues(credentialAuthTypeEnvironmentVariable, secretName, publicAuth, secretPayload)
 }
 
 func normalizeCredentialAuthForUpdate(current db.VaultCredential, currentSecret []byte, raw json.RawMessage) (credentialAuthState, error) {
-	fields, err := objectFromRaw(raw, "auth")
+	authType, err := credentialAuthTypeFromInput(raw)
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	authType, err := requiredString(fields, "type", "auth.type")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	if authType != current.AuthType {
+	if string(authType) != current.AuthType {
 		return credentialAuthState{}, errors.New("auth.type cannot be changed")
 	}
-	publicAuth := rawObjectMap(current.Auth)
-	publicAuth["type"] = current.AuthType
+	stored, err := decodeCredentialAuth(current.Auth)
+	if err != nil {
+		return credentialAuthState{}, fmt.Errorf("decode stored credential auth: %w", err)
+	}
 
-	switch current.AuthType {
-	case "mcp_oauth":
-		return normalizeMCPOAuthForUpdate(current, currentSecret, fields, publicAuth)
-	case "static_bearer":
-		return normalizeStaticBearerForUpdate(current, currentSecret, fields, publicAuth)
-	case "environment_variable":
-		return normalizeEnvironmentVariableForUpdate(current, currentSecret, fields, publicAuth)
+	switch authType {
+	case credentialAuthTypeMCPOAuth:
+		var input mcpOAuthCredentialUpdateInput
+		if err := decodeCredentialAuthInput(raw, &input); err != nil {
+			return credentialAuthState{}, err
+		}
+		publicAuth, ok := stored.value.(*mcpOAuthCredentialAuth)
+		if !ok {
+			return credentialAuthState{}, errors.New("stored credential auth type is invalid")
+		}
+		return normalizeMCPOAuthForUpdate(current, currentSecret, input, publicAuth)
+	case credentialAuthTypeStaticBearer:
+		var input staticBearerCredentialUpdateInput
+		if err := decodeCredentialAuthInput(raw, &input); err != nil {
+			return credentialAuthState{}, err
+		}
+		publicAuth, ok := stored.value.(*staticBearerCredentialAuth)
+		if !ok {
+			return credentialAuthState{}, errors.New("stored credential auth type is invalid")
+		}
+		return normalizeStaticBearerForUpdate(current, currentSecret, input, publicAuth)
+	case credentialAuthTypeEnvironmentVariable:
+		var input environmentVariableCredentialUpdateInput
+		if err := decodeCredentialAuthInput(raw, &input); err != nil {
+			return credentialAuthState{}, err
+		}
+		publicAuth, ok := stored.value.(*environmentVariableCredentialAuth)
+		if !ok {
+			return credentialAuthState{}, errors.New("stored credential auth type is invalid")
+		}
+		return normalizeEnvironmentVariableForUpdate(current, currentSecret, input, publicAuth)
 	default:
 		return credentialAuthState{}, errors.New("stored credential auth type is invalid")
 	}
 }
 
-func normalizeMCPOAuthForUpdate(current db.VaultCredential, currentSecret []byte, fields map[string]json.RawMessage, publicAuth map[string]any) (credentialAuthState, error) {
+func normalizeMCPOAuthForUpdate(current db.VaultCredential, currentSecret []byte, input mcpOAuthCredentialUpdateInput, publicAuth *mcpOAuthCredentialAuth) (credentialAuthState, error) {
 	secretPayload := mcpOAuthCredentialSecret{Type: credentialAuthTypeMCPOAuth}
 	if len(currentSecret) != 0 {
 		var err error
@@ -228,38 +318,51 @@ func normalizeMCPOAuthForUpdate(current db.VaultCredential, currentSecret []byte
 			return credentialAuthState{}, err
 		}
 	}
-	if _, ok := fields["mcp_server_url"]; ok {
+	if input.MCPServerURL != nil {
 		return credentialAuthState{}, errors.New("auth.mcp_server_url is immutable")
 	}
-	if rawAccessToken, ok := fields["access_token"]; ok {
-		accessToken, err := rawString(rawAccessToken, "auth.access_token")
+	if input.AccessToken != nil {
+		accessToken, err := requireNonEmptyString(*input.AccessToken, "auth.access_token")
 		if err != nil {
 			return credentialAuthState{}, err
 		}
 		secretPayload.AccessToken = accessToken
 	}
-	if rawExpiresAt, ok := fields["expires_at"]; ok {
-		expiresAt, err := rawString(rawExpiresAt, "auth.expires_at")
+	if input.ExpiresAt != nil {
+		expiresAt, err := requireNonEmptyString(*input.ExpiresAt, "auth.expires_at")
 		if err != nil {
 			return credentialAuthState{}, err
 		}
 		if err := validateRFC3339(expiresAt, "auth.expires_at"); err != nil {
 			return credentialAuthState{}, err
 		}
-		publicAuth["expires_at"] = expiresAt
+		publicAuth.ExpiresAt = &expiresAt
 	}
-	if rawRefresh, ok := fields["refresh"]; ok {
-		if isJSONNull(rawRefresh) {
-			delete(publicAuth, "refresh")
+	if len(input.Refresh) != 0 {
+		if isJSONNull(input.Refresh) {
+			publicAuth.Refresh = nil
 			secretPayload.Refresh = nil
-		} else if err := patchMCPOAuthRefreshForUpdate(publicAuth, &secretPayload, rawRefresh); err != nil {
+		} else if err := patchMCPOAuthRefreshForUpdate(publicAuth, &secretPayload, input.Refresh); err != nil {
 			return credentialAuthState{}, err
 		}
 	}
-	return credentialAuthStateFromValues(current.AuthType, current.CredentialKey, publicAuth, secretPayload)
+	if secretPayload.AccessToken == "" {
+		return credentialAuthState{}, ErrMissingSecretEnvelope
+	}
+	if publicAuth.Refresh != nil {
+		if secretPayload.Refresh == nil || secretPayload.Refresh.RefreshToken == "" {
+			return credentialAuthState{}, ErrMissingSecretEnvelope
+		}
+		tokenAuthType := publicAuth.Refresh.TokenEndpointAuth.Type
+		if (tokenAuthType == "client_secret_basic" || tokenAuthType == "client_secret_post") &&
+			(secretPayload.Refresh.TokenEndpointAuth == nil || secretPayload.Refresh.TokenEndpointAuth.ClientSecret == "") {
+			return credentialAuthState{}, ErrMissingSecretEnvelope
+		}
+	}
+	return credentialAuthStateFromValues(credentialAuthTypeMCPOAuth, current.CredentialKey, publicAuth, secretPayload)
 }
 
-func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []byte, fields map[string]json.RawMessage, publicAuth map[string]any) (credentialAuthState, error) {
+func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []byte, input staticBearerCredentialUpdateInput, publicAuth *staticBearerCredentialAuth) (credentialAuthState, error) {
 	secretPayload := staticBearerCredentialSecret{Type: credentialAuthTypeStaticBearer}
 	if len(currentSecret) != 0 {
 		var err error
@@ -269,28 +372,31 @@ func normalizeStaticBearerForUpdate(current db.VaultCredential, currentSecret []
 		}
 	}
 	key := current.CredentialKey
-	if rawServerURL, ok := fields["mcp_server_url"]; ok {
-		serverURL, err := rawString(rawServerURL, "auth.mcp_server_url")
+	if input.MCPServerURL != nil {
+		serverURL, err := requireNonEmptyString(*input.MCPServerURL, "auth.mcp_server_url")
 		if err != nil {
 			return credentialAuthState{}, err
 		}
 		if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
 			return credentialAuthState{}, err
 		}
-		publicAuth["mcp_server_url"] = serverURL
+		publicAuth.MCPServerURL = serverURL
 		key = serverURL
 	}
-	if rawToken, ok := fields["token"]; ok {
-		token, err := rawString(rawToken, "auth.token")
+	if input.Token != nil {
+		token, err := requireNonEmptyString(*input.Token, "auth.token")
 		if err != nil {
 			return credentialAuthState{}, err
 		}
 		secretPayload.Token = token
 	}
-	return credentialAuthStateFromValues(current.AuthType, key, publicAuth, secretPayload)
+	if secretPayload.Token == "" {
+		return credentialAuthState{}, ErrMissingSecretEnvelope
+	}
+	return credentialAuthStateFromValues(credentialAuthTypeStaticBearer, key, publicAuth, secretPayload)
 }
 
-func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSecret []byte, fields map[string]json.RawMessage, publicAuth map[string]any) (credentialAuthState, error) {
+func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSecret []byte, input environmentVariableCredentialUpdateInput, publicAuth *environmentVariableCredentialAuth) (credentialAuthState, error) {
 	secretPayload := environmentVariableCredentialSecret{Type: credentialAuthTypeEnvironmentVariable}
 	if len(currentSecret) != 0 {
 		var err error
@@ -299,154 +405,164 @@ func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSe
 			return credentialAuthState{}, err
 		}
 	}
-	if _, ok := fields["secret_name"]; ok {
+	if input.SecretName != nil {
 		return credentialAuthState{}, errors.New("auth.secret_name is immutable")
 	}
-	if rawSecretValue, ok := fields["secret_value"]; ok {
-		secretValue, err := rawString(rawSecretValue, "auth.secret_value")
+	if input.SecretValue != nil {
+		secretValue, err := requireNonEmptyString(*input.SecretValue, "auth.secret_value")
 		if err != nil {
 			return credentialAuthState{}, err
 		}
 		secretPayload.SecretValue = secretValue
 	}
-	if rawNetworking, ok := fields["networking"]; ok {
-		networking, err := normalizeCredentialNetworking(rawNetworking)
+	if len(input.Networking) != 0 {
+		var networkingInput *credentialNetworkingInput
+		if err := json.Unmarshal(input.Networking, &networkingInput); err != nil {
+			return credentialAuthState{}, errors.New("auth.networking must be an object")
+		}
+		networking, err := normalizeCredentialNetworking(networkingInput)
 		if err != nil {
 			return credentialAuthState{}, err
 		}
-		publicAuth["networking"] = networking
+		publicAuth.Networking = networking
 	}
-	return credentialAuthStateFromValues(current.AuthType, current.CredentialKey, publicAuth, secretPayload)
+	if secretPayload.SecretValue == "" {
+		return credentialAuthState{}, ErrMissingSecretEnvelope
+	}
+	return credentialAuthStateFromValues(credentialAuthTypeEnvironmentVariable, current.CredentialKey, publicAuth, secretPayload)
 }
 
-// authUpdateProvidesSecretReplacement reports whether an auth update body
-// carries enough secret material to reseal without opening an existing
-// envelope (used to repair credentials that lost their envelope).
-func authUpdateProvidesSecretReplacement(authType string, raw json.RawMessage) (bool, error) {
-	fields, err := objectFromRaw(raw, "auth")
-	if err != nil {
-		return false, err
+func patchMCPOAuthRefreshForUpdate(publicAuth *mcpOAuthCredentialAuth, secretPayload *mcpOAuthCredentialSecret, raw json.RawMessage) error {
+	var input mcpOAuthRefreshUpdateInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return errors.New("auth.refresh must be an object")
 	}
-	switch authType {
-	case "static_bearer":
-		_, ok := fields["token"]
-		return ok, nil
-	case "environment_variable":
-		_, ok := fields["secret_value"]
-		return ok, nil
-	case "mcp_oauth":
-		_, ok := fields["access_token"]
-		return ok, nil
-	default:
-		return false, nil
-	}
-}
-
-func patchMCPOAuthRefreshForUpdate(publicAuth map[string]any, secretPayload *mcpOAuthCredentialSecret, raw json.RawMessage) error {
-	fields, err := objectFromRaw(raw, "auth.refresh")
-	if err != nil {
-		return err
-	}
-	if _, ok := fields["token_endpoint"]; ok {
+	if input.TokenEndpoint != nil {
 		return errors.New("auth.refresh.token_endpoint is immutable")
 	}
-	if _, ok := fields["client_id"]; ok {
+	if input.ClientID != nil {
 		return errors.New("auth.refresh.client_id is immutable")
 	}
-	if _, ok := fields["resource"]; ok {
+	if input.Resource != nil {
 		return errors.New("auth.refresh.resource is immutable")
 	}
-	publicRefresh := nestedMap(publicAuth, "refresh")
-	if publicRefresh == nil {
+	if publicAuth.Refresh == nil {
 		return errors.New("auth.refresh cannot be added after creation")
 	}
 	if secretPayload.Refresh == nil {
 		secretPayload.Refresh = &mcpOAuthRefreshSecret{}
 	}
-	secretRefresh := secretPayload.Refresh
-	if rawRefreshToken, ok := fields["refresh_token"]; ok {
-		refreshToken, err := rawString(rawRefreshToken, "auth.refresh.refresh_token")
+	if input.RefreshToken != nil {
+		refreshToken, err := requireNonEmptyString(*input.RefreshToken, "auth.refresh.refresh_token")
 		if err != nil {
 			return err
 		}
-		secretRefresh.RefreshToken = refreshToken
+		secretPayload.Refresh.RefreshToken = refreshToken
 	}
-	if rawScope, ok := fields["scope"]; ok {
-		if isJSONNull(rawScope) {
-			delete(publicRefresh, "scope")
+	if len(input.Scope) != 0 {
+		if isJSONNull(input.Scope) {
+			publicAuth.Refresh.Scope = nil
 		} else {
-			scope, err := rawString(rawScope, "auth.refresh.scope")
-			if err != nil {
+			var scope string
+			if err := json.Unmarshal(input.Scope, &scope); err != nil {
+				return errors.New("auth.refresh.scope must be a string")
+			}
+			if _, err := requireNonEmptyString(scope, "auth.refresh.scope"); err != nil {
 				return err
 			}
-			publicRefresh["scope"] = scope
+			publicAuth.Refresh.Scope = &scope
 		}
 	}
-	if rawTokenAuth, ok := fields["token_endpoint_auth"]; ok {
-		publicTokenAuth, secretTokenAuth, err := normalizeTokenEndpointAuth(rawTokenAuth)
+	if len(input.TokenEndpointAuth) != 0 {
+		var tokenAuthInput *tokenEndpointAuthInput
+		if err := json.Unmarshal(input.TokenEndpointAuth, &tokenAuthInput); err != nil {
+			return errors.New("auth.refresh.token_endpoint_auth must be an object")
+		}
+		publicTokenAuth, secretTokenAuth, err := normalizeTokenEndpointAuth(tokenAuthInput)
 		if err != nil {
 			return err
 		}
-		publicRefresh["token_endpoint_auth"] = publicTokenAuth
-		secretRefresh.TokenEndpointAuth = &secretTokenAuth
+		publicAuth.Refresh.TokenEndpointAuth = publicTokenAuth
+		secretPayload.Refresh.TokenEndpointAuth = &secretTokenAuth
 	}
-	publicAuth["refresh"] = publicRefresh
 	return nil
 }
 
-func normalizeCredentialNetworking(raw json.RawMessage) (map[string]any, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return map[string]any{"type": "unrestricted"}, nil
+func normalizeCredentialNetworking(input *credentialNetworkingInput) (credentialAuthNetworking, error) {
+	if input == nil || input.Type == "" || input.Type == "unrestricted" {
+		return credentialAuthNetworking{Type: "unrestricted"}, nil
 	}
-	fields, err := objectFromRaw(raw, "auth.networking")
-	if err != nil {
-		return nil, err
+	if input.Type != "limited" {
+		return credentialAuthNetworking{}, errors.New("auth.networking.type must be unrestricted or limited")
 	}
-	networkType := rawStringOrEmpty(fields["type"])
-	if networkType == "" {
-		networkType = "unrestricted"
+	if len(input.AllowedHosts) > 16 {
+		return credentialAuthNetworking{}, errors.New("auth.networking.allowed_hosts must contain at most 16 hosts")
 	}
-	switch networkType {
-	case "unrestricted":
-		return map[string]any{"type": "unrestricted"}, nil
-	case "limited":
-		hosts := []string{}
-		if rawHosts, ok := fields["allowed_hosts"]; ok && !isJSONNull(rawHosts) {
-			values, err := stringArray(rawHosts, "auth.networking.allowed_hosts")
-			if err != nil {
-				return nil, err
-			}
-			if len(values) > 16 {
-				return nil, errors.New("auth.networking.allowed_hosts must contain at most 16 hosts")
-			}
-			for _, host := range values {
-				if err := validateCredentialHost(host); err != nil {
-					return nil, err
-				}
-			}
-			hosts = values
+	for _, host := range input.AllowedHosts {
+		if _, err := requireNonEmptyString(host, "auth.networking.allowed_hosts entry"); err != nil {
+			return credentialAuthNetworking{}, err
 		}
-		return map[string]any{"type": "limited", "allowed_hosts": hosts}, nil
-	default:
-		return nil, errors.New("auth.networking.type must be unrestricted or limited")
+		if err := validateCredentialHost(host); err != nil {
+			return credentialAuthNetworking{}, err
+		}
 	}
+	hosts := input.AllowedHosts
+	return credentialAuthNetworking{Type: "limited", AllowedHosts: &hosts}, nil
 }
 
-func credentialAuthStateFromValues(authType, key string, publicAuth map[string]any, secretPayload any) (credentialAuthState, error) {
-	publicRaw, err := marshalRaw(publicAuth)
+func credentialAuthTypeFromInput(raw json.RawMessage) (credentialAuthType, error) {
+	var input struct {
+		Type credentialAuthType `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return "", errors.New("auth must be an object with a string type")
+	}
+	if input.Type == "" {
+		return "", errors.New("auth.type is required")
+	}
+	return input.Type, nil
+}
+
+func decodeCredentialAuthInput(raw json.RawMessage, input any) error {
+	if err := json.Unmarshal(raw, input); err != nil {
+		return fmt.Errorf("auth has invalid field types: %w", err)
+	}
+	return nil
+}
+
+func credentialAuthStateFromValues(authType credentialAuthType, key string, publicAuth credentialAuthVariant, secretPayload credentialSecretVariant) (credentialAuthState, error) {
+	publicRaw, err := json.Marshal(credentialAuth{value: publicAuth})
 	if err != nil {
 		return credentialAuthState{}, err
 	}
-	secretRaw, err := marshalRaw(secretPayload)
+	secretRaw, err := json.Marshal(secretPayload)
 	if err != nil {
 		return credentialAuthState{}, err
 	}
 	return credentialAuthState{
-		AuthType:      authType,
+		AuthType:      string(authType),
 		Key:           key,
 		PublicAuth:    publicRaw,
 		SecretPayload: secretRaw,
 	}, nil
+}
+
+func validateHTTPURL(value, name string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be a valid URL", name)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("%s must use http or https", name)
+	}
+	return nil
+}
+
+func validateRFC3339(value, name string) error {
+	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+		return fmt.Errorf("%s must be RFC3339", name)
+	}
+	return nil
 }
 
 func validateSecretName(value string) error {

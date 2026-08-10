@@ -120,7 +120,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fields, err := httpapi.DecodeObjectBody(w, r, maxAgentBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxAgentBodySize)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
@@ -305,7 +305,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		return
 	}
 
-	fields, err := httpapi.DecodeObjectBody(w, r, maxAgentBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxAgentBodySize)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return

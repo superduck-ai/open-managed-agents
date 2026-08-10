@@ -5,11 +5,17 @@ import (
 	"fmt"
 )
 
+type credentialSecretVariant interface {
+	credentialSecretVariant()
+}
+
 type mcpOAuthCredentialSecret struct {
 	Type        credentialAuthType     `json:"type"`
 	AccessToken string                 `json:"access_token"`
 	Refresh     *mcpOAuthRefreshSecret `json:"refresh,omitempty"`
 }
+
+func (mcpOAuthCredentialSecret) credentialSecretVariant() {}
 
 type mcpOAuthRefreshSecret struct {
 	RefreshToken      string                   `json:"refresh_token"`
@@ -26,10 +32,14 @@ type staticBearerCredentialSecret struct {
 	Token string             `json:"token"`
 }
 
+func (staticBearerCredentialSecret) credentialSecretVariant() {}
+
 type environmentVariableCredentialSecret struct {
 	Type        credentialAuthType `json:"type"`
 	SecretValue string             `json:"secret_value"`
 }
+
+func (environmentVariableCredentialSecret) credentialSecretVariant() {}
 
 func decodeMCPOAuthCredentialSecret(raw []byte) (mcpOAuthCredentialSecret, error) {
 	var secret mcpOAuthCredentialSecret

@@ -275,6 +275,10 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if startup["api_base_url"] != "http://host.docker.internal:18081" || startup["session_id"] != "cse_test" || startup["use_code_sessions"] != true {
 		t.Fatalf("unexpected startup context: %#v", startup)
 	}
+	claudeArgs := startup["claude_code_args"].(map[string]any)
+	if claudeArgs["settings"] != launcherSettingsPath {
+		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
+	}
 	startupEnv := startup["environment_variables"].(map[string]any)
 	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" ||
 		startupEnv["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] != "1" ||
@@ -369,7 +373,8 @@ func TestBuildEnvironmentManagerPayloadProxiesMCPConfig(t *testing.T) {
 	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{
 		"mcp_config":{"mcpServers":{"ms-api":{"type":"http","url":"https://learn.microsoft.com/api/mcp?view=azure"}}},
-		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384}
+		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384},
+		"claude_code_args":{"mcp-config":"/tmp/managed-agent-mcp-config.json"}
 	}`)
 	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
 	if err != nil {
@@ -380,6 +385,10 @@ func TestBuildEnvironmentManagerPayloadProxiesMCPConfig(t *testing.T) {
 		t.Fatalf("decode payload: %v", err)
 	}
 	startup := body["startup_context"].(map[string]any)
+	claudeArgs := startup["claude_code_args"].(map[string]any)
+	if claudeArgs["settings"] != launcherSettingsPath || claudeArgs["mcp-config"] != managedAgentMCPConfigPath {
+		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
+	}
 	mcpConfig := startup["mcp_config"].(map[string]any)
 	server := mcpConfig["mcpServers"].(map[string]any)["ms-api"].(map[string]any)
 	wantURL := "http://host.docker.internal:18081/v2/ccr-sessions/cse_test/mcp?mcp_url=https%3A%2F%2Flearn.microsoft.com%2Fapi%2Fmcp%3Fview%3Dazure"

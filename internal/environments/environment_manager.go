@@ -18,6 +18,7 @@ const (
 	defaultClaudeAgentVersion     = "2.1.120"
 	defaultClaudePath             = "/opt/claude-code/bin/claude"
 	defaultEnvironmentWorkDir     = "/home/user"
+	launcherSettingsPath          = "/root/.claude/launcher-settings.json"
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
 )
 
@@ -279,6 +280,9 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	}
 	startupContext["use_code_sessions"] = true
 	startupContext["session_id"] = codeSessionID
+	claudeCodeArgs := mapStringAnyValue(startupContext["claude_code_args"])
+	claudeCodeArgs["settings"] = launcherSettingsPath
+	startupContext["claude_code_args"] = claudeCodeArgs
 	environmentVariables := mapStringAnyValue(startupContext["environment_variables"])
 	environmentVariables["CLAUDE_CODE_REMOTE"] = "true" // 进入 remote-session 路径并初始化 CCR relay。
 	environmentVariables["CLAUDE_CODE_POST_FOR_SESSION_INGRESS_V2"] = "1"

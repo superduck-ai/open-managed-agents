@@ -10,6 +10,7 @@ import {
   type EnvironmentApiResponse,
   type EnvironmentEditValues,
   type EnvironmentPackageRow,
+  type I18nMsg,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
   type ManagedEntitySection,
@@ -242,12 +243,18 @@ export function removeMemoryFromBranches(branches: Record<string, MemoryBranchSt
   return next;
 }
 
-export function memoryPreviewContent(memory: MemoryApiResponse) {
+export function memoryPreviewContent(memory: MemoryApiResponse, msg?: I18nMsg) {
   if (memory.content) {
     return memory.content;
   }
   const bytes = memory.content_size_bytes ?? 0;
-  return bytes ? `${formatBytes(bytes)} stored at ${memory.path}` : '';
+  if (!bytes) {
+    return '';
+  }
+  const size = formatBytes(bytes);
+  return msg
+    ? msg('managedAgents.memoryStores.storedAt', '{size} stored at {path}', { size, path: memory.path })
+    : `${size} stored at ${memory.path}`;
 }
 
 export function memoryFileName(path: string) {
@@ -259,8 +266,15 @@ export function memoryFileName(path: string) {
 export function cellsForEntity(
   section: ManagedEntitySection,
   entity: ManagedEntityApiResponse,
+  msg?: I18nMsg,
+  formatRelativeTime?: (value: number, unit: Intl.RelativeTimeFormatUnit) => string,
 ): Record<string, ReactNode> {
-  const status = <StatusPill tone={statusPillTone(section, entity)}>{entityStatusLabel(entity)}</StatusPill>;
+  const status = (
+    <StatusPill tone={statusPillTone(section, entity)}>
+      {msg ? localizedEntityStatusLabel(section, entity, msg) : entityStatusLabel(entity)}
+    </StatusPill>
+  );
+  const created = relativeTime(entity.created_at, formatRelativeTime);
 
   switch (section) {
     case 'sessions':
@@ -268,34 +282,36 @@ export function cellsForEntity(
         Name: entityDisplayName(section, entity),
         Status: status,
         Agent: <CompactChip icon={Bot}>{entityAgentLabel(entity)}</CompactChip>,
-        Created: relativeTime(entity.created_at),
+        Created: created,
       };
     case 'deployments':
       return {
         Name: entityDisplayName(section, entity),
         Status: status,
         Agent: <CompactChip icon={Bot}>{entityAgentLabel(entity)}</CompactChip>,
-        Trigger: deploymentTrigger(entity as DeploymentApiResponse),
-        Created: relativeTime(entity.created_at),
+        Trigger: msg
+          ? localizedDeploymentTrigger(entity as DeploymentApiResponse, msg)
+          : deploymentTrigger(entity as DeploymentApiResponse),
+        Created: created,
       };
     case 'environments':
       return {
         Name: entityDisplayName(section, entity),
         Status: status,
         Type: 'Cloud',
-        'Updated at': relativeTime(entity.updated_at),
+        'Updated at': relativeTime(entity.updated_at, formatRelativeTime),
       };
     case 'credential-vaults':
       return {
         Name: entityDisplayName(section, entity),
         Status: status,
-        Created: relativeTime(entity.created_at),
+        Created: created,
       };
     case 'memory-stores':
       return {
         Name: entityDisplayName(section, entity),
         Status: status,
-        Created: relativeTime(entity.created_at),
+        Created: created,
       };
   }
 }
@@ -347,6 +363,39 @@ export function entityStatusLabel(entity: ManagedEntityApiResponse) {
     return titleCase(entity.state);
   }
   return 'Active';
+}
+
+export function localizedEntityStatusLabel(
+  section: ManagedEntitySection,
+  entity: ManagedEntityApiResponse,
+  msg: I18nMsg,
+) {
+  if (entity.archived_at) {
+    return msg('common.archived', 'Archived');
+  }
+  const status = 'status' in entity ? entity.status : 'state' in entity ? entity.state : 'active';
+  const normalized = typeof status === 'string' ? status.toLowerCase() : 'active';
+  if (section === 'sessions') {
+    switch (normalized) {
+      case 'active':
+        return msg('managedAgents.sessions.statusActive', 'Active');
+      case 'idle':
+        return msg('managedAgents.sessions.statusIdle', 'Idle');
+      case 'running':
+        return msg('managedAgents.sessions.statusRunning', 'Running');
+      case 'rescheduling':
+        return msg('managedAgents.sessions.statusRescheduling', 'Rescheduling');
+      case 'terminated':
+        return msg('managedAgents.sessions.statusTerminated', 'Terminated');
+    }
+  }
+  if (normalized === 'active') {
+    return msg('common.active', 'Active');
+  }
+  if (normalized === 'paused') {
+    return msg('managedAgents.filters.paused', 'Paused');
+  }
+  return titleCase(normalized);
 }
 
 export function statusPillTone(section: ManagedEntitySection, entity: ManagedEntityApiResponse): 'neutral' | 'success' {
@@ -456,42 +505,74 @@ export function entityTimezone(entity: ManagedEntityApiResponse) {
   return typeof timezone === 'string' && timezone.trim() ? timezone : localTimezone();
 }
 
-export function detailRowsForEntity(section: ManagedEntitySection, entity: ManagedEntityApiResponse) {
+export function detailRowsForEntity(
+  section: ManagedEntitySection,
+  entity: ManagedEntityApiResponse,
+  msg?: I18nMsg,
+  formatRelativeTime?: (value: number, unit: Intl.RelativeTimeFormatUnit) => string,
+) {
+  const label = (key: string, fallback: string) => (msg ? msg(key, fallback) : fallback);
+  const status = msg ? localizedEntityStatusLabel(section, entity, msg) : entityStatusLabel(entity);
+  const created = relativeTime(entity.created_at, formatRelativeTime);
+  const updated = relativeTime(entity.updated_at, formatRelativeTime);
   switch (section) {
     case 'sessions':
       return [
-        { label: 'Status', value: entityStatusLabel(entity) },
-        { label: 'Agent', value: entityAgentLabel(entity) },
-        { label: 'Environment', value: (entity as SessionApiResponse).environment_id || '—' },
-        { label: 'Deployment', value: (entity as SessionApiResponse).deployment_id || '—' },
+        { label: label('common.status', 'Status'), value: status },
+        { label: label('managedAgents.common.agent', 'Agent'), value: entityAgentLabel(entity) },
+        {
+          label: label('managedAgents.environments.kindTitle', 'Environment'),
+          value: (entity as SessionApiResponse).environment_id || '—',
+        },
+        {
+          label: label('managedAgents.deployments.kindTitle', 'Deployment'),
+          value: (entity as SessionApiResponse).deployment_id || '—',
+        },
       ];
     case 'deployments':
       return [
-        { label: 'Status', value: entityStatusLabel(entity) },
-        { label: 'Agent', value: entityAgentLabel(entity) },
-        { label: 'Environment', value: (entity as DeploymentApiResponse).environment_id || '—' },
-        { label: 'Trigger', value: deploymentTrigger(entity as DeploymentApiResponse) },
+        { label: label('common.status', 'Status'), value: status },
+        { label: label('managedAgents.common.agent', 'Agent'), value: entityAgentLabel(entity) },
+        {
+          label: label('managedAgents.environments.kindTitle', 'Environment'),
+          value: (entity as DeploymentApiResponse).environment_id || '—',
+        },
+        {
+          label: label('managedAgents.common.trigger', 'Trigger'),
+          value: msg
+            ? localizedDeploymentTrigger(entity as DeploymentApiResponse, msg)
+            : deploymentTrigger(entity as DeploymentApiResponse),
+        },
       ];
     case 'environments':
       return [
-        { label: 'Status', value: entityStatusLabel(entity) },
-        { label: 'Type', value: 'Cloud' },
-        { label: 'Scope', value: (entity as EnvironmentApiResponse).scope || 'workspace' },
-        { label: 'Created', value: relativeTime(entity.created_at) },
+        { label: label('common.status', 'Status'), value: status },
+        { label: label('analytics.table.type', 'Type'), value: label('managedAgents.environments.cloud', 'Cloud') },
+        {
+          label: label('managedAgents.environments.overview.scope', 'Scope'),
+          value: (entity as EnvironmentApiResponse).scope || 'workspace',
+        },
+        { label: label('common.created', 'Created'), value: created },
       ];
     case 'credential-vaults':
       return [
-        { label: 'Status', value: entityStatusLabel(entity) },
-        { label: 'Created', value: relativeTime(entity.created_at) },
-        { label: 'Last updated', value: relativeTime(entity.updated_at) },
-        { label: 'Type', value: 'Credential vault' },
+        { label: label('common.status', 'Status'), value: status },
+        { label: label('common.created', 'Created'), value: created },
+        { label: label('managedAgents.common.lastUpdated', 'Last updated'), value: updated },
+        {
+          label: label('analytics.table.type', 'Type'),
+          value: label('managedAgents.credentialVaults.kindTitle', 'Vault'),
+        },
       ];
     case 'memory-stores':
       return [
-        { label: 'Status', value: entityStatusLabel(entity) },
-        { label: 'Created', value: relativeTime(entity.created_at) },
-        { label: 'Last updated', value: relativeTime(entity.updated_at) },
-        { label: 'Type', value: 'Memory store' },
+        { label: label('common.status', 'Status'), value: status },
+        { label: label('common.created', 'Created'), value: created },
+        { label: label('managedAgents.common.lastUpdated', 'Last updated'), value: updated },
+        {
+          label: label('analytics.table.type', 'Type'),
+          value: label('managedAgents.memoryStores.kindTitle', 'Memory store'),
+        },
       ];
   }
 }
@@ -509,6 +590,12 @@ export function deploymentTrigger(deployment: DeploymentApiResponse) {
   return 'Manual';
 }
 
+export function localizedDeploymentTrigger(deployment: DeploymentApiResponse, msg: I18nMsg) {
+  return deployment.schedule
+    ? msg('managedAgents.deployments.trigger.scheduled', 'Scheduled')
+    : msg('managedAgents.deployments.trigger.manual', 'Manual');
+}
+
 export function deploymentAgentVersion(deployment: DeploymentApiResponse) {
   const directVersion = (deployment as { agent_version?: unknown }).agent_version;
   if (typeof directVersion === 'number') {
@@ -519,14 +606,14 @@ export function deploymentAgentVersion(deployment: DeploymentApiResponse) {
   return typeof version === 'number' ? version : null;
 }
 
-export function deploymentRunStatus(run: DeploymentRunApiResponse) {
+export function deploymentRunStatus(run: DeploymentRunApiResponse, msg?: I18nMsg) {
   if (run.error) {
-    return 'Failed';
+    return msg ? msg('managedAgents.deployments.runStatus.failed', 'Failed') : 'Failed';
   }
   if (run.session_id) {
-    return 'Succeeded';
+    return msg ? msg('managedAgents.deployments.runStatus.succeeded', 'Succeeded') : 'Succeeded';
   }
-  return 'Running';
+  return msg ? msg('managedAgents.deployments.runStatus.running', 'Running') : 'Running';
 }
 
 export function environmentEditValues(entity: EnvironmentApiResponse): EnvironmentEditValues {
@@ -670,15 +757,19 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
   return body;
 }
 
-export function credentialAuthLabel(auth: unknown) {
+export function credentialAuthLabel(auth: unknown, msg?: I18nMsg) {
   const record = objectRecord(auth);
   if (record.type === 'environment_variable') {
-    return 'Environment variable';
+    return msg
+      ? msg('managedAgents.credentialVaults.credentialDialog.environmentVariable', 'Environment variable')
+      : 'Environment variable';
   }
   if (record.type === 'mcp_oauth') {
     return 'MCP OAuth';
   }
-  return 'Static bearer';
+  return msg
+    ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Static bearer token')
+    : 'Static bearer';
 }
 
 export function columnWidth(section: ManagedEntitySection, column: string) {

@@ -5,7 +5,7 @@ import {
   sessionThreadIsArchived,
   sessionThreadIsChild,
 } from '../api';
-import { entityAgentId, entityStatusLabel, entityVaultIds } from '../resources/ManagedResources';
+import { entityAgentId, entityVaultIds, localizedEntityStatusLabel } from '../resources/ManagedResources';
 import {
   type DisplayEventEntry,
   type DisplayEventType,
@@ -46,7 +46,7 @@ export function buildSessionDetailSummary(
   msg: I18nMsg,
 ) {
   const title = session.title || sessionAgentDisplayName(session.agent) || session.id;
-  const statusLabel = entityStatusLabel(session);
+  const statusLabel = localizedEntityStatusLabel('sessions', session, msg);
   const chips: SessionDetailSummaryChip[] = [];
   const agentLabel = sessionAgentDisplayName(session.agent) || entityAgentId(session);
   if (agentLabel) {

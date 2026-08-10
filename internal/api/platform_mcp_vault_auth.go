@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -206,14 +207,20 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		return
 	}
 
+	clientID, clientSecret := resolveMCPVaultOAuthClientCredentials(
+		req.ClientID,
+		req.ClientSecret,
+		s.cfg.Vault.PlatformOAuthClients,
+		mcpServerURL,
+	)
 	clientID, clientSecret, tokenAuthMethod, err := resolvePlatformMCPOAuthClient(
 		r.Context(),
 		platformMCPVaultAuthHTTPClient,
 		discovery,
 		redirectURL,
 		req.DisplayName,
-		req.ClientID,
-		req.ClientSecret,
+		clientID,
+		clientSecret,
 	)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "resolve mcp oauth client", "mcp_server_host", platformMCPLogHost(mcpServerURL), "error", err)
@@ -714,6 +721,19 @@ func resolvePlatformMCPOAuthClient(ctx context.Context, client *http.Client, dis
 		return "", "", "", errors.New("authorization server has no dynamic registration endpoint")
 	}
 	return registerPlatformMCPOAuthClient(ctx, client, discovery, redirectURL, displayName)
+}
+
+// resolveMCPVaultOAuthClientCredentials applies BYO-over-Platform priority:
+// non-empty BYO client_id wins; otherwise an exact Platform OAuth Client
+// registry hit supplies credentials; otherwise both stay empty for DCR.
+func resolveMCPVaultOAuthClientCredentials(byoClientID, byoClientSecret string, clients []config.PlatformOAuthClientConfig, mcpServerURL string) (string, string) {
+	if strings.TrimSpace(byoClientID) != "" {
+		return strings.TrimSpace(byoClientID), strings.TrimSpace(byoClientSecret)
+	}
+	if entry, ok := config.FindPlatformOAuthClient(clients, mcpServerURL); ok {
+		return strings.TrimSpace(entry.ClientID), strings.TrimSpace(entry.ClientSecret)
+	}
+	return "", ""
 }
 
 func registerPlatformMCPOAuthClient(ctx context.Context, client *http.Client, discovery platformMCPOAuthDiscovery, redirectURL, displayName string) (string, string, string, error) {

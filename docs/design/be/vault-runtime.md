@@ -222,6 +222,18 @@ Sandbox 拿到的 `mcp_config` 只有 proxy URL + session JWT，没有上游 tok
 
 > 注：云 KMS 自动轮换 / DisableKey 另议。
 
+## Platform OAuth Client（登记）
+
+部署方可在 `vault.platform_oauth_clients` 配置通用 registry（列表），每项绑定精确 `mcp_server_url` + `client_id` + `client_secret`（本地/dev 可内联；勿提交真实 secret）。
+
+`POST .../mcp/vault-auth/start` 解析 client 顺序：
+
+1. 请求带非空 BYO `client_id` → 用 BYO（覆盖 Platform）
+2. 否则精确匹配 Platform OAuth Client registry → 注入平台 client
+3. 否则走既有 DCR；无 registration endpoint 则失败
+
+Redirect 仍由前端传入 `{origin}/oauth/vault/success`。控制台 Optional Client 字段保留。用户 access/refresh token 仍进个人 Credential 信封。
+
 ## 不做（注入 MVP）
 
 - `mcp_oauth` 注入与 refresh
@@ -238,3 +250,4 @@ Sandbox 拿到的 `mcp_config` 只有 proxy URL + session JWT，没有上游 tok
 - https://www.anthropic.com/engineering/managed-agents
 - HashiCorp Vault：`vault/barrier_aes_gcm.go`、`shamir/`
 - Related: #65、#52、#121、#137、#142
+- Ubiquitous language: `CONTEXT.md`（Secret envelope / Runtime credential injection / Credential URL match / Platform OAuth Client）

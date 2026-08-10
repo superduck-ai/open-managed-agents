@@ -25,9 +25,20 @@ type Config struct {
 	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
 }
 
-// VaultConfig configures at-rest encryption for vault credential secrets.
+// VaultConfig configures at-rest encryption for vault credential secrets and
+// optional Platform OAuth Clients used during vault MCP OAuth enrollment.
 type VaultConfig struct {
-	MasterKey MasterKeyConfig `yaml:"master_key"`
+	MasterKey            MasterKeyConfig             `yaml:"master_key"`
+	PlatformOAuthClients []PlatformOAuthClientConfig `yaml:"platform_oauth_clients"`
+}
+
+// PlatformOAuthClientConfig is one deployment-owned OAuth client bound to an
+// exact mcp_server_url. When vault-auth/start has no BYO client_id, a matching
+// entry supplies client_id/client_secret before falling back to DCR.
+type PlatformOAuthClientConfig struct {
+	MCPServerURL string `yaml:"mcp_server_url"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
 }
 
 // MasterKeyConfig supplies the key-encryption key (KEK) that wraps per-secret

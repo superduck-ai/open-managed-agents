@@ -25,6 +25,7 @@ import {
   DeploymentTextArea,
   DeploymentTextField,
   LockedAgentReferenceField,
+  ManagedComboboxField,
   ManagedSelectField,
   ManagedTextArea,
   ManagedTextField,
@@ -278,7 +279,8 @@ export function CredentialDialog({
       return;
     }
     // Open synchronously while we still have the click gesture; await would lose activation.
-    // Keep a real popup; larger size helps GitHub enable Authorize via JS.
+    // Keep a real popup (not a new tab). Size matters: GitHub enables Authorize via JS and
+    // often leaves it unresponsive in tiny popups.
     const popup = window.open(
       'about:blank',
       'vault-oauth',
@@ -356,12 +358,14 @@ export function CredentialDialog({
             {showMcpUrl ? (
               <>
                 {showDirectoryPicker && directoryOptions.length > 0 ? (
-                  <ManagedSelectField
+                  <ManagedComboboxField
                     label="MCP server"
                     value={
                       directoryOptions.some((option) => option.id === values.mcpServerUrl) ? values.mcpServerUrl : ''
                     }
                     placeholder="Choose from directory or enter URL below"
+                    searchPlaceholder="Search MCP directory..."
+                    emptyLabel="No MCP servers found."
                     options={directoryOptions}
                     onChange={(mcpServerUrl) => patchValues({ mcpServerUrl })}
                   />

@@ -238,4 +238,3 @@ Sandbox 拿到的 `mcp_config` 只有 proxy URL + session JWT，没有上游 tok
 - https://www.anthropic.com/engineering/managed-agents
 - HashiCorp Vault：`vault/barrier_aes_gcm.go`、`shamir/`
 - Related: #65、#52、#121、#137、#142
-- Ubiquitous language: `CONTEXT.md`（Secret envelope / Runtime credential injection / Credential URL match）

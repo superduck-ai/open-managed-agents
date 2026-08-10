@@ -11,16 +11,30 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 
 	"github.com/google/uuid"
 )
 
-func workerPayloadForPublicEvent(codeSessionID string, raw json.RawMessage, fallback time.Time) (json.RawMessage, error) {
+func workerPayloadForPublicEvent(
+	codeSessionID string,
+	raw json.RawMessage,
+	fallback time.Time,
+	fileBindings []sessioneventfiles.Binding,
+) (json.RawMessage, error) {
 	object, err := decodeJSONObject(raw)
 	if err != nil {
 		return nil, err
 	}
 	eventType := stringField(object, "type")
+	raw, err = sessioneventfiles.WorkerPayload(eventType, raw, fileBindings)
+	if err != nil {
+		return nil, err
+	}
+	object, err = decodeJSONObject(raw)
+	if err != nil {
+		return nil, err
+	}
 	now := firstPayloadTime(object, fallback)
 	if now.IsZero() {
 		now = time.Now().UTC()

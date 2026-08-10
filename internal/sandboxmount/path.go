@@ -69,6 +69,23 @@ func FileBackingPath(mountPath string) (string, error) {
 	return backingPath, nil
 }
 
+// SandboxFilePath maps an authoritative /uploads Filestore path to the path
+// visible inside the managed-agent Sandbox.
+func SandboxFilePath(backingPath string) (string, error) {
+	if err := filestorepath.Validate(backingPath, false); err != nil {
+		return "", fmt.Errorf("file backing path %w", err)
+	}
+	if !strings.HasPrefix(backingPath, FileSource+"/") {
+		return "", fmt.Errorf("file backing path must be under %q", FileSource)
+	}
+	for _, value := range backingPath {
+		if unicode.IsControl(value) {
+			return "", errors.New("file backing path must not contain control characters")
+		}
+	}
+	return SandboxUploadsMount + strings.TrimPrefix(backingPath, FileSource), nil
+}
+
 // ValidateFileMountPaths 校验重复路径与祖先/后代冲突。
 func ValidateFileMountPaths(mountPaths []string) error {
 	backingPaths := make([]string, len(mountPaths))

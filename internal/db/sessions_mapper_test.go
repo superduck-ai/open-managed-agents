@@ -131,6 +131,14 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	)
 	assertMapperSQLContains(t, toolUseBound, "e.event_type IN ( $3 , $4 )")
 	assertMapperSQLContains(t, toolUseBound, ") IN ( $5 , $6 )")
+
+	fileBindingsBound := buildSessionResourceMapperListEventFileBindings(
+		yourbatis.DialectPostgres,
+		"workspace-uuid",
+		"ses_test",
+	)
+	assertMapperSQLContains(t, fileBindingsBound, "file.external_id AS file_external_id")
+	assertMapperSQLContains(t, fileBindingsBound, "ORDER BY resource.created_at ASC, resource.uuid ASC")
 }
 
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {

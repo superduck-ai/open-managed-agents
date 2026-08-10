@@ -10,6 +10,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 )
 
 // ManagedAgentCreateInput 汇总为 managed agent 创建 code session 和签发 sandbox 凭证所需的上下文。
@@ -157,12 +158,17 @@ func (s *Service) ActivateManagedAgentCodeSession(
 		if err != nil {
 			return err
 		}
+		storedBindings, err := tx.ListSessionEventFileBindings(ctx, lockedSession)
+		if err != nil {
+			return err
+		}
+		fileBindings := workerFileBindings(storedBindings)
 		inboundInputs := make([]db.AppendCodeSessionEventInput, 0, len(sessionEvents))
 		for _, event := range sessionEvents {
 			if !shouldForwardPublicEventToWorker(event.EventType) {
 				continue
 			}
-			inbound, err := s.convertSessionEventToInbound(lockedCodeSession.ExternalID, event)
+			inbound, err := s.convertSessionEventToInbound(lockedCodeSession.ExternalID, event, fileBindings)
 			if err != nil {
 				return err
 			}
@@ -187,8 +193,9 @@ func (s *Service) ActivateManagedAgentCodeSession(
 func (s *Service) convertSessionEventToInbound(
 	codeSessionID string,
 	event db.SessionEvent,
+	fileBindings []sessioneventfiles.Binding,
 ) (db.AppendCodeSessionEventInput, error) {
-	payload, err := workerPayloadForPublicEvent(codeSessionID, event.Payload, event.ProcessedAt)
+	payload, err := workerPayloadForPublicEvent(codeSessionID, event.Payload, event.ProcessedAt, fileBindings)
 	if err != nil {
 		return db.AppendCodeSessionEventInput{}, err
 	}

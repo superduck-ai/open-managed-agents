@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 
 	"github.com/google/uuid"
 )
@@ -57,6 +58,11 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 	if codeSession.Status != "active" {
 		return nil
 	}
+	storedBindings, err := s.db.ListSessionEventFileBindings(ctx, session.WorkspaceUUID, session.ExternalID)
+	if err != nil {
+		return err
+	}
+	fileBindings := workerFileBindings(storedBindings)
 	payloads := make([]json.RawMessage, 0, len(events))
 	for _, event := range events {
 		if !shouldForwardPublicEventToWorker(event.EventType) {
@@ -71,7 +77,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 				continue
 			}
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.ProcessedAt)
+		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.ProcessedAt, fileBindings)
 		if err != nil {
 			s.logger.ErrorContext(ctx, "convert public session event to code session payload", "session_id", session.ExternalID, "event_id", event.ExternalID, "error", err)
 			continue
@@ -79,6 +85,18 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		payloads = append(payloads, payload)
 	}
 	return s.QueueRawPublicSessionEvents(ctx, codeSession, payloads)
+}
+
+func workerFileBindings(bindings []db.SessionEventFileBinding) []sessioneventfiles.Binding {
+	result := make([]sessioneventfiles.Binding, len(bindings))
+	for index, binding := range bindings {
+		result[index] = sessioneventfiles.Binding{
+			FileID:   binding.FileExternalID,
+			Path:     binding.Path,
+			MimeType: binding.MimeType,
+		}
+	}
+	return result
 }
 
 func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {

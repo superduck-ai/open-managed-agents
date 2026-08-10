@@ -13,6 +13,7 @@ type ManagedAgentActivationTx struct {
 	codeSessionInboundEventMapper CodeSessionInboundEventMapper
 	sessionMapper                 SessionMapper
 	sessionEventMapper            SessionEventMapper
+	sessionResourceMapper         SessionResourceMapper
 }
 
 // WithManagedAgentActivationTx owns the database transaction lifecycle while
@@ -27,8 +28,26 @@ func (d *DB) WithManagedAgentActivationTx(
 			codeSessionInboundEventMapper: NewCodeSessionInboundEventMapper(executor),
 			sessionMapper:                 NewSessionMapper(executor),
 			sessionEventMapper:            NewSessionEventMapper(executor),
+			sessionResourceMapper:         NewSessionResourceMapper(executor),
 		})
 	})
+}
+
+// ListSessionEventFileBindings returns active file mounts while activation
+// holds the owning Session row lock.
+func (tx ManagedAgentActivationTx) ListSessionEventFileBindings(
+	ctx context.Context,
+	session Session,
+) ([]SessionEventFileBinding, error) {
+	rows, err := tx.sessionResourceMapper.ListEventFileBindings(
+		ctx,
+		session.WorkspaceUUID,
+		session.ExternalID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return sessionEventFileBindingsFromRows(rows), nil
 }
 
 // ListSessionEventsForActivation returns complete public history in insertion order.

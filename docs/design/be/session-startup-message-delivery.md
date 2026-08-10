@@ -8,7 +8,10 @@ Session。快照之后、Code Session 创建之前发送的消息虽然已经写
 
 ## 设计
 
-`session_events` 是启动输入的唯一事实源，不增加临时 queue、watermark 或公开状态。
+`session_events.payload` 是启动输入的唯一公开事实源，不增加临时 queue、watermark、第二份
+Session Event payload 或公开状态。Files API 引用只在 activation 生成 Code Session inbound
+时转换为 Claude Code 可读取的挂载路径，详见
+[Session 事件文件引用](./session-event-file-references.md)。
 
 Send Events 与 Code Session activation 都先锁同一条 Session 行：
 
@@ -63,8 +66,9 @@ sequenceDiagram
 3. 调用 `ActivateManagedAgentCodeSession`；
 4. activation 事务锁定 Session 和 initializing Code Session；
 5. 按 `created_at ASC, id ASC` 读取完整 `session_events`；
-6. 过滤并转换可转发事件，幂等写入 inbound；
-7. 将 Code Session 切为 `active` 并提交。
+6. 读取当前活动 File Resource，过滤公开历史并生成 worker 专用 payload；
+7. 幂等写入 inbound；
+8. 将 Code Session 切为 `active` 并提交。
 
 任一历史转换、inbound 写入或状态更新失败时，activation 事务整体回滚，Code Session 保持
 `initializing`。Deployment initial events 已经属于 `session_events`，无需单独交接路径。

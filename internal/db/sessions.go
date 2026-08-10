@@ -153,10 +153,19 @@ type ListSessionThreadsPageParams struct {
 }
 
 type CreateSessionInput struct {
-	Session   Session
-	Thread    SessionThread
-	Resources []CreateSessionResourceInput
-	Work      EnvironmentWork
+	Session       Session
+	Thread        SessionThread
+	Resources     []CreateSessionResourceInput
+	InitialEvents []SessionEvent
+	Work          EnvironmentWork
+}
+
+// SessionEventFileBinding describes one active Files API object mounted into a
+// Session. Path is the authoritative Filestore path under /uploads.
+type SessionEventFileBinding struct {
+	FileExternalID string
+	Path           string
+	MimeType       string
 }
 
 // CreateSessionResourceInput contains the normalized resource row and its
@@ -480,25 +489,10 @@ func (d *DB) AppendSessionEvents(
 	outcomeEvaluations json.RawMessage,
 ) ([]SessionEvent, error) {
 	var created []SessionEvent
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		sessionMapper := NewSessionMapper(executor)
-		row, found, txErr := sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
-		if txErr != nil {
-			return txErr
-		}
-		if !found {
-			return ErrNotFound
-		}
-		session := row.session()
-		if session.ArchivedAt != nil {
-			return ErrInvalidState
-		}
-		created, txErr = insertSessionEventsTx(ctx, executor, session, events, false)
-		if txErr != nil || len(outcomeEvaluations) == 0 {
-			return txErr
-		}
-		_, txErr = sessionMapper.SetOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, agentJSONArg(outcomeEvaluations))
-		return mapNoRows(txErr)
+	err := d.WithSessionEventWriteTx(ctx, workspaceUUID, sessionExternalID, func(tx SessionEventWriteTx, session Session) error {
+		var txErr error
+		created, txErr = tx.AppendEvents(ctx, session, events, outcomeEvaluations)
+		return txErr
 	})
 	return created, err
 }

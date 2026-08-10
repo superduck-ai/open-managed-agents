@@ -125,6 +125,24 @@
         AND deleted_at IS NULL
     </update>
 
+    <select id="ListEventFileBindings" resultType="sessionEventFileBindingRow">
+        SELECT file.external_id AS file_external_id,
+        resource.path,
+        file.mime_type
+        FROM session_resources resource
+        JOIN files file
+        ON file.workspace_uuid = resource.workspace_uuid
+        AND file.uuid = resource.file_uuid
+        AND file.deleted_at IS NULL
+        WHERE resource.workspace_uuid = #{workspaceUUID}
+        AND resource.session_external_id = #{sessionExternalID}
+        AND resource.resource_type = 'file'
+        AND resource.payload IS NOT NULL
+        AND resource.path IS NOT NULL
+        AND resource.deleted_at IS NULL
+        ORDER BY resource.created_at ASC, resource.uuid ASC
+    </select>
+
     <insert id="InsertDirectory" result="returning" resultType="int64">
         INSERT INTO session_resources (
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,

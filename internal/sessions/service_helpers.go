@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
 	"github.com/google/uuid"
@@ -148,6 +149,7 @@ func (h *Handler) resourceFromFields(
 	payload := map[string]any{"id": resourceID, "type": resourceType}
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
+	var fileMimeType string
 	switch resourceType {
 	case sessionresource.FileType:
 		fileID, err := sessionresource.ParseFileID(fields)
@@ -172,6 +174,7 @@ func (h *Handler) resourceFromFields(
 		}
 		payload = fileSpec.PayloadFields(resourceID)
 		normalizedFileSpec = &fileSpec
+		fileMimeType = file.MimeType
 	case "github_repository":
 		url, err := parseRequiredStringField(fields, "url")
 		if err != nil {
@@ -228,7 +231,8 @@ func (h *Handler) resourceFromFields(
 			CreatedAt:         now,
 			UpdatedAt:         now,
 		},
-		fileSpec: normalizedFileSpec,
+		fileSpec:     normalizedFileSpec,
+		fileMimeType: fileMimeType,
 	}, nil
 }
 
@@ -287,6 +291,9 @@ func normalizeInputEvent(
 	}
 	payloadRaw, err := httpapi.MarshalRaw(payload)
 	if err != nil {
+		return db.SessionEvent{}, nil, false, err
+	}
+	if err := sessioneventfiles.ValidatePublicEvent(eventType, payloadRaw); err != nil {
 		return db.SessionEvent{}, nil, false, err
 	}
 	return db.SessionEvent{

@@ -67,6 +67,11 @@ type KeyProvider interface {
 | `auth` | jsonb，非秘密（如 `mcp_server_url`）。`static_bearer` 更新时可改 URL，并同步 `credential_key` |
 | `secret_payload` | **已删除**。明文秘密不再落库；仅进程内 transient 用于 seal/open/merge |
 
+`auth` 在 Yourbatis Mapper 中仍以 JSONB 原始字节扫描，但不会作为 `json.RawMessage` 扩散到运行时策略或
+API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析为 `mcp_oauth`、`static_bearer` 或
+`environment_variable` 的命名 schema；未知类型或具体字段类型不匹配时 fail-closed。HTTP PATCH 为区分
+字段省略与显式 `null`，只在请求边界保留原始字段，完成合并和校验后再写回规范化的公开 auth JSON。
+
 新增 migration `00049_add_vault_secret_envelope.sql`（Direct cutover：同一次迁移加信封列并丢弃明文列）：
 
 | 列 | 类型 | 说明 |

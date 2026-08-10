@@ -1,8 +1,6 @@
 package vaults
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/url"
 	"strings"
 
@@ -24,11 +22,6 @@ type InjectionDecision struct {
 	Credential *db.VaultCredential
 }
 
-type mcpAuthConfig struct {
-	Type         string `json:"type"`
-	MCPServerURL string `json:"mcp_server_url"`
-}
-
 // DecideInjection walks credentials in vault_ids order. First matching static_bearer
 // wins; same-host coverage without an injectable path match rejects.
 func DecideInjection(requestURL *url.URL, credentials []db.VaultCredential) InjectionDecision {
@@ -38,11 +31,26 @@ func DecideInjection(requestURL *url.URL, credentials []db.VaultCredential) Inje
 	hostCovered := false
 	for i := range credentials {
 		cred := &credentials[i]
-		cfg, err := parseMCPAuthConfig(cred.Auth)
-		if err != nil || cfg.MCPServerURL == "" {
+		auth, err := decodeCredentialAuth(cred.Auth)
+		if err != nil {
 			continue
 		}
-		serverURL, err := url.Parse(cfg.MCPServerURL)
+		var rawServerURL string
+		var authType credentialAuthType
+		switch value := auth.value.(type) {
+		case *mcpOAuthCredentialAuth:
+			rawServerURL = value.MCPServerURL
+			authType = value.Type
+		case *staticBearerCredentialAuth:
+			rawServerURL = value.MCPServerURL
+			authType = value.Type
+		default:
+			continue
+		}
+		if rawServerURL == "" {
+			continue
+		}
+		serverURL, err := url.Parse(rawServerURL)
 		if err != nil || serverURL.Host == "" {
 			continue
 		}
@@ -53,7 +61,7 @@ func DecideInjection(requestURL *url.URL, credentials []db.VaultCredential) Inje
 		if !pathPrefixMatch(serverURL.Path, requestURL.Path) {
 			continue
 		}
-		if !isInjectableStaticBearer(cred.AuthType, cfg.Type) {
+		if !isInjectableStaticBearer(cred.AuthType, string(authType)) {
 			continue
 		}
 		return InjectionDecision{Kind: InjectionInject, Credential: cred}
@@ -107,15 +115,4 @@ func isInjectableStaticBearer(authType, cfgType string) bool {
 		typ = strings.TrimSpace(cfgType)
 	}
 	return typ == "static_bearer"
-}
-
-func parseMCPAuthConfig(raw json.RawMessage) (mcpAuthConfig, error) {
-	var cfg mcpAuthConfig
-	if len(raw) == 0 {
-		return cfg, fmt.Errorf("empty auth")
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return cfg, err
-	}
-	return cfg, nil
 }

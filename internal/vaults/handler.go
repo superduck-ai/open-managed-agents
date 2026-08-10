@@ -62,7 +62,7 @@ type vaultPageResponse struct {
 type credentialResponse struct {
 	ID          string          `json:"id"`
 	ArchivedAt  *string         `json:"archived_at"`
-	Auth        json.RawMessage `json:"auth"`
+	Auth        credentialAuth  `json:"auth"`
 	CreatedAt   string          `json:"created_at"`
 	Metadata    json.RawMessage `json:"metadata"`
 	Type        string          `json:"type"`
@@ -545,7 +545,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	}
 	parentVaultID := created.VaultExternalID
 	h.enqueueWebhookWithOptions(r, principal, "vault_credential.created", created.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
-	httpapi.WriteJSON(w, http.StatusOK, responseFromCredential(created))
+	h.writeCredentialResponse(w, r, created)
 }
 
 func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) {
@@ -590,9 +590,11 @@ func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list credentials"))
 		return
 	}
-	data := make([]credentialResponse, 0, len(records))
-	for _, record := range records {
-		data = append(data, responseFromCredential(record))
+	data, err := responsesFromCredentials(records)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "decode vault credential auth", "error", err)
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list credentials"))
+		return
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
@@ -607,7 +609,7 @@ func (h *Handler) retrieveCredentialRoute(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromCredential(credential))
+	h.writeCredentialResponse(w, r, credential)
 }
 
 func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) {
@@ -709,7 +711,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update credential"))
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromCredential(updated))
+	h.writeCredentialResponse(w, r, updated)
 }
 
 func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request) {
@@ -731,7 +733,7 @@ func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request)
 	}
 	parentVaultID := record.VaultExternalID
 	h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", record.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
-	httpapi.WriteJSON(w, http.StatusOK, responseFromCredential(record))
+	h.writeCredentialResponse(w, r, record)
 }
 
 func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) {
@@ -868,18 +870,44 @@ func responseFromVault(vault db.Vault) vaultResponse {
 	}
 }
 
-func responseFromCredential(credential db.VaultCredential) credentialResponse {
+func responseFromCredential(credential db.VaultCredential) (credentialResponse, error) {
+	auth, err := decodeCredentialAuth(credential.Auth)
+	if err != nil {
+		return credentialResponse{}, fmt.Errorf("decode credential %s auth: %w", credential.ExternalID, err)
+	}
 	return credentialResponse{
 		ID:          credential.ExternalID,
 		ArchivedAt:  optionalTime(credential.ArchivedAt),
-		Auth:        rawOr(credential.Auth, `{}`),
+		Auth:        auth,
 		CreatedAt:   formatTime(credential.CreatedAt),
 		Metadata:    rawOr(credential.Metadata, `{}`),
 		Type:        "vault_credential",
 		UpdatedAt:   formatTime(credential.UpdatedAt),
 		VaultID:     credential.VaultExternalID,
 		DisplayName: credential.DisplayName,
+	}, nil
+}
+
+func responsesFromCredentials(credentials []db.VaultCredential) ([]credentialResponse, error) {
+	responses := make([]credentialResponse, 0, len(credentials))
+	for _, credential := range credentials {
+		response, err := responseFromCredential(credential)
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, response)
 	}
+	return responses, nil
+}
+
+func (h *Handler) writeCredentialResponse(w http.ResponseWriter, r *http.Request, credential db.VaultCredential) {
+	response, err := responseFromCredential(credential)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "decode vault credential auth", "credential_id", credential.ExternalID, "error", err)
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not encode credential"))
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusOK, response)
 }
 
 func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {

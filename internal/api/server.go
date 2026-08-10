@@ -116,7 +116,7 @@ func NewServer(deps ServerDeps) *Server {
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
 		agents:               agents.NewHandler(deps.Config, deps.DB, webhookEnqueuer, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger),
+		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets),
 		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, deps.DeploymentScheduler, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),

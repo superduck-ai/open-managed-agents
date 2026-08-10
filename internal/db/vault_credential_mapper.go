@@ -93,4 +93,5 @@ type VaultCredentialMapper interface {
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (vaultCredentialRow, error)
 	DeleteByExternalID(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (int64, error)
 	ListPage(ctx context.Context, params listVaultCredentialsMapperParams) ([]vaultCredentialRow, error)
+	ListActiveByVaultUUIDs(ctx context.Context, workspaceUUID string, vaultUUIDs []string) ([]vaultCredentialRow, error)
 }

@@ -217,7 +217,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxDeploymentBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxDeploymentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -438,7 +438,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	fields, err := httpapi.DecodeObjectBody(w, r, maxDeploymentBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxDeploymentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return

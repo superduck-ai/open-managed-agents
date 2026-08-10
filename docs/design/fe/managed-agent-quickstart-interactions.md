@@ -4,8 +4,6 @@
 
 本文记录 `/workspaces/{workspace_id}/agent-quickstart` 的对话呈现、问题确认和顶部进度条契约。键盘发送行为仍由 [Managed Agent Quickstart Composer 键盘交互](./managed-agent-quickstart-composer.md) 定义；模型提示词语言由 [Quickstart / Agent Builder 提示词 i18n](./agent/quickstart-prompt-i18n.md) 定义。
 
-本文中的 `Question set`、`Interaction card` 与 `Explicit confirmation` 采用仓库根目录 [领域词汇表](../../../CONTEXT.md) 的定义。
-
 ## 目标
 
 - 把 Quickstart 呈现为连续的对话记录，使用户能够回看每一次说明、工具动作、问题和结果。

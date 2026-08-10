@@ -5,7 +5,7 @@
 -- Pre-existing plaintext is discarded with the dropped column; there is no
 -- Expand/Backfill dual-read window. Envelope completeness and active/archived
 -- lifecycle rules are enforced in application write paths, not CHECK
--- constraints. See docs/design/be/vault-runtime.md and CONTEXT.md.
+-- constraints. See docs/design/be/vault-runtime.md.
 --
 -- IF NOT EXISTS / IF EXISTS keep this safe when an earlier local migration
 -- number already added the envelope columns (renumbered from 00047 -> 00049).

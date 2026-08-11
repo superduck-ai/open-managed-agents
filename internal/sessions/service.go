@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
@@ -550,7 +551,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	now := time.Now().UTC()
 	var (
 		created         []db.SessionEvent
-		eventBindings   []sessioneventfiles.Binding
+		eventBindings   []sessioncontract.EventFileBinding
 		outcomesChanged bool
 		inputErr        error
 	)
@@ -564,7 +565,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 			if txErr != nil {
 				return txErr
 			}
-			bindings := eventFileBindingsFromDB(storedBindings)
+			bindings := storedBindings
 			eventBindings = bindings
 			events := make([]db.SessionEvent, 0, len(inputs))
 			normalizedSession := lockedSession

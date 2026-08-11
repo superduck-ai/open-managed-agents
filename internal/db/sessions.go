@@ -160,14 +160,6 @@ type CreateSessionInput struct {
 	Work          EnvironmentWork
 }
 
-// SessionEventFileBinding describes one active Files API object mounted into a
-// Session. Path is the authoritative Filestore path under /uploads.
-type SessionEventFileBinding struct {
-	FileExternalID string
-	Path           string
-	MimeType       string
-}
-
 // CreateSessionResourceInput contains the normalized resource row and its
 // optional Filestore binding. CreateSessionResource applies all write-time
 // invariants while holding the owning Session row lock.

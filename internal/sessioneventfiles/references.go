@@ -9,16 +9,10 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 const userMessageType = "user.message"
-
-// Binding maps a Files API ID to its active mount in one Session.
-type Binding struct {
-	FileID   string
-	Path     string
-	MimeType string
-}
 
 type eventEnvelope struct {
 	Content []json.RawMessage `json:"content"`
@@ -49,7 +43,7 @@ func ValidatePublicEvent(eventType string, raw json.RawMessage) error {
 
 // ValidateMountedReferences verifies that every file-source block is attached
 // to the current Session. bindings must already be scoped by workspace/session.
-func ValidateMountedReferences(eventType string, raw json.RawMessage, bindings []Binding) error {
+func ValidateMountedReferences(eventType string, raw json.RawMessage, bindings []sessioncontract.EventFileBinding) error {
 	references, err := referencesFromEvent(eventType, raw)
 	if err != nil {
 		return err
@@ -60,7 +54,7 @@ func ValidateMountedReferences(eventType string, raw json.RawMessage, bindings [
 
 // WorkerPayload replaces public file-source blocks with Claude Code @ path
 // mentions while preserving the original public event outside this function.
-func WorkerPayload(eventType string, raw json.RawMessage, bindings []Binding) (json.RawMessage, error) {
+func WorkerPayload(eventType string, raw json.RawMessage, bindings []sessioncontract.EventFileBinding) (json.RawMessage, error) {
 	references, err := referencesFromEvent(eventType, raw)
 	if err != nil {
 		return nil, err
@@ -175,14 +169,17 @@ func isFileSourceBlock(raw json.RawMessage) (bool, error) {
 	return err == nil && block != nil && source != nil && source.Type == "file", err
 }
 
-func resolveReferences(references []reference, bindings []Binding) ([]Binding, error) {
-	byFileID := make(map[string]Binding, len(bindings))
+func resolveReferences(
+	references []reference,
+	bindings []sessioncontract.EventFileBinding,
+) ([]sessioncontract.EventFileBinding, error) {
+	byFileID := make(map[string]sessioncontract.EventFileBinding, len(bindings))
 	for _, binding := range bindings {
 		if _, exists := byFileID[binding.FileID]; !exists {
 			byFileID[binding.FileID] = binding
 		}
 	}
-	resolved := make([]Binding, 0, len(references))
+	resolved := make([]sessioncontract.EventFileBinding, 0, len(references))
 	for _, reference := range references {
 		binding, ok := byFileID[reference.fileID]
 		if !ok {

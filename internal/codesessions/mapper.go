@@ -11,6 +11,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 
 	"github.com/google/uuid"
@@ -20,7 +21,7 @@ func workerPayloadForPublicEvent(
 	codeSessionID string,
 	raw json.RawMessage,
 	fallback time.Time,
-	fileBindings []sessioneventfiles.Binding,
+	fileBindings []sessioncontract.EventFileBinding,
 ) (json.RawMessage, error) {
 	object, err := decodeJSONObject(raw)
 	if err != nil {

@@ -7,13 +7,14 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 )
 
 func normalizeInitialSessionEvents(
 	session db.Session,
 	raw json.RawMessage,
-	bindings []sessioneventfiles.Binding,
+	bindings []sessioncontract.EventFileBinding,
 	now time.Time,
 ) ([]db.SessionEvent, json.RawMessage, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {

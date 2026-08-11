@@ -15,7 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 
 	"github.com/google/uuid"
 )
@@ -48,7 +48,7 @@ func (s *Service) QueuePublicSessionEvents(
 	ctx context.Context,
 	session db.Session,
 	events []db.SessionEvent,
-	fileBindings []sessioneventfiles.Binding,
+	fileBindings []sessioncontract.EventFileBinding,
 ) error {
 	if s == nil || len(events) == 0 {
 		return nil
@@ -85,18 +85,6 @@ func (s *Service) QueuePublicSessionEvents(
 		payloads = append(payloads, payload)
 	}
 	return s.QueueRawPublicSessionEvents(ctx, codeSession, payloads)
-}
-
-func workerFileBindings(bindings []db.SessionEventFileBinding) []sessioneventfiles.Binding {
-	result := make([]sessioneventfiles.Binding, len(bindings))
-	for index, binding := range bindings {
-		result[index] = sessioneventfiles.Binding{
-			FileID:   binding.FileExternalID,
-			Path:     binding.Path,
-			MimeType: binding.MimeType,
-		}
-	}
-	return result
 }
 
 func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {

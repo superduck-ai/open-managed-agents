@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 func TestReferenceValidationFailures(t *testing.T) {
@@ -12,7 +14,7 @@ func TestReferenceValidationFailures(t *testing.T) {
 		name        string
 		eventType   string
 		payload     string
-		bindings    []Binding
+		bindings    []sessioncontract.EventFileBinding
 		publicError bool
 		want        string
 	}{
@@ -26,7 +28,7 @@ func TestReferenceValidationFailures(t *testing.T) {
 			name:      "image mime type mismatch",
 			eventType: "user.message",
 			payload:   `{"type":"user.message","content":[{"type":"image","source":{"type":"file","file_id":"file_text"}}]}`,
-			bindings: []Binding{{
+			bindings: []sessioncontract.EventFileBinding{{
 				FileID: "file_text", Path: "/uploads/not-image.txt", MimeType: "text/plain",
 			}},
 			want: "not a supported image",
@@ -49,14 +51,14 @@ func TestReferenceValidationFailures(t *testing.T) {
 			name:      "padded file ID uses exact match",
 			eventType: "user.message",
 			payload:   `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":" file_doc "}}]}`,
-			bindings:  []Binding{{FileID: "file_doc", Path: "/uploads/doc.pdf", MimeType: "application/pdf"}},
+			bindings:  []sessioncontract.EventFileBinding{{FileID: "file_doc", Path: "/uploads/doc.pdf", MimeType: "application/pdf"}},
 			want:      "Session Resources API",
 		},
 		{
 			name:        "file block outside user message",
 			eventType:   "system.message",
 			payload:     `{"type":"system.message","content":[{"type":"document","source":{"type":"file","file_id":"file_doc"}}]}`,
-			bindings:    []Binding{{FileID: "file_doc", Path: "/uploads/doc.pdf", MimeType: "application/pdf"}},
+			bindings:    []sessioncontract.EventFileBinding{{FileID: "file_doc", Path: "/uploads/doc.pdf", MimeType: "application/pdf"}},
 			publicError: true,
 			want:        "only supported in user.message",
 		},
@@ -97,7 +99,7 @@ func TestWorkerPayloadInjectsDeduplicatedMountedPaths(t *testing.T) {
 			{"type":"image","source":{"type":"file","file_id":"file_image"}}
 		]
 	}`)
-	workerPayload, err := WorkerPayload("user.message", publicPayload, []Binding{
+	workerPayload, err := WorkerPayload("user.message", publicPayload, []sessioncontract.EventFileBinding{
 		{FileID: "file_doc", Path: `/uploads/reference "document".pdf`, MimeType: "application/pdf"},
 		{FileID: "file_image", Path: "/uploads/chart image.png", MimeType: "image/png"},
 	})

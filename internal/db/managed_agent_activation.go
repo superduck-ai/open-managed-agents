@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
+
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -38,7 +40,7 @@ func (d *DB) WithManagedAgentActivationTx(
 func (tx ManagedAgentActivationTx) ListSessionEventFileBindings(
 	ctx context.Context,
 	session Session,
-) ([]SessionEventFileBinding, error) {
+) ([]sessioncontract.EventFileBinding, error) {
 	rows, err := tx.sessionResourceMapper.ListEventFileBindings(
 		ctx,
 		session.WorkspaceUUID,

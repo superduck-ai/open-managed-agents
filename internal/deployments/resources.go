@@ -17,7 +17,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
 	"github.com/google/uuid"
@@ -464,8 +463,8 @@ func sessionResourcesFromDeployment(
 func deploymentEventFileBindings(
 	resources []db.CreateSessionResourceInput,
 	filesByID map[string]db.FileRecord,
-) ([]sessioneventfiles.Binding, error) {
-	bindings := make([]sessioneventfiles.Binding, 0, len(resources))
+) ([]sessioncontract.EventFileBinding, error) {
+	bindings := make([]sessioncontract.EventFileBinding, 0, len(resources))
 	for _, resource := range resources {
 		if resource.FileMount == nil {
 			continue
@@ -474,7 +473,7 @@ func deploymentEventFileBindings(
 		if !ok {
 			return nil, fmt.Errorf("file not found: %s", resource.FileMount.FileExternalID)
 		}
-		bindings = append(bindings, sessioneventfiles.Binding{
+		bindings = append(bindings, sessioncontract.EventFileBinding{
 			FileID:   file.ExternalID,
 			Path:     resource.FileMount.Path,
 			MimeType: file.MimeType,

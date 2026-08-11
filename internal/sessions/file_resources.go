@@ -2,7 +2,7 @@ package sessions
 
 import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -15,8 +15,8 @@ type normalizedSessionResource struct {
 	fileMimeType string
 }
 
-func eventFileBindingsFromResources(resources []normalizedSessionResource) ([]sessioneventfiles.Binding, error) {
-	bindings := make([]sessioneventfiles.Binding, 0, len(resources))
+func eventFileBindingsFromResources(resources []normalizedSessionResource) ([]sessioncontract.EventFileBinding, error) {
+	bindings := make([]sessioncontract.EventFileBinding, 0, len(resources))
 	for _, resource := range resources {
 		if resource.fileSpec == nil {
 			continue
@@ -25,25 +25,13 @@ func eventFileBindingsFromResources(resources []normalizedSessionResource) ([]se
 		if err != nil {
 			return nil, err
 		}
-		bindings = append(bindings, sessioneventfiles.Binding{
+		bindings = append(bindings, sessioncontract.EventFileBinding{
 			FileID:   binding.FileID,
 			Path:     binding.Path,
 			MimeType: resource.fileMimeType,
 		})
 	}
 	return bindings, nil
-}
-
-func eventFileBindingsFromDB(bindings []db.SessionEventFileBinding) []sessioneventfiles.Binding {
-	result := make([]sessioneventfiles.Binding, len(bindings))
-	for index, binding := range bindings {
-		result[index] = sessioneventfiles.Binding{
-			FileID:   binding.FileExternalID,
-			Path:     binding.Path,
-			MimeType: binding.MimeType,
-		}
-	}
-	return result
 }
 
 func validateNormalizedSessionResources(resources []normalizedSessionResource) error {

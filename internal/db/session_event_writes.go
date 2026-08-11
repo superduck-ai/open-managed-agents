@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
+
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -51,7 +53,7 @@ func (d *DB) WithSessionEventWriteTx(
 func (tx SessionEventWriteTx) ListFileBindings(
 	ctx context.Context,
 	session Session,
-) ([]SessionEventFileBinding, error) {
+) ([]sessioncontract.EventFileBinding, error) {
 	rows, err := tx.sessionResourceMapper.ListEventFileBindings(
 		ctx,
 		session.WorkspaceUUID,
@@ -63,13 +65,13 @@ func (tx SessionEventWriteTx) ListFileBindings(
 	return sessionEventFileBindingsFromRows(rows), nil
 }
 
-func sessionEventFileBindingsFromRows(rows []sessionEventFileBindingRow) []SessionEventFileBinding {
-	bindings := make([]SessionEventFileBinding, len(rows))
+func sessionEventFileBindingsFromRows(rows []sessionEventFileBindingRow) []sessioncontract.EventFileBinding {
+	bindings := make([]sessioncontract.EventFileBinding, len(rows))
 	for index, row := range rows {
-		bindings[index] = SessionEventFileBinding{
-			FileExternalID: row.FileExternalID,
-			Path:           row.Path,
-			MimeType:       row.MimeType,
+		bindings[index] = sessioncontract.EventFileBinding{
+			FileID:   row.FileExternalID,
+			Path:     row.Path,
+			MimeType: row.MimeType,
 		}
 	}
 	return bindings

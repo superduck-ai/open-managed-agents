@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 
 	"github.com/go-chi/chi/v5"
@@ -114,33 +113,35 @@ func (h *Handler) streamThreadEventsRoute(w http.ResponseWriter, r *http.Request
 		h.streamEvents(w, r, sessionID, threadID)
 		return
 	}
-	if _, ok := h.authorizeSession(w, r, sessionID, sessionAccessEventsRead); !ok {
+	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
+		h.errorAdapter.Write(w, r, err)
 		return
 	}
 	if _, err := h.db.GetSessionThread(r.Context(), workspaceUUIDFromRequest(r), sessionID, threadID); err != nil {
-		h.writeThreadLoadError(w, r, err, threadID)
+		h.errorAdapter.Write(w, r, mapThreadLoadError(err, threadID))
 		return
 	}
 	h.streamEvents(w, r, sessionID, threadID)
 }
 
 func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string) {
-	session, ok := h.authorizeSession(w, r, sessionID, sessionAccessEventsRead)
-	if !ok {
+	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead)
+	if err != nil {
+		h.errorAdapter.Write(w, r, err)
 		return
 	}
 	subscribeThreadID := threadID
 	if subscribeThreadID == "" {
 		primary, err := h.ensurePrimarySessionThread(r.Context(), session)
 		if err != nil {
-			h.writeSessionLoadError(w, r, err, sessionID)
+			h.errorAdapter.Write(w, r, mapSessionLoadError(err, sessionID))
 			return
 		}
 		subscribeThreadID = primary.ExternalID
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Streaming is not supported"))
+		h.errorAdapter.Write(w, r, streamingUnsupported())
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")

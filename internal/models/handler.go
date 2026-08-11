@@ -16,6 +16,7 @@ import (
 type Handler struct {
 	router        chi.Router
 	modelMappings map[string]string
+	errorAdapter  *httpapi.ErrorAdapter
 }
 
 type listResponse struct {
@@ -26,11 +27,15 @@ type listResponse struct {
 }
 
 func NewHandler(upstream config.AnthropicUpstreamConfig) *Handler {
-	h := &Handler{modelMappings: upstream.ModelMappings}
+	h := &Handler{
+		modelMappings: upstream.ModelMappings,
+		errorAdapter:  httpapi.NewErrorAdapter(nil),
+	}
+	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
-	router.NotFound(notFound)
-	router.MethodNotAllowed(notFound)
-	router.Get("/", h.list)
+	router.NotFound(wrap(h.notFound))
+	router.MethodNotAllowed(wrap(h.notFound))
+	router.Get("/", wrap(h.list))
 	h.router = router
 	return h
 }
@@ -39,11 +44,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }
 
-func notFound(w http.ResponseWriter, r *http.Request) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
+	return modelRouteNotFound()
 }
 
-func (h *Handler) list(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) list(w http.ResponseWriter, _ *http.Request) error {
 	models := resolvePlatformModels(buildPlatformModels(), h.modelMappings)
 	firstID := ""
 	lastID := ""
@@ -57,6 +62,7 @@ func (h *Handler) list(w http.ResponseWriter, _ *http.Request) {
 		FirstID: firstID,
 		LastID:  lastID,
 	})
+	return nil
 }
 
 func resolvePlatformModels(models []map[string]any, mappings map[string]string) []map[string]any {

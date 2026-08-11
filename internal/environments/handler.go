@@ -29,10 +29,10 @@ import (
 const maxEnvironmentBodySize = 4 << 20
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	logger *slog.Logger
-	router chi.Router
+	cfg          config.Config
+	db           *db.DB
+	errorAdapter *httpapi.ErrorAdapter
+	router       chi.Router
 }
 
 type environmentResponse struct {
@@ -114,83 +114,77 @@ type workStatsResponse struct {
 
 func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, logger: logger}
+	h := &Handler{cfg: cfg, db: database, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
-	router.NotFound(notFound)
-	router.MethodNotAllowed(notFound)
-	router.Post("/", h.create)
-	router.Get("/", h.list)
-	router.Get("/{environment_id}", h.retrieveRoute)
-	router.Post("/{environment_id}", h.updateRoute)
-	router.Post("/{environment_id}/archive", h.archiveRoute)
-	router.Delete("/{environment_id}", h.deleteRoute)
-	router.Get("/{environment_id}/work/poll", h.pollWorkRoute)
-	router.Get("/{environment_id}/work/stats", h.workStatsRoute)
-	router.Get("/{environment_id}/work", h.listWorkRoute)
-	router.Get("/{environment_id}/work/{work_id}", h.retrieveWorkRoute)
-	router.Post("/{environment_id}/work/{work_id}", h.updateWorkRoute)
-	router.Post("/{environment_id}/work/{work_id}/ack", h.ackWorkRoute)
-	router.Post("/{environment_id}/work/{work_id}/heartbeat", h.heartbeatWorkRoute)
-	router.Post("/{environment_id}/work/{work_id}/stop", h.stopWorkRoute)
+	router.NotFound(wrap(h.notFound))
+	router.MethodNotAllowed(wrap(h.notFound))
+	router.Post("/", wrap(h.create))
+	router.Get("/", wrap(h.list))
+	router.Get("/{environment_id}", wrap(h.retrieveRoute))
+	router.Post("/{environment_id}", wrap(h.updateRoute))
+	router.Post("/{environment_id}/archive", wrap(h.archiveRoute))
+	router.Delete("/{environment_id}", wrap(h.deleteRoute))
+	router.Get("/{environment_id}/work/poll", wrap(h.pollWorkRoute))
+	router.Get("/{environment_id}/work/stats", wrap(h.workStatsRoute))
+	router.Get("/{environment_id}/work", wrap(h.listWorkRoute))
+	router.Get("/{environment_id}/work/{work_id}", wrap(h.retrieveWorkRoute))
+	router.Post("/{environment_id}/work/{work_id}", wrap(h.updateWorkRoute))
+	router.Post("/{environment_id}/work/{work_id}/ack", wrap(h.ackWorkRoute))
+	router.Post("/{environment_id}/work/{work_id}/heartbeat", wrap(h.heartbeatWorkRoute))
+	router.Post("/{environment_id}/work/{work_id}/stop", wrap(h.stopWorkRoute))
 	h.router = router
 	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("beta") != "true" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Environments API requires beta=true"))
+		h.errorAdapter.Write(w, r, environmentsBetaRequired())
 		return
 	}
 	h.router.ServeHTTP(w, r)
 }
 
-func notFound(w http.ResponseWriter, r *http.Request) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
+	return environmentRouteNotFound()
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireWorkspaceCredential(w, r)
-	if !ok {
-		return
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireWorkspaceCredential(r)
+	if err != nil {
+		return err
 	}
 	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	if h.isOfficialSDKPrincipal(principal) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false))
-		return
+		return nil
 	}
 	name, err := parseRequiredRawString(body.Name, "name")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	description, err := parseOptionalDescription(body.Description)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	metadata, err := normalizeMetadata(rawOrDefault(body.Metadata, `{}`))
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	scope, err := parseScope(body.Scope)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	configRaw, err := normalizeConfigForCreate(body.Config)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	envID, err := ids.New("env_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate environment ID"))
-		return
+		return internalError("Could not generate environment ID", fmt.Errorf("generate environment ID: %w", err))
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateEnvironment(r.Context(), db.Environment{
@@ -210,39 +204,34 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicate) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Environment name already exists"))
-			return
+			return environmentNameConflict(err)
 		}
-		h.logger.ErrorContext(r.Context(), "create environment", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create environment"))
-		return
+		return internalError("Could not create environment", fmt.Errorf("create environment %q: %w", envID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(created))
+	return nil
 }
 
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireWorkspaceCredential(w, r)
-	if !ok {
-		return
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireWorkspaceCredential(r)
+	if err != nil {
+		return err
 	}
 	limit, err := parseLimit(r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	cursor, err := decodeEnvironmentCursor(r.URL.Query().Get("page"))
 	if err != nil {
 		if h.isOfficialSDKPrincipal(principal) {
 			httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false)}})
-			return
+			return nil
 		}
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	includeArchived, err := parseOptionalBool(r, "include_archived")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListEnvironmentsPage(r.Context(), db.ListEnvironmentsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
@@ -251,13 +240,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: includeArchived,
 	})
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list environments", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list environments"))
-		return
+		return internalError("Could not list environments", fmt.Errorf("list environments: %w", err))
 	}
 	if h.isOfficialSDKPrincipal(principal) && len(records) == 0 {
 		httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: []environmentResponse{h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false)}})
-		return
+		return nil
 	}
 	data := make([]environmentResponse, 0, len(records))
 	for _, record := range records {
@@ -269,96 +256,86 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, environmentPageResponse{Data: data, NextPage: nextPage})
+	return nil
 }
 
-func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
-	h.retrieve(w, r, chi.URLParam(r, "environment_id"))
+func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.retrieve(w, r, chi.URLParam(r, "environment_id"))
 }
 
-func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, environmentID string) {
-	principal, ok := requireWorkspaceCredential(w, r)
-	if !ok {
-		return
+func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, environmentID string) error {
+	principal, authErr := requireWorkspaceCredential(r)
+	if authErr != nil {
+		return authErr
 	}
 	record, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, false))
-			return
+			return nil
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
-			return
+			return environmentNotFound(environmentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get environment", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment"))
-		return
+		return internalError("Could not retrieve environment", fmt.Errorf("retrieve environment %q: %w", environmentID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(record))
+	return nil
 }
 
-func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
-	h.update(w, r, chi.URLParam(r, "environment_id"))
+func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.update(w, r, chi.URLParam(r, "environment_id"))
 }
 
-func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID string) {
-	principal, ok := requireWorkspaceCredential(w, r)
-	if !ok {
-		return
+func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID string) error {
+	principal, authErr := requireWorkspaceCredential(r)
+	if authErr != nil {
+		return authErr
 	}
 	if h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, false))
-		return
+		return nil
 	}
 	current, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
-			return
+			return environmentNotFound(environmentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get environment before update", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment"))
-		return
+		return internalError("Could not update environment", fmt.Errorf("retrieve environment %q for update: %w", environmentID, err))
 	}
 	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	next := current
 	if len(body.Name) > 0 {
 		next.Name, err = parseRequiredRawString(body.Name, "name")
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	if len(body.Description) > 0 {
 		next.Description, err = descriptionFromRaw(body.Description)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	if len(body.Metadata) > 0 {
 		next.Metadata, err = patchMetadata(next.Metadata, body.Metadata)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	if len(body.Scope) > 0 {
 		next.Scope, err = parseScope(body.Scope)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	if len(body.Config) > 0 {
 		next.Config, err = normalizeConfigForUpdate(current.Config, body.Config)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 		next.ResolvedTemplate = h.resolvedTemplate(next.Config)
 	}
@@ -366,90 +343,80 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 	updated, err := h.db.UpdateEnvironment(r.Context(), principal.WorkspaceUUID, environmentID, next)
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicate) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Environment name already exists"))
-			return
+			return environmentNameConflict(err)
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
-			return
+			return environmentNotFound(environmentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "update environment", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment"))
-		return
+		return internalError("Could not update environment", fmt.Errorf("update environment %q: %w", environmentID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(updated))
+	return nil
 }
 
-func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
-	h.archive(w, r, chi.URLParam(r, "environment_id"))
+func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.archive(w, r, chi.URLParam(r, "environment_id"))
 }
 
-func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID string) {
-	principal, ok := requireWorkspaceCredential(w, r)
-	if !ok {
-		return
+func (h *Handler) archive(w http.ResponseWriter, r *http.Request, environmentID string) error {
+	principal, authErr := requireWorkspaceCredential(r)
+	if authErr != nil {
+		return authErr
 	}
 	if h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(environmentID, true))
-		return
+		return nil
 	}
 	record, err := h.db.ArchiveEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
-			return
+			return environmentNotFound(environmentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "archive environment", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive environment"))
-		return
+		return internalError("Could not archive environment", fmt.Errorf("archive environment %q: %w", environmentID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromEnvironment(record))
+	return nil
 }
 
-func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
-	principal, ok := requireWorkspaceCredential(w, r)
-	if !ok {
-		return
+func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
+	principal, err := requireWorkspaceCredential(r)
+	if err != nil {
+		return err
 	}
 	environmentID := chi.URLParam(r, "environment_id")
 	if h.isOfficialSDKEnvironmentFixture(principal, environmentID) {
 		httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: environmentID, Type: "environment_deleted"})
-		return
+		return nil
 	}
 	if err := h.db.DeleteEnvironment(r.Context(), principal.WorkspaceUUID, environmentID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Environment has active work"))
-			return
+			return environmentHasActiveWork(err)
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
-			return
+			return environmentNotFound(environmentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "delete environment", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete environment"))
-		return
+		return internalError("Could not delete environment", fmt.Errorf("delete environment %q: %w", environmentID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, deleteResponse{ID: environmentID, Type: "environment_deleted"})
+	return nil
 }
 
-func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) {
-	env, ok := h.authorizeWork(w, r)
-	if !ok {
-		return
+func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) error {
+	env, err := h.authorizeWork(r)
+	if err != nil {
+		return err
 	}
 	if h.isOfficialSDKRequest(r) {
 		httpapi.WriteJSON(w, http.StatusOK, workPageResponse{Data: []workResponse{h.fixtureWork(env.ExternalID, h.cfg.SDKFixtures.WorkID, "queued")}})
-		return
+		return nil
 	}
 	limit, err := parseLimit(r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	cursor, err := decodeWorkCursor(r.URL.Query().Get("page"))
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListEnvironmentWorkPage(r.Context(), db.ListEnvironmentWorkPageParams{
 		WorkspaceUUID:         env.WorkspaceUUID,
@@ -458,9 +425,7 @@ func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) {
 		Cursor:                cursor,
 	})
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list environment work", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list environment work"))
-		return
+		return internalError("Could not list environment work", fmt.Errorf("list work for environment %q: %w", env.ExternalID, err))
 	}
 	data := make([]workResponse, 0, len(records))
 	for _, record := range records {
@@ -472,162 +437,148 @@ func (h *Handler) listWorkRoute(w http.ResponseWriter, r *http.Request) {
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, workPageResponse{Data: data, NextPage: nextPage})
+	return nil
 }
 
-func (h *Handler) retrieveWorkRoute(w http.ResponseWriter, r *http.Request) {
-	env, ok := h.authorizeWork(w, r)
-	if !ok {
-		return
+func (h *Handler) retrieveWorkRoute(w http.ResponseWriter, r *http.Request) error {
+	env, err := h.authorizeWork(r)
+	if err != nil {
+		return err
 	}
 	workID := chi.URLParam(r, "work_id")
 	if h.isOfficialSDKWorkFixture(r, workID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "queued"))
-		return
+		return nil
 	}
 	record, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
-			return
+			return environmentWorkNotFound(workID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get environment work", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment work"))
-		return
+		return internalError("Could not retrieve environment work", fmt.Errorf("retrieve environment work %q: %w", workID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWork(record))
+	return nil
 }
 
-func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
-	env, ok := h.authorizeWork(w, r)
-	if !ok {
-		return
+func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) error {
+	env, err := h.authorizeWork(r)
+	if err != nil {
+		return err
 	}
 	workID := chi.URLParam(r, "work_id")
 	if h.isOfficialSDKWorkFixture(r, workID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "queued"))
-		return
+		return nil
 	}
 	body, err := httpapi.DecodeObjectBodyAs[environmentWorkUpdateRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	current, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
-			return
+			return environmentWorkNotFound(workID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get environment work before update", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment work"))
-		return
+		return internalError("Could not update environment work", fmt.Errorf("retrieve environment work %q for update: %w", workID, err))
 	}
 	metadata := current.Metadata
 	if len(body.Metadata) > 0 {
 		metadata, err = patchMetadata(metadata, body.Metadata)
 		if err != nil {
-			writeBadRequest(w, r, err)
-			return
+			return invalidRequest(err)
 		}
 	}
 	updated, err := h.db.UpdateEnvironmentWorkMetadata(r.Context(), env.WorkspaceUUID, env.ExternalID, workID, metadata)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "update environment work", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment work"))
-		return
+		return internalError("Could not update environment work", fmt.Errorf("update environment work %q: %w", workID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWork(updated))
+	return nil
 }
 
-func (h *Handler) pollWorkRoute(w http.ResponseWriter, r *http.Request) {
-	env, ok := h.authorizeWork(w, r)
-	if !ok {
-		return
+func (h *Handler) pollWorkRoute(w http.ResponseWriter, r *http.Request) error {
+	env, err := h.authorizeWork(r)
+	if err != nil {
+		return err
 	}
 	if h.isOfficialSDKRequest(r) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, h.cfg.SDKFixtures.WorkID, "queued"))
-		return
+		return nil
 	}
 	blockFor, err := parseBlockMS(r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	claimFor, err := parseReclaimMS(r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	workerID := strings.TrimSpace(r.Header.Get("Anthropic-Worker-ID"))
 	deadline := time.Now().Add(blockFor)
 	for {
 		work, err := h.db.PollEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workerID, claimFor)
 		if err != nil {
-			h.logger.ErrorContext(r.Context(), "poll environment work", "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not poll environment work"))
-			return
+			return internalError("Could not poll environment work", fmt.Errorf("poll work for environment %q: %w", env.ExternalID, err))
 		}
 		if work != nil {
 			httpapi.WriteJSON(w, http.StatusOK, responseFromWork(*work))
-			return
+			return nil
 		}
 		if blockFor <= 0 || time.Now().After(deadline) {
 			httpapi.WriteJSON(w, http.StatusOK, nil)
-			return
+			return nil
 		}
 		select {
 		case <-r.Context().Done():
-			return
+			return nil
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
 }
 
-func (h *Handler) workStatsRoute(w http.ResponseWriter, r *http.Request) {
-	env, ok := h.authorizeWork(w, r)
-	if !ok {
-		return
+func (h *Handler) workStatsRoute(w http.ResponseWriter, r *http.Request) error {
+	env, err := h.authorizeWork(r)
+	if err != nil {
+		return err
 	}
 	if h.isOfficialSDKRequest(r) {
 		httpapi.WriteJSON(w, http.StatusOK, workStatsResponse{Type: "work_queue_stats"})
-		return
+		return nil
 	}
 	stats, err := h.db.EnvironmentWorkStats(r.Context(), env.WorkspaceUUID, env.ExternalID)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "environment work stats", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment work stats"))
-		return
+		return internalError("Could not retrieve environment work stats", fmt.Errorf("retrieve work stats for environment %q: %w", env.ExternalID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStats(stats))
+	return nil
 }
 
-func (h *Handler) ackWorkRoute(w http.ResponseWriter, r *http.Request) {
-	env, ok := h.authorizeWork(w, r)
-	if !ok {
-		return
+func (h *Handler) ackWorkRoute(w http.ResponseWriter, r *http.Request) error {
+	env, err := h.authorizeWork(r)
+	if err != nil {
+		return err
 	}
 	workID := chi.URLParam(r, "work_id")
 	if h.isOfficialSDKWorkFixture(r, workID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "starting"))
-		return
+		return nil
 	}
 	record, err := h.db.AckEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
-			return
+			return environmentWorkNotFound(workID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "ack environment work", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not ack environment work"))
-		return
+		return internalError("Could not ack environment work", fmt.Errorf("ack environment work %q: %w", workID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWork(record))
+	return nil
 }
 
-func (h *Handler) heartbeatWorkRoute(w http.ResponseWriter, r *http.Request) {
-	env, ok := h.authorizeWork(w, r)
-	if !ok {
-		return
+func (h *Handler) heartbeatWorkRoute(w http.ResponseWriter, r *http.Request) error {
+	env, err := h.authorizeWork(r)
+	if err != nil {
+		return err
 	}
 	workID := chi.URLParam(r, "work_id")
 	if h.isOfficialSDKWorkFixture(r, workID) {
@@ -638,27 +589,22 @@ func (h *Handler) heartbeatWorkRoute(w http.ResponseWriter, r *http.Request) {
 			State:         "active",
 			TTLSeconds:    60,
 		})
-		return
+		return nil
 	}
 	ttl, err := parseOptionalInt(r, "desired_ttl_seconds")
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	expected := strings.TrimSpace(r.URL.Query().Get("expected_last_heartbeat"))
 	result, err := h.db.HeartbeatEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID, expected, ttl, formatTime)
 	if err != nil {
 		if errors.Is(err, db.ErrPreconditionFailed) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusPreconditionFailed, "invalid_request_error", "Heartbeat precondition failed"))
-			return
+			return environmentHeartbeatPreconditionFailed(err)
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
-			return
+			return environmentWorkNotFound(workID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "heartbeat environment work", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not heartbeat environment work"))
-		return
+		return internalError("Could not heartbeat environment work", fmt.Errorf("heartbeat environment work %q: %w", workID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, heartbeatResponse{
 		Type:          "work_heartbeat",
@@ -667,51 +613,44 @@ func (h *Handler) heartbeatWorkRoute(w http.ResponseWriter, r *http.Request) {
 		State:         result.Work.State,
 		TTLSeconds:    result.TTLSeconds,
 	})
+	return nil
 }
 
-func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
-	env, ok := h.authorizeWork(w, r)
-	if !ok {
-		return
+func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) error {
+	env, err := h.authorizeWork(r)
+	if err != nil {
+		return err
 	}
 	force, err := decodeEnvironmentWorkStopForce(w, r)
 	if err != nil {
-		writeBadRequest(w, r, err)
-		return
+		return invalidRequest(err)
 	}
 	workID := chi.URLParam(r, "work_id")
 	if h.isOfficialSDKWorkFixture(r, workID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "stopped"))
-		return
+		return nil
 	}
 	current, err := h.db.GetEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
-			return
+			return environmentWorkNotFound(workID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "retrieve environment work before stop", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment work"))
-		return
+		return internalError("Could not stop environment work", fmt.Errorf("retrieve environment work %q before stop: %w", workID, err))
 	}
 	if force {
 		if err := h.killSandboxForWork(r.Context(), env, current); err != nil {
-			h.logger.ErrorContext(r.Context(), "kill environment sandbox for work", "work_id", workID, "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment sandbox"))
-			return
+			return internalError("Could not stop environment sandbox", fmt.Errorf("kill sandbox for environment work %q: %w", workID, err))
 		}
 	}
 	record, err := h.db.StopEnvironmentWork(r.Context(), env.WorkspaceUUID, env.ExternalID, workID, force)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Work not found: "+workID))
-			return
+			return environmentWorkNotFound(workID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "stop environment work", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not stop environment work"))
-		return
+		return internalError("Could not stop environment work", fmt.Errorf("stop environment work %q: %w", workID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWork(record))
+	return nil
 }
 
 func decodeEnvironmentWorkStopForce(w http.ResponseWriter, r *http.Request) (bool, error) {
@@ -756,16 +695,14 @@ func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, wo
 	return h.db.UpdateEnvironmentSandboxState(ctx, env.WorkspaceUUID, sandbox.ExternalID, "stopped", &providerSandboxID, nil, &stoppedAt)
 }
 
-func (h *Handler) authorizeWork(w http.ResponseWriter, r *http.Request) (db.Environment, bool) {
+func (h *Handler) authorizeWork(r *http.Request) (db.Environment, error) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return db.Environment{}, false
+		return db.Environment{}, environmentAuthenticationRequired()
 	}
 	environmentID := chi.URLParam(r, "environment_id")
 	if principal.CredentialType == "environment_key" && principal.EnvironmentExternalID != environmentID {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
-		return db.Environment{}, false
+		return db.Environment{}, environmentNotFound(environmentID, nil)
 	}
 	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, environmentID)
 	if err != nil {
@@ -782,26 +719,22 @@ func (h *Handler) authorizeWork(w http.ResponseWriter, r *http.Request) (db.Envi
 				ResolvedTemplate: h.resolvedTemplate(nil),
 				CreatedAt:        time.Now().UTC(),
 				UpdatedAt:        time.Now().UTC(),
-			}, true
+			}, nil
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Environment not found: "+environmentID))
-			return db.Environment{}, false
+			return db.Environment{}, environmentNotFound(environmentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "authorize environment work", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve environment"))
-		return db.Environment{}, false
+		return db.Environment{}, internalError("Could not retrieve environment", fmt.Errorf("authorize environment %q work: %w", environmentID, err))
 	}
-	return env, true
+	return env, nil
 }
 
-func requireWorkspaceCredential(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
+func requireWorkspaceCredential(r *http.Request) (auth.Principal, error) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok || !isWorkspaceCredential(principal) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return auth.Principal{}, false
+		return auth.Principal{}, environmentAuthenticationRequired()
 	}
-	return principal, true
+	return principal, nil
 }
 
 func isWorkspaceCredential(principal auth.Principal) bool {
@@ -1505,8 +1438,4 @@ func optionalTime(value *time.Time) *string {
 
 func formatTime(value time.Time) string {
 	return value.UTC().Format(time.RFC3339Nano)
-}
-
-func writeBadRequest(w http.ResponseWriter, r *http.Request, err error) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 }

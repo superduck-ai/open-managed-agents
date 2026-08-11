@@ -103,7 +103,8 @@
 - `internal/db` 是持久化边界。它不能导入 `internal/api`、`internal/httpapi` 或任何 handler/resource 包；不能构造 HTTP 状态码、HTTP 响应、Anthropic error JSON。
 - API 层可以依赖 DB 层；DB 层不能反向依赖 API 层。共享基础包也不能依赖具体功能 handler 或资源包。
 - API request/response DTO 不要直接变成数据库 schema 的影子。数据库行结构、API 响应结构和内部业务结构可以相互映射，但不要因为方便而把 HTTP 字段泄漏进 DB 层。
-- 业务错误应在 handler/resource 层映射为 `internal/httpapi.WriteError`；DB 层返回普通 Go error、not found/conflict 这类可识别错误或结果状态。
+- 业务错误应在 handler/resource 层翻译为应用错误，再由 `internal/httpapi` 的最终 HTTP 边界写入响应；DB 层返回普通 Go error、not found/conflict 这类可识别错误或结果状态。
+- 每个资源包的稳定错误合同必须集中定义在该包根目录的 `errors.go`，包括 sentinel、公开错误文案、`apperr.New` 构造和下层错误映射。handler、service 等其他文件不得直接构造应用错误，只能调用 `errors.go` 中命名清楚的构造或映射函数；仅用于补充私有 cause 上下文的 `fmt.Errorf` 可以保留在调用点。
 - 多租户边界必须显式：所有 workspace/org 级资源查询和写入都要带 `organization_id`、`workspace_id` 或对应 external scope，避免只按 external_id 全局查询导致越权。
 - 鉴权和权限判断属于 API/resource/service 层；DB 层可以做 key lookup/hash 等数据访问，但不要承载“这个用户能否执行某动作”的业务授权决策。
 - 多表写入、状态机推进、幂等写入和 outbox/event 写入应保持事务一致性；不要把半个事务散落在多个 handler 分支里。

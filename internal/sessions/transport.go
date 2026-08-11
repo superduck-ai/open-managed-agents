@@ -26,36 +26,38 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 		codeSessions: codeSessionService,
 		webhooks:     webhookEvents,
 		logger:       logger,
+		errorAdapter: httpapi.NewErrorAdapter(logger),
 		streams:      newStreamHub(),
 	}
 	codeSessionService.SetPublicEventSink(h)
+	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
-	router.NotFound(notFound)
-	router.MethodNotAllowed(notFound)
-	router.Post("/", h.create)
-	router.Get("/", h.list)
+	router.NotFound(wrap(h.notFound))
+	router.MethodNotAllowed(wrap(h.notFound))
+	router.Post("/", wrap(h.create))
+	router.Get("/", wrap(h.list))
 	router.Route("/{session_id}", func(r chi.Router) {
-		r.Get("/", h.retrieveRoute)
-		r.Post("/", h.updateRoute)
-		r.Delete("/", h.deleteRoute)
-		r.Post("/archive", h.archiveRoute)
+		r.Get("/", wrap(h.retrieveRoute))
+		r.Post("/", wrap(h.updateRoute))
+		r.Delete("/", wrap(h.deleteRoute))
+		r.Post("/archive", wrap(h.archiveRoute))
 		r.Route("/events", func(r chi.Router) {
-			r.Get("/", h.listEventsRoute)
-			r.Post("/", h.sendEventsRoute)
+			r.Get("/", wrap(h.listEventsRoute))
+			r.Post("/", wrap(h.sendEventsRoute))
 			r.Get("/stream", h.streamEventsRoute)
 		})
 		r.Route("/resources", func(r chi.Router) {
-			r.Get("/", h.listResourcesRoute)
-			r.Post("/", h.addResourceRoute)
-			r.Get("/{resource_id}", h.retrieveResourceRoute)
-			r.Post("/{resource_id}", h.updateResourceRoute)
-			r.Delete("/{resource_id}", h.deleteResourceRoute)
+			r.Get("/", wrap(h.listResourcesRoute))
+			r.Post("/", wrap(h.addResourceRoute))
+			r.Get("/{resource_id}", wrap(h.retrieveResourceRoute))
+			r.Post("/{resource_id}", wrap(h.updateResourceRoute))
+			r.Delete("/{resource_id}", wrap(h.deleteResourceRoute))
 		})
 		r.Route("/threads", func(r chi.Router) {
-			r.Get("/", h.listThreadsRoute)
-			r.Get("/{thread_id}", h.retrieveThreadRoute)
-			r.Post("/{thread_id}/archive", h.archiveThreadRoute)
-			r.Get("/{thread_id}/events", h.listThreadEventsRoute)
+			r.Get("/", wrap(h.listThreadsRoute))
+			r.Get("/{thread_id}", wrap(h.retrieveThreadRoute))
+			r.Post("/{thread_id}/archive", wrap(h.archiveThreadRoute))
+			r.Get("/{thread_id}/events", wrap(h.listThreadEventsRoute))
 			r.Get("/{thread_id}/stream", h.streamThreadEventsRoute)
 		})
 	})
@@ -65,12 +67,12 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("beta") != "true" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Sessions API requires beta=true"))
+		h.errorAdapter.Write(w, r, sessionsBetaRequired())
 		return
 	}
 	h.router.ServeHTTP(w, r)
 }
 
-func notFound(w http.ResponseWriter, r *http.Request) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
+	return sessionRouteNotFound()
 }

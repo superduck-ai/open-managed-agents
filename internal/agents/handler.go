@@ -33,12 +33,12 @@ const (
 var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Handler struct {
-	cfg       config.Config
-	db        *db.DB
-	webhooks  *webhooks.Enqueuer
-	scheduler *deploymentsapi.DeploymentScheduler
-	logger    *slog.Logger
-	router    chi.Router
+	cfg          config.Config
+	db           *db.DB
+	webhooks     *webhooks.Enqueuer
+	scheduler    *deploymentsapi.DeploymentScheduler
+	errorAdapter *httpapi.ErrorAdapter
+	router       chi.Router
 }
 
 type agentResponse struct {
@@ -104,58 +104,57 @@ type agentReference struct {
 
 func NewHandler(cfg config.Config, database *db.DB, webhookEvents *webhooks.Enqueuer, scheduler *deploymentsapi.DeploymentScheduler, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, scheduler: scheduler, logger: logger}
+	h := &Handler{
+		cfg: cfg, db: database, webhooks: webhookEvents, scheduler: scheduler,
+		errorAdapter: httpapi.NewErrorAdapter(logger),
+	}
+	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
-	router.NotFound(notFound)
-	router.MethodNotAllowed(notFound)
-	router.Post("/", h.create)
-	router.Get("/", h.list)
-	router.Get("/{agent_id}", h.retrieveRoute)
-	router.Post("/{agent_id}", h.updateRoute)
-	router.Post("/{agent_id}/archive", h.archiveRoute)
-	router.Get("/{agent_id}/versions", h.versionsRoute)
+	router.NotFound(wrap(h.notFound))
+	router.MethodNotAllowed(wrap(h.notFound))
+	router.Post("/", wrap(h.create))
+	router.Get("/", wrap(h.list))
+	router.Get("/{agent_id}", wrap(h.retrieveRoute))
+	router.Post("/{agent_id}", wrap(h.updateRoute))
+	router.Post("/{agent_id}/archive", wrap(h.archiveRoute))
+	router.Get("/{agent_id}/versions", wrap(h.versionsRoute))
 	h.router = router
 	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("beta") != "true" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Agents API requires beta=true"))
+		h.errorAdapter.Write(w, r, agentsBetaRequired())
 		return
 	}
 	h.router.ServeHTTP(w, r)
 }
 
-func notFound(w http.ResponseWriter, r *http.Request) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
+	return agentRouteNotFound()
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return agentAuthenticationRequired()
 	}
 
 	body, err := httpapi.DecodeObjectBodyAs[agentMutationRequest](w, r, maxAgentBodySize)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	agentID, err := ids.New("agent_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate agent ID"))
-		return
+		return internalError("Could not generate agent ID", fmt.Errorf("generate agent ID: %w", err))
 	}
 	state, err := h.stateFromCreate(r, principal, agentID, body)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	versionID, err := ids.New("agentver_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate agent version ID"))
-		return
+		return internalError("Could not generate agent version ID", fmt.Errorf("generate agent version ID: %w", err))
 	}
 	now := time.Now().UTC()
 	created, err := h.db.CreateAgent(r.Context(), db.Agent{
@@ -177,39 +176,33 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:           now,
 	}, versionID)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "create agent", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create agent"))
-		return
+		return internalError("Could not create agent", fmt.Errorf("create agent %q: %w", agentID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(created))
+	return nil
 }
 
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	limit, err := httpapi.ParseLimit(r, 100)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	cursor, err := decodeAgentCursor(r.URL.Query().Get("page"))
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	createdAtGTE, err := httpapi.ParseOptionalTime(r, "created_at[gte]")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	createdAtLTE, err := httpapi.ParseOptionalTime(r, "created_at[lte]")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	includeArchived, err := parseOptionalBool(r, "include_archived")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 
 	records, hasMore, err := h.db.ListAgentsPage(r.Context(), db.ListAgentsPageParams{
@@ -221,9 +214,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		CreatedAtLTE:    createdAtLTE,
 	})
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "list agents", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agents"))
-		return
+		return internalError("Could not list agents", fmt.Errorf("list agents: %w", err))
 	}
 	data := responsesFromAgents(records)
 	var nextPage *string
@@ -232,27 +223,28 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, NextPage: nextPage})
+	return nil
 }
 
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
+	h.errorAdapter.Wrap(h.search)(w, r)
+}
+
+func (h *Handler) search(w http.ResponseWriter, r *http.Request) error {
 	if r.URL.Query().Get("beta") != "true" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Agents API requires beta=true"))
-		return
+		return agentsBetaRequired()
 	}
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return agentAuthenticationRequired()
 	}
 	body, err := decodeSearchRequest(w, r)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	cursor, err := decodeAgentCursor(derefString(body.Page))
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 
 	records, hasMore, err := h.db.SearchAgentsPage(r.Context(), db.SearchAgentsPageParams{
@@ -263,9 +255,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		IncludeArchived: derefBool(body.IncludeArchived),
 	})
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "search agents", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not search agents"))
-		return
+		return internalError("Could not search agents", fmt.Errorf("search agents: %w", err))
 	}
 	data := responsesFromAgents(records)
 	var nextPage *string
@@ -274,13 +264,14 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, NextPage: nextPage})
+	return nil
 }
 
-func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
-	h.retrieve(w, r, chi.URLParam(r, "agent_id"))
+func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.retrieve(w, r, chi.URLParam(r, "agent_id"))
 }
 
-func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID string) {
+func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	rawVersion := strings.TrimSpace(r.URL.Query().Get("version"))
 	var record db.Agent
@@ -290,71 +281,60 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, agentID strin
 	} else {
 		version, parseErr := strconv.Atoi(rawVersion)
 		if parseErr != nil || version < 1 {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "version must be at least 1"))
-			return
+			return invalidRequest(errors.New("version must be at least 1"))
 		}
 		record, err = h.db.GetAgentVersion(r.Context(), principal.WorkspaceUUID, agentID, version)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureID(principal, agentID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, false))
-			return
+			return nil
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
-			return
+			return agentNotFound(agentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get agent", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve agent"))
-		return
+		return internalError("Could not retrieve agent", fmt.Errorf("retrieve agent %q: %w", agentID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(record))
+	return nil
 }
 
-func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
-	h.update(w, r, chi.URLParam(r, "agent_id"))
+func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.update(w, r, chi.URLParam(r, "agent_id"))
 }
 
-func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string) {
+func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if h.isOfficialSDKFixtureID(principal, agentID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 2, false))
-		return
+		return nil
 	}
 
 	body, err := httpapi.DecodeObjectBodyAs[agentMutationRequest](w, r, maxAgentBodySize)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	if len(body.Version) == 0 {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "version is required"))
-		return
+		return invalidRequest(errors.New("version is required"))
 	}
 	expectedVersion, err := parseRequiredVersion(body.Version)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	current, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
-			return
+			return agentNotFound(agentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get agent before update", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
-		return
+		return internalError("Could not update agent", fmt.Errorf("retrieve agent %q for update: %w", agentID, err))
 	}
 	nextState, err := h.stateFromUpdate(r, principal, current, body)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	versionID, err := ids.New("agentver_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate agent version ID"))
-		return
+		return internalError("Could not generate agent version ID", fmt.Errorf("generate agent version ID: %w", err))
 	}
 	updated, err := h.db.UpdateAgent(r.Context(), principal.WorkspaceUUID, agentID, expectedVersion, db.Agent{
 		Name:        nextState.Name,
@@ -370,33 +350,29 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 	}, versionID)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Archived agents cannot be updated"))
-			return
+			return archivedAgentCannotBeUpdated(err)
 		}
 		if errors.Is(err, db.ErrVersionConflict) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusConflict, "conflict_error", "Agent version does not match current version"))
-			return
+			return agentVersionConflict(err)
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
-			return
+			return agentNotFound(agentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "update agent", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
-		return
+		return internalError("Could not update agent", fmt.Errorf("update agent %q: %w", agentID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(updated))
+	return nil
 }
 
-func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
-	h.archive(w, r, chi.URLParam(r, "agent_id"))
+func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.archive(w, r, chi.URLParam(r, "agent_id"))
 }
 
-func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string) {
+func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if h.isOfficialSDKFixtureID(principal, agentID) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
-		return
+		return nil
 	}
 	var buildEvent db.DeploymentArchiveEventBuilder
 	if h.webhooks != nil {
@@ -412,12 +388,9 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 	archived, deployments, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID, buildEvent)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
-			return
+			return agentNotFound(agentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "archive agent", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive agent"))
-		return
+		return internalError("Could not archive agent", fmt.Errorf("archive agent %q: %w", agentID, err))
 	}
 	if h.scheduler != nil {
 		for _, deployment := range deployments {
@@ -425,27 +398,26 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(archived))
+	return nil
 }
 
-func (h *Handler) versionsRoute(w http.ResponseWriter, r *http.Request) {
-	h.versions(w, r, chi.URLParam(r, "agent_id"))
+func (h *Handler) versionsRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.versions(w, r, chi.URLParam(r, "agent_id"))
 }
 
-func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID string) {
+func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if h.isOfficialSDKFixtureID(principal, agentID) {
 		httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: []agentResponse{h.fixtureAgent(agentID, 1, false)}})
-		return
+		return nil
 	}
 	limit, err := httpapi.ParseLimit(r, 100)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	cursor, err := decodeVersionCursor(r.URL.Query().Get("page"))
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	records, hasMore, err := h.db.ListAgentVersionsPage(r.Context(), db.ListAgentVersionsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
@@ -455,12 +427,9 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
-			return
+			return agentNotFound(agentID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "list agent versions", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list agent versions"))
-		return
+		return internalError("Could not list agent versions", fmt.Errorf("list agent %q versions: %w", agentID, err))
 	}
 	data := responsesFromAgents(records)
 	var nextPage *string
@@ -469,6 +438,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, NextPage: nextPage})
+	return nil
 }
 
 func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, agentID string, body *agentMutationRequest) (agentState, error) {

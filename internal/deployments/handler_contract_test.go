@@ -23,31 +23,6 @@ func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
 	}
 }
 
-func TestSessionResourcesFromDeploymentBuildsTypedPayload(t *testing.T) {
-	resources, err := sessionResourcesFromDeployment(db.Deployment{
-		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://github.com/example/repo.git","mount_path":"/workspace/repo","checkout":{"type":"branch","name":"main"}}]`),
-		ResourceSecrets: json.RawMessage(`{"0":{"authorization_token":"secret"}}`),
-	}, time.Time{})
-	if err != nil {
-		t.Fatalf("sessionResourcesFromDeployment() error = %v", err)
-	}
-	if len(resources) != 1 || resources[0].Resource.ResourceType != "github_repository" {
-		t.Fatalf("resources = %+v", resources)
-	}
-	var payload struct {
-		ID       string              `json:"id"`
-		Type     string              `json:"type"`
-		URL      string              `json:"url"`
-		Checkout *deploymentCheckout `json:"checkout"`
-	}
-	if err := json.Unmarshal(resources[0].Resource.Payload, &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
-	if payload.ID == "" || payload.Type != "github_repository" || payload.URL == "" || payload.Checkout == nil || payload.Checkout.Name != "main" {
-		t.Fatalf("payload = %+v", payload)
-	}
-}
-
 func TestDeploymentResponseUsesEmptyDescription(t *testing.T) {
 	response, err := json.Marshal(deploymentResponse{})
 	if err != nil || !strings.Contains(string(response), `"description":""`) {
@@ -89,12 +64,8 @@ func TestDeploymentResourcesResponse(t *testing.T) {
 		if err != nil {
 			t.Fatalf("deploymentResourcesResponse() error = %v", err)
 		}
-		encoded, err := json.Marshal(response)
-		if err != nil {
-			t.Fatalf("marshal response: %v", err)
-		}
-		if strings.Contains(string(encoded), "source") || strings.Contains(string(encoded), "authorization_token") || strings.Contains(string(encoded), "_oma_mount_path_defaulted") {
-			t.Fatalf("response leaks internal fields: %s", encoded)
+		if strings.Contains(string(response), "source") || strings.Contains(string(response), "authorization_token") || strings.Contains(string(response), deploymentMountPathDefaulted) {
+			t.Fatalf("response leaks internal fields: %s", response)
 		}
 	})
 
@@ -107,18 +78,14 @@ func TestDeploymentResourcesResponse(t *testing.T) {
 		if err != nil {
 			t.Fatalf("deploymentResourcesResponse() error = %v", err)
 		}
-		encoded, err := json.Marshal(response)
-		if err != nil {
-			t.Fatalf("marshal response: %v", err)
+		if !strings.Contains(string(response), `"mount_path":"/uploads/file_default"`) {
+			t.Fatalf("default mount path is not public: %s", response)
 		}
-		if !strings.Contains(string(encoded), `"mount_path":"/uploads/file_default"`) {
-			t.Fatalf("default mount path is not public: %s", encoded)
+		if !strings.Contains(string(response), `"mount_path":"/uploads/file_explicit"`) {
+			t.Fatalf("explicit mount path is not mapped into uploads: %s", response)
 		}
-		if !strings.Contains(string(encoded), `"mount_path":"/uploads/file_explicit"`) {
-			t.Fatalf("explicit mount path is not mapped into uploads: %s", encoded)
-		}
-		if !strings.Contains(string(encoded), `"mount_path":"/uploads/file_legacy_explicit"`) {
-			t.Fatalf("unmarked mount path is not mapped into uploads: %s", encoded)
+		if !strings.Contains(string(response), `"mount_path":"/uploads/file_legacy_explicit"`) {
+			t.Fatalf("unmarked mount path is not mapped into uploads: %s", response)
 		}
 	})
 }

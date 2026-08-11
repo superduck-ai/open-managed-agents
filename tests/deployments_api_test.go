@@ -1070,7 +1070,7 @@ func applyScheduledOccurrence(ctx context.Context, database *db.DB, input db.App
 	})
 }
 
-func newDeploymentScheduler(t *testing.T, app *testApp) *deploymentsapi.DeploymentScheduler {
+func startDeploymentScheduler(t *testing.T, app *testApp) func() {
 	t.Helper()
 	if err := deploymentsapi.MigrateRiver(context.Background(), app.db, nil); err != nil {
 		t.Fatalf("migrate River: %v", err)
@@ -1079,13 +1079,7 @@ func newDeploymentScheduler(t *testing.T, app *testApp) *deploymentsapi.Deployme
 	if err != nil {
 		t.Fatalf("new deployment scheduler: %v", err)
 	}
-	return scheduler
-}
-
-func startDeploymentScheduler(t *testing.T, app *testApp) func() {
-	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	scheduler := newDeploymentScheduler(t, app)
 	if err := scheduler.Start(ctx); err != nil {
 		cancel()
 		t.Fatalf("start deployment scheduler: %v", err)

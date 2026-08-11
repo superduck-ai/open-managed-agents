@@ -155,7 +155,7 @@
         <include refid="columns"/>
     </update>
 
-	<update id="ArchiveByRootAgent" result="returning" resultType="deploymentMapperRow">
+	<update id="ArchiveByRootAgent" result="exec">
 		UPDATE deployments
 		SET archived_at = COALESCE(archived_at, NOW()),
 			schedule_revision = schedule_revision + 1,
@@ -164,8 +164,6 @@
 		AND agent_external_id = #{agentExternalID}
 		AND archived_at IS NULL
 		AND deleted_at IS NULL
-		RETURNING
-		<include refid="columns"/>
 	</update>
 
     <update id="PauseByExternalID" result="returning" resultType="deploymentMapperRow">

@@ -64,7 +64,7 @@ Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
 每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule` 和 `schedule_revision`，不保存应用自行推进的下一次游标。创建带 schedule 的 Deployment 时 revision 从 1 开始；PATCH 只有在 schedule 真正修改或清除时才递增，省略 schedule 或提交相同值均保持不变。pause、unpause 和 archive 仍递增 revision，使已经投递的旧 Job 在 worker 中失效；其他字段更新由 worker 在执行时读取最新值，不改调度 revision。
 
-每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒同步一次 registry；API 写路径、worker 自动暂停/归档和 Agent 级联归档在数据库提交后立即更新当前实例。这样 River 文档要求的所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
+每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒从数据库同步一次 registry。这样所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。同步完成前已经投递的 Job 会由 worker 根据当前状态和 revision 跳过。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
 
 River 的 leader election 保证只有 leader 根据 Cron 推进并投递 Periodic Job，应用不计算、持久化或插入“下一条 Job”。worker 使用 River Job 的 `scheduled_at` 作为名义 occurrence；暂停或停机期间不补跑历史 occurrence，恢复注册后直接等待 Cron 的下一次。River 开源 Periodic Jobs 的调度状态主要在 leader 内存中，官方不承诺强持久性，leader 切换的极短窗口可能跳过一次 occurrence；需要严格不漏的调度时应采用 River Pro durable periodic jobs，而不是在应用层恢复一套游标链。
 
@@ -77,7 +77,6 @@ sequenceDiagram
     participant Worker as Scheduled worker
 
     API->>AppDB: 事务提交 schedule、状态与 revision
-    API->>Registry: 更新当前实例的 Periodic Job
     AppDB-->>Registry: 各实例启动加载并每 10 秒同步配置
     Leader->>Registry: 按 Cron 计算下一 occurrence
     Leader->>Worker: 投递带名义 scheduled_at 的 Job

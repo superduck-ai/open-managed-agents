@@ -91,7 +91,7 @@ type DeploymentMapper interface {
 	LockByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	UpdateByExternalID(ctx context.Context, params deploymentWriteParams) (deploymentMapperRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
-	ArchiveByRootAgent(ctx context.Context, workspaceUUID, agentExternalID string) ([]deploymentMapperRow, error)
+	ArchiveByRootAgent(ctx context.Context, workspaceUUID, agentExternalID string) error
 	PauseByExternalID(ctx context.Context, workspaceUUID, externalID string, pausedReason []byte) (deploymentMapperRow, error)
 	UnpauseByExternalID(ctx context.Context, workspaceUUID, externalID string) (deploymentMapperRow, error)
 	ListActiveSchedules(ctx context.Context) ([]DeploymentSchedule, error)

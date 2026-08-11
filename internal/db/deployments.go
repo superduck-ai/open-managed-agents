@@ -131,20 +131,25 @@ type ApplyScheduledOccurrenceInput struct {
 	Now                  time.Time
 }
 
-func (d *DB) CreateDeploymentTx(ctx context.Context, tx *yourbatis.Tx, deployment Deployment) (Deployment, error) {
-	deploymentMapper := NewDeploymentMapper(tx)
-	deployment.ScheduleRevision = 0
-	if len(deployment.Schedule) > 0 {
-		if err := checkScheduledDeploymentQuota(ctx, deploymentMapper, deployment.OrganizationUUID); err != nil {
-			return Deployment{}, err
+func (d *DB) CreateDeployment(ctx context.Context, deployment Deployment) (Deployment, error) {
+	var created Deployment
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		deploymentMapper := NewDeploymentMapper(executor)
+		deployment.ScheduleRevision = 0
+		if len(deployment.Schedule) > 0 {
+			if err := checkScheduledDeploymentQuota(ctx, deploymentMapper, deployment.OrganizationUUID); err != nil {
+				return err
+			}
+			deployment.ScheduleRevision = 1
 		}
-		deployment.ScheduleRevision = 1
-	}
-	row, err := deploymentMapper.Insert(ctx, deploymentWriteParamsFrom(deployment))
-	if err != nil {
-		return Deployment{}, err
-	}
-	return row.deployment(), nil
+		row, err := deploymentMapper.Insert(ctx, deploymentWriteParamsFrom(deployment))
+		if err != nil {
+			return err
+		}
+		created = row.deployment()
+		return nil
+	})
+	return created, err
 }
 
 func (d *DB) GetDeployment(ctx context.Context, workspaceUUID string, externalID string) (Deployment, error) {
@@ -156,32 +161,37 @@ func (d *DB) GetDeployment(ctx context.Context, workspaceUUID string, externalID
 	return row.deployment(), nil
 }
 
-func (d *DB) UpdateDeploymentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID string, externalID string, input UpdateDeploymentInput) (Deployment, error) {
-	deploymentMapper := NewDeploymentMapper(tx)
-	current, err := deploymentMapper.LockByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Deployment{}, mapNoRows(err)
-	}
-	if current.ArchivedAt != nil {
-		return Deployment{}, ErrInvalidState
-	}
-	next := input.Deployment
-	updateSchedule := input.ScheduleProvided && !sameJSON(current.Schedule, next.Schedule)
-	if updateSchedule && len(current.Schedule) == 0 && len(next.Schedule) > 0 {
-		if err := checkScheduledDeploymentQuota(ctx, deploymentMapper, current.OrganizationUUID); err != nil {
-			return Deployment{}, err
+func (d *DB) UpdateDeployment(ctx context.Context, workspaceUUID string, externalID string, input UpdateDeploymentInput) (Deployment, error) {
+	var updated Deployment
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		deploymentMapper := NewDeploymentMapper(executor)
+		current, err := deploymentMapper.LockByExternalID(ctx, workspaceUUID, externalID)
+		if err != nil {
+			return mapNoRows(err)
 		}
-	}
+		if current.ArchivedAt != nil {
+			return ErrInvalidState
+		}
+		next := input.Deployment
+		scheduleChanged := input.ScheduleProvided && !sameJSON(current.Schedule, next.Schedule)
+		if scheduleChanged && len(current.Schedule) == 0 && len(next.Schedule) > 0 {
+			if err := checkScheduledDeploymentQuota(ctx, deploymentMapper, current.OrganizationUUID); err != nil {
+				return err
+			}
+		}
 
-	params := deploymentWriteParamsFrom(next)
-	params.WorkspaceUUID = workspaceUUID
-	params.ExternalID = externalID
-	params.UpdateSchedule = updateSchedule
-	row, err := deploymentMapper.UpdateByExternalID(ctx, params)
-	if err != nil {
-		return Deployment{}, mapNoRows(err)
-	}
-	return row.deployment(), nil
+		params := deploymentWriteParamsFrom(next)
+		params.WorkspaceUUID = workspaceUUID
+		params.ExternalID = externalID
+		params.UpdateSchedule = scheduleChanged
+		row, err := deploymentMapper.UpdateByExternalID(ctx, params)
+		if err != nil {
+			return mapNoRows(err)
+		}
+		updated = row.deployment()
+		return nil
+	})
+	return updated, err
 }
 
 func checkScheduledDeploymentQuota(ctx context.Context, mapper DeploymentMapper, organizationUUID string) error {

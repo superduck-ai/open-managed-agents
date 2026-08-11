@@ -156,7 +156,6 @@ func run(logger *slog.Logger) error {
 			SandboxTimeoutExtender: sandboxProvider,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
-			DeploymentScheduler:    deploymentScheduler,
 			VaultSecrets:           vaultSecrets,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

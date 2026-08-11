@@ -15,7 +15,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -34,7 +33,6 @@ var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 type Handler struct {
 	cfg          config.Config
 	db           *db.DB
-	scheduler    *deploymentsapi.DeploymentScheduler
 	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
 }
@@ -100,10 +98,10 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, scheduler *deploymentsapi.DeploymentScheduler, logger *slog.Logger) *Handler {
+func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{
-		cfg: cfg, db: database, scheduler: scheduler,
+		cfg: cfg, db: database,
 		errorAdapter: httpapi.NewErrorAdapter(logger),
 	}
 	wrap := h.errorAdapter.Wrap
@@ -372,17 +370,12 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
 		return nil
 	}
-	archived, deployments, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
+	archived, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return agentNotFound(agentID, err)
 		}
 		return internalError("Could not archive agent", fmt.Errorf("archive agent %q: %w", agentID, err))
-	}
-	if h.scheduler != nil {
-		for _, deployment := range deployments {
-			h.scheduler.Update(r.Context(), deployment)
-		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(archived))
 	return nil

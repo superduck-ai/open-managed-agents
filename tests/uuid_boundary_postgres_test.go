@@ -8,14 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
-	"github.com/superduck-ai/yourbatis"
-
-	"github.com/google/uuid"
 )
 
 // TestTypedUUIDAuthAndAdminPostgres is intentionally backed by PostgreSQL.
@@ -364,7 +362,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}); err != nil || len(versions) != 2 || versions[0].CurrentVersion != 2 {
 		t.Fatalf("list Agent versions through string UUID mapper parameters = (%+v, %v)", versions, err)
 	}
-	if archived, _, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
+	if archived, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
 		t.Fatalf("archive Agent through string UUID mapper parameters = (%+v, %v)", archived, err)
 	}
 
@@ -472,32 +470,27 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}
 
 	deploymentID := "dep_typed_uuid_" + suffix
-	var deployment db.Deployment
-	err = app.db.Transaction(ctx, func(tx *yourbatis.Tx) error {
-		var createErr error
-		deployment, createErr = app.db.CreateDeploymentTx(ctx, tx, db.Deployment{
-			UUID:                  uuid.NewString(),
-			ExternalID:            deploymentID,
-			OrganizationUUID:      ids.OrganizationUUID,
-			WorkspaceUUID:         ids.WorkspaceUUID,
-			CreatedByAPIKeyUUID:   ids.APIKeyUUID,
-			EnvironmentUUID:       environment.UUID,
-			EnvironmentExternalID: environment.ExternalID,
-			AgentUUID:             agent.UUID,
-			AgentExternalID:       agent.ExternalID,
-			AgentVersion:          agent.CurrentVersion,
-			AgentSnapshot:         []byte(`{}`),
-			Name:                  "typed UUID PostgreSQL deployment",
-			Metadata:              []byte(`{}`),
-			InitialEvents:         []byte(`[]`),
-			Resources:             []byte(`[]`),
-			ResourceSecrets:       []byte(`[]`),
-			VaultIDs:              []byte(`[]`),
-			Status:                "active",
-			CreatedAt:             now,
-			UpdatedAt:             now,
-		})
-		return createErr
+	deployment, err := app.db.CreateDeployment(ctx, db.Deployment{
+		UUID:                  uuid.NewString(),
+		ExternalID:            deploymentID,
+		OrganizationUUID:      ids.OrganizationUUID,
+		WorkspaceUUID:         ids.WorkspaceUUID,
+		CreatedByAPIKeyUUID:   ids.APIKeyUUID,
+		EnvironmentUUID:       environment.UUID,
+		EnvironmentExternalID: environment.ExternalID,
+		AgentUUID:             agent.UUID,
+		AgentExternalID:       agent.ExternalID,
+		AgentVersion:          agent.CurrentVersion,
+		AgentSnapshot:         []byte(`{}`),
+		Name:                  "typed UUID PostgreSQL deployment",
+		Metadata:              []byte(`{}`),
+		InitialEvents:         []byte(`[]`),
+		Resources:             []byte(`[]`),
+		ResourceSecrets:       []byte(`[]`),
+		VaultIDs:              []byte(`[]`),
+		Status:                "active",
+		CreatedAt:             now,
+		UpdatedAt:             now,
 	})
 	if err != nil {
 		t.Fatalf("create Deployment through typed UUID parameters: %v", err)

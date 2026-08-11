@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,7 +40,6 @@ type DeploymentScheduler struct {
 	database   *db.DB
 	client     *river.Client[*sql.Tx]
 	logger     *slog.Logger
-	mu         sync.Mutex
 	registered map[string]int64
 	cancel     context.CancelFunc
 	done       chan struct{}
@@ -77,11 +75,9 @@ func NewDeploymentScheduler(database *db.DB, logger *slog.Logger) (*DeploymentSc
 	if err != nil {
 		return nil, err
 	}
-	scheduler := &DeploymentScheduler{
+	return &DeploymentScheduler{
 		database: database, client: client, logger: logger, registered: make(map[string]int64),
-	}
-	worker.scheduler = scheduler
-	return scheduler, nil
+	}, nil
 }
 
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
@@ -112,36 +108,17 @@ func (s *DeploymentScheduler) Stop(ctx context.Context) error {
 	return s.client.Stop(ctx)
 }
 
-func (s *DeploymentScheduler) Update(ctx context.Context, deployment db.Deployment) {
-	state := db.DeploymentSchedule{
-		WorkspaceUUID: deployment.WorkspaceUUID, ExternalID: deployment.ExternalID,
-		Schedule: deployment.Schedule, ScheduleRevision: deployment.ScheduleRevision,
-	}
-	if deployment.ArchivedAt != nil || deployment.Status != "active" {
-		state.Schedule = nil
-	}
-	s.mu.Lock()
-	err := s.updateLocked(state)
-	s.mu.Unlock()
-	if err != nil {
-		s.logger.ErrorContext(ctx, "update deployment periodic job", "deployment_id", deployment.ExternalID, "error", err)
-	}
-}
-
 func (s *DeploymentScheduler) sync(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	states, err := s.database.ListDeploymentSchedules(ctx)
 	if err != nil {
 		return err
 	}
 	desired := make(map[string]struct{}, len(states))
 	for _, state := range states {
-		if err := s.updateLocked(state); err != nil {
+		if err := s.update(state); err != nil {
 			if errors.Is(err, errInvalidDeploymentSchedule) {
 				state.Schedule = nil
-				_ = s.updateLocked(state)
+				_ = s.update(state)
 				s.logger.ErrorContext(ctx, "skip invalid stored deployment schedule", "deployment_id", state.ExternalID, "error", err)
 				continue
 			}
@@ -158,10 +135,7 @@ func (s *DeploymentScheduler) sync(ctx context.Context) error {
 	return nil
 }
 
-func (s *DeploymentScheduler) updateLocked(state db.DeploymentSchedule) error {
-	if revision, ok := s.registered[state.ExternalID]; ok && revision > state.ScheduleRevision {
-		return nil
-	}
+func (s *DeploymentScheduler) update(state db.DeploymentSchedule) error {
 	if len(state.Schedule) == 0 {
 		s.client.PeriodicJobs().RemoveByID(state.ExternalID)
 		delete(s.registered, state.ExternalID)
@@ -207,8 +181,7 @@ func (s *DeploymentScheduler) syncLoop(ctx context.Context) {
 
 type scheduledDeploymentWorker struct {
 	river.WorkerDefaults[scheduledDeploymentArgs]
-	database  *db.DB
-	scheduler *DeploymentScheduler
+	database *db.DB
 }
 
 func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[scheduledDeploymentArgs]) error {
@@ -239,8 +212,6 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		if err != nil {
 			return err
 		}
-		deployment.ArchivedAt = &now
-		w.scheduler.Update(ctx, deployment)
 		return nil
 	}
 	if agentErr != nil {
@@ -319,10 +290,6 @@ func (w *scheduledDeploymentWorker) recordFailure(
 	})
 	if errors.Is(err, db.ErrStaleSchedule) {
 		return nil
-	}
-	if err == nil && len(pausedReasonJSON) > 0 {
-		deployment.Status = "paused"
-		w.scheduler.Update(ctx, deployment)
 	}
 	return err
 }

@@ -80,7 +80,6 @@ type ServerDeps struct {
 	SandboxTimeoutExtender codesessions.SandboxTimeoutExtender
 	FilestoreCredentials   *filestoreapi.TokenCredentials
 	FilestoreService       *filestoreapi.Service
-	DeploymentScheduler    *deploymentsapi.DeploymentScheduler
 	VaultSecrets           *secrets.Service
 }
 
@@ -114,10 +113,10 @@ func NewServer(deps ServerDeps) *Server {
 		filestoreCredentials: deps.FilestoreCredentials,
 		vaultSecrets:         deps.VaultSecrets,
 		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
-		agents:               agents.NewHandler(deps.Config, deps.DB, deps.DeploymentScheduler, componentLogger("agents")),
+		agents:               agents.NewHandler(deps.Config, deps.DB, componentLogger("agents")),
 		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets),
-		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, deps.DeploymentScheduler, componentLogger("deployments")),
+		deployments:          deploymentsapi.NewHandler(deps.DB, webhookEnqueuer, componentLogger("deployments")),
 		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")),
 		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),

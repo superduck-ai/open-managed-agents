@@ -146,15 +146,8 @@ func (d *DB) Close() {
 
 // Transaction executes fn in a Yourbatis transaction owned by DB.
 func (d *DB) Transaction(ctx context.Context, fn func(*yourbatis.Tx) error) error {
-	if fn == nil {
-		return errors.New("database transaction callback is nil")
-	}
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		tx, ok := executor.(*yourbatis.Tx)
-		if !ok {
-			return fmt.Errorf("unexpected Yourbatis transaction type %T", executor)
-		}
-		return fn(tx)
+		return fn(executor.(*yourbatis.Tx))
 	})
 }
 

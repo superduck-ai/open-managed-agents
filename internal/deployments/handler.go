@@ -762,26 +762,21 @@ func (h *Handler) validateRunReferences(
 			return nil, runErrorForReference("vault", nil, true)
 		}
 	}
-	var resources []map[string]any
-	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
-		if err := json.Unmarshal(deployment.Resources, &resources); err != nil {
-			return nil, runError("unknown_error", "Stored resources are invalid")
-		}
+	resources, err := parseDeploymentRunResourceReferences(deployment.Resources)
+	if err != nil {
+		return nil, runError("unknown_error", "Stored resources are invalid")
 	}
 	filesByID := make(map[string]db.FileRecord)
 	for _, resource := range resources {
-		resourceType, _ := resource["type"].(string)
-		switch resourceType {
+		switch resource.Type {
 		case "file":
-			fileID, _ := resource["file_id"].(string)
-			file, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
+			file, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, resource.FileID)
 			if err != nil {
 				return nil, runErrorForReference("file", err, false)
 			}
-			filesByID[fileID] = file
+			filesByID[resource.FileID] = file
 		case "memory_store":
-			storeID, _ := resource["memory_store_id"].(string)
-			store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
+			store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, resource.MemoryStoreID)
 			if err != nil {
 				return nil, runErrorForReference("memory_store", err, false)
 			}

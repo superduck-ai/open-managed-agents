@@ -23,6 +23,45 @@ func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
 	}
 }
 
+func TestParseDeploymentRunResourceReferences(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "top level is not an array", raw: `{"type":"file"}`},
+		{name: "resource is null", raw: `[null]`},
+		{name: "type is not a string", raw: `[{"type":1,"file_id":"file_test"}]`},
+		{name: "unsupported type", raw: `[{"type":"directory"}]`},
+		{name: "file ID is missing", raw: `[{"type":"file"}]`},
+		{name: "file ID is not a string", raw: `[{"type":"file","file_id":1}]`},
+		{name: "memory store ID is missing", raw: `[{"type":"memory_store"}]`},
+		{name: "memory store ID is not a string", raw: `[{"type":"memory_store","memory_store_id":1}]`},
+		{name: "reference field belongs to another type", raw: `[{"type":"github_repository","file_id":"file_test"}]`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parseDeploymentRunResourceReferences(json.RawMessage(test.raw)); err == nil {
+				t.Fatal("parseDeploymentRunResourceReferences() error = nil")
+			}
+		})
+	}
+
+	t.Run("accepts normalized resource references", func(t *testing.T) {
+		references, err := parseDeploymentRunResourceReferences(json.RawMessage(`[
+			{"type":"file","file_id":"file_test","mount_path":"/uploads/file.txt"},
+			{"type":"memory_store","memory_store_id":"mem_test"},
+			{"type":"github_repository","url":"https://github.com/example/repo.git"}
+		]`))
+		if err != nil {
+			t.Fatalf("parseDeploymentRunResourceReferences() error = %v", err)
+		}
+		if len(references) != 3 || references[0].FileID != "file_test" ||
+			references[1].MemoryStoreID != "mem_test" || references[2].Type != "github_repository" {
+			t.Fatalf("parseDeploymentRunResourceReferences() = %+v", references)
+		}
+	})
+}
+
 func TestDeploymentResponseUsesEmptyDescription(t *testing.T) {
 	response, err := json.Marshal(deploymentResponse{})
 	if err != nil || !strings.Contains(string(response), `"description":""`) {

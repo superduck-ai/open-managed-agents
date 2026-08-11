@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -55,6 +56,12 @@ type deploymentResourcePayload struct {
 	MemoryStoreID string          `json:"memory_store_id,omitempty"`
 	Access        string          `json:"access,omitempty"`
 	Instructions  *string         `json:"instructions,omitempty"`
+}
+
+type deploymentRunResourceReference struct {
+	Type          string `json:"type"`
+	FileID        string `json:"file_id"`
+	MemoryStoreID string `json:"memory_store_id"`
 }
 
 type deploymentResourceSecret struct {
@@ -341,6 +348,35 @@ func (e resourceReferenceError) Error() string {
 
 func (e resourceReferenceError) Unwrap() error {
 	return e.Err
+}
+
+func parseDeploymentRunResourceReferences(raw json.RawMessage) ([]deploymentRunResourceReference, error) {
+	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
+		return nil, nil
+	}
+	var references []deploymentRunResourceReference
+	if err := json.Unmarshal(raw, &references); err != nil {
+		return nil, errors.New("stored resources are invalid")
+	}
+	for _, reference := range references {
+		switch reference.Type {
+		case sessionresource.FileType:
+			if strings.TrimSpace(reference.FileID) == "" || reference.MemoryStoreID != "" {
+				return nil, errors.New("stored file resource reference is invalid")
+			}
+		case "memory_store":
+			if strings.TrimSpace(reference.MemoryStoreID) == "" || reference.FileID != "" {
+				return nil, errors.New("stored memory store resource reference is invalid")
+			}
+		case "github_repository":
+			if reference.FileID != "" || reference.MemoryStoreID != "" {
+				return nil, errors.New("stored GitHub resource reference is invalid")
+			}
+		default:
+			return nil, errors.New("stored resource type is invalid")
+		}
+	}
+	return references, nil
 }
 
 func sessionResourcesFromDeployment(

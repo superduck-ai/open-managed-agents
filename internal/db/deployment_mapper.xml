@@ -131,10 +131,8 @@
             resources = CAST(#{params.Resources,sensitive=true} AS jsonb),
             resource_secrets = CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
             vault_ids = CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
-			<if test="params.ScheduleChanged">
+			<if test="params.UpdateSchedule">
 				schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
-			</if>
-			<if test="params.RevisionChanged">
 				schedule_revision = schedule_revision + 1,
 			</if>
             updated_at = #{params.UpdatedAt}

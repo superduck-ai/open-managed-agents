@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 var errRetryableRunPreparation = errors.New("retryable deployment run preparation")
@@ -21,6 +21,11 @@ type preparedDeploymentRun struct {
 	RunID   string
 	Session db.CreateSessionInput
 	Events  []db.SessionEvent
+}
+
+type deploymentSessionWork struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
 }
 
 func prepareDeploymentRun(deployment db.Deployment, now time.Time) (preparedDeploymentRun, error) {
@@ -37,7 +42,7 @@ func prepareDeploymentRun(deployment db.Deployment, now time.Time) (preparedDepl
 		return preparedDeploymentRun{}, err
 	}
 	deploymentID := deployment.ExternalID
-	workData, err := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
+	workData, err := jsonx.Encode(deploymentSessionWork{ID: sessionID, Type: "session"})
 	if err != nil {
 		return preparedDeploymentRun{}, err
 	}
@@ -53,7 +58,7 @@ func prepareDeploymentRun(deployment db.Deployment, now time.Time) (preparedDepl
 				AgentUUID: deployment.AgentUUID, AgentExternalID: deployment.AgentExternalID,
 				AgentVersion: deployment.AgentVersion, AgentSnapshot: deployment.AgentSnapshot,
 				DeploymentUUID: &deployment.UUID, DeploymentID: &deploymentID,
-				Metadata: httpapi.RawOr(deployment.Metadata, `{}`), VaultIDs: httpapi.RawOr(deployment.VaultIDs, `[]`),
+				Metadata: jsonx.Default(deployment.Metadata, `{}`), VaultIDs: jsonx.Default(deployment.VaultIDs, `[]`),
 				Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`),
 				OutcomeEvaluations: outcomes, CreatedAt: now, UpdatedAt: now,
 			},

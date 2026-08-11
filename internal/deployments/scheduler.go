@@ -14,8 +14,8 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -160,10 +160,10 @@ func (s *DeploymentScheduler) sync(ctx context.Context) error {
 }
 
 func (s *DeploymentScheduler) updateLocked(state db.DeploymentSchedule) error {
+	if revision, ok := s.registered[state.ExternalID]; ok && revision > state.ScheduleRevision {
+		return nil
+	}
 	if len(state.Schedule) == 0 {
-		if revision, ok := s.registered[state.ExternalID]; ok && revision > state.ScheduleRevision {
-			return nil
-		}
 		s.client.PeriodicJobs().RemoveByID(state.ExternalID)
 		delete(s.registered, state.ExternalID)
 		return nil
@@ -256,7 +256,7 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		return agentErr
 	}
 
-	referenceFailure, err := validateRunReferences(ctx, w.database, deployment.WorkspaceUUID, deployment)
+	referenceFailure, err := validateRunDependencies(ctx, w.database, deployment.WorkspaceUUID, deployment)
 	if err != nil {
 		return err
 	}
@@ -302,7 +302,7 @@ func (w *scheduledDeploymentWorker) recordFailure(
 	ctx context.Context,
 	job *river.Job[scheduledDeploymentArgs],
 	deployment db.Deployment,
-	runErrorJSON json.RawMessage,
+	failure *deploymentRunError,
 	now time.Time,
 ) error {
 	args := job.Args
@@ -311,9 +311,13 @@ func (w *scheduledDeploymentWorker) recordFailure(
 	if err != nil {
 		return err
 	}
-	var pausedReason json.RawMessage
-	if shouldAutoPause(runErrorJSON) {
-		pausedReason, err = httpapi.MarshalRaw(map[string]any{"type": "error", "error": runErrorJSON})
+	runErrorJSON, err := jsonx.Encode(failure)
+	if err != nil {
+		return err
+	}
+	var pausedReasonJSON json.RawMessage
+	if shouldAutoPause(failure) {
+		pausedReasonJSON, err = jsonx.Encode(deploymentPausedReason{Type: "error", Error: failure})
 		if err != nil {
 			return err
 		}
@@ -322,7 +326,7 @@ func (w *scheduledDeploymentWorker) recordFailure(
 		{EventType: "deployment_run.started", ResourceID: runID},
 		{EventType: "deployment_run.failed", ResourceID: runID},
 	}
-	if len(pausedReason) > 0 {
+	if len(pausedReasonJSON) > 0 {
 		webhookInputs = append(webhookInputs, webhooks.EnqueueInput{EventType: "deployment.paused", ResourceID: deployment.ExternalID})
 	}
 	webhookEvents, err := w.prepareWebhookEvents(ctx, deployment, now, webhookInputs)
@@ -335,12 +339,12 @@ func (w *scheduledDeploymentWorker) recordFailure(
 		Run: db.DeploymentRun{
 			UUID: uuid.NewString(), ExternalID: runID, Error: runErrorJSON,
 		},
-		AutoPauseReason: pausedReason, WebhookEvents: webhookEvents, Now: now,
+		AutoPauseReason: pausedReasonJSON, WebhookEvents: webhookEvents, Now: now,
 	})
 	if errors.Is(err, db.ErrStaleSchedule) {
 		return nil
 	}
-	if err == nil && len(pausedReason) > 0 {
+	if err == nil && len(pausedReasonJSON) > 0 {
 		deployment.Status = "paused"
 		w.scheduler.Update(ctx, deployment)
 	}
@@ -361,14 +365,11 @@ func (w *scheduledDeploymentWorker) applyOccurrence(
 	})
 }
 
-func shouldAutoPause(raw json.RawMessage) bool {
-	var value struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(raw, &value) != nil {
+func shouldAutoPause(runError *deploymentRunError) bool {
+	if runError == nil {
 		return false
 	}
-	switch value.Type {
+	switch runError.Type {
 	case "environment_archived_error",
 		"agent_archived_error",
 		"environment_not_found_error",

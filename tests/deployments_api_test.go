@@ -367,7 +367,7 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	})
 
-	t.Run("execution update invalidates a stale occurrence", func(t *testing.T) {
+	t.Run("schedule revision changes only when schedule changes", func(t *testing.T) {
 		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-execution-revision-agent"}`)
 		defer cleanupAgentRows(t, app.pool, agent.ID)
 		env := createEnvironment(t, app, `{"name":"deployments-execution-revision-env"}`)
@@ -383,7 +383,7 @@ func TestDeploymentsAPI(t *testing.T) {
 
 		ctx := context.Background()
 		ids := getDefaultDBIDs(t, app.pool)
-		stale, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		original, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
 		if err != nil {
 			t.Fatalf("load scheduled deployment: %v", err)
 		}
@@ -392,15 +392,29 @@ func TestDeploymentsAPI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load updated deployment: %v", err)
 		}
-		if current.ScheduleRevision != stale.ScheduleRevision+1 {
-			t.Fatalf("schedule_revision = %d, want %d", current.ScheduleRevision, stale.ScheduleRevision+1)
+		if original.ScheduleRevision != 1 {
+			t.Fatalf("initial schedule_revision = %d, want 1", original.ScheduleRevision)
 		}
-		err = applyScheduledOccurrence(ctx, app.db, db.ApplyScheduledOccurrenceInput{
-			WorkspaceUUID: ids.WorkspaceUUID, DeploymentExternalID: created.ID,
-			ScheduleRevision: stale.ScheduleRevision, ScheduledAt: time.Now().UTC().Truncate(time.Minute),
-		})
-		if !errors.Is(err, db.ErrStaleSchedule) {
-			t.Fatalf("ApplyScheduledOccurrence() error = %v, want ErrStaleSchedule", err)
+		if current.ScheduleRevision != original.ScheduleRevision {
+			t.Fatalf("execution update schedule_revision = %d, want %d", current.ScheduleRevision, original.ScheduleRevision)
+		}
+
+		updateDeployment(t, app, created.ID, `{"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}}`)
+		unchanged, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		if err != nil {
+			t.Fatalf("load deployment after unchanged schedule: %v", err)
+		}
+		if unchanged.ScheduleRevision != original.ScheduleRevision {
+			t.Fatalf("unchanged schedule_revision = %d, want %d", unchanged.ScheduleRevision, original.ScheduleRevision)
+		}
+
+		updateDeployment(t, app, created.ID, `{"schedule":{"type":"cron","expression":"*/15 * * * *","timezone":"UTC"}}`)
+		changed, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		if err != nil {
+			t.Fatalf("load deployment after schedule change: %v", err)
+		}
+		if changed.ScheduleRevision != original.ScheduleRevision+1 {
+			t.Fatalf("changed schedule_revision = %d, want %d", changed.ScheduleRevision, original.ScheduleRevision+1)
 		}
 	})
 
@@ -424,6 +438,7 @@ func TestDeploymentsAPI(t *testing.T) {
 			ScheduleRevision: deployment.ScheduleRevision, ScheduledAt: scheduledAt,
 			Run: db.DeploymentRun{
 				UUID: uuid.NewString(), ExternalID: "drun_periodic_" + uuid.NewString(),
+				Error: json.RawMessage(`{"type":"unknown_error","message":"test"}`),
 			},
 			Now: scheduledAt,
 		}

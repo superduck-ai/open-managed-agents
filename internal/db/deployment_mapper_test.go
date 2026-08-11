@@ -15,12 +15,9 @@ import (
 func TestDeploymentMapperBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	params := deploymentMapperTestWriteParams(now)
-	params.ScheduleChanged = true
-	params.RevisionChanged = true
+	params.UpdateSchedule = true
 	withoutSchedule := params
-	withoutSchedule.ScheduleChanged = false
-	withoutRevision := withoutSchedule
-	withoutRevision.RevisionChanged = false
+	withoutSchedule.UpdateSchedule = false
 	page := deploymentPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: 21,
 		Cursor:          &DeploymentPageCursor{CreatedAt: now, UUID: "00000000-0000-4000-8000-000000000009"},
@@ -79,25 +76,9 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			wantSensitiveArgumentNames: deploymentSensitiveArgumentNames(false),
 			wantSQLFragments:           []string{"UPDATE deployments", "schedule_revision = schedule_revision + 1", "workspace_uuid = $16", "RETURNING"},
 		}},
-		{"update execution without schedule", mapperBuilderContract{
+		{"update without schedule", mapperBuilderContract{
 			statement: deploymentMapperUpdateByExternalIDStatement,
 			bound:     buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutSchedule),
-			wantID:    "DeploymentMapper.UpdateByExternalID", wantKind: yourbatis.StatementUpdate,
-			wantArgumentNames: []string{
-				"params.EnvironmentUUID", "params.EnvironmentExternalID", "params.AgentUUID", "params.AgentExternalID",
-				"params.AgentVersion", "params.AgentSnapshot", "params.Name", "params.Description", "params.Metadata",
-				"params.InitialEvents", "params.Resources", "params.ResourceSecrets", "params.VaultIDs", "params.UpdatedAt",
-				"params.WorkspaceUUID", "params.ExternalID",
-			},
-			wantSensitiveArgumentNames: []string{
-				"params.AgentSnapshot", "params.Metadata", "params.InitialEvents", "params.Resources",
-				"params.ResourceSecrets", "params.VaultIDs",
-			},
-			wantSQLFragments: []string{"UPDATE deployments", "schedule_revision = schedule_revision + 1", "workspace_uuid = $15", "RETURNING"},
-		}},
-		{"update without execution change", mapperBuilderContract{
-			statement: deploymentMapperUpdateByExternalIDStatement,
-			bound:     buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutRevision),
 			wantID:    "DeploymentMapper.UpdateByExternalID", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
 				"params.EnvironmentUUID", "params.EnvironmentExternalID", "params.AgentUUID", "params.AgentExternalID",
@@ -179,8 +160,8 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) { assertMapperBuilderContract(t, test.contract) })
 	}
 
-	t.Run("update without execution change preserves revision", func(t *testing.T) {
-		bound := buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutRevision)
+	t.Run("update without schedule preserves revision", func(t *testing.T) {
+		bound := buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutSchedule)
 		if containsSQL(bound.SQL, "schedule_revision = schedule_revision + 1") {
 			t.Fatalf("SQL unexpectedly changes schedule state: %q", bound.SQL)
 		}

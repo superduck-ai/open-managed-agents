@@ -74,29 +74,21 @@ func NormalizeFileSpec(fileID, filename string, sourceRaw, mountPathRaw json.Raw
 	return FileSpec{fileID: fileID, mountPath: mountPath}, nil
 }
 
-// ParseStoredFileSpec strictly reconstructs a normalized File resource from a
-// Deployment template. Stored data does not receive API defaults because it
-// must already be in the canonical contract.
-func ParseStoredFileSpec(raw json.RawMessage) (FileSpec, error) {
-	var payload filePayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return FileSpec{}, errors.New("stored file resource is invalid")
-	}
-	if payload.Type != FileType {
-		return FileSpec{}, fmt.Errorf("stored file resource type must be %q", FileType)
-	}
-	if strings.TrimSpace(payload.FileID) == "" {
+// NewStoredFileSpec reconstructs a normalized File resource from canonical
+// Deployment fields without applying API defaults.
+func NewStoredFileSpec(fileID, source, mountPath string) (FileSpec, error) {
+	if strings.TrimSpace(fileID) == "" {
 		return FileSpec{}, errors.New("stored file resource file_id is required")
 	}
-	if payload.Source != sandboxmount.FileSource {
+	if source != sandboxmount.FileSource {
 		return FileSpec{}, fmt.Errorf("stored file resource source must be %q", sandboxmount.FileSource)
 	}
-	if err := sandboxmount.ValidateFileMountPath(payload.MountPath); err != nil {
+	if err := sandboxmount.ValidateFileMountPath(mountPath); err != nil {
 		return FileSpec{}, err
 	}
 	return FileSpec{
-		fileID:    payload.FileID,
-		mountPath: payload.MountPath,
+		fileID:    fileID,
+		mountPath: mountPath,
 	}, nil
 }
 

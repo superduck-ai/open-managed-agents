@@ -101,7 +101,6 @@ func defaultWebhookEventTypes() []string {
 		"deployment.paused",
 		"deployment.unpaused",
 		"deployment.archived",
-		"deployment.deleted",
 		"deployment_run.started",
 		"deployment_run.succeeded",
 		"deployment_run.failed",

@@ -4,15 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"strconv"
 	"time"
 	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
@@ -29,8 +28,6 @@ type normalizedDeploymentResource struct {
 	mountPath    string
 }
 
-const deploymentMountPathDefaulted = "_oma_mount_path_defaulted"
-
 type deploymentResourceRequest struct {
 	Type               json.RawMessage `json:"type"`
 	FileID             json.RawMessage `json:"file_id"`
@@ -45,15 +42,32 @@ type deploymentResourceRequest struct {
 }
 
 type deploymentResourcePayload struct {
-	Type          string          `json:"type"`
-	FileID        string          `json:"file_id,omitempty"`
-	Source        string          `json:"source,omitempty"`
-	MountPath     string          `json:"mount_path,omitempty"`
-	URL           string          `json:"url,omitempty"`
-	Checkout      json.RawMessage `json:"checkout,omitempty"`
-	MemoryStoreID string          `json:"memory_store_id,omitempty"`
-	Access        string          `json:"access,omitempty"`
-	Instructions  *string         `json:"instructions,omitempty"`
+	Type          string              `json:"type"`
+	FileID        string              `json:"file_id,omitempty"`
+	Source        string              `json:"source,omitempty"`
+	MountPath     string              `json:"mount_path,omitempty"`
+	URL           string              `json:"url,omitempty"`
+	Checkout      *deploymentCheckout `json:"checkout,omitempty"`
+	MemoryStoreID string              `json:"memory_store_id,omitempty"`
+	Access        string              `json:"access,omitempty"`
+	Instructions  *string             `json:"instructions,omitempty"`
+}
+
+type deploymentCheckout struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	SHA  string `json:"sha,omitempty"`
+}
+
+type deploymentResourceResponse struct {
+	Type          string              `json:"type"`
+	FileID        string              `json:"file_id,omitempty"`
+	MountPath     string              `json:"mount_path,omitempty"`
+	URL           string              `json:"url,omitempty"`
+	Checkout      *deploymentCheckout `json:"checkout,omitempty"`
+	MemoryStoreID string              `json:"memory_store_id,omitempty"`
+	Access        string              `json:"access,omitempty"`
+	Instructions  *string             `json:"instructions,omitempty"`
 }
 
 type deploymentResourceSecret struct {
@@ -89,7 +103,7 @@ func (h *Handler) normalizeResources(
 	principal auth.Principal,
 	raw json.RawMessage,
 ) (json.RawMessage, json.RawMessage, error) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
+	if len(raw) == 0 || jsonx.IsNull(raw) {
 		return json.RawMessage(`[]`), json.RawMessage(`{}`), nil
 	}
 	var items []deploymentResourceRequest
@@ -123,11 +137,11 @@ func (h *Handler) normalizeResources(
 		return nil, nil, err
 	}
 
-	resourcesRaw, err := httpapi.MarshalRaw(resources)
+	resourcesRaw, err := jsonx.Encode(resources)
 	if err != nil {
 		return nil, nil, err
 	}
-	secretsRaw, err := httpapi.MarshalRaw(secrets)
+	secretsRaw, err := jsonx.Encode(secrets)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -220,11 +234,12 @@ func (h *Handler) normalizeResource(
 		}
 		resource.payload.URL = repoURL
 		resource.payload.MountPath = mountPath
-		if len(fields.Checkout) > 0 && !httpapi.IsJSONNull(fields.Checkout) {
-			if err := validateCheckout(fields.Checkout); err != nil {
+		if len(fields.Checkout) > 0 && !jsonx.IsNull(fields.Checkout) {
+			checkout, err := normalizeCheckout(fields.Checkout)
+			if err != nil {
 				return normalizedDeploymentResource{}, err
 			}
-			resource.payload.Checkout = append(json.RawMessage(nil), fields.Checkout...)
+			resource.payload.Checkout = checkout
 		}
 		token, err := parseRequiredRawString(fields.AuthorizationToken, "authorization_token")
 		if err != nil {
@@ -247,7 +262,7 @@ func (h *Handler) normalizeResource(
 		}
 		resource.payload.Access = access
 		if len(fields.Instructions) > 0 {
-			if httpapi.IsJSONNull(fields.Instructions) {
+			if jsonx.IsNull(fields.Instructions) {
 				return normalizedDeploymentResource{}, errors.New("instructions is required")
 			}
 			var instructions string
@@ -285,47 +300,37 @@ func (h *Handler) normalizeResource(
 	return resource, nil
 }
 
-type deploymentResourceEnvelope struct {
-	Type      string `json:"type"`
-	FileID    string `json:"file_id"`
-	MountPath string `json:"mount_path"`
-}
-
-func deploymentResourcesResponse(raw json.RawMessage) (json.RawMessage, error) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return json.RawMessage(`[]`), nil
+func deploymentResourcesResponse(raw json.RawMessage) ([]deploymentResourceResponse, error) {
+	if len(raw) == 0 || jsonx.IsNull(raw) {
+		return []deploymentResourceResponse{}, nil
 	}
-	var resources []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &resources); err != nil {
+	var stored []deploymentResourcePayload
+	if err := json.Unmarshal(raw, &stored); err != nil {
 		return nil, errors.New("stored deployment resources are invalid")
 	}
-	for _, resource := range resources {
-		var envelope deploymentResourceEnvelope
-		encoded, err := json.Marshal(resource)
-		if err != nil || json.Unmarshal(encoded, &envelope) != nil {
+	resources := make([]deploymentResourceResponse, 0, len(stored))
+	for _, resource := range stored {
+		if resource.Type == "" {
 			return nil, errors.New("stored deployment resource is invalid")
 		}
-		delete(resource, "authorization_token")
-		delete(resource, "source")
-		delete(resource, deploymentMountPathDefaulted)
-		if envelope.Type != sessionresource.FileType || envelope.FileID == "" {
-			continue
+		response := deploymentResourceResponse{
+			Type: resource.Type, FileID: resource.FileID, MountPath: resource.MountPath,
+			URL: resource.URL, Checkout: resource.Checkout, MemoryStoreID: resource.MemoryStoreID,
+			Access: resource.Access, Instructions: resource.Instructions,
 		}
-		publicMountPath, err := sandboxmount.FileBackingPath(envelope.MountPath)
-		if err != nil {
-			return nil, errors.New("stored deployment file mount_path is invalid")
+		if resource.Type == sessionresource.FileType {
+			if resource.FileID == "" {
+				return nil, errors.New("stored deployment resource is invalid")
+			}
+			publicMountPath, err := sandboxmount.FileBackingPath(resource.MountPath)
+			if err != nil {
+				return nil, errors.New("stored deployment file mount_path is invalid")
+			}
+			response.MountPath = publicMountPath
 		}
-		mountPath, err := json.Marshal(publicMountPath)
-		if err != nil {
-			return nil, err
-		}
-		resource["mount_path"] = mountPath
+		resources = append(resources, response)
 	}
-	response, err := httpapi.MarshalRaw(resources)
-	if err != nil {
-		return nil, err
-	}
-	return response, nil
+	return resources, nil
 }
 
 type resourceReferenceError struct {
@@ -346,14 +351,14 @@ func sessionResourcesFromDeployment(
 	deployment db.Deployment,
 	now time.Time,
 ) ([]db.CreateSessionResourceInput, error) {
-	var configs []json.RawMessage
-	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
+	var configs []deploymentResourcePayload
+	if len(deployment.Resources) > 0 && !jsonx.IsNull(deployment.Resources) {
 		if err := json.Unmarshal(deployment.Resources, &configs); err != nil {
 			return nil, errors.New("stored resources are invalid")
 		}
 	}
 	var secrets map[string]json.RawMessage
-	if len(deployment.ResourceSecrets) > 0 && !httpapi.IsJSONNull(deployment.ResourceSecrets) {
+	if len(deployment.ResourceSecrets) > 0 && !jsonx.IsNull(deployment.ResourceSecrets) {
 		if err := json.Unmarshal(deployment.ResourceSecrets, &secrets); err != nil {
 			return nil, errors.New("stored resource secrets are invalid")
 		}
@@ -361,21 +366,19 @@ func sessionResourcesFromDeployment(
 
 	resources := make([]db.CreateSessionResourceInput, 0, len(configs))
 	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
-	for index, configRaw := range configs {
-		var config map[string]any
-		if err := json.Unmarshal(configRaw, &config); err != nil || config == nil {
+	for index, config := range configs {
+		if config.Type == "" {
 			return nil, errors.New("stored resources are invalid")
 		}
-		resourceType, _ := config["type"].(string)
 		resourceID, err := ids.New("sesrsc_")
 		if err != nil {
 			return nil, markRunPreparationRetryable(err)
 		}
 
-		payload := maps.Clone(config)
+		var payload any
 		var fileMount *db.SessionFileMount
-		if resourceType == sessionresource.FileType {
-			fileSpec, err := sessionresource.ParseStoredFileSpec(configRaw)
+		if config.Type == sessionresource.FileType {
+			fileSpec, err := sessionresource.NewStoredFileSpec(config.FileID, config.Source, config.MountPath)
 			if err != nil {
 				return nil, err
 			}
@@ -391,10 +394,12 @@ func sessionResourcesFromDeployment(
 				Path:               binding.Path,
 			}
 		} else {
-			payload["id"] = resourceID
-			payload["type"] = resourceType
+			payload = struct {
+				ID string `json:"id"`
+				deploymentResourcePayload
+			}{ID: resourceID, deploymentResourcePayload: config}
 		}
-		payloadRaw, err := httpapi.MarshalRaw(payload)
+		payloadRaw, err := jsonx.Encode(payload)
 		if err != nil {
 			return nil, err
 		}
@@ -409,7 +414,7 @@ func sessionResourcesFromDeployment(
 				ExternalID:       resourceID,
 				OrganizationUUID: deployment.OrganizationUUID,
 				WorkspaceUUID:    deployment.WorkspaceUUID,
-				ResourceType:     resourceType,
+				ResourceType:     config.Type,
 				Payload:          payloadRaw,
 				SecretPayload:    secretRaw,
 				CreatedAt:        now,

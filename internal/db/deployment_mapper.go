@@ -57,8 +57,7 @@ type deploymentWriteParams struct {
 	ResourceSecrets       []byte
 	VaultIDs              []byte
 	Schedule              []byte
-	ScheduleChanged       bool
-	RevisionChanged       bool
+	UpdateSchedule        bool
 	ScheduleRevision      int64
 	LastRunAt             *time.Time
 	Status                string

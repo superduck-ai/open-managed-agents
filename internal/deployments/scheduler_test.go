@@ -31,6 +31,19 @@ func TestDeploymentSchedulerIgnoresStaleInactiveUpdate(t *testing.T) {
 	}
 }
 
+func TestDeploymentSchedulerIgnoresStaleActiveUpdate(t *testing.T) {
+	scheduler := newRegistryTestScheduler(t)
+	deployment := scheduledDeploymentForRegistryTest(2)
+	scheduler.Update(context.Background(), deployment)
+
+	deployment.ScheduleRevision = 1
+	scheduler.Update(context.Background(), deployment)
+
+	if revision := scheduler.registered[deployment.ExternalID]; revision != 2 {
+		t.Fatalf("registered revision = %d, want 2", revision)
+	}
+}
+
 func TestDeploymentSchedulerRemovesInactiveDeployment(t *testing.T) {
 	scheduler := newRegistryTestScheduler(t)
 	deployment := scheduledDeploymentForRegistryTest(1)
@@ -82,12 +95,12 @@ func TestClassifyReferenceFailureRetriesInfrastructureErrors(t *testing.T) {
 	databaseErr := errors.New("database unavailable")
 	failure, err := classifyReferenceFailure("agent", databaseErr, false)
 	if !errors.Is(err, databaseErr) || failure != nil {
-		t.Fatalf("classifyReferenceFailure() = (%s, %v), want (nil, database error)", failure, err)
+		t.Fatalf("classifyReferenceFailure() = (%v, %v), want (nil, database error)", failure, err)
 	}
 
 	failure, err = classifyReferenceFailure("agent", db.ErrNotFound, false)
-	if err != nil || string(failure) != `{"message":"Agent not found","type":"agent_archived_error"}` {
-		t.Fatalf("classifyReferenceFailure(not found) = (%s, %v)", failure, err)
+	if err != nil || failure == nil || failure.Type != "agent_archived_error" || failure.Message != "Agent not found" {
+		t.Fatalf("classifyReferenceFailure(not found) = (%v, %v)", failure, err)
 	}
 }
 
@@ -109,16 +122,16 @@ func TestShouldAutoPauseUsesOfficialAllowlist(t *testing.T) {
 		"mcp_egress_blocked_error",
 	}
 	for _, errorType := range autoPause {
-		if !shouldAutoPause(json.RawMessage(`{"type":"` + errorType + `"}`)) {
+		if !shouldAutoPause(runError(errorType, "test")) {
 			t.Errorf("shouldAutoPause(%q) = false", errorType)
 		}
 	}
 	for _, errorType := range []string{"session_rate_limited_error", "session_creation_rejected_error", "future_error"} {
-		if shouldAutoPause(json.RawMessage(`{"type":"` + errorType + `"}`)) {
+		if shouldAutoPause(runError(errorType, "test")) {
 			t.Errorf("shouldAutoPause(%q) = true", errorType)
 		}
 	}
-	if shouldAutoPause(json.RawMessage(`not-json`)) {
-		t.Error("shouldAutoPause(invalid JSON) = true")
+	if shouldAutoPause(nil) {
+		t.Error("shouldAutoPause(nil) = true")
 	}
 }

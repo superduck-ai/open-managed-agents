@@ -62,7 +62,7 @@ Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
 - River Job 直接使用名义 occurrence，不增加私有 jitter 算法。
 
-每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule` 和 `schedule_revision`，不保存应用自行推进的下一次游标。create、明确修改或清除 schedule、修改 agent/environment/metadata/initial events/resources/vaults、pause、unpause、archive 都递增 revision，使已经投递的旧 Job 在 worker 中失效；不影响执行的 PATCH 不改 revision。
+每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule` 和 `schedule_revision`，不保存应用自行推进的下一次游标。创建带 schedule 的 Deployment 时 revision 从 1 开始；PATCH 只有在 schedule 真正修改或清除时才递增，省略 schedule 或提交相同值均保持不变。pause、unpause 和 archive 仍递增 revision，使已经投递的旧 Job 在 worker 中失效；其他字段更新由 worker 在执行时读取最新值，不改调度 revision。
 
 每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒同步一次 registry；API 写路径、worker 自动暂停/归档和 Agent 级联归档在数据库提交后立即更新当前实例。这样 River 文档要求的所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
 

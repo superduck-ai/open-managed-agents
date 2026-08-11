@@ -49,6 +49,18 @@ func TestDeploymentRunResponseBuildsOfficialTriggerContext(t *testing.T) {
 	}
 }
 
+func TestScheduleResponseKeepsInvalidStoredCron(t *testing.T) {
+	response := scheduleResponse(
+		json.RawMessage(`{"type":"cron","expression":"bad","timezone":"UTC"}`),
+		nil,
+		time.Now(),
+		false,
+	)
+	if response == nil || response.Expression != "bad" || len(response.UpcomingRunsAt) != 0 {
+		t.Fatalf("scheduleResponse() = %+v", response)
+	}
+}
+
 func TestDeploymentResourcesResponse(t *testing.T) {
 	t.Run("rejects invalid stored resources", func(t *testing.T) {
 		if _, err := deploymentResourcesResponse(json.RawMessage(`{"type":"file"}`)); err == nil {

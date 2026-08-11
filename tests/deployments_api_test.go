@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
-	"github.com/superduck-ai/yourbatis"
 )
 
 type deploymentAPIResponse struct {
@@ -366,54 +365,35 @@ func TestDeploymentsAPI(t *testing.T) {
 
 	})
 
-	t.Run("schedule revision changes only when schedule changes", func(t *testing.T) {
-		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-execution-revision-agent"}`)
+	t.Run("failure changed schedule rejects an old occurrence", func(t *testing.T) {
+		agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"deployments-stale-schedule-agent"}`)
 		defer cleanupAgentRows(t, app.pool, agent.ID)
-		env := createEnvironment(t, app, `{"name":"deployments-execution-revision-env"}`)
+		env := createEnvironment(t, app, `{"name":"deployments-stale-schedule-env"}`)
 		defer cleanupEnvironmentRows(t, app.pool, env.ID)
-		created := createDeployment(t, app, `{
-			"agent":`+quoteJSON(agent.ID)+`,
-			"environment_id":`+quoteJSON(env.ID)+`,
-			"name":"execution revision",
-			"initial_events":[{"type":"user.message","content":[{"type":"text","text":"before"}]}],
-			"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}
-		}`)
+		created := createDeployment(t, app, deploymentBodyWithExtra(agent.ID, env.ID, `"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}`))
 		defer cleanupDeploymentRows(t, app, created.ID)
 
 		ctx := context.Background()
 		ids := getDefaultDBIDs(t, app.pool)
-		original, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
+		deployment, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
 		if err != nil {
 			t.Fatalf("load scheduled deployment: %v", err)
 		}
-		updateDeployment(t, app, created.ID, `{"initial_events":[{"type":"user.message","content":[{"type":"text","text":"after"}]}]}`)
-		current, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
-		if err != nil {
-			t.Fatalf("load updated deployment: %v", err)
-		}
-		if original.ScheduleRevision != 1 {
-			t.Fatalf("initial schedule_revision = %d, want 1", original.ScheduleRevision)
-		}
-		if current.ScheduleRevision != original.ScheduleRevision {
-			t.Fatalf("execution update schedule_revision = %d, want %d", current.ScheduleRevision, original.ScheduleRevision)
-		}
-
-		updateDeployment(t, app, created.ID, `{"schedule":{"type":"cron","expression":"*/10 * * * *","timezone":"UTC"}}`)
-		unchanged, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
-		if err != nil {
-			t.Fatalf("load deployment after unchanged schedule: %v", err)
-		}
-		if unchanged.ScheduleRevision != original.ScheduleRevision {
-			t.Fatalf("unchanged schedule_revision = %d, want %d", unchanged.ScheduleRevision, original.ScheduleRevision)
-		}
-
 		updateDeployment(t, app, created.ID, `{"schedule":{"type":"cron","expression":"*/15 * * * *","timezone":"UTC"}}`)
-		changed, err := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
-		if err != nil {
-			t.Fatalf("load deployment after schedule change: %v", err)
+		scheduledAt := time.Now().UTC().Truncate(time.Minute)
+		err = applyScheduledOccurrence(ctx, app.db, db.ApplyScheduledOccurrenceInput{
+			Deployment: deployment, ScheduledAt: scheduledAt,
+			Run: db.DeploymentRun{UUID: uuid.NewString(), ExternalID: "drun_stale_" + uuid.NewString()},
+			Now: scheduledAt,
+		})
+		if !errors.Is(err, db.ErrStaleSchedule) {
+			t.Fatalf("apply old scheduled occurrence error = %v, want ErrStaleSchedule", err)
 		}
-		if changed.ScheduleRevision != original.ScheduleRevision+1 {
-			t.Fatalf("changed schedule_revision = %d, want %d", changed.ScheduleRevision, original.ScheduleRevision+1)
+		runs, _, err := app.db.ListDeploymentRunsPage(ctx, db.ListDeploymentRunsPageParams{
+			WorkspaceUUID: ids.WorkspaceUUID, DeploymentExternalID: created.ID, Limit: 10,
+		})
+		if err != nil || len(runs) != 0 {
+			t.Fatalf("runs after old occurrence = (%d, %v), want none", len(runs), err)
 		}
 	})
 
@@ -433,8 +413,7 @@ func TestDeploymentsAPI(t *testing.T) {
 		}
 		scheduledAt := time.Now().UTC().Truncate(time.Minute)
 		input := db.ApplyScheduledOccurrenceInput{
-			WorkspaceUUID: ids.WorkspaceUUID, DeploymentExternalID: created.ID,
-			ScheduleRevision: deployment.ScheduleRevision, ScheduledAt: scheduledAt,
+			Deployment: deployment, ScheduledAt: scheduledAt,
 			Run: db.DeploymentRun{
 				UUID: uuid.NewString(), ExternalID: "drun_periodic_" + uuid.NewString(),
 				Error: json.RawMessage(`{"type":"unknown_error","message":"test"}`),
@@ -486,15 +465,14 @@ func TestDeploymentsAPI(t *testing.T) {
 		}()
 
 		err = applyScheduledOccurrence(ctx, app.db, db.ApplyScheduledOccurrenceInput{
-			WorkspaceUUID: ids.WorkspaceUUID, DeploymentExternalID: created.ID,
-			ScheduleRevision: deployment.ScheduleRevision, ScheduledAt: scheduledAt,
+			Deployment: deployment, ScheduledAt: scheduledAt,
 			Session: &db.CreateSessionInput{},
 		})
 		if !errors.Is(err, db.ErrWorkspaceArchived) {
 			t.Fatalf("ApplyScheduledOccurrence() error = %v, want ErrWorkspaceArchived", err)
 		}
 		after, loadErr := app.db.GetDeployment(ctx, ids.WorkspaceUUID, created.ID)
-		if loadErr != nil || after.Status != "active" || after.ScheduleRevision != deployment.ScheduleRevision || after.LastRunAt != nil {
+		if loadErr != nil || after.Status != "active" || after.LastRunAt != nil {
 			t.Fatalf("deployment after rejected occurrence = (%+v, %v), want unchanged", after, loadErr)
 		}
 	})
@@ -1065,9 +1043,7 @@ func cleanupDeploymentRows(t *testing.T, app *testApp, deploymentID string) {
 }
 
 func applyScheduledOccurrence(ctx context.Context, database *db.DB, input db.ApplyScheduledOccurrenceInput) error {
-	return database.Transaction(ctx, func(tx *yourbatis.Tx) error {
-		return database.ApplyScheduledOccurrenceTx(ctx, tx, input)
-	})
+	return database.ApplyScheduledOccurrence(ctx, input)
 }
 
 func startDeploymentScheduler(t *testing.T, app *testApp) func() {

@@ -19,8 +19,7 @@
         resources,
         resource_secrets,
         vault_ids,
-		schedule,
-		schedule_revision,
+        schedule,
         last_run_at,
         status,
         paused_reason,
@@ -50,8 +49,7 @@
             resources,
             resource_secrets,
             vault_ids,
-			schedule,
-			schedule_revision,
+            schedule,
             last_run_at,
             status,
             paused_reason,
@@ -76,8 +74,7 @@
             CAST(#{params.Resources,sensitive=true} AS jsonb),
             CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
             CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
-			CAST(#{params.Schedule,sensitive=true} AS jsonb),
-			#{params.ScheduleRevision},
+            CAST(#{params.Schedule,sensitive=true} AS jsonb),
             #{params.LastRunAt},
             #{params.Status},
             CAST(#{params.PausedReason,sensitive=true} AS jsonb),
@@ -131,10 +128,9 @@
             resources = CAST(#{params.Resources,sensitive=true} AS jsonb),
             resource_secrets = CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
             vault_ids = CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
-			<if test="params.UpdateSchedule">
-				schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
-				schedule_revision = schedule_revision + 1,
-			</if>
+            <if test="params.ScheduleChanged">
+                schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
+            </if>
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
@@ -146,7 +142,6 @@
     <update id="ArchiveByExternalID" result="returning" resultType="deploymentMapperRow">
         UPDATE deployments
         SET archived_at = COALESCE(archived_at, NOW()),
-			schedule_revision = schedule_revision + 1,
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
@@ -158,7 +153,6 @@
 	<update id="ArchiveByRootAgent" result="exec">
 		UPDATE deployments
 		SET archived_at = COALESCE(archived_at, NOW()),
-			schedule_revision = schedule_revision + 1,
 			updated_at = NOW()
 		WHERE workspace_uuid = #{workspaceUUID}
 		AND agent_external_id = #{agentExternalID}
@@ -170,7 +164,6 @@
         UPDATE deployments
         SET status = 'paused',
             paused_reason = CAST(#{pausedReason,sensitive=true} AS jsonb),
-			schedule_revision = schedule_revision + 1,
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
@@ -184,7 +177,6 @@
         UPDATE deployments
         SET status = 'active',
             paused_reason = NULL,
-			schedule_revision = schedule_revision + 1,
             updated_at = NOW()
 		WHERE workspace_uuid = #{workspaceUUID}
 		AND external_id = #{externalID}
@@ -195,7 +187,7 @@
     </update>
 
 	<select id="ListActiveSchedules" resultType="DeploymentSchedule">
-		SELECT workspace_uuid, external_id, schedule, schedule_revision
+		SELECT workspace_uuid, external_id, schedule
 		FROM deployments
 		WHERE status = 'active'
 		AND archived_at IS NULL
@@ -208,7 +200,6 @@
 		SET last_run_at = #{params.LastRunAt},
 			status = 'paused',
 			paused_reason = CAST(#{params.PausedReason,sensitive=true} AS jsonb),
-			schedule_revision = schedule_revision + 1,
 			updated_at = #{params.LastRunAt}
 		WHERE workspace_uuid = #{params.WorkspaceUUID}
 		AND external_id = #{params.ExternalID}

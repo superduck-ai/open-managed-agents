@@ -51,9 +51,9 @@ func parseDeploymentSchedule(raw json.RawMessage) (parsedSchedule, error) {
 	return parsedSchedule{config: config, cron: cronSchedule}, nil
 }
 
-func upcomingRuns(schedule cron.Schedule, now time.Time, archived bool) []string {
+func upcomingRuns(schedule cron.Schedule, now time.Time, inactive bool) []string {
 	values := make([]string, 0, upcomingRunCount)
-	if archived {
+	if inactive {
 		return values
 	}
 	next := schedule.Next(now).UTC()

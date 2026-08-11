@@ -27,7 +27,6 @@ type deploymentMapperRow struct {
 	ResourceSecrets       []byte     `db:"resource_secrets"`
 	VaultIDs              []byte     `db:"vault_ids"`
 	Schedule              []byte     `db:"schedule"`
-	ScheduleRevision      int64      `db:"schedule_revision"`
 	LastRunAt             *time.Time `db:"last_run_at"`
 	Status                string     `db:"status"`
 	PausedReason          []byte     `db:"paused_reason"`
@@ -57,8 +56,7 @@ type deploymentWriteParams struct {
 	ResourceSecrets       []byte
 	VaultIDs              []byte
 	Schedule              []byte
-	UpdateSchedule        bool
-	ScheduleRevision      int64
+	ScheduleChanged       bool
 	LastRunAt             *time.Time
 	Status                string
 	PausedReason          []byte

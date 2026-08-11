@@ -17,7 +17,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
-	"github.com/superduck-ai/yourbatis"
 )
 
 const (
@@ -26,12 +25,10 @@ const (
 	deploymentScheduleSyncInterval = 10 * time.Second
 )
 
-var errInvalidDeploymentSchedule = errors.New("invalid deployment schedule")
-
 type scheduledDeploymentArgs struct {
-	WorkspaceUUID        string `json:"workspace_uuid"`
-	DeploymentExternalID string `json:"deployment_id"`
-	ScheduleRevision     int64  `json:"schedule_revision"`
+	WorkspaceUUID        string             `json:"workspace_uuid"`
+	DeploymentExternalID string             `json:"deployment_id"`
+	Schedule             deploymentSchedule `json:"schedule"`
 }
 
 func (scheduledDeploymentArgs) Kind() string { return "scheduled_deployment" }
@@ -40,7 +37,7 @@ type DeploymentScheduler struct {
 	database   *db.DB
 	client     *river.Client[*sql.Tx]
 	logger     *slog.Logger
-	registered map[string]int64
+	registered map[string]deploymentSchedule
 	cancel     context.CancelFunc
 	done       chan struct{}
 }
@@ -76,7 +73,7 @@ func NewDeploymentScheduler(database *db.DB, logger *slog.Logger) (*DeploymentSc
 		return nil, err
 	}
 	return &DeploymentScheduler{
-		database: database, client: client, logger: logger, registered: make(map[string]int64),
+		database: database, client: client, logger: logger, registered: make(map[string]deploymentSchedule),
 	}, nil
 }
 
@@ -115,16 +112,29 @@ func (s *DeploymentScheduler) sync(ctx context.Context) error {
 	}
 	desired := make(map[string]struct{}, len(states))
 	for _, state := range states {
-		if err := s.update(state); err != nil {
-			if errors.Is(err, errInvalidDeploymentSchedule) {
-				state.Schedule = nil
-				_ = s.update(state)
-				s.logger.ErrorContext(ctx, "skip invalid stored deployment schedule", "deployment_id", state.ExternalID, "error", err)
-				continue
-			}
-			return fmt.Errorf("deployment %s: %w", state.ExternalID, err)
+		schedule, err := parseDeploymentSchedule(state.Schedule)
+		if err != nil {
+			s.client.PeriodicJobs().RemoveByID(state.ExternalID)
+			delete(s.registered, state.ExternalID)
+			s.logger.WarnContext(ctx, "skip invalid stored deployment schedule", "deployment_id", state.ExternalID, "error", err)
+			continue
 		}
 		desired[state.ExternalID] = struct{}{}
+		if registeredSchedule, ok := s.registered[state.ExternalID]; ok && registeredSchedule == schedule.config {
+			continue
+		}
+		job := river.NewPeriodicJob(schedule.cron, func() (river.JobArgs, *river.InsertOpts) {
+			return scheduledDeploymentArgs{
+				WorkspaceUUID: state.WorkspaceUUID, DeploymentExternalID: state.ExternalID,
+				Schedule: schedule.config,
+			}, &river.InsertOpts{Queue: deploymentScheduleQueue}
+		}, &river.PeriodicJobOpts{ID: state.ExternalID})
+		s.client.PeriodicJobs().RemoveByID(state.ExternalID)
+		if _, err := s.client.PeriodicJobs().AddSafely(job); err != nil {
+			delete(s.registered, state.ExternalID)
+			return fmt.Errorf("deployment %s: %w", state.ExternalID, err)
+		}
+		s.registered[state.ExternalID] = schedule.config
 	}
 	for id := range s.registered {
 		if _, ok := desired[id]; !ok {
@@ -132,34 +142,6 @@ func (s *DeploymentScheduler) sync(ctx context.Context) error {
 			delete(s.registered, id)
 		}
 	}
-	return nil
-}
-
-func (s *DeploymentScheduler) update(state db.DeploymentSchedule) error {
-	if len(state.Schedule) == 0 {
-		s.client.PeriodicJobs().RemoveByID(state.ExternalID)
-		delete(s.registered, state.ExternalID)
-		return nil
-	}
-	if revision, ok := s.registered[state.ExternalID]; ok && revision == state.ScheduleRevision {
-		return nil
-	}
-	schedule, err := parseDeploymentSchedule(state.Schedule)
-	if err != nil {
-		return fmt.Errorf("%w: %v", errInvalidDeploymentSchedule, err)
-	}
-	job := river.NewPeriodicJob(schedule.cron, func() (river.JobArgs, *river.InsertOpts) {
-		return scheduledDeploymentArgs{
-			WorkspaceUUID: state.WorkspaceUUID, DeploymentExternalID: state.ExternalID,
-			ScheduleRevision: state.ScheduleRevision,
-		}, &river.InsertOpts{Queue: deploymentScheduleQueue}
-	}, &river.PeriodicJobOpts{ID: state.ExternalID})
-	s.client.PeriodicJobs().RemoveByID(state.ExternalID)
-	if _, err := s.client.PeriodicJobs().AddSafely(job); err != nil {
-		delete(s.registered, state.ExternalID)
-		return err
-	}
-	s.registered[state.ExternalID] = state.ScheduleRevision
 	return nil
 }
 
@@ -194,25 +176,20 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		}
 		return err
 	}
-	if deployment.ArchivedAt != nil || deployment.Status != "active" ||
-		deployment.ScheduleRevision != args.ScheduleRevision {
+	if deployment.ArchivedAt != nil || deployment.Status != "active" {
+		return nil
+	}
+	currentSchedule, err := parseDeploymentSchedule(deployment.Schedule)
+	if err != nil || currentSchedule.config != args.Schedule {
 		return nil
 	}
 	now := time.Now().UTC()
 
 	agent, agentErr := w.database.GetAgent(ctx, deployment.WorkspaceUUID, deployment.AgentExternalID)
-	if errors.Is(agentErr, db.ErrNotFound) || (agentErr == nil && agent.ArchivedAt != nil) {
-		err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
-			WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
-			ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt, ArchiveDeployment: true,
+	if errors.Is(agentErr, db.ErrNotFound) || agent.ArchivedAt != nil {
+		return w.applyOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+			Deployment: deployment, ScheduledAt: scheduledAt, ArchiveDeployment: true,
 		})
-		if errors.Is(err, db.ErrStaleSchedule) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		return nil
 	}
 	if agentErr != nil {
 		return agentErr
@@ -225,25 +202,21 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 	if referenceFailure != nil {
 		return w.recordFailure(ctx, job, deployment, referenceFailure, now)
 	}
-	preparedRun, err := prepareDeploymentRun(deployment, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, deployment.CreatedByAPIKeyUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return err
 		}
 		return w.recordFailure(ctx, job, deployment, runError("session_resource_not_found_error", err.Error()), now)
 	}
-	err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
-		WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
-		ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt,
+	err = w.applyOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+		Deployment: deployment, ScheduledAt: scheduledAt,
 		Session: &preparedRun.Session, Events: preparedRun.Events,
 		Run: db.DeploymentRun{
 			UUID: uuid.NewString(), ExternalID: preparedRun.RunID,
 		},
 		Now: now,
 	})
-	if errors.Is(err, db.ErrStaleSchedule) {
-		return nil
-	}
 	if errors.Is(err, db.ErrWorkspaceArchived) {
 		return w.recordFailure(ctx, job, deployment, runError("workspace_archived_error", "Workspace is archived"), now)
 	}
@@ -263,7 +236,6 @@ func (w *scheduledDeploymentWorker) recordFailure(
 	failure *deploymentRunError,
 	now time.Time,
 ) error {
-	args := job.Args
 	scheduledAt := job.ScheduledAt.UTC()
 	runID, err := ids.New("drun_")
 	if err != nil {
@@ -280,38 +252,27 @@ func (w *scheduledDeploymentWorker) recordFailure(
 			return err
 		}
 	}
-	err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
-		WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
-		ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt,
+	return w.applyOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+		Deployment: deployment, ScheduledAt: scheduledAt,
 		Run: db.DeploymentRun{
 			UUID: uuid.NewString(), ExternalID: runID, Error: runErrorJSON,
 		},
 		AutoPauseReason: pausedReasonJSON, Now: now,
 	})
+}
+
+func (w *scheduledDeploymentWorker) applyOccurrence(
+	ctx context.Context,
+	input db.ApplyScheduledOccurrenceInput,
+) error {
+	err := w.database.ApplyScheduledOccurrence(ctx, input)
 	if errors.Is(err, db.ErrStaleSchedule) {
 		return nil
 	}
 	return err
 }
 
-func (w *scheduledDeploymentWorker) applyOccurrence(
-	ctx context.Context,
-	job *river.Job[scheduledDeploymentArgs],
-	input db.ApplyScheduledOccurrenceInput,
-) error {
-	return w.database.Transaction(ctx, func(tx *yourbatis.Tx) error {
-		if err := w.database.ApplyScheduledOccurrenceTx(ctx, tx, input); err != nil {
-			return err
-		}
-		_, err := river.JobCompleteTx[*riverdatabasesql.Driver](ctx, tx.SQLTx(), job)
-		return err
-	})
-}
-
 func shouldAutoPause(runError *deploymentRunError) bool {
-	if runError == nil {
-		return false
-	}
 	switch runError.Type {
 	case "environment_archived_error",
 		"agent_archived_error",

@@ -15,9 +15,9 @@ import (
 func TestDeploymentMapperBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	params := deploymentMapperTestWriteParams(now)
-	params.UpdateSchedule = true
-	withoutSchedule := params
-	withoutSchedule.UpdateSchedule = false
+	params.ScheduleChanged = true
+	unchangedSchedule := params
+	unchangedSchedule.ScheduleChanged = false
 	page := deploymentPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: 21,
 		Cursor:          &DeploymentPageCursor{CreatedAt: now, UUID: "00000000-0000-4000-8000-000000000009"},
@@ -37,8 +37,7 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 				"params.CreatedByAPIKeyUUID", "params.EnvironmentUUID", "params.EnvironmentExternalID",
 				"params.AgentUUID", "params.AgentExternalID", "params.AgentVersion", "params.AgentSnapshot",
 				"params.Name", "params.Description", "params.Metadata", "params.InitialEvents", "params.Resources",
-				"params.ResourceSecrets", "params.VaultIDs", "params.Schedule", "params.ScheduleRevision",
-				"params.LastRunAt", "params.Status",
+				"params.ResourceSecrets", "params.VaultIDs", "params.Schedule", "params.LastRunAt", "params.Status",
 				"params.PausedReason", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: deploymentSensitiveArgumentNames(true),
@@ -74,11 +73,11 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 				"params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
 			},
 			wantSensitiveArgumentNames: deploymentSensitiveArgumentNames(false),
-			wantSQLFragments:           []string{"UPDATE deployments", "schedule_revision = schedule_revision + 1", "workspace_uuid = $16", "RETURNING"},
+			wantSQLFragments:           []string{"UPDATE deployments", "schedule = CAST($14 AS jsonb)", "workspace_uuid = $16", "RETURNING"},
 		}},
-		{"update without schedule", mapperBuilderContract{
+		{"update without schedule change", mapperBuilderContract{
 			statement: deploymentMapperUpdateByExternalIDStatement,
-			bound:     buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutSchedule),
+			bound:     buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, unchangedSchedule),
 			wantID:    "DeploymentMapper.UpdateByExternalID", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
 				"params.EnvironmentUUID", "params.EnvironmentExternalID", "params.AgentUUID", "params.AgentExternalID",
@@ -103,7 +102,7 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			bound:     buildDeploymentMapperArchiveByRootAgent(yourbatis.DialectPostgres, params.WorkspaceUUID, params.AgentExternalID),
 			wantID:    "DeploymentMapper.ArchiveByRootAgent", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{"workspaceUUID", "agentExternalID"},
-			wantSQLFragments:  []string{"agent_external_id = $2", "schedule_revision = schedule_revision + 1"},
+			wantSQLFragments:  []string{"agent_external_id = $2", "archived_at = COALESCE"},
 		}},
 		{"pause", mapperBuilderContract{
 			statement: deploymentMapperPauseByExternalIDStatement,
@@ -132,7 +131,7 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 			bound:     buildDeploymentMapperListActiveSchedules(yourbatis.DialectPostgres),
 			wantID:    "DeploymentMapper.ListActiveSchedules", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{},
-			wantSQLFragments:  []string{"SELECT workspace_uuid, external_id, schedule, schedule_revision", "schedule IS NOT NULL"},
+			wantSQLFragments:  []string{"SELECT workspace_uuid, external_id, schedule", "schedule IS NOT NULL"},
 		}},
 		{"pause after scheduled run", mapperBuilderContract{
 			statement: deploymentMapperPauseAfterScheduledRunStatement,
@@ -160,9 +159,9 @@ func TestDeploymentMapperBuilderContracts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) { assertMapperBuilderContract(t, test.contract) })
 	}
 
-	t.Run("update without schedule preserves revision", func(t *testing.T) {
-		bound := buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, withoutSchedule)
-		if containsSQL(bound.SQL, "schedule_revision = schedule_revision + 1") {
+	t.Run("update without schedule change preserves schedule", func(t *testing.T) {
+		bound := buildDeploymentMapperUpdateByExternalID(yourbatis.DialectPostgres, unchangedSchedule)
+		if containsSQL(bound.SQL, "schedule =") {
 			t.Fatalf("SQL unexpectedly changes schedule state: %q", bound.SQL)
 		}
 	})
@@ -303,7 +302,7 @@ func deploymentMapperTestWriteParams(now time.Time) deploymentWriteParams {
 		AgentUUID: "00000000-0000-4000-8000-000000000006", AgentExternalID: "agent_test", AgentVersion: 1,
 		AgentSnapshot: []byte(`{}`), Name: "test", Metadata: []byte(`{}`), InitialEvents: []byte(`[]`),
 		Resources: []byte(`[]`), ResourceSecrets: []byte(`[]`), VaultIDs: []byte(`[]`), Schedule: []byte(`{}`),
-		ScheduleRevision: 1, Status: "active", PausedReason: []byte(`null`), CreatedAt: now, UpdatedAt: now,
+		Status: "active", PausedReason: []byte(`null`), CreatedAt: now, UpdatedAt: now,
 	}
 }
 
@@ -335,7 +334,7 @@ func deploymentMapperTestColumns() []string {
 		"uuid", "external_id", "organization_uuid", "workspace_uuid", "created_by_api_key_uuid",
 		"environment_uuid", "environment_external_id", "agent_uuid", "agent_external_id", "agent_version",
 		"agent_snapshot", "name", "description", "metadata", "initial_events", "resources", "resource_secrets",
-		"vault_ids", "schedule", "schedule_revision", "last_run_at", "status", "paused_reason", "created_at", "updated_at", "archived_at", "deleted_at",
+		"vault_ids", "schedule", "last_run_at", "status", "paused_reason", "created_at", "updated_at", "archived_at", "deleted_at",
 	}
 }
 
@@ -346,7 +345,7 @@ func deploymentMapperTestRow() []driver.Value {
 		"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004",
 		"00000000-0000-4000-8000-000000000005", "env_test", "00000000-0000-4000-8000-000000000006",
 		"agent_test", int64(1), []byte(`{}`), "test", nil, []byte(`{}`), []byte(`[]`), []byte(`[]`), []byte(`[]`),
-		[]byte(`[]`), []byte(`{}`), int64(1), nil, "active", []byte(`null`), now, now, nil, nil,
+		[]byte(`[]`), []byte(`{}`), nil, "active", []byte(`null`), now, now, nil, nil,
 	}
 }
 

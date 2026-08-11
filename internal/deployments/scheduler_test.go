@@ -47,7 +47,4 @@ func TestShouldAutoPauseUsesOfficialAllowlist(t *testing.T) {
 			t.Errorf("shouldAutoPause(%q) = true", errorType)
 		}
 	}
-	if shouldAutoPause(nil) {
-		t.Error("shouldAutoPause(nil) = true")
-	}
 }

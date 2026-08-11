@@ -1,7 +1,4 @@
 -- +goose Up
-alter table deployments
-	add column schedule_revision bigint not null default 0;
-
 alter table deployment_runs
 	add column scheduled_at timestamptz;
 
@@ -40,6 +37,3 @@ end;
 alter table deployment_runs
 	alter column trigger_context set not null,
 	drop column scheduled_at;
-
-alter table deployments
-	drop column schedule_revision;

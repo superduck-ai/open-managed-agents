@@ -17,7 +17,7 @@ func markRunPreparationRetryable(err error) error {
 	return fmt.Errorf("%w: %v", errRetryableRunPreparation, err)
 }
 
-type preparedDeploymentRun struct {
+type preparedDeploymentExecution struct {
 	RunID   string
 	Session db.CreateSessionInput
 	Events  []db.SessionEvent
@@ -28,32 +28,36 @@ type deploymentSessionWork struct {
 	Type string `json:"type"`
 }
 
-func prepareDeploymentRun(deployment db.Deployment, now time.Time) (preparedDeploymentRun, error) {
+func prepareDeploymentExecution(
+	deployment db.Deployment,
+	createdByAPIKeyUUID string,
+	now time.Time,
+) (preparedDeploymentExecution, error) {
 	sessionID, threadID, workID, runID, err := newRunIDs()
 	if err != nil {
-		return preparedDeploymentRun{}, err
+		return preparedDeploymentExecution{}, err
 	}
 	events, outcomes, err := sessionEventsFromInitialEvents(deployment.InitialEvents, now)
 	if err != nil {
-		return preparedDeploymentRun{}, err
+		return preparedDeploymentExecution{}, err
 	}
 	resources, err := sessionResourcesFromDeployment(deployment, now)
 	if err != nil {
-		return preparedDeploymentRun{}, err
+		return preparedDeploymentExecution{}, err
 	}
 	deploymentID := deployment.ExternalID
 	workData, err := jsonx.Encode(deploymentSessionWork{ID: sessionID, Type: "session"})
 	if err != nil {
-		return preparedDeploymentRun{}, err
+		return preparedDeploymentExecution{}, err
 	}
-	return preparedDeploymentRun{
+	return preparedDeploymentExecution{
 		RunID:  runID,
 		Events: events,
 		Session: db.CreateSessionInput{
 			Session: db.Session{
 				UUID: uuid.NewString(), ExternalID: sessionID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
-				CreatedByAPIKeyUUID: deployment.CreatedByAPIKeyUUID,
+				CreatedByAPIKeyUUID: createdByAPIKeyUUID,
 				EnvironmentUUID:     deployment.EnvironmentUUID, EnvironmentExternalID: deployment.EnvironmentExternalID,
 				AgentUUID: deployment.AgentUUID, AgentExternalID: deployment.AgentExternalID,
 				AgentVersion: deployment.AgentVersion, AgentSnapshot: deployment.AgentSnapshot,

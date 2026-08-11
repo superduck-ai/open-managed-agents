@@ -62,9 +62,9 @@ Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
 - River Job 直接使用名义 occurrence，不增加私有 jitter 算法。
 
-每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule` 和 `schedule_revision`，不保存应用自行推进的下一次游标。创建带 schedule 的 Deployment 时 revision 从 1 开始；PATCH 只有在 schedule 真正修改或清除时才递增，省略 schedule 或提交相同值均保持不变。pause、unpause 和 archive 仍递增 revision，使已经投递的旧 Job 在 worker 中失效；其他字段更新由 worker 在执行时读取最新值，不改调度 revision。
+每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule`，不保存应用自行推进的下一次游标或额外调度版本。Job 携带注册时的 schedule 快照；worker 读取 Deployment 后以当时的执行配置作为本次 occurrence 快照，最终事务锁行后确认 Deployment 仍为 active、schedule 和执行配置均未变化。
 
-每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒从数据库同步一次 registry。这样所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。同步完成前已经投递的 Job 会由 worker 根据当前状态和 revision 跳过。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
+每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒从数据库同步一次 registry。这样所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。同步完成前已经投递的 Job 会由 worker 根据当前状态和 schedule 快照跳过。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
 
 River 的 leader election 保证只有 leader 根据 Cron 推进并投递 Periodic Job，应用不计算、持久化或插入“下一条 Job”。worker 使用 River Job 的 `scheduled_at` 作为名义 occurrence；暂停或停机期间不补跑历史 occurrence，恢复注册后直接等待 Cron 的下一次。River 开源 Periodic Jobs 的调度状态主要在 leader 内存中，官方不承诺强持久性，leader 切换的极短窗口可能跳过一次 occurrence；需要严格不漏的调度时应采用 River Pro durable periodic jobs，而不是在应用层恢复一套游标链。
 
@@ -76,13 +76,13 @@ sequenceDiagram
     participant Leader as River leader
     participant Worker as Scheduled worker
 
-    API->>AppDB: 事务提交 schedule、状态与 revision
+    API->>AppDB: 提交 schedule 或状态
     AppDB-->>Registry: 各实例启动加载并每 10 秒同步配置
     Leader->>Registry: 按 Cron 计算下一 occurrence
     Leader->>Worker: 投递带名义 scheduled_at 的 Job
-    Worker->>AppDB: 锁定 Deployment，校验 active 与 revision
+    Worker->>AppDB: 锁定 Deployment，校验 active 与 schedule 快照
     Worker->>AppDB: 同一事务写 Run、Session 与 Deployment 状态
-    Worker->>Leader: 同一事务 JobCompleteTx 完成当前 Job
+	Worker-->>Leader: 返回结果，由 River 完成或重试当前 Job
     Note over Leader,Worker: 下一次投递继续由 River Periodic Jobs 推进
 ```
 
@@ -93,8 +93,9 @@ sequenceDiagram
 - 根 Agent 归档会在同一数据库事务自动归档其 Deployment；根 Agent 在触发时已删除也会自动归档，且不生成 Run。
 - Workspace 已归档时，最终事务拒绝创建 Session，worker 改为记录 `workspace_archived_error` 失败 Run 并自动暂停 Deployment。
 - 其他引用或配置失败生成最终失败 Run。只有公开的 14 类 paused-reason error 会自动暂停；`session_rate_limited_error` 与 `session_creation_rejected_error` 不暂停，并继续下一个 occurrence。
-- 数据库或进程级失败发生在最终 Run 提交之前时交给 River 重试；Run、Session、Deployment 状态与当前 River Job 的完成状态在同一个 Yourbatis 事务中提交或回滚。
+- 数据库或进程级失败交给 River 重试；Run、Session 与 Deployment 状态在同一个 Yourbatis 事务中提交或回滚，当前 River Job 由 Worker 返回结果后交给 River 完成。occurrence 唯一索引保证业务事务提交后发生进程故障时，River 重试不会创建重复 Run。
 - paused Deployment 仍允许 manual Run。
+- paused 或 archived Deployment 的 `upcoming_runs_at` 为空。
 
 组织级最多保留 1,000 个未归档且 schedule 非空的 Deployment。创建以及从无 schedule 更新为有 schedule 时进行 best-effort 计数检查；并发请求可能短暂越过限制，不额外引入 organization 锁或配额计数器。
 

@@ -234,10 +234,7 @@ type deploymentAgentSnapshot struct {
 
 func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{
-		db: database, webhooks: webhookEvents,
-		errorAdapter: httpapi.NewErrorAdapter(logger),
-	}
+	h := &Handler{db: database, webhooks: webhookEvents, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -362,7 +359,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
 	}
 	now := time.Now().UTC()
-	deployment := db.Deployment{
+	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
 		UUID:                  uuid.NewString(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      principal.OrganizationUUID,
@@ -385,14 +382,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		Status:                "active",
 		CreatedAt:             now,
 		UpdatedAt:             now,
-	}
-	created, err := h.db.CreateDeployment(r.Context(), deployment)
+	})
 	if err != nil {
 		if errors.Is(err, db.ErrLimitExceeded) {
-			return invalidRequest(fmt.Errorf(
-				"an organization may have at most %d scheduled deployments",
-				db.MaxScheduledDeploymentsPerOrganization,
-			))
+			return scheduledDeploymentLimitExceeded()
 		}
 		return internalError("Could not create deployment", fmt.Errorf("create deployment %q: %w", deploymentID, err))
 	}
@@ -557,38 +550,25 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
-	scheduleRaw := body.Schedule
-	if err := applyScheduleUpdate(&next, scheduleRaw); err != nil {
-		return invalidRequest(err)
+	scheduleProvided := body.Schedule != nil
+	if scheduleProvided {
+		next.Schedule, err = normalizeOptionalSchedule(body.Schedule)
+		if err != nil {
+			return invalidRequest(err)
+		}
 	}
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
-		Deployment: next, ScheduleProvided: len(scheduleRaw) > 0,
+		Deployment: next, ScheduleProvided: scheduleProvided,
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrLimitExceeded) {
-			return invalidRequest(fmt.Errorf(
-				"an organization may have at most %d scheduled deployments",
-				db.MaxScheduledDeploymentsPerOrganization,
-			))
+			return scheduledDeploymentLimitExceeded()
 		}
 		return deploymentLoadError(err, deploymentID)
 	}
 	return writeDeploymentResponse(w, updated)
 }
-
-func applyScheduleUpdate(next *db.Deployment, raw json.RawMessage) error {
-	if raw == nil {
-		return nil
-	}
-	schedule, err := normalizeOptionalSchedule(raw)
-	if err != nil {
-		return err
-	}
-	next.Schedule = schedule
-	return nil
-}
-
 func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 	principal, err := requireAPIKey(r)
 	if err != nil {
@@ -644,13 +624,13 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	referenceFailure, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
 	if err != nil {
-		return deploymentLoadError(err, deploymentID)
+		referenceFailure = runError("unknown_error", "Could not create session")
 	}
 	if referenceFailure != nil {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentRun(deployment, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)
@@ -742,7 +722,7 @@ func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID s
 	if agent.ArchivedAt != nil {
 		return classifyReferenceFailure("agent", nil, true)
 	}
-	return validateRunDependencies(ctx, database, workspaceUUID, deployment)
+	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
 }
 
 func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
@@ -778,6 +758,10 @@ func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID
 			return classifyReferenceFailure("skill", err, false)
 		}
 	}
+	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
+}
+
+func validateSessionDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
 	env, err := database.GetEnvironment(ctx, workspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
 		return classifyReferenceFailure("environment", err, false)
@@ -1124,18 +1108,23 @@ func sessionEventsFromInitialEvents(raw json.RawMessage, now time.Time) ([]db.Se
 	return events, outcomesRaw, nil
 }
 
-func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now time.Time, archived bool) (*deploymentScheduleResponse, error) {
+func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now time.Time, inactive bool) *deploymentScheduleResponse {
 	if len(scheduleRaw) == 0 || jsonx.IsNull(scheduleRaw) {
-		return nil, nil
+		return nil
 	}
-	schedule, err := parseDeploymentSchedule(scheduleRaw)
+	config, err := jsonx.Decode[deploymentSchedule](scheduleRaw)
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	return &deploymentScheduleResponse{
-		deploymentSchedule: schedule.config,
-		LastRunAt:          httpapi.OptionalTime(lastRunAt), UpcomingRunsAt: upcomingRuns(schedule.cron, now, archived),
-	}, nil
+	response := &deploymentScheduleResponse{
+		deploymentSchedule: config,
+		LastRunAt:          httpapi.OptionalTime(lastRunAt),
+		UpcomingRunsAt:     []string{},
+	}
+	if schedule, err := parseDeploymentSchedule(scheduleRaw); err == nil {
+		response.UpcomingRunsAt = upcomingRuns(schedule.cron, now, inactive)
+	}
+	return response
 }
 
 func writeDeploymentResponse(w http.ResponseWriter, deployment db.Deployment) error {
@@ -1181,10 +1170,12 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) (deployment
 	if err != nil {
 		return deploymentResponse{}, err
 	}
-	schedule, err := scheduleResponse(deployment.Schedule, deployment.LastRunAt, now, deployment.ArchivedAt != nil)
-	if err != nil {
-		return deploymentResponse{}, err
-	}
+	schedule := scheduleResponse(
+		deployment.Schedule,
+		deployment.LastRunAt,
+		now,
+		deployment.Status != "active" || deployment.ArchivedAt != nil,
+	)
 	return deploymentResponse{
 		ID:            deployment.ExternalID,
 		Agent:         agentReference(deployment.AgentExternalID, deployment.AgentVersion),
@@ -1566,19 +1557,19 @@ func normalizeOutcomeRubric(raw json.RawMessage) (*deploymentOutcomeRubric, erro
 }
 
 func validateCheckout(raw json.RawMessage) error {
-	var request deploymentCheckoutRequest
-	if err := json.Unmarshal(raw, &request); err != nil {
+	var checkout deploymentCheckoutRequest
+	if err := json.Unmarshal(raw, &checkout); err != nil {
 		return errors.New("checkout must be an object")
 	}
-	checkoutType, err := parseRequiredRawString(request.Type, "type")
+	checkoutType, err := parseRequiredRawString(checkout.Type, "type")
 	if err != nil {
 		return err
 	}
 	switch checkoutType {
 	case "branch":
-		_, err = parseRequiredRawString(request.Name, "name")
+		_, err = parseRequiredRawString(checkout.Name, "name")
 	case "commit":
-		_, err = parseRequiredRawString(request.SHA, "sha")
+		_, err = parseRequiredRawString(checkout.SHA, "sha")
 	default:
 		err = errors.New("checkout.type must be branch or commit")
 	}

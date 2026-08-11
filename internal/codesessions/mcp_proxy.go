@@ -18,8 +18,8 @@ import (
 
 const maxMCPProxyURLBytes = 2048
 
-// mcpProxyHeaderInjector 是服务端 MCP 凭证注入边界。默认实现不注入任何凭证；
-// 后续可在这里按已验签的 session claims 和目标 URL 从 vault 解析上游 header。
+// mcpProxyHeaderInjector 是服务端 MCP 凭证注入边界（真实 mcp_url 目标）。
+// 默认 no-op；WithVaultSecrets 接到 vaults.Injector.RewriteAuthorization。
 type mcpProxyHeaderInjector func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error
 
 func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {

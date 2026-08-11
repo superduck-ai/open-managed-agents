@@ -24,7 +24,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -323,7 +323,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("session must be idle and unarchived to update"))
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -579,7 +579,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 
 func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -701,7 +701,7 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -786,7 +786,7 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("only github_repository resources can be updated"))
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxSessionBodySize)
+	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return

@@ -67,4 +67,16 @@ func TestVaultCredentialMapperBuilders(t *testing.T) {
 		},
 		wantSQLFragments: []string{"vault_external_id = $2", "(created_at, uuid) < ($3, $4)", "LIMIT $5"},
 	})
+
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement:         vaultCredentialMapperListActiveByVaultUUIDsStatement,
+		bound:             buildVaultCredentialMapperListActiveByVaultUUIDs(yourbatis.DialectPostgres, "workspace-uuid", []string{"vault-uuid-a", "vault-uuid-b"}),
+		wantID:            "VaultCredentialMapper.ListActiveByVaultUUIDs",
+		wantKind:          yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "vaultUUID", "vaultUUID"},
+		wantSQLFragments: []string{
+			"workspace_uuid = $1", "vault_uuid IN ( $2 , $3 )",
+			"archived_at IS NULL", "ORDER BY vault_uuid, created_at DESC, uuid DESC",
+		},
+	})
 }

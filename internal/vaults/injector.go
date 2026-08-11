@@ -101,7 +101,6 @@ type resolvedInjection struct {
 	token      string
 	planCredID string
 	authType   string
-	credential *db.VaultCredential
 }
 
 // injectionPlan is the vault_ids-ordered match set for one outbound MCP URL.
@@ -262,7 +261,7 @@ func (i *Injector) resolveInjectableToken(ctx context.Context, credential *db.Va
 		if err != nil {
 			return nil, err
 		}
-		return &resolvedInjection{token: token, credential: credential}, nil
+		return &resolvedInjection{token: token}, nil
 	case credentialAuthTypeMCPOAuth:
 		return i.resolveMCPOAuthToken(ctx, credential, forceRefresh)
 	default:
@@ -299,14 +298,14 @@ func (i *Injector) resolveMCPOAuthToken(ctx context.Context, credential *db.Vaul
 			if token == "" {
 				return nil, incompleteMCPOAuthSecret()
 			}
-			return &resolvedInjection{token: token, credential: &current}, nil
+			return &resolvedInjection{token: token}, nil
 		}
 	}
-	token, saved, err := i.refreshMCPOAuthCredential(ctx, &current, now, forceRefresh)
+	token, _, err := i.refreshMCPOAuthCredential(ctx, &current, now, forceRefresh)
 	if err != nil {
 		return nil, err
 	}
-	return &resolvedInjection{token: token, credential: saved}, nil
+	return &resolvedInjection{token: token}, nil
 }
 
 // openMCPOAuthMaterial opens the envelope and decodes mcp_oauth public auth +

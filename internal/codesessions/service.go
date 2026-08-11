@@ -44,7 +44,12 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 	return &Service{db: database, credentials: credentials, logger: logger}
 }
 
-func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
+func (s *Service) QueuePublicSessionEvents(
+	ctx context.Context,
+	session db.Session,
+	events []db.SessionEvent,
+	fileBindings []sessioneventfiles.Binding,
+) error {
 	if s == nil || len(events) == 0 {
 		return nil
 	}
@@ -58,11 +63,6 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 	if codeSession.Status != "active" {
 		return nil
 	}
-	storedBindings, err := s.db.ListSessionEventFileBindings(ctx, session.WorkspaceUUID, session.ExternalID)
-	if err != nil {
-		return err
-	}
-	fileBindings := workerFileBindings(storedBindings)
 	payloads := make([]json.RawMessage, 0, len(events))
 	for _, event := range events {
 		if !shouldForwardPublicEventToWorker(event.EventType) {
@@ -80,7 +80,7 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.ProcessedAt, fileBindings)
 		if err != nil {
 			s.logger.ErrorContext(ctx, "convert public session event to code session payload", "session_id", session.ExternalID, "event_id", event.ExternalID, "error", err)
-			continue
+			return err
 		}
 		payloads = append(payloads, payload)
 	}

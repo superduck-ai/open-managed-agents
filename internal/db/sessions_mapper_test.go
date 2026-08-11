@@ -138,7 +138,22 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 		"ses_test",
 	)
 	assertMapperSQLContains(t, fileBindingsBound, "file.external_id AS file_external_id")
+	assertMapperSQLContains(t, fileBindingsBound, "resource.expires_at IS NULL OR resource.expires_at > now()")
 	assertMapperSQLContains(t, fileBindingsBound, "ORDER BY resource.created_at ASC, resource.uuid ASC")
+
+	fileReferenceBound := buildSessionEventMapperHasFileReferenceForResource(
+		yourbatis.DialectPostgres,
+		"workspace-uuid",
+		"ses_test",
+		"sesrsc_test",
+	)
+	assertMapperSQLContains(t, fileReferenceBound, "SELECT EXISTS")
+	assertMapperSQLContains(t, fileReferenceBound, "resource.external_id = $1")
+	assertMapperSQLContains(t, fileReferenceBound, "event.workspace_uuid = $2")
+	assertMapperSQLContains(t, fileReferenceBound, "event.session_external_id = $3")
+	assertMapperSQLContains(t, fileReferenceBound, "jsonb_array_elements")
+	assertMapperSQLContains(t, fileReferenceBound, "event.event_type = 'user.message'")
+	assertMapperSQLContains(t, fileReferenceBound, "content_block->'source'->>'file_id' = file.external_id")
 }
 
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
@@ -167,6 +182,11 @@ func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 		{statementID: "SessionEventMapper.InsertIfAbsent", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
 			mapper := NewSessionEventMapper(executor)
 			_, _, err := mapper.InsertIfAbsent(ctx, sessionEventWriteParams{})
+			return err
+		}},
+		{statementID: "SessionEventMapper.HasFileReferenceForResource", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+			mapper := NewSessionEventMapper(executor)
+			_, err := mapper.HasFileReferenceForResource(ctx, "", "", "")
 			return err
 		}},
 	}

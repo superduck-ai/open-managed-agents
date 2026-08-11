@@ -615,6 +615,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	var (
 		created         []db.SessionEvent
+		eventBindings   []sessioneventfiles.Binding
 		outcomesChanged bool
 		inputErr        error
 	)
@@ -629,6 +630,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 				return txErr
 			}
 			bindings := eventFileBindingsFromDB(storedBindings)
+			eventBindings = bindings
 			events := make([]db.SessionEvent, 0, len(inputs))
 			normalizedSession := lockedSession
 			for _, raw := range inputs {
@@ -671,7 +673,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 		h.broadcast(event)
 	}
 	if h.codeSessions != nil {
-		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created); err != nil {
+		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created, eventBindings); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
 		}
 	}
@@ -819,6 +821,14 @@ func (h *Handler) deleteResourceRoute(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.DeleteSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID); err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			h.writeSessionLoadError(w, r, err, sessionID)
+			return
+		}
+		if errors.Is(err, db.ErrFileInUse) {
+			httpapi.WriteError(w, r, httpapi.NewError(
+				http.StatusConflict,
+				"conflict_error",
+				"File resource is referenced by a Session event",
+			))
 			return
 		}
 		h.writeResourceLoadError(w, r, err, resourceID)

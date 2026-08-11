@@ -474,6 +474,18 @@ func (d *DB) DeleteSessionResource(ctx context.Context, workspaceUUID string, se
 		if err != nil {
 			return err
 		}
+		referenced, err := NewSessionEventMapper(executor).HasFileReferenceForResource(
+			ctx,
+			workspaceUUID,
+			sessionExternalID,
+			resourceExternalID,
+		)
+		if err != nil {
+			return err
+		}
+		if referenced {
+			return ErrFileInUse
+		}
 		if err = unbindSessionFileResourceTx(ctx, executor, session, resource); err != nil {
 			return err
 		}

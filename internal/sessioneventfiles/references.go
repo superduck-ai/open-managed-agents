@@ -62,8 +62,11 @@ func ValidateMountedReferences(eventType string, raw json.RawMessage, bindings [
 // mentions while preserving the original public event outside this function.
 func WorkerPayload(eventType string, raw json.RawMessage, bindings []Binding) (json.RawMessage, error) {
 	references, err := referencesFromEvent(eventType, raw)
-	if err != nil || len(references) == 0 {
-		return raw, err
+	if err != nil {
+		return nil, err
+	}
+	if len(references) == 0 {
+		return raw, nil
 	}
 	resolved, err := resolveReferences(references, bindings)
 	if err != nil {

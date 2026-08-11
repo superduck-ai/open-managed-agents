@@ -60,6 +60,7 @@ type SessionEventMapper interface {
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string) (sessionEventRow, error)
 	ListPage(ctx context.Context, params sessionEventPageMapperParams) ([]sessionEventRow, error)
 	ChildSessionToolUseIDs(ctx context.Context, workspaceUUID, sessionExternalID string, eventTypes, toolUseIDs []string) ([]string, error)
+	HasFileReferenceForResource(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (bool, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	ListSessionEventsForActivation(
 		ctx context.Context,

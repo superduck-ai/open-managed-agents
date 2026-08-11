@@ -33,6 +33,9 @@ func normalizeInitialSessionEvents(
 		if err != nil {
 			return nil, nil, err
 		}
+		if event.ThreadExternalID != nil {
+			return nil, nil, errors.New("initial_events must not include session_thread_id")
+		}
 		if err := validateInitialSessionEventOrder(events, event, index, len(inputs)); err != nil {
 			return nil, nil, err
 		}

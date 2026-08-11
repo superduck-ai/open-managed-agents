@@ -41,21 +41,32 @@ Send Events 在事务中锁定 Session 行并按当前 workspace/session 查询�
 3. 校验 `image` 的 MIME 为 `image/jpeg`、`image/png`、`image/gif` 或 `image/webp`；
 4. 同一文件重复引用只影响一次 worker 路径注入；
 5. 任一引用无效时回滚整批事件及 outcome evaluation 更新；
-6. 校验通过后只把原始公开 payload 写入 `session_events`。
+6. 校验通过后只把原始公开 payload 写入 `session_events`，并把本次校验使用的绑定快照交给
+   active Code Session 的 realtime 转换。
 
 资源查询按 `created_at ASC, uuid ASC` 稳定排序；同一个 Files API 对象多次挂载时，worker 转换
 选择最早的活动绑定。跨 workspace、跨 Session、已删除或尚未挂载的文件都表现为当前 Session
 中无绑定，并返回明确的 400，提示先调用 Session Resources API。
 
+一旦公开 Session Event 引用了某个 File Resource，该 Resource 在 Session 生命周期内不可单独删除，
+删除请求返回 409。事件写入与 Resource 删除都锁定同一条 Session 行，因此不存在“事件已通过校验，
+Resource 随即被删除，worker 转换时再也找不到挂载”的竞态。Files API 文件本身也会继续受到既有
+活动 Resource 引用保护。过期 Resource 不属于活动绑定，不能用于接受新的文件引用。
+
 Session 创建请求先规范化本次 `resources`，再用同一规则校验 `initial_events`，最后在一个事务
 内写入 Session、Resource、公开初始事件和 Environment Work。初始事件支持 `user.message`、
 `user.define_outcome`，以及符合既有顺序约束的末尾 `system.message`。
+
+Deployment 创建仍保存公开的 `initial_events` 模板；每次运行在物化 Session Resource 后，用本次
+运行解析出的 File 绑定校验初始事件。引用未出现在 Deployment `resources` 中、文件已删除或绑定
+无法物化时，本次 Deployment Run 以 `session_resource_not_found_error` 失败，不创建 Session。
 
 ## Worker 转换
 
 公开事件提交后存在两个 Code Session 转换入口：
 
-- Session 已 active：`QueuePublicSessionEvents` 查询当前活动 File Resource，再生成 realtime inbound；
+- Session 已 active：`QueuePublicSessionEvents` 使用事件写入事务已校验的 File 绑定快照生成
+  realtime inbound；
 - Session 尚在启动：activation 持有 Session 行锁，读取完整公开历史和活动 File Resource，按顺序
   生成 inbound 后再把 Code Session 切为 active。
 
@@ -86,7 +97,7 @@ sequenceDiagram
     S->>DB: insert original session_events.payload
     S-->>C: original public event
     alt Code Session active
-        S->>DB: resolve active file mounts
+        S->>Q: transform with validated binding snapshot
         S->>Q: persist transformed worker payload
     else Code Session initializing
         S->>S: realtime path skips
@@ -100,7 +111,8 @@ sequenceDiagram
 
 转换后的 worker payload 继续写入既有 Code Session inbound event。投递重试、断线恢复、ACK 与
 幂等重放直接使用这条已转换记录，不会重新读取或改写 Session Event，也不会把绝对路径投影回
-公开 API。
+公开 API。Realtime 转换若违反已校验的不变量而失败，会向调用边界返回错误并记录结构化错误，
+不会跳过单条事件后继续构造一个不完整 batch；正常输入依靠事务内绑定快照保证转换可完成。
 
 Session 标题只由 Session 创建或更新接口的 `title` 控制。worker 消息转换不调用标题生成逻辑，
 也不修改 Session metadata、公开事件或前端展示内容。
@@ -125,6 +137,8 @@ API 不为缓存刷新增加人为延迟。
 - 未挂载、跨租户、已删除、MIME 不匹配与客户端本地路径均被拒绝；
 - 对话中 `resources.add` 后发送的文件进入 realtime inbound；
 - activation 前的文件事件从公开历史转换并按顺序进入 inbound；
+- 已引用文件的 Session Resource 不能被单独删除，activation/retry 始终可重新解析相同挂载；
+- Deployment initial event 只能引用同一 Deployment `resources` 中物化的文件；
 - worker 重连和重试重放既有 inbound，不重复转换；
 - API、事件列表、SSE、Webhook、标题与前端展示不出现 `/mnt/session/uploads`。
 

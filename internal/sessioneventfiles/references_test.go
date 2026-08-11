@@ -7,6 +7,72 @@ import (
 	"testing"
 )
 
+func TestReferenceValidationFailures(t *testing.T) {
+	tests := []struct {
+		name        string
+		eventType   string
+		payload     string
+		bindings    []Binding
+		publicError bool
+		want        string
+	}{
+		{
+			name:      "file is not attached",
+			eventType: "user.message",
+			payload:   `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"file_missing"}}]}`,
+			want:      "Session Resources API",
+		},
+		{
+			name:      "image mime type mismatch",
+			eventType: "user.message",
+			payload:   `{"type":"user.message","content":[{"type":"image","source":{"type":"file","file_id":"file_text"}}]}`,
+			bindings: []Binding{{
+				FileID: "file_text", Path: "/uploads/not-image.txt", MimeType: "text/plain",
+			}},
+			want: "not a supported image",
+		},
+		{
+			name:        "client local path",
+			eventType:   "user.message",
+			payload:     `{"type":"user.message","content":[{"type":"document","source":{"type":"path","path":"/tmp/private.txt"}}]}`,
+			publicError: true,
+			want:        "local file paths are not accepted",
+		},
+		{
+			name:        "file block outside user message",
+			eventType:   "system.message",
+			payload:     `{"type":"system.message","content":[{"type":"document","source":{"type":"file","file_id":"file_doc"}}]}`,
+			bindings:    []Binding{{FileID: "file_doc", Path: "/uploads/doc.pdf", MimeType: "application/pdf"}},
+			publicError: true,
+			want:        "only supported in user.message",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := json.RawMessage(test.payload)
+			publicErr := ValidatePublicEvent(test.eventType, raw)
+			if test.publicError {
+				if publicErr == nil || !strings.Contains(publicErr.Error(), test.want) {
+					t.Fatalf("ValidatePublicEvent() error = %v, want containing %q", publicErr, test.want)
+				}
+			} else if publicErr != nil {
+				t.Fatalf("ValidatePublicEvent() error = %v, want nil", publicErr)
+			}
+			mountedErr := ValidateMountedReferences(test.eventType, raw, test.bindings)
+			if mountedErr == nil || !strings.Contains(mountedErr.Error(), test.want) {
+				t.Fatalf("ValidateMountedReferences() error = %v, want containing %q", mountedErr, test.want)
+			}
+			worker, workerErr := WorkerPayload(test.eventType, raw, test.bindings)
+			if workerErr == nil || !strings.Contains(workerErr.Error(), test.want) {
+				t.Fatalf("WorkerPayload() error = %v, want containing %q", workerErr, test.want)
+			}
+			if worker != nil {
+				t.Fatalf("WorkerPayload() payload = %s, want nil on validation failure", worker)
+			}
+		})
+	}
+}
+
 func TestWorkerPayloadInjectsDeduplicatedMountedPaths(t *testing.T) {
 	publicPayload := json.RawMessage(`{
 		"type":"user.message",
@@ -54,46 +120,6 @@ func TestWorkerPayloadInjectsDeduplicatedMountedPaths(t *testing.T) {
 	}
 	if strings.Count(mention.Text, "reference") != 1 {
 		t.Fatalf("duplicate file reference was not removed: %q", mention.Text)
-	}
-}
-
-func TestReferenceValidationFailures(t *testing.T) {
-	tests := []struct {
-		name     string
-		payload  string
-		bindings []Binding
-		want     string
-	}{
-		{
-			name:    "file is not attached",
-			payload: `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"file_missing"}}]}`,
-			want:    "Session Resources API",
-		},
-		{
-			name:    "image mime type mismatch",
-			payload: `{"type":"user.message","content":[{"type":"image","source":{"type":"file","file_id":"file_text"}}]}`,
-			bindings: []Binding{{
-				FileID: "file_text", Path: "/uploads/not-image.txt", MimeType: "text/plain",
-			}},
-			want: "not a supported image",
-		},
-		{
-			name:    "client local path",
-			payload: `{"type":"user.message","content":[{"type":"document","source":{"type":"path","path":"/tmp/private.txt"}}]}`,
-			want:    "local file paths are not accepted",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			raw := json.RawMessage(test.payload)
-			if err := ValidatePublicEvent("user.message", raw); err != nil && !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("ValidatePublicEvent() error = %v, want containing %q", err, test.want)
-			}
-			err := ValidateMountedReferences("user.message", raw, test.bindings)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("ValidateMountedReferences() error = %v, want containing %q", err, test.want)
-			}
-		})
 	}
 }
 

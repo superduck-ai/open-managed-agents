@@ -51,13 +51,8 @@ func ValidateFileMountPath(mountPath string) error {
 
 // FileBackingPath 将对外 mount_path 映射到 Session Filestore 的固定 uploads namespace。
 func FileBackingPath(mountPath string) (string, error) {
-	if err := filestorepath.Validate(mountPath, false); err != nil {
-		return "", fmt.Errorf("mount_path %w", err)
-	}
-	for _, value := range mountPath {
-		if unicode.IsControl(value) {
-			return "", errors.New("mount_path must not contain control characters")
-		}
+	if err := validateBackingPath("mount_path", mountPath); err != nil {
+		return "", err
 	}
 	backingPath := FileSource + mountPath
 	if strings.HasPrefix(mountPath, FileSource+"/") {
@@ -72,18 +67,25 @@ func FileBackingPath(mountPath string) (string, error) {
 // SandboxFilePath maps an authoritative /uploads Filestore path to the path
 // visible inside the managed-agent Sandbox.
 func SandboxFilePath(backingPath string) (string, error) {
-	if err := filestorepath.Validate(backingPath, false); err != nil {
-		return "", fmt.Errorf("file backing path %w", err)
+	if err := validateBackingPath("file backing path", backingPath); err != nil {
+		return "", err
 	}
 	if !strings.HasPrefix(backingPath, FileSource+"/") {
 		return "", fmt.Errorf("file backing path must be under %q", FileSource)
 	}
-	for _, value := range backingPath {
-		if unicode.IsControl(value) {
-			return "", errors.New("file backing path must not contain control characters")
+	return SandboxUploadsMount + strings.TrimPrefix(backingPath, FileSource), nil
+}
+
+func validateBackingPath(label, value string) error {
+	if err := filestorepath.Validate(value, false); err != nil {
+		return fmt.Errorf("%s %w", label, err)
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return fmt.Errorf("%s must not contain control characters", label)
 		}
 	}
-	return SandboxUploadsMount + strings.TrimPrefix(backingPath, FileSource), nil
+	return nil
 }
 
 // ValidateFileMountPaths 校验重复路径与祖先/后代冲突。

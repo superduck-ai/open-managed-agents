@@ -19,6 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -553,7 +554,8 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("archived deployments cannot be run"))
 		return
 	}
-	if referenceError := h.validateRunReferences(r, principal, deployment); referenceError != nil {
+	filesByID, referenceError := h.validateRunReferences(r, principal, deployment)
+	if referenceError != nil {
 		h.writeRunReferenceFailure(w, r, principal, deployment, referenceError)
 		return
 	}
@@ -572,6 +574,17 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 		return
+	}
+	fileBindings, err := deploymentEventFileBindings(resources, filesByID)
+	if err != nil {
+		h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
+		return
+	}
+	for _, event := range events {
+		if err := sessioneventfiles.ValidateMountedReferences(event.EventType, event.Payload, fileBindings); err != nil {
+			h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
+			return
+		}
 	}
 	deploymentIDCopy := deployment.ExternalID
 	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
@@ -715,62 +728,69 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 	httpapi.WriteJSON(w, http.StatusOK, responseFromRun(run))
 }
 
-func (h *Handler) validateRunReferences(r *http.Request, principal auth.Principal, deployment db.Deployment) json.RawMessage {
+func (h *Handler) validateRunReferences(
+	r *http.Request,
+	principal auth.Principal,
+	deployment db.Deployment,
+) (map[string]db.FileRecord, json.RawMessage) {
 	agent, err := h.db.GetAgent(r.Context(), principal.WorkspaceUUID, deployment.AgentExternalID)
 	if err != nil {
-		return runErrorForReference("agent", err, false)
+		return nil, runErrorForReference("agent", err, false)
 	}
 	if agent.ArchivedAt != nil {
-		return runErrorForReference("agent", nil, true)
+		return nil, runErrorForReference("agent", nil, true)
 	}
 	env, err := h.db.GetEnvironment(r.Context(), principal.WorkspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
-		return runErrorForReference("environment", err, false)
+		return nil, runErrorForReference("environment", err, false)
 	}
 	if env.ArchivedAt != nil {
-		return runErrorForReference("environment", nil, true)
+		return nil, runErrorForReference("environment", nil, true)
 	}
 	var vaultIDs []string
 	if len(deployment.VaultIDs) > 0 && !httpapi.IsJSONNull(deployment.VaultIDs) {
 		if err := json.Unmarshal(deployment.VaultIDs, &vaultIDs); err != nil {
-			return runError("unknown_error", "Stored vault references are invalid")
+			return nil, runError("unknown_error", "Stored vault references are invalid")
 		}
 	}
 	for _, vaultID := range vaultIDs {
 		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, vaultID)
 		if err != nil {
-			return runErrorForReference("vault", err, false)
+			return nil, runErrorForReference("vault", err, false)
 		}
 		if vault.ArchivedAt != nil {
-			return runErrorForReference("vault", nil, true)
+			return nil, runErrorForReference("vault", nil, true)
 		}
 	}
 	var resources []map[string]any
 	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
 		if err := json.Unmarshal(deployment.Resources, &resources); err != nil {
-			return runError("unknown_error", "Stored resources are invalid")
+			return nil, runError("unknown_error", "Stored resources are invalid")
 		}
 	}
+	filesByID := make(map[string]db.FileRecord)
 	for _, resource := range resources {
 		resourceType, _ := resource["type"].(string)
 		switch resourceType {
 		case "file":
 			fileID, _ := resource["file_id"].(string)
-			if _, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID); err != nil {
-				return runErrorForReference("file", err, false)
+			file, err := h.db.GetFile(r.Context(), principal.WorkspaceUUID, fileID)
+			if err != nil {
+				return nil, runErrorForReference("file", err, false)
 			}
+			filesByID[fileID] = file
 		case "memory_store":
 			storeID, _ := resource["memory_store_id"].(string)
 			store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 			if err != nil {
-				return runErrorForReference("memory_store", err, false)
+				return nil, runErrorForReference("memory_store", err, false)
 			}
 			if store.ArchivedAt != nil {
-				return runErrorForReference("memory_store", nil, true)
+				return nil, runErrorForReference("memory_store", nil, true)
 			}
 		}
 	}
-	return nil
+	return filesByID, nil
 }
 
 func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) {

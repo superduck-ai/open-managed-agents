@@ -9,13 +9,14 @@ Session。快照之后、Code Session 创建之前发送的消息虽然已经写
 ## 设计
 
 `session_events.payload` 是启动输入的唯一公开事实源，不增加临时 queue、watermark、第二份
-Session Event payload 或公开状态。Files API 引用只在 activation 生成 Code Session inbound
-时转换为 Claude Code 可读取的挂载路径，详见
+Session Event payload 或公开状态。Files API 引用只在生成 Code Session inbound 时转换为
+Claude Code 可读取的挂载路径：启动历史在 activation 转换，active Session 的新事件在 realtime
+入口转换，详见
 [Session 事件文件引用](./session-event-file-references.md)。
 
 Send Events 与 Code Session activation 都先锁同一条 Session 行：
 
-- Send 通过 `DB.AppendSessionEvents` 锁 Session 并提交公开事件；
+- Send 通过 `DB.WithSessionEventWriteTx` 锁 Session，在同一事务中解析活动文件绑定并提交公开事件；
 - activation 锁 Session 后读取完整公开历史，在同一事务中写 inbound 并将 Code Session 从
   `initializing` 切为 `active`。
 
@@ -66,7 +67,7 @@ sequenceDiagram
 3. 调用 `ActivateManagedAgentCodeSession`；
 4. activation 事务锁定 Session 和 initializing Code Session；
 5. 按 `created_at ASC, id ASC` 读取完整 `session_events`；
-6. 读取当前活动 File Resource，过滤公开历史并生成 worker 专用 payload；
+6. 读取当前活动 File Resource，过滤公开历史并通过 `workerPayloadForPublicEvent` 生成 worker 专用 payload；
 7. 幂等写入 inbound；
 8. 将 Code Session 切为 `active` 并提交。
 
@@ -76,7 +77,10 @@ sequenceDiagram
 ## Realtime cutover
 
 Send 提交公开事件后始终调用 `Service.QueuePublicSessionEvents`。该方法重新读取最新 Code
-Session，只有 `status == active` 时才写 inbound；不存在或仍为 `initializing` 时直接返回。
+Session，只有 `status == active` 时才通过 `workerPayloadForPublicEvent` 写 inbound；不存在或仍为
+`initializing` 时直接返回。文件转换使用 Send 事务内已经校验过的绑定快照，不在提交后重新查询
+Resource，从而避免已接受事件与 realtime 转换之间的删除竞态。被公开事件引用的 File Resource
+不能在 Session 生命周期内单独删除，activation 仍可从公开历史和活动挂载重建相同 worker payload。
 
 如果 activation 恰好在公开事件提交后、realtime 检查前完成，同一事件可能同时出现在
 activation 历史和 realtime 尝试中；现有 inbound idempotency key 会保留一份，不会重复投递。

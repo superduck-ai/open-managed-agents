@@ -3556,6 +3556,103 @@ func TestSessionEventInputValidation(t *testing.T) {
 	}
 }
 
+func TestSessionEventMissingFileResourceRejectsWholeBatch(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-atomicity-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-file-atomicity-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-event-file-atomicity-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[
+			{"type":"user.define_outcome","description":"must roll back","rubric":{"type":"text","text":"pass"}},
+			{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"file_not_attached"}}]}
+		]}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("rejected batch persisted events: %+v", events.Data)
+	}
+	if retrieved := retrieveSession(t, app, session.ID, defaultTestKey); string(retrieved.OutcomeEvaluations) != "[]" {
+		t.Fatalf("rejected batch persisted outcome evaluations: %s", retrieved.OutcomeEvaluations)
+	}
+}
+
+func TestCreateSessionInitialEventsRejectThreadID(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-initial-event-thread-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-initial-event-thread-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-initial-event-thread-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions?beta=true",
+		strings.NewReader(`{
+			"agent":`+quoteJSON(agent.ID)+`,
+			"environment_id":`+quoteJSON(env.ID)+`,
+			"initial_events":[{"type":"user.message","session_thread_id":"sthr_client","content":[{"type":"text","text":"hello"}]}]
+		}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusBadRequest, "invalid_request_error")
+}
+
+func TestSessionEventReferencedFileResourceCannotBeDeleted(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-delete-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-file-delete-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-event-file-delete-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	file := uploadFile(t, app, "pinned.txt", "text/plain", []byte("pinned"))
+	defer deleteFile(t, app, file.ID)
+	session := createSession(t, app, `{
+		"agent":`+quoteJSON(agent.ID)+`,
+		"environment_id":`+quoteJSON(env.ID)+`,
+		"resources":[{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/uploads/pinned.txt"}],
+		"initial_events":[{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":`+quoteJSON(file.ID)+`}}]}]
+	}`)
+	defer deleteSession(t, app, session.ID)
+	if len(session.Resources) != 1 {
+		t.Fatalf("session resources = %+v, want one", session.Resources)
+	}
+	resourceID := sessionEventStringField(t, session.Resources[0], "id")
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodDelete,
+		"/v1/sessions/"+session.ID+"/resources/"+resourceID+"?beta=true",
+		nil,
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusConflict, "conflict_error")
+	codeSessionID := launchLocalCodeSession(t, app, session.ID)
+	inbound, err := app.db.ListQueuedCodeSessionInboundEvents(context.Background(), codeSessionID)
+	if err != nil {
+		t.Fatalf("list pinned resource inbound events: %v", err)
+	}
+	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte(`/mnt/session/uploads/pinned.txt`)) {
+		t.Fatalf("pinned resource inbound = %#v, want mounted path", inbound)
+	}
+}
+
 func TestSessionEventFileReferencesUseMountedResources(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-references-bucket"))
 	defer app.close()
@@ -3676,38 +3773,6 @@ streamVerified:
 	}
 }
 
-func TestSessionEventMissingFileResourceRejectsWholeBatch(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-atomicity-bucket"))
-	defer app.close()
-
-	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-event-file-atomicity-agent"}`)
-	defer cleanupAgentRows(t, app.pool, agent.ID)
-	env := createEnvironment(t, app, `{"name":"sessions-event-file-atomicity-env"}`)
-	defer cleanupEnvironmentRows(t, app.pool, env.ID)
-	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, session.ID)
-
-	response := doSessionRequest(
-		t,
-		app,
-		http.MethodPost,
-		"/v1/sessions/"+session.ID+"/events?beta=true",
-		strings.NewReader(`{"events":[
-			{"type":"user.define_outcome","description":"must roll back","rubric":{"type":"text","text":"pass"}},
-			{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"file_not_attached"}}]}
-		]}`),
-		defaultTestKey,
-		true,
-	)
-	assertError(t, response, http.StatusBadRequest, "invalid_request_error")
-	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
-		t.Fatalf("rejected batch persisted events: %+v", events.Data)
-	}
-	if retrieved := retrieveSession(t, app, session.ID, defaultTestKey); string(retrieved.OutcomeEvaluations) != "[]" {
-		t.Fatalf("rejected batch persisted outcome evaluations: %s", retrieved.OutcomeEvaluations)
-	}
-}
-
 func TestCreateSessionInitialEventCanReferenceCreatedFileResource(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-initial-event-file-bucket"))
 	defer app.close()
@@ -3751,7 +3816,9 @@ func TestCreateSessionInitialEventCanReferenceCreatedFileResource(t *testing.T) 
 	if err != nil {
 		t.Fatalf("list initial inbound events: %v", err)
 	}
-	if len(inbound) != 2 || !bytes.Contains(inbound[1].Payload, []byte(`/mnt/session/uploads/initial.pdf`)) {
+	if len(inbound) != 2 ||
+		!bytes.Contains(inbound[1].Payload, []byte(`/mnt/session/uploads/initial.pdf`)) ||
+		bytes.Contains(inbound[1].Payload, []byte(`"file_id"`)) {
 		t.Fatalf("initial inbound events = %#v, want mounted path", inbound)
 	}
 }

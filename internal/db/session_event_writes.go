@@ -63,21 +63,6 @@ func (tx SessionEventWriteTx) ListFileBindings(
 	return sessionEventFileBindingsFromRows(rows), nil
 }
 
-// ListSessionEventFileBindings resolves active file mounts for Code Session
-// realtime delivery after the public event transaction has committed.
-func (d *DB) ListSessionEventFileBindings(
-	ctx context.Context,
-	workspaceUUID string,
-	sessionExternalID string,
-) ([]SessionEventFileBinding, error) {
-	mapper := NewSessionResourceMapper(d.mapperDB)
-	rows, err := mapper.ListEventFileBindings(ctx, workspaceUUID, sessionExternalID)
-	if err != nil {
-		return nil, err
-	}
-	return sessionEventFileBindingsFromRows(rows), nil
-}
-
 func sessionEventFileBindingsFromRows(rows []sessionEventFileBindingRow) []SessionEventFileBinding {
 	bindings := make([]SessionEventFileBinding, len(rows))
 	for index, row := range rows {

@@ -34,8 +34,10 @@ func TestParseDeploymentRunResourceReferences(t *testing.T) {
 		{name: "unsupported type", raw: `[{"type":"directory"}]`},
 		{name: "file ID is missing", raw: `[{"type":"file"}]`},
 		{name: "file ID is not a string", raw: `[{"type":"file","file_id":1}]`},
+		{name: "file ID has surrounding whitespace", raw: `[{"type":"file","file_id":" file_test "}]`},
 		{name: "memory store ID is missing", raw: `[{"type":"memory_store"}]`},
 		{name: "memory store ID is not a string", raw: `[{"type":"memory_store","memory_store_id":1}]`},
+		{name: "memory store ID has surrounding whitespace", raw: `[{"type":"memory_store","memory_store_id":" mem_test "}]`},
 		{name: "reference field belongs to another type", raw: `[{"type":"github_repository","file_id":"file_test"}]`},
 	}
 	for _, test := range tests {

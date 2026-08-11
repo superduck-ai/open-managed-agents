@@ -153,7 +153,7 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	assertMapperSQLContains(t, fileReferenceBound, "event.session_external_id = $3")
 	assertMapperSQLContains(t, fileReferenceBound, "jsonb_array_elements")
 	assertMapperSQLContains(t, fileReferenceBound, "event.event_type = 'user.message'")
-	assertMapperSQLContains(t, fileReferenceBound, "BTRIM(content_block->'source'->>'file_id') = file.external_id")
+	assertMapperSQLContains(t, fileReferenceBound, "content_block->'source'->>'file_id' = file.external_id")
 }
 
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {

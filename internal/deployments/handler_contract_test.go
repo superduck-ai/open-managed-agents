@@ -34,10 +34,10 @@ func TestParseDeploymentRunResourceReferences(t *testing.T) {
 		{name: "unsupported type", raw: `[{"type":"directory"}]`},
 		{name: "file ID is missing", raw: `[{"type":"file"}]`},
 		{name: "file ID is not a string", raw: `[{"type":"file","file_id":1}]`},
-		{name: "file ID has surrounding whitespace", raw: `[{"type":"file","file_id":" file_test "}]`},
+		{name: "file ID is all whitespace", raw: `[{"type":"file","file_id":"   "}]`},
 		{name: "memory store ID is missing", raw: `[{"type":"memory_store"}]`},
 		{name: "memory store ID is not a string", raw: `[{"type":"memory_store","memory_store_id":1}]`},
-		{name: "memory store ID has surrounding whitespace", raw: `[{"type":"memory_store","memory_store_id":" mem_test "}]`},
+		{name: "memory store ID is all whitespace", raw: `[{"type":"memory_store","memory_store_id":"   "}]`},
 		{name: "reference field belongs to another type", raw: `[{"type":"github_repository","file_id":"file_test"}]`},
 	}
 	for _, test := range tests {
@@ -59,6 +59,20 @@ func TestParseDeploymentRunResourceReferences(t *testing.T) {
 		}
 		if len(references) != 3 || references[0].FileID != "file_test" ||
 			references[1].MemoryStoreID != "mem_test" || references[2].Type != "github_repository" {
+			t.Fatalf("parseDeploymentRunResourceReferences() = %+v", references)
+		}
+	})
+
+	t.Run("preserves resource IDs with surrounding whitespace", func(t *testing.T) {
+		references, err := parseDeploymentRunResourceReferences(json.RawMessage(`[
+			{"type":"file","file_id":" file_test "},
+			{"type":"memory_store","memory_store_id":" mem_test "}
+		]`))
+		if err != nil {
+			t.Fatalf("parseDeploymentRunResourceReferences() error = %v", err)
+		}
+		if len(references) != 2 || references[0].FileID != " file_test " ||
+			references[1].MemoryStoreID != " mem_test " {
 			t.Fatalf("parseDeploymentRunResourceReferences() = %+v", references)
 		}
 	})

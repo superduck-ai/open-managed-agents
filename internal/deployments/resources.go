@@ -361,13 +361,11 @@ func parseDeploymentRunResourceReferences(raw json.RawMessage) ([]deploymentRunR
 	for _, reference := range references {
 		switch reference.Type {
 		case sessionresource.FileType:
-			fileID := strings.TrimSpace(reference.FileID)
-			if fileID == "" || fileID != reference.FileID || reference.MemoryStoreID != "" {
+			if strings.TrimSpace(reference.FileID) == "" || reference.MemoryStoreID != "" {
 				return nil, errors.New("stored file resource reference is invalid")
 			}
 		case "memory_store":
-			memoryStoreID := strings.TrimSpace(reference.MemoryStoreID)
-			if memoryStoreID == "" || memoryStoreID != reference.MemoryStoreID || reference.FileID != "" {
+			if strings.TrimSpace(reference.MemoryStoreID) == "" || reference.FileID != "" {
 				return nil, errors.New("stored memory store resource reference is invalid")
 			}
 		case "github_repository":

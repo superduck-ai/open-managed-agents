@@ -39,11 +39,18 @@ func TestReferenceValidationFailures(t *testing.T) {
 			want:        "local file paths are not accepted",
 		},
 		{
-			name:        "file ID has surrounding whitespace",
+			name:        "file ID is all whitespace",
 			eventType:   "user.message",
-			payload:     `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":" file_doc "}}]}`,
+			payload:     `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"   "}}]}`,
 			publicError: true,
-			want:        "must not contain surrounding whitespace",
+			want:        "source.file_id is required",
+		},
+		{
+			name:      "padded file ID uses exact match",
+			eventType: "user.message",
+			payload:   `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":" file_doc "}}]}`,
+			bindings:  []Binding{{FileID: "file_doc", Path: "/uploads/doc.pdf", MimeType: "application/pdf"}},
+			want:      "Session Resources API",
 		},
 		{
 			name:        "file block outside user message",

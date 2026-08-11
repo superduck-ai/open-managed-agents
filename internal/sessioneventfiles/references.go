@@ -143,12 +143,9 @@ func referencesFromEvent(eventType string, raw json.RawMessage) ([]reference, er
 		if eventType != userMessageType {
 			return nil, errors.New("file content blocks are only supported in user.message events")
 		}
-		fileID := strings.TrimSpace(source.FileID)
-		if fileID == "" {
+		fileID := source.FileID
+		if strings.TrimSpace(fileID) == "" {
 			return nil, errors.New("file content block source.file_id is required")
-		}
-		if fileID != source.FileID {
-			return nil, errors.New("file content block source.file_id must not contain surrounding whitespace")
 		}
 		references = append(references, reference{blockType: block.Type, fileID: fileID})
 	}

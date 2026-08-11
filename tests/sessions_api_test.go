@@ -3679,6 +3679,27 @@ func TestSessionEventFileReferencesUseMountedResources(t *testing.T) {
 	if addResponse.StatusCode != http.StatusOK {
 		t.Fatalf("add session file resource status = %d, want 200: %s", addResponse.StatusCode, readAll(t, addResponse.Body))
 	}
+	paddedResponse := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[{"type":"user.message","content":[
+			{"type":"document","source":{"type":"file","file_id":`+quoteJSON(" "+file.ID+" ")+`}}
+		]}]}`),
+		defaultTestKey,
+		true,
+	)
+	defer paddedResponse.Body.Close()
+	if paddedResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("padded file ID status = %d, want 400: %s", paddedResponse.StatusCode, readAll(t, paddedResponse.Body))
+	}
+	var paddedError errorResponse
+	decodeJSON(t, paddedResponse.Body, &paddedError)
+	if paddedError.Error.Type != "invalid_request_error" ||
+		!strings.Contains(paddedError.Error.Message, "is not mounted in this session") {
+		t.Fatalf("padded file ID error = %+v, want exact-match resource miss", paddedError)
+	}
 	streamLines, closeStream := openSessionEventStreamForTest(t, app, session.ID)
 	defer closeStream()
 

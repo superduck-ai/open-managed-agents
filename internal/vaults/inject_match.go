@@ -7,41 +7,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-// injectionKind is the outbound proxy decision for a request URL.
-type injectionKind int
-
-const (
-	injectionPassthrough injectionKind = iota
-	injectionInject
-	injectionReject
-)
-
-// injectionDecision is the result of matching vault credentials to an outbound URL.
-type injectionDecision struct {
-	Kind       injectionKind
-	Credential *db.VaultCredential
-}
-
-// decideInjection walks credentials in vault_ids order. First matching injectable
-// credential (static_bearer or mcp_oauth) wins; same scheme/host/port coverage
-// without an injectable path match rejects. Unparseable auth fails closed.
-func decideInjection(requestURL *url.URL, credentials []db.VaultCredential) injectionDecision {
-	if requestURL == nil {
-		return injectionDecision{Kind: injectionReject}
-	}
-	matches, hostCovered, err := listInjectableMatches(requestURL, credentials)
-	if err != nil {
-		return injectionDecision{Kind: injectionReject}
-	}
-	if len(matches) > 0 {
-		return injectionDecision{Kind: injectionInject, Credential: matches[0]}
-	}
-	if hostCovered {
-		return injectionDecision{Kind: injectionReject}
-	}
-	return injectionDecision{Kind: injectionPassthrough}
-}
-
 // listInjectableMatches returns vault_ids-ordered injectable credentials that
 // match requestURL. hostCovered is true when any credential covers the host
 // (including non-injectable types), for reject-vs-passthrough.
@@ -134,5 +99,5 @@ func isInjectableCredential(authType, cfgType string) bool {
 	if typ == "" {
 		typ = strings.TrimSpace(cfgType)
 	}
-	return typ == "static_bearer" || typ == "mcp_oauth"
+	return typ == string(credentialAuthTypeStaticBearer) || typ == string(credentialAuthTypeMCPOAuth)
 }

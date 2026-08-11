@@ -19,12 +19,9 @@ import (
 
 const maxMCPProxyURLBytes = 2048
 
-// mcpProxyHeaderInjector 是服务端 MCP 凭证注入边界（真实 mcp_url 目标）。
-// 默认 no-op；测试可注入。生产路径优先用 mcpProxyTransportWrapper。
-type mcpProxyHeaderInjector func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error
-
 // mcpProxyTransportWrapper wraps the MCP upstream RoundTripper for vault
-// inject + mcp_oauth 401 refresh retry.
+// inject + mcp_oauth 401 refresh retry. This is the sole production credential
+// injection seam (tests may substitute a fake wrapper).
 type mcpProxyTransportWrapper func(context.Context, SessionCredentialClaims, *url.URL, http.RoundTripper) http.RoundTripper
 
 func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
@@ -70,13 +67,6 @@ func (h *Handler) handleMCPProxy(w http.ResponseWriter, r *http.Request) {
 	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection"} {
 		headers.Del(name)
 	}
-	if h.wrapMCPVaultTransport == nil && h.injectMCPProxyHeaders != nil {
-		if err := h.injectMCPProxyHeaders(r.Context(), claims, target, headers); err != nil {
-			h.logger.ErrorContext(r.Context(), "inject MCP proxy credentials", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadGateway, "api_error", "MCP upstream credentials are unavailable"))
-			return
-		}
-	}
 	request := r.Clone(r.Context())
 	request.Header = headers
 	h.serveMCPProxy(w, request, target, codeSessionID, claims)
@@ -116,7 +106,7 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, err error) {
 			if errors.Is(err, vaults.ErrInjectionRejected) {
 				h.logger.ErrorContext(request.Context(), "inject MCP proxy credentials", "code_session_id", codeSessionID, "host", target.Hostname(), "error", err)
-				httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", "MCP upstream credentials are unavailable"))
+				httpapi.WriteError(writer, request, httpapi.NewError(http.StatusBadGateway, "api_error", vaults.InjectionUnavailablePublicMessage))
 				return
 			}
 			if request.Context().Err() == nil {

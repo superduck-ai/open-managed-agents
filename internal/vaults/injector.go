@@ -3,38 +3,95 @@ package vaults
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
-var ErrInjectionRejected = errors.New("vault credential injection rejected")
+// oauthRefreshTimeout bounds a single token-endpoint exchange so a hung IdP
+// cannot stall an MCP RoundTrip.
+const oauthRefreshTimeout = 15 * time.Second
+
+// credentialStore is the test seam for the Injector's persistence surface
+// (refresh CAS + session credential loading). *db.DB satisfies it implicitly;
+// production only ever uses *db.DB. Tests substitute a fake to inject
+// deterministic credentials without a live database.
+type credentialStore interface {
+	UpdateVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string, next db.VaultCredential) (db.VaultCredential, error)
+	GetVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (db.VaultCredential, error)
+	GetCodeSessionVaultIDs(ctx context.Context, codeSessionExternalID, organizationUUID, workspaceUUID string) ([]string, error)
+	ListActiveVaultCredentialsForVaultIDs(ctx context.Context, workspaceUUID string, vaultExternalIDs []string) ([]db.VaultCredential, error)
+}
 
 // Injector loads session vault credentials per request and rewrites MCP
 // Authorization for injectable targets. Plaintext tokens are never cached.
 type Injector struct {
 	db         *db.DB
 	secretSvc  *secrets.Service
+	logger     *slog.Logger
 	httpClient *http.Client
 	now        func() time.Time
+	// refreshLocks serializes concurrent mcp_oauth refreshes per credential so
+	// a one-time refresh_token cannot be exchanged twice in-process.
+	// ponytail: one mutex per refreshed credential for process lifetime; add
+	// TTL eviction if map size becomes a problem.
+	refreshLocks sync.Map // credential ExternalID -> *sync.Mutex
+	// store overrides db for tests; nil means use db.
+	store credentialStore
 }
 
-func NewInjector(database *db.DB, secretSvc *secrets.Service) *Injector {
-	return &Injector{db: database, secretSvc: secretSvc}
+func (i *Injector) credentialStore() credentialStore {
+	if i == nil {
+		return nil
+	}
+	if i.store != nil {
+		return i.store
+	}
+	return i.db
+}
+
+func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logger) *Injector {
+	return &Injector{
+		db:        database,
+		secretSvc: secretSvc,
+		logger:    logging.LoggerOrDefault(logger),
+	}
+}
+
+func defaultOAuthHTTPClient() *http.Client {
+	// ponytail: timeout + no redirect; add SSRF-safe dialer when
+	// credential-level egress policy lands.
+	return &http.Client{
+		Timeout: oauthRefreshTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 func (i *Injector) client() *http.Client {
 	if i != nil && i.httpClient != nil {
 		return i.httpClient
 	}
-	return http.DefaultClient
+	return defaultOAuthHTTPClient()
+}
+
+func (i *Injector) refreshLock(credentialID string) *sync.Mutex {
+	key := credentialID
+	if key == "" {
+		key = "<anonymous>"
+	}
+	value, _ := i.refreshLocks.LoadOrStore(key, &sync.Mutex{})
+	return value.(*sync.Mutex)
 }
 
 func (i *Injector) clock() time.Time {
@@ -49,31 +106,13 @@ type resolvedInjection struct {
 	credential *db.VaultCredential
 }
 
-// RewriteAuthorization: passthrough leaves headers alone; inject sets Bearer;
-// reject returns ErrInjectionRejected. Open/refresh failures skip to the next
-// matching injectable credential.
-func (i *Injector) RewriteAuthorization(
-	ctx context.Context,
-	codeSessionExternalID string,
-	organizationUUID string,
-	workspaceUUID string,
-	requestURL *url.URL,
-	header http.Header,
-) error {
-	result, err := i.resolveAuthorization(ctx, codeSessionExternalID, organizationUUID, workspaceUUID, requestURL, nil)
-	if err != nil {
-		return err
-	}
-	if result == nil {
-		return nil
-	}
-	header.Set("Authorization", "Bearer "+result.token)
-	return nil
+// injectionPlan is the vault_ids-ordered match set for one outbound MCP URL.
+// Loaded once per RoundTrip; walk/401 retries reuse it without re-querying.
+type injectionPlan struct {
+	matches     []*db.VaultCredential
+	hostCovered bool
 }
 
-// WrapTransport returns a RoundTripper that injects vault credentials and, for
-// mcp_oauth, performs one refresh+retry on upstream 401 before skipping to the
-// next matching credential.
 func (i *Injector) WrapTransport(
 	ctx context.Context,
 	codeSessionExternalID string,
@@ -114,21 +153,23 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	if err != nil {
 		return nil, err
 	}
+	plan, err := t.injector.loadInjectionPlan(
+		t.ctx,
+		t.codeSessionExternalID,
+		t.organizationUUID,
+		t.workspaceUUID,
+		t.requestURL,
+	)
+	if err != nil {
+		return nil, err
+	}
 	excluded := map[string]struct{}{}
 	for {
-		result, err := t.injector.resolveAuthorization(
-			t.ctx,
-			t.codeSessionExternalID,
-			t.organizationUUID,
-			t.workspaceUUID,
-			t.requestURL,
-			excluded,
-		)
+		result, err := t.injector.resolveFromPlan(t.ctx, plan, excluded)
 		if err != nil {
 			return nil, err
 		}
-		out := req.Clone(req.Context())
-		restoreRequestBody(out, body)
+		out := cloneRequestWithBody(req, body)
 		if result == nil {
 			return t.base.RoundTrip(out)
 		}
@@ -141,13 +182,12 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 			return resp, nil
 		}
 		credID := result.credential.ExternalID
-		if result.credential.AuthType == "mcp_oauth" {
-			refreshed, refreshErr := t.injector.refreshAfterUnauthorized(t.ctx, result.credential)
-			if refreshErr == nil && refreshed != nil {
-				drainAndClose(resp)
-				retry := req.Clone(req.Context())
-				restoreRequestBody(retry, body)
-				retry.Header.Set("Authorization", "Bearer "+refreshed.token)
+		drainAndClose(resp)
+		if result.credential.AuthType == string(credentialAuthTypeMCPOAuth) {
+			token, _, refreshErr := t.injector.refreshMCPOAuthCredential(t.ctx, result.credential, t.injector.clock(), true)
+			if refreshErr == nil {
+				retry := cloneRequestWithBody(req, body)
+				retry.Header.Set("Authorization", "Bearer "+token)
 				resp2, err2 := t.base.RoundTrip(retry)
 				if err2 != nil {
 					return resp2, err2
@@ -156,113 +196,110 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 					return resp2, nil
 				}
 				drainAndClose(resp2)
-			} else {
-				drainAndClose(resp)
 			}
-		} else {
-			drainAndClose(resp)
 		}
 		excluded[credID] = struct{}{}
 	}
 }
 
-func (i *Injector) resolveAuthorization(
+func (i *Injector) loadInjectionPlan(
 	ctx context.Context,
 	codeSessionExternalID string,
 	organizationUUID string,
 	workspaceUUID string,
 	requestURL *url.URL,
-	excluded map[string]struct{},
-) (*resolvedInjection, error) {
-	if i == nil || i.db == nil {
-		return nil, nil
+) (injectionPlan, error) {
+	store := i.credentialStore()
+	if store == nil {
+		return injectionPlan{}, nil
 	}
-	vaultIDs, err := i.db.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
+	vaultIDs, err := store.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: load vault_ids: %w", ErrInjectionRejected, err)
+		return injectionPlan{}, injectionRejected(fmt.Errorf("load vault_ids: %w", err))
 	}
 	if len(vaultIDs) == 0 {
-		return nil, nil
+		return injectionPlan{}, nil
 	}
-	credentials, err := i.db.ListActiveVaultCredentialsForVaultIDs(ctx, workspaceUUID, vaultIDs)
+	credentials, err := store.ListActiveVaultCredentialsForVaultIDs(ctx, workspaceUUID, vaultIDs)
 	if err != nil {
-		return nil, fmt.Errorf("%w: load credentials: %w", ErrInjectionRejected, err)
+		return injectionPlan{}, injectionRejected(fmt.Errorf("load credentials: %w", err))
 	}
 	matches, hostCovered, err := listInjectableMatches(requestURL, credentials)
 	if err != nil {
-		return nil, ErrInjectionRejected
+		return injectionPlan{}, injectionRejected(fmt.Errorf("match credentials: %w", err))
 	}
-	for _, cred := range matches {
-		if excluded != nil {
-			if _, skip := excluded[cred.ExternalID]; skip {
-				continue
-			}
-		}
-		token, resolvedCred, err := i.resolveInjectableToken(ctx, cred)
-		if err != nil {
+	return injectionPlan{matches: matches, hostCovered: hostCovered}, nil
+}
+
+func (i *Injector) resolveFromPlan(
+	ctx context.Context,
+	plan injectionPlan,
+	excluded map[string]struct{},
+) (*resolvedInjection, error) {
+	for _, cred := range plan.matches {
+		if _, skip := excluded[cred.ExternalID]; skip {
 			continue
 		}
-		return &resolvedInjection{token: token, credential: resolvedCred}, nil
+		result, err := i.resolveInjectableToken(ctx, cred)
+		if err != nil {
+			i.logger.WarnContext(ctx, "skip injectable vault credential", "credential_id", cred.ExternalID, "auth_type", cred.AuthType, "error", err)
+			continue
+		}
+		return result, nil
 	}
-	if hostCovered {
-		return nil, ErrInjectionRejected
+	if plan.hostCovered {
+		return nil, injectionRejected(nil)
 	}
 	return nil, nil
 }
 
-func (i *Injector) resolveInjectableToken(ctx context.Context, credential *db.VaultCredential) (string, *db.VaultCredential, error) {
+func (i *Injector) resolveInjectableToken(ctx context.Context, credential *db.VaultCredential) (*resolvedInjection, error) {
 	if credential == nil {
-		return "", nil, errors.New("missing credential")
+		return nil, missingCredential()
 	}
 	switch credential.AuthType {
-	case "static_bearer":
+	case string(credentialAuthTypeStaticBearer):
 		token, err := i.openStaticBearerToken(ctx, credential)
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
-		return token, credential, nil
-	case "mcp_oauth":
+		return &resolvedInjection{token: token, credential: credential}, nil
+	case string(credentialAuthTypeMCPOAuth):
 		return i.resolveMCPOAuthToken(ctx, credential)
 	default:
-		return "", nil, fmt.Errorf("credential type %q is not injectable", credential.AuthType)
+		return nil, credentialTypeNotInjectable(credential.AuthType)
 	}
 }
 
-func (i *Injector) resolveMCPOAuthToken(ctx context.Context, credential *db.VaultCredential) (string, *db.VaultCredential, error) {
+func (i *Injector) resolveMCPOAuthToken(ctx context.Context, credential *db.VaultCredential) (*resolvedInjection, error) {
 	current := *credential
 	plaintext, err := openCredentialSecret(ctx, i.secretSvc, current)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	defer clear(plaintext)
 
-	publicAuth, err := parseMCPOAuthPublicAuth(current.Auth)
+	publicAuth, err := decodeMCPOAuthCredentialAuth(current.Auth)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	secret, err := parseMCPOAuthSecret(plaintext)
+	secret, err := decodeMCPOAuthCredentialSecret(plaintext)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	token := strings.TrimSpace(secret.AccessToken)
-	if token == "" || secret.Type != "mcp_oauth" {
-		return "", nil, errors.New("mcp_oauth secret payload is incomplete")
+	if token == "" {
+		return nil, incompleteMCPOAuthSecret()
 	}
-	expired, err := accessTokenExpired(publicAuth.ExpiresAt, i.clock())
+	now := i.clock()
+	expired, err := accessTokenExpired(publicAuth.ExpiresAt, now)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	if !expired {
-		return token, &current, nil
+		return &resolvedInjection{token: token, credential: &current}, nil
 	}
-	return i.refreshMCPOAuthCredential(ctx, &current, i.clock(), false)
-}
-
-func (i *Injector) refreshAfterUnauthorized(ctx context.Context, credential *db.VaultCredential) (*resolvedInjection, error) {
-	if credential == nil || credential.AuthType != "mcp_oauth" {
-		return nil, errMCPOAuthRefreshUnavailable
-	}
-	token, saved, err := i.refreshMCPOAuthCredential(ctx, credential, i.clock(), true)
+	token, saved, err := i.refreshMCPOAuthCredential(ctx, &current, now, false)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +308,7 @@ func (i *Injector) refreshAfterUnauthorized(ctx context.Context, credential *db.
 
 func (i *Injector) openStaticBearerToken(ctx context.Context, credential *db.VaultCredential) (string, error) {
 	if credential == nil {
-		return "", errors.New("missing credential")
+		return "", missingCredential()
 	}
 	plaintext, err := openCredentialSecret(ctx, i.secretSvc, *credential)
 	if err != nil {
@@ -284,6 +321,12 @@ func (i *Injector) openStaticBearerToken(ctx context.Context, credential *db.Vau
 		return "", err
 	}
 	return secret.Token, nil
+}
+
+func cloneRequestWithBody(req *http.Request, body []byte) *http.Request {
+	out := req.Clone(req.Context())
+	restoreRequestBody(out, body)
+	return out
 }
 
 func snapshotRequestBody(req *http.Request) ([]byte, error) {

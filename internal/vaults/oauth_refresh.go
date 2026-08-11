@@ -18,39 +18,7 @@ import (
 
 const maxOAuthRefreshCASAttempts = 3
 
-var errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")
-
-type mcpOAuthPublicAuth struct {
-	Type         string          `json:"type"`
-	MCPServerURL string          `json:"mcp_server_url"`
-	ExpiresAt    string          `json:"expires_at"`
-	Refresh      json.RawMessage `json:"refresh"`
-}
-
-type mcpOAuthPublicRefresh struct {
-	TokenEndpoint     string          `json:"token_endpoint"`
-	ClientID          string          `json:"client_id"`
-	Scope             string          `json:"scope"`
-	Resource          string          `json:"resource"`
-	TokenEndpointAuth json.RawMessage `json:"token_endpoint_auth"`
-}
-
-type mcpOAuthSecretPayload struct {
-	Type         string          `json:"type"`
-	AccessToken  string          `json:"access_token"`
-	Refresh      json.RawMessage `json:"refresh"`
-}
-
-type mcpOAuthSecretRefresh struct {
-	RefreshToken      string          `json:"refresh_token"`
-	TokenEndpointAuth json.RawMessage `json:"token_endpoint_auth"`
-}
-
-type mcpOAuthTokenEndpointAuth struct {
-	Type         string `json:"type"`
-	ClientSecret string `json:"client_secret"`
-}
-
+// mcpOAuthTokenResponse is the token-endpoint wire schema (external contract).
 type mcpOAuthTokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -59,14 +27,35 @@ type mcpOAuthTokenResponse struct {
 	Error        string `json:"error"`
 }
 
-func accessTokenExpired(expiresAt string, now time.Time) (bool, error) {
-	expiresAt = strings.TrimSpace(expiresAt)
-	if expiresAt == "" {
+func decodeMCPOAuthCredentialAuth(raw []byte) (*mcpOAuthCredentialAuth, error) {
+	if len(raw) == 0 {
+		return nil, emptyMCPOAuthAuth()
+	}
+	auth, err := decodeCredentialAuth(raw)
+	if err != nil {
+		return nil, err
+	}
+	value, ok := auth.value.(*mcpOAuthCredentialAuth)
+	if !ok || value == nil {
+		return nil, credentialAuthNotMCPOAuth()
+	}
+	if strings.TrimSpace(value.MCPServerURL) == "" {
+		return nil, mcpOAuthServerURLRequired()
+	}
+	return value, nil
+}
+
+func accessTokenExpired(expiresAt *string, now time.Time) (bool, error) {
+	if expiresAt == nil {
 		return false, nil
 	}
-	parsed, err := time.Parse(time.RFC3339, expiresAt)
+	value := strings.TrimSpace(*expiresAt)
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {
-		parsed, err = time.Parse(time.RFC3339Nano, expiresAt)
+		parsed, err = time.Parse(time.RFC3339Nano, value)
 		if err != nil {
 			return false, fmt.Errorf("parse expires_at: %w", err)
 		}
@@ -74,46 +63,13 @@ func accessTokenExpired(expiresAt string, now time.Time) (bool, error) {
 	return !now.Before(parsed.UTC()), nil
 }
 
-func parseMCPOAuthPublicAuth(raw json.RawMessage) (mcpOAuthPublicAuth, error) {
-	var auth mcpOAuthPublicAuth
-	if len(raw) == 0 {
-		return auth, errors.New("empty mcp_oauth auth")
-	}
-	if err := json.Unmarshal(raw, &auth); err != nil {
-		return auth, err
-	}
-	return auth, nil
-}
-
-func parseMCPOAuthSecret(raw json.RawMessage) (mcpOAuthSecretPayload, error) {
-	var secret mcpOAuthSecretPayload
-	if len(raw) == 0 {
-		return secret, errors.New("empty mcp_oauth secret")
-	}
-	if err := json.Unmarshal(raw, &secret); err != nil {
-		return secret, err
-	}
-	return secret, nil
-}
-
-func hasMCPOAuthRefreshMaterial(publicAuth mcpOAuthPublicAuth, secret mcpOAuthSecretPayload) bool {
-	if len(publicAuth.Refresh) == 0 || isJSONNull(publicAuth.Refresh) {
+func hasMCPOAuthRefreshMaterial(auth *mcpOAuthCredentialAuth, secret mcpOAuthCredentialSecret) bool {
+	if auth == nil || auth.Refresh == nil || secret.Refresh == nil {
 		return false
 	}
-	if len(secret.Refresh) == 0 || isJSONNull(secret.Refresh) {
-		return false
-	}
-	var publicRefresh mcpOAuthPublicRefresh
-	var secretRefresh mcpOAuthSecretRefresh
-	if err := json.Unmarshal(publicAuth.Refresh, &publicRefresh); err != nil {
-		return false
-	}
-	if err := json.Unmarshal(secret.Refresh, &secretRefresh); err != nil {
-		return false
-	}
-	return strings.TrimSpace(publicRefresh.TokenEndpoint) != "" &&
-		strings.TrimSpace(publicRefresh.ClientID) != "" &&
-		strings.TrimSpace(secretRefresh.RefreshToken) != ""
+	return strings.TrimSpace(auth.Refresh.TokenEndpoint) != "" &&
+		strings.TrimSpace(auth.Refresh.ClientID) != "" &&
+		strings.TrimSpace(secret.Refresh.RefreshToken) != ""
 }
 
 func (i *Injector) refreshMCPOAuthCredential(
@@ -122,114 +78,156 @@ func (i *Injector) refreshMCPOAuthCredential(
 	now time.Time,
 	force bool,
 ) (string, *db.VaultCredential, error) {
-	if i == nil || i.db == nil {
+	store := i.credentialStore()
+	if i == nil || store == nil {
 		return "", nil, errMCPOAuthRefreshUnavailable
 	}
+	lock := i.refreshLock(credential.ExternalID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	current := *credential
+	// Re-read once under the per-credential lock: a concurrent winner may have
+	// already persisted a usable token (one-time refresh_token safe).
+	_ = reloadCredential(ctx, store, &current)
 	for attempt := 0; attempt < maxOAuthRefreshCASAttempts; attempt++ {
-		plaintext, err := openCredentialSecret(ctx, i.secretSvc, current)
+		token, saved, retry, err := i.refreshMCPOAuthAttempt(ctx, store, &current, now, force)
 		if err != nil {
 			return "", nil, err
 		}
-		publicAuth, err := parseMCPOAuthPublicAuth(current.Auth)
-		if err != nil {
-			clear(plaintext)
-			return "", nil, err
+		if retry {
+			force = false
+			continue
 		}
-		secret, err := parseMCPOAuthSecret(plaintext)
-		if err != nil {
-			clear(plaintext)
-			return "", nil, err
-		}
-		expired, err := accessTokenExpired(publicAuth.ExpiresAt, now)
-		if err != nil {
-			clear(plaintext)
-			return "", nil, err
-		}
-		if !force && !expired && strings.TrimSpace(secret.AccessToken) != "" {
-			token := strings.TrimSpace(secret.AccessToken)
-			clear(plaintext)
-			return token, &current, nil
-		}
-		if !hasMCPOAuthRefreshMaterial(publicAuth, secret) {
-			clear(plaintext)
-			return "", nil, errMCPOAuthRefreshUnavailable
-		}
-		token, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now)
-		clear(plaintext)
-		if err != nil {
-			return "", nil, err
-		}
-		updated := current
-		updated.Auth = nextAuth
-		updated.SecretPayload = nextSecret
-		updated.UpdatedAt = now.UTC()
-		if err := SealCredentialSecret(ctx, i.secretSvc, &updated); err != nil {
-			return "", nil, err
-		}
-		saved, err := i.db.UpdateVaultCredential(ctx, updated.WorkspaceUUID, updated.VaultExternalID, updated.ExternalID, updated)
-		if err == nil {
-			return token, &saved, nil
-		}
-		if !errors.Is(err, db.ErrVersionConflict) {
-			return "", nil, err
-		}
-		reloaded, getErr := i.db.GetVaultCredential(ctx, current.WorkspaceUUID, current.VaultExternalID, current.ExternalID)
-		if getErr != nil {
-			return "", nil, getErr
-		}
-		current = reloaded
-		force = true
+		return token, saved, nil
 	}
 	return "", nil, errMCPOAuthRefreshUnavailable
+}
+
+// refreshMCPOAuthAttempt runs one open → maybe-exchange → CAS cycle.
+// retry=true means reload already applied and the outer loop should try again.
+func (i *Injector) refreshMCPOAuthAttempt(
+	ctx context.Context,
+	store credentialStore,
+	current *db.VaultCredential,
+	now time.Time,
+	force bool,
+) (token string, saved *db.VaultCredential, retry bool, err error) {
+	plaintext, err := openCredentialSecret(ctx, i.secretSvc, *current)
+	if err != nil {
+		return "", nil, false, err
+	}
+	defer clear(plaintext)
+
+	publicAuth, err := decodeMCPOAuthCredentialAuth(current.Auth)
+	if err != nil {
+		return "", nil, false, err
+	}
+	secret, err := decodeMCPOAuthCredentialSecret(plaintext)
+	if err != nil {
+		return "", nil, false, err
+	}
+	expired, err := accessTokenExpired(publicAuth.ExpiresAt, now)
+	if err != nil {
+		return "", nil, false, err
+	}
+	if !force && !expired && strings.TrimSpace(secret.AccessToken) != "" {
+		return strings.TrimSpace(secret.AccessToken), current, false, nil
+	}
+	if !hasMCPOAuthRefreshMaterial(publicAuth, secret) {
+		return "", nil, false, errMCPOAuthRefreshUnavailable
+	}
+	accessToken, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now)
+	if err != nil {
+		// Exchange failed (e.g. invalid_grant after a concurrent winner
+		// consumed the refresh_token). Reload once and reuse any usable
+		// token instead of forcing another exchange.
+		if reloadErr := reloadCredential(ctx, store, current); reloadErr != nil {
+			return "", nil, false, err
+		}
+		return "", nil, true, nil
+	}
+	updated := *current
+	updated.Auth = nextAuth
+	updated.SecretPayload = nextSecret
+	updated.UpdatedAt = now.UTC()
+	if err := SealCredentialSecret(ctx, i.secretSvc, &updated); err != nil {
+		return "", nil, false, err
+	}
+	row, err := store.UpdateVaultCredential(ctx, updated.WorkspaceUUID, updated.VaultExternalID, updated.ExternalID, updated)
+	if err == nil {
+		return accessToken, &row, false, nil
+	}
+	if !errors.Is(err, db.ErrVersionConflict) {
+		return "", nil, false, err
+	}
+	// Winner may have already refreshed; reload and reuse unexpired token
+	// instead of forcing another token-endpoint exchange (one-time
+	// refresh_token safe).
+	if reloadErr := reloadCredential(ctx, store, current); reloadErr != nil {
+		return "", nil, false, reloadErr
+	}
+	return "", nil, true, nil
+}
+
+// reloadCredential fetches the latest persisted credential into *current.
+func reloadCredential(ctx context.Context, store credentialStore, current *db.VaultCredential) error {
+	reloaded, err := store.GetVaultCredential(ctx, current.WorkspaceUUID, current.VaultExternalID, current.ExternalID)
+	if err != nil {
+		return err
+	}
+	*current = reloaded
+	return nil
 }
 
 func exchangeMCPOAuthRefresh(
 	ctx context.Context,
 	client *http.Client,
-	publicAuth mcpOAuthPublicAuth,
-	secret mcpOAuthSecretPayload,
+	publicAuth *mcpOAuthCredentialAuth,
+	secret mcpOAuthCredentialSecret,
 	now time.Time,
 ) (string, json.RawMessage, json.RawMessage, error) {
-	var publicRefresh mcpOAuthPublicRefresh
-	var secretRefresh mcpOAuthSecretRefresh
-	if err := json.Unmarshal(publicAuth.Refresh, &publicRefresh); err != nil {
-		return "", nil, nil, err
+	if publicAuth == nil || publicAuth.Refresh == nil || secret.Refresh == nil {
+		return "", nil, nil, errMCPOAuthRefreshUnavailable
 	}
-	if err := json.Unmarshal(secret.Refresh, &secretRefresh); err != nil {
-		return "", nil, nil, err
+	publicRefresh := *publicAuth.Refresh
+	secretRefresh := *secret.Refresh
+	authMethodType := "none"
+	clientSecret := ""
+	if secretRefresh.TokenEndpointAuth != nil {
+		authMethodType = strings.TrimSpace(secretRefresh.TokenEndpointAuth.Type)
+		clientSecret = strings.TrimSpace(secretRefresh.TokenEndpointAuth.ClientSecret)
 	}
-	authMethod := mcpOAuthTokenEndpointAuth{Type: "none"}
-	if len(secretRefresh.TokenEndpointAuth) > 0 && !isJSONNull(secretRefresh.TokenEndpointAuth) {
-		if err := json.Unmarshal(secretRefresh.TokenEndpointAuth, &authMethod); err != nil {
-			return "", nil, nil, err
-		}
-	}
+
 	values := url.Values{}
 	values.Set("grant_type", "refresh_token")
 	values.Set("refresh_token", secretRefresh.RefreshToken)
 	values.Set("client_id", publicRefresh.ClientID)
-	if scope := strings.TrimSpace(publicRefresh.Scope); scope != "" {
-		values.Set("scope", scope)
+	if publicRefresh.Scope != nil {
+		if scope := strings.TrimSpace(*publicRefresh.Scope); scope != "" {
+			values.Set("scope", scope)
+		}
 	}
-	if resource := strings.TrimSpace(publicRefresh.Resource); resource != "" {
-		values.Set("resource", resource)
+	if publicRefresh.Resource != nil {
+		if resource := strings.TrimSpace(*publicRefresh.Resource); resource != "" {
+			values.Set("resource", resource)
+		}
 	}
-	method := strings.TrimSpace(authMethod.Type)
+	method := authMethodType
 	switch method {
-	case "", "none":
-		method = "none"
 	case "client_secret_basic":
-		if strings.TrimSpace(authMethod.ClientSecret) == "" {
-			return "", nil, nil, errors.New("client_secret_basic selected without client secret")
+		if clientSecret == "" {
+			return "", nil, nil, tokenEndpointAuthMissingSecret("client_secret_basic")
 		}
 	case "client_secret_post":
-		if strings.TrimSpace(authMethod.ClientSecret) == "" {
-			return "", nil, nil, errors.New("client_secret_post selected without client secret")
+		if clientSecret == "" {
+			return "", nil, nil, tokenEndpointAuthMissingSecret("client_secret_post")
 		}
-		values.Set("client_secret", authMethod.ClientSecret)
+		values.Set("client_secret", clientSecret)
+	case "", "none":
+		method = "none"
 	default:
-		return "", nil, nil, fmt.Errorf("unsupported token auth method %q", method)
+		return "", nil, nil, unsupportedTokenAuthMethod(method)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, publicRefresh.TokenEndpoint, strings.NewReader(values.Encode()))
@@ -239,11 +237,11 @@ func exchangeMCPOAuthRefresh(
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if method == "client_secret_basic" {
-		basic := url.QueryEscape(publicRefresh.ClientID) + ":" + url.QueryEscape(authMethod.ClientSecret)
+		basic := url.QueryEscape(publicRefresh.ClientID) + ":" + url.QueryEscape(clientSecret)
 		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(basic)))
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultOAuthHTTPClient()
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -259,43 +257,38 @@ func exchangeMCPOAuthRefresh(
 		_ = json.Unmarshal(respBody, &token)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if token.Error != "" {
-			return "", nil, nil, fmt.Errorf("token endpoint status %d: %s", resp.StatusCode, token.Error)
-		}
-		return "", nil, nil, fmt.Errorf("token endpoint status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return "", nil, nil, tokenEndpointStatus(resp.StatusCode, token.Error)
 	}
 	accessToken := strings.TrimSpace(token.AccessToken)
 	if accessToken == "" {
-		return "", nil, nil, errors.New("token endpoint returned no access_token")
+		return "", nil, nil, tokenEndpointMissingAccessToken()
 	}
 
-	nextPublic := map[string]any{
-		"type":           "mcp_oauth",
-		"mcp_server_url": publicAuth.MCPServerURL,
-		"refresh":        mustObjectFromRaw(publicAuth.Refresh),
-	}
-	if expiresIn := parseOAuthExpiresIn(token.ExpiresIn); expiresIn > 0 {
-		nextPublic["expires_at"] = now.UTC().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339)
-	}
+	nextRefresh := publicRefresh
 	if scope := strings.TrimSpace(token.Scope); scope != "" {
-		refreshObj := mustObjectFromRaw(publicAuth.Refresh)
-		refreshObj["scope"] = scope
-		nextPublic["refresh"] = refreshObj
+		nextRefresh.Scope = &scope
+	}
+	nextAuth := mcpOAuthCredentialAuth{
+		Type:         credentialAuthTypeMCPOAuth,
+		MCPServerURL: publicAuth.MCPServerURL,
+		ExpiresAt:    resolveExpiresAtAfterRefresh(now, publicAuth.ExpiresAt, token.ExpiresIn),
+		Refresh:      &nextRefresh,
 	}
 
 	nextRefreshToken := strings.TrimSpace(token.RefreshToken)
 	if nextRefreshToken == "" {
 		nextRefreshToken = secretRefresh.RefreshToken
 	}
-	nextSecret := map[string]any{
-		"type":         "mcp_oauth",
-		"access_token": accessToken,
-		"refresh": map[string]any{
-			"refresh_token":       nextRefreshToken,
-			"token_endpoint_auth": mustObjectFromRaw(secretRefresh.TokenEndpointAuth),
+	nextSecret := mcpOAuthCredentialSecret{
+		Type:        credentialAuthTypeMCPOAuth,
+		AccessToken: accessToken,
+		Refresh: &mcpOAuthRefreshSecret{
+			RefreshToken:      nextRefreshToken,
+			TokenEndpointAuth: secretRefresh.TokenEndpointAuth,
 		},
 	}
-	publicJSON, err := json.Marshal(nextPublic)
+
+	publicJSON, err := json.Marshal(nextAuth)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -303,18 +296,24 @@ func exchangeMCPOAuthRefresh(
 	if err != nil {
 		return "", nil, nil, err
 	}
-	return accessToken, append(json.RawMessage(nil), publicJSON...), append(json.RawMessage(nil), secretJSON...), nil
+	return accessToken, json.RawMessage(publicJSON), json.RawMessage(secretJSON), nil
 }
 
-func mustObjectFromRaw(raw json.RawMessage) map[string]any {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return map[string]any{}
+// resolveExpiresAtAfterRefresh: expires_in > 0 updates expires_at; otherwise
+// keep previous only when it is still unexpired; else clear.
+func resolveExpiresAtAfterRefresh(now time.Time, previous *string, expiresIn any) *string {
+	if seconds := parseOAuthExpiresIn(expiresIn); seconds > 0 {
+		expiresAt := now.UTC().Add(time.Duration(seconds) * time.Second).Format(time.RFC3339)
+		return &expiresAt
 	}
-	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
-		return map[string]any{}
+	if previous == nil {
+		return nil
 	}
-	return obj
+	expired, err := accessTokenExpired(previous, now)
+	if err != nil || expired {
+		return nil
+	}
+	return previous
 }
 
 func parseOAuthExpiresIn(value any) int64 {

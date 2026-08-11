@@ -24,9 +24,8 @@ type Handler struct {
 	logger                 *slog.Logger
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	upstreamProxy          upstreamProxyRuntime
-	mcpProxyTransport      http.RoundTripper
-	injectMCPProxyHeaders  mcpProxyHeaderInjector
-	wrapMCPVaultTransport  mcpProxyTransportWrapper
+	mcpProxyTransport     http.RoundTripper
+	wrapMCPVaultTransport mcpProxyTransportWrapper
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
@@ -54,7 +53,6 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		sandboxTimeoutExtender: sandboxTimeoutExtender,
 		upstreamProxy:          newUpstreamProxyRuntime(),
 		mcpProxyTransport:      newMCPProxyTransport(cfg.CodeSession.UpstreamProxyDisableSSRFProtection),
-		injectMCPProxyHeaders:  func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error { return nil },
 	}
 	handler.loadUpstreamPolicyContext = handler.loadUpstreamProxyPolicyContext
 	handler.loadMCPPolicyContext = handler.loadMCPProxyPolicyContext
@@ -74,7 +72,7 @@ func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service) *Handler {
 	if h == nil || h.db == nil || secretSvc == nil {
 		return h
 	}
-	injector := vaults.NewInjector(h.db, secretSvc)
+	injector := vaults.NewInjector(h.db, secretSvc, h.logger)
 	h.wrapMCPVaultTransport = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, base http.RoundTripper) http.RoundTripper {
 		return injector.WrapTransport(
 			ctx,

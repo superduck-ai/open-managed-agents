@@ -8,46 +8,49 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestDecideInjection(t *testing.T) {
+func TestListInjectableMatches(t *testing.T) {
 	bearerA := credential("static_bearer", "https://mcp.example.com/mcp", "vlt_a")
 	bearerWrongPath := credential("static_bearer", "https://mcp.example.com/other", "vlt_b")
 	oauthSameHost := credential("mcp_oauth", "https://mcp.example.com/mcp", "vlt_o")
 
 	cases := []struct {
-		name   string
-		url    string
-		creds  []db.VaultCredential
-		want   injectionKind
-		wantID string
+		name        string
+		url         string
+		creds       []db.VaultCredential
+		wantErr     bool
+		wantCovered bool
+		wantIDs     []string
 	}{
-		{"malformed auth rejected", "https://mcp.example.com/mcp", []db.VaultCredential{{Auth: json.RawMessage(`{"type":"static_bearer","mcp_server_url":42}`)}}, injectionReject, ""},
-		{"non-segment prefix rejected", "https://mcp.example.com/mcp-admin", []db.VaultCredential{bearerA}, injectionReject, ""},
-		{"reject same host without path match", "https://mcp.example.com/admin", []db.VaultCredential{bearerA}, injectionReject, ""},
-		{"scheme mismatch passthrough", "http://mcp.example.com:443/mcp", []db.VaultCredential{bearerA}, injectionPassthrough, ""},
-		{"host mismatch passthrough", "https://other.example.com/mcp", []db.VaultCredential{bearerA}, injectionPassthrough, ""},
-		{"passthrough when host uncovered", "https://registry.npmjs.org/pkg", []db.VaultCredential{bearerA}, injectionPassthrough, ""},
-		{"empty credentials passthrough", "https://mcp.example.com/mcp", nil, injectionPassthrough, ""},
-		{"inject first matching static_bearer", "https://mcp.example.com/mcp/sse", []db.VaultCredential{bearerWrongPath, bearerA}, injectionInject, "vlt_a"},
-		{"exact path", "https://mcp.example.com/mcp", []db.VaultCredential{bearerA}, injectionInject, "vlt_a"},
-		{"root path covers host", "https://mcp.example.com/anything", []db.VaultCredential{credential("static_bearer", "https://mcp.example.com/", "vlt_root")}, injectionInject, "vlt_root"},
-		{"skip non-injectable env then inject", "https://mcp.example.com/mcp", []db.VaultCredential{credential("environment_variable", "https://mcp.example.com/mcp", "vlt_env"), bearerA}, injectionInject, "vlt_a"},
-		{"inject mcp_oauth", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost}, injectionInject, "vlt_o"},
-		{"mcp_oauth before later static_bearer", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost, bearerA}, injectionInject, "vlt_o"},
+		{"malformed auth rejected", "https://mcp.example.com/mcp", []db.VaultCredential{{Auth: json.RawMessage(`{"type":"static_bearer","mcp_server_url":42}`)}}, true, false, nil},
+		{"non-segment prefix no match", "https://mcp.example.com/mcp-admin", []db.VaultCredential{bearerA}, false, true, nil},
+		{"same host without path match", "https://mcp.example.com/admin", []db.VaultCredential{bearerA}, false, true, nil},
+		{"scheme mismatch uncovered", "http://mcp.example.com:443/mcp", []db.VaultCredential{bearerA}, false, false, nil},
+		{"host mismatch uncovered", "https://other.example.com/mcp", []db.VaultCredential{bearerA}, false, false, nil},
+		{"uncovered host", "https://registry.npmjs.org/pkg", []db.VaultCredential{bearerA}, false, false, nil},
+		{"empty credentials", "https://mcp.example.com/mcp", nil, false, false, nil},
+		{"first matching static_bearer wins order", "https://mcp.example.com/mcp/sse", []db.VaultCredential{bearerWrongPath, bearerA}, false, true, []string{"vlt_a"}},
+		{"exact path", "https://mcp.example.com/mcp", []db.VaultCredential{bearerA}, false, true, []string{"vlt_a"}},
+		{"root path covers host", "https://mcp.example.com/anything", []db.VaultCredential{credential("static_bearer", "https://mcp.example.com/", "vlt_root")}, false, true, []string{"vlt_root"}},
+		{"skip non-injectable env then match", "https://mcp.example.com/mcp", []db.VaultCredential{credential("environment_variable", "https://mcp.example.com/mcp", "vlt_env"), bearerA}, false, true, []string{"vlt_a"}},
+		{"inject mcp_oauth", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost}, false, true, []string{"vlt_o"}},
+		{"mcp_oauth before later static_bearer", "https://mcp.example.com/mcp", []db.VaultCredential{oauthSameHost, bearerA}, false, true, []string{"vlt_o", "vlt_a"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			decision := decideInjection(mustURL(t, tc.url), tc.creds)
-			if decision.Kind != tc.want {
-				t.Fatalf("kind = %v, want %v", decision.Kind, tc.want)
+			matches, hostCovered, err := listInjectableMatches(mustURL(t, tc.url), tc.creds)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
-			if tc.wantID == "" {
-				if decision.Credential != nil {
-					t.Fatalf("credential = %+v, want nil", decision.Credential)
+			if hostCovered != tc.wantCovered {
+				t.Fatalf("hostCovered = %v, want %v", hostCovered, tc.wantCovered)
+			}
+			if len(matches) != len(tc.wantIDs) {
+				t.Fatalf("matches len = %d, want %d", len(matches), len(tc.wantIDs))
+			}
+			for i, id := range tc.wantIDs {
+				if matches[i].ExternalID != id {
+					t.Fatalf("matches[%d] = %q, want %q", i, matches[i].ExternalID, id)
 				}
-				return
-			}
-			if decision.Credential == nil || decision.Credential.ExternalID != tc.wantID {
-				t.Fatalf("credential = %+v, want %s", decision.Credential, tc.wantID)
 			}
 		})
 	}

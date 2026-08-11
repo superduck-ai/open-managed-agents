@@ -65,10 +65,7 @@ func unsupportedTokenAuthMethod(method string) error {
 	return fmt.Errorf("unsupported token auth method %q", method)
 }
 
-func tokenEndpointStatus(status int, oauthError string) error {
-	if oauthError != "" {
-		return fmt.Errorf("token endpoint status %d: %s", status, oauthError)
-	}
+func tokenEndpointStatus(status int) error {
 	return fmt.Errorf("token endpoint status %d", status)
 }
 

@@ -46,13 +46,6 @@ type Injector struct {
 	refreshLocks sync.Map // credential ExternalID -> *sync.Mutex
 }
 
-func (i *Injector) credentialStore() credentialStore {
-	if i == nil {
-		return nil
-	}
-	return i.store
-}
-
 func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logger) *Injector {
 	var store credentialStore
 	if database != nil {
@@ -203,18 +196,14 @@ func (i *Injector) loadInjectionPlan(
 	workspaceUUID string,
 	requestURL *url.URL,
 ) (injectionPlan, error) {
-	store := i.credentialStore()
-	if store == nil {
-		return injectionPlan{}, nil
-	}
-	vaultIDs, err := store.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
+	vaultIDs, err := i.store.GetCodeSessionVaultIDs(ctx, codeSessionExternalID, organizationUUID, workspaceUUID)
 	if err != nil {
 		return injectionPlan{}, injectionRejected(fmt.Errorf("load vault_ids: %w", err))
 	}
 	if len(vaultIDs) == 0 {
 		return injectionPlan{}, nil
 	}
-	credentials, err := store.ListActiveVaultCredentialsForVaultIDs(ctx, workspaceUUID, vaultIDs)
+	credentials, err := i.store.ListActiveVaultCredentialsForVaultIDs(ctx, workspaceUUID, vaultIDs)
 	if err != nil {
 		return injectionPlan{}, injectionRejected(fmt.Errorf("load credentials: %w", err))
 	}

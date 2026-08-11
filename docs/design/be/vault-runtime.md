@@ -167,7 +167,8 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | 项 | 决定 |
 |---|---|
 | 凭证类型 | **static_bearer** + **mcp_oauth**；`environment_variable` 本切片不做 |
-| 注入落点 | Session MCP HTTP proxy（`WithVaultSecrets` → `Injector.WrapTransport`）；**不**走 CONNECT MITM。Runner **不再**自动改写 `mcp_config` 到该 proxy |
+| 注入落点 | Session MCP HTTP proxy（`WithVaultSecrets` → `Injector.WrapTransport`）；**不**走 CONNECT MITM。Runner **不再**自动改写 `mcp_config` 到该 proxy。组装契约：启用 vault wrap 时 `Injector.store` / Secret Service 必须就绪；注入与 refresh 直接使用 `store`，不对 nil store 静默空 plan |
+| token endpoint 错误 | 非 2xx 只上报 HTTP status（`token endpoint status N`），不把 IdP `error` 原文带进 error/日志 |
 | `expires_at` | 缺失 → 直接注入；存在且 `now >= expires_at` → refresh → reseal → 注入（**无** near-expiry skew）。refresh 写回：`expires_in > 0` 才更新；否则仅当旧 `expires_at` 仍未过期时保留，否则置空 |
 | 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk。`excluded` / `forceRefresh` 按 **plan 凭证 ExternalID**（`planCredID`）记账，不依赖 refresh CAS 返回行是否带齐字段 |
 | 401 重试 body | RoundTrip 前缓冲请求体（上限 32 MiB）；超限 **fail closed**（不静默截断重放），由 `snapshotRequestBody` / `readWithinLimit` 实现 |

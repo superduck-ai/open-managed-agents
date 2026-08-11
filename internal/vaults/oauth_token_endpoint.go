@@ -73,7 +73,6 @@ type oauthTokenEndpointWire struct {
 	RefreshToken string         `json:"refresh_token"`
 	ExpiresIn    OAuthExpiresIn `json:"expires_in"`
 	Scope        string         `json:"scope"`
-	Error        string         `json:"error"`
 }
 
 // ExchangeOAuthTokenEndpoint POSTs to an OAuth token endpoint with the shared
@@ -125,7 +124,7 @@ func ExchangeOAuthTokenEndpoint(ctx context.Context, client *http.Client, in OAu
 		_ = json.Unmarshal(respBody, &wire)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return OAuthTokenEndpointResult{}, tokenEndpointStatus(resp.StatusCode, wire.Error)
+		return OAuthTokenEndpointResult{}, tokenEndpointStatus(resp.StatusCode)
 	}
 	accessToken := strings.TrimSpace(wire.AccessToken)
 	if accessToken == "" {

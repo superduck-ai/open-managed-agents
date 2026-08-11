@@ -48,10 +48,6 @@ func (i *Injector) refreshMCPOAuthCredential(
 	now time.Time,
 	force bool,
 ) (string, *db.VaultCredential, error) {
-	store := i.credentialStore()
-	if i == nil || store == nil {
-		return "", nil, errMCPOAuthRefreshUnavailable
-	}
 	lock := i.refreshLock(credential.ExternalID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -60,11 +56,11 @@ func (i *Injector) refreshMCPOAuthCredential(
 	// Best-effort re-read under the per-credential lock so a concurrent winner's
 	// token is visible before we exchange (one-time refresh_token safe). A failed
 	// reload keeps the caller snapshot and continues.
-	if err := reloadCredential(ctx, store, &current); err != nil {
+	if err := reloadCredential(ctx, i.store, &current); err != nil {
 		i.logger.DebugContext(ctx, "mcp_oauth refresh preload miss", "credential_id", credential.ExternalID, "error", err)
 	}
 	for attempt := 0; attempt < maxOAuthRefreshCASAttempts; attempt++ {
-		token, saved, retry, err := i.refreshMCPOAuthAttempt(ctx, store, &current, now, force)
+		token, saved, retry, err := i.refreshMCPOAuthAttempt(ctx, i.store, &current, now, force)
 		if err != nil {
 			return "", nil, err
 		}

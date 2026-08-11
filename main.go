@@ -126,10 +126,8 @@ func run(logger *slog.Logger) error {
 	}
 	environmentRunner.Start(ctx)
 	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
-	webhookEnqueuer := webhooks.NewEnqueuer(database, cfg.Webhook, logger.With("component", "webhooks"))
 	deploymentScheduler, err := deployments.NewDeploymentScheduler(
 		database,
-		webhookEnqueuer,
 		logger.With("component", "deployment_scheduler"),
 	)
 	if err != nil {

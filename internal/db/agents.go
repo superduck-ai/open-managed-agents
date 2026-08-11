@@ -183,9 +183,7 @@ func isNullJSON(raw json.RawMessage) bool {
 	return value == nil
 }
 
-type DeploymentArchiveEventBuilder func(Deployment) (WebhookDeliveryEvent, error)
-
-func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID string, externalID string, buildEvent DeploymentArchiveEventBuilder) (Agent, []Deployment, error) {
+func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID string, externalID string) (Agent, []Deployment, error) {
 	var archived Agent
 	var deployments []Deployment
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -199,18 +197,7 @@ func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID string, externalID 
 			return err
 		}
 		deployments = deploymentsFromRows(rows)
-		if buildEvent == nil {
-			return nil
-		}
-		events := make([]WebhookDeliveryEvent, 0, len(deployments))
-		for _, deployment := range deployments {
-			event, err := buildEvent(deployment)
-			if err != nil {
-				return err
-			}
-			events = append(events, event)
-		}
-		return enqueueWebhookDeliveryEventsTx(ctx, executor, workspaceUUID, events)
+		return nil
 	})
 	return archived, deployments, err
 }

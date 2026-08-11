@@ -364,7 +364,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}); err != nil || len(versions) != 2 || versions[0].CurrentVersion != 2 {
 		t.Fatalf("list Agent versions through string UUID mapper parameters = (%+v, %v)", versions, err)
 	}
-	if archived, _, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID, nil); err != nil || archived.ArchivedAt == nil {
+	if archived, _, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
 		t.Fatalf("archive Agent through string UUID mapper parameters = (%+v, %v)", archived, err)
 	}
 

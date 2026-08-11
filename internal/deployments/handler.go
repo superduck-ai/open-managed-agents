@@ -406,7 +406,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not create deployment", fmt.Errorf("create deployment %q: %w", deploymentID, err))
 	}
 	h.updateSchedule(r.Context(), created)
-	h.enqueueWebhook(r.Context(), principal, "deployment.created", created.ExternalID, nil)
 	return writeDeploymentResponse(w, created)
 }
 
@@ -590,7 +589,6 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		return deploymentLoadError(err, deploymentID)
 	}
 	h.updateSchedule(r.Context(), updated)
-	h.enqueueWebhook(r.Context(), principal, "deployment.updated", updated.ExternalID, nil)
 	return writeDeploymentResponse(w, updated)
 }
 
@@ -617,7 +615,6 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return deploymentLoadError(err, deploymentID)
 	}
 	h.updateSchedule(r.Context(), archived)
-	h.enqueueWebhook(r.Context(), principal, "deployment.archived", archived.ExternalID, nil)
 	return writeDeploymentResponse(w, archived)
 }
 
@@ -633,7 +630,6 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) error {
 		return deploymentLoadError(err, deploymentID)
 	}
 	h.updateSchedule(r.Context(), paused)
-	h.enqueueWebhook(r.Context(), principal, "deployment.paused", paused.ExternalID, nil)
 	return writeDeploymentResponse(w, paused)
 }
 
@@ -648,7 +644,6 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) error {
 		return deploymentLoadError(err, deploymentID)
 	}
 	h.updateSchedule(r.Context(), unpaused)
-	h.enqueueWebhook(r.Context(), principal, "deployment.unpaused", unpaused.ExternalID, nil)
 	return writeDeploymentResponse(w, unpaused)
 }
 

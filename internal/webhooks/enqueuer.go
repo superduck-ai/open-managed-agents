@@ -55,39 +55,14 @@ func (e *Enqueuer) Enqueue(ctx context.Context, input EnqueueInput) {
 	if e == nil || e.store == nil {
 		return
 	}
-	deliveryEvent, err := e.PrepareDeliveryEvent(input, time.Now().UTC())
-	if err != nil {
-		e.logger.ErrorContext(ctx, "prepare webhook event", "event_type", input.EventType, "resource_id", input.ResourceID, "error", err)
-		return
-	}
-
-	hasEndpoints, err := e.store.HasWebhookEndpoints(ctx, input.WorkspaceUUID)
-	if err != nil {
-		e.logger.ErrorContext(ctx, "load webhook endpoint configuration", "workspace_uuid", input.WorkspaceUUID, "error", err)
-		return
-	}
-	if hasEndpoints {
-		e.enqueueForEndpoints(ctx, input, deliveryEvent.Event)
-		return
-	}
-
-	if !deliveryEvent.FallbackEnabled {
-		return
-	}
-	if err := e.store.EnqueueWebhookDeliveryJob(ctx, input.WorkspaceUUID, input.EventType, deliveryEvent.Event); err != nil {
-		e.logger.ErrorContext(ctx, "enqueue webhook event", "event_type", input.EventType, "resource_id", input.ResourceID, "error", err)
-	}
-}
-
-// PrepareDeliveryEvent builds an event for callers that persist it in their own transaction.
-func (e *Enqueuer) PrepareDeliveryEvent(input EnqueueInput, createdAt time.Time) (db.WebhookDeliveryEvent, error) {
 	eventID, err := ids.New("wevt_")
 	if err != nil {
-		return db.WebhookDeliveryEvent{}, err
+		e.logger.ErrorContext(ctx, "webhook event id", "error", err)
+		return
 	}
 	event := Event{
 		ID:        eventID,
-		CreatedAt: createdAt.Format(time.RFC3339),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		Data: EventData{
 			ID:              input.ResourceID,
 			OrganizationID:  input.OrganizationUUID,
@@ -100,12 +75,26 @@ func (e *Enqueuer) PrepareDeliveryEvent(input EnqueueInput, createdAt time.Time)
 	}
 	payload, err := json.Marshal(event)
 	if err != nil {
-		return db.WebhookDeliveryEvent{}, err
+		e.logger.ErrorContext(ctx, "marshal webhook event", "event_type", input.EventType, "resource_id", input.ResourceID, "error", err)
+		return
 	}
-	return db.WebhookDeliveryEvent{
-		EventType: input.EventType, Event: payload,
-		FallbackEnabled: enabled(e.cfg) && subscribed(e.cfg, input.EventType),
-	}, nil
+
+	hasEndpoints, err := e.store.HasWebhookEndpoints(ctx, input.WorkspaceUUID)
+	if err != nil {
+		e.logger.ErrorContext(ctx, "load webhook endpoint configuration", "workspace_uuid", input.WorkspaceUUID, "error", err)
+		return
+	}
+	if hasEndpoints {
+		e.enqueueForEndpoints(ctx, input, payload)
+		return
+	}
+
+	if !enabled(e.cfg) || !subscribed(e.cfg, input.EventType) {
+		return
+	}
+	if err := e.store.EnqueueWebhookDeliveryJob(ctx, input.WorkspaceUUID, input.EventType, payload); err != nil {
+		e.logger.ErrorContext(ctx, "enqueue webhook event", "event_type", input.EventType, "resource_id", input.ResourceID, "error", err)
+	}
 }
 
 func (e *Enqueuer) enqueueForEndpoints(ctx context.Context, input EnqueueInput, payload json.RawMessage) {

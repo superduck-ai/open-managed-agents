@@ -31,37 +31,35 @@ func TestNormalizeFileSpecRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestNewStoredFileSpecRejectsNonCanonicalFields(t *testing.T) {
+func TestParseStoredFileSpecRejectsNonCanonicalPayload(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name      string
-		fileID    string
-		source    string
-		mountPath string
+		name string
+		raw  string
 	}{
 		{
-			name:      "missing source",
-			fileID:    "file_test",
-			mountPath: "/data.csv",
+			name: "missing source",
+			raw:  `{"type":"file","file_id":"file_test","mount_path":"/data.csv"}`,
 		},
 		{
-			name:      "missing file ID",
-			source:    "/uploads",
-			mountPath: "/data.csv",
+			name: "missing file ID",
+			raw:  `{"type":"file","file_id":"","source":"/uploads","mount_path":"/data.csv"}`,
 		},
 		{
-			name:      "relative mount",
-			fileID:    "file_test",
-			source:    "/uploads",
-			mountPath: "data.csv",
+			name: "wrong type",
+			raw:  `{"type":"memory_store","file_id":"file_test","source":"/uploads","mount_path":"/data.csv"}`,
+		},
+		{
+			name: "relative mount",
+			raw:  `{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"data.csv"}`,
 		},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := NewStoredFileSpec(test.fileID, test.source, test.mountPath); err == nil {
-				t.Fatal("NewStoredFileSpec() succeeded")
+			if _, err := ParseStoredFileSpec(json.RawMessage(test.raw)); err == nil {
+				t.Fatal("ParseStoredFileSpec() succeeded")
 			}
 		})
 	}
@@ -105,9 +103,9 @@ func TestFileSpecBuildsCanonicalPayloadAndMount(t *testing.T) {
 	if parsed != spec {
 		t.Fatalf("parsed = %#v, want %#v", parsed, spec)
 	}
-	stored, err := NewStoredFileSpec("file_test", "/uploads", "/uploads/report.csv")
+	stored, err := ParseStoredFileSpec(raw)
 	if err != nil {
-		t.Fatalf("NewStoredFileSpec(): %v", err)
+		t.Fatalf("ParseStoredFileSpec(): %v", err)
 	}
 	if stored != spec {
 		t.Fatalf("stored = %#v, want %#v", stored, spec)

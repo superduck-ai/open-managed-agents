@@ -18,7 +18,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
-	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -59,10 +58,10 @@ func MigrateRiver(ctx context.Context, database *db.DB, logger *slog.Logger) err
 	return err
 }
 
-func NewDeploymentScheduler(database *db.DB, webhookEvents *webhooks.Enqueuer, logger *slog.Logger) (*DeploymentScheduler, error) {
+func NewDeploymentScheduler(database *db.DB, logger *slog.Logger) (*DeploymentScheduler, error) {
 	logger = logging.LoggerOrDefault(logger)
 	workers := river.NewWorkers()
-	worker := &scheduledDeploymentWorker{database: database, webhooks: webhookEvents}
+	worker := &scheduledDeploymentWorker{database: database}
 	river.AddWorker(workers, worker)
 	client, err := river.NewClient(riverdatabasesql.New(database.SQLDB()), &river.Config{
 		Schema: riverSchema,
@@ -209,7 +208,6 @@ func (s *DeploymentScheduler) syncLoop(ctx context.Context) {
 type scheduledDeploymentWorker struct {
 	river.WorkerDefaults[scheduledDeploymentArgs]
 	database  *db.DB
-	webhooks  *webhooks.Enqueuer
 	scheduler *DeploymentScheduler
 }
 
@@ -231,16 +229,9 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 
 	agent, agentErr := w.database.GetAgent(ctx, deployment.WorkspaceUUID, deployment.AgentExternalID)
 	if errors.Is(agentErr, db.ErrNotFound) || (agentErr == nil && agent.ArchivedAt != nil) {
-		webhookEvents, err := w.prepareWebhookEvents(ctx, deployment, now, []webhooks.EnqueueInput{{
-			EventType: "deployment.archived", ResourceID: deployment.ExternalID,
-		}})
-		if err != nil {
-			return err
-		}
 		err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
 			WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
 			ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt, ArchiveDeployment: true,
-			WebhookEvents: webhookEvents,
 		})
 		if errors.Is(err, db.ErrStaleSchedule) {
 			return nil
@@ -270,10 +261,6 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		}
 		return w.recordFailure(ctx, job, deployment, runError("session_resource_not_found_error", err.Error()), now)
 	}
-	webhookEvents, err := w.prepareRunWebhookEvents(ctx, deployment, preparedRun, now)
-	if err != nil {
-		return err
-	}
 	err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
 		WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
 		ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt,
@@ -281,7 +268,7 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		Run: db.DeploymentRun{
 			UUID: uuid.NewString(), ExternalID: preparedRun.RunID,
 		},
-		WebhookEvents: webhookEvents, Now: now,
+		Now: now,
 	})
 	if errors.Is(err, db.ErrStaleSchedule) {
 		return nil
@@ -322,24 +309,13 @@ func (w *scheduledDeploymentWorker) recordFailure(
 			return err
 		}
 	}
-	webhookInputs := []webhooks.EnqueueInput{
-		{EventType: "deployment_run.started", ResourceID: runID},
-		{EventType: "deployment_run.failed", ResourceID: runID},
-	}
-	if len(pausedReasonJSON) > 0 {
-		webhookInputs = append(webhookInputs, webhooks.EnqueueInput{EventType: "deployment.paused", ResourceID: deployment.ExternalID})
-	}
-	webhookEvents, err := w.prepareWebhookEvents(ctx, deployment, now, webhookInputs)
-	if err != nil {
-		return err
-	}
 	err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
 		WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
 		ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt,
 		Run: db.DeploymentRun{
 			UUID: uuid.NewString(), ExternalID: runID, Error: runErrorJSON,
 		},
-		AutoPauseReason: pausedReasonJSON, WebhookEvents: webhookEvents, Now: now,
+		AutoPauseReason: pausedReasonJSON, Now: now,
 	})
 	if errors.Is(err, db.ErrStaleSchedule) {
 		return nil
@@ -388,43 +364,4 @@ func shouldAutoPause(runError *deploymentRunError) bool {
 	default:
 		return false
 	}
-}
-
-func (w *scheduledDeploymentWorker) prepareRunWebhookEvents(ctx context.Context, deployment db.Deployment, run preparedDeploymentRun, createdAt time.Time) ([]db.WebhookDeliveryEvent, error) {
-	threadID := run.Session.Thread.ExternalID
-	inputs := []webhooks.EnqueueInput{
-		{EventType: "deployment_run.started", ResourceID: run.RunID},
-		{EventType: "deployment_run.succeeded", ResourceID: run.RunID},
-		{EventType: "session.created", ResourceID: run.Session.Session.ExternalID},
-		{EventType: "session.pending", ResourceID: run.Session.Session.ExternalID},
-		{EventType: "session.status_idled", ResourceID: run.Session.Session.ExternalID},
-		{EventType: "session.thread_created", ResourceID: run.Session.Session.ExternalID, Options: webhooks.EventOptions{SessionThreadID: &threadID}},
-		{EventType: "session.thread_idled", ResourceID: run.Session.Session.ExternalID, Options: webhooks.EventOptions{SessionThreadID: &threadID}},
-	}
-	if outcomesChanged(run.Events) {
-		inputs = append(inputs, webhooks.EnqueueInput{EventType: "session.outcome_evaluation_ended", ResourceID: run.Session.Session.ExternalID})
-	}
-	return w.prepareWebhookEvents(ctx, deployment, createdAt, inputs)
-}
-
-func (w *scheduledDeploymentWorker) prepareWebhookEvents(ctx context.Context, deployment db.Deployment, createdAt time.Time, inputs []webhooks.EnqueueInput) ([]db.WebhookDeliveryEvent, error) {
-	if w.webhooks == nil {
-		return nil, nil
-	}
-	identifiers, err := w.database.GetWorkspaceIdentifiers(ctx, deployment.WorkspaceUUID)
-	if err != nil {
-		return nil, err
-	}
-	events := make([]db.WebhookDeliveryEvent, 0, len(inputs))
-	for _, input := range inputs {
-		input.WorkspaceUUID = deployment.WorkspaceUUID
-		input.OrganizationUUID = deployment.OrganizationUUID
-		input.WorkspaceExternalID = identifiers.WorkspaceExternalID
-		event, err := w.webhooks.PrepareDeliveryEvent(input, createdAt)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, nil
 }

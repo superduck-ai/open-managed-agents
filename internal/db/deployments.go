@@ -127,7 +127,6 @@ type ApplyScheduledOccurrenceInput struct {
 	Events               []SessionEvent
 	Run                  DeploymentRun
 	AutoPauseReason      json.RawMessage
-	WebhookEvents        []WebhookDeliveryEvent
 	ArchiveDeployment    bool
 	Now                  time.Time
 }
@@ -304,7 +303,7 @@ func (d *DB) ApplyScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, i
 		if _, err := deploymentMapper.ArchiveByExternalID(ctx, input.WorkspaceUUID, input.DeploymentExternalID); err != nil {
 			return err
 		}
-		return enqueueWebhookDeliveryEventsTx(ctx, tx, input.WorkspaceUUID, input.WebhookEvents)
+		return nil
 	}
 	if input.Session != nil {
 		workspace, err := NewAdminWorkspaceMapper(tx).FindByIdentifier(
@@ -361,7 +360,7 @@ func (d *DB) ApplyScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, i
 	if rowsAffected != 1 {
 		return ErrStaleSchedule
 	}
-	return enqueueWebhookDeliveryEventsTx(ctx, tx, input.WorkspaceUUID, input.WebhookEvents)
+	return nil
 }
 
 func (d *DB) CreateDeploymentRunFailure(ctx context.Context, deployment Deployment, run DeploymentRun) (DeploymentRun, error) {

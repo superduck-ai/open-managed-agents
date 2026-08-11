@@ -82,7 +82,7 @@ sequenceDiagram
     Leader->>Registry: 按 Cron 计算下一 occurrence
     Leader->>Worker: 投递带名义 scheduled_at 的 Job
     Worker->>AppDB: 锁定 Deployment，校验 active 与 revision
-    Worker->>AppDB: 同一事务写 Run、Session、状态与 webhook outbox
+    Worker->>AppDB: 同一事务写 Run、Session 与 Deployment 状态
     Worker->>Leader: 同一事务 JobCompleteTx 完成当前 Job
     Note over Leader,Worker: 下一次投递继续由 River Periodic Jobs 推进
 ```
@@ -91,15 +91,13 @@ sequenceDiagram
 
 失败行为按 Claude 公开合同处理：
 
-- 根 Agent 归档会在同一数据库事务自动归档其 Deployment 并写入 `deployment.archived` outbox；根 Agent 在触发时已删除也会自动归档并原子写入该事件，且不生成 Run。
+- 根 Agent 归档会在同一数据库事务自动归档其 Deployment；根 Agent 在触发时已删除也会自动归档，且不生成 Run。
 - Workspace 已归档时，最终事务拒绝创建 Session，worker 改为记录 `workspace_archived_error` 失败 Run 并自动暂停 Deployment。
 - 其他引用或配置失败生成最终失败 Run。只有公开的 14 类 paused-reason error 会自动暂停；`session_rate_limited_error` 与 `session_creation_rejected_error` 不暂停，并继续下一个 occurrence。
-- 数据库或进程级失败发生在最终 Run 提交之前时交给 River 重试；Run、Session、Deployment 状态、webhook outbox 与当前 River Job 的完成状态在同一个 Yourbatis 事务中提交或回滚。
-- paused Deployment 仍允许 manual Run；manual Run 不发送 `deployment_run.*` webhook。
+- 数据库或进程级失败发生在最终 Run 提交之前时交给 River 重试；Run、Session、Deployment 状态与当前 River Job 的完成状态在同一个 Yourbatis 事务中提交或回滚。
+- paused Deployment 仍允许 manual Run。
 
 组织级最多保留 1,000 个未归档且 schedule 非空的 Deployment。创建以及从无 schedule 更新为有 schedule 时进行 best-effort 计数检查；并发请求可能短暂越过限制，不额外引入 organization 锁或配额计数器。
-
-Deployment 生命周期发送 `deployment.created/updated/paused/unpaused/archived`；scheduled Run 发送同一 Run ID 的 `deployment_run.started`，随后发送 `succeeded` 或 `failed`。自动暂停还发送以 Deployment ID 为资源 ID 的 `deployment.paused`。成功创建 Session 时继续发送现有 Session webhook。Scheduled Run 的这些 webhook delivery jobs 与 Run、Session 和 Deployment 状态在同一个 Yourbatis 事务中提交；任一 outbox 写入失败都会回滚 occurrence 并交给 River 重试。
 
 主要参考资料：
 

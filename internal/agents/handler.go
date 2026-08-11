@@ -20,7 +20,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/modelmapping"
-	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -35,7 +34,6 @@ var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 type Handler struct {
 	cfg          config.Config
 	db           *db.DB
-	webhooks     *webhooks.Enqueuer
 	scheduler    *deploymentsapi.DeploymentScheduler
 	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
@@ -102,10 +100,10 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, webhookEvents *webhooks.Enqueuer, scheduler *deploymentsapi.DeploymentScheduler, logger *slog.Logger) *Handler {
+func NewHandler(cfg config.Config, database *db.DB, scheduler *deploymentsapi.DeploymentScheduler, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{
-		cfg: cfg, db: database, webhooks: webhookEvents, scheduler: scheduler,
+		cfg: cfg, db: database, scheduler: scheduler,
 		errorAdapter: httpapi.NewErrorAdapter(logger),
 	}
 	wrap := h.errorAdapter.Wrap
@@ -374,18 +372,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
 		return nil
 	}
-	var buildEvent db.DeploymentArchiveEventBuilder
-	if h.webhooks != nil {
-		createdAt := time.Now().UTC()
-		buildEvent = func(deployment db.Deployment) (db.WebhookDeliveryEvent, error) {
-			return h.webhooks.PrepareDeliveryEvent(webhooks.EnqueueInput{
-				WorkspaceUUID: principal.WorkspaceUUID, OrganizationUUID: principal.OrganizationUUID,
-				WorkspaceExternalID: principal.WorkspaceExternalID, EventType: "deployment.archived",
-				ResourceID: deployment.ExternalID,
-			}, createdAt)
-		}
-	}
-	archived, deployments, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID, buildEvent)
+	archived, deployments, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return agentNotFound(agentID, err)

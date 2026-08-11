@@ -96,14 +96,6 @@ func setDefaultSeedAPIKeys(cfg *Config) {
 
 func defaultWebhookEventTypes() []string {
 	return []string{
-		"deployment.created",
-		"deployment.updated",
-		"deployment.paused",
-		"deployment.unpaused",
-		"deployment.archived",
-		"deployment_run.started",
-		"deployment_run.succeeded",
-		"deployment_run.failed",
 		"session.created",
 		"session.pending",
 		"session.running",

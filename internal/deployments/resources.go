@@ -378,7 +378,11 @@ func sessionResourcesFromDeployment(
 		var payload any
 		var fileMount *db.SessionFileMount
 		if config.Type == sessionresource.FileType {
-			fileSpec, err := sessionresource.NewStoredFileSpec(config.FileID, config.Source, config.MountPath)
+			configRaw, err := jsonx.Encode(config)
+			if err != nil {
+				return nil, err
+			}
+			fileSpec, err := sessionresource.ParseStoredFileSpec(configRaw)
 			if err != nil {
 				return nil, err
 			}

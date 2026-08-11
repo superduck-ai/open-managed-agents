@@ -9,12 +9,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
-// ErrMissingSecretEnvelope is returned when an active credential has no
-// secret envelope to open. The Vaults API maps this to HTTP 400 so clients can
-// resubmit the secret after a direct-cutover discard; the MCP proxy maps it to
-// HTTP 502 because the upstream credential is unavailable.
-var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
-
 // credentialBinding builds the AAD binding from a credential's identity. The
 // same binding is used to seal and open, so an envelope cannot be moved to
 // another org/workspace/vault/credential and still decrypt.

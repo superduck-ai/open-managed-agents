@@ -8,6 +8,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,7 @@ type Handler struct {
 	codeSessions *codesessions.Service
 	webhooks     webhookEnqueuer
 	logger       *slog.Logger
+	errorAdapter *httpapi.ErrorAdapter
 	router       chi.Router
 	streams      *streamHub
 }

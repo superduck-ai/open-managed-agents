@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -77,6 +78,74 @@ func TestVaultCredentialUpdateSecretVersionCAS(t *testing.T) {
 	}
 }
 
+func TestVaultCredentialConcurrentUpdateErrorContract(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("vaults-concurrent-update-bucket"))
+	defer app.close()
+	vault := createVault(t, app, `{"display_name":"vault concurrent update"}`)
+	defer cleanupVaultRows(t, app, vault.ID)
+	created := createVaultCredential(t, app, vault.ID, staticBearerBody("concurrent credential", "https://mcp.concurrent.example/sse", "concurrent-secret"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	lockTx, err := app.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin credential lock: %v", err)
+	}
+	defer func() { _ = lockTx.Rollback(ctx) }()
+	var lockedID string
+	if err := lockTx.QueryRow(ctx, `select external_id from vault_credentials where external_id = $1 for update`, created.ID).Scan(&lockedID); err != nil {
+		t.Fatalf("lock credential: %v", err)
+	}
+
+	type updateResult struct {
+		response *http.Response
+		err      error
+	}
+	results := make(chan updateResult, 2)
+	for _, displayName := range []string{"concurrent first", "concurrent second"} {
+		body, _ := json.Marshal(map[string]string{"display_name": displayName})
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, app.baseURL+"/v1/vaults/"+vault.ID+"/credentials/"+created.ID+"?beta=true", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("new concurrent update request: %v", err)
+		}
+		request.Header.Set("X-Api-Key", defaultTestKey)
+		request.Header.Set("anthropic-version", "2023-06-01")
+		request.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
+		request.Header.Set("Content-Type", "application/json")
+		go func() {
+			response, requestErr := app.client.Do(request)
+			results <- updateResult{response: response, err: requestErr}
+		}()
+	}
+
+	waitForBlockedCredentialUpdates(t, ctx, app, 2)
+	if err := lockTx.Commit(ctx); err != nil {
+		t.Fatalf("release credential lock: %v", err)
+	}
+
+	var successes, conflicts int
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("concurrent update request: %v", result.err)
+		}
+		switch result.response.StatusCode {
+		case http.StatusOK:
+			successes++
+			result.response.Body.Close()
+		case http.StatusConflict:
+			conflicts++
+			assertVaultError(t, result.response, http.StatusConflict, "conflict_error", "Credential was modified concurrently; reload and try again")
+		default:
+			defer result.response.Body.Close()
+			t.Fatalf("concurrent update status = %d: %s", result.response.StatusCode, readAll(t, result.response.Body))
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent updates = %d success and %d conflict, want one each", successes, conflicts)
+	}
+}
+
 func TestVaultCredentialUpdateMissingEnvelopeBehavior(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("vaults-missing-envelope-bucket"))
 	defer app.close()
@@ -86,10 +155,7 @@ func TestVaultCredentialUpdateMissingEnvelopeBehavior(t *testing.T) {
 	credentialID := insertEnvelopeLessCredential(t, app, vault.ID, "missing-envelope-key")
 	omitBody, _ := json.Marshal(map[string]any{"auth": map[string]any{"type": "static_bearer"}})
 	omitResp := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials/"+credentialID+"?beta=true", bytes.NewReader(omitBody), defaultTestKey, true)
-	defer omitResp.Body.Close()
-	if omitResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("missing-envelope update status = %d, want 400: %s", omitResp.StatusCode, readAll(t, omitResp.Body))
-	}
+	assertVaultError(t, omitResp, http.StatusBadRequest, "invalid_request_error", "vault credential secret is missing; resubmit the secret")
 
 	resealBody, _ := json.Marshal(map[string]any{
 		"auth": map[string]any{"type": "static_bearer", "token": "replacement-token"},
@@ -98,6 +164,32 @@ func TestVaultCredentialUpdateMissingEnvelopeBehavior(t *testing.T) {
 	defer resealResp.Body.Close()
 	if resealResp.StatusCode != http.StatusOK || !vaultCredentialHasEnvelope(t, app, credentialID) {
 		t.Fatalf("missing-envelope reseal status = %d hasEnvelope=%v", resealResp.StatusCode, vaultCredentialHasEnvelope(t, app, credentialID))
+	}
+}
+
+func waitForBlockedCredentialUpdates(t *testing.T, ctx context.Context, app *testApp, want int) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var count int
+		if err := app.pool.QueryRow(ctx, `
+			select count(*)
+			from pg_stat_activity
+			where datname = current_database()
+				and wait_event_type = 'Lock'
+				and position('UPDATE vault_credentials' in query) > 0
+		`).Scan(&count); err != nil {
+			t.Fatalf("count blocked credential updates: %v", err)
+		}
+		if count >= want {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for %d blocked credential updates: %v", want, ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -111,10 +203,7 @@ func TestVaultCredentialUpdateOpenFailureReturns5xx(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{"auth": map[string]any{"type": "static_bearer"}})
 	resp := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials/"+created.ID+"?beta=true", bytes.NewReader(body), defaultTestKey, true)
-	defer resp.Body.Close()
-	if resp.StatusCode < 500 {
-		t.Fatalf("tampered-envelope update status = %d, want 5xx: %s", resp.StatusCode, readAll(t, resp.Body))
-	}
+	assertVaultError(t, resp, http.StatusInternalServerError, "api_error", "Could not update credential")
 }
 
 func TestVaultCredentialBackfillEndpointGone(t *testing.T) {

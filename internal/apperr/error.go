@@ -17,6 +17,10 @@ const (
 	Timeout
 	Internal
 	Overloaded
+	InvalidState
+	PreconditionFailed
+	RequestTooLarge
+	Unavailable
 )
 
 // Error carries an application error's public contract and private cause.

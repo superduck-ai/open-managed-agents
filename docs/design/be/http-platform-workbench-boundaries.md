@@ -13,9 +13,10 @@
   - JSON object 请求体通过公共类型化解码边界处理：资源层传入自身大小上限并使用命名 DTO；patch 的字段存在性、显式 `null` 和多态嵌套值由 DTO 中对应的 `json.RawMessage` 字段保留，不使用顶层 `map[string]json.RawMessage` 字段表。
   - 公共解码边界解析请求体中的首个 JSON object，拒绝 malformed JSON、`null`、非 object 和超限 body；不额外扫描 trailing data 或连续 JSON 值。admin/webhooks 等允许空 body 或要求空 object 的特殊合同继续使用显式薄包装。
   - 不注册业务路由，不持有平台/Workbench 领域类型别名，不直接依赖具体 feature 包。
-- `internal/vaults`
-  - 在当前操作拥有业务语义的位置，把数据库 sentinel、加密错误和请求校验错误翻译为 `apperr`；数据库层不负责 Vault 的公开文案或 HTTP 分类。
-  - 13 个普通 JSON 路由返回 `error`，由同一个 `ErrorAdapter` 收口；成功响应、Webhook 行为和数据库调用顺序保持不变。
+- 普通 JSON 资源包
+  - `internal/agents`、`batches`、`deployments`、`environments`、`models`、`sessions`、`skills`、`vaults` 和 `webhooks` 在当前操作拥有业务语义的位置，把数据库 sentinel、校验错误和资源专属失败翻译为 `apperr`；数据库层不负责公开文案或 HTTP 分类。
+  - 每个资源包在根目录的 `errors.go` 集中保存稳定公开文案、应用错误构造和下层错误映射；普通 JSON 路由返回 `error`，并由该资源持有的同一个 `ErrorAdapter` 收口。
+  - 成功响应、Webhook/后台副作用和数据库调用顺序保持不变；best-effort 副作用继续由拥有它的资源层记录，因为其失败不会成为当前 HTTP 请求的最终响应。
 - `internal/db`
   - 继续返回普通 Go error 或可识别 sentinel，不依赖 `apperr` 或 `httpapi`，也不构造公开错误文案。
 - `internal/platformapi`
@@ -49,10 +50,10 @@
 
 ```mermaid
 flowchart LR
-    API["internal/api"] --> Vaults["资源包（例如 internal/vaults）"]
-    Vaults --> DB["internal/db"]
-    Vaults --> HTTP["internal/httpapi"]
-    Vaults --> AppErr["internal/apperr"]
+    API["internal/api"] --> Resources["普通 JSON 资源包"]
+    Resources --> DB["internal/db"]
+    Resources --> HTTP["internal/httpapi"]
+    Resources --> AppErr["internal/apperr"]
     HTTP --> AppErr
 ```
 
@@ -65,12 +66,17 @@ flowchart LR
 
 ## 应用错误与最终 HTTP 边界
 
-- 默认映射覆盖 `InvalidArgument`、`Unauthenticated`、`Billing`、`PermissionDenied`、`NotFound`、`Conflict`、`RateLimited`、`Timeout`、`Internal` 和 `Overloaded`，对应 Anthropic 的标准 HTTP status 与 `error.type`。
+- 默认映射覆盖 `InvalidArgument`、`InvalidState`、`PreconditionFailed`、`RequestTooLarge`、`Unauthenticated`、`Billing`、`PermissionDenied`、`NotFound`、`Conflict`、`RateLimited`、`Timeout`、`Internal`、`Unavailable` 和 `Overloaded`，对应 Anthropic 的标准 HTTP status 与 `error.type`。
+- `InvalidState`、`PreconditionFailed`、`RequestTooLarge` 和 `Unavailable` 分别保留现有的 `409 / invalid_request_error`、`412 / invalid_request_error`、`413 / invalid_request_error` 和 `503 / api_error` 合同；这些 Kind 表达跨资源可复用的应用语义，不包含 HTTP 类型或状态码。
 - 只有 Kind 和安全公开文案都合法的应用错误才采用该映射。未知 Kind、空文案和普通 error 一律返回通用 500，避免意外泄漏内部错误。
 - 响应遵循 Anthropic error shape，只包含既有的 `error.type` 和 `error.message`，不增加 feature error code。
-- 已知 4xx 不写 Error 日志。Internal、Timeout、Overloaded 和未知错误只在 adapter 记录一次，稳定字段为 `request_id`、`method`、`path`、`error_kind`、`error`；`path` 不包含 query string。
-- `ErrorAdapter.Wrap` 只用于尚未提交响应的普通 JSON endpoint。SSE、流式下载或其他已经提交响应后仍可能失败的 handler 不使用该 wrapper，应沿用其协议专属的结束与日志策略。
-- Filestore、Messages proxy，以及已经存在特殊 status/type 合同的 handler 暂不接入默认 adapter。它们只有在逐项确认默认映射不会改变公开协议后才可迁移。
+- 已知 4xx 不写 Error 日志。Internal、Timeout、Unavailable、Overloaded 和未知错误只在 adapter 记录一次，稳定字段为 `request_id`、`method`、`path`、`error_kind`、`error`；`path` 不包含 query string。
+- `ErrorAdapter.Wrap` 只用于尚未提交响应的普通 JSON endpoint。Batches results、Skills content 和 Sessions SSE 不使用 wrapper；它们在提交下载或事件流之前可以调用 `ErrorAdapter.Write`，提交之后的 I/O 失败仍沿用协议专属日志策略。
+- 下列边界不接入默认 adapter，除非后续逐项确认并扩展对应协议：
+  - Filestore 使用独立的 rclone-filestore 错误 envelope 和 code；Files 同时包含下载、multipart 与平台 Cookie 鉴权合同。
+  - Messages 与 Code Sessions 包含上游响应透传、SSE/流式代理，以及 `405`、`410`、`415` 等专属错误类型。
+  - Memory 的 path conflict 和 precondition failure 带自定义 `error.type` 与附加字段；MCP Catalog 对上游 `5xx` 也维持既有 `invalid_request_error` 类型。
+  - Admin、platform console 和 `internal/api` 全局 middleware 具有动态 status/type、重定向、Cookie 或全局鉴权合同，不按单一资源默认映射处理。
 
 ## 兼容与测试
 
@@ -78,7 +84,7 @@ flowchart LR
 
 - `go test ./internal/apperr ./internal/httpapi ./internal/vaults -count=1`
 - `go test ./internal/httpapi ./internal/platformapi ./internal/workbench -count=1`
-- `go test ./internal/agents ./internal/batches ./internal/deployments ./internal/sessions ./internal/vaults ./internal/memory ./internal/environments ./internal/files -count=1`
+- `go test ./internal/agents ./internal/batches ./internal/deployments ./internal/environments ./internal/models ./internal/sessions ./internal/skills ./internal/vaults ./internal/webhooks -count=1`
 - `go test ./internal/codesessions ./internal/sessions ./internal/environments -count=1`
 - `go test ./internal/api -count=1`
 - `go test ./... -count=1`

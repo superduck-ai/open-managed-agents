@@ -9,6 +9,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 func TestCreatePreservesBodyTooLargeResponse(t *testing.T) {
@@ -16,7 +17,8 @@ func TestCreatePreservesBodyTooLargeResponse(t *testing.T) {
 	request := newCreateRequest(`{"requests":[]}`)
 	recorder := httptest.NewRecorder()
 
-	handler.create(recorder, request, false, nil)
+	err := handler.create(recorder, request, false, nil)
+	httpapi.NewErrorAdapter(nil).Write(recorder, request, err)
 
 	assertCreateBodyError(t, recorder, http.StatusRequestEntityTooLarge, "Request body exceeds maximum size")
 }

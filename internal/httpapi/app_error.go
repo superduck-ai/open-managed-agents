@@ -73,6 +73,12 @@ func errorMappingFor(err *apperr.Error) (errorMapping, bool) {
 	switch err.Kind {
 	case apperr.InvalidArgument:
 		return errorMapping{http.StatusBadRequest, "invalid_request_error", "invalid_argument"}, true
+	case apperr.InvalidState:
+		return errorMapping{http.StatusConflict, "invalid_request_error", "invalid_state"}, true
+	case apperr.PreconditionFailed:
+		return errorMapping{http.StatusPreconditionFailed, "invalid_request_error", "precondition_failed"}, true
+	case apperr.RequestTooLarge:
+		return errorMapping{http.StatusRequestEntityTooLarge, "invalid_request_error", "request_too_large"}, true
 	case apperr.Unauthenticated:
 		return errorMapping{http.StatusUnauthorized, "authentication_error", "unauthenticated"}, true
 	case apperr.Billing:
@@ -89,6 +95,8 @@ func errorMappingFor(err *apperr.Error) (errorMapping, bool) {
 		return errorMapping{http.StatusGatewayTimeout, "timeout_error", "timeout"}, true
 	case apperr.Internal:
 		return errorMapping{http.StatusInternalServerError, "api_error", "internal"}, true
+	case apperr.Unavailable:
+		return errorMapping{http.StatusServiceUnavailable, "api_error", "unavailable"}, true
 	case apperr.Overloaded:
 		return errorMapping{529, "overloaded_error", "overloaded"}, true
 	default:

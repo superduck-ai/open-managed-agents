@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -673,17 +674,10 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	force := false
-	if r.Body != nil {
-		body, err := httpapi.DecodeObjectBodyAs[environmentWorkStopRequest](w, r, maxEnvironmentBodySize)
-		if err == nil {
-			if len(body.Force) > 0 && !isJSONNull(body.Force) {
-				if err := json.Unmarshal(body.Force, &force); err != nil {
-					writeBadRequest(w, r, errors.New("force must be a boolean"))
-					return
-				}
-			}
-		}
+	force, err := decodeEnvironmentWorkStopForce(w, r)
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
 	}
 	workID := chi.URLParam(r, "work_id")
 	if h.isOfficialSDKWorkFixture(r, workID) {
@@ -718,6 +712,24 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWork(record))
+}
+
+func decodeEnvironmentWorkStopForce(w http.ResponseWriter, r *http.Request) (bool, error) {
+	body, err := httpapi.DecodeObjectBodyAs[environmentWorkStopRequest](w, r, maxEnvironmentBodySize)
+	if errors.Is(err, io.EOF) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(body.Force) == 0 || isJSONNull(body.Force) {
+		return false, nil
+	}
+	var force bool
+	if err := json.Unmarshal(body.Force, &force); err != nil {
+		return false, errors.New("force must be a boolean")
+	}
+	return force, nil
 }
 
 func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, work db.EnvironmentWork) error {

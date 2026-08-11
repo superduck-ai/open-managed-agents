@@ -78,6 +78,23 @@ type storeResponse struct {
 	Metadata    json.RawMessage `json:"metadata"`
 }
 
+type memoryStoreMutationRequest struct {
+	Description json.RawMessage `json:"description"`
+	Metadata    json.RawMessage `json:"metadata"`
+	Name        json.RawMessage `json:"name"`
+}
+
+type memoryMutationRequest struct {
+	Content      json.RawMessage `json:"content"`
+	Path         json.RawMessage `json:"path"`
+	Precondition json.RawMessage `json:"precondition"`
+}
+
+type memoryPreconditionRequest struct {
+	ContentSHA256 json.RawMessage `json:"content_sha256"`
+	Type          json.RawMessage `json:"type"`
+}
+
 type memoryResponse struct {
 	ID               string  `json:"id"`
 	ContentSHA256    string  `json:"content_sha256"`
@@ -166,12 +183,12 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	body, err := httpapi.DecodeObjectBodyAs[memoryStoreMutationRequest](w, r, maxMemoryBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	name, err := parseRequiredStringField(fields, "name")
+	name, err := parseRequiredRawString(body.Name, "name")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -180,7 +197,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	description, err := optionalStringWithDefault(fields["description"], "", "description")
+	description, err := optionalStringWithDefault(body.Description, "", "description")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -189,7 +206,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, err)
 		return
 	}
-	metadata, err := normalizeMetadata(fieldOrDefault(fields, "metadata", `{}`))
+	metadata, err := normalizeMetadata(rawOrDefault(body.Metadata, `{}`))
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -312,14 +329,14 @@ func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID st
 		writeBadRequest(w, r, errors.New("memory store must not be archived"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	body, err := httpapi.DecodeObjectBodyAs[memoryStoreMutationRequest](w, r, maxMemoryBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
 	name := current.Name
-	if raw, ok := fields["name"]; ok {
-		name, err = parseRequiredRawString(raw, "name")
+	if len(body.Name) > 0 {
+		name, err = parseRequiredRawString(body.Name, "name")
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -330,11 +347,11 @@ func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID st
 		}
 	}
 	description := current.Description
-	if raw, ok := fields["description"]; ok {
-		if isJSONNull(raw) {
+	if len(body.Description) > 0 {
+		if isJSONNull(body.Description) {
 			description = ""
 		} else {
-			description, err = parseRawString(raw, "description")
+			description, err = parseRawString(body.Description, "description")
 			if err != nil {
 				writeBadRequest(w, r, err)
 				return
@@ -346,8 +363,8 @@ func (h *Handler) updateStore(w http.ResponseWriter, r *http.Request, storeID st
 		}
 	}
 	metadata := current.Metadata
-	if raw, ok := fields["metadata"]; ok {
-		metadata, err = patchMetadata(current.Metadata, raw)
+	if len(body.Metadata) > 0 {
+		metadata, err = patchMetadata(current.Metadata, body.Metadata)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -412,17 +429,17 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	body, err := httpapi.DecodeObjectBodyAs[memoryMutationRequest](w, r, maxMemoryBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	content, err := parseRequiredContent(fields, "content")
+	content, err := parseRequiredContent(body.Content, "content")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	path, err := parseRequiredStringField(fields, "path")
+	path, err := parseRequiredRawString(body.Path, "path")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -679,22 +696,22 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		writeBadRequest(w, r, err)
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	body, err := httpapi.DecodeObjectBodyAs[memoryMutationRequest](w, r, maxMemoryBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	content, contentPresent, err := parseOptionalContent(fields, "content")
+	content, contentPresent, err := parseOptionalContent(body.Content, "content")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	path, pathPresent, err := parseOptionalMemoryPath(fields, "path")
+	path, pathPresent, err := parseOptionalMemoryPath(body.Path, "path")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	expectedHash, err := parsePrecondition(fields["precondition"])
+	expectedHash, err := parsePrecondition(body.Precondition)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -1185,27 +1202,6 @@ func rollupPrefix(path, pathPrefix string, depth int) (string, bool) {
 	return base + strings.Join(prefixSegments, "/") + "/", true
 }
 
-func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxMemoryBodySize)
-	var fields map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil {
-		return nil, errors.New("Invalid JSON body")
-	}
-	if fields == nil {
-		return nil, errors.New("JSON body must be an object")
-	}
-	return fields, nil
-}
-
-func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
-		return "", fmt.Errorf("%s is required", name)
-	}
-	return parseRequiredRawString(raw, name)
-}
-
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || isJSONNull(raw) {
 		return "", fmt.Errorf("%s is required", name)
@@ -1235,9 +1231,8 @@ func parseRawString(raw json.RawMessage, name string) (string, error) {
 	return value, nil
 }
 
-func parseRequiredContent(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
+func parseRequiredContent(raw json.RawMessage, name string) (string, error) {
+	if len(raw) == 0 {
 		return "", fmt.Errorf("%s is required", name)
 	}
 	if isJSONNull(raw) {
@@ -1253,9 +1248,8 @@ func parseRequiredContent(fields map[string]json.RawMessage, name string) (strin
 	return value, nil
 }
 
-func parseOptionalContent(fields map[string]json.RawMessage, name string) (string, bool, error) {
-	raw, ok := fields[name]
-	if !ok {
+func parseOptionalContent(raw json.RawMessage, name string) (string, bool, error) {
+	if len(raw) == 0 {
 		return "", false, nil
 	}
 	if isJSONNull(raw) {
@@ -1271,9 +1265,8 @@ func parseOptionalContent(fields map[string]json.RawMessage, name string) (strin
 	return value, true, nil
 }
 
-func parseOptionalMemoryPath(fields map[string]json.RawMessage, name string) (string, bool, error) {
-	raw, ok := fields[name]
-	if !ok {
+func parseOptionalMemoryPath(raw json.RawMessage, name string) (string, bool, error) {
+	if len(raw) == 0 {
 		return "", false, nil
 	}
 	path, err := parseRequiredRawString(raw, name)
@@ -1290,18 +1283,18 @@ func parsePrecondition(raw json.RawMessage) (*string, error) {
 	if len(raw) == 0 || isJSONNull(raw) {
 		return nil, nil
 	}
-	var payload map[string]json.RawMessage
+	var payload memoryPreconditionRequest
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, errors.New("precondition must be an object")
 	}
-	typ, err := parseRequiredStringField(payload, "type")
+	typ, err := parseRequiredRawString(payload.Type, "type")
 	if err != nil {
 		return nil, err
 	}
 	if typ != "content_sha256" {
 		return nil, errors.New("precondition.type must be content_sha256")
 	}
-	value, err := parseRequiredStringField(payload, "content_sha256")
+	value, err := parseRequiredRawString(payload.ContentSHA256, "content_sha256")
 	if err != nil {
 		return nil, err
 	}
@@ -1671,8 +1664,8 @@ func requireAPIKey(w http.ResponseWriter, r *http.Request) (auth.Principal, bool
 	return principal, true
 }
 
-func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
-	if raw, ok := fields[name]; ok {
+func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
+	if len(raw) > 0 {
 		return raw
 	}
 	return json.RawMessage(fallback)

@@ -1,12 +1,23 @@
 # HTTP、平台与 Workbench 包边界
 
-本文记录后端 HTTP 公共层、平台业务路由和 Workbench 业务流的包边界，避免 `internal/httpapi` 继续承担兜底业务职责。
+本文记录后端应用错误、HTTP 公共层、平台业务路由和 Workbench 业务流的包边界，避免 `internal/httpapi` 承担业务语义。
 
 ## 包职责
 
+- `internal/apperr`
+  - 是不依赖传输层和具体功能包的叶子包，只定义稳定的错误 `Kind`、安全公开文案和私有 cause。
+  - 不维护全局错误码注册表，也不决定 HTTP status、wire error type 或日志级别。
 - `internal/httpapi`
   - 仅保留通用 HTTP helper，例如 Anthropic-compatible error shape、JSON 写入、请求解析等。
+  - `ErrorAdapter` 在普通 JSON endpoint 的最终边界把 `apperr` 映射为 HTTP 响应，并统一记录最终的 Internal 或未知错误。
+  - JSON object 请求体通过公共类型化解码边界处理：资源层传入自身大小上限并使用命名 DTO；patch 的字段存在性、显式 `null` 和多态嵌套值由 DTO 中对应的 `json.RawMessage` 字段保留，不使用顶层 `map[string]json.RawMessage` 字段表。
+  - 公共解码边界解析请求体中的首个 JSON object，拒绝 malformed JSON、`null`、非 object 和超限 body；不额外扫描 trailing data 或连续 JSON 值。admin/webhooks 等允许空 body 或要求空 object 的特殊合同继续使用显式薄包装。
   - 不注册业务路由，不持有平台/Workbench 领域类型别名，不直接依赖具体 feature 包。
+- `internal/vaults`
+  - 在当前操作拥有业务语义的位置，把数据库 sentinel、加密错误和请求校验错误翻译为 `apperr`；数据库层不负责 Vault 的公开文案或 HTTP 分类。
+  - 13 个普通 JSON 路由返回 `error`，由同一个 `ErrorAdapter` 收口；成功响应、Webhook 行为和数据库调用顺序保持不变。
+- `internal/db`
+  - 继续返回普通 Go error 或可识别 sentinel，不依赖 `apperr` 或 `httpapi`，也不构造公开错误文案。
 - `internal/platformapi`
   - 承载平台/console 相关 HTTP route registration、请求解析、响应映射和轻量业务编排。
   - 继续依赖 `internal/platform` 的领域类型与错误，并在 HTTP 边界完成 JSON shape 映射。
@@ -36,6 +47,15 @@
 
 ## 依赖方向
 
+```mermaid
+flowchart LR
+    API["internal/api"] --> Vaults["资源包（例如 internal/vaults）"]
+    Vaults --> DB["internal/db"]
+    Vaults --> HTTP["internal/httpapi"]
+    Vaults --> AppErr["internal/apperr"]
+    HTTP --> AppErr
+```
+
 - `internal/api` 可以依赖 `internal/httpapi`、`internal/messages`、`internal/platformapi`、`internal/workbench`。
 - `internal/platformapi` 和 `internal/workbench` 可以依赖 `internal/httpapi` 的公共 helper；`internal/workbench` 还可以依赖只包含进程配置类型的 `internal/config`，但只接收自身需要的 `AnthropicUpstreamConfig`，不接收根 `Config`。
 - `internal/httpapi` 不依赖 `internal/platformapi`、`internal/workbench` 或具体业务 handler。
@@ -43,11 +63,22 @@
 - `internal/api` 只保存 `codesessions.Handler` 作为 HTTP 资源入口；需要创建 code session 或发布事件的 `sessions`、`environments` 依赖 `codesessions.Service`，不依赖 HTTP handler。
 - `codesessions.Service` 不持有 `config.Config`、WebSocket/CA cache 或 HTTP client。协议状态只能由长生命周期的 `codesessions.Handler` 持有。
 
+## 应用错误与最终 HTTP 边界
+
+- 默认映射覆盖 `InvalidArgument`、`Unauthenticated`、`Billing`、`PermissionDenied`、`NotFound`、`Conflict`、`RateLimited`、`Timeout`、`Internal` 和 `Overloaded`，对应 Anthropic 的标准 HTTP status 与 `error.type`。
+- 只有 Kind 和安全公开文案都合法的应用错误才采用该映射。未知 Kind、空文案和普通 error 一律返回通用 500，避免意外泄漏内部错误。
+- 响应遵循 Anthropic error shape，只包含既有的 `error.type` 和 `error.message`，不增加 feature error code。
+- 已知 4xx 不写 Error 日志。Internal、Timeout、Overloaded 和未知错误只在 adapter 记录一次，稳定字段为 `request_id`、`method`、`path`、`error_kind`、`error`；`path` 不包含 query string。
+- `ErrorAdapter.Wrap` 只用于尚未提交响应的普通 JSON endpoint。SSE、流式下载或其他已经提交响应后仍可能失败的 handler 不使用该 wrapper，应沿用其协议专属的结束与日志策略。
+- Filestore、Messages proxy，以及已经存在特殊 status/type 合同的 handler 暂不接入默认 adapter。它们只有在逐项确认默认映射不会改变公开协议后才可迁移。
+
 ## 兼容与测试
 
 本次拆分是保持行为不变的机械迁移。验证重点：
 
+- `go test ./internal/apperr ./internal/httpapi ./internal/vaults -count=1`
 - `go test ./internal/httpapi ./internal/platformapi ./internal/workbench -count=1`
+- `go test ./internal/agents ./internal/batches ./internal/deployments ./internal/sessions ./internal/vaults ./internal/memory ./internal/environments ./internal/files -count=1`
 - `go test ./internal/codesessions ./internal/sessions ./internal/environments -count=1`
 - `go test ./internal/api -count=1`
 - `go test ./... -count=1`

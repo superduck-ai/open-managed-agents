@@ -67,6 +67,30 @@ type deploymentResponse struct {
 	VaultIDs      json.RawMessage `json:"vault_ids"`
 }
 
+type deploymentMutationRequest struct {
+	Agent         json.RawMessage `json:"agent"`
+	Description   json.RawMessage `json:"description"`
+	EnvironmentID json.RawMessage `json:"environment_id"`
+	InitialEvents json.RawMessage `json:"initial_events"`
+	Metadata      json.RawMessage `json:"metadata"`
+	Name          json.RawMessage `json:"name"`
+	Resources     json.RawMessage `json:"resources"`
+	Schedule      json.RawMessage `json:"schedule"`
+	VaultIDs      json.RawMessage `json:"vault_ids"`
+}
+
+type deploymentScheduleRequest struct {
+	Expression json.RawMessage `json:"expression"`
+	Timezone   json.RawMessage `json:"timezone"`
+	Type       json.RawMessage `json:"type"`
+}
+
+type deploymentCheckoutRequest struct {
+	Name json.RawMessage `json:"name"`
+	SHA  json.RawMessage `json:"sha"`
+	Type json.RawMessage `json:"type"`
+}
+
 type deploymentRunResponse struct {
 	ID             string          `json:"id"`
 	Agent          json.RawMessage `json:"agent"`
@@ -196,46 +220,55 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxDeploymentBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[deploymentMutationRequest](w, r, maxDeploymentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	if err := rejectNullFields(fields, "metadata", "resources", "vault_ids"); err != nil {
-		writeBadRequest(w, r, err)
-		return
+	for _, field := range []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{name: "metadata", raw: body.Metadata},
+		{name: "resources", raw: body.Resources},
+		{name: "vault_ids", raw: body.VaultIDs},
+	} {
+		if err := rejectNullField(field.raw, field.name); err != nil {
+			writeBadRequest(w, r, err)
+			return
+		}
 	}
-	environmentID, err := parseRequiredStringField(fields, "environment_id")
+	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	name, err := parseRequiredStringField(fields, "name")
+	name, err := parseRequiredRawString(body.Name, "name")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	description, err := parseNullableStringField(fields, "description")
+	description, err := parseNullableString(body.Description, "description")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	metadata, err := httpapi.NormalizeMetadata(fieldOrDefault(fields, "metadata", `{}`), validateMetadataEntries)
+	metadata, err := httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadataEntries)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	initialEvents, err := normalizeInitialEvents(fields["initial_events"])
+	initialEvents, err := normalizeInitialEvents(body.InitialEvents)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	schedule, err := normalizeOptionalSchedule(fields["schedule"])
+	schedule, err := normalizeOptionalSchedule(body.Schedule)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	agent, err := h.resolveAgent(r, principal, fields["agent"])
+	agent, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -249,12 +282,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("environment must not be archived"))
 		return
 	}
-	resources, resourceSecrets, err := h.normalizeResources(r, principal, fieldOrDefault(fields, "resources", `[]`))
+	resources, resourceSecrets, err := h.normalizeResources(r, principal, rawOrDefault(body.Resources, `[]`))
 	if err != nil {
 		h.writeResourceBuildError(w, r, err)
 		return
 	}
-	vaultIDs, err := h.normalizeVaultIDs(r, principal, fieldOrDefault(fields, "vault_ids", `[]`))
+	vaultIDs, err := h.normalizeVaultIDs(r, principal, rawOrDefault(body.VaultIDs, `[]`))
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -390,7 +423,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxDeploymentBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[deploymentMutationRequest](w, r, maxDeploymentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -405,8 +438,8 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next := current
-	if raw, ok := fields["agent"]; ok {
-		agent, err := h.resolveAgent(r, principal, raw)
+	if len(body.Agent) > 0 {
+		agent, err := h.resolveAgent(r, principal, body.Agent)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -416,8 +449,8 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		next.AgentVersion = agent.record.CurrentVersion
 		next.AgentSnapshot = agent.snapshot
 	}
-	if raw, ok := fields["environment_id"]; ok {
-		environmentID, err := parseRequiredRawString(raw, "environment_id")
+	if len(body.EnvironmentID) > 0 {
+		environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -434,15 +467,15 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		next.EnvironmentUUID = env.UUID
 		next.EnvironmentExternalID = env.ExternalID
 	}
-	if raw, ok := fields["name"]; ok {
-		next.Name, err = parseRequiredRawString(raw, "name")
+	if len(body.Name) > 0 {
+		next.Name, err = parseRequiredRawString(body.Name, "name")
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["description"]; ok {
-		next.Description, err = nullableStringFromRaw(raw, "description")
+	if len(body.Description) > 0 {
+		next.Description, err = nullableStringFromRaw(body.Description, "description")
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -451,36 +484,36 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 			next.Description = nil
 		}
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = patchDeploymentMetadata(next.Metadata, raw)
+	if len(body.Metadata) > 0 {
+		next.Metadata, err = patchDeploymentMetadata(next.Metadata, body.Metadata)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["initial_events"]; ok {
-		next.InitialEvents, err = normalizeInitialEvents(raw)
+	if len(body.InitialEvents) > 0 {
+		next.InitialEvents, err = normalizeInitialEvents(body.InitialEvents)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["resources"]; ok {
-		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, raw)
+	if len(body.Resources) > 0 {
+		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources)
 		if err != nil {
 			h.writeResourceBuildError(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["vault_ids"]; ok {
-		next.VaultIDs, err = h.normalizeVaultIDs(r, principal, raw)
+	if len(body.VaultIDs) > 0 {
+		next.VaultIDs, err = h.normalizeVaultIDs(r, principal, body.VaultIDs)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["schedule"]; ok {
-		next.Schedule, err = normalizeOptionalSchedule(raw)
+	if len(body.Schedule) > 0 {
+		next.Schedule, err = normalizeOptionalSchedule(body.Schedule)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -1076,22 +1109,22 @@ func normalizeOptionalSchedule(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return nil, nil
 	}
-	var schedule map[string]json.RawMessage
+	var schedule deploymentScheduleRequest
 	if err := json.Unmarshal(raw, &schedule); err != nil {
 		return nil, errors.New("schedule must be an object or null")
 	}
-	scheduleType, err := parseRequiredStringField(schedule, "type")
+	scheduleType, err := parseRequiredRawString(schedule.Type, "type")
 	if err != nil {
 		return nil, err
 	}
 	if scheduleType != "cron" {
 		return nil, errors.New("schedule.type must be cron")
 	}
-	expression, err := parseRequiredStringField(schedule, "expression")
+	expression, err := parseRequiredRawString(schedule.Expression, "expression")
 	if err != nil {
 		return nil, err
 	}
-	timezone, err := parseRequiredStringField(schedule, "timezone")
+	timezone, err := parseRequiredRawString(schedule.Timezone, "timezone")
 	if err != nil {
 		return nil, err
 	}
@@ -1432,14 +1465,6 @@ func isWorkspaceCredential(principal auth.Principal) bool {
 		principal.CredentialType == auth.CredentialTypePlatformSession
 }
 
-func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
-		return "", fmt.Errorf("%s is required", name)
-	}
-	return parseRequiredRawString(raw, name)
-}
-
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return "", fmt.Errorf("%s is required", name)
@@ -1454,9 +1479,8 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	return value, nil
 }
 
-func parseNullableStringField(fields map[string]json.RawMessage, name string) (*string, error) {
-	raw, ok := fields[name]
-	if !ok {
+func parseNullableString(raw json.RawMessage, name string) (*string, error) {
+	if len(raw) == 0 {
 		return nil, nil
 	}
 	return nullableStringFromRaw(raw, name)
@@ -1522,11 +1546,9 @@ func patchDeploymentMetadata(current, raw json.RawMessage) (json.RawMessage, err
 	return httpapi.MarshalRaw(metadata)
 }
 
-func rejectNullFields(fields map[string]json.RawMessage, names ...string) error {
-	for _, name := range names {
-		if raw, ok := fields[name]; ok && httpapi.IsJSONNull(raw) {
-			return fmt.Errorf("%s must not be null", name)
-		}
+func rejectNullField(raw json.RawMessage, name string) error {
+	if len(raw) > 0 && httpapi.IsJSONNull(raw) {
+		return fmt.Errorf("%s must not be null", name)
 	}
 	return nil
 }
@@ -1652,27 +1674,27 @@ func validateOutcomeRubric(raw json.RawMessage) error {
 	}
 }
 
-func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
-	if raw, ok := fields[name]; ok {
+func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
+	if len(raw) > 0 {
 		return raw
 	}
 	return json.RawMessage(fallback)
 }
 
 func validateCheckout(raw json.RawMessage) error {
-	var checkout map[string]json.RawMessage
+	var checkout deploymentCheckoutRequest
 	if err := json.Unmarshal(raw, &checkout); err != nil {
 		return errors.New("checkout must be an object")
 	}
-	checkoutType, err := parseRequiredStringField(checkout, "type")
+	checkoutType, err := parseRequiredRawString(checkout.Type, "type")
 	if err != nil {
 		return err
 	}
 	switch checkoutType {
 	case "branch":
-		_, err = parseRequiredStringField(checkout, "name")
+		_, err = parseRequiredRawString(checkout.Name, "name")
 	case "commit":
-		_, err = parseRequiredStringField(checkout, "sha")
+		_, err = parseRequiredRawString(checkout.SHA, "sha")
 	default:
 		err = errors.New("checkout.type must be branch or commit")
 	}

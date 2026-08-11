@@ -99,8 +99,8 @@ func TestStateFromUpdateMapsInheritedModel(t *testing.T) {
 		db.Agent{
 			Model: json.RawMessage(`{"id":"claude-sonnet-4-6","speed":"fast"}`),
 		},
-		map[string]json.RawMessage{
-			"description": json.RawMessage(`"updated without model"`),
+		&agentMutationRequest{
+			Description: json.RawMessage(`"updated without model"`),
 		},
 	)
 	if err != nil {

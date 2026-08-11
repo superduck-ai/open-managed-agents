@@ -23,22 +23,22 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	if h.isOfficialSDKFixturePrincipal(principal) && h.createUsesOfficialFixtures(fields) {
+	if h.isOfficialSDKFixturePrincipal(principal) && h.createUsesOfficialFixtures(body) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureSession(time.Now().UTC(), false))
 		return
 	}
 
-	agent, snapshot, err := h.resolveAgent(r, principal, fields["agent"])
+	agent, snapshot, err := h.resolveAgent(r, principal, body.Agent)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	environmentID, err := parseRequiredStringField(fields, "environment_id")
+	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -57,17 +57,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("environment must not be archived"))
 		return
 	}
-	metadata, err := httpapi.NormalizeMetadata(fieldOrDefault(fields, "metadata", `{}`), validateMetadataEntries)
+	metadata, err := httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadataEntries)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	title, err := parseNullableStringField(fields, "title")
+	title, err := nullableStringOrMissing(body.Title, "title")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	vaultIDs, err := h.normalizeVaultIDs(r, principal, fieldOrDefault(fields, "vault_ids", `[]`))
+	vaultIDs, err := h.normalizeVaultIDs(r, principal, rawOrDefault(body.VaultIDs, `[]`))
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -89,7 +89,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	resources, err := h.resourcesFromCreate(r, principal, sessionID, fields["resources"], now)
+	resources, err := h.resourcesFromCreate(r, principal, sessionID, body.Resources, now)
 	if err != nil {
 		h.writeResourceBuildError(w, r, err)
 		return
@@ -304,32 +304,32 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("session must be idle and unarchived to update"))
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionMutationRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	if _, ok := fields["vault_ids"]; ok {
+	if len(body.VaultIDs) > 0 {
 		writeBadRequest(w, r, errors.New("vault_ids updates are not supported"))
 		return
 	}
 	next := current
-	if raw, ok := fields["title"]; ok {
-		next.Title, err = nullableStringFromRaw(raw, "title")
+	if len(body.Title) > 0 {
+		next.Title, err = nullableStringFromRaw(body.Title, "title")
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = httpapi.PatchMetadata(next.Metadata, raw, validateMetadataEntries)
+	if len(body.Metadata) > 0 {
+		next.Metadata, err = httpapi.PatchMetadata(next.Metadata, body.Metadata, validateMetadataEntries)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["agent"]; ok {
-		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, raw)
+	if len(body.Agent) > 0 {
+		next.AgentSnapshot, err = patchSessionAgent(next.AgentSnapshot, body.Agent)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -560,18 +560,17 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 
 func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
-	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionEventsRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	rawEvents, ok := fields["events"]
-	if !ok {
+	if len(body.Events) == 0 {
 		writeBadRequest(w, r, errors.New("events is required"))
 		return
 	}
 	var inputs []json.RawMessage
-	if err := json.Unmarshal(rawEvents, &inputs); err != nil || len(inputs) == 0 {
+	if err := json.Unmarshal(body.Events, &inputs); err != nil || len(inputs) == 0 {
 		writeBadRequest(w, r, errors.New("events must be a non-empty array"))
 		return
 	}
@@ -656,12 +655,12 @@ func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionResourceRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	resource, err := h.resourceFromFields(r, session, fields, time.Now().UTC())
+	resource, err := h.resourceFromRequest(r, session, body, time.Now().UTC())
 	if err != nil {
 		h.writeResourceBuildError(w, r, err)
 		return
@@ -741,12 +740,12 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r, errors.New("only github_repository resources can be updated"))
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody[map[string]json.RawMessage](w, r, maxSessionBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[sessionResourceUpdateRequest](w, r, maxSessionBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	token, err := parseRequiredStringField(fields, "authorization_token")
+	token, err := parseRequiredRawString(body.AuthorizationToken, "authorization_token")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return

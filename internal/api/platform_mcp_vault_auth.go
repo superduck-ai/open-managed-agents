@@ -126,9 +126,8 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var req platformMCPVaultAuthStartRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	if err := decoder.Decode(&req); err != nil {
+	req, err := httpapi.DecodeObjectBodyAs[platformMCPVaultAuthStartRequest](w, r, 1<<20)
+	if err != nil {
 		writePlatformMCPVaultAuthError(w, http.StatusBadRequest, platformMCPVaultAuthVerificationRequestFailed, "")
 		return
 	}

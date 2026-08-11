@@ -5,16 +5,100 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/samber/lo"
 )
+
+func handleWorkbenchModels(w http.ResponseWriter, r *http.Request) {
+	newWorkbenchTestHandler(r).handleWorkbenchModels(w, r)
+}
+
+func handleWorkbenchCompletions(w http.ResponseWriter, r *http.Request) {
+	newWorkbenchTestHandler(r).handleWorkbenchCompletions(w, r)
+}
+
+func handleWorkbenchGeneratePrompt(w http.ResponseWriter, r *http.Request) {
+	newWorkbenchTestHandler(r).handleWorkbenchGeneratePrompt(w, r)
+}
+
+func handleWorkbenchGenerateTitle(w http.ResponseWriter, r *http.Request) {
+	newWorkbenchTestHandler(r).handleWorkbenchGenerateTitle(w, r)
+}
+
+func handleWorkbenchGenerateTestCase(w http.ResponseWriter, r *http.Request) {
+	newWorkbenchTestHandler(r).handleWorkbenchGenerateTestCase(w, r)
+}
+
+func handleWorkbenchModelCatalogRefresh(w http.ResponseWriter, r *http.Request) {
+	newWorkbenchTestHandler(r).handleWorkbenchModelCatalogRefresh(w, r)
+}
+
+type workbenchPersistenceContextKey struct{}
+type workbenchAnthropicUpstreamContextKey struct{}
+type workbenchModelCatalogContextKey struct{}
+type workbenchModelCatalogUserStoreContextKey struct{}
+
+func newWorkbenchTestHandler(r *http.Request) *workbenchHandler {
+	h := newWorkbenchHandlerWithCatalog(
+		workbenchPersistenceFromRequest(r),
+		workbenchAnthropicUpstreamFromRequest(r),
+		workbenchModelCatalogFromRequest(r),
+		nil,
+	)
+	h.userStore = workbenchModelCatalogUserStoreFromRequest(r)
+	return h
+}
+
+func withWorkbenchDependenciesAndCatalog(
+	store workbenchPersistenceStore,
+	upstream config.AnthropicUpstreamConfig,
+	catalog modelcatalog.Reader,
+	handler http.HandlerFunc,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), workbenchAnthropicUpstreamContextKey{}, upstream)
+		if store != nil {
+			ctx = context.WithValue(ctx, workbenchPersistenceContextKey{}, store)
+		}
+		if catalog != nil {
+			ctx = context.WithValue(ctx, workbenchModelCatalogContextKey{}, catalog)
+		}
+		if userStore, ok := store.(workbenchModelCatalogUserStore); ok {
+			ctx = context.WithValue(ctx, workbenchModelCatalogUserStoreContextKey{}, userStore)
+		}
+		handler(w, r.WithContext(ctx))
+	}
+}
+
+func workbenchPersistenceFromRequest(r *http.Request) workbenchPersistenceStore {
+	store, _ := r.Context().Value(workbenchPersistenceContextKey{}).(workbenchPersistenceStore)
+	return store
+}
+
+func workbenchAnthropicUpstreamFromRequest(r *http.Request) config.AnthropicUpstreamConfig {
+	upstream, _ := r.Context().Value(workbenchAnthropicUpstreamContextKey{}).(config.AnthropicUpstreamConfig)
+	return upstream
+}
+
+func workbenchModelCatalogFromRequest(r *http.Request) modelcatalog.Reader {
+	catalog, _ := r.Context().Value(workbenchModelCatalogContextKey{}).(modelcatalog.Reader)
+	return catalog
+}
+
+func workbenchModelCatalogUserStoreFromRequest(r *http.Request) workbenchModelCatalogUserStore {
+	store, _ := r.Context().Value(workbenchModelCatalogUserStoreContextKey{}).(workbenchModelCatalogUserStore)
+	return store
+}
 
 func TestWorkbenchCreatorUsesPrincipalWhenCookiePresent(t *testing.T) {
 	bootstrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +132,7 @@ func TestWorkbenchCreatorFallsBackToPrincipalWithoutCookie(t *testing.T) {
 	}
 }
 
-func TestWorkbenchGeneratePromptFallsBackWithoutAnthropicToken(t *testing.T) {
+func TestWorkbenchGeneratePromptFailsWithoutConfiguredGateway(t *testing.T) {
 	t.Setenv("ANTHROPIC_UPSTREAM_API_KEY", "ignored-environment-key")
 
 	req := workbenchPostTestRequest(
@@ -57,21 +141,41 @@ func TestWorkbenchGeneratePromptFallsBackWithoutAnthropicToken(t *testing.T) {
 		`{"task":"Summarize support tickets into action items"}`,
 	)
 	rec := httptest.NewRecorder()
-	upstream := config.AnthropicUpstreamConfig{ModelMappings: map[string]string{
-		"claude-sonnet-4-6": "glm-5-turbo",
-	}}
 
-	handler := newWorkbenchHandler(nil, upstream, nil)
-	handler.handleWorkbenchGeneratePrompt(rec, req)
+	withWorkbenchTestDependencies(config.AnthropicUpstreamConfig{}, handleWorkbenchGeneratePrompt)(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	body := rec.Body.String()
-	for _, want := range []string{`"model":"glm-5-turbo"`, "event: content_block_delta", `\u003cplanning\u003e`, `\u003c/planning\u003e`, `\u003cInstructions\u003e`, "Summarize support tickets into action items", `\u003c/Instructions\u003e`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("fallback generate prompt stream missing %q: %s", want, body)
-		}
+	if body := rec.Body.String(); !strings.Contains(body, "AI gateway is not configured") || strings.Contains(body, "content_block_delta") {
+		t.Fatalf("body = %s, want explicit gateway error without generated content", body)
+	}
+}
+
+func TestWorkbenchGeneratePromptForwardsGatewayError(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": "rate_limit_error", "message": "gateway quota exceeded"},
+		})
+	}))
+	defer upstreamServer.Close()
+
+	req := workbenchPostTestRequest(
+		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
+		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/generate_prompt",
+		`{"task":"Summarize support tickets into action items"}`,
+	)
+	rec := httptest.NewRecorder()
+	upstream := config.AnthropicUpstreamConfig{BaseURL: upstreamServer.URL, APIKey: "yaml-key"}
+
+	withWorkbenchTestDependencies(upstream, handleWorkbenchGeneratePrompt)(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "gateway quota exceeded") || strings.Contains(body, "content_block_delta") {
+		t.Fatalf("body = %s, want upstream gateway error without generated content", body)
 	}
 }
 
@@ -103,8 +207,7 @@ func TestWorkbenchGeneratePromptUsesMappedUpstreamModel(t *testing.T) {
 		},
 	}
 
-	handler := newWorkbenchHandler(nil, upstream, nil)
-	handler.handleWorkbenchGeneratePrompt(rec, req)
+	withWorkbenchDependenciesAndCatalog(nil, upstream, mappedWorkbenchTestCatalog(), handleWorkbenchGeneratePrompt)(rec, req)
 
 	if upstreamModel != "glm-5-turbo" {
 		t.Fatalf("upstream model = %q, want glm-5-turbo", upstreamModel)
@@ -140,8 +243,7 @@ func TestWorkbenchCompletionsUseMappedUpstreamModel(t *testing.T) {
 		},
 	}
 
-	handler := newWorkbenchHandler(nil, upstream, nil)
-	handler.handleWorkbenchCompletions(rec, req)
+	withWorkbenchDependenciesAndCatalog(nil, upstream, mappedWorkbenchTestCatalog(), handleWorkbenchCompletions)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -169,6 +271,7 @@ func TestWorkbenchAnthropicTextResolvesUpstreamModelAtRequestBoundary(t *testing
 	defer upstreamServer.Close()
 
 	req := workbenchCreatorTestRequest("7482d00f-2e42-478b-b2db-07c3d056a3b6")
+	rec := httptest.NewRecorder()
 	upstream := config.AnthropicUpstreamConfig{
 		BaseURL: upstreamServer.URL,
 		APIKey:  "yaml-key",
@@ -176,14 +279,17 @@ func TestWorkbenchAnthropicTextResolvesUpstreamModelAtRequestBoundary(t *testing
 			"claude-sonnet-4-6": "glm-5-turbo",
 		},
 	}
-	handler := newWorkbenchHandler(nil, upstream, nil)
-	if _, _, _, ok := handler.anthropicTextFromBody(req, map[string]any{
-		"model":    "claude-sonnet-4-6",
-		"messages": []any{},
-	}); !ok {
-		t.Fatal("anthropicTextFromBody() failed")
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		if _, _, _, err := newWorkbenchHandler(nil, upstream, nil).workbenchAnthropicTextFromBody(r, map[string]any{
+			"model":    "claude-sonnet-4-6",
+			"messages": []any{},
+		}); err != nil {
+			t.Fatalf("workbenchAnthropicTextFromBody() error = %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 
+	withWorkbenchDependenciesAndCatalog(nil, upstream, mappedWorkbenchTestCatalog(), handler)(rec, req)
 	if upstreamModel != "glm-5-turbo" {
 		t.Fatalf("upstream model = %q, want glm-5-turbo", upstreamModel)
 	}
@@ -205,7 +311,7 @@ func TestWorkbenchGeneratePromptSystemPromptRequestsXMLSections(t *testing.T) {
 
 func TestWorkbenchAnthropicEndpointUsesConfig(t *testing.T) {
 	t.Setenv("ANTHROPIC_UPSTREAM_BASE_URL", "https://ignored.example.test")
-	upstream := config.AnthropicUpstreamConfig{BaseURL: "https://api.kimi.com/coding/"}
+	upstream := config.AnthropicUpstreamConfig{BaseURL: "https://api.kimi.com/coding/", APIKey: "yaml-key"}
 
 	endpoint, err := anthropicMessagesEndpoint(upstream)
 	if err != nil {
@@ -236,8 +342,15 @@ func TestWorkbenchModelsExposeEffectiveModelMappings(t *testing.T) {
 		},
 	}
 
-	handler := newWorkbenchHandler(nil, upstream, nil)
-	handler.handleWorkbenchModels(rec, req)
+	catalog := workbenchTestCatalog{snapshot: modelcatalog.Snapshot{
+		Models: []modelcatalog.Model{
+			{ID: "glm-5-turbo", DisplayName: "GLM 5 Turbo"},
+			{ID: "glm-5.2", DisplayName: "GLM 5.2"},
+		},
+		DefaultModelID:   "glm-5-turbo",
+		DefaultAvailable: true,
+	}}
+	withWorkbenchDependenciesAndCatalog(nil, upstream, catalog, handleWorkbenchModels)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -294,32 +407,84 @@ func TestWorkbenchRevisionModelUsesMappingAtWriteAndReadBoundaries(t *testing.T)
 	}
 }
 
-func TestWorkbenchGenerateTitleReturnsCompletionJSON(t *testing.T) {
+func TestWorkbenchGenerateTitleFailsWithoutConfiguredGateway(t *testing.T) {
 	req := workbenchPostTestRequest(
 		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
 		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/generate_title",
-		`{"message_content":"Summarize planning notes","model":"claude-opus-4-8"}`,
+		`{"message_content":"Summarize planning notes","model":"provider/model"}`,
 	)
 	rec := httptest.NewRecorder()
 
-	handler := newWorkbenchHandler(nil, config.AnthropicUpstreamConfig{}, nil)
-	handler.handleWorkbenchGenerateTitle(rec, req)
+	withWorkbenchTestDependencies(config.AnthropicUpstreamConfig{}, handleWorkbenchGenerateTitle)(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
 	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
 		t.Fatalf("content-type = %q, want application/json", contentType)
 	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
+	if body := rec.Body.String(); !strings.Contains(body, "AI gateway is not configured") || strings.Contains(body, "completion") {
+		t.Fatalf("body = %s, want explicit gateway error without local title", body)
 	}
-	if body["completion"] != "Summarize planning notes" {
-		t.Fatalf("completion = %#v", body["completion"])
+}
+
+func TestWorkbenchGenerateTestCaseFailsWithoutConfiguredGateway(t *testing.T) {
+	req := workbenchPostTestRequest(
+		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
+		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/evaluations/generate_test_case",
+		`{"model_name":"provider/model","variables":[{"name":"TOPIC"}]}`,
+	)
+	rec := httptest.NewRecorder()
+
+	withWorkbenchTestDependencies(config.AnthropicUpstreamConfig{}, handleWorkbenchGenerateTestCase)(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "event:") {
-		t.Fatalf("generate_title returned SSE body: %s", rec.Body.String())
+	if body := rec.Body.String(); !strings.Contains(body, "AI gateway is not configured") || strings.Contains(body, "Generated TOPIC example") {
+		t.Fatalf("body = %s, want explicit gateway error without generated values", body)
+	}
+}
+
+func TestWorkbenchGenerateTestCaseUsesFirstCatalogModelWhenDefaultIsUnset(t *testing.T) {
+	var upstreamModel string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var requestBody struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		upstreamModel = requestBody.Model
+		writeJSON(w, http.StatusOK, map[string]any{
+			"content": []any{map[string]any{
+				"type": "text",
+				"text": "<planning>Use a concrete city.</planning><TOPIC>Beijing</TOPIC>",
+			}},
+			"usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer upstreamServer.Close()
+
+	orgUUID := "7482d00f-2e42-478b-b2db-07c3d056a3b6"
+	req := workbenchPostTestRequest(
+		orgUUID,
+		"/api/organizations/"+orgUUID+"/workbench/evaluations/generate_test_case",
+		`{"variables":[{"name":"TOPIC"}]}`,
+	)
+	rec := httptest.NewRecorder()
+	upstream := config.AnthropicUpstreamConfig{BaseURL: upstreamServer.URL, APIKey: "yaml-key"}
+	catalog := workbenchTestCatalog{snapshot: modelcatalog.Snapshot{
+		Models: []modelcatalog.Model{{ID: "provider/first"}, {ID: "provider/second"}},
+	}}
+
+	withWorkbenchDependenciesAndCatalog(nil, upstream, catalog, handleWorkbenchGenerateTestCase)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if upstreamModel != "provider/first" {
+		t.Fatalf("upstream model = %q, want first catalog model", upstreamModel)
 	}
 }
 
@@ -351,19 +516,21 @@ func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
 	req := workbenchPostTestRequest(
 		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
 		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/generate_title",
-		`{"message_content":"Summarize planning notes","model":"claude-opus-4-8"}`,
+		`{"message_content":"Summarize planning notes","model":"provider/model"}`,
 	)
 	rec := httptest.NewRecorder()
 	upstream := config.AnthropicUpstreamConfig{
 		BaseURL: upstreamServer.URL + "/anthropic",
 		APIKey:  "yaml-key",
 		ModelMappings: map[string]string{
-			"claude-opus-4-8": "glm-5.2",
+			"provider/model": "glm-5.2",
 		},
 	}
 
-	handler := newWorkbenchHandler(nil, upstream, nil)
-	handler.handleWorkbenchGenerateTitle(rec, req)
+	catalog := workbenchTestCatalog{snapshot: modelcatalog.Snapshot{
+		Models: []modelcatalog.Model{{ID: "glm-5.2", DisplayName: "GLM 5.2"}},
+	}}
+	withWorkbenchDependenciesAndCatalog(nil, upstream, catalog, handleWorkbenchGenerateTitle)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
@@ -377,6 +544,218 @@ func TestWorkbenchGenerateTitleUsesConfiguredAnthropicUpstream(t *testing.T) {
 	}
 	if upstreamModel != "glm-5.2" {
 		t.Fatalf("upstream model = %q, want glm-5.2", upstreamModel)
+	}
+}
+
+func TestWorkbenchCompletionRejectsUnknownCatalogModel(t *testing.T) {
+	req := workbenchPostTestRequest(
+		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
+		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/completions",
+		`{"model_name":"provider/unknown","messages":[{"role":"human","content":"hello"}]}`,
+	)
+	rec := httptest.NewRecorder()
+
+	withWorkbenchTestDependencies(config.AnthropicUpstreamConfig{}, handleWorkbenchCompletions)(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not available") {
+		t.Fatalf("body = %s, want catalog validation error", rec.Body.String())
+	}
+}
+
+func TestWorkbenchCompletionReportsUnavailableCatalog(t *testing.T) {
+	req := workbenchPostTestRequest(
+		"7482d00f-2e42-478b-b2db-07c3d056a3b6",
+		"/api/organizations/7482d00f-2e42-478b-b2db-07c3d056a3b6/workbench/completions",
+		`{"model_name":"provider/model","messages":[{"role":"human","content":"hello"}]}`,
+	)
+	rec := httptest.NewRecorder()
+	handler := withWorkbenchDependenciesAndCatalog(
+		nil,
+		config.AnthropicUpstreamConfig{},
+		workbenchTestCatalog{err: modelcatalog.ErrUnavailable},
+		handleWorkbenchCompletions,
+	)
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+}
+
+func TestWorkbenchModelsExposeStaleCatalogMetadata(t *testing.T) {
+	now := time.Date(2026, time.July, 24, 1, 2, 3, 0, time.UTC)
+	var capabilities modelcatalog.Capabilities
+	if err := json.Unmarshal([]byte(`{
+		"code_execution":{"supported":true},
+		"context_management":{"supported":true,"compact_20260112":{"supported":true}},
+		"effort":{"supported":true,"low":{"supported":true},"medium":{"supported":false},"high":{"supported":true},"xhigh":{"supported":false},"max":{"supported":true}},
+		"thinking":{"supported":true,"types":{"enabled":{"supported":true},"adaptive":{"supported":false}}},
+		"tool_use":{"supported":true},
+		"image_input":{"supported":true},
+		"pdf_input":{"supported":false},
+		"structured_outputs":{"supported":true}
+	}`), &capabilities); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	req := workbenchCreatorTestRequest("7482d00f-2e42-478b-b2db-07c3d056a3b6")
+	rec := httptest.NewRecorder()
+	handler := withWorkbenchDependenciesAndCatalog(
+		nil,
+		config.AnthropicUpstreamConfig{},
+		workbenchTestCatalog{snapshot: modelcatalog.Snapshot{
+			Models: []modelcatalog.Model{{
+				ID:           "provider/model",
+				DisplayName:  "Provider Model",
+				Capabilities: capabilities,
+			}},
+			DefaultModelID:   "provider/model",
+			DefaultAvailable: true,
+			LastAttemptAt:    &now,
+			LastSuccessAt:    &now,
+			Stale:            true,
+		}},
+		handleWorkbenchModels,
+	)
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	catalogState, _ := body["model_catalog"].(map[string]any)
+	if catalogState["stale"] != true || catalogState["default_available"] != true {
+		t.Fatalf("model_catalog = %#v", catalogState)
+	}
+	models, _ := body["models"].([]any)
+	model, _ := models[0].(map[string]any)
+	for _, field := range []string{
+		"supports_code_execution",
+		"supports_compact_context",
+		"supports_thinking",
+		"supports_thinking_enabled",
+		"supports_tool_use",
+		"supports_images",
+		"supports_structured_outputs",
+	} {
+		if model[field] != true {
+			t.Fatalf("model[%q] = %#v, want true", field, model[field])
+		}
+	}
+	for _, field := range []string{"supports_auto_thinking", "supports_documents"} {
+		if model[field] != false {
+			t.Fatalf("model[%q] = %#v, want false", field, model[field])
+		}
+	}
+	wantEffortLevels := []any{"low", "high", "max"}
+	if !reflect.DeepEqual(model["supported_effort_levels"], wantEffortLevels) {
+		t.Fatalf("supported effort levels = %#v, want %#v", model["supported_effort_levels"], wantEffortLevels)
+	}
+	rawCapabilities, _ := model["capabilities"].(map[string]any)
+	if _, ok := rawCapabilities["image_input"]; !ok {
+		t.Fatalf("capabilities = %#v, want complete provider payload", rawCapabilities)
+	}
+}
+
+func TestWorkbenchModelCatalogRefreshRequiresOrganizationAdmin(t *testing.T) {
+	for _, role := range []string{"user", "developer", "billing", "claude_code_user", "owner", "primary_owner", "membership_admin"} {
+		t.Run(role, func(t *testing.T) {
+			catalog := &workbenchRefreshTestCatalog{snapshot: modelcatalog.Snapshot{
+				Models: []modelcatalog.Model{{ID: "provider/model"}},
+			}}
+			req := workbenchModelCatalogRefreshRequest(role)
+			rec := httptest.NewRecorder()
+
+			withWorkbenchDependenciesAndCatalog(nil, config.AnthropicUpstreamConfig{}, catalog, handleWorkbenchModelCatalogRefresh)(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+			if catalog.refreshes != 0 {
+				t.Fatalf("refreshes = %d, want 0", catalog.refreshes)
+			}
+		})
+	}
+}
+
+func TestWorkbenchModelCatalogRefreshRejectsMissingOrganizationUser(t *testing.T) {
+	catalog := &workbenchRefreshTestCatalog{}
+	req := workbenchModelCatalogRefreshRequest("admin")
+	ctx := context.WithValue(
+		req.Context(),
+		workbenchModelCatalogUserStoreContextKey{},
+		workbenchModelCatalogUserTestStore{err: db.ErrNotFound},
+	)
+	ctx = context.WithValue(ctx, workbenchModelCatalogContextKey{}, catalog)
+	rec := httptest.NewRecorder()
+
+	handleWorkbenchModelCatalogRefresh(rec, req.WithContext(ctx))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if catalog.refreshes != 0 {
+		t.Fatalf("refreshes = %d, want 0", catalog.refreshes)
+	}
+}
+
+func TestWorkbenchModelCatalogRefreshAcceptsOrganizationAdmin(t *testing.T) {
+	catalog := &workbenchRefreshTestCatalog{snapshot: modelcatalog.Snapshot{
+		Models: []modelcatalog.Model{{ID: "provider/model"}},
+	}}
+	req := workbenchModelCatalogRefreshRequest("admin")
+	rec := httptest.NewRecorder()
+
+	withWorkbenchDependenciesAndCatalog(nil, config.AnthropicUpstreamConfig{}, catalog, handleWorkbenchModelCatalogRefresh)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestWorkbenchModelCatalogRefreshReportsConcurrentRefresh(t *testing.T) {
+	catalog := &workbenchRefreshTestCatalog{refreshErr: modelcatalog.ErrRefreshInProgress}
+	req := workbenchModelCatalogRefreshRequest("admin")
+	rec := httptest.NewRecorder()
+
+	withWorkbenchDependenciesAndCatalog(nil, config.AnthropicUpstreamConfig{}, catalog, handleWorkbenchModelCatalogRefresh)(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+}
+
+func TestWorkbenchModelCatalogRefreshReturnsUpdatedCatalog(t *testing.T) {
+	catalog := &workbenchRefreshTestCatalog{snapshot: modelcatalog.Snapshot{
+		Models:           []modelcatalog.Model{{ID: "provider/model", DisplayName: "Provider Model"}},
+		DefaultModelID:   "provider/model",
+		DefaultAvailable: true,
+	}}
+	req := workbenchModelCatalogRefreshRequest("admin")
+	rec := httptest.NewRecorder()
+
+	withWorkbenchDependenciesAndCatalog(nil, config.AnthropicUpstreamConfig{}, catalog, handleWorkbenchModelCatalogRefresh)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if catalog.refreshes != 1 {
+		t.Fatalf("refreshes = %d, want 1", catalog.refreshes)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	models, _ := body["models"].([]any)
+	if len(models) != 1 {
+		t.Fatalf("models = %#v, want one refreshed model", body["models"])
 	}
 }
 
@@ -633,6 +1012,90 @@ func workbenchPostTestRequest(orgUUID string, path string, body string) *http.Re
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	return workbenchTestRequestWithMethod(req, orgUUID)
+}
+
+func withWorkbenchTestDependencies(
+	upstream config.AnthropicUpstreamConfig,
+	handler http.HandlerFunc,
+) http.HandlerFunc {
+	return withWorkbenchDependenciesAndCatalog(nil, upstream, workbenchTestCatalog{
+		snapshot: modelcatalog.Snapshot{
+			Models:           []modelcatalog.Model{{ID: "provider/model", DisplayName: "Provider Model"}},
+			DefaultModelID:   "provider/model",
+			DefaultAvailable: true,
+		},
+	}, handler)
+}
+
+func mappedWorkbenchTestCatalog() workbenchTestCatalog {
+	return workbenchTestCatalog{snapshot: modelcatalog.Snapshot{
+		Models:           []modelcatalog.Model{{ID: "glm-5-turbo", DisplayName: "GLM 5 Turbo"}},
+		DefaultModelID:   "glm-5-turbo",
+		DefaultAvailable: true,
+	}}
+}
+
+type workbenchTestCatalog struct {
+	snapshot modelcatalog.Snapshot
+	err      error
+}
+
+type workbenchRefreshTestCatalog struct {
+	snapshot   modelcatalog.Snapshot
+	refreshErr error
+	refreshes  int
+}
+
+func (c *workbenchRefreshTestCatalog) Snapshot(context.Context) (modelcatalog.Snapshot, error) {
+	return c.snapshot, nil
+}
+
+func (c *workbenchRefreshTestCatalog) ValidateModel(context.Context, string) error {
+	return nil
+}
+
+func (c *workbenchRefreshTestCatalog) TryRefresh(context.Context) error {
+	c.refreshes++
+	return c.refreshErr
+}
+
+type workbenchModelCatalogUserTestStore struct {
+	role string
+	err  error
+}
+
+func (s workbenchModelCatalogUserTestStore) GetAdminUser(context.Context, string, string) (db.AdminUser, error) {
+	return db.AdminUser{Role: s.role}, s.err
+}
+
+func workbenchModelCatalogRefreshRequest(role string) *http.Request {
+	orgUUID := "7482d00f-2e42-478b-b2db-07c3d056a3b6"
+	req := workbenchPostTestRequest(orgUUID, "/api/organizations/"+orgUUID+"/models/refresh", `{}`)
+	principal := auth.Principal{
+		CredentialType:            auth.CredentialTypePlatformSession,
+		OrganizationUUID:          orgUUID,
+		UserExternalID:            "user_default",
+		PlatformSessionExternalID: "platform_session_test",
+	}
+	ctx := auth.WithPrincipal(req.Context(), principal)
+	ctx = context.WithValue(ctx, workbenchModelCatalogUserStoreContextKey{}, workbenchModelCatalogUserTestStore{role: role})
+	return req.WithContext(ctx)
+}
+
+func (c workbenchTestCatalog) Snapshot(context.Context) (modelcatalog.Snapshot, error) {
+	return c.snapshot, c.err
+}
+
+func (c workbenchTestCatalog) ValidateModel(_ context.Context, modelID string) error {
+	if c.err != nil {
+		return c.err
+	}
+	for _, model := range c.snapshot.Models {
+		if model.ID == modelID {
+			return nil
+		}
+	}
+	return modelcatalog.ErrUnknownModel
 }
 
 func workbenchTestRequestWithMethod(req *http.Request, orgUUID string) *http.Request {

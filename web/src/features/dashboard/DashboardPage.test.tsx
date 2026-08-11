@@ -14,6 +14,8 @@ import { setConsoleRequestContext } from '../../shared/api/client';
 import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
+import { modelCatalogQueryKey } from '../model-catalog/hooks';
+import type { ModelCatalogResponse } from '../model-catalog/model';
 import { BatchesPage, DashboardPage, FilesPage, SkillDetailPage, SkillsPage } from './DashboardPage';
 
 const testingLibrary = await import('@testing-library/react');
@@ -58,6 +60,8 @@ describe('Dashboard i18n', () => {
     expect(screen.getByRole('link', { name: '构建 Agent' }).dataset.slot).toBe('button');
     expect(screen.getByText('本月支出')).toBeTruthy();
     expect(screen.getByRole('heading', { name: '模型' })).toBeTruthy();
+    expect(screen.getByText('图片')).toBeTruthy();
+    expect(screen.getByText('PDF')).toBeTruthy();
     expect(screen.getByRole('heading', { name: '资源' })).toBeTruthy();
 
     dashboard.unmount();
@@ -66,13 +70,13 @@ describe('Dashboard i18n', () => {
 
     expect(screen.getByRole('heading', { name: 'Playground' })).toBeTruthy();
     expect(screen.getByText('配置')).toBeTruthy();
-    expect(screen.getByText('开始对话以预览 Claude 的响应。')).toBeTruthy();
+    expect(screen.getByText('开始对话以预览所选模型的响应。')).toBeTruthy();
     const messageInput = screen.getByLabelText('消息');
     expect(messageInput).toBeTruthy();
     expect((messageInput as HTMLElement).dataset.slot).toBe('input-group-control');
     const messageComposer = (messageInput as HTMLElement).closest('[data-slot="input-group"]');
     expect(messageComposer).toBeTruthy();
-    expect(screen.getByPlaceholderText('向 Claude 发送消息...')).toBeTruthy();
+    expect(screen.getByPlaceholderText('向所选模型发送消息...')).toBeTruthy();
     expect(screen.getByRole('button', { name: '发送' })).toBeTruthy();
   });
 
@@ -399,7 +403,7 @@ describe('Dashboard i18n', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     const dashboard = renderDashboardPage(<DashboardPage section="dashboard" />);
 
-    for (const label of ['Fable 5', 'Advisor tool']) {
+    for (const label of ['Gateway Primary', 'Advisor tool']) {
       const card = screen.getByText(label).closest('[data-slot="card"]') as HTMLElement | null;
       expect(card).toBeTruthy();
       expect(card?.className.includes('surface-card')).toBe(false);
@@ -419,6 +423,35 @@ describe('Dashboard i18n', () => {
     expect(emptyState).toBeTruthy();
     expect(emptyState?.className.includes('surface-card')).toBe(false);
     expect(emptyState?.className.includes('border-dashed')).toBe(true);
+  });
+
+  test('renders a stale catalog and lets an admin publish a refreshed snapshot', async () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    const requests: Array<{ method: string; url: string }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ method: init?.method ?? 'GET', url: String(input) });
+      return new Response(JSON.stringify(dashboardModelCatalog('gateway/refreshed', 'Gateway Refreshed', false)), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    renderDashboardPage(
+      <DashboardPage section="dashboard" />,
+      undefined,
+      'en',
+      makeAuthContextValue({ memberships: [{ role: 'admin' }] }),
+      dashboardModelCatalog('gateway/primary', 'Gateway Primary', true),
+    );
+
+    expect(screen.getByText('Gateway Primary')).toBeTruthy();
+    expect(screen.getByText('Stale')).toBeTruthy();
+    expect(screen.getByText('Default')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+
+    expect(await screen.findByText('Gateway Refreshed')).toBeTruthy();
+    expect(screen.getByText('Fresh')).toBeTruthy();
+    expect(requests).toEqual([{ method: 'POST', url: '/api/organizations/org_test_uuid/models/refresh' }]);
   });
 });
 
@@ -1809,6 +1842,7 @@ function renderDashboardPage(
   workspace?: Partial<Workspace>,
   locale: Locale = 'en',
   authValue: AuthContextValue = makeAuthContextValue(),
+  modelCatalog: ModelCatalogResponse = dashboardModelCatalog(),
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -1818,6 +1852,7 @@ function renderDashboardPage(
       },
     },
   });
+  queryClient.setQueryData(modelCatalogQueryKey('org_test_uuid'), modelCatalog);
   const router = createRouter({
     history: createBrowserHistory({ window }),
     routeTree: dashboardTestRouteTree,
@@ -1841,6 +1876,31 @@ function renderDashboardPage(
   return {
     ...rendered,
     rerenderWorkspace: (nextWorkspace?: Partial<Workspace>) => rendered.rerender(renderWithWorkspace(nextWorkspace)),
+  };
+}
+
+function dashboardModelCatalog(
+  modelID = 'gateway/primary',
+  displayName = 'Gateway Primary',
+  stale = false,
+): ModelCatalogResponse {
+  return {
+    default_prompt_settings: { model_name: modelID },
+    models: [
+      {
+        model_name: modelID,
+        display_name: displayName,
+        supports_image_input: true,
+        supports_pdf_input: true,
+        supports_tool_use: true,
+      },
+    ],
+    model_catalog: {
+      stale,
+      default_available: true,
+      last_attempt_at: '2026-07-24T01:02:03Z',
+      last_success_at: '2026-07-24T01:02:03Z',
+    },
   };
 }
 

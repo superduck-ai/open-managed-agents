@@ -40,37 +40,39 @@ describe('localized create-agent template configs', () => {
   });
 
   test('uses locale as the second argument and defaults to English', () => {
-    expect(createDialogAgentConfig(blankAgentTemplate)).toEqual(createDialogTemplateConfigs.blank);
-    expect(createDialogAgentConfig(blankAgentTemplate, 'zh-CN')).toEqual(createDialogTemplateConfigsZh.blank);
-  });
-
-  test('uses the configured effective model id in template configs', () => {
-    const config = createDialogAgentConfig(blankAgentTemplate, 'en', undefined, {
-      'claude-sonnet-4-6': 'glm-5-turbo',
+    expect(createDialogAgentConfig(blankAgentTemplate)).toEqual({ ...createDialogTemplateConfigs.blank, model: '' });
+    expect(createDialogAgentConfig(blankAgentTemplate, 'zh-CN')).toEqual({
+      ...createDialogTemplateConfigsZh.blank,
+      model: '',
     });
-
-    expect(config.model).toBe('glm-5-turbo');
-  });
-
-  test('uses the configured effective model id in template previews', () => {
-    const mappings = {
-      'claude-sonnet-4-6': 'glm-5-turbo',
-    };
-
-    expect(yamlForTemplate(blankAgentTemplate, 'en', mappings)).toContain('model: glm-5-turbo');
-    expect(jsonForTemplate(blankAgentTemplate, 'en', mappings)).toContain('"model": "glm-5-turbo"');
+    expect(createDialogAgentConfig(blankAgentTemplate, 'en', null, 'gateway/agent-model').model).toBe(
+      'gateway/agent-model',
+    );
   });
 
   test('uses the configured effective model id in generated agent configs', () => {
-    const fallback = createDialogAgentConfig(blankAgentTemplate);
+    const fallback = createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'glm-5-turbo');
     const mappings = { 'claude-sonnet-4-6': 'glm-5-turbo' };
 
-    expect(quickstartBuildAgentConfigInput({ model: 'claude-sonnet-4-6' }, fallback, mappings).model).toBe(
-      'glm-5-turbo',
-    );
     expect(
-      quickstartBuildAgentConfigInput({ model: { id: 'claude-sonnet-4-6', speed: 'fast' } }, fallback, mappings).model,
-    ).toEqual({ id: 'glm-5-turbo', speed: 'fast' });
+      quickstartBuildAgentConfigInput({ model: 'claude-sonnet-4-6' }, fallback, ['glm-5-turbo'], mappings).model,
+    ).toBe('glm-5-turbo');
+    expect(
+      quickstartBuildAgentConfigInput(
+        { model: { id: 'claude-sonnet-4-6', speed: 'fast', effort: { type: 'high' } } },
+        fallback,
+        ['glm-5-turbo'],
+        mappings,
+      ).model,
+    ).toEqual({ id: 'glm-5-turbo', speed: 'fast', effort: { type: 'high' } });
+  });
+
+  test('keeps the selected fallback when the model catalog is empty', () => {
+    const fallback = createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'provider/fallback');
+
+    expect(quickstartBuildAgentConfigInput({ model: 'provider/generated' }, fallback, []).model).toBe(
+      'provider/fallback',
+    );
   });
 
   test('distinguishes an omitted generated multiagent from an explicit null', () => {
@@ -91,9 +93,10 @@ describe('localized create-agent template configs', () => {
 
     expect(resolveAgentModelInput(' claude-sonnet-4-6 ', mappings)).toBe('glm-5-turbo');
     expect(resolveAgentModelInput(' glm-5 ', mappings)).toBe('glm-5');
-    expect(resolveAgentModelInput({ id: ' claude-sonnet-4-6 ', speed: 'fast' }, mappings)).toEqual({
+    expect(resolveAgentModelInput({ id: ' claude-sonnet-4-6 ', speed: 'fast', effort: 'high' }, mappings)).toEqual({
       id: 'glm-5-turbo',
       speed: 'fast',
+      effort: 'high',
     });
     expect(resolveAgentModelInput({ id: ' glm-5 ', speed: 'standard' }, mappings)).toEqual({
       id: 'glm-5',

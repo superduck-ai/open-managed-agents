@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="AdvisoryLockMapper">
+    <select id="TryAcquire" result="scalar">
+        SELECT pg_try_advisory_lock(#{lockID})
+    </select>
+
+    <select id="Release" result="scalar">
+        SELECT pg_advisory_unlock(#{lockID})
+    </select>
+</mapper>

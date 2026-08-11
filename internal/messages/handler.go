@@ -5,9 +5,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/aigateway"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -65,7 +65,7 @@ type flushingResponseWriter struct {
 // NewHandler 创建复用连接池的 Messages 代理 handler。
 func NewHandler(cfg config.Config, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	return &Handler{cfg: cfg, client: &http.Client{Transport: newProxyTransport()}, logger: logger}
+	return &Handler{cfg: cfg, client: aigateway.NewHTTPClient(newProxyTransport(), 0), logger: logger}
 }
 
 func newProxyTransport() http.RoundTripper {
@@ -135,22 +135,7 @@ func writeRequestTooLarge(w http.ResponseWriter, r *http.Request) {
 }
 
 func messagesEndpoint(baseURL string, rawQuery string) (string, error) {
-	// base URL 可以带部署前缀，但最终资源始终规范化为其下的 /v1/messages。
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com"
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", errors.New("messages upstream base URL must be absolute")
-	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/v1/messages"
-	parsed.RawPath = ""
-	parsed.RawQuery = rawQuery
-	return parsed.String(), nil
+	return aigateway.Endpoint(baseURL, "v1/messages", rawQuery)
 }
 
 func sanitizedRequestHeaders(source http.Header) http.Header {

@@ -12,6 +12,7 @@ export const { ManagedAgentsPage } = await import('./ManagedAgentsPage');
 export const { WorkspaceContext } = await import('../../shared/workspaces/context');
 const { defaultWorkspace } = await import('../../shared/workspaces/api');
 const { setConsoleRequestContext } = await import('../../shared/api/client');
+const { modelCatalogQueryKey } = await import('../model-catalog/hooks');
 const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
 const { AuthContext } = await import('../../shared/auth/context');
@@ -56,7 +57,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
-  queryOptions: { seedModelMappings?: boolean } = {},
+  queryOptions: { modelCatalog?: Record<string, unknown>; seedModelMappings?: boolean } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -64,6 +65,7 @@ export function render(
       mutations: { retry: false },
     },
   });
+  queryClient.setQueryData(modelCatalogQueryKey('org_test'), queryOptions.modelCatalog ?? testModelCatalog());
   if (queryOptions.seedModelMappings !== false) {
     queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
   }
@@ -76,7 +78,9 @@ export function render(
   );
   return testingLibrary.render(
     <AuthContext.Provider value={managedAgentsAuthContextValue}>
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceContext.Provider value={workspaceContextValue('default')}>{ui}</WorkspaceContext.Provider>
+      </QueryClientProvider>
     </AuthContext.Provider>,
     options,
   );
@@ -147,6 +151,7 @@ export function renderManagedAgentsPage(
       },
     },
   });
+  queryClient.setQueryData(modelCatalogQueryKey('org_test'), testModelCatalog());
   queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
   queryClient.setQueryData(
     ['create-agent', 'models', 'default'],
@@ -255,6 +260,8 @@ export type MockAgentsApiOptions = {
   agentsSearchErrorOnce?: boolean;
   agentArchiveErrorOnce?: boolean;
   agentsSearchPageSize?: number;
+  modelCatalog?: Record<string, unknown>;
+  modelCatalogStatus?: number;
   skillsPageSize?: number;
   models?: Array<{ id: string; displayName?: string }>;
 };
@@ -329,7 +336,10 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         modelMappingsErrorsRemaining -= 1;
         return jsonResponse({ error: { message: 'Model configuration unavailable' } }, 503);
       }
-      return jsonResponse({ model_mappings: options.modelMappings ?? {} });
+      return jsonResponse(
+        { ...(options.modelCatalog ?? testModelCatalog()), model_mappings: options.modelMappings ?? {} },
+        options.modelCatalogStatus ?? 200,
+      );
     }
 
     if (url.startsWith('/v1/models?') && method === 'GET') {
@@ -1341,6 +1351,10 @@ export function mockManagedResourceApi() {
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
 
+    if (url.match(/^\/api\/organizations\/[^/]+\/models$/) && method === 'GET') {
+      return jsonResponse(testModelCatalog());
+    }
+
     if (url.startsWith('/v1/agents?') && method === 'GET') {
       return jsonResponse({ data: resources.agents, next_page: null });
     }
@@ -1947,6 +1961,27 @@ export function jsonResponse(body: unknown, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+export function testModelCatalog() {
+  return {
+    default_prompt_settings: { model_name: 'claude-sonnet-4-6' },
+    models: [
+      {
+        model_name: 'claude-sonnet-4-6',
+        display_name: 'Claude Sonnet 4.6',
+        supports_thinking: true,
+        supports_tool_use: true,
+      },
+      {
+        model_name: 'claude-opus-4-8',
+        display_name: 'Claude Opus 4.8',
+        supports_thinking: true,
+        supports_tool_use: true,
+      },
+    ],
+    model_catalog: { stale: false, default_available: true },
+  };
 }
 
 export function streamResponse(body: string) {

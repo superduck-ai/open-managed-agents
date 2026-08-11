@@ -30,6 +30,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -1077,6 +1078,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		Config:                 cfg,
 		DB:                     database,
 		ObjectStore:            store,
+		ModelCatalog:           testModelCatalog{},
 		Logger:                 logger,
 		PlatformStore:          platformSessions,
 		CodeSessionCredentials: credentials,
@@ -1098,6 +1100,28 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		baseURL:              server.URL,
 		client:               server.Client(),
 	}
+}
+
+type testModelCatalog struct{}
+
+func (testModelCatalog) Snapshot(context.Context) (modelcatalog.Snapshot, error) {
+	now := time.Date(2026, time.July, 24, 1, 2, 3, 0, time.UTC)
+	return modelcatalog.Snapshot{
+		Models: []modelcatalog.Model{{
+			ID:          "test/model",
+			DisplayName: "Test model",
+		}},
+		DefaultModelID:   "test/model",
+		DefaultAvailable: true,
+		LastSuccessAt:    &now,
+	}, nil
+}
+
+func (testModelCatalog) ValidateModel(_ context.Context, modelID string) error {
+	if strings.TrimSpace(modelID) == "test/model" {
+		return nil
+	}
+	return modelcatalog.ErrUnknownModel
 }
 
 func openTestPool(t *testing.T, cfg config.Config) *pgxpool.Pool {

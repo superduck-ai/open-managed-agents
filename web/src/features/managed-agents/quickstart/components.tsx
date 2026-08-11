@@ -1806,7 +1806,8 @@ export function TemplateDetailPanel({
   onFormatChange,
   onUseTemplate,
   isUsing,
-  modelMappings,
+  disabled = false,
+  modelID,
 }: {
   template: AgentTemplate;
   format: CodeFormat;
@@ -1814,10 +1815,11 @@ export function TemplateDetailPanel({
   onFormatChange: (format: CodeFormat) => void;
   onUseTemplate: () => void;
   isUsing: boolean;
-  modelMappings: Record<string, string>;
+  disabled?: boolean;
+  modelID: string;
 }) {
   const { msg, locale } = useI18n();
-  const code = codeForTemplate(template, format, locale, modelMappings);
+  const code = codeForTemplate(template, format, locale, modelID);
   const title = templateTitle(template, msg);
   return (
     <Card className="relative h-full min-h-0 overflow-hidden border border-border bg-card py-0 shadow-sm ring-0">
@@ -1843,7 +1845,7 @@ export function TemplateDetailPanel({
           <CopyButton value={code} label={msg('managedAgents.quickstart.copyCode', 'Copy code')} />
           <Button
             type="button"
-            disabled={isUsing}
+            disabled={isUsing || disabled}
             size="sm"
             className="disabled:cursor-not-allowed disabled:opacity-70"
             onClick={onUseTemplate}
@@ -1880,7 +1882,7 @@ export function CreatedAgentConfigPanel({
   onConfigureEnvironment,
   onFormatChange,
   onTabChange,
-  modelMappings,
+  modelID,
 }: {
   template: AgentTemplate;
   agent: AgentApiResponse | null;
@@ -1899,11 +1901,11 @@ export function CreatedAgentConfigPanel({
   onConfigureEnvironment: () => Promise<void>;
   onFormatChange: (format: CodeFormat) => void;
   onTabChange: (tab: AgentPanelTab) => void;
-  modelMappings: Record<string, string>;
+  modelID: string;
 }) {
   const { msg, locale } = useI18n();
   const displayedConfig = displayAgentConfig(
-    agentConfig ?? createDialogAgentConfig(template, locale, undefined, modelMappings),
+    agentConfig ?? createDialogAgentConfig(template, locale, undefined, modelID),
   );
   const code = format === 'YAML' ? yamlStringify(displayedConfig) : JSON.stringify(displayedConfig, null, 2);
   return (

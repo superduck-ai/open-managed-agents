@@ -25,7 +25,14 @@ storage:
     force_path_style: true
 
 anthropic_upstream:
-  api_key: ""
+  # Replace both values with the configured AI Gateway.
+  # Public anthropic.com hosts are rejected.
+  base_url: https://ai-gateway.example.internal
+  api_key: replace-with-your-gateway-key
+
+# Optional. When empty, the UI initially selects the first discovered model.
+model_catalog:
+  default_model_id: ""
 
 e2b:
   api_key: ""

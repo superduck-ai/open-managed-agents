@@ -3,20 +3,14 @@ import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import { Card, CardContent } from '../../../shared/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '../../../shared/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../shared/ui/dialog';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '../../../shared/ui/input-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { useWorkspace } from '../../../shared/workspaces/context';
+import { useModelCatalog } from '../../model-catalog/hooks';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ChevronDown, Loader2, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   blankAgentTemplate,
@@ -34,7 +28,10 @@ import { listCreateAgentModels } from './create-dialog-api';
 import { CreateDialogConfigEditor } from './create-dialog-config-editor';
 import { normalizeCreateAgentDraft } from './create-dialog-model';
 import { AgentConfigRenderedEditor } from './create-dialog-rendered';
+import { AgentDialogFrame } from './AgentDialogFrame';
+import { AgentModelCatalogSelect } from './AgentModelCatalogSelect';
 import { useCreateAgentDraft } from './use-create-agent-draft';
+import { agentModelName } from './model';
 
 type CreateAgentDialogProps = {
   workspaceId: string;
@@ -128,12 +125,16 @@ function CreateAgentDialogContent({
   modelOptions: Awaited<ReturnType<typeof listCreateAgentModels>>;
 }) {
   const { msg, locale } = useI18n();
+  const modelCatalog = useModelCatalog(orgUuid);
   const [startingPointOpen, setStartingPointOpen] = useState(true);
   const [mode, setMode] = useState<'describe' | 'template'>('describe');
   const [selectedTemplateId, setSelectedTemplateId] = useState(blankAgentTemplate.id);
   const [description, setDescription] = useState('');
   const [generatedConfig, setGeneratedConfig] = useState<CreateAgentInput | null>(null);
-  const draftState = useCreateAgentDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings));
+  const initialModelID = modelCatalog.defaultModelID || modelOptions[0]?.id || '';
+  const draftState = useCreateAgentDraft(
+    createDialogAgentConfig(blankAgentTemplate, locale, undefined, initialModelID),
+  );
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -146,18 +147,35 @@ function CreateAgentDialogContent({
     mode === 'describe'
       ? generatedConfig?.name?.trim() || templateTitle(blankAgentTemplate, msg)
       : templateTitle(selectedTemplate, msg);
-  const createDisabled = createSubmissionDisabled(draftState.rawError, draftState.draftError, isGenerating, isCreating);
+  const selectedModelID = agentModelName(draftState.draft.model);
+  const selectedModelAvailable = modelCatalog.modelIDs.includes(selectedModelID);
+  const createDisabled = createSubmissionDisabled(
+    draftState.rawError,
+    draftState.draftError,
+    isGenerating,
+    isCreating,
+    selectedModelAvailable,
+  );
+
+  useCreateAgentDefaultModel(
+    draftState.replaceDraft,
+    locale,
+    modelCatalog.defaultModelID,
+    modelOptions[0]?.id,
+    selectedModelID,
+  );
 
   const selectMode = (nextMode: 'describe' | 'template') => {
     if (nextMode === mode || draftState.rawError) {
       return;
     }
     setMode(nextMode);
+    const modelID = createModelID(selectedModelID, modelCatalog.defaultModelID, modelOptions[0]?.id);
     if (nextMode === 'describe') {
       setGeneratedConfig(null);
-      draftState.replaceDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelMappings));
+      draftState.replaceDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, modelID));
     } else {
-      draftState.replaceDraft(createDialogAgentConfig(selectedTemplate, locale, undefined, modelMappings));
+      draftState.replaceDraft(createDialogAgentConfig(selectedTemplate, locale, undefined, modelID));
     }
     setCreateError(null);
   };
@@ -167,14 +185,19 @@ function CreateAgentDialogContent({
       setSelectedTemplateId(template.id);
       setMode('template');
       setGeneratedConfig(null);
-      draftState.replaceDraft(createDialogAgentConfig(template, locale, undefined, modelMappings));
+      const modelID = createModelID(selectedModelID, modelCatalog.defaultModelID, modelOptions[0]?.id);
+      draftState.replaceDraft(createDialogAgentConfig(template, locale, undefined, modelID));
       setStartingPointOpen(false);
     });
   };
 
   const handleGenerate = async () => {
     const prompt = description.trim();
-    if (generationBlocked(prompt, isGenerating, draftState.rawError)) {
+    if (
+      generationBlocked(prompt, isGenerating, draftState.rawError, selectedModelAvailable, () =>
+        setCreateError(msg('managedAgents.agents.createDialog.selectModel', 'Select an available model first.')),
+      )
+    ) {
       return;
     }
     if (!orgUuid) {
@@ -195,6 +218,7 @@ function CreateAgentDialogContent({
         workspaceId,
         description: prompt,
         currentConfig: baseConfig,
+        availableModelIDs: modelCatalog.modelIDs,
         modelMappings,
         signal: controller.signal,
         locale,
@@ -218,7 +242,11 @@ function CreateAgentDialogContent({
   };
 
   const handleCreate = async () => {
-    if (draftState.rawError || draftState.draftError) {
+    if (
+      creationBlocked(draftState.rawError, draftState.draftError, selectedModelAvailable, () =>
+        setCreateError(msg('managedAgents.agents.createDialog.selectModel', 'Select an available model first.')),
+      )
+    ) {
       return;
     }
     setIsCreating(true);
@@ -241,224 +269,280 @@ function CreateAgentDialogContent({
   );
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      {/* grid-rows-1 forces the single grid row to fill the fixed height, so the
-          inner flex h-full container resolves to a real height. Without it the
-          auto grid track makes h-full collapse to content height, and the config
-          editor + Create button get clipped by overflow-hidden when the Starting
-          Point panel is expanded. */}
-      <DialogContent
-        aria-label={msg('managedAgents.agents.createLabel', 'Create agent')}
-        className="grid-rows-1 h-[calc(100dvh-2rem)] max-w-[880px] overflow-hidden rounded-[22px] p-0 sm:max-w-[calc(100vw-2rem)] xl:max-w-[880px]"
-        showCloseButton={false}
-      >
-        <div className="flex h-full min-h-0 flex-col text-foreground">
-          <DialogClose
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-[18px] top-[18px] text-foreground hover:bg-accent"
-              />
-            }
-          >
-            <X className="size-[22px]" aria-hidden />
-            <span className="sr-only">{msg('common.close', 'Close')}</span>
-          </DialogClose>
-
-          <DialogHeader className="px-[23px] pt-[19px] pr-14">
-            <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
-              {msg('managedAgents.agents.createLabel', 'Create agent')}
-            </DialogTitle>
-            <DialogDescription className="mt-1 text-sm leading-5 text-muted-foreground">
-              {msg('managedAgents.agents.createDialog.description', 'Start from a template or describe what you need.')}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto px-[23px]">
-            <Collapsible
-              open={startingPointOpen}
-              onOpenChange={setStartingPointOpen}
-              className={startingPointContainerClass(startingPointOpen)}
-            >
-              <div className={startingPointRowClass(startingPointOpen)}>
-                <CollapsibleTrigger
-                  type="button"
-                  aria-label={
-                    startingPointOpen
-                      ? msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')
-                      : msg('managedAgents.agents.createDialog.startingPointSummary', 'Starting point · {name}', {
-                          name: startingPointName,
-                        })
-                  }
-                  className="flex h-9 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-                >
-                  <ChevronDown
-                    className={clsx(
-                      'size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none',
-                      startingPointOpen ? '' : '-rotate-90',
-                    )}
-                    aria-hidden
-                  />
-                  <span>{msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}</span>
-                  {!startingPointOpen ? (
-                    <span className="min-w-0 truncate font-normal text-muted-foreground" aria-hidden>
-                      · {startingPointName}
-                    </span>
-                  ) : null}
-                </CollapsibleTrigger>
-              </div>
-
-              <CollapsibleContent className="border-t border-border/60 px-3 pb-3 pt-3">
-                <Tabs
-                  value={mode}
-                  onValueChange={(nextValue) => nextValue && selectMode(nextValue as 'describe' | 'template')}
-                  className="gap-4"
-                >
-                  <TabsList
-                    aria-label={msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}
-                    className="grid h-10 w-full grid-cols-2"
-                  >
-                    <TabsTrigger value="describe" className="px-3 text-sm font-semibold">
-                      {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
-                    </TabsTrigger>
-                    <TabsTrigger value="template" className="px-3 text-sm font-semibold">
-                      {msg('managedAgents.quickstart.templateSuffix', 'Template')}
-                    </TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="describe" className="mt-0">
-                    <form
-                      className="rounded-xl"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void handleGenerate();
-                      }}
-                    >
-                      <label htmlFor="create-agent-description-input" className="sr-only">
-                        {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
-                      </label>
-                      <InputGroup className="min-h-[156px] items-stretch gap-0 rounded-[20px] border border-border/70 bg-background/70 px-3 py-3 shadow-sm transition-colors hover:border-border focus-within:border-ring/60">
-                        <InputGroupTextarea
-                          id="create-agent-description-input"
-                          value={description}
-                          rows={1}
-                          placeholder={msg(
-                            'managedAgents.agents.createDialog.describePlaceholder',
-                            'Summarizes new GitHub PRs and posts a digest to Slack.',
-                          )}
-                          className="subtle-scrollbar min-h-[108px] max-h-[176px] overflow-y-auto overscroll-contain px-1 py-1 text-[15px] leading-6 placeholder:text-muted-foreground/70"
-                          onChange={(event) => setDescription(event.target.value)}
-                          autoFocus
-                        />
-                        <InputGroupAddon align="block-end" className="cursor-default justify-end gap-0 px-0 pb-0 pt-3">
-                          <InputGroupButton
-                            type="submit"
-                            variant="secondary"
-                            size="sm"
-                            disabled={!description.trim() || isGenerating || Boolean(draftState.rawError)}
-                            className="rounded-lg px-4 text-[13px] font-semibold"
-                          >
-                            {isGenerating ? (
-                              <Loader2 className="size-4 animate-spin" aria-hidden />
-                            ) : (
-                              <Sparkles className="size-4" aria-hidden />
-                            )}
-                            {isGenerating
-                              ? msg('managedAgents.agents.createDialog.generating', 'Generating...')
-                              : msg('managedAgents.agents.createDialog.generate', 'Generate')}
-                          </InputGroupButton>
-                        </InputGroupAddon>
-                      </InputGroup>
-                    </form>
-                  </TabsContent>
-
-                  <TabsContent value="template" className="mt-0">
-                    <div className="grid grid-cols-3 gap-3">
-                      {createAgentTemplates.map((template) => (
-                        <CreateAgentTemplateCard
-                          key={template.id}
-                          template={template}
-                          selected={template.id === selectedTemplateId}
-                          onSelect={() => selectTemplate(template)}
-                        />
-                      ))}
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </CollapsibleContent>
-            </Collapsible>
-
-            <div className="mt-6 flex items-center justify-between border-b border-border pb-4">
-              <h2 className="text-base font-semibold">
-                {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
-              </h2>
-              <Tabs
-                value={draftState.view}
-                onValueChange={(value) => value && draftState.selectView(value as 'rendered' | 'raw')}
-              >
-                <TabsList aria-label={msg('managedAgents.agents.createDialog.editorMode', 'Editor mode')}>
-                  <TabsTrigger value="rendered">
-                    {msg('managedAgents.agents.createDialog.rendered', 'Rendered')}
-                  </TabsTrigger>
-                  <TabsTrigger value="raw">{msg('managedAgents.agents.createDialog.raw', 'Raw')}</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-
-            {draftState.view === 'rendered' ? (
-              <AgentConfigRenderedEditor
-                workspaceId={workspaceId}
-                draft={draftState.draft}
-                modelOptions={modelOptions}
-                onChange={draftState.setDraft}
-              />
-            ) : (
-              <div className="min-h-[520px] pb-8">
-                <CreateDialogConfigEditor
-                  format={draftState.format}
-                  configText={draftState.rawText}
-                  configError={draftState.rawError}
-                  onFormatChange={draftState.selectFormat}
-                  onEditorChange={draftState.updateRawText}
-                  validateEditorText={draftState.validateRawText}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="flex min-h-16 items-center justify-between gap-4 border-t border-border px-[23px] py-3">
-            {createError || draftState.draftError ? (
-              <p className="line-clamp-2 text-sm text-destructive">{createError || draftState.draftError}</p>
-            ) : (
-              <span />
-            )}
-            <Button
+    <AgentDialogFrame
+      onClose={onClose}
+      label={msg('managedAgents.agents.createLabel', 'Create agent')}
+      title={msg('managedAgents.agents.createLabel', 'Create agent')}
+      description={msg(
+        'managedAgents.agents.createDialog.description',
+        'Start from a template or describe what you need.',
+      )}
+      className="grid-rows-1 h-[calc(100dvh-2rem)] max-w-[880px] overflow-hidden rounded-[22px] p-0 sm:max-w-[calc(100vw-2rem)] xl:max-w-[880px]"
+    >
+      {/* grid-rows-1 keeps the fixed-height create dialog's content row sized to the viewport. */}
+      <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto px-[23px]">
+        <Collapsible
+          open={startingPointOpen}
+          onOpenChange={setStartingPointOpen}
+          className={startingPointContainerClass(startingPointOpen)}
+        >
+          <div className={startingPointRowClass(startingPointOpen)}>
+            <CollapsibleTrigger
               type="button"
-              disabled={createDisabled}
-              size="sm"
-              className={clsx(
-                'px-3 text-[14px] font-semibold leading-5',
-                createDisabled
-                  ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
-                  : 'bg-foreground text-background hover:bg-muted',
-              )}
-              onClick={handleCreate}
+              aria-label={
+                startingPointOpen
+                  ? msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')
+                  : msg('managedAgents.agents.createDialog.startingPointSummary', 'Starting point · {name}', {
+                      name: startingPointName,
+                    })
+              }
+              className="flex h-9 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
             >
-              {isCreating
-                ? msg('common.creating', 'Creating...')
-                : msg('managedAgents.agents.createLabel', 'Create agent')}
-            </Button>
+              <ChevronDown
+                className={clsx(
+                  'size-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none',
+                  startingPointOpen ? '' : '-rotate-90',
+                )}
+                aria-hidden
+              />
+              <span>{msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}</span>
+              {!startingPointOpen ? (
+                <span className="min-w-0 truncate font-normal text-muted-foreground" aria-hidden>
+                  · {startingPointName}
+                </span>
+              ) : null}
+            </CollapsibleTrigger>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+
+          <CollapsibleContent className="border-t border-border/60 px-3 pb-3 pt-3">
+            <Tabs
+              value={mode}
+              onValueChange={(nextValue) => nextValue && selectMode(nextValue as 'describe' | 'template')}
+              className="gap-4"
+            >
+              <TabsList
+                aria-label={msg('managedAgents.agents.createDialog.startingPoint', 'Starting point')}
+                className="grid h-10 w-full grid-cols-2"
+              >
+                <TabsTrigger value="describe" className="px-3 text-sm font-semibold">
+                  {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
+                </TabsTrigger>
+                <TabsTrigger value="template" className="px-3 text-sm font-semibold">
+                  {msg('managedAgents.quickstart.templateSuffix', 'Template')}
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="describe" className="mt-0">
+                <form
+                  className="rounded-xl"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleGenerate();
+                  }}
+                >
+                  <label htmlFor="create-agent-description-input" className="sr-only">
+                    {msg('managedAgents.quickstart.initial.inputLabel', 'Describe your agent')}
+                  </label>
+                  <InputGroup className="min-h-[156px] items-stretch gap-0 rounded-[20px] border border-border/70 bg-background/70 px-3 py-3 shadow-sm transition-colors hover:border-border focus-within:border-ring/60">
+                    <InputGroupTextarea
+                      id="create-agent-description-input"
+                      value={description}
+                      rows={1}
+                      placeholder={msg(
+                        'managedAgents.agents.createDialog.describePlaceholder',
+                        'Summarizes new GitHub PRs and posts a digest to Slack.',
+                      )}
+                      className="subtle-scrollbar min-h-[108px] max-h-[176px] overflow-y-auto overscroll-contain px-1 py-1 text-[15px] leading-6 placeholder:text-muted-foreground/70"
+                      onChange={(event) => setDescription(event.target.value)}
+                      autoFocus
+                    />
+                    <InputGroupAddon align="block-end" className="cursor-default justify-end gap-0 px-0 pb-0 pt-3">
+                      <InputGroupButton
+                        type="submit"
+                        variant="secondary"
+                        size="sm"
+                        disabled={!description.trim() || isGenerating || Boolean(draftState.rawError)}
+                        className="rounded-lg px-4 text-[13px] font-semibold"
+                      >
+                        {isGenerating ? (
+                          <Loader2 className="size-4 animate-spin" aria-hidden />
+                        ) : (
+                          <Sparkles className="size-4" aria-hidden />
+                        )}
+                        {isGenerating
+                          ? msg('managedAgents.agents.createDialog.generating', 'Generating...')
+                          : msg('managedAgents.agents.createDialog.generate', 'Generate')}
+                      </InputGroupButton>
+                    </InputGroupAddon>
+                  </InputGroup>
+                </form>
+              </TabsContent>
+
+              <TabsContent value="template" className="mt-0">
+                <div className="grid grid-cols-3 gap-3">
+                  {createAgentTemplates.map((template) => (
+                    <CreateAgentTemplateCard
+                      key={template.id}
+                      template={template}
+                      selected={template.id === selectedTemplateId}
+                      onSelect={() => selectTemplate(template)}
+                    />
+                  ))}
+                </div>
+              </TabsContent>
+            </Tabs>
+          </CollapsibleContent>
+        </Collapsible>
+
+        <CreateAgentConfigSection
+          workspaceId={workspaceId}
+          draftState={draftState}
+          modelCatalog={modelCatalog}
+          modelOptions={modelOptions}
+          selectedModelID={selectedModelID}
+          isCreating={isCreating}
+          isGenerating={isGenerating}
+        />
+      </div>
+
+      <CreateAgentDialogFooter
+        createError={createError}
+        draftError={draftState.draftError}
+        createDisabled={createDisabled}
+        isCreating={isCreating}
+        onCreate={handleCreate}
+      />
+    </AgentDialogFrame>
   );
 }
 
-function generationBlocked(prompt: string, isGenerating: boolean, rawError: string | null) {
-  return !prompt || isGenerating || Boolean(rawError);
+function CreateAgentConfigSection({
+  workspaceId,
+  draftState,
+  modelCatalog,
+  modelOptions,
+  selectedModelID,
+  isCreating,
+  isGenerating,
+}: {
+  workspaceId: string;
+  draftState: ReturnType<typeof useCreateAgentDraft>;
+  modelCatalog: ReturnType<typeof useModelCatalog>;
+  modelOptions: Awaited<ReturnType<typeof listCreateAgentModels>>;
+  selectedModelID: string;
+  isCreating: boolean;
+  isGenerating: boolean;
+}) {
+  const { msg } = useI18n();
+  return (
+    <>
+      <AgentModelCatalogSelect
+        models={modelCatalog.models}
+        value={selectedModelID}
+        onValueChange={(modelID) => {
+          if (!draftState.rawError) {
+            draftState.replaceDraft({ ...draftState.draft, model: modelID });
+          }
+        }}
+        loading={modelCatalog.isPending}
+        error={modelCatalog.isError}
+        stale={Boolean(modelCatalog.catalogState?.stale)}
+        disabled={isCreating || isGenerating}
+        className="mt-4"
+      />
+
+      <div className="mt-6 flex items-center justify-between border-b border-border pb-4">
+        <h2 className="text-base font-semibold">
+          {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
+        </h2>
+        <Tabs
+          value={draftState.view}
+          onValueChange={(value) => value && draftState.selectView(value as 'rendered' | 'raw')}
+        >
+          <TabsList aria-label={msg('managedAgents.agents.createDialog.editorMode', 'Editor mode')}>
+            <TabsTrigger value="rendered">{msg('managedAgents.agents.createDialog.rendered', 'Rendered')}</TabsTrigger>
+            <TabsTrigger value="raw">{msg('managedAgents.agents.createDialog.raw', 'Raw')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {draftState.view === 'rendered' ? (
+        <AgentConfigRenderedEditor
+          workspaceId={workspaceId}
+          draft={draftState.draft}
+          modelOptions={modelOptions}
+          onChange={draftState.setDraft}
+        />
+      ) : (
+        <div className="min-h-[520px] pb-8">
+          <CreateDialogConfigEditor
+            format={draftState.format}
+            configText={draftState.rawText}
+            configError={draftState.rawError}
+            onFormatChange={draftState.selectFormat}
+            onEditorChange={draftState.updateRawText}
+            validateEditorText={draftState.validateRawText}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function CreateAgentDialogFooter({
+  createError,
+  draftError,
+  createDisabled,
+  isCreating,
+  onCreate,
+}: {
+  createError: string | null;
+  draftError: string | null;
+  createDisabled: boolean;
+  isCreating: boolean;
+  onCreate: () => void;
+}) {
+  const { msg } = useI18n();
+  return (
+    <div className="flex min-h-16 items-center justify-between gap-4 border-t border-border px-[23px] py-3">
+      {createError || draftError ? (
+        <p className="line-clamp-2 text-sm text-destructive">{createError || draftError}</p>
+      ) : (
+        <span />
+      )}
+      <Button
+        type="button"
+        disabled={createDisabled}
+        size="sm"
+        className={clsx(
+          'px-3 text-[14px] font-semibold leading-5',
+          createDisabled
+            ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
+            : 'bg-foreground text-background hover:bg-muted',
+        )}
+        onClick={onCreate}
+      >
+        {isCreating ? msg('common.creating', 'Creating...') : msg('managedAgents.agents.createLabel', 'Create agent')}
+      </Button>
+    </div>
+  );
+}
+
+function generationBlocked(
+  prompt: string,
+  isGenerating: boolean,
+  rawError: string | null,
+  selectedModelAvailable: boolean,
+  onUnavailableModel: () => void,
+) {
+  if (!prompt || isGenerating || rawError) {
+    return true;
+  }
+  if (!selectedModelAvailable) {
+    onUnavailableModel();
+    return true;
+  }
+  return false;
 }
 
 function createSubmissionDisabled(
@@ -466,8 +550,45 @@ function createSubmissionDisabled(
   draftError: string | null,
   isGenerating: boolean,
   isCreating: boolean,
+  selectedModelAvailable: boolean,
 ) {
-  return Boolean(rawError || draftError) || isGenerating || isCreating;
+  return Boolean(rawError || draftError) || isGenerating || isCreating || !selectedModelAvailable;
+}
+
+function creationBlocked(
+  rawError: string | null,
+  draftError: string | null,
+  selectedModelAvailable: boolean,
+  onUnavailableModel: () => void,
+) {
+  if (rawError || draftError) {
+    return true;
+  }
+  if (!selectedModelAvailable) {
+    onUnavailableModel();
+    return true;
+  }
+  return false;
+}
+
+function createModelID(selectedModelID: string, defaultModelID: string, fallbackModelID?: string) {
+  return selectedModelID || defaultModelID || fallbackModelID || '';
+}
+
+function useCreateAgentDefaultModel(
+  replaceDraft: (next: CreateAgentInput) => void,
+  locale: Parameters<typeof createDialogAgentConfig>[1],
+  defaultModelID: string,
+  fallbackModelID: string | undefined,
+  selectedModelID: string,
+) {
+  useEffect(() => {
+    const nextModelID = createModelID('', defaultModelID, fallbackModelID);
+    if (!nextModelID || selectedModelID) {
+      return;
+    }
+    replaceDraft(createDialogAgentConfig(blankAgentTemplate, locale, undefined, nextModelID));
+  }, [defaultModelID, fallbackModelID, locale, replaceDraft, selectedModelID]);
 }
 
 function runWithValidRaw(rawError: string | null, action: () => void) {

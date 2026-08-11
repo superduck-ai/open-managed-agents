@@ -6,14 +6,6 @@ import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../shared/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '../../../shared/ui/dialog';
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -26,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { toast } from '../../../shared/ui/sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { useWorkspace } from '../../../shared/workspaces/context';
+import { useModelCatalog } from '../../model-catalog/hooks';
 import clsx from 'clsx';
 import {
   AlertCircle,
@@ -41,10 +34,9 @@ import {
   Play,
   Plus,
   Sparkles,
-  X,
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { agentEditConfig, agentEditSaveErrorMessage, buildAgentUpdateInput } from '../agentConfig';
+import { agentEditConfig, agentEditConfigText, agentEditSaveErrorMessage, buildAgentUpdateInput } from '../agentConfig';
 import {
   archiveAgent,
   createAgentDetailDeployment,
@@ -63,6 +55,8 @@ import {
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { CopyButton } from '../components/CodeBlocks';
 import { ConfirmAgentsArchiveDialog, StatusPill } from '../components/common';
+import { AgentDialogFrame } from './AgentDialogFrame';
+import { AgentModelCatalogSelect } from './AgentModelCatalogSelect';
 import { managedColumnLabel } from '../labels';
 import {
   deploymentAgentVersion,
@@ -1724,6 +1718,8 @@ export function AgentEditDialog({
   onSaved: (agent: AgentApiResponse) => void;
 }) {
   const { msg } = useI18n();
+  const { orgUuid } = useWorkspace();
+  const modelCatalog = useModelCatalog(orgUuid);
   const initialConfig = useMemo(() => agentEditConfig(agent), [agent]);
   const editDraft = useAgentEditDraft(initialConfig);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -1743,9 +1739,14 @@ export function AgentEditDialog({
   );
   const isDirty = JSON.stringify(currentUpdate) !== JSON.stringify(initialUpdate);
   const renderedValidationError = editDraft.view === 'rendered' ? editDraft.renderedDraftError : null;
+  const selectedModelID = agentModelName(editDraft.draft.model);
+  const selectedModelAvailable = modelCatalog.modelIDs.includes(selectedModelID);
 
   const submit = useCallback(async () => {
-    if (submitting || editDraft.rawError || renderedValidationError || !isDirty) {
+    if (submitting || editDraft.rawError || renderedValidationError || !isDirty || !selectedModelAvailable) {
+      if (!selectedModelAvailable && isDirty) {
+        setSaveError(msg('managedAgents.agents.editDialog.selectModel', 'Select an available model first.'));
+      }
       return;
     }
 
@@ -1758,7 +1759,18 @@ export function AgentEditDialog({
       setSaveError(agentEditSaveErrorMessage(submitError));
       setSubmitting(false);
     }
-  }, [agent.id, currentUpdate, editDraft.rawError, isDirty, onSaved, renderedValidationError, submitting, workspaceId]);
+  }, [
+    agent.id,
+    currentUpdate,
+    editDraft.rawError,
+    isDirty,
+    msg,
+    onSaved,
+    renderedValidationError,
+    selectedModelAvailable,
+    submitting,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1772,133 +1784,127 @@ export function AgentEditDialog({
   }, [submit]);
 
   const displayedError = saveError ?? renderedValidationError;
-  const saveDisabled = submitting || Boolean(editDraft.rawError) || Boolean(renderedValidationError) || !isDirty;
+  const saveDisabled =
+    submitting ||
+    Boolean(editDraft.rawError) ||
+    Boolean(renderedValidationError) ||
+    !isDirty ||
+    !selectedModelAvailable;
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        aria-modal="true"
-        aria-label={msg('managedAgents.agents.editDialog.title', 'Edit agent')}
-        className="h-[calc(100dvh-2rem)] max-w-[880px] overflow-hidden rounded-[22px] bg-popover p-0 shadow-xl sm:max-w-[calc(100vw-2rem)] xl:max-w-[880px]"
-        showCloseButton={false}
-      >
-        <div className="flex h-full min-h-0 flex-col text-foreground">
-          <DialogClose
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-[18px] top-[18px] text-foreground hover:bg-accent"
-              />
-            }
+    <AgentDialogFrame
+      ariaModal
+      onClose={onClose}
+      label={msg('managedAgents.agents.editDialog.title', 'Edit agent')}
+      title={msg('managedAgents.agents.editDialog.title', 'Edit agent')}
+      description={msg(
+        'managedAgents.agents.editDialog.description',
+        'Update the agent configuration and save a new version.',
+      )}
+      className="h-[calc(100dvh-2rem)] max-w-[880px] overflow-hidden rounded-[22px] bg-popover p-0 shadow-xl sm:max-w-[calc(100vw-2rem)] xl:max-w-[880px]"
+    >
+      <AgentModelCatalogSelect
+        models={modelCatalog.models}
+        value={selectedModelID}
+        onValueChange={(modelID) => {
+          editDraft.updateRawText(agentEditConfigText({ ...editDraft.draft, model: modelID }, editDraft.format));
+          setSaveError(null);
+        }}
+        loading={modelCatalog.isPending}
+        error={modelCatalog.isError}
+        stale={Boolean(modelCatalog.catalogState?.stale)}
+        disabled={submitting}
+        className="mt-5 max-w-md"
+      />
+
+      <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto px-[23px]">
+        <div className="mt-6 flex items-center justify-between border-b border-border pb-4">
+          <h2 className="text-base font-semibold">
+            {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
+          </h2>
+          <Tabs
+            value={editDraft.view}
+            onValueChange={(value) => value && editDraft.selectView(value as 'rendered' | 'raw')}
           >
-            <X className="size-[22px]" aria-hidden />
-            <span className="sr-only">{msg('common.close', 'Close')}</span>
-          </DialogClose>
-
-          <DialogHeader className="px-[23px] pt-[19px] pr-14">
-            <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
-              {msg('managedAgents.agents.editDialog.title', 'Edit agent')}
-            </DialogTitle>
-            <DialogDescription className="mt-1 text-sm leading-5 text-muted-foreground">
-              {msg(
-                'managedAgents.agents.editDialog.description',
-                'Update the agent configuration and save a new version.',
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto px-[23px]">
-            <div className="mt-6 flex items-center justify-between border-b border-border pb-4">
-              <h2 className="text-base font-semibold">
-                {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
-              </h2>
-              <Tabs
-                value={editDraft.view}
-                onValueChange={(value) => value && editDraft.selectView(value as 'rendered' | 'raw')}
-              >
-                <TabsList aria-label={msg('managedAgents.agents.createDialog.editorMode', 'Editor mode')}>
-                  <TabsTrigger value="rendered" disabled={Boolean(editDraft.renderedError)}>
-                    {msg('managedAgents.agents.createDialog.rendered', 'Rendered')}
-                  </TabsTrigger>
-                  <TabsTrigger value="raw">{msg('managedAgents.agents.createDialog.raw', 'Raw')}</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-
-            {editDraft.view === 'rendered' && editDraft.renderedDraft ? (
-              <>
-                {modelsQuery.isError ? (
-                  <AgentDetailErrorAlert className="mt-5">
-                    <span className="flex flex-wrap items-center gap-2">
-                      {msg('managedAgents.agents.editDialog.modelsError', 'Could not load available models.')}
-                      <Button type="button" size="sm" variant="outline" onClick={() => void modelsQuery.refetch()}>
-                        {msg('common.retry', 'Retry')}
-                      </Button>
-                    </span>
-                  </AgentDetailErrorAlert>
-                ) : null}
-                <AgentConfigRenderedEditor
-                  workspaceId={workspaceId}
-                  draft={editDraft.renderedDraft}
-                  modelOptions={modelsQuery.data ?? []}
-                  onChange={(next) => {
-                    setSaveError(null);
-                    editDraft.setRenderedDraft(next);
-                  }}
-                />
-              </>
-            ) : (
-              <div className="min-h-[520px] pb-8">
-                {editDraft.renderedError ? (
-                  <Alert className="mt-5">
-                    <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                    <AlertDescription>
-                      {msg('managedAgents.agents.editDialog.renderedUnavailable', editDraft.renderedError)}
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
-                <CreateDialogConfigEditor
-                  format={editDraft.format}
-                  configText={editDraft.rawText}
-                  configError={editDraft.rawError}
-                  onFormatChange={(nextFormat) => {
-                    setSaveError(null);
-                    editDraft.selectFormat(nextFormat);
-                  }}
-                  onEditorChange={(value) => {
-                    setSaveError(null);
-                    editDraft.updateRawText(value);
-                  }}
-                  validateEditorText={editDraft.validateRawText}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="flex min-h-16 items-center justify-between gap-4 border-t border-border px-[23px] py-3">
-            {displayedError ? <p className="line-clamp-2 text-sm text-destructive">{displayedError}</p> : <span />}
-            <Button
-              type="button"
-              disabled={saveDisabled}
-              size="sm"
-              className={clsx(
-                'px-3 text-[14px] font-semibold leading-5',
-                saveDisabled
-                  ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
-                  : 'bg-foreground text-background hover:bg-muted',
-              )}
-              onClick={() => void submit()}
-            >
-              {submitting
-                ? msg('common.saving', 'Saving...')
-                : msg('managedAgents.agents.editDialog.saveNewVersion', 'Save new version')}
-            </Button>
-          </div>
+            <TabsList aria-label={msg('managedAgents.agents.createDialog.editorMode', 'Editor mode')}>
+              <TabsTrigger value="rendered" disabled={Boolean(editDraft.renderedError)}>
+                {msg('managedAgents.agents.createDialog.rendered', 'Rendered')}
+              </TabsTrigger>
+              <TabsTrigger value="raw">{msg('managedAgents.agents.createDialog.raw', 'Raw')}</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
-      </DialogContent>
-    </Dialog>
+
+        {editDraft.view === 'rendered' && editDraft.renderedDraft ? (
+          <>
+            {modelsQuery.isError ? (
+              <AgentDetailErrorAlert className="mt-5">
+                <span className="flex flex-wrap items-center gap-2">
+                  {msg('managedAgents.agents.editDialog.modelsError', 'Could not load available models.')}
+                  <Button type="button" size="sm" variant="outline" onClick={() => void modelsQuery.refetch()}>
+                    {msg('common.retry', 'Retry')}
+                  </Button>
+                </span>
+              </AgentDetailErrorAlert>
+            ) : null}
+            <AgentConfigRenderedEditor
+              workspaceId={workspaceId}
+              draft={editDraft.renderedDraft}
+              modelOptions={modelsQuery.data ?? []}
+              onChange={(next) => {
+                setSaveError(null);
+                editDraft.setRenderedDraft(next);
+              }}
+            />
+          </>
+        ) : (
+          <div className="min-h-[520px] pb-8">
+            {editDraft.renderedError ? (
+              <Alert className="mt-5">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <AlertDescription>
+                  {msg('managedAgents.agents.editDialog.renderedUnavailable', editDraft.renderedError)}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            <CreateDialogConfigEditor
+              format={editDraft.format}
+              configText={editDraft.rawText}
+              configError={editDraft.rawError}
+              onFormatChange={(nextFormat) => {
+                setSaveError(null);
+                editDraft.selectFormat(nextFormat);
+              }}
+              onEditorChange={(value) => {
+                setSaveError(null);
+                editDraft.updateRawText(value);
+              }}
+              validateEditorText={editDraft.validateRawText}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="flex min-h-16 items-center justify-between gap-4 border-t border-border px-[23px] py-3">
+        {displayedError ? <p className="line-clamp-2 text-sm text-destructive">{displayedError}</p> : <span />}
+        <Button
+          type="button"
+          disabled={saveDisabled}
+          size="sm"
+          className={clsx(
+            'px-3 text-[14px] font-semibold leading-5',
+            saveDisabled
+              ? 'cursor-not-allowed bg-accent text-muted-foreground/70'
+              : 'bg-foreground text-background hover:bg-muted',
+          )}
+          onClick={() => void submit()}
+        >
+          {submitting
+            ? msg('common.saving', 'Saving...')
+            : msg('managedAgents.agents.editDialog.saveNewVersion', 'Save new version')}
+        </Button>
+      </div>
+    </AgentDialogFrame>
   );
 }
 

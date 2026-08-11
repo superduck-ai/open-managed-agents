@@ -13,7 +13,7 @@ flowchart LR
     validation --> resolved["Resolved Config"]
     resolved --> infrastructure["Database / Redis / Object Storage"]
     resolved --> workers["Batch / EnvironmentRunner / Webhook"]
-    resolved --> runtime["AnthropicUpstream / E2B / CodeSession"]
+    resolved --> runtime["AI Gateway / ModelCatalog / E2B / CodeSession"]
     resolved --> compatibility["Bootstrap / SDKFixtures"]
 ```
 
@@ -37,7 +37,7 @@ YAML 使用严格字段解析，未知字段、显式 `null`、类型错误和�
 
 `config.Config` 只表示可以由 YAML 加载、校验和复现的数据，不持有 logger、数据库连接、对象存储 client 或其他进程内对象。`*slog.Logger` 属于运行时依赖：可执行程序通过 `internal/logging` 创建根 logger 后，通过 `api.ServerDeps` 和组件构造函数显式注入。HTTP Server 组装层从根 logger 派生带稳定 `component` 字段的子 logger，各 handler、service、enqueuer 和 worker 保存并使用自己的 logger；数据库入口同样接收 `component=database` logger，并交给持久化 runtime 持有。构造边界通过 `logging.LoggerOrDefault` 统一兼容 nil，组件内部不再读取全局默认 logger。HTTP access middleware 同样使用归一化后的 `component=http` logger 并始终安装；nil 只表示回落到 `slog.Default()`，不用于隐式关闭 access log。
 
-稳定依赖按生命周期归属组件，而不是在每次调用中机械透传。例如 webhook 入队由 `webhooks.Enqueuer` 持有数据库、Webhook 配置和 `component=webhooks` logger，sessions、deployments 与 vaults 只依赖其入队能力；Workbench 路由组由 `workbenchHandler` 持有 persistence store、Anthropic upstream 配置和 logger；delivery、batch、object cleanup 和 filestore cleanup 的数据库、对象存储、配置、upstream、循环状态与 logger 则由各自 Worker 持有。Worker 的 `RunOnce` 类方法只接收 `context.Context`、worker ID、当前时间等单次执行数据，测试也通过构造 Worker 调用这些方法，不再重复传入稳定依赖。叶子 helper 不接受 logger，应该返回结果或 error，由拥有请求或任务上下文的组件记录。数据库、upstream 配置和静态组件 logger 不放入请求 context；request context 只承载取消信号、deadline、认证 principal、request ID、trace 等请求域数据。
+稳定依赖按生命周期归属组件，而不是在每次调用中机械透传。例如 webhook 入队由 `webhooks.Enqueuer` 持有数据库、Webhook 配置和 `component=webhooks` logger，sessions、deployments 与 vaults 只依赖其入队能力；Workbench 路由组由 `workbenchHandler` 持有 persistence store、model catalog、Anthropic upstream 配置和 logger；delivery、batch、object cleanup 和 filestore cleanup 的数据库、对象存储、配置、upstream、循环状态与 logger 则由各自 Worker 持有。Worker 的 `RunOnce` 类方法只接收 `context.Context`、worker ID、当前时间等单次执行数据，测试也通过构造 Worker 调用这些方法，不再重复传入稳定依赖。叶子 helper 不接受 logger，应该返回结果或 error，由拥有请求或任务上下文的组件记录。数据库、upstream 配置、model catalog 和静态组件 logger 不放入请求 context；request context 只承载取消信号、deadline、认证 principal、request ID、trace 等请求域数据。
 
 ```mermaid
 flowchart LR
@@ -72,7 +72,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 | `S3_ENDPOINT` / `S3_BUCKET` / `S3_REGION` | `storage.s3.endpoint` / `bucket` / `region` | 同时设置 `storage.type: s3` |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `S3_FORCE_PATH_STYLE` | `storage.s3.access_key_id` / `secret_access_key` / `force_path_style` | `force_path_style` 省略时默认 `true` |
 | `MAX_FILE_BYTES` / `WORKSPACE_STORAGE_LIMIT_BYTES` | `storage.max_file_bytes` / `storage.workspace_limit_bytes` | 迁移非默认容量限制 |
-| `ANTHROPIC_UPSTREAM_BASE_URL` / `ANTHROPIC_UPSTREAM_API_KEY` | `anthropic_upstream.base_url` / `api_key` | 密钥只能写入受保护的运行配置 |
+| `ANTHROPIC_UPSTREAM_BASE_URL` / `ANTHROPIC_UPSTREAM_API_KEY` | `anthropic_upstream.base_url` / `api_key` | 迁移为 AI Gateway 配置；公共 `anthropic.com` 地址会被拒绝，密钥只能写入受保护的运行配置 |
 | `BATCH_*` | `batch.*` | 后缀转为小写 snake case，例如 `BATCH_UPSTREAM_TIMEOUT` → `batch.upstream_timeout` |
 | `E2B_*` | `e2b.*` | 后缀保持小写 snake case；包括连接、debug、template 和 timeout 字段 |
 | `ENVIRONMENT_RUNNER_ENABLED` / `ENVIRONMENT_RUNNER_CONCURRENCY` | `environment_runner.enabled` / `concurrency` | 仅在覆盖代码默认值时配置 |
@@ -99,7 +99,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 
 ## 示例与完整参考
 
-`config/config.example.yaml` 只包含正常本地开发最常修改的连接、监听和凭证字段，并且可以直接复制为 `config/config.yaml`。具有稳定代码默认值的 Batch、Webhook、Environment Runner、Bootstrap、SDK fixture、容量限制和高级 Code Session 开关不进入最小示例，避免把“支持配置”误解为“启动必须配置”。
+`config/config.example.yaml` 只包含正常本地开发最常修改的连接、监听和凭证字段，并且可以复制为 `config/config.yaml` 后填写 AI Gateway 地址与凭证。具有稳定代码默认值的 Model Catalog 刷新策略、Batch、Webhook、Environment Runner、Bootstrap、SDK fixture、容量限制和高级 Code Session 开关不进入最小示例，避免把“支持配置”误解为“启动必须配置”。
 
 `docs/configuration-reference.yaml` 是独立的完整字段参考，列出 `Config` 接受的全部 YAML 字段及安全示例值；它用于查找按需覆盖项，不建议整份复制为部署配置。配置合同测试承担两个方向的防漂移：最小示例必须能经过严格解码和完整校验，且只能包含约定的常用字段；完整参考的字段路径必须与 Go `Config` 的 `yaml` 标签精确一致。
 
@@ -144,7 +144,8 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `RedisConfig` | `redis` | 平台会话 Redis 连接 |
 | `StorageConfig` | `storage` | 对象存储类型选择和文件容量限制 |
 | `S3Config` | `storage.s3` | S3 兼容对象存储连接、bucket 和寻址方式 |
-| `AnthropicUpstreamConfig` | `anthropic_upstream` | Anthropic 上游地址、服务端凭证和可选的 Console 模型映射 |
+| `AnthropicUpstreamConfig` | `anthropic_upstream` | AI Gateway 地址、服务端凭证和可选模型映射；字段名作为现有 YAML 合同保留 |
+| `ModelCatalogConfig` | `model_catalog` | 完整模型目录的刷新周期、单次超时和可选显式默认模型 |
 | `BatchConfig` | `batch` | Message Batch 限制、worker、lease 和清理策略 |
 | `E2BConfig` | `e2b` | E2B provider 连接、模板和超时 |
 | `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令 |
@@ -170,10 +171,12 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 ## 兼容与安全合同
 
 - `CONFIG_FILE` 只选择 YAML 文件；业务环境变量不参与配置合并。
-- Workbench 访问 Anthropic 时使用同一份 `anthropic_upstream.base_url` 和 `anthropic_upstream.api_key`，不从 `ANTHROPIC_*` 环境变量回退读取。
-- `anthropic_upstream.model_mappings` 对模型 ID 执行可选的精确覆盖；解析时对 source/target 两侧做 trim，未配置、空映射或未命中的模型均保留 trim 后的原 ID。命中项在模型目录和 Workbench 中以映射后的 ID 展示，Workbench 的 completions、prompt/title 和 test case 生成统一在 Anthropic 请求构造边界使用映射后的 ID。组织级 `GET /api/organizations/{orgUuid}/models` 同时返回有效目录及 `model_mappings`，由 Managed Agents 功能自行读取，不把模型状态耦合进账户 Bootstrap。Quickstart Builder 的请求模型使用映射后的 ID；Builder 返回的 Agent config 在前端配置归一化边界映射，Agent 创建或更新时也把映射后的 ID 写入新的不可变 Agent Version。
+- Messages、Batch、Workbench 和 Model Catalog 统一使用同一份 `anthropic_upstream.base_url` 与 `anthropic_upstream.api_key` 访问配置的 AI Gateway，不从 `ANTHROPIC_*` 环境变量回退读取，也不允许各调用路径配置不同上游。
+- 启动时必须通过 AI Gateway 地址与凭证校验；公共 `anthropic.com` 地址会被拒绝，运行时请求不跟随上游重定向。
+- Model Catalog 只有完成全部分页、校验和去重后才原子发布新快照；刷新失败保留最近一次成功快照，首次同步尚未成功时模型目录明确不可用。
+- `anthropic_upstream.model_mappings` 对 AI Gateway 返回的模型 ID 执行可选的精确覆盖；解析时对 source/target 两侧做 trim，未配置、空映射或未命中的模型均保留 trim 后的原 ID。映射在完整目录写入快照前应用，因此 `/v1/models`、组织级模型目录、Workbench 和 Agent 写入看到相同的最终 ID；Agent 创建或更新时再次解析是幂等的，并把最终 ID 写入新的不可变 Agent Version。
 - 映射不能形成 `A -> B -> C` 链或循环，以保证前端展示、Console 代理和 Agent 写入等多个边界重复解析时结果一致；多个逻辑模型可以映射到同一个上游模型 ID，模型目录按最终 ID 去重，并保留目录中第一个逻辑槽位的能力元数据。
-- 映射项是部署方声明的模型别名覆盖，不是 OMA 维护的独立能力目录；兼容模型项沿用原逻辑槽位的能力元数据，部署方应只把逻辑模型映射到满足相同运行合同的上游模型。需要准确的供应商能力目录时，应由公司 AI gateway 提供完整 catalog，而不是继续扩展该映射配置。
+- 映射项是部署方声明的模型别名覆盖，不是 OMA 维护的独立能力目录；兼容模型项沿用原逻辑槽位的能力元数据，部署方应只把逻辑模型映射到满足相同运行合同的上游模型。需要准确的供应商能力目录时，应由 AI Gateway 提供完整目录，而不是继续扩展该映射配置。
 - Environment Runner 和独立 Environment Manager 不读取映射配置；运行链路直接使用 Agent Snapshot 已保存的最终模型 ID。OMA 在 `environment-manager` v0 启动 payload 中把该 ID 同时投射为 `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`，确保 Claude Code 的主 Agent 与内置子 Agent 使用同一个不可变 Session 模型。Snapshot 没有模型时不注入这些变量，继续沿用原运行时默认逻辑。修改映射不会改变既有 Agent Version，只影响后续创建或更新的版本。
 - 数据库配置不接受独立的管理员 URL 或管理员凭证；启动回退只能使用 `database.url` 派生的 maintenance DB 连接和当前系统用户候选。
 - 上游 API key、Webhook signing key 等秘密只保存在服务端配置边界，不得进入 sandbox payload 或日志。

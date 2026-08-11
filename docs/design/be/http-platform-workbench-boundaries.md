@@ -32,7 +32,7 @@
 - `/v1` platform privacy consent 路由从 `platformapi` 注册；code-session worker、ingress 与 upstream proxy 路由由 `codesessions.Handler` 注册，并在 handler 内执行专用鉴权。
 - `/v1/messages` 进入通用凭据感知中间件；code-session Messages token 只在 service auth 的这个 `POST` 路径被接受。
 - `registerPlatformConsoleRoutes` 将 `/api`、`/auth`、`/oauth`、`/web-api` 的平台 console 路由直接注册到根 chi router，不再通过成对的精确路径和 wildcard handler 转发到第二个 router。
-- `/api/organizations/{orgUuid}` 下的 Workbench 子路由从 `workbench` 注册，并由 `internal/api` 注入 `anthropic_upstream` 配置。
+- `/api/organizations/{orgUuid}` 下的 Workbench 子路由从 `workbench` 注册，并由 `internal/api` 注入 persistence store、model catalog、`anthropic_upstream` 配置和组件 logger。
 
 路径、middleware 顺序、鉴权入口和响应结构在本次迁移中保持不变。
 
@@ -44,6 +44,7 @@
 - `internal/platform` 保持领域类型/错误包，不引入 HTTP handler，避免与 `internal/db` 形成反向依赖或 import cycle。
 - `internal/api` 只保存 `codesessions.Handler` 作为 HTTP 资源入口；需要创建 code session 或发布事件的 `sessions`、`environments` 依赖 `codesessions.Service`，不依赖 HTTP handler。
 - `codesessions.Service` 不持有 `config.Config`、WebSocket/CA cache 或 HTTP client。协议状态只能由长生命周期的 `codesessions.Handler` 持有。
+- `workbenchHandler` 持有 Workbench 的稳定依赖；request context 不承载 persistence、upstream、catalog 或 user store。
 
 ## 兼容与测试
 

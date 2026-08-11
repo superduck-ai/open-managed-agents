@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ModelCatalogMapper">
+    <select id="FindByCatalogKey" result="optional" resultType="modelCatalogSnapshotRow">
+        SELECT catalog_key, models, last_attempt_at, last_success_at, last_error
+        FROM model_catalog_snapshots
+        WHERE catalog_key = #{catalogKey}
+    </select>
+
+    <insert id="SaveSuccess" result="exec">
+        INSERT INTO model_catalog_snapshots (
+            catalog_key, models, last_attempt_at, last_success_at, last_error
+        )
+        VALUES (
+            #{params.CatalogKey}, CAST(#{params.Models} AS jsonb),
+            #{params.LastAttemptAt}, #{params.LastSuccessAt}, NULL
+        )
+        ON CONFLICT (catalog_key) DO UPDATE
+        SET models = excluded.models,
+            last_attempt_at = excluded.last_attempt_at,
+            last_success_at = excluded.last_success_at,
+            last_error = NULL,
+            updated_at = NOW()
+    </insert>
+
+    <insert id="RecordFailure" result="exec">
+        INSERT INTO model_catalog_snapshots (
+            catalog_key, models, last_attempt_at, last_error
+        )
+        VALUES (
+            #{params.CatalogKey}, CAST(#{params.Models} AS jsonb),
+            #{params.LastAttemptAt}, #{params.LastError}
+        )
+        ON CONFLICT (catalog_key) DO UPDATE
+        SET last_attempt_at = excluded.last_attempt_at,
+            last_error = excluded.last_error,
+            updated_at = NOW()
+    </insert>
+
+    <delete id="DeleteByCatalogKey" result="exec">
+        DELETE FROM model_catalog_snapshots
+        WHERE catalog_key = #{catalogKey}
+    </delete>
+</mapper>

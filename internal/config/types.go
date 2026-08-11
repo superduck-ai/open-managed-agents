@@ -15,6 +15,7 @@ type Config struct {
 	Redis             RedisConfig             `yaml:"redis"`
 	Storage           StorageConfig           `yaml:"storage"`
 	AnthropicUpstream AnthropicUpstreamConfig `yaml:"anthropic_upstream"`
+	ModelCatalog      ModelCatalogConfig      `yaml:"model_catalog"`
 	Batch             BatchConfig             `yaml:"batch"`
 	E2B               E2BConfig               `yaml:"e2b"`
 	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
@@ -87,6 +88,12 @@ type AnthropicUpstreamConfig struct {
 	BaseURL       string            `yaml:"base_url"`
 	APIKey        string            `yaml:"api_key"`
 	ModelMappings map[string]string `yaml:"model_mappings"`
+}
+
+type ModelCatalogConfig struct {
+	RefreshInterval time.Duration `yaml:"refresh_interval"`
+	RefreshTimeout  time.Duration `yaml:"refresh_timeout"`
+	DefaultModelID  string        `yaml:"default_model_id"`
 }
 
 type BatchConfig struct {

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/modelcatalog"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -16,9 +17,10 @@ type bootstrapAccountStore interface {
 	ListBootstrapUserOrganizations(ctx context.Context, userExternalID string, preferredOrgUUID string) ([]UserOrganizationRecord, error)
 }
 
-func handleBootstrap(store OrganizationStore) http.HandlerFunc {
+func handleBootstrap(store OrganizationStore, catalog modelcatalog.Reader) http.HandlerFunc {
 	bootstrapStore, _ := store.(bootstrapAccountStore)
 	return func(w http.ResponseWriter, r *http.Request) {
+		models := loadPlatformModelCatalog(r.Context(), catalog)
 		orgUUID := firstNonEmpty(chi.URLParam(r, "orgUuid"), "")
 		userExternalID := ""
 		if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
@@ -30,7 +32,7 @@ func handleBootstrap(store OrganizationStore) http.HandlerFunc {
 
 		var account *Account
 		if userExternalID != "" && bootstrapStore != nil {
-			built, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), bootstrapStore, userExternalID, orgUUID)
+			built, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), bootstrapStore, userExternalID, orgUUID, models)
 			if err != nil {
 				internalError(w, "failed to load bootstrap account")
 				return
@@ -40,11 +42,11 @@ func handleBootstrap(store OrganizationStore) http.HandlerFunc {
 				orgUUID = selectedOrgUUID
 			}
 		}
-		writeJSON(w, http.StatusOK, buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r)))
+		writeJSON(w, http.StatusOK, buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r), models))
 	}
 }
 
-func buildBootstrapAccount(ctx context.Context, store bootstrapAccountStore, userExternalID string, preferredOrgUUID string) (Account, string, error) {
+func buildBootstrapAccount(ctx context.Context, store bootstrapAccountStore, userExternalID string, preferredOrgUUID string, models platformModelCatalog) (Account, string, error) {
 	user, err := store.GetBootstrapUser(ctx, userExternalID)
 	if err != nil {
 		return Account{}, "", err
@@ -56,5 +58,5 @@ func buildBootstrapAccount(ctx context.Context, store bootstrapAccountStore, use
 	if err != nil {
 		return Account{}, "", err
 	}
-	return buildAccount(*user, orgs, preferredOrgUUID)
+	return buildAccount(*user, orgs, preferredOrgUUID, models)
 }

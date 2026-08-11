@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,22 +12,29 @@ import (
 
 type MetadataValidator func(map[string]string) error
 
-func DecodeObjectBody[T any](w http.ResponseWriter, r *http.Request, maxBodySize int64) (T, error) {
-	var zero T
+type invalidJSONBodyError struct {
+	cause error
+}
+
+func (e *invalidJSONBodyError) Error() string {
+	return "Invalid JSON body"
+}
+
+func (e *invalidJSONBodyError) Unwrap() error {
+	return e.cause
+}
+
+func DecodeObjectBodyAs[T any](w http.ResponseWriter, r *http.Request, maxBodySize int64) (*T, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
-	var body *T
 	decoder := json.NewDecoder(r.Body)
+	var body *T
 	if err := decoder.Decode(&body); err != nil {
-		return zero, errors.New("Invalid JSON body")
+		return nil, &invalidJSONBodyError{cause: err}
 	}
 	if body == nil {
-		return zero, errors.New("JSON body must be an object")
+		return nil, errors.New("JSON body must be an object")
 	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return zero, errors.New("Invalid JSON body")
-	}
-	return *body, nil
+	return body, nil
 }
 
 func MarshalRaw(value any) (json.RawMessage, error) {

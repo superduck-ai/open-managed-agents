@@ -46,7 +46,7 @@ type createVaultRequest struct {
 }
 
 type updateVaultRequest struct {
-	DisplayName *string         `json:"display_name"`
+	DisplayName json.RawMessage `json:"display_name"`
 	Metadata    json.RawMessage `json:"metadata"`
 }
 
@@ -57,7 +57,7 @@ type createCredentialRequest struct {
 }
 
 type updateCredentialRequest struct {
-	DisplayName *string         `json:"display_name"`
+	DisplayName json.RawMessage `json:"display_name"`
 	Metadata    json.RawMessage `json:"metadata"`
 	Auth        json.RawMessage `json:"auth"`
 }
@@ -191,7 +191,7 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	request, err := httpapi.DecodeObjectBody[createVaultRequest](w, r, maxVaultBodySize)
+	request, err := httpapi.DecodeObjectBodyAs[createVaultRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -317,7 +317,7 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Vault is archived"))
 		return
 	}
-	request, err := httpapi.DecodeObjectBody[updateVaultRequest](w, r, maxVaultBodySize)
+	request, err := httpapi.DecodeObjectBodyAs[updateVaultRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -416,7 +416,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Vault is archived"))
 		return
 	}
-	request, err := httpapi.DecodeObjectBody[createCredentialRequest](w, r, maxVaultBodySize)
+	request, err := httpapi.DecodeObjectBodyAs[createCredentialRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -575,7 +575,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Credential is archived"))
 		return
 	}
-	request, err := httpapi.DecodeObjectBody[updateCredentialRequest](w, r, maxVaultBodySize)
+	request, err := httpapi.DecodeObjectBodyAs[updateCredentialRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -858,11 +858,18 @@ func normalizeMetadata(metadata map[string]string) (json.RawMessage, error) {
 	return json.Marshal(metadata)
 }
 
-func patchDisplayName(current string, raw *string) (string, error) {
-	if raw == nil {
+func patchDisplayName(current string, raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
 		return current, nil
 	}
-	displayName, err := requireNonEmptyString(*raw, "display_name")
+	if isJSONNull(raw) {
+		return "", errors.New("display_name cannot be null")
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", errors.New("display_name must be a string")
+	}
+	displayName, err := requireNonEmptyString(value, "display_name")
 	if err != nil {
 		return "", err
 	}

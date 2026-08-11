@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -51,6 +52,22 @@ type environmentResponse struct {
 type environmentPageResponse struct {
 	Data     []environmentResponse `json:"data"`
 	NextPage *string               `json:"next_page"`
+}
+
+type environmentMutationRequest struct {
+	Config      json.RawMessage `json:"config"`
+	Description json.RawMessage `json:"description"`
+	Metadata    json.RawMessage `json:"metadata"`
+	Name        json.RawMessage `json:"name"`
+	Scope       json.RawMessage `json:"scope"`
+}
+
+type environmentWorkUpdateRequest struct {
+	Metadata json.RawMessage `json:"metadata"`
+}
+
+type environmentWorkStopRequest struct {
+	Force json.RawMessage `json:"force"`
 }
 
 type deleteResponse struct {
@@ -136,7 +153,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -145,27 +162,27 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureEnvironment(h.cfg.SDKFixtures.EnvironmentID, false))
 		return
 	}
-	name, err := parseRequiredStringField(fields, "name")
+	name, err := parseRequiredRawString(body.Name, "name")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	description, err := parseOptionalDescription(fields)
+	description, err := parseOptionalDescription(body.Description)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	metadata, err := normalizeMetadata(fieldOrDefault(fields, "metadata", `{}`))
+	metadata, err := normalizeMetadata(rawOrDefault(body.Metadata, `{}`))
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	scope, err := parseScope(fields["scope"])
+	scope, err := parseScope(body.Scope)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	configRaw, err := normalizeConfigForCreate(fields["config"])
+	configRaw, err := normalizeConfigForCreate(body.Config)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -303,42 +320,42 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, environmentID s
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update environment"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	body, err := httpapi.DecodeObjectBodyAs[environmentMutationRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
 	next := current
-	if raw, ok := fields["name"]; ok {
-		next.Name, err = parseRequiredRawString(raw, "name")
+	if len(body.Name) > 0 {
+		next.Name, err = parseRequiredRawString(body.Name, "name")
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["description"]; ok {
-		next.Description, err = descriptionFromRaw(raw)
+	if len(body.Description) > 0 {
+		next.Description, err = descriptionFromRaw(body.Description)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = patchMetadata(next.Metadata, raw)
+	if len(body.Metadata) > 0 {
+		next.Metadata, err = patchMetadata(next.Metadata, body.Metadata)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["scope"]; ok {
-		next.Scope, err = parseScope(raw)
+	if len(body.Scope) > 0 {
+		next.Scope, err = parseScope(body.Scope)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["config"]; ok {
-		next.Config, err = normalizeConfigForUpdate(current.Config, raw)
+	if len(body.Config) > 0 {
+		next.Config, err = normalizeConfigForUpdate(current.Config, body.Config)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -490,7 +507,7 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureWork(env.ExternalID, workID, "queued"))
 		return
 	}
-	fields, err := decodeObjectBody(w, r)
+	body, err := httpapi.DecodeObjectBodyAs[environmentWorkUpdateRequest](w, r, maxEnvironmentBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -506,8 +523,8 @@ func (h *Handler) updateWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metadata := current.Metadata
-	if raw, ok := fields["metadata"]; ok {
-		metadata, err = patchMetadata(metadata, raw)
+	if len(body.Metadata) > 0 {
+		metadata, err = patchMetadata(metadata, body.Metadata)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -657,17 +674,10 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	force := false
-	if r.Body != nil {
-		fields, err := decodeObjectBody(w, r)
-		if err == nil {
-			if raw, ok := fields["force"]; ok && !isJSONNull(raw) {
-				if err := json.Unmarshal(raw, &force); err != nil {
-					writeBadRequest(w, r, errors.New("force must be a boolean"))
-					return
-				}
-			}
-		}
+	force, err := decodeEnvironmentWorkStopForce(w, r)
+	if err != nil {
+		writeBadRequest(w, r, err)
+		return
 	}
 	workID := chi.URLParam(r, "work_id")
 	if h.isOfficialSDKWorkFixture(r, workID) {
@@ -702,6 +712,24 @@ func (h *Handler) stopWorkRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromWork(record))
+}
+
+func decodeEnvironmentWorkStopForce(w http.ResponseWriter, r *http.Request) (bool, error) {
+	body, err := httpapi.DecodeObjectBodyAs[environmentWorkStopRequest](w, r, maxEnvironmentBodySize)
+	if errors.Is(err, io.EOF) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(body.Force) == 0 || isJSONNull(body.Force) {
+		return false, nil
+	}
+	var force bool
+	if err := json.Unmarshal(body.Force, &force); err != nil {
+		return false, errors.New("force must be a boolean")
+	}
+	return force, nil
 }
 
 func (h *Handler) killSandboxForWork(ctx context.Context, env db.Environment, work db.EnvironmentWork) error {
@@ -1023,28 +1051,10 @@ func (h *Handler) isOfficialSDKWorkFixture(r *http.Request, workID string) bool 
 		workID == h.cfg.SDKFixtures.WorkID
 }
 
-func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxEnvironmentBodySize)
-	var fields map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil {
-		return nil, errors.New("Invalid JSON body")
-	}
-	if fields == nil {
-		return nil, errors.New("JSON body must be an object")
-	}
-	return fields, nil
-}
-
-func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
+func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
+	if len(raw) == 0 {
 		return "", fmt.Errorf("%s is required", name)
 	}
-	return parseRequiredRawString(raw, name)
-}
-
-func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if isJSONNull(raw) {
 		return "", fmt.Errorf("%s cannot be null", name)
 	}
@@ -1058,9 +1068,8 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	return value, nil
 }
 
-func parseOptionalDescription(fields map[string]json.RawMessage) (string, error) {
-	raw, ok := fields["description"]
-	if !ok {
+func parseOptionalDescription(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
 		return "", nil
 	}
 	return descriptionFromRaw(raw)
@@ -1338,8 +1347,8 @@ func rawConfigType(raw json.RawMessage) string {
 	return rawStringOrEmpty(fields["type"])
 }
 
-func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
-	if raw, ok := fields[name]; ok {
+func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
+	if len(raw) > 0 {
 		return raw
 	}
 	return json.RawMessage(fallback)

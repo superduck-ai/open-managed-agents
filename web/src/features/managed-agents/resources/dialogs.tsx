@@ -57,6 +57,7 @@ import {
   initialFormValues,
   parseCredentialAuthType,
   patchCredentialFormValues,
+  vaultOAuthErrorMessage,
 } from './model';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
 import { DeploymentDialogActions, DeploymentDialogHeader } from './deployment-dialog-components';
@@ -215,7 +216,7 @@ export function CredentialDialog({
       pendingOAuthFlowIdRef.current = null;
       oauthPopupRef.current = null;
       if (message.error_code) {
-        setError(message.error_code);
+        setError(vaultOAuthErrorMessage(message.error_code, msg));
         setSubmitting(false);
         return;
       }

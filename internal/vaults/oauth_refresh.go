@@ -103,9 +103,13 @@ func (i *Injector) refreshMCPOAuthAttempt(
 	accessToken, nextAuth, nextSecret, err := exchangeMCPOAuthRefresh(ctx, i.client(), publicAuth, secret, now)
 	if err != nil {
 		// Exchange failed (e.g. invalid_grant after a concurrent winner
-		// consumed the refresh_token). Reload once and reuse any usable
-		// token instead of forcing another exchange.
+		// consumed the refresh_token). Reload and retry only when the
+		// persisted envelope advanced; otherwise keep the exchange error.
+		before := current.SecretVersion
 		if reloadErr := reloadCredential(ctx, store, current); reloadErr != nil {
+			return "", nil, false, err
+		}
+		if current.SecretVersion == before {
 			return "", nil, false, err
 		}
 		return "", nil, true, nil

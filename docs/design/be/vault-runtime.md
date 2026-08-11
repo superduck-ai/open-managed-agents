@@ -169,10 +169,11 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 | 凭证类型 | **static_bearer** + **mcp_oauth**；`environment_variable` 本切片不做 |
 | 注入落点 | Session MCP HTTP proxy（`WithVaultSecrets` → `Injector.WrapTransport`）；**不**走 CONNECT MITM。Runner **不再**自动改写 `mcp_config` 到该 proxy |
 | `expires_at` | 缺失 → 直接注入；存在且 `now >= expires_at` → refresh → reseal → 注入（**无** near-expiry skew）。refresh 写回：`expires_in > 0` 才更新；否则仅当旧 `expires_at` 仍未过期时保留，否则置空 |
-| 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk |
+| 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk。`excluded` / `forceRefresh` 按 **plan 凭证 ExternalID**（`planCredID`）记账，不依赖 refresh CAS 返回行是否带齐字段 |
+| 401 重试 body | RoundTrip 前缓冲请求体（上限 32 MiB）；超限 **fail closed**（不静默截断重放），由 `snapshotRequestBody` / `readWithinLimit` 实现 |
 | Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
 | 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案为 `InjectionUnavailablePublicMessage`。MCP proxy 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
-| 并发 refresh | 同 credential 进程内串行 + 重读一次；`version` CAS 冲突重读并将 force 清为 false，已有未过期 token 则复用（401 仅首轮 force）；exchange 失败同样重读复用（one-time refresh_token） |
+| 并发 refresh | 同 credential 进程内串行 + 重读一次；`version` CAS 冲突重读并将 force 清为 false，已有未过期 token 则复用（401 仅首轮 force）；exchange 失败后重读，**仅当 `SecretVersion` 前进**时再试并复用，否则保留原 exchange 错误（避免同 refresh_token 反复换） |
 | Credential `networking` | **不做** |
 | 数据加载 | **每个 MCP RoundTrip 查库一次**（`vault_ids` + active credentials）；401 walk / 换凭证不重复加载；不缓存明文 token |
 | Redirect | **不自动跟随**跨 origin redirect |

@@ -30,7 +30,7 @@ func TestResolveMCPVaultOAuthClientCredentialsBYOOverridesPlatform(t *testing.T)
 		"https://api.githubcopilot.com/mcp/",
 	)
 	if id != "platform-id" || secret != "platform-secret" {
-		t.Fatalf("platform registry miss: id=%q secret=%q", id, secret)
+		t.Fatalf("platform registry hit: id=%q secret=%q", id, secret)
 	}
 
 	id, secret = resolveMCPVaultOAuthClientCredentials("", "", clients, "https://other.example/mcp")

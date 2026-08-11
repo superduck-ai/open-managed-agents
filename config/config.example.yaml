@@ -43,6 +43,7 @@ vault:
   # Optional Platform OAuth Clients (exact mcp_server_url match). When
   # vault-auth/start omits BYO client_id, a hit supplies platform client
   # credentials before DCR. Do not commit real client_secret values.
+  # See docs/configuration-reference.yaml for the full platform_oauth_clients shape.
   # platform_oauth_clients:
   #   - mcp_server_url: "https://api.githubcopilot.com/mcp/"
   #     client_id: "Iv23..."

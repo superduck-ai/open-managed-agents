@@ -63,8 +63,10 @@ func TestMCPProxyAuthorizationRejectsURLNotInSession(t *testing.T) {
 func TestMCPProxyVaultInjectionRejectedReturns502(t *testing.T) {
 	targetURL := "https://mcp.example.com/mcp"
 	handler, token := newMCPProxyTestHandler(t, targetURL, slog.Default())
-	handler.injectMCPProxyHeaders = func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error {
-		return vaults.ErrInjectionRejected
+	handler.wrapMCPVaultTransport = func(context.Context, SessionCredentialClaims, *url.URL, http.RoundTripper) http.RoundTripper {
+		return roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, vaults.ErrInjectionRejected
+		})
 	}
 
 	router := chi.NewRouter()
@@ -134,13 +136,16 @@ func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) 
 			},
 		}, nil
 	}
-	handler.injectMCPProxyHeaders = func(_ context.Context, claims SessionCredentialClaims, target *url.URL, headers http.Header) error {
-		if claims.SessionID != "cse_test" || target.String() != targetURL {
-			t.Errorf("credential injector context = session %q target %q", claims.SessionID, target)
-		}
-		headers.Set("Authorization", "Bearer upstream-secret")
-		headers.Set("X-MCP-Key", "vault-secret")
-		return nil
+	handler.wrapMCPVaultTransport = func(_ context.Context, claims SessionCredentialClaims, target *url.URL, base http.RoundTripper) http.RoundTripper {
+		return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if claims.SessionID != "cse_test" || target.String() != targetURL {
+				t.Errorf("credential injector context = session %q target %q", claims.SessionID, target)
+			}
+			out := req.Clone(req.Context())
+			out.Header.Set("Authorization", "Bearer upstream-secret")
+			out.Header.Set("X-MCP-Key", "vault-secret")
+			return base.RoundTrip(out)
+		})
 	}
 	token, err := credentials.Issue(SessionCredentialIdentity{
 		SessionID:        "cse_test",
@@ -243,4 +248,10 @@ func newMCPProxyTestHandler(t *testing.T, allowedMCPURL string, logger *slog.Log
 		t.Fatalf("issue session token: %v", err)
 	}
 	return handler, token
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

@@ -5,13 +5,14 @@
 两件事：
 
 1. **存库加密（已完成）**：库被拖走、或只有读库权限的人，都拿不到明文密码。
-2. **运行时注入（static_bearer MVP：已完成）**：Sandbox 调需要认证的 MCP 时能用上密码；Sandbox 本身永远看不到真密码。
+2. **运行时注入（已完成，Runner 不自动接入）**：显式走 Session MCP HTTP proxy 时可注入凭证；Sandbox / Runner 默认看不到真密码。
 
 主密钥放 `config.yaml` / `kek_file`（全局一把，多 workspace 共用）。本地支持 `version` + `decrypt_only`。不做分片；`KeyProvider` 预留以后接 KMS。
 
 ## 背景
 
-Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）仍支持对显式传入的真实 `mcp_url` 注入 static_bearer，但 Managed Agent Runner 不再自动把 MCP config URL 改写到该接口。
+Vault CRUD 和 OAuth 注册已经有了；存库侧已切到信封加密。Session MCP HTTP proxy（`/v2/ccr-sessions/{id}/mcp`）仍支持对显式传入的真实 `mcp_url` 注入 `static_bearer` / `mcp_oauth`，但 Managed Agent Runner 不再自动把 MCP config URL 改写到该接口。
+
 ## 威胁模型（加密管到哪）
 
 | 场景 | 加密能否挡住 |
@@ -153,42 +154,48 @@ vault:
 
 KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销毁；本期价值在「换钥后旧数据仍可读」，不靠扫表迁移。
 
-## 运行时注入（static_bearer MVP）
+## 运行时注入（MCP HTTP proxy）
 
-> **状态：已实现但不再由 Runner 自动接入。** 存库加密已完成；MCP HTTP proxy 路径仅注入 static_bearer。
+> **状态：已实现但不再由 Runner 自动接入。** 存库加密已完成；MCP HTTP proxy 注入 `static_bearer` 与 `mcp_oauth`（含 refresh / 401 一轮重试）。
 
 目标：显式调用 OMA MCP HTTP proxy 时，由 OMA 在转发前注入凭证；调用方只看到 proxy URL，不看到 token。
 
-注入点：`/v2/ccr-sessions/{code_session_id}/mcp`。显式调用方把真实 MCP URL 放进 `mcp_url`；Proxy 验 JWT、按 Agent Snapshot + Environment 策略授权后，对真实 `mcp_url` 做 Credential URL match，再注入 `Authorization` 并转发。不依赖 upstream CONNECT MITM。Managed Agent 当前保留原始 MCP URL 并通过 `HTTPS_PROXY` 走 CONNECT，因此不会经过此注入点；如需恢复自动 static_bearer 注入，应在 CONNECT MITM 边界单独实现。
+注入点：`/v2/ccr-sessions/{code_session_id}/mcp`。显式调用方把真实 MCP URL 放进 `mcp_url`；Proxy 验 JWT、按 Agent Snapshot + Environment 策略授权后，对真实 `mcp_url` 做 Credential URL match，再注入 `Authorization` 并转发。不依赖 upstream CONNECT MITM。Managed Agent 当前保留原始 MCP URL 并通过 `HTTPS_PROXY` 走 CONNECT，因此不会经过此注入点；如需恢复自动 vault 注入，应在 CONNECT MITM 边界单独实现。
 
-### MVP 决策（grilling 已确认）
+### 运行时注入决策（grilling 已确认）
 
 | 项 | 决定 |
 |---|---|
-| 凭证类型 | 仅 **static_bearer**；`mcp_oauth` / `environment_variable` 本切片不做 |
-| 注入落点 | Session MCP HTTP proxy（`injectMCPProxyHeaders` → `vaults.Injector`）；**不**走 CONNECT MITM |
-| Credential `networking` | **不做**；出站仍受 Environment / MCP proxy 策略约束 |
-| 数据加载 | **每请求查库**（code session → session → `vault_ids` → 活动凭证）；不缓存明文 token |
-| Redirect | **不自动跟随**跨 origin redirect（ReverseProxy 透传 3xx，不代跟） |
-| host 未覆盖 | **passthrough**（即使 session 有 `vault_ids`） |
-| 失败对外 | 注入拒绝 / Open 失败 → **HTTP 502** |
-| 代码落点 | 匹配 / Open 在 `internal/vaults`；`codesessions.WithVaultSecrets` 接到 MCP proxy |
+| 凭证类型 | **static_bearer** + **mcp_oauth**；`environment_variable` 本切片不做 |
+| 注入落点 | Session MCP HTTP proxy（`WithVaultSecrets` → `Injector.WrapTransport`）；**不**走 CONNECT MITM。Runner **不再**自动改写 `mcp_config` 到该 proxy |
+| `expires_at` | 缺失 → 直接注入；存在且 `now >= expires_at` → refresh → reseal → 注入（**无** near-expiry skew）。refresh 写回：`expires_in > 0` 才更新；否则仅当旧 `expires_at` 仍未过期时保留，否则置空 |
+| 401 | 上游 401 且为 `mcp_oauth` → refresh 一次再试上游；仍失败 → 跳过该凭证继续 walk |
+| Open / refresh 失败 | **跳过该条**继续下一条可注入匹配（多 vault / 近似 URL），跳过路径打 Warn（credential_id / auth_type / 脱敏 error）；全部失败 → 502 |
+| 运行时错误合同 | fail-closed 出口统一为 `ErrInjectionRejected`（`errors.go` + `injectionRejected`）；客户端文案为 `InjectionUnavailablePublicMessage`。MCP proxy 用 `errors.Is` 映射 502，**不**走 Vaults JSON `ErrorAdapter`。skip 路径内部错误同样由 `errors.go` 命名构造，不在 injector/refresh 内散落 `errors.New` |
+| 并发 refresh | 同 credential 进程内串行 + 重读一次；`version` CAS 冲突重读并将 force 清为 false，已有未过期 token 则复用（401 仅首轮 force）；exchange 失败同样重读复用（one-time refresh_token） |
+| Credential `networking` | **不做** |
+| 数据加载 | **每个 MCP RoundTrip 查库一次**（`vault_ids` + active credentials）；401 walk / 换凭证不重复加载；不缓存明文 token |
+| Redirect | **不自动跟随**跨 origin redirect |
+| host 未覆盖 | **passthrough** |
+| 本切片不做 | `mcp_oauth_validate` 真 refresh；`vault_credential.refresh_failed` webhook |
 
 ### 每次 MCP 出站流程
 
 1. Proxy 已认证 session（`authenticateRuntimeSession`）→ 解析 `mcp_url` → 策略授权。
-2. 查 code session → workspace → `vault_ids` → 活动凭证；按真实 `mcp_url` 匹配；按 `vault_ids` 顺序，**首个可注入（static_bearer）命中胜出**。非 static_bearer 跳过。凭证 auth schema 无法解析 → **fail-closed**；同 scheme、host、effective port 无 path 命中 → **fail-closed**；目标不在任何凭证的 `mcp_server_url` 上 → **passthrough**。
-3. Open 信封得到 Transient secret payload（token）。Open 失败 → **拒绝该请求**（不换下一条、不 passthrough）。
-4. 删掉客户端带给 proxy 的 `Authorization`（session JWT），加 `Authorization: Bearer <token>`，转发真实上游。passthrough 不写上游 Authorization。
+2. 查 code session → workspace → `vault_ids` → 活动凭证（**每个 RoundTrip 一次**）；按真实 `mcp_url` 匹配；按 `vault_ids` 顺序 walk **可注入**凭证（`static_bearer` / `mcp_oauth`）。凭证 auth schema 无法解析 → **fail-closed**；同 scheme、host、effective port 无 path 命中 → **fail-closed**；host 不在任何凭证的 `mcp_server_url` 上 → **passthrough**。
+3. Open 信封得到 Transient secret payload。`mcp_oauth` 若已过期则 refresh（CAS reseal）后再取 access token。Open/refresh 失败 → **跳过该条**试下一条。
+4. 删掉客户端带给 proxy 的 `Authorization`（session JWT），加 `Authorization: Bearer <token>`，转发真实上游。上游 401 时对当前 `mcp_oauth` 再 refresh 一轮并重试；仍失败则排除该凭证继续 walk。
 5. 跨 origin redirect：代理不自动跟；客户端新请求重新匹配。
+
+`mcp_oauth` 匹配、open、refresh、reseal 统一走 `auth_schema` / `secret_schema`（`decodeCredentialAuth`、`decodeMCPOAuthCredentialSecret`），不另维护平行 `json.RawMessage` 结构；`expires_at` 为可选 `*string`（缺失 → 视为未过期直接注入）。写回信封时用命名 struct marshal，token endpoint 响应才是外部 wire DTO。
 
 匹配规则：凭证与请求 URL 的 scheme、hostname、effective port 必须一致；凭证 `mcp_server_url` 的 path 必须是请求 path 的**按 `/` 分段前缀**。例如 `…/mcp` 命中 `…/mcp`、`…/mcp/sse`，不命中 `…/mcp-admin`。`https://host` 不得匹配 `http://host:443`（避免把 Bearer 注到明文 HTTP）。
 
 后续（非本切片）：
 
-- **mcp_oauth**：过期检查 + refresh 后再注入
 - **environment_variable**：环境占位符 / 出口替换（E2B 上另议）
 - Credential 级 `networking.allowed_hosts` 门控
+- `mcp_oauth_validate` 真探测；`vault_credential.refresh_failed` webhook
 
 显式 MCP proxy 调用方只持有 proxy URL + session JWT，没有上游 token。真 token 只在 OMA proxy 里瞬态出现。日志不记录明文。Runner 生成的 `mcp_config` 则保留原始 URL，不携带 session JWT 或上游 token。
 
@@ -199,7 +206,7 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 2. DB Direct cutover：加信封列 + 删 `secret_payload`；无 Expand/Backfill ✅
 3. vault API 收口：写走加密，读只返回元信息；缺信封 → 400；Open 失败 → 5xx ✅（含 platform MCP OAuth callback seal）
 4. Transport 注入（static_bearer MVP）✅
-5. OAuth 刷新；env 占位符；credential networking — **未做**
+5. OAuth 刷新 + mcp_oauth 注入（含 401 一轮）✅；env 占位符；credential networking — **未做**
 
 ## 验收（存库加密：已完成）
 
@@ -212,11 +219,13 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 - 本地 KEK：`version` + `decrypt_only`（无 rewrap）。
 - `go test ./internal/secrets/ ./internal/vaults/ ./internal/config/ ./internal/db/ ./internal/api/ -count=1`；相关 E2E / `tests/vaults_encryption_test.go`。
 
-## 验收（运行时注入 MVP：已完成）
+## 验收（运行时注入：已完成）
 
-- 显式 MCP proxy 请求走 `/v2/ccr-sessions/{id}/mcp`；vault 注入接在该 proxy，不依赖 MITM。Managed Agent Runner 不再自动生成该 URL。
-- static_bearer：path 前缀命中后注入 Bearer；沙箱 / `mcp_config` / 日志不见 token。
-- host 未覆盖 → passthrough；同 host path 不配 → 拒绝（502）；命中后 Open 失败 → 拒绝（502）。
+- 显式 MCP proxy 请求走 `/v2/ccr-sessions/{id}/mcp`；vault 注入接在该 proxy（`WrapTransport`），不依赖 MITM。Managed Agent Runner 不再自动生成该 URL。
+- `static_bearer` / `mcp_oauth`：path 前缀命中后注入 Bearer；显式 proxy 调用方 / 日志不见 token。Runner 生成的 `mcp_config` 保留原始 URL，不携带 session JWT 或上游 token。
+- `mcp_oauth`：无 `expires_at` 直接注入；过期则 refresh + CAS reseal；上游 401 再 refresh 一轮。
+- Open / refresh / 401 重试失败 → 跳过该凭证继续 walk；全部失败 → 502。
+- host 未覆盖 → passthrough；同 host path 不配 → 拒绝（502）。
 - 不自动跟随跨 origin redirect 携带注入头。
 - Environment / MCP proxy 网络策略仍生效；本切片不做 credential `networking`。
 
@@ -234,9 +243,10 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 Redirect 仍由前端传入 `{origin}/oauth/vault/success`。控制台 Optional Client 字段保留。用户 access/refresh token 仍进个人 Credential 信封。
 
-## 不做（注入 MVP）
+## 不做（本切片外）
 
-- `mcp_oauth` 注入与 refresh
+- `mcp_oauth_validate` 真 refresh / live MCP probe
+- `vault_credential.refresh_failed` webhook 发出
 - `environment_variable` 出口替换
 - Credential 级 `networking.allowed_hosts`
 - Expand/Backfill、`backfill_secrets`

@@ -104,16 +104,6 @@ type platformMCPOAuthClientRegistrationResponse struct {
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
 }
 
-type platformMCPOAuthTokenResponse struct {
-	AccessToken      string `json:"access_token"`
-	RefreshToken     string `json:"refresh_token"`
-	TokenType        string `json:"token_type"`
-	Scope            string `json:"scope"`
-	ExpiresIn        any    `json:"expires_in"`
-	Error            string `json:"error"`
-	ErrorDescription string `json:"error_description"`
-}
-
 func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
@@ -377,7 +367,19 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		return
 	}
 
-	publicAuth, secretPayload, err := buildPlatformMCPVaultOAuthCredentialPayloads(flow, token, now)
+	publicAuth, secretPayload, err := vaultsapi.BuildMCPOAuthStoredCredentialJSON(vaultsapi.MCPOAuthStoredCredentialInput{
+		MCPServerURL:            flow.MCPServerURL,
+		AccessToken:             token.AccessToken,
+		RefreshToken:            token.RefreshToken,
+		TokenEndpoint:           flow.TokenEndpoint,
+		ClientID:                flow.ClientID,
+		ClientSecret:            flow.ClientSecret,
+		TokenEndpointAuthMethod: flow.TokenEndpointAuthMethod,
+		Scope:                   firstNonEmpty(strings.TrimSpace(token.Scope), flow.Scope),
+		Resource:                flow.Resource,
+		ExpiresIn:               int64(token.ExpiresIn),
+		Now:                     now,
+	})
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "build mcp oauth credential payload for flow", "flow_external_id", flow.ExternalID, "error", err)
 		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, platformMCPVaultAuthVerificationRequestFailed, now)
@@ -864,144 +866,23 @@ func buildPlatformMCPVaultAuthorizeURL(discovery platformMCPOAuthDiscovery, redi
 	return authorizeURL.String(), nil
 }
 
-func exchangePlatformMCPOAuthCode(ctx context.Context, client *http.Client, flow db.MCPOAuthFlow, code string) (platformMCPOAuthTokenResponse, error) {
-	values := url.Values{}
-	values.Set("grant_type", "authorization_code")
-	values.Set("code", code)
-	values.Set("redirect_uri", flow.RedirectURL)
-	values.Set("client_id", flow.ClientID)
-	values.Set("code_verifier", flow.CodeVerifier)
+func exchangePlatformMCPOAuthCode(ctx context.Context, client *http.Client, flow db.MCPOAuthFlow, code string) (vaultsapi.OAuthTokenEndpointResult, error) {
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", flow.RedirectURL)
+	form.Set("client_id", flow.ClientID)
+	form.Set("code_verifier", flow.CodeVerifier)
 	if flow.Resource != "" {
-		values.Set("resource", flow.Resource)
+		form.Set("resource", flow.Resource)
 	}
-	authMethod := strings.TrimSpace(flow.TokenEndpointAuthMethod)
-	switch authMethod {
-	case "", "none":
-	case "client_secret_basic":
-		if flow.ClientSecret == "" {
-			return platformMCPOAuthTokenResponse{}, errors.New("client_secret_basic selected without client secret")
-		}
-	case "client_secret_post":
-		if flow.ClientSecret == "" {
-			return platformMCPOAuthTokenResponse{}, errors.New("client_secret_post selected without client secret")
-		}
-		values.Set("client_secret", flow.ClientSecret)
-	default:
-		return platformMCPOAuthTokenResponse{}, fmt.Errorf("unsupported token auth method %q", authMethod)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, flow.TokenEndpoint, strings.NewReader(values.Encode()))
-	if err != nil {
-		return platformMCPOAuthTokenResponse{}, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if authMethod == "client_secret_basic" {
-		basic := url.QueryEscape(flow.ClientID) + ":" + url.QueryEscape(flow.ClientSecret)
-		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(basic)))
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return platformMCPOAuthTokenResponse{}, err
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return platformMCPOAuthTokenResponse{}, err
-	}
-	var token platformMCPOAuthTokenResponse
-	if len(respBody) > 0 {
-		_ = json.Unmarshal(respBody, &token)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if token.Error != "" {
-			return platformMCPOAuthTokenResponse{}, fmt.Errorf("token endpoint status %d: %s", resp.StatusCode, token.Error)
-		}
-		return platformMCPOAuthTokenResponse{}, fmt.Errorf("token endpoint status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	if token.AccessToken == "" {
-		return platformMCPOAuthTokenResponse{}, errors.New("token endpoint returned no access_token")
-	}
-	return token, nil
-}
-
-func buildPlatformMCPVaultOAuthCredentialPayloads(flow db.MCPOAuthFlow, token platformMCPOAuthTokenResponse, now time.Time) (json.RawMessage, json.RawMessage, error) {
-	publicAuth := map[string]any{
-		"type":           "mcp_oauth",
-		"mcp_server_url": flow.MCPServerURL,
-	}
-	if expiresIn := parsePlatformMCPOAuthExpiresIn(token.ExpiresIn); expiresIn > 0 {
-		publicAuth["expires_at"] = now.Add(time.Duration(expiresIn) * time.Second).UTC().Format(time.RFC3339)
-	}
-	secretPayload := map[string]any{
-		"type":         "mcp_oauth",
-		"access_token": token.AccessToken,
-	}
-	if token.RefreshToken != "" {
-		scope := firstNonEmpty(strings.TrimSpace(token.Scope), flow.Scope)
-		publicRefresh := map[string]any{
-			"token_endpoint":      flow.TokenEndpoint,
-			"client_id":           flow.ClientID,
-			"token_endpoint_auth": platformMCPVaultPublicTokenEndpointAuth(flow.TokenEndpointAuthMethod),
-		}
-		if scope != "" {
-			publicRefresh["scope"] = scope
-		}
-		if flow.Resource != "" {
-			publicRefresh["resource"] = flow.Resource
-		}
-		publicAuth["refresh"] = publicRefresh
-		secretPayload["refresh"] = map[string]any{
-			"refresh_token":       token.RefreshToken,
-			"token_endpoint_auth": platformMCPVaultSecretTokenEndpointAuth(flow.TokenEndpointAuthMethod, flow.ClientSecret),
-		}
-	}
-	publicJSON, err := json.Marshal(publicAuth)
-	if err != nil {
-		return nil, nil, err
-	}
-	secretJSON, err := json.Marshal(secretPayload)
-	if err != nil {
-		return nil, nil, err
-	}
-	return copyJSONRaw(publicJSON), copyJSONRaw(secretJSON), nil
-}
-
-func platformMCPVaultPublicTokenEndpointAuth(method string) map[string]any {
-	method = strings.TrimSpace(method)
-	if method == "" {
-		method = "none"
-	}
-	return map[string]any{"type": method}
-}
-
-func platformMCPVaultSecretTokenEndpointAuth(method, clientSecret string) map[string]any {
-	method = strings.TrimSpace(method)
-	if method == "" {
-		method = "none"
-	}
-	auth := map[string]any{"type": method}
-	if (method == "client_secret_basic" || method == "client_secret_post") && clientSecret != "" {
-		auth["client_secret"] = clientSecret
-	}
-	return auth
-}
-
-func parsePlatformMCPOAuthExpiresIn(value any) int64 {
-	switch typed := value.(type) {
-	case float64:
-		return int64(typed)
-	case int64:
-		return typed
-	case json.Number:
-		parsed, _ := typed.Int64()
-		return parsed
-	case string:
-		parsed, _ := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
-		return parsed
-	default:
-		return 0
-	}
+	return vaultsapi.ExchangeOAuthTokenEndpoint(ctx, client, vaultsapi.OAuthTokenEndpointExchange{
+		TokenEndpoint:           flow.TokenEndpoint,
+		ClientID:                flow.ClientID,
+		ClientSecret:            flow.ClientSecret,
+		TokenEndpointAuthMethod: flow.TokenEndpointAuthMethod,
+		Form:                    form,
+	})
 }
 
 func platformMCPVaultOAuthCredentialMetadata(flow db.MCPOAuthFlow) (json.RawMessage, error) {

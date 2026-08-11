@@ -14,6 +14,68 @@ import (
 // unavailable.
 var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
 
+// ErrInjectionRejected is the MCP proxy fail-closed sentinel: the request host
+// is covered by a vault credential but no injectable credential could be used.
+// Transport adapters match with errors.Is and must not invent a second wording
+// for the client-facing message — use InjectionUnavailablePublicMessage.
+var ErrInjectionRejected = errors.New("vault credential injection rejected")
+
+// InjectionUnavailablePublicMessage is the client-safe text for MCP proxy 502
+// when injection rejects.
+const InjectionUnavailablePublicMessage = "MCP upstream credentials are unavailable"
+
+var errMCPOAuthRefreshUnavailable = errors.New("mcp_oauth refresh unavailable")
+
+func injectionRejected(cause error) error {
+	if cause == nil {
+		return ErrInjectionRejected
+	}
+	return fmt.Errorf("%w: %w", ErrInjectionRejected, cause)
+}
+
+func missingCredential() error {
+	return errors.New("missing credential")
+}
+
+func incompleteMCPOAuthSecret() error {
+	return errors.New("mcp_oauth secret payload is incomplete")
+}
+
+func emptyMCPOAuthAuth() error {
+	return errors.New("empty mcp_oauth auth")
+}
+
+func credentialAuthNotMCPOAuth() error {
+	return errors.New("credential auth is not mcp_oauth")
+}
+
+func mcpOAuthServerURLRequired() error {
+	return errors.New("mcp_oauth auth mcp_server_url is required")
+}
+
+func credentialTypeNotInjectable(authType string) error {
+	return fmt.Errorf("credential type %q is not injectable", authType)
+}
+
+func tokenEndpointAuthMissingSecret(method string) error {
+	return fmt.Errorf("%s selected without client secret", method)
+}
+
+func unsupportedTokenAuthMethod(method string) error {
+	return fmt.Errorf("unsupported token auth method %q", method)
+}
+
+func tokenEndpointStatus(status int, oauthError string) error {
+	if oauthError != "" {
+		return fmt.Errorf("token endpoint status %d: %s", status, oauthError)
+	}
+	return fmt.Errorf("token endpoint status %d", status)
+}
+
+func tokenEndpointMissingAccessToken() error {
+	return errors.New("token endpoint returned no access_token")
+}
+
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
 }

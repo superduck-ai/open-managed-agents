@@ -586,7 +586,7 @@ func TestDeploymentsAPI(t *testing.T) {
 
 		ctx := context.Background()
 		ids := getDefaultDBIDs(t, app.pool)
-		_, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agent.ID, func(db.Deployment) (db.WebhookDeliveryEvent, error) {
+		_, _, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agent.ID, func(db.Deployment) (db.WebhookDeliveryEvent, error) {
 			return db.WebhookDeliveryEvent{
 				EventType: "deployment.archived", Event: json.RawMessage(`{`), FallbackEnabled: true,
 			}, nil

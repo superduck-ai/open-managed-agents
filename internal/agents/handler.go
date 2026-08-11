@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -32,11 +33,12 @@ const (
 var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Handler struct {
-	cfg      config.Config
-	db       *db.DB
-	webhooks *webhooks.Enqueuer
-	logger   *slog.Logger
-	router   chi.Router
+	cfg       config.Config
+	db        *db.DB
+	webhooks  *webhooks.Enqueuer
+	scheduler *deploymentsapi.DeploymentScheduler
+	logger    *slog.Logger
+	router    chi.Router
 }
 
 type agentResponse struct {
@@ -100,9 +102,9 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, webhookEvents *webhooks.Enqueuer, logger *slog.Logger) *Handler {
+func NewHandler(cfg config.Config, database *db.DB, webhookEvents *webhooks.Enqueuer, scheduler *deploymentsapi.DeploymentScheduler, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, logger: logger}
+	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, scheduler: scheduler, logger: logger}
 	router := chi.NewRouter()
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -407,7 +409,7 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 			}, createdAt)
 		}
 	}
-	archived, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID, buildEvent)
+	archived, deployments, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID, buildEvent)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Agent not found: "+agentID))
@@ -416,6 +418,11 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		h.logger.ErrorContext(r.Context(), "archive agent", "error", err)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not archive agent"))
 		return
+	}
+	if h.scheduler != nil {
+		for _, deployment := range deployments {
+			h.scheduler.Update(r.Context(), deployment)
+		}
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(archived))
 }

@@ -78,9 +78,11 @@ func NewDeploymentScheduler(database *db.DB, webhookEvents *webhooks.Enqueuer, l
 	if err != nil {
 		return nil, err
 	}
-	return &DeploymentScheduler{
+	scheduler := &DeploymentScheduler{
 		database: database, client: client, logger: logger, registered: make(map[string]int64),
-	}, nil
+	}
+	worker.scheduler = scheduler
+	return scheduler, nil
 }
 
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
@@ -159,6 +161,9 @@ func (s *DeploymentScheduler) sync(ctx context.Context) error {
 
 func (s *DeploymentScheduler) updateLocked(state db.DeploymentSchedule) error {
 	if len(state.Schedule) == 0 {
+		if revision, ok := s.registered[state.ExternalID]; ok && revision > state.ScheduleRevision {
+			return nil
+		}
 		s.client.PeriodicJobs().RemoveByID(state.ExternalID)
 		delete(s.registered, state.ExternalID)
 		return nil
@@ -203,8 +208,9 @@ func (s *DeploymentScheduler) syncLoop(ctx context.Context) {
 
 type scheduledDeploymentWorker struct {
 	river.WorkerDefaults[scheduledDeploymentArgs]
-	database *db.DB
-	webhooks *webhooks.Enqueuer
+	database  *db.DB
+	webhooks  *webhooks.Enqueuer
+	scheduler *DeploymentScheduler
 }
 
 func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[scheduledDeploymentArgs]) error {
@@ -239,7 +245,12 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		if errors.Is(err, db.ErrStaleSchedule) {
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		deployment.ArchivedAt = &now
+		w.scheduler.Update(ctx, deployment)
+		return nil
 	}
 	if agentErr != nil {
 		return agentErr
@@ -328,6 +339,10 @@ func (w *scheduledDeploymentWorker) recordFailure(
 	})
 	if errors.Is(err, db.ErrStaleSchedule) {
 		return nil
+	}
+	if err == nil && len(pausedReason) > 0 {
+		deployment.Status = "paused"
+		w.scheduler.Update(ctx, deployment)
 	}
 	return err
 }

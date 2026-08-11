@@ -52,21 +52,3 @@ func TestShouldAutoPauseUsesOfficialAllowlist(t *testing.T) {
 		t.Error("shouldAutoPause(invalid JSON) = true")
 	}
 }
-
-func TestScheduledFailureWebhookInputsIncludeAutoPause(t *testing.T) {
-	inputs := scheduledFailureWebhookInputs("drun_test", "depl_test", true)
-	if len(inputs) != 3 {
-		t.Fatalf("scheduledFailureWebhookInputs() length = %d, want 3", len(inputs))
-	}
-	for index, eventType := range []string{"deployment_run.started", "deployment_run.failed", "deployment.paused"} {
-		if inputs[index].EventType != eventType {
-			t.Fatalf("scheduledFailureWebhookInputs()[%d].EventType = %q, want %q", index, inputs[index].EventType, eventType)
-		}
-	}
-	if inputs[2].ResourceID != "depl_test" {
-		t.Fatalf("deployment.paused resource ID = %q, want deployment ID", inputs[2].ResourceID)
-	}
-	if withoutPause := scheduledFailureWebhookInputs("drun_test", "depl_test", false); len(withoutPause) != 2 {
-		t.Fatalf("scheduledFailureWebhookInputs(without pause) length = %d, want 2", len(withoutPause))
-	}
-}

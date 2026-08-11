@@ -42,9 +42,8 @@ var (
 )
 
 type DB struct {
-	pool       *pgxpool.Pool
-	riverSQLDB *sql.DB
-	mapperDB   *yourbatis.DB
+	pool     *pgxpool.Pool
+	mapperDB *yourbatis.DB
 }
 
 type APIKey struct {
@@ -105,9 +104,8 @@ func newDB(pool *pgxpool.Pool, logger *slog.Logger) *DB {
 		}),
 	)
 	return &DB{
-		pool:       pool,
-		riverSQLDB: sqlDB,
-		mapperDB:   mapperDB,
+		pool:     pool,
+		mapperDB: mapperDB,
 	}
 }
 
@@ -160,10 +158,10 @@ func (d *DB) Transaction(ctx context.Context, fn func(*yourbatis.Tx) error) erro
 	})
 }
 
-// RiverSQLDB exposes the shared database/sql wrapper only to the River queue
-// integration. Application queries must continue to use Yourbatis mappers.
-func (d *DB) RiverSQLDB() *sql.DB {
-	return d.riverSQLDB
+// SQLDB exposes the Yourbatis-owned database/sql wrapper to integrations.
+// Callers must not close it or use it for application queries.
+func (d *DB) SQLDB() *sql.DB {
+	return d.mapperDB.SQLDB()
 }
 
 func EnsureDatabase(ctx context.Context, databaseURL string) error {

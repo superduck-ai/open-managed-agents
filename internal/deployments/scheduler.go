@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,30 +23,33 @@ import (
 )
 
 const (
-	riverSchema               = "public"
-	deploymentScheduleQueue   = "deployment_schedules"
-	scheduleReconcileInterval = 30 * time.Second
+	riverSchema                    = "public"
+	deploymentScheduleQueue        = "deployment_schedules"
+	deploymentScheduleSyncInterval = 10 * time.Second
 )
 
 var errInvalidDeploymentSchedule = errors.New("invalid deployment schedule")
 
 type scheduledDeploymentArgs struct {
-	WorkspaceUUID        string    `json:"workspace_uuid" river:"unique"`
-	DeploymentExternalID string    `json:"deployment_id" river:"unique"`
-	ScheduleRevision     int64     `json:"schedule_revision" river:"unique"`
-	ScheduledAt          time.Time `json:"scheduled_at" river:"unique"`
+	WorkspaceUUID        string `json:"workspace_uuid"`
+	DeploymentExternalID string `json:"deployment_id"`
+	ScheduleRevision     int64  `json:"schedule_revision"`
 }
 
 func (scheduledDeploymentArgs) Kind() string { return "scheduled_deployment" }
 
 type DeploymentScheduler struct {
-	database *db.DB
-	client   *river.Client[*sql.Tx]
-	logger   *slog.Logger
+	database   *db.DB
+	client     *river.Client[*sql.Tx]
+	logger     *slog.Logger
+	mu         sync.Mutex
+	registered map[string]int64
+	cancel     context.CancelFunc
+	done       chan struct{}
 }
 
 func MigrateRiver(ctx context.Context, database *db.DB, logger *slog.Logger) error {
-	migrator, err := rivermigrate.New(riverdatabasesql.New(database.RiverSQLDB()), &rivermigrate.Config{
+	migrator, err := rivermigrate.New(riverdatabasesql.New(database.SQLDB()), &rivermigrate.Config{
 		Schema: riverSchema, Logger: logging.LoggerOrDefault(logger),
 	})
 	if err != nil {
@@ -58,11 +62,9 @@ func MigrateRiver(ctx context.Context, database *db.DB, logger *slog.Logger) err
 func NewDeploymentScheduler(database *db.DB, webhookEvents *webhooks.Enqueuer, logger *slog.Logger) (*DeploymentScheduler, error) {
 	logger = logging.LoggerOrDefault(logger)
 	workers := river.NewWorkers()
-	worker := &scheduledDeploymentWorker{database: database, webhooks: webhookEvents, logger: logger}
-	if err := river.AddWorkerSafely(workers, worker); err != nil {
-		return nil, err
-	}
-	client, err := river.NewClient(riverdatabasesql.New(database.RiverSQLDB()), &river.Config{
+	worker := &scheduledDeploymentWorker{database: database, webhooks: webhookEvents}
+	river.AddWorker(workers, worker)
+	client, err := river.NewClient(riverdatabasesql.New(database.SQLDB()), &river.Config{
 		Schema: riverSchema,
 		Queues: map[string]river.QueueConfig{
 			deploymentScheduleQueue: {MaxWorkers: 10},
@@ -76,132 +78,138 @@ func NewDeploymentScheduler(database *db.DB, webhookEvents *webhooks.Enqueuer, l
 	if err != nil {
 		return nil, err
 	}
-	return &DeploymentScheduler{database: database, client: client, logger: logger}, nil
+	return &DeploymentScheduler{
+		database: database, client: client, logger: logger, registered: make(map[string]int64),
+	}, nil
 }
 
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
-	if err := s.backfillNextScheduledAt(ctx); err != nil {
-		return fmt.Errorf("backfill deployment next scheduled time: %w", err)
+	if err := s.sync(ctx); err != nil {
+		return fmt.Errorf("load deployment schedules: %w", err)
 	}
-	if err := s.reconcile(ctx); err != nil {
-		return fmt.Errorf("reconcile deployment schedules: %w", err)
-	}
+	ctx, s.cancel = context.WithCancel(ctx)
 	if err := s.client.Start(ctx); err != nil {
+		s.cancel()
 		return err
 	}
-	go s.reconcileLoop(ctx)
+	s.done = make(chan struct{})
+	go s.syncLoop(ctx)
 	return nil
 }
 
 func (s *DeploymentScheduler) Stop(ctx context.Context) error {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	if s.done != nil {
+		select {
+		case <-s.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return s.client.Stop(ctx)
 }
 
-func (s *DeploymentScheduler) Enqueue(ctx context.Context, deployment db.Deployment) error {
-	args, opts, err := scheduledDeploymentJob(deployment)
-	if err != nil || opts == nil {
-		return err
+func (s *DeploymentScheduler) Update(ctx context.Context, deployment db.Deployment) {
+	state := db.DeploymentSchedule{
+		WorkspaceUUID: deployment.WorkspaceUUID, ExternalID: deployment.ExternalID,
+		Schedule: deployment.Schedule, ScheduleRevision: deployment.ScheduleRevision,
 	}
-	_, err = s.client.Insert(ctx, args, opts)
-	return err
-}
-
-func (s *DeploymentScheduler) EnqueueTx(ctx context.Context, yourbatisTx *yourbatis.Tx, deployment db.Deployment) error {
-	if yourbatisTx == nil {
-		return errors.New("yourbatis transaction is nil")
+	if deployment.ArchivedAt != nil || deployment.Status != "active" {
+		state.Schedule = nil
 	}
-	args, opts, err := scheduledDeploymentJob(deployment)
-	if err != nil || opts == nil {
-		return err
-	}
-	_, err = s.client.InsertTx(ctx, yourbatisTx.SQLTx(), args, opts)
-	return err
-}
-
-func scheduledDeploymentJob(deployment db.Deployment) (scheduledDeploymentArgs, *river.InsertOpts, error) {
-	if deployment.NextScheduledAt == nil {
-		return scheduledDeploymentArgs{}, nil, nil
-	}
-	triggerAt, err := jitteredTriggerAt(deployment.ExternalID, deployment.Schedule, *deployment.NextScheduledAt)
+	s.mu.Lock()
+	err := s.updateLocked(state)
+	s.mu.Unlock()
 	if err != nil {
-		return scheduledDeploymentArgs{}, nil, fmt.Errorf("%w: %v", errInvalidDeploymentSchedule, err)
+		s.logger.ErrorContext(ctx, "update deployment periodic job", "deployment_id", deployment.ExternalID, "error", err)
 	}
-	return scheduledDeploymentArgs{
-			WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
-			ScheduleRevision: deployment.ScheduleRevision, ScheduledAt: *deployment.NextScheduledAt,
-		}, &river.InsertOpts{
-			Queue: deploymentScheduleQueue, ScheduledAt: triggerAt,
-			UniqueOpts: river.UniqueOpts{ByArgs: true},
-		}, nil
 }
 
-func (s *DeploymentScheduler) reconcileLoop(ctx context.Context) {
-	ticker := time.NewTicker(scheduleReconcileInterval)
+func (s *DeploymentScheduler) sync(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	states, err := s.database.ListDeploymentSchedules(ctx)
+	if err != nil {
+		return err
+	}
+	desired := make(map[string]struct{}, len(states))
+	for _, state := range states {
+		if err := s.updateLocked(state); err != nil {
+			if errors.Is(err, errInvalidDeploymentSchedule) {
+				state.Schedule = nil
+				_ = s.updateLocked(state)
+				s.logger.ErrorContext(ctx, "skip invalid stored deployment schedule", "deployment_id", state.ExternalID, "error", err)
+				continue
+			}
+			return fmt.Errorf("deployment %s: %w", state.ExternalID, err)
+		}
+		desired[state.ExternalID] = struct{}{}
+	}
+	for id := range s.registered {
+		if _, ok := desired[id]; !ok {
+			s.client.PeriodicJobs().RemoveByID(id)
+			delete(s.registered, id)
+		}
+	}
+	return nil
+}
+
+func (s *DeploymentScheduler) updateLocked(state db.DeploymentSchedule) error {
+	if len(state.Schedule) == 0 {
+		s.client.PeriodicJobs().RemoveByID(state.ExternalID)
+		delete(s.registered, state.ExternalID)
+		return nil
+	}
+	if revision, ok := s.registered[state.ExternalID]; ok && revision == state.ScheduleRevision {
+		return nil
+	}
+	schedule, err := parseDeploymentSchedule(state.Schedule)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errInvalidDeploymentSchedule, err)
+	}
+	job := river.NewPeriodicJob(schedule.cron, func() (river.JobArgs, *river.InsertOpts) {
+		return scheduledDeploymentArgs{
+			WorkspaceUUID: state.WorkspaceUUID, DeploymentExternalID: state.ExternalID,
+			ScheduleRevision: state.ScheduleRevision,
+		}, &river.InsertOpts{Queue: deploymentScheduleQueue}
+	}, &river.PeriodicJobOpts{ID: state.ExternalID})
+	s.client.PeriodicJobs().RemoveByID(state.ExternalID)
+	if _, err := s.client.PeriodicJobs().AddSafely(job); err != nil {
+		delete(s.registered, state.ExternalID)
+		return err
+	}
+	s.registered[state.ExternalID] = state.ScheduleRevision
+	return nil
+}
+
+func (s *DeploymentScheduler) syncLoop(ctx context.Context) {
+	defer close(s.done)
+	ticker := time.NewTicker(deploymentScheduleSyncInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.reconcile(ctx); err != nil {
-				s.logger.ErrorContext(ctx, "reconcile deployment schedules", "error", err)
+			if err := s.sync(ctx); err != nil {
+				s.logger.ErrorContext(ctx, "sync deployment periodic jobs", "error", err)
 			}
 		}
 	}
-}
-
-func (s *DeploymentScheduler) reconcile(ctx context.Context) error {
-	states, err := s.database.ListDeploymentSchedules(ctx)
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for _, state := range states {
-		err := s.Enqueue(ctx, db.Deployment{
-			WorkspaceUUID: state.WorkspaceUUID, ExternalID: state.ExternalID, Schedule: state.Schedule,
-			ScheduleRevision: state.ScheduleRevision, NextScheduledAt: state.NextScheduledAt,
-		})
-		if err != nil {
-			if errors.Is(err, errInvalidDeploymentSchedule) {
-				s.logger.ErrorContext(ctx, "skip invalid stored deployment schedule", "deployment_id", state.ExternalID, "error", err)
-				continue
-			}
-			errs = append(errs, fmt.Errorf("deployment %s: %w", state.ExternalID, err))
-		}
-	}
-	return errors.Join(errs...)
-}
-
-func (s *DeploymentScheduler) backfillNextScheduledAt(ctx context.Context) error {
-	states, err := s.database.ListDeploymentSchedulesMissingNextScheduledAt(ctx)
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	for _, state := range states {
-		next, err := nextScheduledAt(state.Schedule, now)
-		if err != nil {
-			s.logger.ErrorContext(ctx, "skip invalid stored deployment schedule", "deployment_id", state.ExternalID, "error", err)
-			continue
-		}
-		if next != nil {
-			if err := s.database.SetInitialDeploymentNextScheduledAt(ctx, state, *next); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 type scheduledDeploymentWorker struct {
 	river.WorkerDefaults[scheduledDeploymentArgs]
 	database *db.DB
 	webhooks *webhooks.Enqueuer
-	logger   *slog.Logger
 }
 
 func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[scheduledDeploymentArgs]) error {
 	args := job.Args
+	scheduledAt := job.ScheduledAt.UTC()
 	deployment, err := w.database.GetDeployment(ctx, args.WorkspaceUUID, args.DeploymentExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -210,26 +218,22 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		return err
 	}
 	if deployment.ArchivedAt != nil || deployment.Status != "active" ||
-		deployment.ScheduleRevision != args.ScheduleRevision || deployment.NextScheduledAt == nil ||
-		!deployment.NextScheduledAt.Equal(args.ScheduledAt) {
+		deployment.ScheduleRevision != args.ScheduleRevision {
 		return nil
 	}
-	nextScheduledAt, err := nextAfterScheduled(deployment.Schedule, args.ScheduledAt)
-	if err != nil {
-		return err
-	}
+	now := time.Now().UTC()
 
 	agent, agentErr := w.database.GetAgent(ctx, deployment.WorkspaceUUID, deployment.AgentExternalID)
 	if errors.Is(agentErr, db.ErrNotFound) || (agentErr == nil && agent.ArchivedAt != nil) {
-		webhookEvents, err := w.prepareWebhookEvents(ctx, deployment, time.Now().UTC(), []webhooks.EnqueueInput{{
+		webhookEvents, err := w.prepareWebhookEvents(ctx, deployment, now, []webhooks.EnqueueInput{{
 			EventType: "deployment.archived", ResourceID: deployment.ExternalID,
 		}})
 		if err != nil {
 			return err
 		}
-		_, err = w.database.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+		err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
 			WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
-			ScheduleRevision: args.ScheduleRevision, ScheduledAt: args.ScheduledAt, ArchiveDeployment: true,
+			ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt, ArchiveDeployment: true,
 			WebhookEvents: webhookEvents,
 		})
 		if errors.Is(err, db.ErrStaleSchedule) {
@@ -241,34 +245,30 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		return agentErr
 	}
 
-	now := time.Now().UTC()
 	referenceFailure, err := validateRunReferences(ctx, w.database, deployment.WorkspaceUUID, deployment)
 	if err != nil {
 		return err
 	}
 	if referenceFailure != nil {
-		return w.recordFailure(ctx, deployment, args, nextScheduledAt, referenceFailure, now)
+		return w.recordFailure(ctx, job, deployment, referenceFailure, now)
 	}
 	preparedRun, err := prepareDeploymentRun(deployment, now)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return err
 		}
-		return w.recordFailure(ctx, deployment, args, nextScheduledAt, runError("session_resource_not_found_error", err.Error()), now)
+		return w.recordFailure(ctx, job, deployment, runError("session_resource_not_found_error", err.Error()), now)
 	}
 	webhookEvents, err := w.prepareRunWebhookEvents(ctx, deployment, preparedRun, now)
 	if err != nil {
 		return err
 	}
-	_, err = w.database.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+	err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
 		WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
-		ScheduleRevision: args.ScheduleRevision, ScheduledAt: args.ScheduledAt, NextScheduledAt: nextScheduledAt,
+		ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt,
 		Session: &preparedRun.Session, Events: preparedRun.Events,
 		Run: db.DeploymentRun{
 			UUID: uuid.NewString(), ExternalID: preparedRun.RunID,
-			OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
-			CreatedByAPIKeyUUID: deployment.CreatedByAPIKeyUUID, TriggerType: "schedule",
-			ScheduledAt: &args.ScheduledAt, CreatedAt: now,
 		},
 		WebhookEvents: webhookEvents, Now: now,
 	})
@@ -276,21 +276,26 @@ func (w *scheduledDeploymentWorker) Work(ctx context.Context, job *river.Job[sch
 		return nil
 	}
 	if errors.Is(err, db.ErrWorkspaceArchived) {
-		return w.recordFailure(ctx, deployment, args, nextScheduledAt, runError("workspace_archived_error", "Workspace is archived"), now)
+		return w.recordFailure(ctx, job, deployment, runError("workspace_archived_error", "Workspace is archived"), now)
 	}
 	if errors.Is(err, db.ErrFileReferenceNotFound) {
-		return w.recordFailure(ctx, deployment, args, nextScheduledAt, runErrorForReference("file", db.ErrNotFound, false), now)
+		return w.recordFailure(ctx, job, deployment, runErrorForReference("file", db.ErrNotFound, false), now)
 	}
 	if errors.Is(err, db.ErrFilestorePathExists) {
-		return w.recordFailure(ctx, deployment, args, nextScheduledAt, runError("session_creation_rejected_error", "Session resource paths conflict"), now)
+		return w.recordFailure(ctx, job, deployment, runError("session_creation_rejected_error", "Session resource paths conflict"), now)
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
-func (w *scheduledDeploymentWorker) recordFailure(ctx context.Context, deployment db.Deployment, args scheduledDeploymentArgs, nextScheduledAt *time.Time, runErrorJSON json.RawMessage, now time.Time) error {
+func (w *scheduledDeploymentWorker) recordFailure(
+	ctx context.Context,
+	job *river.Job[scheduledDeploymentArgs],
+	deployment db.Deployment,
+	runErrorJSON json.RawMessage,
+	now time.Time,
+) error {
+	args := job.Args
+	scheduledAt := job.ScheduledAt.UTC()
 	runID, err := ids.New("drun_")
 	if err != nil {
 		return err
@@ -302,41 +307,43 @@ func (w *scheduledDeploymentWorker) recordFailure(ctx context.Context, deploymen
 			return err
 		}
 	}
-	webhookEvents, err := w.prepareWebhookEvents(ctx, deployment, now, scheduledFailureWebhookInputs(
-		runID, deployment.ExternalID, len(pausedReason) > 0,
-	))
+	webhookInputs := []webhooks.EnqueueInput{
+		{EventType: "deployment_run.started", ResourceID: runID},
+		{EventType: "deployment_run.failed", ResourceID: runID},
+	}
+	if len(pausedReason) > 0 {
+		webhookInputs = append(webhookInputs, webhooks.EnqueueInput{EventType: "deployment.paused", ResourceID: deployment.ExternalID})
+	}
+	webhookEvents, err := w.prepareWebhookEvents(ctx, deployment, now, webhookInputs)
 	if err != nil {
 		return err
 	}
-	_, err = w.database.ApplyScheduledOccurrence(ctx, db.ApplyScheduledOccurrenceInput{
+	err = w.applyOccurrence(ctx, job, db.ApplyScheduledOccurrenceInput{
 		WorkspaceUUID: deployment.WorkspaceUUID, DeploymentExternalID: deployment.ExternalID,
-		ScheduleRevision: args.ScheduleRevision, ScheduledAt: args.ScheduledAt, NextScheduledAt: nextScheduledAt,
+		ScheduleRevision: args.ScheduleRevision, ScheduledAt: scheduledAt,
 		Run: db.DeploymentRun{
-			UUID: uuid.NewString(), ExternalID: runID,
-			OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
-			CreatedByAPIKeyUUID: deployment.CreatedByAPIKeyUUID, Error: runErrorJSON, TriggerType: "schedule",
-			ScheduledAt: &args.ScheduledAt, CreatedAt: now,
+			UUID: uuid.NewString(), ExternalID: runID, Error: runErrorJSON,
 		},
 		AutoPauseReason: pausedReason, WebhookEvents: webhookEvents, Now: now,
 	})
 	if errors.Is(err, db.ErrStaleSchedule) {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
-func scheduledFailureWebhookInputs(runID, deploymentID string, autoPause bool) []webhooks.EnqueueInput {
-	inputs := []webhooks.EnqueueInput{
-		{EventType: "deployment_run.started", ResourceID: runID},
-		{EventType: "deployment_run.failed", ResourceID: runID},
-	}
-	if autoPause {
-		inputs = append(inputs, webhooks.EnqueueInput{EventType: "deployment.paused", ResourceID: deploymentID})
-	}
-	return inputs
+func (w *scheduledDeploymentWorker) applyOccurrence(
+	ctx context.Context,
+	job *river.Job[scheduledDeploymentArgs],
+	input db.ApplyScheduledOccurrenceInput,
+) error {
+	return w.database.Transaction(ctx, func(tx *yourbatis.Tx) error {
+		if err := w.database.ApplyScheduledOccurrenceTx(ctx, tx, input); err != nil {
+			return err
+		}
+		_, err := river.JobCompleteTx[*riverdatabasesql.Driver](ctx, tx.SQLTx(), job)
+		return err
+	})
 }
 
 func shouldAutoPause(raw json.RawMessage) bool {

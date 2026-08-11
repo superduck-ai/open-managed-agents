@@ -34,13 +34,9 @@ var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 type Handler struct {
 	cfg      config.Config
 	db       *db.DB
-	webhooks webhookEnqueuer
+	webhooks *webhooks.Enqueuer
 	logger   *slog.Logger
 	router   chi.Router
-}
-
-type webhookEnqueuer interface {
-	PrepareDeliveryEvent(webhooks.EnqueueInput, time.Time) (db.WebhookDeliveryEvent, error)
 }
 
 type agentResponse struct {
@@ -91,7 +87,7 @@ type agentReference struct {
 	Version int    `json:"version"`
 }
 
-func NewHandler(cfg config.Config, database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+func NewHandler(cfg config.Config, database *db.DB, webhookEvents *webhooks.Enqueuer, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{cfg: cfg, db: database, webhooks: webhookEvents, logger: logger}
 	router := chi.NewRouter()

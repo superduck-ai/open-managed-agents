@@ -1,7 +1,6 @@
 -- +goose Up
 alter table deployments
-	add column schedule_revision bigint not null default 0,
-	add column next_scheduled_at timestamptz;
+	add column schedule_revision bigint not null default 0;
 
 alter table deployment_runs
 	add column scheduled_at timestamptz;
@@ -20,19 +19,14 @@ create unique index deployment_runs_schedule_occurrence_idx
 	on deployment_runs (deployment_uuid, scheduled_at)
 	where trigger_type = 'schedule';
 
-create index deployments_pending_schedule_idx
-	on deployments (next_scheduled_at)
-	where status = 'active'
-		and archived_at is null
-		and deleted_at is null
-		and next_scheduled_at is not null;
-
 alter table deployment_runs
 	drop column trigger_context;
 
 -- +goose Down
-drop index deployments_pending_schedule_idx;
 drop index deployment_runs_schedule_occurrence_idx;
+
+alter table deployment_runs
+	drop constraint deployment_runs_scheduled_at_check;
 
 alter table deployment_runs
 	add column trigger_context jsonb;
@@ -48,5 +42,4 @@ alter table deployment_runs
 	drop column scheduled_at;
 
 alter table deployments
-	drop column next_scheduled_at,
 	drop column schedule_revision;

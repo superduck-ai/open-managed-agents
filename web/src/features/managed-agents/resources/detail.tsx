@@ -724,6 +724,7 @@ export function DeploymentRunsPanel({
 }
 
 function localizedRunTrigger(run: DeploymentRunApiResponse, msg: I18nMsg) {
+  if (!run.trigger_context) return '—';
   return run.trigger_context.type === 'schedule'
     ? msg('managedAgents.deployments.trigger.scheduled', 'Scheduled')
     : msg('managedAgents.deployments.trigger.manual', 'Manual');

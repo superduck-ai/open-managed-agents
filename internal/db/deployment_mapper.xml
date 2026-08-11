@@ -19,9 +19,8 @@
         resources,
         resource_secrets,
         vault_ids,
-        schedule,
+		schedule,
 		schedule_revision,
-		next_scheduled_at,
         last_run_at,
         status,
         paused_reason,
@@ -51,9 +50,8 @@
             resources,
             resource_secrets,
             vault_ids,
-            schedule,
+			schedule,
 			schedule_revision,
-			next_scheduled_at,
             last_run_at,
             status,
             paused_reason,
@@ -78,9 +76,8 @@
             CAST(#{params.Resources,sensitive=true} AS jsonb),
             CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
             CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
-            CAST(#{params.Schedule,sensitive=true} AS jsonb),
+			CAST(#{params.Schedule,sensitive=true} AS jsonb),
 			#{params.ScheduleRevision},
-			#{params.NextScheduledAt},
             #{params.LastRunAt},
             #{params.Status},
             CAST(#{params.PausedReason,sensitive=true} AS jsonb),
@@ -90,21 +87,6 @@
         RETURNING
         <include refid="columns"/>
     </insert>
-
-	<select id="LockOrganization" result="scalar">
-		SELECT uuid
-		FROM organizations
-		WHERE uuid = #{organizationUUID}
-		FOR UPDATE
-	</select>
-
-	<select id="LockWorkspace" resultType="deploymentWorkspaceStateRow">
-		SELECT archived_at
-		FROM workspaces
-		WHERE organization_uuid = #{organizationUUID}
-		AND uuid = #{workspaceUUID}
-		FOR UPDATE
-	</select>
 
 	<select id="CountScheduledByOrganization" result="scalar">
 		SELECT COUNT(*)
@@ -151,7 +133,6 @@
             vault_ids = CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
 			<if test="params.ScheduleChanged">
 				schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
-				next_scheduled_at = #{params.NextScheduledAt},
 			</if>
 			<if test="params.RevisionChanged">
 				schedule_revision = schedule_revision + 1,
@@ -168,7 +149,6 @@
         UPDATE deployments
         SET archived_at = COALESCE(archived_at, NOW()),
 			schedule_revision = schedule_revision + 1,
-			next_scheduled_at = NULL,
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
@@ -181,7 +161,6 @@
 		UPDATE deployments
 		SET archived_at = COALESCE(archived_at, NOW()),
 			schedule_revision = schedule_revision + 1,
-			next_scheduled_at = NULL,
 			updated_at = NOW()
 		WHERE workspace_uuid = #{workspaceUUID}
 		AND agent_external_id = #{agentExternalID}
@@ -196,7 +175,6 @@
         SET status = 'paused',
             paused_reason = CAST(#{pausedReason,sensitive=true} AS jsonb),
 			schedule_revision = schedule_revision + 1,
-			next_scheduled_at = NULL,
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
@@ -211,65 +189,23 @@
         SET status = 'active',
             paused_reason = NULL,
 			schedule_revision = schedule_revision + 1,
-			next_scheduled_at = #{params.NextScheduledAt},
             updated_at = NOW()
-		WHERE workspace_uuid = #{params.WorkspaceUUID}
-		AND external_id = #{params.ExternalID}
+		WHERE workspace_uuid = #{workspaceUUID}
+		AND external_id = #{externalID}
         AND deleted_at IS NULL
         AND archived_at IS NULL
         RETURNING
         <include refid="columns"/>
     </update>
 
-	<select id="ListActiveSchedules" resultType="deploymentScheduleRow">
-		SELECT workspace_uuid, external_id, schedule, schedule_revision, next_scheduled_at
-		FROM deployments
-		WHERE status = 'active'
-		AND archived_at IS NULL
-		AND deleted_at IS NULL
-		AND next_scheduled_at IS NOT NULL
-		ORDER BY next_scheduled_at, uuid
-	</select>
-
-	<select id="ListSchedulesMissingNextScheduledAt" resultType="deploymentScheduleRow">
-		SELECT workspace_uuid, external_id, schedule, schedule_revision, next_scheduled_at
+	<select id="ListActiveSchedules" resultType="DeploymentSchedule">
+		SELECT workspace_uuid, external_id, schedule, schedule_revision
 		FROM deployments
 		WHERE status = 'active'
 		AND archived_at IS NULL
 		AND deleted_at IS NULL
 		AND schedule IS NOT NULL
-		AND next_scheduled_at IS NULL
-		ORDER BY uuid
 	</select>
-
-	<update id="SetInitialNextScheduledAt" result="rows">
-		UPDATE deployments
-		SET schedule_revision = schedule_revision + 1,
-			next_scheduled_at = #{params.NextScheduledAt},
-			updated_at = NOW()
-		WHERE workspace_uuid = #{params.WorkspaceUUID}
-		AND external_id = #{params.ExternalID}
-		AND schedule_revision = #{params.ScheduleRevision}
-		AND status = 'active'
-		AND archived_at IS NULL
-		AND deleted_at IS NULL
-		AND schedule IS NOT NULL
-		AND next_scheduled_at IS NULL
-	</update>
-
-	<update id="AdvanceSchedule" result="rows">
-		UPDATE deployments
-		SET last_run_at = #{params.LastRunAt},
-			next_scheduled_at = #{params.NextScheduledAt},
-			updated_at = #{params.LastRunAt}
-		WHERE workspace_uuid = #{params.WorkspaceUUID}
-		AND external_id = #{params.ExternalID}
-		AND schedule_revision = #{params.ScheduleRevision}
-		AND next_scheduled_at = #{params.ScheduledAt}
-		AND status = 'active'
-		AND archived_at IS NULL
-		AND deleted_at IS NULL
-	</update>
 
 	<update id="PauseAfterScheduledRun" result="rows">
 		UPDATE deployments
@@ -277,15 +213,9 @@
 			status = 'paused',
 			paused_reason = CAST(#{params.PausedReason,sensitive=true} AS jsonb),
 			schedule_revision = schedule_revision + 1,
-			next_scheduled_at = NULL,
 			updated_at = #{params.LastRunAt}
 		WHERE workspace_uuid = #{params.WorkspaceUUID}
 		AND external_id = #{params.ExternalID}
-		AND schedule_revision = #{params.ScheduleRevision}
-		AND next_scheduled_at = #{params.ScheduledAt}
-		AND status = 'active'
-		AND archived_at IS NULL
-		AND deleted_at IS NULL
 	</update>
 
     <select id="ListPage" resultType="deploymentMapperRow">

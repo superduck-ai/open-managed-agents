@@ -286,13 +286,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	nextScheduledAt, err := nextScheduledAt(schedule, now)
-	if err != nil {
-		writeBadRequest(w, r, err)
-		return
-	}
 	revision := int64(0)
-	if nextScheduledAt != nil {
+	if len(schedule) > 0 {
 		revision = 1
 	}
 	deployment := db.Deployment{
@@ -316,7 +311,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		VaultIDs:              vaultIDs,
 		Schedule:              schedule,
 		ScheduleRevision:      revision,
-		NextScheduledAt:       nextScheduledAt,
 		Status:                "active",
 		CreatedAt:             now,
 		UpdatedAt:             now,
@@ -324,10 +318,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var created db.Deployment
 	err = h.db.Transaction(r.Context(), func(tx *yourbatis.Tx) error {
 		created, err = h.db.CreateDeploymentTx(r.Context(), tx, deployment)
-		if err != nil {
-			return err
-		}
-		return h.enqueueScheduledOccurrenceTx(r.Context(), tx, created)
+		return err
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrLimitExceeded) {
@@ -341,6 +332,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create deployment"))
 		return
 	}
+	h.updateSchedule(r.Context(), created)
 	h.enqueueWebhook(r.Context(), principal, "deployment.created", created.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, created)
 }
@@ -527,22 +519,19 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	now := time.Now().UTC()
 	scheduleRaw := fields["schedule"]
-	if err := applyScheduleUpdate(&next, scheduleRaw, now); err != nil {
+	if err := applyScheduleUpdate(&next, scheduleRaw); err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
+	now := time.Now().UTC()
 	next.UpdatedAt = now
 	var updated db.Deployment
 	err = h.db.Transaction(r.Context(), func(tx *yourbatis.Tx) error {
 		updated, err = h.db.UpdateDeploymentTx(r.Context(), tx, principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
 			Deployment: next, ScheduleChanged: scheduleRaw != nil,
 		})
-		if err != nil {
-			return err
-		}
-		return h.enqueueScheduledOccurrenceTx(r.Context(), tx, updated)
+		return err
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrLimitExceeded) {
@@ -555,11 +544,12 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
+	h.updateSchedule(r.Context(), updated)
 	h.enqueueWebhook(r.Context(), principal, "deployment.updated", updated.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, updated)
 }
 
-func applyScheduleUpdate(next *db.Deployment, raw json.RawMessage, now time.Time) error {
+func applyScheduleUpdate(next *db.Deployment, raw json.RawMessage) error {
 	if raw == nil {
 		return nil
 	}
@@ -568,15 +558,6 @@ func applyScheduleUpdate(next *db.Deployment, raw json.RawMessage, now time.Time
 		return err
 	}
 	next.Schedule = schedule
-	if next.Status != "active" || len(next.Schedule) == 0 {
-		next.NextScheduledAt = nil
-		return nil
-	}
-	value, err := nextScheduledAt(next.Schedule, now)
-	if err != nil {
-		return err
-	}
-	next.NextScheduledAt = value
 	return nil
 }
 
@@ -591,6 +572,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
+	h.updateSchedule(r.Context(), archived)
 	h.enqueueWebhook(r.Context(), principal, "deployment.archived", archived.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, archived)
 }
@@ -607,6 +589,7 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
+	h.updateSchedule(r.Context(), paused)
 	h.enqueueWebhook(r.Context(), principal, "deployment.paused", paused.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, paused)
 }
@@ -617,35 +600,20 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	var unpaused db.Deployment
-	err := h.db.Transaction(r.Context(), func(tx *yourbatis.Tx) error {
-		current, err := h.db.LockDeploymentTx(r.Context(), tx, principal.WorkspaceUUID, deploymentID)
-		if err != nil {
-			return err
-		}
-		next, err := nextScheduledAt(current.Schedule, time.Now().UTC())
-		if err != nil {
-			return err
-		}
-		unpaused, err = h.db.UnpauseDeploymentTx(r.Context(), tx, principal.WorkspaceUUID, deploymentID, next)
-		if err != nil {
-			return err
-		}
-		return h.enqueueScheduledOccurrenceTx(r.Context(), tx, unpaused)
-	})
+	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		h.writeDeploymentLoadError(w, r, err, deploymentID)
 		return
 	}
+	h.updateSchedule(r.Context(), unpaused)
 	h.enqueueWebhook(r.Context(), principal, "deployment.unpaused", unpaused.ExternalID, nil)
 	h.writeDeploymentResponse(w, r, unpaused)
 }
 
-func (h *Handler) enqueueScheduledOccurrenceTx(ctx context.Context, tx *yourbatis.Tx, deployment db.Deployment) error {
-	if h.scheduler == nil || deployment.NextScheduledAt == nil {
-		return nil
+func (h *Handler) updateSchedule(ctx context.Context, deployment db.Deployment) {
+	if h.scheduler != nil {
+		h.scheduler.Update(ctx, deployment)
 	}
-	return h.scheduler.EnqueueTx(ctx, tx, deployment)
 }
 
 func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
@@ -689,8 +657,6 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) {
 		Run: db.DeploymentRun{
 			UUID:                uuid.NewString(),
 			ExternalID:          preparedRun.RunID,
-			OrganizationUUID:    principal.OrganizationUUID,
-			WorkspaceUUID:       principal.WorkspaceUUID,
 			CreatedByAPIKeyUUID: principal.APIKeyUUID,
 			TriggerType:         "manual",
 			CreatedAt:           now,
@@ -754,8 +720,6 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 	run, err := h.db.CreateDeploymentRunFailure(r.Context(), deployment, db.DeploymentRun{
 		UUID:                uuid.NewString(),
 		ExternalID:          runID,
-		OrganizationUUID:    principal.OrganizationUUID,
-		WorkspaceUUID:       principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		Error:               runError,
 		TriggerType:         "manual",
@@ -831,23 +795,20 @@ func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID s
 			return classifyReferenceFailure("vault", nil, true)
 		}
 	}
-	var resources []map[string]any
+	var resources []deploymentResourcePayload
 	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
 		if err := json.Unmarshal(deployment.Resources, &resources); err != nil {
 			return runError("unknown_error", "Stored resources are invalid"), nil
 		}
 	}
 	for _, resource := range resources {
-		resourceType, _ := resource["type"].(string)
-		switch resourceType {
+		switch resource.Type {
 		case "file":
-			fileID, _ := resource["file_id"].(string)
-			if _, err := database.GetFile(ctx, workspaceUUID, fileID); err != nil {
+			if _, err := database.GetFile(ctx, workspaceUUID, resource.FileID); err != nil {
 				return classifyReferenceFailure("file", err, false)
 			}
 		case "memory_store":
-			storeID, _ := resource["memory_store_id"].(string)
-			store, err := database.GetMemoryStore(ctx, workspaceUUID, storeID)
+			store, err := database.GetMemoryStore(ctx, workspaceUUID, resource.MemoryStoreID)
 			if err != nil {
 				return classifyReferenceFailure("memory_store", err, false)
 			}

@@ -743,6 +743,26 @@ export function emptyCredentialFormValues(): CredentialFormValues {
   };
 }
 
+const emptyCredentialRefreshFields = {
+  refreshToken: '',
+  refreshTokenEndpoint: '',
+  refreshClientId: '',
+  refreshClientSecret: '',
+  refreshAuthType: 'none' as const,
+};
+
+/** Apply a form patch; clearing the access token also drops paste-path refresh fields. */
+export function patchCredentialFormValues(
+  current: CredentialFormValues,
+  patch: Partial<CredentialFormValues>,
+): CredentialFormValues {
+  const next = { ...current, ...patch };
+  if (next.token.trim()) {
+    return next;
+  }
+  return { ...next, ...emptyCredentialRefreshFields };
+}
+
 export function parseCredentialAuthType(value: string): CredentialFormValues['authType'] {
   if (value === 'environment_variable' || value === 'mcp_oauth') {
     return value;
@@ -782,41 +802,46 @@ function credentialRefreshBody(values: CredentialFormValues) {
   return {
     token_endpoint: tokenEndpoint,
     client_id: clientId,
-    refresh_token: values.refreshToken,
+    refresh_token: refreshToken,
     token_endpoint_auth:
-      authType === 'none' ? { type: 'none' as const } : { type: authType, client_secret: values.refreshClientSecret },
+      authType === 'none'
+        ? { type: 'none' as const }
+        : { type: authType, client_secret: values.refreshClientSecret.trim() },
   };
 }
 
 export function credentialAuthBody(values: CredentialFormValues, mode: 'create' | 'update') {
   if (values.authType === 'environment_variable') {
+    const secretValue = values.secretValue.trim();
     const body: Record<string, unknown> = {
       type: 'environment_variable',
       networking: { type: 'unrestricted' },
     };
     if (mode === 'create') {
       body.secret_name = values.secretName.trim();
-      body.secret_value = values.secretValue;
-    } else if (values.secretValue.trim()) {
-      body.secret_value = values.secretValue;
+      body.secret_value = secretValue;
+    } else if (secretValue) {
+      body.secret_value = secretValue;
     }
     return body;
   }
   if (values.authType === 'mcp_oauth') {
+    const accessToken = values.token.trim();
     const refresh = mode === 'create' ? credentialRefreshBody(values) : undefined;
     return {
       type: 'mcp_oauth',
       ...(mode === 'create' ? { mcp_server_url: values.mcpServerUrl.trim() } : {}),
-      ...(values.token.trim() ? { access_token: values.token } : {}),
+      ...(accessToken ? { access_token: accessToken } : {}),
       ...(refresh ? { refresh } : {}),
     };
   }
+  const token = values.token.trim();
   const body: Record<string, unknown> = {
     type: 'static_bearer',
     mcp_server_url: values.mcpServerUrl.trim(),
   };
-  if (mode === 'create' || values.token.trim()) {
-    body.token = values.token;
+  if (mode === 'create' || token) {
+    body.token = token;
   }
   return body;
 }
@@ -880,7 +905,7 @@ export function credentialAuthTypeLabel(authType: string, msg?: I18nMsg) {
       : 'Environment variable';
   }
   if (authType === 'mcp_oauth') {
-    return 'MCP OAuth';
+    return msg ? msg('managedAgents.credentialVaults.credentialDialog.mcpOAuth', 'MCP OAuth') : 'MCP OAuth';
   }
   return msg
     ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Static bearer token')

@@ -1367,7 +1367,7 @@
   "managedAgents.credentialVaults.credentialDialog.secretValue": "密钥值",
   "managedAgents.credentialVaults.credentialDialog.sharedWarning": "保险库中的凭据会与所有可使用该保险库的人共享。你需对其存储与使用负责。",
   "managedAgents.credentialVaults.credentialDialog.staticBearer": "静态 Bearer Token",
-  "managedAgents.credentialVaults.credentialDialog.token": "Token",
+  "managedAgents.credentialVaults.credentialDialog.token": "令牌",
   "managedAgents.credentialVaults.credentialDialog.tokenEndpoint": "令牌端点",
   "managedAgents.credentialVaults.credentialDialog.tokenEndpointAuth": "令牌端点认证",
   "managedAgents.credentialVaults.credentialDialog.tokenEndpointPlaceholder": "https://example.com/oauth/token",

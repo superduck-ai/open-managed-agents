@@ -67,6 +67,19 @@ type searchRequest struct {
 	Page            *string `json:"page"`
 }
 
+type agentMutationRequest struct {
+	Name        json.RawMessage `json:"name"`
+	Description json.RawMessage `json:"description"`
+	System      json.RawMessage `json:"system"`
+	Model       json.RawMessage `json:"model"`
+	MCPServers  json.RawMessage `json:"mcp_servers"`
+	Metadata    json.RawMessage `json:"metadata"`
+	Multiagent  json.RawMessage `json:"multiagent"`
+	Skills      json.RawMessage `json:"skills"`
+	Tools       json.RawMessage `json:"tools"`
+	Version     json.RawMessage `json:"version"`
+}
+
 type agentState struct {
 	Name        string
 	Description *string
@@ -120,7 +133,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fields, err := httpapi.DecodeObjectBody(w, r, maxAgentBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[agentMutationRequest](w, r, maxAgentBodySize)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
@@ -130,7 +143,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate agent ID"))
 		return
 	}
-	state, err := h.stateFromCreate(r, principal, agentID, fields)
+	state, err := h.stateFromCreate(r, principal, agentID, body)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
@@ -305,17 +318,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		return
 	}
 
-	fields, err := httpapi.DecodeObjectBody(w, r, maxAgentBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[agentMutationRequest](w, r, maxAgentBodySize)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
 	}
-	rawVersion, ok := fields["version"]
-	if !ok {
+	if len(body.Version) == 0 {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "version is required"))
 		return
 	}
-	expectedVersion, err := parseRequiredVersion(rawVersion)
+	expectedVersion, err := parseRequiredVersion(body.Version)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
@@ -330,7 +342,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, agentID string)
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not update agent"))
 		return
 	}
-	nextState, err := h.stateFromUpdate(r, principal, current, fields)
+	nextState, err := h.stateFromUpdate(r, principal, current, body)
 	if err != nil {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 		return
@@ -439,49 +451,52 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request, agentID strin
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse{Data: data, NextPage: nextPage})
 }
 
-func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, agentID string, fields map[string]json.RawMessage) (agentState, error) {
+func (h *Handler) stateFromCreate(r *http.Request, principal auth.Principal, agentID string, body *agentMutationRequest) (agentState, error) {
 	var state agentState
-	name, err := parseRequiredStringField(fields, "name")
+	name, err := parseRequiredRawString(body.Name, "name")
 	if err != nil {
 		return agentState{}, err
 	}
 	state.Name = name
-	modelRaw, ok := fields["model"]
-	if !ok {
+	if len(body.Model) == 0 {
 		return agentState{}, errors.New("model is required")
 	}
-	model, err := normalizeModel(modelRaw, h.cfg.AnthropicUpstream.ModelMappings)
+	model, err := normalizeModel(body.Model, h.cfg.AnthropicUpstream.ModelMappings)
 	if err != nil {
 		return agentState{}, err
 	}
 	if state.Model, err = httpapi.MarshalRaw(model); err != nil {
 		return agentState{}, err
 	}
-	if state.Description, err = parseNullableStringField(fields, "description"); err != nil {
+	if len(body.Description) > 0 {
+		if state.Description, err = nullableStringFromRaw(body.Description, "description"); err != nil {
+			return agentState{}, err
+		}
+	}
+	if len(body.System) > 0 {
+		if state.System, err = nullableStringFromRaw(body.System, "system"); err != nil {
+			return agentState{}, err
+		}
+	}
+	if state.MCPServers, err = normalizeMCPServers(rawOrDefault(body.MCPServers, `[]`)); err != nil {
 		return agentState{}, err
 	}
-	if state.System, err = parseNullableStringField(fields, "system"); err != nil {
+	if state.Metadata, err = httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadata); err != nil {
 		return agentState{}, err
 	}
-	if state.MCPServers, err = normalizeMCPServers(fieldOrDefault(fields, "mcp_servers", `[]`)); err != nil {
+	if state.Skills, err = normalizeSkills(rawOrDefault(body.Skills, `[]`)); err != nil {
 		return agentState{}, err
 	}
-	if state.Metadata, err = httpapi.NormalizeMetadata(fieldOrDefault(fields, "metadata", `{}`), validateMetadata); err != nil {
+	if state.Tools, err = normalizeTools(rawOrDefault(body.Tools, `[]`), state.MCPServers); err != nil {
 		return agentState{}, err
 	}
-	if state.Skills, err = normalizeSkills(fieldOrDefault(fields, "skills", `[]`)); err != nil {
-		return agentState{}, err
-	}
-	if state.Tools, err = normalizeTools(fieldOrDefault(fields, "tools", `[]`), state.MCPServers); err != nil {
-		return agentState{}, err
-	}
-	if state.Multiagent, err = h.normalizeMultiagent(r, principal, agentID, 1, fields["multiagent"]); err != nil {
+	if state.Multiagent, err = h.normalizeMultiagent(r, principal, agentID, 1, body.Multiagent); err != nil {
 		return agentState{}, err
 	}
 	return state, nil
 }
 
-func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, current db.Agent, fields map[string]json.RawMessage) (agentState, error) {
+func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, current db.Agent, body *agentMutationRequest) (agentState, error) {
 	model, err := normalizeModel(current.Model, h.cfg.AnthropicUpstream.ModelMappings)
 	if err != nil {
 		return agentState{}, err
@@ -501,15 +516,15 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 		Skills:      current.Skills,
 		Tools:       current.Tools,
 	}
-	if raw, ok := fields["name"]; ok {
-		name, err := parseRequiredRawString(raw, "name")
+	if len(body.Name) > 0 {
+		name, err := parseRequiredRawString(body.Name, "name")
 		if err != nil {
 			return agentState{}, err
 		}
 		state.Name = name
 	}
-	if raw, ok := fields["model"]; ok {
-		mapped, err := normalizeModel(raw, h.cfg.AnthropicUpstream.ModelMappings)
+	if len(body.Model) > 0 {
+		mapped, err := normalizeModel(body.Model, h.cfg.AnthropicUpstream.ModelMappings)
 		if err != nil {
 			return agentState{}, err
 		}
@@ -517,54 +532,54 @@ func (h *Handler) stateFromUpdate(r *http.Request, principal auth.Principal, cur
 			return agentState{}, err
 		}
 	}
-	if raw, ok := fields["description"]; ok {
-		description, err := nullableStringFromRaw(raw, "description")
+	if len(body.Description) > 0 {
+		description, err := nullableStringFromRaw(body.Description, "description")
 		if err != nil {
 			return agentState{}, err
 		}
 		state.Description = description
 	}
-	if raw, ok := fields["system"]; ok {
-		system, err := nullableStringFromRaw(raw, "system")
+	if len(body.System) > 0 {
+		system, err := nullableStringFromRaw(body.System, "system")
 		if err != nil {
 			return agentState{}, err
 		}
 		state.System = system
 	}
-	if raw, ok := fields["mcp_servers"]; ok {
-		mcpServers, err := normalizeMCPServers(clearableArray(raw))
+	if len(body.MCPServers) > 0 {
+		mcpServers, err := normalizeMCPServers(clearableArray(body.MCPServers))
 		if err != nil {
 			return agentState{}, err
 		}
 		state.MCPServers = mcpServers
 	}
-	if raw, ok := fields["skills"]; ok {
-		skills, err := normalizeSkills(clearableArray(raw))
+	if len(body.Skills) > 0 {
+		skills, err := normalizeSkills(clearableArray(body.Skills))
 		if err != nil {
 			return agentState{}, err
 		}
 		state.Skills = skills
 	}
-	if raw, ok := fields["tools"]; ok {
-		tools, err := normalizeTools(clearableArray(raw), state.MCPServers)
+	if len(body.Tools) > 0 {
+		tools, err := normalizeTools(clearableArray(body.Tools), state.MCPServers)
 		if err != nil {
 			return agentState{}, err
 		}
 		state.Tools = tools
-	} else if _, ok := fields["mcp_servers"]; ok {
+	} else if len(body.MCPServers) > 0 {
 		if err := validateMCPToolReferences(state.Tools, state.MCPServers); err != nil {
 			return agentState{}, err
 		}
 	}
-	if raw, ok := fields["metadata"]; ok {
-		metadata, err := httpapi.PatchMetadata(state.Metadata, raw, validateMetadata)
+	if len(body.Metadata) > 0 {
+		metadata, err := httpapi.PatchMetadata(state.Metadata, body.Metadata, validateMetadata)
 		if err != nil {
 			return agentState{}, err
 		}
 		state.Metadata = metadata
 	}
-	if raw, ok := fields["multiagent"]; ok {
-		multiagent, err := h.normalizeMultiagent(r, principal, current.ExternalID, current.CurrentVersion+1, raw)
+	if len(body.Multiagent) > 0 {
+		multiagent, err := h.normalizeMultiagent(r, principal, current.ExternalID, current.CurrentVersion+1, body.Multiagent)
 		if err != nil {
 			return agentState{}, err
 		}
@@ -672,16 +687,16 @@ func (h *Handler) resolveRosterEntry(r *http.Request, principal auth.Principal, 
 	return agentReference{ID: id, Type: "agent", Version: record.CurrentVersion}, false, nil
 }
 
-func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (searchRequest, error) {
+func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (*searchRequest, error) {
 	body, err := httpapi.DecodeObjectBodyAs[searchRequest](w, r, maxAgentBodySize)
 	if err != nil {
-		return searchRequest{}, err
+		return nil, err
 	}
 	if strings.TrimSpace(body.Name) == "" {
-		return searchRequest{}, errors.New("name is required")
+		return nil, errors.New("name is required")
 	}
 	if body.Limit != nil && (*body.Limit < 0 || *body.Limit > 100) {
-		return searchRequest{}, errors.New("limit must be between 1 and 100")
+		return nil, errors.New("limit must be between 1 and 100")
 	}
 	return body, nil
 }
@@ -704,15 +719,10 @@ func derefString(value *string) string {
 	return *value
 }
 
-func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
+func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
+	if len(raw) == 0 {
 		return "", fmt.Errorf("%s is required", name)
 	}
-	return parseRequiredRawString(raw, name)
-}
-
-func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if httpapi.IsJSONNull(raw) {
 		return "", fmt.Errorf("%s cannot be null", name)
 	}
@@ -724,14 +734,6 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 		return "", fmt.Errorf("%s must be non-empty", name)
 	}
 	return value, nil
-}
-
-func parseNullableStringField(fields map[string]json.RawMessage, name string) (*string, error) {
-	raw, ok := fields[name]
-	if !ok {
-		return nil, nil
-	}
-	return nullableStringFromRaw(raw, name)
 }
 
 func nullableStringFromRaw(raw json.RawMessage, name string) (*string, error) {
@@ -1115,8 +1117,8 @@ func mcpServerNames(raw json.RawMessage) (map[string]struct{}, error) {
 	return names, nil
 }
 
-func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
-	if raw, ok := fields[name]; ok {
+func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
+	if len(raw) > 0 {
 		return raw
 	}
 	return json.RawMessage(fallback)

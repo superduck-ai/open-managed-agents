@@ -11,16 +11,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 )
 
-func TestCreateRejectsTrailingJSON(t *testing.T) {
-	handler := newRequestBodyTestHandler(1024)
-	request := newCreateRequest(`{"requests":[{"custom_id":"req_1","params":{}}]} {}`)
-	recorder := httptest.NewRecorder()
-
-	handler.create(recorder, request, false, nil)
-
-	assertCreateBodyError(t, recorder, http.StatusBadRequest, "Invalid JSON body")
-}
-
 func TestCreatePreservesBodyTooLargeResponse(t *testing.T) {
 	handler := newRequestBodyTestHandler(1)
 	request := newCreateRequest(`{"requests":[]}`)

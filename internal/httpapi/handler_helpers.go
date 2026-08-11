@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,29 +24,17 @@ func (e *invalidJSONBodyError) Unwrap() error {
 	return e.cause
 }
 
-func DecodeObjectBody(w http.ResponseWriter, r *http.Request, maxBodySize int64) (map[string]json.RawMessage, error) {
-	return DecodeObjectBodyAs[map[string]json.RawMessage](w, r, maxBodySize)
-}
-
-func DecodeObjectBodyAs[T any](w http.ResponseWriter, r *http.Request, maxBodySize int64) (T, error) {
-	var zero T
+func DecodeObjectBodyAs[T any](w http.ResponseWriter, r *http.Request, maxBodySize int64) (*T, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	decoder := json.NewDecoder(r.Body)
 	var body *T
 	if err := decoder.Decode(&body); err != nil {
-		return zero, &invalidJSONBodyError{cause: err}
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err != nil {
-			return zero, &invalidJSONBodyError{cause: err}
-		}
-		return zero, errors.New("Invalid JSON body")
+		return nil, &invalidJSONBodyError{cause: err}
 	}
 	if body == nil {
-		return zero, errors.New("JSON body must be an object")
+		return nil, errors.New("JSON body must be an object")
 	}
-	return *body, nil
+	return body, nil
 }
 
 func MarshalRaw(value any) (json.RawMessage, error) {

@@ -59,6 +59,17 @@ type vaultPageResponse struct {
 	NextPage *string         `json:"next_page"`
 }
 
+type vaultMutationRequest struct {
+	DisplayName json.RawMessage `json:"display_name"`
+	Metadata    json.RawMessage `json:"metadata"`
+}
+
+type credentialMutationRequest struct {
+	Auth        json.RawMessage `json:"auth"`
+	DisplayName json.RawMessage `json:"display_name"`
+	Metadata    json.RawMessage `json:"metadata"`
+}
+
 type credentialResponse struct {
 	ID          string          `json:"id"`
 	ArchivedAt  *string         `json:"archived_at"`
@@ -241,17 +252,17 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxVaultBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[vaultMutationRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	displayName, err := parseRequiredStringField(fields, "display_name")
+	displayName, err := parseRequiredRawString(body.DisplayName, "display_name")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	metadata, err := normalizeMetadata(fieldOrDefault(fields, "metadata", `{}`))
+	metadata, err := normalizeMetadata(rawOrDefault(body.Metadata, `{}`))
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -364,21 +375,21 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Vault is archived"))
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxVaultBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[vaultMutationRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
 	next := current
-	if raw, ok := fields["display_name"]; ok {
-		next.DisplayName, err = parseRequiredRawString(raw, "display_name")
+	if len(body.DisplayName) > 0 {
+		next.DisplayName, err = parseRequiredRawString(body.DisplayName, "display_name")
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = patchMetadata(next.Metadata, raw)
+	if len(body.Metadata) > 0 {
+		next.Metadata, err = patchMetadata(next.Metadata, body.Metadata)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -467,22 +478,22 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Vault is archived"))
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxVaultBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[credentialMutationRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	displayName, err := parseRequiredStringField(fields, "display_name")
+	displayName, err := parseRequiredRawString(body.DisplayName, "display_name")
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	metadata, err := normalizeMetadata(fieldOrDefault(fields, "metadata", `{}`))
+	metadata, err := normalizeMetadata(rawOrDefault(body.Metadata, `{}`))
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
-	authState, err := normalizeCredentialAuthForCreate(fields["auth"])
+	authState, err := normalizeCredentialAuthForCreate(body.Auth)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
@@ -621,27 +632,27 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Credential is archived"))
 		return
 	}
-	fields, err := httpapi.DecodeObjectBody(w, r, maxVaultBodySize)
+	body, err := httpapi.DecodeObjectBodyAs[credentialMutationRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
 	next := current
-	if raw, ok := fields["display_name"]; ok {
-		next.DisplayName, err = parseRequiredRawString(raw, "display_name")
+	if len(body.DisplayName) > 0 {
+		next.DisplayName, err = parseRequiredRawString(body.DisplayName, "display_name")
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = patchMetadata(next.Metadata, raw)
+	if len(body.Metadata) > 0 {
+		next.Metadata, err = patchMetadata(next.Metadata, body.Metadata)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
 		}
 	}
-	if raw, ok := fields["auth"]; ok {
+	if len(body.Auth) > 0 {
 		// Open the existing envelope so partial updates (for example rotating
 		// only an OAuth access token) merge onto stored refresh material
 		// instead of dropping it, then reseal under a fresh DEK.
@@ -653,7 +664,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 		} else {
-			provides, err := authUpdateProvidesSecretReplacement(current.AuthType, raw)
+			provides, err := authUpdateProvidesSecretReplacement(current.AuthType, body.Auth)
 			if err != nil {
 				writeBadRequest(w, r, err)
 				return
@@ -663,7 +674,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 		}
-		authState, err := normalizeCredentialAuthForUpdate(current, raw)
+		authState, err := normalizeCredentialAuthForUpdate(current, body.Auth)
 		if err != nil {
 			writeBadRequest(w, r, err)
 			return
@@ -872,15 +883,10 @@ func responseFromCredential(credential db.VaultCredential) credentialResponse {
 	}
 }
 
-func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
+func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
+	if len(raw) == 0 {
 		return "", fmt.Errorf("%s is required", name)
 	}
-	return parseRequiredRawString(raw, name)
-}
-
-func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if isJSONNull(raw) {
 		return "", fmt.Errorf("%s cannot be null", name)
 	}
@@ -1536,8 +1542,8 @@ func hasNestedSecret(raw json.RawMessage, parent, child string) bool {
 	return ok && strings.TrimSpace(value) != ""
 }
 
-func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
-	if raw, ok := fields[name]; ok {
+func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
+	if len(raw) > 0 {
 		return raw
 	}
 	return json.RawMessage(fallback)

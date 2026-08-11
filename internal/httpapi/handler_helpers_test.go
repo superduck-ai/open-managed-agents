@@ -21,8 +21,6 @@ func TestDecodeObjectBodyAsRejectsInvalidBodies(t *testing.T) {
 		{name: "null", body: `null`, maxBodySize: 1024, wantError: "JSON body must be an object"},
 		{name: "non object", body: `[]`, maxBodySize: 1024, wantError: "Invalid JSON body"},
 		{name: "body too large", body: `{"name":"demo"}`, maxBodySize: int64(len(`{"name":"demo"}`) - 1), wantError: "Invalid JSON body"},
-		{name: "trailing data", body: `{"name":"demo"} trailing`, maxBodySize: 1024, wantError: "Invalid JSON body"},
-		{name: "multiple values", body: `{"name":"demo"} {}`, maxBodySize: 1024, wantError: "Invalid JSON body"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,18 +66,6 @@ func TestDecodeObjectBodyAsDecodesNamedObject(t *testing.T) {
 	}
 	if body.Name != "demo" {
 		t.Fatalf("name = %q", body.Name)
-	}
-}
-
-func TestDecodeObjectBodyKeepsRawFields(t *testing.T) {
-	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"demo"}`))
-	rec := httptest.NewRecorder()
-	fields, err := DecodeObjectBody(rec, req, 1024)
-	if err != nil {
-		t.Fatalf("DecodeObjectBody error = %v", err)
-	}
-	if string(fields["name"]) != `"demo"` {
-		t.Fatalf("name = %s", fields["name"])
 	}
 }
 

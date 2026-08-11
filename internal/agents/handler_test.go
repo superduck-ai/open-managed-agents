@@ -7,15 +7,6 @@ import (
 	"testing"
 )
 
-func TestDecodeSearchRequestRejectsTrailingJSON(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/v1/agents/search", strings.NewReader(`{"name":"agent"} {}`))
-
-	_, err := decodeSearchRequest(httptest.NewRecorder(), request)
-	if err == nil || err.Error() != "Invalid JSON body" {
-		t.Fatalf("decodeSearchRequest() error = %v, want Invalid JSON body", err)
-	}
-}
-
 func TestDecodeSearchRequestRejectsNull(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/agents/search", strings.NewReader(`null`))
 

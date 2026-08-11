@@ -207,7 +207,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	httpapi.WriteJSON(w, http.StatusOK, h.responseFromRecord(r, created))
 }
 
-func (h *Handler) validateCreate(body createRequest, betaHeaders []string) error {
+func (h *Handler) validateCreate(body *createRequest, betaHeaders []string) error {
 	if len(body.Requests) == 0 {
 		return errors.New("requests must contain at least one request")
 	}

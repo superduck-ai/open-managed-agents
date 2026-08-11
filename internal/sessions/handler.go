@@ -76,6 +76,37 @@ type sendEventsResponse struct {
 	Data []json.RawMessage `json:"data,omitempty"`
 }
 
+type sessionMutationRequest struct {
+	Agent         json.RawMessage `json:"agent"`
+	EnvironmentID json.RawMessage `json:"environment_id"`
+	Metadata      json.RawMessage `json:"metadata"`
+	Resources     json.RawMessage `json:"resources"`
+	Title         json.RawMessage `json:"title"`
+	VaultIDs      json.RawMessage `json:"vault_ids"`
+}
+
+type sessionEventsRequest struct {
+	Events json.RawMessage `json:"events"`
+}
+
+type sessionResourceRequest struct {
+	Access        json.RawMessage `json:"access"`
+	Checkout      json.RawMessage `json:"checkout"`
+	Description   json.RawMessage `json:"description"`
+	FileID        json.RawMessage `json:"file_id"`
+	Instructions  json.RawMessage `json:"instructions"`
+	MemoryStoreID json.RawMessage `json:"memory_store_id"`
+	MountPath     json.RawMessage `json:"mount_path"`
+	Name          json.RawMessage `json:"name"`
+	Source        json.RawMessage `json:"source"`
+	Type          json.RawMessage `json:"type"`
+	URL           json.RawMessage `json:"url"`
+}
+
+type sessionResourceUpdateRequest struct {
+	AuthorizationToken json.RawMessage `json:"authorization_token"`
+}
+
 type resourceReferenceError struct {
 	ResourceType string
 	ResourceID   string

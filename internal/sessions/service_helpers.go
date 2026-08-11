@@ -109,7 +109,7 @@ func (h *Handler) resourcesFromCreate(
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return nil, nil
 	}
-	var items []map[string]json.RawMessage
+	var items []sessionResourceRequest
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, errors.New("resources must be an array")
 	}
@@ -119,8 +119,8 @@ func (h *Handler) resourcesFromCreate(
 		OrganizationUUID: principal.OrganizationUUID,
 		WorkspaceUUID:    principal.WorkspaceUUID,
 	}
-	for _, fields := range items {
-		resource, err := h.resourceFromFields(r, session, fields, now)
+	for i := range items {
+		resource, err := h.resourceFromRequest(r, session, &items[i], now)
 		if err != nil {
 			return nil, err
 		}
@@ -132,13 +132,13 @@ func (h *Handler) resourcesFromCreate(
 	return resources, nil
 }
 
-func (h *Handler) resourceFromFields(
+func (h *Handler) resourceFromRequest(
 	r *http.Request,
 	session db.Session,
-	fields map[string]json.RawMessage,
+	body *sessionResourceRequest,
 	now time.Time,
 ) (normalizedSessionResource, error) {
-	resourceType, err := parseRequiredStringField(fields, "type")
+	resourceType, err := parseRequiredRawString(body.Type, "type")
 	if err != nil {
 		return normalizedSessionResource{}, err
 	}
@@ -152,7 +152,7 @@ func (h *Handler) resourceFromFields(
 	var fileMimeType string
 	switch resourceType {
 	case sessionresource.FileType:
-		fileID, err := sessionresource.ParseFileID(fields)
+		fileID, err := sessionresource.ParseFileID(body.FileID)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
@@ -166,8 +166,8 @@ func (h *Handler) resourceFromFields(
 		fileSpec, err := sessionresource.NormalizeFileSpec(
 			fileID,
 			file.Filename,
-			fields["source"],
-			fields["mount_path"],
+			body.Source,
+			body.MountPath,
 		)
 		if err != nil {
 			return normalizedSessionResource{}, err
@@ -176,12 +176,12 @@ func (h *Handler) resourceFromFields(
 		normalizedFileSpec = &fileSpec
 		fileMimeType = file.MimeType
 	case "github_repository":
-		url, err := parseRequiredStringField(fields, "url")
+		url, err := parseRequiredRawString(body.URL, "url")
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
 		mountPath, err := optionalStringWithDefault(
-			fields["mount_path"],
+			body.MountPath,
 			sessionresource.DefaultGitHubRepositoryMountPath(url),
 			"mount_path",
 		)
@@ -190,11 +190,11 @@ func (h *Handler) resourceFromFields(
 		}
 		payload["url"] = url
 		payload["mount_path"] = mountPath
-		if raw, ok := fields["checkout"]; ok && !httpapi.IsJSONNull(raw) {
-			payload["checkout"] = agentsnapshot.RawJSONValue(raw, nil)
+		if len(body.Checkout) > 0 && !httpapi.IsJSONNull(body.Checkout) {
+			payload["checkout"] = agentsnapshot.RawJSONValue(body.Checkout, nil)
 		}
 	case "memory_store":
-		memoryStoreID, err := parseRequiredStringField(fields, "memory_store_id")
+		memoryStoreID, err := parseRequiredRawString(body.MemoryStoreID, "memory_store_id")
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
@@ -206,11 +206,11 @@ func (h *Handler) resourceFromFields(
 			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
 		}
 		payload["memory_store_id"] = memoryStoreID
-		copyOptionalPayloadString(payload, fields, "access")
-		copyOptionalPayloadString(payload, fields, "description")
-		copyOptionalPayloadString(payload, fields, "instructions")
-		copyOptionalPayloadString(payload, fields, "mount_path")
-		copyOptionalPayloadString(payload, fields, "name")
+		copyOptionalPayloadString(payload, body.Access, "access")
+		copyOptionalPayloadString(payload, body.Description, "description")
+		copyOptionalPayloadString(payload, body.Instructions, "instructions")
+		copyOptionalPayloadString(payload, body.MountPath, "mount_path")
+		copyOptionalPayloadString(payload, body.Name, "name")
 	default:
 		return normalizedSessionResource{}, errors.New("resource type must be file, github_repository, or memory_store")
 	}

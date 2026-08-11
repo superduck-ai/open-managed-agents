@@ -18,20 +18,19 @@ func (h *Handler) isOfficialSDKFixturePrincipal(principal auth.Principal) bool {
 	return principal.CredentialType == "api_key" && principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
 }
 
-func (h *Handler) createUsesOfficialFixtures(fields map[string]json.RawMessage) bool {
-	agentRaw := fields["agent"]
-	env, _ := parseRequiredStringField(fields, "environment_id")
+func (h *Handler) createUsesOfficialFixtures(body *sessionMutationRequest) bool {
+	env, _ := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if env != h.cfg.SDKFixtures.EnvironmentID {
 		return false
 	}
 	var agentID string
-	if json.Unmarshal(agentRaw, &agentID) == nil {
+	if json.Unmarshal(body.Agent, &agentID) == nil {
 		return agentID == h.cfg.SDKFixtures.AgentID
 	}
 	var object struct {
 		ID string `json:"id"`
 	}
-	_ = json.Unmarshal(agentRaw, &object)
+	_ = json.Unmarshal(body.Agent, &object)
 	return object.ID == h.cfg.SDKFixtures.AgentID
 }
 

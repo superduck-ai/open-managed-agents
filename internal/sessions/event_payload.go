@@ -51,14 +51,6 @@ func patchSessionAgent(current json.RawMessage, raw json.RawMessage) (json.RawMe
 	return httpapi.MarshalRaw(snapshot)
 }
 
-func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
-		return "", fmt.Errorf("%s is required", name)
-	}
-	return parseRequiredRawString(raw, name)
-}
-
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return "", fmt.Errorf("%s is required", name)
@@ -73,9 +65,8 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	return value, nil
 }
 
-func parseNullableStringField(fields map[string]json.RawMessage, name string) (*string, error) {
-	raw, ok := fields[name]
-	if !ok {
+func nullableStringOrMissing(raw json.RawMessage, name string) (*string, error) {
+	if len(raw) == 0 {
 		return nil, nil
 	}
 	return nullableStringFromRaw(raw, name)
@@ -103,9 +94,8 @@ func optionalStringWithDefault(raw json.RawMessage, fallback, name string) (stri
 	return value, nil
 }
 
-func copyOptionalPayloadString(payload map[string]any, fields map[string]json.RawMessage, name string) {
-	raw, ok := fields[name]
-	if !ok || httpapi.IsJSONNull(raw) {
+func copyOptionalPayloadString(payload map[string]any, raw json.RawMessage, name string) {
+	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return
 	}
 	var value string
@@ -118,8 +108,8 @@ func validateMetadataEntries(metadata map[string]string) error {
 	return httpapi.ValidateMetadataEntryLimit(metadata, 16, "metadata may contain at most 16 entries")
 }
 
-func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
-	if raw, ok := fields[name]; ok {
+func rawOrDefault(raw json.RawMessage, fallback string) json.RawMessage {
+	if len(raw) > 0 {
 		return raw
 	}
 	return json.RawMessage(fallback)

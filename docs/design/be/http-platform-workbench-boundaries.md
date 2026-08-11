@@ -6,6 +6,8 @@
 
 - `internal/httpapi`
   - 仅保留通用 HTTP helper，例如 Anthropic-compatible error shape、JSON 写入、请求解析等。
+  - JSON object 请求体通过公共类型化解码边界处理：资源层传入自身大小上限并使用命名 DTO；patch 的字段存在性、显式 `null` 和多态嵌套值由 DTO 中对应的 `json.RawMessage` 字段保留，不使用顶层 `map[string]json.RawMessage` 字段表。
+  - 公共解码边界解析请求体中的首个 JSON object，拒绝 malformed JSON、`null`、非 object 和超限 body；不额外扫描 trailing data 或连续 JSON 值。admin/webhooks 等允许空 body 或要求空 object 的特殊合同继续使用显式薄包装。
   - 不注册业务路由，不持有平台/Workbench 领域类型别名，不直接依赖具体 feature 包。
 - `internal/platformapi`
   - 承载平台/console 相关 HTTP route registration、请求解析、响应映射和轻量业务编排。
@@ -48,6 +50,7 @@
 本次拆分是保持行为不变的机械迁移。验证重点：
 
 - `go test ./internal/httpapi ./internal/platformapi ./internal/workbench -count=1`
+- `go test ./internal/agents ./internal/batches ./internal/deployments ./internal/sessions ./internal/vaults ./internal/memory ./internal/environments ./internal/files -count=1`
 - `go test ./internal/codesessions ./internal/sessions ./internal/environments -count=1`
 - `go test ./internal/api -count=1`
 - `go test ./... -count=1`

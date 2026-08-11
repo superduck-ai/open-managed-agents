@@ -39,6 +39,13 @@ func TestReferenceValidationFailures(t *testing.T) {
 			want:        "local file paths are not accepted",
 		},
 		{
+			name:        "file ID has surrounding whitespace",
+			eventType:   "user.message",
+			payload:     `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":" file_doc "}}]}`,
+			publicError: true,
+			want:        "must not contain surrounding whitespace",
+		},
+		{
 			name:        "file block outside user message",
 			eventType:   "system.message",
 			payload:     `{"type":"system.message","content":[{"type":"document","source":{"type":"file","file_id":"file_doc"}}]}`,

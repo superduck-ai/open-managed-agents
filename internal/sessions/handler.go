@@ -79,6 +79,7 @@ type sendEventsResponse struct {
 type sessionMutationRequest struct {
 	Agent         json.RawMessage `json:"agent"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
+	InitialEvents json.RawMessage `json:"initial_events"`
 	Metadata      json.RawMessage `json:"metadata"`
 	Resources     json.RawMessage `json:"resources"`
 	Title         json.RawMessage `json:"title"`

@@ -147,6 +147,9 @@ func referencesFromEvent(eventType string, raw json.RawMessage) ([]reference, er
 		if fileID == "" {
 			return nil, errors.New("file content block source.file_id is required")
 		}
+		if fileID != source.FileID {
+			return nil, errors.New("file content block source.file_id must not contain surrounding whitespace")
+		}
 		references = append(references, reference{blockType: block.Type, fileID: fileID})
 	}
 	return references, nil

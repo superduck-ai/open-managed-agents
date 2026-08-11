@@ -39,9 +39,10 @@ Send Events 在事务中锁定 Session 行并按当前 workspace/session 查询�
 1. 从公开事件中提取 `document/image + source.type=file` 的 `file_id`；
 2. 要求每个 `file_id` 都有活动 Session Resource；
 3. 校验 `image` 的 MIME 为 `image/jpeg`、`image/png`、`image/gif` 或 `image/webp`；
-4. 同一文件重复引用只影响一次 worker 路径注入；
-5. 任一引用无效时回滚整批事件及 outcome evaluation 更新；
-6. 校验通过后只把原始公开 payload 写入 `session_events`，并把本次校验使用的绑定快照交给
+4. 要求 `file_id` 使用无首尾空白的规范形式，避免公开 payload 与 Resource pin 比对产生歧义；
+5. 同一文件重复引用只影响一次 worker 路径注入；
+6. 任一引用无效时回滚整批事件及 outcome evaluation 更新；
+7. 校验通过后只把原始公开 payload 写入 `session_events`，并把本次校验使用的绑定快照交给
    active Code Session 的 realtime 转换。
 
 资源查询按 `created_at ASC, uuid ASC` 稳定排序；同一个 Files API 对象多次挂载时，worker 转换

@@ -149,7 +149,7 @@
             AND event.deleted_at IS NULL
             AND content_block-&gt;&gt;'type' IN ('document', 'image')
             AND content_block-&gt;'source'-&gt;&gt;'type' = 'file'
-            AND content_block-&gt;'source'-&gt;&gt;'file_id' = file.external_id
+            AND BTRIM(content_block-&gt;'source'-&gt;&gt;'file_id') = file.external_id
         )
     </select>
 

@@ -129,7 +129,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	initialEvents, outcomes, err := normalizeInitialSessionEvents(
 		sessionRecord,
-		fields["initial_events"],
+		body.InitialEvents,
 		eventFileBindings,
 		now,
 	)

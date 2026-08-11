@@ -1,11 +1,32 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+func TestCodeSessionMapperFindVaultIDsNotFound(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"vault_ids"}})
+	row, found, err := NewCodeSessionMapper(executor).FindVaultIDs(
+		context.Background(),
+		"org-uuid",
+		"workspace-uuid",
+		"codeses_missing",
+	)
+	if err != nil || found || len(row.VaultIDs) != 0 {
+		t.Fatalf("FindVaultIDs() = (%+v, %t, %v), want zero, false, nil", row, found, err)
+	}
+	assertMapperTestExecution(
+		t,
+		executor,
+		"CodeSessionMapper.FindVaultIDs",
+		yourbatis.StatementSelect,
+		[]any{"codeses_missing", "org-uuid", "workspace-uuid"},
+	)
+}
 
 func TestCodeSessionMapperBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)

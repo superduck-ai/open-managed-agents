@@ -141,12 +141,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.Batch.MaxBodyBytes)
-	var body createRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&body); err != nil {
+	body, err := httpapi.DecodeObjectBodyAs[createRequest](w, r, h.cfg.Batch.MaxBodyBytes)
+	if err != nil {
 		status := http.StatusBadRequest
-		message := "Invalid JSON body"
+		message := err.Error()
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			status = http.StatusRequestEntityTooLarge
@@ -209,7 +207,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	httpapi.WriteJSON(w, http.StatusOK, h.responseFromRecord(r, created))
 }
 
-func (h *Handler) validateCreate(body createRequest, betaHeaders []string) error {
+func (h *Handler) validateCreate(body *createRequest, betaHeaders []string) error {
 	if len(body.Requests) == 0 {
 		return errors.New("requests must contain at least one request")
 	}

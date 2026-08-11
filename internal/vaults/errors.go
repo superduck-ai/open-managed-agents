@@ -8,7 +8,10 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-// ErrMissingSecretEnvelope asks clients to resubmit a credential's secret.
+// ErrMissingSecretEnvelope is returned when an active credential has no
+// secret envelope to open. The Vaults API asks clients to resubmit the secret;
+// runtime callers may map it differently when the upstream credential is
+// unavailable.
 var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
 
 func invalidRequest(err error) error {

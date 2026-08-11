@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -90,11 +89,9 @@ func (h *Handler) uploadBase64(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, h.platformUploadBodyLimit())
+	payload, err := httpapi.DecodeObjectBodyAs[platformUploadB64Request](w, r, h.platformUploadBodyLimit())
 	defer r.Body.Close()
-
-	var payload platformUploadB64Request
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err != nil {
 		status := http.StatusBadRequest
 		message := "Expected JSON body with file_name and file_b64"
 		var maxBytesErr *http.MaxBytesError

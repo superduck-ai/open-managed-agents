@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -29,8 +27,6 @@ import (
 
 const maxVaultBodySize = 4 << 20
 
-var credentialHostPattern = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9.-]+$`)
-
 type Handler struct {
 	cfg          config.Config
 	db           *db.DB
@@ -43,6 +39,33 @@ type Handler struct {
 
 type webhookEnqueuer interface {
 	Enqueue(context.Context, webhooks.EnqueueInput)
+}
+
+type createVaultRequest struct {
+	DisplayName string            `json:"display_name"`
+	Metadata    map[string]string `json:"metadata"`
+}
+
+type updateVaultRequest struct {
+	DisplayName json.RawMessage `json:"display_name"`
+	Metadata    json.RawMessage `json:"metadata"`
+}
+
+type createCredentialRequest struct {
+	DisplayName string            `json:"display_name"`
+	Metadata    map[string]string `json:"metadata"`
+	Auth        json.RawMessage   `json:"auth"`
+}
+
+type updateCredentialRequest struct {
+	DisplayName json.RawMessage `json:"display_name"`
+	Metadata    json.RawMessage `json:"metadata"`
+	Auth        json.RawMessage `json:"auth"`
+}
+
+type pageCursorPayload struct {
+	CreatedAt string `json:"created_at"`
+	UUID      string `json:"uuid"`
 }
 
 type vaultResponse struct {
@@ -63,7 +86,7 @@ type vaultPageResponse struct {
 type credentialResponse struct {
 	ID          string          `json:"id"`
 	ArchivedAt  *string         `json:"archived_at"`
-	Auth        json.RawMessage `json:"auth"`
+	Auth        credentialAuth  `json:"auth"`
 	CreatedAt   string          `json:"created_at"`
 	Metadata    json.RawMessage `json:"metadata"`
 	Type        string          `json:"type"`
@@ -108,72 +131,6 @@ type validationHTTPResponse struct {
 	BodyTruncated bool   `json:"body_truncated"`
 	ContentType   string `json:"content_type"`
 	StatusCode    int    `json:"status_code"`
-}
-
-type credentialAuthState struct {
-	AuthType      string
-	Key           string
-	PublicAuth    json.RawMessage
-	SecretPayload json.RawMessage
-}
-
-// credentialBinding builds the AAD binding from a credential's identity. The
-// same binding is used to seal and open, so an envelope cannot be moved to
-// another org/workspace/vault/credential and still decrypt.
-func credentialBinding(credential db.VaultCredential) secrets.Binding {
-	return secrets.Binding{
-		OrganizationUUID:     credential.OrganizationUUID,
-		WorkspaceUUID:        credential.WorkspaceUUID,
-		VaultExternalID:      credential.VaultExternalID,
-		CredentialExternalID: credential.ExternalID,
-	}
-}
-
-// SealCredentialSecret seals a credential's plaintext SecretPayload into
-// SecretEnvelope and drops the plaintext so it is never persisted. Empty or
-// JSON-null payloads are rejected so create/update callers cannot believe a
-// seal succeeded when no envelope was produced. Exported so the platform MCP
-// OAuth callback can seal credentials through the same path as the Vaults API.
-func SealCredentialSecret(ctx context.Context, secretSvc *secrets.Service, credential *db.VaultCredential) error {
-	if len(credential.SecretPayload) == 0 || isJSONNull(credential.SecretPayload) {
-		return errors.New("vault credential secret payload is required to seal")
-	}
-	if err := requireSecretsService(secretSvc); err != nil {
-		return err
-	}
-	envelope, err := secretSvc.Seal(ctx, credentialBinding(*credential), credential.SecretPayload)
-	if err != nil {
-		return fmt.Errorf("seal credential secret: %w", err)
-	}
-	credential.SecretEnvelope = &envelope
-	credential.SecretPayload = nil
-	return nil
-}
-
-// openCredentialSecret decrypts a credential's envelope back into SecretPayload
-// so callers can read the secret for merge or runtime use. A missing envelope
-// returns ErrMissingSecretEnvelope. A present envelope that fails to open
-// fails closed. Decrypted plaintext must not be persisted or logged.
-func openCredentialSecret(ctx context.Context, secretSvc *secrets.Service, credential *db.VaultCredential) error {
-	if credential.SecretEnvelope == nil {
-		return ErrMissingSecretEnvelope
-	}
-	if err := requireSecretsService(secretSvc); err != nil {
-		return err
-	}
-	plaintext, err := secretSvc.Open(ctx, credentialBinding(*credential), *credential.SecretEnvelope)
-	if err != nil {
-		return fmt.Errorf("open credential secret: %w", err)
-	}
-	credential.SecretPayload = plaintext
-	return nil
-}
-
-func requireSecretsService(secretSvc *secrets.Service) error {
-	if secretSvc == nil {
-		return errors.New("vault credential encryption is not configured")
-	}
-	return nil
 }
 
 func NewHandler(cfg config.Config, database *db.DB, secretSvc *secrets.Service, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
@@ -228,15 +185,18 @@ func (h *Handler) createVault(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	fields, err := decodeObjectBody(w, r)
+	request, err := httpapi.DecodeObjectBodyAs[createVaultRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	displayName, err := parseRequiredStringField(fields, "display_name")
+	displayName, err := requireNonEmptyString(request.DisplayName, "display_name")
+	if err == nil {
+		err = validateDisplayName(displayName)
+	}
 	if err != nil {
 		return invalidRequest(err)
 	}
-	metadata, err := normalizeMetadata(fieldOrDefault(fields, "metadata", `{}`))
+	metadata, err := normalizeMetadata(request.Metadata)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -336,22 +296,18 @@ func (h *Handler) updateVaultRoute(w http.ResponseWriter, r *http.Request) error
 	if current.ArchivedAt != nil {
 		return vaultArchived()
 	}
-	fields, err := decodeObjectBody(w, r)
+	request, err := httpapi.DecodeObjectBodyAs[updateVaultRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		return invalidRequest(err)
 	}
 	next := current
-	if raw, ok := fields["display_name"]; ok {
-		next.DisplayName, err = parseRequiredRawString(raw, "display_name")
-		if err != nil {
-			return invalidRequest(err)
-		}
+	next.DisplayName, err = patchDisplayName(next.DisplayName, request.DisplayName)
+	if err != nil {
+		return invalidRequest(err)
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = patchMetadata(next.Metadata, raw)
-		if err != nil {
-			return invalidRequest(err)
-		}
+	next.Metadata, err = patchMetadata(next.Metadata, request.Metadata)
+	if err != nil {
+		return invalidRequest(err)
 	}
 	next.UpdatedAt = time.Now().UTC()
 	updated, err := h.db.UpdateVault(r.Context(), principal.WorkspaceUUID, vaultID, next)
@@ -426,19 +382,22 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	if vault.ArchivedAt != nil {
 		return vaultArchived()
 	}
-	fields, err := decodeObjectBody(w, r)
+	request, err := httpapi.DecodeObjectBodyAs[createCredentialRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	displayName, err := parseRequiredStringField(fields, "display_name")
+	displayName, err := requireNonEmptyString(request.DisplayName, "display_name")
+	if err == nil {
+		err = validateDisplayName(displayName)
+	}
 	if err != nil {
 		return invalidRequest(err)
 	}
-	metadata, err := normalizeMetadata(fieldOrDefault(fields, "metadata", `{}`))
+	metadata, err := normalizeMetadata(request.Metadata)
 	if err != nil {
 		return invalidRequest(err)
 	}
-	authState, err := normalizeCredentialAuthForCreate(fields["auth"])
+	authState, err := normalizeCredentialAuthForCreate(request.Auth)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -473,8 +432,7 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	}
 	parentVaultID := created.VaultExternalID
 	h.enqueueWebhookWithOptions(r, principal, "vault_credential.created", created.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
-	httpapi.WriteJSON(w, http.StatusOK, responseFromCredential(created))
-	return nil
+	return h.writeCredentialResponse(w, created)
 }
 
 func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) error {
@@ -511,9 +469,9 @@ func (h *Handler) listCredentialsRoute(w http.ResponseWriter, r *http.Request) e
 	if err != nil {
 		return internalError("Could not list credentials", fmt.Errorf("list vault credentials: %w", err))
 	}
-	data := make([]credentialResponse, 0, len(records))
-	for _, record := range records {
-		data = append(data, responseFromCredential(record))
+	data, err := responsesFromCredentials(records)
+	if err != nil {
+		return internalError("Could not list credentials", fmt.Errorf("decode vault credential auth: %w", err))
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
@@ -529,8 +487,7 @@ func (h *Handler) retrieveCredentialRoute(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		return err
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromCredential(credential))
-	return nil
+	return h.writeCredentialResponse(w, credential)
 }
 
 func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) error {
@@ -550,43 +507,34 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	if current.ArchivedAt != nil {
 		return credentialArchived()
 	}
-	fields, err := decodeObjectBody(w, r)
+	request, err := httpapi.DecodeObjectBodyAs[updateCredentialRequest](w, r, maxVaultBodySize)
 	if err != nil {
 		return invalidRequest(err)
 	}
 	next := current
-	if raw, ok := fields["display_name"]; ok {
-		next.DisplayName, err = parseRequiredRawString(raw, "display_name")
-		if err != nil {
-			return invalidRequest(err)
-		}
+	next.DisplayName, err = patchDisplayName(next.DisplayName, request.DisplayName)
+	if err != nil {
+		return invalidRequest(err)
 	}
-	if raw, ok := fields["metadata"]; ok {
-		next.Metadata, err = patchMetadata(next.Metadata, raw)
-		if err != nil {
-			return invalidRequest(err)
-		}
+	next.Metadata, err = patchMetadata(next.Metadata, request.Metadata)
+	if err != nil {
+		return invalidRequest(err)
 	}
-	if raw, ok := fields["auth"]; ok {
+	if len(request.Auth) != 0 {
 		// Open the existing envelope so partial updates (for example rotating
 		// only an OAuth access token) merge onto stored refresh material
 		// instead of dropping it, then reseal under a fresh DEK.
-		// A missing envelope can still be repaired when the body carries a
-		// complete replacement secret; otherwise ask the client to resubmit.
+		// Without an envelope, auth normalization requires a complete
+		// replacement secret before allowing the credential to be resealed.
+		var currentSecret []byte
 		if current.SecretEnvelope != nil {
-			if err := openCredentialSecret(r.Context(), h.secretSvc, &current); err != nil {
+			currentSecret, err = openCredentialSecret(r.Context(), h.secretSvc, current)
+			if err != nil {
 				return credentialSecretError(err, "Could not update credential")
 			}
-		} else {
-			provides, err := authUpdateProvidesSecretReplacement(current.AuthType, raw)
-			if err != nil {
-				return invalidRequest(err)
-			}
-			if !provides {
-				return credentialSecretError(ErrMissingSecretEnvelope, "Could not update credential")
-			}
+			defer clear(currentSecret)
 		}
-		authState, err := normalizeCredentialAuthForUpdate(current, raw)
+		authState, err := normalizeCredentialAuthForUpdate(current, currentSecret, request.Auth)
 		if err != nil {
 			return invalidRequest(err)
 		}
@@ -604,8 +552,7 @@ func (h *Handler) updateCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return mapUpdateCredentialError(err, credentialID)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromCredential(updated))
-	return nil
+	return h.writeCredentialResponse(w, updated)
 }
 
 func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request) error {
@@ -624,8 +571,7 @@ func (h *Handler) archiveCredentialRoute(w http.ResponseWriter, r *http.Request)
 	}
 	parentVaultID := record.VaultExternalID
 	h.enqueueWebhookWithOptions(r, principal, "vault_credential.archived", record.ExternalID, webhooks.EventOptions{VaultID: &parentVaultID})
-	httpapi.WriteJSON(w, http.StatusOK, responseFromCredential(record))
-	return nil
+	return h.writeCredentialResponse(w, record)
 }
 
 func (h *Handler) deleteCredentialRoute(w http.ResponseWriter, r *http.Request) error {
@@ -689,10 +635,16 @@ func (h *Handler) validateCredentialRoute(w http.ResponseWriter, r *http.Request
 	}
 	// Decrypt transiently to inspect whether a refresh token is present. The
 	// plaintext is not persisted or logged.
-	if err := openCredentialSecret(r.Context(), h.secretSvc, &credential); err != nil {
+	plaintext, err := openCredentialSecret(r.Context(), h.secretSvc, credential)
+	if err != nil {
 		return credentialSecretError(err, "Could not validate credential")
 	}
-	hasRefreshToken := hasNestedSecret(credential.SecretPayload, "refresh", "refresh_token")
+	defer clear(plaintext)
+	secret, err := decodeMCPOAuthCredentialSecret(plaintext)
+	if err != nil {
+		return credentialSecretError(err, "Could not validate credential")
+	}
+	hasRefreshToken := secret.Refresh != nil && strings.TrimSpace(secret.Refresh.RefreshToken) != ""
 	refreshStatus := "no_refresh_token"
 	if hasRefreshToken {
 		refreshStatus = "connect_error"
@@ -755,73 +707,80 @@ func responseFromVault(vault db.Vault) vaultResponse {
 	}
 }
 
-func responseFromCredential(credential db.VaultCredential) credentialResponse {
+func responseFromCredential(credential db.VaultCredential) (credentialResponse, error) {
+	auth, err := decodeCredentialAuth(credential.Auth)
+	if err != nil {
+		return credentialResponse{}, fmt.Errorf("decode credential %s auth: %w", credential.ExternalID, err)
+	}
 	return credentialResponse{
 		ID:          credential.ExternalID,
 		ArchivedAt:  optionalTime(credential.ArchivedAt),
-		Auth:        rawOr(credential.Auth, `{}`),
+		Auth:        auth,
 		CreatedAt:   formatTime(credential.CreatedAt),
 		Metadata:    rawOr(credential.Metadata, `{}`),
 		Type:        "vault_credential",
 		UpdatedAt:   formatTime(credential.UpdatedAt),
 		VaultID:     credential.VaultExternalID,
 		DisplayName: credential.DisplayName,
-	}
+	}, nil
 }
 
-func decodeObjectBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxVaultBodySize)
-	var fields map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&fields); err != nil {
-		return nil, errors.New("Invalid JSON body")
+func responsesFromCredentials(credentials []db.VaultCredential) ([]credentialResponse, error) {
+	responses := make([]credentialResponse, 0, len(credentials))
+	for _, credential := range credentials {
+		response, err := responseFromCredential(credential)
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, response)
 	}
-	if fields == nil {
-		return nil, errors.New("JSON body must be an object")
-	}
-	return fields, nil
+	return responses, nil
 }
 
-func parseRequiredStringField(fields map[string]json.RawMessage, name string) (string, error) {
-	raw, ok := fields[name]
-	if !ok {
-		return "", fmt.Errorf("%s is required", name)
+func (h *Handler) writeCredentialResponse(w http.ResponseWriter, credential db.VaultCredential) error {
+	response, err := responseFromCredential(credential)
+	if err != nil {
+		return internalError("Could not encode credential", fmt.Errorf("decode credential %q auth: %w", credential.ExternalID, err))
 	}
-	return parseRequiredRawString(raw, name)
+	httpapi.WriteJSON(w, http.StatusOK, response)
+	return nil
 }
 
-func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
-	if isJSONNull(raw) {
-		return "", fmt.Errorf("%s cannot be null", name)
-	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return "", fmt.Errorf("%s must be a string", name)
-	}
-	if strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("%s must be non-empty", name)
-	}
-	if len(value) > 255 {
-		return "", fmt.Errorf("%s must be at most 255 characters", name)
-	}
-	return value, nil
-}
-
-func normalizeMetadata(raw json.RawMessage) (json.RawMessage, error) {
-	if isJSONNull(raw) {
+func normalizeMetadata(metadata map[string]string) (json.RawMessage, error) {
+	if metadata == nil {
 		return json.RawMessage(`{}`), nil
-	}
-	var metadata map[string]string
-	if err := json.Unmarshal(raw, &metadata); err != nil {
-		return nil, errors.New("metadata must be an object with string values")
 	}
 	if err := validateMetadata(metadata); err != nil {
 		return nil, err
 	}
-	return marshalRaw(metadata)
+	return json.Marshal(metadata)
+}
+
+func patchDisplayName(current string, raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return current, nil
+	}
+	if isJSONNull(raw) {
+		return "", errors.New("display_name cannot be null")
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", errors.New("display_name must be a string")
+	}
+	displayName, err := requireNonEmptyString(value, "display_name")
+	if err != nil {
+		return "", err
+	}
+	if err := validateDisplayName(displayName); err != nil {
+		return "", err
+	}
+	return displayName, nil
 }
 
 func patchMetadata(current json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return current, nil
+	}
 	if isJSONNull(raw) {
 		return json.RawMessage(`{}`), nil
 	}
@@ -845,7 +804,7 @@ func patchMetadata(current json.RawMessage, raw json.RawMessage) (json.RawMessag
 	if err := validateMetadata(metadata); err != nil {
 		return nil, err
 	}
-	return marshalRaw(metadata)
+	return json.Marshal(metadata)
 }
 
 func validateMetadata(metadata map[string]string) error {
@@ -863,594 +822,11 @@ func validateMetadata(metadata map[string]string) error {
 	return nil
 }
 
-func normalizeCredentialAuthForCreate(raw json.RawMessage) (credentialAuthState, error) {
-	fields, err := objectFromRaw(raw, "auth")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	authType, err := requiredString(fields, "type", "auth.type")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	switch authType {
-	case "mcp_oauth":
-		return normalizeMCPOAuthForCreate(fields)
-	case "static_bearer":
-		return normalizeStaticBearerForCreate(fields)
-	case "environment_variable":
-		return normalizeEnvironmentVariableForCreate(fields)
-	default:
-		return credentialAuthState{}, errors.New("auth.type must be mcp_oauth, static_bearer, or environment_variable")
-	}
-}
-
-func normalizeMCPOAuthForCreate(fields map[string]json.RawMessage) (credentialAuthState, error) {
-	serverURL, err := requiredString(fields, "mcp_server_url", "auth.mcp_server_url")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
-		return credentialAuthState{}, err
-	}
-	accessToken, err := requiredString(fields, "access_token", "auth.access_token")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	publicAuth := map[string]any{
-		"type":           "mcp_oauth",
-		"mcp_server_url": serverURL,
-	}
-	secretPayload := map[string]any{
-		"type":         "mcp_oauth",
-		"access_token": accessToken,
-	}
-	if expiresAt, ok, err := optionalString(fields, "expires_at", "auth.expires_at"); err != nil {
-		return credentialAuthState{}, err
-	} else if ok {
-		if err := validateRFC3339(expiresAt, "auth.expires_at"); err != nil {
-			return credentialAuthState{}, err
-		}
-		publicAuth["expires_at"] = expiresAt
-	}
-	if rawRefresh, ok := fields["refresh"]; ok && !isJSONNull(rawRefresh) {
-		publicRefresh, secretRefresh, err := normalizeMCPOAuthRefreshForCreate(rawRefresh)
-		if err != nil {
-			return credentialAuthState{}, err
-		}
-		publicAuth["refresh"] = publicRefresh
-		secretPayload["refresh"] = secretRefresh
-	}
-	return credentialAuthStateFromMaps("mcp_oauth", serverURL, publicAuth, secretPayload)
-}
-
-func normalizeMCPOAuthRefreshForCreate(raw json.RawMessage) (map[string]any, map[string]any, error) {
-	fields, err := objectFromRaw(raw, "auth.refresh")
-	if err != nil {
-		return nil, nil, err
-	}
-	tokenEndpoint, err := requiredString(fields, "token_endpoint", "auth.refresh.token_endpoint")
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := validateHTTPURL(tokenEndpoint, "auth.refresh.token_endpoint"); err != nil {
-		return nil, nil, err
-	}
-	clientID, err := requiredString(fields, "client_id", "auth.refresh.client_id")
-	if err != nil {
-		return nil, nil, err
-	}
-	refreshToken, err := requiredString(fields, "refresh_token", "auth.refresh.refresh_token")
-	if err != nil {
-		return nil, nil, err
-	}
-	publicTokenAuth, secretTokenAuth, err := normalizeTokenEndpointAuthForCreate(fields["token_endpoint_auth"])
-	if err != nil {
-		return nil, nil, err
-	}
-	publicRefresh := map[string]any{
-		"token_endpoint":      tokenEndpoint,
-		"client_id":           clientID,
-		"token_endpoint_auth": publicTokenAuth,
-	}
-	secretRefresh := map[string]any{
-		"refresh_token":       refreshToken,
-		"token_endpoint_auth": secretTokenAuth,
-	}
-	if value, ok, err := optionalString(fields, "scope", "auth.refresh.scope"); err != nil {
-		return nil, nil, err
-	} else if ok {
-		publicRefresh["scope"] = value
-	}
-	if value, ok, err := optionalString(fields, "resource", "auth.refresh.resource"); err != nil {
-		return nil, nil, err
-	} else if ok {
-		publicRefresh["resource"] = value
-	}
-	return publicRefresh, secretRefresh, nil
-}
-
-func normalizeTokenEndpointAuthForCreate(raw json.RawMessage) (map[string]any, map[string]any, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return map[string]any{"type": "none"}, map[string]any{"type": "none"}, nil
-	}
-	fields, err := objectFromRaw(raw, "auth.refresh.token_endpoint_auth")
-	if err != nil {
-		return nil, nil, err
-	}
-	authType, err := requiredString(fields, "type", "auth.refresh.token_endpoint_auth.type")
-	if err != nil {
-		return nil, nil, err
-	}
-	switch authType {
-	case "none":
-		return map[string]any{"type": "none"}, map[string]any{"type": "none"}, nil
-	case "client_secret_basic", "client_secret_post":
-		clientSecret, err := requiredString(fields, "client_secret", "auth.refresh.token_endpoint_auth.client_secret")
-		if err != nil {
-			return nil, nil, err
-		}
-		return map[string]any{"type": authType}, map[string]any{"type": authType, "client_secret": clientSecret}, nil
-	default:
-		return nil, nil, errors.New("auth.refresh.token_endpoint_auth.type must be none, client_secret_basic, or client_secret_post")
-	}
-}
-
-func normalizeStaticBearerForCreate(fields map[string]json.RawMessage) (credentialAuthState, error) {
-	serverURL, err := requiredString(fields, "mcp_server_url", "auth.mcp_server_url")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
-		return credentialAuthState{}, err
-	}
-	token, err := requiredString(fields, "token", "auth.token")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	publicAuth := map[string]any{"type": "static_bearer", "mcp_server_url": serverURL}
-	secretPayload := map[string]any{"type": "static_bearer", "token": token}
-	return credentialAuthStateFromMaps("static_bearer", serverURL, publicAuth, secretPayload)
-}
-
-func normalizeEnvironmentVariableForCreate(fields map[string]json.RawMessage) (credentialAuthState, error) {
-	secretName, err := requiredString(fields, "secret_name", "auth.secret_name")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	if err := validateSecretName(secretName); err != nil {
-		return credentialAuthState{}, err
-	}
-	secretValue, err := requiredString(fields, "secret_value", "auth.secret_value")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	networking, err := normalizeCredentialNetworking(fields["networking"])
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	publicAuth := map[string]any{
-		"type":        "environment_variable",
-		"secret_name": secretName,
-		"networking":  networking,
-	}
-	secretPayload := map[string]any{"type": "environment_variable", "secret_value": secretValue}
-	return credentialAuthStateFromMaps("environment_variable", secretName, publicAuth, secretPayload)
-}
-
-func normalizeCredentialAuthForUpdate(current db.VaultCredential, raw json.RawMessage) (credentialAuthState, error) {
-	fields, err := objectFromRaw(raw, "auth")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	authType, err := requiredString(fields, "type", "auth.type")
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	if authType != current.AuthType {
-		return credentialAuthState{}, errors.New("auth.type cannot be changed")
-	}
-	publicAuth := rawObjectMap(current.Auth)
-	secretPayload := rawObjectMap(current.SecretPayload)
-	if secretPayload == nil {
-		secretPayload = map[string]any{"type": current.AuthType}
-	}
-	publicAuth["type"] = current.AuthType
-	secretPayload["type"] = current.AuthType
-
-	switch current.AuthType {
-	case "mcp_oauth":
-		if _, ok := fields["mcp_server_url"]; ok {
-			return credentialAuthState{}, errors.New("auth.mcp_server_url is immutable")
-		}
-		if rawAccessToken, ok := fields["access_token"]; ok {
-			accessToken, err := rawString(rawAccessToken, "auth.access_token")
-			if err != nil {
-				return credentialAuthState{}, err
-			}
-			secretPayload["access_token"] = accessToken
-		}
-		if rawExpiresAt, ok := fields["expires_at"]; ok {
-			expiresAt, err := rawString(rawExpiresAt, "auth.expires_at")
-			if err != nil {
-				return credentialAuthState{}, err
-			}
-			if err := validateRFC3339(expiresAt, "auth.expires_at"); err != nil {
-				return credentialAuthState{}, err
-			}
-			publicAuth["expires_at"] = expiresAt
-		}
-		if rawRefresh, ok := fields["refresh"]; ok {
-			if isJSONNull(rawRefresh) {
-				delete(publicAuth, "refresh")
-				delete(secretPayload, "refresh")
-			} else if err := patchMCPOAuthRefreshForUpdate(publicAuth, secretPayload, rawRefresh); err != nil {
-				return credentialAuthState{}, err
-			}
-		}
-		return credentialAuthStateFromMaps(current.AuthType, current.CredentialKey, publicAuth, secretPayload)
-	case "static_bearer":
-		key := current.CredentialKey
-		if rawServerURL, ok := fields["mcp_server_url"]; ok {
-			serverURL, err := rawString(rawServerURL, "auth.mcp_server_url")
-			if err != nil {
-				return credentialAuthState{}, err
-			}
-			if err := validateHTTPURL(serverURL, "auth.mcp_server_url"); err != nil {
-				return credentialAuthState{}, err
-			}
-			publicAuth["mcp_server_url"] = serverURL
-			key = serverURL
-		}
-		if rawToken, ok := fields["token"]; ok {
-			token, err := rawString(rawToken, "auth.token")
-			if err != nil {
-				return credentialAuthState{}, err
-			}
-			secretPayload["token"] = token
-		}
-		return credentialAuthStateFromMaps(current.AuthType, key, publicAuth, secretPayload)
-	case "environment_variable":
-		if _, ok := fields["secret_name"]; ok {
-			return credentialAuthState{}, errors.New("auth.secret_name is immutable")
-		}
-		if rawSecretValue, ok := fields["secret_value"]; ok {
-			secretValue, err := rawString(rawSecretValue, "auth.secret_value")
-			if err != nil {
-				return credentialAuthState{}, err
-			}
-			secretPayload["secret_value"] = secretValue
-		}
-		if rawNetworking, ok := fields["networking"]; ok {
-			networking, err := normalizeCredentialNetworking(rawNetworking)
-			if err != nil {
-				return credentialAuthState{}, err
-			}
-			publicAuth["networking"] = networking
-		}
-		return credentialAuthStateFromMaps(current.AuthType, current.CredentialKey, publicAuth, secretPayload)
-	default:
-		return credentialAuthState{}, errors.New("stored credential auth type is invalid")
-	}
-}
-
-// authUpdateProvidesSecretReplacement reports whether an auth update body
-// carries enough secret material to reseal without opening an existing
-// envelope (used to repair credentials that lost their envelope).
-func authUpdateProvidesSecretReplacement(authType string, raw json.RawMessage) (bool, error) {
-	fields, err := objectFromRaw(raw, "auth")
-	if err != nil {
-		return false, err
-	}
-	switch authType {
-	case "static_bearer":
-		_, ok := fields["token"]
-		return ok, nil
-	case "environment_variable":
-		_, ok := fields["secret_value"]
-		return ok, nil
-	case "mcp_oauth":
-		_, ok := fields["access_token"]
-		return ok, nil
-	default:
-		return false, nil
-	}
-}
-
-func patchMCPOAuthRefreshForUpdate(publicAuth, secretPayload map[string]any, raw json.RawMessage) error {
-	fields, err := objectFromRaw(raw, "auth.refresh")
-	if err != nil {
-		return err
-	}
-	if _, ok := fields["token_endpoint"]; ok {
-		return errors.New("auth.refresh.token_endpoint is immutable")
-	}
-	if _, ok := fields["client_id"]; ok {
-		return errors.New("auth.refresh.client_id is immutable")
-	}
-	if _, ok := fields["resource"]; ok {
-		return errors.New("auth.refresh.resource is immutable")
-	}
-	publicRefresh := nestedMap(publicAuth, "refresh")
-	secretRefresh := nestedMap(secretPayload, "refresh")
-	if publicRefresh == nil {
-		return errors.New("auth.refresh cannot be added after creation")
-	}
-	if secretRefresh == nil {
-		secretRefresh = map[string]any{}
-	}
-	if rawRefreshToken, ok := fields["refresh_token"]; ok {
-		refreshToken, err := rawString(rawRefreshToken, "auth.refresh.refresh_token")
-		if err != nil {
-			return err
-		}
-		secretRefresh["refresh_token"] = refreshToken
-	}
-	if rawScope, ok := fields["scope"]; ok {
-		if isJSONNull(rawScope) {
-			delete(publicRefresh, "scope")
-		} else {
-			scope, err := rawString(rawScope, "auth.refresh.scope")
-			if err != nil {
-				return err
-			}
-			publicRefresh["scope"] = scope
-		}
-	}
-	if rawTokenAuth, ok := fields["token_endpoint_auth"]; ok {
-		publicTokenAuth, secretTokenAuth, err := normalizeTokenEndpointAuthForUpdate(rawTokenAuth)
-		if err != nil {
-			return err
-		}
-		publicRefresh["token_endpoint_auth"] = publicTokenAuth
-		secretRefresh["token_endpoint_auth"] = secretTokenAuth
-	}
-	publicAuth["refresh"] = publicRefresh
-	secretPayload["refresh"] = secretRefresh
-	return nil
-}
-
-func normalizeTokenEndpointAuthForUpdate(raw json.RawMessage) (map[string]any, map[string]any, error) {
-	if isJSONNull(raw) {
-		return map[string]any{"type": "none"}, map[string]any{"type": "none"}, nil
-	}
-	fields, err := objectFromRaw(raw, "auth.refresh.token_endpoint_auth")
-	if err != nil {
-		return nil, nil, err
-	}
-	authType, err := requiredString(fields, "type", "auth.refresh.token_endpoint_auth.type")
-	if err != nil {
-		return nil, nil, err
-	}
-	switch authType {
-	case "none":
-		return map[string]any{"type": "none"}, map[string]any{"type": "none"}, nil
-	case "client_secret_basic", "client_secret_post":
-		clientSecret, err := requiredString(fields, "client_secret", "auth.refresh.token_endpoint_auth.client_secret")
-		if err != nil {
-			return nil, nil, err
-		}
-		return map[string]any{"type": authType}, map[string]any{"type": authType, "client_secret": clientSecret}, nil
-	default:
-		return nil, nil, errors.New("auth.refresh.token_endpoint_auth.type must be none, client_secret_basic, or client_secret_post")
-	}
-}
-
-func normalizeCredentialNetworking(raw json.RawMessage) (map[string]any, error) {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return map[string]any{"type": "unrestricted"}, nil
-	}
-	fields, err := objectFromRaw(raw, "auth.networking")
-	if err != nil {
-		return nil, err
-	}
-	networkType := rawStringOrEmpty(fields["type"])
-	if networkType == "" {
-		networkType = "unrestricted"
-	}
-	switch networkType {
-	case "unrestricted":
-		return map[string]any{"type": "unrestricted"}, nil
-	case "limited":
-		hosts := []string{}
-		if rawHosts, ok := fields["allowed_hosts"]; ok && !isJSONNull(rawHosts) {
-			values, err := stringArray(rawHosts, "auth.networking.allowed_hosts")
-			if err != nil {
-				return nil, err
-			}
-			if len(values) > 16 {
-				return nil, errors.New("auth.networking.allowed_hosts must contain at most 16 hosts")
-			}
-			for _, host := range values {
-				if err := validateCredentialHost(host); err != nil {
-					return nil, err
-				}
-			}
-			hosts = values
-		}
-		return map[string]any{"type": "limited", "allowed_hosts": hosts}, nil
-	default:
-		return nil, errors.New("auth.networking.type must be unrestricted or limited")
-	}
-}
-
-func credentialAuthStateFromMaps(authType, key string, publicAuth, secretPayload map[string]any) (credentialAuthState, error) {
-	publicRaw, err := marshalRaw(publicAuth)
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	secretRaw, err := marshalRaw(secretPayload)
-	if err != nil {
-		return credentialAuthState{}, err
-	}
-	return credentialAuthState{
-		AuthType:      authType,
-		Key:           key,
-		PublicAuth:    publicRaw,
-		SecretPayload: secretRaw,
-	}, nil
-}
-
-func objectFromRaw(raw json.RawMessage, name string) (map[string]json.RawMessage, error) {
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("%s is required", name)
-	}
-	if isJSONNull(raw) {
-		return nil, fmt.Errorf("%s cannot be null", name)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil, fmt.Errorf("%s must be an object", name)
-	}
-	if fields == nil {
-		return nil, fmt.Errorf("%s must be an object", name)
-	}
-	return fields, nil
-}
-
-func requiredString(fields map[string]json.RawMessage, key, name string) (string, error) {
-	raw, ok := fields[key]
-	if !ok {
-		return "", fmt.Errorf("%s is required", name)
-	}
-	return rawString(raw, name)
-}
-
-func optionalString(fields map[string]json.RawMessage, key, name string) (string, bool, error) {
-	raw, ok := fields[key]
-	if !ok || isJSONNull(raw) {
-		return "", false, nil
-	}
-	value, err := rawString(raw, name)
-	if err != nil {
-		return "", false, err
-	}
-	return value, true, nil
-}
-
-func rawString(raw json.RawMessage, name string) (string, error) {
-	if isJSONNull(raw) {
-		return "", fmt.Errorf("%s cannot be null", name)
-	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return "", fmt.Errorf("%s must be a string", name)
-	}
-	if strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("%s must be non-empty", name)
-	}
-	return value, nil
-}
-
-func rawStringOrEmpty(raw json.RawMessage) string {
-	if len(raw) == 0 || isJSONNull(raw) {
-		return ""
-	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return value
-}
-
-func stringArray(raw json.RawMessage, name string) ([]string, error) {
-	var values []string
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return nil, fmt.Errorf("%s must be an array of strings", name)
-	}
-	for _, value := range values {
-		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("%s entries must be non-empty strings", name)
-		}
-		if len(value) > 253 {
-			return nil, fmt.Errorf("%s entries must be at most 253 characters", name)
-		}
-	}
-	return values, nil
-}
-
-func validateHTTPURL(value, name string) error {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("%s must be a valid URL", name)
-	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return fmt.Errorf("%s must use http or https", name)
+func validateDisplayName(displayName string) error {
+	if len(displayName) > 255 {
+		return errors.New("display_name must be at most 255 characters")
 	}
 	return nil
-}
-
-func validateRFC3339(value, name string) error {
-	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
-		return fmt.Errorf("%s must be RFC3339", name)
-	}
-	return nil
-}
-
-func validateSecretName(value string) error {
-	if len(value) > 255 {
-		return errors.New("auth.secret_name must be at most 255 characters")
-	}
-	return nil
-}
-
-func validateCredentialHost(host string) error {
-	if strings.Contains(host, "://") || strings.Contains(host, "/") || strings.Contains(host, ":") || strings.Contains(host, "[") || strings.Contains(host, "]") {
-		return errors.New("auth.networking.allowed_hosts entries must be hostnames without URL schemes")
-	}
-	if len(host) > 253 {
-		return errors.New("auth.networking.allowed_hosts entries must be at most 253 characters")
-	}
-	if !credentialHostPattern.MatchString(host) {
-		return errors.New("auth.networking.allowed_hosts entries must be valid hostnames")
-	}
-	return nil
-}
-
-func rawObjectMap(raw json.RawMessage) map[string]any {
-	var value map[string]any
-	if len(raw) == 0 || isJSONNull(raw) {
-		return map[string]any{}
-	}
-	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-		return map[string]any{}
-	}
-	return value
-}
-
-func nestedMap(parent map[string]any, key string) map[string]any {
-	value, ok := parent[key]
-	if !ok || value == nil {
-		return nil
-	}
-	if mapped, ok := value.(map[string]any); ok {
-		return mapped
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil
-	}
-	var mapped map[string]any
-	if err := json.Unmarshal(raw, &mapped); err != nil {
-		return nil
-	}
-	return mapped
-}
-
-func hasNestedSecret(raw json.RawMessage, parent, child string) bool {
-	root := rawObjectMap(raw)
-	nested := nestedMap(root, parent)
-	if nested == nil {
-		return false
-	}
-	value, ok := nested[child].(string)
-	return ok && strings.TrimSpace(value) != ""
-}
-
-func fieldOrDefault(fields map[string]json.RawMessage, name, fallback string) json.RawMessage {
-	if raw, ok := fields[name]; ok {
-		return raw
-	}
-	return json.RawMessage(fallback)
 }
 
 func parseLimit(r *http.Request) (int, error) {
@@ -1481,7 +857,7 @@ func parseOptionalBool(r *http.Request, name string) (bool, error) {
 }
 
 func encodeVaultCursor(vault db.Vault) string {
-	data, _ := json.Marshal(map[string]any{"created_at": formatTime(vault.CreatedAt), "uuid": vault.UUID})
+	data, _ := json.Marshal(pageCursorPayload{CreatedAt: formatTime(vault.CreatedAt), UUID: vault.UUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -1493,10 +869,7 @@ func decodeVaultCursor(raw string) (*db.VaultPageCursor, error) {
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	var payload struct {
-		CreatedAt string `json:"created_at"`
-		UUID      string `json:"uuid"`
-	}
+	var payload pageCursorPayload
 	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
 		return nil, errors.New("page is invalid")
 	}
@@ -1508,7 +881,7 @@ func decodeVaultCursor(raw string) (*db.VaultPageCursor, error) {
 }
 
 func encodeCredentialCursor(credential db.VaultCredential) string {
-	data, _ := json.Marshal(map[string]any{"created_at": formatTime(credential.CreatedAt), "uuid": credential.UUID})
+	data, _ := json.Marshal(pageCursorPayload{CreatedAt: formatTime(credential.CreatedAt), UUID: credential.UUID})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
@@ -1520,10 +893,7 @@ func decodeCredentialCursor(raw string) (*db.VaultCredentialPageCursor, error) {
 	if err != nil {
 		return nil, errors.New("page is invalid")
 	}
-	var payload struct {
-		CreatedAt string `json:"created_at"`
-		UUID      string `json:"uuid"`
-	}
+	var payload pageCursorPayload
 	if err := json.Unmarshal(data, &payload); err != nil || uuid.Validate(payload.UUID) != nil || payload.CreatedAt == "" {
 		return nil, errors.New("page is invalid")
 	}
@@ -1532,18 +902,6 @@ func decodeCredentialCursor(raw string) (*db.VaultCredentialPageCursor, error) {
 		return nil, errors.New("page is invalid")
 	}
 	return &db.VaultCredentialPageCursor{CreatedAt: createdAt.UTC(), UUID: payload.UUID}, nil
-}
-
-func isJSONNull(raw json.RawMessage) bool {
-	return strings.TrimSpace(string(raw)) == "null"
-}
-
-func marshalRaw(value any) (json.RawMessage, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	return json.RawMessage(data), nil
 }
 
 func rawOr(raw json.RawMessage, fallback string) json.RawMessage {

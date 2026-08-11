@@ -21,6 +21,11 @@ type vaultRow struct {
 	DeletedAt           *time.Time `db:"deleted_at"`
 }
 
+type vaultReferenceRow struct {
+	UUID       string `db:"uuid"`
+	ExternalID string `db:"external_id"`
+}
+
 type insertVaultParams struct {
 	UUID                string
 	ExternalID          string
@@ -50,6 +55,7 @@ type listVaultsMapperParams struct {
 type VaultMapper interface {
 	Insert(ctx context.Context, params insertVaultParams) (vaultRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (vaultRow, error)
+	ListActiveByExternalIDs(ctx context.Context, workspaceUUID string, externalIDs []string) ([]vaultReferenceRow, error)
 	FindByIdentifier(ctx context.Context, workspaceUUID, identifier, vaultUUID string) (vaultRow, error)
 	UpdateByExternalID(ctx context.Context, params updateVaultParams) (vaultRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (vaultRow, error)

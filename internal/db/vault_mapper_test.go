@@ -12,6 +12,15 @@ func TestVaultMapperBuilders(t *testing.T) {
 	cursor := &VaultPageCursor{CreatedAt: createdAt, UUID: "22222222-2222-4222-8222-222222222222"}
 
 	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement:         vaultMapperListActiveByExternalIDsStatement,
+		bound:             buildVaultMapperListActiveByExternalIDs(yourbatis.DialectPostgres, "workspace", []string{"vault_a", "vault_b"}),
+		wantID:            "VaultMapper.ListActiveByExternalIDs",
+		wantKind:          yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "externalID", "externalID"},
+		wantSQLFragments:  []string{"workspace_uuid = $1", "external_id IN ( $2 , $3 )", "archived_at IS NULL", "ORDER BY external_id"},
+	})
+
+	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement:         vaultMapperFindByIdentifierStatement,
 		bound:             buildVaultMapperFindByIdentifier(yourbatis.DialectPostgres, "workspace", "vault_test", "vault-uuid"),
 		wantID:            "VaultMapper.FindByIdentifier",

@@ -22,18 +22,18 @@ func TestExchangeOAuthTokenEndpoint(t *testing.T) {
 	})
 
 	t.Run("success posts form and decodes token", func(t *testing.T) {
+		// Capture request facts on the handler goroutine; assert on the test
+		// goroutine after Exchange returns (t.Fatal* in httptest is unsafe).
+		var saw struct {
+			contentType string
+			form        url.Values
+			parseErr    error
+		}
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
-				t.Fatalf("content-type = %q", r.Header.Get("Content-Type"))
-			}
-			if err := r.ParseForm(); err != nil {
-				t.Fatalf("parse form: %v", err)
-			}
-			if r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "abc" {
-				t.Fatalf("form = %v", r.Form)
-			}
-			if r.Form.Get("client_secret") != "secret" {
-				t.Fatalf("client_secret = %q", r.Form.Get("client_secret"))
+			saw.contentType = r.Header.Get("Content-Type")
+			saw.parseErr = r.ParseForm()
+			if saw.parseErr == nil {
+				saw.form = r.Form
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  "access",
@@ -56,6 +56,18 @@ func TestExchangeOAuthTokenEndpoint(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("exchange: %v", err)
+		}
+		if saw.contentType != "application/x-www-form-urlencoded" {
+			t.Fatalf("content-type = %q", saw.contentType)
+		}
+		if saw.parseErr != nil {
+			t.Fatalf("parse form: %v", saw.parseErr)
+		}
+		if saw.form.Get("grant_type") != "authorization_code" || saw.form.Get("code") != "abc" {
+			t.Fatalf("form = %v", saw.form)
+		}
+		if saw.form.Get("client_secret") != "secret" {
+			t.Fatalf("client_secret = %q", saw.form.Get("client_secret"))
 		}
 		if got.AccessToken != "access" || got.RefreshToken != "refresh" || got.Scope != "mcp" || got.ExpiresIn != 3600 {
 			t.Fatalf("result = %#v", got)

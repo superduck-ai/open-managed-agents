@@ -908,6 +908,37 @@ export function credentialAuthTypeLabel(authType: string, msg?: I18nMsg) {
     : 'Static bearer';
 }
 
+/** Map platform vault OAuth error_code wire values to localized user copy. */
+export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string {
+  switch (errorCode.trim()) {
+    case 'already_exists':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.alreadyExists',
+        'A credential for this MCP server already exists in the vault.',
+      );
+    case 'oauth_discovery_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.discoveryFailed',
+        'Could not discover OAuth settings for this MCP server.',
+      );
+    case 'token_exchange_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.tokenExchangeFailed',
+        'OAuth token exchange failed. Try connecting again.',
+      );
+    case 'verification_request_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.verificationFailed',
+        'OAuth verification failed. Check the MCP server URL and try again.',
+      );
+    default:
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.generic',
+        'Could not complete OAuth. Try again.',
+      );
+  }
+}
+
 export function columnWidth(section: ManagedEntitySection, column: string) {
   if (!column) {
     return 'w-[48px]';

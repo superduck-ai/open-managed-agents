@@ -329,6 +329,7 @@ func TestRefreshMCPOAuthCredentialReloadsAfterExchangeFailure(t *testing.T) {
 	svc := newTestSecretsService(t)
 	stale := sealedMCPOAuthCredential(t, svc, server.URL, "stale-access", "consumed-refresh", strPtr("2020-01-01T00:00:00Z"))
 	winner := sealedMCPOAuthCredential(t, svc, server.URL, "winner-access", "consumed-refresh", strPtr("2026-08-10T18:00:00Z"))
+	winner.SecretVersion = stale.SecretVersion + 1
 
 	store := &fakeCredentialStore{
 		get:        winner,
@@ -356,6 +357,30 @@ func TestRefreshMCPOAuthCredentialReloadsAfterExchangeFailure(t *testing.T) {
 	}
 	if store.getCalls != 2 {
 		t.Fatalf("getCalls=%d, want 2 (entry reload + post-exchange reload)", store.getCalls)
+	}
+}
+
+func TestRefreshMCPOAuthCredentialKeepsExchangeErrorWhenVersionUnchanged(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	tokenCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenCalls++
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
+	}))
+	defer server.Close()
+
+	svc := newTestSecretsService(t)
+	stale := sealedMCPOAuthCredential(t, svc, server.URL, "stale-access", "bad-refresh", strPtr("2020-01-01T00:00:00Z"))
+	store := &fakeCredentialStore{getResults: []db.VaultCredential{stale, stale}}
+	injector := newTestInjector(t, svc, store, server.Client(), now)
+
+	_, _, err := injector.refreshMCPOAuthCredential(t.Context(), &stale, now, true)
+	if err == nil {
+		t.Fatal("expected exchange error when reload does not advance SecretVersion")
+	}
+	if tokenCalls != 1 {
+		t.Fatalf("token endpoint calls = %d, want 1 (no retry exchange)", tokenCalls)
 	}
 }
 

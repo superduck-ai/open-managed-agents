@@ -99,6 +99,8 @@ func (i *Injector) clock() time.Time {
 
 type resolvedInjection struct {
 	token      string
+	planCredID string
+	authType   string
 	credential *db.VaultCredential
 }
 
@@ -183,9 +185,9 @@ func (t *injectingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		if resp.StatusCode != http.StatusUnauthorized {
 			return resp, nil
 		}
-		credID := result.credential.ExternalID
+		credID := result.planCredID
 		drainAndClose(resp)
-		if credentialAuthType(result.credential.AuthType) == credentialAuthTypeMCPOAuth {
+		if credentialAuthType(result.authType) == credentialAuthTypeMCPOAuth {
 			if _, alreadyForced := forceRefresh[credID]; !alreadyForced {
 				forceRefresh[credID] = struct{}{}
 				continue
@@ -240,6 +242,8 @@ func (i *Injector) resolveFromPlan(
 			i.logger.WarnContext(ctx, "skip injectable vault credential", "credential_id", cred.ExternalID, "auth_type", cred.AuthType, "error", err)
 			continue
 		}
+		result.planCredID = cred.ExternalID
+		result.authType = cred.AuthType
 		return result, nil
 	}
 	if plan.hostCovered {
@@ -348,9 +352,32 @@ func cloneRequestWithBody(req *http.Request, body []byte) *http.Request {
 	return out
 }
 
+// maxSnapshotRequestBodyBytes caps buffered MCP request bodies for 401 retry.
+// Larger bodies fail closed instead of silently truncating the replay.
+const maxSnapshotRequestBodyBytes = 32 << 20
+
+var errSnapshotRequestBodyTooLarge = fmt.Errorf("request body exceeds %d-byte MCP retry buffer", maxSnapshotRequestBodyBytes)
+
+func readWithinLimit(r io.Reader, max int64) ([]byte, error) {
+	if max < 0 {
+		max = 0
+	}
+	data, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, errSnapshotRequestBodyTooLarge
+	}
+	return data, nil
+}
+
 func snapshotRequestBody(req *http.Request) ([]byte, error) {
 	if req.Body == nil || req.Body == http.NoBody {
 		return nil, nil
+	}
+	if req.ContentLength > maxSnapshotRequestBodyBytes {
+		return nil, errSnapshotRequestBodyTooLarge
 	}
 	if req.GetBody != nil {
 		body, err := req.GetBody()
@@ -358,9 +385,9 @@ func snapshotRequestBody(req *http.Request) ([]byte, error) {
 			return nil, err
 		}
 		defer body.Close()
-		return io.ReadAll(io.LimitReader(body, 32<<20))
+		return readWithinLimit(body, maxSnapshotRequestBodyBytes)
 	}
-	data, err := io.ReadAll(io.LimitReader(req.Body, 32<<20))
+	data, err := readWithinLimit(req.Body, maxSnapshotRequestBodyBytes)
 	if err != nil {
 		return nil, err
 	}

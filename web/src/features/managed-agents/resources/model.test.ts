@@ -5,6 +5,7 @@ import {
   type DeploymentApiResponse,
   type EnvironmentApiResponse,
   type EnvironmentEditValues,
+  type I18nMsg,
 } from '../types';
 import {
   credentialAuthBody,
@@ -15,7 +16,10 @@ import {
   environmentEditValues,
   patchCredentialFormValues,
   statusPillTone,
+  vaultOAuthErrorMessage,
 } from './model';
+
+const msgFallback: I18nMsg = ((_key, fallback) => fallback) as I18nMsg;
 
 function editValues(overrides: Partial<EnvironmentEditValues>): EnvironmentEditValues {
   return {
@@ -309,5 +313,18 @@ describe('credentialAuthBody mcp_oauth', () => {
       refreshAuthType: 'none',
     });
     expect(credentialFormReady(cleared, 'create', true)).toBe(true);
+  });
+});
+
+describe('vaultOAuthErrorMessage', () => {
+  test('maps known wire codes to user copy and hides unknown codes', () => {
+    expect(vaultOAuthErrorMessage('token_exchange_failed', msgFallback)).toBe(
+      'OAuth token exchange failed. Try connecting again.',
+    );
+    expect(vaultOAuthErrorMessage('already_exists', msgFallback)).toContain('already exists');
+    expect(vaultOAuthErrorMessage('oauth_discovery_failed', msgFallback)).toContain('discover');
+    expect(vaultOAuthErrorMessage('verification_request_failed', msgFallback)).toContain('verification failed');
+    expect(vaultOAuthErrorMessage('mystery_code', msgFallback)).toBe('Could not complete OAuth. Try again.');
+    expect(vaultOAuthErrorMessage(' mystery_code ', msgFallback)).toBe('Could not complete OAuth. Try again.');
   });
 });

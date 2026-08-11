@@ -120,12 +120,10 @@ vault:
   # Deployment-owned OAuth clients for vault MCP OAuth enrollment. Exact
   # mcp_server_url match only. BYO client_id on vault-auth/start overrides.
   # Inline client_secret is accepted for local/dev; do not commit secrets.
-  platform_oauth_clients: []
-  # Example:
-  # platform_oauth_clients:
-  #   - mcp_server_url: "https://api.githubcopilot.com/mcp/"
-  #     client_id: "Iv23..."
-  #     client_secret: "..."
+  platform_oauth_clients:
+    - mcp_server_url: "https://api.githubcopilot.com/mcp/"
+      client_id: "Iv23liEXAMPLE"
+      client_secret: "replace-me"
 
 bootstrap:
   seed_api_keys:

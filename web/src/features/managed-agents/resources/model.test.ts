@@ -13,6 +13,7 @@ import {
   emptyCredentialFormValues,
   environmentConfigBody,
   environmentEditValues,
+  patchCredentialFormValues,
   statusPillTone,
 } from './model';
 
@@ -188,6 +189,32 @@ describe('credentialAuthBody mcp_oauth', () => {
     });
   });
 
+  test('create body trims pasted oauth secrets', () => {
+    expect(
+      credentialAuthBody(
+        oauthValues({
+          token: ' access-secret\n',
+          refreshToken: ' refresh-secret ',
+          refreshTokenEndpoint: ' https://auth.example.com/token ',
+          refreshClientId: ' client-123 ',
+          refreshAuthType: 'client_secret_basic',
+          refreshClientSecret: ' client-secret\n',
+        }),
+        'create',
+      ),
+    ).toEqual({
+      type: 'mcp_oauth',
+      mcp_server_url: 'https://mcp.example.com/mcp',
+      access_token: 'access-secret',
+      refresh: {
+        token_endpoint: 'https://auth.example.com/token',
+        client_id: 'client-123',
+        refresh_token: 'refresh-secret',
+        token_endpoint_auth: { type: 'client_secret_basic', client_secret: 'client-secret' },
+      },
+    });
+  });
+
   test('credentialFormValues detects mcp_oauth', () => {
     const values = credentialFormValues({
       id: 'vcrd_1',
@@ -211,5 +238,30 @@ describe('credentialAuthBody mcp_oauth', () => {
       false,
     );
     expect(credentialFormReady(oauthValues(), 'create', true)).toBe(true);
+  });
+
+  test('clearing access token drops refresh fields so connect stays recoverable', () => {
+    const withRefresh = oauthValues({
+      refreshToken: 'refresh-secret',
+      refreshTokenEndpoint: 'https://auth.example.com/token',
+      refreshClientId: 'client-123',
+      refreshAuthType: 'client_secret_post',
+      refreshClientSecret: 'client-secret',
+    });
+    expect(credentialFormReady(withRefresh, 'create', true)).toBe(true);
+
+    const stuckIfMerged = { ...withRefresh, token: '' };
+    expect(credentialFormReady(stuckIfMerged, 'create', true)).toBe(false);
+
+    const cleared = patchCredentialFormValues(withRefresh, { token: '' });
+    expect(cleared).toMatchObject({
+      token: '',
+      refreshToken: '',
+      refreshTokenEndpoint: '',
+      refreshClientId: '',
+      refreshClientSecret: '',
+      refreshAuthType: 'none',
+    });
+    expect(credentialFormReady(cleared, 'create', true)).toBe(true);
   });
 });

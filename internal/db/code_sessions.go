@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -504,6 +505,46 @@ func (d *DB) GetCodeSessionNetworkPolicyContext(
 		EnvironmentConfig:     bytes.Clone(row.EnvironmentConfig),
 		AgentSnapshot:         bytes.Clone(row.AgentSnapshot),
 	}, nil
+}
+
+// GetCodeSessionVaultIDs loads parent-session vault_ids for an active code session
+// scoped to the authenticated organization/workspace.
+func (d *DB) GetCodeSessionVaultIDs(
+	ctx context.Context,
+	codeSessionExternalID string,
+	organizationUUID string,
+	workspaceUUID string,
+) ([]string, error) {
+	mapper := NewCodeSessionMapper(d.mapperDB)
+	row, found, err := mapper.FindVaultIDs(
+		ctx,
+		organizationUUID,
+		workspaceUUID,
+		codeSessionExternalID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	return decodeVaultIDList(row.VaultIDs)
+}
+
+func decodeVaultIDList(raw []byte) ([]string, error) {
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err != nil {
+		return nil, fmt.Errorf("decode vault_ids: %w", err)
+	}
+	if ids == nil {
+		return nil, errors.New("decode vault_ids: expected an array")
+	}
+	for _, id := range ids {
+		if id == "" || strings.TrimSpace(id) != id {
+			return nil, fmt.Errorf("decode vault_ids: invalid ID %q", id)
+		}
+	}
+	return ids, nil
 }
 
 func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession, error) {

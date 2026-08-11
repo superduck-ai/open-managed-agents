@@ -156,6 +156,22 @@
           AND s.status &lt;&gt; 'terminated'
     </select>
 
+    <select id="FindVaultIDs" resultType="codeSessionVaultIDsRow">
+        SELECT s.vault_ids
+        FROM code_sessions cs
+        JOIN sessions s ON s.uuid = cs.session_uuid
+            AND s.external_id = cs.session_external_id
+            AND s.organization_uuid = cs.organization_uuid
+            AND s.workspace_uuid = cs.workspace_uuid
+            AND s.deleted_at IS NULL
+        WHERE cs.external_id = #{codeSessionExternalID}
+          AND cs.organization_uuid = #{organizationUUID}
+          AND cs.workspace_uuid = #{workspaceUUID}
+          AND cs.status = 'active'
+          AND cs.deleted_at IS NULL
+          AND s.status &lt;&gt; 'terminated'
+    </select>
+
     <select id="FindByExternalID" resultType="codeSessionRow">
         SELECT
         <include refid="columns"/>

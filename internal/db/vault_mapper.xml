@@ -34,6 +34,19 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="ListActiveByExternalIDs" resultType="vaultReferenceRow">
+        SELECT uuid, external_id
+        FROM vaults
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id IN
+        <foreach collection="externalIDs" item="externalID" open="(" separator="," close=")">
+            #{externalID}
+        </foreach>
+        AND deleted_at IS NULL
+        AND archived_at IS NULL
+        ORDER BY external_id
+    </select>
+
     <select id="FindByIdentifier" resultType="vaultRow">
         SELECT <include refid="columns"/>
         FROM vaults

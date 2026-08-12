@@ -100,10 +100,7 @@ type agentReference struct {
 
 func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{
-		cfg: cfg, db: database,
-		errorAdapter: httpapi.NewErrorAdapter(logger),
-	}
+	h := &Handler{cfg: cfg, db: database, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -370,14 +367,14 @@ func (h *Handler) archive(w http.ResponseWriter, r *http.Request, agentID string
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureAgent(agentID, 1, true))
 		return nil
 	}
-	archived, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
+	record, err := h.db.ArchiveAgent(r.Context(), principal.WorkspaceUUID, agentID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return agentNotFound(agentID, err)
 		}
 		return internalError("Could not archive agent", fmt.Errorf("archive agent %q: %w", agentID, err))
 	}
-	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(archived))
+	httpapi.WriteJSON(w, http.StatusOK, responseFromAgent(record))
 	return nil
 }
 

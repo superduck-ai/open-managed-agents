@@ -648,7 +648,7 @@ function stringArrayValue(value: unknown): string[] {
 }
 
 // parseAllowedHostsText 把逗号/换行分隔的输入归一化为去重、保序的 host 数组。
-function parseAllowedHostsText(text: string): string[] {
+export function parseAllowedHostsText(text: string): string[] {
   const seen = new Set<string>();
   const hosts: string[] = [];
   for (const entry of text.split(/[\s,]+/)) {
@@ -660,6 +660,60 @@ function parseAllowedHostsText(text: string): string[] {
     hosts.push(host);
   }
   return hosts;
+}
+
+export function credentialEnvHostsMissing(values: CredentialFormValues): boolean {
+  return (
+    values.authType === 'environment_variable' &&
+    values.networkType === 'limited' &&
+    parseAllowedHostsText(values.allowedHostsText).length === 0
+  );
+}
+
+function credentialNetworkingBody(values: CredentialFormValues) {
+  if (values.networkType === 'limited') {
+    return {
+      type: 'limited' as const,
+      allowed_hosts: parseAllowedHostsText(values.allowedHostsText),
+    };
+  }
+  return { type: 'unrestricted' as const };
+}
+
+function credentialInjectionLocationBody(values: CredentialFormValues) {
+  return {
+    header: values.injectHeader,
+    body: values.injectBody,
+  };
+}
+
+function credentialInjectionLocationFromAuth(auth: Record<string, unknown>): {
+  injectHeader: boolean;
+  injectBody: boolean;
+} {
+  const location = objectRecord(auth.injection_location);
+  // CMA create default / Console: header only when omitted.
+  if (Object.keys(location).length === 0) {
+    return { injectHeader: true, injectBody: false };
+  }
+  return {
+    injectHeader: location.header !== false,
+    injectBody: location.body === true,
+  };
+}
+
+function credentialNetworkingFromAuth(auth: Record<string, unknown>): {
+  networkType: 'limited' | 'unrestricted';
+  allowedHostsText: string;
+} {
+  const networking = objectRecord(auth.networking);
+  if (networking.type === 'limited') {
+    return {
+      networkType: 'limited',
+      allowedHostsText: stringArrayValue(networking.allowed_hosts).join('\n'),
+    };
+  }
+  return { networkType: 'unrestricted', allowedHostsText: '' };
 }
 
 export function environmentPackageRows(packages: unknown): EnvironmentPackageRow[] {
@@ -733,6 +787,10 @@ export function emptyCredentialFormValues(): CredentialFormValues {
     token: '',
     secretName: '',
     secretValue: '',
+    networkType: 'limited',
+    allowedHostsText: '',
+    injectHeader: true,
+    injectBody: false,
     refreshToken: '',
     refreshTokenEndpoint: '',
     refreshClientId: '',
@@ -772,12 +830,17 @@ export function parseCredentialAuthType(value: string): CredentialFormValues['au
 
 export function credentialFormValues(credential?: VaultCredentialApiResponse): CredentialFormValues {
   const auth = objectRecord(credential?.auth);
+  const authType = parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : '');
+  const networking = authType === 'environment_variable' ? credentialNetworkingFromAuth(auth) : null;
+  const injection = authType === 'environment_variable' ? credentialInjectionLocationFromAuth(auth) : null;
   return {
     ...emptyCredentialFormValues(),
     displayName: credential?.display_name || '',
-    authType: parseCredentialAuthType(typeof auth.type === 'string' ? auth.type : ''),
+    authType,
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
+    ...(networking ?? {}),
+    ...(injection ?? {}),
   };
 }
 
@@ -816,7 +879,8 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
     const secretValue = values.secretValue;
     const body: Record<string, unknown> = {
       type: 'environment_variable',
-      networking: { type: 'unrestricted' },
+      networking: credentialNetworkingBody(values),
+      injection_location: credentialInjectionLocationBody(values),
     };
     if (mode === 'create') {
       body.secret_name = values.secretName.trim();
@@ -865,6 +929,12 @@ export function credentialFormReady(values: CredentialFormValues, mode: 'create'
     return false;
   }
   if (values.authType === 'environment_variable') {
+    if (!values.injectHeader && !values.injectBody) {
+      return false;
+    }
+    if (credentialEnvHostsMissing(values)) {
+      return false;
+    }
     // Edit: secret value optional (sealed secrets are not returned; rotate only when provided).
     if (mode === 'edit') {
       return true;

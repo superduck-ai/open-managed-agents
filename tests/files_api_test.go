@@ -91,8 +91,9 @@ type errorResponse struct {
 	Type      string `json:"type"`
 	RequestID string `json:"request_id"`
 	Error     struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
+		Type    string          `json:"type"`
+		Message string          `json:"message"`
+		Code    json.RawMessage `json:"code"`
 	} `json:"error"`
 }
 

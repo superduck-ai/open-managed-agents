@@ -38,11 +38,12 @@ const (
 )
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	logger *slog.Logger
-	store  storage.ObjectStore
-	router chi.Router
+	cfg          config.Config
+	db           *db.DB
+	logger       *slog.Logger
+	store        storage.ObjectStore
+	errorAdapter *httpapi.ErrorAdapter
+	router       chi.Router
 }
 
 type skillResponse struct {
@@ -79,22 +80,24 @@ type pageCursor struct {
 func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
 	h := &Handler{
-		cfg:    cfg,
-		db:     database,
-		logger: logger,
-		store:  store,
+		cfg:          cfg,
+		db:           database,
+		logger:       logger,
+		store:        store,
+		errorAdapter: httpapi.NewErrorAdapter(logger),
 	}
+	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
-	router.NotFound(notFound)
-	router.MethodNotAllowed(notFound)
-	router.Post("/", h.create)
-	router.Get("/", h.list)
-	router.Get("/{skill_id}", h.retrieveRoute)
-	router.Delete("/{skill_id}", h.deleteRoute)
-	router.Post("/{skill_id}/versions", h.createVersionRoute)
-	router.Get("/{skill_id}/versions", h.listVersionsRoute)
-	router.Get("/{skill_id}/versions/{version}", h.retrieveVersionRoute)
-	router.Delete("/{skill_id}/versions/{version}", h.deleteVersionRoute)
+	router.NotFound(wrap(h.notFound))
+	router.MethodNotAllowed(wrap(h.notFound))
+	router.Post("/", wrap(h.create))
+	router.Get("/", wrap(h.list))
+	router.Get("/{skill_id}", wrap(h.retrieveRoute))
+	router.Delete("/{skill_id}", wrap(h.deleteRoute))
+	router.Post("/{skill_id}/versions", wrap(h.createVersionRoute))
+	router.Get("/{skill_id}/versions", wrap(h.listVersionsRoute))
+	router.Get("/{skill_id}/versions/{version}", wrap(h.retrieveVersionRoute))
+	router.Delete("/{skill_id}/versions/{version}", wrap(h.deleteVersionRoute))
 	router.Get("/{skill_id}/versions/{version}/content", h.downloadVersionRoute)
 	h.router = router
 	return h
@@ -102,46 +105,41 @@ func NewHandler(cfg config.Config, database *db.DB, store storage.ObjectStore, l
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("beta") != "true" || !hasSkillsBeta(r) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Skills API requires anthropic-beta: skills-2025-10-02 and beta=true"))
+		h.errorAdapter.Write(w, r, skillsBetaRequired())
 		return
 	}
 	h.router.ServeHTTP(w, r)
 }
 
-func notFound(w http.ResponseWriter, r *http.Request) {
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Not found"))
+func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
+	return skillRouteNotFound()
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return
+		return skillAuthenticationRequired()
 	}
 	if err := requireWorkspaceCredential(principal); err != nil {
-		httpapi.WriteError(w, r, err)
-		return
+		return err
 	}
 
 	pkg, err := readSkillPackage(w, r, MaxSkillPackageBytes)
 	if err != nil {
 		if h.isOfficialSDKFixturePrincipal(principal) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureSkillResponse(h.cfg.SDKFixtures.SkillID, firstNonEmpty(r.FormValue("display_title"), "display_title")))
-			return
+			return nil
 		}
-		h.writePackageError(w, r, err)
-		return
+		return mapSkillPackageError(err)
 	}
 
 	skillID, err := ids.New("skill_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate skill ID"))
-		return
+		return internalError("Could not generate skill ID", fmt.Errorf("generate skill ID: %w", err))
 	}
 	versionID, err := ids.New("skillver_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate skill version ID"))
-		return
+		return internalError("Could not generate skill version ID", fmt.Errorf("generate skill version ID: %w", err))
 	}
 	skillUUID := uuid.NewString()
 	versionUUID := uuid.NewString()
@@ -149,9 +147,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skillUUID, versionValue, sanitizeForKey(pkg.Directory))
 
 	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
-		h.logger.ErrorContext(r.Context(), "put skill object", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store skill"))
-		return
+		return internalError("Could not store skill", fmt.Errorf("store skill %q archive: %w", skillID, err))
 	}
 
 	now := time.Now().UTC()
@@ -182,37 +178,29 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		var displayTitleConflict *db.SkillDisplayTitleConflictError
 		if errors.As(err, &displayTitleConflict) {
-			httpapi.WriteError(w, r, httpapi.NewError(
-				http.StatusBadRequest,
-				"invalid_request_error",
-				fmt.Sprintf("Skill cannot reuse an existing display_title: %s", displayTitleConflict.DisplayTitle),
-			))
-			return
+			return skillDisplayTitleConflict(displayTitleConflict.DisplayTitle, err)
 		}
-		h.logger.ErrorContext(r.Context(), "create skill metadata", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create skill"))
-		return
+		return internalError("Could not create skill", fmt.Errorf("create skill %q metadata: %w", skillID, err))
 	}
 
 	httpapi.WriteJSON(w, http.StatusOK, responseFromSkill(createdSkill))
+	return nil
 }
 
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	source := strings.TrimSpace(r.URL.Query().Get("source"))
 	if source != "" && source != "custom" && source != "anthropic" {
 		httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillResponse]{Data: []skillResponse{}, HasMore: false, NextPage: nil})
-		return
+		return nil
 	}
 	limit, err := parseLimitParam(r, defaultSkillsLimit, maxSkillsLimit)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	offset, err := decodePageOffset(r.URL.Query().Get("page"))
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 
 	var data []skillResponse
@@ -224,9 +212,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			Offset: offset,
 		})
 		if err != nil {
-			h.logger.ErrorContext(r.Context(), "list builtin skills", "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list skills"))
-			return
+			return internalError("Could not list skills", fmt.Errorf("list built-in skills: %w", err))
 		}
 		data = responsesFromBuiltinSkills(builtins)
 		hasMore = more
@@ -237,18 +223,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			Offset:        offset,
 		})
 		if err != nil {
-			h.logger.ErrorContext(r.Context(), "list skills", "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list skills"))
-			return
+			return internalError("Could not list skills", fmt.Errorf("list custom skills: %w", err))
 		}
 		data = responsesFromSkills(records)
 		hasMore = more
 	default:
 		data, hasMore, err = h.listAllSkills(r, principal, offset, limit)
 		if err != nil {
-			h.logger.ErrorContext(r.Context(), "list skills", "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list skills"))
-			return
+			return internalError("Could not list skills", fmt.Errorf("list all skills: %w", err))
 		}
 	}
 
@@ -258,6 +240,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillResponse]{Data: data, HasMore: hasMore, NextPage: nextPage})
+	return nil
 }
 
 func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offset, limit int) ([]skillResponse, bool, error) {
@@ -333,132 +316,111 @@ func (h *Handler) getBuiltinSkill(ctx context.Context, skillID string) (db.Built
 	return skill, true, nil
 }
 
-func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) {
-	h.retrieve(w, r, chi.URLParam(r, "skill_id"))
+func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.retrieve(w, r, chi.URLParam(r, "skill_id"))
 }
 
-func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, skillID string) {
+func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, skillID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if skill, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
-		h.logger.ErrorContext(r.Context(), "get builtin skill", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve skill"))
-		return
+		return internalError("Could not retrieve skill", fmt.Errorf("retrieve built-in skill %q: %w", skillID, err))
 	} else if ok {
 		httpapi.WriteJSON(w, http.StatusOK, responseFromBuiltinSkill(skill))
-		return
+		return nil
 	}
 	record, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureSkillResponse(skillID, "display_title"))
-			return
+			return nil
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
-			return
+			return skillNotFound(skillID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get skill", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve skill"))
-		return
+		return internalError("Could not retrieve skill", fmt.Errorf("retrieve skill %q: %w", skillID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromSkill(record))
+	return nil
 }
 
-func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) {
-	h.delete(w, r, chi.URLParam(r, "skill_id"))
+func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.delete(w, r, chi.URLParam(r, "skill_id"))
 }
 
 // TODO: 将 custom skill/version 软删除产生的 archive 标记为 catalog GC candidate，
 // 并仅在不存在活动 Skill Archive Resource 引用时由后台任务删除对象。
 // 当前必须保留 archive，以保证已经启动的 Session 仍能读取钉住的具体版本。
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string) {
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if err := requireWorkspaceCredential(principal); err != nil {
-		httpapi.WriteError(w, r, err)
-		return
+		return err
 	}
 	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
-		h.logger.ErrorContext(r.Context(), "get builtin skill before delete", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete skill"))
-		return
+		return internalError("Could not delete skill", fmt.Errorf("retrieve built-in skill %q before delete: %w", skillID, err))
 	} else if ok {
-		httpapi.WriteError(w, r, readOnlyBuiltinError())
-		return
+		return readOnlyBuiltinError()
 	}
 
 	_, _, err := h.db.SoftDeleteSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
 			httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": skillID, "type": "skill_deleted"})
-			return
+			return nil
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
-			return
+			return skillNotFound(skillID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "delete skill", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete skill"))
-		return
+		return internalError("Could not delete skill", fmt.Errorf("delete skill %q: %w", skillID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": skillID, "type": "skill_deleted"})
+	return nil
 }
 
-func (h *Handler) createVersionRoute(w http.ResponseWriter, r *http.Request) {
-	h.createVersion(w, r, chi.URLParam(r, "skill_id"))
+func (h *Handler) createVersionRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.createVersion(w, r, chi.URLParam(r, "skill_id"))
 }
 
-func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID string) {
+func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if err := requireWorkspaceCredential(principal); err != nil {
-		httpapi.WriteError(w, r, err)
-		return
+		return err
 	}
 	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
-		h.logger.ErrorContext(r.Context(), "get builtin skill before version create", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create skill version"))
-		return
+		return internalError("Could not create skill version", fmt.Errorf("retrieve built-in skill %q before version create: %w", skillID, err))
 	} else if ok {
-		httpapi.WriteError(w, r, readOnlyBuiltinError())
-		return
+		return readOnlyBuiltinError()
 	}
 
 	pkg, err := readSkillPackage(w, r, MaxSkillPackageBytes)
 	if err != nil {
 		if h.isOfficialSDKFixtureSkill(principal, skillID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion))
-			return
+			return nil
 		}
-		h.writePackageError(w, r, err)
-		return
+		return mapSkillPackageError(err)
 	}
 
 	skill, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureSkill(principal, skillID) {
 			httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, h.cfg.SDKFixtures.SkillVersion))
-			return
+			return nil
 		}
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
-			return
+			return skillNotFound(skillID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get skill before version create", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create skill version"))
-		return
+		return internalError("Could not create skill version", fmt.Errorf("retrieve skill %q before version create: %w", skillID, err))
 	}
 
 	versionID, err := ids.New("skillver_")
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not generate skill version ID"))
-		return
+		return internalError("Could not generate skill version ID", fmt.Errorf("generate skill version ID: %w", err))
 	}
 	versionUUID := uuid.NewString()
 	versionValue := newVersionString()
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skill.UUID, versionValue, sanitizeForKey(pkg.Directory))
 	if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
-		h.logger.ErrorContext(r.Context(), "put skill version object", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not store skill version"))
-		return
+		return internalError("Could not store skill version", fmt.Errorf("store skill %q version archive: %w", skillID, err))
 	}
 
 	now := time.Now().UTC()
@@ -479,36 +441,30 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 	if err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
-			return
+			return skillNotFound(skillID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "create skill version metadata", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not create skill version"))
-		return
+		return internalError("Could not create skill version", fmt.Errorf("create skill %q version metadata: %w", skillID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromSkillVersion(version))
+	return nil
 }
 
-func (h *Handler) listVersionsRoute(w http.ResponseWriter, r *http.Request) {
-	h.listVersions(w, r, chi.URLParam(r, "skill_id"))
+func (h *Handler) listVersionsRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.listVersions(w, r, chi.URLParam(r, "skill_id"))
 }
 
-func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID string) {
+func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
-		h.logger.ErrorContext(r.Context(), "get builtin skill before version list", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list skill versions"))
-		return
+		return internalError("Could not list skill versions", fmt.Errorf("retrieve built-in skill %q before version list: %w", skillID, err))
 	} else if ok {
 		limit, err := parseLimitParam(r, defaultSkillVersionsLimit, maxSkillVersionsLimit)
 		if err != nil {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-			return
+			return invalidRequest(err)
 		}
 		offset, err := decodePageOffset(r.URL.Query().Get("page"))
 		if err != nil {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-			return
+			return invalidRequest(err)
 		}
 		versions, hasMore, err := h.db.ListBuiltinSkillVersionsPage(r.Context(), db.ListBuiltinSkillVersionsPageParams{
 			SkillExternalID: skillID,
@@ -517,12 +473,9 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 		})
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
-				httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
-				return
+				return skillNotFound(skillID, err)
 			}
-			h.logger.ErrorContext(r.Context(), "list builtin skill versions", "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list skill versions"))
-			return
+			return internalError("Could not list skill versions", fmt.Errorf("list built-in skill %q versions: %w", skillID, err))
 		}
 		var nextPage *string
 		if hasMore {
@@ -534,7 +487,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 			HasMore:  hasMore,
 			NextPage: nextPage,
 		})
-		return
+		return nil
 	}
 	if h.isOfficialSDKFixtureSkill(principal, skillID) {
 		httpapi.WriteJSON(w, http.StatusOK, pageResponse[skillVersionResponse]{
@@ -542,18 +495,16 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 			HasMore:  false,
 			NextPage: nil,
 		})
-		return
+		return nil
 	}
 
 	limit, err := parseLimitParam(r, defaultSkillVersionsLimit, maxSkillVersionsLimit)
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	offset, err := decodePageOffset(r.URL.Query().Get("page"))
 	if err != nil {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
-		return
+		return invalidRequest(err)
 	}
 	versions, hasMore, err := h.db.ListSkillVersionsPage(r.Context(), db.ListSkillVersionsPageParams{
 		WorkspaceUUID:   principal.WorkspaceUUID,
@@ -563,12 +514,9 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
-			return
+			return skillNotFound(skillID, err)
 		}
-		h.logger.ErrorContext(r.Context(), "list skill versions", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not list skill versions"))
-		return
+		return internalError("Could not list skill versions", fmt.Errorf("list skill %q versions: %w", skillID, err))
 	}
 	var nextPage *string
 	if hasMore {
@@ -580,94 +528,80 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 		HasMore:  hasMore,
 		NextPage: nextPage,
 	})
+	return nil
 }
 
-func (h *Handler) retrieveVersionRoute(w http.ResponseWriter, r *http.Request) {
-	h.retrieveVersion(w, r, chi.URLParam(r, "skill_id"), chi.URLParam(r, "version"))
+func (h *Handler) retrieveVersionRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.retrieveVersion(w, r, chi.URLParam(r, "skill_id"), chi.URLParam(r, "version"))
 }
 
-func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, skillID, version string) {
+func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, skillID, version string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
-		h.logger.ErrorContext(r.Context(), "get builtin skill before version retrieve", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve skill version"))
-		return
+		return internalError("Could not retrieve skill version", fmt.Errorf("retrieve built-in skill %q before version retrieve: %w", skillID, err))
 	} else if ok {
 		record, err := h.db.GetBuiltinSkillVersion(r.Context(), skillID, version)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
-				httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
-				return
+				return skillVersionNotFound(version, err)
 			}
-			h.logger.ErrorContext(r.Context(), "get builtin skill version", "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve skill version"))
-			return
+			return internalError("Could not retrieve skill version", fmt.Errorf("retrieve built-in skill %q version %q: %w", skillID, version, err))
 		}
 		httpapi.WriteJSON(w, http.StatusOK, responseFromBuiltinVersion(record))
-		return
+		return nil
 	}
 	if h.isOfficialSDKFixtureVersion(principal, skillID, version) {
 		httpapi.WriteJSON(w, http.StatusOK, h.fixtureVersionResponse(skillID, version))
-		return
+		return nil
 	}
 
 	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
 	if err != nil {
-		h.writeResolveVersionError(w, r, skillID, version, err)
-		return
+		return mapResolveVersionError(skillID, version, err)
 	}
 	record, err := h.db.GetSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, resolved)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
-			return
+			return skillVersionNotFound(version, err)
 		}
-		h.logger.ErrorContext(r.Context(), "get skill version", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve skill version"))
-		return
+		return internalError("Could not retrieve skill version", fmt.Errorf("retrieve skill %q version %q: %w", skillID, resolved, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromSkillVersion(record))
+	return nil
 }
 
-func (h *Handler) deleteVersionRoute(w http.ResponseWriter, r *http.Request) {
-	h.deleteVersion(w, r, chi.URLParam(r, "skill_id"), chi.URLParam(r, "version"))
+func (h *Handler) deleteVersionRoute(w http.ResponseWriter, r *http.Request) error {
+	return h.deleteVersion(w, r, chi.URLParam(r, "skill_id"), chi.URLParam(r, "version"))
 }
 
-func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID, version string) {
+func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID, version string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if err := requireWorkspaceCredential(principal); err != nil {
-		httpapi.WriteError(w, r, err)
-		return
+		return err
 	}
 	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
-		h.logger.ErrorContext(r.Context(), "get builtin skill before version delete", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete skill version"))
-		return
+		return internalError("Could not delete skill version", fmt.Errorf("retrieve built-in skill %q before version delete: %w", skillID, err))
 	} else if ok {
-		httpapi.WriteError(w, r, readOnlyBuiltinError())
-		return
+		return readOnlyBuiltinError()
 	}
 	if h.isOfficialSDKFixtureVersion(principal, skillID, version) {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": version, "type": "skill_version_deleted"})
-		return
+		return nil
 	}
 
 	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
 	if err != nil {
-		h.writeResolveVersionError(w, r, skillID, version, err)
-		return
+		return mapResolveVersionError(skillID, version, err)
 	}
 	_, _, err = h.db.SoftDeleteSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, resolved)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
-			return
+			return skillVersionNotFound(version, err)
 		}
-		h.logger.ErrorContext(r.Context(), "delete skill version", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not delete skill version"))
-		return
+		return internalError("Could not delete skill version", fmt.Errorf("delete skill %q version %q: %w", skillID, resolved, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": resolved, "type": "skill_version_deleted"})
+	return nil
 }
 
 func (h *Handler) downloadVersionRoute(w http.ResponseWriter, r *http.Request) {
@@ -677,18 +611,16 @@ func (h *Handler) downloadVersionRoute(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillID, version string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
-		h.logger.ErrorContext(r.Context(), "get builtin skill before download", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download skill version"))
+		h.errorAdapter.Write(w, r, skillDownloadError(fmt.Errorf("get builtin skill %q before download: %w", skillID, err)))
 		return
 	} else if ok {
 		record, err := h.db.GetBuiltinSkillVersion(r.Context(), skillID, version)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
-				httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
+				h.errorAdapter.Write(w, r, skillVersionNotFound(version, err))
 				return
 			}
-			h.logger.ErrorContext(r.Context(), "get builtin skill version before download", "error", err)
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download skill version"))
+			h.errorAdapter.Write(w, r, skillDownloadError(fmt.Errorf("get builtin skill %q version %q before download: %w", skillID, version, err)))
 			return
 		}
 		h.downloadBuiltinSkill(w, r, record)
@@ -701,23 +633,21 @@ func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillI
 
 	resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
 	if err != nil {
-		h.writeResolveVersionError(w, r, skillID, version, err)
+		h.errorAdapter.Write(w, r, mapResolveVersionError(skillID, version, err))
 		return
 	}
 	record, err := h.db.GetSkillVersion(r.Context(), principal.WorkspaceUUID, skillID, resolved)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
+			h.errorAdapter.Write(w, r, skillVersionNotFound(version, err))
 			return
 		}
-		h.logger.ErrorContext(r.Context(), "get skill version before download", "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download skill version"))
+		h.errorAdapter.Write(w, r, skillDownloadError(fmt.Errorf("get skill %q version %q before download: %w", skillID, resolved, err)))
 		return
 	}
 	object, err := h.store.Open(r.Context(), record.S3Key, nil)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "get skill object", "skill_id", skillID, "version", record.Version, "key", record.S3Key, "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download skill version"))
+		h.errorAdapter.Write(w, r, skillDownloadError(fmt.Errorf("open skill %q version %q object %q: %w", skillID, record.Version, record.S3Key, err)))
 		return
 	}
 	defer object.Body.Close()
@@ -753,8 +683,7 @@ func (h *Handler) resolveVersion(ctx context.Context, workspaceUUID string, skil
 func (h *Handler) downloadBuiltinSkill(w http.ResponseWriter, r *http.Request, version db.BuiltinSkillVersion) {
 	object, err := h.store.Open(r.Context(), version.S3Key, nil)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "get builtin skill object", "skill_id", version.SkillExternalID, "version", version.Version, "key", version.S3Key, "error", err)
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not download skill version"))
+		h.errorAdapter.Write(w, r, skillDownloadError(fmt.Errorf("open builtin skill %q version %q object %q: %w", version.SkillExternalID, version.Version, version.S3Key, err)))
 		return
 	}
 	defer object.Body.Close()
@@ -965,41 +894,6 @@ func hasSkillsBeta(r *http.Request) bool {
 		}
 	}
 	return false
-}
-
-func requireWorkspaceCredential(principal auth.Principal) *httpapi.Error {
-	if principal.CredentialType == auth.CredentialTypeAPIKey ||
-		principal.CredentialType == auth.CredentialTypePlatformSession {
-		return nil
-	}
-	return httpapi.NewError(http.StatusForbidden, "permission_error", "Credential cannot access skills")
-}
-
-func readOnlyBuiltinError() *httpapi.Error {
-	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Built-in skills are read-only")
-}
-
-func (h *Handler) writePackageError(w http.ResponseWriter, r *http.Request, err error) {
-	var packageErr packageError
-	if errors.As(err, &packageErr) {
-		httpapi.WriteError(w, r, httpapi.NewError(packageErr.Status, "invalid_request_error", packageErr.Message))
-		return
-	}
-	h.logger.ErrorContext(r.Context(), "read skill package", "error", err)
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not read skill package"))
-}
-
-func (h *Handler) writeResolveVersionError(w http.ResponseWriter, r *http.Request, skillID, version string, err error) {
-	if errors.Is(err, db.ErrNotFound) {
-		if version == "latest" {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill not found: "+skillID))
-			return
-		}
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "Skill version not found: "+version))
-		return
-	}
-	h.logger.ErrorContext(r.Context(), "resolve skill version", "skill_id", skillID, "version", version, "error", err)
-	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve skill version"))
 }
 
 func (h *Handler) isOfficialSDKFixturePrincipal(principal auth.Principal) bool {

@@ -73,12 +73,12 @@ func TestVaultsAPI(t *testing.T) {
 
 	t.Run("failure missing beta query", func(t *testing.T) {
 		resp := doVaultRequest(t, app, http.MethodGet, "/v1/vaults", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		assertVaultError(t, resp, http.StatusBadRequest, "invalid_request_error", "Vaults API requires beta=true")
 	})
 
 	t.Run("failure invalid json", func(t *testing.T) {
 		resp := doVaultRequest(t, app, http.MethodPost, "/v1/vaults?beta=true", strings.NewReader(`{"display_name":`), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		assertVaultError(t, resp, http.StatusBadRequest, "invalid_request_error", "Invalid JSON body")
 	})
 
 	t.Run("failure invalid auth type", func(t *testing.T) {
@@ -96,7 +96,7 @@ func TestVaultsAPI(t *testing.T) {
 		defer cleanupVaultRows(t, app, vault.ID)
 		createVaultCredential(t, app, vault.ID, staticBearerBody("dup", "https://mcp.example.com/sse", "token-one"))
 		resp := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials?beta=true", strings.NewReader(staticBearerBody("dup again", "https://mcp.example.com/sse", "token-two")), defaultTestKey, true)
-		assertError(t, resp, http.StatusConflict, "conflict_error")
+		assertVaultError(t, resp, http.StatusConflict, "conflict_error", "Credential key already exists")
 	})
 
 	t.Run("failure credential limit", func(t *testing.T) {
@@ -106,17 +106,17 @@ func TestVaultsAPI(t *testing.T) {
 			createVaultCredential(t, app, vault.ID, environmentVariableBody("env limit", "SECRET_LIMIT_"+string(rune('A'+i)), "value"))
 		}
 		resp := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials?beta=true", strings.NewReader(environmentVariableBody("env limit overflow", "SECRET_LIMIT_OVERFLOW", "value")), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		assertVaultError(t, resp, http.StatusBadRequest, "invalid_request_error", "Vault may contain at most 20 active credentials")
 	})
 
 	t.Run("failure not found", func(t *testing.T) {
 		resp := doVaultRequest(t, app, http.MethodGet, "/v1/vaults/vlt_missing_test?beta=true", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusNotFound, "not_found_error")
+		assertVaultError(t, resp, http.StatusNotFound, "not_found_error", "Vault not found: vlt_missing_test")
 
 		vault := createVault(t, app, `{"display_name":"vault missing credential"}`)
 		defer cleanupVaultRows(t, app, vault.ID)
 		resp = doVaultRequest(t, app, http.MethodGet, "/v1/vaults/"+vault.ID+"/credentials/vcrd_missing_test?beta=true", nil, defaultTestKey, true)
-		assertError(t, resp, http.StatusNotFound, "not_found_error")
+		assertVaultError(t, resp, http.StatusNotFound, "not_found_error", "Credential not found: vcrd_missing_test")
 	})
 
 	t.Run("failure archived vault is immutable", func(t *testing.T) {
@@ -125,10 +125,10 @@ func TestVaultsAPI(t *testing.T) {
 		archiveVault(t, app, vault.ID)
 
 		resp := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"?beta=true", strings.NewReader(`{"display_name":"nope"}`), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		assertVaultError(t, resp, http.StatusBadRequest, "invalid_request_error", "Vault is archived")
 
 		resp = doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials?beta=true", strings.NewReader(staticBearerBody("nope", "https://mcp.archived.example/sse", "secret")), defaultTestKey, true)
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		assertVaultError(t, resp, http.StatusBadRequest, "invalid_request_error", "Vault is archived")
 	})
 
 	t.Run("failure cannot add oauth refresh after create", func(t *testing.T) {
@@ -690,6 +690,22 @@ func assertVaultSecretsPurged(t *testing.T, app *testApp, vaultID string) {
 	}
 	if count != 0 {
 		t.Fatalf("vault %s has %d credential secrets, want 0", vaultID, count)
+	}
+}
+
+func assertVaultError(t *testing.T, resp *http.Response, status int, errorType, message string) {
+	t.Helper()
+	defer resp.Body.Close()
+	if resp.StatusCode != status {
+		t.Fatalf("status = %d, want %d: %s", resp.StatusCode, status, readAll(t, resp.Body))
+	}
+	var body errorResponse
+	decodeJSON(t, resp.Body, &body)
+	if body.Type != "error" || body.Error.Type != errorType || body.Error.Message != message {
+		t.Fatalf("error = %+v, want type %q and message %q", body, errorType, message)
+	}
+	if len(body.Error.Code) != 0 {
+		t.Fatalf("error.code leaked into response: %s", body.Error.Code)
 	}
 }
 

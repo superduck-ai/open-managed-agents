@@ -44,9 +44,8 @@ type filePayload struct {
 
 // ParseFileID validates the file_id field before a caller resolves the Files
 // API object in its own workspace and error-mapping boundary.
-func ParseFileID(fields map[string]json.RawMessage) (string, error) {
-	raw, ok := fields["file_id"]
-	if !ok {
+func ParseFileID(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
 		return "", errors.New("file_id is required")
 	}
 	return requiredString(raw, "file_id")

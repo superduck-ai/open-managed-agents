@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/yourbatis"
 )
@@ -280,6 +281,38 @@ func (d *DB) ListVaultCredentialsPage(ctx context.Context, params ListVaultCrede
 	}
 	credentials := vaultCredentialsFromRows(rows)
 	return trimAdminPage(credentials, params.Limit), len(credentials) > params.Limit, nil
+}
+
+// ListActiveVaultCredentialsForVaultIDs returns active credentials in vaultIDs
+// order. Missing or archived vaults contribute nothing.
+func (d *DB) ListActiveVaultCredentialsForVaultIDs(ctx context.Context, workspaceUUID string, vaultIDs []string) ([]VaultCredential, error) {
+	if len(vaultIDs) == 0 {
+		return []VaultCredential{}, nil
+	}
+
+	vaultMapper := NewVaultMapper(d.mapperDB)
+	vaults, err := vaultMapper.ListActiveByExternalIDs(ctx, workspaceUUID, vaultIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(vaults) == 0 {
+		return []VaultCredential{}, nil
+	}
+
+	vaultUUIDs := lo.Map(vaults, func(vault vaultReferenceRow, _ int) string {
+		return vault.UUID
+	})
+	credentialMapper := NewVaultCredentialMapper(d.mapperDB)
+	credentialRows, err := credentialMapper.ListActiveByVaultUUIDs(ctx, workspaceUUID, vaultUUIDs)
+	if err != nil {
+		return nil, err
+	}
+	credentialsByVaultID := lo.GroupByMap(credentialRows, func(row vaultCredentialRow) (string, VaultCredential) {
+		return row.VaultExternalID, row.credential()
+	})
+	return lo.FlatMap(vaultIDs, func(vaultID string, _ int) []VaultCredential {
+		return credentialsByVaultID[vaultID]
+	}), nil
 }
 
 func vaultInsertParams(vault Vault) insertVaultParams {

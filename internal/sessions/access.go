@@ -5,7 +5,6 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 type sessionAccess string
@@ -17,51 +16,44 @@ const (
 	sessionAccessManageResources sessionAccess = "manage_resources"
 )
 
-func (h *Handler) authorizeSession(w http.ResponseWriter, r *http.Request, sessionID string, access sessionAccess) (db.Session, bool) {
+func (h *Handler) authorizeSession(r *http.Request, sessionID string, access sessionAccess) (db.Session, error) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return db.Session{}, false
+		return db.Session{}, sessionAuthenticationRequired()
 	}
 	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
-		return h.fixtureDBSession(principal), true
+		return h.fixtureDBSession(principal), nil
 	}
 	session, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
-		h.writeSessionLoadError(w, r, err, sessionID)
-		return db.Session{}, false
+		return db.Session{}, mapSessionLoadError(err, sessionID)
 	}
 	if isSessionManagerCredential(principal) {
-		return session, true
+		return session, nil
 	}
 	if principal.CredentialType != auth.CredentialTypeEnvironmentKey {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return db.Session{}, false
+		return db.Session{}, sessionAuthenticationRequired()
 	}
 	if session.EnvironmentExternalID != principal.EnvironmentExternalID {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Environment key cannot access this session"))
-		return db.Session{}, false
+		return db.Session{}, environmentKeyCannotAccessSession()
 	}
 	switch access {
 	case sessionAccessRead, sessionAccessEventsRead, sessionAccessEventsSend:
-		return session, true
+		return session, nil
 	default:
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Environment key cannot manage this session"))
-		return db.Session{}, false
+		return db.Session{}, environmentKeyCannotManageSession()
 	}
 }
 
-func requireSessionManager(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
+func requireSessionManager(r *http.Request) (auth.Principal, error) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
-		return auth.Principal{}, false
+		return auth.Principal{}, sessionAuthenticationRequired()
 	}
 	if !isSessionManagerCredential(principal) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Environment key cannot manage sessions"))
-		return auth.Principal{}, false
+		return auth.Principal{}, environmentKeyCannotManageSessions()
 	}
-	return principal, true
+	return principal, nil
 }
 
 func isSessionManagerCredential(principal auth.Principal) bool {

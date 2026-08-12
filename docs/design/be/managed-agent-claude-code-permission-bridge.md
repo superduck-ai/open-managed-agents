@@ -62,6 +62,8 @@ session config 继续通过现有字段传给 `environment-manager`：
 
 `environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数，因此本设计不改变 v0 stdin schema，也不修改 `environment-manager` 代码。MCP config file 保持 `0600`；代理验证 session-ingress JWT 与路径中的 Code Session ID，并要求 `mcp_url` 精确匹配该 Session Agent Snapshot 中的 MCP URL。转发前删除 OMA 的 `Authorization` / `X-Api-Key`，保留 `Mcp-Session-Id`、`Last-Event-ID`、content negotiation 等端到端 header。服务端凭证注入集中在独立 header injector 边界，当前默认不注入，后续可按已验签 claims、目标 URL 和 vault 写入真实上游凭证。
 
+OMA 在组装 environment-manager 启动 payload 时固定写入 `claude_code_args["disallowed-tools"] = "WebSearch"`，确保 Claude Code 不向模型暴露内置 `WebSearch`。Agent API 同时拒绝在 `agent_toolset_20260401.configs` 中配置 `web_search`；需要网页搜索时应配置独立 MCP 搜索工具。该限制不影响 Workbench 的 Messages API 服务端 web search。
+
 ### 2.2 静态提示层
 
 显式 `mcp_toolset.configs[]` 可以继续写进 MCP config 的 `tools` 配置，作为 Claude Code 启动时可见的静态提示：

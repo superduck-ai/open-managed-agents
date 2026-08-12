@@ -984,7 +984,7 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		return nil, errors.New("tools.configs must be an array")
 	}
 	allowed := map[string]struct{}{
-		"bash": {}, "edit": {}, "read": {}, "write": {}, "glob": {}, "grep": {}, "web_fetch": {}, "web_search": {},
+		"bash": {}, "edit": {}, "read": {}, "write": {}, "glob": {}, "grep": {}, "web_fetch": {},
 	}
 	normalized := make([]map[string]any, 0, len(configs))
 	for _, config := range configs {

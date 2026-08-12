@@ -100,6 +100,12 @@ func TestAgentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
+	t.Run("failure web search agent tool config", func(t *testing.T) {
+		body := `{"model":"claude-opus-4-6","name":"bad web search","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","enabled":true}]}]}`
+		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
 	t.Run("failure unreferenced mcp server when using mcp toolsets", func(t *testing.T) {
 		body := `{
 			"model":"claude-opus-4-6",

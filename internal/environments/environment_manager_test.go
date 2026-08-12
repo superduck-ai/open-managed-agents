@@ -276,7 +276,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		t.Fatalf("unexpected startup context: %#v", startup)
 	}
 	claudeArgs := startup["claude_code_args"].(map[string]any)
-	if claudeArgs["settings"] != launcherSettingsPath {
+	if claudeArgs["settings"] != launcherSettingsPath || claudeArgs["disallowed-tools"] != "WebSearch" {
 		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
 	}
 	startupEnv := startup["environment_variables"].(map[string]any)
@@ -386,7 +386,9 @@ func TestBuildEnvironmentManagerPayloadProxiesMCPConfig(t *testing.T) {
 	}
 	startup := body["startup_context"].(map[string]any)
 	claudeArgs := startup["claude_code_args"].(map[string]any)
-	if claudeArgs["settings"] != launcherSettingsPath || claudeArgs["mcp-config"] != managedAgentMCPConfigPath {
+	if claudeArgs["settings"] != launcherSettingsPath ||
+		claudeArgs["mcp-config"] != managedAgentMCPConfigPath ||
+		claudeArgs["disallowed-tools"] != "WebSearch" {
 		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
 	}
 	mcpConfig := startup["mcp_config"].(map[string]any)

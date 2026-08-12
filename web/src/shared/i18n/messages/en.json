@@ -399,6 +399,7 @@
   "managedAgents.agents.createDialog.customMcpName": "Name",
   "managedAgents.agents.createDialog.customMcpNameAmbiguous": "Name must not contain two consecutive underscores.",
   "managedAgents.agents.createDialog.customMcpNameDuplicate": "This MCP server name is already used.",
+  "managedAgents.agents.createDialog.customMcpNameInvalid": "Use only letters, numbers, underscores, hyphens, and periods.",
   "managedAgents.agents.createDialog.customMcpNameRequired": "Name is required.",
   "managedAgents.agents.createDialog.customMcpNameTooLong": "Name must be at most 255 characters.",
   "managedAgents.agents.createDialog.customMcpTab": "Custom MCP",

@@ -35,7 +35,7 @@ export type McpServerInput = {
 };
 
 export type McpServerInputErrors = {
-  name?: 'required' | 'too_long' | 'ambiguous' | 'duplicate';
+  name?: 'required' | 'too_long' | 'invalid' | 'ambiguous' | 'duplicate';
   url?: 'required' | 'too_long' | 'invalid';
   form?: 'limit';
 };
@@ -94,6 +94,7 @@ const mcpServerSchema = z
       .trim()
       .min(1)
       .max(255)
+      .regex(/^[A-Za-z0-9_.-]+$/)
       .refine(isUnambiguousMcpServerName, 'MCP server name must not contain "__".'),
     type: z.literal('url'),
     url: z.string().trim().max(2048).refine(isHTTPURL, 'MCP server URL must be a safe HTTP/HTTPS URL.'),
@@ -136,7 +137,14 @@ const builtInToolNameSchema = z.enum([
 
 const builtInToolConfigSchema = permissionConfigSchema.extend({ name: builtInToolNameSchema }).strict();
 
-const mcpToolConfigSchema = permissionConfigSchema.extend({ name: z.string().trim().min(1).max(128) }).strict();
+const mcpToolConfigSchema = permissionConfigSchema
+  .extend({
+    name: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_.-]{1,128}$/),
+  })
+  .strict();
 
 const builtInToolsetSchema = z
   .object({
@@ -154,6 +162,7 @@ const mcpToolsetSchema = z
       .trim()
       .min(1)
       .max(255)
+      .regex(/^[A-Za-z0-9_.-]+$/)
       .refine(isUnambiguousMcpServerName, 'MCP server name must not contain "__".'),
     default_config: permissionConfigSchema.optional(),
     configs: z.array(mcpToolConfigSchema).optional(),
@@ -202,6 +211,15 @@ export const createAgentDraftSchema = z
       context.addIssue({ code: 'custom', message: 'Toolsets must be unique.', path: ['tools'] });
     }
     const toolsets = draft.tools.filter((tool) => tool.type === 'mcp_toolset');
+    for (const tool of draft.tools) {
+      if (!('configs' in tool) || !Array.isArray(tool.configs)) {
+        continue;
+      }
+      const configNames = tool.configs.map((config) => config.name);
+      if (new Set(configNames).size !== configNames.length) {
+        context.addIssue({ code: 'custom', message: 'Tool config names must be unique.', path: ['tools'] });
+      }
+    }
     for (const toolset of toolsets) {
       if (!serverNames.includes(String(toolset.mcp_server_name))) {
         context.addIssue({
@@ -415,6 +433,8 @@ function validateMcpServerInput(draft: CreateAgentInput, name: string, url: stri
     errors.name = 'required';
   } else if (name.length > 255) {
     errors.name = 'too_long';
+  } else if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+    errors.name = 'invalid';
   } else if (!isUnambiguousMcpServerName(name)) {
     errors.name = 'ambiguous';
   } else if (

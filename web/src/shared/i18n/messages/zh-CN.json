@@ -399,6 +399,7 @@
   "managedAgents.agents.createDialog.customMcpName": "名称",
   "managedAgents.agents.createDialog.customMcpNameAmbiguous": "名称不能包含连续两个下划线。",
   "managedAgents.agents.createDialog.customMcpNameDuplicate": "该 MCP 服务器名称已被使用。",
+  "managedAgents.agents.createDialog.customMcpNameInvalid": "只能使用字母、数字、下划线、连字符和句点。",
   "managedAgents.agents.createDialog.customMcpNameRequired": "名称不能为空。",
   "managedAgents.agents.createDialog.customMcpNameTooLong": "名称不能超过 255 个字符。",
   "managedAgents.agents.createDialog.customMcpTab": "自定义 MCP",

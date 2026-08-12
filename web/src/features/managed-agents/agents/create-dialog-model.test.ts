@@ -59,6 +59,27 @@ describe('create agent draft model', () => {
     });
   });
 
+  test('rejects invalid MCP names and duplicate tool configs', () => {
+    expect(addMcpServer(baseDraft, { name: 'unsafe name', url: 'https://example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { name: 'invalid' },
+    });
+    const duplicateConfigs: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'you-search', type: 'url', url: 'https://example.com/mcp' }],
+      tools: [
+        ...baseDraft.tools,
+        {
+          type: 'mcp_toolset',
+          mcp_server_name: 'you-search',
+          configs: [{ name: 'query' }, { name: 'query' }],
+        },
+      ],
+    };
+
+    expect(createAgentDraftSchema.safeParse(duplicateConfigs).success).toBe(false);
+  });
+
   test('preserves untouched skill payloads while toggling another skill', () => {
     const draft: CreateAgentInput = {
       ...baseDraft,

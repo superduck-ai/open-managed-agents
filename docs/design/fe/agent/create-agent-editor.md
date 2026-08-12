@@ -36,7 +36,7 @@ flowchart LR
 ### MCP 与 Tools
 
 - “添加 MCP 服务器”沿用 CMA 官方的 Popover 与 Directory 搜索列表，并在同一 Popover 中增加“自定义 MCP”页签作为 OMA 扩展；两个页签共享同一 Draft 写入接口。
-- 添加 Directory 或自定义 MCP 必须原子添加 `mcp_servers` 和同名 `mcp_toolset`；删除时原子删除二者。名称 trim 后必填、最长 255 个字符、不得包含连续两个下划线 `__`，并以大小写敏感方式在当前 Agent 内保持唯一；URL trim 后必填、最长 2048 个字符，且必须是不含内嵌凭据或 fragment 的 HTTP/HTTPS 绝对地址；每个 Agent 最多配置 20 个 MCP Server。
+- 添加 Directory 或自定义 MCP 必须原子添加 `mcp_servers` 和同名 `mcp_toolset`；删除时原子删除二者。名称 trim 后必填、最长 255 个字符、只允许字母、数字、下划线、连字符和句点、不得包含连续两个下划线 `__`，并以大小写敏感方式在当前 Agent 内保持唯一；URL trim 后必填、最长 2048 个字符，且必须是不含内嵌凭据或 fragment 的 HTTP/HTTPS 绝对地址；每个 Agent 最多配置 20 个 MCP Server。Toolset 与逐工具配置名称必须唯一；MCP 工具名称只允许字母、数字、下划线、连字符和句点，最长 128 个字符。
 - 创建阶段只使用 Directory `tool_names`，不调用依赖已创建 Agent ID 的动态 catalog API；自定义 MCP 在创建阶段不探测工具列表，只提供 Toolset 级权限。
 - MCP 候选项优先加载 Directory 明确提供的 HTTP/HTTPS 图片 `icon_url`；若该字段是网页或图片加载失败，则依次尝试其同源 `/favicon.ico` 和基于该 Directory 公开主机名的公共 favicon 服务，仍不可用时回退到 Server 图标。自定义 MCP 不向图标组件提供 URL，因此前端不会探测 Agent 配置的 MCP 主机，也不会把自定义主机名发送给第三方。
 - Directory 加载失败不阻止使用自定义 MCP；关闭、取消或按 Escape 会丢弃尚未提交的名称和 URL，但不会关闭外层 Agent 编辑弹窗或修改 Draft。

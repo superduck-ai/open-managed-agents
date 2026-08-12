@@ -111,6 +111,22 @@ func TestAgentsAPI(t *testing.T) {
 		updateAgent(t, app, created.ID, `{"version":1,"mcp_servers":[{"name":"you__search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"you__search"}]}`, http.StatusBadRequest)
 	})
 
+	t.Run("failure invalid mcp inputs", func(t *testing.T) {
+		for _, body := range []string{
+			`{"model":"claude-opus-4-6","name":"bad mcp url","mcp_servers":[{"name":"search","type":"url","url":"ftp://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
+			`{"model":"claude-opus-4-6","name":"bad mcp credentials","mcp_servers":[{"name":"search","type":"url","url":"https://user:secret@example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
+			`{"model":"claude-opus-4-6","name":"bad mcp fragment","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp#tools"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
+			`{"model":"claude-opus-4-6","name":"bad mcp name","mcp_servers":[{"name":"unsafe name","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"unsafe name"}]}`,
+			`{"model":"claude-opus-4-6","name":"duplicate toolsets","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"},{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
+			`{"model":"claude-opus-4-6","name":"duplicate configs","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search","configs":[{"name":"query"},{"name":"query"}]}]}`,
+			`{"model":"claude-opus-4-6","name":"invalid tool name","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search","configs":[{"name":"unsafe tool"}]}]}`,
+			`{"model":"claude-opus-4-6","name":"duplicate custom tools","tools":[{"type":"custom","name":"lookup","description":"first","input_schema":{"type":"object"}},{"type":"custom","name":"lookup","description":"second","input_schema":{"type":"object"}}]}`,
+		} {
+			resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		}
+	})
+
 	t.Run("failure web search agent tool config", func(t *testing.T) {
 		body := `{"model":"claude-opus-4-6","name":"bad web search","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","enabled":true}]}]}`
 		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)

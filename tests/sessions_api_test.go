@@ -3556,6 +3556,40 @@ func TestSessionEventInputValidation(t *testing.T) {
 	}
 }
 
+func TestSessionEventInternalNormalizationFailureReturnsServerError(t *testing.T) {
+	app := newTestAppWithStore(t, nil, newFakeStore("sessions-events-internal-error-bucket"))
+	defer app.close()
+
+	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-events-internal-error-agent"}`)
+	defer cleanupAgentRows(t, app.pool, agent.ID)
+	env := createEnvironment(t, app, `{"name":"sessions-events-internal-error-env"}`)
+	defer cleanupEnvironmentRows(t, app.pool, env.ID)
+	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
+	defer deleteSession(t, app, session.ID)
+
+	if _, err := app.pool.Exec(
+		context.Background(),
+		`update sessions set outcome_evaluations = '{"invalid":true}'::jsonb where external_id = $1`,
+		session.ID,
+	); err != nil {
+		t.Fatalf("inject invalid stored outcome evaluations: %v", err)
+	}
+
+	response := doSessionRequest(
+		t,
+		app,
+		http.MethodPost,
+		"/v1/sessions/"+session.ID+"/events?beta=true",
+		strings.NewReader(`{"events":[{"type":"user.define_outcome","description":"must not persist","rubric":{"type":"text","text":"pass"}}]}`),
+		defaultTestKey,
+		true,
+	)
+	assertError(t, response, http.StatusInternalServerError, "api_error")
+	if events := listSessionEvents(t, app, session.ID, "order=asc&limit=100", defaultTestKey); len(events.Data) != 0 {
+		t.Fatalf("internal normalization failure persisted events: %+v", events.Data)
+	}
+}
+
 func TestSessionEventMissingFileResourceRejectsWholeBatch(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("sessions-event-file-atomicity-bucket"))
 	defer app.close()

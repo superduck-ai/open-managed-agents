@@ -11,6 +11,20 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 )
 
+func prepareEventWorkerContent(
+	event db.SessionEvent,
+	bindings []sessioncontract.EventFileBinding,
+) (json.RawMessage, error) {
+	payload, err := sessioneventfiles.WorkerPayload(event.EventType, event.Payload, bindings)
+	if err == nil {
+		return payload, nil
+	}
+	if sessioneventfiles.IsValidationError(err) {
+		return nil, markEventInputError(err)
+	}
+	return nil, err
+}
+
 func normalizeInitialSessionEvents(
 	session db.Session,
 	raw json.RawMessage,
@@ -22,10 +36,10 @@ func normalizeInitialSessionEvents(
 	}
 	var inputs []json.RawMessage
 	if err := json.Unmarshal(raw, &inputs); err != nil {
-		return nil, nil, errors.New("initial_events must be an array")
+		return nil, nil, markEventInputError(errors.New("initial_events must be an array"))
 	}
 	if len(inputs) == 0 || len(inputs) > 50 {
-		return nil, nil, errors.New("initial_events must contain between 1 and 50 events")
+		return nil, nil, markEventInputError(errors.New("initial_events must contain between 1 and 50 events"))
 	}
 	events := make([]db.SessionEvent, 0, len(inputs))
 	normalizedSession := session
@@ -35,12 +49,12 @@ func normalizeInitialSessionEvents(
 			return nil, nil, err
 		}
 		if event.ThreadExternalID != nil {
-			return nil, nil, errors.New("initial_events must not include session_thread_id")
+			return nil, nil, markEventInputError(errors.New("initial_events must not include session_thread_id"))
 		}
 		if err := validateInitialSessionEventOrder(events, event, index, len(inputs)); err != nil {
-			return nil, nil, err
+			return nil, nil, markEventInputError(err)
 		}
-		if err := sessioneventfiles.ValidateMountedReferences(event.EventType, event.Payload, bindings); err != nil {
+		if _, err := prepareEventWorkerContent(event, bindings); err != nil {
 			return nil, nil, err
 		}
 		if changed {

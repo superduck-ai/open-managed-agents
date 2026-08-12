@@ -11,12 +11,11 @@ import (
 
 func TestReferenceValidationFailures(t *testing.T) {
 	tests := []struct {
-		name        string
-		eventType   string
-		payload     string
-		bindings    []sessioncontract.EventFileBinding
-		publicError bool
-		want        string
+		name      string
+		eventType string
+		payload   string
+		bindings  []sessioncontract.EventFileBinding
+		want      string
 	}{
 		{
 			name:      "file is not attached",
@@ -34,18 +33,16 @@ func TestReferenceValidationFailures(t *testing.T) {
 			want: "not a supported image",
 		},
 		{
-			name:        "client local path",
-			eventType:   "user.message",
-			payload:     `{"type":"user.message","content":[{"type":"document","source":{"type":"path","path":"/tmp/private.txt"}}]}`,
-			publicError: true,
-			want:        "local file paths are not accepted",
+			name:      "client local path",
+			eventType: "user.message",
+			payload:   `{"type":"user.message","content":[{"type":"document","source":{"type":"path","path":"/tmp/private.txt"}}]}`,
+			want:      "local file paths are not accepted",
 		},
 		{
-			name:        "file ID is all whitespace",
-			eventType:   "user.message",
-			payload:     `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"   "}}]}`,
-			publicError: true,
-			want:        "source.file_id is required",
+			name:      "file ID is all whitespace",
+			eventType: "user.message",
+			payload:   `{"type":"user.message","content":[{"type":"document","source":{"type":"file","file_id":"   "}}]}`,
+			want:      "source.file_id is required",
 		},
 		{
 			name:      "padded file ID uses exact match",
@@ -55,28 +52,22 @@ func TestReferenceValidationFailures(t *testing.T) {
 			want:      "Session Resources API",
 		},
 		{
-			name:        "file block outside user message",
-			eventType:   "system.message",
-			payload:     `{"type":"system.message","content":[{"type":"document","source":{"type":"file","file_id":"file_doc"}}]}`,
-			bindings:    []sessioncontract.EventFileBinding{{FileID: "file_doc", Path: "/uploads/doc.pdf", MimeType: "application/pdf"}},
-			publicError: true,
-			want:        "only supported in user.message",
+			name:      "file block outside user message",
+			eventType: "system.message",
+			payload:   `{"type":"system.message","content":[{"type":"document","source":{"type":"file","file_id":"file_doc"}}]}`,
+			bindings:  []sessioncontract.EventFileBinding{{FileID: "file_doc", Path: "/uploads/doc.pdf", MimeType: "application/pdf"}},
+			want:      "only supported in user.message",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			raw := json.RawMessage(test.payload)
-			publicErr := ValidatePublicEvent(test.eventType, raw)
-			if test.publicError {
-				if publicErr == nil || !strings.Contains(publicErr.Error(), test.want) {
-					t.Fatalf("ValidatePublicEvent() error = %v, want containing %q", publicErr, test.want)
-				}
-			} else if publicErr != nil {
-				t.Fatalf("ValidatePublicEvent() error = %v, want nil", publicErr)
-			}
 			mountedErr := ValidateMountedReferences(test.eventType, raw, test.bindings)
 			if mountedErr == nil || !strings.Contains(mountedErr.Error(), test.want) {
 				t.Fatalf("ValidateMountedReferences() error = %v, want containing %q", mountedErr, test.want)
+			}
+			if !IsValidationError(mountedErr) {
+				t.Fatalf("ValidateMountedReferences() error type = %T, want validation error", mountedErr)
 			}
 			worker, workerErr := WorkerPayload(test.eventType, raw, test.bindings)
 			if workerErr == nil || !strings.Contains(workerErr.Error(), test.want) {
@@ -84,6 +75,9 @@ func TestReferenceValidationFailures(t *testing.T) {
 			}
 			if worker != nil {
 				t.Fatalf("WorkerPayload() payload = %s, want nil on validation failure", worker)
+			}
+			if !IsValidationError(workerErr) {
+				t.Fatalf("WorkerPayload() error type = %T, want validation error", workerErr)
 			}
 		})
 	}

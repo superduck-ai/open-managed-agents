@@ -4,6 +4,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+
+	"github.com/samber/lo"
 )
 
 // normalizedSessionResource keeps the typed File contract beside the
@@ -15,32 +17,15 @@ type normalizedSessionResource struct {
 	fileMimeType string
 }
 
-func eventFileBindingsFromResources(resources []normalizedSessionResource) ([]sessioncontract.EventFileBinding, error) {
-	bindings := make([]sessioncontract.EventFileBinding, 0, len(resources))
-	for _, resource := range resources {
-		if resource.fileSpec == nil {
-			continue
-		}
-		binding, err := resource.fileSpec.SessionFileBinding(resource.resource.ExternalID)
-		if err != nil {
-			return nil, err
-		}
-		bindings = append(bindings, sessioncontract.EventFileBinding{
-			FileID:   binding.FileID,
-			Path:     binding.Path,
-			MimeType: resource.fileMimeType,
-		})
-	}
-	return bindings, nil
+type sessionResourceWritePlan struct {
+	inputs        []db.CreateSessionResourceInput
+	eventBindings []sessioncontract.EventFileBinding
 }
 
 func validateNormalizedSessionResources(resources []normalizedSessionResource) error {
-	specs := make([]sessionresource.FileSpec, 0, len(resources))
-	for _, resource := range resources {
-		if resource.fileSpec != nil {
-			specs = append(specs, *resource.fileSpec)
-		}
-	}
+	specs := lo.FilterMap(resources, func(resource normalizedSessionResource, _ int) (sessionresource.FileSpec, bool) {
+		return lo.FromPtr(resource.fileSpec), resource.fileSpec != nil
+	})
 	return sessionresource.ValidateFileSpecs(specs)
 }
 
@@ -61,16 +46,26 @@ func sessionResourceWriteInput(resource normalizedSessionResource) (db.CreateSes
 	return input, nil
 }
 
-func sessionResourceWriteInputs(
+func planSessionResourceWrites(
 	resources []normalizedSessionResource,
-) ([]db.CreateSessionResourceInput, error) {
-	inputs := make([]db.CreateSessionResourceInput, 0, len(resources))
+) (sessionResourceWritePlan, error) {
+	plan := sessionResourceWritePlan{
+		inputs:        make([]db.CreateSessionResourceInput, 0, len(resources)),
+		eventBindings: make([]sessioncontract.EventFileBinding, 0, len(resources)),
+	}
 	for _, resource := range resources {
 		input, err := sessionResourceWriteInput(resource)
 		if err != nil {
-			return nil, err
+			return sessionResourceWritePlan{}, err
 		}
-		inputs = append(inputs, input)
+		plan.inputs = append(plan.inputs, input)
+		if input.FileMount != nil {
+			plan.eventBindings = append(plan.eventBindings, sessioncontract.EventFileBinding{
+				FileID:   input.FileMount.FileExternalID,
+				Path:     input.FileMount.Path,
+				MimeType: resource.fileMimeType,
+			})
+		}
 	}
-	return inputs, nil
+	return plan, nil
 }

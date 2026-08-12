@@ -15,7 +15,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
 	"github.com/google/uuid"
@@ -243,14 +242,14 @@ func normalizeInputEvent(
 ) (db.SessionEvent, json.RawMessage, bool, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return db.SessionEvent{}, nil, false, errors.New("event must be an object")
+		return db.SessionEvent{}, nil, false, markEventInputError(errors.New("event must be an object"))
 	}
 	eventType, _ := payload["type"].(string)
 	if !allowedPublicEventType(eventType) {
-		return db.SessionEvent{}, nil, false, errors.New("event type is not accepted by this endpoint")
+		return db.SessionEvent{}, nil, false, markEventInputError(errors.New("event type is not accepted by this endpoint"))
 	}
 	if err := validatePublicInputEvent(eventType, payload); err != nil {
-		return db.SessionEvent{}, nil, false, err
+		return db.SessionEvent{}, nil, false, markEventInputError(err)
 	}
 	eventID, err := ids.New("sevt_")
 	if err != nil {
@@ -279,7 +278,7 @@ func normalizeInputEvent(
 			maxIterations = int(rawMax)
 		}
 		if maxIterations > 20 {
-			return db.SessionEvent{}, nil, false, errors.New("max_iterations must be at most 20")
+			return db.SessionEvent{}, nil, false, markEventInputError(errors.New("max_iterations must be at most 20"))
 		}
 		payload["max_iterations"] = maxIterations
 		outcomes, err := appendOutcomeEvaluation(session.OutcomeEvaluations, outcomeID, maxIterations, now)
@@ -291,9 +290,6 @@ func normalizeInputEvent(
 	}
 	payloadRaw, err := httpapi.MarshalRaw(payload)
 	if err != nil {
-		return db.SessionEvent{}, nil, false, err
-	}
-	if err := sessioneventfiles.ValidatePublicEvent(eventType, payloadRaw); err != nil {
 		return db.SessionEvent{}, nil, false, err
 	}
 	return db.SessionEvent{

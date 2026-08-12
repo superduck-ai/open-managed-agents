@@ -16,7 +16,8 @@ Claude Code 可读取的挂载路径：启动历史在 activation 转换，activ
 
 Send Events 与 Code Session activation 都先锁同一条 Session 行：
 
-- Send 通过 `DB.WithSessionEventWriteTx` 锁 Session，在同一事务中解析活动文件绑定并提交公开事件；
+- Send 通过 `DB.WithSessionEventWriteTx` 锁 Session，在同一事务中解析活动文件绑定、准备 worker
+  内容并提交公开事件；
 - activation 锁 Session 后读取完整公开历史，在同一事务中写 inbound 并将 Code Session 从
   `initializing` 切为 `active`。
 
@@ -76,11 +77,12 @@ sequenceDiagram
 
 ## Realtime cutover
 
-Send 提交公开事件后始终调用 `Service.QueuePublicSessionEvents`。该方法重新读取最新 Code
-Session，只有 `status == active` 时才通过 `workerPayloadForPublicEvent` 写 inbound；不存在或仍为
-`initializing` 时直接返回。文件转换使用 Send 事务内已经校验过的绑定快照，不在提交后重新查询
-Resource，从而避免已接受事件与 realtime 转换之间的删除竞态。被公开事件引用的 File Resource
-不能在 Session 生命周期内单独删除，activation 仍可从公开历史和活动挂载重建相同 worker payload。
+Send 在公开事件写事务内使用绑定快照准备 worker 内容；任一输入校验或转换失败都会回滚整批。
+提交后 `Service.QueuePublicSessionEvents` 重新读取最新 Code Session，只有 `status == active` 时才为
+已准备内容补充 Code Session envelope 并写 inbound；不存在或仍为 `initializing` 时直接返回。该路径
+不再重新解析 `file_id` 或挂载路径，从而避免同一请求内重复派生和提交后内容转换失败。被公开事件
+引用的 File Resource 不能在 Session 生命周期内单独删除，activation 仍可从公开历史和活动挂载重建
+相同 worker payload。
 
 如果 activation 恰好在公开事件提交后、realtime 检查前完成，同一事件可能同时出现在
 activation 历史和 realtime 尝试中；现有 inbound idempotency key 会保留一份，不会重复投递。

@@ -42,8 +42,10 @@ Send Events 在事务中锁定 Session 行并按当前 workspace/session 查询�
 4. `file_id` 缺失或去除首尾空白后为空时拒绝；其他值保留原文，并与 Resource ID 精确匹配；
 5. 同一文件重复引用只影响一次 worker 路径注入；
 6. 任一引用无效时回滚整批事件及 outcome evaluation 更新；
-7. 校验通过后只把原始公开 payload 写入 `session_events`，并把本次校验使用的绑定快照交给
-   active Code Session 的 realtime 转换。
+7. 在同一事务内根据绑定生成去除 file-source block、增加 `@"..."` 引用的 worker 内容；只有全部
+   事件都准备成功才写入原始公开 payload，任一输入或内部转换错误都会回滚整批；
+8. 提交后 active Code Session 只为已准备内容补充 worker envelope 并写 inbound，不再重新解析
+   `file_id` 或挂载路径。
 
 资源查询按 `created_at ASC, uuid ASC` 稳定排序；同一个 Files API 对象多次挂载时，worker 转换
 选择最早的活动绑定。跨 workspace、跨 Session、已删除或尚未挂载的文件都表现为当前 Session
@@ -66,13 +68,14 @@ Deployment 创建仍保存公开的 `initial_events` 模板；每次运行在物
 
 公开事件提交后存在两个 Code Session 转换入口：
 
-- Session 已 active：`QueuePublicSessionEvents` 使用事件写入事务已校验的 File 绑定快照生成
-  realtime inbound；
+- Session 已 active：Session 写入事务使用绑定快照准备 worker 内容，`QueuePublicSessionEvents`
+  只补充 Code Session envelope 并写 realtime inbound；
 - Session 尚在启动：activation 持有 Session 行锁，读取完整公开历史和活动 File Resource，按顺序
   生成 inbound 后再把 Code Session 切为 active。
 
-两个入口都把绑定结果传给 `workerPayloadForPublicEvent`。该函数保留原始文本和非 file-source
-content block，移除公开的 file-source block，并在消息末尾增加去重后的 Claude Code 原生引用：
+两个入口都遵循相同的内容转换规则：保留原始文本和非 file-source content block，移除公开的
+file-source block，并在消息末尾增加去重后的 Claude Code 原生引用。realtime 在 Session 写事务内
+执行该转换；activation 从持久化公开历史和活动绑定重新执行转换：
 
 ```text
 用户原始文本
@@ -94,12 +97,12 @@ sequenceDiagram
     participant W as Worker
 
     C->>S: events.send(file_id blocks)
-    S->>DB: lock Session + validate active Resources
+    S->>DB: lock Session + resolve active Resources
+    S->>S: validate references + prepare worker content
     S->>DB: insert original session_events.payload
     S-->>C: original public event
     alt Code Session active
-        S->>Q: transform with validated binding snapshot
-        S->>Q: persist transformed worker payload
+        S->>Q: add worker envelope + persist prepared payload
     else Code Session initializing
         S->>S: realtime path skips
         S->>DB: activation reads public history + mounts
@@ -112,8 +115,10 @@ sequenceDiagram
 
 转换后的 worker payload 继续写入既有 Code Session inbound event。投递重试、断线恢复、ACK 与
 幂等重放直接使用这条已转换记录，不会重新读取或改写 Session Event，也不会把绝对路径投影回
-公开 API。Realtime 转换若违反已校验的不变量而失败，会向调用边界返回错误并记录结构化错误，
-不会跳过单条事件后继续构造一个不完整 batch；正常输入依靠事务内绑定快照保证转换可完成。
+公开 API。Realtime 内容准备与公开事件写入处于同一事务，输入错误返回 400，路径转换、ID 生成、
+存量状态解析或序列化等内部错误返回安全的 500；两类错误都会回滚整批，不会留下只有公开事件而
+没有已准备 worker 内容的提交。事务提交后的失败仅可能来自 Code Session 查询、envelope 生成或
+inbound 持久化，并由 Session handler 在最终处理边界记录一次。
 
 Session 标题只由 Session 创建或更新接口的 `title` 控制。worker 消息转换不调用标题生成逻辑，
 也不修改 Session metadata、公开事件或前端展示内容。

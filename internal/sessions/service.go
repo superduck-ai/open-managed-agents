@@ -13,8 +13,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
-	"github.com/superduck-ai/open-managed-agents/internal/sessioneventfiles"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -83,11 +81,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	resourceInputs, err := sessionResourceWriteInputs(resources)
-	if err != nil {
-		return mapResourceBuildError(err)
-	}
-	eventFileBindings, err := eventFileBindingsFromResources(resources)
+	resourcePlan, err := planSessionResourceWrites(resources)
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
@@ -116,11 +110,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	initialEvents, outcomes, err := normalizeInitialSessionEvents(
 		sessionRecord,
 		body.InitialEvents,
-		eventFileBindings,
+		resourcePlan.eventBindings,
 		now,
 	)
 	if err != nil {
-		return invalidRequest(err)
+		return mapEventProcessingError(err, sessionID)
 	}
 	sessionRecord.OutcomeEvaluations = outcomes
 	workData, _ := httpapi.MarshalRaw(map[string]any{"id": sessionID, "type": "session"})
@@ -138,7 +132,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		},
-		Resources:     resourceInputs,
+		Resources:     resourcePlan.inputs,
 		InitialEvents: initialEvents,
 		Work: db.EnvironmentWork{
 			UUID:                  uuid.NewString(),
@@ -550,10 +544,9 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	}
 	now := time.Now().UTC()
 	var (
-		created         []db.SessionEvent
-		eventBindings   []sessioncontract.EventFileBinding
-		outcomesChanged bool
-		inputErr        error
+		created                []db.SessionEvent
+		preparedWorkerPayloads map[string]json.RawMessage
+		outcomesChanged        bool
 	)
 	err = h.db.WithSessionEventWriteTx(
 		r.Context(),
@@ -566,19 +559,19 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 				return txErr
 			}
 			bindings := storedBindings
-			eventBindings = bindings
 			events := make([]db.SessionEvent, 0, len(inputs))
+			preparedWorkerPayloads = make(map[string]json.RawMessage, len(inputs))
 			normalizedSession := lockedSession
 			for _, raw := range inputs {
 				event, outcomes, changed, normalizeErr := normalizeInputEvent(normalizedSession, raw, now)
 				if normalizeErr != nil {
-					inputErr = normalizeErr
-					return normalizeErr
+					return markEventProcessingError(normalizeErr)
 				}
-				if validateErr := sessioneventfiles.ValidateMountedReferences(event.EventType, event.Payload, bindings); validateErr != nil {
-					inputErr = validateErr
-					return validateErr
+				workerPayload, prepareErr := prepareEventWorkerContent(event, bindings)
+				if prepareErr != nil {
+					return markEventProcessingError(prepareErr)
 				}
+				preparedWorkerPayloads[event.ExternalID] = workerPayload
 				if changed {
 					normalizedSession.OutcomeEvaluations = outcomes
 					outcomesChanged = true
@@ -594,8 +587,8 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		},
 	)
 	if err != nil {
-		if inputErr != nil {
-			return invalidRequest(inputErr)
+		if isEventProcessingError(err) {
+			return mapEventProcessingError(err, sessionID)
 		}
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
@@ -606,7 +599,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		h.broadcast(event)
 	}
 	if h.codeSessions != nil {
-		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created, eventBindings); err != nil {
+		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, created, preparedWorkerPayloads); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
 		}
 	}

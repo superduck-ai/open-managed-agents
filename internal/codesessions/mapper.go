@@ -32,10 +32,19 @@ func workerPayloadForPublicEvent(
 	if err != nil {
 		return nil, err
 	}
-	object, err = decodeJSONObject(raw)
+	return workerPayloadFromPublicEvent(codeSessionID, raw, fallback)
+}
+
+func workerPayloadFromPublicEvent(
+	codeSessionID string,
+	raw json.RawMessage,
+	fallback time.Time,
+) (json.RawMessage, error) {
+	object, err := decodeJSONObject(raw)
 	if err != nil {
 		return nil, err
 	}
+	eventType := stringField(object, "type")
 	now := firstPayloadTime(object, fallback)
 	if now.IsZero() {
 		now = time.Now().UTC()

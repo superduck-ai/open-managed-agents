@@ -20,6 +20,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 
 	"github.com/google/uuid"
+	"github.com/samber/lo"
 )
 
 type normalizedDeploymentResource struct {
@@ -57,10 +58,16 @@ type deploymentResourcePayload struct {
 	Instructions  *string         `json:"instructions,omitempty"`
 }
 
-type deploymentRunResourceReference struct {
+type deploymentRunResource struct {
 	Type          string `json:"type"`
 	FileID        string `json:"file_id"`
 	MemoryStoreID string `json:"memory_store_id"`
+	raw           json.RawMessage
+}
+
+type deploymentSessionResourcePlan struct {
+	resources     []db.CreateSessionResourceInput
+	eventBindings []sessioncontract.EventFileBinding
 }
 
 type deploymentResourceSecret struct {
@@ -349,76 +356,83 @@ func (e resourceReferenceError) Unwrap() error {
 	return e.Err
 }
 
-func parseDeploymentRunResourceReferences(raw json.RawMessage) ([]deploymentRunResourceReference, error) {
+func parseDeploymentRunResources(raw json.RawMessage) ([]deploymentRunResource, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return nil, nil
 	}
-	var references []deploymentRunResourceReference
-	if err := json.Unmarshal(raw, &references); err != nil {
+	var encodedResources []json.RawMessage
+	if err := json.Unmarshal(raw, &encodedResources); err != nil {
 		return nil, errors.New("stored resources are invalid")
 	}
-	for _, reference := range references {
-		switch reference.Type {
+	return lo.MapErr(encodedResources, func(encoded json.RawMessage, _ int) (deploymentRunResource, error) {
+		var resource deploymentRunResource
+		if err := json.Unmarshal(encoded, &resource); err != nil || httpapi.IsJSONNull(encoded) {
+			return deploymentRunResource{}, errors.New("stored resources are invalid")
+		}
+		switch resource.Type {
 		case sessionresource.FileType:
-			if strings.TrimSpace(reference.FileID) == "" || reference.MemoryStoreID != "" {
-				return nil, errors.New("stored file resource reference is invalid")
+			if strings.TrimSpace(resource.FileID) == "" || resource.MemoryStoreID != "" {
+				return deploymentRunResource{}, errors.New("stored file resource reference is invalid")
 			}
 		case "memory_store":
-			if strings.TrimSpace(reference.MemoryStoreID) == "" || reference.FileID != "" {
-				return nil, errors.New("stored memory store resource reference is invalid")
+			if strings.TrimSpace(resource.MemoryStoreID) == "" || resource.FileID != "" {
+				return deploymentRunResource{}, errors.New("stored memory store resource reference is invalid")
 			}
 		case "github_repository":
-			if reference.FileID != "" || reference.MemoryStoreID != "" {
-				return nil, errors.New("stored GitHub resource reference is invalid")
+			if resource.FileID != "" || resource.MemoryStoreID != "" {
+				return deploymentRunResource{}, errors.New("stored GitHub resource reference is invalid")
 			}
 		default:
-			return nil, errors.New("stored resource type is invalid")
+			return deploymentRunResource{}, errors.New("stored resource type is invalid")
 		}
-	}
-	return references, nil
+		resource.raw = encoded
+		return resource, nil
+	})
 }
 
-func sessionResourcesFromDeployment(
+func planDeploymentSessionResources(
 	deployment db.Deployment,
+	storedResources []deploymentRunResource,
+	filesByID map[string]db.FileRecord,
 	now time.Time,
-) ([]db.CreateSessionResourceInput, error) {
-	var configs []json.RawMessage
-	if len(deployment.Resources) > 0 && !httpapi.IsJSONNull(deployment.Resources) {
-		if err := json.Unmarshal(deployment.Resources, &configs); err != nil {
-			return nil, errors.New("stored resources are invalid")
-		}
-	}
+) (deploymentSessionResourcePlan, error) {
 	var secrets map[string]json.RawMessage
 	if len(deployment.ResourceSecrets) > 0 && !httpapi.IsJSONNull(deployment.ResourceSecrets) {
 		if err := json.Unmarshal(deployment.ResourceSecrets, &secrets); err != nil {
-			return nil, errors.New("stored resource secrets are invalid")
+			return deploymentSessionResourcePlan{}, errors.New("stored resource secrets are invalid")
 		}
 	}
 
-	resources := make([]db.CreateSessionResourceInput, 0, len(configs))
-	fileSpecs := make([]sessionresource.FileSpec, 0, len(configs))
-	for index, configRaw := range configs {
+	plan := deploymentSessionResourcePlan{
+		resources:     make([]db.CreateSessionResourceInput, 0, len(storedResources)),
+		eventBindings: make([]sessioncontract.EventFileBinding, 0, len(storedResources)),
+	}
+	fileSpecs := make([]sessionresource.FileSpec, 0, len(storedResources))
+	for index, stored := range storedResources {
 		var config map[string]any
-		if err := json.Unmarshal(configRaw, &config); err != nil || config == nil {
-			return nil, errors.New("stored resources are invalid")
+		if err := json.Unmarshal(stored.raw, &config); err != nil || config == nil {
+			return deploymentSessionResourcePlan{}, errors.New("stored resources are invalid")
 		}
-		resourceType, _ := config["type"].(string)
 		resourceID, err := ids.New("sesrsc_")
 		if err != nil {
-			return nil, err
+			return deploymentSessionResourcePlan{}, err
 		}
 
 		payload := maps.Clone(config)
 		var fileMount *db.SessionFileMount
-		if resourceType == sessionresource.FileType {
-			fileSpec, err := sessionresource.ParseStoredFileSpec(configRaw)
+		if stored.Type == sessionresource.FileType {
+			fileSpec, err := sessionresource.ParseStoredFileSpec(stored.raw)
 			if err != nil {
-				return nil, err
+				return deploymentSessionResourcePlan{}, err
 			}
 			payload = fileSpec.PayloadFields(resourceID)
 			binding, err := fileSpec.SessionFileBinding(resourceID)
 			if err != nil {
-				return nil, err
+				return deploymentSessionResourcePlan{}, err
+			}
+			file, ok := filesByID[binding.FileID]
+			if !ok {
+				return deploymentSessionResourcePlan{}, fmt.Errorf("file not found: %s", binding.FileID)
 			}
 			fileSpecs = append(fileSpecs, fileSpec)
 			fileMount = &db.SessionFileMount{
@@ -426,26 +440,31 @@ func sessionResourcesFromDeployment(
 				FileExternalID:     binding.FileID,
 				Path:               binding.Path,
 			}
+			plan.eventBindings = append(plan.eventBindings, sessioncontract.EventFileBinding{
+				FileID:   file.ExternalID,
+				Path:     binding.Path,
+				MimeType: file.MimeType,
+			})
 		} else {
 			payload["id"] = resourceID
-			payload["type"] = resourceType
+			payload["type"] = stored.Type
 		}
 		payloadRaw, err := httpapi.MarshalRaw(payload)
 		if err != nil {
-			return nil, err
+			return deploymentSessionResourcePlan{}, err
 		}
 
 		var secretRaw json.RawMessage
 		if secrets != nil {
 			secretRaw = secrets[strconv.Itoa(index)]
 		}
-		resources = append(resources, db.CreateSessionResourceInput{
+		plan.resources = append(plan.resources, db.CreateSessionResourceInput{
 			Resource: db.SessionResource{
 				UUID:             uuid.NewString(),
 				ExternalID:       resourceID,
 				OrganizationUUID: deployment.OrganizationUUID,
 				WorkspaceUUID:    deployment.WorkspaceUUID,
-				ResourceType:     resourceType,
+				ResourceType:     stored.Type,
 				Payload:          payloadRaw,
 				SecretPayload:    secretRaw,
 				CreatedAt:        now,
@@ -455,29 +474,7 @@ func sessionResourcesFromDeployment(
 		})
 	}
 	if err := sessionresource.ValidateFileSpecs(fileSpecs); err != nil {
-		return nil, err
+		return deploymentSessionResourcePlan{}, err
 	}
-	return resources, nil
-}
-
-func deploymentEventFileBindings(
-	resources []db.CreateSessionResourceInput,
-	filesByID map[string]db.FileRecord,
-) ([]sessioncontract.EventFileBinding, error) {
-	bindings := make([]sessioncontract.EventFileBinding, 0, len(resources))
-	for _, resource := range resources {
-		if resource.FileMount == nil {
-			continue
-		}
-		file, ok := filesByID[resource.FileMount.FileExternalID]
-		if !ok {
-			return nil, fmt.Errorf("file not found: %s", resource.FileMount.FileExternalID)
-		}
-		bindings = append(bindings, sessioncontract.EventFileBinding{
-			FileID:   file.ExternalID,
-			Path:     resource.FileMount.Path,
-			MimeType: file.MimeType,
-		})
-	}
-	return bindings, nil
+	return plan, nil
 }

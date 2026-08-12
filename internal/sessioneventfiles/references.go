@@ -34,22 +34,37 @@ type reference struct {
 	fileID    string
 }
 
-// ValidatePublicEvent rejects malformed file-source blocks and direct local
-// paths without resolving Session-specific mounts.
-func ValidatePublicEvent(eventType string, raw json.RawMessage) error {
-	_, err := referencesFromEvent(eventType, raw)
-	return err
+type validationError struct{ cause error }
+
+func (e *validationError) Error() string { return e.cause.Error() }
+
+func (e *validationError) Unwrap() error { return e.cause }
+
+// IsValidationError 判断错误是否来自公开事件输入。
+func IsValidationError(err error) bool {
+	var validationErr *validationError
+	return errors.As(err, &validationErr)
 }
 
-// ValidateMountedReferences verifies that every file-source block is attached
-// to the current Session. bindings must already be scoped by workspace/session.
-func ValidateMountedReferences(eventType string, raw json.RawMessage, bindings []sessioncontract.EventFileBinding) error {
+func markValidationError(err error) error {
+	return &validationError{cause: err}
+}
+
+// ValidateMountedReferences 校验所有文件引用都已挂载到当前 Session。
+func ValidateMountedReferences(
+	eventType string,
+	raw json.RawMessage,
+	bindings []sessioncontract.EventFileBinding,
+) error {
 	references, err := referencesFromEvent(eventType, raw)
 	if err != nil {
-		return err
+		return markValidationError(err)
 	}
 	_, err = resolveReferences(references, bindings)
-	return err
+	if err != nil {
+		return markValidationError(err)
+	}
+	return nil
 }
 
 // WorkerPayload replaces public file-source blocks with Claude Code @ path
@@ -57,14 +72,14 @@ func ValidateMountedReferences(eventType string, raw json.RawMessage, bindings [
 func WorkerPayload(eventType string, raw json.RawMessage, bindings []sessioncontract.EventFileBinding) (json.RawMessage, error) {
 	references, err := referencesFromEvent(eventType, raw)
 	if err != nil {
-		return nil, err
+		return nil, markValidationError(err)
 	}
 	if len(references) == 0 {
 		return raw, nil
 	}
 	resolved, err := resolveReferences(references, bindings)
 	if err != nil {
-		return nil, err
+		return nil, markValidationError(err)
 	}
 
 	var envelope eventEnvelope

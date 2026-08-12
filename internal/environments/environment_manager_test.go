@@ -324,7 +324,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	for _, want := range []string{
 		"environment-manager binary missing or not executable: /opt/env manager/bin/environment-manager",
 		"Claude binary missing or not executable: /opt/claude path/bin/claude",
-		"task-run --stdin --session 'cse_session with '\"'\"'quote'\"'\"'/and/slash'",
+		"task-run --session 'cse_session with '\"'\"'quote'\"'\"'/and/slash'",
 		"--session-mode resume-cached",
 		"--claude-agent-version 'current'",
 		"--claude-path '/opt/claude path/bin/claude'",
@@ -338,6 +338,9 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 	if strings.Contains(allCommands, "sk-ant-test-secret") {
 		t.Fatalf("command leaked anthropic api key:\n%s", allCommands)
+	}
+	if strings.Contains(allCommands, "task-run --stdin") {
+		t.Fatalf("command should use task-run's native clap stdin behavior:\n%s", allCommands)
 	}
 	if strings.Contains(allCommands, "nohup") ||
 		strings.Contains(allCommands, "environment-manager.v0.json") ||

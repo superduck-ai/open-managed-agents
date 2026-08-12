@@ -406,7 +406,6 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 		// E2B 负责把该命令作为后台进程启动；payload 通过进程 stdin 发送，不进入命令行或沙箱文件系统。
 		"exec " + shellQuote(managerPath) +
 			" task-run" +
-			" --stdin" +
 			" --session " + shellQuote(codeSessionID) +
 			" --session-mode resume-cached" +
 			" --claude-agent-version " + shellQuote("current") +

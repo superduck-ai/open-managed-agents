@@ -25,7 +25,7 @@ func managedAgentSessionConfig(
 	session db.Session,
 	runtimeResources managedAgentRuntimeResources,
 ) (json.RawMessage, error) {
-	launchConfig, err := agentsnapshot.ClaudeLaunchConfigFromSnapshot(session.AgentSnapshot)
+	toolArgs, err := agentsnapshot.ClaudeToolArgsFromSnapshot(session.AgentSnapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -38,12 +38,12 @@ func managedAgentSessionConfig(
 		"sources":  runtimeResources.sources,
 		"outcomes": []any{},
 		"claude_code_args": map[string]string{
-			"tools": launchConfig.Tools,
+			"tools": toolArgs.Tools,
 		},
 	}
 	claudeCodeArgs := body["claude_code_args"].(map[string]string)
-	if launchConfig.AllowedTools != "" {
-		claudeCodeArgs["allowed-tools"] = launchConfig.AllowedTools
+	if toolArgs.AllowedTools != "" {
+		claudeCodeArgs["allowed-tools"] = toolArgs.AllowedTools
 	}
 	if len(mcpServers) > 0 {
 		body["mcp_servers"] = mcpServers

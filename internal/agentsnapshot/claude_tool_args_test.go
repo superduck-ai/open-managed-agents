@@ -7,18 +7,18 @@ import (
 	"testing"
 )
 
-func TestClaudeLaunchConfigFromSnapshotRejectsMalformedSnapshot(t *testing.T) {
+func TestClaudeToolArgsFromSnapshotRejectsMalformedSnapshot(t *testing.T) {
 	t.Parallel()
 
-	if _, err := ClaudeLaunchConfigFromSnapshot(json.RawMessage(`{`)); err == nil {
+	if _, err := ClaudeToolArgsFromSnapshot(json.RawMessage(`{`)); err == nil {
 		t.Fatal("malformed snapshot was accepted")
 	}
 }
 
-func TestClaudeLaunchConfigFromSnapshotDerivesToolsAndPermissions(t *testing.T) {
+func TestClaudeToolArgsFromSnapshotDerivesToolsAndPermissions(t *testing.T) {
 	t.Parallel()
 
-	config, err := ClaudeLaunchConfigFromSnapshot(json.RawMessage(`{
+	config, err := ClaudeToolArgsFromSnapshot(json.RawMessage(`{
 		"tools":[
 			{
 				"type":"agent_toolset_20260401",
@@ -69,10 +69,10 @@ func TestClaudeLaunchConfigFromSnapshotDerivesToolsAndPermissions(t *testing.T) 
 	}
 }
 
-func TestClaudeLaunchConfigDefaultAllowWithAskOverrideOmitsMCPWildcard(t *testing.T) {
+func TestClaudeToolArgsDefaultAllowWithAskOverrideOmitsMCPWildcard(t *testing.T) {
 	t.Parallel()
 
-	config, err := ClaudeLaunchConfigFromSnapshot(json.RawMessage(`{
+	config, err := ClaudeToolArgsFromSnapshot(json.RawMessage(`{
 		"tools":[{
 			"type":"mcp_toolset",
 			"mcp_server_name":"search",

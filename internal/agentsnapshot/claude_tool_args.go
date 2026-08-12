@@ -7,7 +7,7 @@ import (
 	"github.com/samber/lo"
 )
 
-type ClaudeLaunchConfig struct {
+type ClaudeToolArgs struct {
 	Tools        string `json:"tools"`
 	AllowedTools string `json:"allowed_tools,omitempty"`
 }
@@ -69,14 +69,14 @@ var claudeBuiltInTools = []claudeBuiltInTool{
 	{configName: "todo_write", claudeName: "TodoWrite"},
 }
 
-func ClaudeLaunchConfigFromSnapshot(snapshot json.RawMessage) (ClaudeLaunchConfig, error) {
+func ClaudeToolArgsFromSnapshot(snapshot json.RawMessage) (ClaudeToolArgs, error) {
 	var value claudeLaunchSnapshot
 	if len(snapshot) > 0 && strings.TrimSpace(string(snapshot)) != "null" {
 		if err := json.Unmarshal(snapshot, &value); err != nil {
-			return ClaudeLaunchConfig{}, err
+			return ClaudeToolArgs{}, err
 		}
 	}
-	return ClaudeLaunchConfig{
+	return ClaudeToolArgs{
 		Tools:        claudeBuiltInToolNames(),
 		AllowedTools: claudeAllowedTools(value.Tools),
 	}, nil

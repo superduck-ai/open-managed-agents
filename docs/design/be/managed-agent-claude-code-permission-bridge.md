@@ -57,7 +57,7 @@ session config 继续通过现有字段传给 `environment-manager`：
 }
 ```
 
-`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数。本设计不改变 v0 stdin schema。`internal/agentsnapshot.ClaudeLaunchConfigFromSnapshot` 只负责从已校验并固化的 Agent Snapshot 派生本 PR 新增的 `tools` 与 `allowed-tools`；Managed Agent session config 继续沿用既有逻辑生成 MCP config、MCP config file 和 `mcp-config` 参数。`buildEnvironmentManagerV0Payload` 只补充 environment-manager 自身需要的 `settings`、认证和环境变量，不再解析 `tools`、重算权限或删除已有工具参数。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
+`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数。本设计不改变 v0 stdin schema。`internal/agentsnapshot.ClaudeToolArgsFromSnapshot` 只负责从已校验并固化的 Agent Snapshot 派生本 PR 新增的 `tools` 与 `allowed-tools`；Managed Agent session config 继续沿用既有逻辑生成 MCP config、MCP config file 和 `mcp-config` 参数。`buildEnvironmentManagerV0Payload` 只补充 environment-manager 自身需要的 `settings`、认证和环境变量，不再解析 `tools`、重算权限或删除已有工具参数。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
 
 OMA 在 `agentsnapshot` 模块派生 `claude_code_args["tools"]`，显式限定 Claude Code 向模型暴露的内置工具集合。该集合来自项目当前固定的 Claude Code 2.1.120 `system/init` 事件，共 22 项；输出顺序与前端一致，优先放置原有 7 项：`Bash`、`Read`、`Write`、`Edit`、`Glob`、`Grep`、`WebFetch`，随后为 `Task`、`AskUserQuestion`、`CronCreate`、`CronDelete`、`CronList`、`EnterPlanMode`、`EnterWorktree`、`ExitPlanMode`、`ExitWorktree`、`NotebookEdit`、`ScheduleWakeup`、`Skill`、`TaskOutput`、`TaskStop`、`TodoWrite`。它保留该版本的默认内置能力，只移除 `WebSearch`；升级 Claude Code 时必须用新版本的真实 `system/init.tools` 复核并同步此集合。
 
@@ -87,7 +87,7 @@ Agent Create/Update API 是不可信输入的权威校验 seam：`normalizeMCPSe
 - Claude Code `--allowed-tools` 既支持具体工具名（例如 `mcp__weather_service__get_weather`），也支持 server 通配规则（例如 `mcp__weather_service__*`）。但通配规则无法同时表达“默认允许、个别工具询问或禁用”，因此存在 ask/deny 覆盖时只能列出明确允许的工具。
 - 启动参数可能和运行时事件存在版本差异，最终行为必须以 server 端 agent snapshot 为准。
 
-`agentsnapshot.ClaudeLaunchConfigFromSnapshot` 会根据 Agent Snapshot 的 effective policy 生成 `claude_code_args["allowed-tools"]`：内置工具将规范名映射为 Claude Code 名称；MCP 默认 `always_allow` 且没有 ask/deny 覆盖时使用 `mcp__<server>__*`，否则只列出明确 `always_allow` 的 `mcp__<server>__<tool>`。`always_ask` 与 disabled 工具不进入 allow list。该参数只减少 Claude Code 权限询问，runtime permission handler 仍是最终裁决者。
+`agentsnapshot.ClaudeToolArgsFromSnapshot` 会根据 Agent Snapshot 的 effective policy 生成 `claude_code_args["allowed-tools"]`：内置工具将规范名映射为 Claude Code 名称；MCP 默认 `always_allow` 且没有 ask/deny 覆盖时使用 `mcp__<server>__*`，否则只列出明确 `always_allow` 的 `mcp__<server>__<tool>`。`always_ask` 与 disabled 工具不进入 allow list。该参数只减少 Claude Code 权限询问，runtime permission handler 仍是最终裁决者。
 
 ### 2.3 运行时权限层
 

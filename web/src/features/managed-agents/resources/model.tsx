@@ -812,7 +812,8 @@ function credentialRefreshBody(values: CredentialFormValues) {
 
 export function credentialAuthBody(values: CredentialFormValues, mode: 'create' | 'update') {
   if (values.authType === 'environment_variable') {
-    const secretValue = values.secretValue.trim();
+    // Keep secret_value verbatim; env values may intentionally include whitespace.
+    const secretValue = values.secretValue;
     const body: Record<string, unknown> = {
       type: 'environment_variable',
       networking: { type: 'unrestricted' },
@@ -820,7 +821,7 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
     if (mode === 'create') {
       body.secret_name = values.secretName.trim();
       body.secret_value = secretValue;
-    } else if (secretValue) {
+    } else if (secretValue.trim()) {
       body.secret_value = secretValue;
     }
     return body;

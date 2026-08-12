@@ -139,6 +139,52 @@ describe('environmentEditValues networking round-trip', () => {
   });
 });
 
+describe('credentialAuthBody environment_variable', () => {
+  function envValues(overrides: Partial<CredentialFormValues> = {}): CredentialFormValues {
+    return {
+      ...emptyCredentialFormValues(),
+      displayName: 'Env secret',
+      authType: 'environment_variable',
+      secretName: 'API_KEY',
+      secretValue: 'value',
+      ...overrides,
+    };
+  }
+
+  test('preserves secret_value whitespace and trims only secret_name', () => {
+    expect(
+      credentialAuthBody(
+        envValues({
+          secretName: ' API_KEY ',
+          secretValue: '  line-one\nline-two\n',
+        }),
+        'create',
+      ),
+    ).toEqual({
+      type: 'environment_variable',
+      networking: { type: 'unrestricted' },
+      secret_name: 'API_KEY',
+      secret_value: '  line-one\nline-two\n',
+    });
+  });
+
+  test('update omits blank secret_value but keeps intentional whitespace when provided', () => {
+    expect(credentialAuthBody(envValues({ secretValue: '' }), 'update')).toEqual({
+      type: 'environment_variable',
+      networking: { type: 'unrestricted' },
+    });
+    expect(credentialAuthBody(envValues({ secretValue: '   ' }), 'update')).toEqual({
+      type: 'environment_variable',
+      networking: { type: 'unrestricted' },
+    });
+    expect(credentialAuthBody(envValues({ secretValue: '  rotated\n' }), 'update')).toEqual({
+      type: 'environment_variable',
+      networking: { type: 'unrestricted' },
+      secret_value: '  rotated\n',
+    });
+  });
+});
+
 describe('credentialAuthBody mcp_oauth', () => {
   function oauthValues(overrides: Partial<CredentialFormValues> = {}): CredentialFormValues {
     return {

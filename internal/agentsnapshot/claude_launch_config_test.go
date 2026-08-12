@@ -42,9 +42,7 @@ func TestClaudeLaunchConfigFromSnapshotDerivesToolsAndPermissions(t *testing.T) 
 				"mcp_server_name":"you",
 				"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},
 				"configs":[]
-			},
-			{"type":"mcp_toolset","mcp_server_name":"unsafe Read","default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}},
-			{"type":"mcp_toolset","mcp_server_name":"unsafe__Read","default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}}
+			}
 		]
 	}`))
 	if err != nil {
@@ -69,9 +67,23 @@ func TestClaudeLaunchConfigFromSnapshotDerivesToolsAndPermissions(t *testing.T) 
 			t.Fatalf("allowed tools %v unexpectedly contains %q", allowed, excluded)
 		}
 	}
-	for _, tool := range allowed {
-		if strings.HasPrefix(tool, "mcp__unsafe") {
-			t.Fatalf("allowed tools %v contains an injected rule fragment", allowed)
-		}
+}
+
+func TestClaudeLaunchConfigDefaultAllowWithAskOverrideOmitsMCPWildcard(t *testing.T) {
+	t.Parallel()
+
+	config, err := ClaudeLaunchConfigFromSnapshot(json.RawMessage(`{
+		"tools":[{
+			"type":"mcp_toolset",
+			"mcp_server_name":"search",
+			"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},
+			"configs":[{"name":"delete","enabled":true,"permission_policy":{"type":"always_ask"}}]
+		}]
+	}`))
+	if err != nil {
+		t.Fatalf("derive launch config: %v", err)
+	}
+	if config.AllowedTools != "" {
+		t.Fatalf("allowed tools = %q, want no wildcard or explicit ask rule", config.AllowedTools)
 	}
 }

@@ -447,7 +447,7 @@
   "managedAgents.agents.createDialog.toolNamesUnavailable": "工具名称暂不可用。",
   "managedAgents.agents.createDialog.toolPermissions": "工具权限",
   "managedAgents.agents.createDialog.tools": "工具",
-  "managedAgents.agents.createDialog.toolsDescription": "此 Agent 可调用的所有能力：内置工具、MCP 服务器。",
+  "managedAgents.agents.createDialog.toolsDescription": "此 Agent 可调用的所有能力：内置工具、MCP 服务器和已有自定义工具。",
   "managedAgents.agents.createLabel": "创建 Agent",
   "managedAgents.agents.description": "创建并管理自主 Agent。",
   "managedAgents.agents.detail.alwaysAllow": "始终允许",

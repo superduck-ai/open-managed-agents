@@ -412,8 +412,8 @@ function resolveMcpServer(name: string, url: string, directoryServers: McpDirect
   }
 
   const metadata =
-    directoryServers.find((server) => server.slug === name) ??
-    FALLBACK_MCP_SERVERS.find((server) => server.slug === name);
+    directoryServers.find((server) => server.slug === name && server.url === url) ??
+    FALLBACK_MCP_SERVERS.find((server) => server.slug === name && server.url === url);
   // 展示元数据优先级：在线 Directory > 内置 GitHub/Slack fallback > 名称格式化；
   // 实际 URL 始终以当前 Agent 版本配置为准。
   if (metadata) {

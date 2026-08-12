@@ -63,7 +63,7 @@ OMA 在 `agentsnapshot` 模块派生 `claude_code_args["tools"]`，显式限定 
 
 `--tools` 只约束 Claude Code 内置工具，不移除 `--mcp-config` 加载的第三方 MCP 工具；例如 You Search 仍以 `mcp__<server>__<tool>` 名称独立暴露。Agent API 同时拒绝在 `agent_toolset_20260401.configs` 中配置内置 `web_search`；需要网页搜索时应配置独立 MCP 搜索工具。该限制不影响 Workbench 的 Messages API 服务端 web search。
 
-由于 Claude Code 使用双下划线分隔 `mcp__<server>__<tool>`，Agent API 与前端均拒绝包含 `__` 的 MCP Server 名称。历史快照若仍包含此类名称，启动参数不会为其生成 `allowed-tools` 规则，runtime permission handler 也统一降级为询问，避免把调用错误解析到另一个 Toolset 后自动放行。
+由于 Claude Code 使用双下划线分隔 `mcp__<server>__<tool>`，Agent API 与前端均拒绝包含 `__` 的 MCP Server 名称。当前没有需要兼容的存量 Agent，因此运行时直接信任已通过入口校验并固化的 Snapshot，不重复扫描 Server 名称。
 
 Agent Create/Update API 是不可信输入的权威校验 seam：`normalizeMCPServers` 校验 Server 名称格式、长度、唯一性、禁止 `__` 以及无凭据和 fragment 的 HTTP/HTTPS 绝对 URL；`normalizeTools` 校验 Toolset 引用、Tool 名称、权限策略、数量限制和重复配置。前端重复这些规则只用于即时反馈。`allowed-tools` 不接受前端输入，只能从保存后的 Agent Snapshot 派生。
 

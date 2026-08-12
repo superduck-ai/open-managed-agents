@@ -447,7 +447,7 @@
   "managedAgents.agents.createDialog.toolNamesUnavailable": "Tool names are unavailable.",
   "managedAgents.agents.createDialog.toolPermissions": "Tool permissions",
   "managedAgents.agents.createDialog.tools": "Tools",
-  "managedAgents.agents.createDialog.toolsDescription": "Everything this agent can call: built-in tools, MCP servers.",
+  "managedAgents.agents.createDialog.toolsDescription": "Everything this agent can call: built-in tools, MCP servers, and existing custom tools.",
   "managedAgents.agents.createLabel": "Create agent",
   "managedAgents.agents.description": "Create and manage autonomous agents.",
   "managedAgents.agents.detail.alwaysAllow": "Always allow",

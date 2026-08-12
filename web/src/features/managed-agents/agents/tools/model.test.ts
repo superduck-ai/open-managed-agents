@@ -118,20 +118,24 @@ describe('agent tool display model', () => {
     expect(cards[1].tools[0].permission).toBe('always_ask');
   });
 
-  test('uses the MCP runtime default when directory tools have no matching toolset', () => {
+  test('does not use Directory tools without an exact configured URL match', () => {
     const [card] = buildAgentToolDisplayCards(
       agentFixture({
         mcp_servers: [{ name: 'snowflake', url: 'https://tenant.snowflake.example/mcp' }],
         tools: [],
       }),
-      [{ slug: 'snowflake', displayName: 'Snowflake', toolNames: ['search', 'query'] }],
+      [
+        {
+          slug: 'snowflake',
+          displayName: 'Snowflake',
+          url: 'https://directory.snowflake.example/mcp',
+          toolNames: ['search', 'query'],
+        },
+      ],
     );
 
     expect(card.subtitle).toBe('https://tenant.snowflake.example/mcp');
-    expect(card.tools.map((tool) => [tool.name, tool.permission])).toEqual([
-      ['search', 'always_ask'],
-      ['query', 'always_ask'],
-    ]);
+    expect(card.tools).toEqual([]);
     expect(card.aggregatePermission).toBe('always_ask');
   });
 
@@ -196,22 +200,49 @@ describe('agent tool display model', () => {
     expect(empty.aggregatePermission).toBe('always_ask');
   });
 
-  test('uses the GitHub and Slack fallback catalogs when directory metadata is unavailable', () => {
+  test('uses the GitHub and Slack fallback catalogs when names and configured URLs match', () => {
     const cards = buildAgentToolDisplayCards(
       agentFixture({
         mcp_servers: [
-          { name: 'github', url: 'https://github.example/mcp' },
-          { name: 'slack', url: 'https://slack.example/mcp' },
+          { name: 'github', url: 'https://api.githubcopilot.com/mcp/' },
+          { name: 'slack', url: 'https://mcp.slack.com/mcp' },
         ],
         tools: [],
       }),
     );
 
     expect(cards.map((card) => card.title)).toEqual(['GitHub', 'Slack']);
-    expect(cards.map((card) => card.subtitle)).toEqual(['https://github.example/mcp', 'https://slack.example/mcp']);
+    expect(cards.map((card) => card.subtitle)).toEqual([
+      'https://api.githubcopilot.com/mcp/',
+      'https://mcp.slack.com/mcp',
+    ]);
     expect(cards[0].tools.some((tool) => tool.name === 'search_repositories')).toBe(true);
     expect(cards[1].tools.some((tool) => tool.name === 'slack_send_message')).toBe(true);
     expect(cards.every((card) => card.aggregatePermission === 'always_ask')).toBe(true);
+  });
+
+  test('does not apply Directory metadata when only the MCP slug matches', () => {
+    const [card] = buildAgentToolDisplayCards(
+      agentFixture({
+        mcp_servers: [{ name: 'notion', url: 'https://custom.example.com/mcp' }],
+        tools: [{ type: 'mcp_toolset', mcp_server_name: 'notion' }],
+      }),
+      [
+        {
+          slug: 'notion',
+          displayName: 'Notion Directory',
+          url: 'https://mcp.notion.com/mcp',
+          iconUrl: 'https://example.com/notion.png',
+          toolNames: ['search'],
+        },
+      ],
+    );
+
+    expect(card.title).toBe('Notion');
+    expect(card.subtitle).toBe('https://custom.example.com/mcp');
+    expect(card.iconUrl).toBeUndefined();
+    expect(card.tools).toEqual([]);
+    expect(card.toolCountKnown).toBe(false);
   });
 
   test('renders built-in, custom, and MCP cards together in their required order', () => {
@@ -255,11 +286,8 @@ describe('agent tool display model', () => {
     expect(cards[1].tools).toEqual([{ name: 'lookup_customer', description: 'Find a customer' }]);
     expect(cards[2].title).toBe('Notion');
     expect(cards[2].subtitle).toBe('https://agent.example.com/notion');
-    expect(cards[2].aggregatePermission).toBe('custom');
-    expect(cards[2].tools.map((tool) => [tool.name, tool.permission])).toEqual([
-      ['search', 'always_deny'],
-      ['create_page', 'always_ask'],
-    ]);
+    expect(cards[2].aggregatePermission).toBe('always_ask');
+    expect(cards[2].tools).toEqual([]);
   });
 
   test('normalizes directory fields and resolves tunnel display names from the configured URL', () => {

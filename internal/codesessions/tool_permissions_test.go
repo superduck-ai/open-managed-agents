@@ -49,18 +49,6 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 			want:     resolvedToolPermissionAsk,
 		},
 		{
-			name: "ambiguous legacy mcp server name defaults to ask",
-			snapshot: `{
-				"mcp_servers":[{"name":"weather__service","type":"url","url":"https://example.com/mcp"}],
-				"tools":[
-					{"type":"mcp_toolset","mcp_server_name":"weather","default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}},
-					{"type":"mcp_toolset","mcp_server_name":"weather__service","default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}}
-				]
-			}`,
-			toolName: "mcp__weather__service__get_weather",
-			want:     resolvedToolPermissionAsk,
-		},
-		{
 			name:     "agent toolset missing defaults to allow",
 			snapshot: `{"tools":[]}`,
 			toolName: "Bash",
@@ -126,21 +114,5 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 		if identity.Kind != "agent_toolset" || identity.ToolName != configName {
 			t.Fatalf("identity for %s = %+v, want config name %s", claudeName, identity, configName)
 		}
-	}
-}
-
-func TestResolveAmbiguousLegacyMCPIdentity(t *testing.T) {
-	t.Parallel()
-
-	snapshot := json.RawMessage(`{
-		"mcp_servers":[{"name":"weather__service","type":"url","url":"https://example.com/mcp"}],
-		"tools":[{"type":"mcp_toolset","mcp_server_name":"weather__service","default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}}]
-	}`)
-	permission, identity := resolveToolPermissionAndIdentityFromAgentSnapshot(snapshot, "mcp__weather__service__get_weather")
-	if permission != resolvedToolPermissionAsk {
-		t.Fatalf("permission = %s, want %s", permission, resolvedToolPermissionAsk)
-	}
-	if identity.Kind != "unknown" || identity.ServerName != "" || identity.ToolName != "mcp__weather__service__get_weather" {
-		t.Fatalf("identity = %+v, want unparsed legacy MCP identity", identity)
 	}
 }

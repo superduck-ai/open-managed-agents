@@ -3,6 +3,8 @@ package agentsnapshot
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/samber/lo"
 )
 
 type ClaudeLaunchConfig struct {
@@ -81,10 +83,7 @@ func ClaudeLaunchConfigFromSnapshot(snapshot json.RawMessage) (ClaudeLaunchConfi
 }
 
 func claudeBuiltInToolNames() string {
-	names := make([]string, 0, len(claudeBuiltInTools))
-	for _, tool := range claudeBuiltInTools {
-		names = append(names, tool.claudeName)
-	}
+	names := lo.Map(claudeBuiltInTools, func(tool claudeBuiltInTool, _ int) string { return tool.claudeName })
 	return strings.Join(names, ",")
 }
 
@@ -116,9 +115,6 @@ func claudeAllowedBuiltInTools(toolset claudeToolset) []string {
 }
 
 func claudeAllowedMCPTools(toolset claudeToolset) []string {
-	if !safeClaudeMCPServerRuleComponent(toolset.MCPServerName) {
-		return nil
-	}
 	defaultAllowed := claudeToolConfigAllows(toolset.DefaultConfig, true, "always_ask")
 	defaultPolicy := claudeToolConfigPolicy(toolset.DefaultConfig, "always_ask")
 	configs := claudeToolConfigsByName(toolset.Configs)
@@ -134,11 +130,7 @@ func claudeAllowedMCPTools(toolset claudeToolset) []string {
 	}
 	allowed := make([]string, 0, len(configs))
 	for _, config := range toolset.Configs {
-		if _, authoritative := configs[config.Name]; !authoritative {
-			continue
-		}
-		delete(configs, config.Name)
-		if safeClaudeToolRuleComponent(config.Name) && claudeToolConfigAllows(config.permissionConfig(), true, defaultPolicy) {
+		if claudeToolConfigAllows(config.permissionConfig(), true, defaultPolicy) {
 			allowed = append(allowed, "mcp__"+toolset.MCPServerName+"__"+config.Name)
 		}
 	}
@@ -146,15 +138,9 @@ func claudeAllowedMCPTools(toolset claudeToolset) []string {
 }
 
 func claudeToolConfigsByName(configs []claudeToolConfig) map[string]claudeToolConfig {
-	byName := make(map[string]claudeToolConfig, len(configs))
-	for _, config := range configs {
-		if config.Name != "" {
-			if _, exists := byName[config.Name]; !exists {
-				byName[config.Name] = config
-			}
-		}
-	}
-	return byName
+	return lo.SliceToMap(configs, func(config claudeToolConfig) (string, claudeToolConfig) {
+		return config.Name, config
+	})
 }
 
 func (config claudeToolConfig) permissionConfig() claudePermissionConfig {
@@ -174,24 +160,4 @@ func claudeToolConfigPolicy(config claudePermissionConfig, fallback string) stri
 		return config.PermissionPolicy.Type
 	}
 	return fallback
-}
-
-func safeClaudeMCPServerRuleComponent(value string) bool {
-	return !strings.Contains(value, "__") && safeClaudeToolRuleComponent(value)
-}
-
-func safeClaudeToolRuleComponent(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, character := range value {
-		if (character >= 'a' && character <= 'z') ||
-			(character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') ||
-			character == '_' || character == '-' || character == '.' {
-			continue
-		}
-		return false
-	}
-	return true
 }

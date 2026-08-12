@@ -29,17 +29,14 @@ Claude Code 运行在 `environment-manager` 中，它通过 MCP config 加载 MC
 
 ### 2.1 连接层
 
-`managedAgentSessionConfig` 继续从 agent snapshot 中读取 `mcp_servers`。Runner 创建 Code Session 后，在写入 environment-manager v0 payload 前把每个真实 MCP URL 放入 `mcp_url`，并把 Claude Code 实际连接地址改成 session 级 OMA proxy：
+`managedAgentSessionConfig` 继续从 agent snapshot 中读取 `mcp_servers`，并把真实 MCP URL 原样写入 Claude Code 的 MCP config。Claude 主进程与子进程都使用 CCRv2 提供的 `HTTPS_PROXY`，因此不需要把 URL 改成 session 级 OMA MCP proxy：
 
 ```json
 {
   "mcpServers": {
     "weather_service": {
       "type": "http",
-      "url": "http://host.docker.internal:38080/v2/ccr-sessions/cse_123/mcp?mcp_url=https%3A%2F%2Fmcp.example.com%2Fmcp",
-      "headers": {
-        "Authorization": "Bearer sk-ant-si-<JWT>"
-      }
+      "url": "https://mcp.example.com/mcp"
     }
   }
 }
@@ -60,7 +57,7 @@ session config 继续通过现有字段传给 `environment-manager`：
 }
 ```
 
-`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数，因此本设计不改变 v0 stdin schema，也不修改 `environment-manager` 代码。MCP config file 保持 `0600`；代理验证 session-ingress JWT 与路径中的 Code Session ID，并要求 `mcp_url` 精确匹配该 Session Agent Snapshot 中的 MCP URL。转发前删除 OMA 的 `Authorization` / `X-Api-Key`，保留 `Mcp-Session-Id`、`Last-Event-ID`、content negotiation 等端到端 header。服务端凭证注入集中在 `injectMCPProxyHeaders`：`WithVaultSecrets` 接到 `vaults.Injector`，按真实 `mcp_url` 匹配 `static_bearer` 并写入上游 `Authorization`（详见 `docs/design/be/vault-runtime.md`）。
+`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数，因此本设计不改变 v0 stdin schema，也不修改 `environment-manager` 代码。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
 
 ### 2.2 静态提示层
 
@@ -284,7 +281,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 实现应集中在 `claude-api-server`：
 
-- Managed Agent session config 继续生成 MCP config file 和 `claude_code_args["mcp-config"]`；environment-manager payload 边界将其中的真实 URL 重写为 session 级代理 URL。
+- Managed Agent session config 继续生成 MCP config file 和 `claude_code_args["mcp-config"]`；environment-manager payload 边界保留其中的真实 URL。
 - Code Session handler 负责 MCP proxy 的 JWT/path 绑定；加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 的精确 URL set 与 Environment host/port policy 编译为单一授权对象，handler 只调用 `AuthorizeMCPURL`，不保存或重解析原始 snapshot。授权后再执行拨号期 SSRF 防护、流式转发和凭证 header 注入边界。
 - Code session service 新增 policy-aware permission handler。
 - Session events 接收 `user.tool_confirmation` 后，将 public blocking event id 解析为 worker `tool_use_id`，补齐到 Claude Code `control_response` 的路由；旧 worker `tool_use_id` 作为兼容输入继续支持。
@@ -367,7 +364,7 @@ tools:
 期望：
 
 - 新 session 的 agent snapshot 包含 `weather_service` 和 `mcp_toolset`。
-- `/tmp/managed-agent-mcp-config.json` 包含 `weather_service`，其连接地址为 `/v2/ccr-sessions/{code_session_id}/mcp`，原始 URL 只出现在 `mcp_url`。
+- `/tmp/managed-agent-mcp-config.json` 包含 `weather_service`，其连接地址保持 Agent Snapshot 中的原始 URL，且不附加 OMA session-ingress header。
 - Claude Code init event 显示 MCP server connected。
 - 调用 `mcp__weather_service__get_weather` 时不再卡在 permission prompt。
 - DB 中能看到 `can_use_tool` outbound 和对应 auto `control_response` inbound。

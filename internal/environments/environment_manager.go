@@ -3,12 +3,10 @@ package environments
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	urlpkg "net/url"
 	"path"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -93,53 +91,6 @@ func managedAgentMCPConfigFile(mcpConfig map[string]any) map[string]any {
 		"content": base64.StdEncoding.EncodeToString(content),
 		"mode":    0o600,
 	}
-}
-
-func proxyManagedAgentMCPConfig(startupContext map[string]any, apiBaseURL string, codeSessionID string, sessionIngressToken string) error {
-	rawConfig, ok := startupContext["mcp_config"]
-	if !ok {
-		return nil
-	}
-	mcpConfig, ok := rawConfig.(map[string]any)
-	if !ok {
-		return errors.New("managed agent mcp_config must be an object")
-	}
-	servers, ok := mcpConfig["mcpServers"].(map[string]any)
-	if !ok {
-		return errors.New("managed agent mcpServers must be an object")
-	}
-	for name, rawServer := range servers {
-		server, ok := rawServer.(map[string]any)
-		if !ok {
-			return errors.New("managed agent MCP server " + name + " must be an object")
-		}
-		upstreamURL := stringFromMap(server, "url")
-		proxyURL, err := codeSessionMCPProxyURL(apiBaseURL, codeSessionID, upstreamURL)
-		if err != nil {
-			return err
-		}
-		server["url"] = proxyURL
-		headers := mapStringAnyValue(server["headers"])
-		headers["Authorization"] = "Bearer " + sessionIngressToken
-		server["headers"] = headers
-	}
-	startupContext["mcp_config"] = mcpConfig
-	startupContext["mcp_config_file"] = managedAgentMCPConfigFile(mcpConfig)
-	return nil
-}
-
-func codeSessionMCPProxyURL(apiBaseURL string, codeSessionID string, upstreamURL string) (string, error) {
-	base, err := urlpkg.Parse(strings.TrimSpace(apiBaseURL))
-	if err != nil || base.Scheme == "" || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
-		return "", errors.New("code_session.sandbox_api_base_url must be an absolute HTTP(S) URL for MCP proxying")
-	}
-	if collections.IsBlank(codeSessionID) || collections.IsBlank(upstreamURL) {
-		return "", errors.New("managed agent MCP proxy requires a code session ID and upstream URL")
-	}
-	base.RawQuery = ""
-	base.Fragment = ""
-	proxyURL := strings.TrimRight(base.String(), "/") + "/v2/ccr-sessions/" + urlpkg.PathEscape(codeSessionID) + "/mcp"
-	return proxyURL + "?" + urlpkg.Values{"mcp_url": {upstreamURL}}.Encode(), nil
 }
 
 func mcpToolsetsByServer(tools []any) map[string]map[string]any {
@@ -275,9 +226,6 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	}
 	apiBaseURL := codeSessionSandboxAPIBaseURL(cfg)
 	startupContext["api_base_url"] = apiBaseURL
-	if err := proxyManagedAgentMCPConfig(startupContext, apiBaseURL, codeSessionID, sessionIngressToken); err != nil {
-		return nil, err
-	}
 	startupContext["use_code_sessions"] = true
 	startupContext["session_id"] = codeSessionID
 	claudeCodeArgs := mapStringAnyValue(startupContext["claude_code_args"])

@@ -31,25 +31,6 @@ func TestCodeSessionSandboxAPIBaseURLUsesConfiguredValue(t *testing.T) {
 	}
 }
 
-func TestCodeSessionMCPProxyURLRejectsIncompleteInputs(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		apiBaseURL  string
-		sessionID   string
-		upstreamURL string
-	}{
-		{name: "relative API base", apiBaseURL: "/api", sessionID: "cse_test", upstreamURL: "https://mcp.example/mcp"},
-		{name: "missing session", apiBaseURL: "https://api.example", upstreamURL: "https://mcp.example/mcp"},
-		{name: "missing upstream", apiBaseURL: "https://api.example", sessionID: "cse_test"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := codeSessionMCPProxyURL(test.apiBaseURL, test.sessionID, test.upstreamURL); err == nil {
-				t.Fatal("codeSessionMCPProxyURL() error = nil, want error")
-			}
-		})
-	}
-}
-
 func managedAgentRuntimeSourceValues(
 	t *testing.T,
 	sources []json.RawMessage,
@@ -369,7 +350,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 }
 
-func TestBuildEnvironmentManagerPayloadProxiesMCPConfig(t *testing.T) {
+func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{
 		"mcp_config":{"mcpServers":{"ms-api":{"type":"http","url":"https://learn.microsoft.com/api/mcp?view=azure"}}},
@@ -391,25 +372,16 @@ func TestBuildEnvironmentManagerPayloadProxiesMCPConfig(t *testing.T) {
 	}
 	mcpConfig := startup["mcp_config"].(map[string]any)
 	server := mcpConfig["mcpServers"].(map[string]any)["ms-api"].(map[string]any)
-	wantURL := "http://host.docker.internal:18081/v2/ccr-sessions/cse_test/mcp?mcp_url=https%3A%2F%2Flearn.microsoft.com%2Fapi%2Fmcp%3Fview%3Dazure"
+	wantURL := "https://learn.microsoft.com/api/mcp?view=azure"
 	if server["url"] != wantURL || server["type"] != "http" {
-		t.Fatalf("proxied MCP server = %#v, want url %q", server, wantURL)
+		t.Fatalf("MCP server = %#v, want original url %q", server, wantURL)
 	}
-	headers := server["headers"].(map[string]any)
-	if headers["Authorization"] != "Bearer sk-ant-si-test-token" {
-		t.Fatalf("MCP proxy headers = %#v", headers)
+	if _, ok := server["headers"]; ok {
+		t.Fatalf("MCP server unexpectedly contains proxy headers: %#v", server)
 	}
 	mcpConfigFile := startup["mcp_config_file"].(map[string]any)
-	content, err := base64.StdEncoding.DecodeString(mcpConfigFile["content"].(string))
-	if err != nil {
-		t.Fatalf("decode MCP config file: %v", err)
-	}
-	var fileConfig map[string]any
-	if err := json.Unmarshal(content, &fileConfig); err != nil {
-		t.Fatalf("decode MCP config file JSON: %v", err)
-	}
-	if !reflect.DeepEqual(fileConfig, mcpConfig) {
-		t.Fatalf("MCP config file = %#v, want %#v", fileConfig, mcpConfig)
+	if mcpConfigFile["path"] != "/tmp/stale.json" || mcpConfigFile["content"] != "stale" {
+		t.Fatalf("MCP config file was unexpectedly rewritten: %#v", mcpConfigFile)
 	}
 }
 

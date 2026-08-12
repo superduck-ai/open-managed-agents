@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -260,7 +261,16 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			ClaudePath:         "/opt/claude path/bin/claude",
 		},
 	}
-	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
+	sessionConfig := json.RawMessage(`{
+		"model":"claude-opus-4-8",
+		"sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}],
+		"tools":[{
+			"type":"agent_toolset_20260401",
+			"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}},
+			"configs":[{"name":"bash","enabled":true,"permission_policy":{"type":"always_ask"}}]
+		}],
+		"claude_code_args":{"disallowed-tools":"WebSearch"}
+	}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
 	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, "/workspace/widgets", sessionConfig, cfg)
@@ -276,8 +286,15 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		t.Fatalf("unexpected startup context: %#v", startup)
 	}
 	claudeArgs := startup["claude_code_args"].(map[string]any)
-	if claudeArgs["settings"] != launcherSettingsPath || claudeArgs["disallowed-tools"] != "WebSearch" {
+	if claudeArgs["settings"] != launcherSettingsPath || claudeArgs["tools"] != managedAgentBuiltInTools() {
 		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
+	}
+	allowedTools := strings.Split(claudeArgs["allowed-tools"].(string), ",")
+	if slices.Contains(allowedTools, "Bash") || !slices.Contains(allowedTools, "Task") || !slices.Contains(allowedTools, "Write") {
+		t.Fatalf("allowed tools did not follow the frontend snapshot: %v", allowedTools)
+	}
+	if _, exists := claudeArgs["disallowed-tools"]; exists {
+		t.Fatalf("stale disallowed-tools must be removed: %#v", claudeArgs)
 	}
 	startupEnv := startup["environment_variables"].(map[string]any)
 	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" ||
@@ -369,6 +386,101 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	}
 }
 
+func TestManagedAgentBuiltInToolsMatchClaudeCodePinnedDefaultsWithoutWebSearch(t *testing.T) {
+	want := []string{
+		"Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch",
+		"Task", "AskUserQuestion", "CronCreate", "CronDelete", "CronList", "EnterPlanMode",
+		"EnterWorktree", "ExitPlanMode", "ExitWorktree", "NotebookEdit", "ScheduleWakeup",
+		"Skill", "TaskOutput", "TaskStop", "TodoWrite",
+	}
+	if got := strings.Split(managedAgentBuiltInTools(), ","); !slices.Equal(got, want) {
+		t.Fatalf("managed agent built-in tools = %#v, want pinned Claude Code defaults without WebSearch %#v", got, want)
+	}
+}
+
+func TestManagedAgentAllowedToolsFollowEffectiveAgentPolicy(t *testing.T) {
+	tools := []any{
+		map[string]any{
+			"type": "agent_toolset_20260401",
+			"default_config": map[string]any{
+				"enabled":           true,
+				"permission_policy": map[string]any{"type": "always_allow"},
+			},
+			"configs": []any{
+				map[string]any{"name": "bash", "enabled": true, "permission_policy": map[string]any{"type": "always_ask"}},
+				map[string]any{"name": "write", "enabled": false, "permission_policy": map[string]any{"type": "always_allow"}},
+			},
+		},
+		map[string]any{
+			"type":            "mcp_toolset",
+			"mcp_server_name": "notion",
+			"default_config": map[string]any{
+				"enabled":           true,
+				"permission_policy": map[string]any{"type": "always_ask"},
+			},
+			"configs": []any{
+				map[string]any{"name": "search", "enabled": true, "permission_policy": map[string]any{"type": "always_allow"}},
+				map[string]any{"name": "delete_page", "enabled": false, "permission_policy": map[string]any{"type": "always_allow"}},
+			},
+		},
+		map[string]any{
+			"type":            "mcp_toolset",
+			"mcp_server_name": "you",
+			"default_config": map[string]any{
+				"enabled":           true,
+				"permission_policy": map[string]any{"type": "always_allow"},
+			},
+			"configs": []any{},
+		},
+		map[string]any{
+			"type":            "mcp_toolset",
+			"mcp_server_name": "unsafe,Read",
+			"default_config": map[string]any{
+				"enabled":           true,
+				"permission_policy": map[string]any{"type": "always_allow"},
+			},
+		},
+		map[string]any{
+			"type":            "mcp_toolset",
+			"mcp_server_name": "unsafe Read",
+			"default_config": map[string]any{
+				"enabled":           true,
+				"permission_policy": map[string]any{"type": "always_allow"},
+			},
+		},
+	}
+
+	allowed := strings.Split(managedAgentAllowedTools(tools), ",")
+	for _, expected := range []string{"Task", "AskUserQuestion", "Read", "WebFetch", "mcp__notion__search", "mcp__you__*"} {
+		if !slices.Contains(allowed, expected) {
+			t.Fatalf("allowed tools %v missing %q", allowed, expected)
+		}
+	}
+	for _, excluded := range []string{"Bash", "Write", "mcp__notion__delete_page", "mcp__notion__*"} {
+		if slices.Contains(allowed, excluded) {
+			t.Fatalf("allowed tools %v unexpectedly contains %q", allowed, excluded)
+		}
+	}
+	if slices.Contains(allowed, "mcp__unsafe") {
+		t.Fatalf("allowed tools %v contains an injected rule fragment", allowed)
+	}
+}
+
+func TestManagedAgentAllowedToolsUsesFirstDuplicateMCPConfig(t *testing.T) {
+	tools := []any{map[string]any{
+		"type":            "mcp_toolset",
+		"mcp_server_name": "search",
+		"default_config":  map[string]any{"permission_policy": map[string]any{"type": "always_ask"}},
+		"configs": []any{
+			map[string]any{"name": "query", "permission_policy": map[string]any{"type": "always_ask"}},
+			map[string]any{"name": "query", "permission_policy": map[string]any{"type": "always_allow"}},
+		},
+	}}
+	if got := managedAgentAllowedTools(tools); got != "" {
+		t.Fatalf("allowed tools = %q, want first duplicate config to remain authoritative", got)
+	}
+}
+
 func TestBuildEnvironmentManagerPayloadProxiesMCPConfig(t *testing.T) {
 	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:18081/"}}
 	sessionConfig := json.RawMessage(`{
@@ -388,7 +500,7 @@ func TestBuildEnvironmentManagerPayloadProxiesMCPConfig(t *testing.T) {
 	claudeArgs := startup["claude_code_args"].(map[string]any)
 	if claudeArgs["settings"] != launcherSettingsPath ||
 		claudeArgs["mcp-config"] != managedAgentMCPConfigPath ||
-		claudeArgs["disallowed-tools"] != "WebSearch" {
+		claudeArgs["tools"] != managedAgentBuiltInTools() {
 		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
 	}
 	mcpConfig := startup["mcp_config"].(map[string]any)

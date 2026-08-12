@@ -37,7 +37,7 @@ flowchart LR
 - 编辑既有模型 ID 时保留 `model.speed`；已有 `self`、固定 Agent 版本和固定 Skill 版本会展示并保留。
 - MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；自定义 MCP 通过名称和不含内嵌凭据或 fragment 的 HTTP/HTTPS URL 添加，创建阶段不探测工具列表。
 - Rendered 不提供新增 Custom Tool 的入口，但继续允许编辑和移除已有 Custom Tool，Raw 往返不丢失其定义。
-- 内置工具展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`、`web_fetch`；`web_fetch` 对应 Claude Code 本地 `WebFetch`，不启用 Messages API 的模型服务端同名工具。`web_search` 仍不展示，Raw 可继续保留后端合同允许的其他既有配置。
+- 内置工具回显当前固定 Claude Code 2.1.120 的 22 项默认工具，与创建页和后端 `--tools` 清单一致；`web_fetch` 对应 Claude Code 本地 `WebFetch`，不启用 Messages API 的模型服务端同名工具。内置 `web_search` 已永久移除，不在 Rendered 或 Raw 合同中。
 
 ## 布局与验收
 

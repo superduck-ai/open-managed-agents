@@ -22,6 +22,37 @@ const (
 	managedAgentMCPConfigPath     = "/tmp/managed-agent-mcp-config.json"
 )
 
+type managedAgentBuiltInTool struct {
+	configName string
+	claudeName string
+}
+
+// 与当前固定的 Claude Code 2.1.120 system/init 工具集合保持一致，仅移除 WebSearch；原有 7 项优先输出。
+var managedAgentBuiltInToolDefinitions = []managedAgentBuiltInTool{
+	{configName: "bash", claudeName: "Bash"},
+	{configName: "read", claudeName: "Read"},
+	{configName: "write", claudeName: "Write"},
+	{configName: "edit", claudeName: "Edit"},
+	{configName: "glob", claudeName: "Glob"},
+	{configName: "grep", claudeName: "Grep"},
+	{configName: "web_fetch", claudeName: "WebFetch"},
+	{configName: "task", claudeName: "Task"},
+	{configName: "ask_user_question", claudeName: "AskUserQuestion"},
+	{configName: "cron_create", claudeName: "CronCreate"},
+	{configName: "cron_delete", claudeName: "CronDelete"},
+	{configName: "cron_list", claudeName: "CronList"},
+	{configName: "enter_plan_mode", claudeName: "EnterPlanMode"},
+	{configName: "enter_worktree", claudeName: "EnterWorktree"},
+	{configName: "exit_plan_mode", claudeName: "ExitPlanMode"},
+	{configName: "exit_worktree", claudeName: "ExitWorktree"},
+	{configName: "notebook_edit", claudeName: "NotebookEdit"},
+	{configName: "schedule_wakeup", claudeName: "ScheduleWakeup"},
+	{configName: "skill", claudeName: "Skill"},
+	{configName: "task_output", claudeName: "TaskOutput"},
+	{configName: "task_stop", claudeName: "TaskStop"},
+	{configName: "todo_write", claudeName: "TodoWrite"},
+}
+
 func managedAgentSessionConfig(
 	session db.Session,
 	runtimeResources managedAgentRuntimeResources,
@@ -93,6 +124,132 @@ func managedAgentMCPConfigFile(mcpConfig map[string]any) map[string]any {
 		"content": base64.StdEncoding.EncodeToString(content),
 		"mode":    0o600,
 	}
+}
+
+func managedAgentBuiltInTools() string {
+	names := make([]string, 0, len(managedAgentBuiltInToolDefinitions))
+	for _, tool := range managedAgentBuiltInToolDefinitions {
+		names = append(names, tool.claudeName)
+	}
+	return strings.Join(names, ",")
+}
+
+func managedAgentAllowedTools(tools []any) string {
+	allowed := make([]string, 0, len(managedAgentBuiltInToolDefinitions))
+	for _, value := range tools {
+		toolset, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch stringFromMap(toolset, "type") {
+		case "agent_toolset_20260401":
+			allowed = append(allowed, allowedBuiltInTools(toolset)...)
+		case "mcp_toolset":
+			allowed = append(allowed, allowedMCPTools(toolset)...)
+		}
+	}
+	return strings.Join(allowed, ",")
+}
+
+func allowedBuiltInTools(toolset map[string]any) []string {
+	defaultConfig := mapStringAnyValue(toolset["default_config"])
+	defaultAllowed := toolConfigAllows(defaultConfig, true, "always_allow")
+	defaultPolicy := toolConfigPolicy(defaultConfig, "always_allow")
+	configs := toolConfigsByName(toolset["configs"])
+	allowed := make([]string, 0, len(managedAgentBuiltInToolDefinitions))
+	for _, tool := range managedAgentBuiltInToolDefinitions {
+		config, configured := configs[tool.configName]
+		if (!configured && defaultAllowed) || (configured && toolConfigAllows(config, true, defaultPolicy)) {
+			allowed = append(allowed, tool.claudeName)
+		}
+	}
+	return allowed
+}
+
+func allowedMCPTools(toolset map[string]any) []string {
+	serverName := stringFromMap(toolset, "mcp_server_name")
+	if !safeClaudeToolRuleComponent(serverName) {
+		return nil
+	}
+	defaultConfig := mapStringAnyValue(toolset["default_config"])
+	defaultAllowed := toolConfigAllows(defaultConfig, true, "always_ask")
+	defaultPolicy := toolConfigPolicy(defaultConfig, "always_ask")
+	configs := toolConfigsByName(toolset["configs"])
+	allOverridesAllowed := true
+	for _, config := range configs {
+		if !toolConfigAllows(config, true, defaultPolicy) {
+			allOverridesAllowed = false
+			break
+		}
+	}
+	if defaultAllowed && allOverridesAllowed {
+		return []string{"mcp__" + serverName + "__*"}
+	}
+	allowed := make([]string, 0, len(configs))
+	seen := map[string]struct{}{}
+	for _, item := range arrayValue(toolset["configs"]) {
+		config, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := stringFromMap(config, "name")
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		if safeClaudeToolRuleComponent(name) && toolConfigAllows(config, true, defaultPolicy) {
+			allowed = append(allowed, "mcp__"+serverName+"__"+name)
+		}
+	}
+	return allowed
+}
+
+func safeClaudeToolRuleComponent(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '_' || character == '-' || character == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func toolConfigsByName(value any) map[string]map[string]any {
+	configs := map[string]map[string]any{}
+	for _, item := range arrayValue(value) {
+		config, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name := stringFromMap(config, "name"); name != "" {
+			if _, exists := configs[name]; !exists {
+				configs[name] = config
+			}
+		}
+	}
+	return configs
+}
+
+func toolConfigAllows(config map[string]any, fallbackEnabled bool, fallbackPolicy string) bool {
+	enabled := fallbackEnabled
+	if configured, ok := config["enabled"].(bool); ok {
+		enabled = configured
+	}
+	return enabled && toolConfigPolicy(config, fallbackPolicy) == "always_allow"
+}
+
+func toolConfigPolicy(config map[string]any, fallback string) string {
+	policy := mapStringAnyValue(config["permission_policy"])
+	if value := stringFromMap(policy, "type"); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func proxyManagedAgentMCPConfig(startupContext map[string]any, apiBaseURL string, codeSessionID string, sessionIngressToken string) error {
@@ -282,7 +439,13 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	startupContext["session_id"] = codeSessionID
 	claudeCodeArgs := mapStringAnyValue(startupContext["claude_code_args"])
 	claudeCodeArgs["settings"] = launcherSettingsPath
-	claudeCodeArgs["disallowed-tools"] = "WebSearch"
+	claudeCodeArgs["tools"] = managedAgentBuiltInTools()
+	if allowedTools := managedAgentAllowedTools(arrayValue(startupContext["tools"])); allowedTools != "" {
+		claudeCodeArgs["allowed-tools"] = allowedTools
+	} else {
+		delete(claudeCodeArgs, "allowed-tools")
+	}
+	delete(claudeCodeArgs, "disallowed-tools")
 	startupContext["claude_code_args"] = claudeCodeArgs
 	environmentVariables := mapStringAnyValue(startupContext["environment_variables"])
 	environmentVariables["CLAUDE_CODE_REMOTE"] = "true" // 进入 remote-session 路径并初始化 CCR relay。

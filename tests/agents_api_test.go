@@ -106,6 +106,34 @@ func TestAgentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
+	t.Run("success full built in tool set", func(t *testing.T) {
+		body := `{
+			"model":"claude-opus-4-6",
+			"name":"full-built-in-tools",
+			"tools":[{
+				"type":"agent_toolset_20260401",
+				"configs":[
+					{"name":"task"},{"name":"ask_user_question"},{"name":"bash"},
+					{"name":"cron_create"},{"name":"cron_delete"},{"name":"cron_list"},
+					{"name":"edit"},{"name":"enter_plan_mode"},{"name":"enter_worktree"},
+					{"name":"exit_plan_mode"},{"name":"exit_worktree"},{"name":"glob"},
+					{"name":"grep"},{"name":"notebook_edit"},{"name":"read"},
+					{"name":"schedule_wakeup"},{"name":"skill"},{"name":"task_output"},
+					{"name":"task_stop"},{"name":"todo_write"},{"name":"web_fetch"},{"name":"write"}
+				]
+			}]
+		}`
+		created := createAgent(t, app, body)
+		defer cleanupAgentRows(t, app.pool, created.ID)
+		var toolsets []struct {
+			Configs []map[string]any `json:"configs"`
+		}
+		decodeRawJSON(t, created.Tools, &toolsets)
+		if len(toolsets) != 1 || len(toolsets[0].Configs) != 22 {
+			t.Fatalf("full built-in toolset did not round-trip: %s", created.Tools)
+		}
+	})
+
 	t.Run("failure unreferenced mcp server when using mcp toolsets", func(t *testing.T) {
 		body := `{
 			"model":"claude-opus-4-6",

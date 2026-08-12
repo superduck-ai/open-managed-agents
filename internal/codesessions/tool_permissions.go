@@ -92,10 +92,28 @@ func parseClaudeToolIdentity(toolName string) toolIdentity {
 
 func managedAgentToolName(claudeToolName string) string {
 	switch strings.ToLower(strings.TrimSpace(claudeToolName)) {
+	case "task", "agent":
+		return "task"
+	case "askuserquestion", "ask_user_question":
+		return "ask_user_question"
 	case "bash":
 		return "bash"
+	case "croncreate", "cron_create":
+		return "cron_create"
+	case "crondelete", "cron_delete":
+		return "cron_delete"
+	case "cronlist", "cron_list":
+		return "cron_list"
 	case "edit", "multiedit":
 		return "edit"
+	case "enterplanmode", "enter_plan_mode":
+		return "enter_plan_mode"
+	case "enterworktree", "enter_worktree":
+		return "enter_worktree"
+	case "exitplanmode", "exit_plan_mode":
+		return "exit_plan_mode"
+	case "exitworktree", "exit_worktree":
+		return "exit_worktree"
 	case "read":
 		return "read"
 	case "write":
@@ -104,6 +122,18 @@ func managedAgentToolName(claudeToolName string) string {
 		return "glob"
 	case "grep":
 		return "grep"
+	case "notebookedit", "notebook_edit":
+		return "notebook_edit"
+	case "schedulewakeup", "schedule_wakeup":
+		return "schedule_wakeup"
+	case "skill":
+		return "skill"
+	case "taskoutput", "task_output":
+		return "task_output"
+	case "taskstop", "task_stop":
+		return "task_stop"
+	case "todowrite", "todo_write":
+		return "todo_write"
 	case "webfetch", "web_fetch":
 		return "web_fetch"
 	case "websearch", "web_search":

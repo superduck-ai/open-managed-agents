@@ -273,6 +273,51 @@ describe('create agent draft model', () => {
     expect(setToolPermission(askBash, () => true, 'bash', 'always_allow', 'always_allow').tools[0].configs).toEqual([]);
   });
 
+  test('accepts the full pinned built-in tool permission surface while rejecting web search', () => {
+    const configs = [
+      'task',
+      'ask_user_question',
+      'bash',
+      'cron_create',
+      'cron_delete',
+      'cron_list',
+      'edit',
+      'enter_plan_mode',
+      'enter_worktree',
+      'exit_plan_mode',
+      'exit_worktree',
+      'glob',
+      'grep',
+      'notebook_edit',
+      'read',
+      'schedule_wakeup',
+      'skill',
+      'task_output',
+      'task_stop',
+      'todo_write',
+      'web_fetch',
+      'write',
+    ].map((name) => ({ name, enabled: true, permission_policy: { type: 'always_allow' as const } }));
+
+    expect(
+      createAgentDraftSchema.safeParse({
+        ...baseDraft,
+        tools: [{ type: 'agent_toolset_20260401', configs }],
+      }).success,
+    ).toBe(true);
+    expect(
+      createAgentDraftSchema.safeParse({
+        ...baseDraft,
+        tools: [
+          {
+            type: 'agent_toolset_20260401',
+            configs: [{ name: 'web_search', enabled: true, permission_policy: { type: 'always_allow' } }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   test('keeps invalid custom tool schemas observable without offering a create helper', () => {
     const withCustomTool: CreateAgentInput = {
       ...baseDraft,

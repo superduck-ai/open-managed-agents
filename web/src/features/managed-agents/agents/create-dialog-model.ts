@@ -104,7 +104,30 @@ const permissionConfigSchema = z
   })
   .strict();
 
-const builtInToolNameSchema = z.enum(['bash', 'edit', 'read', 'write', 'glob', 'grep', 'web_fetch', 'web_search']);
+const builtInToolNameSchema = z.enum([
+  'task',
+  'ask_user_question',
+  'bash',
+  'cron_create',
+  'cron_delete',
+  'cron_list',
+  'edit',
+  'enter_plan_mode',
+  'enter_worktree',
+  'exit_plan_mode',
+  'exit_worktree',
+  'glob',
+  'grep',
+  'notebook_edit',
+  'read',
+  'schedule_wakeup',
+  'skill',
+  'task_output',
+  'task_stop',
+  'todo_write',
+  'web_fetch',
+  'write',
+]);
 
 const builtInToolConfigSchema = permissionConfigSchema.extend({ name: builtInToolNameSchema }).strict();
 

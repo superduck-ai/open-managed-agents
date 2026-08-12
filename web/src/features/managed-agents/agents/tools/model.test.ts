@@ -11,7 +11,7 @@ import {
 } from './model';
 
 describe('agent tool display model', () => {
-  test('exposes Claude Code local web fetch while continuing to omit web search', () => {
+  test('exposes pinned Claude Code built-in tools while continuing to omit web search', () => {
     expect(BUILT_IN_AGENT_TOOLSETS.agent_toolset_20260401.map((tool) => tool.name)).toEqual([
       'bash',
       'read',
@@ -20,6 +20,21 @@ describe('agent tool display model', () => {
       'glob',
       'grep',
       'web_fetch',
+      'task',
+      'ask_user_question',
+      'cron_create',
+      'cron_delete',
+      'cron_list',
+      'enter_plan_mode',
+      'enter_worktree',
+      'exit_plan_mode',
+      'exit_worktree',
+      'notebook_edit',
+      'schedule_wakeup',
+      'skill',
+      'task_output',
+      'task_stop',
+      'todo_write',
     ]);
     expect(
       builtInAgentToolDescription(

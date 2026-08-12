@@ -2,7 +2,6 @@ package agentsnapshot
 
 import (
 	"encoding/json"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -74,37 +73,5 @@ func TestClaudeLaunchConfigFromSnapshotDerivesToolsAndPermissions(t *testing.T) 
 		if strings.HasPrefix(tool, "mcp__unsafe") {
 			t.Fatalf("allowed tools %v contains an injected rule fragment", allowed)
 		}
-	}
-}
-
-func TestClaudeLaunchConfigFromSnapshotDerivesMCPConfig(t *testing.T) {
-	t.Parallel()
-
-	config, err := ClaudeLaunchConfigFromSnapshot(json.RawMessage(`{
-		"mcp_servers":[{"type":"url","name":"notion","url":"https://mcp.notion.com/sse"}],
-		"tools":[{
-			"type":"mcp_toolset",
-			"mcp_server_name":"notion",
-			"configs":[
-				{"name":"search","enabled":true,"permission_policy":{"type":"always_allow"}},
-				{"name":"delete_page","enabled":false,"permission_policy":{"type":"always_ask"}}
-			]
-		}]
-	}`))
-	if err != nil {
-		t.Fatalf("derive launch config: %v", err)
-	}
-	want := map[string]any{"mcpServers": map[string]any{
-		"notion": map[string]any{
-			"type": "sse",
-			"url":  "https://mcp.notion.com/sse",
-			"tools": []any{
-				map[string]any{"name": "search", "enabled": true, "permission_policy": "allow"},
-				map[string]any{"name": "delete_page", "enabled": false, "permission_policy": "ask"},
-			},
-		},
-	}}
-	if !reflect.DeepEqual(config.MCPConfig, want) {
-		t.Fatalf("MCP config = %#v, want %#v", config.MCPConfig, want)
 	}
 }

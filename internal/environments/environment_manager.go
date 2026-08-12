@@ -29,6 +29,9 @@ func managedAgentSessionConfig(
 	if err != nil {
 		return nil, err
 	}
+	agentSnapshot := rawJSONObject(session.AgentSnapshot)
+	mcpServers := arrayValue(agentSnapshot["mcp_servers"])
+	tools := arrayValue(agentSnapshot["tools"])
 	body := map[string]any{
 		"origin":   "managed_agents_api",
 		"model":    modelIDFromAgentSnapshot(session.AgentSnapshot),
@@ -42,15 +45,51 @@ func managedAgentSessionConfig(
 	if launchConfig.AllowedTools != "" {
 		claudeCodeArgs["allowed-tools"] = launchConfig.AllowedTools
 	}
-	if len(launchConfig.MCPConfig) > 0 {
-		body["mcp_config"] = launchConfig.MCPConfig
-		body["mcp_config_file"] = managedAgentMCPConfigFile(launchConfig.MCPConfig)
-		claudeCodeArgs["mcp-config"] = managedAgentMCPConfigPath
+	if len(mcpServers) > 0 {
+		body["mcp_servers"] = mcpServers
+		if mcpConfig := managedAgentMCPConfig(mcpServers, tools); len(mcpConfig) > 0 {
+			body["mcp_config"] = mcpConfig
+			body["mcp_config_file"] = managedAgentMCPConfigFile(mcpConfig)
+			claudeCodeArgs["mcp-config"] = managedAgentMCPConfigPath
+		}
+	}
+	if len(tools) > 0 {
+		body["tools"] = tools
 	}
 	if vaultIDs := rawJSONArray(session.VaultIDs); len(vaultIDs) > 0 {
 		body["vault_ids"] = vaultIDs
 	}
 	return json.Marshal(body)
+}
+
+func managedAgentMCPConfig(mcpServers []any, tools []any) map[string]any {
+	toolsets := mcpToolsetsByServer(tools)
+	servers := map[string]any{}
+	for _, value := range mcpServers {
+		server, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := stringFromMap(server, "name")
+		serverURL := stringFromMap(server, "url")
+		if name == "" || serverURL == "" {
+			continue
+		}
+		config := map[string]any{
+			"type": mcpServerTransportType(stringFromMap(server, "type"), serverURL),
+			"url":  serverURL,
+		}
+		if toolset, ok := toolsets[name]; ok {
+			if toolConfigs := mcpServerToolConfigs(toolset["configs"]); len(toolConfigs) > 0 {
+				config["tools"] = toolConfigs
+			}
+		}
+		servers[name] = config
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	return map[string]any{"mcpServers": servers}
 }
 
 func managedAgentMCPConfigFile(mcpConfig map[string]any) map[string]any {
@@ -63,6 +102,88 @@ func managedAgentMCPConfigFile(mcpConfig map[string]any) map[string]any {
 		"content": base64.StdEncoding.EncodeToString(content),
 		"mode":    0o600,
 	}
+}
+
+func mcpToolsetsByServer(tools []any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	for _, value := range tools {
+		tool, ok := value.(map[string]any)
+		if !ok || stringFromMap(tool, "type") != "mcp_toolset" {
+			continue
+		}
+		serverName := stringFromMap(tool, "mcp_server_name")
+		if serverName == "" {
+			continue
+		}
+		out[serverName] = tool
+	}
+	return out
+}
+
+func mcpServerToolConfigs(value any) []any {
+	configs := arrayValue(value)
+	out := make([]any, 0, len(configs))
+	for _, item := range configs {
+		config, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := stringFromMap(config, "name")
+		if name == "" {
+			continue
+		}
+		tool := map[string]any{"name": name}
+		if enabled, ok := config["enabled"].(bool); ok {
+			tool["enabled"] = enabled
+		}
+		if policy := mcpPermissionPolicy(config["permission_policy"]); policy != "" {
+			tool["permission_policy"] = policy
+		}
+		out = append(out, tool)
+	}
+	return out
+}
+
+func mcpPermissionPolicy(value any) string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	switch stringFromMap(object, "type") {
+	case "always_allow", "allow":
+		return "allow"
+	case "always_ask", "ask":
+		return "ask"
+	default:
+		return ""
+	}
+}
+
+func mcpServerTransportType(serverType string, rawURL string) string {
+	switch strings.TrimSpace(strings.ToLower(serverType)) {
+	case "sse":
+		return "sse"
+	case "http", "ws":
+		return strings.TrimSpace(strings.ToLower(serverType))
+	case "websocket":
+		return "ws"
+	}
+	parsed, err := urlpkg.Parse(strings.TrimSpace(rawURL))
+	if err == nil && strings.HasSuffix(strings.TrimRight(strings.ToLower(parsed.Path), "/"), "/sse") {
+		return "sse"
+	}
+	return "http"
+}
+
+func rawJSONObject(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return map[string]any{}
+	}
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return map[string]any{}
+	}
+	return object
 }
 
 func rawJSONArray(raw json.RawMessage) []any {
@@ -90,6 +211,11 @@ func mapStringAnyValue(value any) map[string]any {
 		return object
 	}
 	return map[string]any{}
+}
+
+func arrayValue(value any) []any {
+	values, _ := value.([]any)
+	return values
 }
 
 func modelIDFromAgentSnapshot(raw json.RawMessage) string {

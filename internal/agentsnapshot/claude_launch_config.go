@@ -2,25 +2,16 @@ package agentsnapshot
 
 import (
 	"encoding/json"
-	"net/url"
 	"strings"
 )
 
 type ClaudeLaunchConfig struct {
-	Tools        string         `json:"tools"`
-	AllowedTools string         `json:"allowed_tools,omitempty"`
-	MCPConfig    map[string]any `json:"mcp_config,omitempty"`
+	Tools        string `json:"tools"`
+	AllowedTools string `json:"allowed_tools,omitempty"`
 }
 
 type claudeLaunchSnapshot struct {
-	MCPServers []claudeMCPServer `json:"mcp_servers"`
-	Tools      []claudeToolset   `json:"tools"`
-}
-
-type claudeMCPServer struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	URL  string `json:"url"`
+	Tools []claudeToolset `json:"tools"`
 }
 
 type claudeToolset struct {
@@ -86,7 +77,6 @@ func ClaudeLaunchConfigFromSnapshot(snapshot json.RawMessage) (ClaudeLaunchConfi
 	return ClaudeLaunchConfig{
 		Tools:        claudeBuiltInToolNames(),
 		AllowedTools: claudeAllowedTools(value.Tools),
-		MCPConfig:    claudeMCPConfig(value.MCPServers, value.Tools),
 	}, nil
 }
 
@@ -184,80 +174,6 @@ func claudeToolConfigPolicy(config claudePermissionConfig, fallback string) stri
 		return config.PermissionPolicy.Type
 	}
 	return fallback
-}
-
-func claudeMCPConfig(servers []claudeMCPServer, toolsets []claudeToolset) map[string]any {
-	toolsetsByServer := make(map[string]claudeToolset, len(toolsets))
-	for _, toolset := range toolsets {
-		if toolset.Type == "mcp_toolset" && toolset.MCPServerName != "" {
-			toolsetsByServer[toolset.MCPServerName] = toolset
-		}
-	}
-	mcpServers := map[string]any{}
-	for _, server := range servers {
-		if server.Name == "" || server.URL == "" {
-			continue
-		}
-		config := map[string]any{"type": claudeMCPTransportType(server.Type, server.URL), "url": server.URL}
-		if toolset, ok := toolsetsByServer[server.Name]; ok {
-			if tools := claudeMCPToolConfigs(toolset.Configs); len(tools) > 0 {
-				config["tools"] = tools
-			}
-		}
-		mcpServers[server.Name] = config
-	}
-	if len(mcpServers) == 0 {
-		return nil
-	}
-	return map[string]any{"mcpServers": mcpServers}
-}
-
-func claudeMCPToolConfigs(configs []claudeToolConfig) []any {
-	tools := make([]any, 0, len(configs))
-	for _, config := range configs {
-		if config.Name == "" {
-			continue
-		}
-		tool := map[string]any{"name": config.Name}
-		if config.Enabled != nil {
-			tool["enabled"] = *config.Enabled
-		}
-		if policy := claudeMCPPermissionPolicy(config.PermissionPolicy); policy != "" {
-			tool["permission_policy"] = policy
-		}
-		tools = append(tools, tool)
-	}
-	return tools
-}
-
-func claudeMCPPermissionPolicy(policy *claudePermissionPolicy) string {
-	if policy == nil {
-		return ""
-	}
-	switch policy.Type {
-	case "always_allow", "allow":
-		return "allow"
-	case "always_ask", "ask":
-		return "ask"
-	default:
-		return ""
-	}
-}
-
-func claudeMCPTransportType(serverType string, rawURL string) string {
-	switch strings.TrimSpace(strings.ToLower(serverType)) {
-	case "sse":
-		return "sse"
-	case "http", "ws":
-		return strings.TrimSpace(strings.ToLower(serverType))
-	case "websocket":
-		return "ws"
-	}
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err == nil && strings.HasSuffix(strings.TrimRight(strings.ToLower(parsed.Path), "/"), "/sse") {
-		return "sse"
-	}
-	return "http"
 }
 
 func safeClaudeMCPServerRuleComponent(value string) bool {

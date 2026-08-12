@@ -57,7 +57,7 @@ session config 继续通过现有字段传给 `environment-manager`：
 }
 ```
 
-`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数。本设计不改变 v0 stdin schema。`internal/agentsnapshot.ClaudeLaunchConfigFromSnapshot` 从已校验并固化的 Agent Snapshot 派生 `tools`、`allowed-tools` 与 MCP config；Managed Agent session config 把这些结果写入 `claude_code_args` 和 MCP config file。`buildEnvironmentManagerV0Payload` 只补充 environment-manager 自身需要的 `settings`、认证和环境变量，不再解析 `tools`、重算权限或删除客户端字段。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
+`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数。本设计不改变 v0 stdin schema。`internal/agentsnapshot.ClaudeLaunchConfigFromSnapshot` 只负责从已校验并固化的 Agent Snapshot 派生本 PR 新增的 `tools` 与 `allowed-tools`；Managed Agent session config 继续沿用既有逻辑生成 MCP config、MCP config file 和 `mcp-config` 参数。`buildEnvironmentManagerV0Payload` 只补充 environment-manager 自身需要的 `settings`、认证和环境变量，不再解析 `tools`、重算权限或删除已有工具参数。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
 
 OMA 在 `agentsnapshot` 模块派生 `claude_code_args["tools"]`，显式限定 Claude Code 向模型暴露的内置工具集合。该集合来自项目当前固定的 Claude Code 2.1.120 `system/init` 事件，共 22 项；输出顺序与前端一致，优先放置原有 7 项：`Bash`、`Read`、`Write`、`Edit`、`Glob`、`Grep`、`WebFetch`，随后为 `Task`、`AskUserQuestion`、`CronCreate`、`CronDelete`、`CronList`、`EnterPlanMode`、`EnterWorktree`、`ExitPlanMode`、`ExitWorktree`、`NotebookEdit`、`ScheduleWakeup`、`Skill`、`TaskOutput`、`TaskStop`、`TodoWrite`。它保留该版本的默认内置能力，只移除 `WebSearch`；升级 Claude Code 时必须用新版本的真实 `system/init.tools` 复核并同步此集合。
 
@@ -308,7 +308,7 @@ Claude Code 可能通过 `/worker/events` batch endpoint 上报 `can_use_tool`�
 
 实现应集中在 `claude-api-server`：
 
-- `agentsnapshot` 模块从已固化快照派生 MCP config 与 Claude 工具参数，Managed Agent session config 负责序列化 MCP config file 和 `claude_code_args["mcp-config"]`；environment-manager payload 只透传这些结果并保留其中的真实 URL。
+- `agentsnapshot` 模块从已固化快照派生本 PR 新增的 Claude `tools` 与 `allowed-tools` 参数；Managed Agent session config 保留既有 MCP config、MCP config file 和 `claude_code_args["mcp-config"]` 生成逻辑，environment-manager payload 透传这些结果并保留其中的真实 URL。
 - Code Session handler 负责 MCP proxy 的 JWT/path 绑定；加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 的精确 URL set 与 Environment host/port policy 编译为单一授权对象，handler 只调用 `AuthorizeMCPURL`，不保存或重解析原始 snapshot。授权后再执行拨号期 SSRF 防护、流式转发和凭证 header 注入边界。
 - Code session service 新增 policy-aware permission handler。
 - Session events 接收 `user.tool_confirmation` 后，将 public blocking event id 解析为 worker `tool_use_id`，补齐到 Claude Code `control_response` 的路由；旧 worker `tool_use_id` 作为兼容输入继续支持。

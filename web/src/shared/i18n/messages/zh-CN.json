@@ -397,6 +397,7 @@
   "managedAgents.agents.createDialog.builtInTools": "内置工具",
   "managedAgents.agents.createDialog.configFormat": "配置格式",
   "managedAgents.agents.createDialog.customMcpName": "名称",
+  "managedAgents.agents.createDialog.customMcpNameAmbiguous": "名称不能包含连续两个下划线。",
   "managedAgents.agents.createDialog.customMcpNameDuplicate": "该 MCP 服务器名称已被使用。",
   "managedAgents.agents.createDialog.customMcpNameRequired": "名称不能为空。",
   "managedAgents.agents.createDialog.customMcpNameTooLong": "名称不能超过 255 个字符。",

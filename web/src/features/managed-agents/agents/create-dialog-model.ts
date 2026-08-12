@@ -35,7 +35,7 @@ export type McpServerInput = {
 };
 
 export type McpServerInputErrors = {
-  name?: 'required' | 'too_long' | 'duplicate';
+  name?: 'required' | 'too_long' | 'ambiguous' | 'duplicate';
   url?: 'required' | 'too_long' | 'invalid';
   form?: 'limit';
 };
@@ -89,7 +89,12 @@ const skillSchema = z
 
 const mcpServerSchema = z
   .object({
-    name: z.string().trim().min(1).max(255),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(255)
+      .refine(isUnambiguousMcpServerName, 'MCP server name must not contain "__".'),
     type: z.literal('url'),
     url: z.string().trim().max(2048).refine(isHTTPURL, 'MCP server URL must be a safe HTTP/HTTPS URL.'),
   })
@@ -144,7 +149,12 @@ const builtInToolsetSchema = z
 const mcpToolsetSchema = z
   .object({
     type: z.literal('mcp_toolset'),
-    mcp_server_name: z.string().trim().min(1).max(255),
+    mcp_server_name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(255)
+      .refine(isUnambiguousMcpServerName, 'MCP server name must not contain "__".'),
     default_config: permissionConfigSchema.optional(),
     configs: z.array(mcpToolConfigSchema).optional(),
   })
@@ -405,6 +415,8 @@ function validateMcpServerInput(draft: CreateAgentInput, name: string, url: stri
     errors.name = 'required';
   } else if (name.length > 255) {
     errors.name = 'too_long';
+  } else if (!isUnambiguousMcpServerName(name)) {
+    errors.name = 'ambiguous';
   } else if (
     draft.mcp_servers.some((server) => toRecord(server)?.name === name) ||
     draft.tools.some((tool) => tool.type === 'mcp_toolset' && tool.mcp_server_name === name)
@@ -424,6 +436,10 @@ function validateMcpServerInput(draft: CreateAgentInput, name: string, url: stri
     errors.form = 'limit';
   }
   return errors;
+}
+
+function isUnambiguousMcpServerName(value: string) {
+  return !value.includes('__');
 }
 
 function isHTTPURL(value: string) {

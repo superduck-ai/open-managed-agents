@@ -239,6 +239,11 @@ function mcpInputError(
         return msg('managedAgents.agents.createDialog.customMcpNameRequired', 'Name is required.');
       case 'too_long':
         return msg('managedAgents.agents.createDialog.customMcpNameTooLong', 'Name must be at most 255 characters.');
+      case 'ambiguous':
+        return msg(
+          'managedAgents.agents.createDialog.customMcpNameAmbiguous',
+          'Name must not contain two consecutive underscores.',
+        );
       default:
         return msg('managedAgents.agents.createDialog.customMcpNameDuplicate', 'This MCP server name is already used.');
     }

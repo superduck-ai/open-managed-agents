@@ -397,6 +397,7 @@
   "managedAgents.agents.createDialog.builtInTools": "Built-in tools",
   "managedAgents.agents.createDialog.configFormat": "Config format",
   "managedAgents.agents.createDialog.customMcpName": "Name",
+  "managedAgents.agents.createDialog.customMcpNameAmbiguous": "Name must not contain two consecutive underscores.",
   "managedAgents.agents.createDialog.customMcpNameDuplicate": "This MCP server name is already used.",
   "managedAgents.agents.createDialog.customMcpNameRequired": "Name is required.",
   "managedAgents.agents.createDialog.customMcpNameTooLong": "Name must be at most 255 characters.",

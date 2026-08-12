@@ -429,6 +429,14 @@ func TestManagedAgentAllowedToolsFollowEffectiveAgentPolicy(t *testing.T) {
 				"permission_policy": map[string]any{"type": "always_allow"},
 			},
 		},
+		map[string]any{
+			"type":            "mcp_toolset",
+			"mcp_server_name": "unsafe__Read",
+			"default_config": map[string]any{
+				"enabled":           true,
+				"permission_policy": map[string]any{"type": "always_allow"},
+			},
+		},
 	}
 
 	allowed := strings.Split(managedAgentAllowedTools(tools), ",")
@@ -442,8 +450,10 @@ func TestManagedAgentAllowedToolsFollowEffectiveAgentPolicy(t *testing.T) {
 			t.Fatalf("allowed tools %v unexpectedly contains %q", allowed, excluded)
 		}
 	}
-	if slices.Contains(allowed, "mcp__unsafe") {
-		t.Fatalf("allowed tools %v contains an injected rule fragment", allowed)
+	for _, tool := range allowed {
+		if strings.HasPrefix(tool, "mcp__unsafe") {
+			t.Fatalf("allowed tools %v contains an injected rule fragment", allowed)
+		}
 	}
 }
 

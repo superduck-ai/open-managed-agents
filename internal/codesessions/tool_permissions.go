@@ -59,21 +59,46 @@ func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID strin
 	if err != nil {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
 	}
-	return resolveToolPermissionFromAgentSnapshot(session.AgentSnapshot, claudeToolName), parseClaudeToolIdentity(claudeToolName), nil
+	permission, identity := resolveToolPermissionAndIdentityFromAgentSnapshot(session.AgentSnapshot, claudeToolName)
+	return permission, identity, nil
 }
 
 func resolveToolPermissionFromAgentSnapshot(agentSnapshot json.RawMessage, claudeToolName string) resolvedToolPermission {
+	permission, _ := resolveToolPermissionAndIdentityFromAgentSnapshot(agentSnapshot, claudeToolName)
+	return permission
+}
+
+func resolveToolPermissionAndIdentityFromAgentSnapshot(agentSnapshot json.RawMessage, claudeToolName string) (resolvedToolPermission, toolIdentity) {
 	snapshot := rawObject(agentSnapshot)
 	tools := arrayField(snapshot, "tools")
 	identity := parseClaudeToolIdentity(claudeToolName)
 	switch identity.Kind {
 	case "mcp":
-		return resolveMCPToolPermission(tools, identity.ServerName, identity.ToolName)
+		if hasAmbiguousMCPServerName(snapshot, tools) {
+			return resolvedToolPermissionAsk, toolIdentity{Kind: "unknown", ToolName: strings.TrimSpace(claudeToolName)}
+		}
+		return resolveMCPToolPermission(tools, identity.ServerName, identity.ToolName), identity
 	case "agent_toolset":
-		return resolveAgentToolPermission(tools, identity.ToolName)
+		return resolveAgentToolPermission(tools, identity.ToolName), identity
 	default:
-		return resolvedToolPermissionAsk
+		return resolvedToolPermissionAsk, identity
 	}
+}
+
+func hasAmbiguousMCPServerName(snapshot map[string]any, tools []any) bool {
+	for _, value := range arrayField(snapshot, "mcp_servers") {
+		server, ok := value.(map[string]any)
+		if ok && strings.Contains(stringField(server, "name"), "__") {
+			return true
+		}
+	}
+	for _, value := range tools {
+		toolset, ok := value.(map[string]any)
+		if ok && stringField(toolset, "type") == "mcp_toolset" && strings.Contains(stringField(toolset, "mcp_server_name"), "__") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseClaudeToolIdentity(toolName string) toolIdentity {

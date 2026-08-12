@@ -45,6 +45,20 @@ describe('create agent draft model', () => {
     }
   });
 
+  test('rejects ambiguous MCP server names in Raw and rendered modes', () => {
+    const ambiguousDraft: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'you__search', type: 'url', url: 'https://example.com/mcp' }],
+      tools: [...baseDraft.tools, { type: 'mcp_toolset', mcp_server_name: 'you__search' }],
+    };
+
+    expect(createAgentDraftSchema.safeParse(ambiguousDraft).success).toBe(false);
+    expect(addMcpServer(baseDraft, { name: 'you__search', url: 'https://example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { name: 'ambiguous' },
+    });
+  });
+
   test('preserves untouched skill payloads while toggling another skill', () => {
     const draft: CreateAgentInput = {
       ...baseDraft,

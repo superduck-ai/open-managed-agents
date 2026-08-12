@@ -792,6 +792,9 @@ func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		if len(name) > 255 {
 			return nil, errors.New("mcp_servers.name must be at most 255 characters")
 		}
+		if strings.Contains(name, "__") {
+			return nil, errors.New("mcp_servers.name must not contain consecutive underscores")
+		}
 		if _, ok := seen[name]; ok {
 			return nil, errors.New("mcp_servers.name must be unique")
 		}

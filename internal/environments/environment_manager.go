@@ -166,7 +166,7 @@ func allowedBuiltInTools(toolset map[string]any) []string {
 
 func allowedMCPTools(toolset map[string]any) []string {
 	serverName := stringFromMap(toolset, "mcp_server_name")
-	if !safeClaudeToolRuleComponent(serverName) {
+	if !safeClaudeMCPServerRuleComponent(serverName) {
 		return nil
 	}
 	defaultConfig := mapStringAnyValue(toolset["default_config"])
@@ -200,6 +200,10 @@ func allowedMCPTools(toolset map[string]any) []string {
 		}
 	}
 	return allowed
+}
+
+func safeClaudeMCPServerRuleComponent(value string) bool {
+	return !strings.Contains(value, "__") && safeClaudeToolRuleComponent(value)
 }
 
 func safeClaudeToolRuleComponent(value string) bool {

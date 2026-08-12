@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +101,16 @@ func TestAgentsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
 	})
 
+	t.Run("failure ambiguous mcp server name", func(t *testing.T) {
+		body := `{"model":"claude-opus-4-6","name":"bad mcp name","mcp_servers":[{"name":"you__search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"you__search"}]}`
+		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
+		created := createAgent(t, app, `{"model":"claude-opus-4-6","name":"valid before bad mcp update"}`)
+		defer cleanupAgentRows(t, app.pool, created.ID)
+		updateAgent(t, app, created.ID, `{"version":1,"mcp_servers":[{"name":"you__search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"you__search"}]}`, http.StatusBadRequest)
+	})
+
 	t.Run("failure web search agent tool config", func(t *testing.T) {
 		body := `{"model":"claude-opus-4-6","name":"bad web search","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","enabled":true}]}]}`
 		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
@@ -131,6 +142,25 @@ func TestAgentsAPI(t *testing.T) {
 		decodeRawJSON(t, created.Tools, &toolsets)
 		if len(toolsets) != 1 || len(toolsets[0].Configs) != 22 {
 			t.Fatalf("full built-in toolset did not round-trip: %s", created.Tools)
+		}
+		expectedNames := []string{
+			"task", "ask_user_question", "bash", "cron_create", "cron_delete", "cron_list", "edit",
+			"enter_plan_mode", "enter_worktree", "exit_plan_mode", "exit_worktree", "glob", "grep",
+			"notebook_edit", "read", "schedule_wakeup", "skill", "task_output", "task_stop",
+			"todo_write", "web_fetch", "write",
+		}
+		actualNames := make([]string, 0, len(toolsets[0].Configs))
+		for _, config := range toolsets[0].Configs {
+			name, ok := config["name"].(string)
+			if !ok {
+				t.Fatalf("full built-in toolset contains a config without a string name: %s", created.Tools)
+			}
+			actualNames = append(actualNames, name)
+		}
+		slices.Sort(expectedNames)
+		slices.Sort(actualNames)
+		if !slices.Equal(actualNames, expectedNames) {
+			t.Fatalf("full built-in tool names = %v, want %v", actualNames, expectedNames)
 		}
 	})
 

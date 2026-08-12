@@ -57,11 +57,13 @@ session config 继续通过现有字段传给 `environment-manager`：
 }
 ```
 
-`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数，因此本设计不改变 v0 stdin schema，也不修改 `environment-manager` 代码。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
+`environment-manager` 已经会把 `claude_code_args` 展开成 Claude Code CLI 参数。本设计不改变 v0 stdin schema，但 `buildEnvironmentManagerV0Payload` 会派生 `tools` 与 `allowed-tools` 参数，并移除旧的 `disallowed-tools` 参数。MCP config file 保持 `0600`；Runner 不改写其中的 URL，也不附加 session-ingress header。MCP 请求与其他 HTTPS 请求一样通过主进程继承的 CCRv2 CONNECT proxy 出站。
 
 OMA 在组装 environment-manager 启动 payload 时固定写入 `claude_code_args["tools"]`，显式限定 Claude Code 向模型暴露的内置工具集合。该集合来自项目当前固定的 Claude Code 2.1.120 `system/init` 事件，共 22 项；输出顺序与前端一致，优先放置原有 7 项：`Bash`、`Read`、`Write`、`Edit`、`Glob`、`Grep`、`WebFetch`，随后为 `Task`、`AskUserQuestion`、`CronCreate`、`CronDelete`、`CronList`、`EnterPlanMode`、`EnterWorktree`、`ExitPlanMode`、`ExitWorktree`、`NotebookEdit`、`ScheduleWakeup`、`Skill`、`TaskOutput`、`TaskStop`、`TodoWrite`。它保留该版本的默认内置能力，只移除 `WebSearch`；升级 Claude Code 时必须用新版本的真实 `system/init.tools` 复核并同步此集合。
 
 `--tools` 只约束 Claude Code 内置工具，不移除 `--mcp-config` 加载的第三方 MCP 工具；例如 You Search 仍以 `mcp__<server>__<tool>` 名称独立暴露。Agent API 同时拒绝在 `agent_toolset_20260401.configs` 中配置内置 `web_search`；需要网页搜索时应配置独立 MCP 搜索工具。该限制不影响 Workbench 的 Messages API 服务端 web search。
+
+由于 Claude Code 使用双下划线分隔 `mcp__<server>__<tool>`，Agent API 与前端均拒绝包含 `__` 的 MCP Server 名称。历史快照若仍包含此类名称，启动参数不会为其生成 `allowed-tools` 规则，runtime permission handler 也统一降级为询问，避免把调用错误解析到另一个 Toolset 后自动放行。
 
 `--tools` 与 `--allowed-tools` 属于不同层级：前者控制内置工具是否进入模型上下文，未列出的内置工具不可见也不可调用；后者只添加免审批权限规则，未列出的工具仍可见，并继续由 permission mode、动态权限回调和 deny/ask 规则裁决。因此本项目使用 `--tools` 固定内置能力面，继续由 Agent Snapshot 的 permission policy 和 runtime permission handler 决定已暴露工具调用时是自动允许、询问还是拒绝。
 

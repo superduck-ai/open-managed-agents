@@ -49,6 +49,7 @@ import {
 } from '../types';
 import { errorMessage } from '../utils';
 import { areSessionFileResourcesValid, SessionFileResourcesField } from '../sessions/SessionFileResourcesField';
+import { EnvironmentVariableCredentialFields } from './credential-environment-fields';
 import {
   credentialAuthTypeLabel,
   credentialFormReady,
@@ -358,10 +359,15 @@ export function CredentialDialog({
           'managedAgents.credentialVaults.credentialDialog.oauthDescription',
           'Connect an MCP server with OAuth, or paste an access token.',
         )
-      : msg(
-          'managedAgents.credentialVaults.credentialDialog.description',
-          'Store a credential for MCP servers or environment variables.',
-        );
+      : values.authType === 'environment_variable'
+        ? msg(
+            'managedAgents.credentialVaults.credentialDialog.envDescription',
+            'Add a credential to this vault for agents to use.',
+          )
+        : msg(
+            'managedAgents.credentialVaults.credentialDialog.description',
+            'Store a credential for MCP servers or environment variables.',
+          );
 
   return (
     <Dialog open onOpenChange={(open) => !open && dismissDialog()}>
@@ -379,7 +385,11 @@ export function CredentialDialog({
               autoFocus
             />
             <ManagedSelectField
-              label={msg('managedAgents.credentialVaults.credentialDialog.authType', 'Authentication type')}
+              label={
+                values.authType === 'environment_variable'
+                  ? msg('managedAgents.credentialVaults.credentialDialog.type', 'Type')
+                  : msg('managedAgents.credentialVaults.credentialDialog.authType', 'Authentication type')
+              }
               value={values.authType}
               placeholder={msg('managedAgents.credentialVaults.credentialDialog.authType', 'Authentication type')}
               options={authTypeOptions}
@@ -416,25 +426,11 @@ export function CredentialDialog({
               />
             ) : null}
             {values.authType === 'environment_variable' ? (
-              <>
-                <ManagedTextField
-                  label={msg('managedAgents.credentialVaults.credentialDialog.secretName', 'Secret name')}
-                  value={values.secretName}
-                  placeholder={msg(
-                    'managedAgents.credentialVaults.credentialDialog.secretNamePlaceholder',
-                    'EXAMPLE_TOKEN',
-                  )}
-                  disabled={Boolean(credential)}
-                  onChange={(secretName) => patchValues({ secretName })}
-                />
-                <ManagedTextField
-                  label={msg('managedAgents.credentialVaults.credentialDialog.secretValue', 'Secret value')}
-                  type="password"
-                  value={values.secretValue}
-                  placeholder={msg('managedAgents.credentialVaults.credentialDialog.secretValue', 'Secret value')}
-                  onChange={(secretValue) => patchValues({ secretValue })}
-                />
-              </>
+              <EnvironmentVariableCredentialFields
+                values={values}
+                secretNameLocked={Boolean(credential)}
+                onChange={patchValues}
+              />
             ) : null}
             {values.authType === 'mcp_oauth' ? (
               <>
@@ -535,7 +531,7 @@ export function CredentialDialog({
               <AlertDescription>
                 {msg(
                   'managedAgents.credentialVaults.credentialDialog.sharedWarning',
-                  'Credentials in a vault are shared with anyone who can use this vault. You are responsible for storage and use.',
+                  'This credential will be shared across this workspace. Anyone with API key access can use this credential in an agent session to access the service associated with the credential — including reading data and taking actions on behalf of the credential owner.',
                 )}
               </AlertDescription>
             </Alert>

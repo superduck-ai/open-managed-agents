@@ -674,6 +674,11 @@ export type CredentialFormValues = {
   token: string;
   secretName: string;
   secretValue: string;
+  /** Environment variable credential networking (CMA limited / unrestricted). */
+  networkType: 'limited' | 'unrestricted';
+  allowedHostsText: string;
+  injectHeader: boolean;
+  injectBody: boolean;
   refreshToken: string;
   refreshTokenEndpoint: string;
   refreshClientId: string;

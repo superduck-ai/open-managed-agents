@@ -253,7 +253,7 @@ export function AgentConfigRenderedEditor({
         title={msg('managedAgents.agents.createDialog.tools', 'Tools')}
         description={msg(
           'managedAgents.agents.createDialog.toolsDescription',
-          'Everything this agent can call: built-in tools, MCP servers, and custom tool definitions.',
+          'Everything this agent can call: built-in tools, MCP servers, and existing custom tools.',
         )}
         learnMore="https://platform.claude.com/docs/en/managed-agents/tools"
       >

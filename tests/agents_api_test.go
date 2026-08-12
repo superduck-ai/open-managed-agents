@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,85 @@ func TestAgentsAPI(t *testing.T) {
 		body := `{"model":"claude-opus-4-6","name":"bad mcp","tools":[{"type":"mcp_toolset","mcp_server_name":"missing"}]}`
 		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("failure ambiguous mcp server name", func(t *testing.T) {
+		body := `{"model":"claude-opus-4-6","name":"bad mcp name","mcp_servers":[{"name":"you__search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"you__search"}]}`
+		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+
+		created := createAgent(t, app, `{"model":"claude-opus-4-6","name":"valid before bad mcp update"}`)
+		defer cleanupAgentRows(t, app.pool, created.ID)
+		updateAgent(t, app, created.ID, `{"version":1,"mcp_servers":[{"name":"you__search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"you__search"}]}`, http.StatusBadRequest)
+	})
+
+	t.Run("failure invalid mcp inputs", func(t *testing.T) {
+		for _, body := range []string{
+			`{"model":"claude-opus-4-6","name":"bad mcp url","mcp_servers":[{"name":"search","type":"url","url":"ftp://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
+			`{"model":"claude-opus-4-6","name":"bad mcp credentials","mcp_servers":[{"name":"search","type":"url","url":"https://user:secret@example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
+			`{"model":"claude-opus-4-6","name":"bad mcp fragment","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp#tools"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
+			`{"model":"claude-opus-4-6","name":"bad mcp name","mcp_servers":[{"name":"unsafe name","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"unsafe name"}]}`,
+			`{"model":"claude-opus-4-6","name":"duplicate toolsets","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search"},{"type":"mcp_toolset","mcp_server_name":"search"}]}`,
+			`{"model":"claude-opus-4-6","name":"duplicate configs","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search","configs":[{"name":"query"},{"name":"query"}]}]}`,
+			`{"model":"claude-opus-4-6","name":"invalid tool name","mcp_servers":[{"name":"search","type":"url","url":"https://example.com/mcp"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"search","configs":[{"name":"unsafe tool"}]}]}`,
+			`{"model":"claude-opus-4-6","name":"duplicate custom tools","tools":[{"type":"custom","name":"lookup","description":"first","input_schema":{"type":"object"}},{"type":"custom","name":"lookup","description":"second","input_schema":{"type":"object"}}]}`,
+		} {
+			resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+			assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		}
+	})
+
+	t.Run("failure web search agent tool config", func(t *testing.T) {
+		body := `{"model":"claude-opus-4-6","name":"bad web search","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"web_search","enabled":true}]}]}`
+		resp := doAgentRequest(t, app, http.MethodPost, "/v1/agents?beta=true", strings.NewReader(body), defaultTestKey, true)
+		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+	})
+
+	t.Run("success full built in tool set", func(t *testing.T) {
+		body := `{
+			"model":"claude-opus-4-6",
+			"name":"full-built-in-tools",
+			"tools":[{
+				"type":"agent_toolset_20260401",
+				"configs":[
+					{"name":"task"},{"name":"ask_user_question"},{"name":"bash"},
+					{"name":"cron_create"},{"name":"cron_delete"},{"name":"cron_list"},
+					{"name":"edit"},{"name":"enter_plan_mode"},{"name":"enter_worktree"},
+					{"name":"exit_plan_mode"},{"name":"exit_worktree"},{"name":"glob"},
+					{"name":"grep"},{"name":"notebook_edit"},{"name":"read"},
+					{"name":"schedule_wakeup"},{"name":"skill"},{"name":"task_output"},
+					{"name":"task_stop"},{"name":"todo_write"},{"name":"web_fetch"},{"name":"write"}
+				]
+			}]
+		}`
+		created := createAgent(t, app, body)
+		defer cleanupAgentRows(t, app.pool, created.ID)
+		var toolsets []struct {
+			Configs []map[string]any `json:"configs"`
+		}
+		decodeRawJSON(t, created.Tools, &toolsets)
+		if len(toolsets) != 1 || len(toolsets[0].Configs) != 22 {
+			t.Fatalf("full built-in toolset did not round-trip: %s", created.Tools)
+		}
+		expectedNames := []string{
+			"task", "ask_user_question", "bash", "cron_create", "cron_delete", "cron_list", "edit",
+			"enter_plan_mode", "enter_worktree", "exit_plan_mode", "exit_worktree", "glob", "grep",
+			"notebook_edit", "read", "schedule_wakeup", "skill", "task_output", "task_stop",
+			"todo_write", "web_fetch", "write",
+		}
+		actualNames := make([]string, 0, len(toolsets[0].Configs))
+		for _, config := range toolsets[0].Configs {
+			name, ok := config["name"].(string)
+			if !ok {
+				t.Fatalf("full built-in toolset contains a config without a string name: %s", created.Tools)
+			}
+			actualNames = append(actualNames, name)
+		}
+		slices.Sort(expectedNames)
+		slices.Sort(actualNames)
+		if !slices.Equal(actualNames, expectedNames) {
+			t.Fatalf("full built-in tool names = %v, want %v", actualNames, expectedNames)
+		}
 	})
 
 	t.Run("failure unreferenced mcp server when using mcp toolsets", func(t *testing.T) {

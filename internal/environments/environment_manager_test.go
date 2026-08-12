@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -241,7 +242,14 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 			ClaudePath:         "/opt/claude path/bin/claude",
 		},
 	}
-	sessionConfig := json.RawMessage(`{"model":"claude-opus-4-8","sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}]}`)
+	sessionConfig := json.RawMessage(`{
+		"model":"claude-opus-4-8",
+		"sources":[{"type":"git_repository","url":"https://github.com/acme/widgets"}],
+		"claude_code_args":{
+			"tools":"Bash,Read,Write,Edit,Glob,Grep,WebFetch,Task,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,EnterWorktree,ExitPlanMode,ExitWorktree,NotebookEdit,ScheduleWakeup,Skill,TaskOutput,TaskStop,TodoWrite",
+			"allowed-tools":"Read,Write"
+		}
+	}`)
 	const sessionIngressToken = "sk-ant-si-test-token"
 	const oauthAccessToken = "sk-ant-oat01-test-token"
 	payload, err := buildEnvironmentManagerV0Payload("cse_test", sessionIngressToken, oauthAccessToken, "/workspace/widgets", sessionConfig, cfg)
@@ -257,8 +265,12 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		t.Fatalf("unexpected startup context: %#v", startup)
 	}
 	claudeArgs := startup["claude_code_args"].(map[string]any)
-	if claudeArgs["settings"] != launcherSettingsPath {
+	if claudeArgs["settings"] != launcherSettingsPath || claudeArgs["tools"] != "Bash,Read,Write,Edit,Glob,Grep,WebFetch,Task,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,EnterWorktree,ExitPlanMode,ExitWorktree,NotebookEdit,ScheduleWakeup,Skill,TaskOutput,TaskStop,TodoWrite" {
 		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
+	}
+	allowedTools := strings.Split(claudeArgs["allowed-tools"].(string), ",")
+	if !slices.Equal(allowedTools, []string{"Read", "Write"}) {
+		t.Fatalf("allowed tools were not preserved: %v", allowedTools)
 	}
 	startupEnv := startup["environment_variables"].(map[string]any)
 	if startupEnv["CLAUDE_CODE_REMOTE"] != "true" ||
@@ -355,7 +367,12 @@ func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 	sessionConfig := json.RawMessage(`{
 		"mcp_config":{"mcpServers":{"ms-api":{"type":"http","url":"https://learn.microsoft.com/api/mcp?view=azure"}}},
 		"mcp_config_file":{"path":"/tmp/stale.json","content":"stale","mode":384},
-		"claude_code_args":{"mcp-config":"/tmp/managed-agent-mcp-config.json"}
+		"claude_code_args":{
+			"mcp-config":"/tmp/managed-agent-mcp-config.json",
+			"tools":"Read,WebFetch",
+			"allowed-tools":"Read",
+			"disallowed-tools":"Bash"
+		}
 	}`)
 	payload, err := buildEnvironmentManagerV0Payload("cse_test", "sk-ant-si-test-token", "sk-ant-oat01-test-token", "", sessionConfig, cfg)
 	if err != nil {
@@ -367,8 +384,16 @@ func TestBuildEnvironmentManagerPayloadPreservesMCPConfig(t *testing.T) {
 	}
 	startup := body["startup_context"].(map[string]any)
 	claudeArgs := startup["claude_code_args"].(map[string]any)
-	if claudeArgs["settings"] != launcherSettingsPath || claudeArgs["mcp-config"] != managedAgentMCPConfigPath {
+	if claudeArgs["settings"] != launcherSettingsPath ||
+		claudeArgs["mcp-config"] != managedAgentMCPConfigPath {
 		t.Fatalf("unexpected Claude args: %#v", claudeArgs)
+	}
+	for key, want := range map[string]any{
+		"tools": "Read,WebFetch", "allowed-tools": "Read", "disallowed-tools": "Bash",
+	} {
+		if claudeArgs[key] != want {
+			t.Fatalf("Claude arg %q = %#v, want preserved value %#v", key, claudeArgs[key], want)
+		}
 	}
 	mcpConfig := startup["mcp_config"].(map[string]any)
 	server := mcpConfig["mcpServers"].(map[string]any)["ms-api"].(map[string]any)
@@ -585,7 +610,10 @@ func TestManagedAgentSessionConfigIncludesMCPConfig(t *testing.T) {
 		VaultIDs: json.RawMessage(`["vault_cred_123"]`),
 	}
 
-	raw := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	raw, err := managedAgentSessionConfig(session, resolveManagedAgentRuntimeResources(nil))
+	if err != nil {
+		t.Fatalf("build session config: %v", err)
+	}
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode session config: %v", err)

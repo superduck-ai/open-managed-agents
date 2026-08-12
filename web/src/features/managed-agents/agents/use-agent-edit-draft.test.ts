@@ -18,15 +18,14 @@ const editConfig: AgentEditConfig = {
 };
 
 describe('agent edit rendered compatibility', () => {
-  test('preserves supported pinned references and model modifiers', () => {
-    const result = renderedAgentEditDraft(editConfig);
+  test('keeps duplicate toolsets out of Rendered mode', () => {
+    const result = renderedAgentEditDraft({
+      ...editConfig,
+      tools: [{ type: 'agent_toolset_20260401' }, { type: 'agent_toolset_20260401' }],
+    });
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.draft.model).toEqual({ id: 'claude-sonnet-4-6', speed: 'fast' });
-      expect(result.draft.multiagent).toEqual(editConfig.multiagent);
-      expect(result.draft.skills).toEqual(editConfig.skills);
-    }
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Continue in Raw');
   });
 
   test('keeps valid but unsupported legacy tool shapes out of Rendered mode', () => {
@@ -37,5 +36,16 @@ describe('agent edit rendered compatibility', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Continue in Raw');
+  });
+
+  test('preserves supported pinned references and model modifiers', () => {
+    const result = renderedAgentEditDraft(editConfig);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.draft.model).toEqual({ id: 'claude-sonnet-4-6', speed: 'fast' });
+      expect(result.draft.multiagent).toEqual(editConfig.multiagent);
+      expect(result.draft.skills).toEqual(editConfig.skills);
+    }
   });
 });

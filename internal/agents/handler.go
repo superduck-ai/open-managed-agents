@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,7 +29,10 @@ const (
 	maxAgentBodySize = 4 << 20
 )
 
-var customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+var (
+	customToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	mcpNamePattern        = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+)
 
 type Handler struct {
 	cfg          config.Config
@@ -792,6 +796,9 @@ func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		if len(name) > 255 {
 			return nil, errors.New("mcp_servers.name must be at most 255 characters")
 		}
+		if !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
+			return nil, errors.New("mcp_servers.name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+		}
 		if _, ok := seen[name]; ok {
 			return nil, errors.New("mcp_servers.name must be unique")
 		}
@@ -810,9 +817,19 @@ func normalizeMCPServers(raw json.RawMessage) (json.RawMessage, error) {
 		if len(url) > 2048 {
 			return nil, errors.New("mcp_servers.url must be at most 2048 characters")
 		}
+		if !validMCPServerURL(url) {
+			return nil, errors.New("mcp_servers.url must be an HTTP or HTTPS absolute URL without credentials or fragment")
+		}
 		normalized = append(normalized, map[string]string{"name": name, "type": "url", "url": url})
 	}
 	return httpapi.MarshalRaw(normalized)
+}
+
+func validMCPServerURL(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil &&
+		(parsed.Scheme == "http" || parsed.Scheme == "https") &&
+		parsed.IsAbs() && parsed.Hostname() != "" && parsed.User == nil && parsed.Fragment == ""
 }
 
 func validateMetadata(metadata map[string]string) error {
@@ -879,12 +896,18 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 		return nil, err
 	}
 	referencedMCPServers := map[string]struct{}{}
+	seenToolsets := map[string]struct{}{}
+	seenCustomTools := map[string]struct{}{}
 	normalized := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
 		total++
 		toolType, _ := tool["type"].(string)
 		switch toolType {
 		case "agent_toolset_20260401":
+			if _, exists := seenToolsets[toolType]; exists {
+				return nil, errors.New("agent toolset must be unique")
+			}
+			seenToolsets[toolType] = struct{}{}
 			defaultConfig, err := normalizeDefaultConfig(tool["default_config"], "always_allow")
 			if err != nil {
 				return nil, err
@@ -900,9 +923,17 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if name == "" {
 				return nil, errors.New("mcp_toolset.mcp_server_name is required")
 			}
+			if len(name) > 255 || !mcpNamePattern.MatchString(name) || strings.Contains(name, "__") {
+				return nil, errors.New("mcp_toolset.mcp_server_name must match ^[A-Za-z0-9_.-]+$ and not contain consecutive underscores")
+			}
 			if _, ok := serverNames[name]; !ok {
 				return nil, errors.New("mcp_toolset.mcp_server_name must reference an MCP server")
 			}
+			toolsetKey := toolType + ":" + name
+			if _, exists := seenToolsets[toolsetKey]; exists {
+				return nil, errors.New("mcp toolset server names must be unique")
+			}
+			seenToolsets[toolsetKey] = struct{}{}
 			referencedMCPServers[name] = struct{}{}
 			defaultConfig, err := normalizeDefaultConfig(tool["default_config"], "always_ask")
 			if err != nil {
@@ -919,6 +950,11 @@ func normalizeTools(raw json.RawMessage, mcpServers json.RawMessage) (json.RawMe
 			if err != nil {
 				return nil, err
 			}
+			customName := custom["name"].(string)
+			if _, exists := seenCustomTools[customName]; exists {
+				return nil, errors.New("custom tool names must be unique")
+			}
+			seenCustomTools[customName] = struct{}{}
 			normalized = append(normalized, custom)
 		default:
 			return nil, errors.New("tools.type must be agent_toolset_20260401, mcp_toolset, or custom")
@@ -951,14 +987,22 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		return nil, errors.New("tools.configs must be an array")
 	}
 	allowed := map[string]struct{}{
-		"bash": {}, "edit": {}, "read": {}, "write": {}, "glob": {}, "grep": {}, "web_fetch": {}, "web_search": {},
+		"task": {}, "ask_user_question": {}, "bash": {}, "cron_create": {}, "cron_delete": {}, "cron_list": {},
+		"edit": {}, "enter_plan_mode": {}, "enter_worktree": {}, "exit_plan_mode": {}, "exit_worktree": {},
+		"glob": {}, "grep": {}, "notebook_edit": {}, "read": {}, "schedule_wakeup": {}, "skill": {},
+		"task_output": {}, "task_stop": {}, "todo_write": {}, "web_fetch": {}, "write": {},
 	}
 	normalized := make([]map[string]any, 0, len(configs))
+	seen := map[string]struct{}{}
 	for _, config := range configs {
 		name, _ := config["name"].(string)
 		if _, ok := allowed[name]; !ok {
 			return nil, errors.New("agent tool config name is invalid")
 		}
+		if _, exists := seen[name]; exists {
+			return nil, errors.New("agent tool config names must be unique")
+		}
+		seen[name] = struct{}{}
 		enabled, err := boolWithDefault(config["enabled"], true, "tools.configs.enabled")
 		if err != nil {
 			return nil, err
@@ -985,11 +1029,16 @@ func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any,
 		return nil, errors.New("tools.configs must be an array")
 	}
 	normalized := make([]map[string]any, 0, len(configs))
+	seen := map[string]struct{}{}
 	for _, config := range configs {
 		name, _ := config["name"].(string)
-		if name == "" || len(name) > 128 {
-			return nil, errors.New("mcp tool config name must be between 1 and 128 characters")
+		if !mcpNamePattern.MatchString(name) || len(name) > 128 {
+			return nil, errors.New("mcp tool config name must match ^[A-Za-z0-9_.-]{1,128}$")
 		}
+		if _, exists := seen[name]; exists {
+			return nil, errors.New("mcp tool config names must be unique")
+		}
+		seen[name] = struct{}{}
 		enabled, err := boolWithDefault(config["enabled"], true, "tools.configs.enabled")
 		if err != nil {
 			return nil, err

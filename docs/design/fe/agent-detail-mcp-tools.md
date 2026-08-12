@@ -18,6 +18,8 @@ Agent 详情页的 `MCPs and tools` 区域只负责展示当前 agent 版本的�
 
 当前后端只接受 `agent_toolset_20260401`。为兼容升级前留下的 legacy Agent 配置，详情页把第一个 `agent_toolset_*` 视为当前内置 toolset，使用 `agent_toolset_20260401` 的定义和 subtitle，同时继续读取 legacy `tool_name` 权限字段；这与编辑配置时的 canonicalization 行为一致。引入下一版内置 toolset 时必须先扩充版本化定义和选择规则，不能继续无条件归一化到旧的 current 常量。
 
+当前定义展示固定 Claude Code 2.1.120 的 22 项默认内置工具，与创建/编辑页和后端 `--tools` 清单一致。其中 `web_fetch` 对应 Session Sandbox 内 Claude Code 的 `WebFetch` 客户端工具；详情页不把 Messages API 的模型服务端同名工具或已永久移除的内置 `web_search` 混入该清单。
+
 ```mermaid
 flowchart LR
   Agent["Agent version response"] --> Classify["Classify tools and MCP servers"]

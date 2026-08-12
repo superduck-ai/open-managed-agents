@@ -327,7 +327,91 @@ export function registerManagedAgentsAgentsTests() {
     expect(window.location.search).toBe('?tab=config');
   });
 
-  test('builds multiagent, skills, MCP, custom tools, and permissions from the rendered create form', async () => {
+  test('keeps custom MCP available when Directory fails and resets dismissed form state', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    const api = mockAgentsApi([], { mcpDirectoryErrorOnce: true });
+    render(<ManagedAgentsPage section="agents" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    const addMcpButton = within(dialog).getByRole('combobox', { name: 'Add MCP server' });
+    fireEvent.click(addMcpButton);
+    expect(await screen.findByText('Could not load options.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
+    let customPanel = screen.getByRole('tabpanel', { name: 'Custom MCP' });
+    fireEvent.change(within(customPanel).getByLabelText('Name'), { target: { value: 'dismissed' } });
+    fireEvent.change(within(customPanel).getByLabelText('MCP Server URL'), {
+      target: { value: 'https://dismissed.example.com/mcp' },
+    });
+    fireEvent.keyDown(within(customPanel).getByLabelText('MCP Server URL'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Custom MCP' })).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'Create agent' })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(addMcpButton));
+
+    fireEvent.click(addMcpButton);
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
+    customPanel = screen.getByRole('tabpanel', { name: 'Custom MCP' });
+    expect((within(customPanel).getByLabelText('Name') as HTMLInputElement).value).toBe('');
+    expect((within(customPanel).getByLabelText('MCP Server URL') as HTMLInputElement).value).toBe('');
+    fireEvent.change(within(customPanel).getByLabelText('Name'), { target: { value: 'invalid-url' } });
+    fireEvent.change(within(customPanel).getByLabelText('MCP Server URL'), {
+      target: { value: 'ws://example.com/mcp' },
+    });
+    fireEvent.click(within(customPanel).getByRole('button', { name: 'Add MCP server' }));
+    expect(within(customPanel).getByText('Enter a valid HTTP or HTTPS MCP Server URL.')).toBeTruthy();
+    expect(api.requests.some((request) => request.method === 'POST')).toBe(false);
+    fireEvent.click(within(customPanel).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Custom MCP' })).toBeNull());
+  });
+
+  test('filters Directory MCP candidates and keeps a slug-colliding custom MCP toolset-only', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents');
+    mockAgentsApi([], {
+      mcpDirectoryServers: [
+        {
+          type: 'remote',
+          slug: 'github',
+          name: 'GitHub',
+          display_name: 'GitHub',
+          tool_names: ['search_code'],
+          visibility: ['commercial'],
+          remote: { url: 'https://api.githubcopilot.com/mcp/' },
+        },
+        {
+          type: 'remote',
+          slug: 'slack',
+          name: 'Slack',
+          display_name: 'Slack',
+          tool_names: ['search_messages'],
+          visibility: ['commercial'],
+          remote: { url: 'https://mcp.slack.com/mcp' },
+        },
+      ],
+    });
+    render(<ManagedAgentsPage section="agents" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create agent' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create agent' });
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
+    fireEvent.change(screen.getByPlaceholderText('Search MCP servers...'), { target: { value: 'Slack' } });
+    await waitFor(() => expect(screen.queryByRole('option', { name: /GitHub/ })).toBeNull());
+    expect(await screen.findByRole('option', { name: /Slack/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
+    const customPanel = screen.getByRole('tabpanel', { name: 'Custom MCP' });
+    fireEvent.change(within(customPanel).getByLabelText('Name'), { target: { value: 'github' } });
+    fireEvent.change(within(customPanel).getByLabelText('MCP Server URL'), {
+      target: { value: 'https://internal.example.com/mcp' },
+    });
+    fireEvent.click(within(customPanel).getByRole('button', { name: 'Add MCP server' }));
+
+    const customMcpCard = within(dialog).getByText('github').closest('[data-slot="card"]') as HTMLElement;
+    expect(within(customMcpCard).getByText('https://internal.example.com/mcp')).toBeTruthy();
+    expect(within(customMcpCard).getByText('Tool names are unavailable.')).toBeTruthy();
+    expect(within(customMcpCard).queryByText('search_code')).toBeNull();
+  });
+
+  test('builds multiagent, skills, directory and custom MCPs, and permissions from the rendered create form', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     const api = mockAgentsApi(
       [
@@ -376,6 +460,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(dialog).getByText('Reporting skill')).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
+    expect(screen.getByRole('tab', { name: 'Directory' }).getAttribute('aria-selected')).toBe('true');
     const githubOption = await screen.findByRole('option', { name: /GitHub/ });
     expect(githubOption.querySelector('img')?.getAttribute('src')).toBe('https://github.com/favicon.ico');
     fireEvent.click(githubOption);
@@ -385,21 +470,39 @@ export function registerManagedAgentsAgentsTests() {
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Always allow' }));
 
     const addMcpButton = within(dialog).getByRole('combobox', { name: 'Add MCP server' });
-    const addCustomToolButton = within(dialog).getByRole('button', { name: 'Add custom tool' });
-    for (const className of ['h-9', 'gap-2', 'px-2', 'text-sm', 'font-normal']) {
-      expect(addMcpButton.className).toContain(className);
-      expect(addCustomToolButton.className).toContain(className);
-    }
+    expect(within(dialog).queryByRole('button', { name: 'Add custom tool' })).toBeNull();
+    fireEvent.click(addMcpButton);
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
+    const customPanel = screen.getByRole('tabpanel', { name: 'Custom MCP' });
+    fireEvent.click(within(customPanel).getByRole('button', { name: 'Add MCP server' }));
+    expect(within(customPanel).getByText('Name is required.')).toBeTruthy();
+    expect(within(customPanel).getByText('MCP Server URL is required.')).toBeTruthy();
+    fireEvent.change(within(customPanel).getByLabelText('Name'), { target: { value: ' internal-docs ' } });
+    fireEvent.change(within(customPanel).getByLabelText('MCP Server URL'), {
+      target: { value: 'https://mcp.example.com/mcp' },
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'Directory' }));
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Directory' }).getAttribute('aria-selected')).toBe('true'),
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Custom MCP' }).getAttribute('aria-selected')).toBe('true'),
+    );
+    const reopenedCustomPanel = screen.getByRole('tabpanel', { name: 'Custom MCP' });
+    expect((within(reopenedCustomPanel).getByLabelText('Name') as HTMLInputElement).value).toBe(' internal-docs ');
+    expect((within(reopenedCustomPanel).getByLabelText('MCP Server URL') as HTMLInputElement).value).toBe(
+      'https://mcp.example.com/mcp',
+    );
+    fireEvent.click(within(reopenedCustomPanel).getByRole('button', { name: 'Add MCP server' }));
+    const customMcpCard = within(dialog).getByText('internal-docs').closest('[data-slot="card"]') as HTMLElement;
+    expect(within(customMcpCard).getByText('https://mcp.example.com/mcp')).toBeTruthy();
+    expect(within(customMcpCard).getByText('Tool names are unavailable.')).toBeTruthy();
+
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remove Built-in tools' }));
     const restoreBuiltInsButton = within(dialog).getByRole('button', { name: 'Add built-in tools' });
     fireEvent.click(restoreBuiltInsButton);
     expect(within(dialog).getByText('Built-in tools')).toBeTruthy();
-    fireEvent.click(addCustomToolButton);
-    const customCard = within(dialog).getByText('Custom tool').closest('[data-slot="card"]') as HTMLElement;
-    fireEvent.change(within(customCard).getByLabelText('Name'), { target: { value: 'lookup_customer' } });
-    fireEvent.change(within(customCard).getByLabelText('Description'), {
-      target: { value: 'Find a customer by email.' },
-    });
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create agent' }));
 
@@ -419,6 +522,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(request?.body?.skills).toEqual([{ type: 'custom', skill_id: 'skill_reporting', version: 'latest' }]);
     expect(request?.body?.mcp_servers).toEqual([
       { name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' },
+      { name: 'internal-docs', type: 'url', url: 'https://mcp.example.com/mcp' },
     ]);
     expect(request?.body?.tools).toEqual(
       expect.arrayContaining([
@@ -428,9 +532,9 @@ export function registerManagedAgentsAgentsTests() {
           default_config: { enabled: true, permission_policy: { type: 'always_allow' } },
         }),
         expect.objectContaining({
-          type: 'custom',
-          name: 'lookup_customer',
-          description: 'Find a customer by email.',
+          type: 'mcp_toolset',
+          mcp_server_name: 'internal-docs',
+          default_config: { enabled: true, permission_policy: { type: 'always_ask' } },
         }),
       ]),
     );
@@ -593,12 +697,13 @@ export function registerManagedAgentsAgentsTests() {
     expect(api.requests.some((request) => request.url === '/v1/skills/triage?beta=true')).toBe(true);
     expect(api.requests.some((request) => request.url === '/v1/skills/reporting?beta=true')).toBe(true);
     expect(screen.queryByText('No skills configured.')).toBeNull();
-    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+6/ });
+    const permissionsButton = screen.getByRole('button', { name: /Tool permissions\s+22/ });
     expect(permissionsButton).toBeTruthy();
     expect(permissionsButton.querySelector('[data-slot="badge"]')?.getAttribute('data-slot')).toBe('badge');
     fireEvent.click(permissionsButton);
     expect(screen.getByText('bash')).toBeTruthy();
-    expect(screen.queryByText('web_fetch')).toBeNull();
+    expect(screen.getByText('web_fetch')).toBeTruthy();
+    expect(screen.getByText('Fetch URL content')).toBeTruthy();
     expect(screen.queryByText('web_search')).toBeNull();
     expect(screen.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     const versionButton = screen.getByRole('button', { name: 'Version: v2' });
@@ -703,7 +808,7 @@ export function registerManagedAgentsAgentsTests() {
 
     const builtInCard = cards[0];
     expect(within(builtInCard).getByText('Custom')).toBeTruthy();
-    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+6/ }));
+    fireEvent.click(within(builtInCard).getByRole('button', { name: /Tool permissions\s+22/ }));
     expect(within(builtInCard).getByText('bash')).toBeTruthy();
     expect(within(builtInCard).getByText('Always deny')).toBeTruthy();
     expect(within(builtInCard).getAllByText('Always allow').length).toBeGreaterThan(0);
@@ -727,11 +832,11 @@ export function registerManagedAgentsAgentsTests() {
     const directoryIcon = mcpCard.querySelector('img') as HTMLImageElement;
     expect(directoryIcon).toBeTruthy();
     fireEvent.error(directoryIcon);
-    const serverFavicon = mcpCard.querySelector('img') as HTMLImageElement;
-    expect(serverFavicon.getAttribute('src')).toBe('https://agent.example.com/favicon.ico');
-    fireEvent.error(serverFavicon);
+    const directoryFavicon = mcpCard.querySelector('img') as HTMLImageElement;
+    expect(directoryFavicon.getAttribute('src')).toBe('https://example.com/favicon.ico');
+    fireEvent.error(directoryFavicon);
     const publicFavicon = mcpCard.querySelector('img') as HTMLImageElement;
-    expect(publicFavicon.getAttribute('src')).toBe('https://www.google.com/s2/favicons?domain=agent.example.com&sz=64');
+    expect(publicFavicon.getAttribute('src')).toBe('https://www.google.com/s2/favicons?domain=example.com&sz=64');
     fireEvent.error(publicFavicon);
     expect(mcpCard.querySelector('img')).toBeNull();
     expect(mcpCard.querySelector('.lucide-server')).toBeTruthy();
@@ -1347,6 +1452,55 @@ export function registerManagedAgentsAgentsTests() {
     expect(new URL(window.location.href).searchParams.get('deployment')).toBeNull();
   });
 
+  test('preserves custom tool schema text while publishing parsed JSON', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_custom_schema');
+    const api = mockAgentsApi([
+      {
+        id: 'agent_custom_schema',
+        name: 'Custom schema agent',
+        version: 2,
+        tools: [
+          {
+            type: 'custom',
+            name: 'lookup',
+            description: 'Lookup data',
+            input_schema: { type: 'object', properties: {} },
+          },
+        ],
+      },
+    ]);
+    render(<ManagedAgentsPage section="agents" />);
+
+    expect(await screen.findByRole('heading', { name: 'Custom schema agent' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
+    const schemaInput = within(dialog).getByLabelText('Input schema') as HTMLTextAreaElement;
+    const compactSchema = '{"type":"object","properties":{"id":{"type":"string"}}}';
+
+    fireEvent.change(schemaInput, { target: { value: compactSchema } });
+
+    expect(schemaInput.value).toBe(compactSchema);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) => request.method === 'POST' && request.url === '/v1/agents/agent_custom_schema?beta=true',
+        ),
+      ).toBe(true),
+    );
+    const updateRequest = api.requests.find(
+      (request) => request.method === 'POST' && request.url === '/v1/agents/agent_custom_schema?beta=true',
+    );
+    expect(updateRequest?.body?.tools).toEqual([
+      {
+        type: 'custom',
+        name: 'lookup',
+        description: 'Lookup data',
+        input_schema: { type: 'object', properties: { id: { type: 'string' } } },
+      },
+    ]);
+  });
+
   test('opens the edit modal in Rendered mode and preserves the YAML Raw editor', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_edit123456');
     mockAgentsApi([
@@ -1654,6 +1808,18 @@ export function registerManagedAgentsAgentsTests() {
     const dialog = screen.getByRole('dialog', { name: 'Edit agent' });
     expect(within(dialog).getByText('This agent')).toBeTruthy();
     expect(await within(dialog).findByText('Worker')).toBeTruthy();
+    expect(within(dialog).getByText('Custom tool')).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: 'Add custom tool' })).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add MCP server' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Custom MCP' }));
+    const customMcpPanel = screen.getByRole('tabpanel', { name: 'Custom MCP' });
+    fireEvent.change(within(customMcpPanel).getByLabelText('Name'), { target: { value: 'release-mcp' } });
+    fireEvent.change(within(customMcpPanel).getByLabelText('MCP Server URL'), {
+      target: { value: 'https://release.example.com/mcp' },
+    });
+    fireEvent.click(within(customMcpPanel).getByRole('button', { name: 'Add MCP server' }));
+    expect(within(dialog).getByText('release-mcp')).toBeTruthy();
 
     fireEvent.change(within(dialog).getByDisplayValue('Coordinator'), { target: { value: 'Coordinator updated' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save new version' }));
@@ -1674,6 +1840,15 @@ export function registerManagedAgentsAgentsTests() {
       agents: [{ type: 'self' }, { type: 'agent', id: 'agent_worker', version: 7 }],
     });
     expect(updateRequest?.body?.skills).toEqual([{ type: 'custom', skill_id: 'skill_release', version: '3' }]);
+    expect(updateRequest?.body?.mcp_servers).toEqual([
+      { name: 'release-mcp', type: 'url', url: 'https://release.example.com/mcp' },
+    ]);
+    expect(updateRequest?.body?.tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'custom', name: 'release_status' }),
+        expect.objectContaining({ type: 'mcp_toolset', mcp_server_name: 'release-mcp' }),
+      ]),
+    );
   });
 
   test('falls back to Raw mode for a valid legacy configuration that Rendered cannot edit safely', async () => {

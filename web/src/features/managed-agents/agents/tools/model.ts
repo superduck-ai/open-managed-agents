@@ -55,27 +55,54 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'edit', description: 'String replacement in files' },
     { name: 'glob', description: 'File pattern matching' },
     { name: 'grep', description: 'Text search with regex' },
+    { name: 'web_fetch', description: 'Fetch URL content' },
+    { name: 'task', description: 'Run a subagent task' },
+    { name: 'ask_user_question', description: 'Ask the user a structured question' },
+    { name: 'cron_create', description: 'Create a recurring task' },
+    { name: 'cron_delete', description: 'Delete a recurring task' },
+    { name: 'cron_list', description: 'List recurring tasks' },
+    { name: 'enter_plan_mode', description: 'Enter planning mode' },
+    { name: 'enter_worktree', description: 'Enter an isolated worktree' },
+    { name: 'exit_plan_mode', description: 'Exit planning mode' },
+    { name: 'exit_worktree', description: 'Exit an isolated worktree' },
+    { name: 'notebook_edit', description: 'Edit Jupyter notebooks' },
+    { name: 'schedule_wakeup', description: 'Schedule a session wakeup' },
+    { name: 'skill', description: 'Run a configured skill' },
+    { name: 'task_output', description: 'Read background task output' },
+    { name: 'task_stop', description: 'Stop a background task' },
+    { name: 'todo_write', description: 'Manage the task list' },
   ],
 };
 
 export function builtInAgentToolDescription(tool: BuiltInAgentTool, msg: I18nMsg) {
-  switch (tool.name) {
-    case 'bash':
-      return msg('managedAgents.agents.createDialog.builtInTool.bash', tool.description);
-    case 'read':
-      return msg('managedAgents.agents.createDialog.builtInTool.read', tool.description);
-    case 'write':
-      return msg('managedAgents.agents.createDialog.builtInTool.write', tool.description);
-    case 'edit':
-      return msg('managedAgents.agents.createDialog.builtInTool.edit', tool.description);
-    case 'glob':
-      return msg('managedAgents.agents.createDialog.builtInTool.glob', tool.description);
-    case 'grep':
-      return msg('managedAgents.agents.createDialog.builtInTool.grep', tool.description);
-    default:
-      return tool.description;
-  }
+  const key = BUILT_IN_TOOL_DESCRIPTION_KEYS[tool.name];
+  return key ? msg(key, tool.description) : tool.description;
 }
+
+const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
+  task: 'managedAgents.agents.createDialog.builtInTool.task',
+  ask_user_question: 'managedAgents.agents.createDialog.builtInTool.askUserQuestion',
+  bash: 'managedAgents.agents.createDialog.builtInTool.bash',
+  cron_create: 'managedAgents.agents.createDialog.builtInTool.cronCreate',
+  cron_delete: 'managedAgents.agents.createDialog.builtInTool.cronDelete',
+  cron_list: 'managedAgents.agents.createDialog.builtInTool.cronList',
+  edit: 'managedAgents.agents.createDialog.builtInTool.edit',
+  enter_plan_mode: 'managedAgents.agents.createDialog.builtInTool.enterPlanMode',
+  enter_worktree: 'managedAgents.agents.createDialog.builtInTool.enterWorktree',
+  exit_plan_mode: 'managedAgents.agents.createDialog.builtInTool.exitPlanMode',
+  exit_worktree: 'managedAgents.agents.createDialog.builtInTool.exitWorktree',
+  glob: 'managedAgents.agents.createDialog.builtInTool.glob',
+  grep: 'managedAgents.agents.createDialog.builtInTool.grep',
+  notebook_edit: 'managedAgents.agents.createDialog.builtInTool.notebookEdit',
+  read: 'managedAgents.agents.createDialog.builtInTool.read',
+  schedule_wakeup: 'managedAgents.agents.createDialog.builtInTool.scheduleWakeup',
+  skill: 'managedAgents.agents.createDialog.builtInTool.skill',
+  task_output: 'managedAgents.agents.createDialog.builtInTool.taskOutput',
+  task_stop: 'managedAgents.agents.createDialog.builtInTool.taskStop',
+  todo_write: 'managedAgents.agents.createDialog.builtInTool.todoWrite',
+  web_fetch: 'managedAgents.agents.createDialog.builtInTool.webFetch',
+  write: 'managedAgents.agents.createDialog.builtInTool.write',
+};
 
 const CURRENT_BUILT_IN_TOOLSET = 'agent_toolset_20260401';
 
@@ -385,8 +412,8 @@ function resolveMcpServer(name: string, url: string, directoryServers: McpDirect
   }
 
   const metadata =
-    directoryServers.find((server) => server.slug === name) ??
-    FALLBACK_MCP_SERVERS.find((server) => server.slug === name);
+    directoryServers.find((server) => server.slug === name && server.url === url) ??
+    FALLBACK_MCP_SERVERS.find((server) => server.slug === name && server.url === url);
   // 展示元数据优先级：在线 Directory > 内置 GitHub/Slack fallback > 名称格式化；
   // 实际 URL 始终以当前 Agent 版本配置为准。
   if (metadata) {

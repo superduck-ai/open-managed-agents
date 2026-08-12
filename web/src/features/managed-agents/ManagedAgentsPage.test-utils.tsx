@@ -1,5 +1,6 @@
 import { expect, mock } from 'bun:test';
 import type { EditorView } from '@codemirror/view';
+import type { QueryClient as QueryClientType } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { resetTestDom } from '../../test/setup';
 import type { AuthContextValue } from '../../shared/auth/context';
@@ -39,6 +40,18 @@ const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
   managedAgentsTestFallbackRoute,
 ]);
 
+type TestAgentModel = { id: string; displayName?: string };
+
+type ManagedAgentsRenderOptions = {
+  workspaceId?: string;
+  models?: TestAgentModel[];
+};
+
+const defaultTestAgentModels: TestAgentModel[] = [
+  { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+  { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+];
+
 export const { act, cleanup, fireEvent, screen, waitFor, within } = testingLibrary;
 const originalFetch = globalThis.fetch;
 const managedAgentsAuthContextValue: AuthContextValue = {
@@ -56,7 +69,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
-  queryOptions: { seedModelMappings?: boolean } = {},
+  queryOptions: ManagedAgentsRenderOptions & { seedModelMappings?: boolean } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -67,13 +80,7 @@ export function render(
   if (queryOptions.seedModelMappings !== false) {
     queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
   }
-  queryClient.setQueryData(
-    ['create-agent', 'models', 'default'],
-    [
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-    ],
-  );
+  seedCreateAgentModels(queryClient, queryOptions.workspaceId ?? 'default', queryOptions.models);
   return testingLibrary.render(
     <AuthContext.Provider value={managedAgentsAuthContextValue}>
       <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
@@ -139,7 +146,9 @@ export function setAgentConfigEditorValue(container: HTMLElement, value: string,
 export function renderManagedAgentsPage(
   section: Parameters<typeof ManagedAgentsPage>[0]['section'],
   locale: 'en' | 'zh-CN' = 'en',
+  options: ManagedAgentsRenderOptions = {},
 ) {
+  const workspaceId = options.workspaceId ?? 'default';
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -148,27 +157,30 @@ export function renderManagedAgentsPage(
     },
   });
   queryClient.setQueryData(['managed-agents', 'model-mappings', 'org_test'], {});
-  queryClient.setQueryData(
-    ['create-agent', 'models', 'default'],
-    [
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-    ],
-  );
+  seedCreateAgentModels(queryClient, workspaceId, options.models);
   const history = createBrowserHistory({ window });
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
     <ManagedAgentsTestRouterProvider router={router}>
       <QueryClientProvider client={queryClient}>
         <I18nProvider initialLocale={locale}>
-          <WorkspaceContext.Provider value={workspaceContextValue('default')}>
+          <WorkspaceContext.Provider value={workspaceContextValue(workspaceId)}>
             <ManagedAgentsPage section={section} />
           </WorkspaceContext.Provider>
         </I18nProvider>
       </QueryClientProvider>
     </ManagedAgentsTestRouterProvider>,
+    undefined,
+    { workspaceId, models: options.models },
   );
-  return Object.assign(result, { router });
+  return Object.assign(result, { queryClient, router });
+}
+
+function seedCreateAgentModels(queryClient: QueryClientType, workspaceId: string, models?: TestAgentModel[]) {
+  queryClient.setQueryData(
+    ['create-agent', 'models', workspaceId],
+    (models ?? defaultTestAgentModels).map((model) => ({ ...model })),
+  );
 }
 
 function ManagedAgentsTestRouterProvider({

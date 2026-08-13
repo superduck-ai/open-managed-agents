@@ -205,10 +205,9 @@ func (s *Service) AppendWorkerOutputEventsForEpoch(ctx context.Context, codeSess
 		if !ok {
 			continue
 		}
-		if err := s.publishPublicPayloads(ctx, codeSessionID, publicPayloads); err != nil {
+		if err := s.publishWorkerPublicPayloads(ctx, codeSessionID, publicPayloads); err != nil {
 			return err
 		}
-		s.reconcileSubagentEvents(ctx, codeSessionID)
 	}
 	return nil
 }
@@ -272,11 +271,7 @@ func (s *Service) appendWorkerEvent(ctx context.Context, codeSessionID string, r
 	if !ok {
 		return nil
 	}
-	if err := s.publishPublicPayloads(ctx, codeSessionID, publicPayloads); err != nil {
-		return err
-	}
-	s.reconcileSubagentEvents(ctx, codeSessionID)
-	return nil
+	return s.publishWorkerPublicPayloads(ctx, codeSessionID, publicPayloads)
 }
 
 func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSession, configRaw json.RawMessage, now time.Time) error {
@@ -337,6 +332,14 @@ func newInboundEventInput(codeSessionID string, payload json.RawMessage, source 
 		Source:         strings.TrimSpace(source),
 		CreatedAt:      time.Now().UTC(),
 	}, nil
+}
+
+func (s *Service) publishWorkerPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
+	if err := s.publishPublicPayloads(ctx, codeSessionID, payloads); err != nil {
+		return err
+	}
+	s.reconcileSubagentEvents(ctx, codeSessionID)
+	return nil
 }
 
 func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {

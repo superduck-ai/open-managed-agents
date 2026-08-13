@@ -423,9 +423,5 @@ func (s *Service) publishToolPermissionRequiresAction(ctx context.Context, codeS
 		}
 		payloads = append(payloads, raw)
 	}
-	if err := s.publishPublicPayloads(ctx, codeSessionID, payloads); err != nil {
-		return err
-	}
-	s.reconcileSubagentEvents(ctx, codeSessionID)
-	return nil
+	return s.publishWorkerPublicPayloads(ctx, codeSessionID, payloads)
 }
